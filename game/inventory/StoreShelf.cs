@@ -210,18 +210,19 @@ namespace UnturnedGodot
             if (!RenderMesh) return;   // BACK side of a double-sided shelf: shares the FRONT twin's mesh+label, just manages its own display (ShelfMesh() still cached for tier maths)
             if (mesh != null)
             {
-                // Glass-front cooler: split the mesh on the palette u-axis (u<0.5 outer shell, u>0.5 interior/
-                // shelves -- tinyclaw) so ONLY the interior can go emissive. The shell renders plain, keeping the
-                // cooler a dark box with a glowing FRONT, not a glowing box. SplitByUv caches per (mesh,key): 24
-                // coolers share one split. parts[0] = the u>0.5 match (interior), parts[1] = the remainder (shell).
+                // Interior/shell split for the emissive glow, so only the INTERIOR lights (dark box, glowing
+                // front). The separating palette axis DIFFERS per prop -- Cooler_0 splits on u (u>0.5 interior),
+                // Fridge_0 on v (v>0.5 interior); a hardcoded axis silently matches ZERO tris on the other prop =
+                // empty emissive = no glow at all + a hunt in the wrong file (tinyclaw). SplitInterior tries u then
+                // v and takes whichever actually separates. parts[0] = interior, parts[1] = outer shell.
                 ArrayMesh shellMesh = mesh;
-                if (MeshName.StartsWith("Cooler"))
+                if (MeshName.StartsWith("Cooler") || MeshName.StartsWith("Fridge"))
                 {
-                    var parts = ObjMesh.SplitByUv(mesh, 2, (a, b, c) => a.X > 0.5f && b.X > 0.5f && c.X > 0.5f);
-                    if (parts != null && parts.Length == 2 && parts[0] != null && parts[1] != null)
+                    var parts = SplitInterior(mesh);
+                    if (parts != null)
                     {
-                        shellMesh = parts[1];   // u<0.5 outer shell (stays plain)
-                        _glowInteriorMi = new MeshInstance3D { Mesh = parts[0], MaterialOverride = ShelfMat(), Basis = _upright };   // u>0.5 interior -- swaps to emissive while lit
+                        shellMesh = parts[1];   // outer shell (stays plain, carries the collision)
+                        _glowInteriorMi = new MeshInstance3D { Mesh = parts[0], MaterialOverride = ShelfMat(), Basis = _upright };   // interior -- swaps to emissive while lit
                         AddChild(_glowInteriorMi);
                     }
                 }
@@ -309,6 +310,32 @@ namespace UnturnedGodot
 
         // Swing this container's door(s) to a target state -- called by the crate open/close (PlayerController).
         // Grouped multi-leaf props swing together off the first SetOpen (SyncGroup), so the rest no-op: one sound.
+        // Split a container mesh into [interior, outer shell] for the emissive glow. TWO robustness rules
+        // (tinyclaw): (1) the separating palette axis differs per prop (Cooler_0 = u, Fridge_0 = v) -- try u then v,
+        // never hardcode. Build() returns null for an empty bucket, so a null bucket = that axis didn't separate.
+        // (2) which half is the interior is GEOMETRIC, not palette-order: the interior's AABB is strictly inset
+        // within the shell's on every axis. Keys 2/3 are distinct SplitByUv caches. null = no axis separated.
+        static ArrayMesh[] SplitInterior(ArrayMesh mesh)
+        {
+            return PickInterior(ObjMesh.SplitByUv(mesh, 2, (a, b, c) => a.X > 0.5f && b.X > 0.5f && c.X > 0.5f))
+                ?? PickInterior(ObjMesh.SplitByUv(mesh, 3, (a, b, c) => a.Y > 0.5f && b.Y > 0.5f && c.Y > 0.5f));
+        }
+        static ArrayMesh[] PickInterior(ArrayMesh[] parts)
+        {
+            if (parts == null || parts.Length != 2 || parts[0] == null || parts[1] == null) return null;   // a bucket empty -> this axis didn't separate
+            Aabb x = parts[0].GetAabb(), y = parts[1].GetAabb();
+            if (Inset(x, y)) return new[] { parts[0], parts[1] };   // parts[0] inset in parts[1] -> [interior, shell]
+            if (Inset(y, x)) return new[] { parts[1], parts[0] };
+            return null;   // neither strictly contained -> not an interior/shell split
+        }
+        static bool Inset(Aabb inner, Aabb outer)   // inner strictly contained in outer on every axis (small margin)
+        {
+            const float e = 0.01f;
+            return inner.Position.X >= outer.Position.X - e && inner.End.X <= outer.End.X + e
+                && inner.Position.Y >= outer.Position.Y - e && inner.End.Y <= outer.End.Y + e
+                && inner.Position.Z >= outer.Position.Z - e && inner.End.Z <= outer.End.Z + e;
+        }
+
         // Fridge -> warm interior bulb, Cooler -> cold blue; every other container kind -> no interior glow (null).
         static Color? GlowColorFor(string mesh) =>
             string.IsNullOrEmpty(mesh) ? (Color?)null
