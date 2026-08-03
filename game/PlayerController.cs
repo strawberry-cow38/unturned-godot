@@ -3372,6 +3372,10 @@ namespace UnturnedGodot
         }
 
         public string HeldGunName => _gunName;
+        /// <summary>The inventory Item backing whatever is in hand -- the SINGLE home for a gun's ammo/firemode/mag/
+        /// attachments. Exposed so gun.reequip_keeps_ammo can assert that a held gun always has one, rather than the
+        /// invariant being a thing everyone assumes until a call site quietly stops passing it.</summary>
+        public SDG.Unturned.Item HeldItemForTest => _heldItem;
 
         // Hold a specific gun by its content name: reload the GunDef + rebuild the per-gun viewmodel. Used by Q-switch
         // and by the inventory's Equip action (equipping a gun makes it the held weapon).
