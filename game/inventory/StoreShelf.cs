@@ -24,7 +24,7 @@ namespace UnturnedGodot
         public const uint ShelfItemHitLayer = 1u << 11;   // shelf display items' look-ray hitboxes -- the player's look-sphere tests this bit (like WorldItem.ItemHitLayer)
         MeshInstance3D _shelfGlow;                         // whole-shelf outline silhouette, shown while the shelf is looked at
         OmniLight3D _glow;                                 // dim bulb: the light that spills out onto the floor when lit
-        MeshInstance3D _glowBodyMi;                        // COOLER only: body mesh whose material swaps to an emissive copy while lit -- an even, N.L-free interior glow at zero extra light cost (tinyclaw)
+        MeshInstance3D _glowInteriorMi;                    // COOLER only: the INTERIOR sub-mesh (split off the outer shell on the palette u-axis); its material swaps to emissive while lit so ONLY the interior glows (tinyclaw)
         Material _glowOffMat, _glowLitMat;                 // cooler body: normal vs emissive-lit material
         bool _glowAlways;                                  // glass-front display cooler -> lit whenever powered even when closed; opaque fridge -> only when open
         bool _doorsOpen;                                   // last door open/close state, for RefreshGlow
@@ -210,7 +210,22 @@ namespace UnturnedGodot
             if (!RenderMesh) return;   // BACK side of a double-sided shelf: shares the FRONT twin's mesh+label, just manages its own display (ShelfMesh() still cached for tier maths)
             if (mesh != null)
             {
-                var mi = new MeshInstance3D { Mesh = mesh, MaterialOverride = ShelfMat(), Basis = _upright };
+                // Glass-front cooler: split the mesh on the palette u-axis (u<0.5 outer shell, u>0.5 interior/
+                // shelves -- tinyclaw) so ONLY the interior can go emissive. The shell renders plain, keeping the
+                // cooler a dark box with a glowing FRONT, not a glowing box. SplitByUv caches per (mesh,key): 24
+                // coolers share one split. parts[0] = the u>0.5 match (interior), parts[1] = the remainder (shell).
+                ArrayMesh shellMesh = mesh;
+                if (MeshName.StartsWith("Cooler"))
+                {
+                    var parts = ObjMesh.SplitByUv(mesh, 2, (a, b, c) => a.X > 0.5f && b.X > 0.5f && c.X > 0.5f);
+                    if (parts != null && parts.Length == 2 && parts[0] != null && parts[1] != null)
+                    {
+                        shellMesh = parts[1];   // u<0.5 outer shell (stays plain)
+                        _glowInteriorMi = new MeshInstance3D { Mesh = parts[0], MaterialOverride = ShelfMat(), Basis = _upright };   // u>0.5 interior -- swaps to emissive while lit
+                        AddChild(_glowInteriorMi);
+                    }
+                }
+                var mi = new MeshInstance3D { Mesh = shellMesh, MaterialOverride = ShelfMat(), Basis = _upright };
                 AddChild(mi);
                 mi.CreateTrimeshCollision();   // solid shelf on the world layer: the player collides with the actual geometry (spine/tiers); the look-ray still passes through the open gaps to reach items
                 _shelfGlow = new MeshInstance3D   // whole-shelf outline silhouette (hidden until looked at)
@@ -233,16 +248,15 @@ namespace UnturnedGodot
                         Visible = false, Position = box.Position + box.Size * 0.5f,   // interior centre of the standing body
                     };
                     AddChild(_glow);
-                    // Glass-front cooler: ALSO swap the body mesh to an emissive copy while lit. Emission ignores N.L,
-                    // so the shelf undersides glow as bright as their tops = an even glow, no point-light wedges, at
-                    // ZERO extra light cost (coolers line up in rows, dozens on screen -- tinyclaw). Same trick as
-                    // LampLight's fixture. The opaque fridge is only seen open + head-on, so it keeps just the bulb.
-                    if (MeshName.StartsWith("Cooler"))
+                    // Cooler: the interior sub-mesh (split off the shell above) glows emissive while lit -- ONLY the
+                    // interior, so the outer shell stays dark = a dark box with a glowing front (tinyclaw), not a
+                    // glowing box. Emission ignores N.L, so shelf tops + undersides glow equally = no wedges, zero
+                    // light cost. The opaque fridge is only seen open + head-on, so it keeps just the bulb.
+                    if (_glowInteriorMi != null)
                     {
-                        _glowBodyMi = mi;
-                        _glowOffMat = mi.MaterialOverride;
+                        _glowOffMat = _glowInteriorMi.MaterialOverride;
                         var lit = (_glowOffMat as StandardMaterial3D)?.Duplicate() as StandardMaterial3D ?? new StandardMaterial3D();
-                        lit.EmissionEnabled = true; lit.Emission = glowCol.Value; lit.EmissionEnergyMultiplier = 0.35f;   // SHADED -> reaches HDR/bloom
+                        lit.EmissionEnabled = true; lit.Emission = glowCol.Value; lit.EmissionEnergyMultiplier = 0.9f;   // SHADED -> HDR/bloom; brighter is fine, only the interior lights
                         _glowLitMat = lit;
                     }
                     _glowAlways = MeshName.StartsWith("Cooler");   // a glass-front display cooler shows its lit interior even when closed (master); an opaque fridge only when open
@@ -317,7 +331,7 @@ namespace UnturnedGodot
         {
             bool on = (_glowAlways || _doorsOpen) && PowerNet.GlobalPower;
             if (_glow != null) _glow.Visible = on;
-            if (_glowBodyMi != null && IsInstanceValid(_glowBodyMi)) _glowBodyMi.MaterialOverride = on ? _glowLitMat : _glowOffMat;   // cooler: emissive body while lit
+            if (_glowInteriorMi != null && IsInstanceValid(_glowInteriorMi)) _glowInteriorMi.MaterialOverride = on ? _glowLitMat : _glowOffMat;   // cooler: emissive INTERIOR while lit
         }
 
         // --containertest debug: settle + read the door swing without a render loop (0=closed..1=open, -1=no door).
