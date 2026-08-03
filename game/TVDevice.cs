@@ -38,6 +38,7 @@ namespace UnturnedGodot
         MeshInstance3D _screen;   // the emissive SMPTE screen sub-mesh (hidden when dark)
         StandardMaterial3D _screenMat;
         OmniLight3D _light;       // soft forward spill (energy 0 / hidden when dark)
+        MeshInstance3D _outline;  // whole-prop white rim silhouette on the outline overlay -- shown while looked at (F affordance)
         AudioStreamPlayer3D _tone;               // looping 1kHz tone -- plays only while lit
         AudioStreamPlayer3D _onClick, _offClick; // one-shot turn-on / turn-off clicks
 
@@ -93,6 +94,16 @@ namespace UnturnedGodot
                 Position = _screenCenterLocal + _screenNormalLocal * 0.3f,   // just in front of the screen face (soft forward spill; keeps the on-screen hotspot down)
             };
             AddChild(_light);
+
+            // Whole-prop look-focus outline (F affordance -- tells the player F does something): the FULL body
+            // silhouette on the outline overlay, hidden until looked at. Same recipe as StoreShelf._shelfGlow /
+            // ObjectDoor._leafOutline.
+            _outline = new MeshInstance3D
+            {
+                Mesh = body, Visible = false, Layers = OutlineOverlay.OutlineLayer, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
+                MaterialOverride = new StandardMaterial3D { ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, AlbedoColor = Colors.White, CullMode = BaseMaterial3D.CullModeEnum.Disabled },
+            };
+            AddChild(_outline);
 
             BuildAudio();
             AddToGroup("tvdevices");   // DayNightCycle.DriveStreetlights sweeps this group on a grid change -> Refresh
@@ -218,6 +229,15 @@ namespace UnturnedGodot
             _warm = Mathf.Min(1f, _warm + (float)delta / WarmDur);
             if (_warm >= 1f) _warming = false;
             ApplyLevels();
+        }
+
+        /// <summary>Look-focus highlight (F affordance): the whole-prop white rim silhouette. Same shared-static
+        /// trap as StoreShelf/ObjectDoor -- the outline shader tints from WorldItem.FocusColor, so CLAIM it white
+        /// on GAIN; do NOT reset it on loss (that would smear white over an item that legitimately owns its rarity).</summary>
+        public void SetLookFocused(bool on)
+        {
+            if (on) WorldItem.FocusColor = Colors.White;
+            if (_outline != null && IsInstanceValid(_outline)) _outline.Visible = on;
         }
 
         // ---- render-harness / test seams ------------------------------------------------------------------------

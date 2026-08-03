@@ -309,7 +309,12 @@ namespace UnturnedGodot
                 _focusGrid = hitGrid;
                 _focusGrid?.SetLookFocused(true);
             }
-            _focusTV = hitTV;   // TV look-focus: just track it (no outline overlay for this MVP); F toggles it in the input handler
+            if (hitTV != _focusTV)   // TV look-focus: whole-prop white outline (SetLookFocused claims WorldItem.FocusColor=white on gain)
+            {
+                if (IsInstanceValid(_focusTV)) _focusTV.SetLookFocused(false);
+                _focusTV = hitTV;
+                _focusTV?.SetLookFocused(true);
+            }
             if (hitShelfItem != _focusShelfItem)   // looked-at shelf item glows (F grabs it)
             {
                 if (IsInstanceValid(_focusShelfItem)) _focusShelfItem.SetFocused(false);
