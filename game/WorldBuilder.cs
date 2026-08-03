@@ -673,9 +673,9 @@ namespace UnturnedGodot
                     }
                 }
                 if (placedLamp != null)
-                    placedTap = LightTap.Attach(root, gpos, basis, LightTap.LightKind.Streetlight, new Vector3(0.22f, 0f, 0.55f), new Vector3(0.22f, 0f, 0.55f));
+                    placedTap = LightTap.Attach(root, gpos, basis, LightTap.LightKind.Streetlight, new Vector3(0.3f, 0f, 0.5f), new Vector3(0.3f, 0f, 0.5f));
                 else if (placedSignals.Count > 0)
-                    placedTap = LightTap.Attach(root, gpos, basis, LightTap.LightKind.Traffic, new Vector3(0.22f, 0f, 0.55f), new Vector3(0.22f, 0f, 0.55f));
+                    placedTap = LightTap.Attach(root, gpos, basis, LightTap.LightKind.Traffic, new Vector3(0.3f, 0f, 0.5f), new Vector3(0.3f, 0f, 0.5f));
 
                 // OPENABLE PROP DOORS (MVP: Fridge_0 + Wardrobe_0, SP-local -- mirrors the Tower_Water_0
                 // Playable-only gating above: no dedicated/MP support yet). doors.txt (tools/extract_doors.py)
