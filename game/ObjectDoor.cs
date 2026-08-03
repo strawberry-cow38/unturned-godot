@@ -258,6 +258,11 @@ namespace UnturnedGodot
         /// <summary>Look-focus highlight (F-focus outline), matching Door.SetLookFocused.</summary>
         public void SetLookFocused(bool on)
         {
+            // Same shared-static trap as StoreShelf: the outline shader tints from WorldItem.FocusColor, which every
+            // focusable sets on gain and none clears on loss. A STANDALONE doored prop (a wardrobe placed outside the
+            // container path) lit its silhouette without claiming the colour, so it wore the last item's rarity.
+            // Harmless to set again when a StoreShelf already did -- both want white.
+            if (on) WorldItem.FocusColor = Colors.White;
             if (BodyOutline != null && IsInstanceValid(BodyOutline)) BodyOutline.Visible = on;      // whole-prop white rim silhouette (the body)
             if (_leafOutline != null && IsInstanceValid(_leafOutline)) _leafOutline.Visible = on;   // ...and the swinging leaf's OWN white rim -- together the ENTIRE prop outlines uniformly (master: fridge door highlights the whole thing). Replaces the old amber leaf-emission glow so the leaf matches the body outline instead of standing out.
         }

@@ -584,7 +584,20 @@ namespace UnturnedGodot
             return null;
         }
 
-        public void SetShelfFocused(bool on) { if (_shelfGlow != null && IsInstanceValid(_shelfGlow)) _shelfGlow.Visible = on; foreach (var d in _doors) if (IsInstanceValid(d)) d.SetLookFocused(on); }   // container highlight covers the WHOLE prop: the body (_shelfGlow) AND every swinging door leaf (master: looking at a fridge door lights the whole fridge)
+        // Container highlight covers the WHOLE prop: the body (_shelfGlow) AND every swinging door leaf (master:
+        // looking at a fridge door lights the whole fridge).
+        //
+        // WorldItem.FocusColor MUST be set here. It is a single shared static that the outline shader reads each
+        // frame, and every focusable sets it on gain but nobody clears it on loss -- so a container that lit its
+        // silhouette without claiming the colour inherited whatever the last item left behind, and a shelf you looked
+        // at after a rare gun came up orange (strawberry). The silhouette mesh being unshaded white is not enough;
+        // the RIM colour is this static, not the mesh.
+        public void SetShelfFocused(bool on)
+        {
+            if (on) WorldItem.FocusColor = Colors.White;   // a container is always a plain white rim, never a rarity
+            if (_shelfGlow != null && IsInstanceValid(_shelfGlow)) _shelfGlow.Visible = on;
+            foreach (var d in _doors) if (IsInstanceValid(d)) d.SetLookFocused(on);
+        }
 
         // test hook: pack fixed ids left-to-right RESPECTING each item's grid footprint (so wide items span) -- UG_SHELFDEMO.
         public void DebugDisplay(List<int> ids)

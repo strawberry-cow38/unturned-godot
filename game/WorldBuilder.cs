@@ -113,7 +113,8 @@ namespace UnturnedGodot
             ["68339521990c4d70903dfd68da2cd886"] = ("Washer_0", 19, false, "Washer"),      // washing machine -> Cloth
             ["90da84de3f214d129de92b6ee8df60af"] = ("Dryer_0", 19, false, "Dryer"),        // dryer -> Cloth
             ["050dbe869b1c4fd5b215c552d145effd"] = ("Counter_0", 17, false, "Counter"),   // counter x103 -> Kitchen
-            ["0aeeefaf364f46f9906aff76c40c6d2b"] = ("Counter_1", 17, false, "Counter"),   // counter x22 -> Kitchen
+            // Counter_1 is NOT a loot container (strawberry 2026-08-03): it is a SINK, and it now reaches
+            // PlaceObject like Counter_3 so its tap is wired on the ordinary path.
             ["02923364713c4385a2bdaa7221d717ae"] = ("Counter_2", 17, false, "Counter"),   // counter x23 -> Kitchen
             // business/industrial containers (crates + shipping containers) -> prime in-genre loot
             ["cb0d8bf87fca47e3b73f634959a9f523"] = ("Crate_0", 8, false, "Crate"),         // business crate x31 -> Construction
@@ -594,7 +595,7 @@ namespace UnturnedGodot
                 {
                     "Tower_Water_0" => WaterTowerSource.Make(),
                     "Fire_Hydrant_0" => FireHydrantSource.Make(),
-                    _ when IsSinkProp(name) => SinkSource.Make(),   // Counter_3 reaches here; Counter_1 is intercepted as a container and gets its tap in TryContainer
+                    _ when IsSinkProp(name) => SinkSource.Make(),   // Counter_1 + Counter_3, both on the ordinary path now
                     _ => null,
                 };
                 if (mains != null && mode == WorldMode.Playable)
@@ -770,20 +771,6 @@ namespace UnturnedGodot
             bool TryContainer(string[] q)
             {
                 if (mode != WorldMode.Playable || !ContainerShelf.TryGetValue(q[0], out var cfg)) return false;
-                // A SINK THAT IS ALSO A CONTAINER. Counter_1 is a lootable kitchen counter AND a sink unit -- the mesh
-                // is the same shape as Counter_3 (identical 24/10/8/62 tri split at identical Z bands), just a wood
-                // body instead of all-steel. Being in this table means it never reaches PlaceObject, so its tap has to
-                // be attached here or 22 of the map's 28 sinks silently have no water. Both things are true of a real
-                // kitchen counter, so it is a container AND a source rather than a choice between them.
-                if (cfg.mesh == "Counter_1" && IsSinkProp(cfg.mesh))
-                {
-                    var sink = SinkSource.Make();
-                    sink.Position = new Vector3(F(q[1]), F(q[2]), -F(q[3]));
-                    sink.RotationDegrees = new Vector3(0f, 180f - F(q[5]), 0f);
-                    root.AddChild(sink);
-                    waterSources++;
-                    if (sink.GetTree() != null && sink.GetTree().GetNodesInGroup("fluid_managers").Count == 0) root.AddChild(new FluidManager());
-                }
                 // FLAG it (skip the decoration mesh) -> the caller spawns the real container post-build (asset DB ready).
                 result.Containers.Add((cfg.mesh, cfg.table, cfg.display, cfg.label, new Vector3(F(q[1]), F(q[2]), -F(q[3])), 180f - F(q[5])));
                 result.ContainerRots.Add(new Basis(new Vector3(0,1,0), Mathf.DegToRad(180f - F(q[5]))) * new Basis(new Vector3(1,0,0), Mathf.DegToRad(F(q[4]))) * new Basis(new Vector3(0,0,1), Mathf.DegToRad(-F(q[6]))));   // ex=270/ez=0 upright -> yaw only
