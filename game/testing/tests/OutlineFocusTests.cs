@@ -53,6 +53,19 @@ namespace UnturnedGodot.Testing
             door.SetLookFocused(false);
             T.Check("...and it too leaves an unfocus alone", WorldItem.FocusColor == Rare);
 
+            // A THIRD site, added when TVs landed. Not distrust of the author -- the point is that this static is a
+            // shared trap and EVERY new focusable is a fresh chance to forget it, so the test guards the pattern
+            // rather than the two places that happened to be broken first.
+            var tv = new TVDevice();
+            World.AddChild(tv);
+            yield return Ticks(1);
+            WorldItem.FocusColor = Rare;
+            tv.SetLookFocused(true);
+            T.Check($"a focused TV forces a WHITE rim ({WorldItem.FocusColor})", WorldItem.FocusColor == Colors.White);
+            WorldItem.FocusColor = Rare;
+            tv.SetLookFocused(false);
+            T.Check("...and leaves an unfocus alone", WorldItem.FocusColor == Rare);
+
             WorldItem.FocusColor = saved;
         }
     }
