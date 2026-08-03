@@ -237,6 +237,10 @@ void sky() {
             // glow drops with the grid -- it goes dark at the blackout, not only when you next open the door.
             foreach (Node n in tree.GetNodesInGroup("glowcontainers"))
                 if (n is StoreShelf ss) ss.RefreshGlow();
+            // Televisions ride the same mains edge: a TV toggled on goes dark the instant the grid dies (blackout)
+            // and warms back up when it returns -- Refresh reads PowerNet.GlobalPower live, mirroring the glow above.
+            foreach (Node n in tree.GetNodesInGroup("tvdevices"))
+                if (n is TVDevice tv) tv.Refresh();
         }
 
 

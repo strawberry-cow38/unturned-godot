@@ -613,6 +613,7 @@ namespace UnturnedGodot
                 // Auto-grid municipal consumer: lit only when it's NIGHT and the town grid is live (DayNightCycle drives
                 // both; StreetLight.Watts is the nominal draw). toggleGlobalPower darkens the whole town.
                 StreetLight placedLamp = null;   // captured so a break can darken it (see the Register call below)
+                TVDevice placedTV = null;        // captured so the body collider below can meta-link the look-ray to it
                 var placedSignals = new System.Collections.Generic.List<TrafficLight>();   // both heads of a mast, same reason
                 if (name == "Street_Light_0" && mode != WorldMode.Dedicated)
                 {
@@ -635,6 +636,15 @@ namespace UnturnedGodot
                 {
                     var lampCenter = mesh != null ? mesh.GetAabb().GetCenter() : Vector3.Zero;
                     root.AddChild(LampLight.Make(gpos + basis * lampCenter, mainMi));   // hand the prop mesh in so the fixture itself glows when lit
+                }
+                // TELEVISIONS (master): Television_0 (flatscreen) / Television_1 (CRT) become interactive TVs -- look
+                // at it + F toggles it on/off; lit only when ON and the grid is live. TVDevice carves the screen off
+                // THIS body mesh (mainMi) and rides its exact placement transform; the body collider below meta-links
+                // the look-ray to it (like objectdoor/gaspump).
+                if ((name == "Television_0" || name == "Television_1") && mode != WorldMode.Dedicated)
+                {
+                    placedTV = TVDevice.Make(mainMi, name);
+                    root.AddChild(placedTV);
                 }
                 // Each HEAD runs its OWN dumb timer (strawberry's explicit call) -- no junction sync and no mast sync,
                 // so crossing roads can both show green and the two heads on one arm drift apart. The offset is
@@ -719,6 +729,7 @@ namespace UnturnedGodot
                             body.SetMeta(TrafficLight.HitMeta, arr);
                         }
                         if (doorForBody != null) body.SetMeta("objectdoor", doorForBody);   // issue 3: look-at the body resolves to the door (PlayerController)
+                        if (placedTV != null) body.SetMeta("tvdevice", placedTV);   // look-at the TV body resolves to its device (PlayerController F toggle)
                     }
                 }
                 // destructible prop: bind this placement's live nodes to its deterministic index + tag the

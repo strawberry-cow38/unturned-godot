@@ -152,6 +152,7 @@ namespace UnturnedGodot
         /// cooldowns are sim rules, and wall-clock keeps running while the game is paused.</summary>
         double _interactClock;
         GasPump _focusGasPump;        // the gas pump being LOOKED AT (outline + fuel tooltip; RMB w/ a gas can extracts)
+        TVDevice _focusTV;            // the TV being LOOKED AT -> F toggles it on/off
         GridPowerSource _focusGrid;   // the grid-power box being LOOKED AT (outline + "Grid Power - <name>: <watts>" tooltip)
         SDG.Unturned.Item _heldFuelItem;  // a gas can equipped in hand -> RMB a powered pump to fill it (master's fluids)
         SDG.Unturned.Item _heldFluidItem; // a fluid CONTAINER (water bottle / soda / cola / canteen) in hand -> RMB a tank to fill it, LMB to sip clean water (strawberry)
@@ -179,7 +180,7 @@ namespace UnturnedGodot
         void UpdateLookFocus()
         {
             WorldItem hitItem = null; Vehicle hitVeh = null; Deployable hitDeploy = null; GasPump hitGasPump = null; GridPowerSource hitGrid = null; FluidContainer hitFluid = null;
-            Door hitDoor = null; Bed hitBed = null; ObjectDoor hitObjectDoor = null;
+            Door hitDoor = null; Bed hitBed = null; ObjectDoor hitObjectDoor = null; TVDevice hitTV = null;
             ShelfItemBody hitShelfItem = null; StoreShelf hitShelf = null;   // shelf display item / its shelf under the look-sphere
             IPuppetFocusable hitPuppet = null;   // MP ONLY: nearest replicated car/item puppet under the look-sphere (SP hits real Vehicle/WorldItem instead)
             if (!_dead && _driving == null && _riding == null && _cam != null && Input.MouseMode == Input.MouseModeEnum.Captured)
@@ -211,6 +212,7 @@ namespace UnturnedGodot
                     else if (rcol is FluidContainer fcr && IsInstanceValid(fcr)) hitFluid = fcr;   // a placed fluid device body (solid since batch A) -> hold-F pickup
                     else if (rcol is Node grn && grn.HasMeta("gaspump") && grn.GetMeta("gaspump").As<GasPump>() is GasPump gpn && IsInstanceValid(gpn)) hitGasPump = gpn;   // gas pump collider tagged in WorldBuilder -> the fixture
                     else if (rcol is Node grn2 && grn2.HasMeta("gridpower") && grn2.GetMeta("gridpower").As<GridPowerSource>() is GridPowerSource gsn && IsInstanceValid(gsn)) hitGrid = gsn;   // grid-power box collider tagged in SpawnEditorGridPower
+                    else if (rcol is Node tvn && tvn.HasMeta("tvdevice") && tvn.GetMeta("tvdevice").As<TVDevice>() is TVDevice tvd && IsInstanceValid(tvd)) hitTV = tvd;   // TV body collider tagged in WorldBuilder -> its device (F toggles)
                     else if (rcol is ShelfItemBody sibr && IsInstanceValid(sibr)) hitShelfItem = sibr;   // ray hit an item on a shelf directly -> lock onto it (the orb is a backup)
                     else if (rcol is Node rn && ShelfOf(rn) is StoreShelf rshelf) hitShelf = rshelf;   // looked-at shelf -> whole-shelf outline + F-open (look-based, not proximity)
                 }
@@ -307,6 +309,7 @@ namespace UnturnedGodot
                 _focusGrid = hitGrid;
                 _focusGrid?.SetLookFocused(true);
             }
+            _focusTV = hitTV;   // TV look-focus: just track it (no outline overlay for this MVP); F toggles it in the input handler
             if (hitShelfItem != _focusShelfItem)   // looked-at shelf item glows (F grabs it)
             {
                 if (IsInstanceValid(_focusShelfItem)) _focusShelfItem.SetFocused(false);
@@ -3561,6 +3564,7 @@ namespace UnturnedGodot
                 else if (_focusFluid != null && IsInstanceValid(_focusFluid)) { _fHeldFluid = _focusFluid; _fluidPickupTimer = 0f; }   // hold F on a placed fluid device -> pick it up (UpdateFluidPickup)
                 else if (_focusDoor != null && IsInstanceValid(_focusDoor)) { _fHeldDoor = _focusDoor; _doorLockTimer = 0f; }   // looking at a door: F starts a HOLD -> lock/unlock (UpdateDoorLockHold); a quick TAP opens/closes it (fired on release)
                 else if (_focusObjectDoor != null && IsInstanceValid(_focusObjectDoor)) RequestToggleObjectDoor(_focusObjectDoor);   // looking at an openable prop door (fridge): F toggles it directly, no hold/lock semantics for this MVP (unlike a building Door)
+                else if (_focusTV != null && IsInstanceValid(_focusTV)) _focusTV.Toggle();   // looking at a TV: F toggles it on/off (per-TV state)
                 else if (_focusBed != null && IsInstanceValid(_focusBed)) ClaimFocusedBed();       // looking at a bed: claim it as your respawn point
                 else if (RequestHarvestNearestCrop()) { }                  // MP shell near a GROWN replicated crop: ask the server to harvest it (A4; false in SP -- no NetHarvestCrop seam)
                 else if (CropManager.NearestGrown(GlobalPosition) is CropNode grownCrop) CropManager.Harvest(grownCrop, this);  // harvest a nearby fully-grown crop (source InteractableFarm harvest)
