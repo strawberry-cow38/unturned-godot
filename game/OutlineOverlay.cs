@@ -19,6 +19,39 @@ namespace UnturnedGodot
         // the whole pass is pure waste there. PlayerController sets this on vehicle enter/exit.
         public static bool DrivingSuppress;
 
+        // ---- shared look-at outline helpers ------------------------------------------------------------------
+        // Every focusable prop/item/container used to hand-roll its own silhouette + colour claim (9 copies), and a
+        // standalone doored prop once forgot the claim and wore the last item's rarity. These are the ONE place:
+        // MakeOutline builds the (always-white) mask mesh; ShowOutline toggles it AND claims the rim colour in a
+        // single call, so a caller can't light a silhouette without saying what colour its rim should be.
+        public static MeshInstance3D MakeOutline(Mesh mesh, Transform3D? transform = null)
+        {
+            var mi = new MeshInstance3D
+            {
+                Mesh = mesh, Visible = false, Layers = OutlineLayer, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
+                MaterialOverride = new StandardMaterial3D { ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, AlbedoColor = Colors.White, CullMode = BaseMaterial3D.CullModeEnum.Disabled },
+            };
+            if (transform.HasValue) mi.Transform = transform.Value;   // bake a door pivot / shelf upright / standalone placement; omit for a child already placed by its owner
+            return mi;
+        }
+
+        // Show/hide a look-at silhouette AND claim its rim colour together, so a caller can never light one without
+        // saying its colour. On GAIN claims WorldItem.FocusColor; NEVER clears on loss (that would smear this colour
+        // over an item that owns its rarity). color = rarity (items) / white (containers, doors, props) / etc.
+        public static void ShowOutline(bool on, Color color, MeshInstance3D outline)
+        {
+            if (on) WorldItem.FocusColor = color;
+            if (outline != null && GodotObject.IsInstanceValid(outline)) outline.Visible = on;
+        }
+
+        // Two-silhouette variant (a doored prop: body + swinging leaf) -- one colour claim, both toggled.
+        public static void ShowOutline(bool on, Color color, MeshInstance3D a, MeshInstance3D b)
+        {
+            if (on) WorldItem.FocusColor = color;
+            if (a != null && GodotObject.IsInstanceValid(a)) a.Visible = on;
+            if (b != null && GodotObject.IsInstanceValid(b)) b.Visible = on;
+        }
+
         SubViewport _vp;
         Camera3D _vpCam;
         ShaderMaterial _mat;

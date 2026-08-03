@@ -113,7 +113,7 @@ namespace UnturnedGodot
                 // Whole-prop highlight: the leaf's OWN white outline silhouette on the OutlineOverlay layer, a child
                 // of _pivot so it swings with the leaf. Hidden until SetLookFocused. Same recipe as StoreShelf._shelfGlow
                 // (the body's outline) -- together they light up the entire prop, body + door, when looked at (master).
-                _leafOutline = new MeshInstance3D { Mesh = _leafMesh, Position = -_pivotLocal, Visible = false, Layers = OutlineOverlay.OutlineLayer, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off, MaterialOverride = new StandardMaterial3D { ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, AlbedoColor = Colors.White, CullMode = BaseMaterial3D.CullModeEnum.Disabled } };
+                _leafOutline = OutlineOverlay.MakeOutline(_leafMesh, new Transform3D(Basis.Identity, -_pivotLocal));
                 _pivot.AddChild(_leafOutline);
 
                 // A fixed (non-swinging) box collider sized from the leaf's OWN closed-pose AABB -- which is
@@ -262,9 +262,7 @@ namespace UnturnedGodot
             // focusable sets on gain and none clears on loss. A STANDALONE doored prop (a wardrobe placed outside the
             // container path) lit its silhouette without claiming the colour, so it wore the last item's rarity.
             // Harmless to set again when a StoreShelf already did -- both want white.
-            if (on) WorldItem.FocusColor = Colors.White;
-            if (BodyOutline != null && IsInstanceValid(BodyOutline)) BodyOutline.Visible = on;      // whole-prop white rim silhouette (the body)
-            if (_leafOutline != null && IsInstanceValid(_leafOutline)) _leafOutline.Visible = on;   // ...and the swinging leaf's OWN white rim -- together the ENTIRE prop outlines uniformly (master: fridge door highlights the whole thing). Replaces the old amber leaf-emission glow so the leaf matches the body outline instead of standing out.
+            OutlineOverlay.ShowOutline(on, Colors.White, BodyOutline, _leafOutline);   // whole prop = body + swinging leaf, one white claim (master: the door highlights the whole thing)
         }
 
         // --- test/debug seams ---

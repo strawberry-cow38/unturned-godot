@@ -98,11 +98,7 @@ namespace UnturnedGodot
             // Whole-prop look-focus outline (F affordance -- tells the player F does something): the FULL body
             // silhouette on the outline overlay, hidden until looked at. Same recipe as StoreShelf._shelfGlow /
             // ObjectDoor._leafOutline.
-            _outline = new MeshInstance3D
-            {
-                Mesh = body, Visible = false, Layers = OutlineOverlay.OutlineLayer, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
-                MaterialOverride = new StandardMaterial3D { ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, AlbedoColor = Colors.White, CullMode = BaseMaterial3D.CullModeEnum.Disabled },
-            };
+            _outline = OutlineOverlay.MakeOutline(body);
             AddChild(_outline);
 
             BuildAudio();
@@ -236,8 +232,7 @@ namespace UnturnedGodot
         /// on GAIN; do NOT reset it on loss (that would smear white over an item that legitimately owns its rarity).</summary>
         public void SetLookFocused(bool on)
         {
-            if (on) WorldItem.FocusColor = Colors.White;
-            if (_outline != null && IsInstanceValid(_outline)) _outline.Visible = on;
+            OutlineOverlay.ShowOutline(on, Colors.White, _outline);
         }
 
         // ---- render-harness / test seams ------------------------------------------------------------------------

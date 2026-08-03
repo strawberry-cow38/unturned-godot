@@ -695,7 +695,7 @@ namespace UnturnedGodot
                     if (spawnedDoors.Count > 0 && !name.StartsWith("Container_"))   // issue 3/5: whole-prop body-link + outline -- SHIPPING CONTAINERS excluded (master): door-only interact (look at the doors, not the whole big prop)
                     {
                         doorForBody = spawnedDoors[0];
-                        var bodyGlow = new MeshInstance3D { Mesh = mesh, Transform = new Transform3D(basis, gpos), Visible = false, Layers = OutlineOverlay.OutlineLayer, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off, MaterialOverride = new StandardMaterial3D { ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, AlbedoColor = Colors.White, CullMode = BaseMaterial3D.CullModeEnum.Disabled } };
+                        var bodyGlow = OutlineOverlay.MakeOutline(mesh, new Transform3D(basis, gpos));
                         root.AddChild(bodyGlow);
                         foreach (var d in spawnedDoors) d.BodyOutline = bodyGlow;
                     }

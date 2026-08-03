@@ -185,13 +185,7 @@ namespace UnturnedGodot
             body.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = boxSize }, Position = boxCenter });
             p.AddChild(body);
 
-            var glow = new MeshInstance3D
-            {
-                Mesh = visual.Mesh, Visible = false,
-                Layers = OutlineOverlay.OutlineLayer,   // only the offscreen mask camera renders this
-                CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
-                MaterialOverride = new StandardMaterial3D { ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, AlbedoColor = Colors.White, CullMode = BaseMaterial3D.CullModeEnum.Disabled },
-            };
+            var glow = OutlineOverlay.MakeOutline(visual.Mesh);   // only the offscreen mask camera renders this
             p.AddChild(glow);
 
             // name tag (hidden until focused) -- same style as the real WorldItem's _label. TopLevel so it floats in
@@ -274,13 +268,7 @@ namespace UnturnedGodot
 
             // look-at highlight: the item silhouette on the OUTLINE visual layer (main cams cull it; OutlineOverlay's mask
             // cam renders only it -> a fullscreen dilate draws the crisp rarity rim). White + unshaded = a clean solid mask.
-            _glow = new MeshInstance3D
-            {
-                Mesh = _mesh.Mesh, Visible = false,
-                Layers = OutlineOverlay.OutlineLayer,   // only the offscreen mask camera renders this
-                CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
-                MaterialOverride = new StandardMaterial3D { ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, AlbedoColor = Colors.White, CullMode = BaseMaterial3D.CullModeEnum.Disabled },
-            };
+            _glow = OutlineOverlay.MakeOutline(_mesh.Mesh);   // only the offscreen mask camera renders this
             AddChild(_glow);
             // interaction = the player's look-ray ENDS in a sphere; if that sphere touches this item's BOX hitbox (the
             // RigidBody collider on bit 7) it's pickupable (master's real LookAtRadius). No per-item sphere -- the box IS the hitbox.
@@ -434,8 +422,7 @@ namespace UnturnedGodot
         {
             if (_focused == on) return;
             _focused = on;
-            if (on) WorldItem.FocusColor = _rar;   // OutlineOverlay tints the rim with the item's rarity
-            if (_glow != null && IsInstanceValid(_glow)) _glow.Visible = on;
+            OutlineOverlay.ShowOutline(on, _rar, _glow);   // OutlineOverlay tints the rim with the item's rarity
             if (_label != null && IsInstanceValid(_label))
             {
                 _label.Visible = on;

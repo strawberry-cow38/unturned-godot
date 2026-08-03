@@ -229,12 +229,7 @@ namespace UnturnedGodot
                 var mi = new MeshInstance3D { Mesh = shellMesh, MaterialOverride = ShelfMat(), Basis = _upright };
                 AddChild(mi);
                 mi.CreateTrimeshCollision();   // solid shelf on the world layer: the player collides with the actual geometry (spine/tiers); the look-ray still passes through the open gaps to reach items
-                _shelfGlow = new MeshInstance3D   // whole-shelf outline silhouette (hidden until looked at)
-                {
-                    Mesh = mesh, Basis = _upright, Visible = false, Layers = OutlineOverlay.OutlineLayer,
-                    CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
-                    MaterialOverride = new StandardMaterial3D { ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, AlbedoColor = Colors.White, CullMode = BaseMaterial3D.CullModeEnum.Disabled },
-                };
+                _shelfGlow = OutlineOverlay.MakeOutline(mesh, new Transform3D(_upright, Vector3.Zero));   // whole-shelf outline silhouette (hidden until looked at)
                 AddChild(_shelfGlow);
                 // Interior glow: a fridge/cooler lights up inside when opened (master). A subtle omni at the interior
                 // centre, coloured by kind (warm bulb / cold blue), starts hidden -- SetDoorsOpen gates it on door-open
@@ -544,12 +539,7 @@ namespace UnturnedGodot
         {
             if (vis.Mesh == null) return;
             var a = vis.Mesh.GetAabb();
-            var glow = new MeshInstance3D
-            {
-                Mesh = vis.Mesh, Visible = false, Layers = OutlineOverlay.OutlineLayer,
-                CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
-                MaterialOverride = new StandardMaterial3D { ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, AlbedoColor = Colors.White, CullMode = BaseMaterial3D.CullModeEnum.Disabled },
-            };
+            var glow = OutlineOverlay.MakeOutline(vis.Mesh);
             vis.AddChild(glow);
             var body = new ShelfItemBody { Shelf = this, CellKey = cellKey, Glow = glow, Rarity = rar, ItemName = asset?.itemName ?? "?", CollisionLayer = ShelfItemHitLayer, CollisionMask = 0 };
             body.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = a.Size * 1.1f }, Position = a.Position + a.Size * 0.5f });
@@ -594,8 +584,7 @@ namespace UnturnedGodot
         // the RIM colour is this static, not the mesh.
         public void SetShelfFocused(bool on)
         {
-            if (on) WorldItem.FocusColor = Colors.White;   // a container is always a plain white rim, never a rarity
-            if (_shelfGlow != null && IsInstanceValid(_shelfGlow)) _shelfGlow.Visible = on;
+            OutlineOverlay.ShowOutline(on, Colors.White, _shelfGlow);   // a container is always a plain white rim, never a rarity
             foreach (var d in _doors) if (IsInstanceValid(d)) d.SetLookFocused(on);
         }
 
@@ -636,8 +625,7 @@ namespace UnturnedGodot
         public string ItemName = "?";
         public void SetFocused(bool on)
         {
-            if (on) WorldItem.FocusColor = Rarity;
-            if (Glow != null && Godot.GodotObject.IsInstanceValid(Glow)) Glow.Visible = on;
+            OutlineOverlay.ShowOutline(on, Rarity, Glow);
             if (Label != null && Godot.GodotObject.IsInstanceValid(Label)) Label.Visible = on;
         }
     }

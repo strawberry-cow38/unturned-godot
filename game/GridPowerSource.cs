@@ -88,11 +88,7 @@ namespace UnturnedGodot
             g._output = port;
             g.AddToGroup("deployables");   // PowerNet reads this group (keyed on IPowerDevice, not Deployable)
             if (boxMesh != null)   // look-at outline: a duplicate of the box mesh on the overlay layer, hidden until looked at
-                g.AddChild(g._glow = new MeshInstance3D
-                {
-                    Mesh = boxMesh, Visible = false, Layers = OutlineOverlay.OutlineLayer, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
-                    MaterialOverride = new StandardMaterial3D { ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, AlbedoColor = Colors.White, CullMode = BaseMaterial3D.CullModeEnum.Disabled },
-                });
+                g.AddChild(g._glow = OutlineOverlay.MakeOutline(boxMesh));
             g.AddChild(g._info = new InfoBillboard { TopLevel = true });
             if (g.GetTree() is SceneTree t && t.GetNodesInGroup("powermgr").Count == 0)   // one PowerManager ticks the whole net (else a placed generator/pump makes it)
             { var pm = new PowerManager(); pm.AddToGroup("powermgr"); parent.AddChild(pm); }
@@ -150,8 +146,7 @@ namespace UnturnedGodot
         {
             if (_focused == on) return;
             _focused = on;
-            if (_glow != null) _glow.Visible = on;
-            if (on) WorldItem.FocusColor = GridColor;
+            OutlineOverlay.ShowOutline(on, GridColor, _glow);
             _info?.SetActive(on);
         }
 

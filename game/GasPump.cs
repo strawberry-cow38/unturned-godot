@@ -53,11 +53,7 @@ namespace UnturnedGodot
             gp._input = port;
             gp.AddToGroup("deployables");   // PowerNet reads this group (keyed on IPowerDevice now)
             if (pumpMesh != null)   // outline glow: a duplicate of the pump mesh on the overlay layer, hidden until looked at (matches the pump transform since gp shares it)
-                gp.AddChild(gp._glow = new MeshInstance3D
-                {
-                    Mesh = pumpMesh, Visible = false, Layers = OutlineOverlay.OutlineLayer, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
-                    MaterialOverride = new StandardMaterial3D { ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, AlbedoColor = Colors.White, CullMode = BaseMaterial3D.CullModeEnum.Disabled },
-                });
+                gp.AddChild(gp._glow = OutlineOverlay.MakeOutline(pumpMesh));
             gp.AddChild(gp._info = new InfoBillboard { TopLevel = true });
             if (gp.GetTree() is SceneTree t && t.GetNodesInGroup("powermgr").Count == 0)   // one PowerManager ticks the whole net (else a placed generator makes it)
             { var pm = new PowerManager(); pm.AddToGroup("powermgr"); parent.AddChild(pm); }
@@ -112,8 +108,7 @@ namespace UnturnedGodot
         {
             if (_focused == on) return;
             _focused = on;
-            if (_glow != null) _glow.Visible = on;
-            if (on) WorldItem.FocusColor = PumpColor;   // OutlineOverlay tints the rim with this
+            OutlineOverlay.ShowOutline(on, PumpColor, _glow);   // toggle the silhouette + claim the rim colour together
             _info?.SetActive(on);
         }
 
