@@ -44,6 +44,8 @@ namespace UnturnedGodot
         // a container door (StoreShelf owns its own outline) or --doortest.
         public MeshInstance3D BodyOutline;
         MeshInstance3D _leafOutline;   // the swinging LEAF's own white outline (child of _pivot so it swings with the leaf); toggled by SetLookFocused so a doored prop highlights the WHOLE thing -- body outline + leaf outline together (master)
+        CollisionShape3D _leafCollider;   // look-ray + solidity hitbox (bit 6). DIRECT child of this StaticBody -- Godot needs a shape direct-to-body to collide, so it can't parent to the swinging _pivot; ApplySwing rotates its transform about the hinge so the hitbox TRACKS the leaf (master: the look-at orb followed the outline but the collider stayed pinned at the closed pose).
+        Vector3 _leafColliderCenter;      // collider box's closed-pose centre (leaf AABB centre); ApplySwing re-places it about the pivot each frame
 
         public bool IsOpen { get; private set; }
         double _lastToggleSec = double.NegativeInfinity;
@@ -116,16 +118,21 @@ namespace UnturnedGodot
                 _leafOutline = OutlineOverlay.MakeOutline(_leafMesh, new Transform3D(Basis.Identity, -_pivotLocal));
                 _pivot.AddChild(_leafOutline);
 
-                // A fixed (non-swinging) box collider sized from the leaf's OWN closed-pose AABB -- which is
-                // already in ObjectDoor-local space (leafMi sits at ObjectDoor-local origin at rest: pivot at
-                // +pivotLocal, leaf offset -pivotLocal, sum zero), so no extra offset math is needed here.
+                // Box collider = the look-ray + solidity hitbox (bit 6), sized from the leaf's OWN closed-pose
+                // AABB (already ObjectDoor-local: at rest pivot=+pivotLocal, leaf=-pivotLocal, sum zero). It is a
+                // DIRECT child of this StaticBody -- Godot needs a shape direct-to-body to collide, so it CANNOT
+                // hang off the swinging _pivot. Instead ApplySwing rotates its transform about the hinge so the
+                // hitbox TRACKS the leaf as it opens (master: the look-at orb followed the outline, the collider
+                // stayed pinned at the closed pose).
                 var aabb = _leafMesh.GetAabb();
                 var size = aabb.Size.Abs();
-                AddChild(new CollisionShape3D
+                _leafColliderCenter = aabb.GetCenter();
+                _leafCollider = new CollisionShape3D
                 {
                     Shape = new BoxShape3D { Size = new Vector3(Mathf.Max(size.X, 0.15f), Mathf.Max(size.Y, 0.15f), Mathf.Max(size.Z, 0.15f)) },
-                    Position = aabb.GetCenter(),
-                });
+                    Position = _leafColliderCenter,
+                };
+                AddChild(_leafCollider);
             }
 
             if (!string.IsNullOrEmpty(_soundName))
@@ -222,7 +229,14 @@ namespace UnturnedGodot
         {
             if (_pivot == null) return;
             float frac = SampleEasing(t);
-            _pivot.Basis = new Basis(_axis, Mathf.DegToRad(_angleDeg) * frac);
+            var swing = new Basis(_axis, Mathf.DegToRad(_angleDeg) * frac);
+            _pivot.Basis = swing;
+            // Track the leaf with the look-ray/solidity hitbox: it's a DIRECT child of this body (can't parent to
+            // _pivot, see the ctor), so rotate its transform by the SAME hinge swing. A leaf point rotates about
+            // the hinge _pivotLocal, so the collider (rest-centred at _leafColliderCenter) maps to
+            // swing*(centre - pivot) + pivot with the swung basis -- identical motion to the visible leaf.
+            if (_leafCollider != null)
+                _leafCollider.Transform = new Transform3D(swing, swing * (_leafColliderCenter - _pivotLocal) + _pivotLocal);
         }
 
         /// <summary>_swing (0=closed..1=open) doubles as the curve's t_norm: OPENING plays _openCurve directly
