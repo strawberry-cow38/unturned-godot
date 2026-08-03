@@ -2050,7 +2050,14 @@ namespace UnturnedGodot.Testing
             T.Check("shell spawned + bystander joined", sess.Shell != null && bystander.State == NetSessionState.Connected);
             if (sess.Shell == null) yield break;
             T.Check("P3a posture: PvP is ON on the dedicated server", ded.Server.Combat.PvPEnabled);
-            T.Check($"the MP shell spawns holding the EAGLEFIRE -- the server's validation profile ({sess.Shell.HeldGunName})",
+            // ARM THE SHELL EXPLICITLY. A player no longer SPAWNS holding a gun (strawberry 2026-08-03: the spawn kit
+            // is shirt + pants, "fix mp shell to work without it"), so this test arranges its own precondition instead
+            // of inheriting one from a demo loadout. The gun is in the shell's adopted server grid either way -- what
+            // changed is that something has to equip it, which is exactly what a player does. EquipHotbar(1) is the
+            // real primary-slot path, not a test-only shortcut.
+            sess.Shell.EquipHotbar(1);
+            yield return Until(() => sess.Shell.HasGunOut, 5);
+            T.Check($"the shell can arm from its server grid -- the server's validation profile ({sess.Shell.HeldGunName})",
                     sess.Shell.HasGunOut && sess.Shell.HeldGunName == "eaglefire");
             yield return Until(() => ded.PlayerSync.TrackedCount == 2, 5);
             T.Check("both peers have C2 avatar bodies", ded.PlayerSync.TrackedCount == 2);

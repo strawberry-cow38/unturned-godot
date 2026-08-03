@@ -230,8 +230,18 @@ namespace UnturnedGodot
                 _hammerClip = _arms.ClipLength(capGun + "_Hammer") > 0f ? capGun + "_Hammer" : null;   // rechamber rack (empty-reload second half)
                 if (_hammerClip != null) _arms.SetClipLoop(_hammerClip, false);
                 _arms.SetClipLoop(_reloadClip, false);
-                // per-gun inspect clip ({Gun}_Inspect, from that gun's animations.prefab). null = gun has no Inspect anim.
-                _inspectClip = _arms.ClipLength(capGun + "_Inspect") > 0f ? capGun + "_Inspect" : null;
+                // per-gun inspect clip ({Gun}_Inspect, from that gun's animations.prefab). null = play nothing.
+                //
+                // GATED ON IsGunViewmodel (strawberry: "make sure it doesnt use the eaglefire inspect anim if its not
+                // an eaglefire"). GunName defaults to "eaglefire" and every NON-gun viewmodel is built without setting
+                // it -- `new Viewmodel { ConsumableMesh = ... }`, `{ DeployableMesh = ... }`, `{ ToolMesh = ... }`,
+                // `{ Fists = true }` -- so capGun was "Eaglefire" for all of them, Eaglefire_Inspect exists, and F with
+                // nothing focused fell through to PlayInspect(). Holding a can of beans and pressing F played a rifle
+                // inspect. Guns and melee were always fine (melee has its own PlayMeleeInspect).
+                //
+                // Non-weapon holdables have no Inspect clip of their own and shouldn't: null here means PlayInspect
+                // early-returns and nothing plays, which is the asked-for behaviour, not a fallback.
+                _inspectClip = IsGunViewmodel && _arms.ClipLength(capGun + "_Inspect") > 0f ? capGun + "_Inspect" : null;
                 if (_inspectClip != null) _arms.SetClipLoop(_inspectClip, false);
                 _attachStartClip = _arms.ClipLength(capGun + "_AttachStart") > 0f ? capGun + "_AttachStart" : null;
                 _attachStopClip = _arms.ClipLength(capGun + "_AttachStop") > 0f ? capGun + "_AttachStop" : null;

@@ -1418,6 +1418,12 @@ namespace UnturnedGodot
             byte idx = pg.getIndex(x, y);
             if (idx == byte.MaxValue) return;                          // empty slot -> nothing to equip
             var j = pg.getItem(idx);
+            // Pressing the key for what is ALREADY in hand PUTS IT AWAY (strawberry: "switching to the same slot you
+            // currently have equipped will put away that item, leaving u unarmed"). Same toggle the inventory's
+            // Equip<->Dequip button uses, so the hotbar and the UI agree on what "already held" means. Checked here
+            // rather than inside EquipItemAsset so a genuine re-equip from elsewhere (revert-after-consumable) is
+            // unaffected -- this is specifically the key-press-the-same-slot gesture.
+            if (IsHeld(j.GetAsset(), j.item)) { EquipUnarmed(); return; }
             EquipItemAsset(j.GetAsset(), j.item);
         }
 
@@ -3691,7 +3697,7 @@ namespace UnturnedGodot
 
         // seed the inventory with real items: wear the Alicepack (8x7) + Cargo Pants (6x3) so those pages open up,
         // put both guns in the hand slots, and scatter medical/food/water across pockets + backpack to show packing
-        void PopulateDemoInventory() => PopulateDemoKit(Inventory);
+        void PopulateDemoInventory() => PopulateSpawnKit(Inventory);   // what a PLAYER spawns with; the full demo kit is an MP/test fixture now
 
         // DevConsole `wear`/`unwear` seam: equip clothing by item (state + visual) / clear a slot. No-op on a NetAvatar
         // (no local body/clothing controller). Public so the F1 console can drive live equip testing.
@@ -3715,6 +3721,28 @@ namespace UnturnedGodot
         /// <summary>The demo kit, shared by the SP shell (above) and the dedicated server's join seeding
         /// (DedicatedServer -- MP pickup Step 4: the same bag the client always showed, now granted into
         /// the SERVER grid so the owner-block adoption renders truth instead of a client-side fiction).</summary>
+        /// <summary>What a player SPAWNS with (strawberry 2026-08-03: "no mag no bandage no backpack. shirt n pants.
+        /// no eaglefire"). The old kit was two rifles, four magazines, two shell stacks, three medkits, food, water, a
+        /// knife, a sledgehammer and a blowtorch -- a bag you emptied before you could use it, when everything is
+        /// spawnable from the console anyway.
+        ///
+        /// The clothes stay because they ARE the grid: Resize() sizes the shirt and pants pages off the worn item, so
+        /// a player wearing neither has nowhere at all to put what they spawn in. No backpack, so the space is
+        /// deliberately small rather than accidentally zero.</summary>
+        public static void PopulateSpawnKit(PlayerInventory inv)
+        {
+            inv.wearShirt(new Item(3));     // Orange Hoodie -> shirt slot + its grid
+            inv.wearPants(new Item(209));   // Cargo Pants   -> pants slot + 6x3 grid
+        }
+
+        /// <summary>The FULL demo loadout. No longer what anyone spawns with -- it is now a FIXTURE: the MP join
+        /// seeding and four netcode tests use it to stand up a player who already owns things (a gun in the primary
+        /// slot, bandages and medkits on the server grid) so they can assert adoption, consumption and the server's
+        /// shot-validation profile.
+        ///
+        /// Kept whole on purpose. Those tests currently treat "the shell spawns holding the Eaglefire" as a given, so
+        /// emptying this is a behaviour change to MP, not a loadout tweak -- see PopulateSpawnKit for what a player
+        /// actually gets.</summary>
         public static void PopulateDemoKit(PlayerInventory inv)
         {
             inv.wearBackpack(new Item(253));   // Alicepack -> backpack slot + 8x7 storage
@@ -3744,7 +3772,6 @@ namespace UnturnedGodot
             bag.tryAddItem(new Item(76, 1));                        // Blowtorch (repair live hurt cars / salvage cold wrecks)
             inv.items[PlayerInventory.PANTS].tryAddItem(new Item(13));  // Canned Beans in pants
         }
-
         // R to reload: block firing, then refill the magazine after the reload's duration. The reload takes the
         // Gun_Reload clip's length (the Eaglefire .dat has no separate reload-time key), so ReloadTime = that.
         void StartReload()
