@@ -244,7 +244,7 @@ namespace UnturnedGodot
                     var box = StoodAabb(mesh);
                     _glow = new OmniLight3D
                     {
-                        LightColor = glowCol.Value, OmniRange = 1.5f, LightEnergy = 0.7f, ShadowEnabled = false,
+                        LightColor = glowCol.Value, OmniRange = 2.5f, LightEnergy = 1.2f, ShadowEnabled = false,
                         Visible = false, Position = box.Position + box.Size * 0.5f,   // interior centre of the standing body
                     };
                     AddChild(_glow);
@@ -256,7 +256,7 @@ namespace UnturnedGodot
                     {
                         _glowOffMat = _glowInteriorMi.MaterialOverride;
                         var lit = (_glowOffMat as StandardMaterial3D)?.Duplicate() as StandardMaterial3D ?? new StandardMaterial3D();
-                        lit.EmissionEnabled = true; lit.Emission = glowCol.Value; lit.EmissionEnergyMultiplier = 0.9f;   // SHADED -> HDR/bloom; brighter is fine, only the interior lights
+                        lit.EmissionEnabled = true; lit.Emission = glowCol.Value; lit.EmissionEnergyMultiplier = 0.8f;   // SHADED -> HDR/bloom; ~10% down (master); only the interior lights
                         _glowLitMat = lit;
                     }
                     _glowAlways = MeshName.StartsWith("Cooler");   // a glass-front display cooler shows its lit interior even when closed (master); an opaque fridge only when open
