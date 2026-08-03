@@ -584,6 +584,39 @@ namespace UnturnedGodot
         public bool DebugWearFromGrid(EItemType slotType, byte page, byte x, byte y) { bool r = WearFromGrid(slotType, page, x, y); Refresh(); return r; }
         public bool DebugTakeOff(EItemType slotType) { bool r = TakeOff(slotType); Refresh(); return r; }
 
+        /// <summary>Drive a REAL grid-to-grid drag+drop through the actual Drop() handler and its PointToCell
+        /// hit-test -- the gesture a player makes, not the Inv.TryDrag model call underneath it.
+        ///
+        /// This existed only for clothing slots (DebugDropGestureOnSlot), which is why an entire class of bug had no
+        /// instrument: a drag that the model accepts but the UI silently drops lands exactly in the gap between
+        /// inv.* (model-only) and nothing at all.
+        ///
+        /// `layoutValid` false = the target grid Control has no real size, so the hit-test is meaningless and the
+        /// caller must SKIP rather than record a pass. Reported rather than asserted for the same reason the
+        /// clothing one does it: a headless "false" would otherwise read as a passing test of nothing.</summary>
+        public bool DebugDropGestureOnCell(byte page, byte x, byte y, byte tPage, byte tx, byte ty, out bool layoutValid)
+        {
+            layoutValid = false;
+            if (Inv == null || page >= Inv.items.Length || tPage >= Inv.items.Length) return false;
+            var pg = Inv.items[page];
+            byte idx = pg.getIndex(x, y);
+            if (idx == byte.MaxValue) return false;
+            Control grid = null;
+            foreach (var (p, c, slot) in _drop) if (p == tPage && !slot) { grid = c; break; }
+            if (grid == null) return false;
+            layoutValid = grid.Size.X > 1f && grid.Size.Y > 1f;
+            if (!layoutValid) return false;
+            _dragFromCloth = false; _dragJar = pg.getItem(idx);
+            _dragPage = page; _dragX0 = _dragJar.x; _dragY0 = _dragJar.y; _dragRot = _dragJar.rot;
+            _grab = Vector2.Zero; _dragging = true;
+            // Drop() adds half a cell to snap to the nearest, so hand it the target cell's TOP-LEFT: top-left +
+            // CELL/2 lands mid-cell and PointToCell floors back to (tx,ty). Passing the centre would land in the
+            // next cell over and silently test the wrong target.
+            Drop(grid.GlobalPosition + new Vector2(tx * CELL, ty * CELL));
+            Refresh();
+            return true;
+        }
+
         /// <summary>Verify the REAL mouse gesture (not the WearFromGrid bypass): set up the drag from the grid
         /// item at (page,x,y) as StartDrag's grid branch does, then call the actual Drop() at the clothing
         /// slot's screen center -- exercising Drop's PointToClothSlot(global) hit-test. Returns true if the

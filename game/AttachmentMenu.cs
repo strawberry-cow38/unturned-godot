@@ -125,6 +125,18 @@ namespace UnturnedGodot
             LayoutFan();
         }
 
+        /// <summary>Run the DETACH exactly as the button does -- open the fan for `slot`, press its Detach option.
+        /// A test seam because the reported bug ("won't drag after I take them off a gun") is specific to items that
+        /// came out of THIS path, and reproducing it by calling tryAddItem directly proved nothing: that passes.</summary>
+        public bool DebugDetach(string slot)
+        {
+            ToggleFan(slot);
+            foreach (var b in _options)
+                if (b.Text.StartsWith("Detach") && !b.Disabled) { b.EmitSignal(Button.SignalName.Pressed); return true; }
+            ClearFan();
+            return false;
+        }
+
         // Remove ONE of `id` from the bag -- the attachment is now on the gun, so it must not still be in your
         // pockets. Scans the same page range the options came from; false = it wasn't there (a stale fan after the
         // bag changed underneath), in which case the caller does nothing rather than fitting an item you don't own.
