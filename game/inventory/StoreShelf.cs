@@ -245,7 +245,7 @@ namespace UnturnedGodot
                     _glow = new OmniLight3D
                     {
                         LightColor = glowCol.Value, OmniRange = 2.5f, LightEnergy = 1.2f, ShadowEnabled = false,
-                        Visible = false, Position = box.Position + box.Size * 0.5f,   // interior centre of the standing body
+                        Visible = false, Position = box.Position + (MeshName.StartsWith("Cooler") ? new Vector3(box.Size.X * 0.5f, box.Size.Y * 0.5f, box.Size.Z * 0.78f) : box.Size * 0.5f),   // cooler: middle-FRONT (near the glass) so shelf faces light evenly (master); fridge: centre
                     };
                     AddChild(_glow);
                     // Cooler: the interior sub-mesh (split off the shell above) glows emissive while lit -- ONLY the
