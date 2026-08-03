@@ -21,7 +21,11 @@ namespace UnturnedGodot.Testing
             T.Check("grid still live before the blackout day", PowerNet.GlobalPower);
 
             cyc.Day = cyc.BlackoutDay;
-            yield return Ticks(2);   // DriveBlackout runs in _Process
+            // Until, NOT Ticks: DriveBlackout runs in _Process (a RENDER frame) while Ticks advances PHYSICS ticks,
+            // and the two are not locked together. With Ticks(2) this passed only when the suite happened to be busy
+            // enough to interleave render frames -- so it went green in a full run and red on its own, which is the
+            // worst way for a test to fail: it makes the suite unable to localise anything.
+            yield return Until(() => !PowerNet.GlobalPower);
             T.Check("reaching the blackout day kills global power", !PowerNet.GlobalPower);
 
             cyc.Day = cyc.BlackoutDay + 5;
