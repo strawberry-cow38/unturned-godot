@@ -107,7 +107,9 @@ namespace UnturnedGodot.Testing
             T.Check($"...spread around the barrel, not stacked ({seen.Count} distinct positions)", seen.Count == hydrant.Ports.Count);
 
             T.Check("the tower is a single spigot", tower.Ports.Count == 1);
-            T.Check("a sink is a single tap", sink.Ports.Count == 1);
+            // A sink is TWO ports, not one: the spout plus a supply inlet, so it still works once the mains are cut
+            // (strawberry). See fluid.sink_water_input for the behaviour; this just pins the shape.
+            T.Check("a sink is a spout AND an inlet", sink.Ports.Count == 2);
 
             // WATER QUALITY is the whole economy: mains water is tainted and must be purified or bottled; the sink is
             // the one clean tap, and it goes away with the mains.
@@ -115,15 +117,21 @@ namespace UnturnedGodot.Testing
             T.Check("tower water is TAINTED", tower.Tank.Quality == WaterQuality.Tainted);
             T.Check("sink water is CLEAN", sink.Tank.Quality == WaterQuality.Clean);
 
-            // All three ride the mains gate. Checked on the instances rather than by reading the source, so a class
-            // that forgets the override fails here instead of silently staying live through a shutoff.
+            // THE HYDRANT AND THE TOWER ride the mains gate. Checked on the instances rather than by reading the
+            // source, so a class that forgets the override fails here instead of silently staying live through a
+            // shutoff.
             bool saved = FluidNet.GlobalWater;
             FluidNet.SetGlobalWater(true);
-            T.Check("all three supply while the mains are up",
-                hydrant.SupplyEnabled && tower.SupplyEnabled && sink.SupplyEnabled);
+            T.Check("the pressurised mains supply while the water is on", hydrant.SupplyEnabled && tower.SupplyEnabled);
             FluidNet.SetGlobalWater(false);
-            T.Check("...and all three go inert when the mains are cut",
-                !hydrant.SupplyEnabled && !tower.SupplyEnabled && !sink.SupplyEnabled);
+            T.Check("...and go inert when it's cut", !hydrant.SupplyEnabled && !tower.SupplyEnabled);
+
+            // THE SINK DOES NOT, and that's the point of its water input. A hydrant is a pressurised main: cut the
+            // supply and there is nothing in it, so going inert in the solver is correct. A sink is a BASIN, and it
+            // still holds whatever is standing in it (or whatever you hose into its inlet after the shutoff) -- gating
+            // it would mean the inlet fed a container that could never give the water back, which is exactly the
+            // feature defeating itself. The sink's "mains" behaviour lives in its refill, not in a supply gate.
+            T.Check("a sink is NOT gated -- its basin still holds water after a shutoff", sink.SupplyEnabled);
             FluidNet.SetGlobalWater(saved);
 
             // An ordinary tank must NOT be gated -- the mains switch is about municipal supply, not about every

@@ -592,11 +592,17 @@ namespace UnturnedGodot
                 // WHICH COUNTERS ARE SINKS is read off the mesh palette rather than guessed: Counter_1/Counter_3 carry
                 // grey metal texels (a basin recessed into the top plus a fitting above it) that the all-wood
                 // Counter_0/Counter_2 do not. See SinkSource for the texel evidence.
+                //
+                // A SINK gets its ports placed from THIS instance's placement basis rather than a fixed offset: its
+                // spout port has to land on the faucet's actual mouth, and one of PEI's 28 counters is placed pitched
+                // and rolled (euler 277.289/*/237.977) where a fixed swizzle would hang the port out in mid-air. The
+                // node itself is still yaw-only like the others, so SinkSource.MeshToNode un-yaws the full basis back
+                // out -- see the comment there.
                 FluidContainer mains = name switch
                 {
                     "Tower_Water_0" => WaterTowerSource.Make(),
                     "Fire_Hydrant_0" => FireHydrantSource.Make(),
-                    _ when IsSinkProp(name) => SinkSource.Make(),   // Counter_1 + Counter_3, both on the ordinary path now
+                    _ when IsSinkProp(name) => SinkSource.Make(basis, 180f - ey),   // Counter_1 + Counter_3, both on the ordinary path now
                     _ => null,
                 };
                 if (mains != null && mode == WorldMode.Playable)
