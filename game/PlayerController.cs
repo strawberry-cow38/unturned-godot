@@ -13,7 +13,6 @@ namespace UnturnedGodot
         readonly PlayerStanceSim _stance = new PlayerStanceSim();   // intertwined stance state machine (X = crouch, Z = prone), extracted to the engine-free sim-core (MP_PLAN §3.4)
         CapsuleShape3D _capsule; CollisionShape3D _hitbox; float _capStance = -1f;   // hitbox capsule, resized per stance (source HeightForStance)
         Camera3D _cam;
-        ScopeOverlay _scope;   // real PiP scope (aug): reads the look cam + ADS blend + magnification from this controller
         Vector3 _interpPrev, _interpCurr; bool _interpReady;   // render interpolation: smooth the VISUAL position between the 50Hz physics ticks (master); rotation stays per-frame so the mouse is instant
         Viewmodel _viewmodel;
         public PlayerInventory Inventory;   // the ported 9-page inventory model
@@ -3470,8 +3469,6 @@ namespace UnturnedGodot
             if (_body != null) { _body.Visible = false; CallDeferred(Node.MethodName.AddSibling, _body); }
             _viewmodel = new Viewmodel { GunName = _gunName };   // per-gun visuals
             AddChild(_viewmodel);
-            _scope = new ScopeOverlay { Pc = this };   // PiP scope (aug); builds lazily once the look cam has a world
-            AddChild(_scope);
             _rng.Randomize();
 
             // the ported inventory + its dashboard. Demo-populate it (real items) so there's something to show.

@@ -212,6 +212,7 @@ namespace UnturnedGodot
         }
         static string Snd(string name, string fallback) => System.IO.File.Exists(ProjectSettings.GlobalizePath("res://content/" + name)) ? name : fallback;
         Node3D _sight;
+        SubViewport _scopeVp; Camera3D _scopeCam; MeshInstance3D _scopeLens; bool _isScope, _scopeWasOn;   // PiP scope: lens ON the gun model (rides recoil); 2nd cam renders the world zoomed
 
         // Equip gate — source: you can't start OR stop aiming until the Equip (pull-out) animation finishes
         // (UseableGun.ReceivePlayAimStart/Stop both guard on player.equipment.IsEquipAnimationFinished, which is
@@ -383,7 +384,23 @@ namespace UnturnedGodot
                     var sightMat = new StandardMaterial3D { CullMode = BaseMaterial3D.CullModeEnum.Disabled, AlbedoColor = sightCol, Metallic = 0f, MetallicSpecular = 0f, Roughness = 1f };
                     var ironMesh = gv.Sight != null ? ContentProvider.ParseObj($"res://content/{gv.Sight}") : null;
                     if (ironMesh != null)
-                        mi.AddChild(new MeshInstance3D { Name = "IronSights", Mesh = ironMesh, MaterialOverride = sightMat, Position = gv.SightPos != Vector3.Zero ? gv.SightPos : new Vector3(0f, 0.1312f, -0.118f) });   // per-gun sight mount (extracted); eaglefire/maplestrike keep the tuned hardcoded pos
+                        mi.AddChild(new MeshInstance3D { Name = "IronSights", Mesh = ironMesh, MaterialOverride = sightMat, Position = gv.SightPos != Vector3.Zero ? gv.SightPos : new Vector3(0f, 0.1312f, -0.118f) });
+                    // Real PiP scope (master): the aug scope model is an empty 12-sided tube -- drop a LENS at its rear
+                    // opening showing a live render of the world (2nd cam), so you see THROUGH the optic. The lens is a
+                    // child of the scope so it rides recoil/sway with the gun (master). No vignette; zoom = a low FOV.
+                    _isScope = gv.Gun != null && gv.Gun.Contains("augewehr");
+                    if (_isScope && ironMesh != null)
+                    {
+                        _scopeVp = new SubViewport { Size = new Vector2I(720, 720), RenderTargetUpdateMode = SubViewport.UpdateMode.Disabled, OwnWorld3D = true };   // OwnWorld3D + bind the REAL world each frame (below) -- NOT the VM's isolated arms-world
+                        AddChild(_scopeVp);
+                        _scopeCam = new Camera3D { Current = true, Fov = 18f };
+                        _scopeVp.AddChild(_scopeCam);
+                        var lensMat = new StandardMaterial3D { AlbedoTexture = _scopeVp.GetTexture(), ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, CullMode = BaseMaterial3D.CullModeEnum.Disabled, BillboardMode = BaseMaterial3D.BillboardModeEnum.Enabled, TextureFilter = BaseMaterial3D.TextureFilterEnum.Linear };   // the magnified world render; billboard = always faces the eye
+                        _scopeLens = new MeshInstance3D { Name = "ScopeLens", Mesh = new QuadMesh { Size = new Vector2(0.22f, 0.22f) }, MaterialOverride = lensMat, Visible = false, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off };
+                        var _iron = mi.GetNodeOrNull<MeshInstance3D>("IronSights");
+                        (_iron ?? mi).AddChild(_scopeLens);
+                        _scopeLens.Position = new Vector3(0f, 0f, -0.06f);   // aug scope tube axis (X=0, Z=-0.06); billboarded so it faces the eye
+                    }   // per-gun sight mount (extracted); eaglefire/maplestrike keep the tuned hardcoded pos
 
                     // Real default Magazine (item 6 = Military_30, GUID dbfb1d0d) — item.prefab Model_0 from
                     // core.masterbundle, converted (x,y,z)->(-x,y,-z). Mounted as Attachments.cs does
@@ -802,6 +819,22 @@ namespace UnturnedGodot
             _aimT = Mathf.Clamp(_aimT + (_aiming ? 1f : -1f) * (float)delta / AimInDuration, 0f, 1f);
             _aimAlpha = AimEase(_aimT);
             _arms.AimBlend = _aimAlpha;
+            if (_isScope && _scopeVp != null)   // real two-render PiP: world at a NARROW fov into the lens, periphery stays 1x (NOT the cheap FOV-drop)
+            {
+                var _main = GetViewport().GetCamera3D();
+                bool _on = _aimAlpha > 0.35f && _main != null;
+                if (_on)
+                {
+                    if (_scopeVp.World3D != _main.GetWorld3D()) _scopeVp.World3D = _main.GetWorld3D();   // render the REAL world, not the VM's isolated arms-world (tinyclaw)
+                    _scopeCam.GlobalTransform = _main.GlobalTransform;   // look where the player aims; scope cam keeps its narrow FOV (18deg ~ 3.3x)
+                    _scopeVp.RenderTargetUpdateMode = SubViewport.UpdateMode.Always;
+                    _scopeLens.Visible = true; _scopeWasOn = true;
+                }
+                else if (_scopeWasOn)
+                {
+                    _scopeLens.Visible = false; _scopeVp.RenderTargetUpdateMode = SubViewport.UpdateMode.Disabled; _scopeWasOn = false;
+                }
+            }
             _arms.Tick(delta);   // manual-advance the base anim, then layer the additive Aim_Start pose on top
             // ---- source viewmodel-camera motion (PlayerAnimator): walk bob + recoil shake ----
             // blendedViewmodelSwayMultiplier eases toward the sway target (1 hip -> 0.1 aiming) at 16/s.
