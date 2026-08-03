@@ -3652,6 +3652,7 @@ namespace UnturnedGodot
                     if (tKey.Pressed && !AttachMenu.IsOpen && _viewmodel != null && _viewmodel.IsGunViewmodel)
                     {
                         AttachMenu.VM = _viewmodel;
+                        AttachMenu.Player = this;   // the menu draws its quick-attach options from THIS bag; bound here beside VM so a new call site can't wire one and forget the other
                         AttachMenu.Open();
                         Input.MouseMode = Input.MouseModeEnum.Visible;
                     }

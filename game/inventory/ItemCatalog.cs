@@ -282,6 +282,7 @@ namespace SDG.Unturned
         static EItemType ParseType(string s) => s switch
         {
             "Gun" => EItemType.GUN, "Magazine" => EItemType.MAGAZINE, "Melee" => EItemType.MELEE,
+            "Sight" => EItemType.SIGHT, "Barrel" => EItemType.BARREL, "Grip" => EItemType.GRIP, "Tactical" => EItemType.TACTICAL,
             "Food" => EItemType.FOOD, "Water" => EItemType.WATER, "Medical" => EItemType.MEDICAL,
             "Hat" => EItemType.HAT, "Pants" => EItemType.PANTS, "Shirt" => EItemType.SHIRT,
             "Mask" => EItemType.MASK, "Backpack" => EItemType.BACKPACK, "Vest" => EItemType.VEST,
