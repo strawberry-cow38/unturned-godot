@@ -614,6 +614,7 @@ namespace UnturnedGodot
                 // Auto-grid municipal consumer: lit only when it's NIGHT and the town grid is live (DayNightCycle drives
                 // both; StreetLight.Watts is the nominal draw). toggleGlobalPower darkens the whole town.
                 StreetLight placedLamp = null;   // captured so a break can darken it (see the Register call below)
+                LightTap placedTap = null;      // wire-able power tap on this light's base (INPUT intact / OUTPUT once smashed)
                 TVDevice placedTV = null;        // captured so the body collider below can meta-link the look-ray to it
                 var placedSignals = new System.Collections.Generic.List<TrafficLight>();   // both heads of a mast, same reason
                 if (name == "Street_Light_0" && mode != WorldMode.Dedicated)
@@ -665,6 +666,11 @@ namespace UnturnedGodot
                         placedSignals.Add(tl);
                     }
                 }
+                if (placedLamp != null)
+                    placedTap = LightTap.Attach(root, gpos, basis, LightTap.LightKind.Streetlight, new Vector3(0.22f, 0f, 0.55f), new Vector3(0.22f, 0f, 0.55f));
+                else if (placedSignals.Count > 0)
+                    placedTap = LightTap.Attach(root, gpos, basis, LightTap.LightKind.Traffic, new Vector3(0.22f, 0f, 0.55f), new Vector3(0.22f, 0f, 0.55f));
+
                 // OPENABLE PROP DOORS (MVP: Fridge_0 + Wardrobe_0, SP-local -- mirrors the Tower_Water_0
                 // Playable-only gating above: no dedicated/MP support yet). doors.txt (tools/extract_doors.py)
                 // catalogs the door leaf mesh plus hinge pivot/axis/angle/duration per LEAF -- a prop can
@@ -762,10 +768,12 @@ namespace UnturnedGodot
                     // Signals need the same treatment: hiding the meshes alone left both heads still cycling their
                     // omni lights over the rubble, and a rubble reset has to bring them back.
                     var sigs = placedSignals.Count > 0 ? placedSignals.ToArray() : null;
+                    var tap = placedTap;
                     System.Action<bool> onAlive = null;
-                    if (lamp != null || sigs != null)
+                    if (lamp != null || sigs != null || tap != null)
                         onAlive = alive =>
                         {
+                            if (tap != null && GodotObject.IsInstanceValid(tap)) tap.SetBroken(!alive);
                             if (lamp != null && GodotObject.IsInstanceValid(lamp)) lamp.SetBroken(!alive);
                             if (sigs != null)
                                 foreach (var s in sigs) if (GodotObject.IsInstanceValid(s)) s.SetBroken(!alive);
