@@ -166,7 +166,7 @@ namespace UnturnedGodot
         {
             AddToGroup("traffic_lights");
             var cols = new[] { new Color(1f, 0.15f, 0.12f), new Color(1f, 0.68f, 0.10f), new Color(0.25f, 1f, 0.35f) };
-            var lensCentre = Vector3.Zero; int seen = 0;
+            var lensCentre = Vector3.Zero; var lensFwd = Vector3.Zero; int seen = 0;
             for (int i = 0; i < 3; i++)
             {
                 var mi = Lens((Phase)i);
@@ -178,15 +178,53 @@ namespace UnturnedGodot
                     EmissionEnergyMultiplier = LensEmission, Metallic = 0f, Roughness = 0.4f,
                 };
                 mi.CastShadow = GeometryInstance3D.ShadowCastingSetting.Off;
-                if (mi.Mesh != null) { lensCentre += mi.GlobalTransform * mi.Mesh.GetAabb().GetCenter(); seen++; }
+                if (mi.Mesh != null)
+                {
+                    lensCentre += mi.GlobalTransform * mi.Mesh.GetAabb().GetCenter();
+                    lensFwd += LensFacing(mi);
+                    seen++;
+                }
             }
             // THE EMITTER GOES AT THE LENSES (strawberry: "the actual point light emitter is at the prop's 0,0 not on
             // the actual light thing"). This node is TopLevel at the prop's BASE, so a child at local zero sits in the
             // road throwing colour on the tarmac while the head 6m up stays unlit. Ask the lens meshes where they are.
             _glow = new OmniLight3D { OmniRange = 3.2f, LightEnergy = _glowBase, ShadowEnabled = false, Visible = false };
             AddChild(_glow);
-            if (seen > 0) _glow.GlobalPosition = lensCentre / seen;
+            // ...and it sits slightly IN FRONT of the glass rather than inside it (master: "move the actual light
+            // emitter of traffic lights forward a little, floating in front of the actual emissive pieces"). An omni
+            // buried in the lens quad lights the housing it is embedded in as much as the road, so the aspect reads as
+            // a glowing box instead of a lamp throwing light forward.
+            //
+            // "Forward" is taken from the lens geometry's own NORMALS, not from the node -- this node is TopLevel with
+            // an identity basis (Make sets Position only), so there is no transform to ask, and the mast-arm direction
+            // is not the facing either: a head hangs off the arm and points back down the road, not along it.
+            if (seen > 0)
+            {
+                var fwd = lensFwd / seen;
+                _glow.GlobalPosition = lensCentre / seen
+                                     + (fwd.LengthSquared() > 1e-6f ? fwd.Normalized() * GlowForward : Vector3.Zero);
+            }
             Apply();
+        }
+
+        /// <summary>How far in front of the glass the emitter floats. Small on purpose -- far enough that the omni is
+        /// outside the lens quad it would otherwise be embedded in, close enough that it still reads as coming from
+        /// the aspect rather than hovering in the air in front of the signal.</summary>
+        const float GlowForward = 0.25f;
+
+        /// <summary>A lens quad's outward facing, averaged from its own vertex normals and taken into world space.
+        /// The mesh knows which way it points; every other source here is a guess. Returns zero for a mesh with no
+        /// normal array, which the caller treats as "no offset" rather than as a direction.</summary>
+        static Vector3 LensFacing(MeshInstance3D mi)
+        {
+            if (mi?.Mesh == null || mi.Mesh.GetSurfaceCount() < 1) return Vector3.Zero;
+            var arr = mi.Mesh.SurfaceGetArrays(0);
+            var n = arr[(int)Mesh.ArrayType.Normal].AsVector3Array();
+            if (n == null || n.Length == 0) return Vector3.Zero;
+            var sum = Vector3.Zero;
+            foreach (var v in n) sum += v;
+            if (sum.LengthSquared() < 1e-9f) return Vector3.Zero;   // a closed box averages to nothing -- no usable facing
+            return (mi.GlobalTransform.Basis.Orthonormalized() * sum.Normalized()).Normalized();
         }
 
         /// <summary>Pin the head to one aspect and stop the timer. For the --trafficlight harness: every state this

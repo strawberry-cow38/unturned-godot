@@ -74,6 +74,19 @@ namespace UnturnedGodot
         /// to +1.0 with roughly half of it buried, so this cut leaves a ~1m square stump standing.</summary>
         const float StreetLightBaseCut = 1.0f;
 
+        /// <summary>Where a LightTap's two ports sit, in the prop's flat authored frame (+Z runs up the pole).
+        ///
+        /// The INPUT is left on the base's side face where it has always been -- you wire an intact fixture standing
+        /// next to it (master: "power input stays where it is").
+        ///
+        /// The OUTPUT sits dead centre on TOP of the stump (master: "move the power output of street lights and
+        /// traffic lights to the top, center of the stump"), which is why its Z is exactly StreetLightBaseCut: the
+        /// output only ever exists once the prop is smashed, and the stump's cut height IS the surface that is left.
+        /// Tying it to the same constant rather than repeating 1.0 means moving the cut moves the port with it --
+        /// otherwise the port floats above or sinks into the remnant and nothing says which.</summary>
+        static readonly Vector3 TapInLocal  = new(0.3f, 0f, 0.5f);
+        static readonly Vector3 TapOutLocal = new(0f, 0f, StreetLightBaseCut);
+
         /// <summary>Key a placed signal against traffic_side_roads.txt. NOTE THE -gpos.Z: the file is keyed in
         /// placements.txt coordinates so a line can be copied straight out of it, but gpos has already had Z negated
         /// for Unity->Godot. Matching on gpos.Z directly finds NOTHING and every junction silently falls back to
@@ -443,12 +456,21 @@ namespace UnturnedGodot
                             VisibilityRangeEnd = cull, VisibilityRangeFadeMode = GeometryInstance3D.VisibilityRangeFadeModeEnum.Disabled };
                         root.AddChild(lensMi);
                     }
-                    // THE STUMP (strawberry): "fully destroying a streetlight should leave the base piece where it
-                    // once stood". Breaking a prop hides every mesh in `mis`, so the whole fixture used to vanish off
-                    // the pavement. The plinth is a closed box in the model (local Z -1.0..+1.0, half of it buried),
-                    // and the pole's side faces are full-height quads that cross that line -- so cutting at Z=1.0
-                    // with "all verts below" leaves a sealed block behind and lets the pole leave whole.
-                    // Rendered as its OWN instance and deliberately kept OUT of `mis`, which is what makes it survive.
+                }
+                // THE STUMP (strawberry): "fully destroying a streetlight should leave the base piece where it
+                // once stood". Breaking a prop hides every mesh in `mis`, so the whole fixture used to vanish off
+                // the pavement. The plinth is a closed box in the model (local Z -1.0..+1.0, half of it buried),
+                // and the pole's side faces are full-height quads that cross that line -- so cutting at Z=1.0
+                // with "all verts below" leaves a sealed block behind and lets the pole leave whole.
+                // Rendered as its OWN instance and deliberately kept OUT of `mis`, which is what makes it survive.
+                //
+                // TRAFFIC SIGNALS GET ONE TOO (master: "confirm that destroyed traffic lights leave a stump like
+                // street lights do" -- they did not; this block used to live inside the Street_Light_0 branch above
+                // purely because that is where the lens split needed to be). Verified rather than assumed: the two
+                // props have IDENTICAL plinths -- local Z -1.00 at radius 0.35, 0.00 at 0.18, 1.00 at 0.35 on both --
+                // so the same cut height applies unchanged and no second constant is needed.
+                if ((name == "Street_Light_0" || name == "Traffic_Light_0") && mode != WorldMode.Dedicated)
+                {
                     var (baseMesh, upperMesh) = ObjMesh.SplitBelow(visMesh, StreetLightBaseCut);
                     if (baseMesh != null && upperMesh != null)
                     {
@@ -602,6 +624,9 @@ namespace UnturnedGodot
                 {
                     "Tower_Water_0" => WaterTowerSource.Make(),
                     "Fire_Hydrant_0" => FireHydrantSource.Make(),
+                    // A WELL is the one that is NOT municipal: no head (pump-only) and no mains gate, so it keeps
+                    // producing after toggleGlobalWater kills the other three. See WellSource.
+                    "Well_0" => WellSource.Make(),
                     _ when IsSinkProp(name) => SinkSource.Make(basis, 180f - ey),   // Counter_1 + Counter_3, both on the ordinary path now
                     _ => null,
                 };
@@ -673,9 +698,9 @@ namespace UnturnedGodot
                     }
                 }
                 if (placedLamp != null)
-                    placedTap = LightTap.Attach(root, gpos, basis, LightTap.LightKind.Streetlight, new Vector3(0.3f, 0f, 0.5f), new Vector3(0.3f, 0f, 0.5f));
+                    placedTap = LightTap.Attach(root, gpos, basis, LightTap.LightKind.Streetlight, TapInLocal, TapOutLocal);
                 else if (placedSignals.Count > 0)
-                    placedTap = LightTap.Attach(root, gpos, basis, LightTap.LightKind.Traffic, new Vector3(0.3f, 0f, 0.5f), new Vector3(0.3f, 0f, 0.5f));
+                    placedTap = LightTap.Attach(root, gpos, basis, LightTap.LightKind.Traffic, TapInLocal, TapOutLocal);
 
                 // OPENABLE PROP DOORS (MVP: Fridge_0 + Wardrobe_0, SP-local -- mirrors the Tower_Water_0
                 // Playable-only gating above: no dedicated/MP support yet). doors.txt (tools/extract_doors.py)
