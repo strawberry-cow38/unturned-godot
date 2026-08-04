@@ -775,12 +775,17 @@ namespace UnturnedGodot
                     // omni lights over the rubble, and a rubble reset has to bring them back.
                     var sigs = placedSignals.Count > 0 ? placedSignals.ToArray() : null;
                     var tap = placedTap;
+                    // A TV's screen sub-mesh and spill light are TVDevice's own children, not part of `mis`, so
+                    // smashing the set hid the cabinet and left a lit screen glowing over the rubble -- the same
+                    // shape as the street lamp above (master: "when tvs get destroyed make sure to kill the screen").
+                    var tv = placedTV;
                     System.Action<bool> onAlive = null;
-                    if (lamp != null || sigs != null || tap != null)
+                    if (lamp != null || sigs != null || tap != null || tv != null)
                         onAlive = alive =>
                         {
                             if (tap != null && GodotObject.IsInstanceValid(tap)) tap.SetBroken(!alive);
                             if (lamp != null && GodotObject.IsInstanceValid(lamp)) lamp.SetBroken(!alive);
+                            if (tv != null && GodotObject.IsInstanceValid(tv)) tv.SetBroken(!alive);
                             if (sigs != null)
                                 foreach (var s in sigs) if (GodotObject.IsInstanceValid(s)) s.SetBroken(!alive);
                         };

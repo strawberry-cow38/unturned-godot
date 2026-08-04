@@ -11,10 +11,13 @@ namespace UnturnedGodot.Testing
     // toward white. Unshaded makes that unfixable-by-accident: no light in the world can touch it, not the TV's own
     // spill, not the sun, not a torch.
     //
+    // Also covers the NTSC flicker and the directional-spill/cone geometry added alongside it.
+    //
     // WHAT THIS SUITE CANNOT DO, said plainly: the Television_0/1 meshes ship with Unturned, so TVDevice.Make needs
-    // an install and there isn't one on this box -- which also means no render of a TV. So this pins the two material
-    // PROPERTIES the fix rests on, and the on-screen result still needs a human look in game. A green run here is not
-    // a claim that it looks right.
+    // an install and there isn't one on this box -- which also means no render of a TV. So what is pinned here is the
+    // PURE parts: material properties, the flicker curve, and the two aim conventions. Everything about how it
+    // actually looks -- brightness, flicker depth, cone reach -- still needs a human in game. A green run here is not
+    // a claim that it looks right; it is a claim that it cannot be wrong in the ways that are invisible.
     public sealed class TVScreenTests : GameTest
     {
         public override string Name => "tv.screen_material";
@@ -42,6 +45,35 @@ namespace UnturnedGodot.Testing
             // Grey matters: the SMPTE bars are coloured by the TEXTURE. A non-grey multiplier would tint the whole
             // pattern, which is the same washed-out-colour complaint arriving from the other direction.
             T.Check($"...so the bars keep their own hues, only the level moves ({half.R:0.00})", half.R > off.R && half.R < full.R);
+
+            // ---- NTSC FLICKER (master: "make the crt SMPTE bars flicker at ntsc refresh rate as well as the light")
+            float peak = TVDevice.Flicker(0f, 0.06f);
+            float trough = TVDevice.Flicker(0.5f, 0.06f);
+            T.Check($"flicker peaks at full brightness ({peak:0.0000})", Mathf.IsEqualApprox(peak, 1f));
+            T.Check($"...and troughs exactly one depth below ({trough:0.0000})", Mathf.IsEqualApprox(trough, 1f - 0.06f));
+            // Bounded on BOTH sides. An unbounded modulation would brighten past full on some phases, which on an
+            // unshaded screen means the SMPTE bars clip -- reintroducing the washout this whole pass was about.
+            float lo = 2f, hi = -2f;
+            for (int i = 0; i <= 64; i++) { float v = TVDevice.Flicker(i / 64f, 0.06f); lo = Mathf.Min(lo, v); hi = Mathf.Max(hi, v); }
+            T.Check($"stays inside [1-depth, 1] across a full cycle ({lo:0.000}..{hi:0.000})", lo >= 1f - 0.06f - 1e-4f && hi <= 1f + 1e-4f);
+            T.Check("depth 0 is a flat 1.0 (the flatscreen path)", Mathf.IsEqualApprox(TVDevice.Flicker(0.5f, 0f), 1f));
+
+            // ---- AIM BASIS. Two different "point that way" conventions in one file -- SpotLight3D aims down local
+            // -Z, BeamMesh runs down local -Y -- so this is exactly the sort of thing that ships as a cone firing
+            // sideways out of the cabinet and reads as a modelling mistake rather than an axis mistake.
+            foreach (var n in new[] { Vector3.Forward, Vector3.Right, new Vector3(1, 0, 1).Normalized(), Vector3.Up, Vector3.Down })
+            {
+                var spot = TVDevice.AimBasis(n, aimNegZ: true) * new Vector3(0f, 0f, -1f);
+                var beam = TVDevice.AimBasis(n, aimNegZ: false) * new Vector3(0f, -1f, 0f);
+                T.Check($"spot aims down the normal {n} (got {spot})", spot.Normalized().Dot(n) > 0.999f);
+                T.Check($"...and the beam runs down it too (got {beam})", beam.Normalized().Dot(n) > 0.999f);
+            }
+
+            // ---- SCREEN EXTENTS: the beam's near end should be the screen's shape, so the axis the normal points
+            // along is the one to DROP. Screen 2.0 x 1.0, 0.1 thick, facing +Z.
+            var halfExt = TVDevice.ScreenHalfExtents(new Aabb(Vector3.Zero, new Vector3(2f, 1f, 0.1f)), Vector3.Back);
+            T.Check($"in-plane half-extents keep width and height, drop thickness ({halfExt.X:0.00} x {halfExt.Y:0.00})",
+                Mathf.IsEqualApprox(halfExt.X, 1f) && Mathf.IsEqualApprox(halfExt.Y, 0.5f));
 
             yield break;
         }

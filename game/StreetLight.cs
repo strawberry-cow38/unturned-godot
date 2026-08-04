@@ -59,7 +59,7 @@ namespace UnturnedGodot
 
         // Vertical fade for the cone: bright at the lamp end, transparent by the base -- so the shaft dissolves into the
         // ground pool instead of ending in a hard rim. Mapped along the cylinder's V (height).
-        static ImageTexture ConeGradient()
+        internal static ImageTexture ConeGradient()
         {
             int n = 64;
             var img = Image.CreateEmpty(1, n, false, Image.Format.Rgba8);
@@ -81,7 +81,7 @@ namespace UnturnedGodot
         // by the time anyone reads it as a cone.
         //
         // Built by hand rather than with a CylinderMesh because no primitive changes cross-section along its length.
-        static ArrayMesh BeamMesh(float len, float halfA, float halfB, float baseR, float morphEnd = 0.38f, int seg = 24, int rings = 16)
+        internal static ArrayMesh BeamMesh(float len, float halfA, float halfB, float baseR, float morphEnd = 0.38f, int seg = 24, int rings = 16)
         {
             // Cross-section at depth t (0 = at the lens, 1 = at the base): a rectangle blended toward a circle.
             // The rectangle point for an angle is the circle point pushed out to the rect boundary (max-norm), which

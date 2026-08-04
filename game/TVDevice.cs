@@ -33,11 +33,24 @@ namespace UnturnedGodot
         public string PropName = "Television_1";
         bool _isCrt;              // Television_1 warms up; Television_0 snaps on
         bool _on;                 // player toggle state (independent of the grid)
+        bool _broken;             // prop smashed -> screen + light + tone stay dead through any grid sweep
         bool _lit;                // last EFFECTIVE state (_on && grid power) actually applied to the visuals
 
         MeshInstance3D _screen;   // the emissive SMPTE screen sub-mesh (hidden when dark)
         StandardMaterial3D _screenMat;
-        OmniLight3D _light;       // soft forward spill (energy 0 / hidden when dark)
+        SpotLight3D _light;       // forward spill, aimed down the screen normal (energy 0 / hidden when dark)
+        MeshInstance3D _cone;     // the visible light shaft, StreetLight's beam reused
+        StandardMaterial3D _coneMat;
+
+        const float ConeLen = 3.2f, ConeBaseR = 1.1f, ConeAlpha = 0.05f;   // shaft reach / spread at the far end / overall softness
+
+        // NTSC flicker (master: "make the crt SMPTE bars flicker at ntsc refresh rate as well as the light effect").
+        // 59.94 Hz is the real NTSC FIELD rate. Sampling it at a 60 Hz render gives a ~0.06 Hz beat -- one slow pulse
+        // roughly every 17s -- which is not a bug in the choice, it is precisely what a 60fps camera pointed at a CRT
+        // records, and it is the reason a flicker at the true rate reads as a gentle breathing rather than a strobe.
+        // Only the CRT gets it; the flatscreen is an LCD and holds its pixels steady.
+        const float NtscFieldHz = 59.94f, FlickerDepth = 0.06f;
+        float _flickerPhase;
         MeshInstance3D _outline;  // whole-prop white rim silhouette on the outline overlay -- shown while looked at (F affordance)
         AudioStreamPlayer3D _tone;               // looping 1kHz tone -- plays only while lit
         AudioStreamPlayer3D _onClick, _offClick; // one-shot turn-on / turn-off clicks
@@ -93,13 +106,48 @@ namespace UnturnedGodot
             _screen = new MeshInstance3D { Mesh = projected, MaterialOverride = _screenMat, Visible = false, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off };
             AddChild(_screen);
 
-            // Soft forward spill just in FRONT of the screen (the emissive screen alone doesn't light the room).
-            _light = new OmniLight3D
+            // DIRECTIONAL spill (master: "the light should also be directional"). An OmniLight threw light backwards
+            // through the cabinet and sideways into the wall the set is against; a TV only lights what is in front of
+            // it. SpotLight3D aims down its own local -Z, so the node is basised to put -Z on the screen normal.
+            var screenAabb = screenMesh.GetAabb();
+            _light = new SpotLight3D
             {
-                LightColor = new Color(0.85f, 0.9f, 1.0f), OmniRange = 2.6f, LightEnergy = 0f, ShadowEnabled = false, Visible = false,
-                Position = _screenCenterLocal + _screenNormalLocal * 0.3f,   // just in front of the screen face (soft forward spill; keeps the on-screen hotspot down)
+                LightColor = new Color(0.85f, 0.9f, 1.0f),
+                SpotRange = 4.0f, SpotAngle = 55f, SpotAngleAttenuation = 1.2f,
+                LightEnergy = 0f, ShadowEnabled = false, Visible = false,
+                Transform = new Transform3D(AimBasis(_screenNormalLocal, aimNegZ: true), _screenCenterLocal + _screenNormalLocal * 0.05f),
             };
             AddChild(_light);
+
+            // The visible SHAFT, reusing the streetlight's cone rather than a second implementation (master: "we
+            // might wanna do the 'cone' effect we have on the streetlights for the tv effect"). BeamMesh is a better
+            // fit here than it is on a lamp: its cross-section STARTS AS A RECTANGLE and rounds toward a circle with
+            // depth, which is exactly what light leaving a rectangular screen does.
+            // BeamMesh runs along -Y with the section in X/Z, so the node's -Y goes on the screen normal.
+            Vector3 halfExt = ScreenHalfExtents(screenAabb, _screenNormalLocal);
+            _cone = new MeshInstance3D
+            {
+                Mesh = StreetLight.BeamMesh(ConeLen, halfExt.X, halfExt.Y, ConeBaseR),
+                Transform = new Transform3D(AimBasis(_screenNormalLocal, aimNegZ: false), _screenCenterLocal),
+                Visible = false,
+                CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
+                MaterialOverride = new StandardMaterial3D
+                {
+                    AlbedoColor = new Color(0.85f, 0.9f, 1.0f, ConeAlpha),
+                    AlbedoTexture = StreetLight.ConeGradient(),
+                    Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
+                    BlendMode = BaseMaterial3D.BlendModeEnum.Add,
+                    ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
+                    CullMode = BaseMaterial3D.CullModeEnum.Disabled,   // visible from inside the shaft too
+                    DisableReceiveShadows = true,
+                    TextureFilter = BaseMaterial3D.TextureFilterEnum.Linear,
+                    TextureRepeat = false,                             // CLAMP: the gradient is 1x64 and repeat wrap
+                                                                       // blends the two ends into a bright band (the
+                                                                       // bug StreetLight documents at its own cone)
+                },
+            };
+            _coneMat = (StandardMaterial3D)_cone.MaterialOverride;
+            AddChild(_cone);
 
             // Whole-prop look-focus outline (F affordance -- tells the player F does something): the FULL body
             // silhouette on the outline overlay, hidden until looked at. Same recipe as StoreShelf._shelfGlow /
@@ -186,6 +234,11 @@ namespace UnturnedGodot
         /// power (you still hear the switch); the picture/tone only come up if the grid is live.</summary>
         public void Toggle()
         {
+            // A smashed set does not take input at all. Without this the press LOOKS ignored -- Refresh keeps it dark
+            // because _broken gates the effective state -- but it still flips _on, so the TV silently arms itself and
+            // switches on by itself when the rubble resets. Found by the reset assertion in tv.broken_kills_screen,
+            // not by looking: while it is rubble there is nothing on screen to show you it happened.
+            if (_broken) return;
             _on = !_on;
             (_on ? _onClick : _offClick)?.Play();
             Refresh();
@@ -194,9 +247,25 @@ namespace UnturnedGodot
         /// <summary>Bring the screen/light/tone in line with the effective state (_on AND grid power). Called by
         /// Toggle() and by the DayNightCycle grid sweep, so losing the grid drops a lit TV to dark and restoring
         /// it warms it back up. A fresh power-up kicks off the CRT warmup; the flatscreen snaps.</summary>
+        // Smashed prop -> screen dead until the rubble resets (master: "when tvs get destroyed make sure to kill the
+        // screen"). STATE, not a one-shot off, for the same reason GridLight.SetBroken is: Refresh re-derives `eff`
+        // on every PowerNet sweep, so a TV merely switched off would light itself back up at the next grid change --
+        // a glowing screen hanging in the air over its own rubble.
+        //
+        // This is needed at all because the screen sub-mesh and the spill light are TVDevice's OWN children, not part
+        // of the prop body handed to DestructibleField, so hiding the prop's meshes does not touch them. Exactly the
+        // trap the street lamp hit ("hiding the meshes left a lit cone hanging over the rubble").
+        public void SetBroken(bool broken)
+        {
+            if (_broken == broken) return;
+            _broken = broken;
+            if (broken) _on = false;   // a rubble reset rebuilds the set switched OFF, not mid-programme
+            Refresh();
+        }
+
         public void Refresh()
         {
-            bool eff = _on && PowerNet.GlobalPower;
+            bool eff = _on && PowerNet.GlobalPower && !_broken;
             if (eff == _lit) return;
             _lit = eff;
             if (eff)
@@ -205,6 +274,7 @@ namespace UnturnedGodot
                 else { _warming = false; _warm = 1f; }                                 // flatscreen snaps
                 if (_screen != null) _screen.Visible = true;
                 if (_light != null) _light.Visible = true;
+                if (_cone != null) _cone.Visible = true;
                 _tone?.Play();
                 ApplyLevels();
             }
@@ -213,21 +283,40 @@ namespace UnturnedGodot
                 _warming = false; _warm = 0f;
                 if (_screen != null) _screen.Visible = false;
                 if (_light != null) _light.Visible = false;
+                if (_cone != null) _cone.Visible = false;
                 _tone?.Stop();
             }
         }
+
+        /// <summary>NTSC field-rate brightness modulation, CRT only. Depth is deliberately shallow -- a CRT does not
+        /// visibly strobe to the naked eye; the flicker is something you notice at the edge of vision, so a deep
+        /// modulation would read as a fault rather than as a tube.</summary>
+        internal static float Flicker(float phase01, float depth)
+            => 1f - depth * 0.5f * (1f - Mathf.Cos(phase01 * Mathf.Tau));
+
+        float FlickerFactor() => _isCrt ? Flicker(_flickerPhase, FlickerDepth) : 1f;
 
         void ApplyLevels()
         {
             float k = _isCrt ? _warm : 1f;
             // The CRT's fade is now IN THE TEXTURE: albedo lerps up from black, so the picture itself resolves out of
             // a dark tube instead of a fully-drawn image being dimmed. On the flatscreen k is 1 and it snaps.
-            if (_screenMat != null) _screenMat.AlbedoColor = ScreenColor(_emitEnergy * k);
-            if (_light != null) _light.LightEnergy = _lightEnergy * k;
+            float f = FlickerFactor();   // 1.0 on the flatscreen; a shallow NTSC breath on the tube
+            if (_screenMat != null) _screenMat.AlbedoColor = ScreenColor(_emitEnergy * k * f);
+            if (_light != null) _light.LightEnergy = _lightEnergy * k * f;
+            // the shaft rides it too, so the picture, the spill and the beam pulse together instead of drifting apart
+            if (_coneMat != null) _coneMat.AlbedoColor = new Color(0.85f, 0.9f, 1.0f, ConeAlpha * k * f);
         }
 
         public override void _Process(double delta)
         {
+            // The CRT breathes at the NTSC field rate for as long as it is lit -- so this no longer early-outs on
+            // !_warming, which it did back when warmup was the only thing that animated.
+            if (_lit && _isCrt)
+            {
+                _flickerPhase = Mathf.Wrap(_flickerPhase + (float)delta * NtscFieldHz, 0f, 1f);
+                ApplyLevels();
+            }
             if (!_warming) return;
             if (_warmDelay > 0f) { _warmDelay -= (float)delta; if (_warmDelay > 0f) return; }   // dead time before the tube lights
             _warm = Mathf.Min(1f, _warm + (float)delta / WarmDur);
@@ -260,6 +349,33 @@ namespace UnturnedGodot
         /// level moves; black at 0 is what makes the CRT warmup a fade of the picture itself.</summary>
         internal static Color ScreenColor(float brightness) => new Color(brightness, brightness, brightness);
 
+        /// <summary>A basis putting the beam's forward axis on <paramref name="normal"/>. SpotLight3D aims down local
+        /// -Z (aimNegZ), BeamMesh runs down local -Y -- two different conventions for the same "point that way", so
+        /// the caller says which it needs rather than one of them silently getting a sideways cone.</summary>
+        internal static Basis AimBasis(Vector3 normal, bool aimNegZ)
+        {
+            Vector3 f = normal.Normalized();
+            Vector3 axis = -f;                                                     // local +Z or +Y sits opposite the aim
+            Vector3 seed = Mathf.Abs(axis.Dot(Vector3.Up)) > 0.95f ? Vector3.Right : Vector3.Up;
+            Vector3 x = seed.Cross(axis).Normalized();
+            Vector3 y = axis.Cross(x).Normalized();
+            return aimNegZ ? new Basis(x, y, axis) : new Basis(x, axis, y);
+        }
+
+        /// <summary>The screen's two IN-PLANE half-extents, i.e. its size with the axis along the normal dropped.
+        /// Feeds the beam's rectangular near end so the shaft starts the shape of the actual screen.</summary>
+        internal static Vector3 ScreenHalfExtents(Aabb screenAabb, Vector3 normal)
+        {
+            Vector3 h = screenAabb.Size * 0.5f;
+            Vector3 n = normal.Normalized().Abs();
+            // drop the thinnest axis -- the one the normal points along -- and keep the other two
+            if (n.X >= n.Y && n.X >= n.Z) return new Vector3(Mathf.Max(h.Z, 0.05f), Mathf.Max(h.Y, 0.05f), 0f);
+            if (n.Y >= n.X && n.Y >= n.Z) return new Vector3(Mathf.Max(h.X, 0.05f), Mathf.Max(h.Z, 0.05f), 0f);
+            return new Vector3(Mathf.Max(h.X, 0.05f), Mathf.Max(h.Y, 0.05f), 0f);
+        }
+
+        public bool DebugLit => _lit;      // last EFFECTIVE state actually applied -- survives a prop with no meshes
+        public bool DebugBroken => _broken;
         public bool DebugScreenOk => _screen != null;
         /// <summary>Is the screen taking NO lighting? The washout fix depends on this being true, and it is the kind
         /// of property that a screenshot cannot distinguish from "the light happens to be dim right now".</summary>
