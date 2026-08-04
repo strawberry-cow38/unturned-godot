@@ -812,7 +812,7 @@ namespace UnturnedGodot
             {
                 bool _isSc = ScopeCal.TryGetValue(txtName, out var _sc);
                 Color _bodyCol = _isSc ? _sc.Col : new Color(0.06f, 0.065f, 0.075f);   // ported red-dots (no ScopeCal entry) keep the dark default
-                m.MaterialOverride = new StandardMaterial3D { CullMode = BaseMaterial3D.CullModeEnum.Disabled, AlbedoColor = _bodyCol, Metallic = 0.35f, MetallicSpecular = 0.5f, Roughness = 0.5f };
+                m.MaterialOverride = new StandardMaterial3D { CullMode = BaseMaterial3D.CullModeEnum.Disabled, AlbedoColor = _bodyCol, Metallic = 0f, MetallicSpecular = 0f, Roughness = 1f };   // FULLY MATTE like the gun body/irons/mags -- Unturned guns are non-reflective (master: "why are the scope bodies so shiny"); the old satin 0.35/0.5 broke that convention
                 if (_isSc)
                 {
                     // Real ripped reticle (source): each scope's Reticule submesh texture, saved as <base>_reticle.png. The
@@ -1010,7 +1010,10 @@ namespace UnturnedGodot
                     // would leave a CONSTANT eye->objective offset that never converges.)
                     var _objPose = _main.GlobalTransform * (_cam.GlobalTransform.AffineInverse() * _scopeCamAnchor.GlobalTransform);
                     var _zeroPt = _main.GlobalPosition + (-_main.GlobalTransform.Basis.Z) * ScopeZeroDist;
-                    _scopeCam.GlobalTransform = _objPose.LookingAt(_zeroPt, _main.GlobalTransform.Basis.Y);   // objective position, look AT the zero point; up = main cam up (level horizon)
+                    // ROLL: use the SCOPE's own up-vector (from the mapped objective pose), not the main cam's, so the PiP
+                    // inherits the gun's rotation -- the view through the glass rolls/tilts with the weapon (sway, recoil,
+                    // lean) instead of staying artificially level (master: "make the scope camera read rotation as well").
+                    _scopeCam.GlobalTransform = _objPose.LookingAt(_zeroPt, _objPose.Basis.Y);   // objective position + scope's own roll, aimed at the zero point
                     _scopeVp.RenderTargetUpdateMode = SubViewport.UpdateMode.Always;
                     _scopeLens.Visible = true; _scopeWasOn = true;
                 }
