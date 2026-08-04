@@ -4548,9 +4548,36 @@ namespace UnturnedGodot
             timer.Timeout += () => { if (IsInstanceValid(light)) light.QueueFree(); };
         }
 
+        /// <summary>Global shader parameter the grass-displacement shader reads. Named to match retail's
+        /// `_Grass_Displacement_Point` so the two are recognisably the same thing.</summary>
+        static readonly StringName GrassPointParam = "grass_displacement_point";
+        static bool _grassPointReady;
+
+        /// <summary>Push the local player's position to the grass shader, EXACTLY as retail's GrassDisplacement.cs
+        /// does: one global vector per frame at (x, y + 0.5, z), w unused.
+        ///
+        /// The +0.5 is not a fudge -- it is the source's own offset, and it is what makes the bend read as a shin
+        /// pushing through the blades instead of the ground shoving them aside from below. A SINGLE point, also from
+        /// the source: only the local player displaces grass, never zombies or remote players, so this deliberately
+        /// does not accumulate a list.</summary>
+        void UpdateGrassDisplacement()
+        {
+            if (!_grassPointReady)
+            {
+                // Registered at runtime rather than in project settings so the shader works from a fresh clone with
+                // no editor step. Adding an existing global is a no-op, but the guard keeps it off the hot path.
+                if (RenderingServer.GlobalShaderParameterGetList().Contains(GrassPointParam) == false)
+                    RenderingServer.GlobalShaderParameterAdd(GrassPointParam, RenderingServer.GlobalShaderParameterType.Vec4, Variant.From(Vector4.Zero));
+                _grassPointReady = true;
+            }
+            var p = GlobalPosition;
+            RenderingServer.GlobalShaderParameterSet(GrassPointParam, new Vector4(p.X, p.Y + 0.5f, p.Z, 0f));
+        }
+
         public override void _Process(double delta)
         {
             if (NetAvatar) return;   // per-frame work is all client-side (render interp, look focus, recoil drain, cam) -- none of it on a server avatar
+            UpdateGrassDisplacement();
             if (_interpReady && !_dead && _driving == null)   // RENDER INTERPOLATION (master): lerp the visual position between the last two 50Hz ticks so it doesn't step at 50Hz while rendering at 60+
                 GlobalPosition = _interpPrev.Lerp(_interpCurr, (float)Engine.GetPhysicsInterpolationFraction());
             if (_driving != null && !_dead)   // driving: position the cam from the vehicle's Godot-INTERPOLATED visual transform, so cam + car mesh are both smooth + IN SYNC (master: godot smoothing for the car)

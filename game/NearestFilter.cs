@@ -8,8 +8,17 @@ namespace UnturnedGodot
     // every BaseMaterial3D to nearest-neighbor to match the source. Call once after the scene is assembled.
     public static class NearestFilter
     {
+        /// <summary>Node group whose materials this sweep leaves alone. Retail point-filters level/object/item
+        /// textures but keeps FOLIAGE on a smooth filter, and master extended that to trees and bushes -- all of
+        /// which are alpha-scissored billboards where nearest-neighbour stair-steps every leaf edge.
+        ///
+        /// This exists because the sweep runs AFTER the scene is built, so a material that sets LinearWithMipmaps at
+        /// construction gets silently overwritten here. Anything opting out has to say so at the node.</summary>
+        public const string KeepFilterGroup = "keep_texture_filter";
+
         public static void Apply(Node n)
         {
+            if (n.IsInGroup(KeepFilterGroup)) return;   // ...and skip its children too: a MultiMeshInstance's material is its own
             if (n is MeshInstance3D mi)
             {
                 Set(mi.MaterialOverride);

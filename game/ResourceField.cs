@@ -140,9 +140,11 @@ namespace UnturnedGodot
                                 mm.SetInstanceTransform(k, xf[lst[k]]);
                                 recs[lst[k]].Slots.Add((mm, k));
                             }
-                            AddChild(new MultiMeshInstance3D { Multimesh = mm, MaterialOverride = mat,
+                            var mmi = new MultiMeshInstance3D { Multimesh = mm, MaterialOverride = mat,
                                 CastShadow = isTree ? GeometryInstance3D.ShadowCastingSetting.On : GeometryInstance3D.ShadowCastingSetting.Off,
-                                VisibilityRangeEnd = cullRange, VisibilityRangeFadeMode = GeometryInstance3D.VisibilityRangeFadeModeEnum.Disabled });
+                                VisibilityRangeEnd = cullRange, VisibilityRangeFadeMode = GeometryInstance3D.VisibilityRangeFadeModeEnum.Disabled };
+                            mmi.AddToGroup(NearestFilter.KeepFilterGroup);   // keep the bilinear MakeMat set; the scene-wide sweep would stamp it back to Nearest
+                            AddChild(mmi);
                         }
                     }
                 }
@@ -189,7 +191,12 @@ namespace UnturnedGodot
                 {
                     img.GenerateMipmaps();
                     mat.AlbedoTexture = ImageTexture.CreateFromImage(img);
-                    mat.TextureFilter = BaseMaterial3D.TextureFilterEnum.NearestWithMipmaps;
+                    // BILINEAR on trees and bushes (master), matching what grass and flowers already get in
+                    // FoliageField. Resources are alpha-scissored leaf billboards, and nearest-neighbour on those
+                    // leaves a hard stair-stepped edge on every frond that reads as artefacting rather than as the
+                    // pixel look the rest of the port is going for. NearestFilter.Apply sweeps the whole scene after
+                    // build and would undo this, so these instances are tagged for it to skip -- see NearestFilter.
+                    mat.TextureFilter = BaseMaterial3D.TextureFilterEnum.LinearWithMipmaps;
                 }
             }
             else mat.AlbedoColor = new Color(0.35f, 0.45f, 0.28f);   // leafy-green fallback

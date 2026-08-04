@@ -13,6 +13,19 @@ namespace UnturnedGodot
         static readonly string[] Types =
             { "grass_00", "flowers_00", "flowers_01", "flowers_02", "flowers_03", "pebble_00", "pebble_sand_00" };
 
+        /// <summary>The grass-displacement material. Falls back to null (and therefore to the plain lit material) if
+        /// the shader is missing, so a bad path costs the EFFECT rather than the grass.</summary>
+        static ShaderMaterial MakeGrassMaterial()
+        {
+            var sh = GD.Load<Shader>("res://content/grass_displace.gdshader");
+            if (sh == null) { GD.PrintErr("[foliage] grass_displace.gdshader missing -- grass will not displace"); return null; }
+            return new ShaderMaterial { Shader = sh };
+        }
+
+        /// <summary>Small-pebble size multiplier (master: "scale down the small pebbles foliage by 25% globally").
+        /// 0.75 = 25% smaller, applied to every pebble instance's baked basis.</summary>
+        const float PebbleScale = 0.75f;
+
         // pebble materials are textureless solid-colour rocks -- real _Color from the .mat (source-accurate).
         static readonly System.Collections.Generic.Dictionary<string, Color> SolidColor = new()
         {
@@ -43,6 +56,12 @@ namespace UnturnedGodot
                 // foliage is LIT + receives shadows (master), but the mesh normals are baked straight UP (tools set vn=0,1,0)
                 // so the flat billboards are lit like ground -- no ugly per-face directional darkness.
             };
+            // GRASS ONLY gets the displacement shader (master: "lets add grass displacement, grass only"). Flowers and
+            // pebbles keep the plain StandardMaterial3D -- a pebble that bends when you walk past would be worse than
+            // no effect at all, and flowers were not asked for.
+            bool isGrass = nm.StartsWith("grass");
+            ShaderMaterial grassMat = isGrass ? MakeGrassMaterial() : null;
+
             string tp = dir + nm + "_tex.png";
             if (File.Exists(tp))
             {
@@ -50,7 +69,9 @@ namespace UnturnedGodot
                 if (img.Load(tp) == Error.Ok)
                 {
                     img.GenerateMipmaps();
-                    mat.AlbedoTexture = ImageTexture.CreateFromImage(img);
+                    var tex = ImageTexture.CreateFromImage(img);
+                    mat.AlbedoTexture = tex;
+                    grassMat?.SetShaderParameter("albedo_tex", tex);
                     // master: GRASS + FLOWERS get bilinear (smoother blades/petals); pebbles (+ the rest of the port) stay Nearest.
                     mat.TextureFilter = (nm.StartsWith("grass") || nm.StartsWith("flowers"))
                         ? BaseMaterial3D.TextureFilterEnum.LinearWithMipmaps
@@ -58,6 +79,12 @@ namespace UnturnedGodot
                 }
             }
             else mat.AlbedoColor = SolidColor.TryGetValue(nm, out var c) ? c : new Color(0.5f, 0.5f, 0.5f);
+
+            // SMALL PEBBLES 25% SMALLER (master). Folded into the baked instance basis at parse rather than applied
+            // to the mesh or the MultiMesh, because these transforms come straight out of PEI's Foliage.blob and the
+            // blob is the only place the per-instance scale lives -- scaling the shared mesh would also shrink any
+            // future prop reusing it, and MultiMesh has no node-level scale of its own to reach for.
+            bool isPebble = nm.StartsWith("pebble");
 
             using var br = new BinaryReader(File.OpenRead(binPath));
             int count = br.ReadInt32();
@@ -80,6 +107,7 @@ namespace UnturnedGodot
                 float z0 = br.ReadSingle(), z1 = br.ReadSingle(), z2 = br.ReadSingle();
                 float px = br.ReadSingle(), py = br.ReadSingle(), pz = br.ReadSingle();
                 var basis = new Basis(new Vector3(x0, x1, -x2), new Vector3(y0, y1, -y2), new Vector3(-z0, -z1, z2));
+                if (isPebble) basis = basis.Scaled(Vector3.One * PebbleScale);   // master: small pebbles 25% smaller
                 var pos = new Vector3(px, py, -pz);
                 var key = ((int)Mathf.Floor(pos.X / Cell), (int)Mathf.Floor(pos.Z / Cell));
                 if (!byCell.TryGetValue(key, out var lst)) { lst = new System.Collections.Generic.List<Transform3D>(); byCell[key] = lst; }
@@ -89,11 +117,17 @@ namespace UnturnedGodot
             {
                 var lst = kv.Value;
                 var mm = new MultiMesh { Mesh = mesh, TransformFormat = MultiMesh.TransformFormatEnum.Transform3D, InstanceCount = lst.Count };
-                for (int k = 0; k < lst.Count; k++) mm.SetInstanceTransform(k, lst[k]);
-                AddChild(new MultiMeshInstance3D { Multimesh = mm, MaterialOverride = mat,
+                for (int k = 0; k < lst.Count; k++) mm.SetInstanceTransform(k, lst[k]);   // scale already folded in at parse (see PebbleScale)
+                var fmi = new MultiMeshInstance3D { Multimesh = mm, MaterialOverride = (Material)grassMat ?? mat,
                     CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
                     VisibilityRangeEnd = CullRange,   // cell culls when the camera is beyond CullRange from it
-                    VisibilityRangeFadeMode = GeometryInstance3D.VisibilityRangeFadeModeEnum.Disabled });
+                    VisibilityRangeFadeMode = GeometryInstance3D.VisibilityRangeFadeModeEnum.Disabled };
+                // The grass/flowers bilinear set above is chosen per material and must survive the scene-wide
+                // NearestFilter sweep, which runs after the world is assembled and would otherwise stamp it back.
+                // Pebbles are in this group too -- their Nearest is equally deliberate, and the sweep setting it
+                // "correctly" by accident is not the same as it being chosen here.
+                fmi.AddToGroup(NearestFilter.KeepFilterGroup);
+                AddChild(fmi);
             }
             GD.Print($"[foliage] {nm}: {count} instances in {byCell.Count} cells (culled beyond {CullRange}m)");
         }
