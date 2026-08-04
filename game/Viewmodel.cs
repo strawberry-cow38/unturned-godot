@@ -816,13 +816,13 @@ namespace UnturnedGodot
         static readonly System.Collections.Generic.Dictionary<string, ScopeC> ScopeCal = new()
         {
             // mesh -> (lens@ocular-ring, cam-anchor@objective, fov=90/zoom, lens-size=2*ocular-radius) -- MEASURED from each scope's .txt verts; zoom from the retail .dat.
-            { "scope_8x_sight.txt",            new ScopeC(new Vector3( 0f,      -0.367f, -0.1077f), new Vector3( 0f,       0.149f, -0.1072f), 11.25f, 0.171f) },   // 8x
-            { "scope_7x_sight.txt",            new ScopeC(new Vector3( 0f,      -0.367f, -0.0860f), new Vector3( 0f,       0.149f, -0.0858f), 12.86f, 0.124f) },   // 7x
-            { "scope_16x_sight.txt",           new ScopeC(new Vector3( 0f,      -0.367f, -0.1077f), new Vector3( 0f,       0.149f, -0.1072f),  5.63f, 0.171f) },   // 16x
-            { "makeshift_scope_sight.txt",     new ScopeC(new Vector3(-0.0015f, -0.377f, -0.1152f), new Vector3(-0.0018f,  0.120f, -0.1733f), 15.0f,  0.141f) },   // Makeshift 6x
-            { "cross_scope_sight.txt",         new ScopeC(new Vector3( 0f,      -0.350f, -0.0691f), new Vector3( 0f,      -0.148f, -0.0574f), 15.0f,  0.106f) },   // Cross 6x
-            { "chevron_scope_sight.txt",       new ScopeC(new Vector3( 0f,      -0.358f, -0.0908f), new Vector3( 0f,      -0.110f, -0.0989f), 22.5f,  0.122f) },   // Chevron 4x
-            { "shadowstalker_scope_sight.txt", new ScopeC(new Vector3( 0f,      -0.367f, -0.0927f), new Vector3( 0f,       0.149f, -0.0927f), 15.0f,  0.173f) },   // Shadowstalker 6x
+            { "scope_8x_sight.txt",            new ScopeC(new Vector3( 0f,      -0.390f, -0.1077f), new Vector3( 0f,       0.149f, -0.1072f), 11.25f, 0.140f) },   // 8x (lens y=-0.390 = EYE-SIDE of the ocular cap at -0.372 so the model's dark ocular face doesn't occlude it)
+            { "scope_7x_sight.txt",            new ScopeC(new Vector3( 0f,      -0.390f, -0.0860f), new Vector3( 0f,       0.149f, -0.0858f), 12.86f, 0.101f) },   // 7x (lens shifted -0.023 EYE-SIDE of the ocular cap so it isn't occluded)
+            { "scope_16x_sight.txt",           new ScopeC(new Vector3( 0f,      -0.390f, -0.1077f), new Vector3( 0f,       0.149f, -0.1072f),  5.63f, 0.140f) },   // 16x
+            { "makeshift_scope_sight.txt",     new ScopeC(new Vector3(-0.0015f, -0.400f, -0.1152f), new Vector3(-0.0018f,  0.120f, -0.1733f), 15.0f,  0.115f) },   // Makeshift 6x
+            { "cross_scope_sight.txt",         new ScopeC(new Vector3( 0f,      -0.373f, -0.0691f), new Vector3( 0f,      -0.148f, -0.0574f), 15.0f,  0.087f) },   // Cross 6x
+            { "chevron_scope_sight.txt",       new ScopeC(new Vector3( 0f,      -0.381f, -0.0908f), new Vector3( 0f,      -0.110f, -0.0989f), 22.5f,  0.100f) },   // Chevron 4x
+            { "shadowstalker_scope_sight.txt", new ScopeC(new Vector3( 0f,      -0.390f, -0.0927f), new Vector3( 0f,       0.149f, -0.0927f), 15.0f,  0.142f) },   // Shadowstalker 6x
         };
 
         // Build the PiP rig ONCE at gun-construction (_Ready) -- a SubViewport CREATED AT RUNTIME renders BLACK (its render
