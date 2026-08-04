@@ -802,7 +802,7 @@ namespace UnturnedGodot
             if (slot == "Sight")   // scopes/optics: dark SATIN METAL, not the light matte iron-sight gray (master: "proper dark-metal look")
             {
                 m.MaterialOverride = new StandardMaterial3D { CullMode = BaseMaterial3D.CullModeEnum.Disabled, AlbedoColor = new Color(0.06f, 0.065f, 0.075f), Metallic = 0.55f, MetallicSpecular = 0.5f, Roughness = 0.42f };
-                if (ScopeCal.TryGetValue(txtName, out var _sc)) ConfigureScopePiP(_sc.Lens, _sc.Obj, _sc.Fov, _sc.Size);   // magnifying scope -> point the pre-built rig at it (real PiP zoom); irons/red-dots -> no PiP
+                if (ScopeCal.TryGetValue(txtName, out var _sc)) ConfigureScopePiP(_sc.Lens, _sc.Obj, _sc.Fov, _sc.Size, txtName.Contains("shadowstalker") ? 4 : 12);   // magnifying scope -> point the pre-built rig at it (real PiP zoom); shadowstalker ocular = SQUARE (4 sides), others 12-gon; irons/red-dots -> no PiP
             }
             m.Visible = true;
         }
@@ -816,7 +816,7 @@ namespace UnturnedGodot
         static readonly System.Collections.Generic.Dictionary<string, ScopeC> ScopeCal = new()
         {
             // mesh -> (lens@ocular-ring, cam-anchor@objective, fov=90/zoom, lens-size=2*ocular-radius) -- MEASURED from each scope's .txt verts; zoom from the retail .dat.
-            { "scope_8x_sight.txt",            new ScopeC(new Vector3( 0f,      -0.390f, -0.1077f), new Vector3( 0f,       0.149f, -0.1072f), 11.25f, 0.140f) },   // 8x (lens y=-0.390 = EYE-SIDE of the ocular cap at -0.372 so the model's dark ocular face doesn't occlude it)
+            { "scope_8x_sight.txt",            new ScopeC(new Vector3( 0f,      -0.383f, -0.1077f), new Vector3( 0f,       0.149f, -0.1072f), 11.25f, 0.130f) },   // 8x (lens y=-0.383 = eye-side of the ocular cap at -0.372 but nudged toward the muzzle a touch (master); size 0.130)
             { "scope_7x_sight.txt",            new ScopeC(new Vector3( 0f,      -0.390f, -0.0860f), new Vector3( 0f,       0.149f, -0.0858f), 12.86f, 0.101f) },   // 7x (lens shifted -0.023 EYE-SIDE of the ocular cap so it isn't occluded)
             { "scope_16x_sight.txt",           new ScopeC(new Vector3( 0f,      -0.390f, -0.1077f), new Vector3( 0f,       0.149f, -0.1072f),  5.63f, 0.140f) },   // 16x
             { "makeshift_scope_sight.txt",     new ScopeC(new Vector3(-0.0015f, -0.400f, -0.1152f), new Vector3(-0.0018f,  0.120f, -0.1733f), 15.0f,  0.115f) },   // Makeshift 6x
@@ -847,11 +847,13 @@ namespace UnturnedGodot
                 _scopeEnv.GlowEnabled = false;
                 _scopeCam.Environment = _scopeEnv;
             }
-            var lensShader = new Shader { Code =   // per-scope reticle can diverge here later (cross/chevron/mildot); for now = the aug crosshair+donut
+            var lensShader = new Shader { Code =   // mask SHAPE per scope via u_seg/u_rot uniforms: 12-gon default (seg=2pi/12, rot=15deg), square=4 (seg=pi/2, rot=0). Set in ConfigureScopePiP. Reticle can diverge later.
                 "shader_type spatial;\n" +
                 "render_mode unshaded, cull_disabled, shadows_disabled;\n" +
                 "uniform sampler2D scope_tex : source_color, filter_linear;\n" +
-                "void fragment() { vec2 p = (UV - vec2(0.5)) * 2.0; float a = atan(p.y, p.x) + 0.2618; float seg = 0.5235988; float dd = cos(floor(0.5 + a/seg) * seg - a) * length(p); if (dd > 0.95) discard; vec3 col = texture(scope_tex, UV).rgb; float r = length(p); bool cx = (abs(p.x) < 0.005 || abs(p.y) < 0.005) && r > 0.067; bool dn = abs(r - 0.05) < 0.017; if (cx || dn) col = vec3(0.0); ALBEDO = col; }\n" };
+                "uniform float u_seg = 0.5235988;\n" +
+                "uniform float u_rot = 0.2618;\n" +
+                "void fragment() { vec2 p = (UV - vec2(0.5)) * 2.0; float a = atan(p.y, p.x) + u_rot; float dd = cos(floor(0.5 + a/u_seg) * u_seg - a) * length(p); if (dd > 0.95) discard; vec3 col = texture(scope_tex, UV).rgb; float r = length(p); bool cx = (abs(p.x) < 0.005 || abs(p.y) < 0.005) && r > 0.067; bool dn = abs(r - 0.05) < 0.017; if (cx || dn) col = vec3(0.0); ALBEDO = col; }\n" };
             var lensMat = new ShaderMaterial { Shader = lensShader };
             lensMat.SetShaderParameter("scope_tex", _scopeVp.GetTexture());
             var _lb = Basis.Identity; _lb.X = new Vector3(-1f, 0f, 0f); _lb.Y = new Vector3(0f, 0f, -1f); _lb.Z = new Vector3(0f, -1f, 0f);   // RIGID, perpendicular to the barrel
@@ -866,13 +868,15 @@ namespace UnturnedGodot
         }
 
         // Point the pre-built rig at a specific scope (mesh's measured ocular/objective + fov=90/zoom + lens size). Called on mount.
-        void ConfigureScopePiP(Vector3 lensLocal, Vector3 objLocal, float fov, float lensSize)
+        void ConfigureScopePiP(Vector3 lensLocal, Vector3 objLocal, float fov, float lensSize, int sides)
         {
             if (_scopeVp == null || !Godot.GodotObject.IsInstanceValid(_scopeLens)) return;   // gun has no rig
             _scopeLens.Mesh = new QuadMesh { Size = new Vector2(lensSize, lensSize) };
             _scopeLens.Position = lensLocal;
             _scopeCam.Fov = fov;
             _scopeCamAnchor.Position = objLocal;
+            if (_scopeLens.MaterialOverride is ShaderMaterial _sm)   // mask shape to match the scope's ocular: 4=square (verts on the diagonals), else N-gon (rot puts a vertex up)
+            { _sm.SetShaderParameter("u_seg", 2f * Mathf.Pi / sides); _sm.SetShaderParameter("u_rot", sides == 4 ? 0f : Mathf.Pi / sides); }
             _isScope = true;
         }
 
