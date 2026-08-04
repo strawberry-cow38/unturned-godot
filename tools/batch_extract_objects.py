@@ -17,7 +17,11 @@ for datp in glob.glob(os.path.join(BUND, "Objects", "**", "*.dat"), recursive=Tr
     m = re.search(r"GUID\s+([0-9a-fA-F]{32})", txt)
     if not m: continue
     folder = os.path.basename(os.path.dirname(datp))
-    rel = os.path.relpath(os.path.dirname(datp), BUND).replace("\\", "/").lower()
+    # Bundle_Override_Path: holiday (XMAS/HW) + quest variants REUSE a base object's prefab (e.g. Ornament_0_XMAS
+    # -> /Objects/Small/Overgrowth/Ornament_0), which IS in core.masterbundle -- follow it instead of the (prefab-less)
+    # variant folder, else these read as "no-prefab" and never place.
+    ovr = re.search(r"Bundle_Override_Path\s+(\S+)", txt)
+    rel = (ovr.group(1).strip().strip("/") if ovr else os.path.relpath(os.path.dirname(datp), BUND)).replace("\\", "/").lower()
     name2info[folder] = (m.group(1).lower(), "assets/coremasterbundle/" + rel + "/object.prefab")
 
 env = UnityPy.load(os.path.join(BUND, "core.masterbundle"))
