@@ -19,7 +19,7 @@ Hook_Grip
 Hook_Barrel
 
 Ammo_Min 14
-Ammo_Max 27
+Ammo_Max 25
 
 Safety
 Semi
@@ -27,6 +27,8 @@ Auto
 Bursts 3
 
 Caliber 41
+Caliber_Name ".45 ACP"
+Real_Weapon "Heckler & Koch UMP45"
 
 Range 160
 Firerate 5

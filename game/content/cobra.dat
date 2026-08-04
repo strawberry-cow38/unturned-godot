@@ -16,16 +16,18 @@ Hook_Barrel
 Hook_Tactical
 
 Ammo_Min 5
-Ammo_Max 20
+Ammo_Max 17
 
 Safety
 Semi
 Auto
 
 Caliber 4
+Caliber_Name "9x19mm Parabellum"
+Real_Weapon "Glock 18C"
 
 Range 80
-Firerate 4
+Firerate 3
 Action Trigger
 
 Player_Damage 25

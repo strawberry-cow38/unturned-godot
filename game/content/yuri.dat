@@ -25,9 +25,11 @@ Semi
 Auto
 
 Caliber 27
+Caliber_Name "9x18mm Makarov"
+Real_Weapon "PP-19 Bizon-2"
 
 Range 100
-Firerate 3
+Firerate 4
 Replace 0.66
 Action Trigger
 

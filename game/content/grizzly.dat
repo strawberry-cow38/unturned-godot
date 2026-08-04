@@ -18,12 +18,14 @@ Hook_Tactical
 Hook_Grip
 
 Ammo_Min 1
-Ammo_Max 5
+Ammo_Max 10
 
 Safety
 Semi
 
 Caliber 13
+Caliber_Name ".50 BMG"
+Real_Weapon "Barrett M82"
 
 Range 300
 Firerate 20

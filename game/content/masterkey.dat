@@ -21,6 +21,8 @@ Safety
 Semi
 
 Caliber 16
+Caliber_Name "20 Gauge"
+Real_Weapon "KAC Masterkey / USSG MP220"
 
 Range 30
 Firerate 5

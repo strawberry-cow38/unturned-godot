@@ -19,16 +19,18 @@ Hook_Grip
 Hook_Barrel
 
 Ammo_Min 10
-Ammo_Max 35
+Ammo_Max 30
 
 Safety
 Semi
 Auto
 
 Caliber 9
+Caliber_Name "7.62x39mm"
+Real_Weapon "AK-47"
 
 Range 200
-Firerate 4
+Firerate 5
 Action Trigger
 
 Player_Damage 37

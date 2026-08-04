@@ -26,9 +26,11 @@ Semi
 Auto
 
 Caliber 1
+Caliber_Name "5.56x45mm NATO"
+Real_Weapon "FN SCAR-L"
 
 Range 200
-Firerate 7
+Firerate 5
 Action Trigger
 
 Player_Damage 40

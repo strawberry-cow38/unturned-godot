@@ -21,6 +21,8 @@ Safety
 Semi
 
 Caliber 6
+Caliber_Name ".357 Magnum"
+Real_Weapon "Colt Python"
 
 Range 100
 Firerate 10

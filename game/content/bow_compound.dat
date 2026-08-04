@@ -23,6 +23,8 @@ Ammo_Max 1
 Semi
 
 Caliber 15
+Caliber_Name "Arrow"
+Real_Weapon "Compound Bow"
 
 Range 200
 Firerate 50

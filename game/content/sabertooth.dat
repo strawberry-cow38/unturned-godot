@@ -19,12 +19,14 @@ Hook_Grip
 Hook_Barrel
 
 Ammo_Min 2
-Ammo_Max 10
+Ammo_Max 20
 
 Safety
 Semi
 
 Caliber 22
+Caliber_Name "7.62x51mm NATO"
+Real_Weapon "M39 EMR"
 
 Range 250
 Firerate 10

@@ -19,6 +19,8 @@ Safety
 Semi
 
 Caliber 19
+Caliber_Name ".50 AE"
+Real_Weapon "IMI Desert Eagle"
 
 Range 125
 Firerate 10

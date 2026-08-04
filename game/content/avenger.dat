@@ -22,6 +22,8 @@ Safety
 Semi
 
 Caliber 23
+Caliber_Name ".40 S&W"
+Real_Weapon "Beretta 96"
 
 Range 100
 Firerate 4

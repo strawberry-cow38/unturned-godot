@@ -19,12 +19,14 @@ Hook_Grip
 Hook_Barrel
 
 Ammo_Min 1
-Ammo_Max 7
+Ammo_Max 10
 
 Safety
 Semi
 
 Caliber 11
+Caliber_Name "7.62x54mmR"
+Real_Weapon "SVD Dragunov"
 
 Range 250
 Firerate 13

@@ -24,6 +24,8 @@ Safety
 Semi
 
 Caliber 20
+Caliber_Name "Rocket"
+Real_Weapon "Rocket Launcher"
 
 Firerate 50
 Replace 0.5

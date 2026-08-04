@@ -19,12 +19,14 @@ Hook_Grip
 Hook_Barrel
 
 Ammo_Min 30
-Ammo_Max 150
+Ammo_Max 200
 
 Safety
 Auto
 
 Caliber 12
+Caliber_Name "5.56x45mm NATO"
+Real_Weapon "FN M249 SAW"
 
 Equipable_Movement_Speed_Multiplier 0.95
 

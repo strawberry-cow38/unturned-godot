@@ -24,6 +24,8 @@ Safety
 Semi
 
 Caliber 8
+Caliber_Name "12 Gauge"
+Real_Weapon "Mossberg 500"
 
 Range 35
 Firerate 40

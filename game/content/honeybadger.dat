@@ -26,9 +26,11 @@ Semi
 Auto
 
 Caliber 1
+Caliber_Name ".300 AAC Blackout"
+Real_Weapon "AAC Honey Badger PDW"
 
 Range 125
-Firerate 4
+Firerate 5
 Action Trigger
 
 Player_Damage 40

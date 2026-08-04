@@ -25,6 +25,8 @@ Safety
 Semi
 
 Caliber 18
+Caliber_Name ".22 LR"
+Real_Weapon "Ruger 10/22 Carbine"
 
 Range 200
 Firerate 4

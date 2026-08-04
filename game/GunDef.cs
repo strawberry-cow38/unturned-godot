@@ -26,6 +26,16 @@ namespace UnturnedGodot
         public int AmmoMax;
         public int MagazineId;   // .dat Magazine: the default magazine item id
         public int Caliber;      // .dat Caliber: mags with a matching caliber can be loaded
+        // The REAL-WORLD cartridge, and the real firearm the gun is modelled on. Separate from Caliber above, which is
+        // Unturned's abstract magazine-compatibility GROUP -- the two are different axes and must not be conflated: the
+        // Mosin (schofield, caliber 5), the SVD (snayperskya, 11) and the PKM (nykorev, 10) all fire 7.62x54mmR but sit
+        // in three different groups, because a stripper clip, a box mag and a belt are not interchangeable. Conversely
+        // group 1 holds both 5.56 rifles and the .300 BLK honeybadger -- which is correct, not a bug: .300 BLK is 5.56
+        // necked up and feeds from the same STANAG magazines.
+        // Sourced per-gun from the wiki's Trivia section (master's instruction), recorded here rather than inferred so
+        // the next person does not have to re-derive which real weapon each is based on.
+        public string CaliberName;   // .dat Caliber_Name: "5.56x45mm NATO", "12 Gauge", ...
+        public string RealWeapon;    // .dat Real_Weapon:  "Colt AR-15", "Mossberg 500", ...
         // Per-shot rechamber (source ItemGunAsset): Bolt & Pump guns must CYCLE the action (bolt-cycle / pump) after each shot
         // before they can fire, aim or reload again. RechamberAfterShotCount 0 = self-loading (semi/auto). Delay = seconds after
         // the shot before the "Hammer" (bolt-cycle) animation plays.
@@ -69,6 +79,8 @@ namespace UnturnedGodot
                 AmmoMax = d.ParseInt32("Ammo_Max", 30),
                 MagazineId = d.ParseInt32("Magazine", 0),   // default magazine item id (eaglefire/maplestrike = 6, the Military STANAG)
                 Caliber = d.ParseInt32("Caliber", 0),       // which magazines fit: a mag's caliber must match (eaglefire caliber 1)
+                CaliberName = d.GetString("Caliber_Name"),  // real cartridge; null for anything not yet tagged
+                RealWeapon = d.GetString("Real_Weapon"),
                 Pellets = d.ParseInt32("Pellets", 1),   // staged into the shotgun's .dat from its Shells_2 mag (8)
                 SpreadAngleDegrees = d.ParseFloat("Spread_Angle_Degrees"),
                 SpreadAim = d.ParseFloat("Spread_Aim", 1f),

@@ -25,6 +25,8 @@ Safety
 Auto
 
 Caliber 10
+Caliber_Name "7.62x54mmR"
+Real_Weapon "PKM"
 
 Equipable_Movement_Speed_Multiplier 0.95
 

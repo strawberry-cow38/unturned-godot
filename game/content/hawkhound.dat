@@ -19,12 +19,14 @@ Hook_Grip
 Hook_Barrel
 
 Ammo_Min 1
-Ammo_Max 8
+Ammo_Max 10
 
 Safety
 Semi
 
 Caliber 7
+Caliber_Name ".308 Winchester"
+Real_Weapon "Ruger Gunsite Scout"
 
 Range 200
 Firerate 50

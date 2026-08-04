@@ -17,6 +17,8 @@ Ammo_Max 1
 Semi
 
 Caliber 15
+Caliber_Name "Arrow"
+Real_Weapon "Bow"
 
 Range 130
 Firerate 50

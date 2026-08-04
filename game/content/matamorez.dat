@@ -19,16 +19,18 @@ Hook_Tactical
 Hook_Grip
 
 Ammo_Min 6
-Ammo_Max 17
+Ammo_Max 20
 
 Safety
 Semi
 Auto
 
 Caliber 21
+Caliber_Name "9x39mm"
+Real_Weapon "VSS Vintorez"
 
 Range 300
-Firerate 8
+Firerate 6
 Action Trigger
 
 Player_Damage 70

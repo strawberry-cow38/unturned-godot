@@ -25,6 +25,8 @@ Safety
 Semi
 
 Caliber 5
+Caliber_Name "7.62x54mmR"
+Real_Weapon "Mosin-Nagant"
 
 Range 200
 Firerate 50

@@ -24,6 +24,8 @@ Safety
 Semi
 
 Caliber 14
+Caliber_Name "Railgun Slug"
+Real_Weapon "Rorsch MK1 (fictional)"
 
 Range 300
 Firerate 50

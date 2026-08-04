@@ -25,6 +25,8 @@ Safety
 Semi
 
 Caliber 15
+Caliber_Name "Bolt"
+Real_Weapon "Crossbow"
 
 Range 200
 Firerate 50

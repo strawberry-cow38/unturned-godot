@@ -22,7 +22,10 @@ Safety
 Semi
 
 Caliber 16
+Caliber_Name "20 Gauge"
+Real_Weapon "Sawed-off KAC Masterkey"
 
+Pellets 8
 Range 20
 Firerate 5
 Action Break

@@ -18,12 +18,14 @@ Hook_Tactical
 Hook_Grip
 
 Ammo_Min 1
-Ammo_Max 6
+Ammo_Max 5
 
 Safety
 Semi
 
 Caliber 2
+Caliber_Name ".338 Lapua Magnum"
+Real_Weapon "PGW C14 Timberwolf"
 
 Range 300
 Firerate 50

@@ -26,6 +26,8 @@ Semi
 Bursts 3
 
 Caliber 1
+Caliber_Name "5.56x45mm NATO"
+Real_Weapon "Colt AR-15"
 
 Range 200
 Firerate 4
