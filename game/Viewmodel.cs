@@ -45,6 +45,8 @@ namespace UnturnedGodot
         Rk4Spring3 _recoilRotSpring = new Rk4Spring3(550f, 40f); // per-shot gun tilt (pitch/yaw/roll deg), springs back
         bool _moving;                       // player has movement input this frame (drives bob on/off)
         EPlayerStance _stance = EPlayerStance.STAND;   // STAND/SPRINT/CROUCH/PRONE -> bob speed + amplitude
+        bool _safe;                         // gun on SAFETY firemode -> lowered "safe" carry pose
+        float _sprintBlend, _safeBlend;     // 0..1 eased weights for the un-shouldered sprint pose + the lowered safety pose
         float _blendedSway = 1f;            // blendedViewmodelSwayMultiplier: 1 hip -> 0.1 aim, eased at 16/s
         bool _reloading;      // true while the reload clip plays (blocks ADS)
         string _reloadClip = "Gun_Reload";   // per-gun reload clip ({Gun}_Reload), set in _Ready; falls back to Gun_Reload
@@ -275,6 +277,12 @@ namespace UnturnedGodot
             _ladder = new ScopeLadder2D();
             _ladderLayer.AddChild(_ladder);
             AddChild(_ladderLayer);
+
+            if (System.Environment.GetEnvironmentVariable("UG_POSE") is string _pz)   // render-harness: force a stance/firemode pose (no PlayerController in the --vm harness to drive it)
+            {
+                if (_pz == "sprint") { _stance = EPlayerStance.SPRINT; _moving = true; }
+                else if (_pz == "safe") _safe = true;
+            }
 
             _arms = RiggedCharacter.Build("res://content/rig.json", new Color(0.82f, 0.66f, 0.52f), armsOnly: true);
             if (_arms != null)
@@ -567,7 +575,7 @@ namespace UnturnedGodot
 
         // Driven each physics frame by PlayerController: whether the player is moving + their stance, so the
         // walk bob uses the right frequency (SPEED_*) + amplitude (BOB_*) and switches off when standing still.
-        public void SetLocomotion(bool moving, EPlayerStance stance) { _moving = moving; _stance = stance; }
+        public void SetLocomotion(bool moving, EPlayerStance stance, bool safe = false) { _moving = moving; _stance = stance; _safe = safe; }
 
         public void PlayDryFire() { _drySnd?.Play(); }   // hammer click when the trigger's pulled on empty
 
@@ -1068,6 +1076,21 @@ namespace UnturnedGodot
                 hipPos -= mCam * _aimAlpha;                           // slide arms so the aim hook -> camera origin
             }
             _arms.Position = hipPos + vmOffset + TuneOffset;   // + the live uniform tune offset (ESC sliders); per-gun offsets removed
+            // ---- SPRINT + SAFETY weapon poses (master). Unturned lowers/un-shoulders the weapon while sprinting (procedural
+            // TILT/BOB in PlayerAnimator, no baked clip in our lib) and drops it muzzle-down on the SAFETY firemode. Procedural
+            // here: ease a weight, then tilt+lower the whole arms root. Both fade out as you aim (can't ADS un-shouldered).
+            bool _poseOk = EquipDone && !_reloading && !_inspecting && !_hammering;
+            _sprintBlend = Mathf.Lerp(_sprintBlend, (_poseOk && _stance == EPlayerStance.SPRINT && _moving) ? 1f - _aimAlpha : 0f, 10f * (float)delta);
+            _safeBlend   = Mathf.Lerp(_safeBlend,   (_poseOk && _safe) ? 1f - _aimAlpha : 0f, 10f * (float)delta);
+            if (_sprintBlend > 0.001f || _safeBlend > 0.001f)
+            {
+                // POSITION-dominant (rotating the arms ROOT swings the gun far, since it pivots at the root not the grip -- big
+                // angles threw the gun out of frame). Drop + pull in for the lowered look; only a small tilt on top.
+                _arms.Position += new Vector3(0.03f, -0.10f, 0.05f) * _sprintBlend + new Vector3(0.01f, -0.10f, 0.04f) * _safeBlend;
+                Vector3 _e = new Vector3(9f, 5f, 7f) * _sprintBlend + new Vector3(20f, 4f, 0f) * _safeBlend;   // sprint = slight down/side tilt; safety = muzzle-down (bigger pitch + drop). Angles master-tunable in-game.
+                _arms.Basis = Basis.FromEuler(new Vector3(Mathf.DegToRad(_e.X), Mathf.DegToRad(_e.Y), Mathf.DegToRad(_e.Z)));
+            }
+            else if (_arms.Basis != Basis.Identity) _arms.Basis = Basis.Identity;   // no pose -> upright (nothing else rotates the arms root)
             if (_cam != null) _cam.Fov = TuneFov;              // live-tunable viewmodel FOV (ESC sliders); ADS doesn't change VM FOV
 
             // reload plays the real Gun_Reload clip (see SetReloading) — the base pose IS the reload motion, no dip.
