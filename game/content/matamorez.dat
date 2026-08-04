@@ -30,7 +30,7 @@ Caliber_Name "9x39mm"
 Real_Weapon "VSS Vintorez"
 
 Range 300
-Firerate 6
+Firerate 4
 Action Trigger
 
 Player_Damage 70
