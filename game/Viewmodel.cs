@@ -404,13 +404,13 @@ namespace UnturnedGodot
                             "render_mode unshaded, cull_disabled, shadows_disabled;\n" +
                             "uniform sampler2D scope_tex : source_color, filter_linear;\n" +
                             "void vertex() { MODELVIEW_MATRIX = VIEW_MATRIX * mat4(INV_VIEW_MATRIX[0], INV_VIEW_MATRIX[1], INV_VIEW_MATRIX[2], MODEL_MATRIX[3]); }\n" +
-                            "void fragment() { vec2 d = UV - vec2(0.5); if (length(d) > 0.5) discard; ALBEDO = texture(scope_tex, UV).rgb; }\n" };
+                            "void fragment() { vec2 p = (UV - vec2(0.5)) * 2.0; float a = atan(p.y, p.x); float seg = 0.5235988; float dd = cos(floor(0.5 + a/seg) * seg - a) * length(p); if (dd > 0.95) discard; ALBEDO = texture(scope_tex, UV).rgb; }\n" };   // 12-gon mask to MATCH the scope ring's 12 sides (master); apothem 0.95, seg = 2pi/12
                         var lensMat = new ShaderMaterial { Shader = lensShader };
                         lensMat.SetShaderParameter("scope_tex", _scopeVp.GetTexture());
                         _scopeLens = new MeshInstance3D { Name = "ScopeLens", Mesh = new QuadMesh { Size = new Vector2(0.11f, 0.11f) }, MaterialOverride = lensMat, Visible = false, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off };   // sized to fill the scope's BORE (inner hole), not halo around the whole ring; master-tunable
                         var _iron = mi.GetNodeOrNull<MeshInstance3D>("IronSights");
                         (_iron ?? mi).AddChild(_scopeLens);
-                        _scopeLens.Position = new Vector3(0f, -0.14f, -0.06f);   // aug scope tube axis (Z=-0.06 up); Y=-0.14 frames it in the scope body (a billboard grows as it nears the eye, so -0.18 filled the screen). Round mask makes depth free -> master-tunable (toward eye=-Y=bigger, into tube=+Y=smaller)
+                        _scopeLens.Position = new Vector3(0f, -0.05f, -0.06f);   // aug scope tube axis (Z=-0.06 up); Y=-0.05 = further BACK in the tube (master; barrel is +Y so +Y = deeper/back, smaller via billboard perspective). depth + size master-tunable
                     }   // per-gun sight mount (extracted); eaglefire/maplestrike keep the tuned hardcoded pos
 
                     // Real default Magazine (item 6 = Military_30, GUID dbfb1d0d) — item.prefab Model_0 from
