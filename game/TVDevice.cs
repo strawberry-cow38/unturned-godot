@@ -86,6 +86,15 @@ namespace UnturnedGodot
         // off the model rather than hardcoded from a comment. The fallback is Television_1's texel, rgb 53,53,53.
         const float DefaultGlassLevel = 53f / 255f;
         float _glassLevel = DefaultGlassLevel;
+
+        // CRT VERTICAL HOLD slipping (master: "add a small chance every x seconds to do a vertical de-sync scroll, for
+        // x ticks, before correcting itself"). The picture rolls through the frame and the hold then CATCHES, snapping
+        // it back -- so the end of the effect is a jump, not a glide. Direction is signed because a slipped hold rolls
+        // whichever way the field rate is off, and always rolling the same way looks scripted after the second time.
+        const float DesyncMeanGap = 45f;                     // average seconds between slips, per set
+        const float DesyncMin = 0.45f, DesyncMax = 1.30f;    // ~22-65 ticks at 50 Hz
+        const float DesyncSpeedMin = 0.8f, DesyncSpeedMax = 2.4f;   // screens per second
+        float _desyncLeft, _desyncSpeed, _desyncOffset;
         Vector3 _screenRightLocal = Vector3.Right, _screenUpLocal = Vector3.Up;   // the screen's OWN in-plane axes (Reproject's ax/ay)
 
         Vector3 _screenCenterLocal, _screenNormalLocal;   // stashed for the light placement + the render harness
@@ -364,6 +373,7 @@ namespace UnturnedGodot
             {
                 _warming = false; _warm = 0f;
                 _tone?.Stop();
+                ResetDesync();
                 if (ShouldCollapse(_isCrt, _broken, _screenShot) && _screen != null) { _collapse = 0f; ApplyCollapse(); return; }
                 EndCollapse();
             }
@@ -374,6 +384,30 @@ namespace UnturnedGodot
         /// because on a box with no Unturned install a bare TVDevice has no screen mesh, so the branch in Refresh that
         /// consults this can never be reached by a test and the POLICY would go unpinned.</summary>
         internal static bool ShouldCollapse(bool isCrt, bool broken, bool screenShot) => isCrt && !broken && !screenShot;
+
+        // ---- vertical hold ----------------------------------------------------------------------------------------
+        /// <summary>Chance of a slip THIS FRAME, given the frame time and the average gap between slips. Expressed as
+        /// a rate rather than a flat per-frame roll on purpose: a flat chance makes the effect happen twice as often
+        /// on a 120 fps machine as on a 60 fps one, and the only symptom is "the TVs seem worse on my PC".</summary>
+        internal static float DesyncChance(float dt, float meanGap)
+            => meanGap <= 0f ? 0f : Mathf.Clamp(dt / meanGap, 0f, 1f);
+
+        /// <summary>Only a lit TUBE loses vertical hold, and only when it is not already slipping.</summary>
+        internal static bool DesyncCanFire(bool isCrt, bool lit, float running) => isCrt && lit && running <= 0f;
+
+        /// <summary>Advance a slip: returns the seconds left and the new V offset. When the clock runs out the hold
+        /// CATCHES -- offset snaps to exactly 0 (master: "before correcting itself"), which is what a vertical hold
+        /// locking actually does; easing it back would read as the picture drifting home.
+        ///
+        /// The offset is wrapped into [0,1) rather than left to accumulate. An unbounded offset works fine for a while
+        /// and then quietly loses precision after a long enough session, which is the sort of thing that shows up as
+        /// "the roll gets choppy on servers that have been up for days" and is never traced back to here.</summary>
+        internal static (float Left, float Offset) DesyncStep(float left, float offset, float speed, float dt)
+        {
+            float next = left - dt;
+            if (next <= 0f) return (0f, 0f);
+            return (next, Mathf.PosMod(offset + speed * dt, 1f));
+        }
 
         /// <summary>Where the collapse is at <paramref name="t"/> seconds in: how much of the screen's height and width
         /// are left, and how bright it is. Pure, because everything interesting about this effect is the SHAPE of those
@@ -422,6 +456,33 @@ namespace UnturnedGodot
             if (_light != null) { _light.LightEnergy = _lightEnergy * level; _light.Visible = level > 0f; }
             if (_coneMat != null) _coneMat.AlbedoColor = new Color(0.85f, 0.9f, 1.0f, ConeAlpha * level);
             if (_cone != null) _cone.Visible = level > 0f;
+        }
+
+        void TickDesync(float dt)
+        {
+            if (_desyncLeft > 0f)
+            {
+                (_desyncLeft, _desyncOffset) = DesyncStep(_desyncLeft, _desyncOffset, _desyncSpeed, dt);
+                ApplyDesync();
+                return;
+            }
+            if (!DesyncCanFire(_isCrt, _lit, _desyncLeft)) return;
+            if (GD.Randf() >= DesyncChance(dt, DesyncMeanGap)) return;
+            _desyncLeft = (float)GD.RandRange(DesyncMin, DesyncMax);
+            _desyncSpeed = (float)GD.RandRange(DesyncSpeedMin, DesyncSpeedMax) * (GD.Randf() < 0.5f ? -1f : 1f);
+        }
+
+        void ApplyDesync()
+        {
+            if (_screenMat != null) _screenMat.Uv1Offset = new Vector3(0f, _desyncOffset, 0f);
+        }
+
+        /// <summary>Drop any slip in progress and put the picture back in frame. A set going dark mid-roll must not
+        /// come back on still rolling -- it would look like the effect had latched rather than fired.</summary>
+        void ResetDesync()
+        {
+            _desyncLeft = 0f; _desyncOffset = 0f;
+            ApplyDesync();
         }
 
         /// <summary>Stop the collapse and put the screen node back the way it was -- called both when it finishes and
@@ -481,6 +542,7 @@ namespace UnturnedGodot
             if (_lit && _isCrt)
             {
                 _flickerPhase = Mathf.Wrap(_flickerPhase + (float)delta * FlickerHz, 0f, 1f);
+                TickDesync((float)delta);
                 ApplyLevels();
             }
             if (!_warming) return;
@@ -509,6 +571,14 @@ namespace UnturnedGodot
             AlbedoColor = Colors.Black,                                       // starts dark; ApplyLevels raises it
             TextureFilter = BaseMaterial3D.TextureFilterEnum.Linear,          // SMPTE is a real image, not a palette texel
             CullMode = BaseMaterial3D.CullModeEnum.Disabled,                  // ripped mesh: winding may face either way
+            TextureRepeat = true,                                             // REQUIRED by the vertical-hold roll: the
+                                                                              //  slip drives Uv1Offset past the edge, and
+                                                                              //  on clamp that smears the top row down the
+                                                                              //  screen instead of wrapping the picture.
+                                                                              //  It is also the default, which is exactly
+                                                                              //  why it is written down -- nothing else
+                                                                              //  here would show which setting the effect
+                                                                              //  is quietly depending on.
         };
 
         /// <summary>Screen brightness -> AlbedoColor. Grey, so the SMPTE bars keep their own hues and only their
@@ -583,6 +653,10 @@ namespace UnturnedGodot
         public bool DebugLit => _lit;      // last EFFECTIVE state actually applied -- survives a prop with no meshes
         public bool DebugBroken => _broken;
         public bool DebugScreenShot => _screenShot;
+        public float DebugDesyncOffset => _desyncOffset;
+        public bool DebugDesyncRolling => _desyncLeft > 0f;
+        /// <summary>Force a vertical-hold slip, so the tick loop can be driven without waiting on a random roll.</summary>
+        public void DebugForceDesync(float seconds, float speed) { _desyncLeft = seconds; _desyncSpeed = speed; }
         public bool DebugScreenOk => _screen != null;
         /// <summary>Is the screen taking NO lighting? The washout fix depends on this being true, and it is the kind
         /// of property that a screenshot cannot distinguish from "the light happens to be dim right now".</summary>
