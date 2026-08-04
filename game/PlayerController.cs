@@ -39,6 +39,7 @@ namespace UnturnedGodot
         Quaternion _flinch = Quaternion.Identity;   // PlayerLook.flinchLocalRotation: camera kick, recovers at 4/s
 
         [Export] public float MouseSensitivity = 0.12f;
+        [Export] public float AdsSensScale = 0.65f;   // mouse-sens multiplier at full ADS for NON-scoped aim (iron sights); a scoped gun uses 1/zoom instead (master: reduce sens when adsing). Tunable.
         public int Ammo = 30;
         // infAmmo (master): the held gun's magazine refills after a short lull in firing. Deliberately NOT
         // instant -- topping up per-shot would hide every reload and make firerate the only limit, so the gun
@@ -1693,7 +1694,7 @@ namespace UnturnedGodot
         // Scope (PiP): the ScopeOverlay reads these each frame -- the look camera's ADS blend and the per-gun
         // magnification (>1 only for the augewehr for now; scoped view only renders while a scope gun is aimed).
         public float CurrentAimAlpha => _viewmodel?.AimAlpha ?? 0f;
-        public float ScopeMag => (HasGunOut && _viewmodel?.GunName == "augewehr") ? 3.5f : 0f;
+        public float ScopeMag => (HasGunOut && _viewmodel?.GunName == "augewehr") ? 4f : 0f;   // aug is a 4x scope (fov 22.5 = 90/4)
 
         // Equip a consumable to the hands from the inventory: hold its model; LMB to eat/drink.
         // captureRevert=false only for the auto-re-equip of the NEXT of the same stack (keeps the original revert target).
@@ -3550,8 +3551,13 @@ namespace UnturnedGodot
                 }
                 else if (_driving == null && _riding == null)
                 {
-                    RotateY(Mathf.DegToRad(-mm.Relative.X * MouseSensitivity));
-                    _pitchDeg = Mathf.Clamp(_pitchDeg - mm.Relative.Y * MouseSensitivity, -89f, 89f);
+                    // Reduce mouse sensitivity while ADS'ing (master): scale toward AdsSensScale for iron sights, or 1/zoom for a
+                    // scoped gun (a 4x scope magnifies the view 4x, so the same mouse move should turn 4x less to stay controllable).
+                    float aim = _viewmodel?.AimAlpha ?? 0f;
+                    float sens = MouseSensitivity;
+                    if (aim > 0f) { float mag = ScopeMag; sens *= Mathf.Lerp(1f, mag > 1f ? 1f / mag : AdsSensScale, aim); }
+                    RotateY(Mathf.DegToRad(-mm.Relative.X * sens));
+                    _pitchDeg = Mathf.Clamp(_pitchDeg - mm.Relative.Y * sens, -89f, 89f);
                     _cam.RotationDegrees = new Vector3(_pitchDeg, 0f, 0f);
                 }
             }
