@@ -1,8 +1,20 @@
-import UnityPy, os, struct, uuid, collections
+import UnityPy, os, struct, uuid, collections, sys
 import numpy as np
+# MAP-AWARE harvestable RESOURCES bake (Maps/<map>/Terrain/Trees.dat): trees, bushes, ore rocks, mushrooms...
+# version-8 flat format: GUID + point + EulerXYZ + scale + isGenerated. Bakes each ResourceAsset's `Resource`
+# prefab Model_0 subtree (trunk + Foliage_0 leaves as SEPARATE parts -- bark vs leaf need different textures)
+# from core.masterbundle into content/<OUT>/<name>_<i>.obj + _tex.png, lists them in resources.txt
+# ("<name> <partCount> <holiday>"), and exports per-spawn (pos, EulerXYZ, scale)=9 floats -> <name>.bin.
+# The tree ASSETS are SHARED across maps (Pine_0/Maple_0/...); only the Trees.dat spawn set differs -- Washington
+# is 87% pine, PEI is maple-heavy. Resolves spawn GUIDs via the shared table; UNKNOWN GUIDs are reported + skipped.
+#   python resource_extract.py Washington   -> content\resources_washington\
+#   python resource_extract.py PEI          -> content\resources\  (back-compat)
+MAP   = sys.argv[1] if len(sys.argv) > 1 else "PEI"
 BUND  = r"C:\Program Files (x86)\Steam\steamapps\common\Unturned\Bundles\core.masterbundle"
-TREES = r"C:\Program Files (x86)\Steam\steamapps\common\Unturned\Maps\PEI\Terrain\Trees.dat"
-OUT   = r"C:\claude-workspace\unturned-godot\game\content\resources"
+TREES = rf"C:\Program Files (x86)\Steam\steamapps\common\Unturned\Maps\{MAP}\Terrain\Trees.dat"
+OUT   = (r"C:\claude-workspace\unturned-godot\game\content\resources"
+         if MAP.upper() == "PEI" else
+         rf"C:\claude-workspace\unturned-godot\game\content\resources_{MAP.lower()}")
 os.makedirs(OUT, exist_ok=True)
 
 GUID2NAME = {
@@ -21,6 +33,7 @@ GUID2NAME = {
  "58ff3047e8ec4ccbbc2352faf529acef":"Clay_4","74192f26950545d8aabc0e84a2372f9e":"Clay_3",
  "f0707c1712804e6fbe1a7d925cb33ca4":"Ornament_0_XMAS",
 }
+HOLIDAY = {"Cane_00":"CHRISTMAS", "Snow_Pile_00":"CHRISTMAS", "Ornament_0_XMAS":"CHRISTMAS"}   # else NONE
 env = UnityPy.load(BUND)
 by_id = {o.path_id: o for o in env.objects}
 cont  = {p.lower(): o for p, o in env.container.items()}
@@ -92,12 +105,33 @@ def bake_one(mesh, M, path):
     with open(path, "w") as f:
         for (x, y, z) in V: f.write(f"v {x} {y} {z}\n")
         for (u, v) in VT: f.write(f"vt {u} {v}\n")
-        for (a, b, c) in VN: f.write(f"vn {a} {b} {c}\n")   # <-- the missing lines that broke the editor importer
+        for (a, b, c) in VN: f.write(f"vn {a} {b} {c}\n")   # normals: the missing lines that broke the editor importer
         for face in F: f.write("f " + " ".join(face) + "\n")
     return len(V)
 
+# 1) parse Trees.dat FIRST -> per-name spawn rows, so we only bake the resources THIS map actually uses
+d = open(TREES, "rb").read(); p = [0]
+def u8():
+    v = d[p[0]]; p[0]+=1; return v
+def u16():
+    v = struct.unpack_from("<H", d, p[0])[0]; p[0]+=2; return v
+def i32():
+    v = struct.unpack_from("<i", d, p[0])[0]; p[0]+=4; return v
+def f32():
+    v = struct.unpack_from("<f", d, p[0])[0]; p[0]+=4; return v
+u8(); cnt = i32(); buckets = collections.defaultdict(list); unknown = collections.Counter()
+for _ in range(cnt):
+    n = u16(); g = d[p[0]:p[0]+n]; p[0]+=n
+    row = tuple(f32() for _ in range(9)); u8()
+    nm = GUID2NAME.get(str(uuid.UUID(bytes_le=g)).replace("-", ""))
+    if nm: buckets[nm].append(row)
+    else:  unknown[str(uuid.UUID(bytes_le=g)).replace("-", "")] += 1
+if unknown:
+    print(f"UNKNOWN resource GUIDs (skipped, {sum(unknown.values())} spawns): {dict(unknown)}")
+
+# 2) bake meshes for the USED resources only
 manifest = []
-for name in dict.fromkeys(GUID2NAME.values()):
+for name in buckets:
     go = cont.get(f"assets/coremasterbundle/trees/{name.lower()}/resource.prefab")
     if not go:
         print(f"{name}: NO prefab -- skip"); continue
@@ -110,35 +144,21 @@ for name in dict.fromkeys(GUID2NAME.values()):
             if ch: collect(ch, np.eye(4), parts)
     np_ = 0
     for i, (mesh, M, tex) in enumerate(parts):
-        nv = bake_one(mesh, M, os.path.join(OUT, f"{name}_{i}.obj"))
+        bake_one(mesh, M, os.path.join(OUT, f"{name}_{i}.obj"))
         if tex is not None:
             try: tex.read().image.save(os.path.join(OUT, f"{name}_{i}_tex.png"))
             except Exception as e: print(f"   {name}_{i} tex err {e}")
         np_ += 1
     manifest.append((name, np_))
-    print(f"{name}: {np_} parts")
+    print(f"{name}: {np_} parts, {len(buckets[name])} spawns")
 
+# 3) resources.txt (name partCount holiday) + per-name instance .bin (9 floats each)
+baked = {n for n, _ in manifest}
 with open(os.path.join(OUT, "resources.txt"), "w") as f:
-    for name, n in manifest: f.write(f"{name} {n}\n")
-
-# instances per resource: 9 floats (pos, euler, scale)
-d = open(TREES, "rb").read(); p = [0]
-def u8():
-    v = d[p[0]]; p[0]+=1; return v
-def u16():
-    v = struct.unpack_from("<H", d, p[0])[0]; p[0]+=2; return v
-def i32():
-    v = struct.unpack_from("<i", d, p[0])[0]; p[0]+=4; return v
-def f32():
-    v = struct.unpack_from("<f", d, p[0])[0]; p[0]+=4; return v
-u8(); cnt = i32(); buckets = collections.defaultdict(list)
-for _ in range(cnt):
-    n = u16(); g = d[p[0]:p[0]+n]; p[0]+=n
-    row = tuple(f32() for _ in range(9)); u8()
-    nm = GUID2NAME.get(str(uuid.UUID(bytes_le=g)).replace("-", ""))
-    if nm: buckets[nm].append(row)
+    for name, n in manifest: f.write(f"{name} {n} {HOLIDAY.get(name, 'NONE')}\n")
 for nm, rows in buckets.items():
+    if nm not in baked: continue   # a NO-prefab resource: has spawns but no mesh -> don't emit a dangling .bin
     with open(os.path.join(OUT, nm + ".bin"), "wb") as f:
         f.write(struct.pack("<i", len(rows)))
         for r in rows: f.write(struct.pack("<9f", *r))
-print("instances:", sum(len(r) for r in buckets.values()), "trees;", len(manifest), "resources with meshes")
+print(f"{MAP}: {sum(len(r) for r in buckets.values())} spawns; {len(manifest)} resources with meshes -> {OUT}")

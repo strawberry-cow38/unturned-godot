@@ -23,6 +23,10 @@ namespace UnturnedGodot
         /// instance registry (indices for the wire) and tree trunk colliders (the sim needs them) remain.</summary>
         public bool VisualInstances = true;
 
+        // Set by Main per map: PEI -> "resources", others -> "resources_<key>". The tree/rock ASSETS are shared
+        // across maps; only the baked spawn set differs (Washington = 87% pine, PEI = maple-heavy).
+        public static string MapDir = "resources";
+
         sealed class InstanceRec
         {
             public readonly List<(MultiMesh Mm, int Slot)> Slots = new();   // one entry per part-mesh
@@ -58,7 +62,7 @@ namespace UnturnedGodot
 
         public void LoadResources(string activeHoliday)
         {
-            string dir = ProjectSettings.GlobalizePath("res://content/resources/");
+            string dir = ProjectSettings.GlobalizePath($"res://content/{MapDir}/");
             string manifest = dir + "resources.txt";
             if (!File.Exists(manifest)) { GD.Print("[resources] no resources.txt -- skipping"); return; }
             // UG_NOLOD=1 keeps the old hardcoded 320/180 -- the A/B control for what retail's distances changed.
