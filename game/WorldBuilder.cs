@@ -834,6 +834,18 @@ namespace UnturnedGodot
                 converted++;
                 return true;
             }
+            // A readable note placement -> a NoteBody (same transform math as PlaceObject) that renders the note mesh
+            // and carries its text for the look-focus + F read. Playable-only (see the call site).
+            void PlaceNote(string[] p, string meshName, string noteName, string[] lines)
+            {
+                if (!cache.TryGetValue(meshName, out var m)) { m = ObjMesh.Load(dir + meshName + ".obj"); cache[meshName] = m; }
+                if (m == null) { PlaceObject(p, meshName, -1); return; }   // mesh missing -> at least place the decoration
+                float px = F(p[1]), py = F(p[2]), pz = F(p[3]), ex = F(p[4]), ey = F(p[5]), ez = F(p[6]), sx = F(p[7]), sy = F(p[8]), sz = F(p[9]);
+                var rot = new Basis(new Vector3(0, 1, 0), Mathf.DegToRad(180f - ey)) * new Basis(new Vector3(1, 0, 0), Mathf.DegToRad(ex)) * new Basis(new Vector3(0, 0, 1), Mathf.DegToRad(-ez));
+                float cull = LodTable.CullDistance(p[0], LodTable.SourceFov); if (cull <= 0f) cull = 320f;
+                NoteBody.Spawn(root, m, new Transform3D(rot.Scaled(new Vector3(sx, sy, sz)), new Vector3(px, py, -pz)), noteName, lines, cull, MatFor(p.Length >= 11 ? p[10] : meshName));
+                placed++;
+            }
             StationFuel.Reset();   // fresh shared station tanks for this world build (before any gas pumps attach)
             foreach (var line in System.IO.File.ReadLines(dir + mapPlace))
             {
@@ -848,6 +860,7 @@ namespace UnturnedGodot
                     if (ph != activeHoliday) { holidaySkipped++; continue; }                          // out-of-season holiday prop (index stays reserved+unbuilt)
                 }
                 if (TryContainer(p)) continue;   // registered map prop -> lootable container (SP), skip the decoration mesh (no destructible overlap)
+                if (mode == WorldMode.Playable && NoteTexts.TryGet(p[0], out var noteName, out var noteLines)) { PlaceNote(p, name, noteName, noteLines); continue; }   // readable lore note -> a NoteBody (mesh + look-focus, F reads it); non-Playable just shows the mesh
                 PlaceObject(p, name, destIdx);
             }
             destField.SetCount(destN);   // reserve the whole deterministic index space (built + unbuilt holiday slots)

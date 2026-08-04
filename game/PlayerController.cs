@@ -145,6 +145,8 @@ namespace UnturnedGodot
         Vehicle _focusVehicle;  // the vehicle the player is LOOKING AT (outlined + info panel), enter target for E
         Deployable _focusDeployable;  // the placed deployable (generator) the player is LOOKING AT (outlined + HP/fuel billboard)
         Door _focusDoor;              // the door being looked at -> F toggles it
+        NoteBody _focusNote;          // the readable lore note being looked at -> F reads it
+        NoteReader _noteReader;       // the note reading panel (created in _Ready alongside the map)
         ObjectDoor _focusObjectDoor;   // an openable prop door (fridge etc.) being looked at -> F toggles it
         Bed _focusBed;                // the bed being looked at -> F claims it as this player's respawn point
         /// <summary>Identity used for door/bed ownership. SP is a single local player; MP overwrites this
@@ -251,7 +253,7 @@ namespace UnturnedGodot
         void UpdateLookFocus()
         {
             WorldItem hitItem = null; Vehicle hitVeh = null; Deployable hitDeploy = null; GasPump hitGasPump = null; GridPowerSource hitGrid = null; FluidContainer hitFluid = null;
-            Door hitDoor = null; Bed hitBed = null; ObjectDoor hitObjectDoor = null; TVDevice hitTV = null;
+            Door hitDoor = null; Bed hitBed = null; ObjectDoor hitObjectDoor = null; TVDevice hitTV = null; NoteBody hitNote = null;
             ShelfItemBody hitShelfItem = null; StoreShelf hitShelf = null;   // shelf display item / its shelf under the look-sphere
             IPuppetFocusable hitPuppet = null;   // MP ONLY: nearest replicated car/item puppet under the look-sphere (SP hits real Vehicle/WorldItem instead)
             bool rayTerminal = false, rayShelfItem = false;   // did the RAY claim the target, and was it a shelf item? (see the arbitration below)
@@ -280,6 +282,7 @@ namespace UnturnedGodot
                     }
                 else if (rcol is Node bdn && bdn.HasMeta("objectdoor") && bdn.GetMeta("objectdoor").As<ObjectDoor>() is ObjectDoor bod && IsInstanceValid(bod)) hitObjectDoor = bod;   // issue 3: the PROP BODY collider (meta-linked by WorldBuilder.PlaceObject) resolves to its door -> look anywhere on a doored prop to toggle + whole-prop highlight, not just the leaf
                     else if (rcol is Bed rbed && IsInstanceValid(rbed)) hitBed = rbed;
+                    else if (rcol is NoteBody rnote && IsInstanceValid(rnote)) hitNote = rnote;   // readable lore note (see-through layer) -> focus + F reads it
                     else if (rcol is Deployable dep && IsInstanceValid(dep)) hitDeploy = dep;
                     else if (rcol is FluidContainer fcr && IsInstanceValid(fcr)) hitFluid = fcr;   // a placed fluid device body (solid since batch A) -> hold-F pickup
                     else if (rcol is Node grn && grn.HasMeta("gaspump") && grn.GetMeta("gaspump").As<GasPump>() is GasPump gpn && IsInstanceValid(gpn)) hitGasPump = gpn;   // gas pump collider tagged in WorldBuilder -> the fixture
@@ -296,7 +299,7 @@ namespace UnturnedGodot
                 // sphere is still allowed to speak, because picking an individual item off a shelf you are looking at
                 // is exactly what it is for. The ray chain above is else-if, so at most one of these is ever set.
                 rayTerminal = hitDoor != null || hitObjectDoor != null || hitBed != null || hitDeploy != null
-                           || hitFluid != null || hitGasPump != null || hitGrid != null || hitTV != null || rayShelfItem;
+                           || hitFluid != null || hitGasPump != null || hitGrid != null || hitTV != null || hitNote != null || rayShelfItem;
                 // 2) sphere at the ray end -> nearest ITEM (bit 7) or VEHICLE (bit 5) it overlaps is focusable
                 _lookSphereQ ??= new PhysicsShapeQueryParameters3D { Shape = new SphereShape3D { Radius = LookSphereR }, CollisionMask = WorldItem.ItemHitLayer | (1u << 5) | StoreShelf.ShelfItemHitLayer, Exclude = _lookExclude };
                 _lookSphereQ.Transform = new Transform3D(Basis.Identity, _lookEnd);
@@ -413,6 +416,12 @@ namespace UnturnedGodot
                 if (IsInstanceValid(_focusTV)) _focusTV.SetLookFocused(false);
                 _focusTV = hitTV;
                 _focusTV?.SetLookFocused(true);
+            }
+            if (hitNote != _focusNote)   // readable note look-focus: white outline, F reads it
+            {
+                if (IsInstanceValid(_focusNote)) _focusNote.SetLookFocused(false);
+                _focusNote = hitNote;
+                _focusNote?.SetLookFocused(true);
             }
             if (hitShelfItem != _focusShelfItem)   // looked-at shelf item glows (F grabs it)
             {
@@ -3600,6 +3609,8 @@ namespace UnturnedGodot
             ApplyDefaultOutfit();
             _invUI = new InventoryUI { Inv = Inventory, Player = this, Clothing = _clothing };   // P5: drop-to-slot equip drives the on-body visual through the same controller
             AddChild(_invUI);
+            _noteReader = new NoteReader();   // F reads a looked-at lore note into this panel
+            AddChild(_noteReader);
             _craftUI = new CraftingUI { Inv = Inventory, Player = this };
             AddChild(_craftUI);
             _skillsUI = new SkillsUI { Player = this };
@@ -3718,7 +3729,8 @@ namespace UnturnedGodot
             }
             else if (@event is InputEventKey { Pressed: true, Echo: false, Keycode: Key.F })   // F = INTERACT (moved off E, strawberry): exit/hitch/pickup/enter/harvest/open-crate; nothing to interact with -> inspect the held weapon. Echo:false so HOLDING F can't double-fire the hitch toggle (uncouple then instantly re-couple).
             {
-                if (_invUI != null && _invUI.IsOpen) { SaveGunState(); CloseCrate(); _invUI.Close(); Input.MouseMode = Input.MouseModeEnum.Captured; }   // F while a container inventory is open -> CLOSE it (CloseCrate swings the door shut too), same as Escape (master)
+                if (_noteReader != null && _noteReader.IsOpen) _noteReader.Close();   // F while a note is open -> close it first (same as Esc)
+                else if (_invUI != null && _invUI.IsOpen) { SaveGunState(); CloseCrate(); _invUI.Close(); Input.MouseMode = Input.MouseModeEnum.Captured; }   // F while a container inventory is open -> CLOSE it (CloseCrate swings the door shut too), same as Escape (master)
                 else if (_driving != null && !DrivingPredicted) ExitVehicle();  // hop out (SP direct exit; a Part A predicted drive falls through to the server REQUEST below)
                 else if (RequestExitPuppet()) { }                          // riding a replicated vehicle: ask the server to free the seat (C6)
                 else if (TryToggleHitch()) { }                             // on foot at a trailer hitch: couple / uncouple
@@ -3735,6 +3747,7 @@ namespace UnturnedGodot
                 else if (_focusDoor != null && IsInstanceValid(_focusDoor)) { _fHeldDoor = _focusDoor; _doorLockTimer = 0f; }   // looking at a door: F starts a HOLD -> lock/unlock (UpdateDoorLockHold); a quick TAP opens/closes it (fired on release)
                 else if (_focusObjectDoor != null && IsInstanceValid(_focusObjectDoor)) RequestToggleObjectDoor(_focusObjectDoor);   // looking at an openable prop door (fridge): F toggles it directly, no hold/lock semantics for this MVP (unlike a building Door)
                 else if (_focusTV != null && IsInstanceValid(_focusTV)) _focusTV.Toggle();   // looking at a TV: F toggles it on/off (per-TV state)
+                else if (_focusNote != null && IsInstanceValid(_focusNote)) _noteReader?.Show(_focusNote);   // looking at a readable note: F reads it
                 else if (_focusBed != null && IsInstanceValid(_focusBed)) ClaimFocusedBed();       // looking at a bed: claim it as your respawn point
                 else if (RequestHarvestNearestCrop()) { }                  // MP shell near a GROWN replicated crop: ask the server to harvest it (A4; false in SP -- no NetHarvestCrop seam)
                 else if (CropManager.NearestGrown(GlobalPosition) is CropNode grownCrop) CropManager.Harvest(grownCrop, this);  // harvest a nearby fully-grown crop (source InteractableFarm harvest)
