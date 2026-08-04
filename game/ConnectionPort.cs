@@ -22,7 +22,7 @@ namespace UnturnedGodot
         public const uint PortLayer = 1u << 8;   // wire look-ray raycasts this layer only
         const float CubeSize = 0.13f;
 
-        public IPowerDevice Owner;   // the deployable or fixture this port sits on (was Deployable; now any IPowerDevice, e.g. a gas pump)
+        public new IPowerDevice Owner;   // the deployable or fixture this port sits on (was Deployable; now any IPowerDevice, e.g. a gas pump). `new`: intentionally shadows Node.Owner (domain owner, not the scene-tree owner)
         public DeployableDef.PortKind Kind;
         public DeployableDef.SwitchRole Role;   // a switch trigger port (TurnOn/TurnOff), else None
         public float Watts;         // output: produced; consumer: drawn; passthrough: unused

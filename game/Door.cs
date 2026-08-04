@@ -30,7 +30,7 @@ namespace UnturnedGodot
 
         public bool IsOpen => _state.IsOpen;
         public bool IsLocked => _state.Locked;
-        public ulong Owner => _state.Owner;
+        public new ulong Owner => _state.Owner;   // `new`: intentionally shadows Node.Owner (the owning player's Steam ID, not the scene-tree owner)
         public ulong Group { get => _state.Group; set => _state.Group = value; }
         public DoorRefusal LastRefusal { get; private set; }
 

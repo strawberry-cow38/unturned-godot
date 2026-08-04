@@ -18,7 +18,7 @@ namespace UnturnedGodot
         static int _nextId = 1;
 
         public int BedId { get; private set; }
-        public ulong Owner => Claims.OwnerOf(BedId);
+        public new ulong Owner => Claims.OwnerOf(BedId);   // `new`: intentionally shadows Node.Owner (the claiming player's Steam ID, not the scene-tree owner)
         public bool IsClaimed => Claims.IsClaimed(BedId);
 
         /// <summary>Beds are barricades: breakable. Destroying one is how you take away someone's

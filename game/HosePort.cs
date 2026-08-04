@@ -13,7 +13,7 @@ namespace UnturnedGodot
         public const uint PortLayer = 1u << 11;   // hose look-ray raycasts this layer only (distinct from ConnectionPort's 1<<8)
         const float CubeSize = 0.14f;
 
-        public FluidContainer Owner;      // the container this port sits on
+        public new FluidContainer Owner;      // the container this port sits on. `new`: intentionally shadows Node.Owner (domain owner, not the scene-tree owner)
         public FluidPortNode Node;        // the data port the FluidSolver/FluidNet drive (Flow/Flowing/Load written here)
         public FluidPortKind Kind;
         public FluidType TypeOverride = FluidType.None;   // a TRANSFORMER's ports carry a fixed fluid (in!=out) independent of the (null) tank
