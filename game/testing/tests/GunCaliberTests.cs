@@ -179,14 +179,19 @@ namespace UnturnedGodot.Testing
             T.Check($"buckshot is thinner than a .22 ({ga12} / {ga20} vs {lr22})", ga12 < lr22 && ga20 < lr22);
             T.Check($"...and the masterkey really does fire {mk.Pellets} of them per shot", mk.Pellets > 1);
 
-            // 5f. Cobra is SEMI-ONLY (master). Pinned with the reason attached, because the real Glock 18C it is
-            //     modelled on genuinely IS select-fire -- so anyone cross-checking this port against the real weapon
-            //     would "correct" the Auto flag straight back in. It came out on purpose: at 1000 rpm (the closest
-            //     tick to the 18C's ~1200) a full-auto machine pistol empties 17 rounds in a second.
+            // 5f. Cobra is SEMI-ONLY, and Real_Weapon is the Glock 17 rather than the 18C.
+            //     The wiki trivia offers BOTH ("based on a Glock 18C with an olive drab frame" AND "based on the
+            //     Glock 17"); this port takes the 17, on master's evidence rather than the page's: the cobra is POLICE
+            //     loot, and Canadian police do not carry select-fire Glocks. So semi is not a divergence from the real
+            //     weapon to be defended -- it IS the real weapon, and the 18C attribution was the error.
+            //     Full-auto is planned as a craftable conversion (master), which is exactly what an auto sear is in
+            //     reality, so Firerate stays at 1000 rpm: unreachable by human clicking on a semi, and already the
+            //     right cyclic rate for the converted gun when that lands.
             var cob = Def(dir, "cobra");
-            T.Check($"cobra is semi-only despite the Glock 18C being select-fire (auto={cob.HasAuto}, burst={cob.BurstCount})",
+            T.Check($"cobra is semi-only -- police-issue Glock 17, not an 18C (auto={cob.HasAuto}, burst={cob.BurstCount})",
                 !cob.HasAuto && cob.BurstCount == 0);
             T.Check($"...and still has a fire mode at all (semi={cob.HasSemi})", cob.HasSemi);
+            T.Check($"...recorded as the gun it actually is ({cob.RealWeapon})", cob.RealWeapon == "Glock 17");
 
             // 6. Firerate stays a positive tick count after the ROF pass -- a zero or negative here divides by zero in
             //    the shot cooldown, and the retune touched nine guns.
