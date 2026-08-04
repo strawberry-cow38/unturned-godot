@@ -806,7 +806,18 @@ namespace UnturnedGodot
                 bool _isSc = ScopeCal.TryGetValue(txtName, out var _sc);
                 Color _bodyCol = _isSc ? _sc.Col : new Color(0.06f, 0.065f, 0.075f);   // ported red-dots (no ScopeCal entry) keep the dark default
                 m.MaterialOverride = new StandardMaterial3D { CullMode = BaseMaterial3D.CullModeEnum.Disabled, AlbedoColor = _bodyCol, Metallic = 0.35f, MetallicSpecular = 0.5f, Roughness = 0.5f };
-                if (_isSc) ConfigureScopePiP(_sc.Lens, _sc.Obj, _sc.Aim, _sc.Fov, _sc.Size, _sc.Sides);   // magnifying scope -> real PiP zoom + ADS aim through the glass; irons/red-dots -> no PiP
+                if (_isSc)
+                {
+                    // Real ripped reticle (source): each scope's Reticule submesh texture, saved as <base>_reticle.png. The
+                    // white +/^ (cross/chevron) are tinted RED at runtime (source: criticalHitmarkerColor); the black crosshairs
+                    // + baked-red X use white tint. Scale = the reticle's fraction of the glass (measured): dots ~0.056, rest 1.0.
+                    string _retName = txtName.Replace("_sight.txt", "_reticle.png");
+                    Texture2D _retTex = null;
+                    string _rp = ProjectSettings.GlobalizePath($"res://content/{_retName}");
+                    if (System.IO.File.Exists(_rp)) { var _ri = Image.LoadFromFile(_rp); if (_ri != null) _retTex = ImageTexture.CreateFromImage(_ri); }
+                    bool _dot = txtName.Contains("cross") || txtName.Contains("chevron");
+                    ConfigureScopePiP(_sc.Lens, _sc.Obj, _sc.Aim, _sc.Fov, _sc.Size, _sc.Sides, _retTex, _dot ? 0.056f : 1.0f, _dot ? new Color(1f, 0f, 0f) : new Color(1f, 1f, 1f));   // real PiP zoom + ADS aim + ripped reticle
+                }
             }
             m.Visible = true;
         }
@@ -860,13 +871,16 @@ namespace UnturnedGodot
                 _scopeEnv.GlowEnabled = false;
                 _scopeCam.Environment = _scopeEnv;
             }
-            var lensShader = new Shader { Code =   // mask SHAPE per scope via u_seg/u_rot uniforms: 12-gon default (seg=2pi/12, rot=15deg), square=4 (seg=pi/2, rot=0). Set in ConfigureScopePiP. Reticle can diverge later.
+            var lensShader = new Shader { Code =   // mask SHAPE per scope via u_seg/u_rot; the RETICLE is the scope's REAL ripped texture (reticle_tex) composited on the glass, sized by ret_scale + tinted by ret_tint (white texture -> red for cross/chevron; black/red reticles use white tint). Set in ConfigureScopePiP.
                 "shader_type spatial;\n" +
                 "render_mode unshaded, cull_disabled, shadows_disabled;\n" +
                 "uniform sampler2D scope_tex : source_color, filter_linear;\n" +
+                "uniform sampler2D reticle_tex : source_color, filter_linear;\n" +
                 "uniform float u_seg = 0.5235988;\n" +
                 "uniform float u_rot = 0.2618;\n" +
-                "void fragment() { vec2 p = (UV - vec2(0.5)) * 2.0; float a = atan(p.y, p.x) + u_rot; float dd = cos(floor(0.5 + a/u_seg) * u_seg - a) * length(p); if (dd > 0.95) discard; vec3 col = texture(scope_tex, UV).rgb; float r = length(p); bool cx = (abs(p.x) < 0.005 || abs(p.y) < 0.005) && r > 0.067; bool dn = abs(r - 0.05) < 0.017; if (cx || dn) col = vec3(0.0); ALBEDO = col; }\n" };
+                "uniform float ret_scale = 1.0;\n" +
+                "uniform vec3 ret_tint = vec3(1.0);\n" +
+                "void fragment() { vec2 p = (UV - vec2(0.5)) * 2.0; float a = atan(p.y, p.x) + u_rot; float dd = cos(floor(0.5 + a/u_seg) * u_seg - a) * length(p); if (dd > 0.95) discard; vec3 col = texture(scope_tex, UV).rgb; vec2 ruv = (UV - vec2(0.5)) / ret_scale + vec2(0.5); if (ruv.x >= 0.0 && ruv.x <= 1.0 && ruv.y >= 0.0 && ruv.y <= 1.0) { vec4 ret = texture(reticle_tex, ruv); col = mix(col, ret.rgb * ret_tint, ret.a); } ALBEDO = col; }\n" };
             var lensMat = new ShaderMaterial { Shader = lensShader };
             lensMat.SetShaderParameter("scope_tex", _scopeVp.GetTexture());
             var _lb = Basis.Identity; _lb.X = new Vector3(-1f, 0f, 0f); _lb.Y = new Vector3(0f, 0f, -1f); _lb.Z = new Vector3(0f, -1f, 0f);   // RIGID, perpendicular to the barrel
@@ -882,7 +896,7 @@ namespace UnturnedGodot
         }
 
         // Point the pre-built rig at a specific scope (mesh's measured ocular/objective + fov=90/zoom + lens size + ADS aim). Called on mount.
-        void ConfigureScopePiP(Vector3 lensLocal, Vector3 objLocal, Vector3 aimLocal, float fov, float lensSize, int sides)
+        void ConfigureScopePiP(Vector3 lensLocal, Vector3 objLocal, Vector3 aimLocal, float fov, float lensSize, int sides, Texture2D reticleTex, float retScale, Color retTint)
         {
             if (_scopeVp == null || !Godot.GodotObject.IsInstanceValid(_scopeLens)) return;   // gun has no rig
             _scopeLens.Mesh = new QuadMesh { Size = new Vector2(lensSize, lensSize) };
@@ -890,7 +904,12 @@ namespace UnturnedGodot
             _scopeCam.Fov = fov;
             _scopeCamAnchor.Position = objLocal;
             if (_scopeLens.MaterialOverride is ShaderMaterial _sm)   // mask shape to match the scope's ocular: 4=square (verts on the diagonals), else N-gon (rot puts a vertex up)
-            { _sm.SetShaderParameter("u_seg", 2f * Mathf.Pi / sides); _sm.SetShaderParameter("u_rot", sides == 4 ? 0f : Mathf.Pi / sides); }
+            {
+                _sm.SetShaderParameter("u_seg", 2f * Mathf.Pi / sides); _sm.SetShaderParameter("u_rot", sides == 4 ? 0f : Mathf.Pi / sides);
+                if (reticleTex != null) _sm.SetShaderParameter("reticle_tex", reticleTex);
+                _sm.SetShaderParameter("ret_scale", retScale);
+                _sm.SetShaderParameter("ret_tint", new Vector3(retTint.R, retTint.G, retTint.B));
+            }
             // ADS aim through the SCOPE: move the aim hook to the scope's `Aim` node (host-local -> gun-local via the host's SightPos), so ADS lines the eye up with the ocular instead of the gun's irons (Attachments.cs:590).
             if (_sight != null && _scopeHost != null) _sight.Position = _scopeHost.Position + aimLocal;
             _isScope = true;
