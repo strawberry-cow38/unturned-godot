@@ -57,6 +57,16 @@ namespace UnturnedGodot.Testing
             for (int i = 0; i <= 64; i++) { float v = TVDevice.Flicker(i / 64f, 0.06f); lo = Mathf.Min(lo, v); hi = Mathf.Max(hi, v); }
             T.Check($"stays inside [1-depth, 1] across a full cycle ({lo:0.000}..{hi:0.000})", lo >= 1f - 0.06f - 1e-4f && hi <= 1f + 1e-4f);
             T.Check("depth 0 is a flat 1.0 (the flatscreen path)", Mathf.IsEqualApprox(TVDevice.Flicker(0.5f, 0f), 1f));
+            // NEVER OFF (master: "when i say flicker i mean switch between a dimmer and brighter light state, not
+            // on/off"). The floor has to stay a real brightness at any depth we might dial in, so the picture is
+            // continuously visible and only its level moves. A modulation that touched zero would be a strobe.
+            for (float d = 0.05f; d <= 0.5f; d += 0.05f)
+            {
+                float dim = TVDevice.Flicker(0.5f, d);
+                if (dim <= 0.01f) { T.Check($"flicker never goes dark (depth {d:0.00} floored at {dim:0.000})", false); break; }
+            }
+            T.Check($"at the shipped depth it swings {TVDevice.Flicker(0.5f, 0.18f):0.00}..{TVDevice.Flicker(0f, 0.18f):0.00}, both lit",
+                TVDevice.Flicker(0.5f, 0.18f) > 0.5f && TVDevice.Flicker(0f, 0.18f) <= 1f);
 
             // ---- AIM BASIS. Two different "point that way" conventions in one file -- SpotLight3D aims down local
             // -Z, BeamMesh runs down local -Y -- so this is exactly the sort of thing that ships as a cone firing

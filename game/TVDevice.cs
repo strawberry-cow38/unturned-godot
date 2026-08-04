@@ -4,17 +4,18 @@ namespace UnturnedGodot
 {
     // An in-game TELEVISION -- Television_0 (flatscreen) / Television_1 (CRT). Look at it and press F to toggle
     // it ON/OFF (per-TV state). When ON *and* the town grid is live (PowerNet.GlobalPower), the screen shows the
-    // SMPTE test pattern EMISSIVE (self-lit, so it glows into bloom), a soft OmniLight spills forward off the
-    // screen, and tv_tone.wav loops quietly with a fast 3D falloff. Toggling on plays tv_on.wav once; toggling
+    // SMPTE test pattern UNSHADED (so no light can wash its colours out), a SpotLight spills forward down the
+    // screen normal with a visible cone shaft, and tv_tone.wav loops quietly with a fast 3D falloff. Toggling on plays tv_on.wav once; toggling
     // off plays tv_off.wav once. When OFF or the grid is dead: screen dark, no light, no tone -- and if the grid
     // dies while it's on, it goes dark (the DayNightCycle power sweep calls Refresh, like the glow containers).
     //
     // The CRT (Television_1) WARMS UP: toggling it on does NOT snap the picture -- after a short dead delay the
-    // emissive + light FADE IN over ~1.5s (a tube heating up). The flatscreen (Television_0) snaps on instantly.
+    // picture FADES IN from black over ~1.5s (a tube heating up), and once lit it flickers. The flatscreen
+    // (Television_0) snaps on instantly and holds steady, being an LCD.
     //
     // The SCREEN is the prop's darkest palette texel, carved off the body mesh by UV (ObjMesh.SplitByUv) and then
     // its one-texel UVs are REPLACED with a planar projection so the whole pattern fills the screen face. The
-    // wiring mirrors proven props: the emissive material + OmniLight + "tvdevices" group swept on a grid change
+    // wiring mirrors proven props: the screen material + light + "tvdevices" group swept on a grid change
     // come from StoreShelf's cooler/fridge interior glow; the bit-6 look collider + SetMeta("tvdevice", ...)
     // F-interact routing come from ObjectDoor/GasPump. Ripped meshes need CullMode.Disabled.
     public partial class TVDevice : Node3D
@@ -44,12 +45,14 @@ namespace UnturnedGodot
 
         const float ConeLen = 3.2f, ConeBaseR = 1.1f, ConeAlpha = 0.05f;   // shaft reach / spread at the far end / overall softness
 
-        // NTSC flicker (master: "make the crt SMPTE bars flicker at ntsc refresh rate as well as the light effect").
-        // 59.94 Hz is the real NTSC FIELD rate. Sampling it at a 60 Hz render gives a ~0.06 Hz beat -- one slow pulse
-        // roughly every 17s -- which is not a bug in the choice, it is precisely what a 60fps camera pointed at a CRT
-        // records, and it is the reason a flicker at the true rate reads as a gentle breathing rather than a strobe.
+        // CRT flicker, 24 Hz (master's call, overriding the physically-real rate).
+        // This is NOT the NTSC field rate and the constant is named so it cannot be mistaken for it. 59.94 Hz is the
+        // true one, and it was the first attempt -- but sampled by a 60 Hz render it beats down to ~0.06 Hz, one slow
+        // swell every ~17 seconds, which is what a camera filming a CRT records and is very nearly invisible in play.
+        // 24 Hz sits below the 30 Hz Nyquist limit of a 60 fps render, so it is sampled honestly and actually reads as
+        // flicker. Physically it is a film rate rather than a television one; the point here is the look, not the spec.
         // Only the CRT gets it; the flatscreen is an LCD and holds its pixels steady.
-        const float NtscFieldHz = 59.94f, FlickerDepth = 0.06f;
+        const float FlickerHz = 24f, FlickerDepth = 0.18f;
         float _flickerPhase;
         MeshInstance3D _outline;  // whole-prop white rim silhouette on the outline overlay -- shown while looked at (F affordance)
         AudioStreamPlayer3D _tone;               // looping 1kHz tone -- plays only while lit
@@ -288,9 +291,10 @@ namespace UnturnedGodot
             }
         }
 
-        /// <summary>NTSC field-rate brightness modulation, CRT only. Depth is deliberately shallow -- a CRT does not
-        /// visibly strobe to the naked eye; the flicker is something you notice at the edge of vision, so a deep
-        /// modulation would read as a fault rather than as a tube.</summary>
+        /// <summary>Brightness modulation, CRT only. A cosine BETWEEN TWO LIT LEVELS -- full and (1 - depth) -- never
+        /// off (master: "when i say flicker i mean switch between a dimmer and brighter light state, not on/off").
+        /// That is why it is 1 - depth*0.5*(1-cos) rather than anything that reaches zero: the floor is a real
+        /// brightness, so the picture is continuously visible and only its level moves.</summary>
         internal static float Flicker(float phase01, float depth)
             => 1f - depth * 0.5f * (1f - Mathf.Cos(phase01 * Mathf.Tau));
 
@@ -314,7 +318,7 @@ namespace UnturnedGodot
             // !_warming, which it did back when warmup was the only thing that animated.
             if (_lit && _isCrt)
             {
-                _flickerPhase = Mathf.Wrap(_flickerPhase + (float)delta * NtscFieldHz, 0f, 1f);
+                _flickerPhase = Mathf.Wrap(_flickerPhase + (float)delta * FlickerHz, 0f, 1f);
                 ApplyLevels();
             }
             if (!_warming) return;
