@@ -392,8 +392,8 @@ void sky() {
                 float noon = 1f - Mathf.Abs(Time - 0.5f) * 2f;             // 1 at noon, 0 at midnight
                 Env.FogEnabled = true;
                 Env.FogLightColor = Grad(SkyHorizon).Lerp(new Color(0.55f, 0.57f, 0.6f), 0.35f);
-                Env.FogDensity = Mathf.Lerp(0.012f, 0.0025f, noon) * (Overcast ? 2.4f : 1f);
-                Env.FogSkyAffect = 0.4f;
+                Env.FogDensity = Mathf.Lerp(0.012f, 0.0008f, noon) * (Overcast ? 2.4f : 1f);   // much thinner by DAY (master: "sunny isle, not a dreary foggy mess"); night/overcast stay atmospheric
+                Env.FogSkyAffect = Mathf.Lerp(0.4f, 0.15f, noon);   // sky stays clear/blue at noon, fogged at dawn/dusk/night
             }
         }
 
