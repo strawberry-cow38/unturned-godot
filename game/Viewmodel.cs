@@ -47,6 +47,7 @@ namespace UnturnedGodot
         EPlayerStance _stance = EPlayerStance.STAND;   // STAND/SPRINT/CROUCH/PRONE -> bob speed + amplitude
         bool _safe;                         // gun on SAFETY firemode -> un-shouldered "safe" carry (same pose as sprint, source UseableGun.cs:3509)
         bool _sprinting;                    // playing the Sprint_Start hold (un-shouldered); drives the Sprint_Stop return
+        float _shootHold;                   // >0 briefly after each shot: firing breaks + suppresses sprint (source Sprint_Start needs !isShooting)
         string _sprintStartClip, _sprintStopClip;   // per-gun {Cap}_Sprint_Start/Stop, ripped from the gun's own animations.prefab
         float _blendedSway = 1f;            // blendedViewmodelSwayMultiplier: 1 hip -> 0.1 aim, eased at 16/s
         bool _reloading;      // true while the reload clip plays (blocks ADS)
@@ -554,6 +555,7 @@ namespace UnturnedGodot
         public void Kick(Vector3 shakeMin, Vector3 shakeMax, float recoilPitch, float recoilYaw)
         {
             _flash = 0.05f; EjectCasing(); PlayShoot();   // overlapping voice per shot -- full-auto rings out fully
+            _shootHold = 0.25f;   // a shot jumps the gun OUT of the sprint pose (master) + suppresses re-entry for the burst
             // roll the muzzle flash L/R by a random amount each shot, accumulating from the last (master)
             _flashRoll += (_rng.Randf() < 0.5f ? -1f : 1f) * _rng.RandfRange(0.35f, 1.0f);
             _flashMat?.SetShaderParameter("roll", _flashRoll);
@@ -1084,11 +1086,13 @@ namespace UnturnedGodot
             }
             _arms.Position = hipPos + vmOffset + TuneOffset;   // + the live uniform tune offset (ESC sliders); per-gun offsets removed
             // ---- SPRINT + SAFETY pose: play the REAL Sprint_Start clip. Source UseableGun.cs:3509 plays ONE clip for
-            //      BOTH (stance==SPRINT && moving) OR firemode==SAFETY, then Sprint_Stop on leaving (unless aiming).
-            //      The un-shoulder (incl. the ~90deg yaw) is baked into the clip -- no hand-authored angles, and the
-            //      arms ROOT is left untouched (the skeleton clip does the posing; the old code rotated the root by eye).
+            //      BOTH (stance==SPRINT && moving) OR firemode==SAFETY. The un-shoulder (incl. the ~90deg yaw) is baked
+            //      into the clip -- no hand-authored angles, arms ROOT untouched (the skeleton clip does the posing).
+            //      Sprint is the LOWEST-tier pose (master): aim, fire, reload, rack, inspect, attach ALL override it,
+            //      and it must ALWAYS hand the base back or the un-shouldered clip lingers.
+            if (_shootHold > 0f) _shootHold -= (float)delta;   // a shot suppresses sprint for its burst (source: Sprint_Start needs !isShooting)
             bool _wantSprint = EquipDone && !_reloading && !_hammering && !_inspecting && !_attachView && !_aiming
-                               && ((_stance == EPlayerStance.SPRINT && _moving) || _safe);
+                               && _shootHold <= 0f && ((_stance == EPlayerStance.SPRINT && _moving) || _safe);
             if (_wantSprint && !_sprinting)
             {
                 _sprinting = true;
@@ -1097,12 +1101,14 @@ namespace UnturnedGodot
             else if (!_wantSprint && _sprinting)
             {
                 _sprinting = false;
-                // return to ready ONLY if nothing else already grabbed the arms: aim/reload/rack/inspect/attach each
-                // play their own clip and are gated on !isSprinting in source, so they never interrupt Sprint_Stop.
-                if (!_aiming && !_reloading && !_hammering && !_inspecting && !_attachView)
+                // reload/rack/inspect/attach already replaced the base with their own clip -> leave it. Otherwise
+                // restore the ready hold: SNAP instantly when aiming OR firing (ADS is an ADDITIVE with no base clip
+                // and a shot fires from the hip -- both must come off the ready pose, not the un-shoulder; leaving it
+                // was the "weird ADS" + "won't un-set" bug), else play the gentle Sprint_Stop transition.
+                if (!_reloading && !_hammering && !_inspecting && !_attachView)
                 {
-                    if (_sprintStopClip != null) _arms.Play(_sprintStopClip);
-                    else _arms.SnapToEnd("Gun_Equip");   // no stop clip: settle straight to the ready hold
+                    if (_aiming || _shootHold > 0f || _sprintStopClip == null) _arms.SnapToEnd("Gun_Equip");
+                    else _arms.Play(_sprintStopClip);
                 }
             }
             if (_cam != null) _cam.Fov = TuneFov;              // live-tunable viewmodel FOV (ESC sliders); ADS doesn't change VM FOV
