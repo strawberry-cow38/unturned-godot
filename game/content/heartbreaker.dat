@@ -26,8 +26,8 @@ Semi
 Auto
 
 Caliber 1
-Caliber_Name "5.56x45mm NATO"
-Real_Weapon "FN SCAR-L"
+Caliber_Name "7.62x51mm NATO"
+Real_Weapon "FN SCAR-H"
 
 Range 200
 Firerate 5

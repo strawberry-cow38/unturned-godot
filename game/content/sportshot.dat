@@ -19,7 +19,7 @@ Hook_Grip
 Hook_Barrel
 
 Ammo_Min 5
-Ammo_Max 10
+Ammo_Max 20
 
 Safety
 Semi
