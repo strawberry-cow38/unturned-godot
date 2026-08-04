@@ -698,11 +698,18 @@ namespace UnturnedGodot
     // (tools/parse_nodes.py). Used by the F1 `teleport` command and the map.
     public static class MapNodes
     {
-        public static readonly System.Collections.Generic.List<(string Name, Vector3 Pos)> Locations = Load();
+        // Which baked location file to read: nodes.tsv for PEI (Nodes.dat -> parse_nodes.py), nodes_<key>.tsv for a
+        // modern map whose locations live in Level.hierarchy (parse_hierarchy_locations.py) -- same key scheme as
+        // placements. Main sets it while resolving --map=/UG_MAP, which runs BEFORE the first map-UI/teleport access,
+        // and Locations is lazy so the read picks up that value instead of racing the class initializer.
+        public static string MapNodeFile = "nodes.tsv";
+        static System.Collections.Generic.List<(string Name, Vector3 Pos)> _cache;
+        public static System.Collections.Generic.List<(string Name, Vector3 Pos)> Locations => _cache ??= Load();
+        public static void Reload() => _cache = null;   // drop the cache so a mid-session map switch re-reads
         static System.Collections.Generic.List<(string, Vector3)> Load()
         {
             var list = new System.Collections.Generic.List<(string, Vector3)>();
-            string path = ProjectSettings.GlobalizePath("res://content/nodes.tsv");
+            string path = ProjectSettings.GlobalizePath("res://content/" + MapNodeFile);
             if (!System.IO.File.Exists(path)) return list;
             var ci = System.Globalization.CultureInfo.InvariantCulture;
             foreach (var line in System.IO.File.ReadAllLines(path))

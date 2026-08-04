@@ -147,6 +147,7 @@ namespace UnturnedGodot
                     _mapRoot = MapDir(mn);
                     string key = System.Text.RegularExpressions.Regex.Replace(mn, "[^A-Za-z0-9]", "");
                     _mapPlace = mn == "PEI" ? "placements.txt" : "placements_" + key + ".txt";
+                    MapNodes.MapNodeFile = mn == "PEI" ? "nodes.tsv" : "nodes_" + key + ".tsv";   // named-location file follows the map (Level.hierarchy locations for modern maps)
                 }
                 else if (arg == "--peiplay") peiplay = true;     // player standing/walking on real PEI terrain (with colliders)
                 else if (arg == "--invdemo") invdemo = true;
@@ -175,6 +176,7 @@ namespace UnturnedGodot
                 _mapRoot = MapDir(ugMap);
                 string ugKey = System.Text.RegularExpressions.Regex.Replace(ugMap, "[^A-Za-z0-9]", "");
                 _mapPlace = ugMap == "PEI" ? "placements.txt" : "placements_" + ugKey + ".txt";
+                MapNodes.MapNodeFile = ugMap == "PEI" ? "nodes.tsv" : "nodes_" + ugKey + ".tsv";
             }
 
             if (hurtdemo)   // first-person: a zombie hits the player so the hurt flash + camera flinch are visible
