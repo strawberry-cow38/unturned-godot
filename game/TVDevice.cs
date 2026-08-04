@@ -43,7 +43,11 @@ namespace UnturnedGodot
         MeshInstance3D _cone;     // the visible light shaft, StreetLight's beam reused
         StandardMaterial3D _coneMat;
 
-        const float ConeLen = 3.2f, ConeBaseR = 1.1f, ConeAlpha = 0.05f;   // shaft reach / spread at the far end / overall softness
+        // Shaft reach / how much wider the far end is / overall softness. endScale KEEPS THE SCREEN'S ASPECT --
+        // the beam is the screen's rectangle scaled up, not a rectangle rounding into a circle the way the
+        // streetlight's does (master: "maintain a square shape"). The CRT face is 0.85 x 0.79, so its shaft is
+        // very nearly square the whole way down, which is the point.
+        const float ConeLen = 3.2f, ConeEndScale = 2.6f, ConeAlpha = 0.05f;
 
         // CRT flicker, 24 Hz (master's call, overriding the physically-real rate).
         // This is NOT the NTSC field rate and the constant is named so it cannot be mistaken for it. 59.94 Hz is the
@@ -130,14 +134,14 @@ namespace UnturnedGodot
             Vector3 halfExt = ScreenHalfExtents(screenAabb, _screenNormalLocal);
             _cone = new MeshInstance3D
             {
-                Mesh = StreetLight.BeamMesh(ConeLen, halfExt.X, halfExt.Y, ConeBaseR),
+                Mesh = StreetLight.BeamMesh(ConeLen, halfExt.X, halfExt.Y, 0f, keepRect: true, endScale: ConeEndScale),
                 Transform = new Transform3D(AimBasis(_screenNormalLocal, aimNegZ: false), _screenCenterLocal),
                 Visible = false,
                 CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
                 MaterialOverride = new StandardMaterial3D
                 {
                     AlbedoColor = new Color(0.85f, 0.9f, 1.0f, ConeAlpha),
-                    AlbedoTexture = StreetLight.ConeGradient(),
+                    AlbedoTexture = ConeGradient(),
                     Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
                     BlendMode = BaseMaterial3D.BlendModeEnum.Add,
                     ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
@@ -352,6 +356,31 @@ namespace UnturnedGodot
         /// <summary>Screen brightness -> AlbedoColor. Grey, so the SMPTE bars keep their own hues and only their
         /// level moves; black at 0 is what makes the CRT warmup a fade of the picture itself.</summary>
         internal static Color ScreenColor(float brightness) => new Color(brightness, brightness, brightness);
+
+        /// <summary>The shaft's fade, BRIGHT AT THE SCREEN and gone by the far end (master: "gradient fade towards
+        /// to bigger end too, brighter toward the source").
+        ///
+        /// This is the inverse of StreetLight.ConeGradient and has to be, for a reason that is not obvious from
+        /// either file alone: BeamMesh maps `v = t * 0.5`, so v=0 sits at the SOURCE and v=0.5 at the far end, and
+        /// the lamp's gradient rises with v -- faint at the lamp, dense at the ground. StreetLight documents that as
+        /// a deliberate tuning it was built against, so it is not mine to flip; the TV just needs the opposite
+        /// picture and gets its own texture rather than a shared one with a mode flag.
+        ///
+        /// Only v in [0, 0.5] is ever sampled (CylinderMesh reserves the top half of UV space for caps), so the
+        /// falloff is packed into the FIRST half and the rest is left at zero. Writing the ramp across the full
+        /// [0,1] would put the shaft's midpoint at the far end and half the fade off the end of the mesh.</summary>
+        internal static ImageTexture ConeGradient()
+        {
+            const int n = 64;
+            var img = Image.CreateEmpty(1, n, false, Image.Format.Rgba8);
+            for (int y = 0; y < n; y++)
+            {
+                float v = (float)y / (n - 1);
+                float k = Mathf.Clamp(1f - v / 0.5f, 0f, 1f);       // 1 at the screen -> 0 by the far end
+                img.SetPixel(0, y, new Color(1f, 1f, 1f, Mathf.Pow(k, 1.7f)));
+            }
+            return ImageTexture.CreateFromImage(img);
+        }
 
         /// <summary>A basis putting the beam's forward axis on <paramref name="normal"/>. SpotLight3D aims down local
         /// -Z (aimNegZ), BeamMesh runs down local -Y -- two different conventions for the same "point that way", so

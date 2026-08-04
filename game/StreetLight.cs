@@ -81,18 +81,28 @@ namespace UnturnedGodot
         // by the time anyone reads it as a cone.
         //
         // Built by hand rather than with a CylinderMesh because no primitive changes cross-section along its length.
-        internal static ArrayMesh BeamMesh(float len, float halfA, float halfB, float baseR, float morphEnd = 0.38f, int seg = 24, int rings = 16)
+        /// <param name="keepRect">Skip the rectangle-to-circle morph entirely, so the cross-section stays boxy for
+        /// its whole length. The lamp wants the morph (a round pool on the ground); a TV does not -- light leaving a
+        /// screen keeps the screen's shape (master: "maintain a square shape"). Default preserves the lamp.</param>
+        /// <param name="endScale">If &gt; 0, the far end is the near end scaled by this factor, which KEEPS THE
+        /// ASPECT RATIO. The default path lerps both half-extents toward baseR instead, which converges any starting
+        /// rectangle to a square and would quietly discard a widescreen screen's proportions.</param>
+        internal static ArrayMesh BeamMesh(float len, float halfA, float halfB, float baseR, float morphEnd = 0.38f, int seg = 24, int rings = 16,
+                                           bool keepRect = false, float endScale = -1f)
         {
             // Cross-section at depth t (0 = at the lens, 1 = at the base): a rectangle blended toward a circle.
             // The rectangle point for an angle is the circle point pushed out to the rect boundary (max-norm), which
             // keeps the two parametrisations in step so corresponding points lerp without the surface twisting.
             Vector3 Section(float th, float t)
             {
-                float a = Mathf.Lerp(halfA, baseR, t), b = Mathf.Lerp(halfB, baseR, t);
+                float a, b;
+                if (endScale > 0f) { float k = Mathf.Lerp(1f, endScale, t); a = halfA * k; b = halfB * k; }
+                else { a = Mathf.Lerp(halfA, baseR, t); b = Mathf.Lerp(halfB, baseR, t); }
                 float ct = Mathf.Cos(th), st = Mathf.Sin(th);
                 float m = Mathf.Max(Mathf.Abs(ct), Mathf.Abs(st));
                 if (m < 0.0001f) m = 0.0001f;
                 var rect = new Vector2(a * ct / m, b * st / m);
+                if (keepRect) return new Vector3(rect.X, -t * len, rect.Y);
                 float r = (a + b) * 0.5f;
                 var circ = new Vector2(r * ct, r * st);
                 var p = rect.Lerp(circ, Mathf.SmoothStep(0f, 1f, Mathf.Clamp(t / morphEnd, 0f, 1f)));

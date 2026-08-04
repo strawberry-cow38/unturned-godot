@@ -85,6 +85,51 @@ namespace UnturnedGodot.Testing
             T.Check($"in-plane half-extents keep width and height, drop thickness ({halfExt.X:0.00} x {halfExt.Y:0.00})",
                 Mathf.IsEqualApprox(halfExt.X, 1f) && Mathf.IsEqualApprox(halfExt.Y, 0.5f));
 
+            // ---- CONE GRADIENT direction (master: "brighter toward the source"). BeamMesh maps v = t*0.5 with v=0
+            //      at the SOURCE, and StreetLight's gradient rises with v -- faint at the lamp, dense at the ground,
+            //      which its own comment records as deliberate. The TV needs the opposite, so it has its own texture.
+            //      A gradient pointing the wrong way does not look broken, it looks "a bit dim at the screen", which
+            //      is why this is asserted rather than eyeballed.
+            var img = TVDevice.ConeGradient().GetImage();
+            int h = img.GetHeight();
+            float aSrc = img.GetPixel(0, 0).A;                        // v = 0   -> at the screen
+            float aMid = img.GetPixel(0, h / 4).A;                    // v = 0.25
+            float aFar = img.GetPixel(0, h / 2).A;                    // v = 0.5 -> far end of the shaft
+            T.Check($"opaque at the screen ({aSrc:0.000})", aSrc > 0.99f);
+            T.Check($"gone by the far end ({aFar:0.000})", aFar < 0.01f);
+            T.Check($"...and monotonically fading between ({aSrc:0.00} > {aMid:0.00} > {aFar:0.00})", aSrc > aMid && aMid > aFar);
+            // The whole ramp must fit in [0, 0.5]: CylinderMesh reserves the top half of UV space for caps, so a ramp
+            // spread over [0,1] would put its midpoint past the end of the mesh and lose half the fade.
+            bool tailZero = true;
+            for (int y = h / 2; y < h; y++) if (img.GetPixel(0, y).A > 0.01f) tailZero = false;
+            T.Check("the ramp fits inside the sampled half of UV space", tailZero);
+
+            // ---- BEAM CROSS-SECTION stays rectangular and keeps the screen's aspect (master: "maintain a square
+            //      shape"). Measured off the real vertices: the far ring's width:height must match the near ring's.
+            static (float w, float hgt) RingAt(ArrayMesh m, float yTarget, float tol)
+            {
+                var verts = (Vector3[])m.SurfaceGetArrays(0)[(int)Mesh.ArrayType.Vertex];
+                float xmin = 9e9f, xmax = -9e9f, zmin = 9e9f, zmax = -9e9f;
+                foreach (var v in verts)
+                    if (Mathf.Abs(v.Y - yTarget) < tol)
+                    { xmin = Mathf.Min(xmin, v.X); xmax = Mathf.Max(xmax, v.X); zmin = Mathf.Min(zmin, v.Z); zmax = Mathf.Max(zmax, v.Z); }
+                return (xmax - xmin, zmax - zmin);
+            }
+            var tvBeam = StreetLight.BeamMesh(4f, 1.0f, 0.5f, 0f, keepRect: true, endScale: 2f);
+            var near = RingAt(tvBeam, 0f, 0.01f);
+            var far = RingAt(tvBeam, -4f, 0.01f);
+            T.Check($"near ring is the screen's 2:1 ({near.w:0.00} x {near.hgt:0.00})", Mathf.IsEqualApprox(near.w / near.hgt, 2f, 0.02f));
+            T.Check($"far ring keeps that aspect ({far.w:0.00} x {far.hgt:0.00})", Mathf.IsEqualApprox(far.w / far.hgt, 2f, 0.02f));
+            T.Check($"...and is scaled up, not rounded off ({far.w / near.w:0.00}x wider)", far.w > near.w * 1.9f);
+
+            // REGRESSION GUARD on the lamp, whose beam I had to touch to add those options: its default path must
+            // still converge toward a circle of radius baseR, i.e. the far ring goes SQUARE regardless of the near
+            // ring's aspect. If this ever reads 2:1, the streetlight silently inherited the TV's shape.
+            var lampBeam = StreetLight.BeamMesh(4f, 1.0f, 0.5f, 1.5f);
+            var lampFar = RingAt(lampBeam, -4f, 0.01f);
+            T.Check($"lamp beam still rounds to baseR ({lampFar.w:0.00} x {lampFar.hgt:0.00})",
+                Mathf.IsEqualApprox(lampFar.w / lampFar.hgt, 1f, 0.05f));
+
             yield break;
         }
     }
