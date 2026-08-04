@@ -956,6 +956,7 @@ namespace UnturnedGodot
         public float ReloadLength => _arms != null && _arms.ClipLength(_reloadClip) > 0f ? _arms.ClipLength(_reloadClip) : 1.633f;
 
         public float AimAlpha => _aimAlpha;   // 0 hip .. 1 ADS, for spread/accuracy
+        public float ScopeZoom => _isScope && _scopeCam != null && Godot.GodotObject.IsInstanceValid(_scopeCam) ? 90f / _scopeCam.Fov : 0f;   // mounted scope's zoom (90/fov): aug=4, 8x=8, 16x=16... -> drives ADS-sens reduction
 
         public void SetShown(bool shown) { if (_layer != null) _layer.Visible = shown; }
 
@@ -1017,7 +1018,12 @@ namespace UnturnedGodot
                 {
                     _scopeLens.Visible = false; _scopeVp.RenderTargetUpdateMode = SubViewport.UpdateMode.Disabled; _scopeWasOn = false;
                 }
-                if (_ladder != null) _ladder.Active = _scopeHasLadder && _aimAlpha > 0.6f;   // range ladder only while actually ADS'd through a numbered-ladder scope
+                if (_ladder != null)
+                {
+                    _ladder.Active = _scopeHasLadder && _aimAlpha > 0.6f;   // range ladder only while actually ADS'd through a numbered-ladder scope
+                    if (_ladder.Active && _cam != null && Godot.GodotObject.IsInstanceValid(_scopeLens))
+                        _ladder.Center = _cam.UnprojectPosition(_scopeLens.GlobalPosition);   // follow the lens's screen position so the ladder sways WITH the glass + crosshair
+                }
             }
             _arms.Tick(delta);   // manual-advance the base anim, then layer the additive Aim_Start pose on top
             // ---- source viewmodel-camera motion (PlayerAnimator): walk bob + recoil shake ----

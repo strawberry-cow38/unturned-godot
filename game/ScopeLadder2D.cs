@@ -9,6 +9,7 @@ namespace UnturnedGodot
     public partial class ScopeLadder2D : Node2D
     {
         public bool Active;
+        public Vector2 Center;   // the scope lens's screen position (set by the Viewmodel each frame) so the ladder SWAYS with the glass, not pinned to screen-centre
         static readonly int[] Ranges = { 100, 200, 300 };   // the retail 8x/7x ladder marks
 
         public override void _Ready()
@@ -21,7 +22,7 @@ namespace UnturnedGodot
         public override void _Draw()
         {
             if (!Active) return;
-            Vector2 c = GetViewport().GetVisibleRect().Size * 0.5f;
+            Vector2 c = Center != Vector2.Zero ? Center : GetViewport().GetVisibleRect().Size * 0.5f;   // follow the lens; fall back to screen-centre before the first update
             var font = ThemeDB.FallbackFont;
             int fs = 15;
             var black = new Color(0f, 0f, 0f, 0.92f);
