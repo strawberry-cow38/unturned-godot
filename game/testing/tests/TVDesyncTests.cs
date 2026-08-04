@@ -34,10 +34,15 @@ namespace UnturnedGodot.Testing
 
             // ---- WHO SLIPS. Vertical hold is a tube problem; an LCD has no deflection to lose. And a set already
             // mid-slip must not restart, or a long enough session eventually stacks rolls on top of each other.
-            T.Check("a lit CRT can slip", TVDevice.DesyncCanFire(isCrt: true, lit: true, running: 0f));
-            T.Check("a flatscreen never does", !TVDevice.DesyncCanFire(isCrt: false, lit: true, running: 0f));
-            T.Check("a dark CRT never does", !TVDevice.DesyncCanFire(isCrt: true, lit: false, running: 0f));
-            T.Check("...and one already rolling does not restart", !TVDevice.DesyncCanFire(isCrt: true, lit: true, running: 0.5f));
+            T.Check("a lit CRT television can slip", TVDevice.DesyncCanFire(hasDesync: true, lit: true, running: 0f));
+            T.Check("a flatscreen never does", !TVDevice.DesyncCanFire(hasDesync: false, lit: true, running: 0f));
+            T.Check("a dark CRT never does", !TVDevice.DesyncCanFire(hasDesync: true, lit: false, running: 0f));
+            T.Check("...and one already rolling does not restart", !TVDevice.DesyncCanFire(hasDesync: true, lit: true, running: 0.5f));
+            // The gate is "does this KIND roll", not "is it a tube". The computer CRT is a tube and must NOT roll
+            // (master), so wiring this to IsTube would have handed the effect straight back to it.
+            T.Check("...and the gate is per-KIND: only the CRT TELEVISION rolls",
+                TVDevice.HasDesync(TVDevice.DeviceKind.CrtTv) && !TVDevice.HasDesync(TVDevice.DeviceKind.CrtMonitor)
+                && !TVDevice.HasDesync(TVDevice.DeviceKind.FlatTv) && !TVDevice.HasDesync(TVDevice.DeviceKind.FlatMonitor));
 
             // ---- THE ROLL. Offset must MOVE, stay inside [0,1) in both directions, and snap home when the clock runs
             // out. Run it for a long simulated slip so a slow leak out of range would show.

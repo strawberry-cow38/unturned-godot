@@ -53,13 +53,26 @@ namespace UnturnedGodot.Testing
             yield return Ticks(2);
             T.Check($"pressing F on rubble does nothing ({tv.DebugLit})", !tv.DebugLit);
 
-            // Rubble reset restores the prop. It comes back OFF -- a rebuilt set is not mid-programme.
+            // Rubble reset restores the prop, and it comes back ON.
+            //
+            // This USED to assert the opposite, and the flip is deliberate rather than a regression: master's "making
+            // all tvs/monitors on at start" is a claim about the state of the world, and a reset prop is a NEW set, not
+            // the old one mid-programme. Leaving resets off would make the map go dark one prop at a time as things got
+            // shot and respawned -- a slow drift nobody would ever connect back to a break/reset rule.
+            //
+            // What the old assertion was really protecting is the line above it, and that still holds: a smashed set
+            // must not ARM itself while broken. The distinction is where _on is set -- on the RESET (here), not by a
+            // press that got swallowed while it was rubble (the `pressing F on rubble does nothing` check).
             tv.SetBroken(false);
             yield return Ticks(2);
-            T.Check($"a rubble reset leaves it intact but off ({tv.DebugLit}, broken={tv.DebugBroken})",
-                !tv.DebugLit && !tv.DebugBroken);
+            T.Check($"a rubble reset brings it back intact and ON ({tv.DebugLit}, broken={tv.DebugBroken})",
+                tv.DebugLit && !tv.DebugBroken);
 
-            // ...and it works again afterwards, which is what makes the previous check a reset rather than a corpse.
+            // ...and it still takes input afterwards, which is what makes the previous check a reset rather than a
+            // set stuck permanently on.
+            tv.Toggle();
+            yield return Ticks(2);
+            T.Check($"...and F still switches it off again ({tv.DebugLit})", !tv.DebugLit);
             tv.DebugForceOn();
             yield return Ticks(2);
             T.Check($"and it turns on again after the reset ({tv.DebugLit})", tv.DebugLit);

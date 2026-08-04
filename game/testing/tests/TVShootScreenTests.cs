@@ -65,17 +65,16 @@ namespace UnturnedGodot.Testing
             yield return Ticks(2);
             T.Check($"F on a shot-out set does nothing ({tv.DebugLit})", !tv.DebugLit);
 
-            // Rubble reset rebuilds the prop WHOLE: new cabinet, new glass. It comes back off, and the arming check
-            // above is what makes that meaningful rather than luck.
+            // Rubble reset rebuilds the prop WHOLE: new cabinet, new glass, and switched ON like every other set in
+            // the world (master: "making all tvs/monitors on at start"). The arming check above is what keeps that
+            // honest -- a set that came back on because a swallowed press had armed it would look identical here, which
+            // is exactly why that check exists separately.
             tv.SetBroken(true);
             yield return Ticks(2);
             tv.SetBroken(false);
             yield return Ticks(2);
             T.Check($"a rubble reset restores the glass ({tv.DebugScreenShot})", !tv.DebugScreenShot);
-            T.Check($"...and it comes back OFF, not mid-programme ({tv.DebugLit})", !tv.DebugLit);
-            tv.DebugForceOn();
-            yield return Ticks(2);
-            T.Check($"...and works again ({tv.DebugLit})", tv.DebugLit);
+            T.Check($"...and it comes back ON, like every other set in the world ({tv.DebugLit})", tv.DebugLit);
             T.Check("...and can be shot out a second time", tv.ShootOutScreen());
 
             // ---- HIT TEST: glass vs cabinet -----------------------------------------------------------------------

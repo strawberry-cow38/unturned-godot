@@ -387,7 +387,10 @@ namespace UnturnedGodot
             Vector2I bestCell = Vector2I.Zero; int bestN = 0; int placed = 0; int lodMissing = 0; int lodLevels = 0;
             int signals = 0, signalsSide = 0;   // side-road flags are matched by POSITION; a silent miss would flash every junction amber
             int waterSources = 0;               // hydrants + towers + sinks; a silent zero here means the mains exist only in the console
-            int televisions = 0;                // Television_0/1 interactive TVs; printed unconditionally so a hook attaching to NOTHING is visible
+            int televisions = 0, monitors = 0;  // Television_0/1 + Computer_0/3 interactive screens; printed unconditionally so a
+                                                //  hook attaching to NOTHING is visible. Counted SEPARATELY because the two share
+                                                //  one device class -- a combined total would still read "16" if every monitor
+                                                //  silently stopped being picked up and only the televisions remained.
             var lodMis = new System.Collections.Generic.List<MeshInstance3D>();   // this placement's extra LOD instances, reused per prop
             var lodLoadSw = System.Diagnostics.Stopwatch.StartNew(); long lodLoadTicks = 0; int lodMeshesLoaded = 0;   // isolated cost of the LOD mesh parses
             // UG_NOLOD=1 skips the table so every prop falls back to the old flat 320m -- the A/B control for
@@ -670,15 +673,20 @@ namespace UnturnedGodot
                     var lampCenter = mesh != null ? mesh.GetAabb().GetCenter() : Vector3.Zero;
                     root.AddChild(LampLight.Make(gpos + basis * lampCenter, mainMi));   // hand the prop mesh in so the fixture itself glows when lit
                 }
-                // TELEVISIONS (master): Television_0 (flatscreen) / Television_1 (CRT) become interactive TVs -- look
-                // at it + F toggles it on/off; lit only when ON and the grid is live. TVDevice carves the screen off
-                // THIS body mesh (mainMi) and rides its exact placement transform; the body collider below meta-links
-                // the look-ray to it (like objectdoor/gaspump).
-                if ((name == "Television_0" || name == "Television_1") && mode != WorldMode.Dedicated)
+                // SCREENS (master): Television_0/1 (flatscreen / CRT television) and Computer_0/3 (CRT / flatscreen
+                // computer monitor) become interactive sets -- look at it + F toggles it on/off, all of them start ON,
+                // and each carries a wire-able power plug so it survives a blackout on its own generator. TVDevice
+                // carves the screen off THIS body mesh (mainMi) and rides its exact placement transform; the body
+                // collider below meta-links the look-ray to it (like objectdoor/gaspump).
+                //
+                // The prop list lives in TVDevice.IsDeviceProp next to the kind table it has to agree with, rather than
+                // as a name test here. Split across two files they drift, and the failure mode is a prop that gets a
+                // device with the WRONG kind's behaviour -- which looks like a deliberate choice, not a bug.
+                if (TVDevice.IsDeviceProp(name) && mode != WorldMode.Dedicated)
                 {
                     placedTV = TVDevice.Make(mainMi, name);
                     root.AddChild(placedTV);
-                    televisions++;
+                    if (TVDevice.HasPattern(TVDevice.KindFor(name))) televisions++; else monitors++;
                 }
                 // Each HEAD runs its OWN dumb timer (strawberry's explicit call) -- no junction sync and no mast sync,
                 // so crossing roads can both show green and the two heads on one arm drift apart. The offset is
@@ -870,7 +878,7 @@ namespace UnturnedGodot
             var focus = placed > 0 ? cellSum[bestCell] / bestN : Vector3.Zero;
             GD.Print($"[OBJECTS] placed {placed} objects ({cache.Count} meshes); densest cluster {bestN} near {focus}; holiday-gated {holidaySkipped}{(deferredHoliday != null ? $", deferred {deferredHoliday.Count} to the join handshake" : "")} (active={activeHoliday})");
             if (waterSources > 0) GD.Print($"[water] {waterSources} municipal water sources placed (hydrants + towers + sinks); mains {(FluidNet.GlobalWater ? "ON" : "OFF")}");
-            GD.Print($"[tv] {televisions} interactive televisions");
+            GD.Print($"[tv] {televisions} interactive televisions, {monitors} computer monitors");
             if (signals > 0) GD.Print($"[signals] {signals} traffic signals, {signalsSide} flagged side-road (flash RED); {signals - signalsSide} main-road (flash amber)");
             GD.Print($"[lod] {placed - lodMissing}/{placed} placements got a retail draw distance; {lodMissing} fell back to the flat 320m; {lodLevels} extra LOD mesh instances");
             GD.Print($"[lod] LOD mesh parse cost: {lodMeshesLoaded} files in {lodLoadTicks * 1000.0 / System.Diagnostics.Stopwatch.Frequency:F0} ms (the load-time price of the runtime triangle saving)");

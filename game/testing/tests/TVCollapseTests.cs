@@ -78,10 +78,15 @@ namespace UnturnedGodot.Testing
 
             // ---- WHO GETS IT. An LCD does not have a raster to lose, and a set whose glass is already gone does not
             // get to play a power-off animation on its way out.
-            T.Check("a CRT collapses", TVDevice.ShouldCollapse(isCrt: true, broken: false, screenShot: false));
-            T.Check("a flatscreen does NOT -- it is an LCD", !TVDevice.ShouldCollapse(isCrt: false, broken: false, screenShot: false));
-            T.Check("a smashed prop does NOT", !TVDevice.ShouldCollapse(isCrt: true, broken: true, screenShot: false));
-            T.Check("a shot-out screen does NOT", !TVDevice.ShouldCollapse(isCrt: true, broken: false, screenShot: true));
+            T.Check("a CRT television collapses", TVDevice.ShouldCollapse(TVDevice.DeviceKind.CrtTv, broken: false, screenShot: false));
+            // The computer CRT gets it too (master: "dupe the CRT thing onto the computer crt"). Asserted separately
+            // from the television because the two are different enum members and it would be entirely possible to add
+            // the monitor and leave this policy behind -- with no symptom except a monitor that snaps off.
+            T.Check("...and so does the computer CRT", TVDevice.ShouldCollapse(TVDevice.DeviceKind.CrtMonitor, broken: false, screenShot: false));
+            T.Check("a flatscreen TV does NOT -- it is an LCD", !TVDevice.ShouldCollapse(TVDevice.DeviceKind.FlatTv, broken: false, screenShot: false));
+            T.Check("...nor does the flatscreen monitor", !TVDevice.ShouldCollapse(TVDevice.DeviceKind.FlatMonitor, broken: false, screenShot: false));
+            T.Check("a smashed prop does NOT", !TVDevice.ShouldCollapse(TVDevice.DeviceKind.CrtTv, broken: true, screenShot: false));
+            T.Check("a shot-out screen does NOT", !TVDevice.ShouldCollapse(TVDevice.DeviceKind.CrtTv, broken: false, screenShot: true));
 
             // ---- THE WARMUP IS A CROSSFADE, NOT A DIMMER (master: "should fade from the tv model screen color into
             // the image"). This was got wrong once in exactly the way that looks plausible: raise the brightness floor

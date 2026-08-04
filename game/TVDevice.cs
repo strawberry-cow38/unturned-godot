@@ -2,23 +2,26 @@ using Godot;
 
 namespace UnturnedGodot
 {
-    // An in-game TELEVISION -- Television_0 (flatscreen) / Television_1 (CRT). Look at it and press F to toggle
-    // it ON/OFF (per-TV state). When ON *and* the town grid is live (PowerNet.GlobalPower), the screen shows the
+    // An in-game SCREEN -- Television_0/1 (flatscreen / CRT television) and Computer_0/3 (CRT / flatscreen computer
+    // monitor). Look at it and press F to toggle it ON/OFF (per-set state); every set starts ON (master). When ON
+    // *and* it has power -- the town grid, OR its own wired plug once the mains are down -- the screen shows the
     // SMPTE test pattern UNSHADED (so no light can wash its colours out), a SpotLight spills forward down the
     // screen normal with a visible cone shaft, and tv_tone.wav loops quietly with a fast 3D falloff. Toggling on plays tv_on.wav once; toggling
     // off plays tv_off.wav once. When OFF or the grid is dead: screen dark, no light, no tone -- and if the grid
     // dies while it's on, it goes dark (the DayNightCycle power sweep calls Refresh, like the glow containers).
     //
-    // The CRT (Television_1) WARMS UP: toggling it on does NOT snap the picture -- after a short dead delay the
-    // picture FADES IN from black over ~1.5s (a tube heating up), and once lit it flickers. The flatscreen
-    // (Television_0) snaps on instantly and holds steady, being an LCD.
+    // A TUBE (Television_1, Computer_0) WARMS UP: toggling it on does NOT snap the picture -- after a short dead delay
+    // the picture FADES IN out of the tube's own glass colour over ~1.5s, and once lit it flickers and collapses to a
+    // line on the way out. A PANEL (Television_0, Computer_3) snaps on instantly and holds steady, being an LCD.
+    // Independently of that, a TELEVISION shows the SMPTE card and hums; a MONITOR shows a flat colour that changes
+    // every few seconds and tints its own spill and shaft, and is silent. See DeviceKind.
     //
     // The SCREEN is the prop's darkest palette texel, carved off the body mesh by UV (ObjMesh.SplitByUv) and then
     // its one-texel UVs are REPLACED with a planar projection so the whole pattern fills the screen face. The
     // wiring mirrors proven props: the screen material + light + "tvdevices" group swept on a grid change
     // come from StoreShelf's cooler/fridge interior glow; the bit-6 look collider + SetMeta("tvdevice", ...)
     // F-interact routing come from ObjectDoor/GasPump. Ripped meshes need CullMode.Disabled.
-    public partial class TVDevice : Node3D
+    public partial class TVDevice : Node3D, IPowerDevice
     {
         // ---- palette-derived screen texel predicates (GODOT uv space -- ObjMesh V-flips on load) ----------------
         // Both TV screens are the prop's darkest grey texel and both are authored FACE-UP (local +Y normal); the
@@ -26,13 +29,65 @@ namespace UnturnedGodot
         //   CRT (Television_1): screen at u>0.5, v<0.5   (rgb 53,53,53; a 0.85x0.79 recessed face)
         //   Flatscreen (Television_0): the INSET front face at u<0.25, v>0.5 (rgb 39,39,39; 3.55x1.8, recessed in
         //   the bezel). The u<0.25, v<0.5 face is the FLAT BACK panel (rgb 56,56,56) -- not the screen.
+        // The two COMPUTER MONITOR props reuse the CRT television's screen texel exactly -- Computer_0's screen is the
+        // same 0.85 x 0.79 quad at the same (53,53,53) texel, and Computer_3's is 1.15 x 0.79 at the same one. So they
+        // take CrtScreen verbatim rather than getting a predicate of their own. Written down because that is a fact
+        // about the ART, not about this code, and re-extracted UVs could break it silently: the split falls back to a
+        // printed error, but a predicate that matched the WRONG face would just render a picture on the wrong plane.
         static bool CrtScreen(Vector2 a, Vector2 b, Vector2 c)
             => a.X > 0.5f && b.X > 0.5f && c.X > 0.5f && a.Y < 0.5f && b.Y < 0.5f && c.Y < 0.5f;
         static bool FlatScreen(Vector2 a, Vector2 b, Vector2 c)
             => a.X < 0.25f && b.X < 0.25f && c.X < 0.25f && a.Y > 0.5f && b.Y > 0.5f && c.Y > 0.5f;
 
+        // ---- what KIND of set this is ------------------------------------------------------------------------------
+        // Four props, two independent axes (master: "dupe the CRT thing onto the computer crt, minus the test pattern,
+        // and vertical hold desync, and test tone. computer monitors cycle through a few random colors (which tints the
+        // 'cone'), same for the flatscreen computer monitor, minus the crt exclusive things"):
+        //
+        //            | TUBE (warms up, flickers, collapses) | PANEL (snaps on)
+        //   TV       | Television_1                          | Television_0        <- SMPTE card, blanking bar, tone
+        //   MONITOR  | Computer_0                            | Computer_3          <- flat colour on a cycle, silent
+        //
+        // ...plus ONE thing that belongs to a single cell rather than an axis: the vertical-hold slip is the television
+        // tube's alone. A monitor's picture is generated locally and does not roll (and master asked for it gone).
+        //
+        // One enum with derived predicates, not four booleans threaded through Build/Refresh/_Process. The failure that
+        // shape invites is a fifth prop picking up three of the four flags -- and the one it misses is always a QUIET
+        // feature (no tone, no roll), so nothing looks wrong, it just isn't there.
+        public enum DeviceKind { CrtTv, FlatTv, CrtMonitor, FlatMonitor }
+
+        /// <summary>Which props this device drives at all. WorldBuilder gates on THIS, so <see cref="KindFor"/> is
+        /// only ever asked about a name that appears here -- the two are a pair and a test pins that they agree.</summary>
+        public static bool IsDeviceProp(string propName)
+            => propName is "Television_0" or "Television_1" or "Computer_0" or "Computer_3";
+
+        public static DeviceKind KindFor(string propName) => propName switch
+        {
+            "Television_0" => DeviceKind.FlatTv,
+            "Television_1" => DeviceKind.CrtTv,
+            "Computer_0"   => DeviceKind.CrtMonitor,
+            "Computer_3"   => DeviceKind.FlatMonitor,
+            _              => DeviceKind.CrtTv,
+        };
+
+        /// <summary>A tube: warms up rather than snapping, flickers while lit, and collapses to a line on the way out.
+        /// Both televisions and monitors have a tube variant, which is the whole point of splitting this apart from the
+        /// old single is-this-a-CRT flag: "CRT" used to mean tube AND television AND rolls AND hums, all at once.</summary>
+        internal static bool IsTube(DeviceKind k) => k is DeviceKind.CrtTv or DeviceKind.CrtMonitor;
+        /// <summary>Shows the SMPTE test card (and therefore the blanking bar baked under it). Televisions only.</summary>
+        internal static bool HasPattern(DeviceKind k) => k is DeviceKind.CrtTv or DeviceKind.FlatTv;
+        /// <summary>Loses vertical hold. The television TUBE only -- not the monitor tube.</summary>
+        internal static bool HasDesync(DeviceKind k) => k == DeviceKind.CrtTv;
+        /// <summary>Hums the 1 kHz test tone. Tied to the test card because they are the same fiction: a set showing
+        /// bars is showing a test broadcast, and a test broadcast is what the tone belongs to.</summary>
+        internal static bool HasTone(DeviceKind k) => HasPattern(k);
+        /// <summary>Shows a flat colour that changes every few seconds instead of a picture. Monitors.</summary>
+        internal static bool CyclesColour(DeviceKind k) => !HasPattern(k);
+
+        internal static string LabelFor(DeviceKind k) => HasPattern(k) ? "Television" : "Computer Monitor";
+
         public string PropName = "Television_1";
-        bool _isCrt;              // Television_1 warms up; Television_0 snaps on
+        DeviceKind _kind = DeviceKind.CrtTv;
         bool _on;                 // player toggle state (independent of the grid)
         bool _broken;             // prop smashed -> screen + light + tone stay dead through any grid sweep
         bool _screenShot;         // GLASS shot out, cabinet still standing -- dead until the prop itself resets
@@ -116,8 +171,72 @@ namespace UnturnedGodot
         Vector3 _screenRightLocal = Vector3.Right, _screenUpLocal = Vector3.Up;   // the screen's OWN in-plane axes (Reproject's ax/ay)
 
         Vector3 _screenCenterLocal, _screenNormalLocal;   // stashed for the light placement + the render harness
+        Vector3 _localUp = Vector3.Up;                    // world up expressed in the prop's local frame (Reproject computes it)
         Aabb _screenAabbLocal;    // the screen sub-mesh's bounds in PROP-LOCAL space, captured before anything animates
                                   //  the node -- so a hit test never has to invert a collapsing (possibly degenerate) scale
+
+        // ---- MONITOR COLOUR CYCLE ----------------------------------------------------------------------------------
+        // Master: "computer monitors cycle through a few random colors (which tints the 'cone')". A short PALETTE
+        // rather than a random hue each time, because a computer screen is showing something -- a desktop, a terminal,
+        // a crash -- and uniformly random hues read as a disco light rather than as a machine left running.
+        //
+        // The colour is not a texture. A monitor's screen material has no AlbedoTexture at all, so the colour rides
+        // AlbedoColor directly, which is also what makes the warmup crossfade and the collapse work on a monitor for
+        // free: both already drive that same colour's brightness and alpha.
+        static readonly Color[] MonitorColours =
+        {
+            new(0.13f, 0.30f, 0.75f),   // desktop blue
+            new(0.22f, 0.72f, 0.28f),   // phosphor green terminal
+            new(0.85f, 0.62f, 0.15f),   // amber terminal
+            new(0.62f, 0.66f, 0.70f),   // grey UI
+            new(0.10f, 0.55f, 0.62f),   // teal
+        };
+        const float ColourHoldMin = 2.5f, ColourHoldMax = 7f;
+        static readonly Color SpillWhite = new(0.85f, 0.9f, 1.0f);   // the televisions' fixed blue-white spill
+        int _colourIdx;
+        float _colourLeft;
+        bool _mono;               // desaturate the picture (the power-off collapse); a texture swap on a TV, a luma on a monitor
+        Color _tint = Colors.White;   // what the screen -- and therefore the spill and the shaft -- is coloured by
+
+        /// <summary>The colour the screen, the spill and the shaft all take. White on a television (the SMPTE texture
+        /// carries its own colours and albedo MULTIPLIES, so anything else would tint the bars); the current cycle
+        /// colour on a monitor.</summary>
+        Color Picture => CyclesColour(_kind) ? (_mono ? Mono(_tint) : _tint) : Colors.White;
+        Color Spill => CyclesColour(_kind) ? (_mono ? Mono(_tint) : _tint) : SpillWhite;
+
+        // ---- POWER IO ----------------------------------------------------------------------------------------------
+        // Master: "add power io for both TVs, computer crt and computer flat screen monitor". ONE wire-able CONSUMER
+        // port per set -- the plug.
+        //
+        // Deliberately NOT the input/output pair LightTap gives a streetlight. That one exposes an output because a
+        // wrecked lamp is a tap into a municipal main that is still live behind it; a television is an appliance, there
+        // is nothing behind it to tap, and an Output port here would mean wiring a TV into a generator and getting
+        // power back out of the television.
+        //
+        // The plug is an ALTERNATIVE feed, not a replacement: a set still runs off the town mains exactly as before,
+        // and the port is what keeps it running once the mains are down. That is the entire reason to have one.
+        public const float CrtTvWatts = 90f, FlatTvWatts = 60f, CrtMonitorWatts = 70f, FlatMonitorWatts = 25f;
+        internal static float WattsFor(DeviceKind k) => k switch
+        {
+            DeviceKind.FlatTv      => FlatTvWatts,
+            DeviceKind.CrtMonitor  => CrtMonitorWatts,
+            DeviceKind.FlatMonitor => FlatMonitorWatts,
+            _                      => CrtTvWatts,
+        };
+
+        readonly System.Collections.Generic.List<ConnectionPort> _ports = new();
+        ConnectionPort _plug;
+        Aabb _bodyAabbLocal;      // the cabinet's own bounds, kept so a rubble reset can rebuild the plug where it was
+        bool _plugWasPowered;     // last polled state, so a wire going live re-derives the set without a per-frame Refresh
+
+        // IPowerDevice: a pure consumer -- it never produces, and a map fixture never burns.
+        public bool PowerProducing => false;
+        public bool PowerOnFire => false;
+        public uint PowerNetId => 0;   // SP-local map fixture (an MP replica id would go here, like GasPump / LightTap)
+        public System.Collections.Generic.IReadOnlyList<ConnectionPort> PowerPorts => _ports;
+
+        /// <summary>Is the plug actually receiving its wattage? Separate from the mains: a set is live on EITHER.</summary>
+        public bool PlugPowered => _plug != null && GodotObject.IsInstanceValid(_plug) && _plug.Powered;
 
         static float EnvF(string k, float d) => float.TryParse(System.Environment.GetEnvironmentVariable(k), out var v) ? v : d;
 
@@ -127,9 +246,27 @@ namespace UnturnedGodot
         /// the body was added to.</summary>
         public static TVDevice Make(MeshInstance3D bodyMi, string propName)
         {
-            var tv = new TVDevice { PropName = propName, _isCrt = propName == "Television_1", Transform = bodyMi.Transform };
+            // ON AT START (master: "making all tvs/monitors on at start"). Set BEFORE Build, because Build ends with
+            // the first Refresh -- so a tube plays its warmup as the map comes up rather than snapping to a lit
+            // picture, which is what a room full of sets left running should look like.
+            var tv = new TVDevice { PropName = propName, _kind = KindFor(propName), _on = true, Transform = bodyMi.Transform };
             tv.Build(bodyMi.Mesh as ArrayMesh);
             return tv;
+        }
+
+        /// <summary>Join the power graph. Deferred out of <see cref="Make"/> because Make runs BEFORE the device is in
+        /// the tree (the world builder parents it afterwards), and the lazy PowerManager spawn needs a SceneTree.</summary>
+        public override void _Ready()
+        {
+            AddToGroup("deployables");   // PowerNet gathers this group by IPowerDevice, not by the concrete Deployable
+            if (GetTree() is SceneTree tr && tr.GetNodesInGroup("powermgr").Count == 0 && GetParent() is Node parent)
+            {
+                var pm = new PowerManager();
+                pm.AddToGroup("powermgr");
+                // Deferred: adding a SIBLING from inside _Ready runs while the parent is still setting its children up.
+                parent.CallDeferred(Node.MethodName.AddChild, pm);
+            }
+            PowerNet.MarkDirty();
         }
 
         void Build(ArrayMesh body)
@@ -137,14 +274,13 @@ namespace UnturnedGodot
             if (body == null) { GD.PrintErr($"[tv] {PropName}: no body mesh"); return; }
             // Split the screen texel off the body. Bucket[0] = matched (screen) tris; Build() returns null for an
             // empty bucket, so a null bucket means the predicate matched nothing (wrong prop / re-extracted UVs).
-            var parts = ObjMesh.SplitByUv(body, _isCrt ? 71 : 70, _isCrt ? CrtScreen : FlatScreen);
-            var screenMesh = parts != null && parts.Length >= 1 ? parts[0] : null;
+            var screenMesh = SplitScreen(body, _kind);
             if (screenMesh == null) { GD.PrintErr($"[tv] {PropName}: screen split matched no triangles"); return; }
 
-            var pattern = LoadPattern();
+            var pattern = HasPattern(_kind) ? LoadPattern() : null;
             // BEFORE Reproject, which overwrites the UVs: the screen's original UV is a single palette texel, and that
             // texel IS the tube's glass colour. Read it now or it is gone.
-            _glassColor = SampleScreenTexel(PropName, screenMesh, _isCrt ? CrtGlass : FlatGlass);
+            _glassColor = SampleScreenTexel(PropName, screenMesh, _kind == DeviceKind.FlatTv ? FlatGlass : CrtGlass);
             var projected = Reproject(screenMesh, body.GetAabb().GetCenter());   // one-texel UVs -> planar 0..1 fill
 
             // UNSHADED (master: "make the light they emit not reflect on the screen, bc its washing out the colors").
@@ -170,10 +306,17 @@ namespace UnturnedGodot
             // face and the two were exactly coincident -- fine while the overlay was opaque, z-fighting the moment it
             // is not. And the body face carries the destructible's hide-on-break for free, so there is no second
             // screen-shaped node to leave hanging over the rubble.
+            //
+            // A MONITOR takes none of that texture machinery: no card, so no composite, no blanking bar and no
+            // Uv1Scale window. Its picture IS the albedo colour, which is why the crossfade and the collapse work on it
+            // unchanged -- both already drive that colour's brightness and alpha.
             var (patternTex, monoTex, patternFrac) = ScreenTextures(pattern, _glassColor);
             _patternTex = patternTex; _monoTex = monoTex;
             _screenMat = MakeScreenMaterial(_patternTex);
-            _screenMat.Uv1Scale = new Vector3(1f, patternFrac, 1f);   // window the composite onto the picture; the rest is the blanking bar
+            if (HasPattern(_kind))
+                _screenMat.Uv1Scale = new Vector3(1f, patternFrac, 1f);   // window the composite onto the picture; the rest is the blanking bar
+            else
+                _tint = MonitorColours[_colourIdx = Mathf.Abs((int)GD.Randi()) % MonitorColours.Length];
             _screenOffset = _screenNormalLocal * PictureOffset;
             _screen = new MeshInstance3D { Mesh = projected, MaterialOverride = _screenMat, Visible = false, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off, Position = _screenOffset };
             AddChild(_screen);
@@ -185,7 +328,7 @@ namespace UnturnedGodot
             _screenAabbLocal = screenAabb;
             _light = new SpotLight3D
             {
-                LightColor = new Color(0.85f, 0.9f, 1.0f),
+                LightColor = Spill,
                 SpotRange = 4.0f, SpotAngle = 55f, SpotAngleAttenuation = 1.2f,
                 LightEnergy = 0f, ShadowEnabled = false, Visible = false,
                 Transform = new Transform3D(AimBasis(_screenNormalLocal), _screenCenterLocal + _screenNormalLocal * 0.05f),
@@ -206,7 +349,10 @@ namespace UnturnedGodot
                 CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
                 MaterialOverride = new StandardMaterial3D
                 {
-                    AlbedoColor = new Color(0.85f, 0.9f, 1.0f, ConeAlpha),
+                    // Master: the monitor's cycling colour "tints the 'cone'". So the shaft is not a fixed blue-white
+                    // here -- it takes the screen's colour, and so does the SpotLight above, because a screen showing
+                    // green spilling blue-white light onto the wall is the tell that the two are unrelated systems.
+                    AlbedoColor = new Color(Spill, ConeAlpha),
                     AlbedoTexture = ConeGradient(),
                     Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
                     BlendMode = BaseMaterial3D.BlendModeEnum.Add,
@@ -222,6 +368,9 @@ namespace UnturnedGodot
             _coneMat = (StandardMaterial3D)_cone.MaterialOverride;
             AddChild(_cone);
 
+            _bodyAabbLocal = body.GetAabb();
+            BuildPlug(_bodyAabbLocal);   // the wire-able power input (see POWER IO above)
+
             // Whole-prop look-focus outline (F affordance -- tells the player F does something): the FULL body
             // silhouette on the outline overlay, hidden until looked at. Same recipe as StoreShelf._shelfGlow /
             // ObjectDoor._leafOutline.
@@ -231,6 +380,85 @@ namespace UnturnedGodot
             BuildAudio();
             AddToGroup("tvdevices");   // DayNightCycle.DriveStreetlights sweeps this group on a grid change -> Refresh
             Refresh();
+        }
+
+        /// <summary>Carve the screen face off a body mesh for a given kind. Shared with the test rather than the test
+        /// re-deriving one -- the point of checking a UV predicate is to check THE one production runs, and a copy that
+        /// agrees with itself would pass with the real predicate broken.
+        ///
+        /// Keyed on the KIND, not on a two-value flag: the split cache is per (mesh, key) and three of the four props
+        /// share one predicate, so a key that only distinguished CRT from flat would be fine today and collide the
+        /// moment two kinds on one mesh want different splits.</summary>
+        internal static ArrayMesh SplitScreen(ArrayMesh body, DeviceKind kind)
+        {
+            var parts = ObjMesh.SplitByUv(body, 70 + (int)kind, kind == DeviceKind.FlatTv ? FlatScreen : CrtScreen);
+            return parts != null && parts.Length >= 1 ? parts[0] : null;
+        }
+
+        // ---- power plug --------------------------------------------------------------------------------------------
+        void BuildPlug(Aabb bodyLocal)
+        {
+            if (_plug != null) return;
+            _plug = ConnectionPort.Create(this, new DeployableDef.Port
+            {
+                Kind = DeployableDef.PortKind.Consumer,
+                Pos = PlugLocal(bodyLocal, _screenNormalLocal, _localUp),
+                Watts = WattsFor(_kind),
+            }, LabelFor(_kind));
+            AddChild(_plug);
+            _ports.Add(_plug);
+            PowerNet.MarkDirty();
+        }
+
+        void FreePlug()
+        {
+            if (_plug == null) return;
+            _ports.Remove(_plug); _plug.QueueFree(); _plug = null;
+            _plugWasPowered = false;
+            PowerNet.MarkDirty();
+        }
+
+        /// <summary>Where the plug cube hangs, in the prop's own local frame: off the BACK of the cabinet (the far side
+        /// from the screen), a quarter of the way up it.
+        ///
+        /// DERIVED from the body's bounds rather than four hand-measured constants, because the four props are not the
+        /// same shape -- a 1.15 m desk monitor and a 3.55 m wall television -- and one shared vector would sit inside
+        /// the big one and out in mid-air past the small one. Deriving it also means it cannot silently go stale if a
+        /// prop is re-extracted, which matters here more than usual: a badly placed port is invisible until someone
+        /// walks up with the wire tool and finds nothing to aim at, and nothing about the set looks wrong before that.
+        ///
+        /// Pure and internal so the placement can be checked against the real prop bounds without an Unturned install
+        /// -- see <see cref="PointOnScreen"/> for the same argument.</summary>
+        internal static Vector3 PlugLocal(Aabb bodyLocal, Vector3 screenNormalLocal, Vector3 localUp)
+        {
+            var n = screenNormalLocal.LengthSquared() > 1e-9f ? screenNormalLocal.Normalized() : Vector3.Forward;
+            var c = bodyLocal.GetCenter();
+            // Step from the centre out to the back face along the screen normal, then 6 cm clear of it so the cube sits
+            // ON the cabinet rather than buried in it (the same failure GridPowerSource.PortLocal records at Y=0.60).
+            float reach = (bodyLocal.Size * 0.5f).Dot(n.Abs()) + 0.06f;
+            var p = c - n * reach;
+
+            // ...then drop it to a quarter height, measured along whatever local axis the placement basis stands up.
+            // Not simply bodyLocal's Y: these props are authored Z-up and the basis rotates them, so the local "up"
+            // axis differs per prop and hardcoding one puts the plug out of the side of a television.
+            //
+            // ORTHOGONALIZED against the screen normal first, and that is the load-bearing line. The height slide runs
+            // along `u`; if `u` has any component along `n`, the slide undoes part of the step out of the back face and
+            // the port ends up INSIDE the cabinet -- invisible, unclickable, and with nothing about the set looking
+            // wrong. A tilted wall set (screen angled down, so its local up is not perpendicular to its own normal) is
+            // enough to trigger it. If the two are parallel outright -- a screen facing straight up, i.e. a set lying
+            // on its back -- there is no height axis at all and the plug just stays at mid-height rather than being
+            // slid along a degenerate direction.
+            var u = localUp - n * localUp.Dot(n);
+            if (u.LengthSquared() < 1e-6f) return p;
+            u = u.Normalized();
+            float lo = float.MaxValue, hi = float.MinValue;
+            for (int i = 0; i < 8; i++)
+            {
+                float d = bodyLocal.GetEndpoint(i).Dot(u);
+                lo = Mathf.Min(lo, d); hi = Mathf.Max(hi, d);
+            }
+            return p + u * (Mathf.Lerp(lo, hi, 0.25f) - p.Dot(u));
         }
 
         // Reproject the screen sub-mesh's one-texel UVs into a planar 0..1 fill, so the pattern covers the whole
@@ -256,6 +484,8 @@ namespace UnturnedGodot
             // are baked here in local space, then the placement basis rotates them) -- so after placement the
             // pattern's up lands on world up for ANY prop orientation. Orthonormalize drops any placement scale.
             Vector3 localUp = Transform.Basis.Orthonormalized().Inverse() * Vector3.Up;
+            _localUp = localUp;   // kept: the plug's height is measured along it too, and re-deriving it there would
+                                  //  be a second copy of the same reasoning that could drift from this one
             Vector3 ay = localUp - nrm * localUp.Dot(nrm);
             if (ay.LengthSquared() < 1e-5f)   // screen faces straight up/down in WORLD (never for a placed TV) -> stable fallback
                 ay = Mathf.Abs(nrm.Z) < 0.9f ? new Vector3(0, 0, 1) - nrm * nrm.Z : new Vector3(1, 0, 0) - nrm * nrm.X;
@@ -323,11 +553,7 @@ namespace UnturnedGodot
                 {
                     var p = src.GetPixel(x, y);
                     col.SetPixel(x, y, p);
-                    // Rec. 709 luma, not a flat channel average: the SMPTE bars are chosen to be equal-LUMINANCE-ish
-                    // steps, and averaging RGB collapses several of them onto the same grey. The whole reason to go
-                    // monochrome on the way out is that you can still read the bars.
-                    float l = p.R * 0.2126f + p.G * 0.7152f + p.B * 0.0722f;
-                    mono.SetPixel(x, y, new Color(l, l, l, p.A));
+                    mono.SetPixel(x, y, Mono(p));
                 }
             for (int y = h; y < H; y++)
                 for (int x = 0; x < w; x++) { col.SetPixel(x, y, glass); mono.SetPixel(x, y, glass); }
@@ -335,6 +561,20 @@ namespace UnturnedGodot
             var made = (ImageTexture.CreateFromImage(col), ImageTexture.CreateFromImage(mono), (float)h / H);
             _composites[key] = made;
             return made;
+        }
+
+        /// <summary>Desaturate to Rec. 709 luma, NOT a flat channel average: the SMPTE bars are chosen as
+        /// equal-LUMINANCE-ish steps, and averaging RGB collapses several of them onto the same grey -- the whole point
+        /// of going monochrome on the way out is that you can still read the bars. The monitor palette needs it just as
+        /// much: a flat average sends pure blue and pure green to the same value, so a collapsing monitor would lose
+        /// which colour it had been showing a frame earlier.
+        ///
+        /// One definition, used by both paths, because a television that desaturates by one rule and a monitor by
+        /// another is a difference nobody would ever see reported and nobody could ever explain.</summary>
+        internal static Color Mono(Color c)
+        {
+            float l = c.R * 0.2126f + c.G * 0.7152f + c.B * 0.0722f;
+            return new Color(l, l, l, c.A);
         }
 
         /// <summary>The prop's palette colour under the SCREEN triangles, sampled from its own texture at the screen
@@ -380,8 +620,11 @@ namespace UnturnedGodot
 
         void BuildAudio()
         {
-            // Looping tone: quiet-but-noticeable, small UnitSize + a MaxDistance cap so it falls off fast.
-            var tone = PlayerController.LoadWavOneShot("res://content/sounds/tv_tone.wav", loop: true);
+            // Looping tone: quiet-but-noticeable, small UnitSize + a MaxDistance cap so it falls off fast. TELEVISIONS
+            // ONLY (master: the computer monitors come without the test tone) -- and it is simply never built rather
+            // than built-and-never-played, so there is no silent AudioStreamPlayer3D per monitor to wonder about, and
+            // no way for some later Play() to give a monitor a broadcast hum.
+            var tone = HasTone(_kind) ? PlayerController.LoadWavOneShot("res://content/sounds/tv_tone.wav", loop: true) : null;
             if (tone != null) { _tone = new AudioStreamPlayer3D { Stream = tone, VolumeDb = Mathf.LinearToDb(0.45f), UnitSize = 2f, MaxDistance = 12f, Position = _screenCenterLocal }; AddChild(_tone); }
             var on = PlayerController.LoadWavOneShot("res://content/sounds/tv_on.wav");
             if (on != null) { _onClick = new AudioStreamPlayer3D { Stream = on, VolumeDb = Mathf.LinearToDb(0.7f), UnitSize = 3f, MaxDistance = 16f, Position = _screenCenterLocal }; AddChild(_onClick); }
@@ -463,43 +706,68 @@ namespace UnturnedGodot
         {
             if (_broken == broken) return;
             _broken = broken;
-            if (broken) _on = false;      // a rubble reset rebuilds the set switched OFF, not mid-programme
-            else _screenShot = false;     // ...and rebuilds it WHOLE. A reset prop is a new television, not the old
-                                          //  smashed one wearing a fresh cabinet, so the glass comes back with it.
+            if (broken)
+            {
+                _on = false;
+                FreePlug();               // smashed: nothing to plug into, and a live wire hanging off rubble that is
+                                          //  still drawing its 90 W is worse than merely wrong -- it is a load you
+                                          //  cannot see, on a generator you can.
+            }
+            else
+            {
+                _screenShot = false;      // a reset prop is a NEW set, not the old smashed one wearing a fresh
+                                          //  cabinet, so the glass comes back with it...
+                _on = true;               // ...and so does the switch: master's "all tvs/monitors on at start" is
+                                          //  about the state of the world, and rubble resetting into a dead set would
+                                          //  make the map quietly go dark one prop at a time as things got shot.
+                if (_screen != null) BuildPlug(_bodyAabbLocal);   // ...and its plug. Guarded on a built device: a bare
+                                                                  //  TVDevice (no Unturned install) has no bounds to
+                                                                  //  place a port against.
+            }
             Refresh();
         }
 
+        /// <summary>Does this set have power at all? The town mains OR its own wired plug -- either alone is enough,
+        /// which is the whole point of the plug: a blackout kills every set on the grid and leaves the one you wired to
+        /// your generator running.</summary>
+        public bool HasFeed => PowerNet.GlobalPower || PlugPowered;
+
         public void Refresh()
         {
-            bool eff = _on && PowerNet.GlobalPower && !_broken && !_screenShot;
+            bool eff = _on && HasFeed && !_broken && !_screenShot;
+            _plugWasPowered = PlugPowered;   // the poll in _Process compares against this; stamping it here stops a
+                                             //  Refresh from any other cause looking like a plug edge on the next frame
             if (eff == _lit) return;
             _lit = eff;
             if (eff)
             {
                 EndCollapse();   // switched back on mid-collapse: the screen node is still squeezed, so undo it first
-                if (_isCrt) { _warming = true; _warmDelay = WarmDelay; _warm = 0f; }   // tube warms in
-                else { _warming = false; _warm = 1f; }                                 // flatscreen snaps
+                if (IsTube(_kind)) { _warming = true; _warmDelay = WarmDelay; _warm = 0f; }   // tube warms in
+                else { _warming = false; _warm = 1f; }                                        // panel snaps
+                if (CyclesColour(_kind)) _colourLeft = (float)GD.RandRange(ColourHoldMin, ColourHoldMax);
                 if (_screen != null) _screen.Visible = true;
                 if (_light != null) _light.Visible = true;
                 if (_cone != null) _cone.Visible = true;
                 _tone?.Play();
-                ApplyLevels();
+                ApplyTint();
             }
             else
             {
                 _warming = false; _warm = 0f;
                 _tone?.Stop();
                 ResetDesync();
-                if (ShouldCollapse(_isCrt, _broken, _screenShot) && _screen != null) { StartCollapse(); return; }
+                if (ShouldCollapse(_kind, _broken, _screenShot) && _screen != null) { StartCollapse(); return; }
                 EndCollapse();
             }
         }
 
-        /// <summary>Who gets the graceful exit. A TUBE collapses; an LCD just stops, and a set whose glass is already
-        /// gone -- smashed prop or shot-out screen -- does not get to play a power-off animation on the way out. Pure,
-        /// because on a box with no Unturned install a bare TVDevice has no screen mesh, so the branch in Refresh that
-        /// consults this can never be reached by a test and the POLICY would go unpinned.</summary>
-        internal static bool ShouldCollapse(bool isCrt, bool broken, bool screenShot) => isCrt && !broken && !screenShot;
+        /// <summary>Who gets the graceful exit. A TUBE collapses -- and that now means the computer CRT as well as the
+        /// television one (master: "dupe the CRT thing onto the computer crt"); an LCD just stops, and a set whose glass
+        /// is already gone -- smashed prop or shot-out screen -- does not get to play a power-off animation on the way
+        /// out. Pure, because on a box with no Unturned install a bare TVDevice has no screen mesh, so the branch in
+        /// Refresh that consults this can never be reached by a test and the POLICY would go unpinned.</summary>
+        internal static bool ShouldCollapse(DeviceKind kind, bool broken, bool screenShot)
+            => IsTube(kind) && !broken && !screenShot;
 
         // ---- vertical hold ----------------------------------------------------------------------------------------
         /// <summary>Chance of a slip THIS FRAME, given the frame time and the average gap between slips. Expressed as
@@ -508,8 +776,10 @@ namespace UnturnedGodot
         internal static float DesyncChance(float dt, float meanGap)
             => meanGap <= 0f ? 0f : Mathf.Clamp(dt / meanGap, 0f, 1f);
 
-        /// <summary>Only a lit TUBE loses vertical hold, and only when it is not already slipping.</summary>
-        internal static bool DesyncCanFire(bool isCrt, bool lit, float running) => isCrt && lit && running <= 0f;
+        /// <summary>Only a lit set that HAS a vertical hold loses it, and only when it is not already slipping. The
+        /// parameter is "does this kind roll", not "is this a tube" -- the computer CRT is a tube and does not roll
+        /// (master), so tying this to IsTube would have quietly given it the effect back.</summary>
+        internal static bool DesyncCanFire(bool hasDesync, bool lit, float running) => hasDesync && lit && running <= 0f;
 
         /// <summary>Advance a slip: returns the seconds left and the new V offset. When the clock runs out the hold
         /// CATCHES -- offset snaps to exactly 0 (master: "before correcting itself"), which is what a vertical hold
@@ -569,11 +839,11 @@ namespace UnturnedGodot
             // FULLY OPAQUE on the way out, unlike the warmup. The collapse is the picture being crushed into a line,
             // not dissolving back into the tube -- a semi-transparent line would read as a fade playing at the same
             // time and blunt the whole effect.
-            if (_screenMat != null) _screenMat.AlbedoColor = ScreenColor(_emitEnergy * level, 1f);
+            if (_screenMat != null) _screenMat.AlbedoColor = ScreenColor(Picture, _emitEnergy * level, 1f);
             // The spill and the shaft die WITH the picture rather than snapping off at the switch -- but they are not
             // squeezed. The collapse is the raster's, and a light cone narrowing to a blade would read as a bug.
-            if (_light != null) { _light.LightEnergy = _lightEnergy * level; _light.Visible = level > 0f; }
-            if (_coneMat != null) _coneMat.AlbedoColor = new Color(0.85f, 0.9f, 1.0f, ConeAlpha * level);
+            if (_light != null) { _light.LightEnergy = _lightEnergy * level; _light.LightColor = Spill; _light.Visible = level > 0f; }
+            if (_coneMat != null) _coneMat.AlbedoColor = new Color(Spill, ConeAlpha * level);
             if (_cone != null) _cone.Visible = level > 0f;
         }
 
@@ -585,7 +855,7 @@ namespace UnturnedGodot
                 ApplyDesync();
                 return;
             }
-            if (!DesyncCanFire(_isCrt, _lit, _desyncLeft)) return;
+            if (!DesyncCanFire(HasDesync(_kind), _lit, _desyncLeft)) return;
             if (GD.Randf() >= DesyncChance(dt, DesyncMeanGap)) return;
             _desyncLeft = (float)GD.RandRange(DesyncMin, DesyncMax);
             _desyncSpeed = (float)GD.RandRange(DesyncSpeedMin, DesyncSpeedMax) * (GD.Randf() < 0.5f ? -1f : 1f);
@@ -630,9 +900,42 @@ namespace UnturnedGodot
 
         void SetMono(bool mono)
         {
-            if (_screenMat == null) return;
+            _mono = mono;
+            if (_screenMat == null || !HasPattern(_kind)) return;   // a monitor has no texture to swap -- Picture/Spill
+                                                                    //  read _mono and desaturate the tint instead
             var want = mono ? _monoTex : _patternTex;
             if (want != null && _screenMat.AlbedoTexture != want) _screenMat.AlbedoTexture = want;
+        }
+
+        // ---- monitor colour cycle -----------------------------------------------------------------------------------
+        /// <summary>Pick the next colour index from a 0..1 roll, guaranteeing it is NOT the current one. A plain
+        /// `Randi() % n` repeats a fifth of the time, and a repeat does not read as chance -- it reads as the cycle
+        /// having stopped, which is exactly the bug this effect would be reported as.</summary>
+        internal static int NextColourIndex(int cur, float roll, int n)
+        {
+            if (n <= 1) return 0;
+            cur = ((cur % n) + n) % n;
+            int step = 1 + Mathf.Clamp((int)(Mathf.Clamp(roll, 0f, 0.9999f) * (n - 1)), 0, n - 2);
+            return (cur + step) % n;
+        }
+
+        void TickColour(float dt)
+        {
+            _colourLeft -= dt;
+            if (_colourLeft > 0f) return;
+            _colourIdx = NextColourIndex(_colourIdx, GD.Randf(), MonitorColours.Length);
+            _colourLeft = (float)GD.RandRange(ColourHoldMin, ColourHoldMax);
+            _tint = MonitorColours[_colourIdx];
+            ApplyTint();
+        }
+
+        /// <summary>Push the current colour at everything that carries it. The SpotLight's colour is set once at build
+        /// and then only here, so it is the one that would be left behind if this were folded into ApplyLevels -- and a
+        /// blue-white spill under a green screen is the exact tell that the two stopped being the same light.</summary>
+        void ApplyTint()
+        {
+            if (_light != null) _light.LightColor = Spill;
+            ApplyLevels();
         }
 
         /// <summary>Brightness modulation, CRT only. A cosine BETWEEN TWO LIT LEVELS -- full and (1 - depth) -- never
@@ -642,7 +945,7 @@ namespace UnturnedGodot
         internal static float Flicker(float phase01, float depth)
             => 1f - depth * 0.5f * (1f - Mathf.Cos(phase01 * Mathf.Tau));
 
-        float FlickerFactor() => _isCrt ? Flicker(_flickerPhase, FlickerDepth) : 1f;
+        float FlickerFactor() => IsTube(_kind) ? Flicker(_flickerPhase, FlickerDepth) : 1f;
 
         void ApplyLevels()
         {
@@ -650,12 +953,12 @@ namespace UnturnedGodot
             // the tube dissolves into the image in between. Brightness is held at full the whole way, so what comes up
             // is a picture RESOLVING rather than a picture brightening -- the difference between a tube warming and a
             // lamp on a dial. On the flatscreen k is pinned at 1, so an LCD still snaps and takes none of this.
-            float k = _isCrt ? _warm : 1f;
-            float f = FlickerFactor();   // 1.0 on the flatscreen; a shallow breath on the tube
-            if (_screenMat != null) _screenMat.AlbedoColor = ScreenColor(_emitEnergy * f, k);
+            float k = IsTube(_kind) ? _warm : 1f;
+            float f = FlickerFactor();   // 1.0 on a panel; a shallow breath on a tube
+            if (_screenMat != null) _screenMat.AlbedoColor = ScreenColor(Picture, _emitEnergy * f, k);
             if (_light != null) _light.LightEnergy = _lightEnergy * k * f;
             // the shaft rides it too, so the picture, the spill and the beam pulse together instead of drifting apart
-            if (_coneMat != null) _coneMat.AlbedoColor = new Color(0.85f, 0.9f, 1.0f, ConeAlpha * k * f);
+            if (_coneMat != null) _coneMat.AlbedoColor = new Color(Spill, ConeAlpha * k * f);
         }
 
         public override void _Process(double delta)
@@ -669,13 +972,23 @@ namespace UnturnedGodot
                 else ApplyCollapse();
                 return;
             }
-            // The CRT breathes at the NTSC field rate for as long as it is lit -- so this no longer early-outs on
-            // !_warming, which it did back when warmup was the only thing that animated.
-            if (_lit && _isCrt)
+            // A wire going live (or dying) is the plug's half of the power gate. The mains half arrives as a push --
+            // DayNightCycle sweeps the "tvdevices" group on a grid change -- but PowerNet has no such sweep, so this
+            // edge has to be polled. Cheap: one bool compare per set per frame, and Refresh early-outs when nothing
+            // actually changed.
+            if (PlugPowered != _plugWasPowered) Refresh();
+
+            // A TUBE breathes for as long as it is lit -- so this no longer early-outs on !_warming, which it did back
+            // when warmup was the only thing that animated.
+            if (_lit)
             {
-                _flickerPhase = Mathf.Wrap(_flickerPhase + (float)delta * FlickerHz, 0f, 1f);
-                TickDesync((float)delta);
-                ApplyLevels();
+                if (CyclesColour(_kind)) TickColour((float)delta);   // re-applies only when the colour actually changes
+                if (IsTube(_kind))
+                {
+                    _flickerPhase = Mathf.Wrap(_flickerPhase + (float)delta * FlickerHz, 0f, 1f);
+                    if (HasDesync(_kind)) TickDesync((float)delta);
+                    ApplyLevels();
+                }
             }
             if (!_warming) return;
             if (_warmDelay > 0f) { _warmDelay -= (float)delta; if (_warmDelay > 0f) return; }   // dead time before the tube lights
@@ -722,9 +1035,16 @@ namespace UnturnedGodot
         internal static Color ScreenColor(float brightness) => new Color(brightness, brightness, brightness);
 
         /// <summary>...and how much of it is showing. <paramref name="fade"/> 0 is the bare tube face, 1 is the full
-        /// picture; the CRT warmup drives it, the flatscreen pins it at 1.</summary>
+        /// picture; a tube's warmup drives it, a panel pins it at 1.</summary>
         internal static Color ScreenColor(float brightness, float fade)
-            => new Color(brightness, brightness, brightness, Mathf.Clamp(fade, 0f, 1f));
+            => ScreenColor(Colors.White, brightness, fade);
+
+        /// <summary>...and what colour it is. WHITE for a television, because the SMPTE texture already carries its own
+        /// colours and an unshaded albedo MULTIPLIES the texture -- any other tint here would recolour the bars. A
+        /// monitor has no texture at all, so this IS its picture, which is the whole reason the monitors needed no new
+        /// warmup, collapse or flicker path: all three drive exactly this.</summary>
+        internal static Color ScreenColor(Color tint, float brightness, float fade)
+            => new Color(tint.R * brightness, tint.G * brightness, tint.B * brightness, Mathf.Clamp(fade, 0f, 1f));
 
         /// <summary>The shaft's fade, BRIGHT AT THE SCREEN and gone by the far end (master: "gradient fade towards
         /// to bigger end too, brighter toward the source").
@@ -808,7 +1128,24 @@ namespace UnturnedGodot
         public bool DebugScreenUnshaded => _screenMat != null && _screenMat.ShadingMode == BaseMaterial3D.ShadingModeEnum.Unshaded;
         /// <summary>Screen brightness as actually applied (AlbedoColor). 0 = black tube, _emitEnergy = full picture.</summary>
         public float DebugScreenBrightness => _screenMat?.AlbedoColor.R ?? -1f;
-        public bool DebugIsCrt => _isCrt;
+        public bool DebugIsCrt => IsTube(_kind);
+        public DeviceKind DebugKind => _kind;
+        /// <summary>The colour the screen is currently showing (white on a television -- the card carries its own).</summary>
+        public Color DebugTint => Picture;
+        /// <summary>The spill/shaft colour actually applied to the SpotLight, so a render-free check can prove the cone
+        /// follows the screen rather than merely that the screen changed.</summary>
+        public Color DebugSpill => _light?.LightColor ?? Colors.Transparent;
+        /// <summary>The texture the screen is actually sampling. NULL on a monitor -- its picture is the albedo
+        /// colour and there is no card to show -- and non-null on a television. Exposed because "the monitor has no
+        /// test pattern" is otherwise only checkable by looking at it, and a dim SMPTE card at a distance reads as
+        /// a flat colour.</summary>
+        public Texture2D DebugScreenTexture => _screenMat?.AlbedoTexture;
+        public bool DebugHasPlug => _plug != null && GodotObject.IsInstanceValid(_plug);
+        public Vector3 DebugPlugLocal => _plug?.Position ?? Vector3.Zero;
+        public float DebugPlugWatts => _plug?.Watts ?? 0f;
+        public bool DebugHasTone => _tone != null;
+        /// <summary>Force a colour change now, so the cycle can be driven without waiting on the hold timer.</summary>
+        public void DebugCycleColour() { _colourLeft = 0f; TickColour(0f); }
         public Vector3 DebugScreenCenterWorld => ToGlobal(_screenCenterLocal);
         public Vector3 DebugScreenNormalWorld => (GlobalTransform.Basis.Orthonormalized() * _screenNormalLocal).Normalized();
         /// <summary>Force the TV on for a render. instant=true skips the CRT warmup so a single captured frame is
