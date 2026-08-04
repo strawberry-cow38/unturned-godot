@@ -821,9 +821,9 @@ namespace UnturnedGodot
             { "scope_8x_sight.txt",            new ScopeC(new Vector3( 0f,      -0.364f, -0.1077f), new Vector3( 0f,       0.149f, -0.1072f), 11.25f, 0.120f) },   // 8x (glass sized to sit inside the bore -- master wants it SMALL)
             { "scope_7x_sight.txt",            new ScopeC(new Vector3( 0f,      -0.364f, -0.0860f), new Vector3( 0f,       0.149f, -0.0858f), 12.86f, 0.087f) },   // 7x
             { "scope_16x_sight.txt",           new ScopeC(new Vector3( 0f,      -0.364f, -0.1077f), new Vector3( 0f,       0.149f, -0.1072f),  5.63f, 0.120f) },   // 16x
-            { "makeshift_scope_sight.txt",     new ScopeC(new Vector3(-0.0015f, -0.374f, -0.1152f), new Vector3(-0.0018f,  0.120f, -0.1733f), 15.0f,  0.098f) },   // Makeshift 6x
-            { "cross_scope_sight.txt",         new ScopeC(new Vector3( 0f,      -0.347f, -0.0691f), new Vector3( 0f,      -0.148f, -0.0574f), 15.0f,  0.074f) },   // Cross 6x
-            { "chevron_scope_sight.txt",       new ScopeC(new Vector3( 0f,      -0.355f, -0.0908f), new Vector3( 0f,      -0.110f, -0.0989f), 22.5f,  0.086f) },   // Chevron 4x
+            { "makeshift_scope_sight.txt",     new ScopeC(new Vector3(-0.0021f, -0.374f, -0.1151f), new Vector3(-0.0021f,  0.120f, -0.1151f), 15.0f,  0.072f) },   // Makeshift 6x (re-extracted skipping the stray Reticule; center corrected)
+            { "cross_scope_sight.txt",         new ScopeC(new Vector3( 0f,      -0.347f, -0.0563f), new Vector3( 0f,      -0.148f, -0.0563f), 15.0f,  0.104f) },   // Cross 6x (Z center corrected -0.069->-0.056)
+            { "chevron_scope_sight.txt",       new ScopeC(new Vector3( 0f,      -0.355f, -0.0758f), new Vector3( 0f,      -0.110f, -0.0758f), 22.5f,  0.074f) },   // Chevron 4x (Z center corrected -0.091->-0.076)
             { "shadowstalker_scope_sight.txt", new ScopeC(new Vector3( 0f,      -0.364f, -0.0927f), new Vector3( 0f,       0.149f, -0.0927f), 15.0f,  0.120f) },   // Shadowstalker 6x
         };
 
