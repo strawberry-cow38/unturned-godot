@@ -14,12 +14,14 @@ namespace UnturnedGodot
     {
         public PlayerController Player;
         // MAP-AWARE (was PEI-hardcoded): Main sets MapFolder when it resolves the map, and the image / level-size /
-        // label all follow. levelSize = ELevelSize SIZE - 2*BORDER (source Level.cs): PEI MEDIUM 2048-128=1920,
-        // Washington LARGE 4096-128=3968. The town dots come from MapNodes, which is already map-aware.
+        // label all follow. levelSize = ELevelSize SIZE - 2*BORDER (source Level.cs). BOTH shipped maps are MEDIUM
+        // (2048-128=1920): PEI, and Washington -- Washington has a 4096 LANDSCAPE (16 tiles) but its playable/map
+        // level is MEDIUM, confirmed by aligning the town nodes to Map.png (a LARGE 3968 scaled them 2x too small).
+        // The town dots come from MapNodes, which is already map-aware.
         public static string MapFolder = "PEI";
         static (string img, float size, string label) Info() => MapFolder switch
         {
-            "Washington" => ("washington_map.png", 3968f, "Washington"),
+            "Washington" => ("washington_map.png", 1920f, "Washington"),   // MEDIUM level (2048-2*64) despite a 4096 landscape -- verified by aligning the town nodes to the Map.png
             _            => ("pei_map.png",        1920f, "PEI"),
         };
 
@@ -71,6 +73,17 @@ namespace UnturnedGodot
 
             GetViewport().SizeChanged += Layout;
             Layout();
+
+            if (System.Environment.GetEnvironmentVariable("UG_MAPOPEN") == "1")   // debug: open the M-map at start + log node projections so a render can verify alignment
+            {
+                _root.Visible = true;
+                GD.Print($"[mapdbg] folder={MapFolder} levelSize={Info().size} nodes={MapNodes.Locations.Count}");
+                foreach (var (nm, pos) in MapNodes.Locations)
+                {
+                    var n = WorldToNorm(pos);
+                    GD.Print($"[mapnode] {nm} world=({pos.X:0},{pos.Z:0}) norm=({n.X:0.000},{n.Y:0.000})");
+                }
+            }
         }
 
         void Layout()
