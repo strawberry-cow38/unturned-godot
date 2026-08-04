@@ -3988,7 +3988,7 @@ namespace UnturnedGodot
         // decals/blood. The server's bullet is the authority; impact fx render from the broadcast ImpactFx
         // event (single fx authority -- otherwise the shooter would render both its local impact AND the echo)
         // and the hitmarker moves to HitConfirmed so it only ever tells the truth. Never set in SP.
-        const float TracerBaseW = 0.09f;   // 5.56's tracer half-width; every other cartridge is this times GunDef.TracerScale
+        const float TracerBaseW = 0.065f;   // 5.56's tracer half-width; every other cartridge is this times GunDef.TracerScale
         sealed class Bullet { public Vector3 Pos, Vel, Origin; public int StepsLeft; public float Gravity, Damage, VehicleDamage, ObjectDamage; public bool Cosmetic; public MeshInstance3D Tracer; public Node3D RocketVis; public Vector3 MuzzleAnchor; public bool HasAnchor; public float TracerW = TracerBaseW; }
         readonly System.Collections.Generic.List<Bullet> _bullets = new();
 
