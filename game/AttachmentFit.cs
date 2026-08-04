@@ -56,6 +56,35 @@ namespace UnturnedGodot
             return false;
         }
 
+        /// <summary>Every fitting attachment in the bag as SEPARATE PHYSICAL OBJECTS, with the page/index they live
+        /// at so the exact one clicked is the one consumed.
+        ///
+        /// Distinct from InBag, which collapses by item id, because two magazines of the same id are NOT
+        /// interchangeable: Item.amount is the rounds left in that particular magazine, which is why FindBestMag
+        /// picks the fullest rather than any. A ring that shows a 30/30 and a 12/30 as one icon is showing the player
+        /// a choice they cannot make, and consuming "any one of that id" would let them click the full one and get
+        /// the empty one.</summary>
+        public static System.Collections.Generic.List<(ItemAsset Asset, Item Item, byte Page, byte Index)> InBagInstances(
+            PlayerInventory inv, string slot, int gunCaliber)
+        {
+            var outp = new System.Collections.Generic.List<(ItemAsset, Item, byte, byte)>();
+            if (inv == null) return outp;
+            for (byte b = 0; b < (byte)(PlayerInventory.PAGES - 2); b++)
+            {
+                var pg = inv.items[b];
+                if (pg == null) continue;
+                for (byte i = 0; i < pg.getItemCount(); i++)
+                {
+                    var jar = pg.getItem(i);
+                    if (jar?.item == null) continue;
+                    var a = Assets.find(jar.item.id);
+                    if (!Fits(a, slot, gunCaliber)) continue;
+                    outp.Add((a, jar.item, b, i));
+                }
+            }
+            return outp;
+        }
+
         /// <summary>Every distinct attachment in the player's bag that fits `slot`, as (asset, count). Distinct by
         /// item id: carrying six identical magazines is one button that says x6, not six buttons.
         ///

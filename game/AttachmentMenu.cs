@@ -74,27 +74,33 @@ namespace UnturnedGodot
                 // many times in the orbit"). InBag collapses duplicates to (asset, count) because the old fan was a
                 // text list where "x6" was the readable answer; a ring of icons has nowhere to put a multiplier, and
                 // six magazines drawn six times is the point -- the ring IS the count.
-                foreach (var (asset, count) in AttachmentFit.InBag(Player?.Inventory, slot, caliber))
-                for (int dup = 0; dup < count; dup++)
+                bool isMag = slot == "Magazine";
+                foreach (var (asset, item, _, _) in AttachmentFit.InBagInstances(Player?.Inventory, slot, caliber))
                 {
-                    var a = asset;
+                    var a = asset; var inst = item;
+                    int rounds = isMag ? item.amount : -1;   // Item.amount IS the rounds left in THAT magazine
                     string mesh = AttachmentFit.MeshFor(a.id);
                     string sl = slot;
-                    list.Add(AddOption(sl, a.itemName, a.id, () =>
+                    string label = rounds >= 0 ? $"{a.itemName} — {rounds} rounds" : a.itemName;
+                    list.Add(AddOption(sl, label, a.id, () =>
                     {
                         var held = Player?.HeldItemForTest;
-                        // Swapping onto an occupied slot returns the OUTGOING attachment first, so a swap is a swap
-                        // and not a quiet destruction of whatever was already fitted.
+                        // ALWAYS return the outgoing attachment, INCLUDING when it is the same item id (master: "do
+                        // not allow attaching multiple of the same attachment on a gun, should swap between the ones
+                        // we select"). The old guard was `prev != a.id`, which skipped the give-back on a same-id
+                        // swap while still consuming one from the bag -- so swapping your 12/30 magazine for your
+                        // 30/30 silently DESTROYED one of them. A gun has one slot per type; fitting is always a
+                        // swap, never a stack.
                         int prev = AttachmentFit.InstalledId(held, sl);
-                        if (prev >= 0 && prev != a.id) Player?.Inventory?.tryAddItem(new Item((ushort)prev));
-                        if (!TakeFromBag(a.id)) return;                  // consume the one being installed
+                        if (prev >= 0) Player?.Inventory?.tryAddItem(new Item((ushort)prev));
+                        if (!TakeFromBagInstance(inst)) return;          // consume THE ONE CLICKED, not any of its id
                         AttachmentFit.SetInstalledId(held, sl, a.id);
                         // An attachment with no ripped mesh still ATTACHES -- it just renders nothing. Hiding those
                         // would hide most of the arsenal from a menu whose whole job is showing what you own.
                         if (mesh != null) VM.SetSlotMesh(sl, mesh);
                         else if (VM.SlotHasModel(sl)) VM.SetSlotAttached(sl, true);
                         Refresh();
-                    }));
+                    }, rounds: rounds, vertical: isMag));
                 }
                 if (list.Count > 0) _rings[slot] = list;
             }
@@ -135,6 +141,25 @@ namespace UnturnedGodot
         // Remove ONE of `id` from the bag -- the attachment is now on the gun, so it must not still be in your
         // pockets. Scans the same page range the options came from; false = it wasn't there (a stale fan after the
         // bag changed underneath), in which case the caller does nothing rather than fitting an item you don't own.
+        /// <summary>Remove the EXACT object the player clicked, matched by reference rather than by id or by the
+        /// page/index it was found at. Ids are not unique enough -- two magazines of the same id hold different
+        /// rounds, so taking "any one of that id" lets you click the full magazine and receive the empty one. Indices
+        /// are not stable either: anything that removed an item since the ring was built shifts them.</summary>
+        bool TakeFromBagInstance(Item want)
+        {
+            var inv = Player?.Inventory;
+            if (inv == null) return true;    // no bag (the --attach viewmodel harness): nothing to consume, still fit it
+            if (want == null) return false;
+            for (byte b = 0; b < (byte)(PlayerInventory.PAGES - 2); b++)
+            {
+                var pg = inv.items[b];
+                if (pg == null) continue;
+                for (byte i = 0; i < pg.getItemCount(); i++)
+                    if (ReferenceEquals(pg.getItem(i)?.item, want)) { pg.removeItem(i); return true; }
+            }
+            return false;   // gone from under us -> fit nothing rather than an item the player no longer owns
+        }
+
         bool TakeFromBag(ushort id)
         {
             var inv = Player?.Inventory;
@@ -154,19 +179,25 @@ namespace UnturnedGodot
         // has not memorised the sprites, and hover costs nothing on screen.
         const float OptSize = 44f, OptGap = 10f;
 
-        Button AddOption(string slot, string label, ushort? iconId, System.Action onPress, Color? tint = null)
+        Button AddOption(string slot, string label, ushort? iconId, System.Action onPress, Color? tint = null,
+                         int rounds = -1, bool vertical = false)
         {
+            // Magazines stand UP (master: "with magazines, show the icon vertically"). A portrait box plus a
+            // content-orientation fix in LoadItemIcon, because the source art is not consistently oriented -- of four
+            // real magazine icons, two are drawn wide (ids 6, 17) and two tall (20, 98). Sizing the box alone would
+            // letterbox half of them; rotating everything would lay the other half on its side.
+            var sz = vertical ? new Vector2(OptSize * 0.78f, OptSize * 1.34f) : new Vector2(OptSize, OptSize);
             var b = new Button
             {
-                CustomMinimumSize = new Vector2(OptSize, OptSize),
-                Size = new Vector2(OptSize, OptSize),
-                Icon = iconId.HasValue ? LoadItemIcon(iconId.Value) : null,
+                CustomMinimumSize = sz,
+                Size = sz,
+                Icon = iconId.HasValue ? LoadItemIcon(iconId.Value, vertical) : null,
                 ExpandIcon = true,
                 TooltipText = label,
                 Disabled = onPress == null,
                 MouseFilter = Control.MouseFilterEnum.Stop,
             };
-            b.AddThemeConstantOverride("icon_max_width", (int)OptSize - 8);
+            b.AddThemeConstantOverride("icon_max_width", (int)sz.X - 6);
             if (tint.HasValue) b.Modulate = tint.Value;
             // An option with no ripped icon would be a blank square with no way to tell it apart from its neighbours,
             // so those keep the text. Rare, and better than an unlabelled hole in the ring.
@@ -177,6 +208,25 @@ namespace UnturnedGodot
             b.AddThemeStyleboxOverride("disabled", Box(0.08f, 0.09f, 0.11f, 0.55f));
             if (onPress != null) b.Pressed += () => onPress();
             AddChild(b);
+            // ROUNDS IN EACH MAG (master). Drawn as an overlay label rather than Button.Text so it does not fight the
+            // icon for the button's content box -- and it is per-INSTANCE, which is the whole reason the ring stopped
+            // collapsing duplicates: two mags of the same id can hold different amounts.
+            if (rounds >= 0)
+            {
+                var lbl = new Label
+                {
+                    Text = rounds.ToString(),
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    MouseFilter = Control.MouseFilterEnum.Ignore,   // the label must not eat the click meant for the button
+                    Size = new Vector2(sz.X, 14),
+                    Position = new Vector2(0, sz.Y - 15),
+                };
+                lbl.AddThemeFontSizeOverride("font_size", 11);
+                lbl.AddThemeColorOverride("font_color", Colors.White);
+                lbl.AddThemeColorOverride("font_outline_color", new Color(0f, 0f, 0f, 0.9f));
+                lbl.AddThemeConstantOverride("outline_size", 4);   // readable over any icon art underneath
+                b.AddChild(lbl);
+            }
             return b;
         }
 
@@ -248,11 +298,44 @@ namespace UnturnedGodot
         }
 
         // the real ground-truth item icon (content/items/icons/<id>.png), same source the inventory grid uses
-        static Texture2D LoadItemIcon(ushort id)
+        static readonly System.Collections.Generic.Dictionary<(ushort, bool), Texture2D> _itemIcons = new();
+        static Texture2D LoadItemIcon(ushort id, bool standUp = false)
         {
+            if (_itemIcons.TryGetValue((id, standUp), out var hit)) return hit;
             string p = ProjectSettings.GlobalizePath($"res://content/items/icons/{id}.png");
-            if (System.IO.File.Exists(p)) { var img = Image.LoadFromFile(p); if (img != null) return ImageTexture.CreateFromImage(img); }
-            return null;
+            Texture2D tex = null;
+            if (System.IO.File.Exists(p))
+            {
+                var img = Image.LoadFromFile(p);
+                if (img != null)
+                {
+                    if (standUp && DrawnWiderThanTall(img)) img.Rotate90(ClockDirection.Clockwise);
+                    tex = ImageTexture.CreateFromImage(img);
+                }
+            }
+            _itemIcons[(id, standUp)] = tex;
+            return tex;
+        }
+
+        /// <summary>Is the icon's DRAWN CONTENT wider than it is tall? Measured from the alpha bounding box, not the
+        /// canvas: real magazine icons are mostly 256x256 sheets with the art occupying a slice of it, so canvas
+        /// aspect says "square" for both a magazine lying down and one standing up. Measured on the shipped files --
+        /// id 6 is 246x126 of content, id 98 is 98x250 -- which is why this cannot be a per-id table either.</summary>
+        static bool DrawnWiderThanTall(Image img)
+        {
+            int w = img.GetWidth(), h = img.GetHeight();
+            int x0 = w, x1 = -1, y0 = h, y1 = -1;
+            for (int y = 0; y < h; y++)
+                for (int x = 0; x < w; x++)
+                    if (img.GetPixel(x, y).A > 0.03f)
+                    {
+                        if (x < x0) x0 = x;
+                        if (x > x1) x1 = x;
+                        if (y < y0) y0 = y;
+                        if (y > y1) y1 = y;
+                    }
+            if (x1 < x0 || y1 < y0) return false;   // fully transparent: nothing to orient
+            return (x1 - x0) > (y1 - y0);
         }
 
         /// <summary>A slot icon's colour (master: "the slot icons change color depending on if they can accept an
