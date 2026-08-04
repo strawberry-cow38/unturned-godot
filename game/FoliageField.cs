@@ -3,15 +3,17 @@ using System.IO;
 
 namespace UnturnedGodot
 {
-    // PEI's baked FOLIAGE (Maps/PEI/Foliage.blob) as MultiMesh instances: grass + 4 flowers + 2 pebbles
-    // (blob assets 0-6). NOTE: trees are NOT foliage -- they're the map's Resources (separate pipeline).
-    // tools/foliage_all.py resolves each type's FoliageInstancedMeshInfoAsset (.asset, matched by the blob's
-    // 16-byte GUID) -> its mesh + texture by container path, and bakes the blob's FULL per-instance transform
-    // (9 basis + 3 pos = 12 floats) into content/foliage/<name>.bin. Unity(LH)->Godot(RH) = negate Z.
+    // A map's baked FOLIAGE (Maps/<map>/Foliage.blob) as MultiMesh instances: grass + flowers + pebbles.
+    // NOTE: trees are NOT foliage -- they're the map's Resources (separate pipeline). tools/foliage_map.py reads
+    // the blob's per-asset GUIDs (.NET System.Guid order), resolves each to its FoliageInstancedMeshInfoAsset,
+    // and bakes the FULL per-instance transform (9 basis + 3 pos = 12 floats) into content/<MapDir>/<name>.bin.
+    // Unity(LH)->Godot(RH) = negate Z. MAP-AWARE: each map has DIFFERENT types (PEI grass+4 flowers+2 pebbles;
+    // Washington grass_00/01 + pebble_00/shore), so we DISCOVER them from the dir instead of a fixed list.
     public partial class FoliageField : Node3D
     {
-        static readonly string[] Types =
-            { "grass_00", "flowers_00", "flowers_01", "flowers_02", "flowers_03", "pebble_00", "pebble_sand_00" };
+        // Set by Main per map: PEI -> "foliage", others -> "foliage_<key>". A map with no baked dir gets NO
+        // foliage (better a bare field than another map's grass at the wrong heights).
+        public static string MapDir = "foliage";
 
         /// <summary>The grass-displacement material. Falls back to null (and therefore to the plain lit material) if
         /// the shader is missing, so a bad path costs the EFFECT rather than the grass.</summary>
@@ -33,15 +35,19 @@ namespace UnturnedGodot
             { "pebble_sand_00", new Color(0.506f, 0.506f, 0.506f) },
         };
 
-        // kept the name LoadGrass() so the Main.cs call site is unchanged; it now loads every foliage type.
+        // kept the name LoadGrass() so the Main.cs call site is unchanged; it now discovers + loads every baked
+        // foliage type for the current map (glob the map's dir), or nothing if the map has none.
         public void LoadGrass()
         {
-            foreach (var nm in Types) LoadType(nm);
+            string dir = ProjectSettings.GlobalizePath($"res://content/{MapDir}/");
+            if (!Directory.Exists(dir)) { GD.Print($"[foliage] no baked foliage for this map ({MapDir}) -- skipping"); return; }
+            foreach (var bin in Directory.GetFiles(dir, "*.bin"))
+                LoadType(Path.GetFileNameWithoutExtension(bin));
         }
 
         void LoadType(string nm)
         {
-            string dir = ProjectSettings.GlobalizePath("res://content/foliage/");
+            string dir = ProjectSettings.GlobalizePath($"res://content/{MapDir}/");
             string binPath = dir + nm + ".bin", objPath = dir + nm + ".obj";
             if (!File.Exists(binPath) || !File.Exists(objPath)) { GD.Print($"[foliage] skip {nm} (missing files)"); return; }
             var mesh = ObjMesh.Load(objPath);
