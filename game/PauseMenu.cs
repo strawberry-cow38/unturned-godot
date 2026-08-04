@@ -7,6 +7,8 @@ namespace UnturnedGodot
     // old viewmodel-tuning "offset" slider menu, which wasn't needed.
     public partial class PauseMenu : CanvasLayer
     {
+        Control _root, _gfx;
+
         public override void _Ready()
         {
             Layer = 60;
@@ -22,7 +24,15 @@ namespace UnturnedGodot
             AddChild(center);
 
             var panel = new PanelContainer();
+            _root = panel;
             center.AddChild(panel);
+
+            // The graphics panel is a SIBLING that starts hidden, not a separate screen: the pause menu already
+            // freezes the tree, and pushing/popping scenes from a paused tree is how you end up unable to unpause.
+            var gfxPanel = new PanelContainer { Visible = false };
+            _gfx = gfxPanel;
+            center.AddChild(gfxPanel);
+            gfxPanel.AddChild(GraphicsPanel.Build(this, () => { gfxPanel.Visible = false; panel.Visible = true; }));
             var margin = new MarginContainer();
             foreach (var s in new[] { "margin_left", "margin_right", "margin_top", "margin_bottom" }) margin.AddThemeConstantOverride(s, 30);
             panel.AddChild(margin);
@@ -38,6 +48,10 @@ namespace UnturnedGodot
             resume.Pressed += Close;
             vbox.AddChild(resume);
 
+            var gfx = new Button { Text = "Graphics", CustomMinimumSize = new Vector2(0, 46) };
+            gfx.Pressed += () => { _root.Visible = false; _gfx.Visible = true; };
+            vbox.AddChild(gfx);
+
             var toMenu = new Button { Text = "Exit to Menu", CustomMinimumSize = new Vector2(0, 46) };
             toMenu.Pressed += ExitToMenu;
             vbox.AddChild(toMenu);
@@ -49,7 +63,12 @@ namespace UnturnedGodot
         // ESC while paused resumes (the player controller is paused + can't, so the menu handles it itself).
         public override void _UnhandledInput(InputEvent e)
         {
-            if (Visible && e is InputEventKey { Pressed: true, Keycode: Key.Escape }) { Close(); GetViewport().SetInputAsHandled(); }
+            if (!Visible || e is not InputEventKey { Pressed: true, Keycode: Key.Escape }) return;
+            // ESC inside the graphics sub-panel steps BACK to the pause menu rather than closing everything. Closing
+            // straight to the game from a sub-panel loses the level you were on and is the classic escape-key bug.
+            if (_gfx != null && _gfx.Visible) { _gfx.Visible = false; _root.Visible = true; }
+            else Close();
+            GetViewport().SetInputAsHandled();
         }
 
         public void Open()

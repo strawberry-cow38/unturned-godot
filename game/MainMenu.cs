@@ -192,7 +192,9 @@ namespace UnturnedGodot
             MenuButton(layer, "play",          "Play",          170f, false, 1, () => TogglePlayPanel());
             MenuButton(layer, "multiplayer",   "Multiplayer",   230f, false, 1, () => ToggleServersPanel());   // -> the server browser (MainMenuServers.cs)
             MenuButton(layer, "survivors",     "Survivors",     290f, false, 2, () => ShowStub("Survivors"));
-            MenuButton(layer, "configuration", "Configuration", 350f, false, 3, () => ShowStub("Configuration"));
+            // Configuration -> the GRAPHICS panel (master asked for it here and in the pause menu). Retail's
+            // Configuration menu is where graphics live, so this replaces the stub rather than adding a sixth button.
+            MenuButton(layer, "configuration", "Configuration", 350f, false, 3, () => ToggleGraphicsPanel());
             MenuButton(layer, "workshop",      "Workshop",      410f, false, 4, () => ToggleWorkshopPanel());
             MenuButton(layer, "exit",          "Exit",          -70f, true,  0, () => GetTree().Quit());
 
@@ -200,6 +202,38 @@ namespace UnturnedGodot
             BuildServersPanel(layer);  // Multiplayer -> the server browser (MainMenuServers.cs)
             BuildWorkshopPanel(layer);
             BuildStubPanel(layer);
+            BuildGraphicsPanel(layer);
+        }
+
+        Control _graphicsPanel;
+
+        void BuildGraphicsPanel(CanvasLayer layer)
+        {
+            // Same screen position as the other side panels, and the SAME GraphicsPanel builder the pause menu uses
+            // -- the settings themselves live in GraphicsOptions, so the two views cannot drift apart.
+            _graphicsPanel = new PanelContainer { Position = new Vector2(240f, 150f), Visible = false };
+            ((PanelContainer)_graphicsPanel).AddChild(GraphicsPanel.Build(this, () => _graphicsPanel.Visible = false));
+            layer.AddChild(_graphicsPanel);
+        }
+
+        void ToggleGraphicsPanel()
+        {
+            bool show = !_graphicsPanel.Visible;
+            HideAllPanels();
+            _graphicsPanel.Visible = show;
+        }
+
+        /// <summary>Close every side panel. Added when Configuration stopped being a stub: each Toggle* already hid
+        /// the others by hand, so a new panel meant editing four call sites and forgetting one meant two panels
+        /// stacked on top of each other.</summary>
+        void HideAllPanels()
+        {
+            if (_playPanel != null) _playPanel.Visible = false;
+            if (_stubPanel != null) _stubPanel.Visible = false;
+            if (_advancedPanel != null) _advancedPanel.Visible = false;
+            if (_graphicsPanel != null) _graphicsPanel.Visible = false;
+            if (_workshopPanel != null) _workshopPanel.Visible = false;
+            if (_serversPanel != null) _serversPanel.Visible = false;
         }
 
         void MenuButton(CanvasLayer layer, string icon, string text, float y, bool fromBottom, int tab, System.Action onClick)
