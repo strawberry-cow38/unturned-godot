@@ -47,6 +47,7 @@ namespace UnturnedGodot
         //            | TUBE (warms up, flickers, collapses) | PANEL (snaps on)
         //   TV       | Television_1                          | Television_0        <- SMPTE card, blanking bar, tone
         //   MONITOR  | Computer_0                            | Computer_3          <- flat colour on a cycle, silent
+        //   LAPTOP    |                                       | Computer_2          <- a panel too; own label + draw
         //
         // ...plus ONE thing that belongs to a single cell rather than an axis: the vertical-hold slip is the television
         // tube's alone. A monitor's picture is generated locally and does not roll (and master asked for it gone).
@@ -54,18 +55,29 @@ namespace UnturnedGodot
         // One enum with derived predicates, not four booleans threaded through Build/Refresh/_Process. The failure that
         // shape invites is a fifth prop picking up three of the four flags -- and the one it misses is always a QUIET
         // feature (no tone, no roll), so nothing looks wrong, it just isn't there.
-        public enum DeviceKind { CrtTv, FlatTv, CrtMonitor, FlatMonitor }
+        //
+        // Every predicate below is an ALLOWLIST (`k is A or B`), never a denylist, and that is what makes adding a kind
+        // safe: a new member is false everywhere by default, which for a screen means no card, no roll, no tone and a
+        // colour cycle -- the quiet, correct answer. A denylist would hand it the television's whole feature set.
+        public enum DeviceKind { CrtTv, FlatTv, CrtMonitor, FlatMonitor, Laptop }
 
         /// <summary>Which props this device drives at all. WorldBuilder gates on THIS, so <see cref="KindFor"/> is
         /// only ever asked about a name that appears here -- the two are a pair and a test pins that they agree.</summary>
         public static bool IsDeviceProp(string propName)
-            => propName is "Television_0" or "Television_1" or "Computer_0" or "Computer_3";
+            => propName is "Television_0" or "Television_1" or "Computer_0" or "Computer_2" or "Computer_3";
 
+        // Computer_2 is the LAPTOP, and it is worth saying how that was settled because guessing it from the bounding
+        // box got it wrong once: at 0.76 x 0.61 x 0.67 it reads as a small case. What identifies it is the SHAPE by
+        // height band -- a flat 0.76 x 0.56 deck from z 0.01-0.12, then a panel only ~0.05-0.09 thick in Y rising to
+        // z 0.68. A deck plus a hinged lid. Computer_1 and Computer_4 are the towers (0.52 x 0.97 footprint, constant
+        // top to bottom, with a 0.40 x 0.10 drive slot two thirds up), and the CRT predicate matches that slot -- ten
+        // triangles across a 0.04 m slab, which is why the screen test asserts a single planar quad rather than a hit.
         public static DeviceKind KindFor(string propName) => propName switch
         {
             "Television_0" => DeviceKind.FlatTv,
             "Television_1" => DeviceKind.CrtTv,
             "Computer_0"   => DeviceKind.CrtMonitor,
+            "Computer_2"   => DeviceKind.Laptop,
             "Computer_3"   => DeviceKind.FlatMonitor,
             _              => DeviceKind.CrtTv,
         };
@@ -84,7 +96,11 @@ namespace UnturnedGodot
         /// <summary>Shows a flat colour that changes every few seconds instead of a picture. Monitors.</summary>
         internal static bool CyclesColour(DeviceKind k) => !HasPattern(k);
 
-        internal static string LabelFor(DeviceKind k) => HasPattern(k) ? "Television" : "Computer Monitor";
+        internal static string LabelFor(DeviceKind k) => k switch
+        {
+            DeviceKind.Laptop => "Laptop",
+            _ => HasPattern(k) ? "Television" : "Computer Monitor",
+        };
 
         public string PropName = "Television_1";
         DeviceKind _kind = DeviceKind.CrtTv;
@@ -216,11 +232,15 @@ namespace UnturnedGodot
         // The plug is an ALTERNATIVE feed, not a replacement: a set still runs off the town mains exactly as before,
         // and the port is what keeps it running once the mains are down. That is the entire reason to have one.
         public const float CrtTvWatts = 90f, FlatTvWatts = 60f, CrtMonitorWatts = 70f, FlatMonitorWatts = 25f;
+        /// <summary>A laptop is a whole computer, not just a panel, so it draws more than the bare monitor it otherwise
+        /// behaves identically to -- and less than anything with a tube in it.</summary>
+        public const float LaptopWatts = 45f;
         internal static float WattsFor(DeviceKind k) => k switch
         {
             DeviceKind.FlatTv      => FlatTvWatts,
             DeviceKind.CrtMonitor  => CrtMonitorWatts,
             DeviceKind.FlatMonitor => FlatMonitorWatts,
+            DeviceKind.Laptop      => LaptopWatts,
             _                      => CrtTvWatts,
         };
 
@@ -281,7 +301,7 @@ namespace UnturnedGodot
             // BEFORE Reproject, which overwrites the UVs: the screen's original UV is a single palette texel, and that
             // texel IS the tube's glass colour. Read it now or it is gone.
             _glassColor = SampleScreenTexel(PropName, screenMesh, _kind == DeviceKind.FlatTv ? FlatGlass : CrtGlass);
-            var projected = Reproject(screenMesh, body.GetAabb().GetCenter());   // one-texel UVs -> planar 0..1 fill
+            var projected = Reproject(screenMesh);   // one-texel UVs -> planar 0..1 fill
 
             // UNSHADED (master: "make the light they emit not reflect on the screen, bc its washing out the colors").
             // The screen used to be a normal lit material carrying BOTH albedo and emission, with the TV's own
@@ -463,7 +483,7 @@ namespace UnturnedGodot
 
         // Reproject the screen sub-mesh's one-texel UVs into a planar 0..1 fill, so the pattern covers the whole
         // face oriented upright (image top -> screen top = world up) and un-mirrored when viewed from the front.
-        ArrayMesh Reproject(ArrayMesh screen, Vector3 bodyCenter)
+        ArrayMesh Reproject(ArrayMesh screen)
         {
             var a0 = screen.SurfaceGetArrays(0);
             var V = a0[(int)Mesh.ArrayType.Vertex].AsVector3Array();
@@ -471,13 +491,33 @@ namespace UnturnedGodot
             var C = a0[(int)Mesh.ArrayType.Color].AsColorArray();
 
             Vector3 c = Vector3.Zero; foreach (var v in V) c += v; c /= Mathf.Max(1, V.Length);
-            // geometric normal (summed triangle cross products -- robust to a sliver tri), then SIGN it outward
-            // (away from the body interior) so the pattern faces the room regardless of the ripped winding.
+            // WHICH WAY THE SCREEN FACES -- and this is NEGATED winding, which needs saying because it looks like a
+            // sign error.
+            //
+            // ObjMesh.Load reverses every face's vertex order on import ("Unity(LH) verts in Godot(RH) face inward with
+            // the orig order -> reverse so faces point OUT"). After that reversal the summed cross product points INTO
+            // the cabinet, uniformly: measured on all five screen props it is -Y local, every one. So the outward
+            // facing is its negation, and that is a property of the LOADER rather than of any one prop.
+            //
+            // This USED to be signed outward a different way -- flip the winding whenever it pointed toward the body's
+            // AABB centre. That rule is right for a deep cabinet and quietly wrong otherwise, because it assumes the
+            // screen is the part of the prop furthest from its own centre of mass:
+            //
+            //   Television_0/1, Computer_0   screen 62-92% of the way to the front face -> flipped, correct, and the
+            //                                negation here reproduces that answer exactly. NO-OP for all three, which
+            //                                is what makes this change safe for the props that were eyeballed in game.
+            //   Computer_3 (flat monitor)    screen 1 cm BEHIND the AABB centre, because the stand runs back past the
+            //                                panel -> not flipped -> the picture, spill and cone faced out of its back
+            //   Computer_2 (laptop)          screen at the far END of the prop, with the whole keyboard deck on the
+            //                                side it looks at -> not flipped -> the lid rendered onto its own back
+            //
+            // The laptop is the case that shows the old rule was never sound rather than merely mistuned: a screen that
+            // faces back ACROSS its own body cannot be found by pointing away from the centre of mass, and no
+            // refinement of that idea can find it.
             Vector3 nrm = Vector3.Zero;
             for (int i = 0; i + 2 < V.Length; i += 3) nrm += (V[i + 1] - V[i]).Cross(V[i + 2] - V[i]);
-            if (nrm.LengthSquared() < 1e-9f) nrm = Vector3.Up;
-            nrm = nrm.Normalized();
-            if (nrm.Dot(c - bodyCenter) < 0f) nrm = -nrm;
+            if (nrm.LengthSquared() < 1e-9f) nrm = Vector3.Down;   // negated below -> Up, the old degenerate fallback
+            nrm = -nrm.Normalized();
             _screenCenterLocal = c; _screenNormalLocal = nrm;
 
             // screen "up" = WORLD up projected into the screen plane, expressed in the prop's LOCAL frame (the UVs
@@ -1147,6 +1187,9 @@ namespace UnturnedGodot
         /// <summary>Force a colour change now, so the cycle can be driven without waiting on the hold timer.</summary>
         public void DebugCycleColour() { _colourLeft = 0f; TickColour(0f); }
         public Vector3 DebugScreenCenterWorld => ToGlobal(_screenCenterLocal);
+        /// <summary>The screen's facing in the PROP's own frame -- the winding normal. Exposed because which
+        /// way a screen points is invisible in a still from the front and catastrophic from anywhere else.</summary>
+        public Vector3 DebugScreenNormalLocal => _screenNormalLocal;
         public Vector3 DebugScreenNormalWorld => (GlobalTransform.Basis.Orthonormalized() * _screenNormalLocal).Normalized();
         /// <summary>Force the TV on for a render. instant=true skips the CRT warmup so a single captured frame is
         /// at full brightness.</summary>

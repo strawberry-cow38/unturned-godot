@@ -11,7 +11,7 @@ namespace UnturnedGodot.Testing
     // right thing while the branch does the wrong thing looks identical from outside.
     //
     // The other TV suites all open with "the Television meshes ship with Unturned and this box has no install, so
-    // TVDevice.Make cannot run here". That is no longer true and was the reason the built path went untested: the four
+    // TVDevice.Make cannot run here". That is no longer true and was the reason the built path went untested: the five
     // prop .obj files and their palette pngs are tracked in this repo (git ls-files), so Make runs fine here. What it
     // does NOT get is a placement transform from the world builder, so this supplies one -- a -90 deg X rotation, which
     // is exactly what standing a Z-up authored prop upright does, and without it the prop lies on its back and the
@@ -42,30 +42,52 @@ namespace UnturnedGodot.Testing
 
             var crtMon = Build("Computer_0");
             var flatMon = Build("Computer_3");
+            var laptop = Build("Computer_2");
             var crtTv = Build("Television_1");
-            if (crtMon == null || flatMon == null || crtTv == null) { PowerNet.SetGlobalPower(gridWas); yield break; }
+            if (crtMon == null || flatMon == null || laptop == null || crtTv == null) { PowerNet.SetGlobalPower(gridWas); yield break; }
             yield return Ticks(2);
 
             // ---- ON AT START (master: "making all tvs/monitors on at start"). Asserted on a BUILT device rather than
             // on the _on field: the flag being set means nothing if Refresh's power gate then rejects it, and this is
             // the first release where that gate has two terms in it.
-            foreach (var (d, nm) in new[] { (crtMon, "the CRT monitor"), (flatMon, "the flatscreen monitor"), (crtTv, "the CRT television") })
+            foreach (var (d, nm) in new[] { (crtMon, "the CRT monitor"), (flatMon, "the flatscreen monitor"),
+                                            (laptop, "the laptop"), (crtTv, "the CRT television") })
                 T.Check($"{nm} comes up LIT with no player input ({d.DebugLit})", d.DebugLit);
             T.Check($"...and the screen mesh actually got carved out ({crtMon.DebugScreenOk})",
-                crtMon.DebugScreenOk && flatMon.DebugScreenOk && crtTv.DebugScreenOk);
+                crtMon.DebugScreenOk && flatMon.DebugScreenOk && laptop.DebugScreenOk && crtTv.DebugScreenOk);
 
             // ---- NO TEST CARD on a monitor. This is the check the pure table cannot make: HasPattern being false is
             // one thing, Build actually skipping LoadPattern and leaving the material textureless is another.
             T.Check("a monitor's screen carries NO texture -- its picture IS the albedo colour",
-                crtMon.DebugScreenTexture == null && flatMon.DebugScreenTexture == null);
+                crtMon.DebugScreenTexture == null && flatMon.DebugScreenTexture == null && laptop.DebugScreenTexture == null);
             T.Check("...where the television still has the SMPTE card, so this is a difference and not a broken load",
                 crtTv.DebugScreenTexture != null);
             T.Check("a monitor is still UNSHADED, like every other screen here",
-                crtMon.DebugScreenUnshaded && flatMon.DebugScreenUnshaded);
+                crtMon.DebugScreenUnshaded && flatMon.DebugScreenUnshaded && laptop.DebugScreenUnshaded);
+            // WHICH WAY EACH SCREEN FACES, on a BUILT device. The static suite proves the winding is +Y on every prop;
+            // this proves the device actually adopted it, which is the half that was broken -- Reproject used to
+            // re-sign the normal away from the body's centre, and that flipped the flatscreen monitor (its stand runs
+            // 1 cm past the panel) and the laptop (its whole deck is on the side the lid faces).
+            foreach (var (d, nm) in new[] { (crtMon, "CRT monitor"), (flatMon, "flatscreen monitor"),
+                                            (laptop, "laptop"), (crtTv, "CRT television") })
+                T.Check($"the {nm}'s screen faces local +Y, not back into its own body ({d.DebugScreenNormalLocal})",
+                    d.DebugScreenNormalLocal.Y > 0.9f);
+            // The television is the ANCHOR for that direction: it is the prop that has been looked at in-game, and the
+            // old rule and the new one produce the same answer for it. Without something in this list whose facing was
+            // confirmed by eye, "+Y" would just be the number the code happens to emit.
+            T.Check($"...anchored on the television, whose facing the old rule already agreed on ({crtTv.DebugScreenNormalLocal})",
+                crtTv.DebugScreenNormalLocal.Y > 0.9f);
+            // The laptop's lid is HINGED -- tilted back about 6 degrees -- so alone among these its screen plane is not
+            // axis-aligned. Its normal must carry that tilt rather than being snapped to an axis, or the spill and the
+            // shaft leave the lid square instead of angled the way the screen is.
+            T.Check($"...and the laptop's carries its hinge tilt ({laptop.DebugScreenNormalLocal})",
+                Mathf.Abs(laptop.DebugScreenNormalLocal.Z) > 0.02f
+                && Mathf.Abs(crtMon.DebugScreenNormalLocal.Z) < 0.02f);
 
             // ---- NO TONE on a monitor (master). Absent rather than built-and-never-played, so there is no silent
             // player to be woken up later by some unrelated Play().
-            T.Check("neither monitor has a test tone at all", !crtMon.DebugHasTone && !flatMon.DebugHasTone);
+            T.Check("no monitor -- nor the laptop -- has a test tone at all",
+                !crtMon.DebugHasTone && !flatMon.DebugHasTone && !laptop.DebugHasTone);
             T.Check("...and the television does -- again, a difference, not a missing sound file", crtTv.DebugHasTone);
 
             // ---- THE PLUG (master: "add power io"). One consumer port per set, at the right load.
@@ -73,6 +95,7 @@ namespace UnturnedGodot.Testing
             {
                 (crtMon, "CRT monitor", TVDevice.CrtMonitorWatts),
                 (flatMon, "flatscreen monitor", TVDevice.FlatMonitorWatts),
+                (laptop, "laptop", TVDevice.LaptopWatts),
                 (crtTv, "CRT television", TVDevice.CrtTvWatts),
             })
             {

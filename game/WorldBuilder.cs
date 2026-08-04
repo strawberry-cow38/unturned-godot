@@ -387,7 +387,7 @@ namespace UnturnedGodot
             Vector2I bestCell = Vector2I.Zero; int bestN = 0; int placed = 0; int lodMissing = 0; int lodLevels = 0;
             int signals = 0, signalsSide = 0;   // side-road flags are matched by POSITION; a silent miss would flash every junction amber
             int waterSources = 0;               // hydrants + towers + sinks; a silent zero here means the mains exist only in the console
-            int televisions = 0, monitors = 0;  // Television_0/1 + Computer_0/3 interactive screens; printed unconditionally so a
+            int televisions = 0, monitors = 0, laptops = 0;   // Television_0/1 + Computer_0/2/3 interactive screens; printed unconditionally so a
                                                 //  hook attaching to NOTHING is visible. Counted SEPARATELY because the two share
                                                 //  one device class -- a combined total would still read "16" if every monitor
                                                 //  silently stopped being picked up and only the televisions remained.
@@ -686,7 +686,13 @@ namespace UnturnedGodot
                 {
                     placedTV = TVDevice.Make(mainMi, name);
                     root.AddChild(placedTV);
-                    if (TVDevice.HasPattern(TVDevice.KindFor(name))) televisions++; else monitors++;
+                    switch (TVDevice.KindFor(name))
+                    {
+                        case TVDevice.DeviceKind.Laptop: laptops++; break;
+                        case TVDevice.DeviceKind.CrtTv:
+                        case TVDevice.DeviceKind.FlatTv: televisions++; break;
+                        default: monitors++; break;
+                    }
                 }
                 // Each HEAD runs its OWN dumb timer (strawberry's explicit call) -- no junction sync and no mast sync,
                 // so crossing roads can both show green and the two heads on one arm drift apart. The offset is
@@ -878,7 +884,7 @@ namespace UnturnedGodot
             var focus = placed > 0 ? cellSum[bestCell] / bestN : Vector3.Zero;
             GD.Print($"[OBJECTS] placed {placed} objects ({cache.Count} meshes); densest cluster {bestN} near {focus}; holiday-gated {holidaySkipped}{(deferredHoliday != null ? $", deferred {deferredHoliday.Count} to the join handshake" : "")} (active={activeHoliday})");
             if (waterSources > 0) GD.Print($"[water] {waterSources} municipal water sources placed (hydrants + towers + sinks); mains {(FluidNet.GlobalWater ? "ON" : "OFF")}");
-            GD.Print($"[tv] {televisions} interactive televisions, {monitors} computer monitors");
+            GD.Print($"[tv] {televisions} interactive televisions, {monitors} computer monitors, {laptops} laptops");
             if (signals > 0) GD.Print($"[signals] {signals} traffic signals, {signalsSide} flagged side-road (flash RED); {signals - signalsSide} main-road (flash amber)");
             GD.Print($"[lod] {placed - lodMissing}/{placed} placements got a retail draw distance; {lodMissing} fell back to the flat 320m; {lodLevels} extra LOD mesh instances");
             GD.Print($"[lod] LOD mesh parse cost: {lodMeshesLoaded} files in {lodLoadTicks * 1000.0 / System.Diagnostics.Stopwatch.Frequency:F0} ms (the load-time price of the runtime triangle saving)");

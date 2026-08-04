@@ -23,22 +23,45 @@ namespace UnturnedGodot.Testing
 
         static int Tris(ArrayMesh m) => m == null ? 0 : m.SurfaceGetArrays(0)[(int)Mesh.ArrayType.Vertex].AsVector3Array().Length / 3;
 
-        static (float A, float B, float Thin) FaceExtent(ArrayMesh m)
+        /// <summary>A screen face's real dimensions: its two IN-PLANE extents, plus how far the worst vertex strays
+        /// off the plane.
+        ///
+        /// This used to sort the AABB's three axis extents and call the smallest one "thickness", which is only a
+        /// planarity test for a face that happens to be axis-aligned. The laptop's lid is HINGED -- tilted about 6
+        /// degrees back -- so its bounding box is 0.05 m deep and that measurement called a perfectly flat quad
+        /// non-planar. It also mismeasured the height, reporting the box's vertical span rather than the panel's own.
+        /// Fitting the plane instead is both the correct test and the one that keeps working when a prop is angled.</summary>
+        static (float A, float B, float Off) FaceExtent(ArrayMesh m)
         {
             var v = m.SurfaceGetArrays(0)[(int)Mesh.ArrayType.Vertex].AsVector3Array();
-            var lo = new Vector3(float.MaxValue, float.MaxValue, float.MaxValue);
-            var hi = new Vector3(float.MinValue, float.MinValue, float.MinValue);
+            if (v.Length < 3) return (0f, 0f, float.MaxValue);
+
+            Vector3 c = Vector3.Zero;
+            foreach (var p in v) c += p;
+            c /= v.Length;
+            // Summed cross products: robust to one sliver triangle in a way that taking tri 0's normal is not.
+            Vector3 n = Vector3.Zero;
+            for (int i = 0; i + 2 < v.Length; i += 3) n += (v[i + 1] - v[i]).Cross(v[i + 2] - v[i]);
+            if (n.LengthSquared() < 1e-12f) return (0f, 0f, float.MaxValue);
+            n = n.Normalized();
+
+            // Any two in-plane axes will do -- the pair of extents is reported sorted, so which one is "width" does
+            // not have to be recovered.
+            Vector3 ax = (Mathf.Abs(n.Z) < 0.9f ? Vector3.Back : Vector3.Right);
+            ax = (ax - n * ax.Dot(n)).Normalized();
+            Vector3 ay = n.Cross(ax).Normalized();
+
+            float uLo = float.MaxValue, uHi = float.MinValue, vLo = float.MaxValue, vHi = float.MinValue, off = 0f;
             foreach (var p in v)
             {
-                lo = new Vector3(Mathf.Min(lo.X, p.X), Mathf.Min(lo.Y, p.Y), Mathf.Min(lo.Z, p.Z));
-                hi = new Vector3(Mathf.Max(hi.X, p.X), Mathf.Max(hi.Y, p.Y), Mathf.Max(hi.Z, p.Z));
+                var d = p - c;
+                float u = d.Dot(ax), w = d.Dot(ay);
+                uLo = Mathf.Min(uLo, u); uHi = Mathf.Max(uHi, u);
+                vLo = Mathf.Min(vLo, w); vHi = Mathf.Max(vHi, w);
+                off = Mathf.Max(off, Mathf.Abs(d.Dot(n)));
             }
-            var s = hi - lo;
-            // Sorted: a screen is a PLANE, so one axis is ~0 and the other two are its width and height -- without
-            // caring which axis of the authored frame each landed on (they differ per prop).
-            float[] e = { s.X, s.Y, s.Z };
-            System.Array.Sort(e);
-            return (e[2], e[1], e[0]);
+            float a = uHi - uLo, b = vHi - vLo;
+            return (Mathf.Max(a, b), Mathf.Min(a, b), off);
         }
 
         public override IEnumerable<Step> Run()
@@ -53,10 +76,14 @@ namespace UnturnedGodot.Testing
             // IsDeviceProp and KindFor are a PAIR: KindFor's default arm is only safe because nothing else ever reaches
             // it. Pin that the gate admits exactly the four -- in particular that it rejects the other three Computer_N
             // props, which are towers and a keyboard and would otherwise get a screen carved out of a case panel.
-            foreach (var prop in new[] { "Television_0", "Television_1", "Computer_0", "Computer_3" })
+            foreach (var prop in new[] { "Television_0", "Television_1", "Computer_0", "Computer_2", "Computer_3" })
                 T.Check($"{prop} is a screen prop", TVDevice.IsDeviceProp(prop));
-            foreach (var prop in new[] { "Computer_1", "Computer_2", "Computer_4", "Chair_Metal_0" })
-                T.Check($"{prop} is NOT ({(prop.StartsWith("Computer") ? "a tower/keyboard, no screen" : "not a screen at all")})",
+            // Computer_1 and Computer_4 are the TOWERS. They are excluded on evidence, not on the name: their CRT
+            // predicate match is the drive slot, ten triangles across a 0.04 m slab, asserted at the bottom of this
+            // suite. Computer_2 was in this list until master pointed out it is the laptop -- it had been sorted by
+            // bounding box, where a 0.76 x 0.61 x 0.67 prop reads as a small case.
+            foreach (var prop in new[] { "Computer_1", "Computer_4", "Chair_Metal_0" })
+                T.Check($"{prop} is NOT ({(prop.StartsWith("Computer") ? "a tower, its screen-texel match is a drive slot" : "not a screen at all")})",
                     !TVDevice.IsDeviceProp(prop));
 
             // ---- THE MINUS LIST, item by item.
@@ -71,6 +98,30 @@ namespace UnturnedGodot.Testing
             T.Check("the flatscreen monitor is a PANEL (no warmup/flicker/collapse)", !TVDevice.IsTube(flatMon));
             T.Check("...and takes the same minus list", !TVDevice.HasPattern(flatMon) && !TVDevice.HasDesync(flatMon)
                 && !TVDevice.HasTone(flatMon) && TVDevice.CyclesColour(flatMon));
+            // The LAPTOP (master: "theres also a laptop model, get that with the flatscreen thing too"). Its whole
+            // behaviour is the flatscreen monitor's; only its label and its draw differ, because it is a computer
+            // rather than a panel on a desk. Asserted as an EQUIVALENCE against flatMon rather than as five separate
+            // flags, so a later change to the flatscreen's behaviour cannot leave the laptop behind without saying so.
+            var lap = TVDevice.DeviceKind.Laptop;
+            T.Check("the laptop behaves exactly like the flatscreen monitor",
+                TVDevice.IsTube(lap) == TVDevice.IsTube(flatMon) && TVDevice.HasPattern(lap) == TVDevice.HasPattern(flatMon)
+                && TVDevice.HasDesync(lap) == TVDevice.HasDesync(flatMon) && TVDevice.HasTone(lap) == TVDevice.HasTone(flatMon)
+                && TVDevice.CyclesColour(lap) == TVDevice.CyclesColour(flatMon));
+            T.Check($"...but says what it is ({TVDevice.LabelFor(lap)})", TVDevice.LabelFor(lap) == "Laptop");
+            T.Check($"...and draws like a whole computer, not a bare panel ({TVDevice.WattsFor(lap):0} vs {TVDevice.WattsFor(flatMon):0} W)",
+                TVDevice.WattsFor(lap) > TVDevice.WattsFor(flatMon));
+            // A NEW KIND MUST DEFAULT TO QUIET. Every predicate is an allowlist, so an unhandled member is false
+            // everywhere -- no card, no roll, no tone. Asserted over the whole enum so the next kind added inherits
+            // the guarantee rather than relying on whoever adds it having read the comment.
+            foreach (TVDevice.DeviceKind k in System.Enum.GetValues(typeof(TVDevice.DeviceKind)))
+            {
+                T.Check($"{k}: a roll implies a card (only a television rolls)", !TVDevice.HasDesync(k) || TVDevice.HasPattern(k));
+                T.Check($"{k}: a tone implies a card (the tone IS the test broadcast)", TVDevice.HasTone(k) == TVDevice.HasPattern(k));
+                T.Check($"{k}: it either shows a card or cycles a colour, never both and never neither",
+                    TVDevice.HasPattern(k) != TVDevice.CyclesColour(k));
+                T.Check($"{k}: draws a real load ({TVDevice.WattsFor(k):0} W)", TVDevice.WattsFor(k) > 0f);
+                T.Check($"{k}: has a label", !string.IsNullOrWhiteSpace(TVDevice.LabelFor(k)));
+            }
             // ...and the televisions did NOT lose anything on the way. Half of a "dupe X minus Y" change going wrong
             // looks like the SOURCE losing Y, and nobody re-checks the thing that already worked.
             T.Check("the CRT television kept its card, its roll and its tone",
@@ -145,6 +196,8 @@ namespace UnturnedGodot.Testing
                 ("Television_0", 3.55f, 1.80f),   // flatscreen television (the big wall set)
                 ("Computer_0",   0.85f, 0.79f),   // CRT monitor -- literally the television tube's face
                 ("Computer_3",   1.15f, 0.79f),   // flatscreen monitor
+                ("Computer_2",   0.61f, 0.44f),   // LAPTOP lid -- measured IN PLANE, so the hinge tilt does not
+                                                  //  shorten it the way the bounding box did
             };
             foreach (var (nm, w, h) in props)
             {
@@ -161,8 +214,8 @@ namespace UnturnedGodot.Testing
                 // predicate over Computer_1 (a tower) below and it matches 10 triangles spanning a 0.10 m slab -- a
                 // count-only check would call that a screen.
                 T.Check($"{nm}: it is a single flat quad ({Tris(screen)} tris)", Tris(screen) == 2);
-                var (a, b, thin) = FaceExtent(screen);
-                T.Check($"{nm}: ...and genuinely planar (thickness {thin:0.###} m)", thin < 1e-3f);
+                var (a, b, off) = FaceExtent(screen);
+                T.Check($"{nm}: ...and genuinely planar ({off:0.####} m off-plane)", off < 1e-3f);
                 T.Check($"{nm}: ...the right size ({a:0.00} x {b:0.00}, want {w:0.00} x {h:0.00})",
                     Mathf.Abs(a - w) < 0.02f && Mathf.Abs(b - h) < 0.02f);
 
@@ -181,7 +234,28 @@ namespace UnturnedGodot.Testing
                 // (a cube inside the mesh is invisible and unclickable), on the BACK (not out through the picture),
                 // and within arm's reach of the prop rather than off in the room.
                 var bodyAabb = body.GetAabb();
-                var normal = ScreenNormal(body, screen);
+                var winding = WindingNormal(screen);
+                var normal = -winding;   // outward, the same negation Reproject applies -- see below for why it is one
+
+                // 1. THE WINDING IS UNANIMOUS. ObjMesh.Load reverses face order on import, so the summed cross product
+                //    points INTO the prop -- on every one of these, -Y local. That uniformity is what lets the outward
+                //    facing be a plain negation instead of a heuristic, so it is asserted rather than assumed: a
+                //    re-extraction that flips one prop's winding has to fail HERE, loudly, because the symptom
+                //    otherwise is a picture rendered on the back of a lid.
+                T.Check($"{nm}: the loaded winding points inward, -Y like every other screen prop ({winding})",
+                    winding.Y < -0.9f);
+
+                // 2. THE OLD RULE -- flip the winding whenever it pointed at the body's AABB centre -- agreed with that
+                //    negation on the three props that were verified by eye, and disagreed on exactly the two that were
+                //    not. Written as an executable comparison so the reason for the change cannot decay into a story
+                //    that someone later "simplifies" away.
+                bool oldRuleFlipped = winding.Dot(screen.GetAabb().GetCenter() - bodyAabb.GetCenter()) < 0f;
+                if (nm is "Computer_3" or "Computer_2")
+                    T.Check($"{nm}: ...and the old rule FAILED to flip it -- the bug: screen, spill and cone faced backwards",
+                        !oldRuleFlipped);
+                else
+                    T.Check($"{nm}: ...and the old rule flipped it to the same answer, so this change is a no-op here",
+                        oldRuleFlipped);
                 // The AUTHORED up axis, which is +Z: these props are modelled lying flat in Unity's Z-up frame and the
                 // placement basis stands them upright, so the prop-local "up" production computes is +Z, not +Y.
                 // Passing Vector3.Up here instead is not a harmless approximation -- it is PARALLEL to the screen
@@ -199,10 +273,24 @@ namespace UnturnedGodot.Testing
                 float back = (bodyAabb.GetCenter() - normal * (bodyAabb.Size * 0.5f).Dot(normal.Abs())).Dot(normal);
                 float clear = back - plug.Dot(normal);
                 T.Check($"{nm}: ...resting on the back panel ({clear:0.000} m proud of it)", clear > 0f && clear < 0.15f);
-                //   2. ...and ON the cabinet's footprint, not off past its edge: nudging it back through the panel has
-                //      to land inside the body. A port floating a metre to the side would pass check 1 alone.
-                T.Check($"{nm}: ...and within the cabinet's own footprint",
-                    bodyAabb.Grow(1e-3f).HasPoint(plug + normal * (clear + 0.02f)));
+                //   2. ...and ON the cabinet's footprint, not off past its edge -- a port floating a metre to the side
+                //      passes check 1 alone. Measured in the SCREEN'S OWN PLANE, not by pushing the point back through
+                //      the panel and asking the AABB whether it contains it: along a tilted normal the box's support
+                //      point is a CORNER, so that construction lands a few mm outside on the laptop and would have
+                //      reported a correctly-placed port as off the prop.
+                Vector3 pax = (Mathf.Abs(normal.Z) < 0.9f ? Vector3.Back : Vector3.Right);
+                pax = (pax - normal * pax.Dot(normal)).Normalized();
+                Vector3 pay = normal.Cross(pax).Normalized();
+                float aLo = float.MaxValue, aHi = float.MinValue, bLo = float.MaxValue, bHi = float.MinValue;
+                for (int i = 0; i < 8; i++)
+                {
+                    var e = bodyAabb.GetEndpoint(i);
+                    aLo = Mathf.Min(aLo, e.Dot(pax)); aHi = Mathf.Max(aHi, e.Dot(pax));
+                    bLo = Mathf.Min(bLo, e.Dot(pay)); bHi = Mathf.Max(bHi, e.Dot(pay));
+                }
+                T.Check($"{nm}: ...and within the cabinet's own footprint ({plug.Dot(pax):0.00} in [{aLo:0.00},{aHi:0.00}], {plug.Dot(pay):0.00} in [{bLo:0.00},{bHi:0.00}])",
+                    plug.Dot(pax) >= aLo - 1e-3f && plug.Dot(pax) <= aHi + 1e-3f
+                    && plug.Dot(pay) >= bLo - 1e-3f && plug.Dot(pay) <= bHi + 1e-3f);
                 float lo = float.MaxValue, hi = float.MinValue;
                 for (int i = 0; i < 8; i++) { float d = bodyAabb.GetEndpoint(i).Dot(up); lo = Mathf.Min(lo, d); hi = Mathf.Max(hi, d); }
                 float frac = (plug.Dot(up) - lo) / Mathf.Max(1e-5f, hi - lo);
@@ -222,9 +310,9 @@ namespace UnturnedGodot.Testing
                     wt > 2);
                 if (wrong != null)
                 {
-                    var (_, _, wthin) = FaceExtent(wrong);
-                    T.Check($"...and it is not planar ({wthin:0.###} m thick), which is what the shape check rejects",
-                        wthin > 1e-3f);
+                    var (_, _, woff) = FaceExtent(wrong);
+                    T.Check($"...and it is not planar ({woff:0.###} m off-plane), which is what the shape check rejects",
+                        woff > 1e-3f);
                 }
             }
 
@@ -249,19 +337,18 @@ namespace UnturnedGodot.Testing
             yield break;
         }
 
-        /// <summary>The screen's outward normal, derived the way Reproject does: summed triangle cross products, signed
-        /// away from the body centre. Reproduced rather than exposed because what is under test here is the PLUG's
-        /// placement given a normal, not the normal itself (TVScreenTests owns that).</summary>
-        static Vector3 ScreenNormal(ArrayMesh body, ArrayMesh screen)
+        /// <summary>The screen face's raw WINDING normal, exactly as summed from the loaded triangles -- deliberately
+        /// NOT the outward facing, so the suite can assert the two separately.
+        ///
+        /// This helper used to re-sign itself away from the body's AABB centre, mirroring what Reproject did. Both were
+        /// wrong on two of five props, and the test agreeing with the code is precisely why that survived a green run:
+        /// it reproduced the rule instead of checking the result.</summary>
+        internal static Vector3 WindingNormal(ArrayMesh screen)
         {
             var v = screen.SurfaceGetArrays(0)[(int)Mesh.ArrayType.Vertex].AsVector3Array();
-            Vector3 nrm = Vector3.Zero, c = Vector3.Zero;
+            Vector3 nrm = Vector3.Zero;
             for (int i = 0; i + 2 < v.Length; i += 3) nrm += (v[i + 1] - v[i]).Cross(v[i + 2] - v[i]);
-            foreach (var p in v) c += p;
-            c /= Mathf.Max(1, v.Length);
-            if (nrm.LengthSquared() < 1e-9f) return Vector3.Up;
-            nrm = nrm.Normalized();
-            return nrm.Dot(c - body.GetAabb().GetCenter()) < 0f ? -nrm : nrm;
+            return nrm.LengthSquared() < 1e-9f ? Vector3.Down : nrm.Normalized();
         }
     }
 }
