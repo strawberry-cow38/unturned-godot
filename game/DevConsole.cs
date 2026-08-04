@@ -140,6 +140,13 @@ namespace UnturnedGodot
                 return;
             }
 
+            if (verb == "units" || verb == "measurement")   // global client measurement system: metric | imperial | both (default both)
+            {
+                if (arg.Length > 0 && !Units.TrySet(arg)) { Log("usage: units <metric|imperial|both>"); return; }
+                Log($"units = {Units.System}   (e.g. {Units.Length(100)} · {Units.SpeedKph(100)} · {Units.Temperature(20)})");
+                return;
+            }
+
             // toggleGlobalWater [on|off]  -- the MAINS. While ON, fire hydrants / water towers / sinks are infinite
             // supplies; while OFF they go inert and you are back to rain, rivers and storage (strawberry). ON by
             // default; bare form FLIPS it. Above the arg guard so the no-arg toggle works. SP-local static, not
