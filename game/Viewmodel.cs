@@ -393,7 +393,7 @@ namespace UnturnedGodot
                     {
                         _scopeVp = new SubViewport { Size = new Vector2I(720, 720), RenderTargetUpdateMode = SubViewport.UpdateMode.Disabled, OwnWorld3D = false };   // NOT OwnWorld3D: that DUPLICATES the world (copies the sky env but a FRESH EMPTY scenario = no geometry -> lens shows only sky). Leave it false + bind World3D to the REAL main world below so the optic renders actual geometry. (This is a SEPARATE viewport from the arms _vp -- that one stays OwnWorld3D-isolated.)
                         AddChild(_scopeVp);
-                        _scopeCam = new Camera3D { Current = true, Fov = 25.7f };   // retail scope fov = 90/Zoom off the sight .dat; aug 3.5x -> 25.7deg (master-tunable), NOT a hand-picked 18
+                        _scopeCam = new Camera3D { Current = true, Fov = 22.5f };   // retail scope fov = 90/Zoom; the aug scope is 4x (items_catalog: "Rail mounted 4x zoom scope") -> 90/4 = 22.5deg, not the 3.5x/25.7 I'd guessed
                         _scopeVp.AddChild(_scopeCam);
                         // Round lens: the quad was only ever cropped round by the scope RING's aperture (far end). Inset in
                         // front of the ring, nothing masks it -> raw SQUARE (master: "why is the PiP square"). Mask it in the
@@ -410,7 +410,7 @@ namespace UnturnedGodot
                         _scopeLens = new MeshInstance3D { Name = "ScopeLens", Mesh = new QuadMesh { Size = new Vector2(0.11f, 0.11f) }, MaterialOverride = lensMat, Visible = false, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off };   // sized to fill the scope's BORE (inner hole), not halo around the whole ring; master-tunable
                         var _iron = mi.GetNodeOrNull<MeshInstance3D>("IronSights");
                         (_iron ?? mi).AddChild(_scopeLens);
-                        _scopeLens.Position = new Vector3(0f, -0.17f, -0.06f);   // aug scope tube axis (Z=-0.06 up); Y=-0.17 = a hair back toward the ocular/eye from -0.16 (master: "a hair further back and its done") -- fills the bore, ring still frames it (-0.20 covered the ring). billboard grows toward the eye. depth + size master-tunable
+                        _scopeLens.Position = new Vector3(0f, -0.17f, -0.0695f);   // CENTERED on the scope's ocular ring: augewehr_sight.txt ring = Xc=0, Zc=-0.0695, r=0.0522 (measured; sight-local -- the mount's SightPos offset handles height-over-bore vs the gun bore). Was Z=-0.06 = ~0.01 too low; a head-on view can't show a Z error. Y=-0.17 = master's depth. billboard grows toward the eye
                     }   // per-gun sight mount (extracted); eaglefire/maplestrike keep the tuned hardcoded pos
 
                     // Real default Magazine (item 6 = Military_30, GUID dbfb1d0d) — item.prefab Model_0 from
