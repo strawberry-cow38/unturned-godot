@@ -64,7 +64,13 @@ n=0; nogun=[]; aimhave=[]; aimmiss=[]
 for gun in guns:
     clips=gun_clips(gun)
     if not clips: nogun.append(gun); continue
-    for cn in ("Equip","Reload","Inspect","Hammer"):   # Hammer = the rechamber/rack played AFTER Reload when the mag was empty (source UseableGun)
+    if gun in ("eaglefire","maplestrike"):   # AUDIT (master: "get any animations we may have wrong"): dump the gun's REAL source clip set
+        print(f"[clips] {gun}: {sorted(clips)}")
+    # Sprint_Start/Stop = the un-shouldered SPRINT + SAFETY pose. Source UseableGun.cs:3509 plays ONE clip
+    # "Sprint_Start" for BOTH (stance==SPRINT && moving) OR firemode==SAFETY, and "Sprint_Stop" leaving it.
+    # The real un-shoulder (incl. the ~90deg yaw) is baked in the clip -- porting it 1:1 replaces the old
+    # hand-angled procedural pose. Named {Cap}_Sprint_Start so it stays per-gun like Reload/Aim.
+    for cn in ("Equip","Reload","Inspect","Hammer","Sprint_Start","Sprint_Stop"):   # Hammer = the rechamber/rack played AFTER Reload when the mag was empty (source UseableGun)
         if cn in clips:
             rig["anims"][cap(gun)+"_"+cn]=convert(clips[cn]); n+=1
     # per-gun ADS aim POSE -> {Cap}_Aim. Source: UseableGun.aim plays the equipped gun's OWN "Aim_Start" clip

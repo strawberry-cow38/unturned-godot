@@ -4470,7 +4470,7 @@ namespace UnturnedGodot
                     // --attach: once equipped, hold the T attachment menu open (no aim/fire) so the render shows the slot icons
                     if (_am != null && _vm.IsEquipComplete && !_am.IsOpen && ++_vmSettle >= 8) _am.Open();
                 }
-                else if (_vmTest && _vm != null && !_vmMelee)   // gun scripted sequence: ADS -> hip-fire (Kick) -> reload; a melee never fires/aims/reloads, so skip it (its MeleeSwingDriver drives the swings)
+                else if (_vmTest && _vm != null && !_vmMelee && System.Environment.GetEnvironmentVariable("UG_NOADS") != "1")   // gun scripted sequence: ADS -> hip-fire (Kick) -> reload; a melee never fires/aims/reloads, so skip it (its MeleeSwingDriver drives the swings). UG_NOADS=1 skips the whole sequence so the gun HOLDS at hip -> a late frame shows a fully-ramped sprint/safety pose (which ADS would otherwise fade out).
                 {
                     if (!_vmAimed && _vm.IsEquipComplete && ++_vmSettle >= 8)
                     { _vm.SetAiming(true); _vmAimed = true; _vmAimStart = _frame; }
