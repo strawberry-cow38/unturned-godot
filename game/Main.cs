@@ -24,6 +24,16 @@ namespace UnturnedGodot
              ?? @"C:\Program Files (x86)\Steam\steamapps\common\Unturned") + "/Maps/" + name;   // forward slashes: valid on Windows too, and required on the Linux dedicated server
         string _mapRoot = MapDir("PEI");   // --map=NAME switches the whole map (terrain + objects + spawns)
         string _mapPlace = "placements.txt";   // per-map baked object placements in content/objects/ (non-PEI = placements_<key>.txt)
+        // Point the world at the map the menu's singleplayer selector picked (same key scheme as --map=/UG_MAP, so
+        // placements + named locations follow). PEI stays the default; picking Washington loads Washington's world.
+        void ApplyMenuMap(string folder)
+        {
+            if (string.IsNullOrEmpty(folder)) return;
+            _mapRoot = MapDir(folder);
+            string key = System.Text.RegularExpressions.Regex.Replace(folder, "[^A-Za-z0-9]", "");
+            _mapPlace = folder == "PEI" ? "placements.txt" : "placements_" + key + ".txt";
+            MapNodes.MapNodeFile = folder == "PEI" ? "nodes.tsv" : "nodes_" + key + ".tsv";
+        }
         int _frame;
         MainMenu _menuShotMenu; string _menuShotDir; int _menuShotIdx;   // --menushot=DIR: render the 3D barn menu + capture each camera anchor
         string _rigDir;                              // --rig=DIR : capture a frame strip here
@@ -558,9 +568,9 @@ namespace UnturnedGodot
                     warmLs.QueueFree();
                     var menu = new MainMenu();
                     menu.OnPlay = noZombies => { menu.QueueFree(); _noZombies = noZombies; BuildPlayable(null, false, null); };
-                    menu.OnDrivePEI = noZombies => { menu.QueueFree(); _noZombies = noZombies; _peiPlayable = true; BuildObjectsTest(); };
+                    menu.OnDrivePEI = noZombies => { menu.QueueFree(); _noZombies = noZombies; ApplyMenuMap(menu.SelectedMapFolder); _peiPlayable = true; BuildObjectsTest(); };
                     // Same world, zombie REWRITE enabled (== --newzombies); the menu route exists because the launcher passes no game args.
-                    menu.OnDriveNewZombies = () => { menu.QueueFree(); ZombieDirector.Enabled = true; _noZombies = false; _peiPlayable = true; BuildObjectsTest(); };
+                    menu.OnDriveNewZombies = () => { menu.QueueFree(); ZombieDirector.Enabled = true; _noZombies = false; ApplyMenuMap(menu.SelectedMapFolder); _peiPlayable = true; BuildObjectsTest(); };
                     menu.OnMultiplayer = () => { menu.QueueFree(); _connectHost = "claw.bitvox.me"; _playableClient = true; BuildClient(); };   // legacy MP-test entry (fallback)
                     menu.OnJoinServer = (host, port) => { menu.QueueFree(); _connectHost = host; _connectPort = port; _playableClient = true; BuildClient(); };   // server browser JOIN / direct-connect -> real client join
                     menu.OnEditor = () => { menu.QueueFree(); BuildEditor(); };   // Workshop -> the singleplayer map editor (PEI)

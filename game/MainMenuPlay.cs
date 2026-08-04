@@ -24,6 +24,9 @@ namespace UnturnedGodot
 
         string _selectedMap = "Prince Edward Island";
         bool _selectedPlayable = true;
+        // the Steam Maps/<folder> name for the selected map -- Main reads this to point the world at the right map.
+        // PEI's folder is "PEI" (its display name is "Prince Edward Island"); every other map's folder == its name.
+        public string SelectedMapFolder = "PEI";
 
         static readonly string[] Difficulties = { "Easy", "Normal", "Hard" };
         static readonly string[] ZombieModes  = { "Normal", "No Zombies", "New Zombies" };
@@ -70,7 +73,7 @@ namespace UnturnedGodot
         {
             // descriptions are the REAL source text, extracted from each map's Maps/<Name>/English.dat (Description key).
             ("Prince Edward Island", "pei",        true,  "Sunny island off the East coast of Canada. Several small civilian towns with minor military presence. Tourist attractions include beaches, castles and sailing. Recommended for new survivors."),
-            ("Washington",           "washington", false, "Rainy state South-West of Canada. Several large civilian towns with extensive military presence. Tourist attractions include Seattle, golf and racing. Recommended for intermediate survivors."),
+            ("Washington",           "washington", true,  "Rainy state South-West of Canada. Several large civilian towns with extensive military presence. Tourist attractions include Seattle, golf and racing. Recommended for intermediate survivors."),
             ("Russia",               "russia",     false, "Multi-biome country neighboring Canada. Huge diversity of civilian destinations with varying military presence. Tourist attractions include historical monuments, picturesque countrysides and rock climbing. Recommended for experienced survivors."),
             ("Germany",              "germany",    false, "Mountainous country North of Canada. Modernized cities with active military presence. Tourist attractions include breathtaking vistas, hiking the alpine trails and the local celebration of Oktoberfest. Recommended for intermediate survivors."),
             ("Yukon",                "yukon",      false, "Harsh, freezing territory in North-West Canada. Barren frozen wasteland scattered with camps and cabins. Tourist attractions include skiing, skating and train spotting. Recommended for experienced survivors."),
@@ -232,6 +235,8 @@ namespace UnturnedGodot
         {
             _selectedMap = name;
             _selectedPlayable = playable;
+            SelectedMapFolder = name == "Prince Edward Island" ? "PEI" : name;   // display name -> Steam Maps/ folder
+
             if (_previewName != null) _previewName.Text = name;
             if (_descLabel != null) _descLabel.Text = desc;
             if (_previewImage != null) _previewImage.Texture = key != "" ? LoadTex($"mappreview_{key}.png") : null;
