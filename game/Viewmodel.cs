@@ -213,6 +213,7 @@ namespace UnturnedGodot
         static string Snd(string name, string fallback) => System.IO.File.Exists(ProjectSettings.GlobalizePath("res://content/" + name)) ? name : fallback;
         Node3D _sight;
         SubViewport _scopeVp; Camera3D _scopeCam; MeshInstance3D _scopeLens; Node3D _scopeCamAnchor; Godot.Environment _scopeEnv; DayNightCycle _dnc; bool _isScope, _scopeWasOn;   // PiP scope: lens ON the gun model (rides recoil); 2nd cam renders the world zoomed from the scope's OBJECTIVE end (LINEAR env so the lens isn't double-tonemapped by _vp)
+        MeshInstance3D _scopeHost; Vector3 _ironAimPos;   // ADS aim hook: irons use _ironAimPos; a scope moves it to the scope's own `Aim` node (Attachments.cs:590 -- retail aligns the SIGHT model's Aim, so ADS looks THROUGH the scope, not the irons)
         const float ScopeZeroDist = 100f;   // (b) zeroing range (m): scope cam converges onto the bullet ray here, so the reticle = point of impact at 100m + drifts slightly past. Miss at range R = |objective-eye| * |1 - R/Z| ~ 0.1m@50m, 0@100, 0.2m@200 (torso-tight at 4x; tinyclaw)
 
         // Equip gate — source: you can't start OR stop aiming until the Equip (pull-out) animation finishes
@@ -465,6 +466,7 @@ namespace UnturnedGodot
                     _sight.Position = gv.AimHook;
                     if (System.Environment.GetEnvironmentVariable("UG_AIMHOOK") is string _ah && _ah.Split(',').Length == 3)   // tuning: override the per-gun ADS aim hook (find the value that centers iron sights, then bake it)
                     { var _p = _ah.Split(','); _sight.Position = new Vector3(float.Parse(_p[0]), float.Parse(_p[1]), float.Parse(_p[2])); }
+                    _ironAimPos = _sight.Position;   // remember the iron ADS hook so removing a scope restores it
 
                     // muzzle flash = the REAL Muzzle_0 effect (ID 3; the Eaglefire.dat has Muzzle 3), extracted from
                     // core.masterbundle: a warm point light (Unity color (0.94,0.76,0.15), intensity 1.37 — NOT the old
@@ -802,7 +804,7 @@ namespace UnturnedGodot
             if (slot == "Sight")   // scopes/optics: dark SATIN METAL, not the light matte iron-sight gray (master: "proper dark-metal look")
             {
                 m.MaterialOverride = new StandardMaterial3D { CullMode = BaseMaterial3D.CullModeEnum.Disabled, AlbedoColor = new Color(0.06f, 0.065f, 0.075f), Metallic = 0.55f, MetallicSpecular = 0.5f, Roughness = 0.42f };
-                if (ScopeCal.TryGetValue(txtName, out var _sc)) ConfigureScopePiP(_sc.Lens, _sc.Obj, _sc.Fov, _sc.Size, _sc.Sides);   // magnifying scope -> point the pre-built rig at it (real PiP zoom); mask shape = the scope's measured internal-ring sides; irons/red-dots -> no PiP
+                if (ScopeCal.TryGetValue(txtName, out var _sc)) ConfigureScopePiP(_sc.Lens, _sc.Obj, _sc.Aim, _sc.Fov, _sc.Size, _sc.Sides);   // magnifying scope -> point the pre-built rig at it (real PiP zoom + ADS aim through the glass); mask shape = the scope's measured internal-ring sides; irons/red-dots -> no PiP
             }
             m.Visible = true;
         }
@@ -812,7 +814,7 @@ namespace UnturnedGodot
         // chevron/shadowstalker) mount later via SetSlotMesh and call BuildScopePiP. Same two-render PiP as the aug: a 2nd
         // cam at the scope's OBJECTIVE renders the world at a narrow fov (90/zoom) into a RIGID lens quad at the OCULAR ring;
         // the generic block in _Process drives it (world-bind + linear env + objective zeroing). See reference_unturned_scope_pip.
-        struct ScopeC { public Vector3 Lens, Obj; public float Fov, Size; public int Sides; public ScopeC(Vector3 l, Vector3 o, float f, float s, int sides) { Lens = l; Obj = o; Fov = f; Size = s; Sides = sides; } }
+        struct ScopeC { public Vector3 Lens, Obj, Aim; public float Fov, Size; public int Sides; public ScopeC(Vector3 l, Vector3 o, Vector3 aim, float f, float s, int sides) { Lens = l; Obj = o; Aim = aim; Fov = f; Size = s; Sides = sides; } }
         static readonly System.Collections.Generic.Dictionary<string, ScopeC> ScopeCal = new()
         {
             // mesh -> (lens@ocular-ring, cam-anchor@objective, fov=90/zoom, lens-size=2*ocular-radius) -- MEASURED from each scope's .txt verts; zoom from the retail .dat.
@@ -820,13 +822,14 @@ namespace UnturnedGodot
             // from the meshes so the lens no longer needs to sit eye-side of it; size ~= 2*ocular-radius to fill the ring.
             // Sides = the scope's actual internal-ring shape, MEASURED per scope (master): tube scopes 12-gon,
             // makeshift = HEXAGON (6), cross/chevron = 12, shadowstalker = SQUARE (4).
-            { "scope_8x_sight.txt",            new ScopeC(new Vector3( 0f,      -0.364f, -0.1077f), new Vector3( 0f,       0.149f, -0.1072f), 11.25f, 0.120f, 12) },   // 8x
-            { "scope_7x_sight.txt",            new ScopeC(new Vector3( 0f,      -0.364f, -0.0860f), new Vector3( 0f,       0.149f, -0.0858f), 12.86f, 0.087f, 12) },   // 7x
-            { "scope_16x_sight.txt",           new ScopeC(new Vector3( 0f,      -0.364f, -0.1077f), new Vector3( 0f,       0.149f, -0.1072f),  5.63f, 0.120f, 12) },   // 16x
-            { "makeshift_scope_sight.txt",     new ScopeC(new Vector3(-0.0021f, -0.374f, -0.1151f), new Vector3(-0.0021f,  0.120f, -0.1151f), 15.0f,  0.072f,  6) },   // Makeshift = HEXAGON (measured 6 verts at k*60deg)
-            { "cross_scope_sight.txt",         new ScopeC(new Vector3( 0f,      -0.347f, -0.0563f), new Vector3( 0f,      -0.148f, -0.0563f), 15.0f,  0.104f, 12) },   // Cross 12-gon
-            { "chevron_scope_sight.txt",       new ScopeC(new Vector3( 0f,      -0.355f, -0.0758f), new Vector3( 0f,      -0.110f, -0.0758f), 22.5f,  0.074f, 12) },   // Chevron 12-gon
-            { "shadowstalker_scope_sight.txt", new ScopeC(new Vector3( 0f,      -0.364f, -0.0927f), new Vector3( 0f,       0.149f, -0.0927f), 15.0f,  0.120f,  4) },   // Shadowstalker = SQUARE
+            // Aim = the scope's own `Aim` node (sight-local, MEASURED) -- ADS moves the aim hook here so you look THROUGH the glass (Attachments.cs:590). ~0.15 behind the ocular = real eye relief.
+            { "scope_8x_sight.txt",            new ScopeC(new Vector3( 0f,      -0.364f, -0.1077f), new Vector3( 0f,       0.149f, -0.1072f), new Vector3( 0f,      -0.5122f, -0.1086f), 11.25f, 0.120f, 12) },   // 8x
+            { "scope_7x_sight.txt",            new ScopeC(new Vector3( 0f,      -0.364f, -0.0860f), new Vector3( 0f,       0.149f, -0.0858f), new Vector3( 0f,      -0.4893f, -0.0868f), 12.86f, 0.087f, 12) },   // 7x
+            { "scope_16x_sight.txt",           new ScopeC(new Vector3( 0f,      -0.364f, -0.1077f), new Vector3( 0f,       0.149f, -0.1072f), new Vector3( 0f,      -0.5122f, -0.1086f),  5.63f, 0.120f, 12) },   // 16x
+            { "makeshift_scope_sight.txt",     new ScopeC(new Vector3(-0.0021f, -0.374f, -0.1151f), new Vector3(-0.0021f,  0.120f, -0.1151f), new Vector3(-0.0021f, -0.4705f, -0.1149f), 15.0f,  0.072f,  6) },   // Makeshift = HEXAGON
+            { "cross_scope_sight.txt",         new ScopeC(new Vector3( 0f,      -0.347f, -0.0563f), new Vector3( 0f,      -0.148f, -0.0563f), new Vector3( 0f,      -0.4667f, -0.0724f), 15.0f,  0.104f, 12) },   // Cross 12-gon
+            { "chevron_scope_sight.txt",       new ScopeC(new Vector3( 0f,      -0.355f, -0.0758f), new Vector3( 0f,      -0.110f, -0.0758f), new Vector3( 0f,      -0.4541f, -0.0760f), 22.5f,  0.074f, 12) },   // Chevron 12-gon
+            { "shadowstalker_scope_sight.txt", new ScopeC(new Vector3( 0f,      -0.364f, -0.0927f), new Vector3( 0f,       0.149f, -0.0927f), new Vector3( 0f,      -0.4893f, -0.0927f), 15.0f,  0.120f,  4) },   // Shadowstalker = SQUARE
         };
 
         // Build the PiP rig ONCE at gun-construction (_Ready) -- a SubViewport CREATED AT RUNTIME renders BLACK (its render
@@ -868,11 +871,12 @@ namespace UnturnedGodot
             host.AddChild(_scopeCamAnchor);
             var _cb = Basis.Identity; _cb.X = new Vector3(-1f, 0f, 0f); _cb.Y = new Vector3(0f, 0f, -1f); _cb.Z = new Vector3(0f, -1f, 0f);
             _scopeCamAnchor.Basis = _cb;
+            _scopeHost = host;   // the scope mesh sits on this node (at the gun's SightPos); the scope's Aim node is host-local
             // _isScope stays FALSE -> the _Process PiP block is inactive + the lens hidden until a scope Configures it on.
         }
 
-        // Point the pre-built rig at a specific scope (mesh's measured ocular/objective + fov=90/zoom + lens size). Called on mount.
-        void ConfigureScopePiP(Vector3 lensLocal, Vector3 objLocal, float fov, float lensSize, int sides)
+        // Point the pre-built rig at a specific scope (mesh's measured ocular/objective + fov=90/zoom + lens size + ADS aim). Called on mount.
+        void ConfigureScopePiP(Vector3 lensLocal, Vector3 objLocal, Vector3 aimLocal, float fov, float lensSize, int sides)
         {
             if (_scopeVp == null || !Godot.GodotObject.IsInstanceValid(_scopeLens)) return;   // gun has no rig
             _scopeLens.Mesh = new QuadMesh { Size = new Vector2(lensSize, lensSize) };
@@ -881,13 +885,16 @@ namespace UnturnedGodot
             _scopeCamAnchor.Position = objLocal;
             if (_scopeLens.MaterialOverride is ShaderMaterial _sm)   // mask shape to match the scope's ocular: 4=square (verts on the diagonals), else N-gon (rot puts a vertex up)
             { _sm.SetShaderParameter("u_seg", 2f * Mathf.Pi / sides); _sm.SetShaderParameter("u_rot", sides == 4 ? 0f : Mathf.Pi / sides); }
+            // ADS aim through the SCOPE: move the aim hook to the scope's `Aim` node (host-local -> gun-local via the host's SightPos), so ADS lines the eye up with the ocular instead of the gun's irons (Attachments.cs:590).
+            if (_sight != null && _scopeHost != null) _sight.Position = _scopeHost.Position + aimLocal;
             _isScope = true;
         }
 
-        void HideScopePiP()   // scope removed/swapped: deactivate + hide the lens; the rig stays built (rebuilding it at runtime renders black)
+        void HideScopePiP()   // scope removed/swapped: deactivate + hide the lens + restore the iron ADS hook; the rig stays built (rebuilding it at runtime renders black)
         {
             _isScope = false; _scopeWasOn = false;
             if (_scopeLens != null && Godot.GodotObject.IsInstanceValid(_scopeLens)) _scopeLens.Visible = false;
+            if (_sight != null) _sight.Position = _ironAimPos;   // back to iron-sight ADS alignment
         }
 
         // Attachment hook positions on the gun (port frame, from the source prefab's Sight/Tactical/Barrel/Grip/Magazine
