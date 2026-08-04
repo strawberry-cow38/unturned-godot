@@ -34,12 +34,13 @@ namespace UnturnedGodot.Testing
                     src.SetPixel(x, y, y < 20 ? Colors.Red : y < 40 ? new Color(0f, 1f, 0f) : new Color(0f, 0f, 1f));
             var pattern = ImageTexture.CreateFromImage(src);
 
-            const float glass = 53f / 255f;
+            const float glassL = 53f / 255f;                     // Television_1's real screen texel, rgb 53,53,53
+            var glass = new Color(glassL, glassL, glassL);
             var (colour, mono, frac) = TVDevice.ScreenTextures(pattern, glass);
 
             T.Check("a composite is produced", colour != null && mono != null);
-            T.Check($"...and a null pattern degrades to no texture rather than throwing ({TVDevice.ScreenTextures(null, 0.99f).Colour == null})",
-                TVDevice.ScreenTextures(null, 0.99f).Colour == null);
+            T.Check($"...and a null pattern degrades to no texture rather than throwing ({TVDevice.ScreenTextures(null, Colors.White).Colour == null})",
+                TVDevice.ScreenTextures(null, Colors.White).Colour == null);
 
             var ci = colour.GetImage();
             int ch = ci.GetHeight();
@@ -61,10 +62,10 @@ namespace UnturnedGodot.Testing
             // a gap in the set; white as a flash.
             var barPix = ci.GetPixel(0, ch - 1);
             T.Check($"the bar is the tube's own glass colour ({barPix})",
-                Mathf.IsEqualApprox(barPix.R, glass, 0.01f) && Mathf.IsEqualApprox(barPix.G, glass, 0.01f) && Mathf.IsEqualApprox(barPix.B, glass, 0.01f));
+                Mathf.IsEqualApprox(barPix.R, glassL, 0.01f) && Mathf.IsEqualApprox(barPix.G, glassL, 0.01f) && Mathf.IsEqualApprox(barPix.B, glassL, 0.01f));
             T.Check($"...opaque, so it covers rather than tints ({barPix.A:0.00})", barPix.A > 0.99f);
             bool wholeBar = true;
-            for (int y = H; y < ch; y++) if (!Mathf.IsEqualApprox(ci.GetPixel(0, y).R, glass, 0.01f)) wholeBar = false;
+            for (int y = H; y < ch; y++) if (!Mathf.IsEqualApprox(ci.GetPixel(0, y).R, glassL, 0.01f)) wholeBar = false;
             T.Check("...and every row of it, not just the last", wholeBar);
 
             // ---- MONOCHROME. Same geometry, no colour.
@@ -89,7 +90,7 @@ namespace UnturnedGodot.Testing
             T.Check($"...specifically Rec.709 luma, so green reads brightest ({g:0.00} > {r:0.00} > {b:0.00})",
                 g > r && r > b);
             T.Check($"the mono copy keeps the same glass bar ({mi.GetPixel(0, ch - 1)})",
-                Mathf.IsEqualApprox(mi.GetPixel(0, ch - 1).R, glass, 0.01f));
+                Mathf.IsEqualApprox(mi.GetPixel(0, ch - 1).R, glassL, 0.01f));
 
             // Cached per glass colour: every CRT on the map shares one pair, and the map has a lot of televisions.
             var again = TVDevice.ScreenTextures(pattern, glass);
@@ -97,7 +98,7 @@ namespace UnturnedGodot.Testing
                 ReferenceEquals(again.Colour, colour) && ReferenceEquals(again.Mono, mono));
             // ...but a different glass colour is a different bar, so it must not be served the cached one. The two TVs
             // have different screen texels (CRT 53, flatscreen 39), so this is not hypothetical.
-            var other = TVDevice.ScreenTextures(pattern, 39f / 255f);
+            var other = TVDevice.ScreenTextures(pattern, new Color(39f / 255f, 39f / 255f, 39f / 255f));
             T.Check("...and a set with a different screen texel gets its own",
                 !ReferenceEquals(other.Colour, colour)
                 && Mathf.IsEqualApprox(other.Colour.GetImage().GetPixel(0, ch - 1).R, 39f / 255f, 0.01f));

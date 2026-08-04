@@ -82,10 +82,19 @@ namespace UnturnedGodot
         float _collapse = -1f;               // seconds elapsed into the effect; negative = not running
 
         // The tube's OWN GLASS COLOUR (master: "instead of fading from 0,0,0 fade from the color of the screen on the
-        // crt model itself"). The screen sub-mesh carries the prop's palette texel as a vertex colour, so this is read
-        // off the model rather than hardcoded from a comment. The fallback is Television_1's texel, rgb 53,53,53.
-        const float DefaultGlassLevel = 53f / 255f;
-        float _glassLevel = DefaultGlassLevel;
+        // crt model itself"), sampled from the prop's PALETTE TEXTURE at the screen face's own UV.
+        //
+        // It used to read the screen sub-mesh's vertex colour, which was wrong in the way that looks right: the
+        // Television .obj files carry no baked vertex colours at all (384 `v` lines, none with rgb), and ObjMesh fills
+        // that case with Colors.WHITE. So the "colour read off the model" was 1.0, and the blanking bar rendered as a
+        // white band across the picture -- which is what master reported. The guard was on an EMPTY colour array, a
+        // case that never happens, rather than on a white one, which always does.
+        //
+        // The texture is where the colour actually lives, and it is 2x2 / 4x2, so sampling it is free. Verified
+        // against the real files: Television_1 screen texel rgb 53,53,53, Television_0 rgb 39,39,39.
+        static readonly Color CrtGlass = new(53f / 255f, 53f / 255f, 53f / 255f);
+        static readonly Color FlatGlass = new(39f / 255f, 39f / 255f, 39f / 255f);
+        Color _glassColor = CrtGlass;
         const float PictureOffset = 0.004f;   // metres the picture floats off the cabinet's own screen face
         Vector3 _screenOffset;                // the above along the screen normal, folded into every _screen transform
         ImageTexture _patternTex, _monoTex;   // composite (picture + blanking bar), in colour and desaturated
@@ -94,7 +103,7 @@ namespace UnturnedGodot
         // between the 'two' test pattern displays"). Baked into the texture rather than drawn as a second quad: the
         // roll is a UV offset, so a bar living in UV space scrolls with the picture for free and can never drift out
         // of step with it. Uv1Scale windows the material onto the picture, so at rest the bar is off-screen entirely.
-        const float BlankFrac = 0.08f;
+        const float BlankFrac = 0.13f;   // master: "a little wider"
 
         // CRT VERTICAL HOLD slipping (master: "add a small chance every x seconds to do a vertical de-sync scroll, for
         // x ticks, before correcting itself"). The picture rolls through the frame and the hold then CATCHES, snapping
@@ -133,6 +142,9 @@ namespace UnturnedGodot
             if (screenMesh == null) { GD.PrintErr($"[tv] {PropName}: screen split matched no triangles"); return; }
 
             var pattern = LoadPattern();
+            // BEFORE Reproject, which overwrites the UVs: the screen's original UV is a single palette texel, and that
+            // texel IS the tube's glass colour. Read it now or it is gone.
+            _glassColor = SampleScreenTexel(PropName, screenMesh, _isCrt ? CrtGlass : FlatGlass);
             var projected = Reproject(screenMesh, body.GetAabb().GetCenter());   // one-texel UVs -> planar 0..1 fill
 
             // UNSHADED (master: "make the light they emit not reflect on the screen, bc its washing out the colors").
@@ -158,7 +170,7 @@ namespace UnturnedGodot
             // face and the two were exactly coincident -- fine while the overlay was opaque, z-fighting the moment it
             // is not. And the body face carries the destructible's hide-on-break for free, so there is no second
             // screen-shaped node to leave hanging over the rubble.
-            var (patternTex, monoTex, patternFrac) = ScreenTextures(pattern, _glassLevel);
+            var (patternTex, monoTex, patternFrac) = ScreenTextures(pattern, _glassColor);
             _patternTex = patternTex; _monoTex = monoTex;
             _screenMat = MakeScreenMaterial(_patternTex);
             _screenMat.Uv1Scale = new Vector3(1f, patternFrac, 1f);   // window the composite onto the picture; the rest is the blanking bar
@@ -253,8 +265,6 @@ namespace UnturnedGodot
             // horizontal line) and then along ax. Deriving them a second time from the AABB would be guessing at what
             // is already known exactly here.
             _screenRightLocal = ax; _screenUpLocal = ay;
-            // ...and the tube's own glass colour, straight off the model's palette texel rather than out of a comment.
-            _glassLevel = C != null && C.Length > 0 ? Mathf.Clamp(C[0].R, 0f, 1f) : DefaultGlassLevel;
 
             float umin = 1e9f, umax = -1e9f, vmin = 1e9f, vmax = -1e9f;
             var pu = new float[V.Length]; var pv = new float[V.Length];
@@ -286,18 +296,25 @@ namespace UnturnedGodot
         ///
         /// Cached per (glass colour, mono) rather than per device -- every CRT in the map shares one pair, and the map
         /// has a lot of televisions.</summary>
-        static readonly System.Collections.Generic.Dictionary<int, (ImageTexture Colour, ImageTexture Mono, float Frac)> _composites = new();
-        internal static (ImageTexture Colour, ImageTexture Mono, float Frac) ScreenTextures(Texture2D pattern, float glassLevel)
+        static readonly System.Collections.Generic.Dictionary<(ulong, int), (ImageTexture Colour, ImageTexture Mono, float Frac)> _composites = new();
+        internal static (ImageTexture Colour, ImageTexture Mono, float Frac) ScreenTextures(Texture2D pattern, Color glass)
         {
-            int key = Mathf.RoundToInt(Mathf.Clamp(glassLevel, 0f, 1f) * 255f);
-            if (_composites.TryGetValue(key, out var hit)) return hit;
             if (pattern == null) return (null, null, 1f);
+            // Keyed on the PATTERN as well as the glass. Production only ever has one pattern, so keying on colour
+            // alone was harmless there and wrong anyway -- a cache whose key omits an input it is derived from. The
+            // composite suite caught it immediately by asking for a synthetic pattern after the real one had been
+            // built at the same glass colour, and getting the real one back. Order-dependent test failures are the
+            // cheap version of this; the expensive version is a second pattern shipping one day and never rendering.
+            var key = (pattern.GetInstanceId(),
+                       (Mathf.RoundToInt(Mathf.Clamp(glass.R, 0f, 1f) * 255f) << 16)
+                     | (Mathf.RoundToInt(Mathf.Clamp(glass.G, 0f, 1f) * 255f) << 8)
+                     | Mathf.RoundToInt(Mathf.Clamp(glass.B, 0f, 1f) * 255f));
+            if (_composites.TryGetValue(key, out var hit)) return hit;
 
             var src = pattern.GetImage();
             int w = src.GetWidth(), h = src.GetHeight();
             int bar = Mathf.Max(1, Mathf.RoundToInt(h * BlankFrac / (1f - BlankFrac)));
             int H = h + bar;
-            var glass = ScreenColor(key / 255f);
 
             var col = Image.CreateEmpty(w, H, false, Image.Format.Rgba8);
             var mono = Image.CreateEmpty(w, H, false, Image.Format.Rgba8);
@@ -318,6 +335,36 @@ namespace UnturnedGodot
             var made = (ImageTexture.CreateFromImage(col), ImageTexture.CreateFromImage(mono), (float)h / H);
             _composites[key] = made;
             return made;
+        }
+
+        /// <summary>The prop's palette colour under the SCREEN triangles, sampled from its own texture at the screen
+        /// face's UV centroid. Falls back to <paramref name="fallback"/> if the texture is missing or unreadable.
+        ///
+        /// The centroid is safe precisely because the screen is ONE palette texel -- that is the premise SplitByUv
+        /// matches on -- so every screen UV lands in the same cell and averaging them cannot stray into a neighbour.
+        /// ObjMesh V-flips on load, so the stored UVs are already Godot-space and index the image directly.</summary>
+        internal static Color SampleScreenTexel(string propName, ArrayMesh screen, Color fallback)
+        {
+            try
+            {
+                var uv = screen?.SurfaceGetArrays(0)[(int)Mesh.ArrayType.TexUV].AsVector2Array();
+                if (uv == null || uv.Length == 0) return fallback;
+                Vector2 c = Vector2.Zero;
+                foreach (var t in uv) c += t;
+                c /= uv.Length;
+
+                string p = ProjectSettings.GlobalizePath($"res://content/objects/{propName}_tex.png");
+                if (!System.IO.File.Exists(p)) return fallback;
+                var img = new Image();
+                if (img.Load(p) != Error.Ok) return fallback;
+                int w = img.GetWidth(), h = img.GetHeight();
+                if (w <= 0 || h <= 0) return fallback;
+                int x = Mathf.Clamp(Mathf.FloorToInt(c.X * w), 0, w - 1);
+                int y = Mathf.Clamp(Mathf.FloorToInt(c.Y * h), 0, h - 1);
+                var px = img.GetPixel(x, y);
+                return new Color(px.R, px.G, px.B);
+            }
+            catch { return fallback; }
         }
 
         static ImageTexture _pattern;
@@ -747,6 +794,10 @@ namespace UnturnedGodot
         public bool DebugLit => _lit;      // last EFFECTIVE state actually applied -- survives a prop with no meshes
         public bool DebugBroken => _broken;
         public bool DebugScreenShot => _screenShot;
+        /// <summary>The tube's glass colour as actually resolved from the prop. White here means the sample fell
+        /// through to a vertex colour or a fallback that is not the screen texel -- which is what put a white band
+        /// across the picture once already.</summary>
+        public Color DebugGlassColor => _glassColor;
         public float DebugDesyncOffset => _desyncOffset;
         public bool DebugDesyncRolling => _desyncLeft > 0f;
         /// <summary>Force a vertical-hold slip, so the tick loop can be driven without waiting on a random roll.</summary>
