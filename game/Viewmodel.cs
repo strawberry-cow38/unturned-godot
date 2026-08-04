@@ -801,10 +801,12 @@ namespace UnturnedGodot
             if (slot == "Sight") HideScopePiP();   // deactivate any prior scope's PiP before the swap (change or detach)
             if (string.IsNullOrEmpty(txtName)) { m.Visible = false; return; }
             m.Mesh = ContentProvider.ParseObj($"res://content/{txtName}");
-            if (slot == "Sight")   // scopes/optics: dark SATIN METAL, not the light matte iron-sight gray (master: "proper dark-metal look")
+            if (slot == "Sight")   // scopes/optics: each scope's REAL body colour from source (7x gray, most near-black); satin metal
             {
-                m.MaterialOverride = new StandardMaterial3D { CullMode = BaseMaterial3D.CullModeEnum.Disabled, AlbedoColor = new Color(0.06f, 0.065f, 0.075f), Metallic = 0.55f, MetallicSpecular = 0.5f, Roughness = 0.42f };
-                if (ScopeCal.TryGetValue(txtName, out var _sc)) ConfigureScopePiP(_sc.Lens, _sc.Obj, _sc.Aim, _sc.Fov, _sc.Size, _sc.Sides);   // magnifying scope -> point the pre-built rig at it (real PiP zoom + ADS aim through the glass); mask shape = the scope's measured internal-ring sides; irons/red-dots -> no PiP
+                bool _isSc = ScopeCal.TryGetValue(txtName, out var _sc);
+                Color _bodyCol = _isSc ? _sc.Col : new Color(0.06f, 0.065f, 0.075f);   // ported red-dots (no ScopeCal entry) keep the dark default
+                m.MaterialOverride = new StandardMaterial3D { CullMode = BaseMaterial3D.CullModeEnum.Disabled, AlbedoColor = _bodyCol, Metallic = 0.35f, MetallicSpecular = 0.5f, Roughness = 0.5f };
+                if (_isSc) ConfigureScopePiP(_sc.Lens, _sc.Obj, _sc.Aim, _sc.Fov, _sc.Size, _sc.Sides);   // magnifying scope -> real PiP zoom + ADS aim through the glass; irons/red-dots -> no PiP
             }
             m.Visible = true;
         }
@@ -814,7 +816,7 @@ namespace UnturnedGodot
         // chevron/shadowstalker) mount later via SetSlotMesh and call BuildScopePiP. Same two-render PiP as the aug: a 2nd
         // cam at the scope's OBJECTIVE renders the world at a narrow fov (90/zoom) into a RIGID lens quad at the OCULAR ring;
         // the generic block in _Process drives it (world-bind + linear env + objective zeroing). See reference_unturned_scope_pip.
-        struct ScopeC { public Vector3 Lens, Obj, Aim; public float Fov, Size; public int Sides; public ScopeC(Vector3 l, Vector3 o, Vector3 aim, float f, float s, int sides) { Lens = l; Obj = o; Aim = aim; Fov = f; Size = s; Sides = sides; } }
+        struct ScopeC { public Vector3 Lens, Obj, Aim; public float Fov, Size; public int Sides; public Color Col; public ScopeC(Vector3 l, Vector3 o, Vector3 aim, float f, float s, int sides, Color col) { Lens = l; Obj = o; Aim = aim; Fov = f; Size = s; Sides = sides; Col = col; } }
         static readonly System.Collections.Generic.Dictionary<string, ScopeC> ScopeCal = new()
         {
             // mesh -> (lens@ocular-ring, cam-anchor@objective, fov=90/zoom, lens-size=2*ocular-radius) -- MEASURED from each scope's .txt verts; zoom from the retail .dat.
@@ -823,13 +825,17 @@ namespace UnturnedGodot
             // Sides = the scope's actual internal-ring shape, MEASURED per scope (master): tube scopes 12-gon,
             // makeshift = HEXAGON (6), cross/chevron = 12, shadowstalker = SQUARE (4).
             // Aim = the scope's own `Aim` node (sight-local, MEASURED) -- ADS moves the aim hook here so you look THROUGH the glass (Attachments.cs:590). ~0.15 behind the ocular = real eye relief.
-            { "scope_8x_sight.txt",            new ScopeC(new Vector3( 0f,      -0.364f, -0.1077f), new Vector3( 0f,       0.149f, -0.1072f), new Vector3( 0f,      -0.5122f, -0.1086f), 11.25f, 0.120f, 12) },   // 8x
-            { "scope_7x_sight.txt",            new ScopeC(new Vector3( 0f,      -0.364f, -0.0860f), new Vector3( 0f,       0.149f, -0.0858f), new Vector3( 0f,      -0.4893f, -0.0868f), 12.86f, 0.087f, 12) },   // 7x
-            { "scope_16x_sight.txt",           new ScopeC(new Vector3( 0f,      -0.364f, -0.1077f), new Vector3( 0f,       0.149f, -0.1072f), new Vector3( 0f,      -0.5122f, -0.1086f),  5.63f, 0.120f, 12) },   // 16x
-            { "makeshift_scope_sight.txt",     new ScopeC(new Vector3(-0.0021f, -0.374f, -0.1151f), new Vector3(-0.0021f,  0.120f, -0.1151f), new Vector3(-0.0021f, -0.4705f, -0.1149f), 15.0f,  0.072f,  6) },   // Makeshift = HEXAGON
-            { "cross_scope_sight.txt",         new ScopeC(new Vector3( 0f,      -0.347f, -0.0563f), new Vector3( 0f,      -0.148f, -0.0563f), new Vector3( 0f,      -0.4667f, -0.0724f), 15.0f,  0.104f, 12) },   // Cross 12-gon
-            { "chevron_scope_sight.txt",       new ScopeC(new Vector3( 0f,      -0.355f, -0.0758f), new Vector3( 0f,      -0.110f, -0.0758f), new Vector3( 0f,      -0.4541f, -0.0760f), 22.5f,  0.074f, 12) },   // Chevron 12-gon
-            { "shadowstalker_scope_sight.txt", new ScopeC(new Vector3( 0f,      -0.364f, -0.0927f), new Vector3( 0f,       0.149f, -0.0927f), new Vector3( 0f,      -0.4893f, -0.0927f), 15.0f,  0.120f,  4) },   // Shadowstalker = SQUARE
+            // Lens + Obj X,Z now SHARE the Aim node's X,Z (= the true optical axis, the source's own eye alignment)
+            // so the lens/reticle sit dead-center on the axis the eye aligns to (fixes cross/chevron mis-placement +
+            // off-center reticle). Only Y (depth along the tube) differs per element. Col = the scope's real body colour
+            // (Model_0 _MainTex median, MEASURED from source): 7x is GRAY, most are near-black, shadowstalker blue-grey.
+            { "scope_8x_sight.txt",            new ScopeC(new Vector3( 0f,      -0.364f, -0.1086f), new Vector3( 0f,       0.149f, -0.1086f), new Vector3( 0f,      -0.5122f, -0.1086f), 11.25f, 0.120f, 12, new Color(0.118f,0.118f,0.118f)) },   // 8x  (30,30,30)
+            { "scope_7x_sight.txt",            new ScopeC(new Vector3( 0f,      -0.364f, -0.0868f), new Vector3( 0f,       0.149f, -0.0868f), new Vector3( 0f,      -0.4893f, -0.0868f), 12.86f, 0.112f, 12, new Color(0.588f,0.588f,0.588f)) },   // 7x  GRAY (150,150,150); lens bumped 0.087->0.112
+            { "scope_16x_sight.txt",           new ScopeC(new Vector3( 0f,      -0.364f, -0.1086f), new Vector3( 0f,       0.149f, -0.1086f), new Vector3( 0f,      -0.5122f, -0.1086f),  5.63f, 0.120f, 12, new Color(0.118f,0.118f,0.118f)) },   // 16x (30,30,30)
+            { "makeshift_scope_sight.txt",     new ScopeC(new Vector3(-0.0021f, -0.374f, -0.1149f), new Vector3(-0.0021f,  0.120f, -0.1149f), new Vector3(-0.0021f, -0.4705f, -0.1149f), 15.0f,  0.078f,  6, new Color(0.235f,0.235f,0.235f)) },   // Makeshift HEX (60,60,60); a hair wider 0.072->0.078
+            { "cross_scope_sight.txt",         new ScopeC(new Vector3( 0f,      -0.347f, -0.0724f), new Vector3( 0f,      -0.148f, -0.0724f), new Vector3( 0f,      -0.4667f, -0.0724f), 15.0f,  0.104f, 12, new Color(0.118f,0.118f,0.118f)) },   // Cross 12-gon (30,30,30); Z ->optical axis (was -0.056)
+            { "chevron_scope_sight.txt",       new ScopeC(new Vector3( 0f,      -0.355f, -0.0760f), new Vector3( 0f,      -0.110f, -0.0760f), new Vector3( 0f,      -0.4541f, -0.0760f), 22.5f,  0.074f, 12, new Color(0.118f,0.118f,0.118f)) },   // Chevron 12-gon (30,30,30); Z ->optical axis
+            { "shadowstalker_scope_sight.txt", new ScopeC(new Vector3( 0f,      -0.364f, -0.0927f), new Vector3( 0f,       0.149f, -0.0927f), new Vector3( 0f,      -0.4893f, -0.0927f), 15.0f,  0.120f,  4, new Color(0.192f,0.18f,0.2f)) },   // Shadowstalker SQUARE; _Color (0.192,0.18,0.2)
         };
 
         // Build the PiP rig ONCE at gun-construction (_Ready) -- a SubViewport CREATED AT RUNTIME renders BLACK (its render
