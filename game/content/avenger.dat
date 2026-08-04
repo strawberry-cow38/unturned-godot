@@ -16,20 +16,20 @@ Hook_Tactical
 Hook_Barrel
 
 Ammo_Min 3
-Ammo_Max 13
+Ammo_Max 12
 
 Safety
 Semi
 
-Caliber 23
-Caliber_Name ".40 S&W"
-Real_Weapon "Beretta 96"
+Caliber 3
+Caliber_Name ".45 ACP"
+Real_Weapon "H&K USP .45"
 
 Range 100
 Firerate 4
 Action Trigger
 
-Player_Damage 32
+Player_Damage 24
 Player_Leg_Multiplier 0.6
 Player_Arm_Multiplier 0.6
 Player_Spine_Multiplier 0.8
@@ -41,7 +41,7 @@ Zombie_Arm_Multiplier 0.3
 Zombie_Spine_Multiplier 0.6
 Zombie_Skull_Multiplier 1.1
 
-Animal_Damage 32
+Animal_Damage 24
 Animal_Leg_Multiplier 0.6
 Animal_Spine_Multiplier 0.8
 Animal_Skull_Multiplier 1.1

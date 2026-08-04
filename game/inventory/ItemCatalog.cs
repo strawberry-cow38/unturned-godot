@@ -162,6 +162,32 @@ namespace SDG.Unturned
             // M39 EMR's 20-round box. The SCAR-H's (9143) is a deliberate clone in its own group -- same capacity,
             // same round, same mesh, will not seat in the other rifle.
             Mag(1020, 20, 22, "7.62x51mm NATO");
+
+            // ---- .45 ACP: the 1911 and the Avenger (strawberry: "change the Avenger to a 45 acp usp. reuses ammo and
+            // has a niche as a bigger mag 1911").
+            //
+            // BOTH of these were inert, not just the Avenger's. Neither pistol had a working magazine at all -- the two
+            // items exist in the TSV with the right names, the right icons and magCapacity 0, so FindBestMag never saw
+            // them and a reload fell through to the free top-up branch. That is the failure this whole function exists
+            // to fix, and it is invisible in play precisely because the fallback works: you press R, the gun reloads,
+            // and no magazine is ever consumed.
+            //
+            // SAME GROUP (caliber 3) is what "reuses ammo" means: either magazine seats in either pistol. The niche
+            // survives that because a gun's Ammo_Max caps what a reload draws (PlayerController.DoMagSwap takes
+            // Min(mag.amount, Gun.AmmoMax)) -- so the 12-rounder in a 1911 still loads 7, and only the Avenger actually
+            // holds twelve. Same shape as the STANAG group, where a 100-round drum does not turn every rifle into an LMG.
+            Mag(98,   7, 3, ".45 ACP");    // 1911 -- retail's own 7, single-stack
+            Mag(1022, 12, 3, ".45 ACP");   // Avenger (USP .45) -- the real pistol's 12-round double-stack, and the niche
+
+            // The catalog text still describes both as they were. It is GENERATED (tools/gen_item_catalog.py), so the
+            // fix belongs here rather than in the .tsv, and it is done by mutating the loaded asset rather than through
+            // Add() -- Add() does not carry `guid`, so re-adding these ids would silently drop the GUID every
+            // guid-keyed lookup needs.
+            void Text(ushort id, string desc) { var a = Assets.find(id); if (a != null) a.description = desc; }
+            Text(1021, "German pistol chambered in 1911 ammunition.");   // matches the 1911's own "American pistol
+                                                                         //  chambered in 1911 ammunition" -- in this
+                                                                         //  game's naming the shared round IS the tell
+            Text(1022, "Low caliber military grade <color=rare>Avenger</color> magazine. Designed to fit 12 rounds.");
         }
 
         static void WireConsumableStats()
