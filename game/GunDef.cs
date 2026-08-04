@@ -63,6 +63,45 @@ namespace UnturnedGodot
         public int BallisticSteps;        // 0.02s steps before the bullet despawns (Eaglefire 20 = 0.4s to 200m)
         public float GravityMultiplier;   // bullet gravity = -9.81 * this (Eaglefire 4 -> ~3m drop over 200m)
 
+        // TRACER WIDTH per cartridge (master: "scale tracers based on ammo caliber. ie .22 smol 50bmg big").
+        // 1.0 = 5.56x45mm, the most common round in the game, so everything reads relative to the eaglefire.
+        // Each entry is anchored to the real BULLET diameter (in the comment), not invented -- but diameter alone is
+        // NOT the whole answer and two cases say so out loud:
+        //   - .22 LR is a 5.70mm bullet, the SAME bore as 5.56x45. On diameter it would tie with the eaglefire, which
+        //     is the exact opposite of "smol". It carries roughly a tenth the energy, so it is scaled on that instead.
+        //   - the shotguns are scaled per PELLET (00 buck ~8.4mm), not per bore. A 12ga bore is 18.5mm, and 8 pellets
+        //     each drawn three times eaglefire-width would be a walking wall of orange rather than a shot.
+        // Unknown / non-ballistic (arrows, bolts, rockets, the railgun) fall through to 1.0; the rocket draws its own
+        // visible projectile anyway and the bows have no tracer worth speaking of.
+        // A DICTIONARY rather than a switch so the test can ask what is mapped. With a switch, renaming a cartridge in
+        // a .dat drops it into the default arm and every tracer silently reverts to 1.0 -- identical to a gun that is
+        // genuinely 5.56, and invisible in play.
+        public static float TracerScale(string caliberName)
+            => caliberName != null && TracerScales.TryGetValue(caliberName, out var s) ? s : 1.00f;
+
+        public static readonly System.Collections.Generic.Dictionary<string, float> TracerScales = new()
+        {
+            { ".22 LR", 0.60f },                  // 5.70mm bore, ~1/10 the energy -- scaled on energy, see above
+            { "5.56x45mm NATO", 1.00f },          // 5.70mm  (baseline)
+            { ".300 AAC Blackout", 1.15f },       // 7.82mm
+            { "7.62x39mm", 1.25f },               // 7.92mm
+            { "7.62x51mm NATO", 1.35f },          // 7.82mm, notably more case than the x39
+            { "7.62x54mmR", 1.35f },              // 7.92mm
+            { ".338 Lapua Magnum", 1.60f },       // 8.60mm
+            { "9x18mm Makarov", 1.00f },          // 9.27mm but low pressure
+            { "9x19mm Parabellum", 1.05f },       // 9.01mm
+            { "9x39mm", 1.20f },                  // 9.25mm, heavy subsonic
+            { ".357 Magnum", 1.25f },             // 9.07mm
+            { ".40 S&W", 1.20f },                 // 10.17mm
+            { ".44 Magnum", 1.45f },              // 10.90mm
+            { ".45 ACP", 1.30f },                 // 11.48mm
+            { ".50 AE", 1.70f },                  // 12.70mm
+            { ".50 BMG", 2.30f },                 // 12.95mm on an enormous case -- the top of the range on purpose
+            { "12 Gauge", 0.45f },                // EXTRA small per master: this is ONE PELLET, and a shot spawns 8 of
+            { "20 Gauge", 0.40f },                // them. Scaling off the 18.5mm bore would draw eight walls of orange.
+            { "Railgun Slug", 1.80f },            // not a real cartridge; sized to read as heavy
+        };
+
         public static GunDef FromDatText(string datText)
         {
             IDatDictionary d = new DatParser().Parse(datText);

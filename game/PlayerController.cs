@@ -3988,12 +3988,14 @@ namespace UnturnedGodot
         // decals/blood. The server's bullet is the authority; impact fx render from the broadcast ImpactFx
         // event (single fx authority -- otherwise the shooter would render both its local impact AND the echo)
         // and the hitmarker moves to HitConfirmed so it only ever tells the truth. Never set in SP.
-        sealed class Bullet { public Vector3 Pos, Vel, Origin; public int StepsLeft; public float Gravity, Damage, VehicleDamage, ObjectDamage; public bool Cosmetic; public MeshInstance3D Tracer; public Node3D RocketVis; public Vector3 MuzzleAnchor; public bool HasAnchor; }
+        const float TracerBaseW = 0.09f;   // 5.56's tracer half-width; every other cartridge is this times GunDef.TracerScale
+        sealed class Bullet { public Vector3 Pos, Vel, Origin; public int StepsLeft; public float Gravity, Damage, VehicleDamage, ObjectDamage; public bool Cosmetic; public MeshInstance3D Tracer; public Node3D RocketVis; public Vector3 MuzzleAnchor; public bool HasAnchor; public float TracerW = TracerBaseW; }
         readonly System.Collections.Generic.List<Bullet> _bullets = new();
 
         void SpawnBullet(Vector3 pos, Vector3 vel, int steps, float gravity, float damage, float vehicleDamage, float objectDamage)
         {
-            var b = new Bullet { Pos = pos, Origin = pos, Vel = vel, StepsLeft = Mathf.Max(1, steps), Gravity = gravity, Damage = damage, VehicleDamage = vehicleDamage, ObjectDamage = objectDamage, Cosmetic = NetFire != null, Tracer = MakeTracer() };
+            var b = new Bullet { Pos = pos, Origin = pos, Vel = vel, StepsLeft = Mathf.Max(1, steps), Gravity = gravity, Damage = damage, VehicleDamage = vehicleDamage, ObjectDamage = objectDamage, Cosmetic = NetFire != null, Tracer = MakeTracer(),
+                                 TracerW = TracerBaseW * GunDef.TracerScale(Gun?.CaliberName) };   // .22 thin, .50 BMG fat; buckshot deliberately tiny (each pellet is its own bullet, so a shot draws 8 of these)
             // LOCAL first-person only: anchor the tracer's near end at the VIEWMODEL MUZZLE (screen-bridged to the world
             // via the viewmodel cam -> world cam), so it looks like it leaves the barrel; it then BENDS onto the real
             // trajectory (which fires from the EYE). Remote/3p bullets have no on-screen viewmodel muzzle, so they keep
@@ -4305,7 +4307,8 @@ namespace UnturnedGodot
         {
             if (b.Tracer == null || b.Tracer.Mesh is not ImmediateMesh im) return;
             im.ClearSurfaces();
-            const float MaxLen = 40f, MaxW = 0.09f, tHead = 0.55f;   // teardrop: pointed tail (muzzle) -> round nose (bullet)
+            const float MaxLen = 40f, tHead = 0.55f;   // teardrop: pointed tail (muzzle) -> round nose (bullet)
+            float MaxW = b.TracerW;                    // per-CALIBER width (GunDef.TracerScale); was a flat 0.09 for every round
             Vector3 head = b.Pos;                                      // round fat nose = the bullet, leading
             Vector3 muzzle = b.HasAnchor ? b.MuzzleAnchor : b.Origin;
             Vector3 seg = head - muzzle;

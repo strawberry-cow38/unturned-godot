@@ -153,6 +153,28 @@ namespace UnturnedGodot.Testing
             T.Check($"honeybadger defaults to the .300 mag ({Def(dir, "honeybadger").MagazineId})",
                 Def(dir, "honeybadger").MagazineId == 9142);
 
+            // 5e. TRACER WIDTH (master: "scale tracers based on ammo caliber. ie .22 smol 50bmg big", "make pellets
+            //     extra small, each pellet gets a tracer").
+            //     The load-bearing check is COVERAGE, not the ordering: TracerScale falls back to 1.0 for anything it
+            //     does not know, and 1.0 is also the legitimate value for 5.56 -- so a cartridge renamed in a .dat
+            //     would silently draw an eaglefire-sized tracer and look completely normal. Everything ballistic must
+            //     be explicitly mapped; arrows/bolts/rockets are deliberately not.
+            var unmapped = new List<string>();
+            foreach (var g in guns)
+            {
+                string c = Def(dir, g).CaliberName;
+                if (c == "Arrow" || c == "Bolt" || c == "Rocket") continue;   // no ballistic tracer by design
+                if (!GunDef.TracerScales.ContainsKey(c)) unmapped.Add($"{g}={c}");
+            }
+            T.Check($"every ballistic cartridge has a tracer width ({(unmapped.Count == 0 ? "all" : string.Join(",", unmapped))})", unmapped.Count == 0);
+
+            float lr22 = GunDef.TracerScale(".22 LR"), nato556 = GunDef.TracerScale("5.56x45mm NATO"), bmg50 = GunDef.TracerScale(".50 BMG");
+            T.Check($".22 < 5.56 < .50 BMG ({lr22} / {nato556} / {bmg50})", lr22 < nato556 && nato556 < bmg50);
+            // Buckshot is the smallest thing on screen: one shot spawns Pellets bullets, each drawing its own tracer.
+            float ga12 = GunDef.TracerScale("12 Gauge"), ga20 = GunDef.TracerScale("20 Gauge");
+            T.Check($"buckshot is thinner than a .22 ({ga12} / {ga20} vs {lr22})", ga12 < lr22 && ga20 < lr22);
+            T.Check($"...and the masterkey really does fire {mk.Pellets} of them per shot", mk.Pellets > 1);
+
             // 6. Firerate stays a positive tick count after the ROF pass -- a zero or negative here divides by zero in
             //    the shot cooldown, and the retune touched nine guns.
             var badFr = new List<string>();
