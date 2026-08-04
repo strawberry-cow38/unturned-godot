@@ -86,6 +86,15 @@ namespace UnturnedGodot
         // off the model rather than hardcoded from a comment. The fallback is Television_1's texel, rgb 53,53,53.
         const float DefaultGlassLevel = 53f / 255f;
         float _glassLevel = DefaultGlassLevel;
+        const float PictureOffset = 0.004f;   // metres the picture floats off the cabinet's own screen face
+        Vector3 _screenOffset;                // the above along the screen normal, folded into every _screen transform
+        ImageTexture _patternTex, _monoTex;   // composite (picture + blanking bar), in colour and desaturated
+
+        // BLANKING BAR (master: "with the vertical scroll, should have a small blank screen color horizontal zone
+        // between the 'two' test pattern displays"). Baked into the texture rather than drawn as a second quad: the
+        // roll is a UV offset, so a bar living in UV space scrolls with the picture for free and can never drift out
+        // of step with it. Uv1Scale windows the material onto the picture, so at rest the bar is off-screen entirely.
+        const float BlankFrac = 0.08f;
 
         // CRT VERTICAL HOLD slipping (master: "add a small chance every x seconds to do a vertical de-sync scroll, for
         // x ticks, before correcting itself"). The picture rolls through the frame and the hold then CATCHES, snapping
@@ -133,13 +142,28 @@ namespace UnturnedGodot
             // lighting at all. Unshaded also makes the fix total rather than a tuning exercise: no light in the world
             // can wash it out, not the TV's own spill, not the sun through a window, not a torch in your hand.
             //
-            // Unshaded outputs ALBEDO directly and ignores the emission slot, so brightness now rides AlbedoColor
-            // instead of EmissionEnergyMultiplier. That is also what gives the CRT its fade: lerping this from black
-            // fades THE TEXTURE ITSELF up, rather than dimming a light over an already-visible picture (master: "on
-            // crts the texture itself should fade in from black"). Values above 1 still bloom, same trick the tracer
-            // and muzzle-flash materials use.
-            _screenMat = MakeScreenMaterial(pattern);
-            _screen = new MeshInstance3D { Mesh = projected, MaterialOverride = _screenMat, Visible = false, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off };
+            // Unshaded outputs ALBEDO directly and ignores the emission slot, so brightness rides AlbedoColor instead
+            // of EmissionEnergyMultiplier. Values above 1 still bloom, same trick the tracer and muzzle-flash
+            // materials use.
+            //
+            // The warmup is an ALPHA CROSSFADE onto the cabinet's own screen face, not a brightness ramp (master:
+            // "should fade from the tv model screen color into the image"). Brightness cannot do this: albedo
+            // MULTIPLIES the texture, so scaling it down gives a dim SMPTE pattern, never a flat colour -- the whole
+            // picture is simply there from the first frame, at 20% brightness, which is what "the fade got nuked"
+            // looked like. Fading the picture's alpha in over the model's own screen texel is the real thing, and it
+            // fades from the actual model colour rather than from a number copied out of a comment.
+            //
+            // Which is also why the picture is nudged 4mm off the cabinet face: it has to be strictly IN FRONT of what
+            // it dissolves out of. SplitByUv copies triangles rather than removing them, so the body still draws that
+            // face and the two were exactly coincident -- fine while the overlay was opaque, z-fighting the moment it
+            // is not. And the body face carries the destructible's hide-on-break for free, so there is no second
+            // screen-shaped node to leave hanging over the rubble.
+            var (patternTex, monoTex, patternFrac) = ScreenTextures(pattern, _glassLevel);
+            _patternTex = patternTex; _monoTex = monoTex;
+            _screenMat = MakeScreenMaterial(_patternTex);
+            _screenMat.Uv1Scale = new Vector3(1f, patternFrac, 1f);   // window the composite onto the picture; the rest is the blanking bar
+            _screenOffset = _screenNormalLocal * PictureOffset;
+            _screen = new MeshInstance3D { Mesh = projected, MaterialOverride = _screenMat, Visible = false, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off, Position = _screenOffset };
             AddChild(_screen);
 
             // DIRECTIONAL spill (master: "the light should also be directional"). An OmniLight threw light backwards
@@ -249,6 +273,51 @@ namespace UnturnedGodot
             arr[(int)Mesh.ArrayType.Vertex] = V; arr[(int)Mesh.ArrayType.Normal] = N; arr[(int)Mesh.ArrayType.TexUV] = newU; arr[(int)Mesh.ArrayType.Color] = C;
             var m = new ArrayMesh(); m.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, arr);
             return m;
+        }
+
+        /// <summary>The picture as the material actually samples it: the SMPTE pattern with a strip of the tube's own
+        /// glass colour appended below it, in colour and desaturated, plus the fraction of the composite the picture
+        /// occupies (which is what Uv1Scale windows onto).
+        ///
+        /// The strip is the vertical blanking interval. Baking it into the texture is what makes the roll correct for
+        /// free: the slip is a UV offset, so the bar scrolls with the picture by construction and cannot drift out of
+        /// step with it the way a separately-animated quad would. At rest the window excludes it entirely, so a
+        /// television that never slips looks exactly as it did.
+        ///
+        /// Cached per (glass colour, mono) rather than per device -- every CRT in the map shares one pair, and the map
+        /// has a lot of televisions.</summary>
+        static readonly System.Collections.Generic.Dictionary<int, (ImageTexture Colour, ImageTexture Mono, float Frac)> _composites = new();
+        internal static (ImageTexture Colour, ImageTexture Mono, float Frac) ScreenTextures(Texture2D pattern, float glassLevel)
+        {
+            int key = Mathf.RoundToInt(Mathf.Clamp(glassLevel, 0f, 1f) * 255f);
+            if (_composites.TryGetValue(key, out var hit)) return hit;
+            if (pattern == null) return (null, null, 1f);
+
+            var src = pattern.GetImage();
+            int w = src.GetWidth(), h = src.GetHeight();
+            int bar = Mathf.Max(1, Mathf.RoundToInt(h * BlankFrac / (1f - BlankFrac)));
+            int H = h + bar;
+            var glass = ScreenColor(key / 255f);
+
+            var col = Image.CreateEmpty(w, H, false, Image.Format.Rgba8);
+            var mono = Image.CreateEmpty(w, H, false, Image.Format.Rgba8);
+            for (int y = 0; y < h; y++)
+                for (int x = 0; x < w; x++)
+                {
+                    var p = src.GetPixel(x, y);
+                    col.SetPixel(x, y, p);
+                    // Rec. 709 luma, not a flat channel average: the SMPTE bars are chosen to be equal-LUMINANCE-ish
+                    // steps, and averaging RGB collapses several of them onto the same grey. The whole reason to go
+                    // monochrome on the way out is that you can still read the bars.
+                    float l = p.R * 0.2126f + p.G * 0.7152f + p.B * 0.0722f;
+                    mono.SetPixel(x, y, new Color(l, l, l, p.A));
+                }
+            for (int y = h; y < H; y++)
+                for (int x = 0; x < w; x++) { col.SetPixel(x, y, glass); mono.SetPixel(x, y, glass); }
+
+            var made = (ImageTexture.CreateFromImage(col), ImageTexture.CreateFromImage(mono), (float)h / H);
+            _composites[key] = made;
+            return made;
         }
 
         static ImageTexture _pattern;
@@ -374,7 +443,7 @@ namespace UnturnedGodot
                 _warming = false; _warm = 0f;
                 _tone?.Stop();
                 ResetDesync();
-                if (ShouldCollapse(_isCrt, _broken, _screenShot) && _screen != null) { _collapse = 0f; ApplyCollapse(); return; }
+                if (ShouldCollapse(_isCrt, _broken, _screenShot) && _screen != null) { StartCollapse(); return; }
                 EndCollapse();
             }
         }
@@ -448,9 +517,12 @@ namespace UnturnedGodot
             var (vert, horiz, level) = Collapse(_collapse);
             var frame = new Basis(_screenRightLocal, _screenUpLocal, _screenNormalLocal);
             var squeeze = frame * Basis.FromScale(new Vector3(horiz, vert, 1f)) * frame.Transposed();
-            _screen.Transform = new Transform3D(squeeze, _screenCenterLocal - squeeze * _screenCenterLocal);
+            _screen.Transform = new Transform3D(squeeze, _screenOffset + _screenCenterLocal - squeeze * _screenCenterLocal);
             _screen.Visible = level > 0f;
-            if (_screenMat != null) _screenMat.AlbedoColor = ScreenColor(_emitEnergy * level);
+            // FULLY OPAQUE on the way out, unlike the warmup. The collapse is the picture being crushed into a line,
+            // not dissolving back into the tube -- a semi-transparent line would read as a fade playing at the same
+            // time and blunt the whole effect.
+            if (_screenMat != null) _screenMat.AlbedoColor = ScreenColor(_emitEnergy * level, 1f);
             // The spill and the shaft die WITH the picture rather than snapping off at the switch -- but they are not
             // squeezed. The collapse is the raster's, and a light cone narrowing to a blade would read as a bug.
             if (_light != null) { _light.LightEnergy = _lightEnergy * level; _light.Visible = level > 0f; }
@@ -491,9 +563,29 @@ namespace UnturnedGodot
         void EndCollapse()
         {
             _collapse = -1f;
-            if (_screen != null) { _screen.Transform = Transform3D.Identity; _screen.Visible = _lit; }
+            SetMono(false);
+            if (_screen != null) { _screen.Transform = new Transform3D(Basis.Identity, _screenOffset); _screen.Visible = _lit; }
             if (_light != null) _light.Visible = _lit;
             if (_cone != null) _cone.Visible = _lit;
+        }
+
+        /// <summary>Start the power-off collapse, in MONOCHROME (master: "when we do the beam collapse for turning off,
+        /// change the picture to monochrome"). Swapping the texture rather than tinting it, because an unshaded albedo
+        /// MULTIPLIES -- the same reason the warmup could not be a brightness ramp -- so there is no colour you can
+        /// multiply an image by to desaturate it. The mono copy is built alongside the colour one and shared by every
+        /// television with the same glass, so the swap costs nothing at the moment it happens.</summary>
+        void StartCollapse()
+        {
+            _collapse = 0f;
+            SetMono(true);
+            ApplyCollapse();
+        }
+
+        void SetMono(bool mono)
+        {
+            if (_screenMat == null) return;
+            var want = mono ? _monoTex : _patternTex;
+            if (want != null && _screenMat.AlbedoTexture != want) _screenMat.AlbedoTexture = want;
         }
 
         /// <summary>Brightness modulation, CRT only. A cosine BETWEEN TWO LIT LEVELS -- full and (1 - depth) -- never
@@ -505,22 +597,15 @@ namespace UnturnedGodot
 
         float FlickerFactor() => _isCrt ? Flicker(_flickerPhase, FlickerDepth) : 1f;
 
-        /// <summary>CRT warmup level: the picture rises out of the tube's OWN GLASS, not out of a black hole (master:
-        /// "instead of fading from 0,0,0 fade from the color of the screen on the crt model itself"). The screen
-        /// sub-mesh is an overlay sitting on the cabinet's own screen face, so a fade that starts at 0 puts a rectangle
-        /// DARKER THAN THE SET on the front of it for the first moment of every power-on -- the picture visibly dips
-        /// below the surrounding plastic before it comes up.</summary>
-        internal static float WarmLevel(float warm, float glass, float full) => Mathf.Lerp(glass, full, warm);
-
         void ApplyLevels()
         {
+            // k is the CROSSFADE, not a dimmer: 0 is the bare tube face showing through, 1 is the full picture, and
+            // the tube dissolves into the image in between. Brightness is held at full the whole way, so what comes up
+            // is a picture RESOLVING rather than a picture brightening -- the difference between a tube warming and a
+            // lamp on a dial. On the flatscreen k is pinned at 1, so an LCD still snaps and takes none of this.
             float k = _isCrt ? _warm : 1f;
-            // The CRT's fade is now IN THE TEXTURE: albedo lerps up from the glass colour, so the picture itself
-            // resolves out of the tube instead of a fully-drawn image being dimmed. On the flatscreen k is 1 and it
-            // snaps, so WarmLevel returns `full` and the LCD is untouched by any of this.
             float f = FlickerFactor();   // 1.0 on the flatscreen; a shallow breath on the tube
-            float lvl = WarmLevel(k, _glassLevel, _emitEnergy);
-            if (_screenMat != null) _screenMat.AlbedoColor = ScreenColor(lvl * f);
+            if (_screenMat != null) _screenMat.AlbedoColor = ScreenColor(_emitEnergy * f, k);
             if (_light != null) _light.LightEnergy = _lightEnergy * k * f;
             // the shaft rides it too, so the picture, the spill and the beam pulse together instead of drifting apart
             if (_coneMat != null) _coneMat.AlbedoColor = new Color(0.85f, 0.9f, 1.0f, ConeAlpha * k * f);
@@ -568,7 +653,11 @@ namespace UnturnedGodot
         {
             ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
             AlbedoTexture = pattern,
-            AlbedoColor = Colors.Black,                                       // starts dark; ApplyLevels raises it
+            AlbedoColor = new Color(1f, 1f, 1f, 0f),                          // fully dissolved into the tube face; ApplyLevels fades it up
+            Transparency = BaseMaterial3D.TransparencyEnum.Alpha,             // the warmup is a CROSSFADE onto the cabinet's own
+                                                                              //  screen face -- see Build. Brightness cannot do it:
+                                                                              //  albedo multiplies the texture, so a low value is a
+                                                                              //  dim picture, never a flat colour.
             TextureFilter = BaseMaterial3D.TextureFilterEnum.Linear,          // SMPTE is a real image, not a palette texel
             CullMode = BaseMaterial3D.CullModeEnum.Disabled,                  // ripped mesh: winding may face either way
             TextureRepeat = true,                                             // REQUIRED by the vertical-hold roll: the
@@ -584,6 +673,11 @@ namespace UnturnedGodot
         /// <summary>Screen brightness -> AlbedoColor. Grey, so the SMPTE bars keep their own hues and only their
         /// level moves; black at 0 is what makes the CRT warmup a fade of the picture itself.</summary>
         internal static Color ScreenColor(float brightness) => new Color(brightness, brightness, brightness);
+
+        /// <summary>...and how much of it is showing. <paramref name="fade"/> 0 is the bare tube face, 1 is the full
+        /// picture; the CRT warmup drives it, the flatscreen pins it at 1.</summary>
+        internal static Color ScreenColor(float brightness, float fade)
+            => new Color(brightness, brightness, brightness, Mathf.Clamp(fade, 0f, 1f));
 
         /// <summary>The shaft's fade, BRIGHT AT THE SCREEN and gone by the far end (master: "gradient fade towards
         /// to bigger end too, brighter toward the source").

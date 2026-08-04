@@ -83,23 +83,28 @@ namespace UnturnedGodot.Testing
             T.Check("a smashed prop does NOT", !TVDevice.ShouldCollapse(isCrt: true, broken: true, screenShot: false));
             T.Check("a shot-out screen does NOT", !TVDevice.ShouldCollapse(isCrt: true, broken: false, screenShot: true));
 
-            // ---- THE DARK END (master: "instead of fading from 0,0,0 fade from the color of the screen on the crt
-            // model itself"). The screen sub-mesh is an OVERLAY on the cabinet's own screen face, so a warmup starting
-            // at 0 draws a rectangle darker than the surrounding plastic for the first moment of every power-on. The
-            // failure is a dip, not a missing feature, which is why it reads as "fine" in motion.
-            const float glass = 53f / 255f;   // Television_1's screen texel, rgb 53,53,53
-            float cold = TVDevice.WarmLevel(0f, glass, 1f);
-            float hot = TVDevice.WarmLevel(1f, glass, 1f);
-            T.Check($"a cold tube sits at the GLASS colour, not at black ({cold:0.000})", Mathf.IsEqualApprox(cold, glass));
-            T.Check($"...which is a real brightness ({cold:0.000} > 0)", cold > 0.01f);
-            T.Check($"a warm tube is the full picture ({hot:0.000})", Mathf.IsEqualApprox(hot, 1f));
-            bool rises = true;
-            float prev = -1f;
-            for (int i = 0; i <= 32; i++) { float v = TVDevice.WarmLevel(i / 32f, glass, 1f); if (v < prev - 1e-5f) rises = false; prev = v; }
-            T.Check("...and it only ever climbs in between", rises);
-            // The flatscreen path: k is pinned at 1, so the LCD is untouched by any of this and cannot inherit a floor.
-            T.Check("an LCD (warm always 1) is unaffected by the glass floor",
-                Mathf.IsEqualApprox(TVDevice.WarmLevel(1f, 0.9f, 1f), 1f));
+            // ---- THE WARMUP IS A CROSSFADE, NOT A DIMMER (master: "should fade from the tv model screen color into
+            // the image"). This was got wrong once in exactly the way that looks plausible: raise the brightness floor
+            // to the glass level and lerp up from there. Albedo MULTIPLIES the texture, so that produces a dim SMPTE
+            // pattern, fully drawn, present from the first frame -- never a flat colour. Master's read was "the power
+            // on fade in got nuked", and he was right; there was no fade left, just a picture that started dim.
+            //
+            // So the thing to pin is that the warmup rides ALPHA and the brightness stays put. A regression back to
+            // the brightness ramp shows up here as a level that moves and an alpha that does not.
+            var cold = TVDevice.ScreenColor(1f, 0f);
+            var mid = TVDevice.ScreenColor(1f, 0.5f);
+            var hot = TVDevice.ScreenColor(1f, 1f);
+            T.Check($"a cold tube is fully DISSOLVED, showing the model's own screen face ({cold.A:0.00} alpha)", cold.A == 0f);
+            T.Check($"...at full brightness, not a dim picture ({cold.R:0.00})", cold.R == 1f);
+            T.Check($"a warm tube is the full picture ({hot.A:0.00} alpha)", hot.A == 1f);
+            T.Check($"...and it crossfades in between ({mid.A:0.00})", mid.A > 0f && mid.A < 1f);
+            // Brightness must be independent of the fade -- that separation IS the fix. If these two ever move
+            // together again the crossfade has quietly become a dimmer wearing an alpha channel.
+            T.Check("brightness and fade are independent axes",
+                TVDevice.ScreenColor(0.3f, 1f).R < TVDevice.ScreenColor(0.9f, 1f).R
+                && Mathf.IsEqualApprox(TVDevice.ScreenColor(0.3f, 1f).A, TVDevice.ScreenColor(0.9f, 1f).A));
+            T.Check("...and alpha is clamped, so a stray warm value cannot punch past opaque",
+                TVDevice.ScreenColor(1f, 4f).A == 1f && TVDevice.ScreenColor(1f, -2f).A == 0f);
 
             yield break;
         }

@@ -34,7 +34,17 @@ namespace UnturnedGodot.Testing
 
             // Unshaded outputs ALBEDO, so brightness has to ride AlbedoColor -- an emission multiplier would do
             // nothing at all now, silently, and the screen would sit at whatever AlbedoColor it was left on.
-            T.Check($"starts black so a CRT can fade the picture UP ({mat.AlbedoColor})", mat.AlbedoColor == Colors.Black);
+            //
+            // It starts fully DISSOLVED rather than black. The picture floats 4mm off the cabinet's own screen face
+            // and crossfades onto it, so "dark" means alpha 0 (the model's own texel showing through) -- a black
+            // opaque rectangle would be a hole in the front of the set, DARKER than the surrounding plastic, which is
+            // exactly what master reported as the fade being nuked.
+            T.Check($"starts fully dissolved into the tube face ({mat.AlbedoColor})", mat.AlbedoColor.A == 0f);
+            T.Check($"...at full brightness, so the warmup is a fade and not a dimmer ({mat.AlbedoColor.R:0.00})", mat.AlbedoColor.R == 1f);
+            // The crossfade cannot happen at all on an opaque material -- alpha would simply be ignored and every TV
+            // would snap on. Silent, and indistinguishable from "the warmup constant got set to zero".
+            T.Check($"...and the material can actually blend ({mat.Transparency})",
+                mat.Transparency == BaseMaterial3D.TransparencyEnum.Alpha);
 
             var off = TVDevice.ScreenColor(0f);
             var half = TVDevice.ScreenColor(0.5f);
