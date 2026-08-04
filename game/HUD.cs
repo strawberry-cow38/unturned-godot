@@ -27,6 +27,7 @@ namespace UnturnedGodot
         readonly System.Collections.Generic.List<(Control box, System.Func<bool> on)> _status = new();
         Label _ammo;
         Label _fireMode;
+        Label _weaponName;   // held weapon, tinted by its rarity (master)
         Label _alert; float _alertLeft;   // centre-screen transient error (unknown gun); _alertLeft = seconds remaining
 
         /// <summary>The live HUD, so a non-UI system can surface a player-facing error without threading a reference
@@ -113,8 +114,24 @@ namespace UnturnedGodot
             _fireMode.Modulate = new Color(1f, 1f, 1f, 0.7f);
             _fireMode.MouseFilter = Control.MouseFilterEnum.Ignore;
             root.AddChild(_fireMode);
+
+            // WEAPON NAME above the fire mode, in the item's RARITY colour (master). Same colour table the inventory
+            // tile and the ground look-at rim use (ItemTool.RarityColorUI) rather than a second one -- a HUD that
+            // disagreed with the bag about an item's rarity would be worse than showing no colour at all.
+            _weaponName = new Label();
+            _weaponName.AddThemeFontSizeOverride("font_size", 20);
+            _weaponName.AddThemeFontOverride("font", new FontVariation { VariationEmbolden = 0.5f });
+            _weaponName.AddThemeColorOverride("font_outline_color", Colors.Black);
+            _weaponName.AddThemeConstantOverride("outline_size", 4);   // rarity colours run dark (common grey); the outline keeps it readable on pale terrain
+            _weaponName.AnchorLeft = 1; _weaponName.AnchorRight = 1; _weaponName.AnchorTop = 1; _weaponName.AnchorBottom = 1;
+            _weaponName.OffsetLeft = -420; _weaponName.OffsetRight = -22; _weaponName.OffsetTop = -146; _weaponName.OffsetBottom = -120;
+            _weaponName.HorizontalAlignment = HorizontalAlignment.Right;
+            _weaponName.MouseFilter = Control.MouseFilterEnum.Ignore;
+            root.AddChild(_weaponName);
+
             _playerOnly.Add(_fireMode);
             _playerOnly.Add(_ammo);
+            _playerOnly.Add(_weaponName);
 
             // CENTRE-SCREEN ALERT (strawberry: "unknown gun should spit an error center screen and fallback to
             // unarmed"). A transient line just above the crosshair -- high enough to read without covering what you
@@ -252,8 +269,21 @@ namespace UnturnedGodot
             if (Player != null)
             {
                 bool gun = Player.HasGunOut;                       // ammo counter + firemode ONLY when a gun is genuinely out (master: off for fists/melee/held item)
-                _ammo.Visible = gun; _fireMode.Visible = gun;
-                if (gun) { _ammo.Text = $"{Player.Ammo} / {(Player.Gun?.AmmoMax ?? Player.Ammo)}"; _fireMode.Text = Player.FiremodeName; }
+                _ammo.Visible = gun; _fireMode.Visible = gun; _weaponName.Visible = gun;
+                if (gun)
+                {
+                    // "x + 1 / max" when a round rides the chamber (master). The +1 is REAL state, not decoration:
+                    // Ammo can legitimately exceed AmmoMax, and rendering it as a flat "31 / 30" reads as a bug in
+                    // the counter rather than as the extra round it actually is.
+                    int max = Player.Gun?.AmmoMax ?? Player.Ammo;
+                    int inMag = System.Math.Min(Player.Ammo, max);
+                    int chambered = System.Math.Max(0, Player.Ammo - max);
+                    _ammo.Text = chambered > 0 ? $"{inMag} + {chambered} / {max}" : $"{inMag} / {max}";
+                    _fireMode.Text = Player.FiremodeName;
+                    var asset = Player.HeldItemForTest != null ? SDG.Unturned.Assets.find(Player.HeldItemForTest.id) : null;
+                    _weaponName.Text = asset?.itemName ?? Player.Gun?.Id ?? "";   // Id is the .dat stem, a readable fallback when the asset is missing
+                    _weaponName.Modulate = asset != null ? SDG.Unturned.ItemTool.RarityColorUI(asset.rarity) : Colors.White;
+                }
                 _pain.Color = new Color(CR.R, CR.G, CR.B, Player.PainAlpha);   // colorOverlayImage.TintColor.a = painAlpha
             }
 

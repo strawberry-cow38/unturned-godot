@@ -9,7 +9,46 @@ namespace UnturnedGodot
     {
         public string Id;
         public string Action;   // .dat Action: Trigger/Bolt/Pump/Break/Rail...
-        public bool IsShotgun => Action == "Pump" || Action == "Break";   // shell-calibre guns (no detachable-mag, so no +1 chamber)
+        public bool IsShotgun => Action == "Pump" || Action == "Break";   // shell-calibre guns
+
+        /// <summary>Can this gun carry a round in the chamber on top of a full magazine (the "30 + 1")?
+        ///
+        /// NO SOURCE ANSWER EXISTS. Retail has rechambering (bolt/pump cycling) but its reload just fills to
+        /// Ammo_Max -- there is no +1 concept in UseableGun or ItemGunAsset at all. So this is the port's own design
+        /// call, settled by master:
+        ///   bolt   -> YES. A real bolt action tops the magazine up with one already chambered.
+        ///   pump   -> YES, ghost loading: cycle a shell into the chamber, then refill the tube behind it.
+        ///   break  -> no. Both barrels ARE the chambers; there is nowhere else to put a shell.
+        ///   string -> no (bows, crossbow). Master: "thats just dumb."
+        ///   rocket -> no. One tube, one rocket.
+        ///   trigger-> YES for magazine-fed, NO for revolvers -- the cylinder IS the chambers.
+        ///
+        /// THE REVOLVER CASE IS NOT DERIVABLE FROM Action. Every revolver in this port reads `Action Trigger`,
+        /// identical to the Colt and the Eaglefire; the .dat carries no feed or magazine field to separate them. So
+        /// it keys on Real_Weapon, which names the actual firearm -- "Colt Python" is a revolver as a matter of fact
+        /// rather than of taste, so this list is checkable by a human instead of being a table you have to trust.
+        ///
+        /// (Note schofield reads `Action Bolt` with Real_Weapon "Mosin-Nagant" -- despite the name it is modelled as
+        /// a bolt rifle here, not a revolver, so it correctly keeps its +1 with no exception needed.)</summary>
+        public bool HasChamberRound => Action switch
+        {
+            "Break" or "String" or "Rocket" => false,
+            _ => !IsRevolver,
+        };
+
+        /// <summary>Revolvers, identified by the real firearm they model. Extend this when one is added -- the
+        /// alternative is inventing a feed field the extracted .dat files do not have.</summary>
+        static readonly string[] RevolverModels = { "Python", "Revolver", "Smith & Wesson", "Peacemaker", "Anaconda", "Redhawk", "Magnum" };
+        public bool IsRevolver
+        {
+            get
+            {
+                if (string.IsNullOrEmpty(RealWeapon)) return false;
+                foreach (var m in RevolverModels)
+                    if (RealWeapon.Contains(m, System.StringComparison.OrdinalIgnoreCase)) return true;
+                return false;
+            }
+        }
         // Shell-by-shell reload for the PUMP tube (bluntforce): load ONE shell per interval, so firing mid-reload keeps what's
         // loaded. master WANTS this (a pump-shotgun feel) -- the earlier "feels completely wrong" was the reload SOUND replaying
         // once per shell, now fixed (the sound plays once at the start). A BREAK-action (masterkey) is NOT shell-by-shell: it

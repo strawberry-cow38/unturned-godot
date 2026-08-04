@@ -3031,7 +3031,10 @@ namespace UnturnedGodot
         bool UsesMagItem => Gun != null && !Gun.ShellReload && (SDG.Unturned.Assets.find((ushort)Gun.MagazineId)?.IsMagazine ?? false);
         // +1 round in the chamber: a non-shell gun keeps its chambered round through a reload -> capacity is AmmoMax+1. Reloaded
         // from EMPTY (Ammo 0) it has to RACK a round out of the fresh mag (the Hammer clip) and tops out at AmmoMax (no bonus).
-        bool HasChamber => Gun != null && !Gun.IsShotgun;   // +1 chamber = mag-fed guns only; neither shotgun action (pump tube / break double-barrel) gets it
+        // +1 chamber -- the rule lives on GunDef so the reload, the HUD and the tests all read ONE answer. Notably a
+        // PUMP now gets it (ghost loading) where the old `!IsShotgun` test refused it, and a REVOLVER does not,
+        // where the old test allowed it and gave the Ace 6+1. See GunDef.HasChamberRound.
+        bool HasChamber => Gun?.HasChamberRound ?? false;
         int ChamberedCap => (Gun?.AmmoMax ?? 30) + (HasChamber ? 1 : 0);   // absolute max Ammo = a full mag plus the one in the chamber
 
         // infAmmo: refill the held gun once firing has been idle for InfAmmoIdle. Fills to ChamberedCap rather than
