@@ -3651,6 +3651,13 @@ namespace UnturnedGodot
                     RotateY(Mathf.DegToRad(-mm.Relative.X * sens));
                     _pitchDeg = Mathf.Clamp(_pitchDeg - mm.Relative.Y * sens, -89f, 89f);
                     _cam.RotationDegrees = new Vector3(_pitchDeg, 0f, 0f);
+                    // Feed the viewmodel the LOOK DELTA for its inertia roll (PlayerAnimator's
+                    // rotationInputViewmodelRoll). Source drives that spring off per-frame input delta, not off
+                    // camera angle, so it has to be sampled here where the delta exists -- by _Process the
+                    // information is gone. Post-sensitivity on purpose: the source scales by the same option, so an
+                    // ADS'd scope leans LESS for the same hand movement, which is what makes a high-zoom optic feel
+                    // heavy rather than twitchy.
+                    _viewmodel?.AddLookDelta(mm.Relative.Y * sens, mm.Relative.X * sens);
                 }
             }
             else if (@event is InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.Left })

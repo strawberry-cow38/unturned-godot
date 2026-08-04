@@ -587,6 +587,41 @@ namespace UnturnedGodot
         // walk bob uses the right frequency (SPEED_*) + amplitude (BOB_*) and switches off when standing still.
         public void SetLocomotion(bool moving, EPlayerStance stance, bool safe = false) { _moving = moving; _stance = stance; _safe = safe; }
 
+        // ---- INPUT INERTIA (PlayerAnimator.rotationInputViewmodelRoll, source lines 1480-1485) ----------------
+        // The gun lags and leans when you swing the view. Source drives it off the per-frame LOOK DELTA rather than
+        // the camera's angle, so the impulse is accumulated here by PlayerController's mouse handler and integrated
+        // by an RK4 spring below -- that spring is what makes it read as weight rather than as a lerp catching up.
+        //
+        // Source coefficients, verbatim:
+        //     currentPosition.x += deltaPitch * -0.03  * swayMult * bobScale * misalign
+        //     currentPosition.y += deltaYaw   * -0.015 * swayMult * bobScale * misalign
+        //     currentPosition.z += deltaYaw   * -0.05  *            bobScale * misalign
+        // Note the Z term carries NO sway multiplier while X and Y do. That asymmetry is in the source and is
+        // reproduced rather than tidied: it means ADS damps the pitch/yaw lag but leaves the ROLL at full strength,
+        // so a scoped gun still banks into a turn while its up/down lag is suppressed.
+        Rk4Spring3 _inputRoll = new Rk4Spring3(140f, 18f);   // springs back to zero; stiffness/damping are Inspector-side in the source
+        Vector3 _inputRollImpulse;                           // accumulated between frames, applied once per tick
+
+        /// <summary>Accumulate a look delta (degrees this frame, already sensitivity-scaled). Called from the input
+        /// handler because a mouse delta does not survive to _Process -- by then only the resulting angle remains,
+        /// and the angle cannot distinguish a fast flick from a slow pan.</summary>
+        public void AddLookDelta(float deltaPitch, float deltaYaw)
+        {
+            _inputRollImpulse.X += deltaPitch * -0.03f;
+            _inputRollImpulse.Y += deltaYaw * -0.015f;
+            _inputRollImpulse.Z += deltaYaw * -0.05f;
+        }
+
+        // ---- SCOPE SWAY (UseableGun.cs:5983-6021) -----------------------------------------------------------
+        // A LISSAJOUS, not a circle: x rides sin(0.75*t) and y rides sin(1.0*t). The mismatched frequencies are the
+        // whole trick -- the figure never quite repeats, so the drift reads as a hand rather than as a loop. Getting
+        // both axes onto one frequency gives a clean diagonal oscillation that looks mechanical immediately.
+        float _swayTime;
+        Vector3 _scopeSway;
+        /// <summary>Steadiness 0..1 (breath-hold). Source advances swayTime at (1 - steadyAccuracy/4), so steadying
+        /// SLOWS the drift rather than shrinking it -- the sight still wanders, just lazily.</summary>
+        public float SteadyAccuracy;
+
         public void PlayDryFire() { _drySnd?.Play(); }   // hammer click when the trigger's pulled on empty
 
         void PlayShoot()   // one OVERLAPPING polyphonic voice per shot so full-auto shots don't restart-cut each other (master)
@@ -1064,6 +1099,35 @@ namespace UnturnedGodot
             _shakeSpring.Update((float)delta);
             _recoilRotSpring.TargetPosition = Vector3.Zero;   // recoil rotation springs back too
             _recoilRotSpring.Update((float)delta);
+
+            // ---- INPUT INERTIA. Apply the frame's accumulated look impulse, then let the spring pull back to rest.
+            // Source scales x/y by the sway multiplier and leaves z unscaled (see AddLookDelta) and clamps the whole
+            // vector to +-10 degrees, which is what stops a fast flick from whipping the gun off screen.
+            if (_inputRollImpulse != Vector3.Zero)
+            {
+                _inputRoll.CurrentPosition += new Vector3(
+                    _inputRollImpulse.X * _blendedSway,
+                    _inputRollImpulse.Y * _blendedSway,
+                    _inputRollImpulse.Z);
+                _inputRoll.CurrentPosition = _inputRoll.CurrentPosition.Clamp(Vector3.One * -10f, Vector3.One * 10f);
+                _inputRollImpulse = Vector3.Zero;
+            }
+            _inputRoll.TargetPosition = Vector3.Zero;
+            _inputRoll.Update((float)delta);
+
+            // ---- SCOPE SWAY. Only while actually aiming through a magnifying optic: the source gates on
+            // `isAiming && sightAsset != null` and its amplitude is (1 - 1/zoom), which is exactly 0 at 1x. So iron
+            // sights and red dots get none of this for free, from the formula rather than from a special case.
+            float scopeZoom = ScopeZoom;
+            if (_aiming && scopeZoom > 1f)
+            {
+                float sway = (1f - 1f / scopeZoom) * 1.25f;
+                sway *= _stance switch { EPlayerStance.CROUCH => 0.85f, EPlayerStance.PRONE => 0.7f, _ => 1f };
+                _swayTime += (float)delta * (1f - Mathf.Clamp(SteadyAccuracy, 0f, 1f) / 4f);
+                var target = new Vector3(Mathf.Sin(0.75f * _swayTime) * sway, Mathf.Sin(1.0f * _swayTime) * sway, 0f);
+                _scopeSway = _scopeSway.Lerp(target, Mathf.Clamp((float)delta * 4f, 0f, 1f));
+            }
+            else _scopeSway = _scopeSway.Lerp(Vector3.Zero, Mathf.Clamp((float)delta * 4f, 0f, 1f));
             // Bob + recoil shake as an ARMS offset. The source moves the viewmodel CAMERA; our arms are children
             // of that camera (rigid), so instead we move the arms by the NEGATIVE offset — the same on-screen sway
             // (camera fixed, arms move opposite). Godot arms-local == camera-local (scale 1). Source maps bob to
@@ -1086,6 +1150,14 @@ namespace UnturnedGodot
                 hipPos -= mCam * _aimAlpha;                           // slide arms so the aim hook -> camera origin
             }
             _arms.Position = hipPos + vmOffset + TuneOffset;   // + the live uniform tune offset (ESC sliders); per-gun offsets removed
+            // ARMS ROTATION = input inertia + scope sway. Applied to the arms ROOT rather than to the gun model,
+            // because the source rotates the viewmodel CAMERA and our arms hang rigidly off that camera -- rotating
+            // the gun alone would swing the barrel out of the hands. Recoil rotation stays on the gun (it is a
+            // muzzle-climb of the weapon, not of the view) so the two do not fight.
+            //
+            // Scope sway lands on pitch/yaw only; its Z is always 0 in the source, so there is nothing to roll.
+            var armRot = _inputRoll.CurrentPosition + _scopeSway;
+            _arms.RotationDegrees = armRot;
             // ---- SPRINT + SAFETY pose: play the REAL Sprint_Start clip. Source UseableGun.cs:3509 plays ONE clip for
             //      BOTH (stance==SPRINT && moving) OR firemode==SAFETY. The un-shoulder (incl. the ~90deg yaw) is baked
             //      into the clip -- no hand-authored angles, arms ROOT untouched (the skeleton clip does the posing).
