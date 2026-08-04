@@ -154,6 +154,33 @@ namespace UnturnedGodot
         // Read-only views of what the production look-raycast resolved, so a test can assert the wiring
         // without a test-only code path deciding the answer.
         public Door DebugFocusDoor => _focusDoor;
+        int _debugLookCandidates;
+        /// <summary>Candidates the look passes produced on the last frame, BEFORE arbitration cut them to one.</summary>
+        public int DebugLookCandidates => _debugLookCandidates;
+        /// <summary>How many things the look system currently has focused. Master's rule is that this is NEVER above 1
+        /// ("hard restriction of ONE item when ur looking at something"), and it is exposed as a COUNT rather than as a
+        /// bool so a failure reports how badly -- two outlines and five are different bugs.</summary>
+        public int DebugFocusCount
+        {
+            get
+            {
+                int n = 0;
+                if (IsInstanceValid(_focusItem)) n++;
+                if (IsInstanceValid(_focusVehicle)) n++;
+                if (IsInstanceValid(_focusDeployable)) n++;
+                if (_focusFluid != null && IsInstanceValid(_focusFluid)) n++;
+                if (IsInstanceValid(_focusDoor)) n++;
+                if (IsInstanceValid(_focusObjectDoor)) n++;
+                if (IsInstanceValid(_focusBed)) n++;
+                if (IsInstanceValid(_focusGasPump)) n++;
+                if (IsInstanceValid(_focusGrid)) n++;
+                if (IsInstanceValid(_focusTV)) n++;
+                if (IsInstanceValid(_focusShelfItem)) n++;
+                if (IsInstanceValid(_focusShelf)) n++;
+                if (_focusPuppet is Node3D fp && IsInstanceValid(fp)) n++;
+                return n;
+            }
+        }
         public Bed DebugFocusBed => _focusBed;
         /// <summary>Sim seconds, accumulated from the fixed tick -- NOT engine uptime. Door and bed
         /// cooldowns are sim rules, and wall-clock keeps running while the game is paused.</summary>
@@ -184,12 +211,50 @@ namespace UnturnedGodot
         // (LOS-correct). The hit item gets a rarity glow outline + name billboard; a different/no item clears the old.
         const float LookReach = 2.6f, LookSphereR = 0.16f;   // the eye-ray reaches this far, ending in a sphere of this radius (master shrank it by half)
 
+        /// <summary>What the look system settled on. RayOther collapses every ray-claimed interactable into one case
+        /// because the ray chain is else-if -- at most one of them exists, so which one never affects arbitration.</summary>
+        internal enum Look { None, RayOther, Shelf, ShelfItem, Item, Vehicle, Puppet }
+
+        /// <summary>Pick the ONE thing the player is looking at (master: "lookatradius should only choose ONE. hard
+        /// restriction of ONE item when ur looking at something. cover all cases").
+        ///
+        /// The bug this exists to kill: the look system runs TWO passes that never spoke to each other. A ray picks
+        /// one interactable (its chain is else-if, so that half was always singular), then a sphere at the ray's end
+        /// sweeps for items/vehicles/puppets and arbitrated only among ITSELF. Nothing ever compared across the two,
+        /// so a dropped item lying near where the ray landed lit up at the same time as the door or TV the ray hit.
+        ///
+        /// Worse than the double outline: F resolved the tie through a THIRD order -- its own else-if chain in the
+        /// input handler, which puts items before doors -- so the thing highlighted and the thing you interacted with
+        /// could genuinely differ. Fixing it HERE rather than in the F chain is deliberate: with one candidate left
+        /// there is nothing for F to disagree with. Patching F would have left both outlines up and hidden the tell.
+        ///
+        /// The rules, in full:
+        ///   - a ray claim on anything but a shelf is TERMINAL. Pointing at a thing beats whatever the assist radius
+        ///     scraped up nearby; the sphere exists for things too small to hit precisely, not to override your aim.
+        ///   - a ray claim on a SHELF still lets the sphere refine to a shelf ITEM, because picking one item off a
+        ///     shelf you are looking at is the entire job of that radius. Nothing else survives a shelf.
+        ///   - with no ray claim, the nearest sphere find wins. Distances are squared, from the ray's end.
+        /// Ties resolve in the parameter order below, so the outcome is deterministic rather than dependent on which
+        /// order the physics query happened to return overlaps in.</summary>
+        internal static Look ResolveFocus(Look ray, float itemD, float vehD, float shelfItemD, float puppetD)
+        {
+            if (ray == Look.RayOther || ray == Look.ShelfItem) return ray;
+            if (ray == Look.Shelf) return shelfItemD < float.MaxValue ? Look.ShelfItem : Look.Shelf;
+            float best = Mathf.Min(Mathf.Min(itemD, vehD), Mathf.Min(shelfItemD, puppetD));
+            if (best == float.MaxValue) return Look.None;
+            if (shelfItemD <= best) return Look.ShelfItem;   // a display item is a deliberate target; it wins a tie
+            if (itemD <= best) return Look.Item;
+            if (vehD <= best) return Look.Vehicle;
+            return Look.Puppet;
+        }
+
         void UpdateLookFocus()
         {
             WorldItem hitItem = null; Vehicle hitVeh = null; Deployable hitDeploy = null; GasPump hitGasPump = null; GridPowerSource hitGrid = null; FluidContainer hitFluid = null;
             Door hitDoor = null; Bed hitBed = null; ObjectDoor hitObjectDoor = null; TVDevice hitTV = null;
             ShelfItemBody hitShelfItem = null; StoreShelf hitShelf = null;   // shelf display item / its shelf under the look-sphere
             IPuppetFocusable hitPuppet = null;   // MP ONLY: nearest replicated car/item puppet under the look-sphere (SP hits real Vehicle/WorldItem instead)
+            bool rayTerminal = false, rayShelfItem = false;   // did the RAY claim the target, and was it a shelf item? (see the arbitration below)
             if (!_dead && _driving == null && _riding == null && _cam != null && Input.MouseMode == Input.MouseModeEnum.Captured)
             {
                 var space = GetWorld3D().DirectSpaceState;
@@ -222,7 +287,16 @@ namespace UnturnedGodot
                     else if (rcol is Node tvn && tvn.HasMeta(TVDevice.HitMeta) && tvn.GetMeta(TVDevice.HitMeta).As<TVDevice>() is TVDevice tvd && IsInstanceValid(tvd)) hitTV = tvd;   // TV body collider tagged in WorldBuilder -> its device (F toggles; the bullet path uses the same meta to find the screen)
                     else if (rcol is ShelfItemBody sibr && IsInstanceValid(sibr)) hitShelfItem = sibr;   // ray hit an item on a shelf directly -> lock onto it (the orb is a backup)
                     else if (rcol is Node rn && ShelfOf(rn) is StoreShelf rshelf) hitShelf = rshelf;   // looked-at shelf -> whole-shelf outline + F-open (look-based, not proximity)
+                    // Which pass claimed the target decides who wins below. The ray is you POINTING at something;
+                    // the sphere is a forgiveness radius for things too small to hit precisely. A shelf item found by
+                    // the ray is a terminal claim; one found by the sphere is a refinement of a looked-at shelf.
+                    rayShelfItem = hitShelfItem != null;
                 }
+                // A ray claim on anything except a SHELF is terminal -- the shelf is the one case where the assist
+                // sphere is still allowed to speak, because picking an individual item off a shelf you are looking at
+                // is exactly what it is for. The ray chain above is else-if, so at most one of these is ever set.
+                rayTerminal = hitDoor != null || hitObjectDoor != null || hitBed != null || hitDeploy != null
+                           || hitFluid != null || hitGasPump != null || hitGrid != null || hitTV != null || rayShelfItem;
                 // 2) sphere at the ray end -> nearest ITEM (bit 7) or VEHICLE (bit 5) it overlaps is focusable
                 _lookSphereQ ??= new PhysicsShapeQueryParameters3D { Shape = new SphereShape3D { Radius = LookSphereR }, CollisionMask = WorldItem.ItemHitLayer | (1u << 5) | StoreShelf.ShelfItemHitLayer, Exclude = _lookExclude };
                 _lookSphereQ.Transform = new Transform3D(Basis.Identity, _lookEnd);
@@ -253,9 +327,27 @@ namespace UnturnedGodot
                         if (d < bestP) { bestP = d; hitPuppet = pf; }
                     }
                 }
-                if (hitItem != null && hitVeh != null) { if (bestV < bestI) hitItem = null; else hitVeh = null; }   // focus the nearer of the two
-                if (hitShelfItem != null) hitShelf = null;   // looking at an ITEM on the shelf -> outline the item only, not the whole shelf
-                if (hitVeh == null && hitItem == null)   // seats/steering seen through windows have no collider -> focus a car whose visual bounds the look-ray passes through (master). DISTANCE-CULLED so it isn't O(all vehicles) every frame (perf regression fix).
+                // ---- EXACTLY ONE TARGET (master: "lookatradius should only choose ONE. hard restriction of ONE item
+                // when ur looking at something. cover all cases."). See ResolveFocus for the rules and the why.
+                var won = ResolveFocus(rayTerminal ? (rayShelfItem ? Look.ShelfItem : Look.RayOther) : hitShelf != null ? Look.Shelf : Look.None,
+                                       hitItem != null ? bestI : float.MaxValue,
+                                       hitVeh != null ? bestV : float.MaxValue,
+                                       hitShelfItem != null ? bestSI : float.MaxValue,
+                                       hitPuppet != null ? bestP : float.MaxValue);
+                // How many candidates existed BEFORE arbitration. Exposed purely so a test can prove it actually
+                // reproduced the bug: "one thing is focused" passes trivially in a scene that only ever offered one,
+                // and a vacuous pass on the exact case the fix exists for is worse than no test. Asserting
+                // candidates >= 2 alongside focus == 1 is what gives the live check teeth.
+                _debugLookCandidates = (rayTerminal ? 1 : 0) + (hitShelf != null ? 1 : 0)
+                                     + (hitItem != null ? 1 : 0) + (hitVeh != null ? 1 : 0)
+                                     + (hitShelfItem != null && !rayShelfItem ? 1 : 0) + (hitPuppet != null ? 1 : 0);
+                if (won != Look.RayOther) { hitDoor = null; hitObjectDoor = null; hitBed = null; hitDeploy = null; hitFluid = null; hitGasPump = null; hitGrid = null; hitTV = null; }
+                if (won != Look.Shelf) hitShelf = null;
+                if (won != Look.ShelfItem) hitShelfItem = null;
+                if (won != Look.Item) hitItem = null;
+                if (won != Look.Vehicle) hitVeh = null;
+                if (won != Look.Puppet) hitPuppet = null;
+                if (won == Look.None)   // seats/steering seen through windows have no collider -> focus a car whose visual bounds the look-ray passes through (master). DISTANCE-CULLED so it isn't O(all vehicles) every frame (perf regression fix). Skipped entirely once something else already owns the frame -- correctness AND the O(vehicles) loop.
                 {
                     float maxD = (LookReach + 6f) * (LookReach + 6f);
                     foreach (var node in GetTree().GetNodesInGroup("vehicles"))
