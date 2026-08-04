@@ -71,6 +71,23 @@ namespace UnturnedGodot
         const float WarmDelay = 0.3f, WarmDur = 1.5f;
         bool _warming; float _warmDelay, _warm;
 
+        // CRT POWER-OFF COLLAPSE (master: "when turning it off, do the beam collapse on the center, the classic crt
+        // turn off"). The raster loses its vertical deflection first, so the picture squeezes into a bright horizontal
+        // line -- bright because the same beam energy is now painting a fraction of the area -- and then the horizontal
+        // deflection goes and the line pulls into a dot that fades. Only the CRT does this; an LCD just stops.
+        const float CollapseLine = 0.13f;    // picture -> line
+        const float CollapseDot = 0.11f;     // line -> dot -> out
+        const float CollapseFlash = 2.2f;    // peak level as the beam concentrates (blooms, which is the look)
+        const float CollapseThin = 0.02f;    // the line's thickness as a fraction of screen height: one scanline
+        float _collapse = -1f;               // seconds elapsed into the effect; negative = not running
+
+        // The tube's OWN GLASS COLOUR (master: "instead of fading from 0,0,0 fade from the color of the screen on the
+        // crt model itself"). The screen sub-mesh carries the prop's palette texel as a vertex colour, so this is read
+        // off the model rather than hardcoded from a comment. The fallback is Television_1's texel, rgb 53,53,53.
+        const float DefaultGlassLevel = 53f / 255f;
+        float _glassLevel = DefaultGlassLevel;
+        Vector3 _screenRightLocal = Vector3.Right, _screenUpLocal = Vector3.Up;   // the screen's OWN in-plane axes (Reproject's ax/ay)
+
         Vector3 _screenCenterLocal, _screenNormalLocal;   // stashed for the light placement + the render harness
         Aabb _screenAabbLocal;    // the screen sub-mesh's bounds in PROP-LOCAL space, captured before anything animates
                                   //  the node -- so a hit test never has to invert a collapsing (possibly degenerate) scale
@@ -199,6 +216,12 @@ namespace UnturnedGodot
                 ay = Mathf.Abs(nrm.Z) < 0.9f ? new Vector3(0, 0, 1) - nrm * nrm.Z : new Vector3(1, 0, 0) - nrm * nrm.X;
             ay = ay.Normalized();
             Vector3 ax = ay.Cross(nrm).Normalized();   // viewer-right from the +normal side -> increasing U reads left-to-right, un-mirrored
+            // The screen's real in-plane axes, kept: the power-off collapse squeezes along ay (the picture falls to a
+            // horizontal line) and then along ax. Deriving them a second time from the AABB would be guessing at what
+            // is already known exactly here.
+            _screenRightLocal = ax; _screenUpLocal = ay;
+            // ...and the tube's own glass colour, straight off the model's palette texel rather than out of a comment.
+            _glassLevel = C != null && C.Length > 0 ? Mathf.Clamp(C[0].R, 0f, 1f) : DefaultGlassLevel;
 
             float umin = 1e9f, umax = -1e9f, vmin = 1e9f, vmax = -1e9f;
             var pu = new float[V.Length]; var pv = new float[V.Length];
@@ -328,6 +351,7 @@ namespace UnturnedGodot
             _lit = eff;
             if (eff)
             {
+                EndCollapse();   // switched back on mid-collapse: the screen node is still squeezed, so undo it first
                 if (_isCrt) { _warming = true; _warmDelay = WarmDelay; _warm = 0f; }   // tube warms in
                 else { _warming = false; _warm = 1f; }                                 // flatscreen snaps
                 if (_screen != null) _screen.Visible = true;
@@ -339,11 +363,76 @@ namespace UnturnedGodot
             else
             {
                 _warming = false; _warm = 0f;
-                if (_screen != null) _screen.Visible = false;
-                if (_light != null) _light.Visible = false;
-                if (_cone != null) _cone.Visible = false;
                 _tone?.Stop();
+                if (ShouldCollapse(_isCrt, _broken, _screenShot) && _screen != null) { _collapse = 0f; ApplyCollapse(); return; }
+                EndCollapse();
             }
+        }
+
+        /// <summary>Who gets the graceful exit. A TUBE collapses; an LCD just stops, and a set whose glass is already
+        /// gone -- smashed prop or shot-out screen -- does not get to play a power-off animation on the way out. Pure,
+        /// because on a box with no Unturned install a bare TVDevice has no screen mesh, so the branch in Refresh that
+        /// consults this can never be reached by a test and the POLICY would go unpinned.</summary>
+        internal static bool ShouldCollapse(bool isCrt, bool broken, bool screenShot) => isCrt && !broken && !screenShot;
+
+        /// <summary>Where the collapse is at <paramref name="t"/> seconds in: how much of the screen's height and width
+        /// are left, and how bright it is. Pure, because everything interesting about this effect is the SHAPE of those
+        /// three curves over time and none of it is observable on a box with no Unturned install.
+        ///
+        /// Vertical deflection fails first (picture -> line), then horizontal (line -> dot). Level RISES through the
+        /// first phase: the beam is painting a fraction of the area with the same energy, which is why a dying CRT
+        /// flashes rather than dimming. Returns Level 0 once it is over.</summary>
+        internal static (float Vert, float Horiz, float Level) Collapse(float t)
+        {
+            if (t < 0f) return (1f, 1f, 1f);
+            // Ease OUT, not in. Deflection does not decay gently -- it goes, and what you see is a fast squeeze that
+            // settles into the line. The obvious ease-in (u*u) instead holds a nearly full-size picture for most of the
+            // phase and then snaps, which reads as a lag followed by a glitch. Caught by asserting the shape at 42% of
+            // the effect, where ease-in still left the picture 41% tall.
+            static float Ease(float x) { float k = 1f - x; return 1f - k * k; }
+            if (t < CollapseLine)
+            {
+                float u = t / CollapseLine;
+                return (Mathf.Lerp(1f, CollapseThin, Ease(u)), 1f, Mathf.Lerp(1f, CollapseFlash, u));
+            }
+            float d = (t - CollapseLine) / CollapseDot;
+            if (d >= 1f) return (0f, 0f, 0f);
+            // The width goes fast and the BRIGHTNESS trails it linearly -- so what is left is a dot that lingers and
+            // fades, which is the phosphor. Horizontal floors at CollapseThin rather than 0 so there is still a point
+            // to see; the level is what actually puts it out.
+            return (CollapseThin, Mathf.Lerp(1f, CollapseThin, Ease(d)), Mathf.Lerp(CollapseFlash, 0f, d));
+        }
+
+        internal static float CollapseDur => CollapseLine + CollapseDot;
+
+        /// <summary>Squeeze the screen node about the screen's centre, along the screen's OWN axes. Not a plain
+        /// Scale on the node: the mesh lives in prop-local space with its centre nowhere near the origin, so scaling
+        /// the node directly would drag the picture across the cabinet instead of collapsing it in place.</summary>
+        void ApplyCollapse()
+        {
+            if (_screen == null) return;
+            var (vert, horiz, level) = Collapse(_collapse);
+            var frame = new Basis(_screenRightLocal, _screenUpLocal, _screenNormalLocal);
+            var squeeze = frame * Basis.FromScale(new Vector3(horiz, vert, 1f)) * frame.Transposed();
+            _screen.Transform = new Transform3D(squeeze, _screenCenterLocal - squeeze * _screenCenterLocal);
+            _screen.Visible = level > 0f;
+            if (_screenMat != null) _screenMat.AlbedoColor = ScreenColor(_emitEnergy * level);
+            // The spill and the shaft die WITH the picture rather than snapping off at the switch -- but they are not
+            // squeezed. The collapse is the raster's, and a light cone narrowing to a blade would read as a bug.
+            if (_light != null) { _light.LightEnergy = _lightEnergy * level; _light.Visible = level > 0f; }
+            if (_coneMat != null) _coneMat.AlbedoColor = new Color(0.85f, 0.9f, 1.0f, ConeAlpha * level);
+            if (_cone != null) _cone.Visible = level > 0f;
+        }
+
+        /// <summary>Stop the collapse and put the screen node back the way it was -- called both when it finishes and
+        /// when the set is switched back on mid-effect. Leaving a squeezed transform behind would show up as a TV that
+        /// turns on as a horizontal line and stays that way.</summary>
+        void EndCollapse()
+        {
+            _collapse = -1f;
+            if (_screen != null) { _screen.Transform = Transform3D.Identity; _screen.Visible = _lit; }
+            if (_light != null) _light.Visible = _lit;
+            if (_cone != null) _cone.Visible = _lit;
         }
 
         /// <summary>Brightness modulation, CRT only. A cosine BETWEEN TWO LIT LEVELS -- full and (1 - depth) -- never
@@ -355,13 +444,22 @@ namespace UnturnedGodot
 
         float FlickerFactor() => _isCrt ? Flicker(_flickerPhase, FlickerDepth) : 1f;
 
+        /// <summary>CRT warmup level: the picture rises out of the tube's OWN GLASS, not out of a black hole (master:
+        /// "instead of fading from 0,0,0 fade from the color of the screen on the crt model itself"). The screen
+        /// sub-mesh is an overlay sitting on the cabinet's own screen face, so a fade that starts at 0 puts a rectangle
+        /// DARKER THAN THE SET on the front of it for the first moment of every power-on -- the picture visibly dips
+        /// below the surrounding plastic before it comes up.</summary>
+        internal static float WarmLevel(float warm, float glass, float full) => Mathf.Lerp(glass, full, warm);
+
         void ApplyLevels()
         {
             float k = _isCrt ? _warm : 1f;
-            // The CRT's fade is now IN THE TEXTURE: albedo lerps up from black, so the picture itself resolves out of
-            // a dark tube instead of a fully-drawn image being dimmed. On the flatscreen k is 1 and it snaps.
-            float f = FlickerFactor();   // 1.0 on the flatscreen; a shallow NTSC breath on the tube
-            if (_screenMat != null) _screenMat.AlbedoColor = ScreenColor(_emitEnergy * k * f);
+            // The CRT's fade is now IN THE TEXTURE: albedo lerps up from the glass colour, so the picture itself
+            // resolves out of the tube instead of a fully-drawn image being dimmed. On the flatscreen k is 1 and it
+            // snaps, so WarmLevel returns `full` and the LCD is untouched by any of this.
+            float f = FlickerFactor();   // 1.0 on the flatscreen; a shallow breath on the tube
+            float lvl = WarmLevel(k, _glassLevel, _emitEnergy);
+            if (_screenMat != null) _screenMat.AlbedoColor = ScreenColor(lvl * f);
             if (_light != null) _light.LightEnergy = _lightEnergy * k * f;
             // the shaft rides it too, so the picture, the spill and the beam pulse together instead of drifting apart
             if (_coneMat != null) _coneMat.AlbedoColor = new Color(0.85f, 0.9f, 1.0f, ConeAlpha * k * f);
@@ -369,6 +467,15 @@ namespace UnturnedGodot
 
         public override void _Process(double delta)
         {
+            // Power-off collapse runs while the set is already NOT lit, so it has to come before everything else here
+            // -- and it ends by calling EndCollapse, which is what actually hides the screen/light/cone.
+            if (_collapse >= 0f)
+            {
+                _collapse += (float)delta;
+                if (_collapse >= CollapseDur) EndCollapse();
+                else ApplyCollapse();
+                return;
+            }
             // The CRT breathes at the NTSC field rate for as long as it is lit -- so this no longer early-outs on
             // !_warming, which it did back when warmup was the only thing that animated.
             if (_lit && _isCrt)
