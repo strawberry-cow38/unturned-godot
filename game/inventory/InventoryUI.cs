@@ -17,13 +17,38 @@ namespace UnturnedGodot
 
 
         // --- retail palette: the dashboard is a translucent overlay, NOT an opaque dark panel ---
-        static readonly Color UI_PANEL = new Color(0.10f, 0.13f, 0.18f, 0.42f);   // char panel / backdrop: world shows through
-        static readonly Color UI_BAR   = new Color(0.17f, 0.24f, 0.32f, 0.78f);   // page header bars (blue-grey)
-        static readonly Color UI_NAV   = new Color(0.13f, 0.18f, 0.24f, 0.80f);   // navbar strip
-        static readonly Color UI_CELL  = new Color(0.62f, 0.72f, 0.84f, 0.30f);   // empty grid cell: LIGHT + see-through
-        static readonly Color UI_TAB_ON  = new Color(0.55f, 0.62f, 0.70f, 0.72f);   // lit/open tab
-        static readonly Color UI_TAB_OFF = new Color(0.22f, 0.29f, 0.37f, 0.62f);   // the other tabs + icon buttons
-        static readonly Color UI_STAGE = new Color(0.08f, 0.11f, 0.15f, 0.30f);   // paperdoll backing
+        //
+        // NEUTRAL AND LIGHTER (master: "increase the transparency of the entire inventory ui, nd remove the blue tint
+        // and tint it more white-ish/ very light gray"). Every swatch used to be blue-dominant -- the panel was
+        // (0.10, 0.13, 0.18), blue nearly double red -- which is what read as a blue UI.
+        //
+        // DERIVED from the original colours rather than hand-picked, so the palette keeps its internal relationships:
+        // the nav strip still reads darker than a header bar, a lit tab still reads brighter than an unlit one.
+        // Writing seven fresh constants by hand loses that ordering, and it surfaces as "the tabs are hard to tell
+        // apart now" -- which reads as a different bug entirely.
+        //
+        // TWO KNOBS, and they are the whole tuning surface -- nudge these, not the swatches:
+        //   UiLighten     0 = original brightness, 1 = pure white.
+        //   UiAlphaScale  multiplies every alpha; below 1 is more see-through.
+        const float UiLighten = 0.45f, UiAlphaScale = 0.72f;
+
+        /// <summary>Strip the hue and lighten, preserving relative brightness. Rec.709 luma rather than an RGB
+        /// average: averaging shifts how light each swatch reads against its neighbours -- blue-heavy colours come
+        /// out too bright -- and the palette's ordering scrambles.</summary>
+        static Color Neutral(float r, float g, float b, float a)
+        {
+            float y = r * 0.2126f + g * 0.7152f + b * 0.0722f;
+            float v = Mathf.Lerp(y, 1f, UiLighten);
+            return new Color(v, v, v, Mathf.Clamp(a * UiAlphaScale, 0f, 1f));
+        }
+
+        static readonly Color UI_PANEL = Neutral(0.10f, 0.13f, 0.18f, 0.42f);   // char panel / backdrop: world shows through
+        static readonly Color UI_BAR   = Neutral(0.17f, 0.24f, 0.32f, 0.78f);   // page header bars
+        static readonly Color UI_NAV   = Neutral(0.13f, 0.18f, 0.24f, 0.80f);   // navbar strip
+        static readonly Color UI_CELL  = Neutral(0.62f, 0.72f, 0.84f, 0.30f);   // empty grid cell: LIGHT + see-through
+        static readonly Color UI_TAB_ON  = Neutral(0.55f, 0.62f, 0.70f, 0.72f);   // lit/open tab
+        static readonly Color UI_TAB_OFF = Neutral(0.22f, 0.29f, 0.37f, 0.62f);   // the other tabs + icon buttons
+        static readonly Color UI_STAGE = Neutral(0.08f, 0.11f, 0.15f, 0.30f);   // paperdoll backing
         const int CELL = 72;         // SleekItems cell size
         const int HEADER = 30;       // legacy per-page strip (kept for the char-panel slots)
         // --- the source's ACTUAL page-stacking metrics (PlayerDashboardInventoryUI.updateBoxAreas) ---
@@ -692,7 +717,7 @@ namespace UnturnedGodot
             // the real localized Description (from the item's English.dat)
             var desc = new Label { Text = asset.description, Position = new Vector2(228, 72), Size = new Vector2(258, 70) };
             desc.AutowrapMode = TextServer.AutowrapMode.WordSmart;
-            desc.AddThemeColorOverride("font_color", new Color(0.78f, 0.78f, 0.8f));
+            desc.AddThemeColorOverride("font_color", new Color(0.79f, 0.79f, 0.79f));
             desc.AddThemeFontSizeOverride("font_size", 13);
             panel.AddChild(desc);
             // a fluid CONTAINER shows its live contents (the "tooltip" strawberry wanted back): type + amount + capacity
@@ -702,7 +727,7 @@ namespace UnturnedGodot
                 string contents = (ca <= 0.001f || ct == FluidType.None)
                     ? $"Contents: empty  ·  holds {FluidDef.Litres(asset.fluidCapacity)}"
                     : $"Contents: {FluidDef.Litres(ca)} {FluidDef.WaterName(ct, cq)}  ·  of {FluidDef.Litres(asset.fluidCapacity)}";
-                var ccol = ct == FluidType.None ? new Color(0.72f, 0.74f, 0.77f) : FluidDef.WaterColor(ct, cq).Lerp(Colors.White, 0.3f);
+                var ccol = ct == FluidType.None ? new Color(0.75f, 0.75f, 0.75f) : FluidDef.WaterColor(ct, cq).Lerp(Colors.White, 0.3f);
                 var cl = new Label { Text = contents, Position = new Vector2(228, 120), Size = new Vector2(258, 22) };
                 cl.AddThemeColorOverride("font_color", ccol);
                 cl.AddThemeFontSizeOverride("font_size", 13);
@@ -993,7 +1018,7 @@ namespace UnturnedGodot
                                     Size = new Vector2(tabW, NAVH - 16),
                                     HorizontalAlignment = HorizontalAlignment.Center,
                                     VerticalAlignment = VerticalAlignment.Center };
-                t.AddThemeColorOverride("font_color", i == 0 ? new Color(1f, 1f, 1f) : new Color(0.78f, 0.82f, 0.88f));
+                t.AddThemeColorOverride("font_color", i == 0 ? new Color(1f, 1f, 1f) : new Color(0.83f, 0.83f, 0.83f));   // neutral, was blue-leaning
                 t.AddThemeFontSizeOverride("font_size", 32);
                 _dash.AddChild(t);
                 tx2 += tabW + TABGAP;
@@ -1014,7 +1039,7 @@ namespace UnturnedGodot
             uname.AddThemeColorOverride("font_color", new Color(1f, 0.84f, 0.22f)); uname.AddThemeFontSizeOverride("font_size", 28);   // yellow username
             badge.AddChild(uname);
             var fac = new Label { Text = "Neutral [0]", Position = new Vector2(78, 45) };
-            fac.AddThemeColorOverride("font_color", new Color(0.72f, 0.77f, 0.83f)); fac.AddThemeFontSizeOverride("font_size", 18);
+            fac.AddThemeColorOverride("font_color", new Color(0.78f, 0.78f, 0.78f)); fac.AddThemeFontSizeOverride("font_size", 18);
             badge.AddChild(fac);
             var plus = new Label { Text = "+", Position = new Vector2(CHARW - 56, 20) };
             plus.AddThemeColorOverride("font_color", new Color(1f, 0.84f, 0.22f)); plus.AddThemeFontSizeOverride("font_size", 30);
@@ -1049,7 +1074,7 @@ namespace UnturnedGodot
                 StyleBox(slot, new Color(0f, 0f, 0f, 0.5f));
                 _charBox.AddChild(slot);
                 var lbl = new Label { Text = name, Position = new Vector2(CELL + 20, y + 15), Visible = false };
-                lbl.AddThemeColorOverride("font_color", new Color(0.72f, 0.72f, 0.75f));
+                lbl.AddThemeColorOverride("font_color", new Color(0.73f, 0.73f, 0.73f));
                 _charBox.AddChild(lbl);
                 _clothing.Add((slot, lbl, worn, type));
                 y += CELL + 8;
@@ -1117,13 +1142,13 @@ namespace UnturnedGodot
             _pdVp.AddChild(_pdCam);
 
             _pdVp.AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-25f, 155f, 0f), LightEnergy = 1.2f });                                          // key
-            _pdVp.AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-8f, -35f, 0f), LightEnergy = 0.55f, LightColor = new Color(0.78f, 0.84f, 1f) }); // cool fill (the world env doesn't reach an isolated SubViewport)
+            _pdVp.AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-8f, -35f, 0f), LightEnergy = 0.55f, LightColor = new Color(0.90f, 0.90f, 0.90f) }); // NEUTRAL fill (master: no blue tint). The world env does not reach an isolated SubViewport, so this is the ONLY light on the paperdoll -- a cool one tinted the character too, not just the panels.
             _pdVp.AddChild(new WorldEnvironment
             {
                 Environment = new Godot.Environment
                 {
                     BackgroundMode = Godot.Environment.BGMode.Color, BackgroundColor = new Color(0f, 0f, 0f, 0f),
-                    AmbientLightSource = Godot.Environment.AmbientSource.Color, AmbientLightColor = new Color(0.5f, 0.52f, 0.56f), AmbientLightEnergy = 1.0f,
+                    AmbientLightSource = Godot.Environment.AmbientSource.Color, AmbientLightColor = new Color(0.53f, 0.53f, 0.53f), AmbientLightEnergy = 1.0f,   // neutral grey, was faintly blue
                     TonemapMode = Godot.Environment.ToneMapper.Aces,
                 },
             });
@@ -1389,7 +1414,7 @@ namespace UnturnedGodot
             const int N = 40;
             var img = Image.CreateEmpty(N, N, false, Image.Format.Rgba8);
             img.Fill(new Color(1f, 1f, 1f, 0f));
-            var col = new Color(0.97f, 0.99f, 1f);
+            var col = new Color(0.98f, 0.98f, 0.98f);
             float c = (N - 1) / 2f, len = 13f;
             void Dot(float x, float y)
             {
@@ -1483,7 +1508,7 @@ namespace UnturnedGodot
             {
                 FluidItem.Read(jar.item, asset, out var ftype, out var famt, out var fq);
                 float frac = asset.fluidCapacity > 0f ? Mathf.Clamp(famt / asset.fluidCapacity, 0f, 1f) : 0f;
-                var fcol = ftype == FluidType.None ? new Color(0.45f, 0.48f, 0.52f) : FluidDef.WaterColor(ftype, fq);   // water folds its quality into the colour
+                var fcol = ftype == FluidType.None ? new Color(0.49f, 0.49f, 0.49f) : FluidDef.WaterColor(ftype, fq);   // neutral empty-state grey. The FILLED colours stay -- those are the fluid, not chrome.   // water folds its quality into the colour
                 tile.AddChild(new ColorRect { Color = new Color(0f, 0f, 0f, 0.85f), Position = new Vector2(2, h - 10), Size = new Vector2(w - 4, 8), MouseFilter = Control.MouseFilterEnum.Ignore });   // black outline
                 tile.AddChild(new ColorRect { Color = new Color(0.30f, 0.31f, 0.34f, 1f), Position = new Vector2(3, h - 9), Size = new Vector2(w - 6, 6), MouseFilter = Control.MouseFilterEnum.Ignore });   // empty track (grey) -> reads even at 0
                 if (frac > 0f) tile.AddChild(new ColorRect { Color = fcol, Position = new Vector2(3, h - 9), Size = new Vector2((w - 6) * frac, 6), MouseFilter = Control.MouseFilterEnum.Ignore });   // fluid fill, tinted by type
