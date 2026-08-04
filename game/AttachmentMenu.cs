@@ -23,8 +23,8 @@ namespace UnturnedGodot
         static string[] Slots => AttachmentFit.Slots;
 
         readonly System.Collections.Generic.Dictionary<string, Button> _icons = new();
-        readonly System.Collections.Generic.List<Button> _options = new();   // the fanned-out quick-attach buttons
-        string _openSlot;                                                    // which slot's fan is showing, null = none
+        // Every slot's ring, all live at once. Keyed by slot because each ring is positioned around its own hook.
+        readonly System.Collections.Generic.Dictionary<string, System.Collections.Generic.List<Button>> _rings = new();
 
         public override void _Ready()
         {
@@ -52,90 +52,85 @@ namespace UnturnedGodot
                 btn.AddThemeStyleboxOverride("hover", Box(0.24f, 0.30f, 0.40f, 0.80f));
                 btn.AddThemeStyleboxOverride("pressed", Box(0.30f, 0.46f, 0.62f, 0.90f));
                 string s = slot;
-                btn.Pressed += () => ToggleFan(s);
+                btn.Pressed += () => DetachSlot(s);   // the slot IS the detach button now
                 AddChild(btn);
                 _icons[slot] = btn;
             }
         }
 
-        // Open (or close) the quick-attach fan for one slot. Only one fan at a time -- five slots' worth of options
-        // over a pistol would cover the gun the player is trying to look at.
-        void ToggleFan(string slot)
+        // EVERY slot's ring is live the whole time you are inspecting (master: "the orbitting icons always show when
+        // inspecting, dont need to click the slot"). No open/close, no selected slot -- rebuilt whenever the bag or
+        // the gun changes, positioned every frame as the weapon sways.
+        void RebuildRings()
         {
-            if (_openSlot == slot) { ClearFan(); return; }
-            ClearFan();
+            ClearRings();
             if (VM == null) return;
-            _openSlot = slot;
-
             int caliber = Player?.Gun?.Caliber ?? 0;
-            var opts = AttachmentFit.InBag(Player?.Inventory, slot, caliber);
-
-            // DETACH first, and only when something is actually on the slot. Removing an attachment RETURNS THE ITEM
-            // TO THE BAG (strawberry) -- it's a real object, not a flag, so taking a scope off one gun has to leave
-            // you holding a scope you can put on another.
-            int installed = AttachmentFit.InstalledId(Player?.HeldItemForTest, slot);
-            if (installed >= 0 || (VM.SlotHasModel(slot) && VM.SlotAttached(slot)))
+            foreach (var slot in Slots)
             {
-                var held = Player?.HeldItemForTest;
-                AddOption(slot, installed >= 0 ? $"Detach {Assets.find((ushort)installed)?.itemName ?? "attachment"}" : "Detach",
-                    installed >= 0 ? (ushort)installed : null, 0, () =>
+                if (!VM.SlotHasModel(slot)) continue;   // a slot this gun cannot take shows nothing at all -- its icon is already greyed
+                var list = new System.Collections.Generic.List<Button>();
+                // ONE ICON PER PHYSICAL ITEM (master: "if we have multiple of the same relevant item, show it that
+                // many times in the orbit"). InBag collapses duplicates to (asset, count) because the old fan was a
+                // text list where "x6" was the readable answer; a ring of icons has nowhere to put a multiplier, and
+                // six magazines drawn six times is the point -- the ring IS the count.
+                foreach (var (asset, count) in AttachmentFit.InBag(Player?.Inventory, slot, caliber))
+                for (int dup = 0; dup < count; dup++)
                 {
-                    // Give it back BEFORE clearing the slot, and only clear if the bag actually took it -- a full bag
-                    // must refuse the detach rather than delete the attachment. Dropping it on the floor instead would
-                    // be the other defensible answer; silently destroying it is not.
-                    if (installed >= 0)
+                    var a = asset;
+                    string mesh = AttachmentFit.MeshFor(a.id);
+                    string sl = slot;
+                    list.Add(AddOption(sl, a.itemName, a.id, () =>
                     {
-                        if (Player?.Inventory != null && !Player.Inventory.tryAddItem(new Item((ushort)installed)))
-                        {
-                            HUD.Alert("No room to remove that — free a slot first");
-                            return;
-                        }
-                        AttachmentFit.SetInstalledId(held, slot, -1);
-                    }
-                    VM.SetSlotAttached(slot, false);
-                    Refresh();
-                });
+                        var held = Player?.HeldItemForTest;
+                        // Swapping onto an occupied slot returns the OUTGOING attachment first, so a swap is a swap
+                        // and not a quiet destruction of whatever was already fitted.
+                        int prev = AttachmentFit.InstalledId(held, sl);
+                        if (prev >= 0 && prev != a.id) Player?.Inventory?.tryAddItem(new Item((ushort)prev));
+                        if (!TakeFromBag(a.id)) return;                  // consume the one being installed
+                        AttachmentFit.SetInstalledId(held, sl, a.id);
+                        // An attachment with no ripped mesh still ATTACHES -- it just renders nothing. Hiding those
+                        // would hide most of the arsenal from a menu whose whole job is showing what you own.
+                        if (mesh != null) VM.SetSlotMesh(sl, mesh);
+                        else if (VM.SlotHasModel(sl)) VM.SetSlotAttached(sl, true);
+                        Refresh();
+                    }));
+                }
+                if (list.Count > 0) _rings[slot] = list;
             }
-
-            foreach (var (asset, count) in opts)
-            {
-                var a = asset;
-                string label = count > 1 ? $"{a.itemName} x{count}" : a.itemName;
-                string mesh = AttachmentFit.MeshFor(a.id);
-                AddOption(slot, label, a.id, count, () =>
-                {
-                    var held = Player?.HeldItemForTest;
-                    // Swapping onto an occupied slot returns the OUTGOING attachment first, so a swap is a swap and
-                    // not a quiet destruction of whatever was already fitted.
-                    int prev = AttachmentFit.InstalledId(held, slot);
-                    if (prev >= 0 && prev != a.id) Player?.Inventory?.tryAddItem(new Item((ushort)prev));
-                    if (!TakeFromBag(a.id)) return;                  // consume the one being installed
-                    AttachmentFit.SetInstalledId(held, slot, a.id);
-                    // An attachment with no ripped mesh still ATTACHES -- it just renders nothing. Hiding those would
-                    // hide most of the arsenal from a menu whose whole job is showing what you own.
-                    if (mesh != null) VM.SetSlotMesh(slot, mesh);
-                    else if (VM.SlotHasModel(slot)) VM.SetSlotAttached(slot, true);
-                    Refresh();
-                });
-            }
-
-            if (_options.Count == 0)   // carrying nothing for this slot: say so instead of opening an empty fan
-                AddOption(slot, "— nothing that fits —", null, 0, null);
-
-            LayoutFan();
+            LayoutRings();
         }
 
-        /// <summary>Run the DETACH exactly as the button does -- open the fan for `slot`, press its Detach option.
-        /// A test seam because the reported bug ("won't drag after I take them off a gun") is specific to items that
-        /// came out of THIS path, and reproducing it by calling tryAddItem directly proved nothing: that passes.</summary>
-        public bool DebugDetach(string slot)
+        /// <summary>Clicking the SLOT takes its attachment off (master: "detach shouldnt be part of the ring,
+        /// clicking the slot itself should remove the attachment"). Returns false when there was nothing to remove,
+        /// so a click on an empty slot is a no-op rather than a silent state change.
+        ///
+        /// The item goes back in the bag BEFORE the slot is cleared, and the slot is only cleared if the bag actually
+        /// took it -- a full bag has to refuse the detach rather than delete the attachment. Dropping it on the floor
+        /// would be the other defensible answer; destroying it is not.</summary>
+        public bool DetachSlot(string slot)
         {
-            ToggleFan(slot);
-            foreach (var b in _options)
-                if (b.Text.StartsWith("Detach") && !b.Disabled) { b.EmitSignal(Button.SignalName.Pressed); return true; }
-            ClearFan();
-            return false;
+            if (VM == null) return false;
+            int installed = AttachmentFit.InstalledId(Player?.HeldItemForTest, slot);
+            if (installed < 0 && !(VM.SlotHasModel(slot) && VM.SlotAttached(slot))) return false;
+            if (installed >= 0)
+            {
+                if (Player?.Inventory != null && !Player.Inventory.tryAddItem(new Item((ushort)installed)))
+                {
+                    HUD.Alert("No room to remove that — free a slot first");
+                    return false;
+                }
+                AttachmentFit.SetInstalledId(Player?.HeldItemForTest, slot, -1);
+            }
+            VM.SetSlotAttached(slot, false);
+            Refresh();
+            return true;
         }
+
+        /// <summary>Run the DETACH exactly as a slot click does. A test seam because the reported bug ("won't drag
+        /// after I take them off a gun") is specific to items that came out of THIS path, and reproducing it by
+        /// calling tryAddItem directly proved nothing: that passes.</summary>
+        public bool DebugDetach(string slot) => DetachSlot(slot);
 
         // Remove ONE of `id` from the bag -- the attachment is now on the gun, so it must not still be in your
         // pockets. Scans the same page range the options came from; false = it wasn't there (a stale fan after the
@@ -154,49 +149,86 @@ namespace UnturnedGodot
             return false;
         }
 
-        void AddOption(string slot, string label, ushort? iconId, int count, System.Action onPress)
+        // ICONS ONLY (master: "we only need to show the icons of attachments, not the names too, at a reasonable
+        // size"). The name moves to the TOOLTIP rather than being dropped -- an icon grid is unreadable for anyone who
+        // has not memorised the sprites, and hover costs nothing on screen.
+        const float OptSize = 44f, OptGap = 10f;
+
+        Button AddOption(string slot, string label, ushort? iconId, System.Action onPress, Color? tint = null)
         {
             var b = new Button
             {
-                Text = label,
-                CustomMinimumSize = new Vector2(0, 30),
+                CustomMinimumSize = new Vector2(OptSize, OptSize),
+                Size = new Vector2(OptSize, OptSize),
                 Icon = iconId.HasValue ? LoadItemIcon(iconId.Value) : null,
-                ExpandIcon = false,
+                ExpandIcon = true,
+                TooltipText = label,
                 Disabled = onPress == null,
                 MouseFilter = Control.MouseFilterEnum.Stop,
             };
-            b.AddThemeFontSizeOverride("font_size", 14);
+            b.AddThemeConstantOverride("icon_max_width", (int)OptSize - 8);
+            if (tint.HasValue) b.Modulate = tint.Value;
+            // An option with no ripped icon would be a blank square with no way to tell it apart from its neighbours,
+            // so those keep the text. Rare, and better than an unlabelled hole in the ring.
+            if (!iconId.HasValue || b.Icon == null) { b.Text = label; b.ExpandIcon = false; b.CustomMinimumSize = new Vector2(0, 30); b.AddThemeFontSizeOverride("font_size", 12); }
             b.AddThemeStyleboxOverride("normal", Box(0.08f, 0.09f, 0.11f, 0.88f));
             b.AddThemeStyleboxOverride("hover", Box(0.24f, 0.34f, 0.46f, 0.94f));
             b.AddThemeStyleboxOverride("pressed", Box(0.30f, 0.46f, 0.62f, 0.96f));
             b.AddThemeStyleboxOverride("disabled", Box(0.08f, 0.09f, 0.11f, 0.55f));
-            if (onPress != null) b.Pressed += () => { onPress(); ClearFan(); };
+            if (onPress != null) b.Pressed += () => onPress();
             AddChild(b);
-            _options.Add(b);
+            return b;
         }
 
-        // Stack the fan beside its slot icon. Right of the slot normally; flipped to the left when the slot sits in
-        // the right third of the screen, so the options never run off the edge on a gun held to the right.
-        void LayoutFan()
+        /// <summary>Radius that fits <paramref name="n"/> icons of <paramref name="size"/> around a ring without any
+        /// two touching (master: "orbitting the attachment slot, making sure they arent overlapping").
+        ///
+        /// Adjacent centres on a circle of radius r are a CHORD apart, 2r*sin(pi/n) -- not an arc, which is the easy
+        /// thing to reach for and always overestimates the gap, so a ring sized by arc length overlaps at exactly the
+        /// small counts a gun actually produces. Solving the chord for r is what makes "not overlapping" a property
+        /// rather than a tuned constant that breaks the first time somebody carries seven magazines.
+        ///
+        /// Floored so a one- or two-icon ring still clears the slot sprite underneath it.</summary>
+        internal static float OrbitRadius(int n, float size, float gap, float minR)
         {
-            if (_openSlot == null || VM == null || !VM.TryGetSlotScreen(_openSlot, out var anchor)) return;
+            if (n <= 1) return minR;
+            float need = (size + gap) / (2f * Mathf.Sin(Mathf.Pi / n));
+            return Mathf.Max(minR, need);
+        }
+
+        // Ring the options around their slot icon. The ring's CENTRE is pulled inward so the whole circle fits on
+        // screen -- clamping each button individually would fix the edge case by stacking two of them on top of each
+        // other, which is the exact thing being fixed here.
+        void LayoutRings()
+        {
+            if (VM == null) return;
             var vp = GetViewport().GetVisibleRect().Size;
-            bool flip = anchor.X > vp.X * 0.66f;
-            float w = 210f, gap = 4f, h = 30f;
-            float total = _options.Count * h + (_options.Count - 1) * gap;
-            float y = Mathf.Clamp(anchor.Y - total / 2f, 8f, Mathf.Max(8f, vp.Y - total - 8f));
-            for (int i = 0; i < _options.Count; i++)
+            foreach (var kv in _rings)
             {
-                _options[i].Size = new Vector2(w, h);
-                _options[i].Position = new Vector2(flip ? anchor.X - w - 28f : anchor.X + 28f, y + i * (h + gap));
+                var opts = kv.Value;
+                int n = opts.Count;
+                if (n == 0) continue;
+                bool on = VM.TryGetSlotScreen(kv.Key, out var anchor);
+                foreach (var b in opts) b.Visible = on;   // slot off-screen (gun turned away) -> its whole ring goes with it
+                if (!on) continue;
+                float r = OrbitRadius(n, OptSize, OptGap, 56f);
+                float pad = r + OptSize * 0.5f + 6f;
+                var centre = new Vector2(Mathf.Clamp(anchor.X, pad, Mathf.Max(pad, vp.X - pad)),
+                                         Mathf.Clamp(anchor.Y, pad, Mathf.Max(pad, vp.Y - pad)));
+                // Start at the top and go clockwise: options land somewhere predictable instead of wherever angle 0
+                // happens to be, which matters when this reruns every frame as the gun sways.
+                for (int i = 0; i < n; i++)
+                {
+                    float th = -Mathf.Pi / 2f + Mathf.Tau * i / n;
+                    opts[i].Position = centre + new Vector2(Mathf.Cos(th), Mathf.Sin(th)) * r - opts[i].Size / 2f;
+                }
             }
         }
 
-        void ClearFan()
+        void ClearRings()
         {
-            foreach (var b in _options) b.QueueFree();
-            _options.Clear();
-            _openSlot = null;
+            foreach (var kv in _rings) foreach (var b in kv.Value) b.QueueFree();
+            _rings.Clear();
         }
 
         static StyleBoxFlat Box(float r, float g, float b, float a)
@@ -223,15 +255,35 @@ namespace UnturnedGodot
             return null;
         }
 
-        // colour each slot icon by state: white = attached, red-ish = detached, faded = the gun has no model there.
+        /// <summary>A slot icon's colour (master: "the slot icons change color depending on if they can accept an
+        /// attachment in that slot (gray for no, white for yes) and if they have an attachment show the slot icon in
+        /// the rarity of the attachment in that slot's color").
+        ///
+        /// Three states, in that order: can't take one -> GREY, can and is empty -> WHITE, filled -> the fitted
+        /// attachment's own RARITY colour, straight from ItemTool.RarityColorUI so it matches the tile in the bag and
+        /// the look-at rim on the ground. Pure so the mapping is testable without a gun, a viewmodel or a camera --
+        /// none of which exist in the harness.</summary>
+        internal static Color SlotColor(bool canAccept, ItemAsset installed)
+        {
+            if (!canAccept) return new Color(0.45f, 0.45f, 0.48f, 0.6f);   // grey, and dimmed: a dead slot should not draw the eye
+            if (installed == null) return Colors.White;
+            return ItemTool.RarityColorUI(installed.rarity);
+        }
+
         void Refresh()
         {
             foreach (var slot in Slots)
             {
-                bool hasModel = VM != null && VM.SlotHasModel(slot);
-                bool attached = hasModel && VM.SlotAttached(slot);
-                _icons[slot].Modulate = !hasModel ? new Color(1f, 1f, 1f, 0.35f) : attached ? Colors.White : new Color(1f, 0.55f, 0.55f);
+                bool canAccept = VM != null && VM.SlotHasModel(slot);
+                int id = AttachmentFit.InstalledId(Player?.HeldItemForTest, slot);
+                var asset = id >= 0 ? Assets.find((ushort)id) : null;
+                // A slot can be attached without the gun's item recording an id (the --attach viewmodel harness, and
+                // guns that ship with a fitted part). Falling back to the slot's own attached flag keeps those white
+                // rather than reporting them empty; only a REAL id can produce a rarity colour.
+                if (asset == null && canAccept && VM.SlotAttached(slot)) { _icons[slot].Modulate = Colors.White; continue; }
+                _icons[slot].Modulate = SlotColor(canAccept, asset);
             }
+            RebuildRings();   // the bag changed under the rings whenever anything is attached or detached
         }
 
         public override void _Process(double delta)
@@ -247,11 +299,11 @@ namespace UnturnedGodot
                 }
                 else btn.Visible = false;
             }
-            if (_openSlot != null) LayoutFan();   // the fan tracks its slot as the gun sways
+            LayoutRings();   // every ring tracks its own slot as the gun sways
         }
 
         public void Open()  { if (Visible) return; Visible = true;  VM?.EnterAttachView(); Refresh(); }
-        public void Close() { if (!Visible) return; ClearFan(); Visible = false; VM?.ExitAttachView(); }
+        public void Close() { if (!Visible) return; ClearRings(); Visible = false; VM?.ExitAttachView(); }
         public void Toggle() { if (Visible) Close(); else Open(); }
         public bool IsOpen => Visible;
     }
