@@ -28,7 +28,7 @@ namespace UnturnedGodot
 
         LineEdit _input;
         Label _log;
-        static readonly string[] Verbs = { "give", "vehicle", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "toggleGlobalPower", "toggleGlobalWater", "toggleBbat", "infFuel", "wear", "unwear", "fluid", "date", "dateset", "whenBlackout", "triggerGlobalBrownout" };
+        static readonly string[] Verbs = { "give", "vehicle", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "toggleGlobalPower", "toggleGlobalWater", "toggleBbat", "infFuel", "infAmmo", "wear", "unwear", "fluid", "date", "dateset", "whenBlackout", "triggerGlobalBrownout" };
         static readonly EItemType[] ClothingTypes = { EItemType.SHIRT, EItemType.PANTS, EItemType.HAT, EItemType.VEST, EItemType.MASK, EItemType.GLASSES, EItemType.BACKPACK };
         readonly System.Collections.Generic.List<string> _history = new();
         int _histIdx;
@@ -123,6 +123,20 @@ namespace UnturnedGodot
                                      : f == "off" || f == "0" || f == "false" ? false
                                      : !Vehicle.InfiniteFuel;
                 Log($"infFuel {(Vehicle.InfiniteFuel ? "ON -- cars won't burn fuel" : "OFF -- fuel drains normally")}");
+                return;
+            }
+
+            // infAmmo [on|off]  -- dev/playtesting: the held gun's magazine refills after InfAmmoIdle seconds of not
+            // firing (master: "refills your mag of the held weapon after 0.5s of not firing"). OFF by default, unlike
+            // infFuel. Bare form FLIPS it, same shape as infFuel above. SP-local static, not networked, and consumes
+            // nothing from the bag.
+            if (verb == "infammo")
+            {
+                string a2 = arg.ToLowerInvariant();
+                PlayerController.InfiniteAmmo = a2 == "on" || a2 == "1" || a2 == "true" ? true
+                                              : a2 == "off" || a2 == "0" || a2 == "false" ? false
+                                              : !PlayerController.InfiniteAmmo;
+                Log($"infAmmo {(PlayerController.InfiniteAmmo ? $"ON -- held gun refills after {PlayerController.InfAmmoIdle:0.#}s without firing" : "OFF -- ammo drains normally")}");
                 return;
             }
 

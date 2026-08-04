@@ -40,6 +40,12 @@ namespace UnturnedGodot
 
         [Export] public float MouseSensitivity = 0.12f;
         public int Ammo = 30;
+        // infAmmo (master): the held gun's magazine refills after a short lull in firing. Deliberately NOT
+        // instant -- topping up per-shot would hide every reload and make firerate the only limit, so the gun
+        // still runs dry mid-burst and you still feel the mag. OFF by default; SP-local static like
+        // Vehicle.InfiniteFuel, not networked.
+        public static bool InfiniteAmmo;
+        public const float InfAmmoIdle = 0.5f;   // seconds of not firing before the refill lands (master: "after 0.5s")
         public int Kills { get; private set; }
 
         // Vitals live in the engine-free PlayerVitalsSim (MP_PLAN §3.4 sim-core: one per player, steppable
@@ -2901,6 +2907,7 @@ namespace UnturnedGodot
 
         public GunDef Gun;          // real ItemGunAsset stats (damage/range/firerate/mag) when loaded
         float _fireCd;              // seconds until the gun can fire again
+        float _sinceShot;           // seconds since the last shot; drives the infAmmo refill (reset on every Fire)
         const float GunshotRadius = 48f;   // earshot of an unsuppressed shot (AlertTool noise); suppressors would cut it
         bool _reloading;            // reloading -> can't fire; magazine refills when the timer elapses
         double _reloadTimer;
@@ -2933,6 +2940,22 @@ namespace UnturnedGodot
         // from EMPTY (Ammo 0) it has to RACK a round out of the fresh mag (the Hammer clip) and tops out at AmmoMax (no bonus).
         bool HasChamber => Gun != null && !Gun.IsShotgun;   // +1 chamber = mag-fed guns only; neither shotgun action (pump tube / break double-barrel) gets it
         int ChamberedCap => (Gun?.AmmoMax ?? 30) + (HasChamber ? 1 : 0);   // absolute max Ammo = a full mag plus the one in the chamber
+
+        // infAmmo: refill the held gun once firing has been idle for InfAmmoIdle. Fills to ChamberedCap rather than
+        // mirroring the reload's from-empty rule ((HasChamber && Ammo > 0) ? max+1 : max) on purpose -- that rule
+        // depends on the CURRENT count, so a gun refilled from empty would land on max this tick and then creep to
+        // max+1 on the next one, which reads as a bug. One fixed number every time is the honest cheat.
+        // Nothing is consumed: this does not touch magazine items or loose shells, so it cannot quietly drain a bag.
+        void TickInfiniteAmmo()
+        {
+            if (!InfiniteAmmo || Gun == null || !HasGunOut) return;
+            if (_reloading || _sinceShot < InfAmmoIdle) return;   // never fights a reload already in flight
+            if (Ammo >= ChamberedCap) return;
+            Ammo = ChamberedCap;
+        }
+
+        public bool DebugInfAmmoWouldFill => InfiniteAmmo && Gun != null && HasGunOut && !_reloading && Ammo < ChamberedCap;   // test seam
+        public float DebugSinceShot => _sinceShot;
         (byte page, byte idx, Item item)? FindBestMag()   // the spare mag in inventory that fits the gun, with the MOST ammo
         {
             if (Inventory == null || Gun == null) return null;
@@ -3895,6 +3918,7 @@ namespace UnturnedGodot
             float objDamage = Gun?.ObjectDamage ?? 25f;    // bullets vs destructible props (source Object_Damage)
             _fireCd = Gun != null ? (Gun.Firerate + 1) / 50f : 0.1f;   // interval = firerate+1 ticks: source fires when clock-lastFire > firerate (STRICT >, UseableGun.tockShoot), so the real gap is firerate+1. Off-by-one made fast guns (zube firerate 4: 750rpm vs correct 600) fire ~25% too hot -- master's "very high ROF"
             Ammo--;
+            _sinceShot = 0f;   // infAmmo waits out a lull, so every shot restarts the clock
             // fire feedback + the gun's real per-shot viewmodel shake (Shake_Min/Max_*); zero if no gun loaded
             float stanceMul = StanceRecoilMul();   // crouch/prone recoil steadier once settled -- scales the kick + the aim-climb below (master)
             if (Gun != null)
@@ -4680,6 +4704,8 @@ namespace UnturnedGodot
                 return;
             }
             if (_fireCd > 0f) _fireCd -= (float)delta;
+            _sinceShot += (float)delta;
+            TickInfiniteAmmo();
             if (_meleeCd > 0f) _meleeCd -= (float)delta;
             if (_pendingMeleeHit > 0f) { _pendingMeleeHit -= (float)delta; if (_pendingMeleeHit <= 0f) ApplyMeleeHit(_pendingMeleeStrong); }   // deferred melee damage lands at swing-end (master)
             if (_burstCd > 0f) _burstCd -= (float)delta;
