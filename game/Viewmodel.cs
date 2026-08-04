@@ -851,7 +851,7 @@ namespace UnturnedGodot
             }
             var lensShader = new Shader { Code =   // mask SHAPE per scope via u_seg/u_rot uniforms: 12-gon default (seg=2pi/12, rot=15deg), square=4 (seg=pi/2, rot=0). Set in ConfigureScopePiP. Reticle can diverge later.
                 "shader_type spatial;\n" +
-                "render_mode unshaded, cull_disabled, shadows_disabled;\n" +
+                "render_mode unshaded, cull_disabled, shadows_disabled, depth_test_disabled;\n" +   // depth_test_disabled: the lens draws OVER the scope tube's inner geometry, so it can sit deep/muzzle-ward without the tube occluding it (nothing legit sits in front of the ocular glass)
                 "uniform sampler2D scope_tex : source_color, filter_linear;\n" +
                 "uniform float u_seg = 0.5235988;\n" +
                 "uniform float u_rot = 0.2618;\n" +
