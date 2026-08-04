@@ -796,6 +796,8 @@ namespace UnturnedGodot
             if (m == null) return;
             if (string.IsNullOrEmpty(txtName)) { m.Visible = false; return; }
             m.Mesh = ContentProvider.ParseObj($"res://content/{txtName}");
+            if (slot == "Sight")   // scopes/optics: dark SATIN METAL, not the light matte iron-sight gray (master: "proper dark-metal look")
+                m.MaterialOverride = new StandardMaterial3D { CullMode = BaseMaterial3D.CullModeEnum.Disabled, AlbedoColor = new Color(0.06f, 0.065f, 0.075f), Metallic = 0.55f, MetallicSpecular = 0.5f, Roughness = 0.42f };
             m.Visible = true;
         }
 
