@@ -214,6 +214,7 @@ namespace UnturnedGodot
         Node3D _sight;
         SubViewport _scopeVp; Camera3D _scopeCam; MeshInstance3D _scopeLens; Node3D _scopeCamAnchor; Godot.Environment _scopeEnv; DayNightCycle _dnc; bool _isScope, _scopeWasOn;   // PiP scope: lens ON the gun model (rides recoil); 2nd cam renders the world zoomed from the scope's OBJECTIVE end (LINEAR env so the lens isn't double-tonemapped by _vp)
         MeshInstance3D _scopeHost; Vector3 _ironAimPos;   // ADS aim hook: irons use _ironAimPos; a scope moves it to the scope's own `Aim` node (Attachments.cs:590 -- retail aligns the SIGHT model's Aim, so ADS looks THROUGH the scope, not the irons)
+        CanvasLayer _ladderLayer; ScopeLadder2D _ladder; bool _scopeHasLadder;   // range ladder (100/200/300m) shown ADS'd with a numbered-ladder scope (8x/7x/16x); text = the global Units setting
         const float ScopeZeroDist = 100f;   // (b) zeroing range (m): scope cam converges onto the bullet ray here, so the reticle = point of impact at 100m + drifts slightly past. Miss at range R = |objective-eye| * |1 - R/Z| ~ 0.1m@50m, 0@100, 0.2m@200 (torso-tight at 4x; tinyclaw)
 
         // Equip gate — source: you can't start OR stop aiming until the Equip (pull-out) animation finishes
@@ -268,6 +269,12 @@ namespace UnturnedGodot
             _vpEnv.TonemapMode = System.Environment.GetEnvironmentVariable("UG_LINEAR") == "1"
                 ? Godot.Environment.ToneMapper.Linear : Godot.Environment.ToneMapper.Aces;
             _vp.AddChild(new WorldEnvironment { Environment = _vpEnv });
+
+            // Scope range-ladder overlay (2D, screen-centered like retail's distance markers). Toggled ADS'd with a numbered-ladder scope.
+            _ladderLayer = new CanvasLayer { Layer = 60 };
+            _ladder = new ScopeLadder2D();
+            _ladderLayer.AddChild(_ladder);
+            AddChild(_ladderLayer);
 
             _arms = RiggedCharacter.Build("res://content/rig.json", new Color(0.82f, 0.66f, 0.52f), armsOnly: true);
             if (_arms != null)
@@ -817,6 +824,7 @@ namespace UnturnedGodot
                     if (System.IO.File.Exists(_rp)) { var _ri = Image.LoadFromFile(_rp); if (_ri != null) _retTex = ImageTexture.CreateFromImage(_ri); }
                     bool _dot = txtName.Contains("cross") || txtName.Contains("chevron");
                     ConfigureScopePiP(_sc.Lens, _sc.Obj, _sc.Aim, _sc.Fov, _sc.Size, _sc.Sides, _retTex, _dot ? 0.056f : 1.0f, _dot ? new Color(1f, 0f, 0f) : new Color(1f, 1f, 1f));   // real PiP zoom + ADS aim + ripped reticle
+                    _scopeHasLadder = txtName.StartsWith("scope_");   // the tube zoom scopes (8x/7x/16x) carry the numbered 100/200/300m range ladder
                 }
             }
             m.Visible = true;
@@ -917,8 +925,9 @@ namespace UnturnedGodot
 
         void HideScopePiP()   // scope removed/swapped: deactivate + hide the lens + restore the iron ADS hook; the rig stays built (rebuilding it at runtime renders black)
         {
-            _isScope = false; _scopeWasOn = false;
+            _isScope = false; _scopeWasOn = false; _scopeHasLadder = false;
             if (_scopeLens != null && Godot.GodotObject.IsInstanceValid(_scopeLens)) _scopeLens.Visible = false;
+            if (_ladder != null) _ladder.Active = false;
             if (_sight != null) _sight.Position = _ironAimPos;   // back to iron-sight ADS alignment
         }
 
@@ -1008,6 +1017,7 @@ namespace UnturnedGodot
                 {
                     _scopeLens.Visible = false; _scopeVp.RenderTargetUpdateMode = SubViewport.UpdateMode.Disabled; _scopeWasOn = false;
                 }
+                if (_ladder != null) _ladder.Active = _scopeHasLadder && _aimAlpha > 0.6f;   // range ladder only while actually ADS'd through a numbered-ladder scope
             }
             _arms.Tick(delta);   // manual-advance the base anim, then layer the additive Aim_Start pose on top
             // ---- source viewmodel-camera motion (PlayerAnimator): walk bob + recoil shake ----
