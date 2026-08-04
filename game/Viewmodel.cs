@@ -213,6 +213,7 @@ namespace UnturnedGodot
         static string Snd(string name, string fallback) => System.IO.File.Exists(ProjectSettings.GlobalizePath("res://content/" + name)) ? name : fallback;
         Node3D _sight;
         SubViewport _scopeVp; Camera3D _scopeCam; MeshInstance3D _scopeLens; Node3D _scopeCamAnchor; bool _isScope, _scopeWasOn;   // PiP scope: lens ON the gun model (rides recoil); 2nd cam renders the world zoomed from the scope's OBJECTIVE end
+        const float ScopeZeroDist = 100f;   // (b) zeroing range (m): scope cam converges onto the bullet ray here, so the reticle = point of impact at 100m + drifts slightly past. Miss at range R = |objective-eye| * |1 - R/Z| ~ 0.1m@50m, 0@100, 0.2m@200 (torso-tight at 4x; tinyclaw)
 
         // Equip gate — source: you can't start OR stop aiming until the Equip (pull-out) animation finishes
         // (UseableGun.ReceivePlayAimStart/Stop both guard on player.equipment.IsEquipAnimationFinished, which is
@@ -847,7 +848,13 @@ namespace UnturnedGodot
                 {
                     if (_scopeVp.World3D != _main.GetWorld3D()) _scopeVp.World3D = _main.GetWorld3D();   // render the REAL world, not the VM's isolated arms-world (tinyclaw)
                     // PiP view from the scope's OBJECTIVE end, not the eye: map the anchor's pose (relative to the arms cam _cam) into the main world (relative to _main). Rides the gun's sway/recoil + looks down the barrel -> works at the hip too, not just ADS.
-                    _scopeCam.GlobalTransform = _main.GlobalTransform * (_cam.GlobalTransform.AffineInverse() * _scopeCamAnchor.GlobalTransform);
+                    // (b) ZEROING (master + tinyclaw): the scope cam stays at the objective (parallax) but AIMS at the point on
+                    // the BULLET ray (main cam fires from _main along -Z) at ScopeZeroDist, so the reticle = point of impact at
+                    // that range and drifts only slightly past it -- a real zeroed optic. (Merely pointing it PARALLEL to the aim
+                    // would leave a CONSTANT eye->objective offset that never converges.)
+                    var _objPose = _main.GlobalTransform * (_cam.GlobalTransform.AffineInverse() * _scopeCamAnchor.GlobalTransform);
+                    var _zeroPt = _main.GlobalPosition + (-_main.GlobalTransform.Basis.Z) * ScopeZeroDist;
+                    _scopeCam.GlobalTransform = _objPose.LookingAt(_zeroPt, _main.GlobalTransform.Basis.Y);   // objective position, look AT the zero point; up = main cam up (level horizon)
                     _scopeVp.RenderTargetUpdateMode = SubViewport.UpdateMode.Always;
                     _scopeLens.Visible = true; _scopeWasOn = true;
                 }
