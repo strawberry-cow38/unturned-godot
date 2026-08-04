@@ -197,8 +197,15 @@ namespace UnturnedGodot
             { 7,   "suppressor.txt" },              // Military Suppressor
             { 8,   null },                          // Vertical Grip -- no rip yet
             { 17,  "military_30_mag.txt" },         // Military Drum (stand-in: same family, no drum rip)
-            { 21,  "red_kobra_sight.txt" },         // 8x Scope
-            { 22,  "red_halo_sight.txt" },          // Cross Scope
+            { 21,  "scope_8x_sight.txt" },          // 8x Scope (was a red_kobra stand-in)
+            { 22,  "cross_scope_sight.txt" },       // Cross Scope (was a red_halo stand-in)
+            { 146, "red_dot_sight.txt" },           // Dot Sight (electronic aiming point)
+            { 147, "red_halo_sight.txt" },          // Halo Sight (electronic aiming halo)
+            { 148, "chevron_scope_sight.txt" },     // Chevron Scope
+            { 153, "scope_7x_sight.txt" },          // 7x Scope
+            { 296, "scope_16x_sight.txt" },         // 16x Scope
+            { 302, "shadowstalker_scope_sight.txt" }, // Shadowstalker Scope
+            { 476, "makeshift_scope_sight.txt" },   // Makeshift Scope (6x)
             // The three mags added for the group-1 split. Master asked for them to be VISUALLY IDENTICAL to the
             // STANAG one, so they deliberately share its mesh -- the difference is which gun accepts them, not what
             // they look like. Reusing the mesh is the requirement here, not a missing-rip stand-in.
