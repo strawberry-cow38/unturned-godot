@@ -395,11 +395,22 @@ namespace UnturnedGodot
                         AddChild(_scopeVp);
                         _scopeCam = new Camera3D { Current = true, Fov = 25.7f };   // retail scope fov = 90/Zoom off the sight .dat; aug 3.5x -> 25.7deg (master-tunable), NOT a hand-picked 18
                         _scopeVp.AddChild(_scopeCam);
-                        var lensMat = new StandardMaterial3D { AlbedoTexture = _scopeVp.GetTexture(), ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, CullMode = BaseMaterial3D.CullModeEnum.Disabled, BillboardMode = BaseMaterial3D.BillboardModeEnum.Enabled, TextureFilter = BaseMaterial3D.TextureFilterEnum.Linear };   // the magnified world render; billboard = always faces the eye
-                        _scopeLens = new MeshInstance3D { Name = "ScopeLens", Mesh = new QuadMesh { Size = new Vector2(0.22f, 0.22f) }, MaterialOverride = lensMat, Visible = false, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off };
+                        // Round lens: the quad was only ever cropped round by the scope RING's aperture (far end). Inset in
+                        // front of the ring, nothing masks it -> raw SQUARE (master: "why is the PiP square"). Mask it in the
+                        // MATERIAL (tinyclaw) with a UV-radius discard so it's a true circle at ANY depth/size -- the scope
+                        // viewport is square (720x720) so no 16:9 ellipse. Billboard in the vertex so the lens faces the eye.
+                        var lensShader = new Shader { Code =
+                            "shader_type spatial;\n" +
+                            "render_mode unshaded, cull_disabled, shadows_disabled;\n" +
+                            "uniform sampler2D scope_tex : source_color, filter_linear;\n" +
+                            "void vertex() { MODELVIEW_MATRIX = VIEW_MATRIX * mat4(INV_VIEW_MATRIX[0], INV_VIEW_MATRIX[1], INV_VIEW_MATRIX[2], MODEL_MATRIX[3]); }\n" +
+                            "void fragment() { vec2 d = UV - vec2(0.5); if (length(d) > 0.5) discard; ALBEDO = texture(scope_tex, UV).rgb; }\n" };
+                        var lensMat = new ShaderMaterial { Shader = lensShader };
+                        lensMat.SetShaderParameter("scope_tex", _scopeVp.GetTexture());
+                        _scopeLens = new MeshInstance3D { Name = "ScopeLens", Mesh = new QuadMesh { Size = new Vector2(0.11f, 0.11f) }, MaterialOverride = lensMat, Visible = false, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off };   // sized to fill the scope's BORE (inner hole), not halo around the whole ring; master-tunable
                         var _iron = mi.GetNodeOrNull<MeshInstance3D>("IronSights");
                         (_iron ?? mi).AddChild(_scopeLens);
-                        _scopeLens.Position = new Vector3(0f, -0.14f, -0.06f);   // aug scope tube axis (Z=-0.06 up); Y=-0.14 = inset toward the ocular/player end (barrel is +Y); billboarded to face the eye
+                        _scopeLens.Position = new Vector3(0f, -0.14f, -0.06f);   // aug scope tube axis (Z=-0.06 up); Y=-0.14 frames it in the scope body (a billboard grows as it nears the eye, so -0.18 filled the screen). Round mask makes depth free -> master-tunable (toward eye=-Y=bigger, into tube=+Y=smaller)
                     }   // per-gun sight mount (extracted); eaglefire/maplestrike keep the tuned hardcoded pos
 
                     // Real default Magazine (item 6 = Military_30, GUID dbfb1d0d) — item.prefab Model_0 from
