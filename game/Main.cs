@@ -36,6 +36,7 @@ namespace UnturnedGodot
             MapUI.MapFolder = folder;   // in-game M-map: image + level-size + label follow the map
             FoliageField.MapDir = folder == "PEI" ? "foliage" : "foliage_" + key.ToLower();   // grass/pebbles baked per map
             ResourceField.MapDir = folder == "PEI" ? "resources" : "resources_" + key.ToLower();   // trees/rocks baked per map
+            Terrain.MapDir = folder == "PEI" ? "terrain" : "terrain_" + key.ToLower();   // splat layer albedos baked per map
         }
         int _frame;
         MainMenu _menuShotMenu; string _menuShotDir; int _menuShotIdx;   // --menushot=DIR: render the 3D barn menu + capture each camera anchor
@@ -164,6 +165,7 @@ namespace UnturnedGodot
                     MapUI.MapFolder = mn;
                     FoliageField.MapDir = mn == "PEI" ? "foliage" : "foliage_" + key.ToLower();
                     ResourceField.MapDir = mn == "PEI" ? "resources" : "resources_" + key.ToLower();
+                    Terrain.MapDir = mn == "PEI" ? "terrain" : "terrain_" + key.ToLower();
                 }
                 else if (arg == "--peiplay") peiplay = true;     // player standing/walking on real PEI terrain (with colliders)
                 else if (arg == "--invdemo") invdemo = true;
@@ -196,6 +198,7 @@ namespace UnturnedGodot
                 MapUI.MapFolder = ugMap;
                 FoliageField.MapDir = ugMap == "PEI" ? "foliage" : "foliage_" + ugKey.ToLower();
                 ResourceField.MapDir = ugMap == "PEI" ? "resources" : "resources_" + ugKey.ToLower();
+                Terrain.MapDir = ugMap == "PEI" ? "terrain" : "terrain_" + ugKey.ToLower();
             }
 
             if (hurtdemo)   // first-person: a zombie hits the player so the hurt flash + camera flinch are visible

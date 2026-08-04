@@ -12,6 +12,11 @@ namespace UnturnedGodot
     {
         const int RES = 257;
         const int SRES = 256, SLAYERS = 8;   // Landscape SPLATMAP_RESOLUTION + SPLATMAP_LAYERS (per-texel layer weights, 1 byte each)
+
+        // Set by Main per map: PEI -> "terrain", others -> "terrain_<key>". The 8 layer ALBEDOS differ per map
+        // (Washington = Yukon dirt/gravel + Washington grass + Russia road/shore + PEI stone), so the splatmap is
+        // painted with THIS map's textures. tools/terrain_map.py bakes them from the tile "Materials" GUID palette.
+        public static string MapDir = "terrain";
         const float TILE_SIZE = 1024f, TILE_HEIGHT = 2048f, UNIT = 4f;
         const float BRUSH_FALLOFF = 0.5f;   // source Devkit brushFalloff: full strength inside this radius fraction, then linear to 0 at the edge
         static float BrushAlpha(float normDist) => normDist <= BRUSH_FALLOFF ? 1f : (1f - normDist) / (1f - BRUSH_FALLOFF);   // source TerrainEditor.getBrushAlpha
@@ -65,7 +70,7 @@ void fragment() {
             for (int l = 0; l < SLAYERS; l++)
             {
                 var img = new Image();
-                if (img.Load(ProjectSettings.GlobalizePath($"res://content/terrain/layer{l}.png")) != Error.Ok) { GD.Print($"[TERRAIN] texture load FAILED: layer{l}"); return null; }
+                if (img.Load(ProjectSettings.GlobalizePath($"res://content/{MapDir}/layer{l}.png")) != Error.Ok) { GD.Print($"[TERRAIN] texture load FAILED: {MapDir}/layer{l}"); return null; }
                 img.Convert(Image.Format.Rgba8);
                 img.GenerateMipmaps();
                 imgs.Add(img);
