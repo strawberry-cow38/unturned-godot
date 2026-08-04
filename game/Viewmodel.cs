@@ -212,7 +212,7 @@ namespace UnturnedGodot
         }
         static string Snd(string name, string fallback) => System.IO.File.Exists(ProjectSettings.GlobalizePath("res://content/" + name)) ? name : fallback;
         Node3D _sight;
-        SubViewport _scopeVp; Camera3D _scopeCam; MeshInstance3D _scopeLens; Node3D _scopeCamAnchor; bool _isScope, _scopeWasOn;   // PiP scope: lens ON the gun model (rides recoil); 2nd cam renders the world zoomed from the scope's OBJECTIVE end
+        SubViewport _scopeVp; Camera3D _scopeCam; MeshInstance3D _scopeLens; Node3D _scopeCamAnchor; Godot.Environment _scopeEnv; DayNightCycle _dnc; bool _isScope, _scopeWasOn;   // PiP scope: lens ON the gun model (rides recoil); 2nd cam renders the world zoomed from the scope's OBJECTIVE end (LINEAR env so the lens isn't double-tonemapped by _vp)
         const float ScopeZeroDist = 100f;   // (b) zeroing range (m): scope cam converges onto the bullet ray here, so the reticle = point of impact at 100m + drifts slightly past. Miss at range R = |objective-eye| * |1 - R/Z| ~ 0.1m@50m, 0@100, 0.2m@200 (torso-tight at 4x; tinyclaw)
 
         // Equip gate — source: you can't start OR stop aiming until the Equip (pull-out) animation finishes
@@ -396,6 +396,23 @@ namespace UnturnedGodot
                         AddChild(_scopeVp);
                         _scopeCam = new Camera3D { Current = true, Fov = 22.5f };   // retail scope fov = 90/Zoom; the aug scope is 4x (items_catalog: "Rail mounted 4x zoom scope") -> 90/4 = 22.5deg, not the 3.5x/25.7 I'd guessed
                         _scopeVp.AddChild(_scopeCam);
+                        // Match the PiP colors to the main cam (master: "a little blown-out"): the lens re-renders inside the arms
+                        // viewport (_vp), which re-applies ACES -> the scope's already-tonemapped image gets tonemapped TWICE and
+                        // reads bright + over-saturated. Fix: render the SCOPE viewport LINEAR (a copy of the world env with tonemap
+                        // Linear, Sky shared so it stays in sync), so _vp's single ACES is the ONLY tonemap -> the lens matches the
+                        // periphery. (Diagnostic: forcing _vp Linear made lens==periphery, confirming the double-tonemap.)
+                        _dnc = GetTree().GetFirstNodeInGroup("daynight") as DayNightCycle;
+                        Godot.Environment _mainEnv = _dnc?.Env;
+                        if (_mainEnv == null)   // no day/night (e.g. the firetest harness): find the main WorldEnvironment directly (skipping the arms _vpEnv)
+                            foreach (var _n in GetTree().Root.FindChildren("*", "WorldEnvironment", true, false))
+                                if (_n is WorldEnvironment _we && _we.Environment != null && _we.Environment != _vpEnv) { _mainEnv = _we.Environment; break; }
+                        if (_mainEnv != null)
+                        {
+                            _scopeEnv = (Godot.Environment)_mainEnv.Duplicate();   // Duplicate() shares sub-resources (the Sky auto-updates); scalars (ambient/fog) synced each frame below (game only; the firetest env is static)
+                            _scopeEnv.TonemapMode = Godot.Environment.ToneMapper.Linear;
+                            _scopeEnv.GlowEnabled = false;   // glow is the display viewport's post-pass; the scope render doesn't need it (and _vp would bloom the lens)
+                            _scopeCam.Environment = _scopeEnv;
+                        }
                         // Round lens: the quad was only ever cropped round by the scope RING's aperture (far end). Inset in
                         // front of the ring, nothing masks it -> raw SQUARE (master: "why is the PiP square"). Mask it in the
                         // MATERIAL (tinyclaw) with a UV-radius discard so it's a true circle at ANY depth/size -- the scope
@@ -847,6 +864,12 @@ namespace UnturnedGodot
                 if (_on)
                 {
                     if (_scopeVp.World3D != _main.GetWorld3D()) _scopeVp.World3D = _main.GetWorld3D();   // render the REAL world, not the VM's isolated arms-world (tinyclaw)
+                    if (_scopeEnv != null && _dnc?.Env is Godot.Environment _me)   // keep the scope's LINEAR env in sync with the day/night (ambient + fog drift with time-of-day; the Sky is a shared sub-resource so it auto-updates)
+                    {
+                        _scopeEnv.AmbientLightColor = _me.AmbientLightColor;
+                        _scopeEnv.FogEnabled = _me.FogEnabled; _scopeEnv.FogDensity = _me.FogDensity;
+                        _scopeEnv.FogLightColor = _me.FogLightColor; _scopeEnv.FogSkyAffect = _me.FogSkyAffect;
+                    }
                     // PiP view from the scope's OBJECTIVE end, not the eye: map the anchor's pose (relative to the arms cam _cam) into the main world (relative to _main). Rides the gun's sway/recoil + looks down the barrel -> works at the hip too, not just ADS.
                     // (b) ZEROING (master + tinyclaw): the scope cam stays at the objective (parallax) but AIMS at the point on
                     // the BULLET ray (main cam fires from _main along -Z) at ScopeZeroDist, so the reticle = point of impact at

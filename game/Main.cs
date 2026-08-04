@@ -1241,6 +1241,7 @@ namespace UnturnedGodot
             var z = new ZombieController { Target = player, Speciality = ZombieController.ESpeciality.NORMAL };
             AddChild(z);
             z.GlobalPosition = new Vector3(0, 1.0f, System.Environment.GetEnvironmentVariable("UG_HITZOMBIE") == "1" ? -6f : -25f);   // UG_HITZOMBIE: point-blank so shots connect -> verify blood
+            env.TonemapMode = Godot.Environment.ToneMapper.Aces;   // match the game's ACES so this harness validates the scope PiP color/tonemap (was default Linear)
             GD.Print($"[FIRETEST] suppressed={suppressed} -- firing away from a zombie 25 m off; expect [ALERT] ONLY when unsuppressed");
         }
 
