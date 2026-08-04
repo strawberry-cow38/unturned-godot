@@ -122,7 +122,7 @@ namespace UnturnedGodot
                 LightColor = new Color(0.85f, 0.9f, 1.0f),
                 SpotRange = 4.0f, SpotAngle = 55f, SpotAngleAttenuation = 1.2f,
                 LightEnergy = 0f, ShadowEnabled = false, Visible = false,
-                Transform = new Transform3D(AimBasis(_screenNormalLocal, aimNegZ: true), _screenCenterLocal + _screenNormalLocal * 0.05f),
+                Transform = new Transform3D(AimBasis(_screenNormalLocal), _screenCenterLocal + _screenNormalLocal * 0.05f),
             };
             AddChild(_light);
 
@@ -131,11 +131,11 @@ namespace UnturnedGodot
             // fit here than it is on a lamp: its cross-section STARTS AS A RECTANGLE and rounds toward a circle with
             // depth, which is exactly what light leaving a rectangular screen does.
             // BeamMesh runs along -Y with the section in X/Z, so the node's -Y goes on the screen normal.
-            Vector3 halfExt = ScreenHalfExtents(screenAabb, _screenNormalLocal);
+            var beam = BeamFrame(screenAabb, _screenNormalLocal);
             _cone = new MeshInstance3D
             {
-                Mesh = StreetLight.BeamMesh(ConeLen, halfExt.X, halfExt.Y, 0f, keepRect: true, endScale: ConeEndScale),
-                Transform = new Transform3D(AimBasis(_screenNormalLocal, aimNegZ: false), _screenCenterLocal),
+                Mesh = StreetLight.BeamMesh(ConeLen, beam.HalfA, beam.HalfB, 0f, keepRect: true, endScale: ConeEndScale),
+                Transform = new Transform3D(beam.Basis, _screenCenterLocal),
                 Visible = false,
                 CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
                 MaterialOverride = new StandardMaterial3D
@@ -382,29 +382,44 @@ namespace UnturnedGodot
             return ImageTexture.CreateFromImage(img);
         }
 
-        /// <summary>A basis putting the beam's forward axis on <paramref name="normal"/>. SpotLight3D aims down local
-        /// -Z (aimNegZ), BeamMesh runs down local -Y -- two different conventions for the same "point that way", so
-        /// the caller says which it needs rather than one of them silently getting a sideways cone.</summary>
-        internal static Basis AimBasis(Vector3 normal, bool aimNegZ)
+        /// <summary>A basis aiming a SpotLight3D (which points down its local -Z) along <paramref name="normal"/>.
+        ///
+        /// Roll is arbitrary here and that is FINE, because a spot cone is radially symmetric -- there is nothing on it
+        /// for a roll to misalign. The beam MESH is the opposite case and must not use this; it gets its frame from the
+        /// screen's own axes via <see cref="BeamFrame"/>. This used to serve both, with a flag, and that is precisely
+        /// how the flatscreen shaft ended up rolled 90 degrees.</summary>
+        internal static Basis AimBasis(Vector3 normal)
         {
-            Vector3 f = normal.Normalized();
-            Vector3 axis = -f;                                                     // local +Z or +Y sits opposite the aim
+            Vector3 axis = -normal.Normalized();                                   // local +Z sits opposite the aim
             Vector3 seed = Mathf.Abs(axis.Dot(Vector3.Up)) > 0.95f ? Vector3.Right : Vector3.Up;
             Vector3 x = seed.Cross(axis).Normalized();
             Vector3 y = axis.Cross(x).Normalized();
-            return aimNegZ ? new Basis(x, y, axis) : new Basis(x, axis, y);
+            return new Basis(x, y, axis);
         }
 
-        /// <summary>The screen's two IN-PLANE half-extents, i.e. its size with the axis along the normal dropped.
-        /// Feeds the beam's rectangular near end so the shaft starts the shape of the actual screen.</summary>
-        internal static Vector3 ScreenHalfExtents(Aabb screenAabb, Vector3 normal)
+        /// <summary>The beam's frame AND its near-ring size, derived together from the screen's OWN axes.
+        ///
+        /// These have to come from one place. AimBasis picked an arbitrary perpendicular for the beam's roll, so the
+        /// rectangle landed at whatever rotation fell out of a cross product -- while the half-extents were chosen by
+        /// a separate rule. Nothing tied the two together, so the beam's "width" axis and the screen's "width" axis
+        /// agreed only by luck. On the CRT (0.85 x 0.79) that is invisible; on the flatscreen (3.55 x 1.8) it reads
+        /// as the shaft rolled 90 degrees, which is exactly what master saw.
+        ///
+        /// Returns a basis whose -Y is the screen normal (BeamMesh runs down -Y) and whose X / Z are the screen's own
+        /// in-plane axes, plus the half-extents IN THAT ORDER -- so halfA belongs to basis X and halfB to basis Z by
+        /// construction rather than by coincidence. A 180-degree roll is not corrected because a rectangle is
+        /// symmetric under it; only the 90 matters.</summary>
+        internal static (Basis Basis, float HalfA, float HalfB) BeamFrame(Aabb screenAabb, Vector3 normal)
         {
-            Vector3 h = screenAabb.Size * 0.5f;
-            Vector3 n = normal.Normalized().Abs();
-            // drop the thinnest axis -- the one the normal points along -- and keep the other two
-            if (n.X >= n.Y && n.X >= n.Z) return new Vector3(Mathf.Max(h.Z, 0.05f), Mathf.Max(h.Y, 0.05f), 0f);
-            if (n.Y >= n.X && n.Y >= n.Z) return new Vector3(Mathf.Max(h.X, 0.05f), Mathf.Max(h.Z, 0.05f), 0f);
-            return new Vector3(Mathf.Max(h.X, 0.05f), Mathf.Max(h.Y, 0.05f), 0f);
+            Vector3 h = screenAabb.Size * 0.5f, n = normal.Normalized(), an = n.Abs();
+            Vector3 seed; float a, b;
+            if (an.X >= an.Y && an.X >= an.Z) { seed = Vector3.Up;    a = h.Y; b = h.Z; }   // normal along X -> plane is YZ
+            else if (an.Y >= an.Z)            { seed = Vector3.Right; a = h.X; b = h.Z; }   // normal along Y -> plane is XZ
+            else                              { seed = Vector3.Right; a = h.X; b = h.Y; }   // normal along Z -> plane is XY
+            Vector3 y = -n;                                        // beam runs down local -Y, so +Y is anti-normal
+            Vector3 x = (seed - y * seed.Dot(y)).Normalized();     // the screen axis that owns `a`, made perpendicular
+            Vector3 z = x.Cross(y).Normalized();                   // right-handed: x cross y = z
+            return (new Basis(x, y, z), Mathf.Max(a, 0.05f), Mathf.Max(b, 0.05f));
         }
 
         public bool DebugLit => _lit;      // last EFFECTIVE state actually applied -- survives a prop with no meshes

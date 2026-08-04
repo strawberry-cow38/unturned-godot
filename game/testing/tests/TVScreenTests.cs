@@ -68,22 +68,72 @@ namespace UnturnedGodot.Testing
             T.Check($"at the shipped depth it swings {TVDevice.Flicker(0.5f, 0.18f):0.00}..{TVDevice.Flicker(0f, 0.18f):0.00}, both lit",
                 TVDevice.Flicker(0.5f, 0.18f) > 0.5f && TVDevice.Flicker(0f, 0.18f) <= 1f);
 
-            // ---- AIM BASIS. Two different "point that way" conventions in one file -- SpotLight3D aims down local
-            // -Z, BeamMesh runs down local -Y -- so this is exactly the sort of thing that ships as a cone firing
-            // sideways out of the cabinet and reads as a modelling mistake rather than an axis mistake.
+            // ---- SPOT AIM. SpotLight3D points down its local -Z, BeamMesh down its local -Y: two conventions for
+            // "that way" in one file, which is how a cone ends up firing sideways out of the cabinet and reads as a
+            // modelling mistake rather than an axis mistake. Roll is left arbitrary here on purpose -- a spot cone is
+            // radially symmetric, so there is nothing on it for a roll to misalign.
             foreach (var n in new[] { Vector3.Forward, Vector3.Right, new Vector3(1, 0, 1).Normalized(), Vector3.Up, Vector3.Down })
             {
-                var spot = TVDevice.AimBasis(n, aimNegZ: true) * new Vector3(0f, 0f, -1f);
-                var beam = TVDevice.AimBasis(n, aimNegZ: false) * new Vector3(0f, -1f, 0f);
+                var spot = TVDevice.AimBasis(n) * new Vector3(0f, 0f, -1f);
                 T.Check($"spot aims down the normal {n} (got {spot})", spot.Normalized().Dot(n) > 0.999f);
-                T.Check($"...and the beam runs down it too (got {beam})", beam.Normalized().Dot(n) > 0.999f);
             }
 
-            // ---- SCREEN EXTENTS: the beam's near end should be the screen's shape, so the axis the normal points
-            // along is the one to DROP. Screen 2.0 x 1.0, 0.1 thick, facing +Z.
-            var halfExt = TVDevice.ScreenHalfExtents(new Aabb(Vector3.Zero, new Vector3(2f, 1f, 0.1f)), Vector3.Back);
-            T.Check($"in-plane half-extents keep width and height, drop thickness ({halfExt.X:0.00} x {halfExt.Y:0.00})",
-                Mathf.IsEqualApprox(halfExt.X, 1f) && Mathf.IsEqualApprox(halfExt.Y, 0.5f));
+            // ---- BEAM ROLL (master: "i think flatscreen cone is 90 deg rotated roll"). He was right, and this is the
+            // check that would have caught it. The old code took the beam's roll from a cross product against an
+            // arbitrary seed vector and its half-extents from a SEPARATE rule, so "the wide axis of the beam" and "the
+            // wide axis of the screen" only ever coincided by luck. On the CRT (0.85 x 0.79) luck is indistinguishable
+            // from correct; on the flatscreen (3.55 x 1.8) the shaft comes out of the panel turned on its side.
+            //
+            // So the assertion is made in WORLD space off the real vertices: put the near ring where BeamFrame says,
+            // and its footprint has to BE the screen's footprint. Testing the basis alone would not do it -- the bug
+            // lived in the join between the basis and the extents, and each of those is defensible on its own.
+            static Vector3 NearRingHalfExtents(Basis b, ArrayMesh m)
+            {
+                var verts = (Vector3[])m.SurfaceGetArrays(0)[(int)Mesh.ArrayType.Vertex];
+                Vector3 lo = new(9e9f, 9e9f, 9e9f), hi = new(-9e9f, -9e9f, -9e9f);
+                foreach (var v in verts)
+                {
+                    if (Mathf.Abs(v.Y) > 0.01f) continue;               // the near ring only: t = 0, sitting on the glass
+                    Vector3 w = b * v;
+                    lo = new Vector3(Mathf.Min(lo.X, w.X), Mathf.Min(lo.Y, w.Y), Mathf.Min(lo.Z, w.Z));
+                    hi = new Vector3(Mathf.Max(hi.X, w.X), Mathf.Max(hi.Y, w.Y), Mathf.Max(hi.Z, w.Z));
+                }
+                return (hi - lo) * 0.5f;
+            }
+
+            // A flatscreen -- deliberately NOT square -- in each of the three ways a prop's panel can face.
+            foreach (var (nrm, size, where) in new[]
+            {
+                (Vector3.Back,  new Vector3(3.55f, 1.80f, 0.06f), "facing +Z"),
+                (Vector3.Right, new Vector3(0.06f, 1.80f, 3.55f), "facing +X"),
+                (Vector3.Up,    new Vector3(3.55f, 0.06f, 1.80f), "facing +Y"),
+            })
+            {
+                var f = TVDevice.BeamFrame(new Aabb(-size * 0.5f, size), nrm);
+                var beamMesh = StreetLight.BeamMesh(1f, f.HalfA, f.HalfB, 0f, keepRect: true, endScale: 1f);
+                var got = NearRingHalfExtents(f.Basis, beamMesh);
+                var want = size * 0.5f;
+                var an = nrm.Abs();
+
+                bool matches = true;
+                for (int i = 0; i < 3; i++)
+                {
+                    float exp = an[i] > 0.5f ? 0f : want[i];             // the normal's own axis is the flat one
+                    if (!Mathf.IsEqualApprox(got[i], exp, 0.01f)) matches = false;
+                }
+                T.Check($"beam footprint IS the screen {where} (want {want}, got {got})", matches);
+
+                // TEETH. If the fixture were square, the check above would pass under a 90-degree roll and the suite
+                // would report green on the exact bug it exists for. Assert the fixture can tell them apart.
+                T.Check($"...and the fixture is lopsided enough to SEE a roll {where} ({f.HalfA:0.00} vs {f.HalfB:0.00})",
+                    Mathf.Abs(f.HalfA - f.HalfB) > 0.4f);
+                var run = (f.Basis * new Vector3(0f, -1f, 0f)).Normalized();
+                T.Check($"...beam still runs down the normal {where} (got {run})", run.Dot(nrm) > 0.999f);
+                // A mirrored basis would keep the footprint AND the aim and flip the gradient's winding, so pin the
+                // handedness rather than trusting that the two checks above cover the frame.
+                T.Check($"...right-handed and orthonormal {where} (det {f.Basis.Determinant():0.000})",
+                    Mathf.IsEqualApprox(f.Basis.Determinant(), 1f, 0.001f));
+            }
 
             // ---- CONE GRADIENT direction (master: "brighter toward the source"). BeamMesh maps v = t*0.5 with v=0
             //      at the SOURCE, and StreetLight's gradient rises with v -- faint at the lamp, dense at the ground,
