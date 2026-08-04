@@ -239,8 +239,30 @@ namespace UnturnedGodot
                 int effectId = sp.Length > 4 && int.TryParse(sp[4], out int e) ? e : 0;   // col 4 = Rubble_Effect id (mode is col 3)
                 map[sp[0].ToLowerInvariant()] = new Rubble(health, (long)System.Math.Round(resetSecs * 50f), effectId);
             }
+            ApplyOverrides(map);
             GD.Print($"[rubble] catalog {map.Count} destructible object types");
             return map;
         }
+
+        /// <summary>Deliberate departures from the retail scalars, applied AFTER the file is parsed.
+        ///
+        /// They live in code rather than in rubble.txt because that file is generated wholesale from the retail
+        /// bundles (tools/extract_rubble.py) -- a hand-edit there is correct right up until someone re-extracts,
+        /// and then it is gone with nothing to show it ever existed.</summary>
+        static void ApplyOverrides(Dictionary<string, Rubble> map)
+        {
+            foreach (var (guid, health) in HealthOverrides)
+                if (map.TryGetValue(guid, out var r)) map[guid] = new Rubble(health, r.ResetTicks, r.EffectId);
+        }
+
+        // TELEVISIONS take a FEW shots (master: "a few to destroy the actual prop"). Retail ships both sets at 25 hp,
+        // which is exactly one Eaglefire Object_Damage -- so a TV exploded into rubble on the first bullet and the
+        // shot-out-screen state added alongside this had nowhere to live: you could never see it, because the shot
+        // that broke the glass also finished the cabinet. 100 hp is four more rounds after the screen goes.
+        static readonly (string Guid, float Health)[] HealthOverrides =
+        {
+            ("b489a8a63fca4d179fd315cbae8b6ed7", 100f),   // Television_0 (flatscreen)
+            ("becc624cee1a4845808af80472ee9310", 100f),   // Television_1 (CRT)
+        };
     }
 }

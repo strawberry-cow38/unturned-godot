@@ -743,7 +743,7 @@ namespace UnturnedGodot
                             body.SetMeta(TrafficLight.HitMeta, arr);
                         }
                         if (doorForBody != null) body.SetMeta("objectdoor", doorForBody);   // issue 3: look-at the body resolves to the door (PlayerController)
-                        if (placedTV != null) body.SetMeta("tvdevice", placedTV);   // look-at the TV body resolves to its device (PlayerController F toggle)
+                        if (placedTV != null) body.SetMeta(TVDevice.HitMeta, placedTV);   // look-at OR shoot the TV body resolves to its device (F toggle; screen shoot-out)
                     }
                 }
                 // destructible prop: bind this placement's live nodes to its deterministic index + tag the

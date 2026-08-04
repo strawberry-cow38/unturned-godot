@@ -219,7 +219,7 @@ namespace UnturnedGodot
                     else if (rcol is FluidContainer fcr && IsInstanceValid(fcr)) hitFluid = fcr;   // a placed fluid device body (solid since batch A) -> hold-F pickup
                     else if (rcol is Node grn && grn.HasMeta("gaspump") && grn.GetMeta("gaspump").As<GasPump>() is GasPump gpn && IsInstanceValid(gpn)) hitGasPump = gpn;   // gas pump collider tagged in WorldBuilder -> the fixture
                     else if (rcol is Node grn2 && grn2.HasMeta("gridpower") && grn2.GetMeta("gridpower").As<GridPowerSource>() is GridPowerSource gsn && IsInstanceValid(gsn)) hitGrid = gsn;   // grid-power box collider tagged in SpawnEditorGridPower
-                    else if (rcol is Node tvn && tvn.HasMeta("tvdevice") && tvn.GetMeta("tvdevice").As<TVDevice>() is TVDevice tvd && IsInstanceValid(tvd)) hitTV = tvd;   // TV body collider tagged in WorldBuilder -> its device (F toggles)
+                    else if (rcol is Node tvn && tvn.HasMeta(TVDevice.HitMeta) && tvn.GetMeta(TVDevice.HitMeta).As<TVDevice>() is TVDevice tvd && IsInstanceValid(tvd)) hitTV = tvd;   // TV body collider tagged in WorldBuilder -> its device (F toggles; the bullet path uses the same meta to find the screen)
                     else if (rcol is ShelfItemBody sibr && IsInstanceValid(sibr)) hitShelfItem = sibr;   // ray hit an item on a shelf directly -> lock onto it (the orb is a backup)
                     else if (rcol is Node rn && ShelfOf(rn) is StoreShelf rshelf) hitShelf = rshelf;   // looked-at shelf -> whole-shelf outline + F-open (look-based, not proximity)
                 }
@@ -4083,29 +4083,44 @@ namespace UnturnedGodot
                         // SHOOT THE BULB OUT (strawberry): a hit on the lens kills that lamp and leaves the post
                         // standing. Checked BEFORE the destructible routing and consuming the hit, so a bulb shot
                         // does not also chip the prop's health -- you are breaking the light, not the pole.
-                        bool bulbShot = false;
+                        // `glassShot` rather than `bulbShot`: three different fixtures now claim a hit this way (lamp
+                        // bulb, signal aspect, TV screen) and the flag means "the breakable part ate this shot".
+                        bool glassShot = false;
                         if (collider is Node sln && sln.HasMeta(StreetLight.HitMeta)
                             && sln.GetMeta(StreetLight.HitMeta).As<StreetLight>() is StreetLight slamp
                             && IsInstanceValid(slamp) && slamp.IsBulbHit(point))
                         {
-                            bulbShot = slamp.ShootOutBulb();
+                            glassShot = slamp.ShootOutBulb();
                             sf = Surf.Metal;   // no glass surface in the impact set; metal reads closest for a fixture
                         }
                         // Same for a traffic signal, per ASPECT (strawberry: "add the ability to shoot out each light
                         // piece"). The meta is an array because one mast is two independently-timed heads; the first
                         // head whose lens bounds contain the impact owns the shot. A dead aspect stays dark while the
                         // head keeps cycling, so you can shoot out just the green and leave the rest working.
-                        if (!bulbShot && collider is Node tln && tln.HasMeta(TrafficLight.HitMeta))
+                        if (!glassShot && collider is Node tln && tln.HasMeta(TrafficLight.HitMeta))
                             foreach (var e in tln.GetMeta(TrafficLight.HitMeta).AsGodotArray())
                                 if (e.As<TrafficLight>() is TrafficLight sig && IsInstanceValid(sig))
                                 {
                                     int li = sig.LensHit(point);
                                     if (li < 0) continue;
-                                    bulbShot = sig.ShootOutLens(li);   // false if already dead -> the shot falls through to the mast's health
+                                    glassShot = sig.ShootOutLens(li);   // false if already dead -> the shot falls through to the mast's health
                                     sf = Surf.Metal;
                                     break;
                                 }
-                        if (!bulbShot && collider is Node dn && dn.HasMeta(DestructibleField.MetaKey))
+                        // A TELEVISION's screen dies in ONE shot and leaves the cabinet standing (master: "make the
+                        // tvs take 1 shot to destroy the visual screen +cone and a few to destroy the actual prop").
+                        // Identical shape to the bulb, including the part that matters: ShootOutScreen returns false
+                        // once the glass is already gone, so the FIRST bullet buys the screen and every one after it
+                        // falls through to the cabinet's health. Without that the set would be bulletproof after one
+                        // hit, which is the exact opposite of the ask.
+                        if (!glassShot && collider is Node tvbn && tvbn.HasMeta(TVDevice.HitMeta)
+                            && tvbn.GetMeta(TVDevice.HitMeta).As<TVDevice>() is TVDevice tvb
+                            && IsInstanceValid(tvb) && tvb.IsScreenHit(point))
+                        {
+                            glassShot = tvb.ShootOutScreen();
+                            sf = Surf.Metal;
+                        }
+                        if (!glassShot && collider is Node dn && dn.HasMeta(DestructibleField.MetaKey))
                         {
                             NetDamageObject?.Invoke((int)dn.GetMeta(DestructibleField.MetaKey), b.ObjectDamage);
                             HitmarkerHUD.Instance?.ShowCircle();   // circle hitmarker: you hit a destructible prop (master)

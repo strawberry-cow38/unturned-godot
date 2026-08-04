@@ -35,6 +35,7 @@ namespace UnturnedGodot
         bool _isCrt;              // Television_1 warms up; Television_0 snaps on
         bool _on;                 // player toggle state (independent of the grid)
         bool _broken;             // prop smashed -> screen + light + tone stay dead through any grid sweep
+        bool _screenShot;         // GLASS shot out, cabinet still standing -- dead until the prop itself resets
         bool _lit;                // last EFFECTIVE state (_on && grid power) actually applied to the visuals
 
         MeshInstance3D _screen;   // the emissive SMPTE screen sub-mesh (hidden when dark)
@@ -71,6 +72,8 @@ namespace UnturnedGodot
         bool _warming; float _warmDelay, _warm;
 
         Vector3 _screenCenterLocal, _screenNormalLocal;   // stashed for the light placement + the render harness
+        Aabb _screenAabbLocal;    // the screen sub-mesh's bounds in PROP-LOCAL space, captured before anything animates
+                                  //  the node -- so a hit test never has to invert a collapsing (possibly degenerate) scale
 
         static float EnvF(string k, float d) => float.TryParse(System.Environment.GetEnvironmentVariable(k), out var v) ? v : d;
 
@@ -117,6 +120,7 @@ namespace UnturnedGodot
             // through the cabinet and sideways into the wall the set is against; a TV only lights what is in front of
             // it. SpotLight3D aims down its own local -Z, so the node is basised to put -Z on the screen normal.
             var screenAabb = screenMesh.GetAabb();
+            _screenAabbLocal = screenAabb;
             _light = new SpotLight3D
             {
                 LightColor = new Color(0.85f, 0.9f, 1.0f),
@@ -246,9 +250,54 @@ namespace UnturnedGodot
             // switches on by itself when the rubble resets. Found by the reset assertion in tv.broken_kills_screen,
             // not by looking: while it is rubble there is nothing on screen to show you it happened.
             if (_broken) return;
+            // A shot-out set still has a working SWITCH -- you get the click, nothing comes on. Deliberately does not
+            // flip _on: Refresh would keep it dark either way, but an armed _on switches the TV on by itself the moment
+            // the prop resets and the screen comes back. That is the same silent-arming bug _broken hit above,
+            // arriving through the other door, and it is just as invisible while the set is dark.
+            if (_screenShot) { _offClick?.Play(); return; }
             _on = !_on;
             (_on ? _onClick : _offClick)?.Play();
             Refresh();
+        }
+
+        /// <summary>Collider meta carrying the device, so a look-ray or a bullet landing on a Television_0/1 body can
+        /// find it. One key, two consumers: PlayerController's F-interact focus and its bullet routing.</summary>
+        public static readonly StringName HitMeta = "tvdevice";
+
+        /// <summary>Is this world point on the SCREEN rather than the cabinet? Same shape as StreetLight.IsBulbHit and
+        /// for the same reason: the prop's collider is one trimesh over the whole set, so a shot at the glass arrives
+        /// indistinguishable from a shot at the plastic, and the screen sub-mesh's own bounds are what separate them.
+        ///
+        /// Tested against the bounds CAPTURED AT BUILD in prop-local space, not against the live _screen node -- the
+        /// CRT power-off collapses that node's scale toward zero, and inverting a degenerate transform mid-animation
+        /// would make the hit test go haywire for exactly as long as the effect is playing.</summary>
+        public bool IsScreenHit(Vector3 worldPoint)
+            => _screen != null && PointOnScreen(_screenAabbLocal, GlobalTransform, worldPoint);
+
+        /// <summary>The geometry half of <see cref="IsScreenHit"/>, pulled out as a pure function because the
+        /// Television meshes ship with Unturned and there is no install on the build box -- so a test can never get a
+        /// real TVDevice with a real screen, and this predicate would otherwise be unreachable by anything but a human
+        /// with the game running.</summary>
+        internal static bool PointOnScreen(Aabb screenAabbLocal, Transform3D propGlobal, Vector3 worldPoint)
+        {
+            if (screenAabbLocal.Size == Vector3.Zero) return false;
+            var local = propGlobal.AffineInverse() * worldPoint;
+            return screenAabbLocal.Grow(0.04f).HasPoint(local);   // bullets land ON the surface, i.e. exactly on the boundary
+        }
+
+        /// <summary>Shoot the screen out: one hit kills the glass, the spill and the shaft for good and leaves the
+        /// cabinet standing (master: "make the tvs take 1 shot to destroy the visual screen +cone and a few to destroy
+        /// the actual prop").
+        ///
+        /// Returns FALSE if the screen was already dead, so the caller lets that shot fall through to the cabinet's
+        /// health rather than swallowing it -- otherwise the first bullet would make the set bulletproof, which is the
+        /// opposite of what was asked for. Same contract as StreetLight.ShootOutBulb / TrafficLight.ShootOutLens.</summary>
+        public bool ShootOutScreen()
+        {
+            if (_screenShot || _broken) return false;
+            _screenShot = true;
+            Refresh();
+            return true;
         }
 
         /// <summary>Bring the screen/light/tone in line with the effective state (_on AND grid power). Called by
@@ -266,13 +315,15 @@ namespace UnturnedGodot
         {
             if (_broken == broken) return;
             _broken = broken;
-            if (broken) _on = false;   // a rubble reset rebuilds the set switched OFF, not mid-programme
+            if (broken) _on = false;      // a rubble reset rebuilds the set switched OFF, not mid-programme
+            else _screenShot = false;     // ...and rebuilds it WHOLE. A reset prop is a new television, not the old
+                                          //  smashed one wearing a fresh cabinet, so the glass comes back with it.
             Refresh();
         }
 
         public void Refresh()
         {
-            bool eff = _on && PowerNet.GlobalPower && !_broken;
+            bool eff = _on && PowerNet.GlobalPower && !_broken && !_screenShot;
             if (eff == _lit) return;
             _lit = eff;
             if (eff)
@@ -424,6 +475,7 @@ namespace UnturnedGodot
 
         public bool DebugLit => _lit;      // last EFFECTIVE state actually applied -- survives a prop with no meshes
         public bool DebugBroken => _broken;
+        public bool DebugScreenShot => _screenShot;
         public bool DebugScreenOk => _screen != null;
         /// <summary>Is the screen taking NO lighting? The washout fix depends on this being true, and it is the kind
         /// of property that a screenshot cannot distinguish from "the light happens to be dim right now".</summary>
