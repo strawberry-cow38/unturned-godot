@@ -11,7 +11,7 @@ namespace UnturnedGodot
         public static HitmarkerHUD Instance;
         const float HitTime = 0.33f;   // source PlayerUI.HIT_TIME
 
-        struct Mark { public float Age; public bool Crit; }
+        struct Mark { public float Age; public bool Crit; public bool Circle; }
         readonly List<Mark> _marks = new();
         AudioStreamPlayer _critSound;   // source: a headshot plays Sounds/Hit.mp3 at 0.5 volume
 
@@ -28,6 +28,12 @@ namespace UnturnedGodot
         {
             _marks.Add(new Mark { Age = 0f, Crit = crit });
             if (crit) _critSound?.Play();
+        }
+
+        // Prop/vehicle damage: a CIRCLE marker (vanilla), visually distinct from the zombie's diagonal ticks (master).
+        public void ShowCircle()
+        {
+            _marks.Add(new Mark { Age = 0f, Circle = true });
         }
 
         public override void _Process(double delta)
@@ -48,6 +54,12 @@ namespace UnturnedGodot
             foreach (var m in _marks)
             {
                 float t = m.Age / HitTime;                            // 0..1 over the marker's life
+                if (m.Circle)                                         // prop/vehicle: a ring that expands slightly + fades (distinct from the ticks)
+                {
+                    float rad = Mathf.Lerp(6f, 11f, t);
+                    DrawArc(c, rad, 0f, Mathf.Tau, 28, new Color(1f, 1f, 1f, 0.5f * (1f - t)), 2f, true);
+                    continue;
+                }
                 float spread = Mathf.Lerp(5f, 15f, t);               // ticks fan outward (source BASE_OFFSET -> TARGET_OFFSET)
                 var col = m.Crit ? new Color(1f, 0f, 0f, 0.5f) : new Color(1f, 1f, 1f, 0.5f);   // red headshot / white body, a=0.5
                 for (int k = 0; k < 4; k++)                          // 4 diagonal ticks (NE / SE / SW / NW)

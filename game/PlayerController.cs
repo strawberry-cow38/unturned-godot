@@ -4063,10 +4063,10 @@ namespace UnturnedGodot
                     var collider = hit["collider"].As<GodotObject>();
                     if (collider is ZombieController z) { bool head = z.IsHeadshot(point); SpawnFleshImpact(point, hdir); bool wd = z.Dead; z.DamageHit(b.Damage, point, hdir); if (!wd && z.Dead) Kills++; HitmarkerHUD.Instance?.Show(head); }   // hitmarker: white body / red headshot (source EPlayerHit)
                     else if (collider is PhysicalBone3D pb) { SpawnFleshImpact(point, hdir); pb.ApplyImpulse(hdir * 7f, point - pb.GlobalPosition); }
-                    else if (collider is Vehicle veh) { veh.TakeDamage(b.VehicleDamage); SpawnSurfaceImpact(point, hit["normal"].AsVector3(), Surf.Metal, veh); }   // source Vehicle_Damage (35) + metal sparks, hole follows the car
-                    else if (collider is Deployable dep && !dep.IsWreck) { dep.TakeDamage(b.VehicleDamage); SpawnSurfaceImpact(point, hit["normal"].AsVector3(), Surf.Metal); }   // gunfire damages a placed generator (metal sparks) -- Vehicle_Damage
-                    else if (collider is Door bdoor) { bdoor.TakeDamage(b.VehicleDamage); SpawnSurfaceImpact(point, hit["normal"].AsVector3(), Surf.Wood); }   // you can shoot a door open the hard way
-                    else if (collider is Bed bbed) { bbed.TakeDamage(b.VehicleDamage); SpawnSurfaceImpact(point, hit["normal"].AsVector3(), Surf.Wood); }
+                    else if (collider is Vehicle veh) { veh.TakeDamage(b.VehicleDamage); SpawnSurfaceImpact(point, hit["normal"].AsVector3(), Surf.Metal, veh); HitmarkerHUD.Instance?.ShowCircle(); }   // source Vehicle_Damage (35) + metal sparks, hole follows the car; circle hitmarker (master)
+                    else if (collider is Deployable dep && !dep.IsWreck) { dep.TakeDamage(b.VehicleDamage); SpawnSurfaceImpact(point, hit["normal"].AsVector3(), Surf.Metal); HitmarkerHUD.Instance?.ShowCircle(); }   // gunfire damages a placed generator (metal sparks) -- Vehicle_Damage; circle hitmarker
+                    else if (collider is Door bdoor) { bdoor.TakeDamage(b.VehicleDamage); SpawnSurfaceImpact(point, hit["normal"].AsVector3(), Surf.Wood); HitmarkerHUD.Instance?.ShowCircle(); }   // you can shoot a door open the hard way; circle hitmarker
+                    else if (collider is Bed bbed) { bbed.TakeDamage(b.VehicleDamage); SpawnSurfaceImpact(point, hit["normal"].AsVector3(), Surf.Wood); HitmarkerHUD.Instance?.ShowCircle(); }   // circle hitmarker
                     else   // world/prop/terrain -> material impact; terrain samples its splatmap PER-POINT (sand/road/dirt/grass) for the real ground material
                     {
                         Surf sf = Surf.Concrete;
@@ -4104,7 +4104,10 @@ namespace UnturnedGodot
                                     break;
                                 }
                         if (!bulbShot && collider is Node dn && dn.HasMeta(DestructibleField.MetaKey))
+                        {
                             NetDamageObject?.Invoke((int)dn.GetMeta(DestructibleField.MetaKey), b.ObjectDamage);
+                            HitmarkerHUD.Instance?.ShowCircle();   // circle hitmarker: you hit a destructible prop (master)
+                        }
                         SpawnSurfaceImpact(point, hit["normal"].AsVector3(), sf);
                     }
                     if (Gun?.Action == "Rocket") { Explode(point, 9f, 250f, 200f, 300f); GD.Print("[rocket] launcher warhead detonated"); }   // rocket launcher: AoE blast on impact (vehicles hit hardest), reusing the grenade explode
