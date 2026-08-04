@@ -43,6 +43,8 @@ def walk(go_pid, parentM):
     if not go:
         return
     tt = go.read_typetree()
+    if tt.get("m_Name", "") in SKIP:   # skip this node + its whole subtree (e.g. the scope's "Reticule" ocular face -> replaced by the PiP lens)
+        return
     tr = comp_of(tt, ("Transform", "RectTransform"))
     if not tr:
         return
@@ -67,6 +69,7 @@ prefab = next(o for p, o in env.container.items() if p.lower().endswith(sub) and
 root_tr = comp_of(prefab.read_typetree(), ("Transform", "RectTransform"))
 root_trt = root_tr.read_typetree()
 root_local = trs(root_trt["m_LocalPosition"], root_trt["m_LocalRotation"], root_trt["m_LocalScale"])
+SKIP = set(sys.argv[6].split(",")) if len(sys.argv) > 6 else set()   # optional: comma-list of node names to exclude (subtree)
 walk(prefab.path_id, np.linalg.inv(root_local))
 
 Vs, Ns, Ts, Fs = [], [], [], []
