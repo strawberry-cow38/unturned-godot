@@ -410,7 +410,7 @@ namespace UnturnedGodot
                         _scopeLens = new MeshInstance3D { Name = "ScopeLens", Mesh = new QuadMesh { Size = new Vector2(0.11f, 0.11f) }, MaterialOverride = lensMat, Visible = false, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off };   // sized to fill the scope's BORE (inner hole), not halo around the whole ring; master-tunable
                         var _iron = mi.GetNodeOrNull<MeshInstance3D>("IronSights");
                         (_iron ?? mi).AddChild(_scopeLens);
-                        _scopeLens.Position = new Vector3(0f, -0.05f, -0.06f);   // aug scope tube axis (Z=-0.06 up); Y=-0.05 = further BACK in the tube (master; barrel is +Y so +Y = deeper/back, smaller via billboard perspective). depth + size master-tunable
+                        _scopeLens.Position = new Vector3(0f, -0.16f, -0.06f);   // aug scope tube axis (Z=-0.06 up); Y=-0.16 = back toward the OCULAR/eye end (master's "back" = toward the shooter = -Y), sized so it fills the bore with the ring still framing it (-0.20 covered the ring). billboard grows toward the eye. depth + size master-tunable
                     }   // per-gun sight mount (extracted); eaglefire/maplestrike keep the tuned hardcoded pos
 
                     // Real default Magazine (item 6 = Military_30, GUID dbfb1d0d) — item.prefab Model_0 from
