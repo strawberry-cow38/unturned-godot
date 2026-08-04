@@ -212,7 +212,7 @@ namespace UnturnedGodot
         }
         static string Snd(string name, string fallback) => System.IO.File.Exists(ProjectSettings.GlobalizePath("res://content/" + name)) ? name : fallback;
         Node3D _sight;
-        SubViewport _scopeVp; Camera3D _scopeCam; MeshInstance3D _scopeLens; bool _isScope, _scopeWasOn;   // PiP scope: lens ON the gun model (rides recoil); 2nd cam renders the world zoomed
+        SubViewport _scopeVp; Camera3D _scopeCam; MeshInstance3D _scopeLens; Node3D _scopeCamAnchor; bool _isScope, _scopeWasOn;   // PiP scope: lens ON the gun model (rides recoil); 2nd cam renders the world zoomed from the scope's OBJECTIVE end
 
         // Equip gate — source: you can't start OR stop aiming until the Equip (pull-out) animation finishes
         // (UseableGun.ReceivePlayAimStart/Stop both guard on player.equipment.IsEquipAnimationFinished, which is
@@ -411,6 +411,15 @@ namespace UnturnedGodot
                         var _iron = mi.GetNodeOrNull<MeshInstance3D>("IronSights");
                         (_iron ?? mi).AddChild(_scopeLens);
                         _scopeLens.Position = new Vector3(0f, -0.17f, -0.0695f);   // CENTERED on the scope's ocular ring: augewehr_sight.txt ring = Xc=0, Zc=-0.0695, r=0.0522 (measured; sight-local -- the mount's SightPos offset handles height-over-bore vs the gun bore). Was Z=-0.06 = ~0.01 too low; a head-on view can't show a Z error. Y=-0.17 = master's depth. billboard grows toward the eye
+                        // Scope CAMERA anchor at the OBJECTIVE (front) end looking downrange (+Y) -- the PiP view must come from
+                        // the FRONT lens, NOT the player's eye (master + tinyclaw): an eye-centered cam renders naked-eye
+                        // parallax (a zoomed hole); the objective renders what the SCOPE sees (near cover/edges behave like a
+                        // real optic). Child of the scope so it rides sway/recoil; mapped VM->main world each frame. Objective
+                        // ring center = sight-local (0, +0.1932, -0.0695) -- optical axis, same Z as the lens (tinyclaw's numbers).
+                        _scopeCamAnchor = new Node3D { Name = "ScopeCamAnchor" };
+                        (_iron ?? mi).AddChild(_scopeCamAnchor);
+                        var _cb = Basis.Identity; _cb.X = new Vector3(-1f, 0f, 0f); _cb.Y = new Vector3(0f, 0f, -1f); _cb.Z = new Vector3(0f, -1f, 0f);   // cam -Z=+Y (looks downrange), cam up +Y=-Z (gun up); right-handed (det +1, non-mirrored)
+                        _scopeCamAnchor.Transform = new Transform3D(_cb, new Vector3(0f, 0.1932f, -0.0695f));
                     }   // per-gun sight mount (extracted); eaglefire/maplestrike keep the tuned hardcoded pos
 
                     // Real default Magazine (item 6 = Military_30, GUID dbfb1d0d) — item.prefab Model_0 from
@@ -833,11 +842,12 @@ namespace UnturnedGodot
             if (_isScope && _scopeVp != null)   // real two-render PiP: world at a NARROW fov into the lens, periphery stays 1x (NOT the cheap FOV-drop)
             {
                 var _main = GetViewport().GetCamera3D();
-                bool _on = _aimAlpha > 0.35f && _main != null;
+                bool _on = _main != null && _cam != null && _scopeCamAnchor != null;   // render whenever the scope gun is OUT -- even at the hip, not just ADS (master)
                 if (_on)
                 {
                     if (_scopeVp.World3D != _main.GetWorld3D()) _scopeVp.World3D = _main.GetWorld3D();   // render the REAL world, not the VM's isolated arms-world (tinyclaw)
-                    _scopeCam.GlobalTransform = _main.GlobalTransform;   // look where the player aims; scope cam keeps its narrow FOV (25.7deg ~ 3.5x)
+                    // PiP view from the scope's OBJECTIVE end, not the eye: map the anchor's pose (relative to the arms cam _cam) into the main world (relative to _main). Rides the gun's sway/recoil + looks down the barrel -> works at the hip too, not just ADS.
+                    _scopeCam.GlobalTransform = _main.GlobalTransform * (_cam.GlobalTransform.AffineInverse() * _scopeCamAnchor.GlobalTransform);
                     _scopeVp.RenderTargetUpdateMode = SubViewport.UpdateMode.Always;
                     _scopeLens.Visible = true; _scopeWasOn = true;
                 }
