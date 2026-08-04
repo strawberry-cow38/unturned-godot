@@ -419,6 +419,7 @@ namespace UnturnedGodot
                         _scopeVp = new SubViewport { Size = new Vector2I(720, 720), RenderTargetUpdateMode = SubViewport.UpdateMode.Disabled, OwnWorld3D = false };   // NOT OwnWorld3D: that DUPLICATES the world (copies the sky env but a FRESH EMPTY scenario = no geometry -> lens shows only sky). Leave it false + bind World3D to the REAL main world below so the optic renders actual geometry. (This is a SEPARATE viewport from the arms _vp -- that one stays OwnWorld3D-isolated.)
                         AddChild(_scopeVp);
                         _scopeCam = new Camera3D { Current = true, Fov = 22.5f };   // retail scope fov = 90/Zoom; the aug scope is 4x (items_catalog: "Rail mounted 4x zoom scope") -> 90/4 = 22.5deg, not the 3.5x/25.7 I'd guessed
+                        _scopeCam.CullMask &= ~OutlineOverlay.OutlineLayer;   // don't render the look-focus outline SILHOUETTE meshes (layer 19) into the scope -- like the main cams cull them; else they draw as a SOLID tint over the whole object (master: "outlines turn the entire object that color in scope space")
                         _scopeVp.AddChild(_scopeCam);
                         // Match the PiP colors to the main cam (master: "a little blown-out"): the lens re-renders inside the arms
                         // viewport (_vp), which re-applies ACES -> the scope's already-tonemapped image gets tonemapped TWICE and
@@ -434,7 +435,7 @@ namespace UnturnedGodot
                         {
                             _scopeEnv = (Godot.Environment)_mainEnv.Duplicate();   // Duplicate() shares sub-resources (the Sky auto-updates); scalars (ambient/fog) synced each frame below (game only; the firetest env is static)
                             _scopeEnv.TonemapMode = Godot.Environment.ToneMapper.Linear;
-                            _scopeEnv.GlowEnabled = false;   // glow is the display viewport's post-pass; the scope render doesn't need it (and _vp would bloom the lens)
+                            _scopeEnv.GlowEnabled = _mainEnv.GlowEnabled;   // MATCH the main env's glow so emissive (streetlights/TV/signs) blooms in the scope too (master: "emissive textures do not render in scope space"); the lens is unshaded so _vp barely re-blooms it
                             _scopeCam.Environment = _scopeEnv;
                         }
                         // Round lens: the quad was only ever cropped round by the scope RING's aperture (far end). Inset in
@@ -883,6 +884,7 @@ namespace UnturnedGodot
             _scopeVp = new SubViewport { Size = new Vector2I(720, 720), RenderTargetUpdateMode = SubViewport.UpdateMode.Always, OwnWorld3D = false };   // OwnWorld3D=false -> renders the parent (main) world; built at _Ready so the render target initialises
             AddChild(_scopeVp);
             _scopeCam = new Camera3D { Current = true, Fov = 20f };
+            _scopeCam.CullMask &= ~OutlineOverlay.OutlineLayer;   // exclude the outline silhouette layer (19) -- else focus outlines tint the whole object in the scope (master)
             _scopeVp.AddChild(_scopeCam);
             _dnc = GetTree().GetFirstNodeInGroup("daynight") as DayNightCycle;
             Godot.Environment _mainEnv = _dnc?.Env;
@@ -1021,16 +1023,15 @@ namespace UnturnedGodot
                         _scopeEnv.FogLightColor = _me.FogLightColor; _scopeEnv.FogSkyAffect = _me.FogSkyAffect;
                     }
                     // PiP view from the scope's OBJECTIVE end, not the eye: map the anchor's pose (relative to the arms cam _cam) into the main world (relative to _main). Rides the gun's sway/recoil + looks down the barrel -> works at the hip too, not just ADS.
-                    // (b) ZEROING (master + tinyclaw): the scope cam stays at the objective (parallax) but AIMS at the point on
-                    // the BULLET ray (main cam fires from _main along -Z) at ScopeZeroDist, so the reticle = point of impact at
-                    // that range and drifts only slightly past it -- a real zeroed optic. (Merely pointing it PARALLEL to the aim
-                    // would leave a CONSTANT eye->objective offset that never converges.)
+                    // The scope cam RIGIDLY rides the scope's optical axis (master: "parent the camera to the scope itself").
+                    // _objPose is the objective anchor mapped VM->main world; its -Z already points downrange along the optic.
+                    // Using it AS the cam pose -- rather than LookingAt a fixed forward zero point -- means the PiP shows the
+                    // TRUE angle the scope points at all times (inspect, hip, sway, lean) for free, instead of snapping back to
+                    // the player's forward (the old bug: the glass showed a level forward view while the gun tilted away).
+                    // ADS still zeroes: aiming aligns the optic with the eye-line so the reticle (lens center) sits on the aim
+                    // point; the small height-over-bore drop is a reticle-offset follow-up, not a look-direction issue.
                     var _objPose = _main.GlobalTransform * (_cam.GlobalTransform.AffineInverse() * _scopeCamAnchor.GlobalTransform);
-                    var _zeroPt = _main.GlobalPosition + (-_main.GlobalTransform.Basis.Z) * ScopeZeroDist;
-                    // ROLL: use the SCOPE's own up-vector (from the mapped objective pose), not the main cam's, so the PiP
-                    // inherits the gun's rotation -- the view through the glass rolls/tilts with the weapon (sway, recoil,
-                    // lean) instead of staying artificially level (master: "make the scope camera read rotation as well").
-                    _scopeCam.GlobalTransform = _objPose.LookingAt(_zeroPt, _objPose.Basis.Y);   // objective position + scope's own roll, aimed at the zero point
+                    _scopeCam.GlobalTransform = _objPose;
                     _scopeVp.RenderTargetUpdateMode = SubViewport.UpdateMode.Always;
                     _scopeLens.Visible = true; _scopeWasOn = true;
                 }
