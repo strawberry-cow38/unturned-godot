@@ -802,7 +802,7 @@ namespace UnturnedGodot
             if (slot == "Sight")   // scopes/optics: dark SATIN METAL, not the light matte iron-sight gray (master: "proper dark-metal look")
             {
                 m.MaterialOverride = new StandardMaterial3D { CullMode = BaseMaterial3D.CullModeEnum.Disabled, AlbedoColor = new Color(0.06f, 0.065f, 0.075f), Metallic = 0.55f, MetallicSpecular = 0.5f, Roughness = 0.42f };
-                if (ScopeCal.TryGetValue(txtName, out var _sc)) ConfigureScopePiP(_sc.Lens, _sc.Obj, _sc.Fov, _sc.Size, txtName.Contains("shadowstalker") ? 4 : 12);   // magnifying scope -> point the pre-built rig at it (real PiP zoom); shadowstalker ocular = SQUARE (4 sides), others 12-gon; irons/red-dots -> no PiP
+                if (ScopeCal.TryGetValue(txtName, out var _sc)) ConfigureScopePiP(_sc.Lens, _sc.Obj, _sc.Fov, _sc.Size, _sc.Sides);   // magnifying scope -> point the pre-built rig at it (real PiP zoom); mask shape = the scope's measured internal-ring sides; irons/red-dots -> no PiP
             }
             m.Visible = true;
         }
@@ -812,19 +812,21 @@ namespace UnturnedGodot
         // chevron/shadowstalker) mount later via SetSlotMesh and call BuildScopePiP. Same two-render PiP as the aug: a 2nd
         // cam at the scope's OBJECTIVE renders the world at a narrow fov (90/zoom) into a RIGID lens quad at the OCULAR ring;
         // the generic block in _Process drives it (world-bind + linear env + objective zeroing). See reference_unturned_scope_pip.
-        struct ScopeC { public Vector3 Lens, Obj; public float Fov, Size; public ScopeC(Vector3 l, Vector3 o, float f, float s) { Lens = l; Obj = o; Fov = f; Size = s; } }
+        struct ScopeC { public Vector3 Lens, Obj; public float Fov, Size; public int Sides; public ScopeC(Vector3 l, Vector3 o, float f, float s, int sides) { Lens = l; Obj = o; Fov = f; Size = s; Sides = sides; } }
         static readonly System.Collections.Generic.Dictionary<string, ScopeC> ScopeCal = new()
         {
             // mesh -> (lens@ocular-ring, cam-anchor@objective, fov=90/zoom, lens-size=2*ocular-radius) -- MEASURED from each scope's .txt verts; zoom from the retail .dat.
             // lens at the NATURAL ocular ring (ymin+~0.008, muzzle-ward per master) -- the occluding Reticule face was removed
             // from the meshes so the lens no longer needs to sit eye-side of it; size ~= 2*ocular-radius to fill the ring.
-            { "scope_8x_sight.txt",            new ScopeC(new Vector3( 0f,      -0.364f, -0.1077f), new Vector3( 0f,       0.149f, -0.1072f), 11.25f, 0.120f) },   // 8x (glass sized to sit inside the bore -- master wants it SMALL)
-            { "scope_7x_sight.txt",            new ScopeC(new Vector3( 0f,      -0.364f, -0.0860f), new Vector3( 0f,       0.149f, -0.0858f), 12.86f, 0.087f) },   // 7x
-            { "scope_16x_sight.txt",           new ScopeC(new Vector3( 0f,      -0.364f, -0.1077f), new Vector3( 0f,       0.149f, -0.1072f),  5.63f, 0.120f) },   // 16x
-            { "makeshift_scope_sight.txt",     new ScopeC(new Vector3(-0.0021f, -0.374f, -0.1151f), new Vector3(-0.0021f,  0.120f, -0.1151f), 15.0f,  0.072f) },   // Makeshift 6x (re-extracted skipping the stray Reticule; center corrected)
-            { "cross_scope_sight.txt",         new ScopeC(new Vector3( 0f,      -0.347f, -0.0563f), new Vector3( 0f,      -0.148f, -0.0563f), 15.0f,  0.104f) },   // Cross 6x (Z center corrected -0.069->-0.056)
-            { "chevron_scope_sight.txt",       new ScopeC(new Vector3( 0f,      -0.355f, -0.0758f), new Vector3( 0f,      -0.110f, -0.0758f), 22.5f,  0.074f) },   // Chevron 4x (Z center corrected -0.091->-0.076)
-            { "shadowstalker_scope_sight.txt", new ScopeC(new Vector3( 0f,      -0.364f, -0.0927f), new Vector3( 0f,       0.149f, -0.0927f), 15.0f,  0.120f) },   // Shadowstalker 6x
+            // Sides = the scope's actual internal-ring shape, MEASURED per scope (master): tube scopes 12-gon,
+            // makeshift = HEXAGON (6), cross/chevron = 12, shadowstalker = SQUARE (4).
+            { "scope_8x_sight.txt",            new ScopeC(new Vector3( 0f,      -0.364f, -0.1077f), new Vector3( 0f,       0.149f, -0.1072f), 11.25f, 0.120f, 12) },   // 8x
+            { "scope_7x_sight.txt",            new ScopeC(new Vector3( 0f,      -0.364f, -0.0860f), new Vector3( 0f,       0.149f, -0.0858f), 12.86f, 0.087f, 12) },   // 7x
+            { "scope_16x_sight.txt",           new ScopeC(new Vector3( 0f,      -0.364f, -0.1077f), new Vector3( 0f,       0.149f, -0.1072f),  5.63f, 0.120f, 12) },   // 16x
+            { "makeshift_scope_sight.txt",     new ScopeC(new Vector3(-0.0021f, -0.374f, -0.1151f), new Vector3(-0.0021f,  0.120f, -0.1151f), 15.0f,  0.072f,  6) },   // Makeshift = HEXAGON (measured 6 verts at k*60deg)
+            { "cross_scope_sight.txt",         new ScopeC(new Vector3( 0f,      -0.347f, -0.0563f), new Vector3( 0f,      -0.148f, -0.0563f), 15.0f,  0.104f, 12) },   // Cross 12-gon
+            { "chevron_scope_sight.txt",       new ScopeC(new Vector3( 0f,      -0.355f, -0.0758f), new Vector3( 0f,      -0.110f, -0.0758f), 22.5f,  0.074f, 12) },   // Chevron 12-gon
+            { "shadowstalker_scope_sight.txt", new ScopeC(new Vector3( 0f,      -0.364f, -0.0927f), new Vector3( 0f,       0.149f, -0.0927f), 15.0f,  0.120f,  4) },   // Shadowstalker = SQUARE
         };
 
         // Build the PiP rig ONCE at gun-construction (_Ready) -- a SubViewport CREATED AT RUNTIME renders BLACK (its render
