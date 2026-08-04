@@ -439,6 +439,8 @@ namespace UnturnedGodot
                         var _cb = Basis.Identity; _cb.X = new Vector3(-1f, 0f, 0f); _cb.Y = new Vector3(0f, 0f, -1f); _cb.Z = new Vector3(0f, -1f, 0f);   // cam -Z=+Y (looks downrange), cam up +Y=-Z (gun up); right-handed (det +1, non-mirrored)
                         _scopeCamAnchor.Transform = new Transform3D(_cb, new Vector3(0f, 0.1932f, -0.0695f));
                     }   // per-gun sight mount (extracted); eaglefire/maplestrike keep the tuned hardcoded pos
+                    else if (ironMesh != null)   // non-aug scopable gun: pre-build the PiP rig NOW (at _Ready) so an attachment scope can Configure it on mount -- a runtime-CREATED viewport renders black
+                        EnsureScopeRig(mi.GetNodeOrNull<MeshInstance3D>("IronSights") ?? mi);
 
                     // Real default Magazine (item 6 = Military_30, GUID dbfb1d0d) — item.prefab Model_0 from
                     // core.masterbundle, converted (x,y,z)->(-x,y,-z). Mounted as Attachments.cs does
@@ -794,11 +796,96 @@ namespace UnturnedGodot
             if (!_attachMesh.TryGetValue(slot, out var n)) return;
             var m = _gun?.GetNodeOrNull<MeshInstance3D>(n);
             if (m == null) return;
+            if (slot == "Sight") HideScopePiP();   // deactivate any prior scope's PiP before the swap (change or detach)
             if (string.IsNullOrEmpty(txtName)) { m.Visible = false; return; }
             m.Mesh = ContentProvider.ParseObj($"res://content/{txtName}");
             if (slot == "Sight")   // scopes/optics: dark SATIN METAL, not the light matte iron-sight gray (master: "proper dark-metal look")
+            {
                 m.MaterialOverride = new StandardMaterial3D { CullMode = BaseMaterial3D.CullModeEnum.Disabled, AlbedoColor = new Color(0.06f, 0.065f, 0.075f), Metallic = 0.55f, MetallicSpecular = 0.5f, Roughness = 0.42f };
+                if (ScopeCal.TryGetValue(txtName, out var _sc)) ConfigureScopePiP(_sc.Lens, _sc.Obj, _sc.Fov, _sc.Size, txtName.Contains("shadowstalker") ? 4 : 12);   // magnifying scope -> point the pre-built rig at it (real PiP zoom); shadowstalker ocular = SQUARE (4 sides), others 12-gon; irons/red-dots -> no PiP
+            }
             m.Visible = true;
+        }
+
+        // ---- Generalized PiP scope (master: real zoom-THROUGH the attachment scopes, not the cheap fov-drop) ----
+        // The aug's INTEGRATED scope builds this inline (gun-construction); attachment scopes (8x/7x/16x/makeshift/cross/
+        // chevron/shadowstalker) mount later via SetSlotMesh and call BuildScopePiP. Same two-render PiP as the aug: a 2nd
+        // cam at the scope's OBJECTIVE renders the world at a narrow fov (90/zoom) into a RIGID lens quad at the OCULAR ring;
+        // the generic block in _Process drives it (world-bind + linear env + objective zeroing). See reference_unturned_scope_pip.
+        struct ScopeC { public Vector3 Lens, Obj; public float Fov, Size; public ScopeC(Vector3 l, Vector3 o, float f, float s) { Lens = l; Obj = o; Fov = f; Size = s; } }
+        static readonly System.Collections.Generic.Dictionary<string, ScopeC> ScopeCal = new()
+        {
+            // mesh -> (lens@ocular-ring, cam-anchor@objective, fov=90/zoom, lens-size=2*ocular-radius) -- MEASURED from each scope's .txt verts; zoom from the retail .dat.
+            // lens at the NATURAL ocular ring (ymin+~0.008, muzzle-ward per master) -- the occluding Reticule face was removed
+            // from the meshes so the lens no longer needs to sit eye-side of it; size ~= 2*ocular-radius to fill the ring.
+            { "scope_8x_sight.txt",            new ScopeC(new Vector3( 0f,      -0.364f, -0.1077f), new Vector3( 0f,       0.149f, -0.1072f), 11.25f, 0.120f) },   // 8x (glass sized to sit inside the bore -- master wants it SMALL)
+            { "scope_7x_sight.txt",            new ScopeC(new Vector3( 0f,      -0.364f, -0.0860f), new Vector3( 0f,       0.149f, -0.0858f), 12.86f, 0.087f) },   // 7x
+            { "scope_16x_sight.txt",           new ScopeC(new Vector3( 0f,      -0.364f, -0.1077f), new Vector3( 0f,       0.149f, -0.1072f),  5.63f, 0.120f) },   // 16x
+            { "makeshift_scope_sight.txt",     new ScopeC(new Vector3(-0.0015f, -0.374f, -0.1152f), new Vector3(-0.0018f,  0.120f, -0.1733f), 15.0f,  0.098f) },   // Makeshift 6x
+            { "cross_scope_sight.txt",         new ScopeC(new Vector3( 0f,      -0.347f, -0.0691f), new Vector3( 0f,      -0.148f, -0.0574f), 15.0f,  0.074f) },   // Cross 6x
+            { "chevron_scope_sight.txt",       new ScopeC(new Vector3( 0f,      -0.355f, -0.0908f), new Vector3( 0f,      -0.110f, -0.0989f), 22.5f,  0.086f) },   // Chevron 4x
+            { "shadowstalker_scope_sight.txt", new ScopeC(new Vector3( 0f,      -0.364f, -0.0927f), new Vector3( 0f,       0.149f, -0.0927f), 15.0f,  0.120f) },   // Shadowstalker 6x
+        };
+
+        // Build the PiP rig ONCE at gun-construction (_Ready) -- a SubViewport CREATED AT RUNTIME renders BLACK (its render
+        // target never inits like it does during the initial tree render), so the aug's inline PiP works but a runtime build
+        // does not. We pre-build the rig here (lens hidden, _isScope=false) and only RECONFIGURE it when a scope mounts.
+        void EnsureScopeRig(MeshInstance3D host)
+        {
+            if (_scopeVp != null && Godot.GodotObject.IsInstanceValid(_scopeVp)) return;   // once per gun
+            _scopeVp = new SubViewport { Size = new Vector2I(720, 720), RenderTargetUpdateMode = SubViewport.UpdateMode.Always, OwnWorld3D = false };   // OwnWorld3D=false -> renders the parent (main) world; built at _Ready so the render target initialises
+            AddChild(_scopeVp);
+            _scopeCam = new Camera3D { Current = true, Fov = 20f };
+            _scopeVp.AddChild(_scopeCam);
+            _dnc = GetTree().GetFirstNodeInGroup("daynight") as DayNightCycle;
+            Godot.Environment _mainEnv = _dnc?.Env;
+            if (_mainEnv == null)   // no day/night (firetest/vm harness): find the main WorldEnvironment (skip the arms _vpEnv)
+                foreach (var _n in GetTree().Root.FindChildren("*", "WorldEnvironment", true, false))
+                    if (_n is WorldEnvironment _we && _we.Environment != null && _we.Environment != _vpEnv) { _mainEnv = _we.Environment; break; }
+            if (_mainEnv != null)
+            {
+                _scopeEnv = (Godot.Environment)_mainEnv.Duplicate();   // LINEAR copy so the lens isn't double-tonemapped by _vp's ACES (Sky is a shared sub-resource -> auto-syncs)
+                _scopeEnv.TonemapMode = Godot.Environment.ToneMapper.Linear;
+                _scopeEnv.GlowEnabled = false;
+                _scopeCam.Environment = _scopeEnv;
+            }
+            var lensShader = new Shader { Code =   // mask SHAPE per scope via u_seg/u_rot uniforms: 12-gon default (seg=2pi/12, rot=15deg), square=4 (seg=pi/2, rot=0). Set in ConfigureScopePiP. Reticle can diverge later.
+                "shader_type spatial;\n" +
+                "render_mode unshaded, cull_disabled, shadows_disabled;\n" +
+                "uniform sampler2D scope_tex : source_color, filter_linear;\n" +
+                "uniform float u_seg = 0.5235988;\n" +
+                "uniform float u_rot = 0.2618;\n" +
+                "void fragment() { vec2 p = (UV - vec2(0.5)) * 2.0; float a = atan(p.y, p.x) + u_rot; float dd = cos(floor(0.5 + a/u_seg) * u_seg - a) * length(p); if (dd > 0.95) discard; vec3 col = texture(scope_tex, UV).rgb; float r = length(p); bool cx = (abs(p.x) < 0.005 || abs(p.y) < 0.005) && r > 0.067; bool dn = abs(r - 0.05) < 0.017; if (cx || dn) col = vec3(0.0); ALBEDO = col; }\n" };
+            var lensMat = new ShaderMaterial { Shader = lensShader };
+            lensMat.SetShaderParameter("scope_tex", _scopeVp.GetTexture());
+            var _lb = Basis.Identity; _lb.X = new Vector3(-1f, 0f, 0f); _lb.Y = new Vector3(0f, 0f, -1f); _lb.Z = new Vector3(0f, -1f, 0f);   // RIGID, perpendicular to the barrel
+            _scopeLens = new MeshInstance3D { Name = "ScopeLens", Mesh = new QuadMesh { Size = new Vector2(0.1f, 0.1f) }, MaterialOverride = lensMat, Visible = false, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off };
+            host.AddChild(_scopeLens);
+            _scopeLens.Basis = _lb;
+            _scopeCamAnchor = new Node3D { Name = "ScopeCamAnchor" };
+            host.AddChild(_scopeCamAnchor);
+            var _cb = Basis.Identity; _cb.X = new Vector3(-1f, 0f, 0f); _cb.Y = new Vector3(0f, 0f, -1f); _cb.Z = new Vector3(0f, -1f, 0f);
+            _scopeCamAnchor.Basis = _cb;
+            // _isScope stays FALSE -> the _Process PiP block is inactive + the lens hidden until a scope Configures it on.
+        }
+
+        // Point the pre-built rig at a specific scope (mesh's measured ocular/objective + fov=90/zoom + lens size). Called on mount.
+        void ConfigureScopePiP(Vector3 lensLocal, Vector3 objLocal, float fov, float lensSize, int sides)
+        {
+            if (_scopeVp == null || !Godot.GodotObject.IsInstanceValid(_scopeLens)) return;   // gun has no rig
+            _scopeLens.Mesh = new QuadMesh { Size = new Vector2(lensSize, lensSize) };
+            _scopeLens.Position = lensLocal;
+            _scopeCam.Fov = fov;
+            _scopeCamAnchor.Position = objLocal;
+            if (_scopeLens.MaterialOverride is ShaderMaterial _sm)   // mask shape to match the scope's ocular: 4=square (verts on the diagonals), else N-gon (rot puts a vertex up)
+            { _sm.SetShaderParameter("u_seg", 2f * Mathf.Pi / sides); _sm.SetShaderParameter("u_rot", sides == 4 ? 0f : Mathf.Pi / sides); }
+            _isScope = true;
+        }
+
+        void HideScopePiP()   // scope removed/swapped: deactivate + hide the lens; the rig stays built (rebuilding it at runtime renders black)
+        {
+            _isScope = false; _scopeWasOn = false;
+            if (_scopeLens != null && Godot.GodotObject.IsInstanceValid(_scopeLens)) _scopeLens.Visible = false;
         }
 
         // Attachment hook positions on the gun (port frame, from the source prefab's Sight/Tactical/Barrel/Grip/Magazine
