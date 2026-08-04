@@ -1694,7 +1694,7 @@ namespace UnturnedGodot
         // Scope (PiP): the ScopeOverlay reads these each frame -- the look camera's ADS blend and the per-gun
         // magnification (>1 only for the augewehr for now; scoped view only renders while a scope gun is aimed).
         public float CurrentAimAlpha => _viewmodel?.AimAlpha ?? 0f;
-        public float ScopeMag => (HasGunOut && _viewmodel?.GunName == "augewehr") ? 4f : 0f;   // aug is a 4x scope (fov 22.5 = 90/4)
+        public float ScopeMag => HasGunOut ? (_viewmodel?.ScopeZoom ?? 0f) : 0f;   // the MOUNTED scope's real zoom (aug 4x, 8x, 16x...); 0 = iron/red-dot -> ADS sens drops as 1/zoom
 
         // Equip a consumable to the hands from the inventory: hold its model; LMB to eat/drink.
         // captureRevert=false only for the auto-re-equip of the NEXT of the same stack (keeps the original revert target).
