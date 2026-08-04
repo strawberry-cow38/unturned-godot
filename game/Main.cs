@@ -33,6 +33,7 @@ namespace UnturnedGodot
             string key = System.Text.RegularExpressions.Regex.Replace(folder, "[^A-Za-z0-9]", "");
             _mapPlace = folder == "PEI" ? "placements.txt" : "placements_" + key + ".txt";
             MapNodes.MapNodeFile = folder == "PEI" ? "nodes.tsv" : "nodes_" + key + ".tsv";
+            MapUI.MapFolder = folder;   // in-game M-map: image + level-size + label follow the map
         }
         int _frame;
         MainMenu _menuShotMenu; string _menuShotDir; int _menuShotIdx;   // --menushot=DIR: render the 3D barn menu + capture each camera anchor
@@ -158,6 +159,7 @@ namespace UnturnedGodot
                     string key = System.Text.RegularExpressions.Regex.Replace(mn, "[^A-Za-z0-9]", "");
                     _mapPlace = mn == "PEI" ? "placements.txt" : "placements_" + key + ".txt";
                     MapNodes.MapNodeFile = mn == "PEI" ? "nodes.tsv" : "nodes_" + key + ".tsv";   // named-location file follows the map (Level.hierarchy locations for modern maps)
+                    MapUI.MapFolder = mn;
                 }
                 else if (arg == "--peiplay") peiplay = true;     // player standing/walking on real PEI terrain (with colliders)
                 else if (arg == "--invdemo") invdemo = true;
@@ -187,6 +189,7 @@ namespace UnturnedGodot
                 string ugKey = System.Text.RegularExpressions.Regex.Replace(ugMap, "[^A-Za-z0-9]", "");
                 _mapPlace = ugMap == "PEI" ? "placements.txt" : "placements_" + ugKey + ".txt";
                 MapNodes.MapNodeFile = ugMap == "PEI" ? "nodes.tsv" : "nodes_" + ugKey + ".tsv";
+                MapUI.MapFolder = ugMap;
             }
 
             if (hurtdemo)   // first-person: a zombie hits the player so the hurt flash + camera flinch are visible

@@ -13,7 +13,15 @@ namespace UnturnedGodot
     public partial class MapUI : CanvasLayer
     {
         public PlayerController Player;
-        const float LevelSize = 1920f;   // PEI MEDIUM: 2048 - 2*64
+        // MAP-AWARE (was PEI-hardcoded): Main sets MapFolder when it resolves the map, and the image / level-size /
+        // label all follow. levelSize = ELevelSize SIZE - 2*BORDER (source Level.cs): PEI MEDIUM 2048-128=1920,
+        // Washington LARGE 4096-128=3968. The town dots come from MapNodes, which is already map-aware.
+        public static string MapFolder = "PEI";
+        static (string img, float size, string label) Info() => MapFolder switch
+        {
+            "Washington" => ("washington_map.png", 3968f, "Washington"),
+            _            => ("pei_map.png",        1920f, "PEI"),
+        };
 
         Control _root;
         TextureRect _map;    // Map.png, square + centered
@@ -85,7 +93,7 @@ namespace UnturnedGodot
             var pos = Player.GlobalPosition;
             _arrow.Position = WorldToNorm(pos) * _map.Size;
             _arrow.Rotation = Player.MapFacingAngle();
-            _coord.Text = $"PEI    X {pos.X:0}  Z {pos.Z:0}    (M / Esc to close)";
+            _coord.Text = $"{Info().label}    X {pos.X:0}  Z {pos.Z:0}    (M / Esc to close)";
         }
 
         public override void _Input(InputEvent e)
@@ -104,12 +112,12 @@ namespace UnturnedGodot
         void Open() { _root.Visible = true; Layout(); Input.MouseMode = Input.MouseModeEnum.Visible; }
         void Close() { _root.Visible = false; Input.MouseMode = Input.MouseModeEnum.Captured; }
 
-        static Vector2 WorldToNorm(Vector3 p) => new Vector2(p.X / LevelSize + 0.5f, 0.5f + p.Z / LevelSize);
+        static Vector2 WorldToNorm(Vector3 p) { float ls = Info().size; return new Vector2(p.X / ls + 0.5f, 0.5f + p.Z / ls); }
 
         static Texture2D LoadMap()
         {
-            string p = ProjectSettings.GlobalizePath("res://content/pei_map.png");
-            if (!System.IO.File.Exists(p)) { GD.Print("[map] missing content/pei_map.png"); return null; }
+            string p = ProjectSettings.GlobalizePath("res://content/" + Info().img);
+            if (!System.IO.File.Exists(p)) { GD.Print($"[map] missing content/{Info().img}"); return null; }
             var img = Image.LoadFromFile(p);
             return img == null ? null : ImageTexture.CreateFromImage(img);
         }
