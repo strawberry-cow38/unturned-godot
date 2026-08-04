@@ -199,6 +199,15 @@ namespace UnturnedGodot
             { 17,  "military_30_mag.txt" },         // Military Drum (stand-in: same family, no drum rip)
             { 21,  "red_kobra_sight.txt" },         // 8x Scope
             { 22,  "red_halo_sight.txt" },          // Cross Scope
+            // The three mags added for the group-1 split. Master asked for them to be VISUALLY IDENTICAL to the
+            // STANAG one, so they deliberately share its mesh -- the difference is which gun accepts them, not what
+            // they look like. Reusing the mesh is the requirement here, not a missing-rip stand-in.
+            // IDs are 9140+, NOT 9110-9112: those are already the Fluid Tank / Water Source / Splitter, and the
+            // later Add() calls silently overwrote the magazines registered under them.
+            { 9140, "military_30_mag.txt" },        // Augewehr Magazine (group 201)
+            { 9141, "military_30_mag.txt" },        // Nightraider Magazine (group 202)
+            { 9142, "military_30_mag.txt" },        // .300 Blackout Magazine (group 1, different round)
+            { 9143, "military_30_mag.txt" },        // Heartbreaker Magazine (group 203, clone of the M39's)
         };
     }
 }

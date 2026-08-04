@@ -16,7 +16,21 @@ namespace SDG.Unturned
             //  id   name            sx sy  type                 rarity               storage   description (real, from English.dat)
             Add(4,   "Eaglefire",     4, 2, EItemType.GUN,      EItemRarity.RARE,      0, 0, "American assault rifle chambered in Military ammunition.", gun: "eaglefire");
             Add(363, "Maplestrike",   4, 2, EItemType.GUN,      EItemRarity.EPIC,      0, 0, "Canadian assault rifle chambered in Military ammunition.", gun: "maplestrike");
-            Add(6,   "Military Magazine", 2, 1, EItemType.MAGAZINE, EItemRarity.UNCOMMON, 0, 0, "Standard STANAG magazine for Military rifles.", magCap: 30, magCal: 1);   // the eaglefire/maplestrike mag (caliber 1); 2x1 per master (was hardcoded 1x3, overriding the catalog)
+            Add(6,   "Military Magazine", 2, 1, EItemType.MAGAZINE, EItemRarity.UNCOMMON, 0, 0, "Standard STANAG magazine for Military rifles.", magCap: 30, magCal: 1, magRound: "5.56x45mm NATO");   // the eaglefire/maplestrike mag (caliber 1); 2x1 per master (was hardcoded 1x3, overriding the catalog)
+            // .300 BLK in a STANAG body: same group 1, so it physically seats in every group-1 rifle, but a different
+            // round. This pair is the whole reason magRound exists -- with only one STANAG mag the flag has a single
+            // value and can never be wrong, which is not a test of anything.
+            Add(9142, ".300 Blackout Magazine", 2, 1, EItemType.MAGAZINE, EItemRarity.RARE, 0, 0, "STANAG-pattern magazine loaded with subsonic .300 Blackout.", magCap: 30, magCal: 1, magRound: ".300 AAC Blackout");
+            // The AUG and the G36 do NOT take STANAG (master). Retail points both at 123 "Ranger Magazine", which
+            // would still have them sharing; master asked for one apiece, cross-compatible with nothing, so these are
+            // ours. IDs sit above the retail range like the splitters at 9101-9103. Groups 201/202 likewise -- clearly
+            // not retail-extracted numbers. Visually identical to the STANAG mag per master (same mesh in AttachmentFit).
+            Add(9140, "Augewehr Magazine", 2, 1, EItemType.MAGAZINE, EItemRarity.UNCOMMON, 0, 0, "Proprietary AUG magazine. Does not interchange with STANAG.", magCap: 30, magCal: 201, magRound: "5.56x45mm NATO");
+            Add(9141, "Nightraider Magazine", 2, 1, EItemType.MAGAZINE, EItemRarity.UNCOMMON, 0, 0, "Proprietary G36 magazine. Does not interchange with STANAG.", magCap: 30, magCal: 202, magRound: "5.56x45mm NATO");
+            // SCAR-H box: a CLONE of the M39's 20-round 7.62 mag that deliberately will not interchange with it
+            // (master: "split scar and m39 mags into clones of eachother that arent compatible. realism."). Identical
+            // capacity, round and mesh; different group, which is the only thing that decides fit.
+            Add(9143, "Heartbreaker Magazine", 2, 1, EItemType.MAGAZINE, EItemRarity.UNCOMMON, 0, 0, "Proprietary SCAR-H magazine. Does not interchange with the M39's.", magCap: 20, magCal: 203, magRound: "7.62x51mm NATO");
             Add(253, "Alicepack",     2, 2, EItemType.BACKPACK, EItemRarity.EPIC,      8, 7, "Large sized military cargo backpack.");
             Add(209, "Cargo Pants",   2, 2, EItemType.PANTS,    EItemRarity.UNCOMMON,  6, 3, "High capacity synthetic pants for all weather.");
             // consumables also carry their real ItemConsumeableAsset effects (Health / Food / Water / Bleeding heal)
@@ -59,6 +73,7 @@ namespace SDG.Unturned
             WireClothingArmor();
             WireConsumableStats();
             WireShotgunShells();
+            WireMagazines();
             WireFuelCans();
             WireFluidContainers();
         }
@@ -130,6 +145,25 @@ namespace SDG.Unturned
         // Load real ItemConsumeableAsset effects (content/consumable_stats.tsv: id health food water virus disinfectant
         // energy bleeding bones) onto every Food/Water/Medical item -- so the WHOLE catalog is consumable, not just the
         // 8 hardcoded above. Overwrites the hardcoded 8 with the same authoritative .dat values. bleeding/bones: 1=Heal.
+        // Per-gun magazines that load from items_catalog.tsv as type Magazine but arrive INERT: the TSV carries no
+        // capacity or caliber, and only Add() and Shell() ever set those, so magCapacity stays 0 and IsMagazine
+        // (magCapacity > 0) is false. 59 magazine items are in the TSV and exactly one of them -- the Military
+        // Magazine, hand-Add()ed above -- actually functions. That is why the sabertooth had no working magazine
+        // despite naming one in its .dat: the item exists, has the right name, shows the right icon, and is not a
+        // magazine. Wire the ones a gun actually points at here.
+        static void WireMagazines()
+        {
+            void Mag(ushort id, int cap, int cal, string round)
+            {
+                var a = Assets.find(id);
+                if (a == null) return;
+                a.magCapacity = cap; a.magCaliber = cal; a.magRound = round;
+            }
+            // M39 EMR's 20-round box. The SCAR-H's (9143) is a deliberate clone in its own group -- same capacity,
+            // same round, same mesh, will not seat in the other rifle.
+            Mag(1020, 20, 22, "7.62x51mm NATO");
+        }
+
         static void WireConsumableStats()
         {
             const string path = "res://content/consumable_stats.tsv";
@@ -298,12 +332,13 @@ namespace SDG.Unturned
         };
 
         static void Add(ushort id, string name, byte sx, byte sy, EItemType type, EItemRarity rar, byte w, byte h, string desc,
-                        int uh = 0, int uf = 0, int uw = 0, bool ub = false, bool hb = false, string gun = null, int magCap = 0, int magCal = 0)
+                        int uh = 0, int uf = 0, int uw = 0, bool ub = false, bool hb = false, string gun = null, int magCap = 0, int magCal = 0,
+                        string magRound = null)
         {
             Assets.add(new ItemAsset { id = id, itemName = name, size_x = sx, size_y = sy, type = type, rarity = rar,
                                        width = w, height = h, description = desc,
                                        useHealth = uh, useFood = uf, useWater = uw, useStopsBleeding = ub, useHealBroken = hb, gunName = gun,
-                                       magCapacity = magCap, magCaliber = magCal });
+                                       magCapacity = magCap, magCaliber = magCal, magRound = magRound });
         }
     }
 }

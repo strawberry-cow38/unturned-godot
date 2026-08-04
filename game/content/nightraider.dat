@@ -11,7 +11,7 @@ Size_Z 0.35
 Size2_Z 0.55
 
 Sight 1378
-Magazine 6
+Magazine 9141
 Magazine_Replacements 1
 Magazine_Replacement_0_Map Germany
 Magazine_Replacement_0_ID 6
@@ -36,7 +36,7 @@ Magazine_Calibers 2
 Magazine_Caliber_0 9
 Magazine_Caliber_1 1
 
-Caliber 1
+Caliber 202
 Caliber_Name "5.56x45mm NATO"
 Real_Weapon "Heckler & Koch G36C"
 Range 200

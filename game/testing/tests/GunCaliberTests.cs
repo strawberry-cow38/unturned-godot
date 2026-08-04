@@ -88,6 +88,71 @@ namespace UnturnedGodot.Testing
             T.Check($"...the same shell as the masterkey it is sawn from ({mk.Pellets} vs {so.Pellets}, {mk.CaliberName})",
                 so.Pellets == mk.Pellets && so.CaliberName == mk.CaliberName);
 
+            // 5b. THE GROUP-1 SPLIT (master: "the stanag mag group needs to be split up anyway as the aug and g36
+            //     dont take stanag mags ... their own unique magazines that arent cross compatible with any other
+            //     weapons").
+            ItemCatalog.RegisterAll();
+            var grp = new Dictionary<int, List<string>>();
+            foreach (var g in guns)
+            {
+                int c = Def(dir, g).Caliber;
+                if (!grp.TryGetValue(c, out var l)) grp[c] = l = new List<string>();
+                l.Add(g);
+            }
+            grp.TryGetValue(1, out var stanag);
+            stanag ??= new List<string>();
+            stanag.Sort();
+            // Group 1 is now STANAG-and-only-STANAG: two 5.56 rifles plus the .300 BLK that genuinely feeds from one.
+            T.Check($"group 1 is real STANAG only ({string.Join(",", stanag)})",
+                stanag.Count == 3 && stanag.Contains("eaglefire") && stanag.Contains("maplestrike") && stanag.Contains("honeybadger"));
+            foreach (var g in new[] { "augewehr", "nightraider", "heartbreaker" })
+                T.Check($"{g} is out of the STANAG group (now {Def(dir, g).Caliber})", !stanag.Contains(g));
+
+            // The AUG and G36 groups must contain exactly one gun each -- "cross compatible with any other weapons"
+            // is the requirement, so a count of 1 IS the assertion, not a proxy for it.
+            foreach (var g in new[] { "augewehr", "nightraider" })
+            {
+                int c = Def(dir, g).Caliber;
+                T.Check($"{g}'s group {c} is his alone ({string.Join(",", grp[c])})", grp[c].Count == 1);
+            }
+
+            // SCAR-H and M39: CLONES that do not interchange (master's correction -- "split scar and m39 mags into
+            // clones of eachother that arent compatible. realism."). Same cartridge, same capacity, same mesh, and
+            // deliberately different groups. Asserting both halves matters: identical-in-every-way is the easy half
+            // to get right and the incompatibility is the half a "share the mag" refactor would quietly undo.
+            var scar = Def(dir, "heartbreaker");
+            var m39 = Def(dir, "sabertooth");
+            var scarMag = Assets.find((ushort)scar.MagazineId);
+            var m39Mag = Assets.find((ushort)m39.MagazineId);
+            T.Check($"SCAR + M39 are on the same cartridge ({scar.CaliberName})", scar.CaliberName == m39.CaliberName);
+            T.Check($"...their mags are clones (cap {scarMag?.magCapacity} vs {m39Mag?.magCapacity}, round {scarMag?.magRound})",
+                scarMag != null && m39Mag != null && scarMag.magCapacity == m39Mag.magCapacity && scarMag.magRound == m39Mag.magRound);
+            T.Check($"...but do NOT interchange (grp {scar.Caliber} vs {m39.Caliber}, mag {scar.MagazineId} vs {m39.MagazineId})",
+                scar.Caliber != m39.Caliber && scar.MagazineId != m39.MagazineId);
+            T.Check($"...and neither mag fits the other's rifle",
+                scarMag.magCaliber != m39.Caliber && m39Mag.magCaliber != scar.Caliber);
+
+            // 5c. Every gun touched here points at a magazine that is ACTUALLY a magazine and actually fits it.
+            //     A TSV magazine arrives with magCapacity 0, so it has the right name and icon and silently is not a
+            //     magazine -- which is exactly how the sabertooth shipped. Capacity>0 is the real test, not non-null.
+            foreach (var g in new[] { "eaglefire", "maplestrike", "honeybadger", "augewehr", "nightraider", "heartbreaker", "sabertooth" })
+            {
+                var d = Def(dir, g);
+                var a = Assets.find((ushort)d.MagazineId);
+                T.Check($"{g}'s mag {d.MagazineId} is a functioning magazine (cap {a?.magCapacity ?? -1})", a != null && a.IsMagazine);
+                T.Check($"...and fits it (mag cal {a?.magCaliber ?? -1} vs gun {d.Caliber})", a != null && a.magCaliber == d.Caliber);
+            }
+
+            // 5d. The .300 BLK flag: same group, same mesh, different round. Without both values present the flag
+            //     can never disagree with anything and proves nothing.
+            var mil = Assets.find(6);
+            var blk = Assets.find(9142);
+            T.Check($"the .300 mag shares STANAG group 1 ({blk?.magCaliber})", blk != null && blk.magCaliber == 1 && mil.magCaliber == 1);
+            T.Check($"...but is flagged a different round ({mil?.magRound} vs {blk?.magRound})",
+                !string.IsNullOrEmpty(mil?.magRound) && !string.IsNullOrEmpty(blk?.magRound) && mil.magRound != blk.magRound);
+            T.Check($"honeybadger defaults to the .300 mag ({Def(dir, "honeybadger").MagazineId})",
+                Def(dir, "honeybadger").MagazineId == 9142);
+
             // 6. Firerate stays a positive tick count after the ROF pass -- a zero or negative here divides by zero in
             //    the shot cooldown, and the retune touched nine guns.
             var badFr = new List<string>();

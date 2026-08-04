@@ -68,6 +68,12 @@ namespace SDG.Unturned
         // magCaliber == GunDef.Caliber. magCapacity = max rounds (0 = not a magazine). (Military STANAG = cap 30, caliber 1.)
         public int magCapacity;
         public int magCaliber;
+        // WHICH ROUND this magazine is loaded with, distinct from magCaliber above (which is the mechanical
+        // "does this mag fit that gun" group). The two differ precisely where a magazine body feeds more than one
+        // cartridge: a STANAG mag physically fits every group-1 rifle, but a .300 BLK one must not chamber in a
+        // 5.56 gun. master: "give stanag mags a flag for 300blk vs 5.56, we'll handle that when we get to
+        // reloading" -- so this is carried and asserted, and no reload code reads it yet.
+        public string magRound;
         public bool IsMagazine => magCapacity > 0;
         public float fuelCapacity;              // Fuel-type container (gas can): max fuel it holds (retail .dat "Fuel", e.g. Portable 500). 0 = not a fuel can.
         public bool IsFuelContainer => fuelCapacity > 0f;
