@@ -43,7 +43,7 @@ namespace UnturnedGodot
         AudioStreamPlayer3D _onClick, _offClick; // one-shot turn-on / turn-off clicks
 
         // tunable brightness (env overrides so the visual can be dialed in from a render without a rebuild)
-        float _emitEnergy = EnvF("UG_TV_EMIT", 0.4f);    // screen emissive multiplier -- low so the SMPTE colours read instead of clipping to white under bloom (render-verified); env-tunable
+        float _emitEnergy = EnvF("UG_TV_EMIT", 1.0f);    // screen brightness -> AlbedoColor on an UNSHADED material. 1.0 = the SMPTE texture at face value, which is the point: no lighting term can shift the bars any more. >1 pushes it into bloom. (Was 0.4 as an emission multiplier back when the screen was lit and needed holding down to stop it clipping white.)
         float _lightEnergy = EnvF("UG_TV_LIGHT", 0.6f);  // forward spill energy
 
         // CRT warmup: WarmDelay dead, then _warm ramps 0->1 over WarmDur, scaling emissive + light.
@@ -77,13 +77,19 @@ namespace UnturnedGodot
             var pattern = LoadPattern();
             var projected = Reproject(screenMesh, body.GetAabb().GetCenter());   // one-texel UVs -> planar 0..1 fill
 
-            _screenMat = new StandardMaterial3D
-            {
-                AlbedoTexture = pattern,
-                EmissionEnabled = true, EmissionTexture = pattern, Emission = Colors.White, EmissionEnergyMultiplier = _emitEnergy,
-                TextureFilter = BaseMaterial3D.TextureFilterEnum.Linear,          // SMPTE is a real image, not a palette texel
-                CullMode = BaseMaterial3D.CullModeEnum.Disabled,                  // ripped mesh: winding may face either way
-            };
+            // UNSHADED (master: "make the light they emit not reflect on the screen, bc its washing out the colors").
+            // The screen used to be a normal lit material carrying BOTH albedo and emission, with the TV's own
+            // OmniLight sitting 0.3m in front of it -- so every TV was lighting its own screen, and the diffuse term
+            // pushed the SMPTE bars toward white. A screen is a light SOURCE, not a lit surface, so it should take no
+            // lighting at all. Unshaded also makes the fix total rather than a tuning exercise: no light in the world
+            // can wash it out, not the TV's own spill, not the sun through a window, not a torch in your hand.
+            //
+            // Unshaded outputs ALBEDO directly and ignores the emission slot, so brightness now rides AlbedoColor
+            // instead of EmissionEnergyMultiplier. That is also what gives the CRT its fade: lerping this from black
+            // fades THE TEXTURE ITSELF up, rather than dimming a light over an already-visible picture (master: "on
+            // crts the texture itself should fade in from black"). Values above 1 still bloom, same trick the tracer
+            // and muzzle-flash materials use.
+            _screenMat = MakeScreenMaterial(pattern);
             _screen = new MeshInstance3D { Mesh = projected, MaterialOverride = _screenMat, Visible = false, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off };
             AddChild(_screen);
 
@@ -214,7 +220,9 @@ namespace UnturnedGodot
         void ApplyLevels()
         {
             float k = _isCrt ? _warm : 1f;
-            if (_screenMat != null) _screenMat.EmissionEnergyMultiplier = _emitEnergy * k;
+            // The CRT's fade is now IN THE TEXTURE: albedo lerps up from black, so the picture itself resolves out of
+            // a dark tube instead of a fully-drawn image being dimmed. On the flatscreen k is 1 and it snaps.
+            if (_screenMat != null) _screenMat.AlbedoColor = ScreenColor(_emitEnergy * k);
             if (_light != null) _light.LightEnergy = _lightEnergy * k;
         }
 
@@ -236,7 +244,29 @@ namespace UnturnedGodot
         }
 
         // ---- render-harness / test seams ------------------------------------------------------------------------
+        /// <summary>The screen material, built here rather than inline so the two properties the washout fix depends
+        /// on are reachable without an Unturned install (the Television meshes ship with the game, so TVDevice.Make
+        /// cannot run on a box without one -- and neither can a render).</summary>
+        internal static StandardMaterial3D MakeScreenMaterial(Texture2D pattern) => new()
+        {
+            ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
+            AlbedoTexture = pattern,
+            AlbedoColor = Colors.Black,                                       // starts dark; ApplyLevels raises it
+            TextureFilter = BaseMaterial3D.TextureFilterEnum.Linear,          // SMPTE is a real image, not a palette texel
+            CullMode = BaseMaterial3D.CullModeEnum.Disabled,                  // ripped mesh: winding may face either way
+        };
+
+        /// <summary>Screen brightness -> AlbedoColor. Grey, so the SMPTE bars keep their own hues and only their
+        /// level moves; black at 0 is what makes the CRT warmup a fade of the picture itself.</summary>
+        internal static Color ScreenColor(float brightness) => new Color(brightness, brightness, brightness);
+
         public bool DebugScreenOk => _screen != null;
+        /// <summary>Is the screen taking NO lighting? The washout fix depends on this being true, and it is the kind
+        /// of property that a screenshot cannot distinguish from "the light happens to be dim right now".</summary>
+        public bool DebugScreenUnshaded => _screenMat != null && _screenMat.ShadingMode == BaseMaterial3D.ShadingModeEnum.Unshaded;
+        /// <summary>Screen brightness as actually applied (AlbedoColor). 0 = black tube, _emitEnergy = full picture.</summary>
+        public float DebugScreenBrightness => _screenMat?.AlbedoColor.R ?? -1f;
+        public bool DebugIsCrt => _isCrt;
         public Vector3 DebugScreenCenterWorld => ToGlobal(_screenCenterLocal);
         public Vector3 DebugScreenNormalWorld => (GlobalTransform.Basis.Orthonormalized() * _screenNormalLocal).Normalized();
         /// <summary>Force the TV on for a render. instant=true skips the CRT warmup so a single captured frame is
