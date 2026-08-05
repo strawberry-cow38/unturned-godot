@@ -299,8 +299,13 @@ namespace UnturnedGodot
             if (!_dead && _driving == null && _riding == null && _cam != null && Input.MouseMode == Input.MouseModeEnum.Captured)
             {
                 var space = GetWorld3D().DirectSpaceState;
-                Vector3 from = _cam.GlobalPosition;
-                Vector3 fwd = -_cam.GlobalTransform.Basis.Z;
+                // THIRD person traces from the SHOULDER, straight down the look axis (strawberry) -- see ShoulderWorld
+                // for why the camera is not a place a person can see from. FIRST person keeps the existing focus point
+                // (strawberry: "in 1p use the exiating focus point"), and that split is the right one: in first person
+                // the camera IS the eye, so the old origin was already correct, and moving it to the shoulder would
+                // have bought nothing but 0.2 m of parallax between the crosshair and whatever lights up.
+                var (from, fwd) = LookTrace();
+                DebugLookOrigin = from; DebugLookDir = fwd;
                 // 1) ray forward -> the sphere sits where the ray STOPS (on world/props/items/vehicles, or max reach).
                 // Query objects are REUSED across frames (they were alloc'd fresh every frame -> GC pressure = the "dips") -- master.
                 _lookExclude ??= new Godot.Collections.Array<Rid> { GetRid() };
@@ -5161,6 +5166,50 @@ namespace UnturnedGodot
         /// cannot quietly agree with a broken origin by deriving it the same wrong way.</summary>
         public Vector3 DebugLastShotOrigin { get; private set; }
         public Vector3 DebugLastShotDir { get; private set; }
+
+        /// <summary>Where the interaction trace actually started this frame. Recorded in UpdateLookFocus for the same
+        /// reason as the shot seam: a test that recomputes the origin agrees with a wrong one. Only written while the
+        /// mouse is captured, since that is the only time UpdateLookFocus runs -- use LookTrace() to ask directly.</summary>
+        public Vector3 DebugLookOrigin { get; private set; }
+        public Vector3 DebugLookDir { get; private set; }
+
+        /// <summary>Where the interaction ray starts and which way it points. THE production selector, called by
+        /// UpdateLookFocus -- exposed so a test can ask it rather than restate it, because a restated rule agrees with
+        /// itself whichever one of them is wrong.</summary>
+        public (Vector3 From, Vector3 Dir) LookTrace()
+            => _fp && _cam != null ? (_cam.GlobalPosition, -_cam.GlobalTransform.Basis.Z)
+                                   : (ShoulderWorld, LookAxis);
+
+        // ---- THE SHOULDER the interaction trace comes off (strawberry: "base the interaction lookatradius sphere off a
+        // straight line based off the relevant lean shoulder (right shoulder is default if none held)").
+        //
+        // The point is line of sight from the BODY. The camera is not a place a person can see from -- in third person
+        // it floats 2 m behind you and reaches through walls you are stood against, and even in first person it is a
+        // point in the middle of your skull. Tracing from the shoulder you are actually peeking with means leaning
+        // round a corner is what buys you the interaction, exactly as it buys you the shot.
+        internal const float ShoulderOutX = 0.2f;    // lateral from the centreline
+        internal const float ShoulderDropY = 0.25f;  // below the eyes -- a shoulder is not level with your eyeline
+
+        /// <summary>-1 = left shoulder, +1 = right. Follows the LEAN, and defaults to the right when you are not
+        /// leaning (strawberry). Note _lean is +1 for LEFT, source's convention, so this is not a passthrough.</summary>
+        internal static int ShoulderSideFor(int lean) => lean > 0 ? -1 : 1;
+        public int ShoulderSide => ShoulderSideFor(_lean);
+
+        /// <summary>The active shoulder in world space. Under the lean pivot, so it swings out with you -- which is the
+        /// entire reason for using it rather than the eyes.</summary>
+        public Vector3 ShoulderWorld
+        {
+            get
+            {
+                var local = new Vector3(ShoulderSide * ShoulderOutX, _eyeHeight - ShoulderDropY, 0f);
+                return _leanPivot != null ? _leanPivot.GlobalTransform * local : GlobalTransform * local;
+            }
+        }
+
+        /// <summary>The straight look axis: body yaw + look pitch, with no camera in it. Same construction the fire
+        /// path uses, and for the same reason -- the camera's live basis carries flinch and, in third person, sits
+        /// somewhere the player is not.</summary>
+        public Vector3 LookAxis => -(new Basis(Vector3.Up, Rotation.Y) * new Basis(Vector3.Right, Mathf.DegToRad(_pitchDeg))).Z;
 
         public Vector3 EyesWorld => _leanPivot != null
             ? _leanPivot.GlobalTransform * new Vector3(0f, _eyeHeight, 0f)
