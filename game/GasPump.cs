@@ -35,7 +35,12 @@ namespace UnturnedGodot
         public bool PowerOnFire => false;      // a map fixture doesn't burn
         public uint PowerNetId => NetId;       // review H1: 0 for a direct SP/local pump (Attach), the server NetId for a replica (Materialize) so an interactive wire routes over the wire -- mirrors GridPowerSource; was hardcoded 0 => replica pumps could never be powered server-side (extract dead)
         public IReadOnlyList<ConnectionPort> PowerPorts => _ports;
-        public bool IsPowered => _input != null && GodotObject.IsInstanceValid(_input) && _input.Powered;   // on/off flag: getting its 750w
+        /// <summary>Getting its 750 W -- from the MAINS or from a wire into its input (strawberry: "make gas pumps
+        /// take global power"). Same two-source gate TVDevice.HasFeed uses: a forecourt pump runs off the grid like
+        /// everything else on it, and a generator wired straight into the port keeps it alive once the grid dies.
+        /// Wire-only was why every pump on the map read "no power" until someone ran a cable to it.</summary>
+        public bool IsPowered => PowerNet.GlobalPower
+                              || (_input != null && GodotObject.IsInstanceValid(_input) && _input.Powered);
 
         // look-at outline (glow duplicate on the overlay layer) + info tooltip
         MeshInstance3D _glow;

@@ -14,7 +14,7 @@ render_mode unshaded, cull_disabled, blend_mix, depth_draw_opaque;
 // `tint` carries brightness in rgb and the warmup fade in a. `mono` desaturates for a monochrome CRT and for the
 // power-off collapse. `time_s` is offset per set by `seed`, so a room full of televisions is not in lockstep.
 
-uniform int program;            // 0 TestCard 1 Static 2 Dvd 3 Colour 4 TerminalCursor 5 TerminalScroll 6 BarGraph
+uniform int program;            // 0 TestCard 1 Static 2 Dvd 3 Colour 4 TerminalCursor 5 TerminalScroll 6 BarGraph 7 StaticMono
 uniform sampler2D pattern_tex : source_color, filter_linear, repeat_enable;
 uniform float pattern_frac = 1.0;   // windows the composite onto the picture; the rest is the blanking bar
 uniform float roll_offset = 0.0;    // vertical-hold slip
@@ -50,22 +50,63 @@ vec3 prog_testcard(vec2 uv) {
 
 // ---- analogue snow. Quantised in BOTH space and time: a full-resolution per-pixel hash reads as a flat grey haze
 // at any distance, and an unquantised time makes it shimmer at the render rate rather than at a broadcast one.
+// ---- ANALOGUE SNOW. Two flavours, because a colour set and a black-and-white set do not show the same snow: a
+// colour tube's demodulator turns amplifier noise into COLOURED speckle, a mono tube has only luma. strawberry asked
+// for both, and for them to stop looking like blobs.
+//
+// The blobbiness came from the old version's second, very coarse 5x4 band drifting across the field -- that IS a field
+// of slow blobs, and no amount of fine noise underneath hides it. It is gone.
+//
+// The tension it existed to solve is real though: fine noise viewed from across a room averages out to a flat grey
+// field (measured this morning: 96x72 uniform noise fell to 0.066 stdev at 24 px on screen). The fix is not coarser
+// cells, it is a HARDER distribution -- a cell is lit or it is dark, black-to-white, rather than a smooth ramp
+// through the greys. Bimodal noise starts with roughly four times the variance, so it still has grain left after the
+// GPU averages it down. Block-averaged, 64x48 bimodal beats the old 34x26 at every size that matters:
+//
+//     screen px      old 34x26     new 64x48
+//        200           0.236         0.378
+//        100           0.223         0.332
+//         60           0.209         0.292
+//         24           0.153         0.150
+//
+// ...and the per-ROW horizontal jitter is what makes it read as a signal rather than as a dither: a CRT paints in
+// horizontal scan lines, so real snow shears sideways line by line instead of twinkling in place.
+float snow_cell(vec2 uv, out vec2 cell) {
+    const float rows = 48.0, cols = 64.0;
+    float row = floor(uv.y * rows);
+    float t = floor(time_s * 20.0);
+    float rjit = hash11(row * 3.7 + t * 1.3);          // each scan line samples from a different place in the field
+    float cx = floor((uv.x + rjit) * cols);
+    cell = vec2(cx, row);
+    return hash21(cell + t * 9.17 + seed);
+}
+
+float snow_level(vec2 cell, float v, float chan) {
+    // Lit or dark, with a little variation within each so it is not two flat tones.
+    float lit = step(0.5, v);
+    float hi = 0.62 + 0.38 * hash21(cell * 1.7 + chan + floor(time_s * 20.0));
+    float lo = 0.04 * hash21(cell * 2.3 + chan);
+    return mix(lo, hi, lit);
+}
+
+// Colour set: the three channels get INDEPENDENT noise, which is what puts the coloured confetti in analogue snow.
+// Pulled part-way back toward luma, because fully independent channels read as rainbow static rather than as a
+// television that has lost its signal.
 vec3 prog_static(vec2 uv) {
-    // CHUNKY on purpose. This was 96x72 cells, which on a 0.85 m CRT face is ~9 mm of noise -- and high-frequency
-    // noise viewed from anywhere but point-blank averages straight out to a FLAT GREY FIELD. strawberry reported
-    // exactly that: "a blank grayish screen" on a set that was correctly on the static channel and correctly hissing.
-    // The sound was right, the picture was averaging itself into nothing.
-    //
-    // 34x26 keeps a visible grain at across-the-room distance, which is also closer to what analogue snow looks like
-    // on a real set: chunks, not a fine dither.
-    vec2 cell = floor(uv * vec2(34.0, 26.0));
-    float t = floor(time_s * 14.0);
-    float v = hash21(cell + t * 7.13 + seed);
-    // A second, much coarser band drifting at a different rate, so the field has structure instead of being uniform
-    // sparkle -- real snow rolls and clumps. Without it, chunkier cells alone still read as a static texture.
-    float band = hash21(floor(uv * vec2(5.0, 4.0)) - t * 1.7 + seed * 3.0);
-    float lum = clamp(0.05 + v * 0.82 + (band - 0.5) * 0.22, 0.0, 1.0);
-    return vec3(lum);
+    vec2 cell; float v = snow_cell(uv, cell);
+    vec3 c = vec3(snow_level(cell, v, 0.0),
+                  snow_level(cell, hash21(cell * 3.1 + seed), 1.0),
+                  snow_level(cell, hash21(cell * 5.7 + seed), 2.0));
+    float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
+    return mix(vec3(l), c, 0.45);
+}
+
+// Black-and-white set: one luma channel, no colour to demodulate. Its own program rather than a desaturate of the
+// above -- desaturating colour snow gives a DIFFERENT grain than a mono tube actually shows, because the three
+// channels average toward mid-grey and the contrast collapses.
+vec3 prog_static_mono(vec2 uv) {
+    vec2 cell; float v = snow_cell(uv, cell);
+    return vec3(snow_level(cell, v, 0.0));
 }
 
 // ---- the bouncing blob. Triangle waves on each axis ARE a perfect reflection off the walls, so the corners fall out
@@ -207,6 +248,7 @@ void fragment() {
     else if (program == 4) c = prog_cursor(uv);
     else if (program == 5) c = prog_scroll(uv);
     else if (program == 6) c = prog_bars(uv);
+    else if (program == 7) c = prog_static_mono(uv);
     else c = vec3(1.0);                      // 3 Colour: the flat colour rides `tint`
 
     // THE BLACK IS THE GLASS (strawberry: "change the black color for all screen types on all channels to not be

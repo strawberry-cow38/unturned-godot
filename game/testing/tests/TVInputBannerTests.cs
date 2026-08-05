@@ -56,12 +56,10 @@ namespace UnturnedGodot.Testing
             T.Check("...so bannering and being a panel are DIFFERENT questions",
                 TVDevice.HasInputBanner(TVDevice.DeviceKind.CrtMonitor) && TVDevice.FadesIn(TVDevice.DeviceKind.CrtMonitor));
 
-            // ---- THE OSD TRAILS THE PICTURE (strawberry: "a very small delay between the screen coming on, and the
-            // OSD appearing. realisms"). Small, but not zero -- the panel lighting and the scaler naming its input are
-            // two machines, and simultaneous is the one thing they cannot be.
-            T.Check($"the OSD lags the picture ({TVDevice.BannerLead:0.###} s)", TVDevice.BannerLead > 0f);
-            T.Check($"...but only just ({TVDevice.BannerLead:0.###} s, vs {TVDevice.BannerDur:0.##} on screen)",
-                TVDevice.BannerLead < TVDevice.BannerDur * 0.5f);
+            // ---- THE OSD ARRIVES WITH THE PICTURE. There WAS a 0.15 s lead for realism; strawberry: "remove the
+            // delay between on -> osd showing". Kept as a constant rather than torn out, since the ask reversed once
+            // already -- and pinned at zero here so it cannot drift back in unnoticed.
+            T.Check($"no lead between picture and OSD ({TVDevice.BannerLead:0.###} s)", TVDevice.BannerLead == 0f);
 
             // ---- HALF A CRT'S DELAY, stated as a RATIO rather than as a copy of the number. Written as a literal it
             // would silently stop being half the moment the tube's delay was retuned -- which has already happened once
@@ -163,8 +161,8 @@ namespace UnturnedGodot.Testing
             T.Check("...and it STEPPED -- never once caught part-way in, so it is not a fast fade", !sawPartial);
             T.Check("...and the banner went up with it", sawBanner);
             T.Check($"...then cleared ({TVDevice.BannerDur:0.##} s later)", !flatTv.DebugBannerUp);
-            T.Check($"...having trailed the picture rather than arriving with it (first seen {firstBannerTick} ticks in, picture at {ticksToPicture})",
-                firstBannerTick > ticksToPicture);
+            T.Check($"...having arrived WITH the picture, not after it (first seen {firstBannerTick} ticks in, picture at {ticksToPicture})",
+                firstBannerTick > 0 && firstBannerTick <= ticksToPicture + 1);
 
             // ---- A TUBE STILL FADES, and gets no banner. The same power-cycle, so the difference is the kind and not
             // the way it was driven.

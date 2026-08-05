@@ -207,6 +207,10 @@ void sky() {
                 if (n is StreetLight sl) sl.FlickerPulse(durationSec);
             foreach (Node n in tree.GetNodesInGroup("gridlights"))
                 if (n is GridLight gl) gl.FlickerPulse(durationSec);   // indoor lamps ride the same brownout pulse
+            foreach (Node n in tree.GetNodesInGroup("tvdevices"))
+                if (n is TVDevice tv) tv.FlickerPulse(durationSec);   // televisions + monitors sag too (strawberry) --
+                                                                      //  TVDevice.FlickerPulse ignores it on a set fed
+                                                                      //  by its own wire, which never saw the dip
             // NOT traffic signals: their cabinets carry a battery back-up system, so a sag never reaches the lamps
             // (strawberry). TrafficLight.FlickerPulse is an explicit no-op documenting that.
         }

@@ -207,10 +207,18 @@ namespace UnturnedGodot.Testing
             // the ORDERING and the anchor -- exact constants would just restate the table, and the ordering is the
             // thing that is actually claimed: a black terminal must throw less light than a test card.
             float LumOf(TVDevice.ScreenProgram p) => TVDevice.MeanLuma(p, Colors.White);
-            T.Check($"snow is the brightest thing a set shows ({LumOf(TVDevice.ScreenProgram.Static):0.000})",
-                LumOf(TVDevice.ScreenProgram.Static) > LumOf(TVDevice.ScreenProgram.TestCard));
-            T.Check($"...the test card next ({LumOf(TVDevice.ScreenProgram.TestCard):0.000})",
-                LumOf(TVDevice.ScreenProgram.TestCard) > LumOf(TVDevice.ScreenProgram.BarGraph));
+            // Snow and the test card are the two FULL-FIELD bright pictures, and they now sit within a hair of each
+            // other (0.402 vs 0.406). The old assertion was that snow was strictly brighter -- true of the smooth-ramp
+            // noise it was measured against, and no longer true of the bimodal rebuild, which is not a regression:
+            // there is no physical reason a screen of snow must out-glow a test card. What the cone actually depends
+            // on is bright-field vs dark-field, so that is what gets pinned; the incidental ordering does not.
+            T.Check($"snow and the test card are both full-field bright ({LumOf(TVDevice.ScreenProgram.Static):0.000} vs {LumOf(TVDevice.ScreenProgram.TestCard):0.000})",
+                Mathf.Abs(LumOf(TVDevice.ScreenProgram.Static) - LumOf(TVDevice.ScreenProgram.TestCard)) < 0.05f);
+            T.Check($"...the mono snow with them ({LumOf(TVDevice.ScreenProgram.StaticMono):0.000})",
+                Mathf.Abs(LumOf(TVDevice.ScreenProgram.StaticMono) - LumOf(TVDevice.ScreenProgram.Static)) < 0.05f);
+            T.Check($"...and both well clear of a bar graph ({LumOf(TVDevice.ScreenProgram.TestCard):0.000} > {LumOf(TVDevice.ScreenProgram.BarGraph):0.000})",
+                LumOf(TVDevice.ScreenProgram.TestCard) > LumOf(TVDevice.ScreenProgram.BarGraph)
+                && LumOf(TVDevice.ScreenProgram.Static) > LumOf(TVDevice.ScreenProgram.BarGraph));
             T.Check($"...bar graphs above scrolling text ({LumOf(TVDevice.ScreenProgram.BarGraph):0.000} > {LumOf(TVDevice.ScreenProgram.TerminalScroll):0.000})",
                 LumOf(TVDevice.ScreenProgram.BarGraph) > LumOf(TVDevice.ScreenProgram.TerminalScroll));
             T.Check($"...text above a mostly-black DVD screen ({LumOf(TVDevice.ScreenProgram.TerminalScroll):0.000} > {LumOf(TVDevice.ScreenProgram.Dvd):0.000})",

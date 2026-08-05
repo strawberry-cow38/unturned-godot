@@ -108,7 +108,7 @@ namespace UnturnedGodot
         // audio system rather than in the thing that picked the picture.
         //
         // So one enum decides both, and Sound() is derived from it rather than stored alongside it.
-        public enum ScreenProgram { TestCard, Static, Dvd, Colour, TerminalCursor, TerminalScroll, BarGraph }
+        public enum ScreenProgram { TestCard, Static, Dvd, Colour, TerminalCursor, TerminalScroll, BarGraph, StaticMono }
 
         public enum ScreenSound { None, Tone, Noise }
 
@@ -117,14 +117,21 @@ namespace UnturnedGodot
         internal static ScreenSound SoundFor(ScreenProgram p) => p switch
         {
             ScreenProgram.TestCard => ScreenSound.Tone,
-            ScreenProgram.Static   => ScreenSound.Noise,
+            ScreenProgram.Static or ScreenProgram.StaticMono => ScreenSound.Noise,
             _                      => ScreenSound.None,
         };
 
         /// <summary>What each kind of set can be showing. A television is broadcast equipment: a test card, snow, or --
         /// if it is a flatscreen, i.e. modern enough to be plugged into something -- a DVD screensaver. A computer
         /// screen is a computer screen.</summary>
-        internal static ScreenProgram[] ProgramsFor(DeviceKind k) => k switch
+        /// <summary>A BLACK-AND-WHITE set has its OWN channels (strawberry: "change the black and white crt to not be
+        /// a black and white filter but it has its own channels"). The difference is not cosmetic: desaturating colour
+        /// snow averages three independent channels toward mid-grey and the contrast collapses, so a filtered mono set
+        /// showed *duller* static than a mono tube actually does. Its test card is pre-monochromed in the composite
+        /// instead -- see the _monoTube branch where the pattern texture is chosen.</summary>
+        internal static ScreenProgram[] ProgramsFor(DeviceKind k, bool monoTube = false) => monoTube && k == DeviceKind.CrtTv
+            ? new[] { ScreenProgram.TestCard, ScreenProgram.StaticMono }
+            : k switch
         {
             DeviceKind.CrtTv  => new[] { ScreenProgram.TestCard, ScreenProgram.Static },
             DeviceKind.FlatTv => new[] { ScreenProgram.TestCard, ScreenProgram.Static, ScreenProgram.Dvd },
@@ -136,7 +143,7 @@ namespace UnturnedGodot
         /// <summary>The vertical-hold slip is a property of a broadcast picture on a tube, so it needs BOTH: a CRT
         /// television (HasDesync) AND a program that is actually a received broadcast. A DVD blob does not roll.</summary>
         internal static bool CanRoll(DeviceKind k, ScreenProgram p)
-            => HasDesync(k) && (p == ScreenProgram.TestCard || p == ScreenProgram.Static);
+            => HasDesync(k) && (p is ScreenProgram.TestCard or ScreenProgram.Static or ScreenProgram.StaticMono);
 
         // ---- CONE INTENSITY FROM WHAT IS ON SCREEN (master: "change the intensity of the cone to represent the
         // average brightness of the colors on screen"). The picture is generated on the GPU, so the CPU cannot read
@@ -154,7 +161,10 @@ namespace UnturnedGodot
         internal static float MeanLuma(ScreenProgram p, Color tint) => p switch
         {
             ScreenProgram.TestCard       => 0.4057f,
-            ScreenProgram.Static         => 0.4597f,   // re-measured after the snow was coarsened
+            // both snows re-measured (tools note: block-averaged over the replicated hash) after the rebuild --
+            // bimodal cells sit a touch lower than the old smooth ramp, and the two flavours agree to within 0.005
+            ScreenProgram.Static         => 0.4024f,
+            ScreenProgram.StaticMono     => 0.4067f,
             ScreenProgram.Dvd            => 0.0704f,
             ScreenProgram.BarGraph       => 0.2821f,
             // 0.1384 measured, then adjusted for the deeper red: red lines are 9% of lines, their ink luma fell
@@ -287,6 +297,29 @@ namespace UnturnedGodot
         // Only the CRT gets it; the flatscreen is an LCD and holds its pixels steady.
         const float FlickerHz = 24f, FlickerDepth = 0.18f;
         float _flickerPhase;
+
+        // ---- BROWNOUT (strawberry: "make tvs flicker for brownouts/turn off for blackouts if they arent powered via
+        // their input"). The blackout half already worked -- HasFeed is `GlobalPower || PlugPowered`, so a mains-fed
+        // set dies with the grid and a wired one carries on. This is the flicker half, and it takes the same
+        // qualifier: a set running off its OWN input never saw the sag, so it must not stutter.
+        //
+        // DayNightCycle's comment on the existing pulse said "Supplies/deployables could get the same pulse
+        // (follow-up)" -- this is that follow-up, riding the machinery already there rather than a second one.
+        const float BrownoutHz = 11f;          // fast enough to read as an electrical stutter, not as an animation
+        const float BrownoutDepth = 0.72f;     // how far the picture sags on the dark half
+        float _brownoutLeft, _brownoutPhase;
+        public bool DebugBrownout => _brownoutLeft > 0f;
+
+        /// <summary>Ride a grid sag: stutter the picture briefly, then settle back to the SAME state. A visual dip,
+        /// not a power change -- gated on _lit so a blink can never resurrect a dark set, and on the set being
+        /// mains-fed so one running off its own wire ignores it.</summary>
+        public void FlickerPulse(float durationSec = 0.6f)
+        {
+            if (!_lit || _broken || _screenShot) return;
+            if (PlugPowered) return;   // its own supply -- the sag never reached it
+            _brownoutLeft = Mathf.Max(0.05f, durationSec);
+            _brownoutPhase = 0f;
+        }
         MeshInstance3D _outline;  // whole-prop white rim silhouette on the outline overlay -- shown while looked at (F affordance)
         AudioStreamPlayer3D _tone;               // looping 1kHz tone -- plays only while lit
         AudioStreamPlayer3D _onClick, _offClick; // one-shot turn-on / turn-off clicks
@@ -317,14 +350,23 @@ namespace UnturnedGodot
         internal static float PowerDelay(DeviceKind k) => IsTube(k) ? WarmDelay : (HasInputBanner(k) ? WarmDelay * 0.5f : 0f);
         internal static bool FadesIn(DeviceKind k) => IsTube(k);
         internal const float BannerDur = 0.8f;   // strawberry
-        /// <summary>Dead time between the picture arriving and the OSD appearing (strawberry: "a very small delay
-        /// between the screen coming on, and the OSD appearing. realisms"). A real set lights its panel and only then
-        /// does its scaler decide it has a signal to name -- the two are separate machines, so they cannot be
-        /// simultaneous.</summary>
-        internal const float BannerLead = 0.15f;
+        /// <summary>Dead time between the picture arriving and the OSD appearing. Was 0.15 s for realism, then
+        /// strawberry: "remove the delay between on -> osd showing" -- so ZERO, and the lead path stays wired rather
+        /// than being ripped out, because the ask reversed once already and a constant is cheaper than a rewrite.
+        /// Zero is handled explicitly at the arm sites: a `_bannerWait = 0` would leave the countdown branch untaken
+        /// and the banner would simply never appear.</summary>
+        internal const float BannerLead = 0f;
         float _bannerLeft, _bannerWait;
         public bool DebugBannerUp => _bannerLeft > 0f;
         public bool DebugBannerPending => _bannerWait > 0f;
+
+        /// <summary>Raise the OSD -- after BannerLead, or at once when that is zero.</summary>
+        void ArmBanner()
+        {
+            if (BannerLead > 0f) { _bannerWait = BannerLead; return; }
+            _bannerLeft = BannerDur;
+            _screenMat?.SetShaderParameter("banner", 1f);
+        }
         public float DebugWarmDelayLeft => _warmDelay;
 
         // CRT POWER-OFF COLLAPSE (master: "when turning it off, do the beam collapse on the center, the classic crt
@@ -488,7 +530,7 @@ namespace UnturnedGodot
         readonly System.Collections.Generic.List<ConnectionPort> _ports = new();
         ConnectionPort _plug;
         Aabb _bodyAabbLocal;      // the cabinet's own bounds, kept so a rubble reset can rebuild the plug where it was
-        bool _plugWasPowered;     // last polled state, so a wire going live re-derives the set without a per-frame Refresh
+        bool _plugWasPowered;     // last polled FEED state, so a supply going live or dead re-derives the set
 
         // IPowerDevice: a pure consumer -- it never produces, and a map fixture never burns.
         public bool PowerProducing => false;
@@ -511,16 +553,18 @@ namespace UnturnedGodot
             // the first Refresh -- so a tube plays its warmup as the map comes up rather than snapping to a lit
             // picture, which is what a room full of sets left running should look like.
             var kind = KindFor(propName);
-            var pool = ProgramsFor(kind);
+            // A CRT television is randomly a monochrome set (master: "the CRT tvs can be either monochrome or color").
+            // Only the TUBE televisions -- a colour LCD is not a period-plausible black-and-white set, and a monitor's
+            // programs are chosen for their colour. Rolled BEFORE the channel pick, because a mono set draws from a
+            // different channel list rather than filtering the colour one.
+            bool monoTube = kind == DeviceKind.CrtTv && GD.Randf() < 0.35f;
+            var pool = ProgramsFor(kind, monoTube);
             var tv = new TVDevice
             {
                 PropName = propName, _kind = kind, _on = true, Transform = bodyMi.Transform,
                 _program = pool[Mathf.Abs((int)GD.Randi()) % pool.Length],
                 _seed = GD.Randf() * 100f,
-                // A CRT television is randomly a monochrome set (master: "the CRT tvs can be either monochrome or
-                // color"). Only the TUBE televisions -- a colour LCD is not a period-plausible black-and-white set,
-                // and a monitor's programs are chosen for their colour.
-                _monoTube = kind == DeviceKind.CrtTv && GD.Randf() < 0.35f,
+                _monoTube = monoTube,
             };
             tv.Build(bodyMi.Mesh as ArrayMesh);
             return tv;
@@ -597,7 +641,8 @@ namespace UnturnedGodot
             _patternTex = patternTex; _monoTex = monoTex;
             float aspect = _screenHalfH > 1e-5f ? _screenHalfW / _screenHalfH : 1f;
             _blobHalf = BlobHalf(aspect);
-            _screenMat = MakeScreenMaterial(_patternTex, _program, patternFrac, _seed);
+            // A black-and-white set gets the PRE-MONOCHROMED composite, not the colour one under a filter (strawberry).
+            _screenMat = MakeScreenMaterial(_monoTube ? _monoTex : _patternTex, _program, patternFrac, _seed);
             // The mesh's own screen colour becomes the shader's "black" (strawberry: "not perfect black, but the mesh's
             // screen color"). Pushed HERE, after the material exists -- setting it next to where _glassColor is sampled
             // ran while _screenMat was still null, and `?.SetShaderParameter` on null is a silent no-op that leaves the
@@ -613,7 +658,7 @@ namespace UnturnedGodot
             if (_program == ScreenProgram.Colour)
                 _tint = MonitorColours[_colourIdx = Mathf.Abs((int)GD.Randi()) % MonitorColours.Length];
             _screenOffset = _screenNormalLocal * PictureOffset;
-            SetMono(false);   // establishes the uniform; _monoTube keeps it lit for a black-and-white set
+            SetMono(false);   // establishes the uniform; a mono SET is handled by its texture + channels, not by this
             _screen = new MeshInstance3D { Mesh = projected, MaterialOverride = _screenMat, Visible = false, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off, Position = _screenOffset };
             AddChild(_screen);
 
@@ -1191,7 +1236,7 @@ namespace UnturnedGodot
         public void Refresh()
         {
             bool eff = _on && HasFeed && !_broken && !_screenShot;
-            _plugWasPowered = PlugPowered;   // the poll in _Process compares against this; stamping it here stops a
+            _plugWasPowered = HasFeed;   // the poll in _Process compares against this; stamping it here stops a
                                              //  Refresh from any other cause looking like a plug edge on the next frame
             // BEFORE the early-out, and that is not a detail: the standby lamp tracks HasFeed, which moves in cases
             // where the picture does not. A set switched off in a blackout and then re-powered goes dark-red-dark with
@@ -1368,10 +1413,19 @@ namespace UnturnedGodot
         /// The mono TEXTURE the composite still builds is no longer what does this; it is kept because ScreenTextures
         /// is the one place the blanking bar is baked, and pulling the mono copy out of it would only save building an
         /// image that is shared across every television on the map anyway.</summary>
+        /// <summary>The `mono` uniform is now ONLY the power-off collapse's desaturation -- a genuine filter over
+        /// whatever is on screen at the moment the tube dies.
+        ///
+        /// A black-and-white SET no longer rides it (strawberry: "not be a black and white filter but it has its own
+        /// channels", "monochrome the test pattern before putting it on the b&w crt"). Its test card is desaturated in
+        /// the COMPOSITE -- ScreenTextures already builds that pair, so the mono set is handed _monoTex and the
+        /// picture arrives grey rather than being greyed on the way out. Its snow is a separate program. The
+        /// difference shows: filtering colour snow averages three independent channels toward mid-grey and drops the
+        /// contrast, so the filtered version was duller than a mono tube really is.</summary>
         void SetMono(bool mono)
         {
             _mono = mono;
-            _screenMat?.SetShaderParameter("mono", (mono || _monoTube) ? 1f : 0f);
+            _screenMat?.SetShaderParameter("mono", mono ? 1f : 0f);
         }
 
         // ---- monitor colour cycle -----------------------------------------------------------------------------------
@@ -1479,6 +1533,9 @@ namespace UnturnedGodot
             // THROUGH its own delay, which is a delay you cannot see.
             float k = _warm;
             float f = FlickerFactor();   // 1.0 on a panel; a shallow breath on a tube
+            // ...and the brownout sag on top, for tubes AND panels: a grid dip is the supply drooping, which every
+            // kind of set shows. Square, not smooth -- mains sag stutters, it does not breathe.
+            if (_brownoutLeft > 0f) f *= (Mathf.PosMod(_brownoutPhase, 1f) < 0.5f ? 1f - BrownoutDepth : 1f);
             if (_screenMat != null) _screenMat.SetShaderParameter("tint", ScreenColor(Picture, _emitEnergy * f, k));
             // ...and the SPILL is scaled by how bright the picture actually is (master). A terminal showing a black
             // screen barely lights the room; a test card floods it. Without this every set threw the same light no
@@ -1492,6 +1549,17 @@ namespace UnturnedGodot
 
         public override void _Process(double delta)
         {
+            // The WHOLE feed, not just the plug half. This used to poll PlugPowered alone and rely on the mains
+            // arriving as a push -- DayNightCycle sweeps the "tvdevices" group on a grid change. That works for the
+            // scheduled blackout and for nothing else: `toggleGlobalPower` from the console, or any other caller of
+            // PowerNet.SetGlobalPower, dropped the grid and left every television happily lit. Polling HasFeed costs
+            // the same single bool compare and answers for both halves, whoever moves them.
+            //
+            // ABOVE the collapse branch, which returns early: a tube that is mid-collapse is exactly the set most
+            // likely to have its supply come back (the grid flapped), and it should recover rather than finish dying
+            // and sit dark until something else pokes it. Refresh -> SetLit(true) already ends a running collapse.
+            if (HasFeed != _plugWasPowered) Refresh();
+
             // Power-off collapse runs while the set is already NOT lit, so it has to come before everything else here
             // -- and it ends by calling EndCollapse, which is what actually hides the screen/light/cone.
             if (_collapse >= 0f)
@@ -1501,11 +1569,6 @@ namespace UnturnedGodot
                 else ApplyCollapse();
                 return;
             }
-            // A wire going live (or dying) is the plug's half of the power gate. The mains half arrives as a push --
-            // DayNightCycle sweeps the "tvdevices" group on a grid change -- but PowerNet has no such sweep, so this
-            // edge has to be polled. Cheap: one bool compare per set per frame, and Refresh early-outs when nothing
-            // actually changed.
-            if (PlugPowered != _plugWasPowered) Refresh();
 
             // A TUBE breathes for as long as it is lit -- so this no longer early-outs on !_warming, which it did back
             // when warmup was the only thing that animated.
@@ -1527,6 +1590,13 @@ namespace UnturnedGodot
                     ApplyLevels();
                 }
             }
+            if (_brownoutLeft > 0f)
+            {
+                _brownoutLeft -= (float)delta;
+                _brownoutPhase += (float)delta * BrownoutHz;
+                if (_brownoutLeft <= 0f) { _brownoutLeft = 0f; _brownoutPhase = 0f; }
+                ApplyLevels();   // every tick while sagging -- the stutter IS the per-tick level change
+            }
             if (_bannerWait > 0f)
             {
                 _bannerWait -= (float)delta;
@@ -1544,7 +1614,7 @@ namespace UnturnedGodot
                 // A panel STEPS to full and puts its input banner up. No ramp: an LCD that faded in would read as a
                 // tube, which is the distinction this whole branch exists to keep.
                 _warm = 1f; _warming = false;
-                if (HasInputBanner(_kind)) _bannerWait = BannerLead;
+                if (HasInputBanner(_kind)) ArmBanner();
                 ApplyLevels();
                 return;
             }
@@ -1555,7 +1625,7 @@ namespace UnturnedGodot
                 // A tube that banners (the CRT monitor) raises it when the picture has RESOLVED, not when the tube
                 // started warming -- an OSD over a half-faded picture reads as part of the fade rather than as the set
                 // telling you its input.
-                if (HasInputBanner(_kind)) _bannerWait = BannerLead;
+                if (HasInputBanner(_kind)) ArmBanner();
             }
             ApplyLevels();
         }
