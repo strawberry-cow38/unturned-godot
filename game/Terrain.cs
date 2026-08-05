@@ -370,6 +370,10 @@ void fragment() {
         // box whose surface sits at seaLevel*256 world-Y (source: LevelLighting legacy water). The port has a
         // single global plane, so submersion = point.y < SeaLevelY and the swim surface elevation IS SeaLevelY.
         // HasWater is false under UG_NOWATER (no plane built) so swimming disables cleanly.
+        //
+        // water-splash arrived carrying its own `WaterLevelY` with a -inf sentinel for "no water" -- the same
+        // idea under a second name. Folded into this pair rather than kept alongside it: two notions of where
+        // the water is will drift, and the one that drifts is whichever nobody happens to be looking at.
         public static float SeaLevelY = 25.6f;   // = 0.1(PEI seaLevel) * 256; overwritten per-build
         public static bool HasWater;
         /// <summary>Is this world point below the ocean surface? (the port's WaterUtility.isPointUnderwater).</summary>
@@ -578,7 +582,7 @@ void fragment() {
             if (HasWater)
             {
                 float waterY = 0.1f * 256f;   // = 25.6 world-Y; Unturned water surface = seaLevel * Level.TERRAIN(256), Use_Legacy_Water path
-                SeaLevelY = waterY;            // expose for swim submersion tests (PlayerController water state)
+                SeaLevelY = waterY;            // swim submersion (PlayerController water state) + explosion splashes
                 var water = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2((maxX - minX + 1) * TILE_SIZE + 400f, (maxY - minY + 1) * TILE_SIZE + 400f) } };
                 water.Position = new Vector3(baseX + GW * UNIT * 0.5f, waterY, -(baseZ + GH * UNIT * 0.5f));
                 water.MaterialOverride = new StandardMaterial3D
