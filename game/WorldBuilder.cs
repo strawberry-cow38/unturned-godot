@@ -818,13 +818,17 @@ namespace UnturnedGodot
                     // smashing the set hid the cabinet and left a lit screen glowing over the rubble -- the same
                     // shape as the street lamp above (master: "when tvs get destroyed make sure to kill the screen").
                     var tv = placedTV;
+                    // the map's MAINS (hydrant / water tower / sink) rides this prop but is a SEPARATE node -- so a smash
+                    // left its hose ports floating over the rubble (master: "hose points arent destroyed when the hydrant is").
+                    var mns = mains;
                     System.Action<bool> onAlive = null;
-                    if (lamp != null || sigs != null || tap != null || tv != null)
+                    if (lamp != null || sigs != null || tap != null || tv != null || mns != null)
                         onAlive = alive =>
                         {
                             if (tap != null && GodotObject.IsInstanceValid(tap)) tap.SetBroken(!alive);
                             if (lamp != null && GodotObject.IsInstanceValid(lamp)) lamp.SetBroken(!alive);
                             if (tv != null && GodotObject.IsInstanceValid(tv)) tv.SetBroken(!alive);
+                            if (mns != null && GodotObject.IsInstanceValid(mns)) mns.SetBroken(!alive);
                             if (sigs != null)
                                 foreach (var s in sigs) if (GodotObject.IsInstanceValid(s)) s.SetBroken(!alive);
                         };

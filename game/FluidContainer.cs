@@ -107,6 +107,20 @@ namespace UnturnedGodot
         // generator's fuel tank here). Tick-driven, not _Process, so it's authoritative even in headless tests.
         public virtual void OnPostTick(float dt) { }
 
+        // Prop destruction (master: "fire hydrants' hose points arent destroyed when the hydrant is"). A mains riding a
+        // DESTRUCTIBLE prop (hydrant / water tower / sink) is a SEPARATE node from the prop meshes, so smashing the prop
+        // left its hose ports floating over the rubble -- the same split-off-node bug as the street-lamp cone + the TV
+        // screen. Drop OUT of the fluid group (solver + hose tool both scan "fluid_devices", so this stops supply AND
+        // makes the ports un-hoseable) and hide the ports; re-arm on rubble reset. STATE, not one-shot -> a reset restores it.
+        bool _brokenProp;
+        public void SetBroken(bool broken)
+        {
+            if (_brokenProp == broken) return;
+            _brokenProp = broken;
+            Visible = !broken;
+            if (broken) RemoveFromGroup("fluid_devices"); else AddToGroup("fluid_devices");
+        }
+
         protected virtual void BuildPorts()
         {
             switch (Role)

@@ -230,6 +230,7 @@ namespace UnturnedGodot
         // Time >= equipStart + GetAnimationLength("Equip"), PlayerEquipment.cs:269/1633). So SetAiming is ignored
         // while the gun is still raising.
         float _equipLen;       // Gun_Equip clip length (seconds)
+        string _holdClip = "Gun_Equip";   // the CURRENT item's ready-hold clip (gun/melee/consumable/deployable each differ) -- restored on sprint-exit etc. instead of forcing the gun pose onto everything
         float _equipElapsed;   // time since the viewmodel spawned / equip started
         bool EquipDone => _equipLen <= 0f || _equipElapsed >= _equipLen;
         public bool IsEquipComplete => EquipDone;
@@ -341,6 +342,7 @@ namespace UnturnedGodot
                                  : ConsumableMesh != null ? (_arms.ClipLength(ConsumableEquipClip) > 0f ? ConsumableEquipClip : _arms.ClipLength("Consume_Equip") > 0f ? "Consume_Equip" : "Melee_Equip")   // consumable: this item's OWN raise-to-hold archetype (CE_n), else generic Consume_Equip, else the melee raise
                                  : MeleeMesh != null ? (_arms.ClipLength(_meleeCap + "_Equip") > 0f ? _meleeCap + "_Equip" : "Melee_Equip") : (_arms.ClipLength(capGun + "_Equip") > 0f ? capGun + "_Equip" : "Gun_Equip");   // melee: its OWN raise anim (fallback generic knife); gun: its OWN per-weapon hold (pistol grip / rifle stance / etc.)
                 _arms.SetClipLoop(equipClip, false);   // equip/ready-hold ALWAYS plays once and holds (src: one-shot wrapMode) -- the looping empty-hand pose was the bug
+                _holdClip = equipClip;   // remember THIS item's hold so sprint-exit (etc.) restores it, not the gun pose
                 _arms.Play(equipClip);
                 _equipLen = _arms.ClipLength(equipClip);
                 GD.Print($"[vm] equip (pull-out) length = {_equipLen:F3}s — aiming gated until then");
@@ -809,7 +811,7 @@ namespace UnturnedGodot
         {
             if (!_inspecting) return;
             _inspecting = false;
-            _arms?.SnapToEnd("Gun_Equip");   // snap the arms to the equip-END (the ready hold), no pull-out replay
+            _arms?.SnapToEnd(_holdClip);   // snap the arms to the equip-END (the ready hold), no pull-out replay
         }
 
         // T attachment view: present the gun in its source Attach_Start pose so the slot icons can sit on it; holds
@@ -825,7 +827,7 @@ namespace UnturnedGodot
         {
             if (!_attachView) return;
             _attachView = false;
-            _arms?.SnapToEnd("Gun_Equip");
+            _arms?.SnapToEnd(_holdClip);
         }
         public bool InAttachView => _attachView;
 
@@ -967,6 +969,20 @@ namespace UnturnedGodot
             // _isScope stays FALSE -> the _Process PiP block is inactive + the lens hidden until a scope Configures it on.
         }
 
+        // 1x1 fully-transparent texture for scopes with no ripped reticle -- so the lens composite is a no-op and the
+        // glass shows, instead of an unset sampler reading opaque white and whiting out the whole lens.
+        static ImageTexture _blankReticle;
+        static ImageTexture BlankReticle()
+        {
+            if (_blankReticle == null || !Godot.GodotObject.IsInstanceValid(_blankReticle))
+            {
+                var img = Image.CreateEmpty(1, 1, false, Image.Format.Rgba8);
+                img.SetPixel(0, 0, new Color(0f, 0f, 0f, 0f));
+                _blankReticle = ImageTexture.CreateFromImage(img);
+            }
+            return _blankReticle;
+        }
+
         // Point the pre-built rig at a specific scope (mesh's measured ocular/objective + fov=90/zoom + lens size + ADS aim). Called on mount.
         void ConfigureScopePiP(Vector3 lensLocal, Vector3 objLocal, Vector3 aimLocal, float fov, float lensSize, int sides, Texture2D reticleTex, float retScale, Color retTint)
         {
@@ -978,7 +994,7 @@ namespace UnturnedGodot
             if (_scopeLens.MaterialOverride is ShaderMaterial _sm)   // mask shape to match the scope's ocular: 4=square (verts on the diagonals), else N-gon (rot puts a vertex up)
             {
                 _sm.SetShaderParameter("u_seg", 2f * Mathf.Pi / sides); _sm.SetShaderParameter("u_rot", sides == 4 ? 0f : Mathf.Pi / sides);
-                if (reticleTex != null) _sm.SetShaderParameter("reticle_tex", reticleTex);
+                _sm.SetShaderParameter("reticle_tex", reticleTex ?? BlankReticle());   // a MISSING reticle must be TRANSPARENT: an unset sampler2D samples OPAQUE WHITE, and the shader mix(col,white,1) then whites out the whole lens even with a live cam (that's the "blank scope" -- it was really a reticleless one)
                 _sm.SetShaderParameter("ret_scale", retScale);
                 _sm.SetShaderParameter("ret_tint", new Vector3(retTint.R, retTint.G, retTint.B));
             }
@@ -1190,7 +1206,7 @@ namespace UnturnedGodot
                 // was the "weird ADS" + "won't un-set" bug), else play the gentle Sprint_Stop transition.
                 if (!_reloading && !_hammering && !_inspecting && !_attachView)
                 {
-                    if (_aiming || _shootHold > 0f || _sprintStopClip == null) _arms.SnapToEnd("Gun_Equip");
+                    if (_aiming || _shootHold > 0f || _sprintStopClip == null) _arms.SnapToEnd(_holdClip);
                     else _arms.Play(_sprintStopClip);
                 }
             }
