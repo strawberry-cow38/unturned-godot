@@ -4120,7 +4120,11 @@ namespace UnturnedGodot
                 _recoilYawPending += _rng.RandfRange(Gun.RecoilMinX, Gun.RecoilMaxX) * Gun.RecoverX * (_rng.Randf() < 0.5f ? -1f : 1f) * sharp * stanceMul;
             }
 
-            Vector3 from = _cam.GlobalPosition;
+            // FROM THE EYES, not the camera (strawberry: "make our bullet raycasts come from the PM's eyes, not the
+            // camera middle"). Source: `bullet.origin = player.look.aim.position` (UseableGun.cs:1001). In first person
+            // the camera sits at the eyes and this changes nothing; in third person the camera is 2 m back and a metre
+            // to one side, so the old origin fired from behind your own shoulder -- through anything between it and you.
+            Vector3 from = EyesWorld;
             // Aim from the player's AUTHORITATIVE look (body yaw + camera pitch), NOT the camera's live GLOBAL basis.
             // Reading _cam.GlobalTransform.Basis meant a shot could inherit a transiently-bad camera axis -- flinch/
             // hit-shake (line 1223 sets _cam.Basis = flinch*look) or a frame where the cam basis wasn't the player's
@@ -4128,9 +4132,14 @@ namespace UnturnedGodot
             // flies straight south, any gun, any time" bug). Recoil is preserved (it drains into Rotation.Y/_pitchDeg).
             Basis cb = new Basis(Vector3.Up, Rotation.Y) * new Basis(Vector3.Right, Mathf.DegToRad(_pitchDeg));  // X=right, Y=up, -Z=forward
             Vector3 aim = -cb.Z;                                            // undeviated shot axis, from the real look angles
+            // ...but in third person the eyes and the crosshair are in different places, so firing straight down the
+            // look axis misses whatever the reticle is over by however far the camera is offset. Source converges them
+            // (UseableGun.cs:962-977): trace from the CAMERA to find the target, then aim the eyes AT that point.
+            if (!_fp) aim = ThirdPersonAim(from, aim);
             float aimA = _viewmodel?.AimAlpha ?? 0f;
             // muzzle: hip sits lower-right (where the barrel is); ADS pulls the gun onto the camera axis, so the
             // muzzle centres (X offset -> 0) as you aim -> the bullet + tracer keep originating from the barrel.
+            DebugLastShotOrigin = from; DebugLastShotDir = aim;   // test seam: what the REAL fire path actually used
             Vector3 muzzle = from + cb.X * (0.12f * (1f - aimA)) - cb.Y * 0.035f + aim * 0.4f;
             SpawnMuzzleLight(muzzle);   // once per shot — the Muzzle_0 flash lights the world
 
@@ -4190,6 +4199,35 @@ namespace UnturnedGodot
         /// production damage dispatch instead of standing in for it.</summary>
         public void DebugFireBullet(Vector3 from, Vector3 dir, float damage = 40f)
             => SpawnBullet(from, dir.Normalized() * 300f, 60, 0f, damage, damage, damage);
+
+        /// <summary>Third-person shot direction: the eyes aim at whatever the CAMERA is pointing at, so the crosshair
+        /// still means something despite the camera sitting off to one side (UseableGun.cs:962-977).
+        ///
+        /// Two fallbacks, and they are not the same one. Nothing hit -> aim at a point 512 m down the camera axis, which
+        /// keeps the shot parallel-ish to the view. Something hit but BEHIND the eyes (the dot test) -> leave the aim
+        /// alone entirely; converging on it would swing the muzzle backwards through the player to shoot at a wall the
+        /// camera can see and the character cannot.</summary>
+        Vector3 ThirdPersonAim(Vector3 eyes, Vector3 fallback)
+        {
+            if (_cam == null) return fallback;
+            var space = GetWorld3D()?.DirectSpaceState;
+            if (space == null) return fallback;
+            Vector3 camPos = _cam.GlobalPosition, camFwd = -_cam.GlobalBasis.Z;
+            const float Reach = 512f;
+            var q = PhysicsRayQueryParameters3D.Create(camPos, camPos + camFwd * Reach,
+                (1u << 0) | (1u << 1) | (1u << 4) | (1u << 5) | (1u << 6));   // what a bullet would stop on (no water)
+            q.Exclude = new Godot.Collections.Array<Rid> { GetRid() };
+            var hit = space.IntersectRay(q);
+            Vector3 target;
+            if (hit.Count > 0)
+            {
+                target = hit["position"].AsVector3();
+                if ((target - eyes).Dot(camFwd) <= 0f) return fallback;   // it is behind us -- do not turn round and shoot it
+            }
+            else target = camPos + camFwd * Reach;
+            var dir = target - eyes;
+            return dir.LengthSquared() < 1e-6f ? fallback : dir.Normalized();
+        }
 
         /// <summary>Test seam (UG_TRACERANGLE firetest): fire a tracer at an angle ACROSS the view so the stretched
         /// streak is seen side-on. First-person centred fire is end-on, which foreshortens the stretch to a dot.</summary>
@@ -4710,14 +4748,16 @@ namespace UnturnedGodot
             if (!_flinch.IsFinite() || _flinch.LengthSquared() < 1e-6f) _flinch = Quaternion.Identity;
             _flinch = _flinch.Normalized().Slerp(Quaternion.Identity, 4f * (float)delta);
             ApplyLean((float)delta);
+            // The eye height is lerped whether or not the first-person camera is the one being drawn: in third person
+            // nothing reads _cam.Position any more, but the BULLETS still come out of the eyes, so it has to keep up.
+            _eyeHeight = Mathf.Lerp(_eyeHeight, EyeHeight, Mathf.Min(1f, 4f * (float)delta));
             if (_cam != null && !_dead && _driving == null && _riding == null)   // while driving/riding, the drive cam above owns the view
             {
                 if (_ugFp) _fp = true;   // render harness (UG_FP=1): force 1st-person so the FP viewmodel is captured
                 if (_fp)
                 {
-                    // FP: eye height follows the stance (PlayerLook.heightLook 1.75/1.2/0.35, lerped 4/s), pitched by the mouse
-                    float targetEye = Stance switch { EPlayerStance.CROUCH => 1.2f, EPlayerStance.PRONE => 0.35f, _ => 1.75f };
-                    var cp = _cam.Position; cp.X = 0f; cp.Z = 0f; cp.Y = Mathf.Lerp(cp.Y, targetEye, 4f * (float)delta); _cam.Position = cp;
+                    // FP: the camera SITS at the eyes (PlayerLook.heightLook 1.75/1.2/0.35, lerped 4/s), pitched by the mouse
+                    _cam.Position = new Vector3(0f, _eyeHeight, 0f);
                     var look = Basis.FromEuler(new Vector3(Mathf.DegToRad(_pitchDeg), 0f, 0f), EulerOrder.Yxz);   // flinch left-multiplies the look
                     _cam.Basis = new Basis(_flinch) * look;
                 }
@@ -5108,6 +5148,23 @@ namespace UnturnedGodot
         }
 
         internal float EyeHeight => Stance switch { EPlayerStance.CROUCH => 1.2f, EPlayerStance.PRONE => 0.35f, _ => 1.75f };
+        float _eyeHeight = 1.6f;   // the lerped one; EyeHeight is the target
+
+        /// <summary>Where the player is actually looking FROM -- source's `player.look.aim.position`. Under the lean
+        /// pivot, so a lean carries it sideways with the head.
+        ///
+        /// This is NOT the camera. In first person the two coincide and the difference never shows; in third person
+        /// the camera is 2 m back and a metre off to one side, so anything fired from it leaves from behind your own
+        /// shoulder. Source is explicit about the split: the camera decides WHAT you are pointing at, the eyes are
+        /// where the bullet starts (UseableGun.cs:1001 `bullet.origin = player.look.aim.position`).</summary>
+        /// <summary>What the last real shot used. Recorded inside Fire() rather than recomputed by a test, so a test
+        /// cannot quietly agree with a broken origin by deriving it the same wrong way.</summary>
+        public Vector3 DebugLastShotOrigin { get; private set; }
+        public Vector3 DebugLastShotDir { get; private set; }
+
+        public Vector3 EyesWorld => _leanPivot != null
+            ? _leanPivot.GlobalTransform * new Vector3(0f, _eyeHeight, 0f)
+            : GlobalPosition + Vector3.Up * _eyeHeight;
 
         void StepLean(float delta)
         {
