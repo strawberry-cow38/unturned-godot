@@ -487,12 +487,19 @@ namespace UnturnedGodot
         public override void _Ready()
         {
             AddToGroup("deployables");   // PowerNet gathers this group by IPowerDevice, not by the concrete Deployable
-            if (GetTree() is SceneTree tr && tr.GetNodesInGroup("powermgr").Count == 0 && GetParent() is Node parent)
+            if (GetTree() is SceneTree tr && tr.GetNodesInGroup("powermgr").Count == 0)
             {
+                // A child of THIS device, added synchronously. It used to be a DEFERRED add to the parent, copying
+                // LightTap/GasPump -- but those spawn it from Attach(), where the add happens immediately. Deferring it
+                // breaks the "does one already exist" check above: the group is not populated until the deferred call
+                // runs, so EVERY device on the map sees zero and spawns its own. One per television is a leak that only
+                // shows up as accumulated nodes at the end of a long run.
+                //
+                // Parenting it to the device also gives it a lifetime: it dies with the set instead of outliving a
+                // freed parent, which is what a deferred add into a torn-down sandbox does.
                 var pm = new PowerManager();
-                pm.AddToGroup("powermgr");
-                // Deferred: adding a SIBLING from inside _Ready runs while the parent is still setting its children up.
-                parent.CallDeferred(Node.MethodName.AddChild, pm);
+                AddChild(pm);
+                pm.AddToGroup("powermgr");   // AFTER entering the tree, so the next device's check sees it at once
             }
             PowerNet.MarkDirty();
         }
