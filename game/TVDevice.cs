@@ -554,8 +554,10 @@ namespace UnturnedGodot
             float aspect = _screenHalfH > 1e-5f ? _screenHalfW / _screenHalfH : 1f;
             _blobHalf = BlobHalf(aspect);
             _screenMat = MakeScreenMaterial(_patternTex, _program, patternFrac, _seed);
-            _screenMat.SetShaderParameter("blob_tex", LoadPng(BlobAsset));
-            _screenMat.SetShaderParameter("bg_tex", LoadPng(PanelAsset));
+            // Transparent for the blob (a missing logo should draw NOTHING, not a white brick) and black for
+            // the panel backdrop (a missing map should add no light, not a haze).
+            _screenMat.SetShaderParameter("blob_tex", LoadPngOr(BlobAsset, new Color(0f, 0f, 0f, 0f)));
+            _screenMat.SetShaderParameter("bg_tex", LoadPngOr(PanelAsset, Colors.Black));
             _screenMat.SetShaderParameter("blob_half", _blobHalf);
             _blob = BlobPos(0f, _seed, _blobHalf);
             _screenMat.SetShaderParameter("blob_pos", _blob);
@@ -949,6 +951,34 @@ namespace UnturnedGodot
             _pngCache[resPath] = t;
             return t;
         }
+
+        /// <summary>A 1x1 texture of one colour, cached. Exists because of how Godot treats an UNSET sampler2D: it
+        /// samples as OPAQUE WHITE, not as nothing. So handing a null texture to a shader parameter does not leave that
+        /// program un-drawn -- it floods it with white.
+        ///
+        /// The failure that produces is different in each program and none of them looks like a missing file: the DVD
+        /// blob becomes a plain white rectangle (which is exactly what it used to be, so it reads as correct), the bar
+        /// panel gains a white haze that reads as a design choice, and the TEST CARD renders as a solid white screen
+        /// instead of SMPTE bars. Every sampler therefore gets a real texture, always.
+        ///
+        /// Found because cow tools hit the same trap in the scope lens shader -- an unripped reticle left that sampler
+        /// unset and painted a white lens over a live render, which is what made a working scope look blank.</summary>
+        static readonly System.Collections.Generic.Dictionary<uint, ImageTexture> _solidCache = new();
+        internal static ImageTexture Solid1x1(Color c)
+        {
+            uint key = ((uint)Mathf.RoundToInt(c.R * 255) << 24) | ((uint)Mathf.RoundToInt(c.G * 255) << 16)
+                     | ((uint)Mathf.RoundToInt(c.B * 255) << 8) | (uint)Mathf.RoundToInt(c.A * 255);
+            if (_solidCache.TryGetValue(key, out var hit)) return hit;
+            var img = Image.CreateEmpty(1, 1, false, Image.Format.Rgba8);
+            img.SetPixel(0, 0, c);
+            var t = ImageTexture.CreateFromImage(img);
+            _solidCache[key] = t;
+            return t;
+        }
+
+        /// <summary>Load a png, or a 1x1 of <paramref name="fallback"/> if it is missing. NEVER null -- see Solid1x1.</summary>
+        internal static ImageTexture LoadPngOr(string resPath, Color fallback)
+            => LoadPng(resPath) ?? Solid1x1(fallback);
         internal const string BlobAsset = "res://content/menu/icon_sdglogo.png";
         internal const string PanelAsset = "res://content/menu/mappreview_pei.png";
 
@@ -1472,7 +1502,9 @@ namespace UnturnedGodot
         {
             var m = new ShaderMaterial { Shader = ScreenShader() };
             m.SetShaderParameter("program", (int)program);
-            m.SetShaderParameter("pattern_tex", pattern);
+            // Black rather than null: an unset sampler is WHITE, so a missing test card would render every
+            // television as a blank white screen -- the brightest possible failure for a missing file.
+            m.SetShaderParameter("pattern_tex", pattern ?? (Texture2D)Solid1x1(Colors.Black));
             m.SetShaderParameter("pattern_frac", patternFrac);
             m.SetShaderParameter("roll_offset", 0f);
             m.SetShaderParameter("tint", new Color(1f, 1f, 1f, 0f));   // fully dissolved into the tube face; ApplyLevels fades it up

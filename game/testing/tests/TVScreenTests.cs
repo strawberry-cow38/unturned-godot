@@ -71,8 +71,15 @@ namespace UnturnedGodot.Testing
             var tint = (Color)mat.GetShaderParameter("tint");
             T.Check($"starts fully dissolved into the tube face ({tint})", tint.A == 0f);
             T.Check($"...at full brightness, so the warmup is a fade and not a dimmer ({tint.R:0.00})", tint.R == 1f);
-            T.Check("...and the pattern slot is wired (null in, null out -- the asset loads at Make)",
-                mat.GetShaderParameter("pattern_tex").As<Texture2D>() == null);
+            // NEVER NULL. An unset sampler2D in Godot samples as OPAQUE WHITE, not as nothing -- so a missing
+            // smpte_pattern.png would render every television as a blank white screen rather than as a dark one, which
+            // is the brightest possible way for a missing file to fail. Passing null in must still yield a texture.
+            var slot = mat.GetShaderParameter("pattern_tex").As<Texture2D>();
+            T.Check("a null pattern still leaves a real texture bound, not an unset sampler", slot != null);
+            T.Check($"...and it is BLACK, so the failure is a dark screen and not a white one ({slot?.GetImage()?.GetPixel(0, 0)})",
+                slot != null && slot.GetImage().GetPixel(0, 0).R < 0.01f);
+            T.Check("...and the fallback is 1x1, i.e. a stand-in rather than a real asset",
+                slot != null && slot.GetWidth() == 1 && slot.GetHeight() == 1);
             T.Check($"...starting on the test card, undesaturated and unrolled",
                 (int)mat.GetShaderParameter("program") == (int)TVDevice.ScreenProgram.TestCard
                 && (float)mat.GetShaderParameter("mono") == 0f
