@@ -4241,6 +4241,12 @@ namespace UnturnedGodot
                         }
                         if (!glassShot && collider is Node dn && dn.HasMeta(DestructibleField.MetaKey))
                         {
+                            // TOASTER (strawberry): the first shot it SURVIVES may throw bread out the top. Rolled
+                            // BEFORE the damage call, because that is the moment we know the prop was still standing --
+                            // in the loopback the health is server-owned and the alive bit mirrors back a tick later, so
+                            // asking afterwards would read a stale answer on exactly the shot that matters.
+                            if (dn.HasMeta(Toaster.HitMeta) && dn.GetMeta(Toaster.HitMeta).As<Toaster>() is Toaster tst
+                                && IsInstanceValid(tst)) tst.OnShot();
                             NetDamageObject?.Invoke((int)dn.GetMeta(DestructibleField.MetaKey), b.ObjectDamage);
                             HitmarkerHUD.Instance?.ShowCircle();   // circle hitmarker: you hit a destructible prop (master)
                         }

@@ -263,6 +263,10 @@ namespace UnturnedGodot
         {
             ("b489a8a63fca4d179fd315cbae8b6ed7", 100f),   // Television_0 (flatscreen)
             ("becc624cee1a4845808af80472ee9310", 100f),   // Television_1 (CRT)
+            // The TOASTER takes TWO (strawberry). Retail ships it at 25 -- exactly one Eaglefire Object_Damage -- so it
+            // burst on the first bullet and there was no surviving first shot for the bread to pop on. 50 is the second
+            // round and not a third.
+            ("2d1daa0412b94503aa57a5b422187d48", 50f),    // Toaster_0
         };
     }
 }

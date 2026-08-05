@@ -650,6 +650,7 @@ namespace UnturnedGodot
                 StreetLight placedLamp = null;   // captured so a break can darken it (see the Register call below)
                 LightTap placedTap = null;      // wire-able power tap on this light's base (INPUT intact / OUTPUT once smashed)
                 TVDevice placedTV = null;        // captured so the body collider below can meta-link the look-ray to it
+                Toaster placedToaster = null;    // same, for the bread pop on a surviving first shot
                 var placedSignals = new System.Collections.Generic.List<TrafficLight>();   // both heads of a mast, same reason
                 if (name == "Street_Light_0" && mode != WorldMode.Dedicated)
                 {
@@ -682,6 +683,14 @@ namespace UnturnedGodot
                 // The prop list lives in TVDevice.IsDeviceProp next to the kind table it has to agree with, rather than
                 // as a name test here. Split across two files they drift, and the failure mode is a prop that gets a
                 // device with the WRONG kind's behaviour -- which looks like a deliberate choice, not a bug.
+                // TOASTER (strawberry): two shots to break, and the first one it SURVIVES may pop bread out the top.
+                // Same wiring as a television -- a meta on the body routes the bullet, and the destructible's onAlive
+                // hook resets it with the rubble.
+                if (name == "Toaster_0" && mode != WorldMode.Dedicated)
+                {
+                    placedToaster = Toaster.Make(mainMi);
+                    root.AddChild(placedToaster);
+                }
                 if (TVDevice.IsDeviceProp(name) && mode != WorldMode.Dedicated)
                 {
                     placedTV = TVDevice.Make(mainMi, name);
@@ -782,6 +791,7 @@ namespace UnturnedGodot
                             body.SetMeta(TrafficLight.HitMeta, arr);
                         }
                         if (doorForBody != null) body.SetMeta("objectdoor", doorForBody);   // issue 3: look-at the body resolves to the door (PlayerController)
+                        if (placedToaster != null) body.SetMeta(Toaster.HitMeta, placedToaster);   // shoot the toaster body -> its bread pop
                         if (placedTV != null) body.SetMeta(TVDevice.HitMeta, placedTV);   // look-at OR shoot the TV body resolves to its device (F toggle; screen shoot-out)
                     }
                 }
@@ -821,10 +831,12 @@ namespace UnturnedGodot
                     // the map's MAINS (hydrant / water tower / sink) rides this prop but is a SEPARATE node -- so a smash
                     // left its hose ports floating over the rubble (master: "hose points arent destroyed when the hydrant is").
                     var mns = mains;
+                    var toast = placedToaster;
                     System.Action<bool> onAlive = null;
-                    if (lamp != null || sigs != null || tap != null || tv != null || mns != null)
+                    if (lamp != null || sigs != null || tap != null || tv != null || mns != null || toast != null)
                         onAlive = alive =>
                         {
+                            if (toast != null && GodotObject.IsInstanceValid(toast)) toast.SetBroken(!alive);
                             if (tap != null && GodotObject.IsInstanceValid(tap)) tap.SetBroken(!alive);
                             if (lamp != null && GodotObject.IsInstanceValid(lamp)) lamp.SetBroken(!alive);
                             if (tv != null && GodotObject.IsInstanceValid(tv)) tv.SetBroken(!alive);
