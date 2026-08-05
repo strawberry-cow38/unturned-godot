@@ -35,15 +35,33 @@ namespace UnturnedGodot.Testing
             return dev;
         }
 
+        static string ReadShader(string resPath)
+        {
+            try { string p = ProjectSettings.GlobalizePath(resPath); return System.IO.File.Exists(p) ? System.IO.File.ReadAllText(p) : ""; }
+            catch { return ""; }
+        }
+
         public override IEnumerable<Step> Run()
         {
             // ---- WHO GETS ONE. "not laptops" was explicit, and a laptop is the kind most likely to be swept in by a
             // "flat panel" predicate written from the shape of the prop rather than from the ask.
             T.Check("a flat TV gets the input banner", TVDevice.HasInputBanner(TVDevice.DeviceKind.FlatTv));
             T.Check("a flat monitor gets one", TVDevice.HasInputBanner(TVDevice.DeviceKind.FlatMonitor));
+            // ...and the CRT MONITOR (strawberry: "add it to the crt monitor, not tv, too). A computer monitor names
+            // its input whatever tube is behind the glass; a television does not. So this is NOT the tube/panel split,
+            // and writing it as one -- the obvious simplification -- gets the CRT TV wrong in the same stroke.
+            T.Check("a CRT MONITOR gets one too", TVDevice.HasInputBanner(TVDevice.DeviceKind.CrtMonitor));
             T.Check("a LAPTOP does not", !TVDevice.HasInputBanner(TVDevice.DeviceKind.Laptop));
-            T.Check("a CRT television does not", !TVDevice.HasInputBanner(TVDevice.DeviceKind.CrtTv));
-            T.Check("a CRT monitor does not", !TVDevice.HasInputBanner(TVDevice.DeviceKind.CrtMonitor));
+            T.Check("a CRT TELEVISION does not", !TVDevice.HasInputBanner(TVDevice.DeviceKind.CrtTv));
+            T.Check("...so bannering and being a panel are DIFFERENT questions",
+                TVDevice.HasInputBanner(TVDevice.DeviceKind.CrtMonitor) && TVDevice.FadesIn(TVDevice.DeviceKind.CrtMonitor));
+
+            // ---- THE OSD TRAILS THE PICTURE (strawberry: "a very small delay between the screen coming on, and the
+            // OSD appearing. realisms"). Small, but not zero -- the panel lighting and the scaler naming its input are
+            // two machines, and simultaneous is the one thing they cannot be.
+            T.Check($"the OSD lags the picture ({TVDevice.BannerLead:0.###} s)", TVDevice.BannerLead > 0f);
+            T.Check($"...but only just ({TVDevice.BannerLead:0.###} s, vs {TVDevice.BannerDur:0.##} on screen)",
+                TVDevice.BannerLead < TVDevice.BannerDur * 0.5f);
 
             // ---- HALF A CRT'S DELAY, stated as a RATIO rather than as a copy of the number. Written as a literal it
             // would silently stop being half the moment the tube's delay was retuned -- which has already happened once
@@ -80,6 +98,24 @@ namespace UnturnedGodot.Testing
                 T.Check("...and `screen_black`", names.Contains("screen_black"));
             }
 
+            // ---- THE BANNER IS NOT TINTED BY THE CHANNEL (strawberry: "the input source thing gets tinted to
+            // whatever color the background is. should stay blue"). It was applied BEFORE `* tint.rgb`, and tint.rgb
+            // IS the picture colour on the flat-colour channel -- so the box got repainted whatever was behind it.
+            //
+            // This checks the ORDER in the shader source, which is honest about what it can see: it pins the exact
+            // mistake (overlay before the multiply) and would catch it coming back. It does NOT prove the rendered
+            // box is blue -- there is no TV scene in the visual harness, so that part is still eyes-only.
+            string src = ReadShader("res://content/screen.gdshader");
+            T.Check($"the shader source was readable ({src.Length} chars)", src.Length > 500);
+            if (src.Length > 500)
+            {
+                int mul = src.IndexOf("c * tint.rgb", System.StringComparison.Ordinal);
+                int mix = mul > 0 ? src.IndexOf("prog_banner(uv)", mul, System.StringComparison.Ordinal) : -1;
+                T.Check($"the tint multiply happens ({mul})", mul > 0);
+                T.Check($"...and the banner is overlaid AFTER it, so the channel cannot repaint it ({mix} > {mul})",
+                    mul > 0 && mix > mul);
+            }
+
             bool gridWas = PowerNet.GlobalPower;
             PowerNet.SetGlobalPower(true);
             var flatTv = Build("Television_0");
@@ -112,13 +148,13 @@ namespace UnturnedGodot.Testing
 
             // Sample every tick. A crossfade would be caught here and nowhere else.
             bool sawPartial = false, sawBanner = false;
-            int ticksToPicture = 0;
+            int ticksToPicture = 0, firstBannerTick = 0;
             for (int i = 0; i < 120; i++)
             {
                 yield return Ticks(1);
                 float w = flatTv.DebugWarm;
                 if (w > 0.01f && w < 0.99f) sawPartial = true;
-                if (flatTv.DebugBannerUp) sawBanner = true;
+                if (flatTv.DebugBannerUp) { sawBanner = true; if (firstBannerTick == 0) firstBannerTick = i + 1; }
                 if (w >= 0.99f && ticksToPicture == 0) ticksToPicture = i + 1;
             }
             T.Check($"the picture came up ({ticksToPicture} ticks in)", ticksToPicture > 0);
@@ -127,6 +163,8 @@ namespace UnturnedGodot.Testing
             T.Check("...and it STEPPED -- never once caught part-way in, so it is not a fast fade", !sawPartial);
             T.Check("...and the banner went up with it", sawBanner);
             T.Check($"...then cleared ({TVDevice.BannerDur:0.##} s later)", !flatTv.DebugBannerUp);
+            T.Check($"...having trailed the picture rather than arriving with it (first seen {firstBannerTick} ticks in, picture at {ticksToPicture})",
+                firstBannerTick > ticksToPicture);
 
             // ---- A TUBE STILL FADES, and gets no banner. The same power-cycle, so the difference is the kind and not
             // the way it was driven.
@@ -142,7 +180,28 @@ namespace UnturnedGodot.Testing
                 if (crtTv.DebugBannerUp) tubeBanner = true;
             }
             T.Check("a tube is caught part-way in -- it really does crossfade", tubePartial);
-            T.Check("...and never shows an input banner", !tubeBanner);
+            T.Check("...and a TELEVISION never shows an input banner", !tubeBanner);
+
+            // ---- THE CRT MONITOR: tube warm-up AND a banner. The combination is the point -- it is the one device
+            // that takes both paths, so a predicate written as "panels banner" passes every other check here.
+            var crtMon = Build("Computer_0");
+            if (crtMon != null)
+            {
+                yield return Ticks(120);
+                if (crtMon.DebugLit) crtMon.Toggle();
+                yield return Ticks(40);
+                crtMon.Toggle();
+                bool monPartial = false, monBanner = false;
+                for (int i = 0; i < 260; i++)
+                {
+                    yield return Ticks(1);
+                    float w = crtMon.DebugWarm;
+                    if (w > 0.01f && w < 0.99f) monPartial = true;
+                    if (crtMon.DebugBannerUp) monBanner = true;
+                }
+                T.Check("a CRT monitor still crossfades like the tube it is", monPartial);
+                T.Check("...and ALSO raises an input banner", monBanner);
+            }
 
             // ---- A LAPTOP JUST COMES ON. No delay, no banner: the exclusion strawberry asked for, checked live rather
             // than only through the predicate.

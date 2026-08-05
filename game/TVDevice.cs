@@ -309,12 +309,22 @@ namespace UnturnedGodot
         // A panel does not warm up -- it is dark while it acquires a signal and then it is simply ON. So the delay is
         // real dead time and the picture STEPS, where a tube's dead time is followed by a crossfade. Laptops keep the
         // instant snap they had.
-        internal static bool HasInputBanner(DeviceKind k) => k is DeviceKind.FlatTv or DeviceKind.FlatMonitor;
+        // Both flat panels and the CRT MONITOR (strawberry: "add it to the crt monitor, not tv, too") -- a computer
+        // monitor announces its input whatever tube is behind the glass; a television does not. So this is NOT the
+        // same split as IsTube/FadesIn, and deliberately so: the CRT monitor still takes the full tube delay and
+        // crossfade, and raises its banner once the picture has finished resolving.
+        internal static bool HasInputBanner(DeviceKind k) => k is DeviceKind.FlatTv or DeviceKind.FlatMonitor or DeviceKind.CrtMonitor;
         internal static float PowerDelay(DeviceKind k) => IsTube(k) ? WarmDelay : (HasInputBanner(k) ? WarmDelay * 0.5f : 0f);
         internal static bool FadesIn(DeviceKind k) => IsTube(k);
         internal const float BannerDur = 0.8f;   // strawberry
-        float _bannerLeft;
+        /// <summary>Dead time between the picture arriving and the OSD appearing (strawberry: "a very small delay
+        /// between the screen coming on, and the OSD appearing. realisms"). A real set lights its panel and only then
+        /// does its scaler decide it has a signal to name -- the two are separate machines, so they cannot be
+        /// simultaneous.</summary>
+        internal const float BannerLead = 0.15f;
+        float _bannerLeft, _bannerWait;
         public bool DebugBannerUp => _bannerLeft > 0f;
+        public bool DebugBannerPending => _bannerWait > 0f;
         public float DebugWarmDelayLeft => _warmDelay;
 
         // CRT POWER-OFF COLLAPSE (master: "when turning it off, do the beam collapse on the center, the classic crt
@@ -1195,7 +1205,7 @@ namespace UnturnedGodot
                 EndCollapse();   // switched back on mid-collapse: the screen node is still squeezed, so undo it first
                 float delay = PowerDelay(_kind);
                 if (delay > 0f) { _warming = true; _warmDelay = delay; _warm = 0f; }   // tube warms in; a panel sits dark, then steps
-                else { _warming = false; _warm = 1f; _bannerLeft = 0f; }               // laptop: straight on, no banner
+                else { _warming = false; _warm = 1f; _bannerLeft = 0f; _bannerWait = 0f; }   // laptop: straight on, no banner
                 if (_program == ScreenProgram.Colour) _colourLeft = (float)GD.RandRange(ColourHoldMin, ColourHoldMax);
                 if (_screen != null) _screen.Visible = true;
                 if (_light != null) _light.Visible = true;
@@ -1205,7 +1215,7 @@ namespace UnturnedGodot
             }
             else
             {
-                _warming = false; _warm = 0f; _bannerLeft = 0f;
+                _warming = false; _warm = 0f; _bannerLeft = 0f; _bannerWait = 0f;
                 _screenMat?.SetShaderParameter("banner", 0f);
                 _tone?.Stop();
                 ResetDesync();
@@ -1517,7 +1527,12 @@ namespace UnturnedGodot
                     ApplyLevels();
                 }
             }
-            if (_bannerLeft > 0f)
+            if (_bannerWait > 0f)
+            {
+                _bannerWait -= (float)delta;
+                if (_bannerWait <= 0f) { _bannerWait = 0f; _bannerLeft = BannerDur; _screenMat?.SetShaderParameter("banner", 1f); }
+            }
+            else if (_bannerLeft > 0f)
             {
                 _bannerLeft -= (float)delta;
                 if (_bannerLeft <= 0f) { _bannerLeft = 0f; _screenMat?.SetShaderParameter("banner", 0f); }
@@ -1529,12 +1544,19 @@ namespace UnturnedGodot
                 // A panel STEPS to full and puts its input banner up. No ramp: an LCD that faded in would read as a
                 // tube, which is the distinction this whole branch exists to keep.
                 _warm = 1f; _warming = false;
-                if (HasInputBanner(_kind)) { _bannerLeft = BannerDur; _screenMat?.SetShaderParameter("banner", 1f); }
+                if (HasInputBanner(_kind)) _bannerWait = BannerLead;
                 ApplyLevels();
                 return;
             }
             _warm = Mathf.Min(1f, _warm + (float)delta / WarmDur);
-            if (_warm >= 1f) _warming = false;
+            if (_warm >= 1f)
+            {
+                _warming = false;
+                // A tube that banners (the CRT monitor) raises it when the picture has RESOLVED, not when the tube
+                // started warming -- an OSD over a half-faded picture reads as part of the fade rather than as the set
+                // telling you its input.
+                if (HasInputBanner(_kind)) _bannerWait = BannerLead;
+            }
             ApplyLevels();
         }
 
