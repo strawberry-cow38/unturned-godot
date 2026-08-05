@@ -47,6 +47,20 @@ namespace UnturnedGodot.Testing
             T.Check($"...but still clears the peek it permits ({PlayerController.LeanReach:0.##} m > {floorReach:0.##} m = {PlayerController.LeanPeek(1.75f):0.##} peek + {PlayerController.LeanHeadRadius:0.##} head)",
                 PlayerController.LeanReach > floorReach);
 
+            // ---- THE QUERY ONLY LOOKS AT THE SIDE YOU ARE LEANING TOWARDS (strawberry, in game: "before my left side
+            // was against a wall, and it prevented me from leaning right").
+            //
+            // The source sweeps from the eye with a hemisphere still hanging BACK off it, reaching PlayerStance.RADIUS
+            // behind. Retail gets away with that because the player's own body is exactly that wide, so a wall flush
+            // against your shoulder sits tangent to the overhang. Our body is 0.35 -- narrower than the source's 0.4 --
+            // so the overhang stuck out past our own shoulder and a wall you were touching blocked the lean AWAY from
+            // it. The per-side branch in LeanFrom was correct the whole time; the shape was looking the wrong way.
+            var span = PlayerController.LeanCapsuleSpan();
+            T.Check($"the obstruction capsule starts AT the eye, not behind it (near edge {span.Mid - span.Height * 0.5f:0.###} m)",
+                Mathf.Abs(span.Mid - span.Height * 0.5f) < 1e-4f);
+            T.Check($"...and ends exactly at the reach ({span.Mid + span.Height * 0.5f:0.###} m vs {PlayerController.LeanReach:0.##})",
+                Mathf.Abs((span.Mid + span.Height * 0.5f) - PlayerController.LeanReach) < 1e-4f);
+
             // ---- THE RULES, engine-free. These are the branches of PlayerAnimator.simulate.
             {
                 T.Check("neither key -> upright", PlayerController.LeanFrom(false, false, EPlayerStance.STAND, true, true, out _) == 0);
@@ -209,6 +223,24 @@ namespace UnturnedGodot.Testing
             w.ScriptedLean = -1;   // away from it
             yield return Until(() => w.DebugLeanAngle < -19f, 6);
             T.Check($"...and leaning AWAY from that same wall still works ({EyeLocal(w).X:0.###} m)",
+                !w.DebugLeanObstructed && EyeLocal(w).X > 0.3f);
+
+            // ---- AND THE REPORTED CASE, END TO END: a wall pressed against the shoulder. Placed as close as the body
+            // physically allows, which is the only place it can be for the symptom to show -- the wall above sits
+            // 0.65 m out, past where the overhang reached, which is how 39 green checks missed this.
+            w.ScriptedLean = 0;
+            yield return Until(() => Mathf.Abs(w.DebugLeanAngle) < 0.5f, 6);
+            wall.GlobalPosition = stood + w.GlobalTransform.Basis.X * -(0.36f + halfThick) + Vector3.Up * 2f;
+            yield return Ticks(10);
+            T.Check($"a wall flush to the shoulder did not shove the player ({(w.GlobalPosition - stood)})",
+                w.GlobalPosition.DistanceTo(stood) < 0.05f);
+            w.ScriptedLean = 1;   // into it
+            yield return Ticks(10);
+            T.Check("...leaning INTO the shoulder wall is blocked", w.DebugLeanObstructed && w.DebugLean == 0);
+            w.ScriptedLean = -1;  // away from it -- the reported bug
+            yield return Ticks(40);   // fixed wait, not Until: a broken build should report THIS check by name with its
+                                      //  numbers, not an anonymous "UNTIL timed out" that says nothing about the case
+            T.Check($"...and leaning AWAY from it is NOT ({EyeLocal(w).X:0.###} m of peek, obstructed {w.DebugLeanObstructed})",
                 !w.DebugLeanObstructed && EyeLocal(w).X > 0.3f);
 
             // Blocked mid-lean SNAPS upright rather than lerping (PlayerLook.cs:738-741) -- lerping out of a wall means

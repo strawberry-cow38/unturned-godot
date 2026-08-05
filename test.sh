@@ -117,6 +117,14 @@ run_l1() {  # batched in-engine tests: build the game once, boot headless godot,
   fi
   local p f; p="$(sed -E 's/.*passed=([0-9]+).*/\1/' <<<"$summary")"; f="$(sed -E 's/.*failed=([0-9]+).*/\1/' <<<"$summary")"
   TOTAL_PASS=$((TOTAL_PASS + p)); TOTAL_FAIL=$((TOTAL_FAIL + f))
+  # A glob that matched NOTHING ran zero tests and reported "PASS | 0 passed" -- which is the same green an agent or a
+  # human skims past as "my change is fine". --only takes one glob, not an alternation, so `player.lean|tv.*` silently
+  # selects nothing and looks exactly like a clean run. Zero tests is an ERROR, never a pass.
+  if [ "$p" -eq 0 ] && [ "$f" -eq 0 ]; then
+    echo "[SUITE] L1 | ERROR | no test matched --only '$ONLY' (0 ran; --only takes ONE glob, not a|b)"; INFRA_FAIL=1
+    [ $FAILFAST -eq 1 ] && finish
+    return
+  fi
   if [ "$f" -eq 0 ]; then
     echo "[SUITE] L1 in-engine | PASS | $p passed"
   else

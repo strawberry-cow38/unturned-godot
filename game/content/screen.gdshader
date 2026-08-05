@@ -129,7 +129,7 @@ vec3 prog_scroll(vec2 uv) {
     // a whole line is red or none of it is -- per-character would read as broken glyphs rather than as an error being
     // printed, and the line keeps its colour as it scrolls because the hash is on its absolute index, not its position
     // on screen.
-    vec3 ink = hash11(cy * 5.19 + seed) < 0.09 ? vec3(0.95, 0.32, 0.28) : vec3(0.55, 0.95, 0.60);
+    vec3 ink = hash11(cy * 5.19 + seed) < 0.09 ? vec3(0.82, 0.07, 0.06) : vec3(0.55, 0.95, 0.60);   // deeper red (strawberry) -- the old 0.95,0.32,0.28 read as salmon next to the green
     return vec3(step(0.42, bit)) * ink;
 }
 

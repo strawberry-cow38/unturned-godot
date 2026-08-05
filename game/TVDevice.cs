@@ -157,7 +157,10 @@ namespace UnturnedGodot
             ScreenProgram.Static         => 0.4597f,   // re-measured after the snow was coarsened
             ScreenProgram.Dvd            => 0.0704f,
             ScreenProgram.BarGraph       => 0.2821f,
-            ScreenProgram.TerminalScroll => 0.1384f,
+            // 0.1384 measured, then adjusted for the deeper red: red lines are 9% of lines, their ink luma fell
+            // 0.451 -> 0.228, and lit coverage on this program is ~0.165 -- so 0.09*0.165*0.223 comes off the mean.
+            // Small enough that the ordering test's margins are untouched; carried anyway so the number stays honest.
+            ScreenProgram.TerminalScroll => 0.1351f,
             ScreenProgram.TerminalCursor => 0.0005f,
             _                            => Mono(tint).R,   // Colour: the tint IS the picture
         };
