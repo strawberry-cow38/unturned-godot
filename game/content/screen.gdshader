@@ -22,8 +22,17 @@ uniform vec4 tint = vec4(1.0);      // rgb = colour * brightness, a = warmup fad
 uniform float mono = 0.0;
 uniform float time_s = 0.0;
 uniform float seed = 0.0;
-uniform float scroll_offset = 0.0;   // driven from C#, so the text can scroll in BURSTS rather than continuously
+uniform float head_line = 0.0;       // absolute index of the line being TYPED right now
+uniform float head_col = 0.0;        // how many cells have been typed on it
 uniform float cursor_on = 0.0;       // the terminal's cursor, shown while a burst is idle
+uniform sampler2D blob_tex : source_color, filter_linear, repeat_disable;   // the studio logo, bounced like a DVD
+uniform sampler2D bg_tex : source_color, filter_linear, repeat_disable;     // a map preview, behind the instrument panel
+uniform vec2 blob_half = vec2(0.12, 0.18);   // half-size in UV, aspect-corrected in C# so the logo stays SQUARE on a
+                                             // 2:1 flatscreen instead of being stretched into a smear
+uniform vec2 blob_pos = vec2(0.5);   // the DVD blob's centre, in UV. Driven from C# so the SPILL LIGHT can be placed
+                                     // exactly where the blob is drawn -- if both sides derived it from time_s they
+                                     // would agree only until one of them was edited, and then the light would track
+                                     // a blob that is not there.
 
 float hash11(float p) { return fract(sin(p * 127.1) * 43758.5453123); }
 float hash21(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123); }
@@ -49,15 +58,12 @@ vec3 prog_static(vec2 uv) {
 // ---- the bouncing blob. Triangle waves on each axis ARE a perfect reflection off the walls, so the corners fall out
 // of the maths instead of needing a collision test.
 vec3 prog_dvd(vec2 uv) {
-    vec2 half_size = vec2(0.17, 0.11);
-    vec2 span = vec2(1.0) - half_size * 2.0;
-    float tx = abs(fract((time_s * 0.13 + seed) ) * 2.0 - 1.0);
-    float ty = abs(fract((time_s * 0.097 + seed * 1.7)) * 2.0 - 1.0);
-    vec2 c = half_size + vec2(tx, ty) * span;
-    vec2 d = abs(uv - c) / half_size;
-    // rounded rect, softened just enough that it does not crawl with aliasing as it slides
-    float m = 1.0 - smoothstep(0.86, 1.0, max(d.x, d.y * 0.92));
-    return vec3(m);
+    // The actual studio logo, bouncing -- master: "repurpose existing assets in the game". Which is the joke: a DVD
+    // screensaver is a logo, and the game already ships one.
+    vec2 luv = (uv - blob_pos) / (blob_half * 2.0) + 0.5;
+    if (luv.x < 0.0 || luv.x > 1.0 || luv.y < 0.0 || luv.y > 1.0) return vec3(0.0);
+    vec4 t = texture(blob_tex, luv);
+    return t.rgb * t.a;   // premultiplied against black: the screen around it is off
 }
 
 // ---- a terminal waiting for input: black, with one block cursor blinking at roughly 1.5 Hz.
@@ -73,42 +79,50 @@ vec3 prog_cursor(vec2 uv) {
 // ---- block "text" scrolling forever. Not noise: lines have RAGGED LENGTHS with blank gaps, and glyphs are drawn from
 // a 3x5 sub-grid, which is what makes it read as text rather than as a dither pattern. Scrolls upward continuously.
 vec3 prog_scroll(vec2 uv) {
-    float cols = 34.0, rows = 17.0;
-    // `scroll_offset` rather than time: master wants it to run in bursts of random length with random gaps, and a
-    // burst is a state machine with memory. Deriving one from a pure function of time is possible but unreadable, and
-    // the CPU is already ticking these sets -- so C# owns the position and this just draws it.
-    vec2 g = vec2(uv.x * cols, uv.y * rows + scroll_offset);
-    vec2 cell = floor(g);
-    vec2 f = fract(g);
+    const float cols = 34.0, rows = 17.0;
 
-    float line = hash11(cell.y * 1.37 + seed);           // how far along this line the text runs
-    float lineLen = 6.0 + line * (cols - 8.0);
+    // A terminal TYPING, not a wall of text sliding past (master: "it should write out each line from left to right.
+    // scrolling as the screen fills"). The write head is owned by C# -- typing has state, and a burst has memory.
+    // The screen fills from the top and only starts scrolling once the head reaches the bottom, which is what a real
+    // terminal does and what a pure upward scroll never looks like.
+    float top = max(0.0, head_line - (rows - 1.0));
+    float cy = floor(uv.y * rows) + top;          // absolute line under this pixel
+    float cx = floor(uv.x * cols);
+    vec2 f = vec2(fract(uv.x * cols), fract(uv.y * rows));
 
-    // The cursor sits after the end of the newest line, and only shows while the terminal is IDLE -- text does not
-    // flow and blink at the same time on a real one, and having it blink through a burst reads as two effects
-    // fighting rather than one machine working.
-    float newest = floor(scroll_offset) + rows - 1.0;
-    if (cursor_on > 0.5 && cell.y == newest) {
-        float curX = floor(6.0 + hash11(newest * 1.37 + seed) * (cols - 8.0)) + 1.0;
-        if (cell.x == curX && f.y > 0.08 && f.y < 0.92 && f.x > 0.05 && f.x < 0.75)
+    // NOTHING BELOW THE HEAD (master: "keep the line below the blinking cursor blank"). This is what makes it read as
+    // a machine writing rather than as a window onto text that already exists.
+    if (cy > head_line) return vec3(0.0);
+
+    // Ragged right edge + the occasional blank line, so it reads as prose rather than as a block.
+    float lineLen = 6.0 + hash11(cy * 1.37 + seed) * (cols - 8.0);
+    bool blankLine = hash11(cy * 3.71) < 0.13;
+    float endCol = blankLine ? 0.0 : lineLen;
+    // ...and on the line being typed, only as far as the head has got.
+    if (cy == head_line) endCol = min(endCol, head_col);
+
+    // The cursor sits at the head, clamped to the end of its line so it never floats out in the blank margin.
+    if (cursor_on > 0.5 && cy == head_line) {
+        float curX = floor(min(head_col, blankLine ? 0.0 : lineLen));
+        if (cx == curX && f.y > 0.08 && f.y < 0.92 && f.x > 0.05 && f.x < 0.75)
             return vec3(0.55, 0.95, 0.60);
     }
 
-    if (cell.x > lineLen) return vec3(0.0);              // ragged right edge
-    if (hash11(cell.y * 3.71) < 0.13) return vec3(0.0);  // occasional empty line, like paragraph breaks
+    if (cx >= endCol) return vec3(0.0);
 
     // a 3x5 glyph cell with a one-pixel gutter
     vec2 sub = floor(vec2(f.x * 4.0, f.y * 6.0));
     if (sub.x > 2.5 || sub.y > 4.5) return vec3(0.0);
-    float bit = hash21(cell * 11.7 + sub + seed);
-    float on = step(0.42, bit);
-    return vec3(on) * vec3(0.55, 0.95, 0.60);            // phosphor green
+    float bit = hash21(vec2(cx, cy) * 11.7 + sub + seed);
+    return vec3(step(0.42, bit)) * vec3(0.55, 0.95, 0.60);   // phosphor green
 }
 
 // ---- an instrument readout: bars on a gridded panel, each breathing at its own rate, with a sweeping trace over the
 // top. The per-bar frequencies are deliberately incommensurate so the row never falls into a visible marching pattern.
 vec3 prog_bars(vec2 uv) {
-    vec3 col = vec3(0.02, 0.03, 0.05);
+    // A dim map preview behind the panel, so it reads as a monitoring station rather than as an abstract chart --
+    // again an asset the game already has, rather than something invented.
+    vec3 col = vec3(0.02, 0.03, 0.05) + texture(bg_tex, uv).rgb * 0.16;
     // grid
     vec2 gl = abs(fract(uv * vec2(12.0, 8.0)) - 0.5);
     float grid = (1.0 - smoothstep(0.0, 0.06, min(gl.x, gl.y))) * 0.10;

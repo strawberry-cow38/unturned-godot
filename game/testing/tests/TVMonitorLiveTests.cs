@@ -221,12 +221,12 @@ namespace UnturnedGodot.Testing
             // window. A continuous scroll would satisfy "it advances" perfectly.
             crtMon.DebugSetProgram(TVDevice.ScreenProgram.TerminalScroll);
             yield return Ticks(2);
-            float last = crtMon.DebugScrollOffset;
+            float last = crtMon.DebugTypeHead;
             int moved = 0, stalled = 0, cursorSeen = 0, bothAtOnce = 0;
             for (int i = 0; i < 400; i++)
             {
                 yield return Ticks(1);
-                float now = crtMon.DebugScrollOffset;
+                float now = crtMon.DebugTypeHead;
                 if (now > last + 1e-5f) moved++; else stalled++;
                 if (crtMon.DebugCursorOn) cursorSeen++;
                 // Sampled at ONE INSTANT from the state machine itself, not inferred from movement across the
@@ -235,14 +235,19 @@ namespace UnturnedGodot.Testing
                 if (crtMon.DebugCursorOn && crtMon.DebugScrolling) bothAtOnce++;
                 last = now;
             }
-            T.Check($"the terminal scrolls ({moved} frames advancing)", moved > 20);
+            T.Check($"the terminal types ({moved} frames advancing)", moved > 20);
             T.Check($"...and PAUSES between bursts ({stalled} frames parked) -- a continuous scroll would never stall",
                 stalled > 20);
             T.Check($"...showing a cursor while it waits ({cursorSeen} frames)", cursorSeen > 5);
             T.Check($"...and never while a burst is running ({bothAtOnce}) -- one machine, not two effects fighting",
                 bothAtOnce == 0);
-            T.Check($"...with the offset only ever going forward ({crtMon.DebugScrollOffset:0.0})",
-                crtMon.DebugScrollOffset > 0f);
+            T.Check($"...with the head only ever going forward ({crtMon.DebugTypeHead:0.0} lines typed)",
+                crtMon.DebugTypeHead > 0f);
+            // It TYPES rather than scrolling a finished page (master: "write out each line from left to right.
+            // scrolling as the screen fills"), so the head has to advance in fractions of a line, not whole ones.
+            // A model that only ever jumped by whole lines would satisfy every check above.
+            T.Check($"...a fraction of a line at a time, i.e. character by character ({crtMon.DebugTypeHead % 1f:0.00})",
+                crtMon.DebugTypeHead % 1f != 0f || crtMon.DebugTypeHead > 1f);
 
             // ---- THE CONE READS THE PICTURE. Same device, two programs, and the dark one must throw less light.
             crtMon.DebugSetProgram(TVDevice.ScreenProgram.TerminalCursor);

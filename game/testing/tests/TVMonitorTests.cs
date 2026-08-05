@@ -213,6 +213,67 @@ namespace UnturnedGodot.Testing
             float pale = TVDevice.ConeScale(TVDevice.ScreenProgram.Colour, new Color(0.62f, 0.66f, 0.70f));  // grey UI
             T.Check($"a pale colour throws more light than a deep blue ({pale:0.00} vs {dark:0.00})", pale > dark);
 
+            // ---- WHERE THE LIGHT COMES FROM (master: "the light beam comes from the dvd logo as it moves across the
+            // dark screen, the blinking cursor is the source of that cone"). Mean brightness alone made a screen
+            // showing one small bright thing into a DIM light at the CENTRE; it is a SMALL light where that thing is.
+            var half = TVDevice.BlobHalf(2.0f);
+            // The blob's emitter must sit ON the blob. Note the V FLIP: UV v runs DOWN the screen (image top at screen
+            // top), so a centre computed without it lands on the blob's mirror image -- which still tracks, still
+            // moves, and is wrong in a way that looks like it is working.
+            var topLeft = TVDevice.Emitter(TVDevice.ScreenProgram.Dvd, new Vector2(0.2f, 0.2f), half);
+            var botRight = TVDevice.Emitter(TVDevice.ScreenProgram.Dvd, new Vector2(0.8f, 0.8f), half);
+            T.Check($"a blob at UV (0.2,0.2) emits from up-LEFT ({topLeft.Centre})",
+                topLeft.Centre.X < 0f && topLeft.Centre.Y > 0f);
+            T.Check($"...and at (0.8,0.8) from down-RIGHT ({botRight.Centre})",
+                botRight.Centre.X > 0f && botRight.Centre.Y < 0f);
+            T.Check($"the cursor emits from the top-left corner ({TVDevice.Emitter(TVDevice.ScreenProgram.TerminalCursor, Vector2.Zero, half).Centre})",
+                TVDevice.Emitter(TVDevice.ScreenProgram.TerminalCursor, Vector2.Zero, half).Centre.X < -0.3f
+                && TVDevice.Emitter(TVDevice.ScreenProgram.TerminalCursor, Vector2.Zero, half).Centre.Y > 0.3f);
+            T.Check($"bar graphs emit from LOW and wide ({TVDevice.Emitter(TVDevice.ScreenProgram.BarGraph, Vector2.Zero, half).Centre})",
+                TVDevice.Emitter(TVDevice.ScreenProgram.BarGraph, Vector2.Zero, half).Centre.Y < 0f);
+            foreach (var full in new[] { TVDevice.ScreenProgram.TestCard, TVDevice.ScreenProgram.Static, TVDevice.ScreenProgram.Colour })
+            {
+                var e = TVDevice.Emitter(full, Vector2.Zero, half);
+                T.Check($"{full} genuinely fills the screen, so it stays centred and full-width ({e.Centre}, {e.Extent})",
+                    e.Centre == Vector2.Zero && e.Extent == Vector2.One);
+            }
+            // A cursor is a far smaller emitter than a test card -- that is what narrows its beam.
+            T.Check("a cursor's lit area is a fraction of a test card's",
+                TVDevice.Emitter(TVDevice.ScreenProgram.TerminalCursor, Vector2.Zero, half).Extent.X
+                < TVDevice.Emitter(TVDevice.ScreenProgram.TestCard, Vector2.Zero, half).Extent.X * 0.2f);
+
+            // ---- THE BOUNCE. Triangle waves reflect perfectly off the walls, so the logo must stay wholly on screen
+            // for all time -- a blob that clips through an edge is the classic failure of doing this with a modulo.
+            float minX = 1f, maxX = 0f, minY = 1f, maxY = 0f;
+            var seen = new List<Vector2>();
+            for (float t = 0f; t < 400f; t += 0.37f)
+            {
+                var b = TVDevice.BlobPos(t, 3.7f, half);
+                minX = Mathf.Min(minX, b.X); maxX = Mathf.Max(maxX, b.X);
+                minY = Mathf.Min(minY, b.Y); maxY = Mathf.Max(maxY, b.Y);
+                seen.Add(b);
+            }
+            T.Check($"the logo never leaves the screen horizontally ([{minX:0.000},{maxX:0.000}] within [{half.X:0.000},{1 - half.X:0.000}])",
+                minX >= half.X - 1e-4f && maxX <= 1f - half.X + 1e-4f);
+            T.Check($"...nor vertically ([{minY:0.000},{maxY:0.000}])",
+                minY >= half.Y - 1e-4f && maxY <= 1f - half.Y + 1e-4f);
+            T.Check("...and it actually reaches both walls, so it is bouncing rather than drifting in the middle",
+                minX < half.X + 0.02f && maxX > 1f - half.X - 0.02f);
+            T.Check($"...covering the screen rather than retracing one line ({seen.Select(v => Mathf.RoundToInt(v.X * 6) * 8 + Mathf.RoundToInt(v.Y * 6)).Distinct().Count()} cells visited)",
+                seen.Select(v => Mathf.RoundToInt(v.X * 6) * 8 + Mathf.RoundToInt(v.Y * 6)).Distinct().Count() > 15);
+
+            // ---- ASPECT. The screen's UV is 0..1 across a face that is 3.55 x 1.80 m on the big flatscreen, so equal
+            // UV steps are nothing like equal distances. Without this the logo is a wide smear on exactly the set it is
+            // most visible on -- and it would still bounce, so nothing else would look wrong.
+            var wide = TVDevice.BlobHalf(3.55f / 1.80f);
+            var square = TVDevice.BlobHalf(1f);
+            T.Check($"on a 2:1 screen the logo is narrower in UV to stay square ({wide.X:0.000} vs {wide.Y:0.000})",
+                wide.X < wide.Y * 0.6f);
+            T.Check($"...on a square screen it is not squashed at all ({square.X:0.000} vs {square.Y:0.000})",
+                Mathf.IsEqualApprox(square.X, square.Y));
+            T.Check($"...and in WORLD units it comes out square on both ({wide.X * 3.55f / (wide.Y * 1.80f):0.000})",
+                Mathf.Abs(wide.X * 3.55f / (wide.Y * 1.80f) - 1f) < 0.02f);
+
             // ---- WATTS are per kind and none of them is zero. A 0 W consumer is a REAL thing in this codebase (a
             // splitter's relay input) and the solver treats it as always-satisfied -- so a monitor that fell through to
             // 0 W would light up wired to nothing at all and look like the feature working.

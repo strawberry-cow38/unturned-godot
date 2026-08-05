@@ -169,13 +169,72 @@ namespace UnturnedGodot
         internal static float ConeScale(ScreenProgram p, Color tint)
             => Mathf.Max(ConeFloor, MeanLuma(p, tint) / RefLuma);
 
+        // ---- WHERE THE LIGHT COMES FROM (master: "track the scale/motion on screen? ie the light beam comes from the
+        // dvd logo as it moves across the dark screen, the blinking cursor is the source of that cone").
+        //
+        // Mean brightness alone was the crude version of this: it made a screen showing one small bright thing into a
+        // DIM light at the centre, when physically it is a SMALL light where that thing is. So the spill is placed at
+        // the picture's luminance centroid and the shaft narrowed to the size of the lit region.
+        //
+        // Centre is in screen-plane units, (right, up), each in [-0.5, 0.5] of the screen's own width and height.
+        // Extent is the lit region as a fraction of the screen, which is what narrows the beam.
+        //
+        // The DVD blob's position is NOT recomputed here from time -- it is the same value the shader is drawing with,
+        // handed to both. Two independent copies of a bounce agree exactly until one is edited, and the symptom then is
+        // a light tracking a blob that is not there, which looks like a lighting bug rather than a duplication one.
+        internal static (Vector2 Centre, Vector2 Extent) Emitter(ScreenProgram p, Vector2 blobUv, Vector2 blobHalf) => p switch
+        {
+            // A blob at UV b sits at (b.x - 0.5) right and (0.5 - b.y) up: UV v runs DOWN the screen (Reproject puts
+            // image top at screen top), so the vertical term is flipped, and getting that backwards would send the
+            // light to the blob's mirror image -- which still tracks, still moves, and is wrong.
+            ScreenProgram.Dvd            => (new Vector2(blobUv.X - 0.5f, 0.5f - blobUv.Y), blobHalf * 2f),
+            // The cursor lives two cells in and two lines down of a 40x20 grid: top-left, and tiny.
+            ScreenProgram.TerminalCursor => (new Vector2(0.05f - 0.5f, 0.5f - 0.10f), new Vector2(0.05f, 0.08f)),
+            // Text runs from the left edge to a ragged right, full height.
+            ScreenProgram.TerminalScroll => (new Vector2(-0.15f, 0f), new Vector2(0.70f, 1f)),
+            // Bars rise from the bottom across the full width, so the lit mass sits low.
+            ScreenProgram.BarGraph       => (new Vector2(0f, -0.22f), new Vector2(1f, 0.62f)),
+            // A test card, snow and a flat colour genuinely do fill the screen.
+            _                            => (Vector2.Zero, Vector2.One),
+        };
+
+        /// <summary>The bouncing logo's half-size in UV, aspect-corrected so it stays SQUARE in the world. Screen UV
+        /// is 0..1 across a face that is 3.55 x 1.80 m on the big flatscreen, so equal UV steps are nothing like equal
+        /// distances -- an uncorrected square logo comes out as a wide smear on exactly the set it is most visible on.
+        /// Shared with the shader as a uniform rather than written twice.</summary>
+        internal static Vector2 BlobHalf(float aspect) => new(0.18f / Mathf.Max(0.05f, aspect), 0.18f);
+
+        /// <summary>The DVD blob's centre at time t. Triangle waves ARE a perfect reflection off the walls, so the
+        /// corners fall out of the maths rather than needing a collision test. Pure so the emitter position and the
+        /// drawn blob can be checked against each other.</summary>
+        internal static Vector2 BlobPos(float t, float seed, Vector2 half)
+        {
+            var span = Vector2.One - half * 2f;
+            float tx = Mathf.Abs(Mathf.PosMod(t * 0.13f + seed, 1f) * 2f - 1f);
+            float ty = Mathf.Abs(Mathf.PosMod(t * 0.097f + seed * 1.7f, 1f) * 2f - 1f);
+            return half + new Vector2(tx, ty) * span;
+        }
+
+        const float BeamMinScale = 0.18f;   // a cursor's beam is a pencil, but not a zero-width one
+        float _screenHalfW = 0.5f, _screenHalfH = 0.5f;   // the screen's own in-plane half-extents, set by Reproject
+        Vector2 _blob = new(0.5f, 0.5f);
+        Vector2 _blobHalf = new(0.12f, 0.18f);
+        Vector3 _coneBaseScale = Vector3.One;
+        Basis _beamBasis = Basis.Identity;
+        float _lightBaseAngle = 55f;
+
         // ---- TERMINAL SCROLL BURSTS (master: "make it scroll in bursts of random durations and time between. with a
         // blinking cursor sometimes"). A burst has memory, so the CPU owns the scroll position and the shader just
         // draws it -- a pure function of time could fake this but not readably.
-        const float BurstMin = 0.35f, BurstMax = 2.6f;    // seconds of movement
+        const float BurstMin = 0.35f, BurstMax = 2.6f;    // seconds of typing
         const float IdleMin = 0.5f, IdleMax = 3.4f;       // seconds parked, cursor blinking
-        const float ScrollSpeed = 4.2f;                   // lines per second while running
-        float _scrollPos, _burstLeft, _idleLeft;
+        const float TypeSpeed = 19f;                      // cells per second while typing
+        const float ScrollCols = 34f;                     // must match the shader's grid, and is the ONLY thing that
+                                                          //  does -- C# deliberately does not know line LENGTHS. The
+                                                          //  shader clips each line at its own hashed length and
+                                                          //  clamps the cursor to it, so there is no second copy of
+                                                          //  the layout to drift out of step with the first.
+        float _headLine, _headCol, _burstLeft, _idleLeft;
 
         ScreenProgram _program = ScreenProgram.TestCard;
         float _seed;          // per-set, so a room of televisions is not in lockstep
@@ -485,7 +544,14 @@ namespace UnturnedGodot
             // unchanged -- both already drive that colour's brightness and alpha.
             var (patternTex, monoTex, patternFrac) = ScreenTextures(pattern, _glassColor);
             _patternTex = patternTex; _monoTex = monoTex;
+            float aspect = _screenHalfH > 1e-5f ? _screenHalfW / _screenHalfH : 1f;
+            _blobHalf = BlobHalf(aspect);
             _screenMat = MakeScreenMaterial(_patternTex, _program, patternFrac, _seed);
+            _screenMat.SetShaderParameter("blob_tex", LoadPng(BlobAsset));
+            _screenMat.SetShaderParameter("bg_tex", LoadPng(PanelAsset));
+            _screenMat.SetShaderParameter("blob_half", _blobHalf);
+            _blob = BlobPos(0f, _seed, _blobHalf);
+            _screenMat.SetShaderParameter("blob_pos", _blob);
             if (_program == ScreenProgram.Colour)
                 _tint = MonitorColours[_colourIdx = Mathf.Abs((int)GD.Randi()) % MonitorColours.Length];
             _screenOffset = _screenNormalLocal * PictureOffset;
@@ -513,6 +579,7 @@ namespace UnturnedGodot
             // depth, which is exactly what light leaving a rectangular screen does.
             // BeamMesh runs along -Y with the section in X/Z, so the node's -Y goes on the screen normal.
             var beam = BeamFrame(screenAabb, _screenNormalLocal);
+            _beamBasis = beam.Basis;
             _cone = new MeshInstance3D
             {
                 Mesh = StreetLight.BeamMesh(ConeLen, beam.HalfA, beam.HalfB, 0f, keepRect: true, endScale: ConeEndScale),
@@ -759,6 +826,7 @@ namespace UnturnedGodot
                 vmin = Mathf.Min(vmin, pv[i]); vmax = Mathf.Max(vmax, pv[i]);
             }
             float uw = Mathf.Max(1e-5f, umax - umin), vw = Mathf.Max(1e-5f, vmax - vmin);
+            _screenHalfW = uw * 0.5f; _screenHalfH = vw * 0.5f;   // the emitter offset is measured in these
             var newU = new Vector2[V.Length];
             for (int i = 0; i < V.Length; i++)
                 newU[i] = new Vector2((pu[i] - umin) / uw, (vmax - pv[i]) / vw);   // V flipped: image top (v=0) at the screen top
@@ -860,6 +928,22 @@ namespace UnturnedGodot
             }
             catch { return fallback; }
         }
+
+        // Repurposed game assets (master: "see if u can repurpose existing assets in the game"). Loaded raw via
+        // Image.Load rather than GD.Load, the same as the SMPTE card -- these are loose pngs, not imported resources.
+        static readonly System.Collections.Generic.Dictionary<string, ImageTexture> _pngCache = new();
+        internal static ImageTexture LoadPng(string resPath)
+        {
+            if (_pngCache.TryGetValue(resPath, out var hit)) return hit;
+            var img = new Image();
+            string p = ProjectSettings.GlobalizePath(resPath);
+            if (!System.IO.File.Exists(p) || img.Load(p) != Error.Ok) { GD.PrintErr($"[tv] {resPath} missing/failed"); _pngCache[resPath] = null; return null; }
+            var t = ImageTexture.CreateFromImage(img);
+            _pngCache[resPath] = t;
+            return t;
+        }
+        internal const string BlobAsset = "res://content/menu/icon_sdglogo.png";
+        internal const string PanelAsset = "res://content/menu/mappreview_pei.png";
 
         static ImageTexture _pattern;
         static ImageTexture LoadPattern()
@@ -1208,9 +1292,11 @@ namespace UnturnedGodot
             if (_burstLeft > 0f)
             {
                 _burstLeft -= dt;
-                _scrollPos += dt * ScrollSpeed;
+                _headCol += dt * TypeSpeed;
+                if (_headCol >= ScrollCols) { _headCol = 0f; _headLine += 1f; }   // wrap to the next line
                 if (_burstLeft <= 0f) _idleLeft = (float)GD.RandRange(IdleMin, IdleMax);
-                _screenMat?.SetShaderParameter("scroll_offset", _scrollPos);
+                _screenMat?.SetShaderParameter("head_line", _headLine);
+                _screenMat?.SetShaderParameter("head_col", _headCol);
                 _screenMat?.SetShaderParameter("cursor_on", 0f);
                 return;
             }
@@ -1221,6 +1307,34 @@ namespace UnturnedGodot
             {
                 _burstLeft = (float)GD.RandRange(BurstMin, BurstMax);
                 _screenMat?.SetShaderParameter("cursor_on", 0f);
+            }
+        }
+
+        /// <summary>Move the spill and the shaft to where the picture is actually bright, and narrow them to how much
+        /// of the screen is lit. A DVD blob drags its pool of light across the wall as it bounces; a cursor throws a
+        /// pencil from the top-left; a test card floods the room from the middle, exactly as before.
+        ///
+        /// The offset is measured along the screen's OWN axes -- the same ax/ay Reproject built the UVs from -- so
+        /// "where the blob is in UV" and "where the light is in the world" are the same statement rather than two that
+        /// happen to agree.</summary>
+        void PlaceEmitter()
+        {
+            var (c, ext) = Emitter(_program, _blob, _blobHalf);
+            var offset = _screenRightLocal * (c.X * _screenHalfW * 2f)
+                       + _screenUpLocal * (c.Y * _screenHalfH * 2f);
+            if (_light != null)
+            {
+                _light.Transform = new Transform3D(AimBasis(_screenNormalLocal),
+                                                   _screenCenterLocal + offset + _screenNormalLocal * 0.05f);
+                _light.SpotAngle = Mathf.Lerp(18f, _lightBaseAngle, Mathf.Clamp((ext.X + ext.Y) * 0.5f, 0f, 1f));
+            }
+            if (_cone != null)
+            {
+                // Cross-section only: X and Z are the beam's width, Y is its length and must not move, or the shaft
+                // would grow and shrink toward the viewer instead of getting narrower.
+                float k = Mathf.Max(BeamMinScale, (ext.X + ext.Y) * 0.5f);
+                _cone.Transform = new Transform3D(_beamBasis * Basis.FromScale(new Vector3(k, 1f, k)),
+                                                  _screenCenterLocal + offset);
             }
         }
 
@@ -1299,6 +1413,8 @@ namespace UnturnedGodot
                 _screenMat?.SetShaderParameter("time_s", _clock);
                 if (_program == ScreenProgram.Colour) TickColour((float)delta);   // re-applies only on an actual change
                 if (_program == ScreenProgram.TerminalScroll) TickScroll((float)delta);
+                if (_program == ScreenProgram.Dvd) { _blob = BlobPos(_clock, _seed, _blobHalf); _screenMat?.SetShaderParameter("blob_pos", _blob); }
+                PlaceEmitter();
                 if (IsTube(_kind))
                 {
                     _flickerPhase = Mathf.Wrap(_flickerPhase + (float)delta * FlickerHz, 0f, 1f);
@@ -1356,8 +1472,11 @@ namespace UnturnedGodot
             m.SetShaderParameter("mono", 0f);
             m.SetShaderParameter("time_s", 0f);
             m.SetShaderParameter("seed", seed);
-            m.SetShaderParameter("scroll_offset", 0f);
+            m.SetShaderParameter("head_line", 0f);
+            m.SetShaderParameter("head_col", 0f);
             m.SetShaderParameter("cursor_on", 0f);
+            m.SetShaderParameter("blob_pos", new Vector2(0.5f, 0.5f));
+            m.SetShaderParameter("blob_half", new Vector2(0.12f, 0.18f));
             return m;
         }
 
@@ -1477,7 +1596,10 @@ namespace UnturnedGodot
         public ScreenProgram DebugProgram => _program;
         public float DebugConeScale => ConeScale(_program, _tint);
         public float DebugConeAlpha => _coneMat?.AlbedoColor.A ?? -1f;
-        public float DebugScrollOffset => _screenMat == null ? -1f : (float)_screenMat.GetShaderParameter("scroll_offset");
+        /// <summary>The write head as one monotonic number: whole part = lines typed, fraction = progress along the
+        /// current line. One value rather than two so a test can say "it advanced" without caring which of the two
+        /// moved -- a line wrap moves both at once.</summary>
+        public float DebugTypeHead => _headLine + _headCol / ScrollCols;
         /// <summary>Is a burst running right now? Paired with DebugCursorOn so the "never both at once" rule can be
         /// sampled at ONE INSTANT. Comparing scroll positions across a frame interval cannot express it: a burst that
         /// ends mid-interval leaves the position advanced and the cursor lit, which looks like a violation and is not.</summary>
