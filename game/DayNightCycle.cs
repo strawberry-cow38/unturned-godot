@@ -14,7 +14,15 @@ namespace UnturnedGodot
     {
         public DirectionalLight3D Sun;
         public Godot.Environment Env;
-        public float DayLength = 1440f;   // seconds per full cycle = 24 min (master); was a dev-short 120s, Unturned's default is ~an hour
+        /// <summary>Seconds in ONE FULL CYCLE -- midnight through noon and back, not the daylight half. 24 real
+        /// minutes (strawberry), so one game hour is one real minute, which is also the unit the dev console's
+        /// `dayLength &lt;minutes&gt;` command speaks in. Was a dev-short 120 s; Unturned's own is ~an hour.
+        ///
+        /// A CONSTANT rather than a bare default, because the default was NOT what the game ran on: WorldBuilder set
+        /// its own 300f at both call sites, so editing the field here changed nothing in play while every test still
+        /// passed. One number, referenced from both.</summary>
+        public const float DefaultDayLength = 24f * 60f;
+        public float DayLength = DefaultDayLength;   // seconds per full cycle
         public float Time = 0.35f;       // 0..1 time of day: 0 midnight, 0.25 dawn, 0.5 noon, 0.75 dusk
         public float Speed = 1f;         // day/night clock multiplier (console `timeSpeed`); 0 = frozen. Distinct from Engine.TimeScale.
         // Running in-game day count, bumped once per forward midnight crossing (natural cycle OR a dev `timeAdd` that

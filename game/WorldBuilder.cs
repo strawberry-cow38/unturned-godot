@@ -278,7 +278,7 @@ namespace UnturnedGodot
             // authoritative state now, §3.7) but skips shadow maps + the per-frame sky/fog/glow work
             var sun = new DirectionalLight3D { LightEnergy = 1.2f, ShadowEnabled = mode != WorldMode.Dedicated, DirectionalShadowMaxDistance = 40f };   // cap shadow cascade reach (was Godot-default 100m): the high, pulled-back 3p vehicle cam stretched the 100m cascades to blanket a whole POI -> every zombie/building re-rendered into the shadow map every frame (strawberry: 3p-car-in-POI gpu tank). Demos cap at 14m; 40m keeps gameplay shadows.
             root.AddChild(sun);
-            var dayNight = new DayNightCycle { Sun = sun, Env = env, DayLength = 300f, VisualsEnabled = mode != WorldMode.Dedicated };
+            var dayNight = new DayNightCycle { Sun = sun, Env = env, DayLength = DayNightCycle.DefaultDayLength, VisualsEnabled = mode != WorldMode.Dedicated };
             { var _tod = System.Environment.GetEnvironmentVariable("UG_TIME"); if (_tod != null && float.TryParse(_tod, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var _todv)) { dayNight.Time = _todv; dayNight.Speed = 0f; } }   // UG_TIME=0..1 freezes time-of-day for a render (0 midnight / 0.75 dusk) -- streetlight night demo
             root.AddChild(dayNight);
             result.DayNight = dayNight;
@@ -1368,7 +1368,7 @@ namespace UnturnedGodot
             root.AddChild(new WorldEnvironment { Environment = env });
             var sun = new DirectionalLight3D { LightEnergy = 1.2f, ShadowEnabled = true, DirectionalShadowMaxDistance = 40f };   // cap shadow cascade reach (was default 100m) -- see the 3p-vehicle-POI shadow-tank note on the other sun (strawberry)
             root.AddChild(sun);
-            var dayNight = new DayNightCycle { Sun = sun, Env = env, DayLength = 300f };
+            var dayNight = new DayNightCycle { Sun = sun, Env = env, DayLength = DayNightCycle.DefaultDayLength };
             root.AddChild(dayNight);
             result.DayNight = dayNight;
 
