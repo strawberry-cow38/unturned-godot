@@ -103,3 +103,33 @@ axis, and wrong against `main`'s over-the-shoulder camera, which sits 2 m back a
 side's tests could have caught it — the branch had no such camera, `main` had no water. **When a
 branch reads shared state that `main` has since redefined, the seam needs its own test**, because
 both halves passing is exactly what you will observe.
+
+---
+
+## What was actually done, 2026-08-05
+
+**Backed up first.** The 9 local-only branches (`editor-map-port`, `mp-vitals`, `mp-netobserve`,
+`feat-traps`, `feat-weather`, `mp-hitbox-debug`, `sp-mp-unify`, `launcher-prune-branches`,
+`merge-integration`) existed on ONE disk. All pushed to `origin` before anything was deleted -- that
+was the only irreversible step in this whole job, so it went first.
+
+**Merged (4).** `docs-function-index`, `vm-capture`, `feat-mp-ownership` -- zero conflicts, as
+measured. `water-splash` -- one conflict, which turned out to be a duplicate CONCEPT rather than a
+disagreement: the branch carried `Terrain.WaterLevelY` (with a -inf "no water" sentinel) while `main`
+already had `HasWater` + `SeaLevelY` from boats-integration. Folded into main's pair and the call
+sites repointed. L0 1566 + L1 263, all green.
+
+**Deleted (33).** 18 remote and 15 local, every one PROVABLY contained somewhere else -- either an
+ancestor of `main`, or (for `watertest`, `beacon-review-fixes`, `mp-fixtures`, `sentry-mp`) content
+verified present in `main`/`base-defense-mp` file by file. `mp-predict-a` was one commit of tracked
+build artifacts. A stale `ug-water` worktree was pinning `watertest`; removed after checking it held
+no uncommitted source.
+
+**Deliberately NOT deleted.** `zombie-shadow-diag` and `renderstats` are diagnostics this page
+recommends deleting, but neither is *contained* anywhere -- deleting them loses the experiment. That
+is a judgement call for a human, not something to infer from "collapse what we don't need".
+
+**Local `streetlight-mote-kill` pointed at an older commit than `origin/streetlight-mote-kill`**, so
+the local looked merged while the remote still holds 2 unique commits. The local copy was deleted and
+the remote kept. Worth knowing that a local branch name and its remote can disagree about how much
+work exists -- checking only one of them would have thrown the other away.
