@@ -112,8 +112,12 @@ namespace UnturnedGodot.Testing
             p.DebugSetPitch(0f);
             yield return Ticks(10);
 
-            // ---- Q AND E SWAP SHOULDERS. The tap window is the interesting half: in third person a TAP only swaps
-            // sides, and only a HOLD leans. Without it every shoulder swap yanks you into a lean.
+            // ---- Q AND E SWAP SHOULDERS, WITH SOURCE'S TAP SUPPRESSION (strawberry: "do it the src way, tap
+            // supression. not tap/hold state"). There is no tap-vs-hold MODE and nothing latches: the key is polled
+            // every tick as always, and the window merely withholds the lean for 75 ms after a press in third person.
+            // So a quick tap resolves as a shoulder swap alone, and simply keeping the key down leans with no second
+            // input. Both halves are checked, because a build that only ever swaps would pass the first on its own.
+            T.Check("source's tap suppression is on", PlayerController.ShoulderTapSuppressesLean);
             T.Check("the camera starts on the right shoulder", !p.DebugCamOnLeftSide);
             float rightX = (p.GlobalTransform.AffineInverse() * p.Camera.GlobalPosition).X;
 
@@ -132,18 +136,21 @@ namespace UnturnedGodot.Testing
             yield return Ticks(2);
             p.ScriptedLean = 0;
             T.Check("a TAP of E puts it back on the right", !p.DebugCamOnLeftSide);
+            T.Check($"...also without leaning ({p.DebugLeanAngle:0.##} deg)", Mathf.Abs(p.DebugLeanAngle) < 1f);
             yield return Ticks(40);
 
-            // A HOLD past the window leans as well as swapping -- the other half of the same rule.
+            // ...and simply KEEPING the key down leans, with no second input. This is the half that stops "tap
+            // suppression" from silently becoming "the lean key does nothing in third person".
             p.ScriptedLean = 1;
             yield return Ticks(30);
-            T.Check($"HOLDING Q leans as well as swapping ({p.DebugLeanAngle:0.##} deg, left side {p.DebugCamOnLeftSide})",
+            T.Check($"holding Q swaps AND leans ({p.DebugLeanAngle:0.##} deg, left side {p.DebugCamOnLeftSide})",
                 p.DebugCamOnLeftSide && Mathf.Abs(p.DebugLeanAngle) > 5f);
             p.ScriptedLean = 0;
             yield return Ticks(40);
 
-            // ---- FIRST PERSON IGNORES THE WINDOW. Source gates it on perspective, so a tap in first person leans
-            // immediately -- a lean that waited 75 ms every time would feel broken.
+            // ---- FIRST PERSON SKIPS THE WINDOW ENTIRELY. Source gates it on perspective (`perspective == FIRST ||`),
+            // so a tap in first person leans at once -- a first-person lean that waited 75 ms every time would feel
+            // broken, and it is the same key.
             p.DriveFP = true;
             yield return Ticks(20);
             p.ScriptedLean = 1;

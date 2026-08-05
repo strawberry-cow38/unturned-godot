@@ -5117,14 +5117,16 @@ namespace UnturnedGodot
             if (ScriptedLean.HasValue) { q = ScriptedLean.Value > 0; e = ScriptedLean.Value < 0; }
 
             // The same two keys own the third-person shoulder (PlayerAnimator.cs:1319-1336). On PRESS they set the
-            // side; the lean then waits out a short window, so in third person a TAP swaps shoulders and only a HOLD
-            // leans. Without that window every shoulder swap yanks you into a lean you did not ask for -- and note the
-            // stamp is shared between the keys, exactly as in source, so tapping the other side restarts the wait.
+            // side; in third person the lean is then withheld for ShoulderTapWindow, so a tap swaps shoulders alone and
+            // a hold swaps and leans. The stamp is SHARED between the two keys, exactly as in source, so tapping the
+            // other side restarts the wait.
             _sideInputAge += delta;
             if (q && !_leanQHeld) { _camOnLeftSide = true; _sideInputAge = 0f; }
             if (e && !_leanEHeld) { _camOnLeftSide = false; _sideInputAge = 0f; }
             _leanQHeld = q; _leanEHeld = e;
-            if (!_fp && _sideInputAge <= ShoulderTapWindow) { q = false; e = false; }
+            #pragma warning disable CS0162
+            if (ShoulderTapSuppressesLean && !_fp && _sideInputAge <= ShoulderTapWindow) { q = false; e = false; }
+            #pragma warning restore CS0162
 
             // Only pay for the shape query on the side actually being asked for -- and only when a key is down at all.
             float eye = EyeHeight;
@@ -5169,9 +5171,16 @@ namespace UnturnedGodot
         internal const float TpSweepRadius = 0.39f;                        // NEAR_CLIP_SWEEP_RADIUS, "// PlayerStance.RADIUS"
         internal const float TpToeInDeg = 5.0f;                            // shoulder * -5 yaw, so the view converges on the aim
         const float ShoulderLerp = 8f;                                     // PlayerAnimator.cs:1545
-        /// <summary>Tap-vs-hold window on the lean keys in third person: a TAP inside this only swaps shoulders, a hold
-        /// past it also leans (PlayerAnimator.cs:1336). Without it every shoulder swap yanks you into a lean.</summary>
+        /// <summary>Source suppresses the lean for 75 ms after a lean-key PRESS in third person
+        /// (PlayerAnimator.cs:1336), so a TAP swaps shoulders without leaning while a HOLD swaps and then leans.
+        /// strawberry: "do it the src way, tap supression. not tap/hold state".
+        ///
+        /// Worth being precise about what this is NOT: there is no tap-versus-hold MODE, and nothing latches. The key
+        /// is polled every tick exactly as before; the only thing the window does is withhold the lean for 75 ms after
+        /// a press, in third person, so that a quick tap resolves as a shoulder swap alone. Keep holding and the lean
+        /// arrives on its own with no second input.</summary>
         internal const float ShoulderTapWindow = 0.075f;
+        internal const bool ShoulderTapSuppressesLean = true;
 
         bool _camOnLeftSide;        // source `side`: true = over the LEFT shoulder
         float _shoulder = 1f;       // lerped toward side ? -1 : +1; signs the camera's sideways offset
