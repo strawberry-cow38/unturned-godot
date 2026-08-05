@@ -44,7 +44,7 @@ namespace UnturnedGodot
         Rk4Spring3 _shakeSpring = new Rk4Spring3(550f, 40f); // positional kick, settles ~0.2s (slight overshoot)
         Rk4Spring3 _recoilRotSpring = new Rk4Spring3(550f, 40f); // per-shot gun tilt (pitch/yaw/roll deg), springs back
         bool _moving;                       // player has movement input this frame (drives bob on/off)
-        EPlayerStance _stance = EPlayerStance.STAND;   // STAND/SPRINT/CROUCH/PRONE -> bob speed + amplitude
+        EPlayerStance _stance = EPlayerStance.STAND;   // STAND/SPRINT/CROUCH/PRONE/SWIM -> bob speed + amplitude
         bool _safe;                         // gun on SAFETY firemode -> un-shouldered "safe" carry (same pose as sprint, source UseableGun.cs:3509)
         bool _sprinting;                    // playing the Sprint_Start hold (un-shouldered); drives the Sprint_Stop return
         float _shootHold;                   // >0 briefly after each shot: firing breaks + suppresses sprint (source Sprint_Start needs !isShooting)
@@ -230,7 +230,7 @@ namespace UnturnedGodot
         // Time >= equipStart + GetAnimationLength("Equip"), PlayerEquipment.cs:269/1633). So SetAiming is ignored
         // while the gun is still raising.
         float _equipLen;       // Gun_Equip clip length (seconds)
-        string _holdClip = "Gun_Equip";   // the CURRENT item's ready-hold clip (gun/melee/consumable/deployable each differ) -- restored on sprint-exit etc. instead of forcing the gun pose onto everything
+        string _holdClip = "Gun_Equip";   // the CURRENT item's ready-hold clip (gun/melee/consumable/deployable each differ) -- restored on sprint-exit AND on leaving the water, instead of forcing the gun pose onto everything
         float _equipElapsed;   // time since the viewmodel spawned / equip started
         bool EquipDone => _equipLen <= 0f || _equipElapsed >= _equipLen;
         public bool IsEquipComplete => EquipDone;
@@ -594,7 +594,21 @@ namespace UnturnedGodot
 
         // Driven each physics frame by PlayerController: whether the player is moving + their stance, so the
         // walk bob uses the right frequency (SPEED_*) + amplitude (BOB_*) and switches off when standing still.
-        public void SetLocomotion(bool moving, EPlayerStance stance, bool safe = false) { _moving = moving; _stance = stance; _safe = safe; }
+        public void SetLocomotion(bool moving, EPlayerStance stance, bool safe = false)
+        {
+            bool leftSwim = _stance == EPlayerStance.SWIM && stance != EPlayerStance.SWIM;
+            _moving = moving; _stance = stance; _safe = safe;
+            if (_arms == null) return;
+            // 1p arms swim: retail's PlayerAnimator.updateState plays Idle_Swim/Move_Swim on the FIRST-PERSON
+            // animator too (not just 3p), overriding the equipped-item hold -- otherwise the empty-hand melee
+            // ready pose (Melee_Equip) shows while swimming. Revert to the held pose on leaving the water.
+            if (stance == EPlayerStance.SWIM)
+            {
+                string want = moving ? "Move_Swim" : "Idle_Swim";
+                if (_arms.ClipLength(want) > 0f) { _arms.SetClipLoop(want, true); _arms.PlayLoop(want); }
+            }
+            else if (leftSwim) _arms.Play(_holdClip);
+        }
 
         // ---- INPUT INERTIA (PlayerAnimator.rotationInputViewmodelRoll, source lines 1480-1485) ----------------
         // The gun lags and leans when you swing the view. Source drives it off the per-frame LOOK DELTA rather than
@@ -1124,8 +1138,8 @@ namespace UnturnedGodot
             // blendedViewmodelSwayMultiplier eases toward the sway target (1 hip -> 0.1 aiming) at 16/s.
             _blendedSway = Mathf.Lerp(_blendedSway, Mathf.Lerp(1f, 0.1f, _aimAlpha), 16f * (float)delta);
             // stance-driven bob frequency (SPEED_*) + amplitude (BOB_*), scaled by the sway multiplier.
-            float bobSpeed = _stance switch { EPlayerStance.SPRINT => 10f, EPlayerStance.CROUCH => 6f, EPlayerStance.PRONE => 4f, _ => 8f };
-            float bobAmp = (_stance switch { EPlayerStance.SPRINT => 0.075f, EPlayerStance.CROUCH => 0.025f, EPlayerStance.PRONE => 0.0125f, _ => 0.05f }) * _blendedSway;
+            float bobSpeed = _stance switch { EPlayerStance.SPRINT => 10f, EPlayerStance.CROUCH => 6f, EPlayerStance.PRONE => 4f, EPlayerStance.SWIM => 6f, _ => 8f };   // SWIM = viewmodel SPEED_SWIM (PlayerAnimator.cs:34)
+            float bobAmp = (_stance switch { EPlayerStance.SPRINT => 0.075f, EPlayerStance.CROUCH => 0.025f, EPlayerStance.PRONE => 0.0125f, EPlayerStance.SWIM => 0.025f, _ => 0.05f }) * _blendedSway;   // SWIM = BOB_SWIM (PlayerAnimator.cs:22)
             if (_moving)
             {
                 float s = Mathf.Sin(bobSpeed * (float)_t) * bobAmp;   // horizontal sine; vertical = |horizontal| (double-freq dip)

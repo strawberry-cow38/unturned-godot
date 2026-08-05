@@ -2204,6 +2204,7 @@ namespace UnturnedGodot
         public void MeleeAttack(bool strong = false)
         {
             if (_meleeCd > 0f || _cam == null || _dead || _driving != null || _heldConsumable != null || (_invUI?.IsOpen ?? false)) return;
+            if (IsSwimming) return;   // no melee/punching while swimming (source PlayerEquipment: "No punching while swimming"; canUseUnderwater=false)
             if (IsRepeatedMelee) return;   // Repeated tools (blowtorch/chainsaw) have NO weak/strong swing -- you don't punch with them; their use is the continuous LMB-hold (source UseableMelee.startPrimary/startSecondary)
             float staminaCost = strong ? (_melee?.Stamina ?? 0f) / 100f : 0f;   // only the STRONG (RMB) swing costs stamina; the WEAK (LMB) attack is free (master)
             if (staminaCost > 0f && Stamina < staminaCost) return;   // too winded for a strong swing
@@ -4042,6 +4043,7 @@ namespace UnturnedGodot
         void StartFire()
         {
             if (_dead) return;   // ignore fire commands on the death screen (master)
+            if (IsSwimming) return;   // no firing while swimming -- guns are canUseUnderwater=false (source PlayerEquipment: submerged/SWIM + !canUseUnderwater blocks the use)
             if (!HasGunOut) return;   // no gun in hand (fists / melee / held item) -> no firing at all (master: gun & held item mutually exclusive)
             if (_reloading) { if (Gun?.ShellReload == true && Ammo > 0) { _reloading = false; _viewmodel?.SetReloading(false); } else return; }   // shell-fed shotgun: firing CANCELS the shell-by-shell reload (shoot what's loaded); other guns ignore fire mid-reload (master)
             if (_viewmodel != null && _viewmodel.InAttachView) return;   // no firing while the T attachment menu is up
@@ -4099,7 +4101,7 @@ namespace UnturnedGodot
         public bool Fire()
         {
             if (_fireCd > 0f || Ammo <= 0 || _reloading || _needsRechamber || _rechambering || _cam == null || _dead || _driving != null
-                || !HasGunOut || (_invUI?.IsOpen ?? false)) return false;   // !HasGunOut: no gun in hand (melee/held item disarm it) -> no shot, even from the polled auto/burst tick after switching away mid-fire (master)
+                || !HasGunOut || IsSwimming || (_invUI?.IsOpen ?? false)) return false;   // IsSwimming: guns are canUseUnderwater=false -> no shot while swimming, incl. the polled AUTO/burst tick (source PlayerEquipment). !HasGunOut: no gun in hand (melee/held item disarm it) -> no shot, even from the polled auto/burst tick after switching away mid-fire (master)
             // -- also while the bolt/pump still needs cycling -- kills a queued burst the frame we die (the tick calls Fire()) + ignores death-screen clicks (master). _driving guard fixes the "stray tracer flies straight south" bug: the auto/burst tick (_PhysicsProcess) calls Fire() on held-LMB WITHOUT a driving check, and while driving _cam is TopLevel (detached chase cam) -> aim = the chase cam's fixed heading, not the player's look. LMB honks while driving anyway.
             if (_viewmodel != null && (!_viewmodel.IsEquipComplete || _viewmodel.IsInspecting || _viewmodel.InAttachView)) return false;   // no firing until equip finishes, or during inspect / attachment menu (source canFire gates)
             float damage = Gun?.ZombieDamage ?? 34f;   // range/travel are encoded in the bullet's steps + velocity
@@ -5093,6 +5095,17 @@ namespace UnturnedGodot
         float StanceRecoilMul() => _recoilStanceTime < StanceSettle ? 1f
             : _move.Stance switch { EPlayerStance.CROUCH => 0.85f, EPlayerStance.PRONE => 0.7f, _ => 1f };   // subtler than 0.6/0.35 -- a flat mult scales hardest on the punchiest guns, keep it gentle (master/tinyclaw)
 
+        // ---- water / swim state (retail PlayerStance probes; the port's ocean is a single global plane at
+        // Terrain.SeaLevelY, so submersion is a Y test). Player origin = feet; eye = feet+1.75 in SWIM. ----
+        /// <summary>The feet+1.25m body probe is under the surface -> SWIM (PlayerStance.cs:636 isBodyUnderwater).</summary>
+        bool BodyUnderwater => Terrain.HasWater && GlobalPosition.Y + 1.25f < Terrain.SeaLevelY;
+        /// <summary>The eye probe (feet+1.75) is under -> submerged: free-swim in look dir + oxygen drains (areEyesUnderwater).</summary>
+        public bool EyesUnderwater => Terrain.HasWater && GlobalPosition.Y + 1.75f < Terrain.SeaLevelY;
+        /// <summary>The feet probe is under -> in the shallows: wading blocks crouch/prone (PlayerStance _inShallows).</summary>
+        bool FeetUnderwater => Terrain.IsPointUnderwater(GlobalPosition.Y);
+        /// <summary>Currently in the SWIM stance (deep enough that the body probe is submerged).</summary>
+        public bool IsSwimming => _move.Stance == EPlayerStance.SWIM;
+
         /// <summary>Stance half: one stance-FSM step + the capsule resize (source HeightForStance).</summary>
         /// <summary>Who may lean, and which way. Engine-free so the RULES are testable without a physics world -- the
         /// obstruction results come in as booleans rather than being raycast in here.
@@ -5209,7 +5222,8 @@ namespace UnturnedGodot
         /// <summary>The straight look axis: body yaw + look pitch, with no camera in it. Same construction the fire
         /// path uses, and for the same reason -- the camera's live basis carries flinch and, in third person, sits
         /// somewhere the player is not.</summary>
-        public Vector3 LookAxis => -(new Basis(Vector3.Up, Rotation.Y) * new Basis(Vector3.Right, Mathf.DegToRad(_pitchDeg))).Z;
+        public Basis LookBasis => new Basis(Vector3.Up, Rotation.Y) * new Basis(Vector3.Right, Mathf.DegToRad(_pitchDeg));
+        public Vector3 LookAxis => -LookBasis.Z;
 
         public Vector3 EyesWorld => _leanPivot != null
             ? _leanPivot.GlobalTransform * new Vector3(0f, _eyeHeight, 0f)
@@ -5383,6 +5397,12 @@ namespace UnturnedGodot
         void StepStanceOnce(bool crouchKey, bool proneKey, bool sprintKey, EPlayerStance? scriptedStance)
         {
             _move.Stance = _stance.Step(crouchKey, proneKey, sprintKey, Stamina, Broken, scriptedStance, _capStance, HeadroomFor);
+            // Water overrides the key-driven stance. NetAvatars hold the replicated stance (NetHoldPose), so
+            // only a locally-simulated shell decides here.
+            if (!NetAvatar && BodyUnderwater)
+                _move.Stance = EPlayerStance.SWIM;   // feet+1.25 body probe submerged -> swim (PlayerStance.cs:636-673)
+            else if (!NetAvatar && FeetUnderwater && (_move.Stance == EPlayerStance.CROUCH || _move.Stance == EPlayerStance.PRONE))
+                _move.Stance = EPlayerStance.STAND;  // wading (feet wet, not deep enough to swim) blocks crouch/crawl (PlayerStance.cs:340-346, 865-869)
             UpdateHitbox(_move.Stance);   // resize the collision capsule to match the stance (source HeightForStance)
         }
 
@@ -5394,6 +5414,14 @@ namespace UnturnedGodot
         void StepMoveOnce(float strafe, float forward, bool jump, float delta,
                           out bool wasAirborne, out float verticalVel, out bool groundedEntering)
         {
+            if (_move.Stance == EPlayerStance.SWIM)
+            {
+                SwimStep(strafe, forward, jump);   // no gravity, buoyancy/free-swim; own velocity path
+                wasAirborne = false;               // swimming is never airborne -> the caller skips fall damage (retail: SWIM branch never onLanded)
+                verticalVel = Velocity.Y;
+                groundedEntering = false;
+                return;
+            }
             bool grounded = IsOnFloor();
             groundedEntering = grounded;
             var v = _move.Step(new UnityEngine.Vector2(strafe, forward), jump, grounded, delta);
@@ -5403,6 +5431,43 @@ namespace UnturnedGodot
             StepUp(delta, grounded);   // climb small curbs/thresholds so we don't snag (master)
             MoveAndSlide();
             verticalVel = v.y;
+        }
+
+        /// <summary>Swim movement (PlayerMovement.cs:1134-1164): no gravity. Submerged (or look-down + push
+        /// forward) = free-swim following the 3D aim, space swims UP at 3 m/s. At the surface = horizontal in
+        /// the body frame + a buoyancy bob that floats the eyes just above water. Base speed 4.5 m/s (SPEED_SWIM
+        /// 3 x the branch's 1.5). Client-side only (the shell has the camera); NetAvatars hold their pose.</summary>
+        void SwimStep(float strafe, float forward, bool jump)
+        {
+            const float SwimSpeed = PlayerMovementDef.SPEED_SWIM * 1.5f;   // 4.5 m/s (PlayerMovement.cs:1143/1163)
+            const float SwimUp = 3f;                                        // vertical swim/ascend constant (PlayerMovement.cs:104)
+            var local = new Vector3(strafe, 0f, -forward);
+            if (local.LengthSquared() > 1f) local = local.Normalized();     // move.normalized: unit on diagonals, digital single-axis stays 1
+
+            // The LOOK basis, not the camera's. These were the same thing when third person was a fixed chase cam
+            // roughly down the look axis -- but the third-person camera now sits 2 m back, a metre to one side, and
+            // carries a 5 degree toe-in, so swimming off _cam.Basis would drift you sideways relative to where you are
+            // actually aiming. Same reason the fire path stopped reading the camera. First person is unaffected: there
+            // the camera IS this basis.
+            Basis aim = LookBasis;
+            Vector3 lookFwd = -aim.Z;
+            bool diving = lookFwd.Y < -0.25f && forward > 0.1f;             // look down + forward -> submerge (retail look.pitch>110 & move.z>0.1)
+
+            Vector3 vel;
+            if (EyesUnderwater || diving)
+            {
+                vel = (aim * local) * SwimSpeed;   // 3D velocity follows where you look (dive / ascend)
+                if (jump) vel.Y = SwimUp;          // space always climbs
+            }
+            else
+            {
+                Vector3 horiz = GlobalTransform.Basis * local;   // surface: horizontal follows body yaw
+                float buoy = (Terrain.SeaLevelY - 1.275f - GlobalPosition.Y) / 8f;   // float feet toward surface-1.275 (eyes above water)
+                vel = new Vector3(horiz.X * SwimSpeed, buoy, horiz.Z * SwimSpeed);
+            }
+            Velocity = vel;
+            MoveAndSlide();
+            _move.Velocity = new UnityEngine.Vector3(strafe * SwimSpeed, vel.Y, forward * SwimSpeed);   // keep the sim velocity coherent for consumers
         }
     }
 }

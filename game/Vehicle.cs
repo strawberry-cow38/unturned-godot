@@ -12,6 +12,10 @@ namespace UnturnedGodot
         float _speedMax = 12.5f, _speedMin = -7f;    // Speed_Max fwd / Speed_Min reverse, m/s -- source .dat (directly usable)
         float _brakeForce = 32f;                     // Brake -- source .dat value
         float _steerTarget, _steerAngle, _steerTurnSpeed = 70f;   // steering smoothing: MoveTowards target at deg/s. LOWERED for a weighty/laggy feel -- the wheels float behind the input, slow to turn AND slow to re-center (master)
+        WaterMode _water; Vector3[] _buoys; float _inThrottle, _inSteer; int _waterFrame;   // BOAT/AMPHIBIOUS: water mode + hull buoyancy VOXELS + the last drive input (water propulsion runs in _PhysicsProcess)
+        float _voxelHalfHeight, _waterTime, _gravityMag = 9.8f;   // source Buoyancy.cs port: voxel half-height (submersion test), wave-ripple clock, gravity magnitude (Archimedes balance)
+        bool _afloat;   // currently floating (any buoy submerged) -- HUD/anim can read it
+        public bool Afloat => _afloat;
         bool _parked, _handbraking; float _spawnGrace = 2.5f; Vector3 _velAvg, _angAvg;   // -> STATIC freeze once majority-grounded + the LOW-PASSED velocity/spin are low (jitter-immune, d9588d3); _spawnGrace lets a fresh car DROP to terrain first
         float _prevSpeed;   // last frame's speed, to detect a sudden drop = a crash (collision/ram damage)
         float _deadTimer = -1f; bool _exploded, _husk; CpuParticles3D _smoke, _smoke0, _fire; OmniLight3D _fireLight;
@@ -200,9 +204,13 @@ namespace UnturnedGodot
             _ => null,
         };
 
+        public enum WaterMode { Car, Boat, Amphibious }   // source VehicleAsset.engine: CAR = land; BOAT = floats + water-drive; amphibious (e.g. APC) = CAR wheels + buoyancy so it swims too
+
         struct Spec
         {
             public string Body, Wheel, WheelTex, Palette;   // Palette = paintable palette; WheelTex = wheel albedo
+            public WaterMode Water;   // Car (default) = land only; Boat = floats+water-drives (no useful wheels); Amphibious = land wheels + float/water-drive when its hull is in the sea
+            public Vector3[] Buoys;   // hull buoyancy points (local space, Godot); null = auto 4 bottom corners of BoxSize. Boats/amphibious float via a spring at each toward SeaLevelY
             public string[] DefaultPaints;   // source .dat DefaultPaintColors (random on spawn); null + !RandomHueGray = unpainted white
             public bool RandomHueGray;       // source RandomHueOrGrayscale mode (quad/sedan/hatchback)
             public float WheelRadius, Engine, SteerMax, SteerMin, SpeedMax, SpeedMin, Brake;
@@ -977,8 +985,56 @@ namespace UnturnedGodot
         public static Vehicle BuildTruck(int variant = 0) => Build(_truck, variant, "truck");
         public static Vehicle BuildVan(int variant = 0) => Build(_van, variant, "van");
         public static Vehicle BuildGolf(int variant = 0) => Build(_golf, variant, "golf");
-        public static Vehicle BuildByName(string name, int variant = 0) => name switch { "quad" => BuildQuad(variant), "bus" => BuildBus(variant), "sedan" => BuildSedan(variant), "hatchback" => BuildHatchback(variant), "humvee" => BuildHumvee(variant), "roadster" => BuildRoadster(variant), "ambulance" => BuildAmbulance(variant), "firetruck" => BuildFiretruck(variant), "tractor" => BuildTractor(variant), "ural" => BuildUral(variant), "police" => BuildPolice(variant), "semi" => BuildSemi(variant), "trailer" => BuildTrailer(variant), "offroader" => BuildOffRoader(variant), "off_roader" => BuildOffRoader(variant), "truck" => BuildTruck(variant), "van" => BuildVan(variant), "golf" => BuildGolf(variant), "vw_golf" => BuildGolf(variant), _ => BuildJeep(variant) };
-        public static readonly string[] SpecNames = { "jeep", "quad", "bus", "sedan", "hatchback", "humvee", "roadster", "ambulance", "firetruck", "tractor", "ural", "police", "semi", "trailer", "offroader", "truck", "van", "golf" };   // F1 dev-console autocomplete + validation ("golf" = VW_Golf, command-only, no natural spawn)
+        // Runabout motorboat (source vehicles/runabout: Model_0 hull, NO wheels, a Buoyancy/Pontoon + Rotors). WaterMode.Boat
+        // -> floats on the sea + drives via water thrust/rudder (the wheel drive is inert). First aquatic vehicle.
+        static readonly Spec _runabout = new()
+        {
+            Body = "runabout_body.txt", Water = WaterMode.Boat,
+            Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", WheelRadius = 0.3f,   // unused (no wheels) but non-null for safety
+            Palette = "runabout_palette.png", DefaultPaints = new[] { "#e8e8ea" },   // paintable hull (Texture_Paintable) + its fixed detail texels via PaintMat
+            Engine = 600f, SteerMax = 0f, SteerMin = 0f, SpeedMax = 16f, SpeedMin = 8f, Brake = 0f,   // boat: propulsion is BoatThrust, not wheel EngineForce
+            BoxSize = new Vector3(2.8f, 1.6f, 9.0f), BoxCenter = new Vector3(0f, 0.1f, -0.3f),   // hull box (mesh x±1.5, y-0.85..2.1, z-4.94..4.37)
+            ForwardGears = new[] { 1f }, ReverseGear = 1f, ShiftUpRpm = 5000f,
+            Sound = "engine_medium.ogg", IdlePitch = 1.0f, MaxPitch = 2.0f, IdleVolume = 0.7f, MaxVolume = 1.0f,   // outboard motor loop
+            Fuel = 500f, Health = 300f, Name = "Runabout",
+            Wheels = new (float, float, float, bool)[0],   // NO wheels -- a boat floats on buoyancy
+            Parts = new (string, Color)[]
+            {
+                ("runabout_seats.txt", new Color(0.25f, 0.25f, 0.25f)),   // 4 real cockpit seats (Objects/Seat_0..3): real material _Color = dark grey (no texture, flat -- same as jeep seats)
+                ("runabout_steer.txt", new Color(0.28f, 0.23f, 0.14f)),   // real steering console/wheel (Objects/Steer): real material _Color = dark brown (matches jeep steer)
+            },
+        };
+        public static Vehicle BuildRunabout(int variant = 0) => Build(_runabout, variant, "runabout");
+        // APC -- 8-wheeled AMPHIBIOUS armored car (source vehicles/apc). WaterMode.Amphibious: drives on land via the
+        // wheels AND floats + water-drives when its hull is in the sea. Wheels approximated (4/side) from the hull box.
+        static readonly Spec _apc = new()
+        {
+            Body = "apc_body.txt", Water = WaterMode.Amphibious,
+            Wheel = "apc_wheel.txt", WheelTex = "jeep_wheel_albedo.png", WheelRadius = 0.74f,   // REAL APC wheel (Wheel_LOD0 ripped): radius 0.74 (was a too-small 0.55 jeep wheel); tire albedo reused
+            Palette = "apc_palette.png", DefaultPaints = new[] { "#5a6650" },   // Texture_MilitaryPaintable: olive paintable hull. NO grille (strawberry) -- headlights/taillights are the real separate Parts meshes below, not palette texels
+            Engine = 700f, SteerMax = 24f, SteerMin = 12f, SpeedMax = 12f, SpeedMin = 6f, Brake = 35f,
+            BoxSize = new Vector3(3.6f, 1.8f, 7.7f), BoxCenter = new Vector3(0f, 0.6f, 0f),   // hull (mesh x±1.83 y-0.27..2.31 z-4..3.72)
+            ForwardGears = new[] { 18f, 10f }, ReverseGear = 8f, ShiftUpRpm = 4000f,
+            Sound = "engine_medium.ogg", IdlePitch = 0.9f, MaxPitch = 1.8f, IdleVolume = 0.8f, MaxVolume = 1.0f,
+            Fuel = 1500f, Health = 800f, Name = "APC",
+            SpotPos = new[] { new Vector3(-1.03f, 0.78f, -4.0f), new Vector3(1.03f, 0.78f, -4.0f) }, OmniPos = Vector3.Zero,   // headlight beams at the 2 lens clusters (real Headlights mesh: front z-4.06, y0.78, x-groups ±1.03)
+            TailPos = new[] { new Vector3(-1.4f, 0.72f, 3.5f), new Vector3(1.4f, 0.72f, 3.5f) },   // taillight red glow at the rear lenses (real Taillights mesh: z+3.5, x±1.4)
+            Wheels = new (float, float, float, bool)[]   // REAL Wheel_0..7 positions from the prefab: X±2.0, Y0.1, 4 axles (was guessed X±1.7 Y0.25)
+            {
+                (-2.0f, 0.1f, -2.4f, true),   (2.0f, 0.1f, -2.4f, true),    // front axle (steers)
+                (-2.0f, 0.1f, -0.75f, false), (2.0f, 0.1f, -0.75f, false),
+                (-2.0f, 0.1f, 0.9f, false),   (2.0f, 0.1f, 0.9f, false),
+                (-2.0f, 0.1f, 2.55f, false),  (2.0f, 0.1f, 2.55f, false),    // rear
+            },
+            Parts = new (string, Color)[]
+            {
+                ("apc_headlights.txt", new Color(0.94f, 0.89f, 0.73f)),   // the 4 real headlights (Headlights_Model mesh): cream lenses. APC has NO grille -- these ARE the front detail (strawberry)
+                ("apc_taillights.txt", new Color(0.56f, 0.13f, 0.13f)),   // real taillights (Taillights_Model mesh): red
+            },
+        };
+        public static Vehicle BuildAPC(int variant = 0) => Build(_apc, variant, "apc");
+        public static Vehicle BuildByName(string name, int variant = 0) => name switch { "quad" => BuildQuad(variant), "bus" => BuildBus(variant), "sedan" => BuildSedan(variant), "hatchback" => BuildHatchback(variant), "humvee" => BuildHumvee(variant), "roadster" => BuildRoadster(variant), "ambulance" => BuildAmbulance(variant), "firetruck" => BuildFiretruck(variant), "tractor" => BuildTractor(variant), "ural" => BuildUral(variant), "police" => BuildPolice(variant), "semi" => BuildSemi(variant), "trailer" => BuildTrailer(variant), "offroader" => BuildOffRoader(variant), "off_roader" => BuildOffRoader(variant), "truck" => BuildTruck(variant), "van" => BuildVan(variant), "golf" => BuildGolf(variant), "vw_golf" => BuildGolf(variant), "runabout" => BuildRunabout(variant), "apc" => BuildAPC(variant), _ => BuildJeep(variant) };
+        public static readonly string[] SpecNames = { "jeep", "quad", "bus", "sedan", "hatchback", "humvee", "roadster", "ambulance", "firetruck", "tractor", "ural", "police", "semi", "trailer", "offroader", "truck", "van", "golf", "runabout", "apc" };   // F1 dev-console autocomplete + validation ("golf" = VW_Golf, command-only, no natural spawn; runabout = boat + apc = amphibious, both command-spawnable -- drop over water to float)
 
         // spec lookup by key (same table as BuildByName) -- the MP puppet builder resolves replicated
         // TypeIds through this so client replicas rebuild the exact meshes/palette the server spawned
@@ -1088,6 +1144,21 @@ namespace UnturnedGodot
             v.ContactMonitor = true; v.MaxContactsReported = 6; v.BodyEntered += v.OnVehicleContact;   // wake a frozen parked car when another vehicle rams it (master)
             v._engineForce = s.Engine; v._steerMax = s.SteerMax; v._steerMin = s.SteerMin;
             v._speedMax = s.SpeedMax; v._speedMin = s.SpeedMin; v._brakeForce = s.Brake;
+            v._water = s.Water;   // BOAT/AMPHIBIOUS: voxelize the hull box for the source Buoyancy.cs voxel-Archimedes model
+            if (s.Water != WaterMode.Car)
+            {
+                const int slices = 2;   // source Buoyancy.slicesPerAxis default -> 2x2x2 = 8 voxels
+                Vector3 vsz = s.BoxSize / slices, minExt = s.BoxCenter - s.BoxSize * 0.5f;
+                v._voxelHalfHeight = Mathf.Min(vsz.X, Mathf.Min(vsz.Y, vsz.Z)) * 0.5f;   // a voxel is "submerged enough" when its centre is within this of the surface
+                var vox = new Vector3[slices * slices * slices];
+                int vi = 0;
+                for (int sx = 0; sx < slices; sx++)
+                    for (int sy = 0; sy < slices; sy++)
+                        for (int sz = 0; sz < slices; sz++)
+                            vox[vi++] = new Vector3(minExt.X + vsz.X * (0.5f + sx), minExt.Y + vsz.Y * (0.5f + sy), minExt.Z + vsz.Z * (0.5f + sz));
+                v._buoys = vox;
+                v._gravityMag = Mathf.Abs(ProjectSettings.GetSetting("physics/3d/default_gravity", 9.8f).AsSingle());   // the g the body actually falls under -> Archimedes must balance it
+            }
             v.FifthWheelLocal = s.FifthWheel; v.KingpinLocal = s.Kingpin;   // trailer-hitch coupling points (Zero = neither)
             v._steerTurnSpeed = s.SteerMax * 2f;   // master: ramp to full lock a LOT longer than source (source default = SteerMax*5 deg/s) -> slower turn-in
             v._gears = s.ForwardGears; v._reverseGear = s.ReverseGear; v._shiftUpRpm = s.ShiftUpRpm;
@@ -1226,7 +1297,9 @@ namespace UnturnedGodot
 
             // Drop the centre of mass to just below the axle line so the car stops rolling on turns and pitching onto its
             // nose under braking (master). Godot's auto COM sat at the body-box centre (~0.6m up) -> top-heavy + tippy.
-            float comY = 0f; foreach (var wl in s.Wheels) comY += wl.y; comY = comY / s.Wheels.Length - 0.2f;
+            float comY;
+            if (s.Wheels.Length > 0) { comY = 0f; foreach (var wl in s.Wheels) comY += wl.y; comY = comY / s.Wheels.Length - 0.2f; }
+            else comY = s.BoxCenter.Y - s.BoxSize.Y * 0.25f;   // BOAT (no wheels): low COM below the hull centre so buoyancy keeps it upright (was a div-by-zero)
             v.CenterOfMassMode = RigidBody3D.CenterOfMassModeEnum.Custom;
             v.CenterOfMass = new Vector3(0f, comY, 0f);
 
@@ -1364,6 +1437,7 @@ namespace UnturnedGodot
         // steering (Steer_Max at rest -> Steer_Min at full speed), so the observable handling matches the game.
         public void Drive(float throttle, float steer, bool handbrake)
         {
+            _inThrottle = throttle; _inSteer = steer;   // remembered for boat/amphibious water propulsion (applied as forces in _PhysicsProcess)
             if (_exploded) { EngineForce = 0f; Steering = 0f; Brake = 0f; return; }   // a wrecked vehicle can't be driven
             _parked = false;
             if (!EngineOn) throttle = 0f;   // dead/off engine (e.g. 0 HP): no drive power, but the car keeps its momentum and can still steer + brake -> coasts to a stop instead of freezing (master)
@@ -2240,6 +2314,50 @@ namespace UnturnedGodot
             _steerAngle = Mathf.MoveToward(_steerAngle, _steerTarget, _steerTurnSpeed * (float)delta);
             Steering = Mathf.DegToRad(_steerAngle);
             if (_steerPivot != null) _steerPivot.Basis = new Basis(_steerAxis, Mathf.DegToRad(_steerAngle));   // steering wheel model turns 1:1 with the steer angle (source line 4020, AnimatedSteeringAngle)
+            if (_water != WaterMode.Car) ApplyWaterPhysics((float)delta);   // BOAT/AMPHIBIOUS: buoyancy float + water propulsion (overrides wheel drive while afloat)
+        }
+
+        const float BoatThrust = 15f, BoatTurn = 2.2f, BoatDrag = 0.5f;   // water propulsion / rudder yaw / extra horizontal drag. Thrust 6->15 + drag 0.9->0.5: the source voxel damping now adds its own per-voxel water drag, so the old values left the boat sluggish (~4 m/s); these hit a proper speedboat pace (strawberry)
+        const float WaterDensity = 1000f, HullDensity = 500f;            // source Buoyancy.cs: rho_water, and density=500 (a vehicle floats at ~half-submersion)
+
+        // BOAT / AMPHIBIOUS water physics. Buoyancy is a faithful port of the source Buoyancy.cs voxel-Archimedes model:
+        // the hull box is sliced 2x2x2; each SUBMERGED voxel gets an Archimedes up-force (rho_water*g*V, depth-scaled by a
+        // sqrt curve) + point-velocity damping, applied AT the voxel -> the hull floats level, self-rights, and damps sway.
+        // While afloat the drive input becomes forward thrust + rudder yaw (source propels boats via the engine; same feel).
+        void ApplyWaterPhysics(float delta)
+        {
+            _afloat = false;
+            if (!Terrain.HasWater || _buoys == null) return;
+            _waterTime += delta;
+            float seaY = Terrain.SeaLevelY;
+            var xf = GlobalTransform;
+            var comGlobal = ToGlobal(CenterOfMass);
+            float volume = Mass / HullDensity;                                            // source: volume = mass / density
+            var archPerVoxel = new Vector3(0f, WaterDensity * _gravityMag * volume, 0f) / _buoys.Length;   // rho_water * |g| * V, split per voxel
+            int submerged = 0;
+            foreach (var localPoint in _buoys)
+            {
+                var worldPoint = xf * localPoint;                                         // source: transform.TransformPoint(localPoint)
+                if (worldPoint.Y >= seaY) continue;                                       // WaterUtility: above the flat sea surface -> not underwater
+                float surface = seaY + Mathf.Sin((worldPoint.X + worldPoint.Z) * 8f + _waterTime) * 0.1f;   // source client-side wave ripple
+                if (worldPoint.Y - _voxelHalfHeight >= surface) continue;                 // voxel not yet within voxelHalfHeight of the surface -> no force
+                submerged++;
+                var pv = LinearVelocity + AngularVelocity.Cross(worldPoint - comGlobal);  // source: rootRigidbody.GetPointVelocity(worldPoint)
+                var damping = -pv * 0.1f * Mass;                                          // source: -velocity * 0.1 * mass
+                float subFactor = Mathf.Sqrt(Mathf.Clamp((surface - worldPoint.Y) / (2f * _voxelHalfHeight) + 0.5f, 0f, 1f));   // source sqrt depth curve
+                ApplyForce(damping + subFactor * archPerVoxel, worldPoint - GlobalPosition);   // source: AddForceAtPosition(force, worldPoint)
+            }
+            _afloat = submerged > 0;
+            if (!_afloat) return;
+            var fwd = -xf.Basis.Z;                                                        // boat forward = -Z
+            float thr = EngineOn ? _inThrottle : 0f;
+            ApplyCentralForce(fwd * thr * BoatThrust * Mass);                             // propulsion
+            float spd = LinearVelocity.Dot(fwd);
+            float rudder = Mathf.Clamp(Mathf.Abs(spd) * 0.25f + 0.25f, 0.25f, 1f);        // speed-dependent rudder + a little idle authority
+            ApplyTorque(Vector3.Up * -_inSteer * BoatTurn * Mass * rudder);               // rudder yaw
+            ApplyCentralForce(new Vector3(-LinearVelocity.X, 0f, -LinearVelocity.Z) * BoatDrag * Mass);   // extra horizontal water drag -> controllable top speed
+            if (_water == WaterMode.Boat) { EngineForce = 0f; Brake = 0f; }               // a pure boat has no useful wheels
+            if (++_waterFrame % 30 == 0) GD.Print($"[boat] afloat={_afloat} sub={submerged}/{_buoys.Length} y={GlobalPosition.Y:F2} spd={LinearVelocity.Length():F1} thr={_inThrottle:F1} str={_inSteer:F1}");
         }
     }
 }
