@@ -5,8 +5,9 @@ Generalizes extract_attachment_mesh.py to all 402 PEI loot items. For each item:
   - resolves items/<cat>/<name>/item.prefab in core.masterbundle
   - walks the prefab tree, bakes each active MeshFilter's TRS relative to the root
     (root-cancelled), combines all parts into ONE Wavefront .obj
-  - same Unturned->Godot convention as the rest of the rip: negate Z on pos+normal,
-    reverse winding (RH Y-up), V-down UVs handled later by ContentProvider.ParseObj
+  - same Unturned->Godot convention as the gun/consumable viewmodel rip: negate X AND Z on
+    pos+normal (Z-only mirrors items left/right), reverse winding (RH Y-up), V-down UVs
+    handled later by ContentProvider.ParseObj
   - grabs the primary part's _MainTex -> <id>.png (rarity-tint fallback if none)
   - computes the best-fit AABB box (size + center) -> the RigidBody collider
 
@@ -174,11 +175,11 @@ def bake_obj(parts):
             if not p: continue
             if p[0] == "v":
                 w = M @ np.array([float(p[1]), float(p[2]), float(p[3]), 1.0])
-                Vs.append((w[0], w[1], -w[2])); pv += 1
+                Vs.append((-w[0], w[1], -w[2])); pv += 1   # negate X AND Z (gun/consumable viewmodel convention); Z-only leaves items mirrored L/R -- see extract_gun.py
             elif p[0] == "vn":
                 n = Rn @ np.array([float(p[1]), float(p[2]), float(p[3])])
                 ln = np.linalg.norm(n); n = n/ln if ln > 0 else n
-                Ns.append((n[0], n[1], -n[2]))
+                Ns.append((-n[0], n[1], -n[2]))
             elif p[0] == "vt":
                 Ts.append((p[1], p[2]))
             elif p[0] == "f":
@@ -194,7 +195,7 @@ def bake_obj(parts):
     return Vs, Ns, Ts, Fs, part_vcounts
 
 def write_obj(path, Vs, Ns, Ts, Fs):
-    L = ["# Unturned item rip -> Godot (Z negated, winding reversed, RH Y-up)"]
+    L = ["# Unturned item rip -> Godot (X+Z negated, winding reversed, RH Y-up)"]
     L += ["v %.6f %.6f %.6f" % v for v in Vs]
     L += ["vt %s %s" % t for t in Ts]
     L += ["vn %.6f %.6f %.6f" % n for n in Ns]
@@ -227,7 +228,7 @@ for iid_s, meta in loot.items():
     xs=[v[0] for v in Vs]; ys=[v[1] for v in Vs]; zs=[v[2] for v in Vs]
     box=[max(xs)-min(xs), max(ys)-min(ys), max(zs)-min(zs)]
     center=[(max(xs)+min(xs))/2, (max(ys)+min(ys))/2, (max(zs)+min(zs))/2]
-    write_obj(os.path.join(OUT, f"{iid}.obj"), Vs, Ns, Ts, Fs)
+    write_obj(os.path.join(OUT, f"{iid}.txt"), Vs, Ns, Ts, Fs)   # .txt so Godot doesn't auto-import; ContentProvider.ParseObj reads it
 
     # primary texture = material of the biggest part; if it has no albedo, fall back to its flat _Color
     tex_name = None; flat = None
@@ -246,7 +247,7 @@ for iid_s, meta in loot.items():
         if tex_name is None:
             flat = mat_color(mat_obj) or next((mat_color(p[2]) for p in parts if mat_color(p[2])), None)
     if len([p for p in pvc if p>0]) > 1: n_multi += 1
-    manifest[iid_s] = {"name": name, "type": typ, "obj": f"{iid}.obj",
+    manifest[iid_s] = {"name": name, "type": typ, "obj": f"{iid}.txt",
                        "tex": tex_name, "color": flat, "box": [round(b,4) for b in box],
                        "center": [round(c,4) for c in center], "parts": len(parts)}
     n_ok += 1
