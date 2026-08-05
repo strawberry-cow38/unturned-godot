@@ -49,6 +49,7 @@ namespace UnturnedGodot
         /// tell the two shapes apart once the radius is small enough to hide the overhang.</summary>
         internal static (float Mid, float Height) LeanCapsuleSpan() => (LeanReach * 0.5f, LeanReach);
         int _lean;                             // +1 left, -1 right, 0 none -- source's own sign convention
+        bool _leanQHeld, _leanEHeld;           // edge detection: the shoulder swap fires on PRESS, the lean on hold
         bool _leanObstructed;
         float _leanAngle;                      // current rolled degrees, lerped toward _lean * LeanDegrees
         Vector3 _interpPrev, _interpCurr; bool _interpReady;   // render interpolation: smooth the VISUAL position between the 50Hz physics ticks (master); rotation stays per-frame so the mouse is instant
@@ -4722,9 +4723,7 @@ namespace UnturnedGodot
                 }
                 else
                 {
-                    // 3rd person on foot: chase behind + above (child of the player, so it follows the body yaw); mouse Y orbits a bit
-                    _cam.Position = new Vector3(0f, 1.9f, 3.4f);
-                    _cam.Rotation = new Vector3(Mathf.DegToRad(Mathf.Clamp(_pitchDeg * 0.5f, -40f, 25f) - 6f), 0f, 0f);
+                    StepThirdPersonCam((float)delta);
                 }
             }
             UpdateBody(delta);
@@ -4850,6 +4849,10 @@ namespace UnturnedGodot
 
         public Vector2? ScriptedDrive;   // test hook: (steer, throttle) instead of keys
         public bool DriveFP { set => _fp = value; }   // test hook: force first-person cam
+        /// <summary>Test hook: aim the view without a mouse. Clamped like the real look, so a test cannot ask for a
+        /// pitch the player could never reach and get an answer that does not apply in play.</summary>
+        public void DebugSetPitch(float deg) => _pitchDeg = Mathf.Clamp(deg, -89f, 89f);
+        public float DebugPitch => _pitchDeg;
         public void EnterNearestVehicle() { var v = NearestVehicle(); if (v != null) EnterVehicle(v); }
 
         // While any menu/cursor UI is up (F1 dev console, inventory, craft, skills, map) the mouse is un-captured. Gate
@@ -5113,6 +5116,16 @@ namespace UnturnedGodot
             bool e = !blocked && Input.IsPhysicalKeyPressed(Key.E);
             if (ScriptedLean.HasValue) { q = ScriptedLean.Value > 0; e = ScriptedLean.Value < 0; }
 
+            // The same two keys own the third-person shoulder (PlayerAnimator.cs:1319-1336). On PRESS they set the
+            // side; the lean then waits out a short window, so in third person a TAP swaps shoulders and only a HOLD
+            // leans. Without that window every shoulder swap yanks you into a lean you did not ask for -- and note the
+            // stamp is shared between the keys, exactly as in source, so tapping the other side restarts the wait.
+            _sideInputAge += delta;
+            if (q && !_leanQHeld) { _camOnLeftSide = true; _sideInputAge = 0f; }
+            if (e && !_leanEHeld) { _camOnLeftSide = false; _sideInputAge = 0f; }
+            _leanQHeld = q; _leanEHeld = e;
+            if (!_fp && _sideInputAge <= ShoulderTapWindow) { q = false; e = false; }
+
             // Only pay for the shape query on the side actually being asked for -- and only when a key is down at all.
             float eye = EyeHeight;
             bool leftClear = !q || LeanSpaceEmpty(-GlobalTransform.Basis.X, eye);
@@ -5138,6 +5151,118 @@ namespace UnturnedGodot
             // a quarter second with your head inside it, which is exactly the peek the obstruction check exists to deny.
             _leanAngle = _leanObstructed ? 0f : Mathf.Lerp(_leanAngle, target, Mathf.Min(1f, LeanLerp * delta));
             var r = _leanPivot.Rotation; r.Z = Mathf.DegToRad(_leanAngle); _leanPivot.Rotation = r;
+        }
+
+        // ---- THIRD PERSON (strawberry: "fix the 3rd person camera to be source accurate. Q & E switch which shoulder
+        // of OTS cam", "3p just.. sucks", "we tilt the cam as if our cam is our head, not focusing on the playermodel").
+        //
+        // That last line names the old bug exactly. The chase cam sat at a FIXED offset behind the player and pitched
+        // in place, so looking up or down rotated the view about a stationary point and slid the character out of
+        // frame. Source computes the offset in the CAMERA's own frame -- so pitching down swings the camera up and
+        // back, and the player stays in shot. The camera orbits; it does not merely tilt.
+        //
+        //     direction = normalize(fwd*-1.5 + up*0.25 + right*shoulder)      PlayerLook.cs:1799
+        //     origin    = playerPos + up * thirdPersonEyeHeight
+        //     position  = spherecast(origin, direction, 2.0, r=0.39, BLOCK_PLAYERCAM)
+        internal const float TpBack = 1.5f, TpUp = 0.25f, TpSide = 1.0f;   // the unnormalised offset blend
+        internal const float TpLength = 2.0f;                              // how far along it the camera sits
+        internal const float TpSweepRadius = 0.39f;                        // NEAR_CLIP_SWEEP_RADIUS, "// PlayerStance.RADIUS"
+        internal const float TpToeInDeg = 5.0f;                            // shoulder * -5 yaw, so the view converges on the aim
+        const float ShoulderLerp = 8f;                                     // PlayerAnimator.cs:1545
+        /// <summary>Tap-vs-hold window on the lean keys in third person: a TAP inside this only swaps shoulders, a hold
+        /// past it also leans (PlayerAnimator.cs:1336). Without it every shoulder swap yanks you into a lean.</summary>
+        internal const float ShoulderTapWindow = 0.075f;
+
+        bool _camOnLeftSide;        // source `side`: true = over the LEFT shoulder
+        float _shoulder = 1f;       // lerped toward side ? -1 : +1; signs the camera's sideways offset
+        float _sideInputAge = 99f;  // seconds since the last lean-key PRESS, for the tap window
+        float _tpEyeHeight = 1.6f;
+
+        public bool DebugCamOnLeftSide => _camOnLeftSide;
+        public float DebugShoulder => _shoulder;
+        /// <summary>The point the third-person camera orbits: the clamped pivot, in world space. Distances have to be
+        /// measured from HERE, not from the player's feet -- the pivot is 1.6 m up, so a 2 m camera is 2.6 m from the
+        /// soles and a check written against the feet reads as "too far" while the camera is exactly right.</summary>
+        public Vector3 DebugTpOrigin => GlobalPosition + Vector3.Up * _tpEyeHeight;
+        /// <summary>Last camera sweep result: the safe fraction of the 2 m reach, or -1 if the query returned nothing.
+        /// A sweep that silently returns "clear" and one that is never run both leave the camera at full distance.</summary>
+        public float DebugTpSweepFraction { get; private set; } = -1f;
+
+        /// <summary>The 3P pivot height. Source clamps the stance eye height into the collision capsule so the sweep
+        /// sphere cannot start poking out of the top or bottom of you (PlayerLook.cs:1238-1240) -- which means a
+        /// STANDING third-person pivot is 1.605, not the 1.75 the first-person eye sits at.</summary>
+        internal static float ThirdPersonPivot(float eyeHeight, float capsuleHeight)
+            => Mathf.Clamp(eyeHeight, TpSweepRadius + 0.005f, capsuleHeight - TpSweepRadius - 0.005f);
+
+        /// <summary>The camera offset direction, in CAMERA space. Normalised, so the three weights set the ANGLE the
+        /// camera sits at and TpLength alone sets the distance.</summary>
+        internal static Vector3 ThirdPersonOffsetLocal(float shoulder)
+            => new Vector3(TpSide * shoulder, TpUp, TpBack).Normalized();   // Godot: -forward is +Z, right is +X
+
+        PhysicsShapeQueryParameters3D _tpQ;
+
+        void StepThirdPersonCam(float delta)
+        {
+            _shoulder = Mathf.Lerp(_shoulder, _camOnLeftSide ? -1f : 1f, Mathf.Min(1f, ShoulderLerp * delta));
+            float eye = EyeHeight;
+            _tpEyeHeight = Mathf.Lerp(_tpEyeHeight, ThirdPersonPivot(eye, PlayerMovementDef.HeightForStance(Stance)), Mathf.Min(1f, 4f * delta));
+
+            // Rotation FIRST: the offset below is expressed in this frame, so the order is load-bearing rather than
+            // stylistic -- computing the direction off last frame's basis lags the camera behind every mouse movement.
+            var look = Basis.FromEuler(new Vector3(Mathf.DegToRad(_pitchDeg), Mathf.DegToRad(_shoulder * -TpToeInDeg), 0f), EulerOrder.Yxz);
+            _cam.Basis = new Basis(_flinch) * look;
+
+            var dirLocal = ThirdPersonOffsetLocal(_shoulder);
+            var dir = (_cam.GlobalBasis * dirLocal).Normalized();
+            var origin = GlobalPosition + Vector3.Up * _tpEyeHeight;
+            _cam.GlobalPosition = origin + dir * SweepCamera(origin, dir, TpLength);
+        }
+
+        /// <summary>How far the camera can go before it would be inside something. Source sphereCastCamera takes the
+        /// CLOSEST hit along a sphere sweep, so the camera pulls in against a wall instead of clipping through it.
+        ///
+        /// Stepped-and-bisected rather than a single CastMotion, because THIS PROJECT RUNS JOLT and Jolt's cast_motion
+        /// returns a clear fraction of 1 even with a wall squarely in the path -- verified here with a plain ray that
+        /// hits the same wall the sweep says is not there. A sweep that silently reports "clear" and a sweep that never
+        /// runs leave the camera in exactly the same place, so this is worth not re-simplifying.
+        ///
+        /// The step is capped at the sphere RADIUS on purpose: sample any coarser and a wall thinner than the gap slips
+        /// between two samples, which is the same silent "clear" in a different costume.</summary>
+        float SweepCamera(Vector3 origin, Vector3 dir, float length)
+        {
+            var space = GetWorld3D()?.DirectSpaceState;
+            if (space == null) { DebugTpSweepFraction = 1f; return length; }
+            _tpQ ??= new PhysicsShapeQueryParameters3D
+            {
+                Shape = new SphereShape3D { Radius = TpSweepRadius },
+                // BLOCK_PLAYERCAM: ground, environment, structures, vehicles. Deliberately NOT the item/port layers --
+                // a dropped can must not shove the camera.
+                CollisionMask = (1u << 0) | (1u << 5) | (1u << 6),
+                Exclude = new Godot.Collections.Array<Rid> { GetRid() },
+            };
+
+            bool Blocked(float d)
+            {
+                _tpQ.Transform = new Transform3D(Basis.Identity, origin + dir * d);
+                return space.IntersectShape(_tpQ, 1).Count > 0;
+            }
+
+            int steps = Mathf.Max(2, Mathf.CeilToInt(length / TpSweepRadius));
+            float clear = 0f, hit = -1f;
+            for (int i = 1; i <= steps; i++)
+            {
+                float d = length * i / steps;
+                if (Blocked(d)) { hit = d; break; }
+                clear = d;
+            }
+            if (hit < 0f) { DebugTpSweepFraction = 1f; return length; }
+            for (int i = 0; i < 5; i++)   // bisect the last clear/blocked pair -- 5 rounds is ~2 cm at this range
+            {
+                float mid = 0.5f * (clear + hit);
+                if (Blocked(mid)) hit = mid; else clear = mid;
+            }
+            DebugTpSweepFraction = clear / length;
+            return clear;
         }
 
         void StepStanceOnce(bool crouchKey, bool proneKey, bool sprintKey, EPlayerStance? scriptedStance)
