@@ -143,7 +143,7 @@ namespace UnturnedGodot
         // it back -- these are MEASURED means, taken by evaluating each program over six seconds and averaging its
         // Rec.709 luma, the same way the prop dimensions were measured rather than guessed:
         //
-        //   TestCard 0.406 (straight off smpte_pattern.png)   Static 0.499   BarGraph 0.282
+        //   TestCard 0.406 (straight off smpte_pattern.png)   Static 0.460   BarGraph 0.282
         //   TerminalScroll 0.138   Dvd 0.070   TerminalCursor 0.0005 (a black terminal really is black)
         //
         // Normalised against the TEST CARD, because the cone's existing brightness was dialled in on it -- so a set
@@ -154,7 +154,7 @@ namespace UnturnedGodot
         internal static float MeanLuma(ScreenProgram p, Color tint) => p switch
         {
             ScreenProgram.TestCard       => 0.4057f,
-            ScreenProgram.Static         => 0.4991f,
+            ScreenProgram.Static         => 0.4597f,   // re-measured after the snow was coarsened
             ScreenProgram.Dvd            => 0.0704f,
             ScreenProgram.BarGraph       => 0.2821f,
             ScreenProgram.TerminalScroll => 0.1384f,

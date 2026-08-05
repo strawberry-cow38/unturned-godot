@@ -49,10 +49,21 @@ vec3 prog_testcard(vec2 uv) {
 // ---- analogue snow. Quantised in BOTH space and time: a full-resolution per-pixel hash reads as a flat grey haze
 // at any distance, and an unquantised time makes it shimmer at the render rate rather than at a broadcast one.
 vec3 prog_static(vec2 uv) {
-    vec2 cell = floor(uv * vec2(96.0, 72.0));
-    float t = floor(time_s * 18.0);
+    // CHUNKY on purpose. This was 96x72 cells, which on a 0.85 m CRT face is ~9 mm of noise -- and high-frequency
+    // noise viewed from anywhere but point-blank averages straight out to a FLAT GREY FIELD. strawberry reported
+    // exactly that: "a blank grayish screen" on a set that was correctly on the static channel and correctly hissing.
+    // The sound was right, the picture was averaging itself into nothing.
+    //
+    // 34x26 keeps a visible grain at across-the-room distance, which is also closer to what analogue snow looks like
+    // on a real set: chunks, not a fine dither.
+    vec2 cell = floor(uv * vec2(34.0, 26.0));
+    float t = floor(time_s * 14.0);
     float v = hash21(cell + t * 7.13 + seed);
-    return vec3(0.06 + v * 0.88);
+    // A second, much coarser band drifting at a different rate, so the field has structure instead of being uniform
+    // sparkle -- real snow rolls and clumps. Without it, chunkier cells alone still read as a static texture.
+    float band = hash21(floor(uv * vec2(5.0, 4.0)) - t * 1.7 + seed * 3.0);
+    float lum = clamp(0.05 + v * 0.82 + (band - 0.5) * 0.22, 0.0, 1.0);
+    return vec3(lum);
 }
 
 // ---- the bouncing blob. Triangle waves on each axis ARE a perfect reflection off the walls, so the corners fall out
