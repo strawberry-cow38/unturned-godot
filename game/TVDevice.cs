@@ -302,6 +302,21 @@ namespace UnturnedGodot
         const float WarmDelay = 0.6f, WarmDur = 3.0f;
         bool _warming; float _warmDelay, _warm;
 
+        // ---- FLATSCREEN POWER-ON (strawberry: "make flatscreens of both tv and monitors (not laptops) have a short
+        // delay (half a crts delay, no fade) followed by a white rectangle box with the black fake text (from
+        // terminalscroll), centered on screen to simulate like an 'Input 1:' screen").
+        //
+        // A panel does not warm up -- it is dark while it acquires a signal and then it is simply ON. So the delay is
+        // real dead time and the picture STEPS, where a tube's dead time is followed by a crossfade. Laptops keep the
+        // instant snap they had.
+        internal static bool HasInputBanner(DeviceKind k) => k is DeviceKind.FlatTv or DeviceKind.FlatMonitor;
+        internal static float PowerDelay(DeviceKind k) => IsTube(k) ? WarmDelay : (HasInputBanner(k) ? WarmDelay * 0.5f : 0f);
+        internal static bool FadesIn(DeviceKind k) => IsTube(k);
+        internal const float BannerDur = 0.8f;   // strawberry
+        float _bannerLeft;
+        public bool DebugBannerUp => _bannerLeft > 0f;
+        public float DebugWarmDelayLeft => _warmDelay;
+
         // CRT POWER-OFF COLLAPSE (master: "when turning it off, do the beam collapse on the center, the classic crt
         // turn off"). The raster loses its vertical deflection first, so the picture squeezes into a bright horizontal
         // line -- bright because the same beam energy is now painting a fraction of the area -- and then the horizontal
@@ -573,6 +588,11 @@ namespace UnturnedGodot
             float aspect = _screenHalfH > 1e-5f ? _screenHalfW / _screenHalfH : 1f;
             _blobHalf = BlobHalf(aspect);
             _screenMat = MakeScreenMaterial(_patternTex, _program, patternFrac, _seed);
+            // The mesh's own screen colour becomes the shader's "black" (strawberry: "not perfect black, but the mesh's
+            // screen color"). Pushed HERE, after the material exists -- setting it next to where _glassColor is sampled
+            // ran while _screenMat was still null, and `?.SetShaderParameter` on null is a silent no-op that leaves the
+            // uniform at its default of pure black. Which looks exactly like the feature not being written.
+            _screenMat.SetShaderParameter("screen_black", _glassColor);
             // Transparent for the blob (a missing logo should draw NOTHING, not a white brick) and black for
             // the panel backdrop (a missing map should add no light, not a haze).
             _screenMat.SetShaderParameter("blob_tex", LoadPngOr(BlobAsset, new Color(0f, 0f, 0f, 0f)));
@@ -1173,8 +1193,9 @@ namespace UnturnedGodot
             if (eff)
             {
                 EndCollapse();   // switched back on mid-collapse: the screen node is still squeezed, so undo it first
-                if (IsTube(_kind)) { _warming = true; _warmDelay = WarmDelay; _warm = 0f; }   // tube warms in
-                else { _warming = false; _warm = 1f; }                                        // panel snaps
+                float delay = PowerDelay(_kind);
+                if (delay > 0f) { _warming = true; _warmDelay = delay; _warm = 0f; }   // tube warms in; a panel sits dark, then steps
+                else { _warming = false; _warm = 1f; _bannerLeft = 0f; }               // laptop: straight on, no banner
                 if (_program == ScreenProgram.Colour) _colourLeft = (float)GD.RandRange(ColourHoldMin, ColourHoldMax);
                 if (_screen != null) _screen.Visible = true;
                 if (_light != null) _light.Visible = true;
@@ -1184,7 +1205,8 @@ namespace UnturnedGodot
             }
             else
             {
-                _warming = false; _warm = 0f;
+                _warming = false; _warm = 0f; _bannerLeft = 0f;
+                _screenMat?.SetShaderParameter("banner", 0f);
                 _tone?.Stop();
                 ResetDesync();
                 if (ShouldCollapse(_kind, _broken, _screenShot) && _screen != null) { StartCollapse(); return; }
@@ -1442,7 +1464,10 @@ namespace UnturnedGodot
             // the tube dissolves into the image in between. Brightness is held at full the whole way, so what comes up
             // is a picture RESOLVING rather than a picture brightening -- the difference between a tube warming and a
             // lamp on a dial. On the flatscreen k is pinned at 1, so an LCD still snaps and takes none of this.
-            float k = IsTube(_kind) ? _warm : 1f;
+            // k is _warm for every kind now: a tube ramps it, a panel steps it after its dead time, and a laptop is
+            // handed 1 at power-on. Reading `IsTube(kind) ? _warm : 1` instead would pin a panel at full picture
+            // THROUGH its own delay, which is a delay you cannot see.
+            float k = _warm;
             float f = FlickerFactor();   // 1.0 on a panel; a shallow breath on a tube
             if (_screenMat != null) _screenMat.SetShaderParameter("tint", ScreenColor(Picture, _emitEnergy * f, k));
             // ...and the SPILL is scaled by how bright the picture actually is (master). A terminal showing a black
@@ -1492,8 +1517,22 @@ namespace UnturnedGodot
                     ApplyLevels();
                 }
             }
+            if (_bannerLeft > 0f)
+            {
+                _bannerLeft -= (float)delta;
+                if (_bannerLeft <= 0f) { _bannerLeft = 0f; _screenMat?.SetShaderParameter("banner", 0f); }
+            }
             if (!_warming) return;
-            if (_warmDelay > 0f) { _warmDelay -= (float)delta; if (_warmDelay > 0f) return; }   // dead time before the tube lights
+            if (_warmDelay > 0f) { _warmDelay -= (float)delta; if (_warmDelay > 0f) return; }   // dead time before it lights
+            if (!FadesIn(_kind))
+            {
+                // A panel STEPS to full and puts its input banner up. No ramp: an LCD that faded in would read as a
+                // tube, which is the distinction this whole branch exists to keep.
+                _warm = 1f; _warming = false;
+                if (HasInputBanner(_kind)) { _bannerLeft = BannerDur; _screenMat?.SetShaderParameter("banner", 1f); }
+                ApplyLevels();
+                return;
+            }
             _warm = Mathf.Min(1f, _warm + (float)delta / WarmDur);
             if (_warm >= 1f) _warming = false;
             ApplyLevels();
@@ -1547,6 +1586,8 @@ namespace UnturnedGodot
             m.SetShaderParameter("head_line", 0f);
             m.SetShaderParameter("head_col", 0f);
             m.SetShaderParameter("cursor_on", 0f);
+            m.SetShaderParameter("banner", 0f);
+            m.SetShaderParameter("screen_black", Colors.Black);   // real value pushed once the glass texel is sampled
             m.SetShaderParameter("blob_pos", new Vector2(0.5f, 0.5f));
             m.SetShaderParameter("blob_half", new Vector2(0.12f, 0.18f));
             return m;
@@ -1652,6 +1693,8 @@ namespace UnturnedGodot
         /// through THAT shader at all -- which is the property the washout fix actually depends on.</summary>
         public bool DebugScreenUnshaded => _screenMat?.Shader != null;
         /// <summary>Screen brightness as actually applied (AlbedoColor). 0 = black tube, _emitEnergy = full picture.</summary>
+        public float DebugWarm => _warm;
+        public ShaderMaterial DebugScreenMaterial => _screenMat;
         public float DebugScreenBrightness => _screenMat == null ? -1f : ((Color)_screenMat.GetShaderParameter("tint")).R;
         public bool DebugIsCrt => IsTube(_kind);
         public DeviceKind DebugKind => _kind;
