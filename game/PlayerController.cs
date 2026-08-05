@@ -2200,14 +2200,14 @@ namespace UnturnedGodot
                 && (_focusVehicle.GlobalPosition - GlobalPosition).Length() < range + 3f)   // vehicles are big -> generous reach
             {
                 if (HasBlowtorch) { if (_focusVehicle.Hurt) _focusVehicle.Repair(_melee?.VehicleDamage ?? 10f); }
-                else { _focusVehicle.TakeDamage((_melee?.VehicleDamage ?? 10f) * mult); GD.Print($"[melee] hit {_focusVehicle.DisplayName} for {(_melee?.VehicleDamage ?? 10f) * mult:0}"); }
+                else { _focusVehicle.TakeDamage((_melee?.VehicleDamage ?? 10f) * mult); MeleeImpactFx(_focusVehicle.GlobalPosition, false, Surf.Metal); GD.Print($"[melee] hit {_focusVehicle.DisplayName} for {(_melee?.VehicleDamage ?? 10f) * mult:0}"); }
                 return;
             }
             if (_focusDeployable != null && IsInstanceValid(_focusDeployable) && !_focusDeployable.IsWreck
                 && (_focusDeployable.GlobalPosition - GlobalPosition).Length() < range + 2f)   // looking at a placed generator: melee damages it (a blowtorch is for salvaging the wreck, not smashing)
             {
                 if (HasBlowtorch) { if (_focusDeployable.Hurt) _focusDeployable.Repair(_melee?.VehicleDamage ?? 10f); }   // blowtorch repairs a hurt generator (continuous heal is in UpdateSalvage)
-                else { _focusDeployable.TakeDamage((_melee?.VehicleDamage ?? 10f) * mult); GD.Print($"[melee] hit {_focusDeployable.Def?.Name} for {(_melee?.VehicleDamage ?? 10f) * mult:0}"); }
+                else { _focusDeployable.TakeDamage((_melee?.VehicleDamage ?? 10f) * mult); MeleeImpactFx(_focusDeployable.GlobalPosition, false, Surf.Metal); GD.Print($"[melee] hit {_focusDeployable.Def?.Name} for {(_melee?.VehicleDamage ?? 10f) * mult:0}"); }
                 return;
             }
             // Barricades take hits like a generator does. Without this doors and beds carried Health and a
@@ -2217,13 +2217,13 @@ namespace UnturnedGodot
             if (_focusDoor != null && IsInstanceValid(_focusDoor)
                 && (_focusDoor.GlobalPosition - GlobalPosition).Length() < range + 2f)
             {
-                _focusDoor.TakeDamage((_melee?.VehicleDamage ?? 10f) * mult);
+                _focusDoor.TakeDamage((_melee?.VehicleDamage ?? 10f) * mult); MeleeImpactFx(_focusDoor.GlobalPosition, false, Surf.Wood);
                 return;
             }
             if (_focusBed != null && IsInstanceValid(_focusBed)
                 && (_focusBed.GlobalPosition - GlobalPosition).Length() < range + 2f)
             {
-                _focusBed.TakeDamage((_melee?.VehicleDamage ?? 10f) * mult);
+                _focusBed.TakeDamage((_melee?.VehicleDamage ?? 10f) * mult); MeleeImpactFx(_focusBed.GlobalPosition, false, Surf.Wood);
                 return;
             }
 
@@ -2231,7 +2231,7 @@ namespace UnturnedGodot
             Vector3 origin = GlobalPosition + Vector3.Up * 1.2f, fwd = -_cam.GlobalTransform.Basis.Z;
             // The rewrite's zombies are sim ROWS, not nodes, so the group sweep below cannot see them --
             // which is why they were unkillable under --newzombies. Swing at the sim too.
-            if (ZombieDirector.Instance is { } zdm && zdm.ShootRay(origin, fwd, range + 0.5f, dmg, out bool zdKilled) && zdKilled) Kills++;
+            if (ZombieDirector.Instance is { } zdm && zdm.ShootRay(origin, fwd, range + 0.5f, dmg, out bool zdKilled)) { MeleeImpactFx(origin + fwd * Mathf.Min(range, 1.5f), true); if (zdKilled) Kills++; }   // sim zombie: FX at an estimated point along the swing
             foreach (var n in GetTree().GetNodesInGroup("zombies"))
                 if (n is ZombieController z && !z.Dead)
                 {
@@ -2240,11 +2240,23 @@ namespace UnturnedGodot
                     {
                         bool wd = z.Dead;
                         z.DamageHit(dmg, z.GlobalPosition + Vector3.Up, fwd);
+                        MeleeImpactFx(z.GlobalPosition + Vector3.Up, true);   // blood + flesh thunk + hitmarker so the swing/punch REGISTERS
                         if (!wd && z.Dead) Kills++;
                         GD.Print($"[melee] {(strong ? "STRONG" : "weak")} hit ({_melee?.Name ?? "fists"} {dmg:0} dmg)");
                         break;   // one target per swing
                     }
                 }
+        }
+
+        // Melee HIT feedback (master: "wire up melee swing/hit sounds + unarmed damage"). The swing already DEALS damage
+        // (MeleeAttack -> ApplyMeleeHit); this makes it REGISTER: a flesh hit sprays blood + plays impact_flesh.wav + pops a
+        // hitmarker (SpawnFleshImpact already carries the audio); a structure hit plays the material thunk. Reuses the gun
+        // impact infra. Unturned has NO swing whoosh (verified: no swing clip in the bundle, no AudioSource on melee prefabs),
+        // so a MISS is silent -- source-accurate. Covers bare FISTS (they run the same ApplyMeleeHit path).
+        void MeleeImpactFx(Vector3 point, bool flesh, Surf surf = Surf.Concrete)
+        {
+            if (flesh) { SpawnFleshImpact(point, -(_cam?.GlobalTransform.Basis.Z ?? Vector3.Back)); HitmarkerHUD.Instance?.Show(false); }
+            else PlayImpactSound(ImpactSnd(surf), point);
         }
 
         // PlayerLife.onLanded: landing faster than the fall-damage threshold (map default 22 m/s, and the port has
