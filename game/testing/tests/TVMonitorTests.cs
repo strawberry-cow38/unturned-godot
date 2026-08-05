@@ -1,5 +1,6 @@
 using Godot;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace UnturnedGodot.Testing
 {
@@ -130,6 +131,35 @@ namespace UnturnedGodot.Testing
             T.Check("the flatscreen television kept its card and tone and is still a panel",
                 TVDevice.HasPattern(TVDevice.DeviceKind.FlatTv) && TVDevice.HasTone(TVDevice.DeviceKind.FlatTv)
                 && !TVDevice.IsTube(TVDevice.DeviceKind.FlatTv) && !TVDevice.HasDesync(TVDevice.DeviceKind.FlatTv));
+
+            // ---- THE STANDBY LAMP IS A THREE-STATE READ, not a negation of "on". A set with no mains and no wire shows
+            // NOTHING -- an unpowered television does not glow red. Getting this wrong is invisible in the common case
+            // (mains up, set switched off -> red either way) and only shows during a blackout, which is exactly when
+            // someone would be looking at a wall of televisions to see whether the power is back.
+            T.Check("lit -> green, not red", TVDevice.LedState(lit: true, hasFeed: true, broken: false, screenShot: false) == (true, false));
+            T.Check("powered but switched off -> red standby",
+                TVDevice.LedState(lit: false, hasFeed: true, broken: false, screenShot: false) == (false, true));
+            T.Check("NO power at all -> nothing lit, not standby",
+                TVDevice.LedState(lit: false, hasFeed: false, broken: false, screenShot: false) == (false, false));
+            T.Check("smashed -> nothing, even on a live grid",
+                TVDevice.LedState(lit: false, hasFeed: true, broken: true, screenShot: false) == (false, false));
+            T.Check("shot-out glass -> no standby either (the set is not waiting for anything)",
+                TVDevice.LedState(lit: false, hasFeed: true, broken: false, screenShot: true) == (false, false));
+            T.Check("...and the two lamps are never both lit",
+                !new[] { (true, true, false, false), (false, true, false, false), (false, false, false, false) }
+                    .Select(t => TVDevice.LedState(t.Item1, t.Item2, t.Item3, t.Item4))
+                    .Any(r => r.On && r.Standby));
+
+            // ---- WHICH PROPS HAVE WHICH LAMPS. Only the flatscreen television has a red/green PAIR; the monitors have
+            // a single green; the CRT television's cube is plain grey and the laptop has no indicator geometry at all.
+            T.Check("the flatscreen TV has both lamps",
+                TVDevice.LedsFor(TVDevice.DeviceKind.FlatTv).On != null && TVDevice.LedsFor(TVDevice.DeviceKind.FlatTv).Standby != null);
+            foreach (var k in new[] { TVDevice.DeviceKind.CrtMonitor, TVDevice.DeviceKind.FlatMonitor })
+                T.Check($"{k} has an on-lamp but no standby lamp",
+                    TVDevice.LedsFor(k).On != null && TVDevice.LedsFor(k).Standby == null);
+            foreach (var k in new[] { TVDevice.DeviceKind.CrtTv, TVDevice.DeviceKind.Laptop })
+                T.Check($"{k} has no indicator geometry, so it claims neither lamp",
+                    TVDevice.LedsFor(k).On == null && TVDevice.LedsFor(k).Standby == null);
 
             // ---- THE COLOUR CYCLE never repeats. A plain `Randi() % n` sits on the same colour a fifth of the time,
             // and a repeat does not read as chance -- it reads as the cycle having STOPPED, which is how it would be

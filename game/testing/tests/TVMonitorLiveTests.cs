@@ -110,6 +110,43 @@ namespace UnturnedGodot.Testing
                     d.DebugPlugLocal.LengthSquared() > 0f);
             }
 
+            // ---- THE INDICATOR LAMPS, on built devices. The static suite pins the POLICY; this pins that the UV split
+            // actually found the cubes in the real meshes -- a predicate that matched nothing leaves the device with a
+            // null lamp and no error anyone sees, which is indistinguishable from "this prop has no LED".
+            var flatTv = Build("Television_0");
+            if (flatTv != null)
+            {
+                yield return Ticks(2);
+                T.Check("the flatscreen TV found BOTH indicator cubes in its mesh",
+                    flatTv.DebugHasOnLed && flatTv.DebugHasStandbyLed);
+                T.Check($"...and lit, it shows green and not red ({flatTv.DebugLeds})",
+                    flatTv.DebugLeds == (true, false));
+                flatTv.Toggle();
+                yield return Ticks(2);
+                T.Check($"...switched off but still powered, it shows RED standby ({flatTv.DebugLeds})",
+                    flatTv.DebugLeds == (false, true));
+                PowerNet.SetGlobalPower(false);
+                flatTv.Refresh();
+                yield return Ticks(2);
+                T.Check($"...and in a blackout it shows NOTHING -- an unpowered set does not glow ({flatTv.DebugLeds})",
+                    flatTv.DebugLeds == (false, false));
+                PowerNet.SetGlobalPower(true);
+                flatTv.Toggle();
+                flatTv.Refresh();
+                yield return Ticks(2);
+                T.Check($"...and comes back green ({flatTv.DebugLeds})", flatTv.DebugLeds == (true, false));
+            }
+            T.Check("both monitors found their green cube", crtMon.DebugHasOnLed && flatMon.DebugHasOnLed);
+            T.Check("...and neither claims a standby lamp it does not have",
+                !crtMon.DebugHasStandbyLed && !flatMon.DebugHasStandbyLed);
+            T.Check($"a lit monitor's green lamp is emitting ({crtMon.DebugLeds})", crtMon.DebugLeds == (true, false));
+            // The laptop and the CRT television have no indicator geometry at all. Asserted so "no lamp" stays a
+            // measured fact about those meshes rather than a split that silently failed on all four.
+            T.Check("the laptop has no indicator lamp (its mesh has none)",
+                !laptop.DebugHasOnLed && !laptop.DebugHasStandbyLed);
+            T.Check("the CRT television has none either -- its cube is plain grey, not a red/green pair",
+                !crtTv.DebugHasOnLed && !crtTv.DebugHasStandbyLed);
+
             // ---- THE COLOUR CYCLE, AND THE CONE FOLLOWING IT (master: "cycle through a few random colors (which tints
             // the 'cone')"). The tint and the spill are set in different places -- AlbedoColor on the screen material,
             // LightColor on the SpotLight -- so "the screen changed colour" alone would pass with the cone left blue.

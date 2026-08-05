@@ -220,6 +220,55 @@ namespace UnturnedGodot
         Color Picture => CyclesColour(_kind) ? (_mono ? Mono(_tint) : _tint) : Colors.White;
         Color Spill => CyclesColour(_kind) ? (_mono ? Mono(_tint) : _tint) : SpillWhite;
 
+        // ---- STATUS LEDS ---------------------------------------------------------------------------------------------
+        // Master: "make the little green LED emissive" on the monitors, and on the flatscreen "the red little LED
+        // emissive when the TV has power, but is off, and the green one lights up when its on".
+        //
+        // These are REAL GEOMETRY, already in the props as their own palette texels -- not something drawn on. Measured
+        // off the .objs, with the palette colour each texel actually carries:
+        //
+        //   Television_0 (4x2 palette)  THREE 5 cm cubes at the bezel's bottom-left:
+        //                                 red   (174,46,46)  texel(1,0) -> standby
+        //                                 green (63,128,61)  texel(2,0) -> on
+        //                                 blue  (50,112,147) texel(3,1) -> unused, left dark
+        //   Computer_3   (2x2)          one 8 cm green cube (63,119,52) at texel(1,1) -> on
+        //   Computer_0   (2x2)          same size, same position, but the texel is bluish-grey (114,124,133). Lit
+        //                                 green anyway: it is LED-shaped and in the LED spot, and an indicator that
+        //                                 stays grey while the tube is warm reads as a dead prop, not as a design.
+        //   Computer_2   (2x1)          NO indicator geometry at all -- body and screen, nothing else. Gets none.
+        //   Television_1 (2x2)          one grey (104,104,104) cube, not a red/green pair -- so no standby light,
+        //                                 which is why the request only asked for one on the flatscreen.
+        //
+        // The LED texels sit at u>0.5 on the monitors, the SAME half as CrtScreen -- they are separated by V, so a
+        // predicate that only tested U would carve the screen and the LED into one mesh and light the picture.
+        static bool TvOnLed(Vector2 a, Vector2 b, Vector2 c)
+            => InCell(a, b, c, 0.50f, 0.75f, 0f, 0.5f);
+        static bool TvStandbyLed(Vector2 a, Vector2 b, Vector2 c)
+            => InCell(a, b, c, 0.25f, 0.50f, 0f, 0.5f);
+        static bool MonitorLed(Vector2 a, Vector2 b, Vector2 c)
+            => InCell(a, b, c, 0.50f, 1.01f, 0.5f, 1.01f);
+        static bool InCell(Vector2 a, Vector2 b, Vector2 c, float u0, float u1, float v0, float v1)
+            => In1(a, u0, u1, v0, v1) && In1(b, u0, u1, v0, v1) && In1(c, u0, u1, v0, v1);
+        static bool In1(Vector2 t, float u0, float u1, float v0, float v1)
+            => t.X >= u0 && t.X < u1 && t.Y >= v0 && t.Y < v1;
+
+        static readonly Color LedGreen = new(0.30f, 0.95f, 0.35f);
+        static readonly Color LedRed = new(0.95f, 0.20f, 0.16f);
+        const float LedEmission = 3.0f;   // same scale StreetLight/TrafficLight use, so an LED blooms like a lens
+
+        /// <summary>Which indicator cubes this kind has, as UV predicates. Null = the prop has no such cube.</summary>
+        internal static (System.Func<Vector2, Vector2, Vector2, bool> On, System.Func<Vector2, Vector2, Vector2, bool> Standby) LedsFor(DeviceKind k)
+            => k switch
+            {
+                DeviceKind.FlatTv      => (TvOnLed, TvStandbyLed),   // the only prop with a red/green PAIR
+                DeviceKind.CrtMonitor  => (MonitorLed, null),
+                DeviceKind.FlatMonitor => (MonitorLed, null),
+                _                      => (null, null),              // CRT television: grey cube. Laptop: nothing at all.
+            };
+
+        MeshInstance3D _ledOn, _ledStandby;
+        StandardMaterial3D _ledOnMat, _ledStandbyMat;
+
         // ---- POWER IO ----------------------------------------------------------------------------------------------
         // Master: "add power io for both TVs, computer crt and computer flat screen monitor". ONE wire-able CONSUMER
         // port per set -- the plug.
@@ -388,6 +437,8 @@ namespace UnturnedGodot
             _coneMat = (StandardMaterial3D)_cone.MaterialOverride;
             AddChild(_cone);
 
+            BuildLeds(body);
+
             _bodyAabbLocal = body.GetAabb();
             BuildPlug(_bodyAabbLocal);   // the wire-able power input (see POWER IO above)
 
@@ -413,6 +464,66 @@ namespace UnturnedGodot
         {
             var parts = ObjMesh.SplitByUv(body, 70 + (int)kind, kind == DeviceKind.FlatTv ? FlatScreen : CrtScreen);
             return parts != null && parts.Length >= 1 ? parts[0] : null;
+        }
+
+        // ---- status LEDs -------------------------------------------------------------------------------------------
+        void BuildLeds(ArrayMesh body)
+        {
+            var (on, standby) = LedsFor(_kind);
+            _ledOn = MakeLed(body, on, LedGreen, 90, out _ledOnMat);
+            _ledStandby = MakeLed(body, standby, LedRed, 91, out _ledStandbyMat);
+        }
+
+        /// <summary>Carve one indicator cube off the body and hang an emissive copy over it.
+        ///
+        /// A COPY, slightly inflated, rather than a recolour of the body face: SplitByUv copies triangles instead of
+        /// removing them, so the prop still draws its own dark cube underneath. That is what an unlit LED should look
+        /// like -- and it means the lit state is purely additive, so nothing has to be undone when the set goes dark.
+        /// The 3% inflation about the cube's own centre is what keeps the two from z-fighting; the screen solves the
+        /// same problem with a 4 mm offset, but an offset on a cube would slide it out of the bezel.</summary>
+        MeshInstance3D MakeLed(ArrayMesh body, System.Func<Vector2, Vector2, Vector2, bool> pred, Color col, int key,
+                               out StandardMaterial3D mat)
+        {
+            mat = null;
+            if (pred == null) return null;
+            var parts = ObjMesh.SplitByUv(body, key, pred);
+            var mesh = parts != null && parts.Length >= 1 ? parts[0] : null;
+            if (mesh == null) { GD.PrintErr($"[tv] {PropName}: LED split matched no triangles"); return null; }
+
+            mat = new StandardMaterial3D
+            {
+                AlbedoColor = col,
+                EmissionEnabled = true, Emission = col, EmissionEnergyMultiplier = 0f,   // Refresh lights it
+                Metallic = 0f, Roughness = 0.4f,
+                CullMode = BaseMaterial3D.CullModeEnum.Disabled,   // ripped mesh: winding may face either way
+            };
+            var c = mesh.GetAabb().GetCenter();
+            var mi = new MeshInstance3D
+            {
+                Mesh = mesh, MaterialOverride = mat, Visible = false,
+                CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
+                Transform = new Transform3D(Basis.FromScale(Vector3.One * 1.03f), c - Basis.FromScale(Vector3.One * 1.03f) * c),
+            };
+            AddChild(mi);
+            return mi;
+        }
+
+        /// <summary>Which indicator is lit. Deliberately a three-state read rather than "on/off": a set with no mains
+        /// AND no wire shows NOTHING, because an unpowered television does not glow red -- standby is a thing a
+        /// powered set does. That distinction is the entire point of the red lamp, and it is invisible unless the
+        /// blackout case is handled separately from the switched-off case.</summary>
+        internal static (bool On, bool Standby) LedState(bool lit, bool hasFeed, bool broken, bool screenShot)
+        {
+            if (broken) return (false, false);                       // rubble does not indicate anything
+            if (lit) return (true, false);
+            return (false, hasFeed && !screenShot);                  // powered, not showing a picture -> standby
+        }
+
+        void ApplyLeds()
+        {
+            var (on, standby) = LedState(_lit, HasFeed, _broken, _screenShot);
+            if (_ledOn != null) { _ledOn.Visible = on; if (_ledOnMat != null) _ledOnMat.EmissionEnergyMultiplier = on ? LedEmission : 0f; }
+            if (_ledStandby != null) { _ledStandby.Visible = standby; if (_ledStandbyMat != null) _ledStandbyMat.EmissionEnergyMultiplier = standby ? LedEmission : 0f; }
         }
 
         // ---- power plug --------------------------------------------------------------------------------------------
@@ -777,8 +888,13 @@ namespace UnturnedGodot
             bool eff = _on && HasFeed && !_broken && !_screenShot;
             _plugWasPowered = PlugPowered;   // the poll in _Process compares against this; stamping it here stops a
                                              //  Refresh from any other cause looking like a plug edge on the next frame
+            // BEFORE the early-out, and that is not a detail: the standby lamp tracks HasFeed, which moves in cases
+            // where the picture does not. A set switched off in a blackout and then re-powered goes dark-red-dark with
+            // `eff` false the whole way, so an ApplyLeds below the early-out would simply never run for it.
+            ApplyLeds();
             if (eff == _lit) return;
             _lit = eff;
+            ApplyLeds();   // again, now that _lit has moved: the first call above ran on the OLD state
             if (eff)
             {
                 EndCollapse();   // switched back on mid-collapse: the screen node is still squeezed, so undo it first
@@ -1180,6 +1296,12 @@ namespace UnturnedGodot
         /// test pattern" is otherwise only checkable by looking at it, and a dim SMPTE card at a distance reads as
         /// a flat colour.</summary>
         public Texture2D DebugScreenTexture => _screenMat?.AlbedoTexture;
+        /// <summary>Which indicator cube is currently emitting, for a check that does not need a render.</summary>
+        public (bool On, bool Standby) DebugLeds =>
+            (_ledOn != null && _ledOn.Visible && (_ledOnMat?.EmissionEnergyMultiplier ?? 0f) > 0f,
+             _ledStandby != null && _ledStandby.Visible && (_ledStandbyMat?.EmissionEnergyMultiplier ?? 0f) > 0f);
+        public bool DebugHasOnLed => _ledOn != null;
+        public bool DebugHasStandbyLed => _ledStandby != null;
         public bool DebugHasPlug => _plug != null && GodotObject.IsInstanceValid(_plug);
         public Vector3 DebugPlugLocal => _plug?.Position ?? Vector3.Zero;
         public float DebugPlugWatts => _plug?.Watts ?? 0f;
