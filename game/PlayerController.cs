@@ -6,13 +6,25 @@ namespace UnturnedGodot
     // First-person player: ported PlayerMovementSim on Godot's 50 Hz physics tick + mouse look + a hitscan
     // gun (raycast from the camera vs the zombie collision layer). Movement CONSTANTS are exact; feel goes
     // through Jolt. Builds its own camera + capsule collider so it can be spawned from code.
-    // WASD move / Shift sprint / Ctrl crouch / Z prone / Space jump / LMB fire / G melee / H grenade / R reload / Esc release mouse.
+    // WASD move / Shift sprint / X crouch (C hold) / Z prone / Q,E lean / Space jump / LMB fire / G melee / H grenade / R reload / Esc release mouse.
     public partial class PlayerController : CharacterBody3D
     {
         readonly PlayerMovementSim _move = new PlayerMovementSim();
         readonly PlayerStanceSim _stance = new PlayerStanceSim();   // intertwined stance state machine (X = crouch, Z = prone), extracted to the engine-free sim-core (MP_PLAN §3.4)
         CapsuleShape3D _capsule; CollisionShape3D _hitbox; float _capStance = -1f;   // hitbox capsule, resized per stance (source HeightForStance)
         Camera3D _cam;
+        Node3D _leanPivot;      // rolls for lean; the camera is its child (see the construction site for why it matters)
+
+        // ---- LEANING (strawberry; ported from PlayerLook + PlayerAnimator) -------------------------------------------
+        // Q left / E right. The angle is TWENTY degrees, not the ~45 that was assumed -- HumanAnimator.LEAN = 20,
+        // consumed at PlayerLook.cs:744 as Quaternion.Euler(0, 0, lean * LEAN) lerped at 4*delta.
+        public const float LeanDegrees = 20f;
+        const float LeanLerp = 4f;             // source: the same 4*delta the eye-height and scope-sway lerps use
+        const float LeanReach = 1.2f;          // source isLeanSpaceEmpty: capsule from the eyes, (1.2 - RADIUS) along
+        const float LeanRadius = 0.4f;         //   the lean direction at PlayerStance.RADIUS
+        int _lean;                             // +1 left, -1 right, 0 none -- source's own sign convention
+        bool _leanObstructed;
+        float _leanAngle;                      // current rolled degrees, lerped toward _lean * LeanDegrees
         Vector3 _interpPrev, _interpCurr; bool _interpReady;   // render interpolation: smooth the VISUAL position between the 50Hz physics ticks (master); rotation stays per-frame so the mouse is instant
         Viewmodel _viewmodel;
         public PlayerInventory Inventory;   // the ported 9-page inventory model
@@ -3570,9 +3582,17 @@ namespace UnturnedGodot
             PhysicsInterpolationMode = Node.PhysicsInterpolationModeEnum.Off;   // opt the PLAYER out of Godot's global physics interp -- on-foot uses MANUAL position-only interp so the mouse stays instant (master)
             // NetAvatar keeps the (non-Current) camera node -- look math (LookPoint, aim) reads it -- but a
             // Current camera per avatar would hijack the host viewport (L1 sandbox / any windowed server).
+            // LEAN PIVOT (source PlayerLook: the camera's parent). It sits at the player's ORIGIN -- at the feet, not
+            // the eyes -- and only ever rolls. That placement IS the mechanic: rolling a pivot at the feet while the
+            // camera rides at eye height above it swings your head sideways as a CONSEQUENCE of the tilt. Roll the
+            // camera in place instead and you get the tilt with no peek at all, which is the version that feels broken.
+            // Retail says so out loud in GetEyesPositionWithoutLeaning: "child of another transform with zeroed
+            // position which gets rotated according to the leaning angle".
+            _leanPivot = new Node3D { PhysicsInterpolationMode = Node.PhysicsInterpolationModeEnum.Off };
+            AddChild(_leanPivot);
             _cam = new Camera3D { Position = new Vector3(0, 1.6f, 0), Current = !NetAvatar, PhysicsInterpolationMode = Node.PhysicsInterpolationModeEnum.Off };
             _cam.CullMask &= ~OutlineOverlay.OutlineLayer;   // don't render the items' silhouette meshes in the main view (only the offscreen mask cam does)
-            AddChild(_cam);
+            _leanPivot.AddChild(_cam);
             if (NetAvatar)
             {
                 // server avatar: capsule + camera node + registry registration are enough. Everything below
@@ -4650,6 +4670,7 @@ namespace UnturnedGodot
             // denormalized, and Godot's Slerp/Basis assert IsNormalized -> that was the "Quaternion is not normalized" spam.
             if (!_flinch.IsFinite() || _flinch.LengthSquared() < 1e-6f) _flinch = Quaternion.Identity;
             _flinch = _flinch.Normalized().Slerp(Quaternion.Identity, 4f * (float)delta);
+            ApplyLean((float)delta);
             if (_cam != null && !_dead && _driving == null && _riding == null)   // while driving/riding, the drive cam above owns the view
             {
                 if (_ugFp) _fp = true;   // render harness (UG_FP=1): force 1st-person so the FP viewmodel is captured
@@ -4864,6 +4885,8 @@ namespace UnturnedGodot
             // below-map kill: Unturned Level.isPointWithinValidHeight = y in [-1024,1024]; fall past the map floor -> die + respawn (covers driving too)
             if (!NetAvatar && !_dead && GlobalPosition.Y < -1030f) { GD.Print("[oob] fell below the map -> killed"); TakeDamage(9999f); }   // NetAvatar: TakeDamage is a no-op (invulnerable) -- gate here too so a pathological fall can't spam the log every tick
             if (NetHold) return;   // mp-clientauth-foot: a follower body never moves itself -- the entity owns the transform, PlayerNetSync teleports this body onto it
+            StepLean((float)delta);   // BEFORE the driving/riding returns below: those bail out of the tick entirely, so a lean
+                                      //  polled after them would freeze at whatever it was when you got into the car and stay there.
             if (_driving != null) { _interpReady = false; LastMoveInput = UnityEngine.Vector2.zero; LastJumpInput = false; DriveVehicle((float)delta); return; }   // driving: skip on-foot movement (+ pause the render-interp so exiting doesn't smear)
             if (_riding != null) { _interpReady = false; LastMoveInput = UnityEngine.Vector2.zero; LastJumpInput = false; RidePuppet(); return; }   // C6 ride mode: same freeze -- capture drive intent only, the SERVER drives
             if (_interpReady && !_dead) GlobalPosition = _interpCurr;   // render-interp (master): restore the TRUE physics position before moving (undoes the _Process visual smoothing)
@@ -4985,6 +5008,93 @@ namespace UnturnedGodot
             : _move.Stance switch { EPlayerStance.CROUCH => 0.85f, EPlayerStance.PRONE => 0.7f, _ => 1f };   // subtler than 0.6/0.35 -- a flat mult scales hardest on the punchiest guns, keep it gentle (master/tinyclaw)
 
         /// <summary>Stance half: one stance-FSM step + the capsule resize (source HeightForStance).</summary>
+        /// <summary>Who may lean, and which way. Engine-free so the RULES are testable without a physics world -- the
+        /// obstruction results come in as booleans rather than being raycast in here.
+        ///
+        /// Returns the source's own sign convention: +1 LEFT, -1 RIGHT (PlayerAnimator.simulate). Obstructed is a
+        /// separate outcome from "not leaning", because retail treats it differently at the other end: a lean that ends
+        /// normally lerps back upright, one that is blocked SNAPS (PlayerLook.cs:738) so you cannot smear yourself
+        /// through a wall on the way out.</summary>
+        internal static int LeanFrom(bool leftKey, bool rightKey, EPlayerStance stance, bool leftClear, bool rightClear, out bool obstructed)
+        {
+            obstructed = false;
+            // Stance gate, from the source verbatim. Note what is NOT here: CROUCH and PRONE lean fine, which is the
+            // whole point -- leaning out of cover from a crouch is the move.
+            if (stance is EPlayerStance.CLIMB or EPlayerStance.SPRINT or EPlayerStance.DRIVING or EPlayerStance.SITTING) return 0;
+            // Nelson, 2025-01-20, on holding both: "Left==Right will stop lean when no input and when both input."
+            // Holding Q+E stands you up rather than silently preferring one side.
+            if (leftKey == rightKey) return 0;
+            if (leftKey) { if (leftClear) return 1; obstructed = true; return 0; }
+            if (rightClear) return -1;
+            obstructed = true; return 0;
+        }
+
+        PhysicsShapeQueryParameters3D _leanQ;
+
+        /// <summary>Is there room to put your head out that way? Source isLeanSpaceEmpty: a capsule of PlayerStance.RADIUS
+        /// swept from the EYES (not the feet) along the lean direction for (1.2 - radius) metres.</summary>
+        bool LeanSpaceEmpty(Vector3 dir, float eyeHeight)
+        {
+            var space = GetWorld3D()?.DirectSpaceState;
+            if (space == null) return true;   // no world (bare unit test): nothing to be blocked by
+            float reach = LeanReach - LeanRadius;
+            if (_leanQ == null)
+                _leanQ = new PhysicsShapeQueryParameters3D
+                {
+                    // Godot's capsule is Y-axis with Height counting the caps, so a 0.8 m sweep between two spheres of
+                    // r=0.4 is a 1.6 m capsule -- NOT 0.8. Getting this wrong makes the check silently permissive.
+                    Shape = new CapsuleShape3D { Radius = LeanRadius, Height = reach + 2f * LeanRadius },
+                    // What blocks a lean is what blocks the player, plus vehicles -- the source's BLOCK_LEAN is
+                    // BLOCK_STANCE, which is ground/environment/props/structures/vehicles/clip.
+                    CollisionMask = (1u << 0) | (1u << 5) | (1u << 6),
+                };
+            _leanQ.Exclude = new Godot.Collections.Array<Rid> { GetRid() };
+            var mid = GlobalPosition + Vector3.Up * eyeHeight + dir * (reach * 0.5f);
+            // Stand the capsule along the lean direction: its local +Y becomes dir.
+            var y = dir.Normalized();
+            var x = y.Cross(Vector3.Up);
+            if (x.LengthSquared() < 1e-6f) x = y.Cross(Vector3.Forward);
+            x = x.Normalized();
+            _leanQ.Transform = new Transform3D(new Basis(x, y, x.Cross(y).Normalized()), mid);
+            return space.IntersectShape(_leanQ, 1).Count == 0;
+        }
+
+        internal float EyeHeight => Stance switch { EPlayerStance.CROUCH => 1.2f, EPlayerStance.PRONE => 0.35f, _ => 1.75f };
+
+        void StepLean(float delta)
+        {
+            bool blocked = NetAvatar || UiInputBlocked || _dead || _driving != null || _riding != null;
+            bool q = !blocked && Input.IsPhysicalKeyPressed(Key.Q);
+            bool e = !blocked && Input.IsPhysicalKeyPressed(Key.E);
+            if (ScriptedLean.HasValue) { q = ScriptedLean.Value > 0; e = ScriptedLean.Value < 0; }
+
+            // Only pay for the shape query on the side actually being asked for -- and only when a key is down at all.
+            float eye = EyeHeight;
+            bool leftClear = !q || LeanSpaceEmpty(-GlobalTransform.Basis.X, eye);
+            bool rightClear = !e || LeanSpaceEmpty(GlobalTransform.Basis.X, eye);
+            _lean = LeanFrom(q, e, Stance, leftClear, rightClear, out _leanObstructed);
+        }
+
+        /// <summary>Test/demo override: +1 lean left, -1 right, 0 upright, null = read the keyboard.</summary>
+        public int? ScriptedLean;
+
+        /// <summary>Degrees the lean pivot is currently rolled, and where the camera ends up because of it.</summary>
+        public float DebugLeanAngle => _leanAngle;
+        public int DebugLean => _lean;
+        public bool DebugLeanObstructed => _leanObstructed;
+
+        /// <summary>Roll the pivot toward the current lean. Per-FRAME, matching PlayerLook.Update -- the state machine
+        /// above runs at 50 Hz, the visible tilt is smooth.</summary>
+        void ApplyLean(float delta)
+        {
+            if (_leanPivot == null) return;
+            float target = _lean * LeanDegrees;
+            // Obstructed SNAPS upright instead of lerping (PlayerLook.cs:738-741). Lerping out of a wall means spending
+            // a quarter second with your head inside it, which is exactly the peek the obstruction check exists to deny.
+            _leanAngle = _leanObstructed ? 0f : Mathf.Lerp(_leanAngle, target, Mathf.Min(1f, LeanLerp * delta));
+            var r = _leanPivot.Rotation; r.Z = Mathf.DegToRad(_leanAngle); _leanPivot.Rotation = r;
+        }
+
         void StepStanceOnce(bool crouchKey, bool proneKey, bool sprintKey, EPlayerStance? scriptedStance)
         {
             _move.Stance = _stance.Step(crouchKey, proneKey, sprintKey, Stamina, Broken, scriptedStance, _capStance, HeadroomFor);
