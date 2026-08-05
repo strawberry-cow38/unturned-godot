@@ -642,10 +642,20 @@ namespace UnturnedGodot
 
         public void SwingMelee(bool strong = false)   // play this melee's OWN Weak/Strong swing (source UseableMelee), falling back to the generic knife clip if it wasn't ripped
         {
+            PlaySwing();   // src swing WHOOSH (sounds/meleeattack_0{1,2}, random of 2) -- fires for weapons AND bare fists
             if (Fists) { _arms?.Play(strong ? "Punch_Right" : "Punch_Left"); return; }   // bare fists: the real src jab (LMB=left / RMB=right, ported from Punch.fbx)
             string own = _meleeCap + (strong ? "_Strong" : "_Weak");
             _arms?.Play(_meleeCap != null && _arms.ClipLength(own) > 0f ? own : (strong ? "Melee_Strong" : "Melee_Weak"));
         }
+        AudioStreamPlayer _swingSnd; AudioStream[] _swingWavs;   // melee/fists SWING whoosh: src sounds/meleeattack_0{1,2} -> content/melee_swing_{0,1}.wav (a random one per swing)
+        void PlaySwing()
+        {
+            _swingWavs ??= new AudioStream[] { PlayerController.LoadWavOneShot("res://content/melee_swing_0.wav"), PlayerController.LoadWavOneShot("res://content/melee_swing_1.wav") };
+            if (_swingSnd == null) { _swingSnd = new AudioStreamPlayer { VolumeDb = -5f }; AddChild(_swingSnd); }
+            AudioStream w = _swingWavs[(int)(GD.Randi() % 2)];
+            if (w != null) { _swingSnd.Stream = w; _swingSnd.Play(); }   // one player, restarts per swing (swings are gated by the cooldown, so no choppy overlap)
+        }
+
         // This weapon's swing-anim length (per-weapon), used as the attack cooldown so click-spam can't beat the cadence.
         public float MeleeSwingLength(bool strong)
         {
@@ -1192,8 +1202,8 @@ namespace UnturnedGodot
             //      Sprint is the LOWEST-tier pose (master): aim, fire, reload, rack, inspect, attach ALL override it,
             //      and it must ALWAYS hand the base back or the un-shouldered clip lingers.
             if (_shootHold > 0f) _shootHold -= (float)delta;   // a shot suppresses sprint for its burst (source: Sprint_Start needs !isShooting)
-            bool _wantSprint = EquipDone && !_reloading && !_hammering && !_inspecting && !_attachView && !_aiming
-                               && _shootHold <= 0f && ((_stance == EPlayerStance.SPRINT && _moving) || _safe);
+            bool _wantSprint = IsGunViewmodel && EquipDone && !_reloading && !_hammering && !_inspecting && !_attachView && !_aiming
+                               && _shootHold <= 0f && ((_stance == EPlayerStance.SPRINT && _moving) || _safe);   // GUNS ONLY: the un-shoulder/safety pose is a gun thing. melee/consumable/deployable/fists never enter it -> they just keep their hold + bob (master: melee sprint-END animated buggily because it flipped _sprinting with null clips then hit the exit snap)
             if (_wantSprint && !_sprinting)
             {
                 _sprinting = true;
