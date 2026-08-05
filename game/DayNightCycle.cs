@@ -14,7 +14,7 @@ namespace UnturnedGodot
     {
         public DirectionalLight3D Sun;
         public Godot.Environment Env;
-        public float DayLength = 120f;   // seconds per full cycle (short here; Unturned's is ~an hour)
+        public float DayLength = 1440f;   // seconds per full cycle = 24 min (master); was a dev-short 120s, Unturned's default is ~an hour
         public float Time = 0.35f;       // 0..1 time of day: 0 midnight, 0.25 dawn, 0.5 noon, 0.75 dusk
         public float Speed = 1f;         // day/night clock multiplier (console `timeSpeed`); 0 = frozen. Distinct from Engine.TimeScale.
         // Running in-game day count, bumped once per forward midnight crossing (natural cycle OR a dev `timeAdd` that
