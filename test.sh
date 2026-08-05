@@ -103,7 +103,11 @@ run_l1() {  # batched in-engine tests: build the game once, boot headless godot,
   fi
   local glob=""; [ "$ONLY" != "*" ] && glob="=$ONLY"
   local log="$RESULTS/l1.log"
-  timeout 600 "$GODOT" --path game --headless -- "--tests$glob" >"$log" 2>&1   # cap > the full L1 set (the four §8 geometry WAN courses added ~3 min of simulated-course wall time)
+  # Cap > the full L1 set. Measured 2026-08-05: 254 tests sum to ~603 s of test time plus ~15 s of boot, so the old 600
+  # sat UNDER the suite -- it killed the run two tests from the end and the core dump read as a hang in whatever was
+  # next in line. An outer cap that the suite has grown past reports as a crash in an innocent test, so keep real
+  # headroom here and re-measure when it gets close rather than trimming to fit.
+  timeout 1200 "$GODOT" --path game --headless -- "--tests$glob" >"$log" 2>&1
   grep -E '^\[TEST\]|^[[:space:]]+✗|^[[:space:]]+repro' "$log"   # per-test detail (human + agent)
   local summary; summary="$(grep -E '^\[L1\] passed=' "$log" | tail -1)"
   if [ -z "$summary" ]; then

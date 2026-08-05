@@ -20,8 +20,27 @@ namespace UnturnedGodot
         // consumed at PlayerLook.cs:744 as Quaternion.Euler(0, 0, lean * LEAN) lerped at 4*delta.
         public const float LeanDegrees = 20f;
         const float LeanLerp = 4f;             // source: the same 4*delta the eye-height and scope-sway lerps use
-        const float LeanReach = 1.2f;          // source isLeanSpaceEmpty: capsule from the eyes, (1.2 - RADIUS) along
-        const float LeanRadius = 0.4f;         //   the lean direction at PlayerStance.RADIUS
+
+        // Obstruction geometry. Source isLeanSpaceEmpty sweeps a capsule from the EYES along the lean direction, and
+        // because the sweep is (Reach - Radius) long with hemispherical caps of Radius, REACH IS THE WHOLE ANSWER: it
+        // is the distance from your eye at which something starts refusing the lean. Radius only sets how much
+        // clearance is wanted around that line -- vertically, and fore/aft.
+        //
+        // Retail is 1.2 / 0.4 (PlayerStance.RADIUS). We run looser (strawberry: "make leaning snap-out colliders a
+        // little more lenient") -- 1.2 m demands roughly double the room the lean actually uses, so standing anywhere
+        // near a doorframe or a parked car refused to lean at all.
+        internal const float LeanReachRetail = 1.2f;
+        internal const float LeanReach = 0.95f;
+        const float LeanRadius = 0.3f;
+
+        /// <summary>How far the eyes actually travel on a lean at a given eye height: the pivot is on the floor, so the
+        /// head swings on an arc of that radius. This is the number the reach has to stay clear of.</summary>
+        internal static float LeanPeek(float eyeHeight) => eyeHeight * Mathf.Sin(Mathf.DegToRad(LeanDegrees));
+
+        /// <summary>The smallest reach that is still honest, at standing height: the peek itself plus room for the head
+        /// that arrives there. Go under this and the check permits leans that put your face inside the wall, which is
+        /// worse than the strictness it was loosened from -- it is the one direction "more lenient" must not go.</summary>
+        internal const float LeanHeadRadius = 0.2f;
         int _lean;                             // +1 left, -1 right, 0 none -- source's own sign convention
         bool _leanObstructed;
         float _leanAngle;                      // current rolled degrees, lerped toward _lean * LeanDegrees
@@ -5043,8 +5062,9 @@ namespace UnturnedGodot
 
         PhysicsShapeQueryParameters3D _leanQ;
 
-        /// <summary>Is there room to put your head out that way? Source isLeanSpaceEmpty: a capsule of PlayerStance.RADIUS
-        /// swept from the EYES (not the feet) along the lean direction for (1.2 - radius) metres.</summary>
+        /// <summary>Is there room to put your head out that way? Source isLeanSpaceEmpty: a capsule swept from the EYES
+        /// (not the feet) along the lean direction for (LeanReach - LeanRadius) metres. With the caps, the far end lands
+        /// exactly LeanReach from the eye -- so LeanReach alone decides how close something has to be to refuse.</summary>
         bool LeanSpaceEmpty(Vector3 dir, float eyeHeight)
         {
             var space = GetWorld3D()?.DirectSpaceState;
@@ -5053,14 +5073,15 @@ namespace UnturnedGodot
             if (_leanQ == null)
                 _leanQ = new PhysicsShapeQueryParameters3D
                 {
-                    // Godot's capsule is Y-axis with Height counting the caps, so a 0.8 m sweep between two spheres of
-                    // r=0.4 is a 1.6 m capsule -- NOT 0.8. Getting this wrong makes the check silently permissive.
+                    // Godot's capsule is Y-axis with Height counting the CAPS, so a sweep of `reach` between two
+                    // spheres of LeanRadius is a (reach + 2*radius) capsule, not `reach`. Getting this wrong makes the
+                    // check silently permissive -- it still blocks sometimes, just later than it should.
                     Shape = new CapsuleShape3D { Radius = LeanRadius, Height = reach + 2f * LeanRadius },
                     // What blocks a lean is what blocks the player, plus vehicles -- the source's BLOCK_LEAN is
                     // BLOCK_STANCE, which is ground/environment/props/structures/vehicles/clip.
                     CollisionMask = (1u << 0) | (1u << 5) | (1u << 6),
+                    Exclude = new Godot.Collections.Array<Rid> { GetRid() },   // built once: this runs twice a tick while a lean key is held
                 };
-            _leanQ.Exclude = new Godot.Collections.Array<Rid> { GetRid() };
             var mid = GlobalPosition + Vector3.Up * eyeHeight + dir * (reach * 0.5f);
             // Stand the capsule along the lean direction: its local +Y becomes dir.
             var y = dir.Normalized();

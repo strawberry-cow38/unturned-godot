@@ -35,6 +35,18 @@ namespace UnturnedGodot.Testing
             T.Check($"lean is 20 degrees, per HumanAnimator.LEAN ({PlayerController.LeanDegrees:0.##})",
                 Mathf.IsEqualApprox(PlayerController.LeanDegrees, 20f));
 
+            // ---- HOW LENIENT THE OBSTRUCTION CHECK IS (strawberry: "make leaning snap-out colliders a little more
+            // lenient"). Reach is the whole knob: the capsule is (Reach - Radius) long with Radius caps, so Reach IS
+            // the distance from the eye at which something starts refusing the lean.
+            T.Check($"the reach is looser than retail's ({PlayerController.LeanReach:0.##} m vs {PlayerController.LeanReachRetail:0.##} m)",
+                PlayerController.LeanReach < PlayerController.LeanReachRetail);
+            // ...and NOT loose enough to lie. The head really does travel LeanPeek metres; a reach under that plus the
+            // head itself would wave you through into geometry, which is a worse failure than the strictness it was
+            // loosened from. This is the check that stops "a little more lenient" being applied twice.
+            float floorReach = PlayerController.LeanPeek(1.75f) + PlayerController.LeanHeadRadius;
+            T.Check($"...but still clears the peek it permits ({PlayerController.LeanReach:0.##} m > {floorReach:0.##} m = {PlayerController.LeanPeek(1.75f):0.##} peek + {PlayerController.LeanHeadRadius:0.##} head)",
+                PlayerController.LeanReach > floorReach);
+
             // ---- THE RULES, engine-free. These are the branches of PlayerAnimator.simulate.
             {
                 T.Check("neither key -> upright", PlayerController.LeanFrom(false, false, EPlayerStance.STAND, true, true, out _) == 0);
@@ -90,6 +102,19 @@ namespace UnturnedGodot.Testing
             T.Check($"...which also DROPS the head slightly ({eyeY - left.Y:0.###} m), because it swung on an arc",
                 left.Y < eyeY - 0.05f);
 
+            // ---- AND THE VIEW TILTS WITH IT. Retail never rolls the main camera itself (PlayerLook.cs:1643 pins its
+            // local Z to 0) -- the roll is inherited from the pivot, so the horizon comes over by the full lean angle.
+            // Worth its own check because everything above measures POSITION: a lean re-implemented as a sideways
+            // camera offset would peek correctly, keep the horizon dead level, and pass every one of them.
+            var camUp = p.Camera.GlobalBasis.Y;
+            float rollDeg = Mathf.RadToDeg(camUp.AngleTo(Vector3.Up));
+            T.Check($"the horizon rolls by the lean angle ({rollDeg:0.##} deg vs {PlayerController.LeanDegrees:0.##})",
+                Mathf.Abs(rollDeg - PlayerController.LeanDegrees) < 1.5f);
+            // ...and rolls the correct WAY: leaning left tips the top of your head left, same side as the peek. A roll
+            // that went the other way would still be 20 degrees off level and would look like falling over.
+            T.Check($"...toward the same side as the peek ({(p.GlobalTransform.Basis.Inverse() * camUp).X:0.###})",
+                (p.GlobalTransform.Basis.Inverse() * camUp).X < -0.2f);
+
             p.ScriptedLean = -1;   // E
             yield return Until(() => p.DebugLeanAngle < -19f, 6);
             var right = EyeLocal(p);
@@ -99,6 +124,8 @@ namespace UnturnedGodot.Testing
             p.ScriptedLean = 0;
             yield return Until(() => Mathf.Abs(p.DebugLeanAngle) < 0.5f, 6);
             T.Check($"releasing returns to the centreline ({EyeLocal(p).X:0.###} m)", Mathf.Abs(EyeLocal(p).X) < 0.05f);
+            T.Check($"...and the horizon comes back level ({Mathf.RadToDeg(p.Camera.GlobalBasis.Y.AngleTo(Vector3.Up)):0.##} deg)",
+                Mathf.RadToDeg(p.Camera.GlobalBasis.Y.AngleTo(Vector3.Up)) < 1f);
 
             // ---- TEETH. Prove the peek check above can actually fail, by doing the plausible wrong thing on purpose:
             // roll the CAMERA instead of the pivot. The view tilts by the same 20 degrees and the eyes do not move an
@@ -150,14 +177,33 @@ namespace UnturnedGodot.Testing
             // 1.0 m out, so its near face sits at 0.8 m: inside the lean capsule's 1.2 m reach and clear of the player's
             // own collision radius. A wall placed close enough to touch the BODY gets pushed off by the character
             // controller, drifts out of range, and quietly turns this into a test of an empty room.
-            wall.GlobalPosition = stood + w.GlobalTransform.Basis.X * -1.0f + Vector3.Up * 2f;
+            // Start it in the GAP the leniency opened up: a face between the new reach and retail's. Retail refused a
+            // lean here; we allow it. Testing the constants alone would not catch a query that ignores them.
+            const float halfThick = 0.2f;
+            float lenientFace = 0.5f * (PlayerController.LeanReach + PlayerController.LeanReachRetail);   // 1.075 m out
+            wall.GlobalPosition = stood + w.GlobalTransform.Basis.X * -(lenientFace + halfThick) + Vector3.Up * 2f;
             yield return Ticks(10);
             T.Check($"the wall did not shove the player ({(w.GlobalPosition - stood)} of drift)",
                 w.GlobalPosition.DistanceTo(stood) < 0.05f);
 
+            w.ScriptedLean = 1;
+            yield return Until(() => Mathf.Abs(w.DebugLeanAngle) > 19f, 6);
+            T.Check($"a wall {lenientFace:0.##} m out no longer blocks -- retail's 1.2 m reach did ({EyeLocal(w).X:0.###} m of peek)",
+                !w.DebugLeanObstructed && EyeLocal(w).X < -0.3f);
+            T.Check($"...and the head still stops short of it ({lenientFace - -EyeLocal(w).X:0.###} m of clearance left)",
+                -EyeLocal(w).X < lenientFace - 0.15f);
+
+            // Now bring it inside the new reach: still blocked, so the loosening did not simply switch the check off.
+            w.ScriptedLean = 0;
+            yield return Until(() => Mathf.Abs(w.DebugLeanAngle) < 0.5f, 6);
+            wall.GlobalPosition = stood + w.GlobalTransform.Basis.X * -(0.65f + halfThick) + Vector3.Up * 2f;
+            yield return Ticks(10);
+            T.Check($"...the wall still did not shove the player ({(w.GlobalPosition - stood)} of drift)",
+                w.GlobalPosition.DistanceTo(stood) < 0.05f);
+
             w.ScriptedLean = 1;   // into the wall
             yield return Ticks(10);
-            T.Check("a wall at head height blocks the lean into it", w.DebugLeanObstructed && w.DebugLean == 0);
+            T.Check("a wall 0.65 m out at head height still blocks the lean into it", w.DebugLeanObstructed && w.DebugLean == 0);
             T.Check($"...so the eyes stay put ({EyeLocal(w).X:0.###} m)", Mathf.Abs(EyeLocal(w).X) < 0.05f);
 
             w.ScriptedLean = -1;   // away from it
