@@ -1039,11 +1039,18 @@ namespace UnturnedGodot
             var tone = loop == null ? null : PlayerController.LoadWavOneShot(loop, loop: true);
             if (tone == null) return;
             _loopPath = loop;
+            bool noise = SoundFor(_program) == ScreenSound.Noise;
             _tone = new AudioStreamPlayer3D
             {
                 Stream = tone,
-                VolumeDb = Mathf.LinearToDb(SoundFor(_program) == ScreenSound.Noise ? 0.30f : 0.45f),
-                UnitSize = 2f, MaxDistance = 12f, Position = _screenCenterLocal,
+                VolumeDb = Mathf.LinearToDb(noise ? 0.30f : 0.45f),
+                // Snow carries HALF the distance of the tone. At a shared 12 m a hiss reached two rooms away, so it
+                // seemed to come from whichever set you happened to be facing -- which is how a monitor that owns no
+                // audio node at all gets reported as "playing static sfx". A broadband hiss should also fall off
+                // faster than a pure tone, so this is the physical answer as well as the legible one.
+                UnitSize = noise ? 1.2f : 2f,
+                MaxDistance = noise ? 6f : 12f,
+                Position = _screenCenterLocal,
             };
             AddChild(_tone);
         }
@@ -1705,6 +1712,7 @@ namespace UnturnedGodot
         /// set playing the wrong one -- a television humming hiss over a test card and one humming the tone are both
         /// "has a sound", and that is the whole of the claim being made about gating.</summary>
         public string DebugLoopSound => _loopPath;
+        public float DebugToneRange => _tone?.MaxDistance ?? -1f;
         public bool DebugTonePlaying => _tone != null && _tone.Playing;
         /// <summary>Force a colour change now, so the cycle can be driven without waiting on the hold timer.</summary>
         public void DebugCycleColour() { _colourLeft = 0f; TickColour(0f); }

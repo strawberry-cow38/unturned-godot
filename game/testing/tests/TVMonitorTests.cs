@@ -163,6 +163,24 @@ namespace UnturnedGodot.Testing
                 T.Check($"{k} has no indicator geometry, so it claims neither lamp",
                     TVDevice.LedsFor(k).On == null && TVDevice.LedsFor(k).Standby == null);
 
+            // ---- THE MONOCHROME TUBE CANNOT LEAK ONTO A MONITOR. strawberry saw "a crt on a color channel playing
+            // static sfx" and then suspected the mono filter -- worth pinning, because a set that renders grey is easy
+            // to misread as showing something it is not, and a monitor owns no audio node at all so it cannot be the
+            // source of a hiss whatever it renders.
+            //
+            // Only a CRT TELEVISION can be monochrome: an LCD is not a period black-and-white set, and a monitor's
+            // programs are chosen for their colour. A mono monitor would be a real bug AND a plausible-looking one.
+            T.Check("only the CRT television can be a monochrome set",
+                TVDevice.IsTube(TVDevice.DeviceKind.CrtTv) && !TVDevice.IsTube(TVDevice.DeviceKind.FlatMonitor));
+            // ...and whatever a monochrome tube shows, it is a TELEVISION program -- never the flat colour, so
+            // "a crt on a colour channel" cannot describe a monochrome set at all.
+            foreach (var prog in TVDevice.ProgramsFor(TVDevice.DeviceKind.CrtTv))
+                T.Check($"a CRT television's programs exclude the flat colour ({prog})",
+                    prog != TVDevice.ScreenProgram.Colour);
+            T.Check("...and only the TV kinds can be dealt Static at all",
+                System.Array.Exists(TVDevice.ProgramsFor(TVDevice.DeviceKind.CrtTv), x => x == TVDevice.ScreenProgram.Static)
+                && !System.Array.Exists(TVDevice.ProgramsFor(TVDevice.DeviceKind.CrtMonitor), x => x == TVDevice.ScreenProgram.Static));
+
             // ---- THE COLOUR CYCLE never repeats. A plain `Randi() % n` sits on the same colour a fifth of the time,
             // and a repeat does not read as chance -- it reads as the cycle having STOPPED, which is how it would be
             // reported. Swept across the whole roll range and every starting index rather than sampled.
