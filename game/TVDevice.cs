@@ -266,6 +266,15 @@ namespace UnturnedGodot
         // very nearly square the whole way down, which is the point.
         const float ConeLen = 3.2f, ConeEndScale = 2.6f, ConeAlpha = 0.05f;
 
+        /// <summary>The visible light SHAFT (strawberry 2026-08-05: "the light cones from tvs are completely messed up.
+        /// remove em for now"). One flag rather than deleting the code, because "for now" is what was asked -- the
+        /// beam frame, the emitter tracking and the brightness curve all still work and are still exercised by the
+        /// suite; only the mesh is withheld. Flip this to restore it.
+        ///
+        /// The SPILL LIGHT is deliberately NOT gated by this: it is what actually lights the room, and a television
+        /// that throws no light at all is a different change from one that has no visible shaft.</summary>
+        const bool ShowShaft = false;
+
         // CRT flicker, 24 Hz (master's call, overriding the physically-real rate).
         // This is NOT the NTSC field rate and the constant is named so it cannot be mistaken for it. 59.94 Hz is the
         // true one, and it was the first attempt -- but sampled by a 60 Hz render it beats down to ~0.06 Hz, one slow
@@ -589,32 +598,35 @@ namespace UnturnedGodot
             // BeamMesh runs along -Y with the section in X/Z, so the node's -Y goes on the screen normal.
             var beam = BeamFrame(screenAabb, _screenNormalLocal);
             _beamBasis = beam.Basis;
-            _cone = new MeshInstance3D
+            if (ShowShaft)
             {
-                Mesh = StreetLight.BeamMesh(ConeLen, beam.HalfA, beam.HalfB, 0f, keepRect: true, endScale: ConeEndScale),
-                Transform = new Transform3D(beam.Basis, _screenCenterLocal),
-                Visible = false,
-                CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
-                MaterialOverride = new StandardMaterial3D
+                _cone = new MeshInstance3D
                 {
-                    // Master: the monitor's cycling colour "tints the 'cone'". So the shaft is not a fixed blue-white
-                    // here -- it takes the screen's colour, and so does the SpotLight above, because a screen showing
-                    // green spilling blue-white light onto the wall is the tell that the two are unrelated systems.
-                    AlbedoColor = new Color(Spill, ConeAlpha),
-                    AlbedoTexture = ConeGradient(),
-                    Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
-                    BlendMode = BaseMaterial3D.BlendModeEnum.Add,
-                    ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
-                    CullMode = BaseMaterial3D.CullModeEnum.Disabled,   // visible from inside the shaft too
-                    DisableReceiveShadows = true,
-                    TextureFilter = BaseMaterial3D.TextureFilterEnum.Linear,
-                    TextureRepeat = false,                             // CLAMP: the gradient is 1x64 and repeat wrap
-                                                                       // blends the two ends into a bright band (the
-                                                                       // bug StreetLight documents at its own cone)
-                },
-            };
-            _coneMat = (StandardMaterial3D)_cone.MaterialOverride;
-            AddChild(_cone);
+                    Mesh = StreetLight.BeamMesh(ConeLen, beam.HalfA, beam.HalfB, 0f, keepRect: true, endScale: ConeEndScale),
+                    Transform = new Transform3D(beam.Basis, _screenCenterLocal),
+                    Visible = false,
+                    CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
+                    MaterialOverride = new StandardMaterial3D
+                    {
+                        // Master: the monitor's cycling colour "tints the 'cone'". So the shaft is not a fixed blue-white
+                        // here -- it takes the screen's colour, and so does the SpotLight above, because a screen showing
+                        // green spilling blue-white light onto the wall is the tell that the two are unrelated systems.
+                        AlbedoColor = new Color(Spill, ConeAlpha),
+                        AlbedoTexture = ConeGradient(),
+                        Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
+                        BlendMode = BaseMaterial3D.BlendModeEnum.Add,
+                        ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
+                        CullMode = BaseMaterial3D.CullModeEnum.Disabled,   // visible from inside the shaft too
+                        DisableReceiveShadows = true,
+                        TextureFilter = BaseMaterial3D.TextureFilterEnum.Linear,
+                        TextureRepeat = false,                             // CLAMP: the gradient is 1x64 and repeat wrap
+                                                                           // blends the two ends into a bright band (the
+                                                                           // bug StreetLight documents at its own cone)
+                    },
+                };
+                _coneMat = (StandardMaterial3D)_cone.MaterialOverride;
+                AddChild(_cone);
+            }
 
             BuildLeds(body);
 
@@ -1326,6 +1338,12 @@ namespace UnturnedGodot
         /// effects fighting rather than one machine working.</summary>
         void TickScroll(float dt)
         {
+            // The cursor blinks CONTINUOUSLY now, typing or not. It used to be suppressed mid-burst, because it shared
+            // a line with the text and the two read as effects fighting -- but master moved it onto its own blank line
+            // below whatever is being printed, and on its own line there is nothing to fight with. A real terminal's
+            // cursor sits at the insertion point and blinks the whole time.
+            _screenMat?.SetShaderParameter("cursor_on", Mathf.PosMod(_clock, 1f) < 0.5f ? 1f : 0f);
+
             if (_burstLeft > 0f)
             {
                 _burstLeft -= dt;
@@ -1334,26 +1352,20 @@ namespace UnturnedGodot
                 if (_burstLeft <= 0f) _idleLeft = (float)GD.RandRange(IdleMin, IdleMax);
                 _screenMat?.SetShaderParameter("head_line", _headLine);
                 _screenMat?.SetShaderParameter("head_col", _headCol);
-                _screenMat?.SetShaderParameter("cursor_on", 0f);
                 return;
             }
             _idleLeft -= dt;
-            // Blinks the whole time it is parked, so a long gap reads as "waiting for input" rather than as frozen.
-            _screenMat?.SetShaderParameter("cursor_on", Mathf.PosMod(_idleLeft, 1f) < 0.5f ? 1f : 0f);
-            if (_idleLeft <= 0f)
-            {
-                _burstLeft = (float)GD.RandRange(BurstMin, BurstMax);
-                _screenMat?.SetShaderParameter("cursor_on", 0f);
-            }
+            if (_idleLeft <= 0f) _burstLeft = (float)GD.RandRange(BurstMin, BurstMax);
         }
 
-        /// <summary>Move the spill and the shaft to where the picture is actually bright, and narrow them to how much
-        /// of the screen is lit. A DVD blob drags its pool of light across the wall as it bounces; a cursor throws a
-        /// pencil from the top-left; a test card floods the room from the middle, exactly as before.
+        /// <summary>Move the spill to where the picture is actually bright, and narrow it to how much of the screen is
+        /// lit. A DVD logo drags its pool of light across the wall as it bounces; a cursor throws a pencil from the
+        /// top-left; a test card floods the room from the middle.
         ///
         /// The offset is measured along the screen's OWN axes -- the same ax/ay Reproject built the UVs from -- so
-        /// "where the blob is in UV" and "where the light is in the world" are the same statement rather than two that
-        /// happen to agree.</summary>
+        /// "where the logo is in UV" and "where the light is in the world" are the same statement rather than two that
+        /// happen to agree. The _cone branch is a no-op while the visible shaft is withheld (see ShowShaft); the spill
+        /// is unaffected, because that is what actually lights the room.</summary>
         void PlaceEmitter()
         {
             var (c, ext) = Emitter(_program, _blob, _blobHalf);
@@ -1634,6 +1646,9 @@ namespace UnturnedGodot
         public Texture2D DebugScreenTexture => _screenMat?.GetShaderParameter("pattern_tex").As<Texture2D>();
         public ScreenProgram DebugProgram => _program;
         public float DebugConeScale => ConeScale(_program, _tint);
+        /// <summary>The spill light's actual energy. The shaft used to be the probe for "the brightness reached
+        /// something real"; with the shaft withheld this is what remains, and it is the one that lights the room.</summary>
+        public float DebugLightEnergy => _light?.LightEnergy ?? -1f;
         public float DebugConeAlpha => _coneMat?.AlbedoColor.A ?? -1f;
         /// <summary>The write head as one monotonic number: whole part = lines typed, fraction = progress along the
         /// current line. One value rather than two so a test can say "it advanced" without caring which of the two

@@ -81,33 +81,32 @@ vec3 prog_cursor(vec2 uv) {
 vec3 prog_scroll(vec2 uv) {
     const float cols = 34.0, rows = 17.0;
 
-    // A terminal TYPING, not a wall of text sliding past (master: "it should write out each line from left to right.
-    // scrolling as the screen fills"). The write head is owned by C# -- typing has state, and a burst has memory.
-    // The screen fills from the top and only starts scrolling once the head reaches the bottom, which is what a real
-    // terminal does and what a pure upward scroll never looks like.
-    float top = max(0.0, head_line - (rows - 1.0));
+    // A terminal TYPING, not a wall of text sliding past. The write head is owned by C# -- typing has state and a burst
+    // has memory. The screen fills from the top and only starts scrolling once the head reaches the bottom.
+    //
+    // The cursor lives on ITS OWN BLANK LINE, one below whatever is being printed (master: "the cursor of the terminal
+    // scroll one should blink on its own blank line under whatever is being printed line by line"). So the visible
+    // window has to reach one line PAST the head, or the cursor would sit just off the bottom edge and never be seen.
+    float cursorLine = head_line + 1.0;
+    float top = max(0.0, cursorLine - (rows - 1.0));
     float cy = floor(uv.y * rows) + top;          // absolute line under this pixel
     float cx = floor(uv.x * cols);
     vec2 f = vec2(fract(uv.x * cols), fract(uv.y * rows));
 
-    // NOTHING BELOW THE HEAD (master: "keep the line below the blinking cursor blank"). This is what makes it read as
-    // a machine writing rather than as a window onto text that already exists.
-    if (cy > head_line) return vec3(0.0);
+    // The cursor's own line, and nothing below it.
+    if (cy > cursorLine) return vec3(0.0);
+    if (cy == cursorLine) {
+        // Column 0, because the line is blank -- this is where the NEXT character would go.
+        if (cursor_on > 0.5 && cx == 0.0 && f.y > 0.08 && f.y < 0.92 && f.x > 0.05 && f.x < 0.75)
+            return vec3(0.55, 0.95, 0.60);
+        return vec3(0.0);
+    }
 
     // Ragged right edge + the occasional blank line, so it reads as prose rather than as a block.
     float lineLen = 6.0 + hash11(cy * 1.37 + seed) * (cols - 8.0);
-    bool blankLine = hash11(cy * 3.71) < 0.13;
-    float endCol = blankLine ? 0.0 : lineLen;
+    float endCol = hash11(cy * 3.71) < 0.13 ? 0.0 : lineLen;
     // ...and on the line being typed, only as far as the head has got.
     if (cy == head_line) endCol = min(endCol, head_col);
-
-    // The cursor sits at the head, clamped to the end of its line so it never floats out in the blank margin.
-    if (cursor_on > 0.5 && cy == head_line) {
-        float curX = floor(min(head_col, blankLine ? 0.0 : lineLen));
-        if (cx == curX && f.y > 0.08 && f.y < 0.92 && f.x > 0.05 && f.x < 0.75)
-            return vec3(0.55, 0.95, 0.60);
-    }
-
     if (cx >= endCol) return vec3(0.0);
 
     // a 3x5 glyph cell with a one-pixel gutter

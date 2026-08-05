@@ -229,9 +229,10 @@ namespace UnturnedGodot.Testing
                 float now = crtMon.DebugTypeHead;
                 if (now > last + 1e-5f) moved++; else stalled++;
                 if (crtMon.DebugCursorOn) cursorSeen++;
-                // Sampled at ONE INSTANT from the state machine itself, not inferred from movement across the
-                // interval -- a burst that ends mid-interval leaves the position advanced AND the cursor lit, which
-                // looks like a violation of this rule and is not one.
+                // The cursor now lives on its OWN blank line below the text (master), so it blinks the whole time --
+                // including mid-burst. This used to assert the OPPOSITE (never both at once), which was right while the
+                // cursor shared a line with the text and is wrong now. Counted so the new behaviour is pinned rather
+                // than merely no longer forbidden.
                 if (crtMon.DebugCursorOn && crtMon.DebugScrolling) bothAtOnce++;
                 last = now;
             }
@@ -239,8 +240,10 @@ namespace UnturnedGodot.Testing
             T.Check($"...and PAUSES between bursts ({stalled} frames parked) -- a continuous scroll would never stall",
                 stalled > 20);
             T.Check($"...showing a cursor while it waits ({cursorSeen} frames)", cursorSeen > 5);
-            T.Check($"...and never while a burst is running ({bothAtOnce}) -- one machine, not two effects fighting",
-                bothAtOnce == 0);
+            T.Check($"...INCLUDING while typing ({bothAtOnce} frames) -- it has its own line now, nothing to fight with",
+                bothAtOnce > 0);
+            T.Check($"...and it genuinely blinks rather than sitting lit ({cursorSeen} of 400 frames)",
+                cursorSeen > 20 && cursorSeen < 380);
             T.Check($"...with the head only ever going forward ({crtMon.DebugTypeHead:0.0} lines typed)",
                 crtMon.DebugTypeHead > 0f);
             // It TYPES rather than scrolling a finished page (master: "write out each line from left to right.
@@ -252,14 +255,17 @@ namespace UnturnedGodot.Testing
             // ---- THE CONE READS THE PICTURE. Same device, two programs, and the dark one must throw less light.
             crtMon.DebugSetProgram(TVDevice.ScreenProgram.TerminalCursor);
             yield return Ticks(3);
-            float darkCone = crtMon.DebugConeAlpha, darkScale = crtMon.DebugConeScale;
+            float darkCone = crtMon.DebugLightEnergy, darkScale = crtMon.DebugConeScale;
             crtMon.DebugSetProgram(TVDevice.ScreenProgram.BarGraph);
             yield return Ticks(3);
-            float brightCone = crtMon.DebugConeAlpha, brightScale = crtMon.DebugConeScale;
+            float brightCone = crtMon.DebugLightEnergy, brightScale = crtMon.DebugConeScale;
             T.Check($"a black terminal barely lights the room ({darkScale:0.000} scale)", darkScale < 0.1f);
             T.Check($"...far less than an instrument panel ({brightScale:0.000})", brightScale > darkScale * 4f);
-            T.Check($"...and that reaches the actual shaft, not just the number ({darkCone:0.0000} vs {brightCone:0.0000})",
-                brightCone > darkCone);
+            // Against the SPILL LIGHT, not the shaft: the visible shaft is withheld (strawberry: "remove em for now"),
+            // so probing it would read -1 for both and pass by comparing two equal nothings. The spill is what still
+            // lights the room, and it is the thing the brightness has to actually reach.
+            T.Check($"...and that reaches the actual light, not just the number ({darkCone:0.0000} vs {brightCone:0.0000})",
+                brightCone > darkCone && darkCone >= 0f);
 
             crtMon.DebugSetProgram(TVDevice.ScreenProgram.Colour);   // the collapse below is asserted on a colour picture
             yield return Ticks(2);
