@@ -344,10 +344,25 @@ namespace UnturnedGodot
             }
             else if (verb == "teleport" || verb == "tp")
             {
+                // Every other verb guards on a null Player; this one used `Player?.` and then logged success
+                // UNCONDITIONALLY -- so "teleported to X" printed whether the move happened, whether it was undone a
+                // tick later, or whether nothing was called at all. strawberry could only report "it doesn't work",
+                // because the console said the same thing in every failure mode.
+                if (Player == null) { Log("no player"); return; }
                 var m = MapNodes.Locations.Where(n => n.Name.Replace(" ", "").StartsWith(arg.Replace(" ", ""), System.StringComparison.OrdinalIgnoreCase)).OrderBy(n => n.Name.Length).ToList();
-                if (m.Count == 0) { Log($"no location '{arg}'"); return; }
-                Player?.TeleportTo(m[0].Pos + Vector3.Up * 3f);   // teleport the vehicle if driving, else the player (master)
-                Log($"teleported to {m[0].Name}");
+                if (m.Count == 0) { Log($"no location '{arg}' (in {MapNodes.MapNodeFile})"); return; }
+                var dest = m[0].Pos + Vector3.Up * 3f;
+                var from = Player.TruePhysicsPosition;
+                Player.TeleportTo(dest);                          // teleport the vehicle if driving, else the player (master)
+                // Report what ACTUALLY happened, against the physics-truth position rather than the interpolated
+                // visual one. A teleport that gets dragged back reports the snap-back instead of claiming success, and
+                // the node file is named so a location resolved from the WRONG MAP's table is visible on sight.
+                var now = Player.TruePhysicsPosition;
+                string where = $"{m[0].Name} ({dest.X:0}, {dest.Y:0}, {dest.Z:0})";
+                if (now.DistanceTo(dest) > 1.5f)
+                    Log($"teleport to {where} DID NOT TAKE -- still at ({now.X:0}, {now.Y:0}, {now.Z:0}); riding={Player.IsRidingForDebug}");
+                else
+                    Log($"teleported to {where} from ({from.X:0}, {from.Y:0}, {from.Z:0})  ·  {MapNodes.MapNodeFile}");
             }
             else if (verb == "plant")
             {

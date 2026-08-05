@@ -2668,6 +2668,10 @@ namespace UnturnedGodot
         // exactly like SP driving, captures WASD/space as drive INTENT (LastDriveInput), and the session
         // streams it to the server (SendDriveInput @50 Hz); the server's Vehicle node does the physics.
         VehiclePuppet _riding;
+        /// <summary>Is the player a PASSENGER? Exposed for the teleport report: a passenger's position is forced to the
+        /// vehicle every physics tick, so TeleportTo moves them and the next tick drags them straight back -- a real
+        /// way for a teleport to "not take" that is otherwise indistinguishable from any other.</summary>
+        public bool IsRidingForDebug => _riding != null;
         public bool IsRiding => _riding != null;
         public VehiclePuppet RidingPuppet => _riding;
         public UnityEngine.Vector2 LastDriveInput;   // captured while riding: x=steer, y=throttle (the DriveVehicle axes)
