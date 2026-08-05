@@ -42,7 +42,8 @@ namespace UnturnedGodot
         public bool ConsumeDeployables;   // "--spconsume": the local player consumes the replica subsystems instead of owning direct nodes
         public System.Collections.Generic.List<FixtureRecord> Fixtures;   // A3: world power fixtures (Circuit_0 grid sources) recorded by WorldBuilder -- ServerPlaced under consume, direct-Attached otherwise
         public System.Collections.Generic.List<(string mesh, int table, bool display, string label, Vector3 pos, float yaw)> Containers;   // A1: world-build container manifest -> ContainerNetSync registers each as a server-owned fixture + stocks its grid
-        bool _localInventoryAdopted;   // P1b: latches the one-time initial owner-grid pull (ClientWorldSession.SpawnShell:456-457)
+        bool _localInventoryAdopted;
+        uint _teleportSeq;   // last server teleport adopted onto the local node (see TickLocal step 1b)   // P1b: latches the one-time initial owner-grid pull (ClientWorldSession.SpawnShell:456-457)
 
         public MemNetwork Net { get; private set; }
         public NetWorldServer Server { get; private set; }
@@ -407,6 +408,24 @@ namespace UnturnedGodot
             float yaw = Player.RotationDegrees.Y;
             ushort seq = Client.SendMoveInput(Player.LastMoveInput.x, Player.LastMoveInput.y, yaw,
                                               MoveInput.PackStance(Player.Stance));
+
+            // 1b) A SERVER-SIDE TELEPORT has to be adopted BEFORE step 2 overwrites it.
+            //
+            //     The console routes `teleport` to the server (it is the position authority in MP), and
+            //     ServerTeleport moves the replicated entity. That works for a real remote client, whose shell
+            //     consumes corrections. Here the local node IS the authority and corrections are deliberately NOT
+            //     applied back to it -- so step 2 wrote the player's unchanged position straight back over the
+            //     teleport on the very next tick, and the entity forgot it had ever moved. The console still printed
+            //     "teleported to (x, y, z)", because the SERVER genuinely did it.
+            //
+            //     Keyed on a COUNTER rather than a position comparison: comparing positions cannot distinguish "the
+            //     server moved me" from "I walked there", and a teleport to where you already stand would be
+            //     indistinguishable from no teleport at all.
+            if (Server.Players.TryGetByOwner(Client.PlayerId, out var selfEnt) && selfEnt.TeleportSeq != _teleportSeq)
+            {
+                _teleportSeq = selfEnt.TeleportSeq;
+                Player.TeleportTo(new Vector3(selfEnt.Pos.x, selfEnt.Pos.y, selfEnt.Pos.z));
+            }
 
             // 2) the local node IS the authority (listen-server): write its sim-core + real-collision
             //    result into the replication entity; ServerStep skips externally-driven entities

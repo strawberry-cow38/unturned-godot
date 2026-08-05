@@ -266,6 +266,10 @@ namespace UnturnedGodot.Net
             public Vector3 Pos { get; internal set; }
             public float YawDegrees { get; internal set; }
             public ushort LastProcessedInputSeq { get; internal set; }
+            /// <summary>Bumped ONLY by ServerTeleport. A listen-server/loopback host drives this entity FROM its local
+            /// node every tick, so a server-side position write is overwritten before anything can observe it -- and
+            /// comparing positions cannot tell "the server moved me" from "I walked there". A counter can.</summary>
+            public uint TeleportSeq { get; internal set; }
             // mp-event-coalesce (v10): the owner-facing ACK for the redundant combat carry -- the highest
             // combat seq the server has applied from this owner's PlayerStateCommand stream. Rides every
             // snapshot beside LastProcessedInputSeq; the owner's client drops acked events from its pending
@@ -439,8 +443,10 @@ namespace UnturnedGodot.Net
         {
             if (!TryGetByOwner(ownerPlayerId, out var e)) return;
             var newPos = Quantize(pos);
-            if (newPos == e.Pos) return;
+            // NOT gated on the position differing: the counter has to advance even for a teleport to where the entity
+            // already is, or a listen-server host would silently skip adopting it.
             e.Pos = newPos;
+            e.TeleportSeq++;
             e.LastChangedTick = tick;
         }
 
