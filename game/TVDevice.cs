@@ -293,7 +293,10 @@ namespace UnturnedGodot
         float _lightEnergy = EnvF("UG_TV_LIGHT", 0.6f);  // forward spill energy
 
         // CRT warmup: WarmDelay dead, then _warm ramps 0->1 over WarmDur, scaling emissive + light.
-        const float WarmDelay = 0.3f, WarmDur = 1.5f;
+        // Doubled from 0.3 / 1.5 (strawberry: "double the time it takes for the tub to warm up when turning on crts of
+        // any type"). BOTH terms, not just the ramp: the dead delay is part of what you wait through, so doubling only
+        // WarmDur would have made the total 3.3 s against 1.8 -- not double, just longer.
+        const float WarmDelay = 0.6f, WarmDur = 3.0f;
         bool _warming; float _warmDelay, _warm;
 
         // CRT POWER-OFF COLLAPSE (master: "when turning it off, do the beam collapse on the center, the classic crt
@@ -417,9 +420,13 @@ namespace UnturnedGodot
         internal static (System.Func<Vector2, Vector2, Vector2, bool> On, System.Func<Vector2, Vector2, Vector2, bool> Standby) LedsFor(DeviceKind k)
             => k switch
             {
-                DeviceKind.FlatTv      => (TvOnLed, TvStandbyLed),   // the only prop with a red/green PAIR
-                DeviceKind.CrtMonitor  => (MonitorLed, null),
-                DeviceKind.FlatMonitor => (MonitorLed, null),
+                DeviceKind.FlatTv      => (TvOnLed, TvStandbyLed),   // the only prop with two SEPARATE cubes
+                // A monitor has ONE cube, so it is BOTH lamps -- green lit when on, red when powered and off
+                // (strawberry: "make the LEDs on CRT and flatscreen computer monitors light up red if they have power
+                // but are off"). Two emissive copies of the same geometry, shown exclusively: LedState never returns
+                // both, so they cannot z-fight, and this needs no new geometry or a colour-swapping material.
+                DeviceKind.CrtMonitor  => (MonitorLed, MonitorLed),
+                DeviceKind.FlatMonitor => (MonitorLed, MonitorLed),
                 _                      => (null, null),              // CRT television: grey cube. Laptop: nothing at all.
             };
 

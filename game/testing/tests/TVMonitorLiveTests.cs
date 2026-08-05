@@ -145,9 +145,18 @@ namespace UnturnedGodot.Testing
                 T.Check($"...and comes back green ({flatTv.DebugLeds})", flatTv.DebugLeds == (true, false));
             }
             T.Check("both monitors found their green cube", crtMon.DebugHasOnLed && flatMon.DebugHasOnLed);
-            T.Check("...and neither claims a standby lamp it does not have",
-                !crtMon.DebugHasStandbyLed && !flatMon.DebugHasStandbyLed);
+            T.Check("...and both also carry a standby lamp on that same cube",
+                crtMon.DebugHasStandbyLed && flatMon.DebugHasStandbyLed);
             T.Check($"a lit monitor's green lamp is emitting ({crtMon.DebugLeds})", crtMon.DebugLeds == (true, false));
+            // ...and RED when powered but switched off (strawberry). The same cube, the other colour -- and never both,
+            // which is what makes two overlapping copies of one mesh safe.
+            crtMon.Toggle();
+            yield return Ticks(2);
+            T.Check($"...and RED once switched off with power still on ({crtMon.DebugLeds})",
+                crtMon.DebugLeds == (false, true));
+            crtMon.Toggle();
+            yield return Ticks(2);
+            T.Check($"...back to green ({crtMon.DebugLeds})", crtMon.DebugLeds == (true, false));
             // The laptop and the CRT television have no indicator geometry at all. Asserted so "no lamp" stays a
             // measured fact about those meshes rather than a split that silently failed on all four.
             T.Check("the laptop has no indicator lamp (its mesh has none)",

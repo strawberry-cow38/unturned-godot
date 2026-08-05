@@ -113,7 +113,13 @@ vec3 prog_scroll(vec2 uv) {
     vec2 sub = floor(vec2(f.x * 4.0, f.y * 6.0));
     if (sub.x > 2.5 || sub.y > 4.5) return vec3(0.0);
     float bit = hash21(vec2(cx, cy) * 11.7 + sub + seed);
-    return vec3(step(0.42, bit)) * vec3(0.55, 0.95, 0.60);   // phosphor green
+
+    // The occasional RED line (strawberry: "a random chance for a red string of words"). Hashed off the LINE index, so
+    // a whole line is red or none of it is -- per-character would read as broken glyphs rather than as an error being
+    // printed, and the line keeps its colour as it scrolls because the hash is on its absolute index, not its position
+    // on screen.
+    vec3 ink = hash11(cy * 5.19 + seed) < 0.09 ? vec3(0.95, 0.32, 0.28) : vec3(0.55, 0.95, 0.60);
+    return vec3(step(0.42, bit)) * ink;
 }
 
 // ---- an instrument readout: bars on a gridded panel, each breathing at its own rate, with a sweeping trace over the

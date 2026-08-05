@@ -154,9 +154,11 @@ namespace UnturnedGodot.Testing
             // a single green; the CRT television's cube is plain grey and the laptop has no indicator geometry at all.
             T.Check("the flatscreen TV has both lamps",
                 TVDevice.LedsFor(TVDevice.DeviceKind.FlatTv).On != null && TVDevice.LedsFor(TVDevice.DeviceKind.FlatTv).Standby != null);
+            // Both monitors now claim a standby lamp too (strawberry). They have ONE cube, so both lamps are the same
+            // geometry -- which is only safe because LedState never returns both lit at once, asserted above.
             foreach (var k in new[] { TVDevice.DeviceKind.CrtMonitor, TVDevice.DeviceKind.FlatMonitor })
-                T.Check($"{k} has an on-lamp but no standby lamp",
-                    TVDevice.LedsFor(k).On != null && TVDevice.LedsFor(k).Standby == null);
+                T.Check($"{k} has BOTH lamps, off its single cube",
+                    TVDevice.LedsFor(k).On != null && TVDevice.LedsFor(k).Standby != null);
             foreach (var k in new[] { TVDevice.DeviceKind.CrtTv, TVDevice.DeviceKind.Laptop })
                 T.Check($"{k} has no indicator geometry, so it claims neither lamp",
                     TVDevice.LedsFor(k).On == null && TVDevice.LedsFor(k).Standby == null);
