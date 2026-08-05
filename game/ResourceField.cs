@@ -46,6 +46,10 @@ namespace UnturnedGodot
         /// assert the §7-risk-7 collider toggle without reaching into the registry.</summary>
         public StaticBody3D DebugTrunk(int index) => index >= 0 && index < _instances.Count ? _instances[index].Trunk : null;
 
+        /// <summary>Test seam: the placed transform for an instance -- what the MultiMesh slot was given. Paired with
+        /// DebugTrunk so a test can check the thing you SEE and the thing you WALK INTO agree.</summary>
+        public Transform3D DebugInstanceXf(int index) => index >= 0 && index < _instances.Count ? _instances[index].Xf : default;
+
         /// <summary>Fell (false) or respawn (true) one resource instance by its load-order index: the visual
         /// leaves/enters its MultiMesh (zero-scale -- MultiMesh has no per-instance visibility) and a tree's
         /// trunk collider toggles with it. Idempotent; never called on the SP direct path.</summary>
@@ -81,6 +85,11 @@ namespace UnturnedGodot
                 if (!File.Exists(binPath)) continue;
                 var xf = ReadInstances(binPath);
                 if (xf.Count == 0) continue;
+                // strawberry: "lower all tree models on their positions by a little bit". Applied to the SHARED list,
+                // before either consumer reads it, so the visual instance and the trunk collider move together -- sink
+                // one and not the other and the tree looks seated while its collider stands proud of the ground, which
+                // is a bug you cannot see and only meet by walking into it.
+                if (isTree) SinkTrees(xf);
                 // the deterministic index space: instances register in manifest x .bin order on every peer
                 var recs = new List<InstanceRec>(xf.Count);
                 foreach (var t in xf)
@@ -156,6 +165,23 @@ namespace UnturnedGodot
                 GD.Print($"[resources] {name}: {xf.Count} x {parts} part(s)");
             }
             GD.Print($"[resources] {total} instances across {types} types (MultiMesh), {treeCols} tree trunk colliders");
+        }
+
+        /// <summary>How far a tree is dropped below its spawn point, per unit of instance Y-scale (strawberry).
+        /// SCALED rather than flat because these spawns run from saplings to full canopy at the same baked offset: a
+        /// fixed nudge that seats a big pine leaves a small one hovering.</summary>
+        internal const float TreeSink = 0.2f;
+
+        internal static void SinkTrees(List<Transform3D> xf)
+        {
+            for (int i = 0; i < xf.Count; i++)
+            {
+                var t = xf[i];
+                float sy = Mathf.Abs(t.Basis.Scale.Y);
+                if (sy < 0.001f) sy = 1f;   // a degenerate scale must not silently sink the tree to nothing
+                t.Origin = new Vector3(t.Origin.X, t.Origin.Y - TreeSink * sy, t.Origin.Z);
+                xf[i] = t;
+            }
         }
 
         static List<Transform3D> ReadInstances(string binPath)
