@@ -1,5 +1,11 @@
 # Unmerged branch audit — what it would take to land 217 commits
 
+> **Superseded for NUMBERS by [`BRANCH_AUDIT_2026-08-05.md`](BRANCH_AUDIT_2026-08-05.md).** `main` has
+> moved ~240 commits since this was written, so every ahead/behind figure and conflict claim below is
+> stale. The REASONING here — the MP gate, the per-branch judgement calls, the evidence rules — still
+> stands and is why this file is kept rather than replaced.
+
+
 Requested by VoX, 2026-07-28: *"prepare all unmerged work (in our unturned feature branches) for
 merging, remember to check for the entire feature flow, destruction, usage by players, MP support,
 everything."*
