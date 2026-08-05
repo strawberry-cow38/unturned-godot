@@ -235,6 +235,9 @@ namespace UnturnedGodot
             { 296, "scope_16x_sight.txt" },         // 16x Scope
             { 302, "shadowstalker_scope_sight.txt" }, // Shadowstalker Scope
             { 476, "makeshift_scope_sight.txt" },   // Makeshift Scope (6x)
+            { 1004, "red_kobra_sight.txt" },        // Kobra Sight (1x red-dot) -- mesh already ripped, now wired to its id
+            { 1201, "nightvision_scope_sight.txt" }, // Nightvision Military Scope (6x)
+            { 1442, "shadowstalkermk2_scope_sight.txt" }, // Shadowstalker Mk2 Scope (20x)
             // The three mags added for the group-1 split. Master asked for them to be VISUALLY IDENTICAL to the
             // STANAG one, so they deliberately share its mesh -- the difference is which gun accepts them, not what
             // they look like. Reusing the mesh is the requirement here, not a missing-rip stand-in.
