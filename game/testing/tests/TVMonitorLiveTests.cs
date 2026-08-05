@@ -56,12 +56,20 @@ namespace UnturnedGodot.Testing
             T.Check($"...and the screen mesh actually got carved out ({crtMon.DebugScreenOk})",
                 crtMon.DebugScreenOk && flatMon.DebugScreenOk && laptop.DebugScreenOk && crtTv.DebugScreenOk);
 
-            // ---- NO TEST CARD on a monitor. This is the check the pure table cannot make: HasPattern being false is
-            // one thing, Build actually skipping LoadPattern and leaving the material textureless is another.
-            T.Check("a monitor's screen carries NO texture -- its picture IS the albedo colour",
-                crtMon.DebugScreenTexture == null && flatMon.DebugScreenTexture == null && laptop.DebugScreenTexture == null);
-            T.Check("...where the television still has the SMPTE card, so this is a difference and not a broken load",
-                crtTv.DebugScreenTexture != null);
+            // ---- NO TEST CARD on a monitor. What decides the picture is the shader's `program`, not whether a texture
+            // happens to be bound -- the SMPTE composite is a shared static wired into every set so any of them can be
+            // switched onto the card. So the claim to check is that a monitor is never DEALT the card in the first
+            // place: its pool does not contain it.
+            foreach (var (d, nm) in new[] { (crtMon, "CRT monitor"), (flatMon, "flatscreen monitor"), (laptop, "laptop") })
+                T.Check($"the {nm} is not showing a test card ({d.DebugProgram})",
+                    d.DebugProgram != TVDevice.ScreenProgram.TestCard);
+            foreach (var k in new[] { TVDevice.DeviceKind.CrtMonitor, TVDevice.DeviceKind.FlatMonitor, TVDevice.DeviceKind.Laptop })
+                T.Check($"...and {k}'s whole pool excludes it, so it never can be",
+                    !System.Array.Exists(TVDevice.ProgramsFor(k), x => x == TVDevice.ScreenProgram.TestCard));
+            T.Check("...while a television's pool does include it",
+                System.Array.Exists(TVDevice.ProgramsFor(TVDevice.DeviceKind.CrtTv), x => x == TVDevice.ScreenProgram.TestCard));
+            T.Check("...and every set has the shared card wired, so any can be switched onto it",
+                crtTv.DebugScreenTexture != null && crtMon.DebugScreenTexture != null);
             T.Check("a monitor is still UNSHADED, like every other screen here",
                 crtMon.DebugScreenUnshaded && flatMon.DebugScreenUnshaded && laptop.DebugScreenUnshaded);
             // WHICH WAY EACH SCREEN FACES, on a BUILT device. The static suite proves the winding is +Y on every prop;
@@ -147,9 +155,37 @@ namespace UnturnedGodot.Testing
             T.Check("the CRT television has none either -- its cube is plain grey, not a red/green pair",
                 !crtTv.DebugHasOnLed && !crtTv.DebugHasStandbyLed);
 
+            // ---- EVERY PROGRAM, on a real device. The program is picked at RANDOM per set -- which is the point, a
+            // street of televisions should not all show the same thing -- and that makes coverage impossible by
+            // construction: whatever this suite asserted about "the monitor" would only ever describe the one program
+            // the RNG happened to deal it, and six of seven would go untested on a green run. So each is forced.
+            foreach (var prog in System.Enum.GetValues<TVDevice.ScreenProgram>())
+            {
+                var dev = TVDevice.HasPattern(TVDevice.KindFor("Television_1")) && prog is TVDevice.ScreenProgram.TestCard
+                          or TVDevice.ScreenProgram.Static or TVDevice.ScreenProgram.Dvd ? crtTv : crtMon;
+                dev.DebugSetProgram(prog);
+                yield return Ticks(2);
+                T.Check($"{prog}: the device adopts it", dev.DebugProgram == prog);
+                // THE RULE master added: the tone belongs to the test card, not to the television.
+                var want = TVDevice.SoundFor(prog);
+                T.Check($"{prog}: sound is {want}", dev.DebugSound == want);
+                T.Check($"{prog}: ...and the loop player exists ONLY when there is a sound ({dev.DebugHasTone})",
+                    dev.DebugHasTone == (want != TVDevice.ScreenSound.None));
+            }
+            T.Check("only the test card carries the 1kHz tone",
+                TVDevice.SoundFor(TVDevice.ScreenProgram.TestCard) == TVDevice.ScreenSound.Tone);
+            T.Check("...only static hisses",
+                TVDevice.SoundFor(TVDevice.ScreenProgram.Static) == TVDevice.ScreenSound.Noise);
+            foreach (var quiet in new[] { TVDevice.ScreenProgram.Dvd, TVDevice.ScreenProgram.Colour,
+                                          TVDevice.ScreenProgram.TerminalCursor, TVDevice.ScreenProgram.TerminalScroll,
+                                          TVDevice.ScreenProgram.BarGraph })
+                T.Check($"...and {quiet} is silent", TVDevice.SoundFor(quiet) == TVDevice.ScreenSound.None);
+
             // ---- THE COLOUR CYCLE, AND THE CONE FOLLOWING IT (master: "cycle through a few random colors (which tints
-            // the 'cone')"). The tint and the spill are set in different places -- AlbedoColor on the screen material,
-            // LightColor on the SpotLight -- so "the screen changed colour" alone would pass with the cone left blue.
+            // the 'cone')"). The tint and the spill are set in different places -- the shader's `tint` uniform and the
+            // SpotLight's LightColor -- so "the screen changed colour" alone would pass with the cone left blue.
+            crtMon.DebugSetProgram(TVDevice.ScreenProgram.Colour);
+            yield return Ticks(2);
             var seenTints = new HashSet<Color>();
             for (int i = 0; i < 24; i++)
             {
@@ -162,12 +198,21 @@ namespace UnturnedGodot.Testing
                 seenTints.Count >= 3);
             T.Check("...and none of them is white (which is what an untinted screen would report)",
                 !seenTints.Contains(Colors.White));
-            // THE CONTRAST that makes the above mean something: a television's spill is the fixed blue-white and its
-            // "tint" is white, because albedo MULTIPLIES the SMPTE texture and any other value would recolour the bars.
-            T.Check($"a television's picture stays untinted ({crtTv.DebugTint})", crtTv.DebugTint == Colors.White);
+            // THE CONTRAST that makes the above mean something: a program that draws its OWN colours must be multiplied
+            // by white, or the tint would recolour whatever it drew. That is why Picture is white for everything except
+            // the flat-colour program.
+            crtMon.DebugSetProgram(TVDevice.ScreenProgram.BarGraph);
+            yield return Ticks(2);
+            T.Check($"a program that draws its own colours is multiplied by WHITE ({crtMon.DebugTint})",
+                crtMon.DebugTint == Colors.White);
+            crtTv.DebugSetProgram(TVDevice.ScreenProgram.TestCard);
+            yield return Ticks(2);
+            T.Check($"...as is the test card, so albedo cannot tint the bars ({crtTv.DebugTint})",
+                crtTv.DebugTint == Colors.White);
             T.Check($"...and its spill stays the fixed blue-white ({crtTv.DebugSpill})",
                 !crtTv.DebugSpill.IsEqualApprox(Colors.White) && crtTv.DebugSpill.B > crtTv.DebugSpill.R);
 
+            crtMon.DebugSetProgram(TVDevice.ScreenProgram.Colour);
             yield return Ticks(2);
 
             // ---- THE CRT MONITOR STILL COLLAPSES, in monochrome. Both are "dupe the CRT thing onto the computer crt",
@@ -179,10 +224,13 @@ namespace UnturnedGodot.Testing
             yield return Ticks(2);
             T.Check($"switching it off starts the collapse rather than snapping ({crtMon.DebugScreenOk})",
                 crtMon.DebugScreenOk);
-            T.Check($"...and the picture goes MONOCHROME on the way out ({crtMon.DebugTint})",
-                Achromatic(crtMon.DebugTint));
-            T.Check($"...to the luma of the colour it was showing, not to black ({crtMon.DebugTint.R:0.000})",
-                crtMon.DebugTint.R > 0.01f && Mathf.IsEqualApprox(crtMon.DebugTint.R, TVDevice.Mono(beforeOff).R));
+            // Desaturation moved from the C# tint into the shader's `mono` uniform when the programs landed -- it has
+            // to, because five of the seven programs generate their colours on the GPU and there is no CPU-side colour
+            // to desaturate. So the probe moves too: the uniform is what carries it now.
+            T.Check($"...and the picture goes MONOCHROME on the way out (mono={crtMon.DebugMonoUniform})",
+                Mathf.IsEqualApprox(crtMon.DebugMonoUniform, 1f));
+            T.Check($"...while the tint keeps the colour it was showing, undesaturated ({crtMon.DebugTint})",
+                !Achromatic(crtMon.DebugTint) && crtMon.DebugTint.IsEqualApprox(beforeOff));
             // The flatscreen monitor is a PANEL and gets none of that -- it just stops.
             flatMon.Toggle();
             yield return Ticks(2);
@@ -193,8 +241,23 @@ namespace UnturnedGodot.Testing
             crtMon.Toggle();
             yield return Ticks(4);
             T.Check($"the monitor switches back on ({crtMon.DebugLit})", crtMon.DebugLit);
-            T.Check($"...in colour again, not stuck in the collapse's monochrome ({crtMon.DebugTint})",
-                !Achromatic(crtMon.DebugTint));
+            T.Check($"...in colour again, not stuck in the collapse's monochrome (mono={crtMon.DebugMonoUniform})",
+                Mathf.IsEqualApprox(crtMon.DebugMonoUniform, 0f));
+
+            // "the uniform is 1" only proves the C# half asked for desaturation. What actually desaturates is the
+            // shader, so the shader is pinned too -- otherwise deleting the mix() leaves every check here green and
+            // every dying CRT in colour. And the weights must be the SAME Rec.709 the C# Mono() uses: a flat average
+            // sends pure blue and pure green to one grey, so the two rules disagreeing is a real visual difference.
+            string shader = crtMon.DebugScreenShaderCode;
+            T.Check("the shader actually desaturates by `mono`", shader.Contains("mix(c, desat(c)"));
+            T.Check("...using Rec.709, matching the C# rule", shader.Contains("0.2126, 0.7152, 0.0722"));
+            T.Check($"...the same weights C# uses ({TVDevice.Mono(new Color(0f, 1f, 0f)).R:0.0000})",
+                Mathf.IsEqualApprox(TVDevice.Mono(new Color(0f, 1f, 0f)).R, 0.7152f));
+
+            // A MONOCHROME CRT TELEVISION (master: "the CRT tvs can be either monochrome or color") holds mono lit
+            // while it is running, not only while it dies.
+            T.Check($"a colour tube runs with mono off (monoTube={crtTv.DebugMonoTube}, mono={crtTv.DebugMonoUniform})",
+                crtTv.DebugMonoTube || Mathf.IsEqualApprox(crtTv.DebugMonoUniform, 0f));
 
             // ---- SMASHED: the plug goes with the cabinet. A wire hanging off rubble still drawing 70 W is a load you
             // cannot see on a generator you can, and it is the sort of thing only ever noticed as "my genny is short".

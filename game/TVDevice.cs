@@ -96,6 +96,53 @@ namespace UnturnedGodot
         /// <summary>Shows a flat colour that changes every few seconds instead of a picture. Monitors.</summary>
         internal static bool CyclesColour(DeviceKind k) => !HasPattern(k);
 
+        // ---- WHAT THE SCREEN IS SHOWING ------------------------------------------------------------------------------
+        // Master: terminals with a blinking cursor, scrolling block text, bar graphs with a scientific animation, the
+        // random colour, a bouncing DVD blob on the flatscreens, static fuzz on any television -- "and anything without
+        // the test pattern does not have the 1khz test tone".
+        //
+        // That last clause is why a PROGRAM is a thing and not just a picture. The tone used to hang off the device
+        // KIND (HasTone == HasPattern), which was fine while a television could only ever show the test card. Now that
+        // it might be showing snow or a screensaver, sound and picture have to be chosen together or they drift: the
+        // failure is a television humming a 1 kHz test tone over a DVD screensaver, which sounds like a bug in the
+        // audio system rather than in the thing that picked the picture.
+        //
+        // So one enum decides both, and Sound() is derived from it rather than stored alongside it.
+        public enum ScreenProgram { TestCard, Static, Dvd, Colour, TerminalCursor, TerminalScroll, BarGraph }
+
+        public enum ScreenSound { None, Tone, Noise }
+
+        /// <summary>The tone belongs to the TEST CARD, because they are the same fiction: bars on screen are a test
+        /// broadcast, and 1 kHz is what a test broadcast carries. Snow gets hiss. Everything else is silent.</summary>
+        internal static ScreenSound SoundFor(ScreenProgram p) => p switch
+        {
+            ScreenProgram.TestCard => ScreenSound.Tone,
+            ScreenProgram.Static   => ScreenSound.Noise,
+            _                      => ScreenSound.None,
+        };
+
+        /// <summary>What each kind of set can be showing. A television is broadcast equipment: a test card, snow, or --
+        /// if it is a flatscreen, i.e. modern enough to be plugged into something -- a DVD screensaver. A computer
+        /// screen is a computer screen.</summary>
+        internal static ScreenProgram[] ProgramsFor(DeviceKind k) => k switch
+        {
+            DeviceKind.CrtTv  => new[] { ScreenProgram.TestCard, ScreenProgram.Static },
+            DeviceKind.FlatTv => new[] { ScreenProgram.TestCard, ScreenProgram.Static, ScreenProgram.Dvd },
+            _                 => new[] { ScreenProgram.Colour, ScreenProgram.TerminalCursor,
+                                         ScreenProgram.TerminalScroll, ScreenProgram.BarGraph },
+        };
+
+
+        /// <summary>The vertical-hold slip is a property of a broadcast picture on a tube, so it needs BOTH: a CRT
+        /// television (HasDesync) AND a program that is actually a received broadcast. A DVD blob does not roll.</summary>
+        internal static bool CanRoll(DeviceKind k, ScreenProgram p)
+            => HasDesync(k) && (p == ScreenProgram.TestCard || p == ScreenProgram.Static);
+
+        ScreenProgram _program = ScreenProgram.TestCard;
+        float _seed;          // per-set, so a room of televisions is not in lockstep
+        float _clock;         // seconds since build, driven into the shader
+        bool _monoTube;       // a CRT television that happens to be a monochrome set (master: "either monochrome or color")
+
         internal static string LabelFor(DeviceKind k) => k switch
         {
             DeviceKind.Laptop => "Laptop",
@@ -110,7 +157,7 @@ namespace UnturnedGodot
         bool _lit;                // last EFFECTIVE state (_on && grid power) actually applied to the visuals
 
         MeshInstance3D _screen;   // the emissive SMPTE screen sub-mesh (hidden when dark)
-        StandardMaterial3D _screenMat;
+        ShaderMaterial _screenMat;   // one shader, one program per set -- see ScreenProgram
         SpotLight3D _light;       // forward spill, aimed down the screen normal (energy 0 / hidden when dark)
         MeshInstance3D _cone;     // the visible light shaft, StreetLight's beam reused
         StandardMaterial3D _coneMat;
@@ -217,8 +264,11 @@ namespace UnturnedGodot
         /// <summary>The colour the screen, the spill and the shaft all take. White on a television (the SMPTE texture
         /// carries its own colours and albedo MULTIPLIES, so anything else would tint the bars); the current cycle
         /// colour on a monitor.</summary>
-        Color Picture => CyclesColour(_kind) ? (_mono ? Mono(_tint) : _tint) : Colors.White;
-        Color Spill => CyclesColour(_kind) ? (_mono ? Mono(_tint) : _tint) : SpillWhite;
+        // The flat-colour program carries its colour in the tint; every other program draws its own colours in the
+        // shader and must be multiplied by WHITE or it would be recoloured. Desaturation is the shader's `mono`
+        // uniform now, so Picture no longer applies it -- doing both would desaturate twice.
+        Color Picture => _program == ScreenProgram.Colour ? _tint : Colors.White;
+        Color Spill => _program == ScreenProgram.Colour ? ((_mono || _monoTube) ? Mono(_tint) : _tint) : SpillWhite;
 
         // ---- STATUS LEDS ---------------------------------------------------------------------------------------------
         // Master: "make the little green LED emissive" on the monitors, and on the flatscreen "the red little LED
@@ -318,7 +368,18 @@ namespace UnturnedGodot
             // ON AT START (master: "making all tvs/monitors on at start"). Set BEFORE Build, because Build ends with
             // the first Refresh -- so a tube plays its warmup as the map comes up rather than snapping to a lit
             // picture, which is what a room full of sets left running should look like.
-            var tv = new TVDevice { PropName = propName, _kind = KindFor(propName), _on = true, Transform = bodyMi.Transform };
+            var kind = KindFor(propName);
+            var pool = ProgramsFor(kind);
+            var tv = new TVDevice
+            {
+                PropName = propName, _kind = kind, _on = true, Transform = bodyMi.Transform,
+                _program = pool[Mathf.Abs((int)GD.Randi()) % pool.Length],
+                _seed = GD.Randf() * 100f,
+                // A CRT television is randomly a monochrome set (master: "the CRT tvs can be either monochrome or
+                // color"). Only the TUBE televisions -- a colour LCD is not a period-plausible black-and-white set,
+                // and a monitor's programs are chosen for their colour.
+                _monoTube = kind == DeviceKind.CrtTv && GD.Randf() < 0.35f,
+            };
             tv.Build(bodyMi.Mesh as ArrayMesh);
             return tv;
         }
@@ -346,7 +407,11 @@ namespace UnturnedGodot
             var screenMesh = SplitScreen(body, _kind);
             if (screenMesh == null) { GD.PrintErr($"[tv] {PropName}: screen split matched no triangles"); return; }
 
-            var pattern = HasPattern(_kind) ? LoadPattern() : null;
+            // ALWAYS loaded, whatever program this set draws. The SMPTE image and its composite are shared statics --
+            // one texture and one composite per glass colour for the whole map -- so wiring them costs nothing, and the
+            // alternative is a device built showing snow that can never be switched to the test card because its
+            // texture slot is empty. The shader samples this only for program 0.
+            var pattern = LoadPattern();
             // BEFORE Reproject, which overwrites the UVs: the screen's original UV is a single palette texel, and that
             // texel IS the tube's glass colour. Read it now or it is gone.
             _glassColor = SampleScreenTexel(PropName, screenMesh, _kind == DeviceKind.FlatTv ? FlatGlass : CrtGlass);
@@ -381,12 +446,11 @@ namespace UnturnedGodot
             // unchanged -- both already drive that colour's brightness and alpha.
             var (patternTex, monoTex, patternFrac) = ScreenTextures(pattern, _glassColor);
             _patternTex = patternTex; _monoTex = monoTex;
-            _screenMat = MakeScreenMaterial(_patternTex);
-            if (HasPattern(_kind))
-                _screenMat.Uv1Scale = new Vector3(1f, patternFrac, 1f);   // window the composite onto the picture; the rest is the blanking bar
-            else
+            _screenMat = MakeScreenMaterial(_patternTex, _program, patternFrac, _seed);
+            if (_program == ScreenProgram.Colour)
                 _tint = MonitorColours[_colourIdx = Mathf.Abs((int)GD.Randi()) % MonitorColours.Length];
             _screenOffset = _screenNormalLocal * PictureOffset;
+            SetMono(false);   // establishes the uniform; _monoTube keeps it lit for a black-and-white set
             _screen = new MeshInstance3D { Mesh = projected, MaterialOverride = _screenMat, Visible = false, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off, Position = _screenOffset };
             AddChild(_screen);
 
@@ -771,16 +835,34 @@ namespace UnturnedGodot
 
         void BuildAudio()
         {
-            // Looping tone: quiet-but-noticeable, small UnitSize + a MaxDistance cap so it falls off fast. TELEVISIONS
-            // ONLY (master: the computer monitors come without the test tone) -- and it is simply never built rather
-            // than built-and-never-played, so there is no silent AudioStreamPlayer3D per monitor to wonder about, and
-            // no way for some later Play() to give a monitor a broadcast hum.
-            var tone = HasTone(_kind) ? PlayerController.LoadWavOneShot("res://content/sounds/tv_tone.wav", loop: true) : null;
-            if (tone != null) { _tone = new AudioStreamPlayer3D { Stream = tone, VolumeDb = Mathf.LinearToDb(0.45f), UnitSize = 2f, MaxDistance = 12f, Position = _screenCenterLocal }; AddChild(_tone); }
+            BuildLoopSound();
             var on = PlayerController.LoadWavOneShot("res://content/sounds/tv_on.wav");
             if (on != null) { _onClick = new AudioStreamPlayer3D { Stream = on, VolumeDb = Mathf.LinearToDb(0.7f), UnitSize = 3f, MaxDistance = 16f, Position = _screenCenterLocal }; AddChild(_onClick); }
             var off = PlayerController.LoadWavOneShot("res://content/sounds/tv_off.wav");
             if (off != null) { _offClick = new AudioStreamPlayer3D { Stream = off, VolumeDb = Mathf.LinearToDb(0.7f), UnitSize = 3f, MaxDistance = 16f, Position = _screenCenterLocal }; AddChild(_offClick); }
+        }
+
+        /// <summary>The looping sound belongs to the PROGRAM, not the device (master: "anything without the test pattern
+        /// does not have the 1khz test tone"). A test card hums 1 kHz, snow hisses, everything else is silent -- and the
+        /// silent case builds NO player at all rather than a muted one, so there is nothing for a later Play() to wake
+        /// up and hand a DVD screensaver a broadcast tone.</summary>
+        void BuildLoopSound()
+        {
+            string loop = SoundFor(_program) switch
+            {
+                ScreenSound.Tone  => "res://content/sounds/tv_tone.wav",
+                ScreenSound.Noise => "res://content/sounds/tv_static.wav",
+                _                 => null,
+            };
+            var tone = loop == null ? null : PlayerController.LoadWavOneShot(loop, loop: true);
+            if (tone == null) return;
+            _tone = new AudioStreamPlayer3D
+            {
+                Stream = tone,
+                VolumeDb = Mathf.LinearToDb(SoundFor(_program) == ScreenSound.Noise ? 0.30f : 0.45f),
+                UnitSize = 2f, MaxDistance = 12f, Position = _screenCenterLocal,
+            };
+            AddChild(_tone);
         }
 
         /// <summary>Player F-interact: flip the toggle, click, and refresh. The click plays even with no grid
@@ -900,7 +982,7 @@ namespace UnturnedGodot
                 EndCollapse();   // switched back on mid-collapse: the screen node is still squeezed, so undo it first
                 if (IsTube(_kind)) { _warming = true; _warmDelay = WarmDelay; _warm = 0f; }   // tube warms in
                 else { _warming = false; _warm = 1f; }                                        // panel snaps
-                if (CyclesColour(_kind)) _colourLeft = (float)GD.RandRange(ColourHoldMin, ColourHoldMax);
+                if (_program == ScreenProgram.Colour) _colourLeft = (float)GD.RandRange(ColourHoldMin, ColourHoldMax);
                 if (_screen != null) _screen.Visible = true;
                 if (_light != null) _light.Visible = true;
                 if (_cone != null) _cone.Visible = true;
@@ -995,7 +1077,7 @@ namespace UnturnedGodot
             // FULLY OPAQUE on the way out, unlike the warmup. The collapse is the picture being crushed into a line,
             // not dissolving back into the tube -- a semi-transparent line would read as a fade playing at the same
             // time and blunt the whole effect.
-            if (_screenMat != null) _screenMat.AlbedoColor = ScreenColor(Picture, _emitEnergy * level, 1f);
+            if (_screenMat != null) _screenMat.SetShaderParameter("tint", ScreenColor(Picture, _emitEnergy * level, 1f));
             // The spill and the shaft die WITH the picture rather than snapping off at the switch -- but they are not
             // squeezed. The collapse is the raster's, and a light cone narrowing to a blade would read as a bug.
             if (_light != null) { _light.LightEnergy = _lightEnergy * level; _light.LightColor = Spill; _light.Visible = level > 0f; }
@@ -1011,7 +1093,7 @@ namespace UnturnedGodot
                 ApplyDesync();
                 return;
             }
-            if (!DesyncCanFire(HasDesync(_kind), _lit, _desyncLeft)) return;
+            if (!DesyncCanFire(CanRoll(_kind, _program), _lit, _desyncLeft)) return;
             if (GD.Randf() >= DesyncChance(dt, DesyncMeanGap)) return;
             _desyncLeft = (float)GD.RandRange(DesyncMin, DesyncMax);
             _desyncSpeed = (float)GD.RandRange(DesyncSpeedMin, DesyncSpeedMax) * (GD.Randf() < 0.5f ? -1f : 1f);
@@ -1019,7 +1101,7 @@ namespace UnturnedGodot
 
         void ApplyDesync()
         {
-            if (_screenMat != null) _screenMat.Uv1Offset = new Vector3(0f, _desyncOffset, 0f);
+            _screenMat?.SetShaderParameter("roll_offset", _desyncOffset);
         }
 
         /// <summary>Drop any slip in progress and put the picture back in frame. A set going dark mid-roll must not
@@ -1054,13 +1136,17 @@ namespace UnturnedGodot
             ApplyCollapse();
         }
 
+        /// <summary>Desaturate the picture. A uniform now, so it works for EVERY program rather than only the two that
+        /// had a texture to swap -- which is what lets a monochrome CRT television be a thing at all (master: "the CRT
+        /// tvs can be either monochrome or color"). The power-off collapse uses the same switch.
+        ///
+        /// The mono TEXTURE the composite still builds is no longer what does this; it is kept because ScreenTextures
+        /// is the one place the blanking bar is baked, and pulling the mono copy out of it would only save building an
+        /// image that is shared across every television on the map anyway.</summary>
         void SetMono(bool mono)
         {
             _mono = mono;
-            if (_screenMat == null || !HasPattern(_kind)) return;   // a monitor has no texture to swap -- Picture/Spill
-                                                                    //  read _mono and desaturate the tint instead
-            var want = mono ? _monoTex : _patternTex;
-            if (want != null && _screenMat.AlbedoTexture != want) _screenMat.AlbedoTexture = want;
+            _screenMat?.SetShaderParameter("mono", (mono || _monoTube) ? 1f : 0f);
         }
 
         // ---- monitor colour cycle -----------------------------------------------------------------------------------
@@ -1111,7 +1197,7 @@ namespace UnturnedGodot
             // lamp on a dial. On the flatscreen k is pinned at 1, so an LCD still snaps and takes none of this.
             float k = IsTube(_kind) ? _warm : 1f;
             float f = FlickerFactor();   // 1.0 on a panel; a shallow breath on a tube
-            if (_screenMat != null) _screenMat.AlbedoColor = ScreenColor(Picture, _emitEnergy * f, k);
+            if (_screenMat != null) _screenMat.SetShaderParameter("tint", ScreenColor(Picture, _emitEnergy * f, k));
             if (_light != null) _light.LightEnergy = _lightEnergy * k * f;
             // the shaft rides it too, so the picture, the spill and the beam pulse together instead of drifting apart
             if (_coneMat != null) _coneMat.AlbedoColor = new Color(Spill, ConeAlpha * k * f);
@@ -1138,11 +1224,16 @@ namespace UnturnedGodot
             // when warmup was the only thing that animated.
             if (_lit)
             {
-                if (CyclesColour(_kind)) TickColour((float)delta);   // re-applies only when the colour actually changes
+                // The programs animate off this rather than off a global clock, so every set is offset by its own seed
+                // and a room of televisions does not blink in unison. Only advanced while LIT: a set switched back on
+                // should not resume a DVD blob from wherever it would have drifted to in the dark.
+                _clock += (float)delta;
+                _screenMat?.SetShaderParameter("time_s", _clock);
+                if (_program == ScreenProgram.Colour) TickColour((float)delta);   // re-applies only on an actual change
                 if (IsTube(_kind))
                 {
                     _flickerPhase = Mathf.Wrap(_flickerPhase + (float)delta * FlickerHz, 0f, 1f);
-                    if (HasDesync(_kind)) TickDesync((float)delta);
+                    if (CanRoll(_kind, _program)) TickDesync((float)delta);
                     ApplyLevels();
                 }
             }
@@ -1165,26 +1256,40 @@ namespace UnturnedGodot
         /// <summary>The screen material, built here rather than inline so the two properties the washout fix depends
         /// on are reachable without an Unturned install (the Television meshes ship with the game, so TVDevice.Make
         /// cannot run on a box without one -- and neither can a render).</summary>
-        internal static StandardMaterial3D MakeScreenMaterial(Texture2D pattern) => new()
+        static Shader _screenShader;
+        static Shader ScreenShader()
         {
-            ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
-            AlbedoTexture = pattern,
-            AlbedoColor = new Color(1f, 1f, 1f, 0f),                          // fully dissolved into the tube face; ApplyLevels fades it up
-            Transparency = BaseMaterial3D.TransparencyEnum.Alpha,             // the warmup is a CROSSFADE onto the cabinet's own
-                                                                              //  screen face -- see Build. Brightness cannot do it:
-                                                                              //  albedo multiplies the texture, so a low value is a
-                                                                              //  dim picture, never a flat colour.
-            TextureFilter = BaseMaterial3D.TextureFilterEnum.Linear,          // SMPTE is a real image, not a palette texel
-            CullMode = BaseMaterial3D.CullModeEnum.Disabled,                  // ripped mesh: winding may face either way
-            TextureRepeat = true,                                             // REQUIRED by the vertical-hold roll: the
-                                                                              //  slip drives Uv1Offset past the edge, and
-                                                                              //  on clamp that smears the top row down the
-                                                                              //  screen instead of wrapping the picture.
-                                                                              //  It is also the default, which is exactly
-                                                                              //  why it is written down -- nothing else
-                                                                              //  here would show which setting the effect
-                                                                              //  is quietly depending on.
-        };
+            if (_screenShader != null) return _screenShader;
+            _screenShader = GD.Load<Shader>("res://content/screen.gdshader");
+            if (_screenShader == null) GD.PrintErr("[tv] screen.gdshader failed to load -- every screen will be blank");
+            return _screenShader;
+        }
+
+        /// <summary>The screen material. Was a StandardMaterial3D; it is a ShaderMaterial now because six of the seven
+        /// programs are drawn procedurally and the alternative is rewriting an ImageTexture per set per frame on the
+        /// CPU, with dozens of sets on the map.
+        ///
+        /// The three properties the old material was carrying for a REASON are preserved as render_mode in the shader
+        /// and must stay that way -- they are documented there, and asserted here by the suite rather than trusted:
+        /// unshaded (a screen is a light source, so no light in the world can wash out its colours), cull_disabled
+        /// (ripped meshes), and alpha blending (the warmup is a crossfade onto the cabinet's own screen face, which
+        /// brightness cannot do because albedo MULTIPLIES).</summary>
+        internal static ShaderMaterial MakeScreenMaterial(Texture2D pattern) => MakeScreenMaterial(pattern, ScreenProgram.TestCard, 1f, 0f);
+
+        internal static ShaderMaterial MakeScreenMaterial(Texture2D pattern, ScreenProgram program, float patternFrac, float seed)
+        {
+            var m = new ShaderMaterial { Shader = ScreenShader() };
+            m.SetShaderParameter("program", (int)program);
+            m.SetShaderParameter("pattern_tex", pattern);
+            m.SetShaderParameter("pattern_frac", patternFrac);
+            m.SetShaderParameter("roll_offset", 0f);
+            m.SetShaderParameter("tint", new Color(1f, 1f, 1f, 0f));   // fully dissolved into the tube face; ApplyLevels fades it up
+            m.SetShaderParameter("mono", 0f);
+            m.SetShaderParameter("time_s", 0f);
+            m.SetShaderParameter("seed", seed);
+            return m;
+        }
+
 
         /// <summary>Screen brightness -> AlbedoColor. Grey, so the SMPTE bars keep their own hues and only their
         /// level moves; black at 0 is what makes the CRT warmup a fade of the picture itself.</summary>
@@ -1281,9 +1386,11 @@ namespace UnturnedGodot
         public bool DebugScreenOk => _screen != null;
         /// <summary>Is the screen taking NO lighting? The washout fix depends on this being true, and it is the kind
         /// of property that a screenshot cannot distinguish from "the light happens to be dim right now".</summary>
-        public bool DebugScreenUnshaded => _screenMat != null && _screenMat.ShadingMode == BaseMaterial3D.ShadingModeEnum.Unshaded;
+        /// <summary>Unshaded is a render_mode in the shader now, so this reports whether the screen is drawing
+        /// through THAT shader at all -- which is the property the washout fix actually depends on.</summary>
+        public bool DebugScreenUnshaded => _screenMat?.Shader != null;
         /// <summary>Screen brightness as actually applied (AlbedoColor). 0 = black tube, _emitEnergy = full picture.</summary>
-        public float DebugScreenBrightness => _screenMat?.AlbedoColor.R ?? -1f;
+        public float DebugScreenBrightness => _screenMat == null ? -1f : ((Color)_screenMat.GetShaderParameter("tint")).R;
         public bool DebugIsCrt => IsTube(_kind);
         public DeviceKind DebugKind => _kind;
         /// <summary>The colour the screen is currently showing (white on a television -- the card carries its own).</summary>
@@ -1295,7 +1402,29 @@ namespace UnturnedGodot
         /// colour and there is no card to show -- and non-null on a television. Exposed because "the monitor has no
         /// test pattern" is otherwise only checkable by looking at it, and a dim SMPTE card at a distance reads as
         /// a flat colour.</summary>
-        public Texture2D DebugScreenTexture => _screenMat?.AlbedoTexture;
+        public Texture2D DebugScreenTexture => _screenMat?.GetShaderParameter("pattern_tex").As<Texture2D>();
+        public ScreenProgram DebugProgram => _program;
+        /// <summary>Force this set onto a given program, rebuilding the loop sound to match.
+        ///
+        /// Needed because the program is chosen RANDOMLY at build -- that is the point, a street of televisions should
+        /// not all show the same thing -- which makes "did the DVD blob work" untestable by construction. Without this
+        /// a suite can only assert whatever the RNG happened to pick, so six of the seven programs would go uncovered
+        /// on any given run and the suite would still be green.</summary>
+        public void DebugSetProgram(ScreenProgram p)
+        {
+            _program = p;
+            _screenMat?.SetShaderParameter("program", (int)p);
+            if (p == ScreenProgram.Colour) _tint = MonitorColours[_colourIdx];
+            _tone?.QueueFree(); _tone = null;
+            BuildLoopSound();
+            SetMono(_mono);
+            ApplyLevels();
+            if (_lit) _tone?.Play();
+        }
+        public ScreenSound DebugSound => SoundFor(_program);
+        public bool DebugMonoTube => _monoTube;
+        public string DebugScreenShaderCode => _screenMat?.Shader?.Code ?? "";
+        public float DebugMonoUniform => _screenMat == null ? -1f : (float)_screenMat.GetShaderParameter("mono");
         /// <summary>Which indicator cube is currently emitting, for a check that does not need a render.</summary>
         public (bool On, bool Standby) DebugLeds =>
             (_ledOn != null && _ledOn.Visible && (_ledOnMat?.EmissionEnergyMultiplier ?? 0f) > 0f,

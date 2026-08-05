@@ -26,25 +26,57 @@ namespace UnturnedGodot.Testing
         {
             var mat = TVDevice.MakeScreenMaterial(null);
 
-            // THE fix. If someone later "restores" the emissive material, this is what catches it -- and note that a
-            // screenshot could not: a re-lit screen looks merely a bit brighter, which reads as a tuning choice.
-            T.Check($"the screen takes NO lighting ({mat.ShadingMode})",
-                mat.ShadingMode == BaseMaterial3D.ShadingModeEnum.Unshaded);
-            T.Check("...and still carries the pattern as a texture slot", mat.AlbedoTexture == null);   // null in, null out: the slot is wired, the asset is loaded at Make()
+            // The screen material is a ShaderMaterial now -- six of the seven programs are drawn procedurally, and the
+            // alternative was rewriting an ImageTexture per set per frame with dozens of sets on the map. The three
+            // properties the old StandardMaterial3D was carrying for a REASON became render_mode lines, which C# cannot
+            // read back off the material. So they are asserted against the SHADER SOURCE, which is the only place they
+            // now exist: delete one and this fails, which is the whole job.
+            T.Check("the screen draws through the screen shader", mat?.Shader != null);
+            string src = mat?.Shader?.Code ?? "";
+            T.Check($"...and the shader actually has source ({src.Length} chars)", src.Length > 200);
 
-            // Unshaded outputs ALBEDO, so brightness has to ride AlbedoColor -- an emission multiplier would do
-            // nothing at all now, silently, and the screen would sit at whatever AlbedoColor it was left on.
-            //
-            // It starts fully DISSOLVED rather than black. The picture floats 4mm off the cabinet's own screen face
-            // and crossfades onto it, so "dark" means alpha 0 (the model's own texel showing through) -- a black
+            // THE fix. If someone later "restores" a lit material, this is what catches it -- and note that a
+            // screenshot could not: a re-lit screen looks merely a bit brighter, which reads as a tuning choice.
+            T.Check("the screen takes NO lighting (render_mode unshaded)", src.Contains("unshaded"));
+            // Ripped meshes may wind either way; without this half the screens in the map render invisible from the
+            // front and nothing says which half.
+            T.Check("...draws from both sides (cull_disabled)", src.Contains("cull_disabled"));
+            // The crossfade cannot happen at all without alpha blending -- ALPHA would simply be ignored and every set
+            // would snap on. Silent, and indistinguishable from "the warmup constant got set to zero".
+            T.Check("...and can actually blend (blend_mix)", src.Contains("blend_mix"));
+            // The vertical-hold roll drives the sample past the edge of the composite. On clamp that smears the top row
+            // down the screen instead of wrapping the picture.
+            T.Check("...the pattern sampler WRAPS, for the vertical-hold roll", src.Contains("repeat_enable"));
+            T.Check("...and filters linearly -- SMPTE is a real image, not a palette texel", src.Contains("filter_linear"));
+
+            // Brightness and the warmup fade both ride the `tint` uniform: rgb is colour x brightness, alpha is the
+            // fade. It starts fully DISSOLVED rather than black -- the picture floats 4 mm off the cabinet's own screen
+            // face and crossfades onto it, so "dark" means alpha 0 (the model's own texel showing through). A black
             // opaque rectangle would be a hole in the front of the set, DARKER than the surrounding plastic, which is
             // exactly what master reported as the fade being nuked.
-            T.Check($"starts fully dissolved into the tube face ({mat.AlbedoColor})", mat.AlbedoColor.A == 0f);
-            T.Check($"...at full brightness, so the warmup is a fade and not a dimmer ({mat.AlbedoColor.R:0.00})", mat.AlbedoColor.R == 1f);
-            // The crossfade cannot happen at all on an opaque material -- alpha would simply be ignored and every TV
-            // would snap on. Silent, and indistinguishable from "the warmup constant got set to zero".
-            T.Check($"...and the material can actually blend ({mat.Transparency})",
-                mat.Transparency == BaseMaterial3D.TransparencyEnum.Alpha);
+            // THE PARSE CHECK. Everything above reads the shader's SOURCE TEXT, which a file that fails to compile
+            // still has -- so on its own it is a check whose pass looks exactly like its failure. Godot can only
+            // enumerate uniforms off a shader it successfully PARSED, so an empty list is the failure signal.
+            //
+            // It also catches the quieter bug: SetShaderParameter on a uniform that does not exist is silently a no-op.
+            // Rename a uniform in the .gdshader and every C# call still "succeeds" while the screen ignores brightness,
+            // fade, roll and mono forever.
+            var uniforms = new HashSet<string>();
+            foreach (var u in mat.Shader.GetShaderUniformList())
+                uniforms.Add(u.AsGodotDictionary()["name"].AsString());
+            T.Check($"the shader PARSED -- it reports its uniforms ({uniforms.Count})", uniforms.Count > 0);
+            foreach (var need in new[] { "program", "pattern_tex", "pattern_frac", "roll_offset", "tint", "mono", "time_s", "seed" })
+                T.Check($"...and declares `{need}`, the name C# sets", uniforms.Contains(need));
+
+            var tint = (Color)mat.GetShaderParameter("tint");
+            T.Check($"starts fully dissolved into the tube face ({tint})", tint.A == 0f);
+            T.Check($"...at full brightness, so the warmup is a fade and not a dimmer ({tint.R:0.00})", tint.R == 1f);
+            T.Check("...and the pattern slot is wired (null in, null out -- the asset loads at Make)",
+                mat.GetShaderParameter("pattern_tex").As<Texture2D>() == null);
+            T.Check($"...starting on the test card, undesaturated and unrolled",
+                (int)mat.GetShaderParameter("program") == (int)TVDevice.ScreenProgram.TestCard
+                && (float)mat.GetShaderParameter("mono") == 0f
+                && (float)mat.GetShaderParameter("roll_offset") == 0f);
 
             var off = TVDevice.ScreenColor(0f);
             var half = TVDevice.ScreenColor(0.5f);
