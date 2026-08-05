@@ -215,6 +215,50 @@ namespace UnturnedGodot.Testing
             crtMon.DebugSetProgram(TVDevice.ScreenProgram.Colour);
             yield return Ticks(2);
 
+            // ---- THE TERMINAL SCROLLS IN BURSTS (master: "scroll in bursts of random durations and time between.
+            // with a blinking cursor sometimes"). What makes this a burst rather than a slow scroll is that the
+            // position sometimes DOES NOT MOVE -- so the check is that it both advances and stalls over a long enough
+            // window. A continuous scroll would satisfy "it advances" perfectly.
+            crtMon.DebugSetProgram(TVDevice.ScreenProgram.TerminalScroll);
+            yield return Ticks(2);
+            float last = crtMon.DebugScrollOffset;
+            int moved = 0, stalled = 0, cursorSeen = 0, bothAtOnce = 0;
+            for (int i = 0; i < 400; i++)
+            {
+                yield return Ticks(1);
+                float now = crtMon.DebugScrollOffset;
+                if (now > last + 1e-5f) moved++; else stalled++;
+                if (crtMon.DebugCursorOn) cursorSeen++;
+                // Sampled at ONE INSTANT from the state machine itself, not inferred from movement across the
+                // interval -- a burst that ends mid-interval leaves the position advanced AND the cursor lit, which
+                // looks like a violation of this rule and is not one.
+                if (crtMon.DebugCursorOn && crtMon.DebugScrolling) bothAtOnce++;
+                last = now;
+            }
+            T.Check($"the terminal scrolls ({moved} frames advancing)", moved > 20);
+            T.Check($"...and PAUSES between bursts ({stalled} frames parked) -- a continuous scroll would never stall",
+                stalled > 20);
+            T.Check($"...showing a cursor while it waits ({cursorSeen} frames)", cursorSeen > 5);
+            T.Check($"...and never while a burst is running ({bothAtOnce}) -- one machine, not two effects fighting",
+                bothAtOnce == 0);
+            T.Check($"...with the offset only ever going forward ({crtMon.DebugScrollOffset:0.0})",
+                crtMon.DebugScrollOffset > 0f);
+
+            // ---- THE CONE READS THE PICTURE. Same device, two programs, and the dark one must throw less light.
+            crtMon.DebugSetProgram(TVDevice.ScreenProgram.TerminalCursor);
+            yield return Ticks(3);
+            float darkCone = crtMon.DebugConeAlpha, darkScale = crtMon.DebugConeScale;
+            crtMon.DebugSetProgram(TVDevice.ScreenProgram.BarGraph);
+            yield return Ticks(3);
+            float brightCone = crtMon.DebugConeAlpha, brightScale = crtMon.DebugConeScale;
+            T.Check($"a black terminal barely lights the room ({darkScale:0.000} scale)", darkScale < 0.1f);
+            T.Check($"...far less than an instrument panel ({brightScale:0.000})", brightScale > darkScale * 4f);
+            T.Check($"...and that reaches the actual shaft, not just the number ({darkCone:0.0000} vs {brightCone:0.0000})",
+                brightCone > darkCone);
+
+            crtMon.DebugSetProgram(TVDevice.ScreenProgram.Colour);   // the collapse below is asserted on a colour picture
+            yield return Ticks(2);
+
             // ---- THE CRT MONITOR STILL COLLAPSES, in monochrome. Both are "dupe the CRT thing onto the computer crt",
             // and both had to survive the picture becoming a flat colour instead of a texture -- the television's mono
             // is a TEXTURE SWAP, which a monitor has nothing to swap, so it desaturates its tint instead.

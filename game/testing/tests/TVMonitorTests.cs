@@ -182,6 +182,37 @@ namespace UnturnedGodot.Testing
             T.Check("a one-colour palette degenerates safely rather than looping forever",
                 TVDevice.NextColourIndex(0, 0.5f, 1) == 0);
 
+            // ---- THE CONE FOLLOWS WHAT IS ON SCREEN (master: "change the intensity of the cone to represent the
+            // average brightness of the colors on screen"). The values are MEASURED means, so what is pinned here is
+            // the ORDERING and the anchor -- exact constants would just restate the table, and the ordering is the
+            // thing that is actually claimed: a black terminal must throw less light than a test card.
+            float LumOf(TVDevice.ScreenProgram p) => TVDevice.MeanLuma(p, Colors.White);
+            T.Check($"snow is the brightest thing a set shows ({LumOf(TVDevice.ScreenProgram.Static):0.000})",
+                LumOf(TVDevice.ScreenProgram.Static) > LumOf(TVDevice.ScreenProgram.TestCard));
+            T.Check($"...the test card next ({LumOf(TVDevice.ScreenProgram.TestCard):0.000})",
+                LumOf(TVDevice.ScreenProgram.TestCard) > LumOf(TVDevice.ScreenProgram.BarGraph));
+            T.Check($"...bar graphs above scrolling text ({LumOf(TVDevice.ScreenProgram.BarGraph):0.000} > {LumOf(TVDevice.ScreenProgram.TerminalScroll):0.000})",
+                LumOf(TVDevice.ScreenProgram.BarGraph) > LumOf(TVDevice.ScreenProgram.TerminalScroll));
+            T.Check($"...text above a mostly-black DVD screen ({LumOf(TVDevice.ScreenProgram.TerminalScroll):0.000} > {LumOf(TVDevice.ScreenProgram.Dvd):0.000})",
+                LumOf(TVDevice.ScreenProgram.TerminalScroll) > LumOf(TVDevice.ScreenProgram.Dvd));
+            T.Check($"...and an idle terminal is nearly black ({LumOf(TVDevice.ScreenProgram.TerminalCursor):0.000})",
+                LumOf(TVDevice.ScreenProgram.TerminalCursor) < 0.01f);
+
+            // THE ANCHOR: a test card leaves the cone exactly where it was tuned, so this change cannot have quietly
+            // re-lit every television in the map while claiming to be about the dark ones.
+            T.Check($"a test card scales the cone by 1.0 ({TVDevice.ConeScale(TVDevice.ScreenProgram.TestCard, Colors.White):0.000})",
+                Mathf.IsEqualApprox(TVDevice.ConeScale(TVDevice.ScreenProgram.TestCard, Colors.White), 1f));
+            // ...and nothing reaches zero, or a dark screen would read as a broken cone rather than as a dark screen.
+            foreach (TVDevice.ScreenProgram p in System.Enum.GetValues(typeof(TVDevice.ScreenProgram)))
+                T.Check($"{p}: the cone never goes fully out ({TVDevice.ConeScale(p, Colors.Black):0.000})",
+                    TVDevice.ConeScale(p, Colors.Black) > 0f);
+
+            // The FLAT COLOUR program's brightness is the colour it is showing, so its cone dims and brightens as it
+            // cycles. Checked with two real palette colours rather than an assertion about the formula.
+            float dark = TVDevice.ConeScale(TVDevice.ScreenProgram.Colour, new Color(0.13f, 0.30f, 0.75f));  // desktop blue
+            float pale = TVDevice.ConeScale(TVDevice.ScreenProgram.Colour, new Color(0.62f, 0.66f, 0.70f));  // grey UI
+            T.Check($"a pale colour throws more light than a deep blue ({pale:0.00} vs {dark:0.00})", pale > dark);
+
             // ---- WATTS are per kind and none of them is zero. A 0 W consumer is a REAL thing in this codebase (a
             // splitter's relay input) and the solver treats it as always-satisfied -- so a monitor that fell through to
             // 0 W would light up wired to nothing at all and look like the feature working.

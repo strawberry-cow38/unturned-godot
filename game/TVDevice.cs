@@ -138,6 +138,45 @@ namespace UnturnedGodot
         internal static bool CanRoll(DeviceKind k, ScreenProgram p)
             => HasDesync(k) && (p == ScreenProgram.TestCard || p == ScreenProgram.Static);
 
+        // ---- CONE INTENSITY FROM WHAT IS ON SCREEN (master: "change the intensity of the cone to represent the
+        // average brightness of the colors on screen"). The picture is generated on the GPU, so the CPU cannot read
+        // it back -- these are MEASURED means, taken by evaluating each program over six seconds and averaging its
+        // Rec.709 luma, the same way the prop dimensions were measured rather than guessed:
+        //
+        //   TestCard 0.406 (straight off smpte_pattern.png)   Static 0.499   BarGraph 0.282
+        //   TerminalScroll 0.138   Dvd 0.070   TerminalCursor 0.0005 (a black terminal really is black)
+        //
+        // Normalised against the TEST CARD, because the cone's existing brightness was dialled in on it -- so a set
+        // showing the card looks exactly as it did, and everything else is relative to that.
+        internal const float RefLuma = 0.4057f;
+        /// <summary>Mean screen luma per program. `tint` matters only for the flat-colour program, whose brightness is
+        /// literally the colour it is showing -- so its cone dims and brightens as it cycles, for free.</summary>
+        internal static float MeanLuma(ScreenProgram p, Color tint) => p switch
+        {
+            ScreenProgram.TestCard       => 0.4057f,
+            ScreenProgram.Static         => 0.4991f,
+            ScreenProgram.Dvd            => 0.0704f,
+            ScreenProgram.BarGraph       => 0.2821f,
+            ScreenProgram.TerminalScroll => 0.1384f,
+            ScreenProgram.TerminalCursor => 0.0005f,
+            _                            => Mono(tint).R,   // Colour: the tint IS the picture
+        };
+
+        /// <summary>How hard this set throws light, relative to a test card. Floored rather than allowed to reach zero:
+        /// a black terminal emits almost nothing and SHOULD barely light the room, but a spill that goes exactly to
+        /// zero reads as the cone being broken rather than as the screen being dark.</summary>
+        const float ConeFloor = 0.06f;
+        internal static float ConeScale(ScreenProgram p, Color tint)
+            => Mathf.Max(ConeFloor, MeanLuma(p, tint) / RefLuma);
+
+        // ---- TERMINAL SCROLL BURSTS (master: "make it scroll in bursts of random durations and time between. with a
+        // blinking cursor sometimes"). A burst has memory, so the CPU owns the scroll position and the shader just
+        // draws it -- a pure function of time could fake this but not readably.
+        const float BurstMin = 0.35f, BurstMax = 2.6f;    // seconds of movement
+        const float IdleMin = 0.5f, IdleMax = 3.4f;       // seconds parked, cursor blinking
+        const float ScrollSpeed = 4.2f;                   // lines per second while running
+        float _scrollPos, _burstLeft, _idleLeft;
+
         ScreenProgram _program = ScreenProgram.TestCard;
         float _seed;          // per-set, so a room of televisions is not in lockstep
         float _clock;         // seconds since build, driven into the shader
@@ -1161,6 +1200,30 @@ namespace UnturnedGodot
             return (cur + step) % n;
         }
 
+        /// <summary>Advance the terminal. Either it is mid-burst (text flowing, no cursor) or parked (cursor blinking)
+        /// -- never both, because a real terminal does not scroll and blink at once, and doing both reads as two
+        /// effects fighting rather than one machine working.</summary>
+        void TickScroll(float dt)
+        {
+            if (_burstLeft > 0f)
+            {
+                _burstLeft -= dt;
+                _scrollPos += dt * ScrollSpeed;
+                if (_burstLeft <= 0f) _idleLeft = (float)GD.RandRange(IdleMin, IdleMax);
+                _screenMat?.SetShaderParameter("scroll_offset", _scrollPos);
+                _screenMat?.SetShaderParameter("cursor_on", 0f);
+                return;
+            }
+            _idleLeft -= dt;
+            // Blinks the whole time it is parked, so a long gap reads as "waiting for input" rather than as frozen.
+            _screenMat?.SetShaderParameter("cursor_on", Mathf.PosMod(_idleLeft, 1f) < 0.5f ? 1f : 0f);
+            if (_idleLeft <= 0f)
+            {
+                _burstLeft = (float)GD.RandRange(BurstMin, BurstMax);
+                _screenMat?.SetShaderParameter("cursor_on", 0f);
+            }
+        }
+
         void TickColour(float dt)
         {
             _colourLeft -= dt;
@@ -1198,9 +1261,14 @@ namespace UnturnedGodot
             float k = IsTube(_kind) ? _warm : 1f;
             float f = FlickerFactor();   // 1.0 on a panel; a shallow breath on a tube
             if (_screenMat != null) _screenMat.SetShaderParameter("tint", ScreenColor(Picture, _emitEnergy * f, k));
-            if (_light != null) _light.LightEnergy = _lightEnergy * k * f;
+            // ...and the SPILL is scaled by how bright the picture actually is (master). A terminal showing a black
+            // screen barely lights the room; a test card floods it. Without this every set threw the same light no
+            // matter what it was showing, which is most obvious on the DVD screensaver -- a white blob on black,
+            // lighting the wall as hard as a full test card.
+            float lum = ConeScale(_program, _tint);
+            if (_light != null) _light.LightEnergy = _lightEnergy * k * f * lum;
             // the shaft rides it too, so the picture, the spill and the beam pulse together instead of drifting apart
-            if (_coneMat != null) _coneMat.AlbedoColor = new Color(Spill, ConeAlpha * k * f);
+            if (_coneMat != null) _coneMat.AlbedoColor = new Color(Spill, ConeAlpha * k * f * lum);
         }
 
         public override void _Process(double delta)
@@ -1230,6 +1298,7 @@ namespace UnturnedGodot
                 _clock += (float)delta;
                 _screenMat?.SetShaderParameter("time_s", _clock);
                 if (_program == ScreenProgram.Colour) TickColour((float)delta);   // re-applies only on an actual change
+                if (_program == ScreenProgram.TerminalScroll) TickScroll((float)delta);
                 if (IsTube(_kind))
                 {
                     _flickerPhase = Mathf.Wrap(_flickerPhase + (float)delta * FlickerHz, 0f, 1f);
@@ -1287,6 +1356,8 @@ namespace UnturnedGodot
             m.SetShaderParameter("mono", 0f);
             m.SetShaderParameter("time_s", 0f);
             m.SetShaderParameter("seed", seed);
+            m.SetShaderParameter("scroll_offset", 0f);
+            m.SetShaderParameter("cursor_on", 0f);
             return m;
         }
 
@@ -1404,6 +1475,14 @@ namespace UnturnedGodot
         /// a flat colour.</summary>
         public Texture2D DebugScreenTexture => _screenMat?.GetShaderParameter("pattern_tex").As<Texture2D>();
         public ScreenProgram DebugProgram => _program;
+        public float DebugConeScale => ConeScale(_program, _tint);
+        public float DebugConeAlpha => _coneMat?.AlbedoColor.A ?? -1f;
+        public float DebugScrollOffset => _screenMat == null ? -1f : (float)_screenMat.GetShaderParameter("scroll_offset");
+        /// <summary>Is a burst running right now? Paired with DebugCursorOn so the "never both at once" rule can be
+        /// sampled at ONE INSTANT. Comparing scroll positions across a frame interval cannot express it: a burst that
+        /// ends mid-interval leaves the position advanced and the cursor lit, which looks like a violation and is not.</summary>
+        public bool DebugScrolling => _burstLeft > 0f;
+        public bool DebugCursorOn => _screenMat != null && (float)_screenMat.GetShaderParameter("cursor_on") > 0.5f;
         /// <summary>Force this set onto a given program, rebuilding the loop sound to match.
         ///
         /// Needed because the program is chosen RANDOMLY at build -- that is the point, a street of televisions should

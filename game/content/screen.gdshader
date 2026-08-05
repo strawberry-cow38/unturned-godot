@@ -22,6 +22,8 @@ uniform vec4 tint = vec4(1.0);      // rgb = colour * brightness, a = warmup fad
 uniform float mono = 0.0;
 uniform float time_s = 0.0;
 uniform float seed = 0.0;
+uniform float scroll_offset = 0.0;   // driven from C#, so the text can scroll in BURSTS rather than continuously
+uniform float cursor_on = 0.0;       // the terminal's cursor, shown while a burst is idle
 
 float hash11(float p) { return fract(sin(p * 127.1) * 43758.5453123); }
 float hash21(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123); }
@@ -72,14 +74,27 @@ vec3 prog_cursor(vec2 uv) {
 // a 3x5 sub-grid, which is what makes it read as text rather than as a dither pattern. Scrolls upward continuously.
 vec3 prog_scroll(vec2 uv) {
     float cols = 34.0, rows = 17.0;
-    float scroll = time_s * 2.1 + seed * 40.0;
-    vec2 g = vec2(uv.x * cols, uv.y * rows + scroll);
+    // `scroll_offset` rather than time: master wants it to run in bursts of random length with random gaps, and a
+    // burst is a state machine with memory. Deriving one from a pure function of time is possible but unreadable, and
+    // the CPU is already ticking these sets -- so C# owns the position and this just draws it.
+    vec2 g = vec2(uv.x * cols, uv.y * rows + scroll_offset);
     vec2 cell = floor(g);
     vec2 f = fract(g);
 
     float line = hash11(cell.y * 1.37 + seed);           // how far along this line the text runs
     float lineLen = 6.0 + line * (cols - 8.0);
-    if (cell.x > lineLen) return vec3(0.0);              // ragged right edge + blank lines
+
+    // The cursor sits after the end of the newest line, and only shows while the terminal is IDLE -- text does not
+    // flow and blink at the same time on a real one, and having it blink through a burst reads as two effects
+    // fighting rather than one machine working.
+    float newest = floor(scroll_offset) + rows - 1.0;
+    if (cursor_on > 0.5 && cell.y == newest) {
+        float curX = floor(6.0 + hash11(newest * 1.37 + seed) * (cols - 8.0)) + 1.0;
+        if (cell.x == curX && f.y > 0.08 && f.y < 0.92 && f.x > 0.05 && f.x < 0.75)
+            return vec3(0.55, 0.95, 0.60);
+    }
+
+    if (cell.x > lineLen) return vec3(0.0);              // ragged right edge
     if (hash11(cell.y * 3.71) < 0.13) return vec3(0.0);  // occasional empty line, like paragraph breaks
 
     // a 3x5 glyph cell with a one-pixel gutter
