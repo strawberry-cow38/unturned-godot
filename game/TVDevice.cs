@@ -1025,8 +1025,11 @@ namespace UnturnedGodot
         /// does not have the 1khz test tone"). A test card hums 1 kHz, snow hisses, everything else is silent -- and the
         /// silent case builds NO player at all rather than a muted one, so there is nothing for a later Play() to wake
         /// up and hand a DVD screensaver a broadcast tone.</summary>
+        string _loopPath = "";   // which wav this set actually loaded -- see DebugLoopSound
+
         void BuildLoopSound()
         {
+            _loopPath = "";
             string loop = SoundFor(_program) switch
             {
                 ScreenSound.Tone  => "res://content/sounds/tv_tone.wav",
@@ -1035,6 +1038,7 @@ namespace UnturnedGodot
             };
             var tone = loop == null ? null : PlayerController.LoadWavOneShot(loop, loop: true);
             if (tone == null) return;
+            _loopPath = loop;
             _tone = new AudioStreamPlayer3D
             {
                 Stream = tone,
@@ -1697,6 +1701,11 @@ namespace UnturnedGodot
         public Vector3 DebugPlugLocal => _plug?.Position ?? Vector3.Zero;
         public float DebugPlugWatts => _plug?.Watts ?? 0f;
         public bool DebugHasTone => _tone != null;
+        /// <summary>WHICH wav is loaded, not merely whether one is. Asserting only that a sound exists cannot catch a
+        /// set playing the wrong one -- a television humming hiss over a test card and one humming the tone are both
+        /// "has a sound", and that is the whole of the claim being made about gating.</summary>
+        public string DebugLoopSound => _loopPath;
+        public bool DebugTonePlaying => _tone != null && _tone.Playing;
         /// <summary>Force a colour change now, so the cycle can be driven without waiting on the hold timer.</summary>
         public void DebugCycleColour() { _colourLeft = 0f; TickColour(0f); }
         public Vector3 DebugScreenCenterWorld => ToGlobal(_screenCenterLocal);

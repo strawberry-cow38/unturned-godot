@@ -180,6 +180,21 @@ namespace UnturnedGodot.Testing
                 T.Check($"{prog}: sound is {want}", dev.DebugSound == want);
                 T.Check($"{prog}: ...and the loop player exists ONLY when there is a sound ({dev.DebugHasTone})",
                     dev.DebugHasTone == (want != TVDevice.ScreenSound.None));
+                // WHICH wav, not merely whether one exists (strawberry: "gate static sfx behind the static channel").
+                // A set humming hiss over a test card and one humming the tone are both "has a sound" -- the file is
+                // the entire claim, so a check that stops at non-null cannot catch the thing being asked about.
+                string wantFile = want switch
+                {
+                    TVDevice.ScreenSound.Noise => "tv_static.wav",
+                    TVDevice.ScreenSound.Tone  => "tv_tone.wav",
+                    _                          => "",
+                };
+                T.Check($"{prog}: ...and it is the RIGHT wav ({(dev.DebugLoopSound == "" ? "none" : dev.DebugLoopSound)})",
+                    dev.DebugLoopSound.EndsWith(wantFile) && (wantFile != "" || dev.DebugLoopSound == ""));
+                // ...and it is actually AUDIBLE only while lit -- a hiss that keeps playing through a blackout is the
+                // same complaint arriving from the other direction.
+                T.Check($"{prog}: ...playing only while the set is lit ({dev.DebugTonePlaying})",
+                    dev.DebugTonePlaying == (dev.DebugHasTone && dev.DebugLit));
             }
             T.Check("only the test card carries the 1kHz tone",
                 TVDevice.SoundFor(TVDevice.ScreenProgram.TestCard) == TVDevice.ScreenSound.Tone);
