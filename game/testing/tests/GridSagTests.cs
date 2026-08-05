@@ -67,22 +67,44 @@ namespace UnturnedGodot.Testing
             T.Check($"a mains-fed set is lit ({tv.DebugLit})", tv.DebugLit);
             T.Check("...and is not already sagging", !tv.DebugBrownout);
 
-            float steady = tv.DebugScreenBrightness;
+            // A TUBE BREATHES. FlickerFactor swings the picture over FlickerDepth (0.18) at 24 Hz for as long as it is
+            // lit, so a single sample of DebugScreenBrightness is a sample of a moving value -- and comparing two of
+            // them with a 0.05 tolerance is a coin flip on which phase each landed in. Measure the BAND instead: what
+            // the level ranges over while it is behaving normally, and then assert the sag leaves that band and the
+            // recovery returns to it. (This test passed on one machine and flaked on another until it did.)
+            float steadyLo = float.MaxValue, steadyHi = float.MinValue;
+            for (int i = 0; i < 30; i++)   // 0.6 s ~= 14 flicker cycles: comfortably the whole breath
+            {
+                yield return Ticks(1);
+                steadyLo = Mathf.Min(steadyLo, tv.DebugScreenBrightness);
+                steadyHi = Mathf.Max(steadyHi, tv.DebugScreenBrightness);
+            }
+            T.Check($"the lit tube's level is a BAND, not a number ({steadyLo:0.###}..{steadyHi:0.###})",
+                steadyHi > steadyLo);
+
             tv.FlickerPulse(0.6f);
             T.Check("a brownout pulse starts a sag", tv.DebugBrownout);
-            // Sample across the pulse: the picture must actually drop somewhere in it, not merely set a flag. A sag
-            // that never reaches the screen is indistinguishable from no sag at all.
-            float lowest = steady;
+            // The sag must take the picture BELOW the whole steady band -- not merely below some sample of it, which
+            // the breath alone would manage.
+            float lowest = float.MaxValue;
             for (int i = 0; i < 40; i++)
             {
                 yield return Ticks(1);
                 lowest = Mathf.Min(lowest, tv.DebugScreenBrightness);
             }
-            T.Check($"...and the picture really dips ({lowest:0.###} vs {steady:0.###} steady)", lowest < steady * 0.75f);
+            T.Check($"...and the picture drops clear of the steady band ({lowest:0.###} vs floor {steadyLo:0.###})",
+                lowest < steadyLo * 0.75f);
             yield return Ticks(60);
             T.Check("...then settles back", !tv.DebugBrownout);
-            T.Check($"...to the same level it was ({tv.DebugScreenBrightness:0.###} vs {steady:0.###})",
-                Mathf.Abs(tv.DebugScreenBrightness - steady) < 0.05f);
+            float backLo = float.MaxValue, backHi = float.MinValue;
+            for (int i = 0; i < 30; i++)
+            {
+                yield return Ticks(1);
+                backLo = Mathf.Min(backLo, tv.DebugScreenBrightness);
+                backHi = Mathf.Max(backHi, tv.DebugScreenBrightness);
+            }
+            T.Check($"...to the same BAND it was in ({backLo:0.###}..{backHi:0.###} vs {steadyLo:0.###}..{steadyHi:0.###})",
+                backLo > steadyLo - 0.05f && backHi < steadyHi + 0.05f);
             T.Check("...still lit -- a sag is a dip, not a power cut", tv.DebugLit);
 
             // ---- BLACKOUT kills a mains-fed set.

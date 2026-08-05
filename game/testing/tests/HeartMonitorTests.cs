@@ -74,15 +74,17 @@ namespace UnturnedGodot.Testing
                 string src = ReadText("res://content/ecg.gdshader");
                 T.Check($"the ECG shader was readable ({src.Length} chars)", src.Length > 400);
 
-                float baseline = 0f, peak = 0f, dip = 0f, lw = 0f;
+                float baseline = 0f, peak = 0f, dip = 0f, lw = 0f, scale = 1f;
                 foreach (var l in src.Split('\n'))
                 {
                     var t = l.Trim();
                     if (t.StartsWith("const float BASELINE")) baseline = ParseConst(t);
-                    else if (t.StartsWith("const float R_PEAK")) peak = ParseConst(t);
-                    else if (t.StartsWith("const float Q_DIP")) dip = ParseConst(t);
+                    else if (t.StartsWith("const float VANILLA_SCALE")) scale = ParseConst(t);
+                    else if (t.StartsWith("const float R_PEAK")) peak = ParseFactor(t);
+                    else if (t.StartsWith("const float Q_DIP")) dip = ParseFactor(t);
                     else if (t.StartsWith("const float LINE_W")) lw = ParseConst(t);
                 }
+                peak *= scale; dip *= scale;
                 T.Check($"...and its four proportions parsed (base {baseline:0.###}, R {peak:0.###}, Q {dip:0.###}, w {lw:0.###})",
                     baseline > 0f && peak > 0f && dip > 0f && lw > 0f);
 
@@ -91,12 +93,20 @@ namespace UnturnedGodot.Testing
                 float meshBot = (lo - HeartMonitor.ScreenZ0) / h;
                 float shaderTop = baseline + peak;
                 float shaderBot = baseline - dip;
-                T.Check($"the animated R spike reaches the vanilla height ({shaderTop:0.###} vs mesh {meshTop:0.###})",
-                    Mathf.Abs(shaderTop - meshTop) < 0.02f);
-                T.Check($"...and the Q dip goes as low ({shaderBot:0.###} vs mesh {meshBot:0.###})",
-                    Mathf.Abs(shaderBot - meshBot) < 0.02f);
-                T.Check($"...so peak-to-peak matches ({shaderTop - shaderBot:0.###} vs {meshTop - meshBot:0.###})",
-                    Mathf.Abs((shaderTop - shaderBot) - (meshTop - meshBot)) < 0.03f);
+                // Deliberately 80% of the measured amplitude, not 100% (strawberry: "the amplitude looked like its
+                // more. lower it by like 20%"). The measurement is still the anchor -- the check is that the shader is
+                // that fraction OF the mesh, so the vanilla numbers remain the thing everything is expressed against
+                // and a drift in either the mesh or the constants still fails. Deleting the comparison and hardcoding
+                // 0.286 would have passed just as well and pinned nothing.
+                float meshPeak = meshTop - (baseline);      // vanilla amplitude above the baseline
+                float meshDipA = baseline - meshBot;
+                T.Check($"the shader's scale factor was found ({scale:0.##})", scale > 0.5f && scale <= 1f);
+                T.Check($"the R spike is {scale:0.##} of the vanilla amplitude ({peak:0.###} vs {meshPeak * scale:0.###})",
+                    Mathf.Abs(peak - meshPeak * scale) < 0.02f);
+                T.Check($"...and the Q dip likewise ({dip:0.###} vs {meshDipA * scale:0.###})",
+                    Mathf.Abs(dip - meshDipA * scale) < 0.02f);
+                T.Check($"...so the trace is visibly shorter than vanilla, on purpose ({shaderTop - shaderBot:0.###} vs mesh {meshTop - meshBot:0.###})",
+                    (shaderTop - shaderBot) < (meshTop - meshBot));
                 // TEETH: the screen is much taller than the trace, so "fills the screen" would ALSO sit inside a loose
                 // tolerance. Pin that the trace does not fill it -- the vanilla one occupies about 53% centreline.
                 T.Check($"...and it is NOT simply the whole screen ({meshTop - meshBot:0.###} of it)",
@@ -165,6 +175,20 @@ namespace UnturnedGodot.Testing
 
             PowerNet.SetGlobalPower(gridWas);
             yield break;
+        }
+
+        /// <summary>Parse `const float X = 0.358 * SCALE;` -- the leading factor only. The scale is read separately and
+        /// applied by the caller, so the vanilla measurement stays visible in the source as its own number rather than
+        /// being pre-multiplied into something nobody can trace back to the mesh.</summary>
+        static float ParseFactor(string line)
+        {
+            int eq = line.IndexOf('=');
+            int semi = line.IndexOf(';', eq + 1);
+            if (eq < 0 || semi < 0) return 0f;
+            var body = line[(eq + 1)..semi];
+            int star = body.IndexOf('*');
+            if (star >= 0) body = body[..star];
+            return float.TryParse(body.Trim(), out var v) ? v : 0f;
         }
 
         static float ParseConst(string line)

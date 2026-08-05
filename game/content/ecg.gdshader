@@ -32,8 +32,15 @@ uniform float seed = 0.0;
 const vec3 SCREEN_BG = vec3(0.055, 0.075, 0.062);   // near-black with the faintest green cast, like a phosphor panel
 const vec3 TRACE     = vec3(0.247, 0.467, 0.204);   // the prop's OWN palette green, texel (63,119,52)/255
 const float BASELINE = 0.364;
-const float R_PEAK   = 0.358;    // above baseline, centreline to centreline
-const float Q_DIP    = 0.176;    // below baseline, centreline to centreline
+// 80% of the measured vanilla amplitude (strawberry: "the amplitude looked like its more. lower it by like 20%").
+// Not a drift and not a correction of the measurement -- the numbers off the mesh are 0.358 / 0.176 and those are
+// still what the test compares against. The reason the same number READS taller here is the shape change: a
+// hard-cornered polyline arrives at its peak and turns, holding the extreme for a few pixels, where the Gaussian it
+// replaced only grazed it. Same amplitude, more of it visible. So the perceived height is brought back to vanilla by
+// lowering the actual height, which is the right way round for something judged by eye.
+const float VANILLA_SCALE = 0.80;
+const float R_PEAK   = 0.358 * VANILLA_SCALE;    // above baseline, centreline to centreline
+const float Q_DIP    = 0.176 * VANILLA_SCALE;    // below baseline, centreline to centreline
 const float LINE_W   = 0.050;    // the vanilla RIBBON is 0.076 of the screen; drawn that thick the spike reads as a
                                  // blob at real on-screen size. Amplitude is what "same as vanilla" was about, and
                                  // a thinner line makes that amplitude MORE legible, not less faithful.
