@@ -387,7 +387,7 @@ namespace UnturnedGodot
             Vector2I bestCell = Vector2I.Zero; int bestN = 0; int placed = 0; int lodMissing = 0; int lodLevels = 0;
             int signals = 0, signalsSide = 0;   // side-road flags are matched by POSITION; a silent miss would flash every junction amber
             int waterSources = 0;               // hydrants + towers + sinks; a silent zero here means the mains exist only in the console
-            int televisions = 0, monitors = 0, laptops = 0;   // Television_0/1 + Computer_0/2/3 interactive screens; printed unconditionally so a
+            int televisions = 0, monitors = 0, laptops = 0, monitorsPlaced = 0;   // monitorsPlaced = Science_3 patient monitors   // Television_0/1 + Computer_0/2/3 interactive screens; printed unconditionally so a
                                                 //  hook attaching to NOTHING is visible. Counted SEPARATELY because the two share
                                                 //  one device class -- a combined total would still read "16" if every monitor
                                                 //  silently stopped being picked up and only the televisions remained.
@@ -691,6 +691,15 @@ namespace UnturnedGodot
                     placedToaster = Toaster.Make(mainMi);
                     root.AddChild(placedToaster);
                 }
+                // Patient monitors (strawberry: "for now give it to random units across the map. it'll be a map making
+                // feature"). Random per unit rather than per map, so a ward has a mix -- and seeded off nothing but
+                // GD.Randf, because until it IS a map-making feature there is no authored flag to read.
+                if (HeartMonitor.IsMonitorProp(name) && mode != WorldMode.Dedicated)
+                {
+                    var hm = HeartMonitor.Make(mainMi, GD.Randf() < HeartMonitor.AliveChance);
+                    root.AddChild(hm);
+                    monitorsPlaced++;
+                }
                 if (TVDevice.IsDeviceProp(name) && mode != WorldMode.Dedicated)
                 {
                     placedTV = TVDevice.Make(mainMi, name);
@@ -901,6 +910,7 @@ namespace UnturnedGodot
             GD.Print($"[OBJECTS] placed {placed} objects ({cache.Count} meshes); densest cluster {bestN} near {focus}; holiday-gated {holidaySkipped}{(deferredHoliday != null ? $", deferred {deferredHoliday.Count} to the join handshake" : "")} (active={activeHoliday})");
             if (waterSources > 0) GD.Print($"[water] {waterSources} municipal water sources placed (hydrants + towers + sinks); mains {(FluidNet.GlobalWater ? "ON" : "OFF")}");
             GD.Print($"[tv] {televisions} interactive televisions, {monitors} computer monitors, {laptops} laptops");
+            GD.Print($"[medical] {monitorsPlaced} patient monitors");   // printed unconditionally: a zero here is the tell that the prop stopped being placed
             if (signals > 0) GD.Print($"[signals] {signals} traffic signals, {signalsSide} flagged side-road (flash RED); {signals - signalsSide} main-road (flash amber)");
             GD.Print($"[lod] {placed - lodMissing}/{placed} placements got a retail draw distance; {lodMissing} fell back to the flat 320m; {lodLevels} extra LOD mesh instances");
             GD.Print($"[lod] LOD mesh parse cost: {lodMeshesLoaded} files in {lodLoadTicks * 1000.0 / System.Diagnostics.Stopwatch.Frequency:F0} ms (the load-time price of the runtime triangle saving)");

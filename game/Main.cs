@@ -1392,7 +1392,16 @@ namespace UnturnedGodot
             var mat = new StandardMaterial3D { Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled, VertexColorUseAsAlbedo = true };
             string tp = dir + name + "_tex.png";
             if (System.IO.File.Exists(tp)) { var img = new Image(); if (img.Load(tp) == Error.Ok) { img.GenerateMipmaps(); mat.AlbedoTexture = ImageTexture.CreateFromImage(img); } }
-            AddChild(new MeshInstance3D { Mesh = mesh, MaterialOverride = mat });
+            var propMi = new MeshInstance3D { Mesh = mesh, MaterialOverride = mat };
+            AddChild(propMi);
+            // UG_LIVE=1: also attach whatever DEVICE this prop carries, so the diagnostic can show the animated thing
+            // rather than the static mesh. Added for the patient monitor, whose whole point is that its screen moves.
+            if (System.Environment.GetEnvironmentVariable("UG_LIVE") == "1" && HeartMonitor.IsMonitorProp(name))
+            {
+                var hm = HeartMonitor.Make(propMi, System.Environment.GetEnvironmentVariable("UG_FLATLINE") == "1" ? false : true);
+                AddChild(hm);
+                GD.Print($"[PROPTEST] attached HeartMonitor (alive={hm.Alive})");
+            }
             var aabb = mesh.GetAabb(); var c = aabb.GetCenter(); float r = Mathf.Max(aabb.Size.X, Mathf.Max(aabb.Size.Y, aabb.Size.Z));
             if (r < 0.01f) r = 1f;
             GD.Print($"[PROPTEST] {name} aabb pos={aabb.Position} size={aabb.Size}");
