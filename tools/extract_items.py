@@ -19,7 +19,8 @@ U = r"C:\Program Files (x86)\Steam\steamapps\common\Unturned"
 CORE = os.path.join(U, r"Bundles\core.masterbundle")
 OUT = r"C:\claude-workspace\item_out"
 os.makedirs(OUT, exist_ok=True)
-loot = json.load(open(r"C:\claude-workspace\pei_loot_items.json"))["resolved"]
+_lootpath = sys.argv[1] if len(sys.argv) > 1 else r"C:\claude-workspace\pei_loot_items.json"   # arg: swap in all_items.json to rip the full catalog, not just PEI loot
+loot = json.load(open(_lootpath))["resolved"]
 
 print("loading core.masterbundle ...", flush=True)
 env = UnityPy.load(CORE)
