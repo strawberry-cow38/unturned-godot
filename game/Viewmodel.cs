@@ -71,6 +71,10 @@ namespace UnturnedGodot
         BoxMesh _casingMesh;
         bool _ejects = true;   // GunVisual.Ejects -- false for shotguns (masterkey): no per-shot shell eject
         StandardMaterial3D _casingMat;
+        // Current gun's iron-sight body _Color + its default sight mesh name, remembered at build so a DETACHED-then-
+        // REFITTED iron sight restores its real per-gun colour instead of the near-black scope/red-dot default.
+        Color _sightColor = new(0.3f, 0.3f, 0.3f);
+        string _defaultSightTxt;
         readonly System.Collections.Generic.List<Casing> _casings = new();
         readonly RandomNumberGenerator _rng = new();
         sealed class Casing { public MeshInstance3D Node; public Vector3 Vel; public Vector3 Spin; public float Life; }
@@ -406,6 +410,7 @@ namespace UnturnedGodot
                     // greys 0.12-0.64, honeybadger tan); the old hardcoded 0.06 near-black was wrong. Grey default for the
                     // hardcoded guns (SightColor unset -> A==0).
                     var sightCol = gv.SightColor.A > 0f ? gv.SightColor : new Color(0.3f, 0.3f, 0.3f);
+                    _sightColor = sightCol; _defaultSightTxt = gv.Sight;   // remembered so a re-fitted iron sight (SetSlotMesh) restores this colour, not the red-dot default
                     var sightMat = new StandardMaterial3D { CullMode = BaseMaterial3D.CullModeEnum.Disabled, AlbedoColor = sightCol, Metallic = 0f, MetallicSpecular = 0f, Roughness = 1f };
                     var ironMesh = gv.Sight != null ? ContentProvider.ParseObj($"res://content/{gv.Sight}") : null;
                     if (ironMesh != null)
@@ -864,7 +869,12 @@ namespace UnturnedGodot
             if (slot == "Sight")   // scopes/optics: each scope's REAL body colour from source (7x gray, most near-black); satin metal
             {
                 bool _isSc = ScopeCal.TryGetValue(txtName, out var _sc);
-                Color _bodyCol = _isSc ? _sc.Col : new Color(0.06f, 0.065f, 0.075f);   // ported red-dots (no ScopeCal entry) keep the dark default
+                // a re-fitted IRON SIGHT (this gun's own default sight mesh, or an *_iron_sights mesh) restores its real
+                // per-gun _Color; only a ported red-dot (non-ScopeCal, non-iron) keeps the near-black default. Without
+                // this, detach+re-attach of iron sights went jet-black -- they carry no texture, just a flat _Color, and
+                // fell through to the 0.06 body colour meant for red-dots.
+                bool _isIron = txtName == _defaultSightTxt || txtName.Contains("iron_sights");
+                Color _bodyCol = _isSc ? _sc.Col : (_isIron ? _sightColor : new Color(0.06f, 0.065f, 0.075f));
                 m.MaterialOverride = new StandardMaterial3D { CullMode = BaseMaterial3D.CullModeEnum.Disabled, AlbedoColor = _bodyCol, Metallic = 0f, MetallicSpecular = 0f, Roughness = 1f };   // FULLY MATTE like the gun body/irons/mags -- Unturned guns are non-reflective (master: "why are the scope bodies so shiny"); the old satin 0.35/0.5 broke that convention
                 if (_isSc)
                 {
