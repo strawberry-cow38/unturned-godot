@@ -18,8 +18,13 @@ namespace SDG.Unturned
         /// as it stands NOW (<= 0 on the very first tick, which skips the headroom gate exactly like the
         /// controller's _capStance sentinel did); headroomFor answers "is there space for a capsule this
         /// tall" (Godot shape query on the shell/server; a pure stub in L0 tests).</summary>
+        /// <param name="equipmentAllowsSprint">Retail's `doesEquipmentAllowSprinting` (PlayerStance.cs:698-703):
+        /// `gunAsset.canAimDuringSprint || !gun.isAiming`. AIMING DOES NOT CANCEL A SPRINT -- it stops the SPRINT
+        /// STANCE FROM BEING ENTERED, which is a different thing and the one source picked. Defaulted true so the
+        /// callers that have no weapon opinion (and the L0 stance tests) are unaffected.</param>
         public EPlayerStance Step(bool crouchKey, bool proneKey, bool sprintKey, float stamina, bool broken,
-                                  EPlayerStance? scriptedStance, float currentCapsuleHeight, Func<float, bool> headroomFor)
+                                  EPlayerStance? scriptedStance, float currentCapsuleHeight, Func<float, bool> headroomFor,
+                                  bool equipmentAllowsSprint = true)
         {
             // Intertwined stance STATE MACHINE (master): X = crouch key, Z = prone key, moving between STAND/CROUCH/PRONE from ANY state.
             if (crouchKey && !_crouchHeld) BaseStance = (BaseStance == EPlayerStance.CROUCH) ? EPlayerStance.STAND : EPlayerStance.CROUCH;   // X: stand<->crouch, and prone->crouch
@@ -27,7 +32,7 @@ namespace SDG.Unturned
             if (proneKey && !_proneHeld) BaseStance = (BaseStance == EPlayerStance.PRONE) ? EPlayerStance.STAND : EPlayerStance.PRONE;      // Z: stand<->prone, and crouch->prone
             _proneHeld = proneKey;
             var wantStance = scriptedStance ?? BaseStance;
-            if (wantStance == EPlayerStance.STAND && sprintKey && stamina > 0.05f) wantStance = EPlayerStance.SPRINT;   // sprint overlays standing
+            if (wantStance == EPlayerStance.STAND && sprintKey && stamina > 0.05f && equipmentAllowsSprint) wantStance = EPlayerStance.SPRINT;   // sprint overlays standing; ADS withholds it (PlayerStance.cs:698-703)
             if (broken && wantStance == EPlayerStance.SPRINT) wantStance = EPlayerStance.STAND;   // broken legs can't sprint (PlayerStance.cs:703)
             // can't rise into a ceiling: if the target stance is TALLER than the current capsule and there's no headroom, stay low (master)
             float wantH = PlayerMovementDef.HeightForStance(wantStance);

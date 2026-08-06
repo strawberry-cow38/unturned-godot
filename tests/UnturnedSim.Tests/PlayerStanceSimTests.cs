@@ -15,8 +15,36 @@ namespace UnturnedSim.Tests
 
         static EPlayerStance Step(PlayerStanceSim s, bool x = false, bool z = false, bool sprint = false,
                                   float stamina = 1f, bool broken = false, EPlayerStance? scripted = null,
-                                  float cap = StandCap, System.Func<float, bool> headroom = null)
-            => s.Step(x, z, sprint, stamina, broken, scripted, cap, headroom ?? Roomy);
+                                  float cap = StandCap, System.Func<float, bool> headroom = null,
+                                  bool equipmentAllowsSprint = true)
+            => s.Step(x, z, sprint, stamina, broken, scripted, cap, headroom ?? Roomy, equipmentAllowsSprint);
+
+        // ADS AND SPRINT ARE MUTUALLY EXCLUSIVE (strawberry). Source picks a specific one of the two possible
+        // readings: PlayerStance.cs:701 folds `canAimDuringSprint || !gun.isAiming` into the gate that ENTERS the
+        // sprint stance, so aiming WITHHOLDS the sprint -- it does not cancel the aim. The distinction is the whole
+        // behaviour: cancel-the-aim would rip your sights away every time sprint was brushed.
+        [Test]
+        public void Aiming_WithholdsSprint_RatherThanCancellingTheAim()
+        {
+            var s = new PlayerStanceSim();
+            Assert.That(Step(s, sprint: true), Is.EqualTo(EPlayerStance.SPRINT), "sprint works with a free weapon");
+            Assert.That(Step(s, sprint: true, equipmentAllowsSprint: false), Is.EqualTo(EPlayerStance.STAND),
+                        "a shouldered gun withholds the sprint stance");
+            // ...and the base stance is untouched, so releasing the aim resumes the sprint rather than needing a
+            // fresh key press -- a withheld sprint is not a cancelled one.
+            Assert.That(Step(s, sprint: true), Is.EqualTo(EPlayerStance.SPRINT), "and it comes straight back");
+        }
+
+        [Test]
+        public void Aiming_DoesNotDisturbCrouchOrProne()
+        {
+            // The gate rides on the STAND->SPRINT overlay only. An aiming player who is crouched must stay crouched,
+            // not get pushed to STAND by a rule that is about sprinting.
+            var s = new PlayerStanceSim();
+            Assert.That(Step(s, x: true), Is.EqualTo(EPlayerStance.CROUCH));
+            Assert.That(Step(s, x: false, sprint: true, equipmentAllowsSprint: false), Is.EqualTo(EPlayerStance.CROUCH),
+                        "aiming while crouched leaves the crouch alone");
+        }
 
         [Test]
         public void CrouchKey_TogglesStandCrouch_OnPressEdgeOnly()

@@ -5525,7 +5525,13 @@ namespace UnturnedGodot
 
         void StepStanceOnce(bool crouchKey, bool proneKey, bool sprintKey, EPlayerStance? scriptedStance)
         {
-            _move.Stance = _stance.Step(crouchKey, proneKey, sprintKey, Stamina, Broken, scriptedStance, _capStance, HeadroomFor);
+            // ADS WITHHOLDS THE SPRINT STANCE (strawberry: "make ads-ing and sprinting states mutually exclusive").
+            // Source does not cancel the aim when you press sprint -- PlayerStance.cs:701 folds
+            // `gunAsset.canAimDuringSprint || !gun.isAiming` into the gate that ENTERS the sprint stance, so a
+            // shouldered gun simply means the sprint never starts. Cancelling the aim instead would look similar and
+            // feel nothing like it: you would lose your sights every time a sprint key was brushed.
+            bool equipmentAllowsSprint = _viewmodel == null || !_viewmodel.IsAiming;
+            _move.Stance = _stance.Step(crouchKey, proneKey, sprintKey, Stamina, Broken, scriptedStance, _capStance, HeadroomFor, equipmentAllowsSprint);
             // Water overrides the key-driven stance. NetAvatars hold the replicated stance (NetHoldPose), so
             // only a locally-simulated shell decides here.
             if (!NetAvatar && BodyUnderwater)

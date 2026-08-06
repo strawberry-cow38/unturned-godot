@@ -765,7 +765,17 @@ namespace UnturnedGodot
 
         // Hold RMB to aim (Unturned's default aiming mode). PlayerController drives this on RMB down/up.
         // Source gate: can't begin aiming until the equip pull-out is finished (IsEquipAnimationFinished).
-        public void SetAiming(bool on) { if (on && (!EquipDone || _attachView || _reloading || _hammering)) return; if (on && _inspecting) CancelInspect(); _aiming = on; }   // no ADS while the attach menu is up, or during ANY active reload / rack / bolt-cycle (source canStartAim: !isReloading && !isHammering) (master); ADS mid-inspect cancels the inspect then aims
+        /// <summary>Is the gun shouldered? Read by the stance FSM, which must not enter SPRINT while it is
+        /// (PlayerStance.cs:701 `doesEquipmentAllowSprinting`).</summary>
+        public bool IsAiming => _aiming;
+
+        // ...and the other half of the same rule: you cannot START an aim while sprinting (UseableGun.cs:3221,
+        // `canStartAim &= isSprinting == false || equippedGunAsset.canAimDuringSprint`). Both directions are gated in
+        // source and they are NOT the same statement -- one withholds the stance, the other withholds the aim -- so
+        // implementing either alone still leaves a way into sprint-ADS. `_stance == SPRINT && _moving` mirrors retail's
+        // own isSprinting (UseableGun.cs:3947). Can_Aim_During_Sprint is a per-gun .dat exception, default false, and
+        // nothing in our content sets it -- so this is unconditional here until something does.
+        public void SetAiming(bool on) { if (on && (!EquipDone || _attachView || _reloading || _hammering || (_stance == EPlayerStance.SPRINT && _moving))) return; if (on && _inspecting) CancelInspect(); _aiming = on; }   // no ADS while the attach menu is up, or during ANY active reload / rack / bolt-cycle (source canStartAim: !isReloading && !isHammering) (master); ADS mid-inspect cancels the inspect then aims
         // Consumable eat/drink motion on click -- this item's OWN archetype (CU_n: eat/drink/pills/syringe/bandage),
         // else the generic Consume_Use, else re-raise (Melee_Equip placeholder).
         public void PlayConsumeUse()
