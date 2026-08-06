@@ -351,7 +351,7 @@ namespace UnturnedGodot
         // the next open/close.
         public void RefreshGlow()
         {
-            bool on = (_glowAlways || _doorsOpen) && PowerNet.GlobalPower;
+            bool on = (_glowAlways || _doorsOpen) && PowerNet.MainsLive;
             if (_glow != null) _glow.Visible = on;
             if (_glowInteriorMi != null && IsInstanceValid(_glowInteriorMi)) _glowInteriorMi.MaterialOverride = on ? _glowLitMat : _glowOffMat;   // cooler: emissive INTERIOR while lit
         }

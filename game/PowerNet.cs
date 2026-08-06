@@ -25,7 +25,50 @@ namespace UnturnedGodot
         public static bool ToggleGlobalPower() { _globalPower = !_globalPower; MarkDirty(); return _globalPower; }
         public static void SetGlobalPower(bool on) { if (_globalPower != on) { _globalPower = on; MarkDirty(); } }
 
-        public static void ResetForTests() { _dirty = true; _lastWires = -1; _lastDeployables = -1; _globalPower = false; }   // L1 test isolation between sandboxes
+        // ---- MAINS AUTHORITY, which is NOT always the flag above -----------------------------------------------------
+        //
+        // On a joined client or a consuming loopback the mains are server-authoritative: `toggleGlobalPower` is
+        // forwarded over the console plane (DevConsole returns before touching _globalPower), the server flips each
+        // GridPowerSource fixture's replicated ToggledOn, and DeployableReplicaView pushes that into
+        // NetProducingOverride. So on that path the process-global flag NEVER MOVES -- GridPowerSource already knows
+        // this and reads `_netProducing ?? GlobalPower`, with a comment saying never to use the global directly.
+        //
+        // Every OTHER mains-fed fixture -- televisions, patient monitors, gas pumps -- read the raw flag, so grid
+        // sources correctly stopped producing while the fixtures carried on regardless. Reported as "globalpower has
+        // no effect on tvs", and it also let a set be switched ON with the grid dead, because the same flag gates
+        // Toggle's Refresh. L1 could not see any of it: the harness is direct SP, where the flag path is the real one
+        // and the replicated path never runs.
+        //
+        // Tracked as a SET of live replicated sources rather than one last-write bool, so several breaker boxes
+        // toggled independently give the right answer instead of whichever reported last.
+        static readonly System.Collections.Generic.HashSet<GodotObject> _netMainsOn = new();
+        static bool _anyReplicatedGrid;
+
+        /// <summary>A replicated grid source reporting its server-authoritative producing bit.</summary>
+        public static void ReportNetMains(GodotObject src, bool on)
+        {
+            _anyReplicatedGrid = true;
+            if (on) _netMainsOn.Add(src); else _netMainsOn.Remove(src);
+            MarkDirty();
+        }
+
+        /// <summary>Is the mains live? The replicated bit where there IS one, the local flag otherwise. This is what a
+        /// mains-fed fixture must gate on -- never GlobalPower, for the reasons above.</summary>
+        public static bool MainsLive
+        {
+            get
+            {
+                if (!_anyReplicatedGrid) return _globalPower;
+                _netMainsOn.RemoveWhere(o => !GodotObject.IsInstanceValid(o));   // a despawned source is not a supply
+                return _netMainsOn.Count > 0;
+            }
+        }
+
+        public static void ResetForTests()
+        {
+            _dirty = true; _lastWires = -1; _lastDeployables = -1; _globalPower = false;
+            _netMainsOn.Clear(); _anyReplicatedGrid = false;   // or one sandbox's replicas decide the next one's mains
+        }
 
         public static void RecomputeIfDirty(SceneTree tree)
         {

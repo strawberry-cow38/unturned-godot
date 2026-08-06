@@ -1241,7 +1241,10 @@ namespace UnturnedGodot
         /// <summary>Does this set have power at all? The town mains OR its own wired plug -- either alone is enough,
         /// which is the whole point of the plug: a blackout kills every set on the grid and leaves the one you wired to
         /// your generator running.</summary>
-        public bool HasFeed => PowerNet.GlobalPower || PlugPowered;
+        // MainsLive, not GlobalPower: on a loopback/joined client the mains ride the replicated grid bit and the
+        // process-global flag never moves, which left every set lit through a server-side blackout (strawberry:
+        // "globalpower has no effect on tvs"). Identical in direct SP, where MainsLive IS the flag.
+        public bool HasFeed => PowerNet.MainsLive || PlugPowered;
 
         public void Refresh()
         {

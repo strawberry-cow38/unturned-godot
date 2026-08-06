@@ -53,7 +53,16 @@ namespace UnturnedGodot
         public bool? NetProducingOverride
         {
             get => _netProducing;
-            set { if (_netProducing != value) { _netProducing = value; PowerNet.MarkDirty(); } }
+            set
+            {
+                if (_netProducing == value) return;
+                _netProducing = value;
+                // Publish it, so the fixtures that used to read the raw global flag can ask the same authority this
+                // node does. Without this, a client's televisions/monitors/pumps ignore a server-side blackout: the
+                // mains never touch PowerNet.GlobalPower on that path.
+                if (value.HasValue) PowerNet.ReportNetMains(this, value.Value);
+                PowerNet.MarkDirty();
+            }
         }
         bool Producing => _netProducing ?? PowerNet.GlobalPower;   // replica: the replicated mains bit; direct SP: the global flag
         /// <summary>Is this breaker actually feeding the grid? Other municipal consumers (streetlights) must ask

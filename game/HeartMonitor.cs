@@ -87,7 +87,7 @@ namespace UnturnedGodot
 
         /// <summary>Live on the mains OR on a wire into the port -- the same two-source gate TVDevice.HasFeed uses.
         /// A ward monitor is precisely the thing someone runs off a generator once the grid is gone.</summary>
-        public bool HasFeed => PowerNet.GlobalPower || (_plug != null && GodotObject.IsInstanceValid(_plug) && _plug.Powered);
+        public bool HasFeed => PowerNet.MainsLive || (_plug != null && GodotObject.IsInstanceValid(_plug) && _plug.Powered);
 
         public static bool IsMonitorProp(string prop) => prop == PropName;
 

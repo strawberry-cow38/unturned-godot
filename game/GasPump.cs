@@ -39,7 +39,7 @@ namespace UnturnedGodot
         /// take global power"). Same two-source gate TVDevice.HasFeed uses: a forecourt pump runs off the grid like
         /// everything else on it, and a generator wired straight into the port keeps it alive once the grid dies.
         /// Wire-only was why every pump on the map read "no power" until someone ran a cable to it.</summary>
-        public bool IsPowered => PowerNet.GlobalPower
+        public bool IsPowered => PowerNet.MainsLive
                               || (_input != null && GodotObject.IsInstanceValid(_input) && _input.Powered);
 
         // look-at outline (glow duplicate on the overlay layer) + info tooltip

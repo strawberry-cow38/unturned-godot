@@ -33,7 +33,7 @@ namespace UnturnedGodot
         public uint PowerNetId => 0;   // SP-local map fixture (an MP replica id would go here, like GasPump / GridSource)
         public IReadOnlyList<ConnectionPort> PowerPorts => _ports;
 
-        bool OutputLive => _kind == LightKind.Traffic ? TrafficLight.BatteryBackup : PowerNet.GlobalPower;
+        bool OutputLive => _kind == LightKind.Traffic ? TrafficLight.BatteryBackup : PowerNet.MainsLive;
 
         /// <summary>Attach a tap at a light prop. pos/basis = the placement transform (WorldBuilder.PlaceObject);
         /// inLocal / outLocal are port positions in the prop's LOCAL frame (the flat authored frame the basis stands

@@ -48,7 +48,7 @@ namespace UnturnedGodot
             BuildVisual();
             var dn = GetTree().GetFirstNodeInGroup("daynight") as DayNightCycle;
             _night = dn == null || DayNightCycle.IsNightTime(dn.Time);   // no cycle in this mode -> default "night"
-            _powered = PowerNet.GlobalPower;                             // municipal grid feed (default on)
+            _powered = PowerNet.MainsLive;                               // municipal grid feed (default on)
             Refresh();
             SetProcess(false);   // idle fixtures do NOT tick every frame -- _Process runs ONLY while a transition flickers
         }

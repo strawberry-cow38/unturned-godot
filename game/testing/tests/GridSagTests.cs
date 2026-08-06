@@ -135,6 +135,42 @@ namespace UnturnedGodot.Testing
             yield return Ticks(30);
             T.Check($"...and relights it ({tv.DebugLit})", tv.DebugLit);
 
+            // ---- THE REPLICATED MAINS: the path every check above is blind to.
+            //
+            // On a loopback/joined client `toggleGlobalPower` is forwarded to the server -- DevConsole returns before
+            // touching the process-global flag -- and the mains arrive as each GridPowerSource's replicated ToggledOn.
+            // So the flag stays TRUE while the grid is genuinely dead, and a fixture gating on GlobalPower stays lit
+            // through a blackout it should have seen. That is exactly the report, and it was invisible to L1 because
+            // the harness is direct SP: the flag path is the real one there and the replicated path never runs.
+            //
+            // Simulated by doing what DeployableReplicaView does -- pushing NetProducingOverride -- while deliberately
+            // leaving GlobalPower ON. If a fixture is reading the raw flag, it cannot fail this test's premise.
+            PowerNet.SetGlobalPower(true);
+            PowerNet.Recompute(Tree);
+            var pump2 = GasPump.Attach(World, new Vector3(7f, 0f, 0f), Basis.Identity, GasPump.PortLocal);
+            var gridSrc = GridPowerSource.Materialize(World, new Vector3(-6f, 0f, 0f), 0f, 10000f, 4242);
+            gridSrc.NetProducingOverride = true;
+            PowerNet.Recompute(Tree);
+            yield return Ticks(240);
+            T.Check($"the set is lit with the replicated mains up ({tv.DebugLit})", tv.DebugLit);
+            T.Check($"...and the local flag is still ON, so this is not the flag being read ({PowerNet.GlobalPower})",
+                PowerNet.GlobalPower);
+
+            gridSrc.NetProducingOverride = false;   // the server's blackout; the LOCAL flag does not move
+            PowerNet.Recompute(Tree);
+            yield return Ticks(30);
+            T.Check($"a server-side blackout darkens the set even though GlobalPower is still true ({tv.DebugLit})",
+                !tv.DebugLit);
+            // A FRESH, UNWIRED pump -- not the one above, which has a generator cabled into it from the earlier
+            // section and is SUPPOSED to ride a blackout out. Asserting on that one tested the wrong fixture and
+            // failed for the right reason.
+            T.Check($"...and an unwired pump goes with it ({pump2.IsPowered})", !pump2.IsPowered);
+            gridSrc.NetProducingOverride = true;
+            PowerNet.Recompute(Tree);
+            yield return Ticks(30);
+            T.Check($"...and both come back when the server restores it ({tv.DebugLit}/{pump2.IsPowered})",
+                tv.DebugLit && pump2.IsPowered);
+
             PowerNet.SetGlobalPower(gridWas);
             PowerNet.Recompute(Tree);
             yield break;
