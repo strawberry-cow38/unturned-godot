@@ -3680,7 +3680,23 @@ namespace UnturnedGodot
             AddChild(_lookHullViz);
 
             _body = RiggedCharacter.Build("res://content/rig.json", new Color(0.82f, 0.66f, 0.52f));   // live 3rd-person body
-            if (_body != null) { _body.Visible = false; CallDeferred(Node.MethodName.AddSibling, _body); }
+            if (_body != null)
+            {
+                _body.Visible = false;
+                // Opt the LOCAL 3P body out of Godot's global physics interpolation, exactly as the player node above
+                // does. It is a SIBLING, not a child, so it never inherited that opt-out -- it sat on the project
+                // default (physics_interpolation=true) while _Process writes its transform EVERY FRAME from our
+                // already manually-interpolated GlobalPosition. Godot then interpolated that a second time, from the
+                // last physics tick's snapshot, so the model juddered against a camera and a world that were both
+                // smooth (master: "theres jitter on the model in 3p"). Double-smoothing reads as no smoothing.
+                //
+                // NOT on a NetAvatar. _Process returns immediately for one, so a remote player's body is never driven
+                // per-frame at all -- it is placed straight from network snapshots in PlayerNetSync. Godot's
+                // interpolation is the ONLY thing smoothing those, and turning it off here would have fixed our own
+                // model by making every other player's stutter.
+                if (!NetAvatar) _body.PhysicsInterpolationMode = Node.PhysicsInterpolationModeEnum.Off;
+                CallDeferred(Node.MethodName.AddSibling, _body);
+            }
             _viewmodel = new Viewmodel { GunName = _gunName };   // per-gun visuals
             AddChild(_viewmodel);
             _rng.Randomize();
@@ -4878,6 +4894,10 @@ namespace UnturnedGodot
                 // The character leans too, or the muzzle every 3P effect is sourced from stays bolt upright while the
                 // camera tilts away from it. Fed the same smoothed angle the camera rides, so body and view agree.
                 _body.LeanDeg = _leanAngle;
+                // ...and pitches with the look, or a character aiming at the sky stands there level (master: "can we
+                // get pitch tilt for the spine when aiming up/down in 3p"). Retail feeds the raw look pitch and lets
+                // HumanAnimator split it half to the spine, half to the skull.
+                _body.PitchDeg = _pitchDeg;
                 _body.SetLocomotion(new Vector2(Velocity.X, Velocity.Z).Length(), Stance);   // crouch/prone anims by stance (master)
             }
             UpdateBodyGun();   // attach + pose the held gun on the 3P body (detaches when driving/dead/unarmed)

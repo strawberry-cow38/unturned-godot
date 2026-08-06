@@ -368,10 +368,12 @@ namespace UnturnedGodot
         ///
         /// NOT retail's `_pitch * 0.5f` term. Our 3P spine does not pitch with the look angle at all; separate
         /// missing behaviour, deliberately not bundled.
-        public partial class LeanModifier : SkeletonModifier3D
+        public partial class TorsoPoseModifier : SkeletonModifier3D
         {
             public float LeanDeg;
+            public float PitchDeg;        // the FULL look pitch; spine and skull take half each (see below)
             public int SpineBone = -1;
+            public int SkullBone = -1;
             // The resulting Spine->Skull direction in skeleton space, recorded EVERY pass (leaning or not). This is
             // the only place the modified pose is observable: Godot restores the stored bone pose once the
             // modification pass ends, so a caller doing GetBoneGlobalPose from outside reads the UNMODIFIED skeleton
@@ -379,6 +381,12 @@ namespace UnturnedGodot
             // but it lives in the pass, so anything asserting on it has to sample here. Per-instance, never static:
             // a shared slot would let one rig's reading stand in for another's and turn "never ran" into a pass.
             public Vector3 SkullDir = Vector3.Up;
+
+            // Global (skeleton-space) orientation of each bone as it ended up. Recorded so a test can measure how far
+            // a bone TURNED between two runs -- Basis-to-Basis angle is convention-free, so the half-to-the-spine /
+            // half-to-the-skull split can be checked without re-deriving which local axis means "pitch" on this rig,
+            // which is the derivation the assertion is supposed to be independent of.
+            public Basis SpineBasis = Basis.Identity, SkullBasis = Basis.Identity;
 
             public override void _ProcessModification()
             {
@@ -405,20 +413,59 @@ namespace UnturnedGodot
                 Basis parentBasis = parent >= 0 ? sk.GetBoneGlobalPose(parent).Basis : Basis.Identity;
                 Vector3 axis = (parentBasis.Inverse() * Vector3.Back).Normalized();
                 if (!axis.IsFinite() || axis.LengthSquared() < 1e-6f) return;
+                // Retail composes both onto the one bone: spine.Rotate(0, _pitch * 0.5f, _lean * LEAN). Unity's
+                // Rotate applies Z then X then Y, so the lean lands first and the pitch on top of it -- hence
+                // pitch * lean here and not the other way round.
+                var d = Quaternion.Identity;
                 if (!Mathf.IsZeroApprox(LeanDeg))
+                    d = new Quaternion(axis, Mathf.DegToRad(LeanDeg));
+                if (!Mathf.IsZeroApprox(PitchDeg))
                 {
-                    var d = new Quaternion(axis, Mathf.DegToRad(LeanDeg));
+                    // Pitch is a rotation about the character's RIGHT axis, +X by the same derivation that put
+                    // forward at -Z. Looking up (our _pitchDeg > 0, a Godot +X camera rotation) has to tilt the torso
+                    // BACK: the arms hang off the spine, so the shoulders can only raise the gun toward the sky by
+                    // rotating the chest up and the head back. A rotation about +X carries +Y toward +Z, which is
+                    // backwards -- so the angle keeps the pitch's sign rather than inverting it.
+                    var pa = (parentBasis.Inverse() * Vector3.Right).Normalized();
+                    if (pa.IsFinite() && pa.LengthSquared() > 1e-6f)
+                        d = new Quaternion(pa, Mathf.DegToRad(PitchDeg * SpinePitchShare)) * d;
+                }
+                if (!d.IsEqualApprox(Quaternion.Identity))
                     sk.SetBonePoseRotation(SpineBone, d * sk.GetBonePoseRotation(SpineBone));
+
+                // The SKULL takes the other half -- retail's very next line, skull.Rotate(0, _pitch * 0.5f, 0). Without
+                // it the head only turns half as far as you are actually looking, and since the spine's half is all
+                // the arms get, a 3P character aiming at the sky would be staring at the horizon.
+                //
+                // Read the skull's parent basis AFTER the spine write above: the globals recompute inside the pass, so
+                // this half composes onto the pitched spine instead of fighting it.
+                if (SkullBone >= 0 && !Mathf.IsZeroApprox(PitchDeg))
+                {
+                    int sp = sk.GetBoneParent(SkullBone);
+                    Basis sb = sp >= 0 ? sk.GetBoneGlobalPose(sp).Basis : Basis.Identity;
+                    var sa = (sb.Inverse() * Vector3.Right).Normalized();
+                    if (sa.IsFinite() && sa.LengthSquared() > 1e-6f)
+                        sk.SetBonePoseRotation(SkullBone,
+                            new Quaternion(sa, Mathf.DegToRad(PitchDeg * SkullPitchShare)) * sk.GetBonePoseRotation(SkullBone));
                 }
 
-                int skull = sk.FindBone("Skull");
-                if (skull >= 0)
-                    SkullDir = (sk.GetBoneGlobalPose(skull).Origin - sk.GetBoneGlobalPose(SpineBone).Origin).Normalized();
+                SpineBasis = sk.GetBoneGlobalPose(SpineBone).Basis.Orthonormalized();
+                if (SkullBone >= 0)
+                {
+                    SkullBasis = sk.GetBoneGlobalPose(SkullBone).Basis.Orthonormalized();
+                    SkullDir = (sk.GetBoneGlobalPose(SkullBone).Origin - sk.GetBoneGlobalPose(SpineBone).Origin).Normalized();
+                }
             }
         }
 
-        LeanModifier _leanMod;
-        float _leanDeg;
+        TorsoPoseModifier _leanMod;
+        float _leanDeg, _pitchDeg;
+
+        /// <summary>Retail splits the look pitch across two bones -- spine.Rotate(0, _pitch * 0.5f, ...) then
+        /// skull.Rotate(0, _pitch * 0.5f, 0) -- so the head ends up covering the full angle while the shoulders (and
+        /// therefore the gun) only get half of it. That asymmetry is deliberate and load-bearing, not a rounding of
+        /// "the torso pitches": a 3P character aiming at the sky raises the gun halfway and looks the rest.</summary>
+        internal const float SpinePitchShare = 0.5f, SkullPitchShare = 0.5f;
         /// <summary>Signed lean in degrees; + leans left, matching PlayerController's _leanAngle.
         ///
         /// Backed by a FIELD rather than forwarded straight at the modifier. The first version was
@@ -432,18 +479,34 @@ namespace UnturnedGodot
             set { _leanDeg = value; if (_leanMod != null) _leanMod.LeanDeg = value; }
         }
 
+        /// <summary>Look pitch in degrees, + looking up, matching PlayerController._pitchDeg. Backed by a field for
+        /// the same reason LeanDeg is: an assignment before the modifier exists must not vanish.</summary>
+        public float PitchDeg
+        {
+            get => _pitchDeg;
+            set { _pitchDeg = value; if (_leanMod != null) _leanMod.PitchDeg = value; }
+        }
+
         /// <summary>Attach the lean modifier to a freshly built skeleton. Called from BuildFrom for EVERY rig --
         /// player, zombie, corpse -- because the lean must not depend on whether a gun layer was ever enabled.</summary>
         /// <summary>Where the torso actually ended up: the Spine-&gt;Skull direction in skeleton space, sampled inside
         /// the modification pass (the only place the leaned pose exists -- see LeanModifier.SkullDir).</summary>
         public Vector3 LeanSkullDir => _leanMod?.SkullDir ?? Vector3.Up;
 
+        /// <summary>Spine/skull orientation as posed, sampled inside the modification pass (see TorsoPoseModifier).</summary>
+        public Basis TorsoSpineBasis => _leanMod?.SpineBasis ?? Basis.Identity;
+        public Basis TorsoSkullBasis => _leanMod?.SkullBasis ?? Basis.Identity;
+
         void AttachLeanModifier()
         {
             if (Skeleton == null || _leanMod != null) return;
             int spine = Skeleton.FindBone("Spine");
             if (spine < 0) return;
-            _leanMod = new LeanModifier { SpineBone = spine, LeanDeg = _leanDeg, Name = "LeanModifier" };
+            _leanMod = new TorsoPoseModifier
+            {
+                SpineBone = spine, SkullBone = Skeleton.FindBone("Skull"),
+                LeanDeg = _leanDeg, PitchDeg = _pitchDeg, Name = "LeanModifier",
+            };
             Skeleton.AddChild(_leanMod);
         }
 

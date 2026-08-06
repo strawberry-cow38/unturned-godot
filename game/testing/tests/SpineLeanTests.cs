@@ -116,4 +116,93 @@ namespace UnturnedGodot.Testing
             return null;
         }
     }
+
+    // The pitch half of retail's torso pose: HumanAnimator.apply() does spine.Rotate(0, _pitch * 0.5f, ...) and then
+    // skull.Rotate(0, _pitch * 0.5f, 0), so the SPINE turns half the look angle and the SKULL -- inheriting the
+    // spine's half and adding its own -- turns the whole of it. The gun hangs off the spine, so a 3P character aiming
+    // at the sky raises the weapon halfway and makes up the rest with their head. That asymmetry is the feature.
+    //
+    // Measured as a Basis-to-Basis angle rather than by reading a local euler: how far a bone TURNED between two runs
+    // is convention-free, so the check does not quietly re-derive the same "which axis is pitch on this rig" guess
+    // the implementation makes, and cannot agree with it by sharing its mistake.
+    public class SpinePitchSplitsAcrossSpineAndSkull : GameTest
+    {
+        public override string Name => "rig.spine_pitch";
+
+        const float Pitch = 45f;         // + = looking up, matching PlayerController._pitchDeg
+
+        public override IEnumerable<Step> Run()
+        {
+            RiggedCharacter.SetAnimFrozen(false);
+
+            var flat = new ZombieController();
+            var aim  = new ZombieController();
+            World.AddChild(flat);
+            World.AddChild(aim);
+            flat.GlobalPosition = new Vector3(-4f, 0f, 0f);
+            aim.GlobalPosition = new Vector3(4f, 0f, 0f);
+            yield return Ticks(10);
+
+            var rf = FindDown<RiggedCharacter>(flat);
+            var ra = FindDown<RiggedCharacter>(aim);
+            bool built = rf?.Skeleton != null && ra?.Skeleton != null && rf.Skeleton.FindBone("Skull") >= 0;
+            T.Check("both rigs built with a Spine + Skull bone", built);
+            if (!built) yield break;
+
+            rf.PlayLoop("Idle_0");
+            ra.PlayLoop("Idle_0");
+            yield return Ticks(4);
+
+            // Control: unpitched rigs on the same clip must read as the same pose, or every angle below is clip drift.
+            T.Check($"control: two unpitched rigs agree (spine {Turn(rf.TorsoSpineBasis, ra.TorsoSpineBasis):0.###} deg, "
+                  + $"skull {Turn(rf.TorsoSkullBasis, ra.TorsoSkullBasis):0.###} deg)",
+                Turn(rf.TorsoSpineBasis, ra.TorsoSpineBasis) < 0.5f && Turn(rf.TorsoSkullBasis, ra.TorsoSkullBasis) < 0.5f);
+
+            ra.PitchDeg = Pitch;
+            yield return Ticks(4);
+
+            float spineTurn = Turn(rf.TorsoSpineBasis, ra.TorsoSpineBasis);
+            float skullTurn = Turn(rf.TorsoSkullBasis, ra.TorsoSkullBasis);
+
+            T.Check($"spine takes HALF the pitch ({spineTurn:0.##} deg of {Pitch})",
+                Mathf.Abs(spineTurn - Pitch * RiggedCharacter.SpinePitchShare) < 2f);
+            T.Check($"skull ends up covering the FULL pitch ({skullTurn:0.##} deg of {Pitch})",
+                Mathf.Abs(skullTurn - Pitch) < 2f);
+            // The split is the point: if both bones ever turn by the same amount, one of the two halves is missing and
+            // the head has stopped tracking the aim -- which no magnitude check above would catch on its own.
+            T.Check($"the head turns FURTHER than the chest ({skullTurn:0.##} vs {spineTurn:0.##} deg)",
+                skullTurn > spineTurn + 5f);
+
+            // Direction: looking UP tilts the torso BACK (+Z is backward, forward being -Z). The arms hang off the
+            // spine, so the only way the shoulders raise a gun toward the sky is by rotating the chest up and
+            // carrying the head backwards.
+            T.Check($"looking up tilts the torso BACK (z {ra.LeanSkullDir.Z:0.###})", ra.LeanSkullDir.Z > 0.05f);
+
+            // ...and looking down mirrors it, rather than the sign only being right on one side of level.
+            ra.PitchDeg = -Pitch;
+            yield return Ticks(4);
+            T.Check($"looking down tilts the torso FORWARD (z {ra.LeanSkullDir.Z:0.###})", ra.LeanSkullDir.Z < -0.05f);
+
+            ra.PitchDeg = 0f;
+            yield return Ticks(4);
+            T.Check($"pitch 0 returns the torso upright ({Turn(rf.TorsoSpineBasis, ra.TorsoSpineBasis):0.###} deg residual)",
+                Turn(rf.TorsoSpineBasis, ra.TorsoSpineBasis) < 0.5f);
+        }
+
+        // Angle of the rotation that takes basis a to basis b, in degrees. Independent of which local axis anything
+        // calls "pitch".
+        static float Turn(Basis a, Basis b)
+        {
+            Quaternion q = b.GetRotationQuaternion() * a.GetRotationQuaternion().Inverse();
+            return Mathf.RadToDeg(2f * Mathf.Acos(Mathf.Clamp(Mathf.Abs(q.W), -1f, 1f)));
+        }
+
+        static TN FindDown<TN>(Node n) where TN : Node
+        {
+            if (n is TN hit) return hit;
+            foreach (var c in n.GetChildren())
+                if (FindDown<TN>(c) is TN found) return found;
+            return null;
+        }
+    }
 }

@@ -696,6 +696,15 @@ namespace UnturnedGodot
             // Unity's, so which axis rolls the torso sideways is a thing to LOOK at rather than port on faith.
             if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_LEAN"), out var _lean))
             { rc.LeanDeg = _lean; GD.Print($"[rig] lean {_lean:0.#} deg"); }
+            // UG_PITCH=<deg>, + looking up. Same reason as UG_LEAN: "looking up tilts the torso back" is a claim about
+            // the picture, and a single frame can settle it -- unlike the lean's SIGN, which needed the camera.
+            if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_PITCH"), out var _pit))
+            { rc.PitchDeg = _pit; GD.Print($"[rig] pitch {_pit:0.#} deg"); }
+            // UG_YAW=<deg>: turn the character on the spot. The harness camera looks at the rig nearly head-on, which
+            // is the WORST angle for judging a pitch -- a rotation in the sagittal plane is edge-on from there and
+            // reads as ambiguous head-wobble. Yaw 90 puts that plane across the screen, where a tilt is just a tilt.
+            if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_YAW"), out var _yaw))
+            { rc.RotationDegrees = new Vector3(0f, _yaw, 0f); GD.Print($"[rig] yaw {_yaw:0.#} deg"); }
             if (System.Environment.GetEnvironmentVariable("UG_GUNLAYER") == "1" && !string.IsNullOrEmpty(gun))
             {
                 // 3P GUN LAYER test: legs walk (Move_Walk) while the arms hold/aim/reload the gun via the overlay.
