@@ -48,6 +48,8 @@ namespace UnturnedGodot
         int _rigMontageIdx = -1;
         const int MontageFramesPerClip = 55;
         bool _ragTest;                               // --anim=Ragdoll : trigger the death ragdoll mid-capture
+        bool _gunLayerTest;                          // UG_GUNLAYER=1 (+--gun): legs walk while the arms hold/aim/reload the gun via the overlay
+        string _glEquipClip, _glReloadClip;          // resolved overlay clips for the gun-layer test
         bool _vmTest; Viewmodel _vm;                 // --vm=DIR : first-person viewmodel test (equip -> ADS -> hip)
         bool _vmMelee;                               // --vm target is a melee weapon -> skip the gun aim/fire/reload script (MeleeSwingDriver swings it instead)
         bool _vmAimed; int _vmAimStart; int _vmSettle;
@@ -483,7 +485,7 @@ namespace UnturnedGodot
             {
                 _rigDir = rig;
                 GetWindow().Size = new Vector2I(900, 1100);
-                BuildRigTest(anim);
+                BuildRigTest(anim, gun);
                 return; // frame strip captured in _Process
             }
 
@@ -655,7 +657,7 @@ namespace UnturnedGodot
 
         // --rig=DIR : show the real skeletal-animated character playing an Unturned clip,
         // capturing a frame strip across the cycle so the animation is eyeball-verifiable.
-        void BuildRigTest(string anim)
+        void BuildRigTest(string anim, string gun)
         {
             var env = new Godot.Environment
             {
@@ -688,8 +690,24 @@ namespace UnturnedGodot
             if (rc == null) { GD.PrintErr("[rig] build failed"); GetTree().Quit(); return; }
             AddChild(rc);
             _rc = rc;
+            if (!string.IsNullOrEmpty(gun)) rc.AttachGun(gun);   // 3P gun mesh on the hand (the clip poses the arms)
             GD.Print($"[rig] clips: {string.Join(",", rc.ClipNames)}  playing '{anim}'");
-            if (anim == "Ragdoll")
+            if (System.Environment.GetEnvironmentVariable("UG_GUNLAYER") == "1" && !string.IsNullOrEmpty(gun))
+            {
+                // 3P GUN LAYER test: legs walk (Move_Walk) while the arms hold/aim/reload the gun via the overlay.
+                string cg = char.ToUpper(gun[0]) + gun.Substring(1);
+                _glEquipClip  = rc.ClipLength(cg + "_Equip")  > 0f ? cg + "_Equip"  : "Gun_Equip";
+                _glReloadClip = rc.ClipLength(cg + "_Reload") > 0f ? cg + "_Reload" : "Gun_Reload";
+                rc.SetLocomotion(3.0f);                                                       // ~walk speed -> Move_Walk on the legs
+                rc.EnableGunLayer(rc.ClipLength(cg + "_Aim") > 0f ? cg + "_Aim" : "Gun_Aim");  // upper-body overlay + ADS delta
+                rc.SetGunOverlay(_glEquipClip, 1f, loop: false);                              // equip pull-out -> holds the ready pose
+                var gvg = Viewmodel.VisualForTest(gun);                                        // mount the gun's default iron sight + mag on the 3P gun (attachment test)
+                if (!string.IsNullOrEmpty(gvg.Sight) && ContentProvider.ParseObj($"res://content/{gvg.Sight}") is Mesh gsm) rc.MountGunAttachment("Sight", gsm, gvg.SightPos != Vector3.Zero ? gvg.SightPos : new Vector3(0f, 0.1312f, -0.118f), gvg.SightColor.A > 0f ? gvg.SightColor : new Color(0.3f, 0.3f, 0.3f));
+                if (!string.IsNullOrEmpty(gvg.Mag) && ContentProvider.ParseObj($"res://content/{gvg.Mag}") is Mesh gmm) rc.MountGunAttachment("Magazine", gmm, new Vector3(0f, 0.0166f, 0.0238f), new Color(0.07f, 0.07f, 0.08f));
+                _gunLayerTest = true;
+                _rigCaptureFrames = new[] { 30, 55, 85, 115, 130, 150 };   // walk+hold, walk+aim, reload, hold-after-reload
+            }
+            else if (anim == "Ragdoll")
             {
                 _ragTest = true;
                 _rigCaptureFrames = new[] { 8, 24, 42, 50, 58, 78 };   // collapse, then a corpse-shot impact at f46
@@ -708,10 +726,11 @@ namespace UnturnedGodot
                 else rc.Play(anim);
             }
 
-            // 3/4 front view, framed on a ~1.9m character
-            var cam = new Camera3D { Fov = 42f };
+            // 3/4 front view, framed on a ~1.9m character (pulled back for --gun so the whole holding pose reads)
+            var cam = new Camera3D { Fov = string.IsNullOrEmpty(gun) ? 42f : 52f };
             AddChild(cam);
-            cam.LookAtFromPosition(new Vector3(-2.5f, 1.2f, -3.4f), new Vector3(0f, 0.92f, 0f), Vector3.Up);
+            if (string.IsNullOrEmpty(gun)) cam.LookAtFromPosition(new Vector3(-2.5f, 1.2f, -3.4f), new Vector3(0f, 0.92f, 0f), Vector3.Up);
+            else cam.LookAtFromPosition(new Vector3(4.5f, 1.7f, -6.5f), new Vector3(0f, 1.0f, 0f), Vector3.Up);
         }
 
         // --clothtest=<shirtId>,<pantsId> : the P3a render gate. Spawn a 3P RiggedCharacter (clothes-shader body +
@@ -4555,6 +4574,15 @@ namespace UnturnedGodot
             if (_rigDir != null)
             {
                 _frame++;
+                if (_gunLayerTest && _rc != null)   // 3P gun-layer test: legs walk + arms hold/aim/reload, Ticking the Manual overlay
+                {
+                    _rc.SetLocomotion(3.0f);                                                                  // keep walking
+                    _rc.AimBlend = (_frame >= 40 && _frame < 68) ? Mathf.Min(1f, (_frame - 40) / 8f) : 0f;    // ADS in f40-48, hold, out f68
+                    if (_frame >= 52 && _frame <= 58) _rc.FlashMuzzle();                                     // fire: hold the flash across the f55 capture (live game flashes ~0.05s/shot)
+                    if (_frame == 70) _rc.SetGunOverlay(_glReloadClip, 1f, loop: false);                      // reload once
+                    if (_frame == 120) _rc.SnapGunOverlay(_glEquipClip);                                      // snap back to the ready hold
+                    _rc.Tick(delta);
+                }
                 if (_ragTest && _frame == 4) _rc?.RagdollStart(new Vector3(3.5f, 5f, 1.5f)); // knock him over
                 if (_ragTest && _frame == 46) _rc?.ApplyImpact(_rc.GlobalPosition + new Vector3(0f, 0.4f, 0f), new Vector3(8f, 4f, 0f)); // simulate a corpse shot
                 // UG_SIGHT=<mesh.txt>: mount a specific sight/scope on the gun once equipped, for a scope-showcase demo.

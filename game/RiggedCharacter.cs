@@ -149,6 +149,20 @@ namespace UnturnedGodot
         System.Collections.Generic.Dictionary<int, Quaternion> _aimDR;
         System.Collections.Generic.Dictionary<int, Vector3> _aimDP;
 
+        // 3P GUN LAYER: the equipped gun's clips play on the UPPER body (spine/skull/arms/hands) via a 2nd
+        // AnimationPlayer (_gunAp), while _ap keeps driving the legs' locomotion. Each Tick: advance loco (all bones)
+        // -> snapshot the lower bones -> advance the gun overlay (all bones, overwrites) -> restore the lower bones,
+        // so the legs walk while the arms hold/aim/reload. Full-body player body only (armsOnly viewmodel skips it).
+        AnimationPlayer _gunAp;
+        AnimationLibrary _lib;                     // shared clip library, kept so _gunAp can reuse it
+        bool _gunLayer;
+        int[] _lowerBones;                          // Skeleton(root)+hips+legs+feet -> restored from locomotion each frame
+        Quaternion[] _lbRot; Vector3[] _lbPos;      // per-frame lower-bone snapshot
+        Node3D _muzzle, _flash;                     // 3P: muzzle marker (at the gun's MuzzleHook) + the flash on the held gun
+        float _flashT;                              // muzzle-flash visible timer
+        ShaderMaterial _flashMat;                   // the real 1P muzzleflash shader (roll uniform set per shot)
+        float _flashRoll;                           // accumulated flash roll (each shot rolls the star L/R)
+
         public void Play(string name, float speed = 1f)
         {
             if (_ap != null && !string.IsNullOrEmpty(name) && _ap.HasAnimation(name))
@@ -222,12 +236,88 @@ namespace UnturnedGodot
             _loco = null;
         }
 
+        // 3P GUN (source: PlayerAnimator adds the equipped gun's clip to the third-person animator; the body holds the
+        // gun on the SAME Right_Hook hand bone the 1P viewmodel uses). Attach the gun mesh to the hand; play the gun's
+        // clip ({Gun}_Equip / Gun_Equip) to pose the arms around it. Replaces any prior attached gun.
+        public void AttachGun(string gunName)
+        {
+            if (Skeleton == null || string.IsNullOrEmpty(gunName)) return;
+            Skeleton.GetNodeOrNull("GunAttach")?.QueueFree();
+            int hb = Skeleton.FindBone("Right_Hook");
+            if (hb < 0) hb = Skeleton.FindBone("Right_Hand");
+            if (hb < 0) return;
+            var att = new BoneAttachment3D { Name = "GunAttach" };
+            Skeleton.AddChild(att);
+            att.BoneName = Skeleton.GetBoneName(hb);
+            var info = Viewmodel.VisualForTest(gunName);
+            if (info.Gun == null) return;
+            var mesh = ContentProvider.ParseObj($"res://content/{info.Gun}");
+            if (mesh == null) return;
+            var mat = new StandardMaterial3D { CullMode = BaseMaterial3D.CullModeEnum.Disabled, TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest };   // repo gear convention (:114): ripped meshes are winding-reversed -> Disabled or they render inside-out
+            if (info.Albedo != null)
+            {
+                string ap = ProjectSettings.GlobalizePath($"res://content/{info.Albedo}");
+                if (System.IO.File.Exists(ap)) { var img = Image.LoadFromFile(ap); if (img != null) mat.AlbedoTexture = ImageTexture.CreateFromImage(img); }
+            }
+            var mi = new MeshInstance3D { Name = "GunMesh", Mesh = mesh, MaterialOverride = mat, RotationDegrees = new Vector3(0f, 0f, 90f) };   // barrel is gun-local +Y; roll about local +Z (world-vertical here) swings it to the char forward (-Z)
+            att.AddChild(mi);
+            // 3P muzzle marker (at the gun's own MuzzleHook) + a flash quad, so firing effects spawn off the 3P gun itself.
+            _muzzle = new Node3D { Name = "Muzzle", Position = info.MuzzleHook };
+            mi.AddChild(_muzzle);
+            _flash = new Node3D { Name = "Flash", Visible = false };
+            _flash.AddChild(new OmniLight3D { OmniRange = 4.0f, LightColor = new Color(0.941f, 0.756f, 0.152f), LightEnergy = 1.4f, ShadowEnabled = false });
+            // the REAL 1P muzzle flash: the Muzzle_0 star sprite on content/muzzleflash.gdshader (rolls per shot), same as the viewmodel (master)
+            _flashMat = new ShaderMaterial { Shader = GD.Load<Shader>("res://content/muzzleflash.gdshader") };
+            string ffp = ProjectSettings.GlobalizePath("res://content/muzzleflash.png");
+            if (System.IO.File.Exists(ffp)) { var fimg = Image.LoadFromFile(ffp); if (fimg != null) _flashMat.SetShaderParameter("tex", ImageTexture.CreateFromImage(fimg)); }
+            _flashMat.SetShaderParameter("roll", 0f);
+            _flash.AddChild(new MeshInstance3D { Mesh = new QuadMesh { Size = new Vector2(0.55f, 0.55f) }, MaterialOverride = _flashMat });
+            _muzzle.AddChild(_flash);
+        }
+
+        // Remove the held gun (weapon holstered / swapped away). Safe if nothing's attached.
+        public void DetachGun() { Skeleton?.GetNodeOrNull("GunAttach")?.QueueFree(); _muzzle = null; _flash = null; }
+
+        // The attached gun mesh (for mounting 3P attachments + a muzzle marker on it). Null when unarmed.
+        public MeshInstance3D HeldGunMesh => Skeleton?.GetNodeOrNull("GunAttach")?.GetNodeOrNull<MeshInstance3D>("GunMesh");
+
+        // World position of the 3P gun's muzzle (its own MuzzleHook), for spawning the flash + tracer there. Null when unarmed.
+        public Vector3? MuzzleWorld => (_muzzle != null && IsInstanceValid(_muzzle)) ? _muzzle.GlobalPosition : (Vector3?)null;
+
+        // Fire: flash the 3P muzzle for a couple of frames (Tick hides it), rolling the star L/R per shot like the 1P.
+        public void FlashMuzzle()
+        {
+            if (_flash == null || !IsInstanceValid(_flash)) return;
+            _flash.Visible = true; _flashT = 0.05f;
+            _flashRoll += (GD.Randf() < 0.5f ? -1f : 1f) * (0.35f + GD.Randf() * 0.65f);
+            _flashMat?.SetShaderParameter("roll", _flashRoll);
+        }
+
+        // Mount an attachment mesh (sight/scope/magazine/barrel) as a child of the 3P gun mesh at its gun-local hook.
+        // Rides the gun's Z=90 roll like the body + muzzle marker. Called by the fire wiring right after AttachGun.
+        public void MountGunAttachment(string name, Mesh mesh, Vector3 pos, Color color)
+        {
+            var gm = HeldGunMesh;
+            if (gm == null || mesh == null) return;
+            var mat = new StandardMaterial3D { CullMode = BaseMaterial3D.CullModeEnum.Disabled, AlbedoColor = color, TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest, Metallic = 0f, MetallicSpecular = 0f, Roughness = 1f };
+            gm.AddChild(new MeshInstance3D { Name = "A_" + name, Mesh = mesh, MaterialOverride = mat, Position = pos });
+        }
+
         public void Tick(double delta)
         {
             if (_oneShot > 0) _oneShot -= delta;
+            if (_flashT > 0f) { _flashT -= (float)delta; if (_flashT <= 0f && _flash != null && IsInstanceValid(_flash)) _flash.Visible = false; }
             if (_ap != null && _ap.CallbackModeProcess == AnimationMixer.AnimationCallbackModeProcess.Manual)
             {
-                _ap.Advance(delta);   // base pose (equip/hold), manually driven so we can layer the aim delta on
+                _ap.Advance(delta);   // base pose: locomotion (full-body 3P) or equip/hold (1P arms), manually driven
+                if (_gunLayer && _gunAp != null && Skeleton != null)
+                {
+                    for (int i = 0; i < _lowerBones.Length; i++)   // keep the legs' locomotion...
+                    { _lbRot[i] = Skeleton.GetBonePoseRotation(_lowerBones[i]); _lbPos[i] = Skeleton.GetBonePosePosition(_lowerBones[i]); }
+                    _gunAp.Advance(delta);                          // ...while the gun clip poses the upper body
+                    for (int i = 0; i < _lowerBones.Length; i++)
+                    { Skeleton.SetBonePoseRotation(_lowerBones[i], _lbRot[i]); Skeleton.SetBonePosePosition(_lowerBones[i], _lbPos[i]); }
+                }
                 ApplyAimAdditive();
             }
         }
@@ -283,6 +373,62 @@ namespace UnturnedGodot
                 Skeleton.SetBonePoseRotation(kv.Key, Quaternion.Identity.Slerp(kv.Value, AimBlend) * Skeleton.GetBonePoseRotation(kv.Key));
             foreach (var kv in _aimDP)
                 Skeleton.SetBonePosePosition(kv.Key, Skeleton.GetBonePosePosition(kv.Key) + kv.Value * AimBlend);
+        }
+
+        // ---- 3P gun layer control (player body) ----
+        // Turn the upper-body gun overlay on: spin up the 2nd AnimationPlayer, resolve the lower bones to preserve
+        // from locomotion, and bake the ADS aim delta (aimClip = {gun}_Aim, generic "Gun_Aim" fallback). SetupAimAdditive
+        // also switches _ap to Manual advance, which Tick's overlay pass relies on. Idempotent.
+        public void EnableGunLayer(string aimClip = "Gun_Aim")
+        {
+            if (_gunLayer || _ap == null || Skeleton == null || _lib == null) return;
+            _gunAp = new AnimationPlayer { Name = "GunAnim" };
+            AddChild(_gunAp);
+            _gunAp.AddAnimationLibrary("", _lib);
+            _gunAp.CallbackModeProcess = AnimationMixer.AnimationCallbackModeProcess.Manual;
+            string[] lower = { "Skeleton", "Left_Hip", "Left_Leg", "Left_Foot", "Right_Hip", "Right_Leg", "Right_Foot" };
+            var idx = new List<int>();
+            foreach (var n in lower) { int b = Skeleton.FindBone(n); if (b >= 0) idx.Add(b); }
+            _lowerBones = idx.ToArray();
+            _lbRot = new Quaternion[_lowerBones.Length];
+            _lbPos = new Vector3[_lowerBones.Length];
+            SetupAimAdditive(aimClip);   // bakes the ADS delta + switches _ap to Manual
+            _gunLayer = true;
+        }
+
+        // Re-bake the ADS aim delta for a different gun (each gun ships its own {Gun}_Aim). No-op unless the layer's up.
+        public void RebakeAim(string aimClip) { if (_gunLayer) SetupAimAdditive(aimClip); }
+
+        // Set the upper-body overlay clip: the ready hold (loop=true) or a one-shot reload/equip (loop=false). No-op if
+        // the clip's already current (safe every frame). speed scales a reload to the gun's real reload time.
+        public void SetGunOverlay(string clip, float speed = 1f, bool loop = true)
+        {
+            if (_gunAp == null || string.IsNullOrEmpty(clip) || !_gunAp.HasAnimation(clip)) return;
+            _gunAp.GetAnimation(clip).LoopMode = loop ? Animation.LoopModeEnum.Linear : Animation.LoopModeEnum.None;
+            if (_gunAp.CurrentAnimation != clip) _gunAp.Play(clip, -1, speed);
+        }
+
+        // Snap the overlay straight to a clip's END pose (the ready hold) without replaying it -- used to return from a
+        // reload/equip to the hold without re-running the pull-out.
+        public void SnapGunOverlay(string clip)
+        {
+            if (_gunAp == null || string.IsNullOrEmpty(clip) || !_gunAp.HasAnimation(clip)) return;
+            _gunAp.GetAnimation(clip).LoopMode = Animation.LoopModeEnum.None;
+            _gunAp.Play(clip); _gunAp.Seek(_gunAp.GetAnimation(clip).Length, true);
+        }
+
+        public string GunOverlayClip => _gunAp?.CurrentAnimation ?? "";
+        public bool GunLayerOn => _gunLayer;
+
+        // Tear the gun layer down (weapon holstered): stop + free the overlay player, drop the aim delta, and hand
+        // _ap back to automatic advance so plain locomotion drives the whole body again.
+        public void DisableGunLayer()
+        {
+            if (!_gunLayer) return;
+            _gunLayer = false;
+            _gunAp?.QueueFree(); _gunAp = null;
+            _aimDR = null; _aimDP = null; AimBlend = 0f;
+            if (_ap != null) _ap.CallbackModeProcess = AnimationMixer.AnimationCallbackModeProcess.Idle;
         }
 
         // ---- ragdoll (built from Unturned's Ragdoll_Player prefab: 11 bodies, box colliders,
@@ -599,6 +745,7 @@ namespace UnturnedGodot
             }
             ap.AddAnimationLibrary("", built.lib);
             root._ap = ap;
+            root._lib = built.lib;   // kept so a lazily-created gun-overlay AnimationPlayer (3P) can share the same clips
             root.ClipNames = built.names;
             root._rag = rig.ragdoll;
             if (armsOnly) root.SetupAimAdditive();   // viewmodel: bake the Gun_Aim additive ADS layer

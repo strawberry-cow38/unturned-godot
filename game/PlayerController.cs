@@ -4153,7 +4153,9 @@ namespace UnturnedGodot
             // muzzle centres (X offset -> 0) as you aim -> the bullet + tracer keep originating from the barrel.
             DebugLastShotOrigin = from; DebugLastShotDir = aim;   // test seam: what the REAL fire path actually used
             Vector3 muzzle = from + cb.X * (0.12f * (1f - aimA)) - cb.Y * 0.035f + aim * 0.4f;
-            SpawnMuzzleLight(muzzle);   // once per shot — the Muzzle_0 flash lights the world
+            Vector3? bodyMuzzle = (!_fp && _body != null) ? _body.MuzzleWorld : null;   // 3P: fire effects come off the 3P gun's OWN muzzle, not the camera-relative point
+            SpawnMuzzleLight(bodyMuzzle ?? muzzle);   // once per shot — the Muzzle_0 flash lights the world
+            if (bodyMuzzle.HasValue) _body.FlashMuzzle();   // 3P: the visible flash quad on the gun's muzzle
 
             // Ballistics: each pellet is a SIMULATED PROJECTILE (travel + drop), not an instant ray. Velocity =
             // dir * MuzzleVelocity; it steps every physics tick (0.02s) in StepBullets, dropping under gravity, its
@@ -4199,7 +4201,9 @@ namespace UnturnedGodot
             // via the viewmodel cam -> world cam), so it looks like it leaves the barrel; it then BENDS onto the real
             // trajectory (which fires from the EYE). Remote/3p bullets have no on-screen viewmodel muzzle, so they keep
             // the straight-from-origin streak (HasAnchor stays false; a point behind the cam fails the guard).
-            if (!NetAvatar && _viewmodel != null && _cam != null && _viewmodel.TryMuzzleScreenPos(out var _mpx))
+            if (!NetAvatar && !_fp && _body != null && _body.MuzzleWorld is Vector3 _bmz)   // 3P: anchor the tracer at the 3P gun's OWN muzzle (position); it still flies to the converged aim, so it tracks the bullet
+            { b.MuzzleAnchor = _bmz; b.HasAnchor = true; }
+            else if (!NetAvatar && _viewmodel != null && _cam != null && _viewmodel.TryMuzzleScreenPos(out var _mpx))
             { b.MuzzleAnchor = _cam.ProjectPosition(_mpx, 1.5f); b.HasAnchor = true; }   // a bit down the barrel line: the muzzle reference for the tracer's teardrop axis
             if (b.Tracer != null) { GetTree().CurrentScene?.AddChild(b.Tracer); UpdateTracer(b); }
             if (Gun?.Action == "Rocket") b.RocketVis = SpawnRocketVis(pos);   // launcher: the rocket is a VISIBLE flying projectile, not an invisible bullet
@@ -4846,7 +4850,62 @@ namespace UnturnedGodot
                 _body.Rotation = new Vector3(0f, Rotation.Y, 0f);
                 _body.SetLocomotion(new Vector2(Velocity.X, Velocity.Z).Length(), Stance);   // crouch/prone anims by stance (master)
             }
+            UpdateBodyGun();   // attach + pose the held gun on the 3P body (detaches when driving/dead/unarmed)
             _body.Tick(delta);
+        }
+
+        // 3P held gun: attach the gun mesh + drive the upper-body gun layer (equip/hold/reload + ADS blend) on the live
+        // body, so in 3rd person you see yourself holding + animating the weapon over a walking lower body. The gun clips
+        // play ONLY on the arms/spine (RiggedCharacter's overlay), so the legs keep their locomotion.
+        string _bodyGunName;                                   // gun currently attached to _body (null = unarmed)
+        string _bodyAimClip, _bodyReloadClip, _bodyEquipClip;  // resolved per-gun clip names for the overlay
+        bool _bodyReloading3p;                                 // edge-detect the reload so we play it once + snap back
+        void UpdateBodyGun()
+        {
+            bool wantGun = HasGunOut && _driving == null && _riding == null && !_dead;
+            if (!wantGun)
+            {
+                if (_bodyGunName != null) { _body.DetachGun(); _body.DisableGunLayer(); _bodyGunName = null; _bodyReloading3p = false; }
+                return;
+            }
+            if (_gunName != _bodyGunName)                       // just drew or swapped a gun
+            {
+                string capGun = char.ToUpper(_gunName[0]) + _gunName.Substring(1);
+                _body.AttachGun(_gunName);
+                MountBody3PAttachments();   // sights/scope/mag/barrel on the 3P gun, from the held item's installed ids
+                _bodyAimClip    = _body.ClipLength(capGun + "_Aim")    > 0f ? capGun + "_Aim"    : "Gun_Aim";
+                _bodyReloadClip = _body.ClipLength(capGun + "_Reload") > 0f ? capGun + "_Reload" : "Gun_Reload";
+                _bodyEquipClip  = _body.ClipLength(capGun + "_Equip")  > 0f ? capGun + "_Equip"  : "Gun_Equip";
+                if (!_body.GunLayerOn) _body.EnableGunLayer(_bodyAimClip); else _body.RebakeAim(_bodyAimClip);
+                _body.SetGunOverlay(_bodyEquipClip, 1f, loop: false);   // play the equip pull-out; it holds its end (the ready hold)
+                _bodyGunName = _gunName;
+                _bodyReloading3p = false;
+            }
+            if (_reloading && !_bodyReloading3p)                     // reload just started -> play it once at the real reload speed
+                _body.SetGunOverlay(_bodyReloadClip, _reloadSpeed, loop: false);
+            else if (!_reloading && _bodyReloading3p)               // reload finished -> snap back to the ready hold
+                _body.SnapGunOverlay(_bodyEquipClip);
+            _bodyReloading3p = _reloading;
+            _body.AimBlend = _viewmodel?.AimAlpha ?? 0f;            // ADS: same eased 0..1 the 1P arms use
+        }
+
+        // 3P attachments: mount the gun's installed sight/scope + magazine + barrel onto the 3P gun mesh, mirroring the
+        // viewmodel attach loop (same meshes / hook positions / materials). Installed ids come off the held Item via
+        // AttachmentFit; falls back to the gun's factory iron sight + default magazine when nothing's fitted.
+        void MountBody3PAttachments()
+        {
+            var gv = Viewmodel.VisualForTest(_gunName);
+            int sid = _heldItem != null ? AttachmentFit.InstalledId(_heldItem, "Sight") : 0;
+            string sightTxt = sid > 0 ? AttachmentFit.MeshFor((ushort)sid) : gv.Sight;
+            if (!string.IsNullOrEmpty(sightTxt) && ContentProvider.ParseObj($"res://content/{sightTxt}") is Mesh sm)
+                _body.MountGunAttachment("Sight", sm, gv.SightPos != Vector3.Zero ? gv.SightPos : new Vector3(0f, 0.1312f, -0.118f), gv.SightColor.A > 0f ? gv.SightColor : new Color(0.3f, 0.3f, 0.3f));
+            int mid = _heldItem != null ? AttachmentFit.InstalledId(_heldItem, "Magazine") : 0;
+            string magTxt = mid > 0 ? AttachmentFit.MeshFor((ushort)mid) : gv.Mag;
+            if (!string.IsNullOrEmpty(magTxt) && ContentProvider.ParseObj($"res://content/{magTxt}") is Mesh mm)
+                _body.MountGunAttachment("Magazine", mm, new Vector3(0f, 0.0166f, 0.0238f), new Color(0.07f, 0.07f, 0.08f));
+            int bid = _heldItem != null ? AttachmentFit.InstalledId(_heldItem, "Barrel") : 0;   // barrel only when one's fitted (guns ship bare)
+            if (bid > 0 && AttachmentFit.MeshFor((ushort)bid) is string bt && ContentProvider.ParseObj($"res://content/{bt}") is Mesh bm)
+                _body.MountGunAttachment("Barrel", bm, new Vector3(0f, 0.7307f, -0.0818f), new Color(0.05f, 0.05f, 0.055f));
         }
 
         // --- Vehicle enter/exit (source: InteractableVehicle). F enters the nearest vehicle's driver seat / exits. ---

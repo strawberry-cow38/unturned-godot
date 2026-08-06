@@ -128,22 +128,23 @@ namespace UnturnedGodot
         public readonly struct GunVisualInfo
         {
             public readonly string Gun, Sight, Mag, Albedo, Shoot, Reload, Hammer;
-            public readonly Vector3 AimHook, MuzzleHook;
-            public readonly Color Tint;
+            public readonly Vector3 AimHook, MuzzleHook, SightPos;
+            public readonly Color Tint, SightColor;
             public readonly bool Ejects;
             public GunVisualInfo(string gun, string sight, string mag, string albedo, string shoot, string reload,
-                                 string hammer, Vector3 aim, Vector3 muzzle, Color tint, bool ejects)
+                                 string hammer, Vector3 aim, Vector3 muzzle, Color tint, bool ejects, Vector3 sightPos, Color sightColor)
             {
                 Gun = gun; Sight = sight; Mag = mag; Albedo = albedo;
                 Shoot = shoot; Reload = reload; Hammer = hammer;
                 AimHook = aim; MuzzleHook = muzzle; Tint = tint; Ejects = ejects;
+                SightPos = sightPos; SightColor = sightColor;
             }
         }
         public static GunVisualInfo VisualForTest(string name)
         {
             var g = Visual(name);
             return new GunVisualInfo(g.Gun, g.Sight, g.Mag, g.Albedo, g.Shoot, g.Reload, g.Hammer,
-                                     g.AimHook, g.MuzzleHook, g.AlbedoTint, g.Ejects);
+                                     g.AimHook, g.MuzzleHook, g.AlbedoTint, g.Ejects, g.SightPos, g.SightColor);
         }
 
         /// <summary>Is this a gun the visual table knows about? The equip path asks BEFORE putting it in your hands,
