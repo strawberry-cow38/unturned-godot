@@ -576,13 +576,33 @@ void fragment() {
             terr.RebuildAll();   // builds every chunk's mesh + collider from _grid
             _phase($"RebuildAll ({terr._chunksX}x{terr._chunksY} chunks, collider={withCollider})");
 
-            // translucent ocean surface at PEI's REAL sea level (source: Environment/Lighting.dat seaLevel float @+18, v12 = 0.1)
+            // translucent ocean surface at the map's REAL sea level (source: Environment/Lighting.dat seaLevel float @+18; PEI v12 = 0.1)
             // UG_NOWATER=1 skips the water plane -> see a map's raw terrain/textures from above (esp. flat custom maps below sea level)
             HasWater = System.Environment.GetEnvironmentVariable("UG_NOWATER") != "1";
             if (HasWater)
             {
-                float waterY = 0.1f * 256f;   // = 25.6 world-Y; Unturned water surface = seaLevel * Level.TERRAIN(256), Use_Legacy_Water path
-                SeaLevelY = waterY;            // swim submersion (PlayerController water state) + explosion splashes
+                // Per-map sea level: read the map's OWN seaLevel (0..1) from Environment/Lighting.dat instead of
+                // assuming PEI's 0.1 -- Washington and other maps float their ocean at a different height. maproot =
+                // heightmapsDir up two (Heightmaps -> Landscape -> map). PEI's 0.1 stays the fallback when the file's
+                // absent (no local install) or the float reads out of the valid 0..1 range.
+                float seaLevel01 = 0.1f;
+                try
+                {
+                    string ldat = Path.Combine(Path.GetDirectoryName(Path.GetDirectoryName(heightmapsDir)), "Environment", "Lighting.dat");
+                    if (File.Exists(ldat))
+                    {
+                        byte[] lb = File.ReadAllBytes(ldat);
+                        if (lb.Length >= 22)
+                        {
+                            float sv = System.BitConverter.ToSingle(lb, 18);   // version(1)+azimuth/bias/fade/time(16)+moon(1) -> seaLevel@18
+                            if (float.IsFinite(sv) && sv >= 0f && sv <= 1f) seaLevel01 = sv;
+                        }
+                    }
+                }
+                catch { /* keep PEI 0.1 */ }
+                float waterY = seaLevel01 * 256f;   // Unturned water surface = seaLevel * Level.TERRAIN(256), Use_Legacy_Water path
+                SeaLevelY = waterY;                 // swim submersion (PlayerController water state) + explosion splashes
+                GD.Print($"[terrain] sea level {seaLevel01:F3} -> world-Y {waterY:F1}");
                 var water = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2((maxX - minX + 1) * TILE_SIZE + 400f, (maxY - minY + 1) * TILE_SIZE + 400f) } };
                 water.Position = new Vector3(baseX + GW * UNIT * 0.5f, waterY, -(baseZ + GH * UNIT * 0.5f));
                 water.MaterialOverride = new StandardMaterial3D

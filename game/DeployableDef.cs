@@ -61,7 +61,7 @@ namespace UnturnedGodot
         public bool FluidDirties;                    // a transformer that DIRTIES water (the sluice) -> its output resolves to dirty
         public bool FluidPurifies;                   // a POWERED transformer that CLEANS water (the purifier) -> FluidDeploy spawns a FluidPurifier (needs power to run)
         public float WaterDepthMin = -1f, WaterDepthMax = -1f;   // placement must be SUBMERGED in this water-depth band (-1 = no water requirement)
-        public const float SeaLevel = 25.6f;         // PEI water plane world-Y (Lighting.dat seaLevel 0.1 x 256; = Deployable.WindSeaLevel)
+        public static float SeaLevel => Terrain.SeaLevelY;   // per-map water plane world-Y (Terrain reads each map's Lighting.dat seaLevel x 256; = Deployable.WindSeaLevel)
         // barricades are authored lying flat -> a +90 X stands them up. (The src uses -90 in Unity's left-handed
         // space; our rip negates Z into Godot's right-handed space, which flips the sense to +90.)
         public static float StandRotX = float.TryParse(System.Environment.GetEnvironmentVariable("UG_DEPLOYROT"), out var r) ? r : 90f;
