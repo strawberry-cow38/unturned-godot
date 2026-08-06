@@ -4874,7 +4874,10 @@ namespace UnturnedGodot
             else   // on foot: at the player's feet, facing the body yaw, locomotion by horizontal speed
             {
                 _body.GlobalPosition = GlobalPosition;
-                _body.Rotation = new Vector3(0f, Rotation.Y, 0f);
+                _body.Rotation = new Vector3(0f, Rotation.Y, 0f);   // yaw only -- the LEAN goes on the spine, not here
+                // The character leans too, or the muzzle every 3P effect is sourced from stays bolt upright while the
+                // camera tilts away from it. Fed the same smoothed angle the camera rides, so body and view agree.
+                _body.LeanDeg = _leanAngle;
                 _body.SetLocomotion(new Vector2(Velocity.X, Velocity.Z).Length(), Stance);   // crouch/prone anims by stance (master)
             }
             UpdateBodyGun();   // attach + pose the held gun on the 3P body (detaches when driving/dead/unarmed)

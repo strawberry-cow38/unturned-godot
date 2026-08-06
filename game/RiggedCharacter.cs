@@ -346,6 +346,107 @@ namespace UnturnedGodot
             }
         }
 
+        /// <summary>Third-person LEAN, applied to the SPINE (master: "the projectile launch point doesnt follow the
+        /// player eyes when leaning, stays in an upright position").
+        ///
+        /// The bullet was never the bug: PlayerController fires from EyesWorld, which hangs off the lean pivot and
+        /// does swing out. The BODY never leaned -- _body.Rotation is yaw only -- so the character stood bolt upright
+        /// while the camera tilted, and every visual sourced from the model (muzzle flash, tracer anchor, the gun)
+        /// stayed upright with it. Retail leans the spine and lets the arms inherit it: HumanAnimator.cs:45,
+        /// `spine.Rotate(0, _pitch * 0.5f, _lean * LEAN)`. On the spine rather than the whole body is what keeps the
+        /// legs planted.
+        ///
+        /// A SkeletonModifier3D, and that is the whole reason this took a second pass. Applying it at the end of
+        /// Tick() worked ONLY while a gun was out: EnableGunLayer puts the base AnimationPlayer in Manual and Tick
+        /// advances it, so the rotation landed after the pose -- but DisableGunLayer returns it to Idle and the engine
+        /// then poses the skeleton OUTSIDE Tick, wiping the lean. Verified, not suspected: the first --rig render
+        /// showed no lean at all and only UG_GUNLAYER=1 made it appear. A modifier runs after the mixer whatever the
+        /// callback mode is, which is the property actually needed.
+        ///
+        /// (The tempting smaller fix -- flip DisableGunLayer to Manual -- is wrong: the base pose would then only
+        /// advance when something calls Tick, freezing any consumer that does not.)
+        ///
+        /// NOT retail's `_pitch * 0.5f` term. Our 3P spine does not pitch with the look angle at all; separate
+        /// missing behaviour, deliberately not bundled.
+        public partial class LeanModifier : SkeletonModifier3D
+        {
+            public float LeanDeg;
+            public int SpineBone = -1;
+            // The resulting Spine->Skull direction in skeleton space, recorded EVERY pass (leaning or not). This is
+            // the only place the modified pose is observable: Godot restores the stored bone pose once the
+            // modification pass ends, so a caller doing GetBoneGlobalPose from outside reads the UNMODIFIED skeleton
+            // and sees a perfectly upright spine no matter what the modifier did. The lean is real -- it renders --
+            // but it lives in the pass, so anything asserting on it has to sample here. Per-instance, never static:
+            // a shared slot would let one rig's reading stand in for another's and turn "never ran" into a pass.
+            public Vector3 SkullDir = Vector3.Up;
+
+            public override void _ProcessModification()
+            {
+                var sk = GetSkeleton();
+                if (sk == null || SpineBone < 0) return;
+                // A lean is a roll about the character's fore-aft axis, which rig.json puts along Z: Spine's rest is
+                // -90 about Z off the Skeleton root, so Spine-local -X runs up the body, and the Left_Shoulder /
+                // Left_Arm chain extends toward parent -X -- left = -X, up = +Y, hence forward = -Z. Retail's
+                // magnitude is HumanAnimator.LEAN = 20.
+                //
+                // THE AXIS IS Vector3.Back (+Z), NOT Forward, and the sign is the whole point: PlayerController leans
+                // the CAMERA with `_leanPivot.Rotation.Z = +_leanAngle`, a rotation about +Z that carries the eye
+                // toward -X. Rolling the spine about -Z instead swings the head toward +X -- a model leaning out from
+                // the opposite side of the wall to the camera peeking past it, correct by 20 degrees and backwards to
+                // every other player. A rig render cannot catch that (there is no camera in the shot to disagree
+                // with); only tying the two conventions together can, which is what rig.spine_lean asserts.
+                //
+                // The axis is re-expressed in the parent's frame each tick rather than hardcoded, because EVERY clip
+                // in rig.json animates the Skeleton root bone (432 of them). At rest the two are identical -- a render
+                // measured 22.9 deg of tilt for a 20 deg input -- and they diverge only once the animated root carries
+                // the parent frame away from the character's, which is exactly when "roll about the character's own
+                // fore-aft axis" is the definition that still means something.
+                int parent = sk.GetBoneParent(SpineBone);
+                Basis parentBasis = parent >= 0 ? sk.GetBoneGlobalPose(parent).Basis : Basis.Identity;
+                Vector3 axis = (parentBasis.Inverse() * Vector3.Back).Normalized();
+                if (!axis.IsFinite() || axis.LengthSquared() < 1e-6f) return;
+                if (!Mathf.IsZeroApprox(LeanDeg))
+                {
+                    var d = new Quaternion(axis, Mathf.DegToRad(LeanDeg));
+                    sk.SetBonePoseRotation(SpineBone, d * sk.GetBonePoseRotation(SpineBone));
+                }
+
+                int skull = sk.FindBone("Skull");
+                if (skull >= 0)
+                    SkullDir = (sk.GetBoneGlobalPose(skull).Origin - sk.GetBoneGlobalPose(SpineBone).Origin).Normalized();
+            }
+        }
+
+        LeanModifier _leanMod;
+        float _leanDeg;
+        /// <summary>Signed lean in degrees; + leans left, matching PlayerController's _leanAngle.
+        ///
+        /// Backed by a FIELD rather than forwarded straight at the modifier. The first version was
+        /// `set { if (_leanMod != null) _leanMod.LeanDeg = value; }` -- which silently DROPPED every assignment made
+        /// before the modifier existed, and the modifier was being created inside EnableGunLayer, so an unarmed rig
+        /// swallowed the lean and rendered pixel-identical to no lean at all. A no-op setter is the same failure as a
+        /// null-returning loader: it reports success by saying nothing.</summary>
+        public float LeanDeg
+        {
+            get => _leanDeg;
+            set { _leanDeg = value; if (_leanMod != null) _leanMod.LeanDeg = value; }
+        }
+
+        /// <summary>Attach the lean modifier to a freshly built skeleton. Called from BuildFrom for EVERY rig --
+        /// player, zombie, corpse -- because the lean must not depend on whether a gun layer was ever enabled.</summary>
+        /// <summary>Where the torso actually ended up: the Spine-&gt;Skull direction in skeleton space, sampled inside
+        /// the modification pass (the only place the leaned pose exists -- see LeanModifier.SkullDir).</summary>
+        public Vector3 LeanSkullDir => _leanMod?.SkullDir ?? Vector3.Up;
+
+        void AttachLeanModifier()
+        {
+            if (Skeleton == null || _leanMod != null) return;
+            int spine = Skeleton.FindBone("Spine");
+            if (spine < 0) return;
+            _leanMod = new LeanModifier { SpineBone = spine, LeanDeg = _leanDeg, Name = "LeanModifier" };
+            Skeleton.AddChild(_leanMod);
+        }
+
         // Perf (strawberry: POI fps): pose the skeletal AnimationPlayer at the 50 Hz PHYSICS rate instead of
         // the render rate (default Idle = _process = up to 280 fps). A shambling zombie/puppet looks identical
         // at 50 Hz, but posing 17 bones per zombie at a high-refresh render rate is pure waste -- this is the
@@ -633,6 +734,7 @@ namespace UnturnedGodot
             }
             skel.ResetBonePoses();
             root.Skeleton = skel;
+            root.AttachLeanModifier();   // every rig, not only one that later gets a gun layer
 
             // ---- skinned mesh (raw arrays; arms-only variant for the 1P viewmodel) ----
             // Geometry (ArrayMesh) + Skin are identical for every character of this rig+variant, so build once and

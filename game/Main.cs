@@ -692,6 +692,10 @@ namespace UnturnedGodot
             _rc = rc;
             if (!string.IsNullOrEmpty(gun)) rc.AttachGun(gun);   // 3P gun mesh on the hand (the clip poses the arms)
             GD.Print($"[rig] clips: {string.Join(",", rc.ClipNames)}  playing '{anim}'");
+            // UG_LEAN=<deg>: hold the 3P spine at a lean so the tilt is renderable. The rig's bone axes are not
+            // Unity's, so which axis rolls the torso sideways is a thing to LOOK at rather than port on faith.
+            if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_LEAN"), out var _lean))
+            { rc.LeanDeg = _lean; GD.Print($"[rig] lean {_lean:0.#} deg"); }
             if (System.Environment.GetEnvironmentVariable("UG_GUNLAYER") == "1" && !string.IsNullOrEmpty(gun))
             {
                 // 3P GUN LAYER test: legs walk (Move_Walk) while the arms hold/aim/reload the gun via the overlay.
