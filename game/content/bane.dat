@@ -18,7 +18,7 @@ Hook_Tactical
 Hook_Grip
 
 Ammo_Min 10
-Ammo_Max 21
+Ammo_Max 20
 
 Safety
 Auto

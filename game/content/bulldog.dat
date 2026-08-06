@@ -18,7 +18,7 @@ Hook_Grip
 Hook_Barrel
 
 Ammo_Min 20
-Ammo_Max 45
+Ammo_Max 32
 
 Safety
 Semi
@@ -29,7 +29,7 @@ Caliber_Name "9x19mm Parabellum"
 Real_Weapon "IMI Uzi"
 
 Range 90
-Firerate 2
+Firerate 5
 Action Trigger
 
 Player_Damage 20

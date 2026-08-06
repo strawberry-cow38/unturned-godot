@@ -100,6 +100,41 @@ namespace UnturnedGodot.Testing
             T.Check($"every gun with a real-world basis carries its cartridge ({(untagged.Count == 0 ? "all" : string.Join(",", untagged))})", untagged.Count == 0);
             T.Check($"...and the ones with NO real basis invent nothing ({(invented.Count == 0 ? "none" : string.Join(",", invented))})", invented.Count == 0);
 
+            // 1b. REAL rate of fire and magazine size (master: "rebalance all the new guns to have real ROF and
+            //     mag sizes"). This is a DELIBERATE DIVERGENCE FROM RETAIL and needs pinning, because every one of
+            //     these matched retail exactly before the rebalance -- so the next person who re-ports a gun from the
+            //     bundles reverts it and nothing notices. That is the failure this file keeps finding.
+            //
+            //     Firerate is TICKS BETWEEN SHOTS at 50 Hz, so RPM = 3000/ticks, and the ladder is coarse where these
+            //     guns live: 1500 / 1000 / 750 / 600 / 500. 900 rpm is not expressible at all -- the P90 and the PPSh
+            //     both land on 3 ticks (1000) because it is nearer than 4 (750). Asserted as TICKS rather than as an
+            //     rpm with a tolerance, so the quantisation is visible instead of hidden behind a rounding window.
+            //
+            //     ROF is rebalanced ONLY where the real weapon has a cyclic rate. A semi-auto or bolt gun is
+            //     trigger-limited, so retail's number there is a click-rate allowance rather than a wrong cyclic
+            //     figure; those keep it and only their magazines move.
+            var rof = new (string Gun, int Ticks, int Mag)[]
+            {
+                ("peacemaker",  3, 50),   // FN P90        900 rpm -> 1000 (nearest)
+                ("viper",       4, 30),   // H&K MP5       800 -> 750
+                ("bulldog",     5, 32),   // IMI Uzi       600 exact  (retail had 1500 rpm and a 45 mag)
+                ("card",        3, 71),   // PPSh-41       900 -> 1000; 71-round drum is retail's already
+                ("scalar",      3, 30),   // KRISS Vector 1200 -> 1000
+                ("bane",       10, 20),   // AA-12         300 exact
+                ("fusilaut",    3, 25),   // FAMAS F1     1000 exact
+                ("mp40",        6, 32),   // MP 40         500 exact -- retail was already right
+                ("swissgewehr", 4, 30),   // SIG SG 550    700 -> 750
+            };
+            foreach (var r in rof)
+            {
+                var d = Def(dir, r.Gun);
+                T.Check($"{r.Gun} fires at its real cyclic rate ({d.Firerate} ticks = {3000f / Mathf.Max(d.Firerate, 1):0} rpm)", d.Firerate == r.Ticks);
+                T.Check($"...on a real magazine ({d.AmmoMax})", d.AmmoMax == r.Mag);
+            }
+            // The trigger-limited ones: magazine only, and the rate deliberately LEFT as retail had it.
+            foreach (var (g, mag) in new[] { ("vonya", 8), ("teklowvka", 32), ("kryzkarek", 12), ("luger", 8), ("ekho", 7) })
+                T.Check($"{g} carries its real magazine ({Def(dir, g).AmmoMax})", Def(dir, g).AmmoMax == mag);
+
             // 2. One cartridge across three DIFFERENT magazine groups -- the fact that makes a separate field necessary.
             var mosin = Def(dir, "schofield");
             var pkm = Def(dir, "nykorev");

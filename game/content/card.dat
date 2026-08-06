@@ -27,7 +27,7 @@ Caliber_Name "7.62x25mm Tokarev"
 Real_Weapon "PPSh-41"
 
 Range 125
-Firerate 4
+Firerate 3
 Replace 0.7
 Action Trigger
 

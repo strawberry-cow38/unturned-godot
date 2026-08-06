@@ -16,7 +16,7 @@ Hook_Barrel
 Hook_Tactical
 
 Ammo_Min 5
-Ammo_Max 15
+Ammo_Max 32
 
 Safety
 Semi
