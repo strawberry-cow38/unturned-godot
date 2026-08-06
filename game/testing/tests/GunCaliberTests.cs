@@ -49,18 +49,38 @@ namespace UnturnedGodot.Testing
             var guns = PortedGuns(dir);
             T.Check($"the content ships guns to check ({guns.Count})", guns.Count >= 30);
 
-            // 1. EVERY ported gun carries a cartridge and a real-world basis. An untagged gun is the failure mode that
-            //    matters: it reads as "no caliber" rather than as "nobody has done this one yet".
+            // 1. A REAL cartridge where the game names one -- and NOTHING where it does not.
+            //
+            // This used to demand a Caliber_Name AND a Real_Weapon from every ported gun, and that requirement is what
+            // manufactured the data it was meant to protect: a gun the game describes as "Russian minigun chambered in
+            // Hell's Fury ammunition" cannot be tagged truthfully, so it got tagged "9x19mm Parabellum / Heckler &
+            // Koch MP5K" -- wrong nation, wrong class, wrong cartridge, and green. Nine of the twenty Washington guns
+            // were annotated with a real weapon that contradicts their own in-game description (teklowvka, a SWEDISH
+            // PISTOL, was recorded as an AKM; peacemaker, a BELGIAN CARBINE, as a Colt Single Action Army).
+            //
+            // The fields are what GunDef says they are: the REAL-WORLD cartridge and the REAL firearm. Unturned's
+            // fictional guns fire fictional ammunition -- Hell's Fury, Devil's Bane, Calling Card -- and the honest
+            // value for those is ABSENT. So the rule is two-sided, and the second side is the one with teeth: a
+            // fictional-ammo gun must carry NO real-world tag, or the next pass re-invents one and passes.
+            //
+            // Membership is decided by the game's own English.dat description, not by looking at the mesh.
+            var fictionalAmmo = new HashSet<string>
+            {
+                "fury", "vonya", "ekho", "scalar", "bane", "card", "teklowvka",
+                "kryzkarek", "viper", "bulldog", "peacemaker", "nailgun", "paintballgun",
+            };
             var untagged = new List<string>();
-            var noBasis = new List<string>();
+            var invented = new List<string>();
             foreach (var g in guns)
             {
                 var d = Def(dir, g);
-                if (string.IsNullOrWhiteSpace(d.CaliberName)) untagged.Add(g);
-                if (string.IsNullOrWhiteSpace(d.RealWeapon)) noBasis.Add(g);
+                bool fictional = fictionalAmmo.Contains(g);
+                if (!fictional && string.IsNullOrWhiteSpace(d.CaliberName)) untagged.Add(g);
+                if (fictional && (!string.IsNullOrWhiteSpace(d.CaliberName) || !string.IsNullOrWhiteSpace(d.RealWeapon)))
+                    invented.Add($"{g}={d.CaliberName ?? "-"}/{d.RealWeapon ?? "-"}");
             }
-            T.Check($"every ported gun has a Caliber_Name ({(untagged.Count == 0 ? "all" : string.Join(",", untagged))})", untagged.Count == 0);
-            T.Check($"...and a Real_Weapon it was sourced from ({(noBasis.Count == 0 ? "all" : string.Join(",", noBasis))})", noBasis.Count == 0);
+            T.Check($"every gun the game gives a real cartridge has one ({(untagged.Count == 0 ? "all" : string.Join(",", untagged))})", untagged.Count == 0);
+            T.Check($"...and no fictional-ammo gun has an invented one ({(invented.Count == 0 ? "none" : string.Join(",", invented))})", invented.Count == 0);
 
             // 2. One cartridge across three DIFFERENT magazine groups -- the fact that makes a separate field necessary.
             var mosin = Def(dir, "schofield");
@@ -171,6 +191,7 @@ namespace UnturnedGodot.Testing
             foreach (var g in guns)
             {
                 string c = Def(dir, g).CaliberName;
+                if (string.IsNullOrWhiteSpace(c)) continue;   // fictional ammo -> no real cartridge -> GunDef.TracerScale defaults it (and ContainsKey(null) THROWS)
                 if (c == "Arrow" || c == "Bolt" || c == "Rocket"
                     || c == "Card" || c == "Nail" || c == "Paintball") continue;   // no ballistic tracer by design -- Card/Nail/Paintball throw a physical object, not a bullet
                 if (!GunDef.TracerScales.ContainsKey(c)) unmapped.Add($"{g}={c}");

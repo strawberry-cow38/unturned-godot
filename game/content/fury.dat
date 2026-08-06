@@ -20,8 +20,6 @@ Ammo_Max 250
 Auto
 
 Caliber 32
-Caliber_Name "9x19mm Parabellum"
-Real_Weapon "Heckler & Koch MP5K"
 
 Equipable_Movement_Speed_Multiplier 0.9
 

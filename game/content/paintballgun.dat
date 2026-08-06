@@ -21,8 +21,6 @@ Hook_Grip
 Semi
 
 Caliber 30
-Caliber_Name "Paintball"
-Real_Weapon "Paintball Marker"
 
 Range 100
 Firerate 3

@@ -20,8 +20,6 @@ Ammo_Max 20
 Semi
 
 Caliber 28
-Caliber_Name "Nail"
-Real_Weapon "Nail Gun"
 
 Range 25
 Firerate 3
