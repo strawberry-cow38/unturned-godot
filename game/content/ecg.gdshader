@@ -71,20 +71,35 @@ const vec2 BEAT[13] = {
     vec2(1.000,  0.0)
 };
 
-// Returns the height, and hands back the segment's SLOPE -- which the caller needs to keep the line an even width.
-// Measuring how far a pixel is from the trace vertically is fine on a flat run and hopeless on the R upstroke, where
-// a near-vertical segment is thousands of units "away" from a pixel sitting right next to it. That is what makes a
-// hard-cornered trace render as a dotted or broken line if you draw it the naive way.
-float ecg(float x, out float slope) {
-    slope = 0.0;
+// A real line-drawing primitive: distance from a point to a SEGMENT (strawberry: "have a new drawLine function for
+// the ECG instead of scaling segments up/down").
+//
+// The version this replaces evaluated the trace as a height function of x and then divided the vertical distance by
+// sqrt(1 + slope^2) to fake a perpendicular measurement. That is an approximation with two real faults: it degrades
+// as a segment approaches vertical -- slope goes to infinity and the correction with it -- and a height function
+// cannot represent a truly vertical segment at all, so the R upstroke could never actually be vertical no matter how
+// steep it was drawn. Measuring the real distance to the segment removes both: thickness is exact everywhere,
+// corners join properly because neighbouring segments overlap at the vertex, and the spike may stand straight up.
+//
+// Distances are computed in SCREEN-HEIGHT units -- x is multiplied by the face's aspect first -- so LINE_W means the
+// same thickness horizontally as vertically. Skip that and the line is visibly fatter along one axis on a screen
+// that is not square, and this one is 0.6374 x 0.5950.
+float segDist(vec2 p, vec2 a, vec2 b) {
+    vec2 ab = b - a;
+    vec2 ap = p - a;
+    float t = clamp(dot(ap, ab) / max(dot(ab, ab), 1e-9), 0.0, 1.0);
+    return length(ap - ab * t);
+}
+
+/// Distance from a point to the whole polyline: the nearest of its segments.
+float drawLine(vec2 p, float aspect) {
+    float d = 1e9;
     for (int i = 0; i < PTS - 1; i++) {
-        if (x >= BEAT[i].x && x <= BEAT[i + 1].x) {
-            float dx = max(BEAT[i + 1].x - BEAT[i].x, 1e-5);
-            slope = (BEAT[i + 1].y - BEAT[i].y) / dx;
-            return mix(BEAT[i].y, BEAT[i + 1].y, (x - BEAT[i].x) / dx);
-        }
+        vec2 a = vec2(BEAT[i].x * aspect, BASELINE + BEAT[i].y);
+        vec2 b = vec2(BEAT[i + 1].x * aspect, BASELINE + BEAT[i + 1].y);
+        d = min(d, segDist(p, a, b));
     }
-    return 0.0;
+    return d;
 }
 
 void fragment() {
@@ -105,12 +120,12 @@ void fragment() {
     if (age < 0.0) age += 1.0;                                        // wrapped round the back
     float trail = 1.0 - smoothstep(0.0, 0.92, age);                   // bright at the head, dim behind
 
-    float slope = 0.0;
-    float y = alive > 0.5 ? ecg(uv.x, slope) : 0.0;
-    float line = BASELINE + y;
-    // Perpendicular distance, not vertical: divide by the segment's length-per-unit-x. Without this the steep parts
-    // of a hard-cornered trace thin out to nothing and the spike looks like two dots.
-    float d = abs(uv.y - line) / sqrt(1.0 + slope * slope);
+    // 0.6374 / 0.5950 -- the screen face's own proportions, measured off the prop with everything else here.
+    const float ASPECT = 1.0713;
+    vec2 p = vec2(uv.x * ASPECT, uv.y);
+    float d = alive > 0.5
+        ? drawLine(p, ASPECT)
+        : segDist(p, vec2(0.0, BASELINE), vec2(ASPECT, BASELINE));   // flatline: one segment, same primitive
     float on = 1.0 - smoothstep(LINE_W * 0.35, LINE_W * 0.75, d);
 
     // The head itself is a brighter dot, so the sweep has something to be at.
