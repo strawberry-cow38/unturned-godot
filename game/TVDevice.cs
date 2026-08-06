@@ -647,7 +647,17 @@ namespace UnturnedGodot
             // screen color"). Pushed HERE, after the material exists -- setting it next to where _glassColor is sampled
             // ran while _screenMat was still null, and `?.SetShaderParameter` on null is a silent no-op that leaves the
             // uniform at its default of pure black. Which looks exactly like the feature not being written.
-            _screenMat.SetShaderParameter("screen_black", _glassColor);
+            // CONVERTED TO LINEAR. _glassColor is the texel as sampled -- sRGB -- and that is the right form for
+            // ScreenTextures above, because pattern_tex is declared `: source_color` and the sampler linearises it.
+            // A bare `uniform vec3` gets no such treatment: whatever is written lands in the linear buffer as-is, so
+            // pushing 0.208 put the glass at sRGB 0.49 instead of 0.208, roughly six times too bright in linear.
+            //
+            // The visible symptom was snow going grey and staying grey (strawberry: "a crt on a static channel
+            // suddenly turned gray static instead of black and white ... and is stuck in that state"). This term is
+            // deliberately scaled by how DARK the pixel already is, so it lands hardest on exactly the black half of
+            // a bimodal signal: the blacks lifted to mid grey, the whites stayed, and the contrast collapsed. The
+            // comment below predicted the failure and the wrong colour space delivered it anyway.
+            _screenMat.SetShaderParameter("screen_black", _glassColor.SrgbToLinear());
             // Transparent for the blob (a missing logo should draw NOTHING, not a white brick) and black for
             // the panel backdrop (a missing map should add no light, not a haze).
             _screenMat.SetShaderParameter("blob_tex", LoadPngOr(BlobAsset, new Color(0f, 0f, 0f, 0f)));
@@ -1618,15 +1628,23 @@ namespace UnturnedGodot
                 ApplyLevels();
                 return;
             }
-            _warm = Mathf.Min(1f, _warm + (float)delta / WarmDur);
-            if (_warm >= 1f)
+            // RAISED AS THE CROSSFADE STARTS, not when it finishes (strawberry: "the OSD should fade in with the rest
+            // of the CRT picture"). It used to wait for the picture to resolve, on the reasoning that an OSD over a
+            // half-faded picture reads as part of the fade -- which was the right description and the wrong call: it
+            // being part of the fade is the point. The shader scales the box's alpha by the same tint.a the picture
+            // rides, so the two come up as one image.
+            //
+            // The lifetime covers the fade AND the hold: BannerDur alone is 0.8 s against a 3 s crossfade, so arming
+            // it here without extending it would flash the OSD across a mush picture and take it away before the
+            // channel had resolved -- the visible 0.8 s strawberry asked for is the time at FULL picture.
+            if (_warm <= 0f && HasInputBanner(_kind))
             {
-                _warming = false;
-                // A tube that banners (the CRT monitor) raises it when the picture has RESOLVED, not when the tube
-                // started warming -- an OSD over a half-faded picture reads as part of the fade rather than as the set
-                // telling you its input.
-                if (HasInputBanner(_kind)) ArmBanner();
+                _bannerWait = 0f;
+                _bannerLeft = WarmDur + BannerDur;
+                _screenMat?.SetShaderParameter("banner", 1f);
             }
+            _warm = Mathf.Min(1f, _warm + (float)delta / WarmDur);
+            if (_warm >= 1f) _warming = false;
             ApplyLevels();
         }
 

@@ -458,7 +458,15 @@ namespace UnturnedGodot
                 _focusGrid = hitGrid;
                 _focusGrid?.SetLookFocused(true);
             }
-            _focusMonitor = hitMonitor;
+            if (hitMonitor != _focusMonitor)   // patient monitor look-focus: same whole-prop white outline the TV gets
+            {
+                // This was a bare assignment. The monitor was the one focusable fixture that lit nothing when you
+                // looked at it, so F worked and there was no affordance saying so -- an interaction with no outline
+                // reads as "this prop is scenery", which is indistinguishable from the feature not existing.
+                if (IsInstanceValid(_focusMonitor)) _focusMonitor.SetLookFocused(false);
+                _focusMonitor = hitMonitor;
+                _focusMonitor?.SetLookFocused(true);
+            }
             if (hitTV != _focusTV)   // TV look-focus: whole-prop white outline (SetLookFocused claims WorldItem.FocusColor=white on gain)
             {
                 if (IsInstanceValid(_focusTV)) _focusTV.SetLookFocused(false);

@@ -125,13 +125,27 @@ namespace UnturnedGodot.Testing
             // ---- THE BLACK IS THE GLASS. Pushed to the shader from the texel sampled off the prop, so a set with a
             // different screen grey gets ITS grey.
             var black = (Color)flatTv.DebugScreenMaterial.GetShaderParameter("screen_black");
-            T.Check($"the shader's black is the mesh's screen colour ({black} vs glass {flatTv.DebugGlassColor})",
-                Mathf.Abs(black.R - flatTv.DebugGlassColor.R) < 0.01f
-                && Mathf.Abs(black.G - flatTv.DebugGlassColor.G) < 0.01f
-                && Mathf.Abs(black.B - flatTv.DebugGlassColor.B) < 0.01f);
-            T.Check($"...and is NOT perfect black ({black.R:0.###})", black.R > 0.02f);
+            // COMPARED IN LINEAR. DebugGlassColor is the texel as sampled -- sRGB -- and that is the right form for
+            // building the composite texture, because pattern_tex is `: source_color` and the sampler converts it. A
+            // bare `uniform vec3` gets no conversion, so the value pushed here must be the LINEAR one or the glass
+            // lands ~6x too bright. This check used to compare the two as raw numbers and passed while they matched,
+            // which is what let a washed-out screen ship: static's blacks lifted to mid grey and stuck there.
+            var wantBlack = flatTv.DebugGlassColor.SrgbToLinear();
+            T.Check($"the shader's black is the mesh's screen colour, in linear ({black} vs {wantBlack}; sRGB texel {flatTv.DebugGlassColor.R:0.###})",
+                Mathf.Abs(black.R - wantBlack.R) < 0.005f
+                && Mathf.Abs(black.G - wantBlack.G) < 0.005f
+                && Mathf.Abs(black.B - wantBlack.B) < 0.005f);
+            // TEETH: it must NOT be the sRGB digits written straight in -- that is the bug, and it is only visible as
+            // a difference once the two colour spaces are told apart.
+            T.Check($"...not the raw sRGB value ({black.R:0.###} vs {flatTv.DebugGlassColor.R:0.###})",
+                Mathf.Abs(black.R - flatTv.DebugGlassColor.R) > 0.05f);
+            T.Check($"...and is NOT perfect black ({black.R:0.####})", black.R > 0.005f);
             var crtBlack = (Color)crtTv.DebugScreenMaterial.GetShaderParameter("screen_black");
-            T.Check($"a CRT gets its own glass too ({crtBlack.R:0.###})", crtBlack.R > 0.02f);
+            T.Check($"a CRT gets its own glass too ({crtBlack.R:0.####})", crtBlack.R > 0.005f);
+            // ...and the two tubes genuinely differ: Television_0 is 39/255, Television_1 is 53/255. Equal values here
+            // would mean the per-prop sample had quietly collapsed to one constant.
+            T.Check($"...and the two sets do not share one glass ({crtBlack.R:0.####} vs {black.R:0.####})",
+                Mathf.Abs(crtBlack.R - black.R) > 0.005f);
 
             // ---- POWER-CYCLE A FLAT TV and watch the whole transition, tick by tick.
             if (flatTv.DebugLit) flatTv.Toggle();
@@ -189,16 +203,30 @@ namespace UnturnedGodot.Testing
                 if (crtMon.DebugLit) crtMon.Toggle();
                 yield return Ticks(40);
                 crtMon.Toggle();
-                bool monPartial = false, monBanner = false;
+                bool monPartial = false, monBanner = false, bannerDuringWarm = false;
+                float warmAtBanner = -1f;
                 for (int i = 0; i < 260; i++)
                 {
                     yield return Ticks(1);
                     float w = crtMon.DebugWarm;
                     if (w > 0.01f && w < 0.99f) monPartial = true;
                     if (crtMon.DebugBannerUp) monBanner = true;
+                    if (crtMon.DebugBannerUp && w < 0.99f) { bannerDuringWarm = true; if (warmAtBanner < 0f) warmAtBanner = w; }
                 }
                 T.Check("a CRT monitor still crossfades like the tube it is", monPartial);
                 T.Check("...and ALSO raises an input banner", monBanner);
+                // The OSD has to be UP WHILE the tube is still resolving, or "fade it in with the picture" has nothing
+                // to act on -- a banner that only ever appeared after warmup finished would make the shader's
+                // tint.a scaling dead code that no render would ever show.
+                T.Check($"...while the tube is still resolving, so the fade has something to do (warm {warmAtBanner:0.##} at first banner frame)",
+                    bannerDuringWarm);
+
+                // ...and the shader actually folds the warmup into the box's alpha. Checked in the source because the
+                // composite happens per-fragment and there is no other seam to read it from.
+                string ssrc = ReadShader("res://content/screen.gdshader");
+                T.Check($"the screen shader was readable ({ssrc.Length} chars)", ssrc.Length > 500);
+                T.Check("...and the OSD's alpha is scaled by the warmup, not drawn at full over a half-resolved picture",
+                    ssrc.Contains("b.a * clamp(tint.a"));
             }
 
             // ---- A LAPTOP JUST COMES ON. No delay, no banner: the exclusion strawberry asked for, checked live rather

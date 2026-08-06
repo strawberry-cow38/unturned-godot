@@ -263,7 +263,12 @@ void fragment() {
     // channel's colour may touch it. Applying it before the multiply meant `tint.rgb` (which IS the picture colour on
     // the flat-colour channel) repainted the box whatever the screen behind it happened to be showing (strawberry).
     vec3 outc = c * tint.rgb;
-    if (banner > 0.5) { vec4 b = prog_banner(uv); outc = mix(outc, b.rgb, b.a); }
+    // ...and it RESOLVES WITH THE PICTURE (strawberry: "the OSD should fade in with the rest of the CRT picture").
+    // The quad's ALPHA already carried the warmup, so the box was technically fading -- but its own alpha stayed at
+    // full, and a high-contrast white-on-blue panel is legible at 20% over a dark tube face while the picture behind
+    // it is still mush. It read as the OSD arriving first and the channel catching up. Folding tint.a into the box's
+    // alpha puts it in the same dissolve as everything else, so the whole screen comes up as one image.
+    if (banner > 0.5) { vec4 b = prog_banner(uv); outc = mix(outc, b.rgb, b.a * clamp(tint.a, 0.0, 1.0)); }
     ALBEDO = outc;
     ALPHA = tint.a;
 }

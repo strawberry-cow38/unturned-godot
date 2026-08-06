@@ -213,9 +213,18 @@ namespace UnturnedGodot.Testing
                         int a = l.IndexOf('('), b = l.IndexOf(',');
                         if (a >= 0 && b > a) float.TryParse(l.Substring(a + 1, b - a - 1).Trim(), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out bg);
                     }
-                T.Check($"the shader's SCREEN_BG parsed ({bg:0.###})", bg > 0f);
-                T.Check($"...and the lit background matches the model's screen texel ({bg:0.###} vs {screenTexel.R:0.###})",
-                    Mathf.Abs(bg - screenTexel.R) < 0.01f);
+                T.Check($"the shader's SCREEN_BG parsed ({bg:0.####})", bg > 0f);
+                // COMPARED IN LINEAR. This check used to put the shader constant next to the raw texel and pass when
+                // they were the same number -- which is precisely the bug: AlbedoColor is linearised by Godot and a
+                // shader's ALBEDO is not, so the SAME colour must be written as two different numbers. Comparing the
+                // numbers agreed that a washed-out mid grey was the model's dark screen. Converting first is what
+                // makes the check mean "same colour" rather than "same digits".
+                float wantLinear = screenTexel.SrgbToLinear().R;
+                T.Check($"...and the lit background IS the model's screen texel, in linear ({bg:0.####} vs {wantLinear:0.####}; the sRGB digits are {screenTexel.R:0.###})",
+                    Mathf.Abs(bg - wantLinear) < 0.005f);
+                // TEETH: and it must NOT be the raw sRGB number, which is the mistake that shipped.
+                T.Check($"...not the sRGB digits written straight in ({bg:0.####} vs {screenTexel.R:0.###})",
+                    Mathf.Abs(bg - screenTexel.R) > 0.05f);
             }
             hm.Toggle();
             yield return Ticks(2);

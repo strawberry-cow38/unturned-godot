@@ -14,9 +14,23 @@ namespace UnturnedGodot
     //
     // Power is TVDevice's gate, deliberately: mains OR a wire into its own port. A monitor is exactly the thing you
     // would run off a generator when the grid dies.
-    public partial class HeartMonitor : Node3D
+    public partial class HeartMonitor : Node3D, IPowerDevice
     {
         public const string PropName = "Science_3";
+
+        // ---- IPowerDevice. A pure consumer: it draws, never produces, and never relays.
+        public bool PowerProducing => false;
+        public bool PowerOnFire => false;
+        public uint PowerNetId => 0;   // world fixture, not an MP replica
+        public System.Collections.Generic.IReadOnlyList<ConnectionPort> PowerPorts => _ports;
+        readonly System.Collections.Generic.List<ConnectionPort> _ports = new();
+
+        /// <summary>Where the plug cube hangs, in the prop's own local frame. The prop is authored Z-up and its screen
+        /// faces +Y, so the BACK is -Y: this sits just proud of the rear of the column (body Y reaches -0.193), about
+        /// a quarter of the way up its 1.85 m height -- the same placement rule TVDevice uses, for the same reason,
+        /// which is that a plug buried inside the mesh cannot be looked at and therefore cannot be wired.</summary>
+        internal static readonly Vector3 PlugLocal = new Vector3(0f, -0.24f, 0.42f);
+        internal const float PlugWatts = 60f;   // a ward monitor is a small draw next to a pump's 750
 
         // ---- the screen face, measured off Science_3.obj (mesh local units; the prop is authored Z-up) -------------
         internal const float ScreenY = 0.2160f;      // the dark screen quad's plane
@@ -59,6 +73,7 @@ namespace UnturnedGodot
         ShaderMaterial _mat;
         StandardMaterial3D _offMat;
         MeshInstance3D _screen;
+        MeshInstance3D _outline;
         AudioStreamPlayer3D _audio;
         float _lastBeat = -1f;
         ConnectionPort _plug;
@@ -79,11 +94,11 @@ namespace UnturnedGodot
         public static HeartMonitor Make(MeshInstance3D bodyMi, bool alive)
         {
             var hm = new HeartMonitor { _alive = alive, Transform = bodyMi.Transform };
-            hm.Build();
+            hm.Build(bodyMi.Mesh);
             return hm;
         }
 
-        void Build()
+        void Build(Mesh bodyMesh)
         {
             // A quad the size of the screen face, standing in the prop's own local frame: the prop is authored Z-up,
             // so the screen spans X (width) and Z (height) and faces +Y.
@@ -134,6 +149,26 @@ namespace UnturnedGodot
 
             _audio = new AudioStreamPlayer3D { UnitSize = 7f, MaxDistance = 26f, VolumeDb = -3f, Bus = "Master" };
             AddChild(_audio);
+
+            // A REAL POWER INPUT. HasFeed has always read `mains OR the wire`, and AttachPort existed to supply the
+            // wire half -- but nothing ever called it, so the second half of that condition could never be true and
+            // the monitor had no input at all. Logic that is written, tested and never reached: the wire path had a
+            // test because the test called AttachPort itself, which is exactly the shape that hides this.
+            _plug = ConnectionPort.Create(this, new DeployableDef.Port
+            {
+                Kind = DeployableDef.PortKind.Consumer,
+                Pos = PlugLocal,
+                Watts = PlugWatts,
+            }, "Patient Monitor");
+            AddChild(_plug);
+            _ports.Add(_plug);
+            PowerNet.MarkDirty();
+
+            // Whole-prop rim outline while looked at, the affordance that says F does something here. The monitor was
+            // the one focusable fixture without it -- PlayerController assigned _focusMonitor and, unlike the TV two
+            // lines below, never called anything to show it.
+            _outline = OutlineOverlay.MakeOutline(bodyMesh);
+            AddChild(_outline);
         }
 
         public override void _Ready()
@@ -390,7 +425,7 @@ namespace UnturnedGodot
             _audio.Play();
         }
 
-        /// <summary>Wire port, so a generator can run one. Mirrors the other map fixtures' single consumer input.</summary>
-        public void AttachPort(ConnectionPort port) => _plug = port;
+        /// <summary>Look-at affordance: the whole-prop white rim, same as TVDevice's.</summary>
+        public void SetLookFocused(bool on) => OutlineOverlay.ShowOutline(on, Colors.White, _outline);
     }
 }

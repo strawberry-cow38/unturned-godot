@@ -31,12 +31,16 @@ uniform float period = 1.0;       // seconds per beat -- one full sweep of the t
 // of monitors must NOT have. They share one clock now; see HeartMonitor.GlobalPhase.)
 uniform float sag = 1.0;      // brownout: a square stutter on the whole picture level
 
-// The prop's OWN screen colour, palette texel (1,0) of Science_3_tex.png = (53,53,53)/255 (strawberry: "change the
-// grid background for the black color thats used in the model"). It was a darker, faintly green-cast panel, invented
-// rather than measured -- which meant the screen CHANGED base colour as it powered on, because the dark state uses
-// the mesh's texel. One number for both states, taken from the asset, so switching on adds a picture instead of
-// swapping the panel underneath it.
-const vec3 SCREEN_BG = vec3(0.207843, 0.207843, 0.207843);
+// The prop's OWN screen colour, palette texel (1,0) of Science_3_tex.png (strawberry: "change the grid background for
+// the black color thats used in the model"). It was a darker, faintly green-cast panel, invented rather than
+// measured, which meant the screen CHANGED base colour as it powered on.
+//
+// IN LINEAR, and that is the whole trap. The texel is 53/255 = 0.2078 in sRGB, and StandardMaterial3D.AlbedoColor
+// takes exactly that number because Godot linearises material colours for you. ALBEDO in a shader is written to a
+// LINEAR buffer with no such conversion, so the same 0.2078 lands at sRGB 0.493 -- a washed-out mid grey, which is
+// what shipped. The same colour therefore needs two different numbers depending on which side of the boundary it is
+// written on: 0.2078 as a material, 0.0356 here.
+const vec3 SCREEN_BG = vec3(0.035601, 0.035601, 0.035601);
 const vec3 TRACE     = vec3(0.247, 0.467, 0.204);   // the prop's OWN palette green, texel (63,119,52)/255
 const float BASELINE = 0.364;
 // 80% of the measured vanilla amplitude (strawberry: "the amplitude looked like its more. lower it by like 20%").

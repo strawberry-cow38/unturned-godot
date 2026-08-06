@@ -117,6 +117,24 @@ namespace UnturnedGodot.Testing
             tv.FlickerPulse(0.6f);
             T.Check("a dark set ignores the pulse entirely", !tv.DebugBrownout && !tv.DebugLit);
 
+            // ---- THE CONSOLE PATH: a bare flag flip, with NO explicit Recompute.
+            //
+            // Every check above calls PowerNet.Recompute by hand. The game does not -- `toggleGlobalPower` calls
+            // SetGlobalPower, which only MarkDirty()s, and something else recomputes on its own schedule. So the
+            // assertions above can all pass while the thing a player actually does has no effect, which is exactly the
+            // report ("globalpower has no effect on tvs still"). A set with no wire in it must not need the solver at
+            // all: HasFeed reads the mains flag directly.
+            PowerNet.SetGlobalPower(true);
+            PowerNet.Recompute(Tree);
+            yield return Ticks(240);
+            T.Check($"a set is lit before the console flip ({tv.DebugLit})", tv.DebugLit);
+            PowerNet.SetGlobalPower(false);        // NO Recompute -- deliberately
+            yield return Ticks(30);
+            T.Check($"...and a bare flag flip darkens it too ({tv.DebugLit})", !tv.DebugLit);
+            PowerNet.SetGlobalPower(true);         // ...and back, same way
+            yield return Ticks(30);
+            T.Check($"...and relights it ({tv.DebugLit})", tv.DebugLit);
+
             PowerNet.SetGlobalPower(gridWas);
             PowerNet.Recompute(Tree);
             yield break;
