@@ -148,16 +148,25 @@ namespace UnturnedGodot.Testing
             yield return Ticks(4);
 
             T.Check("a powered monitor is lit", hm.DebugLit);
-            T.Check("...and its screen is showing", hm.DebugScreen != null && hm.DebugScreen.Visible);
+            T.Check("...and its screen is showing the live trace",
+                hm.DebugScreen != null && hm.DebugScreen.Visible && hm.DebugScreen.MaterialOverride == hm.DebugMaterial);
             T.Check($"...beating, not flatlined ({hm.Alive})", hm.Alive);
             T.Check($"...at a hibernating rate ({60f / hm.DebugPeriod:0} bpm)", Mathf.IsEqualApprox(60f / hm.DebugPeriod, 60f));
 
             // The sweep advances: time_s must actually be driven, or the trace is a still picture that happens to be
             // the right shape -- which is exactly what "shows a pattern" would look like if _Process never ran.
+            //
+            // Compared MODULO the period, because time_s is now a sawtooth rather than an ever-growing accumulator:
+            // it is handed to the shader pre-wrapped so the beat cannot decay as the session lengthens. A plain
+            // t1 > t0 test passes or fails on where in the cycle the sample happened to land.
+            float per0 = hm.DebugPeriod;
             float t0 = (float)hm.DebugMaterial.GetShaderParameter("time_s");
             yield return Ticks(25);
             float t1 = (float)hm.DebugMaterial.GetShaderParameter("time_s");
-            T.Check($"the trace is animated, not a still ({t0:0.###} -> {t1:0.###})", t1 > t0 + 0.2f);
+            float adv = Mathf.PosMod(t1 - t0, per0);
+            T.Check($"the trace is animated, not a still ({t0:0.###} -> {t1:0.###}, advanced {adv:0.###}s of {per0:0.#})",
+                adv > 0.05f && adv < per0 * 0.95f);
+            T.Check($"...and it never leaves its own period ({t1:0.###} in 0..{per0:0.#})", t1 >= 0f && t1 < per0);
 
             // ---- THE FLATLINE FLAG. Both halves: the shader is told, and the period changes with it.
             hm.SetAlive(false);
@@ -173,7 +182,41 @@ namespace UnturnedGodot.Testing
             // ---- ON/OFF LIKE A TV, and the same two-source power gate.
             hm.Toggle();
             yield return Ticks(2);
-            T.Check("switching it off darkens the screen", !hm.DebugLit && !hm.DebugScreen.Visible);
+            T.Check("switching it off darkens the screen", !hm.DebugLit && hm.DebugOffMaterial != null
+                && hm.DebugScreen.MaterialOverride == hm.DebugOffMaterial);
+            // ...and it must still be DRAWN. Hiding it uncovers the prop's own modelled green ECG, which is what a
+            // dead monitor was showing before -- the failure looked exactly like "the screen went off" until you
+            // noticed the trace was still there.
+            T.Check("...while still COVERING the vanilla trace", hm.DebugScreen.Visible);
+
+            // THE OFF COLOUR IS THE PROP'S OWN, read back out of the palette rather than trusted. Science_3's texture
+            // is 2x2, and the screen face's UVs land on texel (1,0) -- so that texel IS the answer, and a hardcoded
+            // constant that drifted from the asset would otherwise look perfectly reasonable.
+            var pal = Image.LoadFromFile(ProjectSettings.GlobalizePath("res://content/objects/Science_3_tex.png"));
+            T.Check($"the prop's palette loaded ({pal?.GetWidth()}x{pal?.GetHeight()})", pal != null && pal.GetWidth() == 2);
+            if (pal != null && pal.GetWidth() == 2)
+            {
+                var screenTexel = pal.GetPixel(1, 0);
+                var off = hm.DebugOffMaterial.AlbedoColor;
+                T.Check($"...and the dark screen IS its screen texel (off {off.R:0.###},{off.G:0.###},{off.B:0.###} vs texel {screenTexel.R:0.###},{screenTexel.G:0.###},{screenTexel.B:0.###})",
+                    Mathf.Abs(off.R - screenTexel.R) < 0.01f && Mathf.Abs(off.G - screenTexel.G) < 0.01f && Mathf.Abs(off.B - screenTexel.B) < 0.01f);
+                // TEETH: and it is NOT black, which is the thing that was explicitly rejected for every screen type.
+                T.Check($"...and is not perfect black ({off.R:0.###})", off.R > 0.05f);
+
+                // ...and the LIT shader's background is the SAME texel. Two hand-typed copies of one colour is how the
+                // screen ends up changing shade as it powers on, which is the thing this replaced.
+                string esrc = ReadText("res://content/ecg.gdshader");
+                float bg = 0f;
+                foreach (var l in esrc.Split('\n'))
+                    if (l.Trim().StartsWith("const vec3 SCREEN_BG"))
+                    {
+                        int a = l.IndexOf('('), b = l.IndexOf(',');
+                        if (a >= 0 && b > a) float.TryParse(l.Substring(a + 1, b - a - 1).Trim(), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out bg);
+                    }
+                T.Check($"the shader's SCREEN_BG parsed ({bg:0.###})", bg > 0f);
+                T.Check($"...and the lit background matches the model's screen texel ({bg:0.###} vs {screenTexel.R:0.###})",
+                    Mathf.Abs(bg - screenTexel.R) < 0.01f);
+            }
             hm.Toggle();
             yield return Ticks(2);
             T.Check("...and back on relights it", hm.DebugLit);
@@ -304,7 +347,29 @@ namespace UnturnedGodot.Testing
                 flatUnit.DebugStream != null && flatUnit.DebugStream.GetLength() > 0.2);
             T.Check("...and the two units were not handed the same clip",
                 sound.DebugStream != null && flatUnit.DebugStream != null && sound.DebugStream != flatUnit.DebugStream);
-            sound.QueueFree(); flatUnit.QueueFree();
+            // ---- ONE BEEP SOURCE FOR THE WHOLE WARD (strawberry: "give ecgs a global 'beep source' to sync to so we
+            // dont get a bunch of them beeping out of phase").
+            //
+            // The unit spawned SECOND is the whole test. Both run at the same rate either way, so a per-unit clock
+            // fails this and nothing else: identical rate at scattered offsets is what sounds wrong, and it is
+            // invisible to any check that only looks at one monitor.
+            var late = Spawn(new Vector3(13f, 0f, 0f), alive: true);
+            yield return Ticks(37);   // deliberately not a whole number of beats
+            var later = Spawn(new Vector3(15f, 0f, 0f), alive: true);
+            yield return Ticks(3);
+            T.Check($"two monitors born {37f / 60f:0.##}s apart share a phase ({sound.DebugPhase:0.####} / {late.DebugPhase:0.####} / {later.DebugPhase:0.####})",
+                Mathf.Abs(sound.DebugPhase - late.DebugPhase) < 0.001f && Mathf.Abs(late.DebugPhase - later.DebugPhase) < 0.001f);
+            // TEETH: a phase pinned at 0 (or at any constant) would satisfy "they agree" while the display sat still.
+            float p0 = late.DebugPhase;
+            yield return Ticks(12);
+            T.Check($"...and that shared phase actually ADVANCES ({p0:0.####} -> {late.DebugPhase:0.####})",
+                !Mathf.IsEqualApprox(p0, late.DebugPhase));
+            // A flatlined unit runs its own period, so it is NOT expected to match -- asserted so that "everything
+            // agrees with everything" can't quietly become the rule.
+            T.Check($"...while a flatline keeps its own slower sweep ({HeartMonitor.FlatlinePeriod:0.#}s vs {HeartMonitor.BeatPeriod:0.#}s)",
+                !Mathf.IsEqualApprox(flatUnit.DebugPeriod, late.DebugPeriod));
+
+            sound.QueueFree(); flatUnit.QueueFree(); late.QueueFree(); later.QueueFree();
             yield return Ticks(2);
             // ...and the blip must be shorter than a beat, or beats would overlap into a drone.
             if (beepRes != null) T.Check($"a blip fits inside one beat ({beepRes.GetLength():0.###}s vs {HeartMonitor.BeatPeriod:0.###}s)",
@@ -333,7 +398,8 @@ namespace UnturnedGodot.Testing
             // after one hit, which is the opposite of what shooting it should do.
             T.Check("the first shot kills the display", hm.ShootOutScreen());
             yield return Ticks(4);
-            T.Check("...the screen goes dark and stays dark", !hm.DebugLit && !hm.DebugScreen.Visible);
+            T.Check("...the screen goes dark and stays dark",
+                !hm.DebugLit && hm.DebugScreen.Visible && hm.DebugScreen.MaterialOverride == hm.DebugOffMaterial);
             T.Check("...a second shot is NOT swallowed", !hm.ShootOutScreen());
             // ...and a dead display cannot be switched or powered back on. A shot-out monitor that relit on the next
             // grid sweep would read as the shot not having registered.

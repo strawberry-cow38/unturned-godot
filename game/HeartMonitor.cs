@@ -49,16 +49,24 @@ namespace UnturnedGodot
         public AudioStream DebugStream => _audio?.Stream;
         public bool DebugAudioPlaying => _audio != null && _audio.Playing;
 
+        /// <summary>The prop's OWN screen colour, palette texel (1,0) of Science_3_tex.png = (53,53,53). Resolved by
+        /// following the screen face's UVs into the 2x2 palette rather than picked by eye, and it is deliberately not
+        /// black -- the same call strawberry made for the televisions ("change the black color for all screen types on
+        /// all channels to not be perfect black, but the mesh's screen color").</summary>
+        internal static readonly Color ScreenOffColor = new Color(53f / 255f, 53f / 255f, 53f / 255f);
+
         bool _alive = true, _on = true, _lit, _screenShot;
         ShaderMaterial _mat;
+        StandardMaterial3D _offMat;
         MeshInstance3D _screen;
         AudioStreamPlayer3D _audio;
-        float _clock, _lastBeat = -1f;
+        float _lastBeat = -1f;
         ConnectionPort _plug;
 
         public bool Alive => _alive;
         public bool DebugLit => _lit;
         public ShaderMaterial DebugMaterial => _mat;
+        public StandardMaterial3D DebugOffMaterial => _offMat;
         public MeshInstance3D DebugScreen => _screen;
         public float DebugPeriod => _alive ? BeatPeriod : FlatlinePeriod;
 
@@ -102,13 +110,25 @@ namespace UnturnedGodot
             _mat.SetShaderParameter("alive", _alive ? 1f : 0f);
             _mat.SetShaderParameter("lit", 0f);
             _mat.SetShaderParameter("period", DebugPeriod);
-            _mat.SetShaderParameter("seed", GD.Randf() * 100f);
 
+            // THE OFF STATE IS A MATERIAL SWAP, NOT A HIDE (strawberry: "remove the base ecg prop's graph when the
+            // screen is off, should be the green line").
+            //
+            // Hiding the overlay does not blank the screen -- it UNCOVERS the vanilla prop's own modelled ECG, which
+            // is 21 real vertices of palette green sitting 2.1 mm proud of the screen face. So a dead monitor still
+            // had a bright green trace drawn across it. The overlay has to stay drawn and go dark instead, which it
+            // can because it sits 4 mm in front and spans the trace exactly (trace X -0.3171..0.3204 against the
+            // overlay's own -0.3171..0.3204; Z is inset).
+            //
+            // A lit StandardMaterial3D rather than a branch in the shader: the shader is `unshaded` because a live
+            // screen is a light SOURCE, and painting the off state there would leave a flat patch that ignores every
+            // lamp in the room while the casing around it responds. Roughness 1 matches WorldBuilder's own prop
+            // material, so the dark screen shades like the plastic it is set into.
+            _offMat = new StandardMaterial3D { AlbedoColor = ScreenOffColor, Roughness = 1f };
             _screen = new MeshInstance3D
             {
-                Mesh = mesh, MaterialOverride = _mat,
+                Mesh = mesh, MaterialOverride = _offMat,
                 CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
-                Visible = false,
             };
             AddChild(_screen);
 
@@ -162,9 +182,11 @@ namespace UnturnedGodot
         public void Refresh()
         {
             bool want = _on && HasFeed && !_screenShot;
-            if (want == _lit && _screen != null && _screen.Visible == want) return;
+            if (want == _lit && _screen != null && _screen.MaterialOverride == (want ? (Material)_mat : _offMat)) return;
             _lit = want;
-            if (_screen != null) _screen.Visible = want;
+            // The quad stays DRAWN either way -- see Build(). Hiding it would put the prop's own green trace back on
+            // screen, which is the bug this replaced.
+            if (_screen != null) _screen.MaterialOverride = want ? (Material)_mat : _offMat;
             _mat?.SetShaderParameter("lit", want ? 1f : 0f);
             if (!want) _audio?.Stop();
         }
@@ -176,11 +198,18 @@ namespace UnturnedGodot
             // Poll the WHOLE feed, mains and wire together -- the same lesson TVDevice learned today: relying on a
             // push means the one caller that pushes works and every other route leaves the unit lit through a
             // blackout.
+            // Advanced BEFORE the lit gate, so the ward's clock does not stall whenever every monitor happens to be
+            // dark and then resume from where it stopped.
+            AdvanceShared(delta);
+
             if (HasFeed != _feedWas) { _feedWas = HasFeed; Refresh(); }
             if (!_lit) return;
 
-            _clock += (float)delta;
-            _mat?.SetShaderParameter("time_s", _clock);
+            // Driven off the SHARED clock, not a per-unit accumulator -- so the sweep is in step across the ward too,
+            // not merely the sound. Handed over already wrapped into [0, period), which is all the shader's
+            // fract(time_s / period) needs and keeps it away from the float-resolution cliff a long uptime creates.
+            float per = DebugPeriod;
+            _mat?.SetShaderParameter("time_s", (float)Mathf.PosMod(GlobalSeconds, per));
 
             // The sag is a square stutter on the picture level, not a fade: mains droop stutters.
             if (_brownoutLeft > 0f)
@@ -195,11 +224,11 @@ namespace UnturnedGodot
             // The beep fires when the sweep passes the R spike, so the sound is ON the visible beat rather than merely
             // at the same rate as it -- those are indistinguishable until you watch and listen at once, and then the
             // second one is obviously wrong.
-            float period = DebugPeriod;
-            float phase = Mathf.PosMod(_clock, period) / period;
+            float phase = GlobalPhase(per);
             if (_alive)
             {
-                if (phase < _lastBeat || _lastBeat < 0f) { /* wrapped */ }
+                // The edge is still detected per-unit -- only the CLOCK is shared. Every alive monitor crosses RPhase
+                // on the same frame, so they fire together without any of them owning the others.
                 if (_lastBeat >= 0f && _lastBeat < RPhase && phase >= RPhase) Beep(sustained: false);
                 _lastBeat = phase;
             }
@@ -207,6 +236,37 @@ namespace UnturnedGodot
         }
 
         internal const float RPhase = 0.42f;   // matches the shader's R position, so sound and picture agree
+
+        /// <summary>THE GLOBAL BEEP SOURCE (strawberry: "give ecgs a global 'beep source' to sync to so we dont get a
+        /// bunch of them beeping out of phase").
+        ///
+        /// Every unit derives its phase from the engine clock rather than from a counter it started when it happened
+        /// to spawn. That is the whole mechanism: monitors placed at different times used to be at different points in
+        /// the cycle, and a ward of them beeping at the same RATE but at scattered offsets is a mess -- the rate being
+        /// identical is what makes the scatter sound wrong rather than random.
+        ///
+        /// SIM time, not wall time. It was Time.GetTicksMsec(), which is genuinely global and genuinely wrong here: it
+        /// keeps running when the game does not, so a paused game would have its monitors beat on, and it diverges
+        /// from the sim wherever the two clocks disagree -- the headless harness runs ~12x faster than realtime, which
+        /// is how this got caught. Accumulated from delta instead, exactly once per frame no matter how many units are
+        /// on the map (the frame counter is the guard; without it a ward of ten monitors would run ten times fast).
+        ///
+        /// Kept in DOUBLE and wrapped before it is narrowed. Seconds-since-boot as a float loses resolution as uptime
+        /// grows (past ~10^6 s a float cannot even represent tenths), so a long session would quantise the beat and
+        /// eventually stop advancing it. Wrapping first means the value handed out is always inside one period.</summary>
+        static double _shared;
+        static ulong _sharedFrame = ulong.MaxValue;
+        internal static double GlobalSeconds => _shared;
+        internal static void AdvanceShared(double delta)
+        {
+            ulong f = Engine.GetProcessFrames();
+            if (f == _sharedFrame) return;   // some other monitor already advanced it this frame
+            _sharedFrame = f;
+            _shared += delta;
+        }
+        internal static float GlobalPhase(float period) => (float)(Mathf.PosMod(GlobalSeconds, period) / period);
+        /// <summary>Where in the cycle this unit is, 0..1. Two units with the same period must agree.</summary>
+        public float DebugPhase => GlobalPhase(DebugPeriod);
 
         // ---- THE BEEP: real recordings, not a synthesised tone --------------------------------------------------
         //

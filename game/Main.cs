@@ -1419,7 +1419,11 @@ namespace UnturnedGodot
             {
                 var hm = HeartMonitor.Make(propMi, System.Environment.GetEnvironmentVariable("UG_FLATLINE") == "1" ? false : true);
                 AddChild(hm);
-                GD.Print($"[PROPTEST] attached HeartMonitor (alive={hm.Alive})");
+                // UG_MONITOR_OFF=1: switch it off, so the DARK state is renderable too. The off state is the one that
+                // was wrong (a hidden overlay uncovered the prop's own green trace), and it is not visible from any
+                // amount of staring at the lit one.
+                if (System.Environment.GetEnvironmentVariable("UG_MONITOR_OFF") == "1") hm.Toggle();
+                GD.Print($"[PROPTEST] attached HeartMonitor (alive={hm.Alive} lit={hm.DebugLit})");
             }
             var aabb = mesh.GetAabb(); var c = aabb.GetCenter(); float r = Mathf.Max(aabb.Size.X, Mathf.Max(aabb.Size.Y, aabb.Size.Z));
             if (r < 0.01f) r = 1f;
