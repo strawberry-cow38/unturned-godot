@@ -141,6 +141,13 @@ namespace UnturnedGodot
             { ".50 BMG", 2.30f },                 // 12.95mm on an enormous case -- the top of the range on purpose
             { "12 Gauge", 0.45f },                // EXTRA small per master: this is ONE PELLET, and a shot spawns 8 of
             { "20 Gauge", 0.40f },                // them. Scaling off the 18.5mm bore would draw eight walls of orange.
+            // Added with the Washington port. Placed by BORE against the neighbours above, not invented:
+            { "7.62x25mm Tokarev", 1.10f },       // 7.85mm, a fast PISTOL round -- bigger bore than the
+                                                  // 9x19 but nowhere near the x39's case (PPSh-41)
+            { "5.7x28mm", 0.70f },                // 5.70mm, same bore as the 5.56 baseline on a much smaller
+                                                  // case -- so between the .22 LR and the baseline (P90)
+            { ".408 CheyTac", 2.00f },            // 10.36mm; heavier than .338 Lapua, lighter than .50 BMG,
+                                                  // and sits between them here for the same reason (M200)
             { "Railgun Slug", 1.80f },            // not a real cartridge; sized to read as heavy
         };
 

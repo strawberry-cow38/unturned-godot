@@ -25,6 +25,8 @@ Semi
 Auto
 
 Caliber 34
+Caliber_Name "9x19mm Parabellum"
+Real_Weapon "IMI Uzi"
 
 Range 90
 Firerate 2

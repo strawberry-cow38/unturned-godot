@@ -26,6 +26,8 @@ Semi
 Auto
 
 Caliber 39
+Caliber_Name ".45 ACP"
+Real_Weapon "KRISS Vector"
 
 Range 100
 Firerate 3

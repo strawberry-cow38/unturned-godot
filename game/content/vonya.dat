@@ -24,6 +24,8 @@ Safety
 Semi
 
 Caliber 33
+Caliber_Name "12 Gauge"
+Real_Weapon "Saiga-12"
 
 Range 25
 Firerate 20

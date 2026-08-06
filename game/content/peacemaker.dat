@@ -25,6 +25,8 @@ Semi
 Auto
 
 Caliber 24
+Caliber_Name "5.7x28mm"
+Real_Weapon "FN P90"
 
 Range 100
 Firerate 3

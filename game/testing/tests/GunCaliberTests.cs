@@ -49,38 +49,56 @@ namespace UnturnedGodot.Testing
             var guns = PortedGuns(dir);
             T.Check($"the content ships guns to check ({guns.Count})", guns.Count >= 30);
 
-            // 1. A REAL cartridge where the game names one -- and NOTHING where it does not.
+            // 1. A REAL-WORLD BASIS WHERE ONE EXISTS -- and nothing invented where it does not.
             //
-            // This used to demand a Caliber_Name AND a Real_Weapon from every ported gun, and that requirement is what
-            // manufactured the data it was meant to protect: a gun the game describes as "Russian minigun chambered in
-            // Hell's Fury ammunition" cannot be tagged truthfully, so it got tagged "9x19mm Parabellum / Heckler &
-            // Koch MP5K" -- wrong nation, wrong class, wrong cartridge, and green. Nine of the twenty Washington guns
-            // were annotated with a real weapon that contradicts their own in-game description (teklowvka, a SWEDISH
-            // PISTOL, was recorded as an AKM; peacemaker, a BELGIAN CARBINE, as a Colt Single Action Army).
+            // This originally demanded a Caliber_Name AND a Real_Weapon from every ported gun, and that requirement is
+            // what manufactured the data it was meant to protect: a gun the game describes as "Russian minigun
+            // chambered in Hell's Fury ammunition" cannot be tagged truthfully, so it got tagged "9x19mm Parabellum /
+            // Heckler & Koch MP5K" -- wrong nation, wrong class, wrong cartridge, and green. A check that demands data
+            // for things which have none gets paid in fabrication.
             //
-            // The fields are what GunDef says they are: the REAL-WORLD cartridge and the REAL firearm. Unturned's
-            // fictional guns fire fictional ammunition -- Hell's Fury, Devil's Bane, Calling Card -- and the honest
-            // value for those is ABSENT. So the rule is two-sided, and the second side is the one with teeth: a
-            // fictional-ammo gun must carry NO real-world tag, or the next pass re-invents one and passes.
+            // The attributions are now SOURCED (master supplied them: peacemaker=P90, viper=MP5, vonya=Saiga,
+            // bulldog=Uzi, card=PPSh, scalar=Vector, bane=AA-12, fusilaut=FAMAS, teklowvka=TEC-9, kryzkarek=Makarov,
+            // ekho=M200) rather than inferred from the mesh, and ten of the eleven corroborate the game's own stated
+            // nationality -- the TEC-9 included, which is why a "Swedish pistol" is right: Interdynamic AB, Stockholm.
             //
-            // Membership is decided by the game's own English.dat description, not by looking at the mesh.
-            var fictionalAmmo = new HashSet<string>
+            // TWO AXES, and they move independently, which is the thing this check now encodes:
+            //   Real_Weapon  -- the firearm the MODEL is based on. Can exist even when the ammo is invented.
+            //   Caliber_Name -- the REAL cartridge. Derived from Real_Weapon where there is one; absent otherwise.
+            // The guns with no real basis at all are the ones that must stay empty, or the next pass re-invents them.
+            var noRealBasis = new HashSet<string>
             {
-                "fury", "vonya", "ekho", "scalar", "bane", "card", "teklowvka",
-                "kryzkarek", "viper", "bulldog", "peacemaker", "nailgun", "paintballgun",
+                "fury",              // Russian minigun, "Hell's Fury"
+                "nailgun",           // construction tool
+                "paintballgun",      // painting tool
+                "shadowstalkermk2",  // prototype railgun -- was tagged with its OWN NAME as its basis
             };
+            // ...and a THIRD case: a real model basis and NO cartridge, because the gun throws an OBJECT rather
+            // than firing a bullet. Decided by what the MAGAZINE holds, which is the only place that actually says:
+            // "Designed to fit 20 nails", "...35 paintballs". NOT by the ammo's flavour name -- `card` is a PPSh-41
+            // firing "Calling Card" ammo whose magazine holds "71 rounds", and I filed it here as a card-thrower on
+            // the strength of the name alone until master asked what I was talking about. Hell's Fury, Vonya and
+            // Calling Card are all just Unturned naming its ammo types.
+            var nonBallistic = new HashSet<string> { "nailgun", "paintballgun" };
             var untagged = new List<string>();
             var invented = new List<string>();
             foreach (var g in guns)
             {
                 var d = Def(dir, g);
-                bool fictional = fictionalAmmo.Contains(g);
-                if (!fictional && string.IsNullOrWhiteSpace(d.CaliberName)) untagged.Add(g);
-                if (fictional && (!string.IsNullOrWhiteSpace(d.CaliberName) || !string.IsNullOrWhiteSpace(d.RealWeapon)))
-                    invented.Add($"{g}={d.CaliberName ?? "-"}/{d.RealWeapon ?? "-"}");
+                if (nonBallistic.Contains(g) && !noRealBasis.Contains(g))
+                {
+                    T.Check($"{g} throws an object, so it carries no cartridge ({d.CaliberName ?? "-"})",
+                        string.IsNullOrWhiteSpace(d.CaliberName));
+                }
+                else if (noRealBasis.Contains(g))
+                {
+                    if (!string.IsNullOrWhiteSpace(d.CaliberName) || !string.IsNullOrWhiteSpace(d.RealWeapon))
+                        invented.Add($"{g}={d.CaliberName ?? "-"}/{d.RealWeapon ?? "-"}");
+                }
+                else if (string.IsNullOrWhiteSpace(d.CaliberName)) untagged.Add(g);
             }
-            T.Check($"every gun the game gives a real cartridge has one ({(untagged.Count == 0 ? "all" : string.Join(",", untagged))})", untagged.Count == 0);
-            T.Check($"...and no fictional-ammo gun has an invented one ({(invented.Count == 0 ? "none" : string.Join(",", invented))})", invented.Count == 0);
+            T.Check($"every gun with a real-world basis carries its cartridge ({(untagged.Count == 0 ? "all" : string.Join(",", untagged))})", untagged.Count == 0);
+            T.Check($"...and the ones with NO real basis invent nothing ({(invented.Count == 0 ? "none" : string.Join(",", invented))})", invented.Count == 0);
 
             // 2. One cartridge across three DIFFERENT magazine groups -- the fact that makes a separate field necessary.
             var mosin = Def(dir, "schofield");
@@ -192,8 +210,7 @@ namespace UnturnedGodot.Testing
             {
                 string c = Def(dir, g).CaliberName;
                 if (string.IsNullOrWhiteSpace(c)) continue;   // fictional ammo -> no real cartridge -> GunDef.TracerScale defaults it (and ContainsKey(null) THROWS)
-                if (c == "Arrow" || c == "Bolt" || c == "Rocket"
-                    || c == "Card" || c == "Nail" || c == "Paintball") continue;   // no ballistic tracer by design -- Card/Nail/Paintball throw a physical object, not a bullet
+                if (c == "Arrow" || c == "Bolt" || c == "Rocket") continue;   // no ballistic tracer by design
                 if (!GunDef.TracerScales.ContainsKey(c)) unmapped.Add($"{g}={c}");
             }
             T.Check($"every ballistic cartridge has a tracer width ({(unmapped.Count == 0 ? "all" : string.Join(",", unmapped))})", unmapped.Count == 0);

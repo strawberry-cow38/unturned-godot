@@ -22,6 +22,8 @@ Safety
 Semi
 
 Caliber 26
+Caliber_Name "9x18mm Makarov"
+Real_Weapon "Makarov PMM"
 
 Range 90
 Firerate 4

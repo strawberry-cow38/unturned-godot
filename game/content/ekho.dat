@@ -24,6 +24,8 @@ Safety
 Semi
 
 Caliber 36
+Caliber_Name ".408 CheyTac"
+Real_Weapon "CheyTac M200 Intervention"
 
 Range 300
 Firerate 50

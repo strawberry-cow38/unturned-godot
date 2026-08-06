@@ -24,6 +24,8 @@ Safety
 Auto
 
 Caliber 42
+Caliber_Name "12 Gauge"
+Real_Weapon "Atchisson AA-12"
 
 Range 20
 Firerate 10

@@ -22,6 +22,8 @@ Safety
 Semi
 
 Caliber 31
+Caliber_Name "9x19mm Parabellum"
+Real_Weapon "Intratec TEC-9"
 
 Range 80
 Firerate 3

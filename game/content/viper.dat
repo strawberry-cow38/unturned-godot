@@ -26,6 +26,8 @@ Semi
 Auto
 
 Caliber 25
+Caliber_Name "9x19mm Parabellum"
+Real_Weapon "Heckler & Koch MP5"
 
 Range 125
 Firerate 4
