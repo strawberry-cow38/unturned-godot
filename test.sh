@@ -53,6 +53,33 @@ if [ $DEFAULTED -eq 1 ]; then
   echo "[test.sh] Before merging to main / deploying, run the full sweep:  ./test.sh --all"
 fi
 
+# ONE RUN AT A TIME. Every suite writes into the SAME $RESULTS dir, so two concurrent runs clobber
+# each other's logs and trx files -- and the way that surfaces is a lie: the loser reports
+# "host never reported (boot/hang)", an INFRA-ERROR that looks exactly like a crashed or wedged
+# engine. I produced that three times in one session, and a second agent working the same repo
+# nearly did from the other side. "Remember not to" is not a mechanism; a lock is.
+#
+# flock on a fd, held for the life of the script -- so it releases on exit, on Ctrl-C, and on kill,
+# with no trap to forget. Non-blocking by design: a run that queued silently would just move the
+# confusion later. UG_TEST_NOLOCK=1 escapes it for the genuinely-separate-checkout case.
+# MSBuild's node-reuse daemons OUTLIVE this script and INHERIT its file descriptors, so a lock fd they
+# hold is never released -- the lock then refuses every future run with nothing actually running, which
+# is worse than the collisions it exists to stop. (Found the hard way: two dotnet MSBuild.dll processes
+# holding /tmp/.ug-test-*.lock long after the suite finished.) Disabling node reuse keeps every build
+# child mortal; it costs a little build warm-up and buys a lock that always releases.
+export MSBUILDDISABLENODEREUSE=1
+export DOTNET_CLI_USE_MSBUILD_SERVER=0
+
+if [ "${UG_TEST_NOLOCK:-}" != "1" ]; then
+  exec 9>"${TMPDIR:-/tmp}/.ug-test-$(id -u).lock"
+  if ! flock -n 9; then
+    echo "[test.sh] ANOTHER RUN HOLDS THE LOCK -- refusing to start."
+    echo "[test.sh] Two suites share $RESULTS; the loser reports a boot/hang that never happened."
+    echo "[test.sh] Wait for it, or set UG_TEST_NOLOCK=1 if you are genuinely on a separate checkout."
+    exit 2
+  fi
+fi
+
 rm -rf "$RESULTS"; mkdir -p "$RESULTS"
 TOTAL_PASS=0; TOTAL_FAIL=0; FIRST_FAILURE=""; INFRA_FAIL=0
 
