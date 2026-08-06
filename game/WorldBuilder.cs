@@ -333,6 +333,28 @@ namespace UnturnedGodot
                 }
             var doorMeshCache = new System.Collections.Generic.Dictionary<string, ArrayMesh>();
             var folCache = new System.Collections.Generic.Dictionary<string, ArrayMesh>();   // separate tree-leaf meshes (own leaf material)
+            // PROPS YOU WALK THROUGH (master: "hedges and some other foliage stuff as well as farm crops ...
+            // all of these props should have No Collision").
+            //
+            // Every prop otherwise gets a TRIMESH of its visual mesh, and for foliage that is the whole problem: a
+            // hedge or a crop row is a sprawl of thin alpha-cutout planes, so the generated collider is a mess of
+            // invisible edges you catch on. The mesh is the wrong shape to collide with, not merely the wrong size.
+            //
+            // NOT read from the retail data, and I checked before assuming: object .dats carry `Has_Clip_Prefab`,
+            // which looks exactly like the field for this -- Hedge_0 has it false. It is false on ALL 1164 objects,
+            // including Apartment_0 and Bank_0, so it discriminates nothing. One sample supported a clean story that
+            // the distribution killed.
+            //
+            // So this is OUR gameplay call, listed explicitly rather than sniffed: an alpha-cutout test would also
+            // catch every window, and a size test would also catch every small solid prop.
+            // HayBale_* is deliberately NOT here (cow tools): a bale is a solid block you stand on and take cover
+            // behind. "Grows out of the ground" is not the test -- thin-and-see-through is.
+            static bool IsWalkThrough(string prop) =>
+                prop.StartsWith("Bush_") || prop.StartsWith("Crop_") || prop.StartsWith("Vines_")
+                || prop.StartsWith("Hedge_") || prop.StartsWith("Grass_")
+                || prop.StartsWith("Cane_")            // sugarcane, thin stalks
+                || prop.StartsWith("Mushroom_");       // ankle height
+
             var shapeCache = new System.Collections.Generic.Dictionary<string, ConcavePolygonShape3D>();   // one trimesh collider per unique prop mesh, shared across instances
             var matCache = new System.Collections.Generic.Dictionary<string, StandardMaterial3D>();
             StandardMaterial3D MatFor(string nm)
@@ -771,7 +793,7 @@ namespace UnturnedGodot
                     }
                 }
                 StaticBody3D destBody = null;
-                if (colliders)   // walkable collision: trimesh of the VISUAL mesh (trees collide on the trunk only; the separate leaf mesh has no collider, so you walk through foliage)
+                if (colliders && !IsWalkThrough(name))   // walkable collision: trimesh of the VISUAL mesh (trees collide on the trunk only; the separate leaf mesh has no collider, so you walk through foliage)
                 {
                     if (!shapeCache.TryGetValue(name, out var shp)) { shp = mesh.CreateTrimeshShape(); shapeCache[name] = shp; }
                     if (shp != null)
