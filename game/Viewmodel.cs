@@ -42,6 +42,8 @@ namespace UnturnedGodot
         // the viewmodel camera's local position. Stiffness/damping are Inspector-serialized on the Player
         // prefab in the original (not in the scripts) -> tuned here; the motion + amplitudes are source-exact.
         Rk4Spring2 _bobSpring = new Rk4Spring2(900f, 60f);   // tracks the Sin(speed*t) target cleanly + eases stop
+        Rk4Spring2 _swayTilt = new Rk4Spring2(120f, 22f);    // movement-driven viewmodel TILT (PlayerAnimator sway): softer/slower than the bob so the tilt trails the walk
+        Godot.Vector2 _moveInput;                            // last move axes from the player (x=strafe, y=forward) -> the sway tilt direction
         Rk4Spring3 _shakeSpring = new Rk4Spring3(550f, 40f); // positional kick, settles ~0.2s (slight overshoot)
         Rk4Spring3 _recoilRotSpring = new Rk4Spring3(550f, 40f); // per-shot gun tilt (pitch/yaw/roll deg), springs back
         bool _moving;                       // player has movement input this frame (drives bob on/off)
@@ -606,10 +608,11 @@ namespace UnturnedGodot
 
         // Driven each physics frame by PlayerController: whether the player is moving + their stance, so the
         // walk bob uses the right frequency (SPEED_*) + amplitude (BOB_*) and switches off when standing still.
-        public void SetLocomotion(bool moving, EPlayerStance stance, bool safe = false)
+        public void SetLocomotion(bool moving, EPlayerStance stance, bool safe = false, float moveX = 0f, float moveZ = 0f)
         {
             bool leftSwim = _stance == EPlayerStance.SWIM && stance != EPlayerStance.SWIM;
             _moving = moving; _stance = stance; _safe = safe;
+            _moveInput = new Vector2(moveX, moveZ);   // x=strafe, y=forward -> the movement sway tilt
             if (_arms == null) return;
             // 1p arms swim: retail's PlayerAnimator.updateState plays Idle_Swim/Move_Swim on the FIRST-PERSON
             // animator too (not just 3p), overriding the equipped-item hold -- otherwise the empty-hand melee
@@ -1237,6 +1240,25 @@ namespace UnturnedGodot
             //
             // Scope sway lands on pitch/yaw only; its Z is always 0 in the source, so there is nothing to roll.
             var armRot = _inputRoll.CurrentPosition + _scopeSway;
+            // MOVEMENT SWAY TILT (PlayerAnimator.cs:1449-1458, tinyclaw). While moving, the gun tilts by the move
+            // direction x a per-stance TILT, plus a slow "roll" oscillation -- the walk wiggle -- eased through a spring.
+            // swayMul = the same viewmodelSwayMultiplier the bob uses (1 hip -> 0.1 aim), so ADS keeps a small residual
+            // sway (misalignmentScale defaults 1.0 -- vanilla ADS does NOT zero the sway, it's a server knob; a magnifying
+            // SCOPE zeroes it, handled by the ScopeZoom gate below). tilt = TILT x (1 - swayMul/2). 1:1 SOURCE QUIRK: the
+            // y (strafe) term omits swayMul while the x (fwd/back) term keeps it -- reads like a slip but it's retail's,
+            // so it's copied verbatim rather than "fixed". Scopes kill sway entirely (UseableOptic sets the mult to 0).
+            float TILT = _stance switch { EPlayerStance.SPRINT => 5f, EPlayerStance.CROUCH => 2f, EPlayerStance.PRONE => 1f, EPlayerStance.SWIM => 10f, _ => 3f };
+            float swayMul = (_aiming && ScopeZoom > 1f) ? 0f : _blendedSway;   // a magnifying optic zeroes the sway outright
+            float tiltAmt = TILT * (1f - swayMul * 0.5f);
+            float wiggle = Mathf.Sin(TILT * (float)_t * 0.25f) * TILT;   // the slow movement oscillation
+            Vector2 swayTarget = _moving
+                ? new Vector2(_moveInput.Y * tiltAmt * swayMul + wiggle * swayMul,   // x <- fwd/back, WITH swayMul
+                              _moveInput.X * tiltAmt          + wiggle * swayMul)     // y <- strafe, NO swayMul on the move term (source quirk)
+                : Vector2.Zero;
+            _swayTilt.TargetPosition = swayTarget;
+            _swayTilt.Update((float)delta);
+            armRot.X += _swayTilt.CurrentPosition.X;   // fwd/back sway -> pitch
+            armRot.Y += _swayTilt.CurrentPosition.Y;   // strafe sway -> yaw
             _arms.RotationDegrees = armRot;
             // 1P lean tilt: a 2D roll of the composited viewmodel IMAGE about screen-centre -- NOT a 3D roll of the arms.
             // Stylistic only (the bullet origin already leans via the eye pivot, tinyclaw). Doing it in 2D keeps the ADS

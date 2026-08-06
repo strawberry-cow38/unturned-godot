@@ -5202,7 +5202,7 @@ namespace UnturnedGodot
             // feed the viewmodel its locomotion so the walk bob picks the right SPEED_*/BOB_* + gates on movement
             bool moving = Mathf.Abs(forward) > 0.01f || Mathf.Abs(strafe) > 0.01f;
             Moving = moving;                                  // exposed for zombie stealth detection
-            _viewmodel?.SetLocomotion(moving, _move.Stance, _firemode == FireMode.Safety);   // safety firemode -> lowered "safe" carry pose on the viewmodel
+            _viewmodel?.SetLocomotion(moving, _move.Stance, _firemode == FireMode.Safety, LastMoveInput.x, LastMoveInput.y);   // safety firemode -> lowered "safe" carry pose; move axes drive the viewmodel sway tilt
             UpdateVitals(moving, (float)delta);
             FoodSpoilTick();             // once per in-game day: spoil the food in the bag (freshness -> moldy)
             TickConsume((float)delta);   // eat/drink timer -> applies the held consumable's effects
