@@ -49,7 +49,7 @@ namespace UnturnedGodot
         const int MontageFramesPerClip = 55;
         bool _ragTest;                               // --anim=Ragdoll : trigger the death ragdoll mid-capture
         bool _gunLayerTest;                          // UG_GUNLAYER=1 (+--gun): legs walk while the arms hold/aim/reload the gun via the overlay
-        string _glEquipClip, _glReloadClip;          // resolved overlay clips for the gun-layer test
+        string _glEquipClip, _glReloadClip, _glHammerClip;   // resolved overlay clips for the gun-layer test (+ the empty-reload rack)
         bool _vmTest; Viewmodel _vm;                 // --vm=DIR : first-person viewmodel test (equip -> ADS -> hip)
         bool _vmMelee;                               // --vm target is a melee weapon -> skip the gun aim/fire/reload script (MeleeSwingDriver swings it instead)
         bool _vmAimed; int _vmAimStart; int _vmSettle;
@@ -698,6 +698,7 @@ namespace UnturnedGodot
                 string cg = char.ToUpper(gun[0]) + gun.Substring(1);
                 _glEquipClip  = rc.ClipLength(cg + "_Equip")  > 0f ? cg + "_Equip"  : "Gun_Equip";
                 _glReloadClip = rc.ClipLength(cg + "_Reload") > 0f ? cg + "_Reload" : "Gun_Reload";
+                _glHammerClip = rc.ClipLength(cg + "_Hammer") > 0f ? cg + "_Hammer" : null;    // the rack (empty-reload 2nd half)
                 rc.SetLocomotion(3.0f);                                                       // ~walk speed -> Move_Walk on the legs
                 rc.EnableGunLayer(rc.ClipLength(cg + "_Aim") > 0f ? cg + "_Aim" : "Gun_Aim");  // upper-body overlay + ADS delta
                 rc.SetGunOverlay(_glEquipClip, 1f, loop: false);                              // equip pull-out -> holds the ready pose
@@ -705,7 +706,7 @@ namespace UnturnedGodot
                 if (!string.IsNullOrEmpty(gvg.Sight) && ContentProvider.ParseObj($"res://content/{gvg.Sight}") is Mesh gsm) rc.MountGunAttachment("Sight", gsm, gvg.SightPos != Vector3.Zero ? gvg.SightPos : new Vector3(0f, 0.1312f, -0.118f), gvg.SightColor.A > 0f ? gvg.SightColor : new Color(0.3f, 0.3f, 0.3f));
                 if (!string.IsNullOrEmpty(gvg.Mag) && ContentProvider.ParseObj($"res://content/{gvg.Mag}") is Mesh gmm) rc.MountGunAttachment("Magazine", gmm, new Vector3(0f, 0.0166f, 0.0238f), new Color(0.07f, 0.07f, 0.08f));
                 _gunLayerTest = true;
-                _rigCaptureFrames = new[] { 30, 55, 85, 115, 130, 150 };   // walk+hold, walk+aim, reload, hold-after-reload
+                _rigCaptureFrames = new[] { 30, 50, 100, 145, 190, 210 };   // stand+hold, stand+ADS, rack(hammer), CROUCH, PRONE, prone-settled
             }
             else if (anim == "Ragdoll")
             {
@@ -2578,6 +2579,7 @@ namespace UnturnedGodot
             // gated OFF under consume, so it never ran and every shelf's display digest came back empty.
             if (_peiPlayable) LootTables.Load(_mapRoot + "/Spawns/Items.dat");
             _pdPlayer = res.Player;   // UG_AUTOFIRE terrain-impact verification
+            if (_pdPlayer != null && System.Environment.GetEnvironmentVariable("UG_START3P") == "1") _pdPlayer.DriveFP = false;   // start in 3rd person (verify the 3P centre crosshair + the 3P body)
             _ztField = res.Zombies;   // --zombietest reads this at frame 25 to verify spawns land on the navmesh
             _zdField = res.Director;  // --zdirtest reads this to watch the rewrite tier/path/move on the real map
             if (res.HasVehicleAim && !_vHave) { _vAim = res.VehicleAim; _vHave = true; }
@@ -4578,13 +4580,20 @@ namespace UnturnedGodot
             if (_rigDir != null)
             {
                 _frame++;
-                if (_gunLayerTest && _rc != null)   // 3P gun-layer test: legs walk + arms hold/aim/reload, Ticking the Manual overlay
+                if (_gunLayerTest && _rc != null)   // 3P gun-layer test: legs walk + arms hold/aim/reload, then crouch/prone + the rack
                 {
-                    _rc.SetLocomotion(3.0f);                                                                  // keep walking
+                    // Stance timeline: STAND (walking) -> CROUCH (idle) -> PRONE (idle), so the overlay's stance handling
+                    // is visible -- the torso should LIE DOWN / hunch, not stay upright over crouched legs (master).
+                    var st = _frame < 120 ? SDG.Unturned.EPlayerStance.STAND
+                           : _frame < 165 ? SDG.Unturned.EPlayerStance.CROUCH
+                           :                 SDG.Unturned.EPlayerStance.PRONE;
+                    float sp = _frame < 120 ? 3.0f : 0.0f;                                                    // stand walks; crouch/prone idle so the posture reads
+                    _rc.SetLocomotion(sp, st);
                     _rc.AimBlend = (_frame >= 40 && _frame < 68) ? Mathf.Min(1f, (_frame - 40) / 8f) : 0f;    // ADS in f40-48, hold, out f68
-                    if (_frame >= 52 && _frame <= 58) _rc.FlashMuzzle();                                     // fire: hold the flash across the f55 capture (live game flashes ~0.05s/shot)
-                    if (_frame == 70) _rc.SetGunOverlay(_glReloadClip, 1f, loop: false);                      // reload once
-                    if (_frame == 120) _rc.SnapGunOverlay(_glEquipClip);                                      // snap back to the ready hold
+                    if (_frame >= 52 && _frame <= 58) _rc.FlashMuzzle();                                     // fire: hold the flash across the capture
+                    if (_frame == 70) _rc.SetGunOverlay(_glReloadClip, 1f, loop: false);                      // reload once (standing)
+                    if (_frame == 92 && _glHammerClip != null) _rc.SetGunOverlay(_glHammerClip, 1f, loop: false);  // the RACK (empty-reload 2nd half) -> captured at f100
+                    if (_frame == 112) _rc.SnapGunOverlay(_glEquipClip);                                      // back to the ready hold before the stance demo
                     _rc.Tick(delta);
                 }
                 if (_ragTest && _frame == 4) _rc?.RagdollStart(new Vector3(3.5f, 5f, 1.5f)); // knock him over

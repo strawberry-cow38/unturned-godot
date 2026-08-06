@@ -45,6 +45,7 @@ namespace UnturnedGodot
             Current._alertLeft = seconds;
         }
         ColorRect _pain;   // PlayerUI colorOverlayImage: full-screen COLOR_R tint, alpha = the player's painAlpha
+        Control _crosshair3p;   // centre-screen crosshair, shown only in third person (master) -- the 1P has the viewmodel reticle, the 3P had nothing marking the aim
 
         // PlayerUI messageBox (VEHICLE_ENTER): bottom-centre dark box with the vehicle's fuel/health/battery bars, shown while driving
         public Vehicle Vehicle;   // bound driven vehicle; the box is visible while this is non-null
@@ -150,6 +151,15 @@ namespace UnturnedGodot
             _alert.Modulate = new Color(1f, 1f, 1f, 0f);
             root.AddChild(_alert);
 
+            // Centre-screen crosshair for THIRD person (master). Sits dead-centre with a small gap so it frames the aim
+            // point without covering it; the 3P camera toes in on the converged aim, so screen-centre is where the shot
+            // goes. Hidden by default -> _Process shows it only while the 3P camera is live. Thin lines, dark outline so
+            // it reads on sky and on grass alike (strawberry earlier: "thinner crosshair lines").
+            _crosshair3p = new Crosshair3PControl { Visible = false };
+            _crosshair3p.SetAnchorsPreset(Control.LayoutPreset.Center);
+            _crosshair3p.MouseFilter = Control.MouseFilterEnum.Ignore;
+            root.AddChild(_crosshair3p);
+
             // vehicle status box (PlayerUI messageBox on VEHICLE_ENTER): 300-wide dark box, bottom-centre, 80px above the
             // screen bottom. Rows pack from y=45 at 30px: Fuel (COLOR_Y), Health (COLOR_R), Battery (COLOR_Y, Stamina icon).
             _vehBox = new Control();
@@ -252,6 +262,7 @@ namespace UnturnedGodot
         public override void _Process(double delta)
         {
             foreach (var c in _playerOnly) c.Visible = Player != null;   // hide the on-foot HUD in a vehicle-only view
+            if (_crosshair3p != null) _crosshair3p.Visible = Player != null && Player.ThirdPersonActive;   // centre crosshair: third person only
 
             // centre-screen alert: hold at full opacity, then fade over the last second so it clears itself
             if (_alert != null && _alertLeft > 0f)
@@ -303,6 +314,32 @@ namespace UnturnedGodot
             string p = ProjectSettings.GlobalizePath(res);
             if (System.IO.File.Exists(p)) { var img = Image.LoadFromFile(p); if (img != null) return ImageTexture.CreateFromImage(img); }
             return null;
+        }
+
+        // The third-person centre crosshair: four thin arms with a centre gap plus a centre dot, drawn about the node's
+        // own origin (the node is anchored to screen centre). Each mark is laid as a dark outline rect with a white rect
+        // on top, so the reticle keeps its contrast whether it sits over bright sky or dark ground.
+        private sealed partial class Crosshair3PControl : Control
+        {
+            const float Gap = 3f, Len = 9f, Thick = 2f, Dot = 3f;   // gap from centre, arm length, arm thickness, centre dot
+            static readonly Color Ink = Colors.White;                      // the mark (thin white lines)
+            static readonly Color Edge = new Color(0f, 0f, 0f, 0.85f);     // a solid dark halo so it reads on sky, grass or a wall alike
+
+            public override void _Draw()
+            {
+                // arms: up / down / left / right
+                DrawArm(new Rect2(-Thick * 0.5f, -Gap - Len, Thick, Len));
+                DrawArm(new Rect2(-Thick * 0.5f,  Gap,       Thick, Len));
+                DrawArm(new Rect2(-Gap - Len, -Thick * 0.5f, Len, Thick));
+                DrawArm(new Rect2( Gap,       -Thick * 0.5f, Len, Thick));
+                DrawArm(new Rect2(-Dot * 0.5f, -Dot * 0.5f, Dot, Dot));   // centre dot
+            }
+
+            void DrawArm(Rect2 r)
+            {
+                DrawRect(r.Grow(1.5f), Edge, filled: true);   // dark halo (1.5px) under the mark for contrast
+                DrawRect(r, Ink, filled: true);               // the white line itself, kept thin
+            }
         }
     }
 }

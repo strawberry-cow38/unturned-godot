@@ -157,7 +157,11 @@ namespace UnturnedGodot
         AnimationLibrary _lib;                     // shared clip library, kept so _gunAp can reuse it
         bool _gunLayer;
         int[] _lowerBones;                          // Skeleton(root)+hips+legs+feet -> restored from locomotion each frame
-        Quaternion[] _lbRot; Vector3[] _lbPos;      // per-frame lower-bone snapshot
+        int[] _lowerBonesTorso;                     // the above + Spine + Skull -> also preserved while CROUCHED/PRONE, so the stance's torso posture survives the gun overlay instead of the arms' standing pose overwriting it (master: "crouch and crawl states aren't being set correctly")
+        bool _stancePreserveTorso;                  // current stance lays the torso down/low (crouch/prone) -> preserve the torso from locomotion too
+        int _spineBone = -1;                        // Spine index -> the crouch/prone gun-aim counter reads its stance-vs-gun pitch delta
+        int[] _armRootBones;                        // the two shoulders -> re-aimed forward after the torso restore so the barrel doesn't tilt down with the pitched stance spine (master: crouch pointed 45deg down, prone into the ground)
+        Quaternion[] _lbRot; Vector3[] _lbPos;      // per-frame preserved-bone snapshot (sized to the larger torso set)
         Node3D _muzzle, _flash;                     // 3P: muzzle marker (at the gun's MuzzleHook) + the flash on the held gun
         float _flashT;                              // muzzle-flash visible timer
         ShaderMaterial _flashMat;                   // the real 1P muzzleflash shader (roll uniform set per shot)
@@ -209,6 +213,10 @@ namespace UnturnedGodot
         public void SetLocomotion(float speed, SDG.Unturned.EPlayerStance stance)
         {
             string idle = IdleClip, walk = WalkClip, run = RunClip;
+            // Crouch/prone lay the TORSO down (their clips animate Spine + Skull, not just the legs), so while a gun is
+            // out the overlay must preserve the torso from this stance clip too -- otherwise the arms' standing gun pose
+            // pops the spine upright and the player looks like they're standing from the waist up (master).
+            _stancePreserveTorso = stance == SDG.Unturned.EPlayerStance.CROUCH || stance == SDG.Unturned.EPlayerStance.PRONE;
             if (stance == SDG.Unturned.EPlayerStance.CROUCH) { idle = "Idle_Crouch"; walk = run = "Move_Crouch"; }
             else if (stance == SDG.Unturned.EPlayerStance.PRONE) { idle = "Idle_Prone"; walk = run = "Move_Prone"; }
             else if (stance == SDG.Unturned.EPlayerStance.SWIM) { idle = "Idle_Swim"; walk = run = "Move_Swim"; }   // moving=Move_Swim / still=Idle_Swim (PlayerAnimator.cs:940/998)
@@ -312,11 +320,27 @@ namespace UnturnedGodot
                 _ap.Advance(delta);   // base pose: locomotion (full-body 3P) or equip/hold (1P arms), manually driven
                 if (_gunLayer && _gunAp != null && Skeleton != null)
                 {
-                    for (int i = 0; i < _lowerBones.Length; i++)   // keep the legs' locomotion...
-                    { _lbRot[i] = Skeleton.GetBonePoseRotation(_lowerBones[i]); _lbPos[i] = Skeleton.GetBonePosePosition(_lowerBones[i]); }
-                    _gunAp.Advance(delta);                          // ...while the gun clip poses the upper body
-                    for (int i = 0; i < _lowerBones.Length; i++)
-                    { Skeleton.SetBonePoseRotation(_lowerBones[i], _lbRot[i]); Skeleton.SetBonePosePosition(_lowerBones[i], _lbPos[i]); }
+                    // Standing: preserve the legs (the arms hold/aim over them). Crouch/prone: preserve the torso + head
+                    // too, so the stance's laid-down posture isn't overwritten by the arms' standing gun pose (master).
+                    var preserve = (_stancePreserveTorso && _lowerBonesTorso != null) ? _lowerBonesTorso : _lowerBones;
+                    for (int i = 0; i < preserve.Length; i++)      // keep locomotion on the preserved bones...
+                    { _lbRot[i] = Skeleton.GetBonePoseRotation(preserve[i]); _lbPos[i] = Skeleton.GetBonePosePosition(preserve[i]); }
+                    _gunAp.Advance(delta);                          // ...while the gun clip poses the rest (the arms)
+                    // Grab the gun clip's UPRIGHT spine before the restore overwrites it -- the counter below needs it.
+                    Quaternion spineUp = (_stancePreserveTorso && _spineBone >= 0) ? Skeleton.GetBonePoseRotation(_spineBone) : Quaternion.Identity;
+                    for (int i = 0; i < preserve.Length; i++)
+                    { Skeleton.SetBonePoseRotation(preserve[i], _lbRot[i]); Skeleton.SetBonePosePosition(preserve[i], _lbPos[i]); }
+                    // Crouch/prone gun-aim counter: the torso is now pitched down (right), but the arms still carry the
+                    // gun clip's pose UNDER that pitched spine, so the barrel points at the ground (master: crouch ~45deg
+                    // down, prone straight into the dirt). The whole tilt is the spine's own pitch delta, so re-aim each
+                    // shoulder by (S_stance^-1 * S_gun): the arm chain -- and the gun -- returns to the forward direction
+                    // it holds over an upright spine, while the torso keeps its lowered stance posture. ADS layers after.
+                    if (_stancePreserveTorso && _spineBone >= 0 && _armRootBones != null && _armRootBones.Length > 0)
+                    {
+                        Quaternion cc = Skeleton.GetBonePoseRotation(_spineBone).Inverse() * spineUp;
+                        foreach (int sh in _armRootBones)
+                            Skeleton.SetBonePoseRotation(sh, cc * Skeleton.GetBonePoseRotation(sh));
+                    }
                 }
                 ApplyAimAdditive();
             }
@@ -390,8 +414,18 @@ namespace UnturnedGodot
             var idx = new List<int>();
             foreach (var n in lower) { int b = Skeleton.FindBone(n); if (b >= 0) idx.Add(b); }
             _lowerBones = idx.ToArray();
-            _lbRot = new Quaternion[_lowerBones.Length];
-            _lbPos = new Vector3[_lowerBones.Length];
+            // The crouch/prone set: the legs PLUS the torso (Spine) and head (Skull), so a low stance keeps its whole
+            // posture under the overlay; the arms stay overlay-driven (they still aim/hold, now relative to the leaned
+            // torso), and the ADS additive only nudges the spine when actually aiming (AimBlend-gated).
+            var idxT = new List<int>(idx);
+            foreach (var n in new[] { "Spine", "Skull" }) { int b = Skeleton.FindBone(n); if (b >= 0) idxT.Add(b); }
+            _lowerBonesTorso = idxT.ToArray();
+            _spineBone = Skeleton.FindBone("Spine");   // the crouch/prone gun-aim counter reads this
+            var arms = new List<int>();
+            foreach (var n in new[] { "Left_Shoulder", "Right_Shoulder" }) { int b = Skeleton.FindBone(n); if (b >= 0) arms.Add(b); }
+            _armRootBones = arms.ToArray();   // shoulders = the top of each arm chain -> re-aim these to point the gun forward under a pitched spine
+            _lbRot = new Quaternion[_lowerBonesTorso.Length];   // sized to the larger set so either can reuse the buffer
+            _lbPos = new Vector3[_lowerBonesTorso.Length];
             SetupAimAdditive(aimClip);   // bakes the ADS delta + switches _ap to Manual
             _gunLayer = true;
         }

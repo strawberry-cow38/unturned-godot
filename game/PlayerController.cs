@@ -4881,8 +4881,8 @@ namespace UnturnedGodot
         // body, so in 3rd person you see yourself holding + animating the weapon over a walking lower body. The gun clips
         // play ONLY on the arms/spine (RiggedCharacter's overlay), so the legs keep their locomotion.
         string _bodyGunName;                                   // gun currently attached to _body (null = unarmed)
-        string _bodyAimClip, _bodyReloadClip, _bodyEquipClip;  // resolved per-gun clip names for the overlay
-        bool _bodyReloading3p;                                 // edge-detect the reload so we play it once + snap back
+        string _bodyAimClip, _bodyReloadClip, _bodyEquipClip, _bodyHammerClip;  // resolved per-gun clip names for the overlay
+        bool _bodyReloading3p, _bodyHammer3p;                  // edge-detect the reload + the rack so each plays once
         void UpdateBodyGun()
         {
             bool wantGun = HasGunOut && _driving == null && _riding == null && !_dead;
@@ -4899,16 +4899,23 @@ namespace UnturnedGodot
                 _bodyAimClip    = _body.ClipLength(capGun + "_Aim")    > 0f ? capGun + "_Aim"    : "Gun_Aim";
                 _bodyReloadClip = _body.ClipLength(capGun + "_Reload") > 0f ? capGun + "_Reload" : "Gun_Reload";
                 _bodyEquipClip  = _body.ClipLength(capGun + "_Equip")  > 0f ? capGun + "_Equip"  : "Gun_Equip";
+                _bodyHammerClip = _body.ClipLength(capGun + "_Hammer") > 0f ? capGun + "_Hammer" : null;   // rechamber rack (empty-reload 2nd half); null = gun has none, mirrors Viewmodel._hammerClip
                 if (!_body.GunLayerOn) _body.EnableGunLayer(_bodyAimClip); else _body.RebakeAim(_bodyAimClip);
                 _body.SetGunOverlay(_bodyEquipClip, 1f, loop: false);   // play the equip pull-out; it holds its end (the ready hold)
                 _bodyGunName = _gunName;
-                _bodyReloading3p = false;
+                _bodyReloading3p = false; _bodyHammer3p = false;
             }
             if (_reloading && !_bodyReloading3p)                     // reload just started -> play it once at the real reload speed
                 _body.SetGunOverlay(_bodyReloadClip, _reloadSpeed, loop: false);
             else if (!_reloading && _bodyReloading3p)               // reload finished -> snap back to the ready hold
                 _body.SnapGunOverlay(_bodyEquipClip);
             _bodyReloading3p = _reloading;
+            // The rack: after an EMPTY reload the mag swap finishes and _hammerActive goes true while the bolt cycles
+            // (source: the reload's 2nd half). Play the body's {Gun}_Hammer clip once over it, mirroring the 1P; when
+            // the rack ends _reloading also clears the same tick, so the snap-to-hold above returns the arms to ready.
+            if (_hammerActive && !_bodyHammer3p && _bodyHammerClip != null)
+                _body.SetGunOverlay(_bodyHammerClip, _reloadSpeed, loop: false);
+            _bodyHammer3p = _hammerActive;
             _body.AimBlend = _viewmodel?.AimAlpha ?? 0f;            // ADS: same eased 0..1 the 1P arms use
         }
 
@@ -5025,6 +5032,10 @@ namespace UnturnedGodot
 
         public Vector2? ScriptedDrive;   // test hook: (steer, throttle) instead of keys
         public bool DriveFP { set => _fp = value; }   // test hook: force first-person cam
+        /// <summary>The third-person camera is live: on foot (or the puppet), not first-person, not dead. The HUD shows
+        /// a centre crosshair here (master) since there is no viewmodel reticle to mark where the shot goes; the 3P view
+        /// toes in on the aim so screen-centre IS the converged aim point.</summary>
+        public bool ThirdPersonActive => !_fp && !_dead && _driving == null && _riding == null;
         /// <summary>Test hook: aim the view without a mouse. Clamped like the real look, so a test cannot ask for a
         /// pitch the player could never reach and get an answer that does not apply in play.</summary>
         public void DebugSetPitch(float deg) => _pitchDeg = Mathf.Clamp(deg, -89f, 89f);
