@@ -71,7 +71,11 @@ export MSBUILDDISABLENODEREUSE=1
 export DOTNET_CLI_USE_MSBUILD_SERVER=0
 
 if [ "${UG_TEST_NOLOCK:-}" != "1" ]; then
-  exec 9>"${TMPDIR:-/tmp}/.ug-test-$(id -u).lock"
+  # Keyed on the RESULTS DIR, not just the uid: two checkouts on one box write to different
+  # .testresults and genuinely do not collide, so a per-user lock would block a second agent working
+  # a separate clone for no reason -- turning a fix for one person into an obstacle for another.
+  _ug_lockkey=$(printf '%s' "$(cd "$(dirname "$RESULTS")" 2>/dev/null && pwd -P)/$(basename "$RESULTS")" | cksum | cut -d' ' -f1)
+  exec 9>"${TMPDIR:-/tmp}/.ug-test-$(id -u)-${_ug_lockkey}.lock"
   if ! flock -n 9; then
     echo "[test.sh] ANOTHER RUN HOLDS THE LOCK -- refusing to start."
     echo "[test.sh] Two suites share $RESULTS; the loser reports a boot/hang that never happened."
