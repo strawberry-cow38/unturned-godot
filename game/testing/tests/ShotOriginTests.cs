@@ -89,8 +89,20 @@ namespace UnturnedGodot.Testing
             T.Check("the second shot fired", p.Fire());
             yield return Ticks(1);
             float aimErr = AngleBetween(p.DebugLastShotDir, wantDir);
+            // THE CAP IS SET FROM THE MEASURED RESIDUAL, not from a round number. It was `aimErr < 1.5f`, and the
+            // residual actually runs 1.24 / 1.30 / 1.43 / 1.60 across runs -- so the threshold sat INSIDE its own
+            // distribution and the test failed maybe a quarter of the time, in the full suite only, which reads as a
+            // regression somewhere else entirely.
+            //
+            // The residual is not error, it is geometry plus state: the pillar is 0.5 m thick and 25 m away, so the
+            // camera ray converges on its FRONT FACE while wantDir points at the centre -- 0.57 deg of the total
+            // before anything else -- and the earlier shot in this test leaves accumulated recoil on the aim, whose
+            // yaw component is random-signed by design. Neither is a bug and neither is going to zero.
+            //
+            // So the scale-free RATIO carries the claim (convergence must remove most of an 8 deg miss) and the
+            // absolute cap only guards against it drifting off entirely. Both sit clear of the measured spread.
             T.Check($"...and the shot converges on it from the eyes ({aimErr:0.##} deg off, vs {missBy:0.##} without)",
-                aimErr < missBy * 0.5f && aimErr < 1.5f);
+                aimErr < missBy * 0.35f && aimErr < 2.5f);
 
             // ---- FIRST PERSON IS UNTOUCHED. Source only redirects in third person, and a first-person shot that
             // quietly went through the convergence path would be a regression nothing else here would catch.
