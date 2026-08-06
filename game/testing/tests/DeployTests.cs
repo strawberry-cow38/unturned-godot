@@ -155,11 +155,15 @@ namespace UnturnedGodot.Testing
         {
             var gen = Deployable.Spawn(World, DeployableDef.Generator, Vector3.Zero, 0f);
             yield return Ticks(1);
-            gen.Fuel = 0.004f;      // almost empty
-            gen.TogglePower();      // switch it ON
+            gen.TogglePower();      // switch it ON (spawns full-fuelled)
             yield return Ticks(1);
-            T.Check("running while it still has fuel", gen.IsPowered);
-            yield return Ticks(120);   // let the idle sip burn it dry
+            T.Check("running while it has fuel", gen.IsPowered);
+            // Drain to a sip and let it run dry -- WAIT ON THE OUTCOME, not a fixed tick count. Fuel burns in _Process
+            // (per frame, scaled by delta), so how many ticks a fixed sip takes to empty depends on the box's frame rate:
+            // a faster box empties it in fewer ticks. Ticks(120) baked that assumption in and flaked both ways -- a fast
+            // box emptied 0.004 before the "still running" check even ran; a slow one never reached dry. Until() is safe.
+            gen.Fuel = 0.002f;
+            yield return Until(() => !gen.IsPowered, maxSimSeconds: 10);
             T.Check($"ran DRY -> stops producing (fuel {gen.Fuel:0.000})", gen.Fuel <= 0f && !gen.IsPowered);
 
             gen.Fuel = gen.FuelMax;    // refuel (as a poured can would) WITHOUT touching the switch
