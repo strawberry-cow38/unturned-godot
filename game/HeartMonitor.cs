@@ -25,9 +25,11 @@ namespace UnturnedGodot
         internal const float ScreenX0 = -0.3171f, ScreenX1 = 0.3204f;
         internal const float ScreenZ0 = 1.2020f, ScreenZ1 = 1.7970f;
 
-        /// <summary>Seconds per beat. 60/72 bpm -- a resting adult, and slow enough that the sweep reads as a repeat
-        /// rather than as a blur.</summary>
-        internal const float BeatPeriod = 60f / 72f;
+        /// <summary>Seconds per beat. 60 bpm, not a human resting rate (strawberry: "the only place where there are
+        /// live creatures are the polysol federation aliens in the basement of scorpion 7 who are in deep hibernation,
+        /// not actively excercising"). Also reads better: one beat per second is slow enough that the sweep is
+        /// legibly a repeat rather than a blur.</summary>
+        internal const float BeatPeriod = 60f / 60f;
         internal const float FlatlinePeriod = 2.2f;   // the sweep still travels; there is just nothing on it
 
         /// <summary>How many placed monitors are alive rather than flatlined. Most wards are not a morgue, but a
@@ -42,6 +44,10 @@ namespace UnturnedGodot
         float _brownoutLeft, _brownoutPhase;
         public bool DebugBrownout => _brownoutLeft > 0f;
         public bool DebugScreenShot => _screenShot;
+        /// <summary>What the player was last handed. Exposed because "the assets load" and "the monitor makes a noise"
+        /// are different claims, and the bug that put a silent monitor on the ward passed the first one.</summary>
+        public AudioStream DebugStream => _audio?.Stream;
+        public bool DebugAudioPlaying => _audio != null && _audio.Playing;
 
         bool _alive = true, _on = true, _lit, _screenShot;
         ShaderMaterial _mat;
@@ -106,7 +112,7 @@ namespace UnturnedGodot
             };
             AddChild(_screen);
 
-            _audio = new AudioStreamPlayer3D { UnitSize = 6f, MaxDistance = 22f, VolumeDb = -12f, Bus = "Master" };
+            _audio = new AudioStreamPlayer3D { UnitSize = 7f, MaxDistance = 26f, VolumeDb = -3f, Bus = "Master" };
             AddChild(_audio);
         }
 
@@ -194,36 +200,133 @@ namespace UnturnedGodot
             if (_alive)
             {
                 if (phase < _lastBeat || _lastBeat < 0f) { /* wrapped */ }
-                if (_lastBeat >= 0f && _lastBeat < RPhase && phase >= RPhase) Beep(BeepHz, 0.09f);
+                if (_lastBeat >= 0f && _lastBeat < RPhase && phase >= RPhase) Beep(sustained: false);
                 _lastBeat = phase;
             }
-            else if (!_audio.Playing) Beep(FlatHz, 2.5f, loopish: true);
+            else if (!_audio.Playing) Beep(sustained: true);   // the clip loops, so this fires once and holds
         }
 
         internal const float RPhase = 0.42f;   // matches the shader's R position, so sound and picture agree
-        const float BeepHz = 1046f;            // C6 -- the thin electronic blip a monitor actually makes
-        const float FlatHz = 880f;             // A5, held: the flatline tone
 
-        /// <summary>Synthesised rather than sourced: nothing in the ripped audio is a monitor beep, and a beep is two
-        /// numbers (a frequency and an envelope). Generating it keeps the asset out of the repo and makes the pitch a
-        /// constant someone can read instead of a file someone has to open.</summary>
-        void Beep(float hz, float seconds, bool loopish = false)
+        // ---- THE BEEP: real recordings, not a synthesised tone --------------------------------------------------
+        //
+        // strawberry: "the beep tones are very soft and generic. not like an actual ECG". VoX: source a royalty-free
+        // effect and pull the pieces out of it with the same amplitude analysis the CRT work used.
+        //
+        // Source: "Heart Monitor Beep" by samfk360, CC0 1.0 Universal (public domain dedication), via Wikimedia
+        // Commons. 28 s of a monitor beeping, accelerating, then flatlining -- so both halves are in one clip.
+        // The pieces were CUT BY MEASUREMENT rather than by ear: a 5 ms amplitude envelope over the whole file found
+        // 18 discrete blips of ~180 ms each and then one unbroken 11.4 s run, which is the flatline. One steady early
+        // blip became ecg_beep.ogg. The flatline half is not a cut of that run at all -- see below.
+        //
+        // The FLATLINE half is SYNTHESISED, and that is not a shortcut -- it is what the measurement asked for.
+        //
+        // Cutting it from the recording went wrong twice, and both failures are worth keeping written down:
+        //
+        //   1. As a crossfaded .ogg, the crossfade was correct in PCM and then wrecked by the encoder. Vorbis is a
+        //      lapped transform and does not return the sample count it was given: a 13230-frame body decoded to
+        //      13312, putting the real wrap 82 samples from the faded join, and the loop stepped 22801 -- 4.9x the
+        //      wave's own p95, 35% of full scale, a tick every 600 ms. My "verified the seam" check had read frame
+        //      13230, an ordinary interior sample, and reported a clean 4572. A check at the wrong offset agrees
+        //      with the bug.
+        //   2. As a WAV that fixed the wrap, it still PULSED. The tone is exactly 880 Hz and 880 x 0.600 s is 528
+        //      whole cycles, so the two ends of the body were already in phase -- and an equal-POWER (cos/sin)
+        //      crossfade of two IN-PHASE copies sums to 1.414, a +3.01 dB bulge over the 50 ms fade, once per loop.
+        //      Equal-power is the right law for uncorrelated signals and the wrong one here. The pulse was mine.
+        //
+        // The FFT that diagnosed (2) also showed the source needs no repair: 880.00 Hz with zero measurable drift
+        // over the whole 11.4 s run and +/-0.5% of level. So the tone is rebuilt from its own measured partials --
+        // odd harmonics only, H1 1.0 / H3 0.1104 / H5 0.0396 / H7 0.0200 / H9 0.0123, at the measured phases -- which
+        // keeps the timbre and drops the noise floor. Level is matched by RMS rather than by peak, because a
+        // synthesised tone has a different crest factor and peak-matching would ship it audibly louder than the clip
+        // that was approved.
+        //
+        // The loop body is 4410 samples = 176 WHOLE cycles at 880 Hz, so the wrap is exact by construction and there
+        // is no crossfade left to get wrong. A 30 ms lead-in ramped from silence plays once (LoopBegin sits after it)
+        // because the bare tone starts at full amplitude, and switching a flatlined monitor on was itself a click.
+        //
+        // The BEEP stays a real recording, and stays .ogg: it is one-shot, so it has no seam to protect, and its
+        // edges already decay to near zero on their own (its last 35 ms fall 12325 -> 7). Trimming its tail, as was
+        // first suggested, would cut into that decay and MAKE a click where measurement found none -- all 7
+        // discontinuities in the first posted preview were the flatline's wrap, none were in the beep. A beep is a
+        // struck, resonant thing worth recording; a flatline is a steady electronic tone, which is worth generating.
+        internal const string BeepPath = "res://content/ecg_beep.ogg";
+        internal const string FlatPath = "res://content/ecg_flat.wav";
+        internal const float SourceHz = 880f;   // measured off the clip; both pieces share it
+
+        static AudioStream _beepStream, _flatStream;
+
+        /// <summary>Loaded off DISK, not through res://. An asset dropped into content/ has never been through the
+        /// editor's import step, so it has no .import sidecar and GD.Load returns null for it -- silently, which reads
+        /// exactly like "the sound is quiet". Every other runtime asset in this project (gun shots, albedos, prop
+        /// meshes) is loaded the same way, by absolute path: Viewmodel.LoadOgg.
+        ///
+        /// A .wav is loaded as a NATIVELY-LOOPING AudioStreamWav; anything else as one-shot Vorbis. The extension
+        /// picks the path because the two roles genuinely differ -- see the note above on why the looping half cannot
+        /// be an .ogg.</summary>
+        internal static AudioStream LoadClip(string path, bool loop)
         {
-            const int rate = 22050;
-            int n = Mathf.Max(1, (int)(seconds * rate));
-            var pcm = new byte[n * 2];
-            for (int i = 0; i < n; i++)
+            string p = ProjectSettings.GlobalizePath(path);
+            if (!System.IO.File.Exists(p)) return null;
+            if (path.EndsWith(".wav")) return LoadWavLooped(p, loop);
+            var ogg = AudioStreamOggVorbis.LoadFromFile(p);
+            if (ogg != null) ogg.Loop = loop;
+            return ogg;
+        }
+
+        /// <summary>Minimal RIFF parse -> AudioStreamWav with real loop points, read from the file's own `smpl` chunk.
+        ///
+        /// The loop point lives in the ASSET, not in a constant here, because it is a property of how the waveform was
+        /// cut and a number in C# would quietly drift from the file it describes the first time either is regenerated.
+        ///
+        /// The flatline does not loop over its whole length. It opens with a 30 ms lead-in ramped up from silence --
+        /// otherwise the clip's first sample is most of full scale and switching a flatlined monitor on is a click --
+        /// and `smpl` puts LoopBegin AFTER that lead, so the fade plays once and every wrap thereafter lands on the
+        /// crossfaded join instead. That is exactly what LoopBegin is for, and it is why this cannot simply loop 0..n.
+        ///
+        /// Deliberately NOT Viewmodel.LoadWavLooped, which trims leading and trailing silence before setting its loop
+        /// points. That is right for a ripped clip padded with silence and would be actively wrong here twice over: it
+        /// would eat the lead-in that exists precisely to start at silence, and it would move the two edges the body
+        /// was crossfaded to join.</summary>
+        static AudioStream LoadWavLooped(string absPath, bool loop)
+        {
+            var b = System.IO.File.ReadAllBytes(absPath);
+            int channels = 1, rate = 22050, bits = 16, dataOff = -1, dataLen = 0, loopBegin = -1, loopEnd = -1;
+            for (int i = 12; i + 8 <= b.Length;)
             {
-                float t = (float)i / rate;
-                // A short attack and a long-ish decay; a raw gated sine clicks at both ends.
-                float env = loopish
-                    ? Mathf.Min(1f, t / 0.02f) * Mathf.Min(1f, (seconds - t) / 0.05f)
-                    : Mathf.Min(1f, t / 0.004f) * Mathf.Exp(-t * 26f);
-                short s = (short)(Mathf.Sin(t * hz * Mathf.Tau) * env * 9000f);
-                pcm[i * 2] = (byte)(s & 0xFF);
-                pcm[i * 2 + 1] = (byte)((s >> 8) & 0xFF);
+                string id = System.Text.Encoding.ASCII.GetString(b, i, 4);
+                int sz = System.BitConverter.ToInt32(b, i + 4);
+                if (id == "fmt ") { channels = System.BitConverter.ToInt16(b, i + 10); rate = System.BitConverter.ToInt32(b, i + 12); bits = System.BitConverter.ToInt16(b, i + 22); }
+                else if (id == "data") { dataOff = i + 8; dataLen = sz; }
+                else if (id == "smpl" && sz >= 60 && System.BitConverter.ToInt32(b, i + 8 + 28) >= 1)
+                {
+                    loopBegin = System.BitConverter.ToInt32(b, i + 8 + 36 + 8);
+                    loopEnd = System.BitConverter.ToInt32(b, i + 8 + 36 + 12) + 1;   // smpl `end` is INCLUSIVE
+                }
+                i += 8 + sz + (sz & 1);
             }
-            _audio.Stream = new AudioStreamWav { Format = AudioStreamWav.FormatEnum.Format16Bits, MixRate = rate, Stereo = false, Data = pcm };
+            if (dataOff < 0 || bits != 16 || dataOff + dataLen > b.Length) return null;
+            int frames = dataLen / (2 * channels);
+            if (loopBegin < 0 || loopEnd <= loopBegin || loopEnd > frames) { loopBegin = 0; loopEnd = frames; }
+            var pcm = new byte[dataLen];
+            System.Array.Copy(b, dataOff, pcm, 0, dataLen);
+            return new AudioStreamWav
+            {
+                Data = pcm,
+                Format = AudioStreamWav.FormatEnum.Format16Bits,
+                MixRate = rate, Stereo = channels == 2,
+                LoopMode = loop ? AudioStreamWav.LoopModeEnum.Forward : AudioStreamWav.LoopModeEnum.Disabled,
+                LoopBegin = loopBegin, LoopEnd = loopEnd,
+            };
+        }
+
+        void Beep(bool sustained)
+        {
+            if (sustained) _flatStream ??= LoadClip(FlatPath, true);
+            else _beepStream ??= LoadClip(BeepPath, false);
+            var st = sustained ? _flatStream : _beepStream;
+            if (st == null) return;   // asset missing -> silence, not a crash
+            _audio.Stream = st;
             _audio.Play();
         }
 
