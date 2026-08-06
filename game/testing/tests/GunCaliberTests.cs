@@ -106,9 +106,13 @@ namespace UnturnedGodot.Testing
             grp.TryGetValue(1, out var stanag);
             stanag ??= new List<string>();
             stanag.Sort();
-            // Group 1 is now STANAG-and-only-STANAG: two 5.56 rifles plus the .300 BLK that genuinely feeds from one.
+            // Group 1 is STANAG-and-only-STANAG: three 5.56 rifles (eaglefire, maplestrike, and the swissgewehr --
+            // SG 550 in 5.56, retail puts it AND its own mag 1490 in caliber 1) plus the .300 BLK that genuinely feeds
+            // from a STANAG mag. swissgewehr's real-life proprietary mags live in Caliber_Name/Real_Weapon, not here:
+            // Caliber is the retail gameplay axis and this is a 1:1 base (tinyclaw verified vs the bundles).
             T.Check($"group 1 is real STANAG only ({string.Join(",", stanag)})",
-                stanag.Count == 3 && stanag.Contains("eaglefire") && stanag.Contains("maplestrike") && stanag.Contains("honeybadger"));
+                stanag.Count == 4 && stanag.Contains("eaglefire") && stanag.Contains("maplestrike")
+                && stanag.Contains("honeybadger") && stanag.Contains("swissgewehr"));
             foreach (var g in new[] { "augewehr", "nightraider", "heartbreaker" })
                 T.Check($"{g} is out of the STANAG group (now {Def(dir, g).Caliber})", !stanag.Contains(g));
 
@@ -167,7 +171,8 @@ namespace UnturnedGodot.Testing
             foreach (var g in guns)
             {
                 string c = Def(dir, g).CaliberName;
-                if (c == "Arrow" || c == "Bolt" || c == "Rocket") continue;   // no ballistic tracer by design
+                if (c == "Arrow" || c == "Bolt" || c == "Rocket"
+                    || c == "Card" || c == "Nail" || c == "Paintball") continue;   // no ballistic tracer by design -- Card/Nail/Paintball throw a physical object, not a bullet
                 if (!GunDef.TracerScales.ContainsKey(c)) unmapped.Add($"{g}={c}");
             }
             T.Check($"every ballistic cartridge has a tracer width ({(unmapped.Count == 0 ? "all" : string.Join(",", unmapped))})", unmapped.Count == 0);

@@ -32,7 +32,9 @@ namespace UnturnedGodot
         /// a bolt rifle here, not a revolver, so it correctly keeps its +1 with no exception needed.)</summary>
         public bool HasChamberRound => Action switch
         {
-            "Break" or "String" or "Rocket" => false,
+            // Minigun: a rotary/belt-fed gun has no single chamber to top up (Fury). Same "nowhere to put a +1" as
+            // break-action, so it joins the no-chamber list rather than falling through to the magazine-fed default.
+            "Break" or "String" or "Rocket" or "Minigun" => false,
             _ => !IsRevolver,
         };
 
@@ -134,6 +136,7 @@ namespace UnturnedGodot
             { ".40 S&W", 1.20f },                 // 10.17mm
             { ".44 Magnum", 1.45f },              // 10.90mm
             { ".45 ACP", 1.30f },                 // 11.48mm
+            { ".45 Long Colt", 1.35f },           // 11.48mm on a bigger case than the ACP (Peacemaker)
             { ".50 AE", 1.70f },                  // 12.70mm
             { ".50 BMG", 2.30f },                 // 12.95mm on an enormous case -- the top of the range on purpose
             { "12 Gauge", 0.45f },                // EXTRA small per master: this is ONE PELLET, and a shot spawns 8 of

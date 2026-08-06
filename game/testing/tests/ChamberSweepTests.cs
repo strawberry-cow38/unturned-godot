@@ -70,7 +70,7 @@ namespace UnturnedGodot.Testing
             // the catalogue resolves to a deliberate answer.
             int seen = 0, revolvers = 0;
             var unknownActions = new List<string>();
-            var known = new HashSet<string> { "Trigger", "Bolt", "Pump", "Break", "String", "Rail", "Rocket" };
+            var known = new HashSet<string> { "Trigger", "Bolt", "Pump", "Break", "String", "Rail", "Rocket", "Minigun" };
             foreach (var f in System.IO.Directory.GetFiles(dir, "*.dat"))
             {
                 var g = Def(System.IO.Path.GetFileNameWithoutExtension(f));
