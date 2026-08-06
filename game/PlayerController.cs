@@ -4853,7 +4853,11 @@ namespace UnturnedGodot
         // live 3rd-person body: shown when !_fp; stands at the player (facing the body yaw, animated by ground speed) or sits in the driver seat
         void UpdateBody(double delta)
         {
-            if (_viewmodel != null) _viewmodel.SetShown(_fp && _driving == null && _riding == null && !_dead);   // FP gun arms: first-person on foot only
+            if (_viewmodel != null)
+            {
+                _viewmodel.SetShown(_fp && _driving == null && _riding == null && !_dead);   // FP gun arms: first-person on foot only
+                _viewmodel.LeanRoll = _leanAngle;   // 1P lean tilt: hand the already-lerped/obstruct-snapped roll to the viewmodel (its SubViewport can't inherit the camera pivot's roll)
+            }
             if (_body == null) return;
             _body.Visible = !_fp && !_dead;   // dead -> the corpse ragdoll handles the body
             if (_fp || _dead) { return; }

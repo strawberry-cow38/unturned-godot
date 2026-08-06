@@ -27,6 +27,7 @@ namespace UnturnedGodot
         string _meleeCap;   // Cap(melee content name), e.g. "Blowtorch"/"Sledgehammer" -> per-melee clip labels (Blowtorch_Start_Swing, Sledgehammer_Weak, ...); null for guns/consumables
         Node3D _gun;
         CanvasLayer _layer;
+        TextureRect _vpRect;   // the composited viewmodel image; rolled 2D about screen-centre for the 1P lean tilt
         // Source-accurate: horizontal offset is ZERO (PlayerAnimator.cs:1653 base = Vector3.zero,
         // PreferenceData Offset_Horizontal defaults 0). The gun reads right-handed because the RIG holds
         // it in the right hand (lefties get localScale.x=-1, PlayerAnimator:1613 — a mirror, not a shift).
@@ -563,9 +564,9 @@ namespace UnturnedGodot
 
             // Composite the viewmodel viewport on top of the main view.
             _layer = new CanvasLayer { Layer = 5 };
-            var tr = new TextureRect { Texture = _vp.GetTexture(), StretchMode = TextureRect.StretchModeEnum.Scale };
-            tr.SetAnchorsPreset(Control.LayoutPreset.FullRect);
-            _layer.AddChild(tr);
+            _vpRect = new TextureRect { Texture = _vp.GetTexture(), StretchMode = TextureRect.StretchModeEnum.Scale };
+            _vpRect.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+            _layer.AddChild(_vpRect);
             AddChild(_layer);
         }
 
@@ -1083,6 +1084,12 @@ namespace UnturnedGodot
         public float ReloadLength => _arms != null && _arms.ClipLength(_reloadClip) > 0f ? _arms.ClipLength(_reloadClip) : 1.633f;
 
         public float AimAlpha => _aimAlpha;   // 0 hip .. 1 ADS, for spread/accuracy
+        // 1P lean tilt (master: "shooting while leaning in 1p feels off"). The viewmodel lives in an isolated
+        // SubViewport that can't inherit the lean pivot's roll, so the gun stayed upright while the world tilted.
+        // The player pushes its already-lerped, already-obstruct-snapped _leanAngle here each frame (LeanLerp=4/s =
+        // retail's rate -- DON'T re-lerp/re-snap, that double-lerps and feels mushy, tinyclaw); we roll the arms root
+        // by it. Source: PlayerAnimator.cs:1537 rolls player.first by lean*HumanAnimator.LEAN (=20deg). Stylistic tilt.
+        public float LeanRoll;   // degrees of Z-roll to apply to the viewmodel this frame (0 upright)
         public float ScopeZoom => _isScope && _scopeCam != null && Godot.GodotObject.IsInstanceValid(_scopeCam) ? 90f / _scopeCam.Fov : 0f;   // mounted scope's zoom (90/fov): aug=4, 8x=8, 16x=16... -> drives ADS-sens reduction
 
         public void SetShown(bool shown) { if (_layer != null) _layer.Visible = shown; }
@@ -1231,6 +1238,18 @@ namespace UnturnedGodot
             // Scope sway lands on pitch/yaw only; its Z is always 0 in the source, so there is nothing to roll.
             var armRot = _inputRoll.CurrentPosition + _scopeSway;
             _arms.RotationDegrees = armRot;
+            // 1P lean tilt: a 2D roll of the composited viewmodel IMAGE about screen-centre -- NOT a 3D roll of the arms.
+            // Stylistic only (the bullet origin already leans via the eye pivot, tinyclaw). Doing it in 2D keeps the ADS
+            // sight pinned dead-centre (it sits at the roll pivot) while the gun tilts around it, and -- crucially -- it
+            // never touches _sight.GlobalPosition, which the ADS slide measures: a 3D arms-roll fed the roll back into
+            // that measurement and the aim drifted off-centre. Source rolls player.first by lean*20 (PlayerAnimator:1537);
+            // for a screen-space viewmodel a centre-pivot image roll reads the same. Negated: Godot Control rotation is
+            // CW-positive (screen Y-down), the head-lean tilts the view CCW.
+            if (_vpRect != null)
+            {
+                _vpRect.PivotOffset = _vpRect.Size * 0.5f;
+                _vpRect.Rotation = Mathf.DegToRad(-LeanRoll);
+            }
             // ---- SPRINT + SAFETY pose: play the REAL Sprint_Start clip. Source UseableGun.cs:3509 plays ONE clip for
             //      BOTH (stance==SPRINT && moving) OR firemode==SAFETY. The un-shoulder (incl. the ~90deg yaw) is baked
             //      into the clip -- no hand-authored angles, arms ROOT untouched (the skeleton clip does the posing).
