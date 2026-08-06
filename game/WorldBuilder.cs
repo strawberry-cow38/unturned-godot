@@ -648,6 +648,7 @@ namespace UnturnedGodot
                 // Auto-grid municipal consumer: lit only when it's NIGHT and the town grid is live (DayNightCycle drives
                 // both; StreetLight.Watts is the nominal draw). toggleGlobalPower darkens the whole town.
                 StreetLight placedLamp = null;   // captured so a break can darken it (see the Register call below)
+                HeartMonitor placedMonitor = null;   // captured so its body collider can carry the hit meta
                 LightTap placedTap = null;      // wire-able power tap on this light's base (INPUT intact / OUTPUT once smashed)
                 TVDevice placedTV = null;        // captured so the body collider below can meta-link the look-ray to it
                 Toaster placedToaster = null;    // same, for the bread pop on a surviving first shot
@@ -696,8 +697,8 @@ namespace UnturnedGodot
                 // GD.Randf, because until it IS a map-making feature there is no authored flag to read.
                 if (HeartMonitor.IsMonitorProp(name) && mode != WorldMode.Dedicated)
                 {
-                    var hm = HeartMonitor.Make(mainMi, GD.Randf() < HeartMonitor.AliveChance);
-                    root.AddChild(hm);
+                    placedMonitor = HeartMonitor.Make(mainMi, GD.Randf() < HeartMonitor.AliveChance);
+                    root.AddChild(placedMonitor);
                     monitorsPlaced++;
                 }
                 if (TVDevice.IsDeviceProp(name) && mode != WorldMode.Dedicated)
@@ -802,6 +803,7 @@ namespace UnturnedGodot
                         if (doorForBody != null) body.SetMeta("objectdoor", doorForBody);   // issue 3: look-at the body resolves to the door (PlayerController)
                         if (placedToaster != null) body.SetMeta(Toaster.HitMeta, placedToaster);   // shoot the toaster body -> its bread pop
                         if (placedTV != null) body.SetMeta(TVDevice.HitMeta, placedTV);   // look-at OR shoot the TV body resolves to its device (F toggle; screen shoot-out)
+                        if (placedMonitor != null) body.SetMeta(HeartMonitor.HitMeta, placedMonitor);   // same route for the patient monitor
                     }
                 }
                 // destructible prop: bind this placement's live nodes to its deterministic index + tag the

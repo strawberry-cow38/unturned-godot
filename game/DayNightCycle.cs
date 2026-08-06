@@ -207,6 +207,8 @@ void sky() {
                 if (n is StreetLight sl) sl.FlickerPulse(durationSec);
             foreach (Node n in tree.GetNodesInGroup("gridlights"))
                 if (n is GridLight gl) gl.FlickerPulse(durationSec);   // indoor lamps ride the same brownout pulse
+            foreach (Node n in tree.GetNodesInGroup("heartmonitors"))
+                if (n is HeartMonitor hm) hm.FlickerPulse(durationSec);   // ward monitors sag with everything else
             foreach (Node n in tree.GetNodesInGroup("tvdevices"))
                 if (n is TVDevice tv) tv.FlickerPulse(durationSec);   // televisions + monitors sag too (strawberry) --
                                                                       //  TVDevice.FlickerPulse ignores it on a set fed

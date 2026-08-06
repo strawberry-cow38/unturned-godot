@@ -173,6 +173,40 @@ namespace UnturnedGodot.Testing
             yield return Ticks(4);
             T.Check("...and it returns with the grid", hm.DebugLit);
 
+            // ---- BROWNOUT: a sag, not a power cut. Measured as a BAND, because the shader's level is driven per
+            // frame and a single sample of a moving value is a coin flip -- the lesson the TV brownout test learned
+            // the hard way an hour before this was written.
+            float sagLo = 1f;
+            hm.FlickerPulse(0.6f);
+            T.Check("a brownout pulse sags the monitor", hm.DebugBrownout);
+            for (int i = 0; i < 40; i++)
+            {
+                yield return Ticks(1);
+                sagLo = Mathf.Min(sagLo, (float)hm.DebugMaterial.GetShaderParameter("sag"));
+            }
+            T.Check($"...and the picture level really drops ({sagLo:0.###})", sagLo < 0.6f);
+            yield return Ticks(60);
+            T.Check("...then settles", !hm.DebugBrownout);
+            T.Check($"...back to full ({(float)hm.DebugMaterial.GetShaderParameter("sag"):0.###})",
+                Mathf.IsEqualApprox((float)hm.DebugMaterial.GetShaderParameter("sag"), 1f));
+            T.Check("...still lit -- a sag is a dip", hm.DebugLit);
+
+            // ---- SHOOTING IT OUT. The contract that matters is the RETURN: false once already dead, so the shot
+            // falls through to the prop's health instead of being swallowed. Swallow it and the stand is bulletproof
+            // after one hit, which is the opposite of what shooting it should do.
+            T.Check("the first shot kills the display", hm.ShootOutScreen());
+            yield return Ticks(4);
+            T.Check("...the screen goes dark and stays dark", !hm.DebugLit && !hm.DebugScreen.Visible);
+            T.Check("...a second shot is NOT swallowed", !hm.ShootOutScreen());
+            // ...and a dead display cannot be switched or powered back on. A shot-out monitor that relit on the next
+            // grid sweep would read as the shot not having registered.
+            hm.Toggle(); yield return Ticks(2);
+            T.Check("...toggling does not resurrect it", !hm.DebugLit);
+            hm.Toggle(); yield return Ticks(2);
+            T.Check("...nor does toggling back", !hm.DebugLit);
+            hm.FlickerPulse(0.6f);
+            T.Check("...and it ignores a brownout", !hm.DebugBrownout);
+
             PowerNet.SetGlobalPower(gridWas);
             yield break;
         }

@@ -34,7 +34,16 @@ namespace UnturnedGodot
         /// flatline is the interesting one to come across, so it is not rare either.</summary>
         internal const float AliveChance = 0.7f;
 
-        bool _alive = true, _on = true, _lit;
+        /// <summary>Collider meta, so looking at or shooting the prop body finds the device -- the same route
+        /// TVDevice.HitMeta takes, and it buys the F toggle and the screen shoot-out off one tag.</summary>
+        public static readonly StringName HitMeta = "heartmonitor";
+
+        const float BrownoutHz = 11f, BrownoutDepth = 0.72f;
+        float _brownoutLeft, _brownoutPhase;
+        public bool DebugBrownout => _brownoutLeft > 0f;
+        public bool DebugScreenShot => _screenShot;
+
+        bool _alive = true, _on = true, _lit, _screenShot;
         ShaderMaterial _mat;
         MeshInstance3D _screen;
         AudioStreamPlayer3D _audio;
@@ -69,7 +78,12 @@ namespace UnturnedGodot
             st.Begin(Mesh.PrimitiveType.Triangles);
             void V(float u, float v)
             {
-                st.SetUV(new Vector2(u, 1f - v));   // v up the screen; Godot UVs run down
+                // ROTATED 180 (strawberry: "the screen is upside down, 180 the whole display"). Both axes flip: the
+                // prop's screen face is modelled with its own orientation and the overlay was laid on in the quad's,
+                // so the trace ran the wrong way AND swept the wrong way. Flipping u as well as v turns the whole
+                // display rather than merely mirroring it, which would have fixed the picture and left the sweep
+                // travelling right to left.
+                st.SetUV(new Vector2(1f - u, v));
                 st.AddVertex(new Vector3(ScreenX0 + u * w, TraceY + OverlayGap, ScreenZ0 + v * h));
             }
             V(0, 0); V(1, 0); V(1, 1);
@@ -116,9 +130,32 @@ namespace UnturnedGodot
             _lastBeat = -1f;   // don't carry a half-finished beat across the change
         }
 
+        /// <summary>Ride a grid sag. Gated on being LIT and on being mains-fed: a monitor running off its own wire
+        /// never saw the dip, and a dark one must not blink back to life for half a second.</summary>
+        public void FlickerPulse(float durationSec = 0.6f)
+        {
+            if (!_lit || _screenShot) return;
+            if (_plug != null && GodotObject.IsInstanceValid(_plug) && _plug.Powered) return;
+            _brownoutLeft = Mathf.Max(0.05f, durationSec);
+            _brownoutPhase = 0f;
+        }
+
+        /// <summary>One bullet kills the display for good; the stand keeps standing. Returns FALSE when it is already
+        /// dead so the shot falls through to the prop's own health instead of being swallowed -- the same contract
+        /// TVDevice.ShootOutScreen has, and for the same reason: swallowing it would make a shot-out monitor
+        /// bulletproof.</summary>
+        public bool ShootOutScreen()
+        {
+            if (_screenShot) return false;
+            _screenShot = true;
+            _brownoutLeft = 0f;
+            Refresh();
+            return true;
+        }
+
         public void Refresh()
         {
-            bool want = _on && HasFeed;
+            bool want = _on && HasFeed && !_screenShot;
             if (want == _lit && _screen != null && _screen.Visible == want) return;
             _lit = want;
             if (_screen != null) _screen.Visible = want;
@@ -138,6 +175,16 @@ namespace UnturnedGodot
 
             _clock += (float)delta;
             _mat?.SetShaderParameter("time_s", _clock);
+
+            // The sag is a square stutter on the picture level, not a fade: mains droop stutters.
+            if (_brownoutLeft > 0f)
+            {
+                _brownoutLeft -= (float)delta;
+                _brownoutPhase += (float)delta * BrownoutHz;
+                float f = Mathf.PosMod(_brownoutPhase, 1f) < 0.5f ? 1f - BrownoutDepth : 1f;
+                _mat?.SetShaderParameter("sag", f);
+                if (_brownoutLeft <= 0f) { _brownoutLeft = 0f; _brownoutPhase = 0f; _mat?.SetShaderParameter("sag", 1f); }
+            }
 
             // The beep fires when the sweep passes the R spike, so the sound is ON the visible beat rather than merely
             // at the same rate as it -- those are indistinguishable until you watch and listen at once, and then the

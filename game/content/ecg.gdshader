@@ -28,6 +28,7 @@ uniform float alive = 1.0;        // 1 = beating, 0 = flatline
 uniform float lit = 1.0;          // powered and switched on; 0 draws nothing at all
 uniform float period = 1.0;       // seconds per beat -- one full sweep of the trace
 uniform float seed = 0.0;
+uniform float sag = 1.0;      // brownout: a square stutter on the whole picture level
 
 const vec3 SCREEN_BG = vec3(0.055, 0.075, 0.062);   // near-black with the faintest green cast, like a phosphor panel
 const vec3 TRACE     = vec3(0.247, 0.467, 0.204);   // the prop's OWN palette green, texel (63,119,52)/255
@@ -132,6 +133,6 @@ void fragment() {
     float headGlow = (1.0 - smoothstep(0.0, 0.03, age)) * on;
 
     col += TRACE * (on * (0.45 + 0.55 * trail) + headGlow * 0.8);
-    ALBEDO = col;
+    ALBEDO = col * sag;
     ALPHA = 1.0;
 }
