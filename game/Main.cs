@@ -4301,8 +4301,16 @@ namespace UnturnedGodot
 
             var cam = new Camera3D { Current = true, Fov = 52f };
             AddChild(cam);
-            cam.Position = new Vector3(13f, 7.5f, 24f);
-            cam.LookAt(new Vector3(0f, 3.4f, -3f), Vector3.Up);
+            if (System.Environment.GetEnvironmentVariable("UG_WALLCLOSE") == "1")
+            {   // close on the front-wall window: the frame/reveal detail, straight on
+                cam.Position = new Vector3(-0.5f, 2.4f, 6.5f);
+                cam.LookAt(new Vector3(-0.5f, 2.4f, 0f), Vector3.Up);
+            }
+            else
+            {
+                cam.Position = new Vector3(13f, 7.5f, 24f);
+                cam.LookAt(new Vector3(0f, 3.4f, -3f), Vector3.Up);
+            }
             GD.Print($"[walls] 6 walls; front run partitions into {UnturnedSim.WallOpenings.Solids(L, H, front.Openings).Count} solids, garage wall into {UnturnedSim.WallOpenings.Solids(L, H, back.Openings).Count}");
         }
 

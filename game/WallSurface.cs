@@ -103,26 +103,21 @@ namespace UnturnedGodot
 
         void AddTrim(SurfaceTool st, WallOpening o)
         {
-            // A band on EACH face, standing off it -- never a box that encloses the wall edge. An enclosing box
-            // shares volume with the wall solids, so every shared face is two coincident polygons fighting for
-            // the depth buffer, which is the flicker around every frame.
-            float t = Thickness * 0.5f, w = TrimProfile;
-            foreach (float sign in new[] { 1f, -1f })
-            {
-                float z0 = sign > 0 ? t : -t - TrimProud;
-                float z1 = sign > 0 ? t + TrimProud : -t;
-                AddBox(st, new Vector3(o.U - w, o.V - w, z0), new Vector3(o.U, o.V1 + w, z1));     // left jamb
-                AddBox(st, new Vector3(o.U1, o.V - w, z0), new Vector3(o.U1 + w, o.V1 + w, z1));   // right jamb
-                AddBox(st, new Vector3(o.U, o.V1, z0), new Vector3(o.U1, o.V1 + w, z1));           // head
-                if (o.V > WallOpenings.Eps)                                                         // floor-pinned openings have no sill
-                    AddBox(st, new Vector3(o.U, o.V - w, z0), new Vector3(o.U1, o.V, z1));
-            }
+            // The frame LINES THE REVEAL -- it sits inside the hole spanning the wall thickness, not as a bar
+            // on the face. That is what retail does: the dominant loose panel in every building measured is a
+            // strip the length of an opening edge by the wall thickness (0.70), i.e. a reveal lining.
+            //
+            // A bar on the face leaves the wall's own cut faces exposed inside the frame -- a pale band on all
+            // four sides of every opening, which is exactly what it looked like.
+            float t = Thickness * 0.5f + TrimProud, w = TrimProfile;
+            float u0 = o.U, u1 = o.U1, v0 = o.V, v1 = o.V1;
+            AddBox(st, new Vector3(u0, v0, -t), new Vector3(u0 + w, v1, t));          // left lining
+            AddBox(st, new Vector3(u1 - w, v0, -t), new Vector3(u1, v1, t));          // right lining
+            AddBox(st, new Vector3(u0 + w, v1 - w, -t), new Vector3(u1 - w, v1, t));  // head lining
+            if (o.V > WallOpenings.Eps)                                                // floor-pinned openings have no sill
+                AddBox(st, new Vector3(u0 + w, v0, -t), new Vector3(u1 - w, v0 + w, t));
         }
 
-        /// <summary>One solid, minus any side face that another solid is flush against. The partition emits
-        /// boxes that share edges, so drawing all six faces of each leaves two coincident polygons at every
-        /// internal boundary -- they z-fight and self-shadow, and the wall reads as a grid of tiles rather than
-        /// one surface. Only faces on the OUTSIDE of the union get drawn.</summary>
         static void AddWallBox(SurfaceTool st, WallSolid s, List<WallSolid> all, float t)
         {
             bool left = !Abuts(all, s, -1, 0), right = !Abuts(all, s, 1, 0);
