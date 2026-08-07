@@ -191,6 +191,12 @@ Two smaller fixes at the same seam:
 
 ## Known, not-mine
 
-`power.wind_turbine` is **flaky**, not consistently red. It failed on clean `origin/main` with this work
-stashed, then passed on a later full run of this branch. So it is pre-existing and unrelated to structures,
-but "main is red" overstates it — if you see it fail, re-run before believing it.
+`power.wind_turbine` is **order-dependent**, not flaky — I called it flaky earlier and that was imprecise.
+It fails in isolation on untouched `origin/main` (`./test.sh --l1 --only 'power.wind_turbine'`), and passes
+inside a full run, so its result depends on state a previously-run suite leaves behind. Adding the barricade
+suites changed the ordering enough that it now fails in the full run too.
+
+`Terrain.SeaLevelY` is a mutable static overwritten by every map build (`Terrain.cs:604`) and never restored
+between suites, and the turbine measures height *above sea level* — so it is the obvious suspect, but resetting
+it did not fix the failure, so the real cause is still open. Pre-existing and outside the structures lane;
+flagged rather than guessed at.
