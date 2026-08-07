@@ -155,8 +155,11 @@ namespace UnturnedGodot
             return collider == null || (!collider.IsInGroup("deployables") && !collider.IsInGroup("barricades"));
         }
 
-        // clearance sphere at the standoff point (src OverlapSphere(point, radius, BLOCK_BARRICADE)); excludes the
-        // mount surface so contact with the wall/floor we're placing on doesn't count as a blocking obstacle.
+        // clearance sphere at the standoff point (src OverlapSphere(point, radius, BLOCK_BARRICADE)); excludes the mount
+        // surface (the wall/floor we're placing on). The src BLOCK_BARRICADE mask does NOT include GROUND, so the terrain
+        // a barricade sits against never counts as a blocking obstacle -- otherwise a wall barricade near the floor (its
+        // sphere dipping into the ground) would falsely read blocked. We can't mask that out by layer (ground/structures
+        // share layer 0), so filter the ground/terrain hits out in code.
         static bool Overlap(PhysicsDirectSpaceState3D space, Vector3 p, float r, Rid exclude)
         {
             var pq = new PhysicsShapeQueryParameters3D
@@ -166,7 +169,13 @@ namespace UnturnedGodot
                 CollisionMask = 1u << 0,
                 Exclude = new Godot.Collections.Array<Rid> { exclude },
             };
-            return space.IntersectShape(pq, 1).Count > 0;
+            foreach (var h in space.IntersectShape(pq, 8))
+            {
+                var c = h["collider"].As<Node>();
+                if (c == null || c.IsInGroup("terrain") || c.IsInGroup("ground")) continue;   // ground doesn't block (src BLOCK_BARRICADE)
+                return true;   // a real obstacle: another structure / barricade / vehicle / prop
+            }
+            return false;
         }
 
         void Apply()

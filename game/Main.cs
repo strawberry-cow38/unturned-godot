@@ -78,7 +78,7 @@ namespace UnturnedGodot
             string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null, drivetest = null, proptest = null, animrig = null, rottest = null, itemtest = null, navShot = null, croptest = null, menuShot = null, clothtest = null, boattest = null;
             bool zperf = false;
             bool zbody = false;
-            bool deployTest = false, barricadeTest = false;
+            bool deployTest = false, barricadeTest = false, barricadePlay = false;
             bool wearcloth = false;
             bool skillsui = false;
             bool fluidTest = false;
@@ -108,6 +108,7 @@ namespace UnturnedGodot
                 else if (arg == "--zbody") zbody = true;   // MECHANISM probe: N bare kinematic capsules, moving vs parked -> is the physics cost the BODIES?
                 else if (arg == "--deploytest") deployTest = true;   // both deployables placed on a ground plane + a valid(blue)+invalid(red) ghost -> verify models/palette/stand-up/ghost materials
                 else if (arg == "--barricadetest") barricadeTest = true;   // barricades mounted on a STRUCTURE wall (upright, facing out) + a valid ghost + a floor barricade -> verify surface placement
+                else if (arg == "--barricadeplay") barricadePlay = true;   // INTERACTIVE: fly (hold RMB) + LMB-place barricades on a structure room -- test placement feel ([1-3]=def, Tab=mount, R=rotate)
                 else if (arg == "--skillsui") skillsui = true;   // render the skills menu (showcase/validate the SkillsUI)
                 else if (arg.StartsWith("--itemtest=")) itemtest = arg["--itemtest=".Length..];   // drop a row of loot items (ids) as physics WorldItems -> validate real mesh/tex/scale/settle
                 else if (arg.StartsWith("--animrig=")) { animrig = arg["--animrig=".Length..]; _shotRequested = animrig; }   // build a rigged animal (content/NAME_rig.json) at rest + 3/4 cam -> validate the static pose stands
@@ -347,6 +348,14 @@ namespace UnturnedGodot
                 GetWindow().Size = new Vector2I(1280, 720);
                 _shotPath = shot;
                 BuildBarricadeTest();
+                return;
+            }
+
+            if (barricadePlay)   // INTERACTIVE barricade placement sandbox (fly + place). Live; --shot=OUT still captures the opening frame for a build check
+            {
+                GetWindow().Size = new Vector2I(1280, 720);
+                _shotPath = shot;
+                BuildBarricadePlay();
                 return;
             }
 
@@ -2044,6 +2053,61 @@ namespace UnturnedGodot
             AddChild(cam);
             cam.Position = new Vector3(5.6f, 3.2f, 8.2f);
             cam.LookAt(new Vector3(-0.3f, 1.5f, -0.6f), Vector3.Up);
+        }
+
+        // --barricadeplay : an interactive sandbox to TEST barricade placement feel before the in-game held-item flow
+        // is wired. A small structure room (walls + roof, all in "structures"), a free-fly EditorCamera (hold RMB), a
+        // BarricadePlayground driving a BarricadePlacer off the screen-centre aim, and a centre crosshair. LMB places;
+        // [1-3] cycle def, Tab cycles mount family, R rotates.
+        void BuildBarricadePlay()
+        {
+            var env = new Godot.Environment
+            {
+                BackgroundMode = Godot.Environment.BGMode.Color,
+                BackgroundColor = new Color(0.30f, 0.34f, 0.42f),
+                AmbientLightSource = Godot.Environment.AmbientSource.Color,
+                AmbientLightColor = new Color(0.72f, 0.72f, 0.75f), AmbientLightEnergy = 1.0f,
+            };
+            AddChild(new WorldEnvironment { Environment = env });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-48f, -40f, 0f), LightEnergy = 1.3f, ShadowEnabled = true });
+
+            AddChild(new MeshInstance3D
+            {
+                Mesh = new PlaneMesh { Size = new Vector2(60f, 60f) },
+                MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.34f, 0.40f, 0.28f), Roughness = 1f },
+            });
+            var groundBody = new StaticBody3D();
+            groundBody.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
+            groundBody.AddToGroup("terrain");
+            AddChild(groundBody);
+
+            // a small structure room to place on: back wall + left wall + a roof (Sticky targets), all in "structures"
+            void Slab(Vector3 pos, Vector3 size)
+            {
+                var b = new StaticBody3D { Position = pos };
+                b.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = size } });
+                b.AddChild(new MeshInstance3D { Mesh = new BoxMesh { Size = size }, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.56f, 0.57f, 0.61f), Roughness = 0.85f } });
+                b.AddToGroup("structures");
+                AddChild(b);
+            }
+            Slab(new Vector3(0f, 2f, -3f), new Vector3(8f, 4f, 0.4f));    // back wall
+            Slab(new Vector3(-4f, 2f, 0f), new Vector3(0.4f, 4f, 6f));    // left wall
+            Slab(new Vector3(0f, 4.1f, 0f), new Vector3(8f, 0.4f, 6f));   // roof (Sticky targets on its underside)
+
+            var cam = new EditorCamera { Position = new Vector3(0f, 2f, 1.6f), RotationDegrees = new Vector3(-3f, 0f, 0f) };   // start within the barricade Range of the back wall so the opening ghost is placeable
+            AddChild(cam);
+            var pg = new BarricadePlayground();
+            AddChild(pg);
+            pg.Setup(cam);
+
+            // centre crosshair so you can see where the ghost will land
+            var layer = new CanvasLayer();
+            AddChild(layer);
+            var dot = new ColorRect { Color = new Color(1f, 1f, 1f, 0.85f), Size = new Vector2(6f, 6f) };
+            dot.SetAnchorsPreset(Control.LayoutPreset.Center);
+            dot.Position = new Vector2(-3f, -3f);
+            layer.AddChild(dot);
+            GD.Print("[barricadeplay] HOLD RMB to fly/look (WASD move, scroll=speed). LMB=place. [1-3]=def, Tab=mount family, R=rotate 90.");
         }
 
         void BuildDeployTest()

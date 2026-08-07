@@ -200,4 +200,45 @@ namespace UnturnedGodot.Testing
                 placer.Valid && placer.Normal.Dot(Vector3.Up) > 0.99f && (placer.Point - new Vector3(3f, 0f, 3f)).Length() < 0.001f && Mathf.Abs(placer.Yaw - 90f) < 0.001f);
         }
     }
+
+    // BarricadePlayground drives the interactive --barricadeplay sandbox: its place/cycle logic (the input events wire
+    // straight onto these methods). Raw input can't be driven headless, so we exercise the methods directly.
+    public class BarricadePlaygroundLogic : GameTest
+    {
+        public override string Name => "barricade.playground";
+        public override IEnumerable<Step> Run()
+        {
+            Rigs.Ground(World);
+            var cam = new Camera3D { Current = false };
+            World.AddChild(cam);
+            var wall = new StaticBody3D { CollisionLayer = 1 << 0 };
+            wall.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = new Vector3(1f, 4f, 4f) } });
+            World.AddChild(wall);
+            wall.GlobalPosition = new Vector3(6f, 2f, 0f);
+            wall.AddToGroup("structures");
+            cam.Position = new Vector3(4f, 2f, 0f);
+            cam.LookAt(new Vector3(5.5f, 2f, 0f), Vector3.Up);   // aim at the wall's -X face
+
+            var pg = new BarricadePlayground();
+            World.AddChild(pg);
+            pg.Setup(cam, new[] { DeployableDef.MetalBarricade, DeployableDef.Generator });
+            yield return Ticks(2);   // let the wall collider register with the physics space
+            pg.Aim();                // headless has no render frames, so drive the aim directly (as _Process would live)
+
+            T.Check("default def is the first (MetalBarricade), Wall mount from the def", pg.Current == DeployableDef.MetalBarricade && pg.Placer.Mount == BarricadeMount.Wall);
+            T.Check("the ghost is on a valid wall surface", pg.Placer.Valid);
+            var placed = pg.PlaceCurrent();
+            yield return Ticks(1);
+            T.Check("PlaceCurrent (LMB) drops a barricade on the wall", placed != null && GodotObject.IsInstanceValid(placed) && placed.IsInGroup("barricades"));
+
+            pg.CycleDef(1);
+            T.Check("cycling the def switches to the generator (Floor mount)", pg.Current == DeployableDef.Generator && pg.Placer.Mount == BarricadeMount.Floor);
+            var m0 = pg.Placer.Mount;
+            pg.CycleMount();
+            T.Check("cycling the mount family changes it", pg.Placer.Mount != m0);
+            float y0 = pg.Placer.YawOffset;
+            pg.Rotate();
+            T.Check("rotate bumps the yaw offset by 90", Mathf.Abs((pg.Placer.YawOffset - y0) - 90f) < 0.01f);
+        }
+    }
 }
