@@ -325,6 +325,95 @@ namespace UnturnedGodot.Testing
         }
     }
 
+    // Explosions against a base, reimplemented from SDK StructureDrop.cs:52-70.
+    //
+    // The check that matters is the LINE-OF-SIGHT one. Distance falloff alone looks perfectly reasonable and
+    // quietly removes the point of building: one charge at the front door damages every wall in the building
+    // at once, layering buys you nothing, and the whole upgrade ladder becomes decoration. It is also the rule
+    // most easily lost, because a version without it passes every "does the explosion hurt things nearby" test
+    // anyone would naturally write.
+    public class StructureExplosion : GameTest
+    {
+        public override string Name => "structure.explosion";
+
+        public override IEnumerable<Step> Run()
+        {
+            Rigs.Ground(World);
+            var sm = new StructureManager();
+            World.AddChild(sm);
+            yield return Ticks(1);
+
+            // ---- geometry helper: range is to the CLOSEST POINT, not the origin ----
+            // a floor first: wood cannot float, so a bare wall would be refused (which is the support rule
+            // working, not a fixture that happens to fail)
+            var pad = sm.Place(Vector3.Zero, EConstruct.Floor, 0);
+            var w = sm.Place(new Vector3(StructureCatalog.HalfEdge, 0f, 0f), EConstruct.Wall, 0);
+            T.Check("fixture: a floor and a wall", pad != null && w != null);
+            // a point level with the wall's middle, 1 m out from its face
+            var outside = new Vector3(w.Pos.X + 1f, StructureCatalog.WallPivotOffset, 0f);
+            float toClosest = StructureManager.ClosestPointOn(w, outside).DistanceTo(outside);
+            float toOrigin = w.Pos.DistanceTo(outside);
+            T.Check($"closest point is nearer than the origin ({toClosest:0.00} vs {toOrigin:0.00})",
+                toClosest < toOrigin - 1f);
+            T.Check($"and it is about the face standoff, ~1 m ({toClosest:0.00})", toClosest < 1.2f);
+            yield return Ticks(2);
+
+            // ---- falloff is linear in range/radius ----
+            int hpFull = w.Health;
+            sm.Explode(StructureManager.ClosestPointOn(w, outside), 10f, 100, out int dmgd);
+            T.Check($"a point-blank blast deals ~full damage ({hpFull - w.Health} of 100)",
+                dmgd >= 1 && hpFull - w.Health >= 95);
+
+            var w2 = sm.Place(new Vector3(-StructureCatalog.HalfEdge, 0f, 0f), EConstruct.Wall, 0);
+            yield return Ticks(2);
+            int hp2 = w2.Health;
+            // half a radius away from its face -> half damage
+            var half = StructureManager.ClosestPointOn(w2, new Vector3(-20f, StructureCatalog.WallPivotOffset, 0f))
+                       + new Vector3(-5f, 0f, 0f);
+            sm.Explode(half, 10f, 100, out _);
+            int dealt2 = hp2 - w2.Health;
+            T.Check($"at half the radius it deals about half ({dealt2} of 100)", dealt2 >= 40 && dealt2 <= 60);
+
+            // ---- out of range is untouched ----
+            int hp3 = w2.Health;
+            sm.Explode(new Vector3(-200f, 0f, 0f), 10f, 100, out int dmgd3);
+            T.Check("nothing outside the radius is touched", dmgd3 == 0 && w2.Health == hp3);
+
+            // ---- metal is NOT immune to explosives the way it is to melee ----
+            var metal = sm.Place(new Vector3(60f, 0f, 60f), EConstruct.Wall, 2);
+            yield return Ticks(2);
+            int mhp = metal.Health;
+            T.Check("metal shrugs off a melee hit", !sm.Damage(metal, 50) && metal.Health == mhp);
+            sm.Explode(StructureManager.ClosestPointOn(metal, new Vector3(61f, 2f, 60f)), 10f, 100, out _);
+            T.Check($"but an explosion hurts it ({mhp - metal.Health})", metal.Health < mhp);
+
+            // ---- THE rule: a piece behind another piece is SHIELDED ----
+            // two parallel walls on the same tile row; blast outside the near one, aimed through both.
+            sm.Place(new Vector3(120f, 0f, 120f), EConstruct.Floor, 0);   // support for both
+            var near = sm.Place(new Vector3(120f + StructureCatalog.HalfEdge, 0f, 120f), EConstruct.Wall, 0);
+            var far = sm.Place(new Vector3(120f - StructureCatalog.HalfEdge, 0f, 120f), EConstruct.Wall, 0);
+            T.Check("fixture: two stacked walls", near != null && far != null);
+            yield return Ticks(3);
+            int nearHp = near.Health, farHp = far.Health;
+            // outside the near wall, far enough back that BOTH are inside a generous radius
+            var blast = new Vector3(near.Pos.X + 2f, StructureCatalog.WallPivotOffset, 120f);
+            sm.Explode(blast, 30f, 200, out _);
+            T.Check($"the near wall takes it ({nearHp - near.Health})", near.Health < nearHp);
+            T.Check($"the far wall is SHIELDED by it ({farHp - far.Health} damage)", far.Health == farHp);
+            // and once the shield is gone, the far wall is exposed -- proving the block was line of sight and
+            // not simply that the far wall was out of range all along.
+            sm.Damage(near, 100000, explosive: true);   // remove the shield directly -- another huge blast would
+                                                        // also flatten the far wall and prove nothing
+            yield return Ticks(3);
+            bool nearGone = true;
+            foreach (var pc in sm.All) if (pc == near) nearGone = false;
+            T.Check("the near wall is destroyed", nearGone);
+            int farHp2 = far.Health;
+            sm.Explode(blast, 30f, 200, out _);
+            T.Check($"now the far wall takes damage ({farHp2 - far.Health})", far.Health < farHp2);
+        }
+    }
+
     // The SEAM between structures and barricades, exercised through the exact hook PlayerController installs.
     //
     // Both subsystems are green in isolation and the merge compiles clean, which is precisely the situation

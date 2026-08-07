@@ -300,6 +300,72 @@ namespace UnturnedGodot
             return true;
         }
 
+        /// <summary>The nearest point ON a piece to a world point -- its box clamped in the piece's own frame.
+        /// Not the origin: a charge stuck to a wall is ~2 m from that wall's ORIGIN (which sits at its base) and
+        /// would take a heavy falloff penalty against the very thing it is stuck to.</summary>
+        public static Vector3 ClosestPointOn(Piece p, Vector3 world)
+        {
+            var ext = StructureCatalog.Extents(p.Construct) * 0.5f;
+            var centre = p.Pos + Vector3.Up * StructureCatalog.PivotOffset(p.Construct);
+            var basis = new Basis(Vector3.Up, Mathf.DegToRad(p.YawDeg));
+            var local = basis.Inverse() * (world - centre);
+            var clamped = new Vector3(
+                Mathf.Clamp(local.X, -ext.X, ext.X),
+                Mathf.Clamp(local.Y, -ext.Y, ext.Y),
+                Mathf.Clamp(local.Z, -ext.Z, ext.Z));
+            return centre + basis * clamped;
+        }
+
+        /// <summary>An explosion against the base. Reimplemented from SDK StructureDrop.cs:52-70, which is worth
+        /// following closely because all three of its details are load-bearing for raiding:
+        ///
+        ///   1. range is measured to the piece's CLOSEST POINT, not its origin;
+        ///   2. falloff is linear, 1 - range/radius (StructureDrop.cs:69);
+        ///   3. a LINE-OF-SIGHT test drops the damage entirely when something else blocks the path
+        ///      (StructureDrop.cs:60-65) -- and the blocker being part of the same piece does NOT count.
+        ///
+        /// (3) is the whole reason a base is a base. Without it one charge at the front door damages every wall
+        /// in the building at once and layering walls buys you nothing, which is not a balance quibble -- it
+        /// makes the entire upgrade-and-layer loop pointless. Explosive damage ignores tier vulnerability, so
+        /// metal is not immune here the way it is to melee.
+        ///
+        /// Returns the number of pieces DESTROYED (not merely damaged); `damaged` reports how many were hit.</summary>
+        public int Explode(Vector3 point, float radius, int damage, out int damaged)
+        {
+            damaged = 0;
+            if (radius <= 0f || damage <= 0) return 0;
+            int destroyed = 0;
+            var space = GetWorld3D()?.DirectSpaceState;
+            // snapshot: Damage() can Remove() a piece mid-loop, and _all is the live list
+            foreach (var p in new List<Piece>(_all))
+            {
+                var near = ClosestPointOn(p, point);
+                float range = near.DistanceTo(point);
+                if (range > radius) continue;
+
+                // LOS: is another piece in the way? A ray that stops short on a DIFFERENT piece means this one
+                // is shielded. Zero range (the charge is inside/touching it) needs no test and must not
+                // normalize a zero vector.
+                if (range > 0.01f && space != null)
+                {
+                    var q = PhysicsRayQueryParameters3D.Create(point, near);
+                    q.CollisionMask = 1u << 0;
+                    var hit = space.IntersectRay(q);
+                    if (hit.Count > 0)
+                    {
+                        var blocker = PieceForCollider(hit["collider"].As<Node>());
+                        if (blocker != null && blocker != p) continue;   // shielded by another piece
+                    }
+                }
+
+                int dealt = Mathf.RoundToInt(damage * (1f - range / radius));
+                if (dealt <= 0) continue;
+                damaged++;
+                if (Damage(p, dealt, explosive: true)) destroyed++;
+            }
+            return destroyed;
+        }
+
         /// <summary>Upgrade to the next tier, refilling health. Returns false at the top of the ladder.</summary>
         public bool Upgrade(Piece p)
         {

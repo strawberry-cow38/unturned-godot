@@ -23,6 +23,12 @@ It's now just input + preview over `StructureManager`, which owns the real thing
   level always stands.
 - **Tiers** wood → brick → metal, with health, upgrade, and a salvage-duration multiplier.
 - **Damage** with vulnerability: metal ignores non-explosive damage.
+- **Explosions** (`StructureManager.Explode`), reimplemented from SDK `StructureDrop.cs:52-70`: range measured
+  to the piece's *closest point* rather than its origin, linear `1 - range/radius` falloff, and a
+  **line-of-sight test** so a piece behind another piece is shielded. That last one is what makes layering
+  walls worth doing — without it a single charge at the front door damages every wall in the building at once
+  and the whole upgrade ladder is decoration. Explosive damage ignores tier vulnerability, so metal is not
+  immune the way it is to melee.
 - **Repair / salvage**, both reporting what actually happened (see "Deliberate choices").
 - **Persistence** to `user://structures.json`, loaded on entry and saved on exit + on window close.
 
@@ -66,8 +72,12 @@ Note the `--` before the game args, and that `--shot=` takes a **file** path, no
 ./test.sh --l1 --only 'structure.*'
 ```
 
-68 checks across `structure.lattice`, `structure.damage_save`, `structure.repair_salvage`,
-`structure.corners`. The full suite (`./test.sh --l1`) is 272 checks and passes on this branch.
+98 checks across `structure.lattice`, `structure.damage_save`, `structure.query`,
+`structure.repair_salvage`, `structure.explosion` and `structure.barricade_seam`.
+
+Two of these were verified by deliberately breaking the code and confirming the test goes red — the
+explosion suite with the line-of-sight rule removed (the far wall then takes 148 damage through a wall), and
+the seam suite with the wrong hook wired. A green test nobody has seen fail is a guess.
 
 ## What to actually poke at
 
@@ -83,6 +93,9 @@ Note the `--` before the game args, and that `--shot=` takes a **file** path, no
 7. **Blowtorch a damaged piece** — it repairs rather than hits, matching how vehicles and generators already
    behave.
 8. **Quit and relaunch.** Your base should still be there.
+9. **Build two parallel walls and blow up the outer one.** The inner wall should take nothing while the outer
+   one stands, and start taking damage once it falls. That is the shielding rule, and it is the difference
+   between a base and a pile of tiles.
 
 ## Deliberate choices worth arguing with
 
