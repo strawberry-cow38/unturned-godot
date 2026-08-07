@@ -60,42 +60,66 @@ namespace UnturnedGodot
         SkillsUI _skillsUI;                 // the skills menu (J to open) -- spend XP to level skills
         BuildTool _build;                   // B = build mode. C = construct, V = tier, LMB place, R salvage.
 
+        /// <summary>Upgrade the aimed piece a tier in place. StructureManager.Upgrade had tests and no caller
+        /// anywhere in the game -- the tier ladder existed only as an API, so nothing a player did could climb
+        /// it. Same shape as the doors and beds that carried a TakeDamage nothing ever invoked: green tests
+        /// proving a method works say nothing about whether it is reachable.</summary>
+        void UpgradeAimedStructure()
+        {
+            var piece = AimedStructure();
+            if (piece == null) return;
+            var sm = StructureManager.Instance;
+            int was = piece.Tier;
+            if (sm.Upgrade(piece))
+                GD.Print($"[build] upgraded {piece.Construct}: {StructureCatalog.TierAt(was).Name} -> {StructureCatalog.TierAt(piece.Tier).Name} ({piece.Health} hp)");
+            else
+                GD.Print($"[build] {piece.Construct} is already {StructureCatalog.TierAt(piece.Tier).Name} (top tier)");
+        }
+
+        /// <summary>The structure piece under the crosshair, or null. Shared by salvage/upgrade/melee so all
+        /// three agree on WHICH piece you mean -- three separate raycasts drifting apart is how "salvage took
+        /// the wrong wall" bugs start.</summary>
+        StructureManager.Piece AimedStructure(float reach = -1f)
+        {
+            var sm = StructureManager.Instance;
+            if (sm == null || _cam == null) return null;
+            var space = GetWorld3D()?.DirectSpaceState;
+            if (space == null) return null;
+            if (reach <= 0f) reach = StructureCatalog.MaxPlacementDistance;   // melee reaches less far than placement
+            Vector3 from = _cam.GlobalPosition, dir = -_cam.GlobalTransform.Basis.Z;
+            var q = PhysicsRayQueryParameters3D.Create(from, from + dir * reach);
+            q.CollisionMask = 1u << 0;
+            var hit = space.IntersectRay(q);
+            if (hit.Count == 0) return null;
+            var found = sm.QueryAt((Vector3)hit["position"], StructureCatalog.HalfEdge);
+            if (found == null) return null;
+            foreach (var piece in sm.All) if (piece.Node == found.Value.Node) return piece;
+            return null;
+        }
+
         /// <summary>Swing at the structure piece under the crosshair. Returns true if one was hit, so the melee
         /// chain stops there rather than also swinging at whatever is behind it. A blowtorch repairs instead of
         /// hitting, matching how vehicles and deployables already behave.</summary>
         bool MeleeStructure(float amount, float range)
         {
+            var piece = AimedStructure(range + 1.5f);
+            if (piece == null) return false;
             var sm = StructureManager.Instance;
-            if (sm == null || _cam == null) return false;
-            var space = GetWorld3D()?.DirectSpaceState;
-            if (space == null) return false;
-            Vector3 from = _cam.GlobalPosition, dir = -_cam.GlobalTransform.Basis.Z;
-            var q = PhysicsRayQueryParameters3D.Create(from, from + dir * (range + 1.5f));
-            q.CollisionMask = 1u << 0;
-            var hit = space.IntersectRay(q);
-            if (hit.Count == 0) return false;
-            var found = sm.QueryAt((Vector3)hit["position"], StructureCatalog.HalfEdge);
-            if (found == null) return false;
-            foreach (var piece in sm.All)
+            bool metal = StructureCatalog.TierAt(piece.Tier).Name == "metal";
+            if (HasBlowtorch)
             {
-                if (piece.Node != found.Value.Node) continue;
-                var pos = (Vector3)hit["position"];
-                if (HasBlowtorch)
-                {
-                    int healed = sm.Repair(piece, Mathf.RoundToInt(amount));
-                    if (healed > 0) GD.Print($"[build] repaired {piece.Construct} +{healed}");
-                }
-                else
-                {
-                    bool broke = sm.Damage(piece, Mathf.RoundToInt(amount));
-                    MeleeImpactFx(pos, false, StructureCatalog.TierAt(piece.Tier).Name == "metal" ? Surf.Metal : Surf.Wood);
-                    GD.Print(broke
-                        ? $"[build] destroyed {StructureCatalog.TierAt(piece.Tier).Name} {piece.Construct}"
-                        : $"[build] hit {piece.Construct} for {amount:0} ({piece.Health}/{piece.MaxHealth})");
-                }
+                int healed = sm.Repair(piece, Mathf.RoundToInt(amount));
+                if (healed > 0) GD.Print($"[build] repaired {piece.Construct} +{healed}");
                 return true;
             }
-            return false;
+            var c = piece.Construct;
+            int tier = piece.Tier;
+            bool broke = sm.Damage(piece, Mathf.RoundToInt(amount));
+            MeleeImpactFx(piece.Pos, false, metal ? Surf.Metal : Surf.Wood);
+            GD.Print(broke
+                ? $"[build] destroyed {StructureCatalog.TierAt(tier).Name} {c}"
+                : $"[build] hit {c} for {amount:0} ({piece.Health}/{piece.MaxHealth})");
+            return true;
         }
 
         /// <summary>Salvage the structure piece under the crosshair. Uses the eye ray rather than the build
@@ -103,24 +127,11 @@ namespace UnturnedGodot
         /// at, so salvaging off the ghost takes down the wrong thing (or nothing).</summary>
         void SalvageAimedStructure()
         {
-            var sm = StructureManager.Instance;
-            if (sm == null || _cam == null) return;
-            var space = GetWorld3D()?.DirectSpaceState;
-            if (space == null) return;
-            Vector3 from = _cam.GlobalPosition, dir = -_cam.GlobalTransform.Basis.Z;
-            var q = PhysicsRayQueryParameters3D.Create(from, from + dir * StructureCatalog.MaxPlacementDistance);
-            q.CollisionMask = 1u << 0;
-            var hit = space.IntersectRay(q);
-            if (hit.Count == 0) return;
-            var found = sm.QueryAt((Vector3)hit["position"], StructureCatalog.HalfEdge);
-            if (found == null) return;
-            foreach (var piece in sm.All)
-                if (piece.Node == found.Value.Node)
-                {
-                    int tier = sm.Salvage(piece);
-                    if (tier >= 0) GD.Print($"[build] salvaged {StructureCatalog.TierAt(tier).Name} {piece.Construct}");
-                    return;
-                }
+            var piece = AimedStructure();
+            if (piece == null) return;
+            var c = piece.Construct;
+            int tier = StructureManager.Instance.Salvage(piece);
+            if (tier >= 0) GD.Print($"[build] salvaged {StructureCatalog.TierAt(tier).Name} {c}");
         }
         string _gunName = "eaglefire";   // gun folder name (eaglefire | maplestrike), derived from the .dat path
         float _pitchDeg;
@@ -3961,6 +3972,8 @@ namespace UnturnedGodot
                 _build?.CycleType();  // cycle the structure type (floor/wall/pillar/rampart/roof)
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.R } && (_build?.Active ?? false))
                 SalvageAimedStructure();   // R while building: take the aimed piece back down (reload is meaningless here)
+            else if (@event is InputEventKey { Pressed: true, Keycode: Key.Y } && (_build?.Active ?? false))
+                UpgradeAimedStructure();   // Y while building: wood -> brick -> metal in place
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.G })
                 MeleeAttack();        // melee swing at a zombie in reach
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.H })
