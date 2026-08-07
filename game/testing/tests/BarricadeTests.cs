@@ -241,4 +241,56 @@ namespace UnturnedGodot.Testing
             T.Check("rotate bumps the yaw offset by 90", Mathf.Abs((pg.Placer.YawOffset - y0) - 90f) < 0.01f);
         }
     }
+
+    // The CanAttach seam (tinyclaw's integration review): the structure hook and the no-stack default are BOTH gates,
+    // not either/or, and the hook must ABSTAIN (true) off-structure rather than refuse. The old code exercised none of
+    // this -- every other test leaves CanAttach null -- so this wires a MOCK hook to cover it.
+    public class BarricadeAttachSeam : GameTest
+    {
+        public override string Name => "barricade.attach_seam";
+        public override IEnumerable<Step> Run()
+        {
+            Rigs.Ground(World);
+            var cam = new Camera3D { Current = false };
+            World.AddChild(cam);
+            var wall = new StaticBody3D { CollisionLayer = 1 << 0 };
+            wall.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = new Vector3(1f, 4f, 4f) } });
+            World.AddChild(wall);
+            wall.GlobalPosition = new Vector3(6f, 2f, 0f);
+            wall.AddToGroup("structures");
+            // a stand-in already-placed deployable (the no-stack target)
+            var dep = new StaticBody3D { CollisionLayer = 1 << 0 };
+            dep.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = Vector3.One } });
+            World.AddChild(dep);
+            dep.GlobalPosition = new Vector3(-2f, 0.5f, 0f);
+            dep.AddToGroup("deployables");
+            yield return Ticks(2);
+
+            var placer = new BarricadePlacer { Mount = BarricadeMount.Wall };
+            World.AddChild(placer);
+            placer.SetDef(DeployableDef.MetalBarricade);
+
+            // aim at the structure wall: the hook AGREES -> valid (both gates pass); REFUSES -> invalid (gate has teeth).
+            cam.Position = new Vector3(4f, 2f, 0f);
+            cam.LookAt(new Vector3(5.5f, 2f, 0f), Vector3.Up);
+            placer.CanAttach = (p, n, c) => true;
+            T.Check("hook agrees on a structure wall -> valid (both gates pass)", placer.Aim(cam));
+            placer.CanAttach = (p, n, c) => false;
+            T.Check("hook refuses -> invalid (the structure gate has teeth)", !placer.Aim(cam));
+
+            // NO-STACK survives a wired hook: aim down at a deployable with a hook that AGREES -> still invalid.
+            // (the old either/or bug let this through: the hook replaced DefaultAttachable, dropping the no-stack rule.)
+            placer.Mount = BarricadeMount.Floor;
+            placer.CanAttach = (p, n, c) => true;
+            cam.Position = new Vector3(-2f, 3f, 0f);
+            cam.LookAt(new Vector3(-2f, 0.5f, 0f), Vector3.Back);
+            T.Check("no-stacking survives a wired hook: can't plant on another deployable", !placer.Aim(cam));
+
+            // ABSTAIN off-structure: a hook returning true leaves open-ground placement to DefaultAttachable.
+            placer.CanAttach = (p, n, c) => true;
+            cam.Position = new Vector3(-8f, 3f, 3f);
+            cam.LookAt(new Vector3(-8f, 0f, 3f), Vector3.Back);   // open ground, clear of the props
+            T.Check("abstaining hook leaves open-ground placement valid", placer.Aim(cam));
+        }
+    }
 }
