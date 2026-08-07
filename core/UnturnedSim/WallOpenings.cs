@@ -16,7 +16,10 @@ namespace UnturnedSim
     {
         public float U, V;          // lower-left corner in wall space
         public float Width, Height;
-        public float Depth;         // centred on the wall mid-plane; >= thickness means it pierces
+        /// <summary>NOT IMPLEMENTED YET: nothing reads this, so every opening is a through-hole and the 999
+        /// written to each save line is ballast. Kept because the recess case is real (a blind alcove, a
+        /// window seat) and the field costs a float; do not document it as working until Rebuild honours it.</summary>
+        public float Depth;         // intended: centred on the wall mid-plane; >= thickness means it pierces
         public int Archetype;       // index into the preset table; presentation only, never read by the geometry
 
         public float U1 => U + Width;
@@ -209,5 +212,10 @@ namespace UnturnedSim
         public const float InteriorThickness = 0.50f;  // partitions
         public const float TrimProfile = 0.20f;        // frame bar width, retail-measured
         public const float MinOpening = 0.5f;
+        /// <summary>How far a foundation reaches below the floor. Every one of the 52 sampled retail buildings
+        /// extends below ground, and it is a hollow SKIRT rather than a solid block -- hundreds of square
+        /// metres of side face down there and essentially no bottom. Depth is bimodal, 5.00 or 6.00, median 6.
+        /// So a foundation is a wall hanging under a wall, and needs no geometry of its own.</summary>
+        public const float FoundationDepth = 6.0f;
     }
 }

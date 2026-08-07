@@ -21,7 +21,10 @@ namespace UnturnedSim.Tests
             a.Openings.Add(new WallOpening(1f, 0f, 2.5f, 3.75f, 999f, 0));
             a.Openings.Add(new WallOpening(5f, 1f, 3.31f, 2.75f, 999f, 1));
             var b = new WallPlan { X = 3f, Y = 4.75f, Z = -1f, Yaw = 15f, Length = 9f, Height = 9.5f, Thickness = 0.5f, Material = 6 };
-            return new List<WallPlan> { a, b };
+            var c = new WallPlan { X = -7f, Y = 4.75f, Z = 1f, Yaw = 0f, Pitch = -90f, Kind = SurfaceKind.Roof,
+                                   Length = 13f, Height = 10f, Thickness = 0.5f, Material = 24 };
+            c.Openings.Add(new WallOpening(4f, 3f, 2f, 2.5f, 999f, 0));   // a stairwell is just an opening
+            return new List<WallPlan> { a, b, c };
         }
 
         static void AssertSame(List<WallPlan> want, List<WallPlan> got)
@@ -37,6 +40,8 @@ namespace UnturnedSim.Tests
                 Assert.That(g.Yaw, Is.EqualTo(w.Yaw).Within(1e-3f), $"wall {i} yaw");
                 Assert.That(g.Length, Is.EqualTo(w.Length).Within(1e-3f), $"wall {i} length");
                 Assert.That(g.Height, Is.EqualTo(w.Height).Within(1e-3f), $"wall {i} height");
+                Assert.That(g.Pitch, Is.EqualTo(w.Pitch).Within(1e-3f), $"wall {i} pitch");
+                Assert.That(g.Kind, Is.EqualTo(w.Kind), $"wall {i} kind");
                 Assert.That(g.Thickness, Is.EqualTo(w.Thickness).Within(1e-3f), $"wall {i} thickness");
                 Assert.That(g.Material, Is.EqualTo(w.Material), $"wall {i} material");
                 Assert.That(g.Openings.Count, Is.EqualTo(w.Openings.Count), $"wall {i} opening count");
@@ -118,7 +123,42 @@ namespace UnturnedSim.Tests
             Assert.That(got.Count, Is.EqualTo(1), "an old wall line still loads");
             Assert.That(got[0].Height, Is.EqualTo(WallOpenings.DoorHeight).Within(1e-4f),
                         "and defaults to one storey, which is what those walls were");
+            Assert.That(got[0].Pitch, Is.EqualTo(0f).Within(1e-4f), "upright, which is what they all were");
+            Assert.That(got[0].Kind, Is.EqualTo(SurfaceKind.Wall), "and a wall, since floors did not exist yet");
             Assert.That(got[0].Openings.Count, Is.EqualTo(1));
+        }
+
+        // Overlapping openings are LEGAL -- the partition removes their union once, which WallOpeningsTests
+        // pins as load-bearing -- and the editor can produce them, because Clamp's two-sided fallback parks an
+        // opening overlapping a neighbour and DragEdge never constrains size against siblings at all.
+        //
+        // BREAK IT: clamp each loaded opening against the ones already loaded. That is what it did: openings
+        // at U=1 and U=2 came back with the second at U=4. Save and reopen gave a different building than the
+        // one you baked, silently, and no disjoint-opening round trip could see it.
+        [Test]
+        public void OverlappingOpeningsAreNotShovedApartOnLoad()
+        {
+            var w = new WallPlan { X = 0f, Y = 0f, Z = 0f, Yaw = 0f, Length = 12f, Height = 4.25f, Thickness = 0.7f };
+            w.Openings.Add(new WallOpening(1f, 1f, 2f, 2f));
+            w.Openings.Add(new WallOpening(2f, 1f, 2f, 2f));      // deliberately overlapping the first
+            var got = WallSave.Read(Lines(WallSave.Write(new List<WallPlan> { w })));
+
+            Assert.That(got.Count, Is.EqualTo(1));
+            Assert.That(got[0].Openings.Count, Is.EqualTo(2));
+            Assert.That(got[0].Openings[0].U, Is.EqualTo(1f).Within(1e-3f), "the first stays put");
+            Assert.That(got[0].Openings[1].U, Is.EqualTo(2f).Within(1e-3f), "and so does the second -- a loader returns what was written");
+        }
+
+        // BREAK IT: snap length to the lattice anywhere on the LOAD path. An off-lattice wall -- imported from
+        // a retail mesh, or hand-edited -- gets rounded by up to half a lattice step, so Load stops being the
+        // inverse of Save and imported walls mis-meet at their corners.
+        [Test]
+        public void AnOffLatticeLengthSurvivesTheRoundTrip()
+        {
+            var w = new WallPlan { X = 0f, Y = 0f, Z = 0f, Yaw = 0f, Length = 7.43f, Height = 4.25f, Thickness = 0.7f };
+            var got = WallSave.Read(Lines(WallSave.Write(new List<WallPlan> { w })));
+            Assert.That(got.Count, Is.EqualTo(1));
+            Assert.That(got[0].Length, Is.EqualTo(7.43f).Within(1e-3f), "not rounded to a multiple of the lattice step");
         }
 
         // BREAK IT: trust the file. A hand-edited opening wider than its wall must give a silly hole, never a

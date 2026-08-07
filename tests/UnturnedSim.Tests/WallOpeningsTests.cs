@@ -91,6 +91,26 @@ namespace UnturnedSim.Tests
                 }
                 var solids = WallOpenings.Solids(W, H, ops);
 
+                // COVERAGE. Disjointness and not-overlapping-a-hole were both checked; nothing checked that
+                // the solids actually COVER the wall, so a partition that silently dropped a box passed the
+                // whole random sweep. Sampled rather than summed because area alone cannot tell a missing box
+                // from a duplicated one.
+                const int G = 23;
+                for (int gx = 0; gx < G; gx++)
+                    for (int gy = 0; gy < G; gy++)
+                    {
+                        float u = (gx + 0.5f) * W / G, v = (gy + 0.5f) * H / G;
+                        bool inHole = false;
+                        foreach (var o in ops)
+                            if (u > o.U && u < o.U1 && v > o.V && v < o.V1) { inHole = true; break; }
+                        if (inHole) continue;
+                        int covering = 0;
+                        foreach (var s in solids)
+                            if (u > s.U0 && u < s.U1 && v > s.V0 && v < s.V1) covering++;
+                        Assert.That(covering, Is.EqualTo(1),
+                            $"iter {iter}: solid wall at ({u:0.##},{v:0.##}) is covered by {covering} boxes, want exactly 1");
+                    }
+
                 for (int a = 0; a < solids.Count; a++)
                 {
                     Assert.That(solids[a].Width, Is.GreaterThan(WallOpenings.Eps));

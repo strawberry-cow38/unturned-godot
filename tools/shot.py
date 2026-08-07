@@ -60,6 +60,10 @@ SCENES = {
     "editbuild":(["--editor", "--shot={OUT}"], {"UG_EDITTOOL": "buildings"}, True, 400, "the Buildings editor: a drawn building on the stage"),
     "editbake": (["--editor", "--shot={OUT}"], {"UG_EDITTOOL": "buildings", "UG_EDITBAKE": "1"}, True, 400,
                  "build -> bake -> placed back on the map as a prop"),
+    # the translator, looked at rather than trusted. IMPORT=House_03 tools/shot.py editimport
+    "editimport": (["--editor", "--shot={OUT}"],
+                   {"UG_EDITTOOL": "buildings", "UG_EDITIMPORT": os.environ.get("IMPORT", "House_00")}, True, 400,
+                   "a retail building ported into editable walls (set IMPORT=Name)"),
     "objects":  (["--objects", "--shot={OUT}"], {}, True, 400, "ripped prop showcase"),
     # one named prop at identity + RGB axes -- the diagnostic view for a model that looks wrong.
     # `PROP=Street_Light_0 tools/shot.py prop`

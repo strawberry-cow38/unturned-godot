@@ -55,6 +55,14 @@ namespace UnturnedGodot
             _history.Add((label, undo));
             if (_history.Count > 256) _history.RemoveAt(0);   // cap the stack
         }
+        /// <summary>Discard the newest undo step WITHOUT running it -- for an action that undid itself, like a
+        /// wall draw abandoned with Escape. Leaving the step on the stack means the next Ctrl+Z silently
+        /// consumes itself doing nothing.</summary>
+        public void PopUndo()
+        {
+            if (_history.Count > 0) _history.RemoveAt(_history.Count - 1);
+        }
+
         public bool Undo()
         {
             if (_history.Count == 0) return false;

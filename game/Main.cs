@@ -3404,16 +3404,29 @@ namespace UnturnedGodot
             if (System.Environment.GetEnvironmentVariable("UG_EDITTOOL") == "buildings")
             {
                 editor.Mode = EEditorMode.Buildings;
-                if (buildings.Walls.Count == 0) DrawDemoBuilding(buildings);
+                // UG_EDITIMPORT ports a retail building in instead of drawing the demo, so the translator can
+                // be LOOKED at. The L1 test proves its numbers are wall-shaped; only a render shows whether
+                // the building it rebuilt is the building it read.
+                string imp = System.Environment.GetEnvironmentVariable("UG_EDITIMPORT");
+                if (!string.IsNullOrEmpty(imp)) buildings.ImportRetail(imp);
+                else if (buildings.Walls.Count == 0) DrawDemoBuilding(buildings);
                 if (System.Environment.GetEnvironmentVariable("UG_EDITBAKE") == "1")
                 {
                     string baked = buildings.Bake("Demo_House");
                     editor.Mode = EEditorMode.Level;
                     if (baked != null)
                     {
-                        var at = new Vector3(0f, 0f, 0f);
-                        var hit = WorldBuilder.InteractableAnchor(_mapRoot);
-                        if (hit != Vector3.Zero) at = hit;
+                        var at = WorldBuilder.InteractableAnchor(_mapRoot);
+                        // Drop it ON the ground. A building's origin is its floor line and its foundation
+                        // hangs 6 m below that, so placing at y=0 over water leaves the foundation dangling in
+                        // mid-air -- which looks like the bake got the origin wrong when it did not.
+                        var down = new PhysicsRayQueryParameters3D
+                        {
+                            From = at + new Vector3(0f, 300f, 0f), To = at - new Vector3(0f, 100f, 0f),
+                            CollisionMask = 1u << 0,
+                        };
+                        var ground = cam.GetWorld3D().DirectSpaceState.IntersectRay(down);
+                        if (ground.ContainsKey("position")) at = (Vector3)ground["position"];
                         objs.SetPlaceType(baked);
                         var placed = objs.Place(baked, at, EditorObjects.Upright(0f));
                         if (placed != null)
@@ -4454,6 +4467,15 @@ namespace UnturnedGodot
             right.Openings.Add(new UnturnedSim.WallOpening(5.5f, sill, 2.81f, wh));
 
             foreach (var w in b.Walls) w.Rebuild();
+            var floor = b.AddSlab(UnturnedSim.SurfaceKind.Floor);
+            // a stairwell, to show that a hole in a floor is the same opening as a hole in a wall
+            if (floor != null)
+            {
+                floor.Openings.Add(new UnturnedSim.WallOpening(floor.Length - 3.6f, floor.Height * 0.5f - 1.4f, 2.8f, 2.8f));
+                floor.Rebuild();
+            }
+            b.AddFoundation();
+            b.AddGableRoof(20f);
         }
 
         // A few bundled ripped crates as cover/scenery (portable res:// assets).

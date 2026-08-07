@@ -112,27 +112,38 @@ namespace UnturnedGodot
 
         // ---- public seams, driven by tests as well as by the mouse ------------------------------------
 
+        /// <summary>Draw a wall. Length snaps to the lattice HERE, because snapping belongs to the act of
+        /// drawing -- it is a drafting aid for a hand on a mouse.</summary>
         public WallSurface AddWall(Vector3 origin, float yawDeg, float length)
         {
-            var w = SpawnWall(origin, yawDeg, length, NewWallThickness, ActiveMaterial, null);
+            var w = SpawnWall(origin, yawDeg, SnapRun(length), NewWallThickness, ActiveMaterial, null);
             _editor?.PushUndo("wall place", () => RemoveWall(w));
             return w;
         }
+
+        /// <summary>Wall runs snap to the lattice so drawn walls stay interoperable with anything built on the
+        /// structures grid.</summary>
+        public static float SnapRun(float length) => Mathf.Max(WallOpenings.LatticeStep,
+            Mathf.Round(length / WallOpenings.LatticeStep) * WallOpenings.LatticeStep);
 
         /// <summary>Build a wall and register it, WITHOUT touching the undo stack. Undo actions run through
         /// here: a restore that called AddWall would push a fresh entry onto the stack it is being replayed
         /// from.</summary>
         WallSurface SpawnWall(Vector3 origin, float yawDeg, float length, float thickness, int material,
-                              IReadOnlyList<WallOpening> openings, float height = WallOpenings.DoorHeight)
+                              IReadOnlyList<WallOpening> openings, float height = WallOpenings.DoorHeight,
+                              float pitchDeg = 0f, SurfaceKind kind = SurfaceKind.Wall, float gableRise = 0f)
         {
-            // wall runs snap to the lattice so drawn walls stay interoperable with anything built on the
-            // structures grid; free-length walls would drift off it for no gain
-            float snapped = Mathf.Max(WallOpenings.LatticeStep,
-                Mathf.Round(length / WallOpenings.LatticeStep) * WallOpenings.LatticeStep);
+            // NO SNAPPING HERE. This is the path Load() and ImportRetail() come through, and rounding a
+            // length on the way in makes loading lossy: an imported wall measured off the mesh to the
+            // centimetre was being rounded to the nearest 3 m -- up to 1.5 m per wall -- so imported buildings
+            // mis-met at their corners and openings recovered against the true length fell off the shortened
+            // end, where the partition clamps them away silently. It also meant Load() was not the inverse of
+            // Save(). Snapping is a DRAWING aid and now lives in AddWall.
             var w = new WallSurface
             {
-                Length = snapped, Height = height, Thickness = thickness, MaterialId = material,
-                Position = origin, RotationDegrees = new Vector3(0f, yawDeg, 0f),
+                Length = Mathf.Max(0.01f, length), Height = height, Thickness = thickness, MaterialId = material, Kind = kind,
+                GableRise = gableRise,
+                Position = origin, RotationDegrees = new Vector3(pitchDeg, yawDeg, 0f),
             };
             AddChild(w);
             if (openings != null) { w.Openings.AddRange(openings); w.Rebuild(); }
@@ -150,9 +161,11 @@ namespace UnturnedGodot
             Vector3 pos = w.Position, rot = w.RotationDegrees;
             float len = w.Length, th = w.Thickness, h = w.Height;
             int mat = w.MaterialId;
+            var kind = w.Kind;
+            float gable = w.GableRise;
             var ops = w.Openings.ToArray();
             RemoveWall(w);
-            _editor?.PushUndo("wall delete", () => SpawnWall(pos, rot.Y, len, th, mat, ops, h));
+            _editor?.PushUndo("wall delete", () => SpawnWall(pos, rot.Y, len, th, mat, ops, h, rot.X, kind, gable));
         }
 
         public void RemoveWall(WallSurface w)
@@ -311,7 +324,7 @@ namespace UnturnedGodot
                 }
                 else if (k.Keycode == Key.Escape)
                 {
-                    if (_drawing != null) { RemoveWall(_drawing); _drawing = null; }
+                    if (_drawing != null) { CancelDraw(); }
                     else if (_selOpening >= 0) _selOpening = -1;
                     else _selWall = null;
                     PositionHandles();
@@ -364,6 +377,17 @@ namespace UnturnedGodot
             }
         }
 
+        /// <summary>Abandon the wall being laid, INCLUDING the undo step AddWall pushed for it. Dropping the
+        /// wall and leaving the step behind is the failure DeleteWall's comment calls out: Ctrl+Z then fires,
+        /// reports success and does nothing.</summary>
+        void CancelDraw()
+        {
+            if (_drawing == null) return;
+            RemoveWall(_drawing);
+            _drawing = null;
+            _editor?.PopUndo();
+        }
+
         /// <summary>Where the cursor meets the ground, ignoring walls. Walls sit on collision layer 0 along
         /// with the terrain, so an un-excluded pick starts the next wall on top of the last one you drew --
         /// which looks like the tool randomly placing walls in the air.</summary>
@@ -398,8 +422,7 @@ namespace UnturnedGodot
             var flat = new Vector2(d.X, d.Z);
             if (flat.Length() < 0.05f) return;
             float yaw = Mathf.Snapped(Mathf.RadToDeg(Mathf.Atan2(-flat.Y, flat.X)), 15f);
-            float len = Mathf.Max(WallOpenings.LatticeStep,
-                                  Mathf.Round(flat.Length() / WallOpenings.LatticeStep) * WallOpenings.LatticeStep);
+            float len = SnapRun(flat.Length());
             _drawing.RotationDegrees = new Vector3(0f, yaw, 0f);
             _drawing.Length = len;
             _drawing.Rebuild();
@@ -422,7 +445,7 @@ namespace UnturnedGodot
             }
             else
             {
-                if (_drawing != null) { RemoveWall(_drawing); _drawing = null; }
+                CancelDraw();
                 if (_haveReturn && _cam != null) { _cam.GlobalTransform = _camReturn; _haveReturn = false; }
             }
         }
@@ -441,9 +464,12 @@ namespace UnturnedGodot
         void MoveCameraToStage()
         {
             if (_cam == null) return;
-            var eye = StageOrigin + new Vector3(0f, 11f, 30f);
+            // Three-quarter, not straight on. A frontal view of a building shows one elevation and flattens
+            // everything else -- you cannot see a roof's pitch, a wall's depth or which way a corner turns
+            // from it, so it is the wrong camera both to build from and to judge a change by.
+            var eye = StageOrigin + new Vector3(22f, 14f, 26f);
             _cam.GlobalPosition = eye;
-            _cam.LookAt(StageOrigin + new Vector3(0f, 3f, 0f), Vector3.Up);
+            _cam.LookAt(StageOrigin + new Vector3(0f, 2f, -4.5f), Vector3.Up);
         }
 
         void BuildStage()
@@ -500,7 +526,8 @@ namespace UnturnedGodot
                 var pl = new WallPlan
                 {
                     X = w.Position.X, Y = w.Position.Y, Z = w.Position.Z,
-                    Yaw = w.RotationDegrees.Y, Length = w.Length, Height = w.Height,
+                    Yaw = w.RotationDegrees.Y, Pitch = w.RotationDegrees.X, Kind = w.Kind,
+                    Length = w.Length, Height = w.Height, GableRise = w.GableRise,
                     Thickness = w.Thickness, Material = w.MaterialId,
                 };
                 pl.Openings.AddRange(w.Openings);
@@ -528,7 +555,8 @@ namespace UnturnedGodot
 
             foreach (var w in _walls.ToArray()) RemoveWall(w);
             foreach (var pl in plans)
-                SpawnWall(new Vector3(pl.X, pl.Y, pl.Z), pl.Yaw, pl.Length, pl.Thickness, pl.Material, pl.Openings, pl.Height);
+                SpawnWall(new Vector3(pl.X, pl.Y, pl.Z), pl.Yaw, pl.Length, pl.Thickness, pl.Material,
+                          pl.Openings, pl.Height, pl.Pitch, pl.Kind, pl.GableRise);
             GD.Print($"[editor-buildings] loaded {plans.Count} walls");
             return plans.Count;
         }
@@ -551,12 +579,31 @@ namespace UnturnedGodot
             if (string.IsNullOrWhiteSpace(name) || _walls.Count == 0) return null;
             name = SafeName(name);
 
+            // Corners are solved for the bake only. The .dat written below is deliberately the UNSOLVED
+            // layout: reopening a building must give you back the walls you drew, at the lengths you drew
+            // them, not ones silently grown by half a neighbour each time it was baked.
+            var plans = Plans();
+            var cornerUndo = SolveCorners();
+            try { return BakeSolved(name, plans); }
+            finally { RestoreCorners(cornerUndo); }
+        }
+
+        string BakeSolved(string name, List<WallPlan> plans)
+        {
+
             // one palette for the building: every distinct wall/reveal colour in use, laid out 4 across
             var colours = new List<Color>();
             int TexelOf(Color c)
             {
                 for (int i = 0; i < colours.Count; i++) if (colours[i].IsEqualApprox(c)) return i;
-                if (colours.Count >= 16) return 0;      // MatFor's palette ceiling; 16 colours is four materials
+                if (colours.Count >= 16)
+                {
+                    // MatFor's palette ceiling. Returning texel 0 means the overflow walls silently wear the
+                    // FIRST material's colour, and the magenta canary cannot fire because 0 is a real texel --
+                    // so say so, or a five-material building looks merely odd rather than broken.
+                    GD.PrintErr($"[editor-buildings] more than 16 distinct colours in one building; extra walls will wear the first palette entry");
+                    return 0;
+                }
                 colours.Add(c);
                 return colours.Count - 1;
             }
@@ -610,8 +657,14 @@ namespace UnturnedGodot
             {
                 System.IO.Directory.CreateDirectory(dir);
                 System.IO.File.WriteAllText(dir + name + ".obj", ObjText(name, verts, norms, uvs, tris));
+                // ObjMesh caches by path forever, so a re-bake under the same name would keep serving the
+                // FIRST bake's geometry until a restart -- exactly the loop this tool exists for.
+                ObjMesh.Forget(dir + name + ".obj");
                 PaletteImage(colours, pw, ph).SavePng(dir + name + "_tex.png");
-                System.IO.File.WriteAllText(BuildingSourcePath(name), WallSave.Write(Plans()));
+                // NOTE: written in STAGE-ABSOLUTE coordinates (y ~ 2000) while the .obj beside it is
+                // building-local, and there is no un-bake path yet -- so re-editing a baked building currently
+                // goes through the lossy mesh importer while this lossless file sits next to it unused.
+                System.IO.File.WriteAllText(BuildingSourcePath(name), WallSave.Write(plans));
                 RegisterBaked(name);
             }
             catch (System.Exception e) { GD.PrintErr($"[editor-buildings] bake failed: {e.Message}"); return null; }
@@ -619,6 +672,84 @@ namespace UnturnedGodot
             GD.Print($"[editor-buildings] baked '{name}': {tris.Count / 3} tris, {colours.Count} palette colours");
             _editor?.Objects?.ReloadCatalog();
             return name;
+        }
+
+        // ---- corner solving -------------------------------------------------------------------------
+
+        /// <summary>Extend walls through their shared corners so the outer corner is filled, returning what to
+        /// put back. Applied only for the duration of a BAKE.
+        ///
+        /// While you are drawing, walls just interpenetrate -- that is what strawberry asked for, and it is the
+        /// right behaviour: a corner that re-solves itself on every mouse move fights the drag. But two walls
+        /// meeting at their centre-lines leave a quarter of a wall's thickness missing at the OUTER corner, a
+        /// square notch you can see through from outside and nothing inside ever fills. So the solve happens
+        /// once, at the moment the geometry stops being editable.
+        ///
+        /// Each wall simply runs on past the junction by half its neighbour's thickness. The overlap that
+        /// creates is inside the corner post where nothing can see it, which is the same reason the reveal
+        /// linings are allowed to interpenetrate the wall.</summary>
+        public List<(WallSurface W, float Len, Vector3 Pos)> SolveCorners()
+        {
+            // LIMITATION: extending by half the neighbour's thickness fills the notch EXACTLY at 90 degrees.
+            // At the 30-60 degree corners the 15-degree yaw snap allows, a true mitre needs more, so a sliver
+            // of notch survives the bake (or the extension pushes through the far face).
+            const float Tol = 0.35f;
+            var undo = new List<(WallSurface, float, Vector3)>();
+            // Foundations are corner-solved too. A foundation is a wall, so it has the same missing quarter at
+            // every corner -- and being underground is exactly why it would never get noticed: the notch is a
+            // hole in the buried skirt that only shows when the ground falls away beside it.
+            //
+            // Wall and foundation corners cannot be confused for each other: the endpoints compared below are
+            // at each surface's BASE, and a foundation's base is a storey underground, far outside Tol.
+            var walls = new List<WallSurface>();
+            foreach (var w in _walls)
+                if (IsInstanceValid(w) && (w.Kind == SurfaceKind.Wall || w.Kind == SurfaceKind.Foundation)) walls.Add(w);
+
+            // grow[i] = how far to push wall i's start back and its end forward
+            var growStart = new float[walls.Count];
+            var growEnd = new float[walls.Count];
+            for (int i = 0; i < walls.Count; i++)
+                for (int j = 0; j < walls.Count; j++)
+                {
+                    if (i == j) continue;
+                    var a = walls[i];
+                    var b = walls[j];
+                    // parallel walls do not form a corner -- they form a seam, and extending them just makes
+                    // two walls overlap end to end
+                    float dy = Mathf.Abs(Mathf.Wrap(a.RotationDegrees.Y - b.RotationDegrees.Y, -90f, 90f));
+                    if (dy < 20f) continue;
+
+                    foreach (var (mine, isStart) in new[] { (a.UVToWorld(0f, 0f), true), (a.UVToWorld(a.Length, 0f), false) })
+                        foreach (var theirs in new[] { b.UVToWorld(0f, 0f), b.UVToWorld(b.Length, 0f) })
+                        {
+                            if ((mine - theirs).Length() > Tol) continue;
+                            float grow = b.Thickness * 0.5f;
+                            if (isStart) growStart[i] = Mathf.Max(growStart[i], grow);
+                            else growEnd[i] = Mathf.Max(growEnd[i], grow);
+                        }
+                }
+
+            for (int i = 0; i < walls.Count; i++)
+            {
+                if (growStart[i] <= 0f && growEnd[i] <= 0f) continue;
+                var w = walls[i];
+                undo.Add((w, w.Length, w.Position));
+                // the run direction in world, from the surface's own projection rather than from the yaw
+                var dir = (w.UVToWorld(1f, 0f) - w.UVToWorld(0f, 0f)).Normalized();
+                w.Position -= dir * growStart[i];
+                w.Length += growStart[i] + growEnd[i];
+                w.Rebuild();
+            }
+            return undo;
+        }
+
+        public void RestoreCorners(List<(WallSurface W, float Len, Vector3 Pos)> undo)
+        {
+            foreach (var (w, len, pos) in undo)
+            {
+                if (!IsInstanceValid(w)) continue;
+                w.Length = len; w.Position = pos; w.Rebuild();
+            }
         }
 
         public static string BuildingSourcePath(string name) =>
@@ -660,7 +791,8 @@ namespace UnturnedGodot
                 var pl = new WallPlan
                 {
                     X = w.Position.X, Y = w.Position.Y, Z = w.Position.Z,
-                    Yaw = w.RotationDegrees.Y, Length = w.Length, Height = w.Height,
+                    Yaw = w.RotationDegrees.Y, Pitch = w.RotationDegrees.X, Kind = w.Kind,
+                    Length = w.Length, Height = w.Height, GableRise = w.GableRise,
                     Thickness = w.Thickness, Material = w.MaterialId,
                 };
                 pl.Openings.AddRange(w.Openings);
@@ -725,6 +857,209 @@ namespace UnturnedGodot
         /// base at -4.25, roof at 0. It survived every size check, because a mirrored box is the same size.
         /// Hence the round-trip test: sizes agree with a sign error, positions do not.</summary>
         public static Vector3 ToObj(Vector3 nodeSpace) => new(nodeSpace.X, -nodeSpace.Z, nodeSpace.Y);
+
+        // ---- slabs: floors and flat roofs ------------------------------------------------------------
+
+        /// <summary>Thickness a floor or flat roof starts at -- the measured storey pitch is 4.75, which is a
+        /// 4.25 opening plus a 0.50 slab.</summary>
+        public const float SlabThickness = 0.50f;
+
+        /// <summary>Add a floor or a flat roof spanning the footprint of the walls already drawn.
+        ///
+        /// A slab is one of these same surfaces PITCHED FLAT, not a new kind of object: the rectangle-minus-
+        /// openings problem is the same lying down, so the partition, the collider, the reveal lining around a
+        /// stairwell, the palette and the bake all work already. Every test written for a wall covers it.
+        ///
+        /// It spans the walls rather than being drawn, because the useful floor is almost always "the one that
+        /// fits this room", and dragging a rectangle that has to line up with four walls by hand is a worse
+        /// version of a button.</summary>
+        /// <summary>LIMITATION: the footprint is a world-axis AABB of the wall endpoints, so this is only
+        /// correct for a building whose walls run along X or Z. Draw at 15/30/45 degrees -- which the wall tool
+        /// allows -- and the slab is the AABB of the rotated footprint, overhanging on every side, which is
+        /// exactly what the retail measurement says should not happen. Mixed thicknesses also grow by the
+        /// MAX half-thickness on all four sides, so a 0.50 partition meeting a 0.70 wall overhangs by 0.10.</summary>
+        public WallSurface AddSlab(SurfaceKind kind)
+        {
+            if (_walls.Count == 0) return null;
+            float minX = float.MaxValue, maxX = float.MinValue, minZ = float.MaxValue, maxZ = float.MinValue;
+            float baseY = float.MaxValue, topY = float.MinValue;
+            int seen = 0, material = ActiveMaterial;
+            float maxWallThickness = WallOpenings.DefaultThickness;
+            foreach (var w in _walls)
+            {
+                if (!IsInstanceValid(w) || w.Kind != SurfaceKind.Wall) continue;   // slabs do not stack on slabs
+                maxWallThickness = Mathf.Max(maxWallThickness, w.Thickness);
+                foreach (float u in new[] { 0f, w.Length })
+                {
+                    var p = w.UVToWorld(u, 0f);
+                    minX = Mathf.Min(minX, p.X); maxX = Mathf.Max(maxX, p.X);
+                    minZ = Mathf.Min(minZ, p.Z); maxZ = Mathf.Max(maxZ, p.Z);
+                }
+                baseY = Mathf.Min(baseY, w.Position.Y);
+                topY = Mathf.Max(topY, w.Position.Y + w.Height);
+                material = w.MaterialId;      // a slab wears the walls' palette, not whatever the picker last showed
+                seen++;
+            }
+            if (seen == 0) return null;
+
+            // FLUSH WITH THE OUTER WALL FACE. I had put half a thickness of lip on this because it looked
+            // more like a roof; strawberry asked whether retail does that and it does not -- 24 of 26
+            // buildings measured have the roof and floor ending on the wall face within 6 cm, and the two that
+            // differ have a smaller upper storey rather than an overhang.
+            //
+            // The footprint above is measured on the wall MID-planes (UVToWorld's v=0 line lies at local z=0),
+            // so flush means growing by half a wall. Stopping at the centre-line instead leaves the outer half
+            // of every wall poking through the roof, which is a thin bright seam rather than an obvious fault.
+            float half = maxWallThickness * 0.5f;
+            minX -= half; maxX += half; minZ -= half; maxZ += half;
+
+            // The slab's top lands where you would stand on it: at the walls' base for a floor, at their head
+            // for a roof. Thickness runs along local Z, which the -90 pitch turns into world up.
+            float top = kind == SurfaceKind.Roof ? topY + SlabThickness : baseY;
+            var origin = new Vector3(minX, top - SlabThickness * 0.5f, maxZ);
+            var slab = SpawnWall(origin, 0f, maxX - minX, SlabThickness, material, null,
+                                 maxZ - minZ, -90f, kind);
+            _editor?.PushUndo(kind == SurfaceKind.Roof ? "roof place" : "floor place", () => RemoveWall(slab));
+            return slab;
+        }
+
+        /// <summary>Port a retail building into editable walls, REPLACING whatever is on the stage.
+        ///
+        /// Replacing rather than adding: an import lands on the same footprint every time, so merging it into
+        /// a building already being drawn just stacks two buildings in the same place and leaves you to pick
+        /// them apart by hand.</summary>
+        public int ImportRetail(string buildingName)
+        {
+            if (string.IsNullOrWhiteSpace(buildingName)) return 0;
+            string obj = ProjectSettings.GlobalizePath("res://content/objects/") + buildingName + ".obj";
+            if (!System.IO.File.Exists(obj)) { GD.PrintErr($"[editor-buildings] no mesh for {buildingName}"); return 0; }
+
+            int mat = 0;
+            for (int i = 0; i < WallMaterials.Count; i++)
+                if (WallMaterials.At(i).Name == buildingName) { mat = i; break; }   // its own palette, if we have it
+
+            var plans = BuildingImport.FromObj(obj, mat);
+            if (plans.Count == 0) return 0;
+
+            foreach (var w in new List<WallSurface>(_walls)) RemoveWall(w);
+            foreach (var pl in plans)
+                SpawnWall(StageOrigin + new Vector3(pl.X, pl.Y, pl.Z), pl.Yaw, pl.Length, pl.Thickness,
+                          pl.Material, pl.Openings, pl.Height, pl.Pitch, pl.Kind, pl.GableRise);
+            ActiveMaterial = mat;
+            GD.Print($"[editor-buildings] imported {buildingName}: {plans.Count} walls");
+            return plans.Count;
+        }
+
+        /// <summary>Measured retail roof pitches, area-weighted across the 52 buildings. Snap targets, not
+        /// law. 0 is first and is the DEFAULT because 80% of retail roof area is flat -- a pitched roof is the
+        /// special case here, which is the opposite of what a house-shaped intuition suggests.</summary>
+        public static readonly float[] RoofPitches = { 0f, 12f, 15f, 18f, 20f, 22f, 27f, 30f, 45f };
+        // Flat, because that is what the measurement says -- 80% of retail roof AREA. It read 20 here while
+        // the comment above and the button tooltip both claimed flat was the default, so the first press of
+        // Add roof built a gable on a fresh session.
+        public float ActiveRoofPitch;
+
+        /// <summary>Add a gable roof: two sloped surfaces meeting at a ridge, and the end walls raised into
+        /// gable ends to close it.
+        ///
+        /// The triangular end is put on the WALL, not on the roof, because that is what it is -- retail gable
+        /// ends are the wall carrying on up to the roof line. It also keeps the roof pieces rectangular, so
+        /// they stay ordinary surfaces.</summary>
+        /// <summary>LIMITATION: axis-aligned only, same as AddSlab, and the gable cap assumes the end wall
+        /// spans the whole footprint -- its apex sits at the WALL's midpoint. An L-shaped plan, an offset end
+        /// wall or a diagonal one gets a triangle that misses the roof planes. The along/across-ridge
+        /// classification is a 45-degree threshold, which is meaningless for a diagonal wall.</summary>
+        public int AddGableRoof(float pitchDeg)
+        {
+            if (pitchDeg <= 0.1f) return AddSlab(SurfaceKind.Roof) != null ? 1 : 0;   // flat is a slab
+            pitchDeg = Mathf.Clamp(pitchDeg, 1f, 70f);
+
+            float minX = float.MaxValue, maxX = float.MinValue, minZ = float.MaxValue, maxZ = float.MinValue;
+            float topY = float.MinValue;
+            int seen = 0, material = ActiveMaterial;
+            float maxWallThickness = WallOpenings.DefaultThickness;
+            foreach (var w in _walls)
+            {
+                if (!IsInstanceValid(w) || w.Kind != SurfaceKind.Wall) continue;
+                maxWallThickness = Mathf.Max(maxWallThickness, w.Thickness);
+                foreach (float u in new[] { 0f, w.Length })
+                {
+                    var p = w.UVToWorld(u, 0f);
+                    minX = Mathf.Min(minX, p.X); maxX = Mathf.Max(maxX, p.X);
+                    minZ = Mathf.Min(minZ, p.Z); maxZ = Mathf.Max(maxZ, p.Z);
+                }
+                topY = Mathf.Max(topY, w.Position.Y + w.Height);
+                material = w.MaterialId;
+                seen++;
+            }
+            if (seen == 0) return 0;
+
+            // flush with the outer wall face, same as a flat roof -- see AddSlab
+            float halfW = maxWallThickness * 0.5f;
+            minX -= halfW; maxX += halfW; minZ -= halfW; maxZ += halfW;
+
+            float spanX = maxX - minX, spanZ = maxZ - minZ;
+            bool ridgeAlongX = spanX >= spanZ;                 // the ridge runs the LONG way, as a roof does
+            float half = (ridgeAlongX ? spanZ : spanX) * 0.5f;
+            float th = Mathf.DegToRad(pitchDeg);
+            float rise = half * Mathf.Tan(th);
+            float slope = half / Mathf.Cos(th);
+            float pitchNode = pitchDeg - 90f;                  // -90 is flat; adding the pitch tilts it up
+
+            var made = new List<WallSurface>();
+            if (ridgeAlongX)
+            {
+                made.Add(SpawnWall(new Vector3(minX, topY, maxZ), 0f, spanX, SlabThickness, material, null, slope, pitchNode, SurfaceKind.Roof));
+                made.Add(SpawnWall(new Vector3(maxX, topY, minZ), 180f, spanX, SlabThickness, material, null, slope, pitchNode, SurfaceKind.Roof));
+            }
+            else
+            {
+                made.Add(SpawnWall(new Vector3(minX, topY, minZ), -90f, spanZ, SlabThickness, material, null, slope, pitchNode, SurfaceKind.Roof));
+                made.Add(SpawnWall(new Vector3(maxX, topY, maxZ), 90f, spanZ, SlabThickness, material, null, slope, pitchNode, SurfaceKind.Roof));
+            }
+
+            // Raise the walls that run ACROSS the ridge into gable ends. A wall parallel to the ridge stays
+            // flat-topped -- putting a peak on all four is the classic wrong-looking roof.
+            var raised = new List<(WallSurface W, float Prev)>();
+            foreach (var w in _walls)
+            {
+                if (!IsInstanceValid(w) || w.Kind != SurfaceKind.Wall) continue;
+                float yaw = Mathf.Wrap(w.RotationDegrees.Y, 0f, 180f);
+                bool runsAlongX = yaw < 45f || yaw > 135f;
+                if (runsAlongX == ridgeAlongX) continue;       // parallel to the ridge: no gable
+                raised.Add((w, w.GableRise));
+                w.GableRise = rise;
+                w.Rebuild();
+            }
+
+            _editor?.PushUndo("gable roof", () =>
+            {
+                foreach (var m in made) RemoveWall(m);
+                foreach (var (w, prev) in raised) if (IsInstanceValid(w)) { w.GableRise = prev; w.Rebuild(); }
+            });
+            return made.Count + raised.Count;
+        }
+
+        /// <summary>Hang a foundation under every wall drawn: a hollow skirt, which is what retail is.
+        ///
+        /// It follows whatever footprint you drew, including a non-rectangular one, because it is built per
+        /// wall rather than from a bounding box -- and it needs no geometry of its own, being a wall.</summary>
+        public int AddFoundation(float depth = WallOpenings.FoundationDepth)
+        {
+            var made = new List<WallSurface>();
+            foreach (var w in new List<WallSurface>(_walls))
+            {
+                if (!IsInstanceValid(w) || w.Kind != SurfaceKind.Wall) continue;
+                // directly under its wall, same run and thickness, reaching down by `depth`
+                var origin = w.Position - new Vector3(0f, depth, 0f);
+                var f = SpawnWall(origin, w.RotationDegrees.Y, w.Length, w.Thickness, w.MaterialId, null,
+                                  depth, w.RotationDegrees.X, SurfaceKind.Foundation);
+                made.Add(f);
+            }
+            if (made.Count == 0) return 0;
+            _editor?.PushUndo("foundation place", () => { foreach (var f in made) RemoveWall(f); });
+            return made.Count;
+        }
 
         /// <summary>Set the palette for the selection if there is one, else for the next wall drawn.</summary>
         public void SelectMaterial(int id)

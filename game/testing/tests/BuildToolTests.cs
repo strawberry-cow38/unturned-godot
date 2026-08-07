@@ -181,11 +181,17 @@ namespace UnturnedGodot.Testing
             tool.SetMaterial(a, 20);
             var b = tool.AddWall(new Vector3(-6f, 0f, -9f), -90f, 9f);
             b.Thickness = WallOpenings.InteriorThickness;
+            // OFF the lattice on purpose. Drawing snaps to 3 m, but loading and importing must not: a wall
+            // measured off a retail mesh is any length at all, and rounding it on the way in makes Load stop
+            // being the inverse of Save. Every other wall here is lattice-aligned, so without this the whole
+            // suite is blind to a snap on the spawn path.
+            b.Length = 7.43f;
             b.Rebuild();
             yield return Step.Ticks(1);
 
             T.Check("saved both walls", tool.Save() == 2);
             T.Check("the file exists", System.IO.File.Exists(Path));
+            // (deleted at the end -- this file lives in the content tree)
 
             // reload into a SECOND tool, the way opening the map again would
             var tool2 = new EditorBuildings();
@@ -201,6 +207,7 @@ namespace UnturnedGodot.Testing
             T.Check($"and its length ({la.Length:0.##})", Mathf.Abs(la.Length - 12f) < 1e-3f);
             T.Check($"and its palette ({la.MaterialId})", la.MaterialId == 20);
             T.Check($"second wall keeps its yaw ({lb.RotationDegrees.Y:0.#})", Mathf.Abs(lb.RotationDegrees.Y + 90f) < 1e-3f);
+            T.Check($"and its off-lattice length, unrounded ({lb.Length:0.###}, want 7.43)", Mathf.Abs(lb.Length - 7.43f) < 1e-2f);
             T.Check($"and its partition thickness ({lb.Thickness:0.##})",
                     Mathf.Abs(lb.Thickness - WallOpenings.InteriorThickness) < 1e-3f);
             T.Check("a loaded wall is pickable -- one nothing can select is still lost", la.BodyRid.IsValid);
@@ -300,8 +307,12 @@ namespace UnturnedGodot.Testing
                 {
                     var mi = w.GetNodeOrNull<MeshInstance3D>(node);
                     if (mi?.Mesh == null || mi.Mesh.GetSurfaceCount() == 0) continue;
-                    var box = (w.GlobalTransform * mi.Mesh.GetAabb()).Position - o;
-                    var full = new Aabb(box, mi.Mesh.GetAabb().Size);
+                    // Transform the WHOLE box. This used to pair the transformed position with the mesh's
+                    // UNROTATED size, which for the yaw--90 wall is wrong by that wall's entire run -- and the
+                    // union with the other wall happened to paper over it in this exact layout. A ruler that
+                    // reads correctly by coincidence is worse than no ruler.
+                    var full = w.GlobalTransform * mi.Mesh.GetAabb();
+                    full.Position -= o;
                     want = first ? full : want.Merge(full);
                     first = false;
                 }
@@ -368,6 +379,477 @@ namespace UnturnedGodot.Testing
             T.Check("it is in the props palette", new List<string>(objs.Catalog).Contains(Nm));
 
             Clean();
+        }
+    }
+
+    public class BuildToolFloorIsAWallLyingDown : GameTest
+    {
+        public override string Name => "buildtool.floor_is_a_wall_lying_down";
+
+        public override IEnumerable<Step> Run()
+        {
+            // A floor is the same surface pitched flat, so what needs proving is not the partition -- that is
+            // already covered upright -- but that the pitch lands the slab where a person would stand on it,
+            // and that its hole is a hole in the thing you walk on too.
+            var ed = new Editor();
+            World.AddChild(ed);
+            var tool = new EditorBuildings();
+            World.AddChild(tool);
+            tool.Setup(ed, null, null);
+            foreach (var old in new List<WallSurface>(tool.Walls)) tool.RemoveWall(old);
+
+            var o = EditorBuildings.StageOrigin;
+            tool.AddWall(o + new Vector3(-6f, 0f, 0f), 0f, 12f);
+            tool.AddWall(o + new Vector3(-6f, 0f, -9f), 0f, 12f);
+            yield return Step.Ticks(1);
+
+            var floor = tool.AddSlab(SurfaceKind.Floor);
+            T.Check("a floor was added", floor != null);
+            if (floor == null) yield break;
+            var roof = tool.AddSlab(SurfaceKind.Roof);
+            T.Check("and a roof", roof != null);
+            if (roof == null) yield break;
+            yield return Step.Ticks(2);
+
+            // The slab's TOP is the surface you stand on. Half a thickness out and you spawn inside the floor,
+            // which reads in game as falling through it -- and looks perfectly fine in a screenshot.
+            float floorTop = floor.Position.Y + floor.Thickness * 0.5f;
+            float roofBottom = roof.Position.Y - roof.Thickness * 0.5f;
+            T.Check($"the floor's top meets the walls' base ({floorTop:0.###} vs {o.Y:0.###})",
+                    Mathf.Abs(floorTop - o.Y) < 1e-3f);
+            T.Check($"the roof's underside meets the walls' head ({roofBottom:0.###} vs {o.Y + WallOpenings.DoorHeight:0.###})",
+                    Mathf.Abs(roofBottom - (o.Y + WallOpenings.DoorHeight)) < 1e-3f);
+            T.Check("a slab is a surface, not a new kind of object", floor.Kind == SurfaceKind.Floor && roof.Kind == SurfaceKind.Roof);
+            T.Check($"pitched flat ({floor.RotationDegrees.X:0.#} deg)", Mathf.Abs(floor.RotationDegrees.X + 90f) < 1e-3f);
+
+            // It spans the walls and stops FLUSH with their outer face -- not overhanging (retail does not)
+            // and not stopping at the centre-line (which leaves the outer half of every wall poking through).
+            // Walls run x -6..6 and z 0..-9 on their mid-planes, at 0.70 thick, so 12.7 x 9.7.
+            float want = WallOpenings.DefaultThickness;
+            T.Check($"it stops flush with the outer wall face ({floor.Length:0.###} x {floor.Height:0.###}, want {12f + want:0.###} x {9f + want:0.###})",
+                    Mathf.Abs(floor.Length - (12f + want)) < 1e-2f && Mathf.Abs(floor.Height - (9f + want)) < 1e-2f);
+
+            // and you can stand on it -- checked through physics, not by reading back the numbers that made it
+            var space = World.GetWorld3D().DirectSpaceState;
+            bool Hits(Vector3 at)
+            {
+                var q = new PhysicsRayQueryParameters3D
+                {
+                    From = at + new Vector3(0f, 3f, 0f), To = at - new Vector3(0f, 3f, 0f), CollisionMask = 1u << 0,
+                };
+                return space.IntersectRay(q).Count > 0;
+            }
+            T.Check("the floor is solid underfoot", Hits(o + new Vector3(0f, 0f, -4.5f)));
+
+            // a stairwell: an opening in a floor is the same opening
+            floor.Openings.Add(new WallOpening(floor.Length * 0.5f - 1.25f, floor.Height * 0.5f - 1.25f, 2.5f, 2.5f));
+            floor.Rebuild();
+            yield return Step.Ticks(2);
+            var mid = floor.UVToWorld(floor.Length * 0.5f, floor.Height * 0.5f);
+            T.Check("a stairwell hole is open underfoot", !Hits(mid));
+            T.Check("and the slab beside it still is not", Hits(o + new Vector3(-5f, 0f, -4.5f)));
+        }
+    }
+
+    public class BuildToolSlabsSurviveSaveAndBake : GameTest
+    {
+        public override string Name => "buildtool.slabs_survive_save_and_bake";
+
+        static string Dir => ProjectSettings.GlobalizePath("res://content/objects/");
+        const string Nm = "__l1_slab_test";
+
+        static void Clean()
+        {
+            // ...including the map save this test writes. It was cleaning the objects dir and leaving
+            // editor_none_Walls.dat behind every run -- litter in the content tree, from the test whose own
+            // Clean comment lectures about litter.
+            foreach (var f in new[] { Dir + Nm + ".obj", Dir + Nm + "_tex.png", EditorBuildings.BuildingSourcePath(Nm),
+                                      ProjectSettings.GlobalizePath("res://content/buildings/") + "editor_none_Walls.dat" })
+                if (System.IO.File.Exists(f)) System.IO.File.Delete(f);
+            string list = EditorBuildings.BakedListPath();
+            if (!System.IO.File.Exists(list)) return;
+            var keep = new List<string>();
+            foreach (var l in System.IO.File.ReadAllLines(list))
+                if (l.Trim() != Nm && l.Trim().Length > 0) keep.Add(l.Trim());
+            if (keep.Count > 0) System.IO.File.WriteAllLines(list, keep);
+            else System.IO.File.Delete(list);
+        }
+
+        public override IEnumerable<Step> Run()
+        {
+            // Pitch and kind are trailing fields on a format that already shipped. Dropping either loses a
+            // floor QUIETLY -- it reloads as an upright wall standing where the floor was, which looks like a
+            // stray wall rather than like a bug in saving.
+            Clean();
+            var ed = new Editor();
+            World.AddChild(ed);
+            var tool = new EditorBuildings();
+            World.AddChild(tool);
+            tool.Setup(ed, null, null);
+            foreach (var old in new List<WallSurface>(tool.Walls)) tool.RemoveWall(old);
+
+            var o = EditorBuildings.StageOrigin;
+            tool.AddWall(o + new Vector3(-6f, 0f, 0f), 0f, 12f);
+            tool.AddWall(o + new Vector3(-6f, 0f, -9f), 0f, 12f);
+            var floor = tool.AddSlab(SurfaceKind.Floor);
+            tool.AddSlab(SurfaceKind.Roof);
+            float len = floor.Length, dep = floor.Height, y = floor.Position.Y;
+            yield return Step.Ticks(1);
+
+            T.Check("saved all four surfaces", tool.Save() == 4);
+            var tool2 = new EditorBuildings();
+            World.AddChild(tool2);
+            tool2.Setup(ed, null, null);
+            yield return Step.Ticks(1);
+
+            int floors = 0, roofs = 0, walls = 0;
+            WallSurface back = null;
+            foreach (var w in tool2.Walls)
+            {
+                if (w.Kind == SurfaceKind.Floor) { floors++; back = w; }
+                else if (w.Kind == SurfaceKind.Roof) roofs++;
+                else walls++;
+            }
+            T.Check($"reloaded 2 walls, 1 floor, 1 roof (got {walls}/{floors}/{roofs})", walls == 2 && floors == 1 && roofs == 1);
+            if (back != null)
+            {
+                T.Check($"the floor came back lying down ({back.RotationDegrees.X:0.#} deg)", Mathf.Abs(back.RotationDegrees.X + 90f) < 1e-2f);
+                T.Check($"at its height ({back.Position.Y:0.###} vs {y:0.###})", Mathf.Abs(back.Position.Y - y) < 1e-2f);
+                T.Check($"and its span ({back.Length:0.##}x{back.Height:0.##} vs {len:0.##}x{dep:0.##})",
+                        Mathf.Abs(back.Length - len) < 1e-2f && Mathf.Abs(back.Height - dep) < 1e-2f);
+            }
+
+            // the bake walks every surface, not just the upright ones
+            T.Check("baked", tool2.Bake(Nm) == Nm);
+            var loaded = ObjMesh.Load(Dir + Nm + ".obj");
+            if (loaded == null || loaded.GetSurfaceCount() == 0) { T.Fail("baked obj did not load"); Clean(); yield break; }
+            var placed = new Transform3D(EditorObjects.Upright(0f), Vector3.Zero) * loaded.GetAabb();
+            // walls alone are 4.25 tall; with a floor under and a roof over it must be taller than that
+            T.Check($"the baked prop includes the slabs (height {placed.Size.Y:0.##} > wall height {WallOpenings.DoorHeight:0.##})",
+                    placed.Size.Y > WallOpenings.DoorHeight + 0.5f);
+            Clean();
+        }
+    }
+
+    public class BuildToolGableRoofClosesAtARidge : GameTest
+    {
+        public override string Name => "buildtool.gable_roof_closes_at_a_ridge";
+
+        public override IEnumerable<Step> Run()
+        {
+            // Checked as GEOMETRY, not against the formula that built it: the two slopes must meet at one
+            // line, that line must be above the walls, the eaves must sit ON the walls, and the angle
+            // recovered from the surface itself must be the angle asked for. Re-deriving half*tan(pitch) here
+            // would just agree with the constructor, including when the constructor is wrong.
+            var ed = new Editor();
+            World.AddChild(ed);
+            var tool = new EditorBuildings();
+            World.AddChild(tool);
+            tool.Setup(ed, null, null);
+            foreach (var old in new List<WallSurface>(tool.Walls)) tool.RemoveWall(old);
+
+            var o = EditorBuildings.StageOrigin;
+            const float Pitch = 20f;
+            tool.AddWall(o + new Vector3(-6f, 0f, 0f), 0f, 12f);        // runs along X
+            tool.AddWall(o + new Vector3(-6f, 0f, -9f), 0f, 12f);       // runs along X
+            var endA = tool.AddWall(o + new Vector3(-6f, 0f, -9f), -90f, 9f);   // runs along Z
+            var endB = tool.AddWall(o + new Vector3(6f, 0f, -9f), -90f, 9f);
+            yield return Step.Ticks(1);
+
+            T.Check("gable roof added", tool.AddGableRoof(Pitch) > 0);
+            yield return Step.Ticks(2);
+
+            var roofs = new List<WallSurface>();
+            foreach (var w in tool.Walls) if (w.Kind == SurfaceKind.Roof) roofs.Add(w);
+            T.Check($"two slopes ({roofs.Count})", roofs.Count == 2);
+            if (roofs.Count != 2) yield break;
+
+            float wallTop = o.Y + WallOpenings.DoorHeight;
+            var eaveA = roofs[0].UVToWorld(roofs[0].Length * 0.5f, 0f);
+            var ridgeA = roofs[0].UVToWorld(roofs[0].Length * 0.5f, roofs[0].Height);
+            var eaveB = roofs[1].UVToWorld(roofs[1].Length * 0.5f, 0f);
+            var ridgeB = roofs[1].UVToWorld(roofs[1].Length * 0.5f, roofs[1].Height);
+
+            T.Check($"the eaves sit on the walls ({eaveA.Y:0.##} / {eaveB.Y:0.##} vs {wallTop:0.##})",
+                    Mathf.Abs(eaveA.Y - wallTop) < 1e-2f && Mathf.Abs(eaveB.Y - wallTop) < 1e-2f);
+            T.Check($"the two slopes meet at one ridge (gap {(ridgeA - ridgeB).Length():0.###} m)",
+                    (ridgeA - ridgeB).Length() < 2e-2f);
+            T.Check($"the ridge is above the walls ({ridgeA.Y - wallTop:0.##} m of rise)", ridgeA.Y - wallTop > 0.5f);
+
+            float run = new Vector2(ridgeA.X - eaveA.X, ridgeA.Z - eaveA.Z).Length();
+            float got = Mathf.RadToDeg(Mathf.Atan2(ridgeA.Y - eaveA.Y, run));
+            T.Check($"and the slope is the pitch asked for ({got:0.#} deg vs {Pitch:0.#})", Mathf.Abs(got - Pitch) < 0.5f);
+
+            // the walls across the ridge become gable ends; the ones along it stay flat-topped
+            int gabled = 0, flatTop = 0;
+            foreach (var w in tool.Walls)
+            {
+                if (w.Kind != SurfaceKind.Wall) continue;
+                if (w.GableRise > 0.01f) gabled++; else flatTop++;
+            }
+            T.Check($"only the two end walls are gabled ({gabled} gabled, {flatTop} flat-topped)", gabled == 2 && flatTop == 2);
+            T.Check("and they are the ones across the ridge", endA.GableRise > 0.01f && endB.GableRise > 0.01f);
+
+            // A gable's collider must be the TRIANGLE, not a box round it -- a box fills the two wedges of air
+            // beside the peak, and you collide with a roof corner that is not there.
+            var space = World.GetWorld3D().DirectSpaceState;
+            bool Solid(Vector3 at)
+            {
+                var q = new PhysicsRayQueryParameters3D
+                { From = at + new Vector3(0.9f, 0f, 0f), To = at - new Vector3(0.9f, 0f, 0f), CollisionMask = 1u << 0 };
+                return space.IntersectRay(q).Count > 0;
+            }
+            var peak = endA.UVToWorld(endA.Length * 0.5f, endA.Height + endA.GableRise * 0.5f);
+            var corner = endA.UVToWorld(endA.Length * 0.06f, endA.Height + endA.GableRise * 0.85f);
+            T.Check("the gable itself is solid", Solid(peak));
+            T.Check("but the air beside the peak is not", !Solid(corner));
+        }
+    }
+
+    public class BuildToolFoundationIsASkirt : GameTest
+    {
+        public override string Name => "buildtool.foundation_is_a_skirt";
+
+        public override IEnumerable<Step> Run()
+        {
+            // Measured off retail: all 52 buildings sink below ground, as a hollow skirt (hundreds of m2 of
+            // side face, essentially no bottom) 5-6 m deep. So a foundation is a wall under a wall, and the
+            // thing worth checking is that it MEETS the wall -- a gap there is daylight under the building on
+            // any slope, and invisible from above.
+            var ed = new Editor();
+            World.AddChild(ed);
+            var tool = new EditorBuildings();
+            World.AddChild(tool);
+            tool.Setup(ed, null, null);
+            foreach (var old in new List<WallSurface>(tool.Walls)) tool.RemoveWall(old);
+
+            var o = EditorBuildings.StageOrigin;
+            tool.AddWall(o + new Vector3(-6f, 0f, 0f), 0f, 12f);
+            tool.AddWall(o + new Vector3(-6f, 0f, -9f), 0f, 12f);
+            tool.AddWall(o + new Vector3(-6f, 0f, -9f), -90f, 9f);
+            yield return Step.Ticks(1);
+
+            T.Check("one foundation per wall", tool.AddFoundation() == 3);
+            yield return Step.Ticks(2);
+
+            int n = 0;
+            foreach (var w in tool.Walls)
+            {
+                if (w.Kind != SurfaceKind.Foundation) continue;
+                n++;
+                T.Check($"foundation {n} meets its wall ({w.Position.Y + w.Height:0.###} vs {o.Y:0.###})",
+                        Mathf.Abs((w.Position.Y + w.Height) - o.Y) < 1e-3f);
+                T.Check($"and reaches the measured depth ({w.Height:0.##} m)",
+                        Mathf.Abs(w.Height - WallOpenings.FoundationDepth) < 1e-3f);
+            }
+            T.Check($"three of them ({n})", n == 3);
+
+            // hollow, not a block: solid where a wall is, open in the middle of the room
+            var space = World.GetWorld3D().DirectSpaceState;
+            bool Solid(Vector3 at)
+            {
+                var q = new PhysicsRayQueryParameters3D
+                { From = at + new Vector3(0f, 0f, 2f), To = at - new Vector3(0f, 0f, 2f), CollisionMask = 1u << 0 };
+                return space.IntersectRay(q).Count > 0;
+            }
+            T.Check("solid under a wall", Solid(o + new Vector3(0f, -3f, 0f)));
+            T.Check("hollow under the middle of the room", !Solid(o + new Vector3(0f, -3f, -4.5f)));
+        }
+    }
+
+    public class BuildToolCornersAreSolvedOnBake : GameTest
+    {
+        public override string Name => "buildtool.corners_are_solved_on_bake";
+
+        public override IEnumerable<Step> Run()
+        {
+            // Two walls meeting at their centre-lines leave a quarter of a thickness MISSING at the outer
+            // corner -- a square notch you can see through from outside, which nothing on the inside fills.
+            // While drawing, walls are meant to just interpenetrate; the solve happens once, at bake.
+            var ed = new Editor();
+            World.AddChild(ed);
+            var tool = new EditorBuildings();
+            World.AddChild(tool);
+            tool.Setup(ed, null, null);
+            foreach (var old in new List<WallSurface>(tool.Walls)) tool.RemoveWall(old);
+
+            var o = EditorBuildings.StageOrigin;
+            // Yaw -90 turns local +X into world +Z, so this wall runs from z=-9 UP TO the corner at z=0 --
+            // it ends there, it does not start there. Starting it at the corner instead sends it away across
+            // the notch and fills the very gap the test is looking for, which reads as the corner already
+            // being solved.
+            var a = tool.AddWall(o + new Vector3(-6f, 0f, 0f), 0f, 12f);       // along +X, ending at x=+6
+            var b = tool.AddWall(o + new Vector3(6f, 0f, -9f), -90f, 9f);      // along +Z, ending at z=0
+            float lenA = a.Length, lenB = b.Length;
+            yield return Step.Ticks(2);
+
+            var space = World.GetWorld3D().DirectSpaceState;
+            // The ray has to START OUTSIDE the geometry. IntersectRay does not report a hit from inside a
+            // shape by default, so a probe beginning at mid-wall height reports "not solid" while standing in
+            // the middle of a wall -- which is indistinguishable from the corner logic having failed. Caught
+            // by the sanity check beside the real one, which is what that check is for.
+            bool Solid(Vector3 at)
+            {
+                var q = new PhysicsRayQueryParameters3D
+                { From = at + new Vector3(0f, 6f, 0f), To = at - new Vector3(0f, 0.5f, 0f), CollisionMask = 1u << 0 };
+                return space.IntersectRay(q).Count > 0;
+            }
+            // dead centre of the missing quarter: outside both centre-lines, inside both outer faces
+            float q4 = WallOpenings.DefaultThickness * 0.25f;
+            var notch = o + new Vector3(6f + q4, 2f, q4);
+
+            T.Check("the outer corner is open while drawing", !Solid(notch));
+            T.Check("and the walls next to it are not", Solid(o + new Vector3(3f, 2f, 0f)));
+
+            var undo = tool.SolveCorners();
+            yield return Step.Ticks(2);
+            T.Check("solving fills the outer corner", Solid(notch));
+            T.Check($"by running each wall past the junction ({a.Length - lenA:0.###} m, want {WallOpenings.DefaultThickness * 0.5f:0.###})",
+                    Mathf.Abs((a.Length - lenA) - WallOpenings.DefaultThickness * 0.5f) < 1e-3f);
+            T.Check($"both of them ({b.Length - lenB:0.###} m)",
+                    Mathf.Abs((b.Length - lenB) - WallOpenings.DefaultThickness * 0.5f) < 1e-3f);
+
+            tool.RestoreCorners(undo);
+            yield return Step.Ticks(2);
+            T.Check("and it is put back afterwards, so editing is unaffected",
+                    Mathf.Abs(a.Length - lenA) < 1e-4f && Mathf.Abs(b.Length - lenB) < 1e-4f);
+            T.Check("the corner is open again", !Solid(notch));
+
+            // Foundations get solved too: the same notch exists in the buried skirt, where nothing would ever
+            // reveal it except ground falling away beside the building.
+            foreach (var w in new List<WallSurface>(tool.Walls)) tool.RemoveWall(w);
+            tool.AddWall(o + new Vector3(-6f, 0f, 0f), 0f, 12f);
+            tool.AddWall(o + new Vector3(6f, 0f, -9f), -90f, 9f);
+            tool.AddFoundation();
+            yield return Step.Ticks(2);
+            var below = o + new Vector3(6f + q4, -3f, q4);
+            T.Check("the foundation corner is open too, before solving", !Solid(below));
+            var u3 = tool.SolveCorners();
+            yield return Step.Ticks(2);
+            T.Check("and solving fills it", Solid(below));
+            int solvedFoundations = 0;
+            foreach (var (w, _, _) in u3) if (GodotObject.IsInstanceValid(w) && w.Kind == SurfaceKind.Foundation) solvedFoundations++;
+            T.Check($"both foundation runs were extended ({solvedFoundations})", solvedFoundations == 2);
+            tool.RestoreCorners(u3);
+
+            // parallel walls are a seam, not a corner -- extending those just overlaps two walls end to end
+            foreach (var w in new List<WallSurface>(tool.Walls)) tool.RemoveWall(w);
+            var p1 = tool.AddWall(o + new Vector3(-6f, 0f, 0f), 0f, 6f);
+            var p2 = tool.AddWall(o + new Vector3(0f, 0f, 0f), 0f, 6f);
+            float l1 = p1.Length, l2 = p2.Length;
+            yield return Step.Ticks(1);
+            var u2 = tool.SolveCorners();
+            T.Check("two walls in a straight line are left alone",
+                    Mathf.Abs(p1.Length - l1) < 1e-4f && Mathf.Abs(p2.Length - l2) < 1e-4f);
+            tool.RestoreCorners(u2);
+        }
+    }
+
+    public class BuildToolImportsARetailBuilding : GameTest
+    {
+        public override string Name => "buildtool.imports_a_retail_building";
+
+        public override IEnumerable<Step> Run()
+        {
+            // The translator, against a real ripped building rather than a synthetic one -- the round trip is
+            // already L0'd on clean input, and what only a real mesh can test is whether the panel finding
+            // survives geometry nobody authored for us.
+            string obj = ProjectSettings.GlobalizePath("res://content/objects/House_00.obj");
+            if (!System.IO.File.Exists(obj)) { T.Fail("House_00.obj missing"); yield break; }
+
+            var plans = BuildingImport.FromObj(obj);
+            T.Check($"it recovered walls at all ({plans.Count})", plans.Count >= 4);
+            if (plans.Count == 0) yield break;
+
+            // Heights are the sharpest check on the FRAME. Import off the raw mesh instead of the upright one
+            // and the building comes back on its side: the walls are still walls, still rectangular, still
+            // paired -- they are just 16 m "tall" and 4 m long, which no other assertion here would notice.
+            int sane = 0, tall = 0;
+            float maxLen = 0f;
+            foreach (var p in plans)
+            {
+                if (p.Height > 1.5f && p.Height < 14f) sane++;
+                if (p.Height >= 14f) tall++;
+                maxLen = Mathf.Max(maxLen, p.Length);
+            }
+            T.Check($"wall heights are wall-shaped ({sane} of {plans.Count} between 1.5 and 14 m, {tall} absurd)",
+                    sane > plans.Count / 2 && tall == 0);
+            T.Check($"and the longest run matches a house, not a continent ({maxLen:0.#} m)", maxLen > 4f && maxLen < 40f);
+
+            int withOpenings = 0, openings = 0;
+            foreach (var p in plans) { if (p.Openings.Count > 0) withOpenings++; openings += p.Openings.Count; }
+            T.Check($"it found openings ({openings} across {withOpenings} walls)", openings > 0);
+
+            // thickness comes from PAIRING the two faces of each wall; unpaired, everything falls back to the
+            // default and this spread collapses to a single value
+            // >= 2 distinct, not >= 1: every non-empty plan list has at least one thickness, including the
+            // all-defaulted collapse this check exists to catch. It asserted >= 1 and could not fail.
+            var seen = new HashSet<int>();
+            int defaulted = 0;
+            foreach (var p in plans)
+            {
+                seen.Add(Mathf.RoundToInt(p.Thickness * 100f));
+                if (Mathf.Abs(p.Thickness - WallOpenings.DefaultThickness) < 1e-3f) defaulted++;
+            }
+            T.Check($"thicknesses were measured off the mesh, not defaulted ({seen.Count} distinct, {defaulted}/{plans.Count} at the default)",
+                    seen.Count >= 2 || defaulted < plans.Count);
+            foreach (var p in plans)
+                T.Check($"wall thickness {p.Thickness:0.##} is plausible", p.Thickness >= 0.2f && p.Thickness <= 1.2f);
+
+            // and what comes out must go straight back in: an import that cannot be saved is not a port
+            string text = WallSave.Write(plans);
+            var back = WallSave.Read(new List<string>(text.Split('\n')));
+            T.Check($"the import round-trips through the save format ({back.Count} of {plans.Count})", back.Count == plans.Count);
+            // and it round-trips the VALUES, not just the row count -- a formatter that wrote zeroes would
+            // have passed the count check.
+            int drift = 0;
+            for (int i = 0; i < Mathf.Min(back.Count, plans.Count); i++)
+            {
+                var x = plans[i];
+                var y = back[i];
+                if (Mathf.Abs(x.X - y.X) > 1e-2f || Mathf.Abs(x.Y - y.Y) > 1e-2f || Mathf.Abs(x.Z - y.Z) > 1e-2f
+                    || Mathf.Abs(x.Length - y.Length) > 1e-2f || Mathf.Abs(x.Height - y.Height) > 1e-2f
+                    || Mathf.Abs(x.Thickness - y.Thickness) > 1e-2f || Mathf.Abs(Mathf.Wrap(x.Yaw - y.Yaw, -180f, 180f)) > 1e-2f
+                    || x.Openings.Count != y.Openings.Count) drift++;
+            }
+            T.Check($"every wall came back identical ({drift} drifted)", drift == 0);
+            yield break;
+        }
+    }
+
+    public class BuildToolTrimIsShootableButNotSolid : GameTest
+    {
+        public override string Name => "buildtool.trim_is_shootable_but_not_solid";
+
+        public override IEnumerable<Step> Run()
+        {
+            // strawberry: "the trim in game has collision no? maybe have bullet etc collision but omit player
+            // collision." The body for that existed and was documented -- and nothing ever put a shape in it,
+            // so it was a dead node and editor frames were not shootable at all. Worse, a BAKED building's
+            // frames ARE solid (the prop path trimeshes the whole render mesh), so the same building behaved
+            // differently before and after baking, which is the kind of difference nobody thinks to check.
+            var w = new WallSurface { Length = 12f, Height = WallOpenings.DoorHeight };
+            World.AddChild(w);
+            w.Openings.Add(new WallOpening(4f, 0f, 2.5f, WallOpenings.DoorHeight - 0.5f));
+            w.Rebuild();
+            yield return Step.Ticks(2);
+
+            var space = World.GetWorld3D().DirectSpaceState;
+            bool Hit(float u, float v, uint layer)
+            {
+                var a = w.UVToWorld(u, v) + new Vector3(0f, 0f, 3f);
+                var b = w.UVToWorld(u, v) - new Vector3(0f, 0f, 3f);
+                var q = new PhysicsRayQueryParameters3D { From = a, To = b, CollisionMask = layer };
+                return space.IntersectRay(q).Count > 0;
+            }
+
+            const uint World0 = 1u << 0, Props = 1u << 6;
+            // just inside the doorway edge: the reveal lining is there, the wall is not
+            float u = 4f + WallSurface.TrimProfile * 0.5f, v = 2f;
+            T.Check("a bullet ray hits the doorframe", Hit(u, v, Props));
+            T.Check("but movement passes through it", !Hit(u, v, World0));
+            T.Check("mid-doorway is clear on both layers", !Hit(5.25f, 2f, Props) && !Hit(5.25f, 2f, World0));
+            T.Check("and the wall beside it still stops movement", Hit(1f, 2f, World0));
         }
     }
 }

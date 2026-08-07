@@ -1,4 +1,5 @@
 using Godot;
+using UnturnedSim;
 
 namespace UnturnedGodot
 {
@@ -57,6 +58,53 @@ namespace UnturnedGodot
             };
             box.AddChild(th);
 
+            // Flat is the DEFAULT roof because it is what retail overwhelmingly is: 80% of the sloped-and-flat
+            // roof area across the 52 sampled buildings is flat. A pitched roof is the special case, not the
+            // norm, and a flat one is this same slab.
+            var slabs = new HBoxContainer();
+            var addFloor = new Button { Text = "Add floor", CustomMinimumSize = new Vector2(120, 0),
+                                        TooltipText = "a slab under the walls you have drawn" };
+            addFloor.Pressed += () => Say(_b.AddSlab(SurfaceKind.Floor) != null ? "floor added" : "draw some walls first");
+            var addRoof = new Button { Text = "Add roof", CustomMinimumSize = new Vector2(120, 0),
+                                       TooltipText = "flat at 0 pitch — 80% of retail roof area is flat" };
+            addRoof.Pressed += () =>
+            {
+                int n = _b.AddGableRoof(_b.ActiveRoofPitch);
+                Say(n > 0 ? (_b.ActiveRoofPitch <= 0.1f ? "flat roof added" : $"gable roof at {_b.ActiveRoofPitch:0.#}°")
+                          : "draw some walls first");
+            };
+            slabs.AddChild(addFloor);
+            slabs.AddChild(addRoof);
+            box.AddChild(slabs);
+
+            // Snapped to the measured retail pitches rather than free: those are where real roofs sit, and 0
+            // (flat) is first because it is 80% of them.
+            _pitchLbl = new Label { Text = PitchText(_b.ActiveRoofPitch) };
+            box.AddChild(_pitchLbl);
+            var pitch = new HSlider
+            {
+                MinValue = 0, MaxValue = EditorBuildings.RoofPitches.Length - 1, Step = 1,
+                Value = System.Array.IndexOf(EditorBuildings.RoofPitches, _b.ActiveRoofPitch),
+                CustomMinimumSize = new Vector2(240, 0), FocusMode = FocusModeEnum.None,
+            };
+            pitch.ValueChanged += v =>
+            {
+                _b.ActiveRoofPitch = EditorBuildings.RoofPitches[Mathf.Clamp((int)v, 0, EditorBuildings.RoofPitches.Length - 1)];
+                _pitchLbl.Text = PitchText(_b.ActiveRoofPitch);
+            };
+            box.AddChild(pitch);
+
+            // Measured, not guessed: all 52 retail buildings sink a hollow skirt 5-6 m down. Without one a
+            // building on any slope has daylight under it.
+            var found = new Button { Text = $"Add foundation ({WallOpenings.FoundationDepth:0.#}m)",
+                                     TooltipText = "a skirt under the walls — retail sinks 5-6m" };
+            found.Pressed += () =>
+            {
+                int n = _b.AddFoundation();
+                Say(n > 0 ? $"foundation under {n} wall(s)" : "draw some walls first");
+            };
+            box.AddChild(found);
+
             box.AddChild(new HSeparator());
             box.AddChild(Dim("Opening — click a wall to place"));
             var grid = new GridContainer { Columns = 2 };
@@ -97,6 +145,24 @@ namespace UnturnedGodot
                 : "no palettes loaded — check content/wall_palettes.tsv"));
 
             box.AddChild(new HSeparator());
+            box.AddChild(Dim("Import — port a retail building in"));
+            var imp = new OptionButton { CustomMinimumSize = new Vector2(240, 0) };
+            // The palette table IS the list of retail buildings, so the importer needs no second inventory of
+            // what exists -- and a name in one and not the other is impossible by construction.
+            for (int i = 0; i < WallMaterials.Count; i++) imp.AddItem(WallMaterials.At(i).Name, i);
+            if (WallMaterials.Count > 0) imp.Select(0);
+            box.AddChild(imp);
+            var impBtn = new Button { Text = "Import (replaces stage)" };
+            impBtn.Pressed += () =>
+            {
+                if (imp.Selected < 0) return;
+                string nm = imp.GetItemText(imp.Selected);
+                int n = _b.ImportRetail(nm);
+                Say(n > 0 ? $"imported {nm}: {n} walls" : $"could not import {nm}");
+            };
+            box.AddChild(impBtn);
+
+            box.AddChild(new HSeparator());
             box.AddChild(Dim("Bake — becomes a prop in the Level tab"));
             _name = new LineEdit { PlaceholderText = "building name", CustomMinimumSize = new Vector2(240, 0) };
             box.AddChild(_name);
@@ -110,6 +176,9 @@ namespace UnturnedGodot
 
         LineEdit _name;
         Label _bakeMsg;
+        Label _pitchLbl;
+
+        static string PitchText(float p) => p <= 0.1f ? "Roof pitch: flat" : $"Roof pitch: {p:0.#}°";
 
         void DoBake()
         {

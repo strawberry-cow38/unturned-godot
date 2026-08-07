@@ -30,9 +30,22 @@ namespace UnturnedGodot
         /// pass concluded the opposite because it read the palette without the V-flip that ObjMesh.cs applies
         /// to these same textures, which lands one row low -- every building came back a shade of brown.</summary>
         public int MaterialId;
+
+        /// <summary>What this surface is for. Defaults and labels only -- Rebuild() never reads it. A floor is
+        /// this same rectangle pitched flat, which is why there is no FloorSurface: the partition, the
+        /// collider, the reveal lining and the bake all work already, and a stairwell is an opening.</summary>
+        public SurfaceKind Kind = SurfaceKind.Wall;
         public Color Tint => WallMaterials.At(MaterialId).Wall;
         public Color TrimTint => WallMaterials.At(MaterialId).Reveal;
         public bool ShowTrim = true;
+
+        /// <summary>How far this wall's top rises to a central peak, for a gable end. 0 = a flat top.
+        ///
+        /// ADDITIVE: the wall stays a rectangle and the partition never sees this, because a gable end really
+        /// is a normal wall with a triangle sitting on it -- that is how retail builds them, and it keeps the
+        /// one boundary shape the whole tool relies on. Making the boundary a pentagon instead would put a
+        /// special case through Solids, the collider and every test that leans on them.</summary>
+        public float GableRise;
 
         /// <summary>Trim sits proud of BOTH faces and never scales with the opening -- widen a garage and the
         /// jambs move apart at constant thickness. Scaling the frame with the hole is what makes a parametric
@@ -41,10 +54,15 @@ namespace UnturnedGodot
         public const float TrimProud = 0.035f;                       // how far the bar stands off each face
 
         MeshInstance3D _mesh, _trimMesh;
+        // Materials are made ONCE and recoloured. Rebuild() runs every frame of a drag, so allocating a
+        // StandardMaterial3D per call hands the GC two new resources per wall per frame for a colour that
+        // almost never changes.
+        StandardMaterial3D _mat, _trimMat;
         StaticBody3D _body;          // wall solids: layer 0, the layer player movement collides against
         StaticBody3D _trimBody;      // trim: layer 6 (props) -- bullets and look-rays hit it, movement does not,
                                      // so a doorframe is shootable without snagging you on every doorway
         readonly List<CollisionShape3D> _shapes = new();
+        readonly List<CollisionShape3D> _trimShapes = new();
 
         public override void _Ready()
         {
@@ -78,10 +96,13 @@ namespace UnturnedGodot
                 AddWallBox(st, s, solids, t);
             // GenerateNormals BEFORE Index: indexing welds vertices, and welding before normals exist lights
             // the mesh as one smooth blob instead of crisp box faces.
+            if (GableRise > WallOpenings.Eps) AddGableCap(st, t);
             st.GenerateNormals();
             st.Index();
             _mesh.Mesh = st.Commit();
-            _mesh.MaterialOverride = new StandardMaterial3D { AlbedoColor = Tint, Roughness = 0.95f };
+            _mat ??= new StandardMaterial3D { Roughness = 0.95f };
+            _mat.AlbedoColor = Tint;
+            _mesh.MaterialOverride = _mat;
 
             if (ShowTrim && Openings.Count > 0)
             {
@@ -96,23 +117,122 @@ namespace UnturnedGodot
                 tt.GenerateNormals();
                 tt.Index();
                 _trimMesh.Mesh = tt.Commit();
-                _trimMesh.MaterialOverride = new StandardMaterial3D { AlbedoColor = TrimTint, Roughness = 0.9f };
+                _trimMat ??= new StandardMaterial3D { Roughness = 0.9f };
+                _trimMat.AlbedoColor = TrimTint;
+                _trimMesh.MaterialOverride = _trimMat;
             }
             else _trimMesh.Mesh = null;
 
             // collision: one box per solid. Because the solids ARE the partition, the hole in the collider is
             // exactly the hole you can see -- the see-through-but-not-walk-through class of bug is impossible.
-            foreach (var sh in _shapes) { sh.QueueFree(); }
-            _shapes.Clear();
-            foreach (var s in solids)
+            // Reused, not respawned. QueueFree defers to the end of the frame, so freeing and re-adding every
+            // shape each Rebuild leaves a drag running with two sets of colliders live at once -- and the
+            // stale set is what a ray can still hit for the rest of that frame.
+            int want = solids.Count + (GableRise > WallOpenings.Eps ? 1 : 0);
+            while (_shapes.Count > want)
             {
-                var cs = new CollisionShape3D
-                {
-                    Shape = new BoxShape3D { Size = new Vector3(s.Width, s.Height, Thickness) },
-                    Position = new Vector3((s.U0 + s.U1) * 0.5f, (s.V0 + s.V1) * 0.5f, 0f),
-                };
+                var last = _shapes[_shapes.Count - 1];
+                _shapes.RemoveAt(_shapes.Count - 1);
+                last.QueueFree();
+            }
+            while (_shapes.Count < want)
+            {
+                var cs = new CollisionShape3D();
                 _body.AddChild(cs);
                 _shapes.Add(cs);
+            }
+            for (int i = 0; i < solids.Count; i++)
+            {
+                var s = solids[i];
+                if (_shapes[i].Shape is not BoxShape3D box) _shapes[i].Shape = box = new BoxShape3D();
+                box.Size = new Vector3(s.Width, s.Height, Thickness);
+                _shapes[i].Position = new Vector3((s.U0 + s.U1) * 0.5f, (s.V0 + s.V1) * 0.5f, 0f);
+            }
+            RebuildTrimCollision();
+
+            if (GableRise > WallOpenings.Eps)
+            {
+                // A convex hull of the prism's six corners, NOT a box: a box round a gable fills the two
+                // triangles of air beside the peak, and you would collide with a roof corner that is not there.
+                float t2 = Thickness * 0.5f;
+                var gcs = _shapes[solids.Count];
+                if (gcs.Shape is not ConvexPolygonShape3D hull) gcs.Shape = hull = new ConvexPolygonShape3D();
+                hull.Points = new[]
+                {
+                    new Vector3(0f, Height, -t2), new Vector3(Length, Height, -t2), new Vector3(Length * 0.5f, Height + GableRise, -t2),
+                    new Vector3(0f, Height, t2), new Vector3(Length, Height, t2), new Vector3(Length * 0.5f, Height + GableRise, t2),
+                };
+                gcs.Position = Vector3.Zero;
+            }
+        }
+
+        /// <summary>The triangular prism that turns a flat-topped wall into a gable end: apex over the middle
+        /// of the run, base along the wall's head. Emitted as its own faces rather than by reshaping the wall,
+        /// so nothing downstream has to know a wall can be non-rectangular.</summary>
+        void AddGableCap(SurfaceTool st, float t)
+        {
+            float x0 = 0f, x1 = Length, mid = Length * 0.5f;
+            float y0 = Height, y1 = Height + GableRise;
+            Vector3 A = new(x0, y0, -t), B = new(x1, y0, -t), P = new(mid, y1, -t);   // back face
+            Vector3 C = new(x0, y0, t), D = new(x1, y0, t), Q = new(mid, y1, t);      // front face
+
+            // Godot treats CLOCKWISE as front-facing, so each face is emitted in the order that reads
+            // anticlockwise from outside -- the same reversal AddBoxFaces does, for the same reason.
+            Tri(st, P, B, A);        // -Z gable triangle
+            Tri(st, C, D, Q);        // +Z gable triangle
+            Quad(st, A, C, Q, P);    // left slope
+            Quad(st, P, Q, D, B);    // right slope
+            // no bottom face: it sits flush on the wall head and would z-fight the wall's own top
+        }
+
+        static void Tri(SurfaceTool st, Vector3 a, Vector3 b, Vector3 c)
+        { st.AddVertex(a); st.AddVertex(b); st.AddVertex(c); }
+
+        static void Quad(SurfaceTool st, Vector3 a, Vector3 b, Vector3 c, Vector3 d)
+        { Tri(st, a, b, c); Tri(st, a, c, d); }
+
+        /// <summary>Colliders for the frames, on layer 6.
+        ///
+        /// _trimBody existed and was documented as "a doorframe is shootable without snagging you on every
+        /// doorway" -- and nothing ever added a shape to it, so it was a dead node and editor-drawn frames
+        /// were not shootable at all. Worse, a BAKED building's frames are solid (the prop path trimeshes the
+        /// whole render mesh), so the same building behaved differently before and after baking.
+        ///
+        /// Layer 6 is the props layer: bullets and look-rays hit it, player movement does not.</summary>
+        void RebuildTrimCollision()
+        {
+            var boxes = new List<(Vector3 Min, Vector3 Max)>();
+            if (ShowTrim)
+                foreach (var o in Openings)
+                {
+                    float t = Thickness * 0.5f + TrimProud, w = TrimProfile;
+                    float u0 = o.U, u1 = o.U1, v0 = o.V, v1 = o.V1;
+                    bool sill = o.V > WallOpenings.Eps;
+                    float vb = sill ? v0 : v0;
+                    boxes.Add((new Vector3(u0, vb, -t), new Vector3(u0 + w, v1, t)));
+                    boxes.Add((new Vector3(u1 - w, vb, -t), new Vector3(u1, v1, t)));
+                    boxes.Add((new Vector3(u0, v1 - w, -t), new Vector3(u1, v1, t)));
+                    if (sill) boxes.Add((new Vector3(u0, v0, -t), new Vector3(u1, v0 + w, t)));
+                }
+
+            while (_trimShapes.Count > boxes.Count)
+            {
+                var last = _trimShapes[_trimShapes.Count - 1];
+                _trimShapes.RemoveAt(_trimShapes.Count - 1);
+                last.QueueFree();
+            }
+            while (_trimShapes.Count < boxes.Count)
+            {
+                var cs = new CollisionShape3D();
+                _trimBody.AddChild(cs);
+                _trimShapes.Add(cs);
+            }
+            for (int i = 0; i < boxes.Count; i++)
+            {
+                var (mn, mx) = boxes[i];
+                if (_trimShapes[i].Shape is not BoxShape3D b) _trimShapes[i].Shape = b = new BoxShape3D();
+                b.Size = mx - mn;
+                _trimShapes[i].Position = (mn + mx) * 0.5f;
             }
         }
 

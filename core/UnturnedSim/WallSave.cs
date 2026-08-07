@@ -7,10 +7,19 @@ namespace UnturnedSim
 {
     /// <summary>One wall as saved: where it is, how big, and its holes. Deliberately POCO and engine-free --
     /// a wall is only data, which is the same reason undo can rebuild a deleted one from a snapshot.</summary>
+    /// <summary>What a surface is FOR. Presentation and defaults only -- the geometry never reads it, the
+    /// same rule the opening archetypes follow. A floor is a wall lying down: the identical rectangle-minus-
+    /// openings problem, so it goes through the identical partition, collider, palette and bake path, and a
+    /// stairwell is an opening. Splitting them into separate types would buy a second copy of every bug.</summary>
+    public enum SurfaceKind { Wall, Floor, Roof, Foundation }
+
     public sealed class WallPlan
     {
         public float X, Y, Z;         // origin: the wall's start corner at its base
         public float Yaw;             // degrees; the wall runs along its local +X
+        public float Pitch;           // degrees about local X: 0 upright, -90 lying flat (a floor or flat roof)
+        public SurfaceKind Kind = SurfaceKind.Wall;
+        public float GableRise;       // 0 = flat top; >0 raises this wall to a central peak (a gable end)
         public float Length = WallOpenings.LatticeStep;
         public float Height = WallOpenings.DoorHeight;
         public float Thickness = WallOpenings.DefaultThickness;
@@ -34,7 +43,7 @@ namespace UnturnedSim
         {
             var sb = new StringBuilder();
             sb.Append(Header).Append('\n');
-            sb.Append("# wall <x> <y> <z> <yawDeg> <length> <thickness> <materialId> [height]\n");
+            sb.Append("# wall <x> <y> <z> <yawDeg> <length> <thickness> <materialId> [height] [pitchDeg] [kind] [gableRise]\n");
             sb.Append("#   open <u> <v> <width> <height> <depth> <archetype>\n");
             if (walls != null)
                 foreach (var w in walls)
@@ -44,6 +53,9 @@ namespace UnturnedSim
                       .Append(' ').Append(F(w.Yaw)).Append(' ').Append(F(w.Length)).Append(' ')
                       .Append(F(w.Thickness)).Append(' ').Append(w.Material.ToString(CultureInfo.InvariantCulture))
                       .Append(' ').Append(F(w.Height))
+                      .Append(' ').Append(F(w.Pitch))
+                      .Append(' ').Append(w.Kind.ToString())
+                      .Append(' ').Append(F(w.GableRise))
                       .Append('\n');
                     foreach (var o in w.Openings)
                         sb.Append("  open ").Append(F(o.U)).Append(' ').Append(F(o.V)).Append(' ')
@@ -75,6 +87,9 @@ namespace UnturnedSim
                     // height is trailing and optional: it arrived after the format did, and a file written
                     // before it existed describes walls that were all one storey tall
                     if (p.Length < 9 || !N(p[8], out w.Height)) w.Height = WallOpenings.DoorHeight;
+                    if (p.Length < 10 || !N(p[9], out w.Pitch)) w.Pitch = 0f;
+                    if (p.Length < 11 || !System.Enum.TryParse(p[10], out w.Kind)) w.Kind = SurfaceKind.Wall;
+                    if (p.Length < 12 || !N(p[11], out w.GableRise)) w.GableRise = 0f;
                     outp.Add(w);
                     cur = w;
                 }
@@ -82,10 +97,18 @@ namespace UnturnedSim
                 {
                     if (!N(p[1], out float u) || !N(p[2], out float v) || !N(p[3], out float ow)
                         || !N(p[4], out float oh) || !N(p[5], out float d) || !int.TryParse(p[6], out int arch)) continue;
-                    // Clamped on load, not trusted: a hand-edited file with an opening bigger than its wall
-                    // must produce a wall with a silly hole, never a crash or a wall that fails to appear.
-                    cur.Openings.Add(WallOpenings.Clamp(new WallOpening(u, v, ow, oh, d, arch),
-                                                        cur.Length, cur.Height, cur.Openings));
+                    // Clamped into the WALL, but deliberately NOT against its siblings.
+                    //
+                    // Overlapping openings are legal -- the partition removes their union once, and that is
+                    // L0-tested as load-bearing -- and the editor can produce them, because Clamp's two-sided
+                    // fallback parks an opening overlapping a neighbour and DragEdge never constrains size
+                    // against siblings at all. Passing the already-loaded openings in as blockers meant load
+                    // RELOCATED the second of any overlapping pair: openings at U=1 and U=2 read back with the
+                    // second at U=4. Saving and reopening then gave a different building than the one baked,
+                    // silently. A loader's job is to return what was written.
+                    float cu = Math.Clamp(u, 0f, Math.Max(0f, cur.Length - Math.Min(ow, cur.Length)));
+                    float cv = Math.Clamp(v, 0f, Math.Max(0f, cur.Height - Math.Min(oh, cur.Height)));
+                    cur.Openings.Add(new WallOpening(cu, cv, Math.Min(ow, cur.Length), Math.Min(oh, cur.Height), d, arch));
                 }
                 // anything else: a newer editor's field. Skip it and keep the building.
             }
