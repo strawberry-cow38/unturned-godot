@@ -439,6 +439,7 @@ namespace UnturnedGodot
             if (buildmode)  // script a small structure (floor + walls) to show the build system
             {
                 GetWindow().Size = new Vector2I(1280, 720);
+                _shotPath = shot; _shotRequested = shot;   // --build never armed the capture: every other shot mode sets these two, this one did not, so --shot was silently ignored and the run just timed out
                 BuildBuildDemo(gun);
                 return;
             }
@@ -4203,20 +4204,31 @@ namespace UnturnedGodot
             ground.AddChild(gmesh);
             AddChild(ground);
 
+            // A small base on the REAL 6 m lattice, one tier per row so the upgrade ladder is visible at a
+            // glance. Everything goes through StructureManager.Place, so what this renders is what the
+            // placement rules actually permit -- a demo that bypassed them would look right and prove nothing.
+            var sm = new StructureManager { Name = "StructureManager" };
+            AddChild(sm);
             var bt = new BuildTool();
             AddChild(bt);
-            bt.Type = 0;   // 2x2 floor of tiles
-            bt.Spawn(new Vector3(-1.5f, 0.1f, -1.5f), 0); bt.Spawn(new Vector3(1.5f, 0.1f, -1.5f), 0);
-            bt.Spawn(new Vector3(-1.5f, 0.1f, 1.5f), 0);  bt.Spawn(new Vector3(1.5f, 0.1f, 1.5f), 0);
-            bt.Type = 1;   // three walls
-            bt.Spawn(new Vector3(-3f, 1.5f, 0f), 90f);
-            bt.Spawn(new Vector3(3f, 1.5f, 0f), 90f);
-            bt.Spawn(new Vector3(0f, 1.5f, -3f), 0f);
+            for (int tier = 0; tier < StructureCatalog.TierCount; tier++)
+            {
+                float z = (tier - 1) * StructureCatalog.EdgeLength;
+                bt.Spawn(new Vector3(0f, 0f, z), EConstruct.Floor, tier);                       // 2 tiles of floor
+                bt.Spawn(new Vector3(StructureCatalog.EdgeLength, 0f, z), EConstruct.Floor, tier);
+                bt.Spawn(new Vector3(-StructureCatalog.HalfEdge, 0f, z), EConstruct.Wall, tier); // wall on the outer edge
+                bt.Spawn(new Vector3(StructureCatalog.EdgeLength * 1.5f, 0f, z), EConstruct.Wall, tier);
+            }
 
-            var overview = new Camera3D { Current = true, Fov = 60f };
+            // Framed off the LATTICE, not hardcoded metres. The old camera sat at (6, 4.5, 7) for a 3 m demo;
+            // on the real 6 m tile that is INSIDE the base looking at the back of a wall, which is what the
+            // first render of this showed. Deriving it from EdgeLength means the shot survives the next
+            // geometry change instead of quietly framing the inside of something.
+            float span = StructureCatalog.EdgeLength * StructureCatalog.TierCount;
+            var overview = new Camera3D { Current = true, Fov = 55f };
             AddChild(overview);
-            overview.Position = new Vector3(6f, 4.5f, 7f);
-            overview.LookAt(new Vector3(0f, 1f, 0f), Vector3.Up);
+            overview.Position = new Vector3(span * 1.15f, span * 0.85f, span * 1.25f);
+            overview.LookAt(new Vector3(StructureCatalog.HalfEdge, 1.5f, 0f), Vector3.Up);
             GD.Print("[BUILD] scripted a small structure (floor + walls)");
         }
 
