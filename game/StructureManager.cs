@@ -198,6 +198,9 @@ namespace UnturnedGodot
                         var at = new Vector3(snapped.X + ix * h, y, snapped.Z + iz * h);
                         if (_bySlot.ContainsKey(StructureCatalog.SlotKey(at, EConstruct.Floor))) return true;
                         if (_bySlot.ContainsKey(StructureCatalog.SlotKey(at, EConstruct.Wall))) return true;
+                        // pillars occupy their own CORNER slot class, and a pillar is the archetypal support --
+                        // omitting it here would mean a frame built on pillars could not be built on
+                        if (_bySlot.ContainsKey(StructureCatalog.SlotKey(at, EConstruct.Pillar))) return true;
                     }
             }
             return false;

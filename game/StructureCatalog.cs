@@ -52,6 +52,13 @@ namespace UnturnedGodot
         /// makes walls appear to float half a tile away from the floor they were meant to sit on.</summary>
         public static bool IsFace(EConstruct c) => c == EConstruct.Floor || c == EConstruct.Roof;
 
+        /// <summary>Pillars and posts stand at tile CORNERS, not on faces or edges. Without this they snapped
+        /// like walls, to side midpoints -- so a pillar meant to hold up the junction of four tiles landed
+        /// halfway along one wall instead, which is both wrong and impossible to build a frame out of. A
+        /// corner is where four tiles meet, so it is the one slot a single piece can support all of them
+        /// from.</summary>
+        public static bool IsCorner(EConstruct c) => c == EConstruct.Pillar || c == EConstruct.Post;
+
         /// <summary>Vertical extent, used for the overlap check and for the render/collision box.</summary>
         public static Vector3 Extents(EConstruct c) => c switch
         {
@@ -106,6 +113,16 @@ namespace UnturnedGodot
 
             if (IsFace(c)) return (new Vector3(cx, y, cz), 0f);
 
+            // CORNER: tile centres sit on multiples of the edge length, so the corners between them sit on the
+            // ODD multiples of the half edge -- 3, 9, 15 ... Round to that lattice directly rather than to a
+            // centre and then nudge, which double-rounds and lands a pillar a whole tile away near a boundary.
+            if (IsCorner(c))
+            {
+                float qx = Mathf.Round((world.X - HalfEdge) / EdgeLength) * EdgeLength + HalfEdge;
+                float qz = Mathf.Round((world.Z - HalfEdge) / EdgeLength) * EdgeLength + HalfEdge;
+                return (new Vector3(qx, y, qz), 0f);
+            }
+
             // EDGE: pick whichever of the four tile sides the point is nearest, and face along it.
             float dx = world.X - cx, dz = world.Z - cz;
             if (Mathf.Abs(dx) >= Mathf.Abs(dz))
@@ -119,7 +136,8 @@ namespace UnturnedGodot
         public static string SlotKey(Vector3 snapped, EConstruct c)
         {
             int q(float v) => Mathf.RoundToInt(v / LinkTolerance);
-            return $"{(IsFace(c) ? "F" : "E")}:{q(snapped.X)}:{q(snapped.Y)}:{q(snapped.Z)}";
+            string kind = IsFace(c) ? "F" : IsCorner(c) ? "C" : "E";
+            return $"{kind}:{q(snapped.X)}:{q(snapped.Y)}:{q(snapped.Z)}";
         }
     }
 }

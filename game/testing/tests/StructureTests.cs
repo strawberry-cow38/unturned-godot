@@ -79,6 +79,36 @@ namespace UnturnedGodot.Testing
             T.Check("a wood wall on the floor's edge is supported",
                 sm.Place(new Vector3(2.9f, 0f, 0f), EConstruct.Wall, 0) != null);
 
+            // PILLARS stand at tile CORNERS -- where four tiles meet -- not on faces or edges. Before the
+            // corner slot class they snapped like walls, to a side midpoint, so a pillar meant to hold up the
+            // junction of four tiles landed halfway along one wall: wrong, and impossible to frame with.
+            var (pp, _) = StructureCatalog.Snap(new Vector3(2.6f, 0f, 2.6f), EConstruct.Pillar);
+            T.Check($"a pillar snaps to a tile CORNER ({pp})",
+                Mathf.IsEqualApprox(Mathf.Abs(pp.X), StructureCatalog.HalfEdge)
+                && Mathf.IsEqualApprox(Mathf.Abs(pp.Z), StructureCatalog.HalfEdge));
+            // ...and not to the centre a floor would take
+            var (fc, _) = StructureCatalog.Snap(new Vector3(2.6f, 0f, 2.6f), EConstruct.Floor);
+            T.Check($"a pillar and a floor at the same aim take DIFFERENT spots ({pp} vs {fc})", pp != fc);
+            T.Check("corner, face and edge are three distinct slot classes",
+                StructureCatalog.SlotKey(pp, EConstruct.Pillar) != StructureCatalog.SlotKey(pp, EConstruct.Wall)
+                && StructureCatalog.SlotKey(pp, EConstruct.Pillar) != StructureCatalog.SlotKey(pp, EConstruct.Floor));
+            // The real invariant, rather than the one I first wrote: EVERY pillar lands on the corner lattice,
+            // i.e. an ODD multiple of the half edge on both axes. My first attempt asserted that two points
+            // either side of x=6 snap together -- but x=6 is exactly halfway between corners 3 and 9, so
+            // landing on different ones is correct, and the test was wrong rather than the code. Sweeping the
+            // whole range catches a genuine double-round (which would produce an EVEN multiple) without
+            // encoding a false expectation about tie points.
+            bool allOnLattice = true;
+            for (float x = -13f; x <= 13f; x += 0.7f)
+                for (float z = -13f; z <= 13f; z += 0.7f)
+                {
+                    var (q, _) = StructureCatalog.Snap(new Vector3(x, 0f, z), EConstruct.Pillar);
+                    int kx = Mathf.RoundToInt(q.X / StructureCatalog.HalfEdge);
+                    int kz = Mathf.RoundToInt(q.Z / StructureCatalog.HalfEdge);
+                    if (kx % 2 == 0 || kz % 2 == 0) { allOnLattice = false; GD.Print($"[structure] pillar off-lattice at ({x},{z}) -> {q}"); }
+                }
+            T.Check("every pillar snaps onto the corner lattice (odd multiples of the half edge)", allOnLattice);
+
             // Extending outward onto the NEXT tile is the commonest real build action, and it is the case the
             // neighbour-lookup rewrite could most easily have broken: support moved from a distance scan over
             // every piece to a fixed set of lattice probes, so an adjacent tile has to be in that set. A base

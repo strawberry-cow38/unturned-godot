@@ -14,6 +14,9 @@ It's now just input + preview over `StructureManager`, which owns the real thing
 - **Face vs edge snapping.** Floors/roofs snap to tile centres; walls/ramparts snap to side midpoints and
   take the facing that side implies. A floor slot and a wall slot at the same coordinates are distinct, so a
   wall doesn't block the floor of its own tile.
+- **Corner snapping for pillars/posts.** Faces snap to tile centres and edges to side midpoints, but a pillar
+  belongs at the tile *corner* — the odd multiples of the half edge. Snapping it like a floor would park it in
+  the middle of the tile it is supposed to hold up.
 - **Support rules.** Wood and brick need a neighbouring piece; metal places free-standing. A floor at ground
   level always stands.
 - **Tiers** wood → brick → metal, with health, upgrade, and a salvage-duration multiplier.
@@ -38,6 +41,7 @@ In game:
 | `V` | cycle tier — wood / brick / metal |
 | `LMB` | place |
 | `R` | salvage the piece you're aiming at |
+| `Y` | upgrade the piece you're aiming at one tier |
 | `G` | melee the piece you're aiming at (blowtorch equipped → repairs instead) |
 
 The readout at the bottom of the screen shows the current construct, tier and health, and **why** a slot is
@@ -60,7 +64,8 @@ Note the `--` before the game args, and that `--shot=` takes a **file** path, no
 ./test.sh --l1 --only 'structure.*'
 ```
 
-53 checks across `structure.lattice`, `structure.damage_save`, `structure.repair_salvage`.
+68 checks across `structure.lattice`, `structure.damage_save`, `structure.repair_salvage`,
+`structure.corners`. The full suite (`./test.sh --l1`) is 272 checks and passes on this branch.
 
 ## What to actually poke at
 
@@ -104,5 +109,6 @@ until it has a harness of its own.
 
 ## Known, not-mine
 
-`power.wind_turbine` fails on clean `origin/main` — verified by stashing this work and running it there.
-Pre-existing; main is red independent of this sprint.
+`power.wind_turbine` is **flaky**, not consistently red. It failed on clean `origin/main` with this work
+stashed, then passed on a later full run of this branch. So it is pre-existing and unrelated to structures,
+but "main is red" overstates it — if you see it fail, re-run before believing it.
