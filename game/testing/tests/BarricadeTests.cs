@@ -193,6 +193,11 @@ namespace UnturnedGodot.Testing
             World.AddChild(placer);
             placer.SetDef(DeployableDef.MetalBarricade);
             T.Check("SetDef adopts the def's mount family", placer.Mount == BarricadeMount.Wall);
+
+            // the DeployablePlacer-compatible Freeze(point, yaw) overload makes the placer a drop-in (normal defaults up)
+            placer.Freeze(new Vector3(3f, 0f, 3f), 90f);
+            T.Check("Freeze(point, yaw) drop-in: valid + up normal + committed point/yaw",
+                placer.Valid && placer.Normal.Dot(Vector3.Up) > 0.99f && (placer.Point - new Vector3(3f, 0f, 3f)).Length() < 0.001f && Mathf.Abs(placer.Yaw - 90f) < 0.001f);
         }
     }
 }

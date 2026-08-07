@@ -177,6 +177,12 @@ namespace UnturnedGodot
             if (_arrowMat != null) { var c = Valid ? ConnectionPort.ArrowBlue : ConnectionPort.ArrowRed; c.A = 0.92f; _arrowMat.AlbedoColor = c; }
         }
 
+        // DeployablePlacer-compatible overload: freeze with just point + yaw (normal = up, i.e. a Floor barricade).
+        // Lets the in-game place flow swap DeployablePlacer -> BarricadePlacer with no signature change -- BarricadePlacer
+        // is an API superset (SetDef/Aim/Point/Yaw/YawOffset/SetGhostVisible all match), so the swap plus a spawn branch
+        // to Barricade.PlaceOnSurface is the whole integration.
+        public void Freeze(Vector3 point, float yaw) => Freeze(point, Vector3.Up, yaw);
+
         // Pin the ghost at a committed point/normal/yaw (blue) while the place gesture plays -- ignores aim.
         public void Freeze(Vector3 point, Vector3 normal, float yaw)
         {
