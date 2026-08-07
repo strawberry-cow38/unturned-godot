@@ -16,6 +16,7 @@ namespace UnturnedGodot.Testing
 
         public override IEnumerable<Step> Run()
         {
+            Rigs.Ground(World);   // a floor needs GROUND under it now, not merely a Y near sea level
             var sm = new StructureManager();
             World.AddChild(sm);
             yield return Ticks(1);
@@ -155,6 +156,7 @@ namespace UnturnedGodot.Testing
 
         public override IEnumerable<Step> Run()
         {
+            Rigs.Ground(World);   // a floor needs GROUND under it now, not merely a Y near sea level
             var sm = new StructureManager();
             World.AddChild(sm);
             yield return Ticks(1);
@@ -229,6 +231,7 @@ namespace UnturnedGodot.Testing
 
         public override IEnumerable<Step> Run()
         {
+            Rigs.Ground(World);   // a floor needs GROUND under it now, not merely a Y near sea level
             var sm = new StructureManager();
             World.AddChild(sm);
             yield return Ticks(1);
@@ -282,6 +285,7 @@ namespace UnturnedGodot.Testing
 
         public override IEnumerable<Step> Run()
         {
+            Rigs.Ground(World);   // a floor needs GROUND under it now, not merely a Y near sea level
             var sm = new StructureManager();
             World.AddChild(sm);
             yield return Ticks(1);
@@ -481,8 +485,11 @@ namespace UnturnedGodot.Testing
             yield return Ticks(2);
             int farHp = far.Health;
             var c2 = Deployable.Spawn(World, DeployableDef.Charge, new Vector3(0.4f, 1f, 0f), 0f);
+            T.Check("fixture: a second charge planted", c2 != null);
             yield return Ticks(3);
-            Deployable.DetonateAllCharges(World.GetTree());
+            int fired2 = Deployable.DetonateAllCharges(World.GetTree());
+            // assert the STIMULUS, or "the far wall is undamaged" passes just as well when nothing detonated
+            T.Check($"the second charge actually fired ({fired2})", fired2 == 1);
             yield return Ticks(3);
             T.Check($"a wall 120 m away is untouched ({far.Health}/{farHp})", far.Health == farHp);
         }
@@ -538,8 +545,11 @@ namespace UnturnedGodot.Testing
                 Mathf.IsEqualApprox(sock.Value.Origin.Y, door.Pos.Y + StructureCatalog.DoorOpeningHeight * 0.5f));
             T.Check("the socket sits at the doorway's edge in plan",
                 Mathf.IsEqualApprox(sock.Value.Origin.X, door.Pos.X) && Mathf.IsEqualApprox(sock.Value.Origin.Z, door.Pos.Z));
-            T.Check("the socket faces the way the doorway does",
-                sock.Value.Basis.GetEuler().Y - Mathf.DegToRad(door.YawDeg) < 0.001f);
+            // Mathf.Abs matters: the signed form passed for ANY basis with euler.Y <= the doorway's yaw,
+            // including Basis.Identity -- i.e. "DoorSocket forgot the yaw entirely", which is a door leaf
+            // mounted 90 degrees into the wall it hangs in.
+            T.Check($"the socket faces the way the doorway does ({Mathf.RadToDeg(sock.Value.Basis.GetEuler().Y):0.0} vs {door.YawDeg:0.0})",
+                Mathf.Abs(sock.Value.Basis.GetEuler().Y - Mathf.DegToRad(door.YawDeg)) < 0.001f);
             // a wall is NOT a doorway: returning a plausible transform here would mount a door inside a solid wall
             var solid = sm.Place(new Vector3(0f, 0f, StructureCatalog.HalfEdge), EConstruct.Wall, 0);
             T.Check("a plain wall has NO socket rather than a plausible one",
@@ -561,6 +571,62 @@ namespace UnturnedGodot.Testing
                 new Vector3(door.Pos.X - 2f, 1.0f, 2.4f), new Vector3(door.Pos.X + 2f, 1.0f, 2.4f));
             qh.CollisionMask = 1u << 0;
             T.Check("but the jamb beside it is solid", space.IntersectRay(qh).Count > 0);
+        }
+    }
+
+    // Building somewhere that is NOT sea level.
+    //
+    // Every fixture in this file stood on Rigs.Ground -- a WorldBoundaryShape3D at exactly y=0 -- which is why
+    // the whole suite stayed green while you could not found a wood or brick base anywhere above ~2.1 m. The
+    // storey lattice was `Round(world.Y / WallHeight) * WallHeight`, anchored at world zero, so a floor aimed
+    // at terrain y=12 snapped to 12.75, failed its own "am I on the ground" test (which really asked "am I
+    // near sea level"), and was refused. A flat test rig cannot see a bug about height.
+    public class StructureOnHighGround : GameTest
+    {
+        public override string Name => "structure.high_ground";
+
+        public override IEnumerable<Step> Run()
+        {
+            Rigs.Ground(World);                     // sea level, y = 0
+            const float HillY = 40f;                // a plateau well beyond the old +-2.125 m window
+            var hill = new StaticBody3D { CollisionLayer = 1 << 0 };
+            hill.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = new Vector3(60f, 4f, 60f) } });
+            World.AddChild(hill);
+            hill.GlobalPosition = new Vector3(0f, HillY - 2f, 0f);   // top face at exactly HillY
+            var sm = new StructureManager();
+            World.AddChild(sm);
+            yield return Ticks(3);
+
+            // ---- the bug, stated as the user experiences it ----
+            var f = sm.Place(new Vector3(0f, HillY, 0f), EConstruct.Floor, 0);
+            T.Check("a WOOD floor founds on a hilltop 40 m up", f != null);
+            if (f == null) { sm.CanPlace(new Vector3(0f, HillY, 0f), EConstruct.Floor, 0, out var why); T.Check($"(refusal reason was '{why}')", false); yield break; }
+
+            // ...and it sits ON the hill rather than half a storey through it. The old lattice would have put
+            // this at Round(40/4.25)*4.25 = 38.25, nearly 2 m underground.
+            T.Check($"and it sits on the surface, not on the sea-level lattice ({f.Pos.Y:0.00})",
+                Mathf.IsEqualApprox(f.Pos.Y, HillY));
+
+            // ---- a second piece takes ITS levels from the base, not from the sea ----
+            var w = sm.Place(new Vector3(StructureCatalog.HalfEdge, HillY, 0f), EConstruct.Wall, 0);
+            T.Check("a wall attaches to it", w != null);
+            T.Check($"at the same storey as the floor ({w.Pos.Y:0.00})", Mathf.IsEqualApprox(w.Pos.Y, f.Pos.Y));
+
+            var up = sm.Place(new Vector3(0f, HillY + StructureCatalog.WallHeight, 0f), EConstruct.Floor, 0);
+            T.Check("a second storey stacks", up != null);
+            T.Check($"exactly one wall-height above the first ({up.Pos.Y - f.Pos.Y:0.00})",
+                Mathf.IsEqualApprox(up.Pos.Y - f.Pos.Y, StructureCatalog.WallHeight));
+
+            // ---- QueryAt has to find pieces up here too, or the barricade seam is dead on a hill ----
+            var q = sm.QueryAt(f.Pos, 1.0f);
+            T.Check("QueryAt finds a hilltop piece", q.HasValue && q.Value.Node == f.Node);
+
+            // ---- and the rule it replaced still holds: you cannot found in mid-air ----
+            T.Check("wood still cannot be founded floating in the sky",
+                sm.Place(new Vector3(300f, 80f, 300f), EConstruct.Floor, 0) == null);
+            sm.CanPlace(new Vector3(300f, 80f, 300f), EConstruct.Floor, 0, out var why2);
+            T.Check($"...for lack of support ({why2})", why2 == "no support");
+            T.Check("and sea level still works", sm.Place(new Vector3(300f, 0f, 300f), EConstruct.Floor, 0) != null);
         }
     }
 
@@ -594,7 +660,9 @@ namespace UnturnedGodot.Testing
             float toOrigin = w.Pos.DistanceTo(outside);
             T.Check($"closest point is nearer than the origin ({toClosest:0.00} vs {toOrigin:0.00})",
                 toClosest < toOrigin - 1f);
-            T.Check($"and it is about the face standoff, ~1 m ({toClosest:0.00})", toClosest < 1.2f);
+            // TWO-SIDED. `< 1.2` alone passes for an implementation that returns the query point verbatim
+            // (distance 0), which is the actual way this helper would break.
+            T.Check($"and it is about the face standoff, ~1 m ({toClosest:0.00})", toClosest > 0.8f && toClosest < 1.2f);
             yield return Ticks(2);
 
             // ---- falloff is linear in range/radius ----
@@ -653,6 +721,144 @@ namespace UnturnedGodot.Testing
         }
     }
 
+    // The defects the 4-way review found that a green suite was hiding. Each check here is written so that
+    // removing the corresponding fix turns it RED -- several of the originals passed either way, which is how
+    // this set survived in the first place.
+    public class StructureReviewRegressions : GameTest
+    {
+        public override string Name => "structure.review_regressions";
+
+        public override IEnumerable<Step> Run()
+        {
+            Rigs.Ground(World);
+            var sm = new StructureManager();
+            World.AddChild(sm);
+            yield return Ticks(2);
+
+            // ---- Mathf.Sign(0) put an EDGE piece at the tile CENTRE ----
+            var (wp, _) = StructureCatalog.Snap(Vector3.Zero, EConstruct.Wall);
+            T.Check($"a wall aimed at a tile centre still lands on an EDGE, not the centre ({wp})",
+                Mathf.IsEqualApprox(Mathf.Abs(wp.X) + Mathf.Abs(wp.Z), StructureCatalog.HalfEdge));
+            // every point in a tile must produce a real edge slot -- sweep rather than trust the one tie point
+            bool allEdges = true;
+            for (float x = -3f; x <= 3f; x += 0.5f)
+                for (float z = -3f; z <= 3f; z += 0.5f)
+                {
+                    var (q, _) = StructureCatalog.Snap(new Vector3(x, 0f, z), EConstruct.Wall);
+                    float ax = Mathf.Abs(q.X), az = Mathf.Abs(q.Z);
+                    bool onEdge = (Mathf.IsEqualApprox(ax, StructureCatalog.HalfEdge) && Mathf.IsZeroApprox(az))
+                               || (Mathf.IsEqualApprox(az, StructureCatalog.HalfEdge) && Mathf.IsZeroApprox(ax));
+                    if (!onEdge) { allEdges = false; GD.Print($"[structure] edge snap off-lattice at ({x},{z}) -> {q}"); }
+                }
+            T.Check("every point in a tile snaps a wall to a real side midpoint", allEdges);
+
+            // ---- a ROOF and the storey above's FLOOR are different slots ----
+            T.Check("roof and floor do not share a slot key",
+                StructureCatalog.SlotKey(Vector3.Zero, EConstruct.Roof) != StructureCatalog.SlotKey(Vector3.Zero, EConstruct.Floor));
+            var groundFloor = sm.Place(Vector3.Zero, EConstruct.Floor, 2);
+            var roof = sm.Place(new Vector3(0f, StructureCatalog.WallHeight, 0f), EConstruct.Roof, 2);
+            T.Check("a roof caps the storey", roof != null);
+            var above = sm.Place(new Vector3(0f, StructureCatalog.WallHeight, 0f), EConstruct.Floor, 2);
+            T.Check("and you can STILL build a floor on top of it", above != null);
+
+            // ---- QueryAt's bounded probe has to see pillars (their own "C" namespace) ----
+            var pil = sm.Place(new Vector3(StructureCatalog.HalfEdge, 0f, StructureCatalog.HalfEdge), EConstruct.Pillar, 2);
+            T.Check("fixture: a pillar", pil != null);
+            yield return Ticks(2);
+            var narrow = sm.QueryAt(pil.Pos, 1.0f);
+            T.Check("a NARROW query finds a pillar (it used to only show up in the wide fallback)",
+                narrow.HasValue && narrow.Value.Node == pil.Node);
+
+            // ---- Remove must not evict a slot that has been rebuilt ----
+            var first = sm.Place(new Vector3(60f, 0f, 60f), EConstruct.Floor, 2);
+            string key = first.Key;
+            sm.Remove(first);
+            var second = sm.Place(new Vector3(60f, 0f, 60f), EConstruct.Floor, 2);
+            T.Check("the slot can be rebuilt", second != null && second.Key == key);
+            sm.Remove(first);                       // stale handle: must be a no-op on the new occupant
+            yield return Ticks(2);
+            sm.CanPlace(new Vector3(60f, 0f, 60f), EConstruct.Floor, 2, out var why);
+            T.Check($"removing a STALE piece handle does not orphan the new one ({why})", why == "occupied");
+
+            // ---- support must not reach DIAGONALLY across an empty tile ----
+            // a lone floor, then a wall on the far edge of the EMPTY tile next to it: braced only on the
+            // diagonal, which used to be accepted and lets a base walk out over a void one piece at a time.
+            // Anchor on a real tile CENTRE (a multiple of the 6 m edge). My first attempt used 200, which is
+            // not on the lattice -- it snapped to 198 and the "own edge" wall landed on a neighbouring tile
+            // entirely, so the test failed while the code was right. Same mistake as the first pillar test.
+            const float T0 = 204f;   // 34 * EdgeLength
+            var lone = sm.Place(new Vector3(T0, 0f, T0), EConstruct.Floor, 0);
+            T.Check($"fixture: a lone wood floor on a tile centre ({lone?.Pos})",
+                lone != null && Mathf.IsEqualApprox(lone.Pos.X, T0) && Mathf.IsEqualApprox(lone.Pos.Z, T0));
+            T.Check("a wood wall on the far edge of the NEXT tile is refused",
+                sm.Place(new Vector3(T0 + StructureCatalog.HalfEdge, 0f, T0 + StructureCatalog.EdgeLength), EConstruct.Wall, 0) == null);
+            // ...while the ones that genuinely touch it still work
+            T.Check("a wall on the floor's OWN edge is still supported",
+                sm.Place(new Vector3(T0 + StructureCatalog.HalfEdge, 0f, T0), EConstruct.Wall, 0) != null);
+            T.Check("a floor on the ADJACENT tile is still supported",
+                sm.Place(new Vector3(T0 + StructureCatalog.EdgeLength, 0f, T0), EConstruct.Floor, 0) != null);
+
+            // ---- deserialise clamps a drifted save instead of trusting it ----
+            string path = "user://structures_review_test.json";
+            var bad = new StructureManager();
+            World.AddChild(bad);
+            yield return Ticks(1);
+            using (var f = Godot.FileAccess.Open(path, Godot.FileAccess.ModeFlags.Write))
+                f.StoreString("[{\"c\":0,\"t\":7,\"h\":999999,\"x\":0,\"y\":0,\"z\":0}]");
+            int n = bad.LoadFromDisk(path);
+            T.Check($"a drifted save still loads ({n})", n == 1);
+            var lp = bad.All[0];
+            T.Check($"tier is clamped into range ({lp.Tier})", lp.Tier >= 0 && lp.Tier < StructureCatalog.TierCount);
+            T.Check($"health is clamped to the tier max ({lp.Health}/{lp.MaxHealth})", lp.Health <= lp.MaxHealth && lp.Health > 0);
+            bad.QueueFree();
+            if (Godot.FileAccess.FileExists(path)) DirAccess.RemoveAbsolute(ProjectSettings.GlobalizePath(path));
+        }
+    }
+
+    // Explosion damage must not depend on the order the base was BUILT in.
+    public class StructureExplosionOrder : GameTest
+    {
+        public override string Name => "structure.explosion_order";
+
+        public override IEnumerable<Step> Run()
+        {
+            Rigs.Ground(World);
+            var sm = new StructureManager();
+            World.AddChild(sm);
+            yield return Ticks(2);
+
+            // Two bases, identical geometry, opposite build order. Outer wall weak enough that the blast
+            // destroys it; inner wall behind it must survive untouched in BOTH.
+            // base A: outer placed first (the natural order)
+            sm.Place(new Vector3(0f, 0f, 0f), EConstruct.Floor, 0);
+            var aOuter = sm.Place(new Vector3(StructureCatalog.HalfEdge, 0f, 0f), EConstruct.Wall, 0);
+            var aInner = sm.Place(new Vector3(-StructureCatalog.HalfEdge, 0f, 0f), EConstruct.Wall, 0);
+            // base B: inner placed first
+            sm.Place(new Vector3(120f, 0f, 0f), EConstruct.Floor, 0);
+            var bInner = sm.Place(new Vector3(120f - StructureCatalog.HalfEdge, 0f, 0f), EConstruct.Wall, 0);
+            var bOuter = sm.Place(new Vector3(120f + StructureCatalog.HalfEdge, 0f, 0f), EConstruct.Wall, 0);
+            T.Check("fixture: both bases built", aOuter != null && aInner != null && bInner != null && bOuter != null);
+            yield return Ticks(3);
+
+            int aInnerHp = aInner.Health, bInnerHp = bInner.Health;
+            float y = StructureCatalog.WallPivotOffset;
+            // blast outside each outer wall, strong enough to destroy it and reach the inner one
+            sm.Explode(new Vector3(aOuter.Pos.X + 1.5f, y, 0f), 30f, 400, out _);
+            sm.Explode(new Vector3(bOuter.Pos.X + 1.5f, y, 0f), 30f, 400, out _);
+            yield return Ticks(2);
+
+            bool aOuterGone = true, bOuterGone = true;
+            foreach (var pc in sm.All) { if (pc == aOuter) aOuterGone = false; if (pc == bOuter) bOuterGone = false; }
+            T.Check("both outer walls were destroyed", aOuterGone && bOuterGone);
+            T.Check($"inner wall shielded when the outer was placed FIRST ({aInnerHp - aInner.Health} damage)",
+                aInner.Health == aInnerHp);
+            T.Check($"inner wall shielded when the outer was placed LAST ({bInnerHp - bInner.Health} damage)",
+                bInner.Health == bInnerHp);
+            T.Check("...and the two identical bases took identical damage",
+                aInner.Health == bInner.Health);
+        }
+    }
+
     // The SEAM between structures and barricades, exercised through the exact hook PlayerController installs.
     //
     // Both subsystems are green in isolation and the merge compiles clean, which is precisely the situation
@@ -703,6 +909,11 @@ namespace UnturnedGodot.Testing
             // to its own question and the wrong answer to the placer's.
             T.Check("raw CanAttach still reports no structure face on open ground (the trap)",
                 !sm.CanAttach(new Vector3(40f, 0f, 40f), Vector3.Up));
+            // The normal-agreement branch had NO coverage at all -- every existing call passed Vector3.Zero or
+            // queried empty space, so both early-outs fired first and you could invert the comparison, or
+            // `return true`, with the suite still green.
+            T.Check("CanAttach AGREES with a floor's up-normal", sm.CanAttach(floor.Pos, Vector3.Up));
+            T.Check("CanAttach REFUSES a horizontal normal on a floor", !sm.CanAttach(floor.Pos, new Vector3(1f, 0f, 0f)));
 
             // ---- 2. a WALL barricade mounts on a real structure wall ----
             placer.SetDef(DeployableDef.MetalBarricade);   // Mount = Wall
@@ -724,8 +935,19 @@ namespace UnturnedGodot.Testing
             // within 1.5 m, a wall's origin is its base, and the hit is 2.1 m up the face -- so it found nothing
             // and returned "not my department". Valid either way, and the wall rule totally untested. Resolving
             // by COLLIDER is what makes the two outcomes distinguishable.
-            T.Check("the gate resolves the hit to the actual wall piece",
-                sm.PieceForCollider(wall.Node) != null && sm.PieceForCollider(wall.Node).Construct == EConstruct.Wall);
+            // Resolve from the COLLIDER the aim actually hit, not from wall.Node. Feeding in the piece root --
+            // the node that carries the slot meta -- makes PieceForCollider's parent walk run zero iterations,
+            // so it proved the lookup worked and nothing at all about the WIRING. The real path hands it the
+            // StaticBody3D grandchild built by AddSlab.
+            var space2 = World.GetWorld3D().DirectSpaceState;
+            var probe = PhysicsRayQueryParameters3D.Create(new Vector3(wx + 3f, wy, 0f), new Vector3(wx - 1f, wy, 0f));
+            probe.CollisionMask = 1u << 0;
+            var probeHit = space2.IntersectRay(probe);
+            var realCollider = probeHit.Count > 0 ? probeHit["collider"].As<Node>() : null;
+            T.Check("the aim hits a collider that is NOT the piece root (so the walk is exercised)",
+                realCollider != null && realCollider != wall.Node);
+            T.Check("the gate resolves that real collider to the wall piece",
+                sm.PieceForCollider(realCollider) == wall);
             T.Check("a hit on the wall AGREES with a horizontal normal",
                 sm.AllowsBarricadeAt(mountProbe, placer.Normal, wall.Node));
             T.Check("...and the same wall REFUSES an up-normal, so the gate is doing work",
