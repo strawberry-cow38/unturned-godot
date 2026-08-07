@@ -160,6 +160,8 @@ namespace UnturnedGodot
         // A procedural stand-in for a WALL barricade -- a thin metal plate that mounts flush + upright on a structure
         // wall, facing out (BarricadeMount.Wall). Real Unturned ships this as an ItemBarricadeAsset with a ripped mesh;
         // this is a placeholder box until that asset is extracted (id in the port's custom 91xx range, not a retail id).
+        // NOT yet in All/ById -- a showcase + test def referenced directly; it joins the item-placement rail when
+        // in-game barricade placement is wired (so it doesn't enter the net schema / catalog as an unobtainable item).
         public static readonly DeployableDef MetalBarricade = new()
         {
             Id = 9120, Name = "Metal Barricade", ProcBox = true, Mount = BarricadeMount.Wall, PlaceSound = "metalplacement",
