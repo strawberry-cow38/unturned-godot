@@ -16,6 +16,7 @@ namespace UnturnedGodot
         BarricadePlacer _placer;
         DeployableDef[] _defs;
         int _defIx;
+        Label _hud;
 
         public BarricadePlacer Placer => _placer;
         public DeployableDef Current => _defs[_defIx];
@@ -27,6 +28,17 @@ namespace UnturnedGodot
             _placer = new BarricadePlacer();
             AddChild(_placer);
             _placer.SetDef(_defs[0]);
+            var layer = new CanvasLayer();
+            AddChild(layer);
+            _hud = new Label { Position = new Vector2(16f, 14f) };
+            layer.AddChild(_hud);
+            UpdateHud();
+        }
+
+        void UpdateHud()
+        {
+            if (_hud == null) return;
+            _hud.Text = $"Def: {Current.Name}    Mount: {_placer.Mount}\n[1-{_defs.Length}] def   [Tab] mount family   [R] rotate   LMB place   hold RMB to fly";
         }
 
         // Aim the ghost at the camera's screen-centre. Called from _Process (live) + directly by tests (the headless
@@ -50,12 +62,14 @@ namespace UnturnedGodot
             _defIx = ((slot % _defs.Length) + _defs.Length) % _defs.Length;
             _placer.SetDef(Current);   // SetDef adopts the def's own mount family
             GD.Print($"[barricadeplay] def -> {Current.Name} (mount {_placer.Mount})");
+            UpdateHud();
         }
 
         public void CycleMount()   // override the def's mount family to try Floor/Wall/Sticky on any surface
         {
             _placer.Mount = (BarricadeMount)(((int)_placer.Mount + 1) % 3);
             GD.Print($"[barricadeplay] mount -> {_placer.Mount}");
+            UpdateHud();
         }
 
         public void Rotate() { if (_placer != null) _placer.YawOffset += 90f; }
