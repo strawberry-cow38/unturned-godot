@@ -29,6 +29,11 @@ It's now just input + preview over `StructureManager`, which owns the real thing
   level always stands.
 - **Tiers** wood → brick → metal, with health, upgrade, and a salvage-duration multiplier.
 - **Damage** with vulnerability: metal ignores non-explosive damage.
+- **Charges actually raid.** `DetonateTrap` damaged nearby *deployables* and left every wall untouched, so a
+  charge would flatten the generator next to a base and not scratch the base. It now goes through
+  `StructureManager.Explode`, and `structure.charge_raid` drives the real path — plant a charge, fire it the
+  way a detonator does, check the wall — because a suite that only calls the manager passes whether or not
+  anything in the game ever reaches it.
 - **Explosions** (`StructureManager.Explode`), reimplemented from SDK `StructureDrop.cs:52-70`: range measured
   to the piece's *closest point* rather than its origin, linear `1 - range/radius` falloff, and a
   **line-of-sight test** so a piece behind another piece is shielded. That last one is what makes layering
@@ -78,8 +83,9 @@ Note the `--` before the game args, and that `--shot=` takes a **file** path, no
 ./test.sh --l1 --only 'structure.*'
 ```
 
-114 checks across `structure.lattice`, `structure.damage_save`, `structure.query`,
-`structure.repair_salvage`, `structure.explosion`, `structure.doorway` and `structure.barricade_seam`.
+120 checks across `structure.lattice`, `structure.damage_save`, `structure.query`,
+`structure.repair_salvage`, `structure.explosion`, `structure.charge_raid`, `structure.doorway` and
+`structure.barricade_seam`.
 
 Two of these were verified by deliberately breaking the code and confirming the test goes red — the
 explosion suite with the line-of-sight rule removed (the far wall then takes 148 damage through a wall), and
@@ -102,6 +108,8 @@ the seam suite with the wrong hook wired. A green test nobody has seen fail is a
 9. **Build two parallel walls and blow up the outer one.** The inner wall should take nothing while the outer
    one stands, and start taking damage once it falls. That is the shielding rule, and it is the difference
    between a base and a pile of tiles.
+10. **Plant a remote charge against a wall and fire it.** A point-blank charge (1000 structure damage) should
+    flatten wood and brick outright. This is the actual raid loop, end to end.
 
 ## Deliberate choices worth arguing with
 

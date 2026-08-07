@@ -325,6 +325,61 @@ namespace UnturnedGodot.Testing
         }
     }
 
+    // Is the explosion code actually REACHED by a real charge?
+    //
+    // structure.explosion tests StructureManager.Explode directly and passes whether or not anything in the
+    // game ever calls it -- and for a while nothing did. DetonateTrap damaged nearby DEPLOYABLES and left every
+    // wall untouched, so a charge would blow up the generator next to a base and not scratch the base. Fully
+    // tested, completely unreachable, and invisible to a suite that only ever calls the manager itself.
+    //
+    // So this drives the real path: plant a real Charge, fire it the way a detonator does, and check the wall.
+    public class StructureChargeRaid : GameTest
+    {
+        public override string Name => "structure.charge_raid";
+
+        public override IEnumerable<Step> Run()
+        {
+            Rigs.Ground(World);
+            var sm = new StructureManager();
+            World.AddChild(sm);
+            yield return Ticks(1);
+
+            sm.Place(Vector3.Zero, EConstruct.Floor, 0);
+            var wall = sm.Place(new Vector3(StructureCatalog.HalfEdge, 0f, 0f), EConstruct.Wall, 1);   // brick
+            T.Check("fixture: a brick wall", wall != null);
+            yield return Ticks(2);
+
+            int before = wall.Health;
+            // a charge planted against the wall's outer face, at its mid-height
+            var at = new Vector3(wall.Pos.X + 0.4f, StructureCatalog.WallPivotOffset, 0f);
+            var charge = Deployable.Spawn(World, DeployableDef.Charge, at, 0f);
+            T.Check("fixture: a charge is planted", charge != null);
+            yield return Ticks(3);
+
+            int fired = Deployable.DetonateAllCharges(World.GetTree());
+            T.Check($"the detonator fires it ({fired})", fired == 1);
+            yield return Ticks(3);
+
+            T.Check($"the WALL took the blast ({before - wall.Health} of {before})", wall.Health < before);
+            // and it went through the shared rules rather than a second hand-rolled falloff: 1000 structure
+            // damage at point-blank on a 600 hp brick wall destroys it outright.
+            bool gone = true;
+            foreach (var pc in sm.All) if (pc == wall) gone = false;
+            T.Check("a 1000-damage charge point-blank destroys a brick wall", gone);
+
+            // a wall well outside the 8 m blast is untouched -- proves the radius is respected and that the
+            // charge is not simply damaging every piece in the world.
+            var far = sm.Place(new Vector3(90f, 0f, 90f), EConstruct.Wall, 2);
+            yield return Ticks(2);
+            int farHp = far.Health;
+            var c2 = Deployable.Spawn(World, DeployableDef.Charge, new Vector3(0.4f, 1f, 0f), 0f);
+            yield return Ticks(3);
+            Deployable.DetonateAllCharges(World.GetTree());
+            yield return Ticks(3);
+            T.Check($"a wall 120 m away is untouched ({far.Health}/{farHp})", far.Health == farHp);
+        }
+    }
+
     // Doorways: a wall-class piece with a hole, and the socket a door leaf hangs in.
     //
     // The mutual exclusion is the interesting part and it is deliberately NOT written as a rule anywhere. A
