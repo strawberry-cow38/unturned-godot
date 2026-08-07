@@ -21,8 +21,11 @@ namespace UnturnedGodot
         public float Thickness = WallOpenings.DefaultThickness;   // 0.70 exterior, 0.50 for partitions
         public readonly List<WallOpening> Openings = new();
 
-        public Color Tint = new(0.78f, 0.74f, 0.66f);
-        public Color TrimTint = new(0.34f, 0.30f, 0.27f);
+        // Retail palette values (House_00_tex.png, a 4x2 8-texel palette). The reveal is NOT a contrasting
+        // frame: all 74 reveal strips in House_00 point at texel (2,1), which 20 big wall panels also use. So
+        // the lining is the same colour family as the wall -- lining GEOMETRY, wall COLOUR.
+        public Color Tint = new(119f / 255f, 97f / 255f, 77f / 255f);        // texel (0,1)
+        public Color TrimTint = new(80f / 255f, 64f / 255f, 48f / 255f);     // texel (2,1), the reveal colour
         public bool ShowTrim = true;
 
         /// <summary>Trim sits proud of BOTH faces and never scales with the opening -- widen a garage and the
