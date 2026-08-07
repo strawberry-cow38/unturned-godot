@@ -113,16 +113,31 @@ namespace UnturnedGodot.Testing
             // landing on different ones is correct, and the test was wrong rather than the code. Sweeping the
             // whole range catches a genuine double-round (which would produce an EVEN multiple) without
             // encoding a false expectation about tie points.
+            // Checking that the result is an ODD multiple of the half edge is an identity of the formula --
+            // Round((x-3)/6)*6+3 is 6k+3 by algebra, and the very double-round the old comment feared,
+            // Round(x/6)*6+3, is ALSO 6k+3. It passed for the bug it claimed to catch, and it never pinned the
+            // pillar to the RIGHT corner, so a sign flip or a whole-tile offset sailed through too.
+            //
+            // Compare against ground truth computed a different way: the nearest point of the corner lattice,
+            // found by brute force. Now a mirrored sign or an off-by-one-tile lands somewhere that is still an
+            // odd multiple and still fails.
             bool allOnLattice = true;
             for (float x = -13f; x <= 13f; x += 0.7f)
                 for (float z = -13f; z <= 13f; z += 0.7f)
                 {
                     var (q, _) = StructureCatalog.Snap(new Vector3(x, 0f, z), EConstruct.Pillar);
-                    int kx = Mathf.RoundToInt(q.X / StructureCatalog.HalfEdge);
-                    int kz = Mathf.RoundToInt(q.Z / StructureCatalog.HalfEdge);
-                    if (kx % 2 == 0 || kz % 2 == 0) { allOnLattice = false; GD.Print($"[structure] pillar off-lattice at ({x},{z}) -> {q}"); }
+                    float bx = 0f, bz = 0f, bd = float.MaxValue;
+                    for (int i = -4; i <= 4; i++)
+                        for (int j = -4; j <= 4; j++)
+                        {
+                            float cxx = (2 * i + 1) * StructureCatalog.HalfEdge, czz = (2 * j + 1) * StructureCatalog.HalfEdge;
+                            float d = (cxx - x) * (cxx - x) + (czz - z) * (czz - z);
+                            if (d < bd - 1e-4f) { bd = d; bx = cxx; bz = czz; }
+                        }
+                    if (!Mathf.IsEqualApprox(q.X, bx) || !Mathf.IsEqualApprox(q.Z, bz))
+                    { allOnLattice = false; GD.Print($"[structure] pillar at ({x},{z}) -> {q}, nearest corner is ({bx},{bz})"); }
                 }
-            T.Check("every pillar snaps onto the corner lattice (odd multiples of the half edge)", allOnLattice);
+            T.Check("every pillar snaps to the NEAREST corner (checked against a brute-force search, not the formula)", allOnLattice);
 
             // Extending outward onto the NEXT tile is the commonest real build action, and it is the case the
             // neighbour-lookup rewrite could most easily have broken: support moved from a distance scan over
@@ -401,6 +416,11 @@ namespace UnturnedGodot.Testing
             T.Check($"the eye is above the wall's mid-height ({eye.Origin.Y:0.00})", eye.Origin.Y > 0.5f);
             T.Check("the eye points at the upper wall (downward-ish is wrong)", (-eye.Basis.Z).Dot((high - eye.Origin).Normalized()) > 0.99f);
 
+            // The Debug* seams resolve through StructureManager.Instance while every assertion below reads `sm`.
+            // Those are only the same object because this test adds sm BEFORE Rigs.Player, so BuildTool's
+            // deferred EnsureManager sees a non-null Instance and skips. Swap those two lines and the assertions
+            // would be measuring a different manager -- so assert the coupling rather than rely on the order.
+            T.Check("the manager under test IS the one the aim path resolves through", StructureManager.Instance == sm);
             var aimed = p.DebugAimedStructure();
             GD.Print($"[aimtest] aimed={(aimed == null ? "null" : aimed.Construct.ToString())}");
             T.Check("aiming high on a wall resolves to the WALL", aimed == wall);
@@ -972,8 +992,12 @@ namespace UnturnedGodot.Testing
             // PlayerController freezes point+normal+yaw at the click. Freezing point+yaw alone (the old
             // two-arg overload) defaults the normal to UP, so a wall barricade snaps flat for the length of
             // the placement animation and then lands correctly -- a visible pop nobody would call a bug report.
+            // Knock Normal off the wall first. Aim had already set it to the wall face, so asserting it
+            // afterwards held whether or not Freeze did anything at all.
+            placer.Freeze(mountPoint, Vector3.Up, mountYaw);
+            T.Check("(precondition) the normal is knocked off the wall", placer.Normal.Dot(mountNormal) < 0.5f);
             placer.Freeze(mountPoint, mountNormal, mountYaw);
-            T.Check("freeze keeps the wall normal", placer.Normal.Dot(mountNormal) > 0.99f);
+            T.Check("freeze RESTORES the wall normal", placer.Normal.Dot(mountNormal) > 0.99f);
             placer.Freeze(mountPoint, mountYaw);
             T.Check("the two-arg freeze assumes UP -- which is why the normal is carried", placer.Normal.Dot(Vector3.Up) > 0.99f);
         }

@@ -76,6 +76,7 @@ namespace UnturnedGodot
         /// unreadable file looks exactly like an empty world, and the next save turns a recoverable read
         /// failure into permanent data loss.</summary>
         bool _loadFailed;
+        bool _warnedNoSpace;   // one-shot: an Explode with no physics space cannot shield
 
         public override void _EnterTree()
         {
@@ -471,6 +472,13 @@ namespace UnturnedGodot
                 //
                 // The 0.01 m floor matches retail's MIN_LINE_OF_SIGHT_DISTANCE (DamageTool.cs:67): a charge
                 // touching the piece needs no test, and a zero-length ray has no direction to test with.
+                if (range > 0.01f && space == null)
+                {
+                    // Say so. Without a space there is no shielding at all -- the rule the header calls "the
+                    // whole reason a base is a base" -- and a caller cannot otherwise tell "nothing was in the
+                    // way" from "the check never ran".
+                    if (!_warnedNoSpace) { _warnedNoSpace = true; GD.PrintErr("[structures] Explode has no physics space: line-of-sight shielding is NOT being applied"); }
+                }
                 if (range > 0.01f && space != null)
                 {
                     var q = PhysicsRayQueryParameters3D.Create(point, near);
@@ -595,7 +603,17 @@ namespace UnturnedGodot
             // resolve, i.e. permanently unhittable and unsalvageable.
             if (_bySlot.TryGetValue(p.Key, out var cur) && cur == p) _bySlot.Remove(p.Key);
             _all.Remove(p);
-            if (p.Node != null && GodotObject.IsInstanceValid(p.Node)) p.Node.QueueFree();
+            if (p.Node != null && GodotObject.IsInstanceValid(p.Node))
+            {
+                // Retire the corpse THIS frame. QueueFree only deletes at end of frame, so the node kept
+                // colliding with its slot meta still on it: rebuild in that slot before the frame ends and a
+                // ray hitting the corpse resolved to the NEW piece -- aim at the wreck, damage its replacement.
+                p.Node.RemoveMeta(SlotMeta);
+                foreach (var ch in p.Node.GetChildren())
+                    if (ch is StaticBody3D body) { body.CollisionLayer = 0; body.CollisionMask = 0; }
+                p.Node.RemoveFromGroup(Group);
+                p.Node.QueueFree();
+            }
         }
 
         public void Clear() { foreach (var p in new List<Piece>(_all)) Remove(p); }
