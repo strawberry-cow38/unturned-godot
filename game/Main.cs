@@ -2027,23 +2027,23 @@ namespace UnturnedGodot
             float faceZ = wallPos.Z + wallSize.Z * 0.5f;
             float wallYaw = BarricadePlacer.YawFacing(n);           // face straight out of the wall
 
-            // two barricades mounted on the wall: UPRIGHT, facing out (Wall mount family)
-            Barricade.PlaceOnSurface(this, DeployableDef.Generator, new Vector3(-1.7f, 1.4f, faceZ), n, wallYaw, BarricadeMount.Wall);
-            Barricade.PlaceOnSurface(this, DeployableDef.Spotlight, new Vector3(1.7f, 1.4f, faceZ), n, wallYaw, BarricadeMount.Wall);
+            // WALL: two metal-plate barricades flush on the wall face. Mount comes from the def (Wall) -> upright, facing out.
+            Barricade.PlaceOnSurface(this, DeployableDef.MetalBarricade, new Vector3(-1.6f, 1.7f, faceZ), n, wallYaw);
+            Barricade.PlaceOnSurface(this, DeployableDef.MetalBarricade, new Vector3(1.6f, 1.7f, faceZ), n, wallYaw);
 
-            // a blue VALID placement ghost snapped to the wall (the placer preview)
-            var placer = new BarricadePlacer { Mount = BarricadeMount.Wall };
+            // a blue VALID placement ghost snapped to the wall (the placer preview; SetDef reads Mount=Wall from the def)
+            var placer = new BarricadePlacer();
             AddChild(placer);
-            placer.SetDef(DeployableDef.Generator);
-            placer.Freeze(new Vector3(0.2f, 2.7f, faceZ), n, wallYaw);
+            placer.SetDef(DeployableDef.MetalBarricade);
+            placer.Freeze(new Vector3(0f, 1.7f, faceZ), n, wallYaw);
 
-            // contrast: a FLOOR barricade on the ground in front (upright, free yaw)
-            Barricade.PlaceOnSurface(this, DeployableDef.Generator, new Vector3(0f, 0f, 2.6f), Vector3.Up, 20f, BarricadeMount.Floor);
+            // FLOOR: a deployable on the ground in front for contrast (Floor mount, upright, free yaw)
+            Deployable.Spawn(this, DeployableDef.Generator, new Vector3(-3.4f, 0f, 2.2f), 25f);
 
-            var cam = new Camera3D { Current = true, Fov = 54f, Far = 10000f };
+            var cam = new Camera3D { Current = true, Fov = 56f, Far = 10000f };
             AddChild(cam);
-            cam.Position = new Vector3(5.0f, 3.1f, 7.8f);
-            cam.LookAt(new Vector3(0f, 1.3f, -0.4f), Vector3.Up);
+            cam.Position = new Vector3(5.6f, 3.2f, 8.2f);
+            cam.LookAt(new Vector3(-0.3f, 1.5f, -0.6f), Vector3.Up);
         }
 
         void BuildDeployTest()

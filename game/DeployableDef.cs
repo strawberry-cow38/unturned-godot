@@ -25,6 +25,7 @@ namespace UnturnedGodot
         public bool IsWindTurbine;    // a wind turbine: output ramps with WindField wind x a height-above-sea multiplier; blades spin ~ wind
         public bool IsStorage;        // a placeable storage container with its own IPowerDevice consumer port (the fridge): spawns via FridgeDeploy, not a plain Deployable body
         public bool Upright;          // build the mesh already-vertical (skip the flat->stand-up rotation) -- for procedural models like the turbine
+        public BarricadeMount Mount = BarricadeMount.Floor;   // which surface family this places on: Floor (ground, default) / Wall / Sticky. BarricadePlacer + Barricade read this so a barricade def carries its own mount rule.
         public string PlaceSound;  // src .dat PlacementAudioClip stem (content/sounds/<stem>.wav) played when planted; null = silent
         public string HoldMesh, HoldAlbedo;   // content/<mesh>.obj + palette for the 1st-person carry model (item.prefab); null -> EmptyHands fallback (ghost only)
         public bool ShatterOnDeath;   // true -> explodes into flying debris + vanishes (no salvageable husk, drops nothing); false -> charred blowtorch-salvageable wreck
@@ -155,6 +156,16 @@ namespace UnturnedGodot
             };
         }
         public static readonly DeployableDef Combiner2 = MakeCombiner(9104, "2-Way Combiner", 0.55f, new[] { -0.14f, 0.14f });
+
+        // A procedural stand-in for a WALL barricade -- a thin metal plate that mounts flush + upright on a structure
+        // wall, facing out (BarricadeMount.Wall). Real Unturned ships this as an ItemBarricadeAsset with a ripped mesh;
+        // this is a placeholder box until that asset is extracted (id in the port's custom 91xx range, not a retail id).
+        public static readonly DeployableDef MetalBarricade = new()
+        {
+            Id = 9120, Name = "Metal Barricade", ProcBox = true, Mount = BarricadeMount.Wall, PlaceSound = "metalplacement",
+            Size = new Vector3(1.6f, 0.08f, 1.6f),   // flat frame: X width, Y thickness (the facing axis), Z height -> a thin panel that stands up + faces out of the wall
+            Offset = 0.05f, Radius = 0.6f, Range = 5f, Health = 300f, Fuel = 0f,
+        };
 
         // --- Switch (custom): power in one side, out the other, gated by an F-toggle. A 0-watt relay Consumer (IN) + a
         //     Passthrough (OUT); PowerConducting = the toggle state, so OFF kills the passthrough = no downstream power.

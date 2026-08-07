@@ -169,4 +169,30 @@ namespace UnturnedGodot.Testing
             T.Check("a burning wreck is TOO HOT to salvage (hold reset)", sw == RepairTool.SalvageState.TooHot && held2 == 0f);
         }
     }
+
+    // The barricade def carries its own mount family, so PlaceOnSurface/SetDef default to it (no explicit mount arg).
+    public class BarricadeDefMount : GameTest
+    {
+        public override string Name => "barricade.def_mount";
+        public override IEnumerable<Step> Run()
+        {
+            T.Check("MetalBarricade is a Wall-mount barricade", DeployableDef.MetalBarricade.Mount == BarricadeMount.Wall);
+            T.Check("a ground deployable defaults to Floor mount", DeployableDef.Generator.Mount == BarricadeMount.Floor);
+
+            // PlaceOnSurface with NO explicit mount uses the def's mount -> a MetalBarricade on a wall is upright + facing out.
+            var n = new Vector3(0f, 0f, 1f);
+            float yaw = BarricadePlacer.YawFacing(n);
+            var d = Barricade.PlaceOnSurface(World, DeployableDef.MetalBarricade, new Vector3(0f, 2f, 0f), n, yaw);   // no mount arg
+            yield return Ticks(1);
+            T.Check("def-mounted wall barricade is upright", BarricadeAxes.VisualUp(d.Basis).Dot(Vector3.Up) > 0.99f);
+            T.Check("def-mounted wall barricade faces out", BarricadeAxes.Facing(d.Basis).Dot(n) > 0.99f);
+            T.Check("spawned with the def HP", Mathf.Abs(d.Health - DeployableDef.MetalBarricade.Health) < 0.01f);
+
+            // the placer adopts the mount family from the def too
+            var placer = new BarricadePlacer();
+            World.AddChild(placer);
+            placer.SetDef(DeployableDef.MetalBarricade);
+            T.Check("SetDef adopts the def's mount family", placer.Mount == BarricadeMount.Wall);
+        }
+    }
 }

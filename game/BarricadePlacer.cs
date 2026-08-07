@@ -47,6 +47,7 @@ namespace UnturnedGodot
         public void SetDef(DeployableDef def)
         {
             Def = def;
+            Mount = def.Mount;   // the barricade def carries its own mount family (Floor/Wall/Sticky); caller may still override
             _ghost?.QueueFree();
             _ghost = Deployable.BuildMesh(def, out _localAabb);
             _ghost.MaterialOverride = DeployablePlacer.InvalidMat;
