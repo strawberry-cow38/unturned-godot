@@ -325,6 +325,82 @@ namespace UnturnedGodot.Testing
         }
     }
 
+    // The CROSSHAIR path into the structure system -- melee, salvage, upgrade.
+    //
+    // The manager's Damage/Repair/Salvage were covered; nothing checked whether aiming at a wall reaches THAT
+    // wall. It did not: the resolver took the nearest piece within 3 m of the hit point, measured to each
+    // piece's ORIGIN, and an origin sits at the piece's base. Aim high on a wall and the floor tile beside it
+    // is nearer to the hit than the wall you are looking at -- and past 3 m up, nothing is in range at all, so
+    // melee, salvage and upgrade silently no-op. Every manager-level test stayed green throughout, because
+    // none of them went through the aim.
+    public class StructureAimedActions : GameTest
+    {
+        public override string Name => "structure.aimed_actions";
+
+        public override IEnumerable<Step> Run()
+        {
+            Rigs.Ground(World);
+            var sm = new StructureManager();
+            World.AddChild(sm);
+            yield return Ticks(1);
+
+            var floor = sm.Place(Vector3.Zero, EConstruct.Floor, 0);
+            var wall = sm.Place(new Vector3(StructureCatalog.HalfEdge, 0f, 0f), EConstruct.Wall, 0);
+            T.Check("fixture: a floor and a wall on its edge", floor != null && wall != null);
+
+            var p = Rigs.Player(World, new Vector3(wall.Pos.X + 4f, 0f, 0f));
+            // Let the player's own deferred setup flush. Run alone, Rigs.Player blocks ~3 s loading gun assets
+            // and everything has settled by the first check; run inside the full suite those assets are cached,
+            // the call returns instantly, and the deferred work lands AFTER the test has already aimed -- which
+            // is why this suite passed alone and failed in the suite. Waiting on ticks makes it independent of
+            // whether the assets happened to be warm.
+            yield return Ticks(30);
+
+            // The aim is a PRECONDITION, not a check: re-aim immediately before each action and confirm the eye
+            // really points at the wall, so an action failing means the ACTION is broken rather than that the
+            // camera quietly reset.
+            var high = new Vector3(wall.Pos.X, StructureCatalog.WallHeight * 0.85f, 0f);
+            var eye = p.DebugLookAt(high);
+            GD.Print($"[aimtest] eye={eye.Origin} fwd={-eye.Basis.Z} target={high}");
+            T.Check($"the eye is above the wall's mid-height ({eye.Origin.Y:0.00})", eye.Origin.Y > 0.5f);
+            T.Check("the eye points at the upper wall (downward-ish is wrong)", (-eye.Basis.Z).Dot((high - eye.Origin).Normalized()) > 0.99f);
+
+            var aimed = p.DebugAimedStructure();
+            GD.Print($"[aimtest] aimed={(aimed == null ? "null" : aimed.Construct.ToString())}");
+            T.Check("aiming high on a wall resolves to the WALL", aimed == wall);
+            T.Check("...and specifically not the floor sharing its tile", aimed != floor);
+
+            // ---- melee damages the piece under the crosshair ----
+            int before = wall.Health;
+            p.DebugLookAt(high);
+            bool hitIt = p.DebugMeleeStructure(50f, 4f);
+            T.Check("the swing connects", hitIt);
+            T.Check($"the wall lost exactly the swing ({before - wall.Health})", wall.Health == before - 50);
+            T.Check("the floor was untouched", floor.Health == floor.MaxHealth);
+
+            // ---- upgrade the aimed piece ----
+            int tierBefore = wall.Tier;
+            p.DebugLookAt(high);
+            p.DebugUpgradeAimed();
+            T.Check($"upgrade raised the aimed piece a tier ({tierBefore} -> {wall.Tier})", wall.Tier == tierBefore + 1);
+            T.Check("and refilled health to the new tier", wall.Health == StructureCatalog.TierAt(wall.Tier).Health);
+
+            // ---- salvage takes the aimed piece, not its neighbour ----
+            p.DebugLookAt(high);
+            p.DebugSalvageAimed();
+            yield return Ticks(2);
+            bool wallGone = true, floorGone = true;
+            foreach (var pc in sm.All) { if (pc == wall) wallGone = false; if (pc == floor) floorGone = false; }
+            T.Check("salvage removed the wall", wallGone);
+            T.Check("and left the floor standing", !floorGone);
+
+            // ---- the negative: aiming at nothing resolves to nothing ----
+            p.DebugLookAt(new Vector3(wall.Pos.X + 400f, 300f, 0f));
+            T.Check("aiming at empty sky resolves to no piece", p.DebugAimedStructure() == null);
+            T.Check("and a swing at nothing reports no hit", !p.DebugMeleeStructure(50f, 4f));
+        }
+    }
+
     // Is the explosion code actually REACHED by a real charge?
     //
     // structure.explosion tests StructureManager.Explode directly and passes whether or not anything in the

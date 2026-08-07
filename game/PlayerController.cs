@@ -91,11 +91,31 @@ namespace UnturnedGodot
             q.CollisionMask = 1u << 0;
             var hit = space.IntersectRay(q);
             if (hit.Count == 0) return null;
-            var found = sm.QueryAt((Vector3)hit["position"], StructureCatalog.HalfEdge);
-            if (found == null) return null;
-            foreach (var piece in sm.All) if (piece.Node == found.Value.Node) return piece;
-            return null;
+            // Resolve by the COLLIDER we actually hit, not by nearest-piece-within-3 m of the hit point. The
+            // radius version picks by distance to each piece's ORIGIN, and an origin sits at the piece's base:
+            // aim high on a wall and the floor tile beside it is nearer to the hit than the wall you are
+            // looking at, so the swing lands on the floor -- or, past 3 m up, on nothing at all. Exactly the
+            // mistake the barricade attach gate made, and worse here because all three callers destroy things.
+            return sm.PieceForCollider(hit["collider"].As<Node>());
         }
+
+        // Test seams for the three INPUT paths into the structure system. The manager-level Damage/Repair/
+        // Salvage were covered while nothing verified that the crosshair path reached the piece you were
+        // actually looking at -- the "logic tested, never called" gap, which had already bitten once (charges
+        // did not touch structures at all). These drive the real methods, not copies of them.
+        public StructureManager.Piece DebugAimedStructure(float reach = -1f) => AimedStructure(reach);
+        public bool DebugMeleeStructure(float amount, float range) => MeleeStructure(amount, range);
+        public void DebugSalvageAimed() => SalvageAimedStructure();
+        public void DebugUpgradeAimed() => UpgradeAimedStructure();
+        /// <summary>Aim the eye at a world point (the test stand-in for moving the mouse). Returns the eye
+        /// transform actually in force, so a test can assert it took rather than assume it.</summary>
+        public Transform3D DebugLookAt(Vector3 target)
+        {
+            if (_cam == null) return Transform3D.Identity;
+            _cam.LookAt(target, Vector3.Up);
+            return _cam.GlobalTransform;
+        }
+        public Transform3D DebugEye => _cam?.GlobalTransform ?? Transform3D.Identity;
 
         /// <summary>Swing at the structure piece under the crosshair. Returns true if one was hit, so the melee
         /// chain stops there rather than also swinging at whatever is behind it. A blowtorch repairs instead of
