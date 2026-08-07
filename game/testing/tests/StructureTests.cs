@@ -879,6 +879,101 @@ namespace UnturnedGodot.Testing
         }
     }
 
+    // THE PLACE PATH -- B / C / V / LMB. The thing a player's hands actually touch.
+    //
+    // Until now this had ZERO coverage. Everything green was the manager UNDERNEATH the build tool, so "building
+    // works" only ever meant "StructureManager.Place works". The tool that aims the ray, snaps the ghost,
+    // decides whether the slot is refused, and calls Place with the right construct and tier was driven by
+    // nobody -- not a test, and not a human either. That is the same "logic tested, never actually called" gap
+    // that let charges ship without damaging a single wall.
+    //
+    // This drives the REAL BuildTool that PlayerController builds in _Ready, through its real camera and its
+    // real raycast, not a hand-made one.
+    public class StructureBuildToolInput : GameTest
+    {
+        public override string Name => "structure.build_input";
+
+        public override IEnumerable<Step> Run()
+        {
+            Rigs.Ground(World);
+            var sm = new StructureManager();
+            World.AddChild(sm);
+            var p = Rigs.Player(World, new Vector3(0f, 0f, -6f));
+            yield return Ticks(30);   // let the player's deferred setup settle (see structure.aimed_actions)
+
+            var bt = p.DebugBuildTool;
+            T.Check("the player owns a build tool", bt != null);
+            T.Check("the aim path resolves through the manager under test", StructureManager.Instance == sm);
+            if (bt == null) yield break;
+
+            // ---- B: build mode is off until you turn it on ----
+            T.Check("build mode starts OFF", !bt.Active);
+            bt.Toggle();
+            T.Check("B turns it on", bt.Active);
+
+            // look at the ground a few metres ahead
+            p.DebugLookAt(new Vector3(0f, 0f, 0f));
+            yield return Ticks(2);
+
+            // ---- LMB: the piece lands, and it lands on the LATTICE ----
+            int before = sm.Count;
+            var placed = bt.Place();
+            T.Check("LMB places a piece", placed != null && sm.Count == before + 1);
+            if (placed == null) yield break;
+            T.Check($"it is the construct the tool is showing ({placed.Construct} vs {bt.Construct})", placed.Construct == bt.Construct);
+            // Pin WHERE, not just "on some tile centre". The looser form passed while the aim was silently
+            // reverting and TryAim was falling back to eye + forward*8 -- a point in mid-air that happens to
+            // snap onto the lattice like any other.
+            T.Check($"it landed on the tile I aimed at, on the ground ({placed.Pos})",
+                Mathf.IsEqualApprox(placed.Pos.X, 0f) && Mathf.IsEqualApprox(placed.Pos.Z, 0f)
+                && Mathf.Abs(placed.Pos.Y) < 0.01f);
+            yield return Ticks(2);
+
+            // ---- the ghost goes RED on an occupied slot, and LMB refuses ----
+            yield return Ticks(2);
+            T.Check($"aiming at the slot it just filled is refused ({bt.BlockedReason})", !bt.AimValid && bt.BlockedReason == "occupied");
+            int held = sm.Count;
+            T.Check("and a second LMB there places nothing", bt.Place() == null && sm.Count == held);
+
+            // ---- C: cycling the construct changes what LMB builds ----
+            var first = bt.Construct;
+            bt.CycleType();
+            T.Check($"C changes the construct ({first} -> {bt.Construct})", bt.Construct != first);
+            // walk the whole ring and come back
+            var seen = new List<EConstruct> { first, bt.Construct };
+            for (int i = 2; i < StructureCatalog.Buildable.Length; i++) { bt.CycleType(); seen.Add(bt.Construct); }
+            bt.CycleType();
+            T.Check($"C wraps back to where it started ({bt.Construct})", bt.Construct == first);
+            T.Check($"and the ring covers every buildable ({seen.Count})", seen.Count == StructureCatalog.Buildable.Length);
+
+            // ---- V: the tier the tool shows is the tier the piece gets ----
+            bt.CycleTier();
+            int tierNow = bt.Tier;
+            T.Check($"V changes the tier (now {tierNow})", tierNow != 0);
+            p.DebugLookAt(new Vector3(StructureCatalog.EdgeLength, 0f, 0f));
+            yield return Ticks(2);
+                        var second = bt.Place();
+            T.Check($"a piece places on a fresh slot (reason={bt.BlockedReason})", second != null);
+            if (second != null)
+            {
+                T.Check($"and carries the tool's tier, not the default ({second.Tier})", second.Tier == tierNow);
+                T.Check($"with that tier's health ({second.Health})", second.Health == StructureCatalog.TierAt(tierNow).Health);
+            }
+
+            // ---- B again: with build mode OFF, LMB builds nothing ----
+            bt.Toggle();
+            T.Check("B turns build mode off", !bt.Active);
+            p.DebugLookAt(new Vector3(-StructureCatalog.EdgeLength, 0f, 0f));
+            yield return Ticks(2);
+            int idle = sm.Count;
+            T.Check("LMB with build mode off places nothing", bt.Place() == null && sm.Count == idle);
+            var cWas = bt.Construct; int vWas = bt.Tier;
+            bt.CycleType(); bt.CycleTier();
+            T.Check($"and C / V are inert while it is off ({cWas}/{vWas} -> {bt.Construct}/{bt.Tier})",
+                bt.Construct == cWas && bt.Tier == vWas);
+        }
+    }
+
     // The SEAM between structures and barricades, exercised through the exact hook PlayerController installs.
     //
     // Both subsystems are green in isolation and the merge compiles clean, which is precisely the situation

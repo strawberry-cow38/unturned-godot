@@ -103,16 +103,28 @@ namespace UnturnedGodot
         // Salvage were covered while nothing verified that the crosshair path reached the piece you were
         // actually looking at -- the "logic tested, never called" gap, which had already bitten once (charges
         // did not touch structures at all). These drive the real methods, not copies of them.
+        public BuildTool DebugBuildTool => _build;   // the BUILD INPUT path (B/C/V/LMB) had no coverage at all
         public StructureManager.Piece DebugAimedStructure(float reach = -1f) => AimedStructure(reach);
         public bool DebugMeleeStructure(float amount, float range) => MeleeStructure(amount, range);
         public void DebugSalvageAimed() => SalvageAimedStructure();
         public void DebugUpgradeAimed() => UpgradeAimedStructure();
         /// <summary>Aim the eye at a world point (the test stand-in for moving the mouse). Returns the eye
-        /// transform actually in force, so a test can assert it took rather than assume it.</summary>
+        /// transform actually in force, so a test can assert it took rather than assume it.
+        ///
+        /// Drives the SAME state real mouse input drives -- body yaw plus _pitchDeg -- rather than poking
+        /// _cam.LookAt. A raw LookAt is transient: the player's own setup writes _cam.Rotation back and the aim
+        /// silently reverts on the next frame, so a test that aimed, waited a tick, then acted was acting on a
+        /// stale direction. That produced a suite where two different aims both reported forward = (0,0,-1) and
+        /// a piece "placed at a tile centre" was really the no-hit fallback point.</summary>
         public Transform3D DebugLookAt(Vector3 target)
         {
             if (_cam == null) return Transform3D.Identity;
-            _cam.LookAt(target, Vector3.Up);
+            Vector3 d = target - _cam.GlobalPosition;
+            float horiz = new Vector2(d.X, d.Z).Length();
+            if (d.LengthSquared() < 1e-6f) return _cam.GlobalTransform;
+            RotationDegrees = new Vector3(0f, Mathf.RadToDeg(Mathf.Atan2(-d.X, -d.Z)), 0f);
+            _pitchDeg = Mathf.Clamp(Mathf.RadToDeg(Mathf.Atan2(d.Y, horiz)), -89f, 89f);
+            _cam.RotationDegrees = new Vector3(_pitchDeg, 0f, 0f);
             return _cam.GlobalTransform;
         }
         public Transform3D DebugEye => _cam?.GlobalTransform ?? Transform3D.Identity;

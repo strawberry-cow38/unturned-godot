@@ -163,7 +163,15 @@ namespace UnturnedGodot
             // the raycast mask (1<<0) already limits hits to ground / structures / vehicles; accept any of those, and
             // just never stack a barricade straight onto another barricade/deployable. CanAttach (StructureManager)
             // supersedes this for the structure-specific edge/pillar rules at merge.
-            return collider == null || (!collider.IsInGroup("deployables") && !collider.IsInGroup("barricades"));
+            if (collider == null) return true;
+            // A VEHICLE surface is refused, deliberately, until planting exists. Retail parents a barricade to
+            // the vehicle it is dropped on (SDK dropPlantedBarricade); nothing here does, so the old code let
+            // the ghost go BLUE on a car roof and then left the generator hanging in mid-air the moment the car
+            // drove away. A ghost that says no is honest; a ghost that says yes and then loses your item is not.
+            // Swap this for real planting when the parented path lands.
+            for (var n = collider; n != null; n = n.GetParent())
+                if (n.IsInGroup("vehicles")) return false;
+            return !collider.IsInGroup("deployables") && !collider.IsInGroup("barricades");
         }
 
         // clearance sphere at the standoff point (src OverlapSphere(point, radius, BLOCK_BARRICADE)); excludes the mount

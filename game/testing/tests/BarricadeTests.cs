@@ -334,4 +334,44 @@ namespace UnturnedGodot.Testing
             T.Check("barricade low on a wall is VALID (the floor-slab lattice doesn't block clearance)", placer.Aim(cam));
         }
     }
+
+    // A barricade must not go blue on a VEHICLE. Nothing parents it to the car (retail's dropPlantedBarricade
+    // does), so it would sit in mid-air the moment the car moved -- the player loses the item and the game
+    // never told them it would.
+    public class BarricadeVehicleSurface : GameTest
+    {
+        public override string Name => "barricade.vehicle_surface";
+        public override IEnumerable<Step> Run()
+        {
+            Rigs.Ground(World);
+            var cam = new Camera3D { Current = false };
+            World.AddChild(cam);
+            var placer = new BarricadePlacer();
+            World.AddChild(placer);
+            placer.SetDef(DeployableDef.Generator);      // a Floor-mount deployable, the common case
+            placer.Mount = BarricadeMount.Floor;
+
+            // a flat surface at the same height, twice: one plain, one a "vehicle"
+            var slab = new StaticBody3D { CollisionLayer = 1 << 0 };
+            slab.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = new Vector3(4f, 1f, 4f) } });
+            World.AddChild(slab);
+            slab.GlobalPosition = new Vector3(0f, 1f, 0f);
+
+            var car = new StaticBody3D { CollisionLayer = 1 << 0 };
+            car.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = new Vector3(4f, 1f, 4f) } });
+            World.AddChild(car);
+            car.GlobalPosition = new Vector3(20f, 1f, 0f);
+            car.AddToGroup("vehicles");
+            yield return Ticks(3);
+
+            // CONTROL: the identical plain slab must be placeable, or "refused" proves nothing
+            cam.Position = new Vector3(0f, 4f, 0f);
+            cam.LookAt(new Vector3(0f, 1.5f, 0f), Vector3.Forward);
+            T.Check("control: an ordinary slab top is a VALID spot", placer.Aim(cam));
+
+            cam.Position = new Vector3(20f, 4f, 0f);
+            cam.LookAt(new Vector3(20f, 1.5f, 0f), Vector3.Forward);
+            T.Check("but the identical surface on a VEHICLE is refused", !placer.Aim(cam));
+        }
+    }
 }
