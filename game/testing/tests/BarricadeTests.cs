@@ -60,8 +60,8 @@ namespace UnturnedGodot.Testing
             // FLOOR mode on the ground: valid, and orientation is pixel-identical to the old ground StandBasis.
             placer.Mount = BarricadeMount.Floor;
             T.Check("floor mode: open ground is VALID", placer.Aim(cam));
-            T.Check("floor: mount basis == StandBasis (parity with the ground path)",
-                ColsMatch(BarricadePlacer.MountBasis(BarricadeMount.Floor, placer.Normal, placer.Yaw), DeployableDef.StandBasis(placer.Yaw)));
+            T.Check("floor: barricade stands upright (visual-up = world up)",   // falsifiable: fails if Floor stopped standing the mesh up
+                BarricadeAxes.VisualUp(BarricadePlacer.MountBasis(BarricadeMount.Floor, placer.Normal, placer.Yaw)).Dot(Vector3.Up) > 0.99f);
             cam.Position = new Vector3(8f, 2f, -6f);
             cam.LookAt(new Vector3(9.5f, 2f, -6f), Vector3.Up);
             T.Check("floor mode REJECTS a wall", !placer.Aim(cam));
@@ -80,9 +80,6 @@ namespace UnturnedGodot.Testing
             cam.LookAt(new Vector3(20f, 8f, -6f), Vector3.Forward);
             T.Check("sky: aiming at nothing is INVALID", !placer.Aim(cam));
         }
-
-        static bool ColsMatch(Basis a, Basis b) =>
-            (a.Column0 - b.Column0).Length() < 1e-3f && (a.Column1 - b.Column1).Length() < 1e-3f && (a.Column2 - b.Column2).Length() < 1e-3f;
     }
 
     // AlignUpTo (the Sticky flush rotation) + YawFacing (the Wall facing yaw) are the two orientation primitives.
@@ -91,6 +88,7 @@ namespace UnturnedGodot.Testing
         public override string Name => "barricade.orientation_primitives";
         public override IEnumerable<Step> Run()
         {
+            yield return Ticks(1);   // suspend once -- a no-yield coroutine completes inside the host's StartNext (was a masked NRE)
             foreach (var n in new[] { Vector3.Up, Vector3.Down, Vector3.Right, Vector3.Forward, new Vector3(1f, 1f, 0f).Normalized() })
                 T.Check($"AlignUpTo maps up onto {n}", BarricadePlacer.AlignUpTo(n).Column1.Dot(n) > 0.999f);
             T.Check("AlignUpTo floor case is exactly identity", BarricadePlacer.AlignUpTo(Vector3.Up) == Basis.Identity);
@@ -98,6 +96,10 @@ namespace UnturnedGodot.Testing
             foreach (var n in new[] { Vector3.Right, Vector3.Left, Vector3.Forward, Vector3.Back, new Vector3(1f, 0f, 1f).Normalized() })
                 T.Check($"YawFacing makes the front face {n}",
                     BarricadeAxes.Facing(DeployableDef.StandBasis(BarricadePlacer.YawFacing(n))).Dot(n) > 0.999f);
+            // Upright-authored defs (wind turbine) skip the flat stand-up: their authored up (local +Y) stays world-up.
+            // Falsifiable: with the old MountBasis (StandBasis for everything) this is a horizontal facing -> ~0.
+            T.Check("upright def stays vertical (not stood-up sideways)",
+                BarricadePlacer.MountBasis(BarricadeMount.Floor, Vector3.Up, 25f, upright: true).Column1.Dot(Vector3.Up) > 0.99f);
             yield break;
         }
     }
@@ -278,6 +280,13 @@ namespace UnturnedGodot.Testing
             placer.CanAttach = (p, n, c) => false;
             T.Check("hook refuses -> invalid (the structure gate has teeth)", !placer.Aim(cam));
 
+            // the placer must hand the hook the ACTUAL hit collider (not a stand-in), or the structure gate can't tell
+            // which piece it's judging -- the review caught this exact hole in the structure seam test.
+            Node seen = null;
+            placer.CanAttach = (p, n, c) => { seen = c; return true; };
+            placer.Aim(cam);
+            T.Check("placer hands the hook the real hit collider", seen == wall);
+
             // NO-STACK survives a wired hook: aim down at a deployable with a hook that AGREES -> still invalid.
             // (the old either/or bug let this through: the hook replaced DefaultAttachable, dropping the no-stack rule.)
             placer.Mount = BarricadeMount.Floor;
@@ -291,6 +300,38 @@ namespace UnturnedGodot.Testing
             cam.Position = new Vector3(-8f, 3f, 3f);
             cam.LookAt(new Vector3(-8f, 0f, 3f), Vector3.Back);   // open ground, clear of the props
             T.Check("abstaining hook leaves open-ground placement valid", placer.Aim(cam));
+        }
+    }
+
+    // The clearance sphere must skip the structure lattice (the mount surface): a barricade low on a wall, its sphere
+    // dipping toward the adjacent floor slab, is still placeable. Was a ~0.73m dead zone at the base of every wall,
+    // because the sphere excluded only the exact body the ray hit and counted the floor slab as an obstacle.
+    public class BarricadeClearanceLattice : GameTest
+    {
+        public override string Name => "barricade.clearance_lattice";
+        public override IEnumerable<Step> Run()
+        {
+            Rigs.Ground(World);
+            var cam = new Camera3D { Current = false };
+            World.AddChild(cam);
+            var wall = new StaticBody3D { CollisionLayer = 1 << 0 };
+            wall.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = new Vector3(0.4f, 4f, 4f) } });
+            World.AddChild(wall);
+            wall.GlobalPosition = new Vector3(6f, 2f, 0f);
+            wall.AddToGroup("structures");
+            var floor = new StaticBody3D { CollisionLayer = 1 << 0 };   // a floor slab meeting the wall at its base
+            floor.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = new Vector3(2f, 0.4f, 4f) } });
+            World.AddChild(floor);
+            floor.GlobalPosition = new Vector3(5f, 0f, 0f);
+            floor.AddToGroup("structures");
+            yield return Ticks(2);
+
+            var placer = new BarricadePlacer { Mount = BarricadeMount.Wall };
+            World.AddChild(placer);
+            placer.SetDef(DeployableDef.MetalBarricade);
+            cam.Position = new Vector3(4f, 0.6f, 0f);
+            cam.LookAt(new Vector3(5.8f, 0.6f, 0f), Vector3.Up);   // aim LOW on the wall, so the clearance sphere reaches the floor slab
+            T.Check("barricade low on a wall is VALID (the floor-slab lattice doesn't block clearance)", placer.Aim(cam));
         }
     }
 }

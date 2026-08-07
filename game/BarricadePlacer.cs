@@ -79,12 +79,15 @@ namespace UnturnedGodot
         // facing(yaw) = (sin yaw, 0, cos yaw); solving facing == n gives atan2(n.x, n.z).
         public static float YawFacing(Vector3 n) => Mathf.RadToDeg(Mathf.Atan2(n.X, n.Z));
 
-        // The world basis for a given mount family. Floor/Wall stay upright (StandBasis); Sticky lies flush.
-        public static Basis MountBasis(BarricadeMount mount, Vector3 n, float yaw) => mount switch
+        // The world basis for a given mount family. Floor/Wall keep the model's ground orientation -- StandBasis for a
+        // flat-authored mesh, or a bare yaw for a model authored already-vertical (Upright, e.g. the wind turbine;
+        // matches Deployable.Spawn so its ghost doesn't lie on its side). Sticky tips that whole thing so the mount
+        // axis follows the normal.
+        public static Basis MountBasis(BarricadeMount mount, Vector3 n, float yaw, bool upright = false)
         {
-            BarricadeMount.Sticky => AlignUpTo(n) * DeployableDef.StandBasis(yaw),   // whole stand-up tipped so the mount axis follows the normal
-            _ => DeployableDef.StandBasis(yaw),                                       // Floor + Wall: upright; the yaw already encodes wall-facing for Wall
-        };
+            var ground = upright ? new Basis(Vector3.Up, Mathf.DegToRad(yaw)) : DeployableDef.StandBasis(yaw);
+            return mount == BarricadeMount.Sticky ? AlignUpTo(n) * ground : ground;
+        }
 
         // Which surfaces this mount family accepts (src per-EBuild normal.y gates).
         static bool SurfaceOk(BarricadeMount mount, Vector3 n) => mount switch
@@ -180,7 +183,7 @@ namespace UnturnedGodot
             foreach (var h in space.IntersectShape(pq, 8))
             {
                 var c = h["collider"].As<Node>();
-                if (c == null || c.IsInGroup("terrain") || c.IsInGroup("ground")) continue;   // ground doesn't block (src BLOCK_BARRICADE)
+                if (c == null || c.IsInGroup("terrain") || c.IsInGroup("ground") || c.IsInGroup("structures")) continue;   // ground + the structure lattice (the mount SURFACE) don't block, else the floor slab bricks the bottom of every wall
                 return true;   // a real obstacle: another structure / barricade / vehicle / prop
             }
             return false;
@@ -189,7 +192,7 @@ namespace UnturnedGodot
         void Apply()
         {
             if (_ghost == null) return;
-            _ghost.GlobalTransform = new Transform3D(MountBasis(Mount, Normal, Yaw), MountOrigin());
+            _ghost.GlobalTransform = new Transform3D(MountBasis(Mount, Normal, Yaw, Def != null && Def.Upright), MountOrigin());
             _ghost.MaterialOverride = Valid ? DeployablePlacer.ValidMat : DeployablePlacer.InvalidMat;
             if (_arrowMat != null) { var c = Valid ? ConnectionPort.ArrowBlue : ConnectionPort.ArrowRed; c.A = 0.92f; _arrowMat.AlbedoColor = c; }
         }
@@ -206,7 +209,7 @@ namespace UnturnedGodot
             Valid = true; Point = point; Normal = normal.Normalized(); Yaw = yaw;
             if (_ghost == null) return;
             _ghost.Visible = true;
-            _ghost.GlobalTransform = new Transform3D(MountBasis(Mount, Normal, Yaw), MountOrigin());
+            _ghost.GlobalTransform = new Transform3D(MountBasis(Mount, Normal, Yaw, Def != null && Def.Upright), MountOrigin());
             _ghost.MaterialOverride = DeployablePlacer.ValidMat;
             if (_arrowMat != null) { var c = ConnectionPort.ArrowBlue; c.A = 0.92f; _arrowMat.AlbedoColor = c; }
         }

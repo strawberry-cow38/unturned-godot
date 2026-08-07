@@ -29,7 +29,7 @@ namespace UnturnedGodot
             Vector3 origin = m == BarricadeMount.Floor
                 ? point + Vector3.Up * (def.Upright ? -ab.Position.Y : DeployableDef.GroundLift(ab))
                 : point + normal * Mathf.Min(def.Offset, 0.1f);
-            d.GlobalTransform = new Transform3D(BarricadePlacer.MountBasis(m, normal, yawDeg), origin);
+            d.GlobalTransform = new Transform3D(BarricadePlacer.MountBasis(m, normal, yawDeg, def.Upright), origin);
             d.AddToGroup("barricades");   // a surface barricade (still a "deployable" too — look-at / repair target it either way)
             return d;
         }
