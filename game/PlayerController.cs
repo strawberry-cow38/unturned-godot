@@ -1913,9 +1913,14 @@ namespace UnturnedGodot
         public bool HoldingDetonatorTool => _viewmodel != null && _viewmodel.IsDetonatorViewmodel;   // Detonator (item 1240) in hand -> LMB fires all placed remote Charges; derived from the viewmodel (auto-clears on re-equip)
         DeployableDef _deployable;      // held deployable (null = none)
         SDG.Unturned.Item _deployItem;  // the backing inventory item (null = console `deploy`, i.e. infinite/no consume)
-        DeployablePlacer _placer;       // the world-space ghost preview
+        BarricadePlacer _placer;        // the world-space ghost preview. BarricadePlacer is an API superset of the old
+                                        // DeployablePlacer and behaves identically for Floor-mount defs, but also
+                                        // accepts the WALL and CEILING faces the ground placer rejected outright.
         float _placeTimer;              // >0 while the brief place gesture runs; the object drops at 0
         Vector3 _placePoint; float _placeYaw;   // target FROZEN at click -> the object drops there even if you look away
+        Vector3 _placeNormal = Vector3.Up;      // the surface normal frozen with them: a wall barricade's whole orientation
+                                                // hangs off it, and re-deriving it at drop time would read the surface the
+                                                // player is looking at THEN, not the one they clicked
         const float PlaceTime = 0.45f;  // src UseableBarricade builds over the Use-clip length; a short stand-in here
         public bool HoldingDeployable => _deployable != null;
 
@@ -2030,9 +2035,13 @@ namespace UnturnedGodot
             AddChild(_viewmodel);
             RelinkViewmodelLighting();
             _placer?.QueueFree();
-            _placer = new DeployablePlacer();
+            _placer = new BarricadePlacer();
             GetParent().AddChild(_placer);      // world space: the ghost stays put in the world, not glued to the player
-            _placer.SetDef(def);
+            // Structures get a say in where a barricade may mount. Via the shared hook, NOT CanAttach directly:
+            // CanAttach answers "is there a structure face here" and returns false on open terrain, which would
+            // make every generator and crate unplaceable on the ground.
+            _placer.CanAttach = StructureManager.BarricadeAttachHook;
+            _placer.SetDef(def);            // carries the def's own mount family (Floor / Wall / Sticky)
             GD.Print($"[deploy] holding {def.Name} -- aim, LMB to place");
         }
 
@@ -2092,7 +2101,7 @@ namespace UnturnedGodot
         {
             if (_placer == null || _deployable == null || _placeTimer > 0f || _dead) return;
             if (!_placer.Aim(_cam)) return;   // only from a VALID (blue) spot
-            _placePoint = _placer.Point; _placeYaw = _placer.Yaw;   // FROZEN at click (strawberry: don't drift with the mouse)
+            _placePoint = _placer.Point; _placeYaw = _placer.Yaw; _placeNormal = _placer.Normal;   // FROZEN at click (strawberry: don't drift with the mouse)
             _viewmodel?.PlayDeployUse();   // arms play the src "Use" place motion; the object drops when it finishes
             float useLen = _viewmodel?.DeployUseLength() ?? 0f;
             _placeTimer = useLen > 0f ? useLen : PlaceTime;   // build over the Use-clip length (src useTime), else the short stand-in
@@ -2105,7 +2114,7 @@ namespace UnturnedGodot
             if (_deployable == null || _placer == null) return;
             if (_placeTimer > 0f)   // FROZEN: ghost stays at the click point, aim is ignored until the object drops
             {
-                _placer.Freeze(_placePoint, _placeYaw);
+                _placer.Freeze(_placePoint, _placeNormal, _placeYaw);   // normal too: a wall ghost frozen with an assumed up-normal snaps flat mid-gesture
                 _placeTimer -= dt;
                 if (_placeTimer <= 0f)
                 {
@@ -2172,7 +2181,13 @@ namespace UnturnedGodot
                         _viewmodel?.PlayDeployHold();
                         return;
                     }
-                    Deployable.Spawn(GetParent(), _deployable, _placePoint, _placeYaw, _deployItem);   // backing item restores a picked-up generator's fuel + HP
+                    // A non-Floor def is a SURFACE barricade: it has to be re-seated against the frozen normal, and
+                    // Deployable.Spawn only knows how to stand things up on the ground. Floor defs (every existing
+                    // deployable -- generators, crates, charges) take the original path unchanged.
+                    if (_deployable.Mount != BarricadeMount.Floor)
+                        Barricade.PlaceOnSurface(GetParent(), _deployable, _placePoint, _placeNormal, _placeYaw, backing: _deployItem);
+                    else
+                        Deployable.Spawn(GetParent(), _deployable, _placePoint, _placeYaw, _deployItem);   // backing item restores a picked-up generator's fuel + HP
                     PlayPlaceSound(_deployable.PlaceSound, _placePoint);   // src: playSound(barricadeAsset.use) on build -- the .dat PlacementAudioClip
                     GD.Print($"[deploy] placed {_deployable.Name} at {_placePoint}");
                     // consume one from the bag (like a placed barricade). Console `deploy` has no backing item -> infinite.

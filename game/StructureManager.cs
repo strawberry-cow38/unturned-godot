@@ -32,6 +32,7 @@ namespace UnturnedGodot
         public static StructureManager Instance { get; private set; }
 
         public const string Group = "structures";   // the collision/scene group barricades and damage query
+        public const string SlotMeta = "ug_slot";   // node meta: the piece's slot key, so a raycast hit resolves to its Piece
 
         public sealed class Piece
         {
@@ -152,6 +153,50 @@ namespace UnturnedGodot
             return Mathf.Abs(hit.Value.Normal.Dot(normal.Normalized())) > 0.5f;
         }
 
+        /// <summary>The Piece a physics hit landed on, or null when the collider is not one of ours. Resolved by
+        /// the slot key stamped on the node at creation, so it is an exact answer and a dictionary lookup --
+        /// no nearest-piece search, no radius to tune.</summary>
+        public Piece PieceForCollider(Node collider)
+        {
+            for (var n = collider; n != null; n = n.GetParent())
+                if (n.HasMeta(SlotMeta) && _bySlot.TryGetValue((string)n.GetMeta(SlotMeta), out var p))
+                    return p;
+            return null;
+        }
+
+        /// <summary>The outward face of a piece: up for floors and roofs, the yaw-facing horizontal for walls.</summary>
+        public static Vector3 FaceNormal(Piece p) => StructureCatalog.IsFace(p.Construct)
+            ? Vector3.Up
+            : new Vector3(Mathf.Sin(Mathf.DegToRad(p.YawDeg)), 0f, Mathf.Cos(Mathf.DegToRad(p.YawDeg))).Normalized();
+
+        /// <summary>The predicate the DEPLOYABLE PLACER wants, which is not the same question as
+        /// <see cref="CanAttach"/>. CanAttach answers "is there a structure face here", and on open terrain the
+        /// honest answer is NO -- so wiring CanAttach straight into BarricadePlacer.CanAttach (as its own header
+        /// suggests) refuses every generator, crate and charge placed on the ground, because the placer treats a
+        /// false as "you cannot build here" rather than "not my department".
+        ///
+        /// This one abstains instead: the collider is not a structure -> true, and let the mount family's own
+        /// surface gate decide. Only a hit ON a piece has to agree with that piece's face.
+        ///
+        /// It takes the COLLIDER rather than guessing from the point, because guessing cannot work here. A
+        /// piece's origin is its base, so a hit 2 m up a 4.25 m wall is nowhere near it; widen the radius to
+        /// compensate and a generator placed on the ground a metre from that wall resolves to the WALL, whose
+        /// horizontal face disagrees with the ground's up-normal, and gets refused. Nearest-piece-by-distance is
+        /// the wrong instrument for "what surface am I touching" in both directions at once.</summary>
+        public bool AllowsBarricadeAt(Vector3 world, Vector3 normal, Node collider)
+        {
+            var p = PieceForCollider(collider);
+            if (p == null) return true;                    // ground, terrain, a prop: not this system's call to make
+            if (normal == Vector3.Zero) return true;
+            return Mathf.Abs(FaceNormal(p).Dot(normal.Normalized())) > 0.5f;
+        }
+
+        /// <summary>The one wiring both PlayerController and the integration test use, so the test exercises the
+        /// real hook rather than a hand-rolled copy that can drift from it. Null-safe: a world with no structure
+        /// manager places deployables exactly as it always did.</summary>
+        public static bool BarricadeAttachHook(Vector3 world, Vector3 normal, Node collider)
+            => Instance?.AllowsBarricadeAt(world, normal, collider) ?? true;
+
         // ---- placement -------------------------------------------------------------------------------------
 
         /// <summary>Is this slot free AND supported? Returns the reason when not, so the ghost can say why
@@ -221,6 +266,7 @@ namespace UnturnedGodot
                 Pos = pos, YawDeg = yaw, Key = StructureCatalog.SlotKey(pos, c),
             };
             _bySlot[piece.Key] = piece;
+            node.SetMeta(SlotMeta, piece.Key);   // lets a physics hit resolve straight back to its Piece (see PieceForCollider)
             _all.Add(piece);
             return piece;
         }
@@ -390,6 +436,7 @@ namespace UnturnedGodot
                     };
                     if (_bySlot.ContainsKey(piece.Key)) { node.QueueFree(); continue; } // duplicate slot in the save
                     _bySlot[piece.Key] = piece;
+                    node.SetMeta(SlotMeta, piece.Key);
                     _all.Add(piece);
                     n++;
                 }

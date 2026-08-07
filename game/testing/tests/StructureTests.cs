@@ -324,4 +324,108 @@ namespace UnturnedGodot.Testing
             if (Godot.FileAccess.FileExists(path)) DirAccess.RemoveAbsolute(ProjectSettings.GlobalizePath(path));
         }
     }
+
+    // The SEAM between structures and barricades, exercised through the exact hook PlayerController installs.
+    //
+    // Both subsystems are green in isolation and the merge compiles clean, which is precisely the situation
+    // where the integration bug lives. BarricadePlacer's own header proposes wiring
+    // `placer.CanAttach = StructureManager.Instance.CanAttach` -- and that is wrong in a way no test on either
+    // branch can see. CanAttach answers "is there a structure face here"; on open terrain it answers NO, and the
+    // placer reads a false as "you may not build here". Wire it verbatim and every generator, crate and charge
+    // becomes unplaceable on the ground, in a build where every existing barricade and structure test still
+    // passes: the barricade tests construct a placer with NO hook, so the hook is the one thing they cannot see.
+    //
+    // So the first check below is the one with the teeth, and it only has teeth because a StructureManager is
+    // alive and holding pieces while we aim at bare ground far away from them. With no manager the hook is
+    // trivially true and the check would pass while proving nothing.
+    public class StructureBarricadeAttachSeam : GameTest
+    {
+        public override string Name => "structure.barricade_seam";
+
+        public override IEnumerable<Step> Run()
+        {
+            Rigs.Ground(World);
+            var sm = new StructureManager();
+            World.AddChild(sm);
+            var cam = new Camera3D { Current = false };
+            World.AddChild(cam);
+            yield return Ticks(1);
+
+            // a real base: floor at the origin tile, wall on its +x edge (the manager snaps both).
+            var floor = sm.Place(Vector3.Zero, EConstruct.Floor, 0);
+            var wall = sm.Place(new Vector3(StructureCatalog.HalfEdge, 0f, 0f), EConstruct.Wall, 0);
+            T.Check("fixture: floor and wall both placed", floor != null && wall != null);
+            yield return Ticks(2);   // let the new colliders register with the physics space
+
+            var placer = new BarricadePlacer();
+            World.AddChild(placer);
+            placer.CanAttach = StructureManager.BarricadeAttachHook;   // EXACTLY what PlayerController installs
+
+            // ---- 1. the regression guard: ground placement must survive the hook ----
+            placer.SetDef(DeployableDef.Generator);   // Mount = Floor, like every deployable that already existed
+            cam.Position = new Vector3(40f, 2.2f, 40f);
+            cam.LookAt(new Vector3(41.5f, 0f, 41.5f), Vector3.Up);
+            bool groundOk = placer.Aim(cam);
+            T.Check("a FLOOR deployable still places on open ground with the structure hook wired", groundOk);
+            T.Check("the manager is genuinely live, so that check was not vacuous",
+                StructureManager.Instance == sm && sm.Count == 2);
+            T.Check("and the hook itself abstains on open ground rather than refusing it",
+                StructureManager.BarricadeAttachHook(new Vector3(40f, 0f, 40f), Vector3.Up, null));
+            // the distinction the seam turns on: the raw CanAttach says NO out here, which is the correct answer
+            // to its own question and the wrong answer to the placer's.
+            T.Check("raw CanAttach still reports no structure face on open ground (the trap)",
+                !sm.CanAttach(new Vector3(40f, 0f, 40f), Vector3.Up));
+
+            // ---- 2. a WALL barricade mounts on a real structure wall ----
+            placer.SetDef(DeployableDef.MetalBarricade);   // Mount = Wall
+            T.Check("the def carries its own mount family", placer.Mount == BarricadeMount.Wall);
+            float wx = wall.Pos.X, wy = StructureCatalog.WallPivotOffset;
+            cam.Position = new Vector3(wx + 3f, wy, 0f);
+            cam.LookAt(new Vector3(wx, wy, 0f), Vector3.Up);   // straight at the wall's outward face
+            bool wallOk = placer.Aim(cam);
+            Vector3 mountProbe = placer.Point;
+            T.Check($"a WALL barricade mounts on a structure wall (normal {placer.Normal})", wallOk);
+            T.Check($"the mount surface is vertical, not the floor ({placer.Normal.Y:0.00})",
+                Mathf.Abs(placer.Normal.Y) < 0.1f);
+            T.Check("it faces out of the wall",
+                BarricadeAxes.Facing(BarricadePlacer.MountBasis(BarricadeMount.Wall, placer.Normal, placer.Yaw))
+                    .Dot(placer.Normal) > 0.99f);
+
+            // ...and the structure gate ENGAGED rather than abstained. Worth asserting separately, because the
+            // first version of this passed for the wrong reason: the gate resolved the piece by nearest-origin
+            // within 1.5 m, a wall's origin is its base, and the hit is 2.1 m up the face -- so it found nothing
+            // and returned "not my department". Valid either way, and the wall rule totally untested. Resolving
+            // by COLLIDER is what makes the two outcomes distinguishable.
+            T.Check("the gate resolves the hit to the actual wall piece",
+                sm.PieceForCollider(wall.Node) != null && sm.PieceForCollider(wall.Node).Construct == EConstruct.Wall);
+            T.Check("a hit on the wall AGREES with a horizontal normal",
+                sm.AllowsBarricadeAt(mountProbe, placer.Normal, wall.Node));
+            T.Check("...and the same wall REFUSES an up-normal, so the gate is doing work",
+                !sm.AllowsBarricadeAt(mountProbe, Vector3.Up, wall.Node));
+            T.Check("a floor piece is the other way round: agrees with up, refuses horizontal",
+                sm.AllowsBarricadeAt(floor.Pos, Vector3.Up, floor.Node)
+                && !sm.AllowsBarricadeAt(floor.Pos, new Vector3(1f, 0f, 0f), floor.Node));
+
+            // ---- 3. supplying the hook must not drop the no-stacking rule ----
+            // This is the other half of the seam: the placer used to pick CanAttach *instead of* its own
+            // attachability rule, so wiring structures in would have quietly made barricades stackable.
+            Vector3 mountPoint = placer.Point, mountNormal = placer.Normal;
+            float mountYaw = placer.Yaw;
+            var planted = Barricade.PlaceOnSurface(World, DeployableDef.MetalBarricade, mountPoint, mountNormal, mountYaw);
+            T.Check("fixture: the barricade planted and is tagged", planted != null && planted.IsInGroup("barricades"));
+            yield return Ticks(2);
+            cam.Position = new Vector3(wx + 3f, wy, 0f);
+            cam.LookAt(new Vector3(wx, wy, 0f), Vector3.Up);   // same aim -- now the barricade is in the way
+            T.Check("cannot stack a barricade on another barricade, hook or no hook", !placer.Aim(cam));
+
+            // ---- 4. the frozen normal survives the place gesture ----
+            // PlayerController freezes point+normal+yaw at the click. Freezing point+yaw alone (the old
+            // two-arg overload) defaults the normal to UP, so a wall barricade snaps flat for the length of
+            // the placement animation and then lands correctly -- a visible pop nobody would call a bug report.
+            placer.Freeze(mountPoint, mountNormal, mountYaw);
+            T.Check("freeze keeps the wall normal", placer.Normal.Dot(mountNormal) > 0.99f);
+            placer.Freeze(mountPoint, mountYaw);
+            T.Check("the two-arg freeze assumes UP -- which is why the normal is carried", placer.Normal.Dot(Vector3.Up) > 0.99f);
+        }
+    }
 }

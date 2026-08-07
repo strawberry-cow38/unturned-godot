@@ -1,6 +1,8 @@
 # Structures — how to test it
 
 Branch: `feat/structures`. Companion branch: `feat/barricades` (cow tools).
+**`feat/build-integration`** is both of them merged with the held-item wiring done — test there if you want
+one session with everything in it. See "The integration branch" at the bottom.
 
 ## What's new
 
@@ -106,6 +108,51 @@ The **melee wiring** is the exception and is called out deliberately: the manage
 tested, but the input path that calls them needs a live camera and physics raycast, which L1 doesn't give.
 That's the classic "logic tested, never actually called" gap, so treat step 6 above as the real check on it
 until it has a harness of its own.
+
+## The integration branch
+
+`feat/build-integration` = `feat/structures` + `feat/barricades`, plus the one piece neither branch could land
+alone: the held-item place flow in `PlayerController`, which both subsystems needed and only one of us could
+edit without a conflict.
+
+What the wiring is:
+
+- the placer is now `BarricadePlacer` (an API superset of `DeployablePlacer`, identical for `Floor` defs, but
+  it also accepts wall and ceiling faces);
+- the surface **normal** is frozen at the click alongside the point and yaw, and passed to `Freeze`. Freeze
+  point+yaw only and a wall barricade snaps flat for the length of the place animation, then lands correctly —
+  a visible pop that reads as a glitch rather than a bug;
+- a def whose `Mount != Floor` spawns through `Barricade.PlaceOnSurface`; every existing deployable is `Floor`
+  and takes the original `Deployable.Spawn` path untouched.
+
+### The seam bug worth knowing about
+
+`BarricadePlacer`'s header proposed wiring `placer.CanAttach = StructureManager.Instance.CanAttach`. Don't.
+`CanAttach` answers *"is there a structure face here"*, and on open terrain the honest answer is **no** — while
+the placer reads a false as *"you may not build here"*. Wired that way, every generator, crate and charge
+becomes unplaceable on the ground, and **both branches stay fully green**, because the barricade tests build a
+placer with no hook at all. The hook is the one thing they structurally cannot see.
+
+The wiring is `StructureManager.BarricadeAttachHook`, which abstains instead of refusing, and which takes the
+**collider** rather than the hit point. Point-and-radius cannot work here in either direction: a piece's origin
+is its base, so a hit 2 m up a 4.25 m wall is nowhere near it, and widening the radius to compensate makes a
+generator on the ground beside that wall resolve *to the wall*, whose horizontal face disagrees with the
+ground's up-normal, and get refused.
+
+Two smaller fixes at the same seam:
+
+- supplying `CanAttach` used to **replace** the placer's own attachability rule instead of adding to it, so
+  wiring structures in would have silently made barricades stackable on other barricades. Both gates now apply.
+- `structure.barricade_seam` (17 checks) covers this, and was itself verified by wiring the *wrong* hook and
+  confirming it goes red. Its first version passed for the wrong reason — the gate abstained on the wall
+  instead of agreeing with it — so it now asserts that the same wall piece **refuses** an up-normal, which is
+  only true if the gate is actually engaging.
+
+### Still open
+
+- `MetalBarricade` (id 9120) is not in `DeployableDef.All`/`ById`, so it is reachable from a def reference but
+  not yet obtainable as an item. It joins the rail when item-id→def placement is wired.
+- MP placement carries yaw only, so a wall barricade's full orientation does not survive the wire yet.
 
 ## Known, not-mine
 

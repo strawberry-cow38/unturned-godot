@@ -4364,6 +4364,23 @@ namespace UnturnedGodot
             bool roof = bt.Spawn(new Vector3(0f, StructureCatalog.WallHeight, midZ), EConstruct.Roof, 2) != null;
             GD.Print($"[BUILD] corner pillars placed: {pillars}/4, roof: {roof}");
 
+            // INTEGRATION proof: a barricade mounted on a structure WALL. This is the whole point of merging the
+            // two branches -- the ground DeployablePlacer rejected any surface with normal.y < 0.01, so before
+            // this a barricade could only ever sit on the floor. Mounted through Barricade.PlaceOnSurface with
+            // the wall's real outward face, the same call the held-item place flow makes.
+            int mounted = 0;
+            foreach (var pc in StructureManager.Instance.All)
+            {
+                if (pc.Construct != EConstruct.Wall || pc.Tier != 2) continue;   // one, on a metal wall
+                var n = StructureManager.FaceNormal(pc);
+                float halfThick = StructureCatalog.Extents(EConstruct.Wall).Z * 0.5f;
+                var at = pc.Pos + Vector3.Up * StructureCatalog.WallPivotOffset + n * (halfThick + 0.02f);
+                Barricade.PlaceOnSurface(this, DeployableDef.MetalBarricade, at, n, BarricadePlacer.YawFacing(n));
+                mounted++;
+                break;
+            }
+            GD.Print($"[BUILD] wall-mounted barricades: {mounted}");
+
             // Framed off the LATTICE, not hardcoded metres. The old camera sat at (6, 4.5, 7) for a 3 m demo;
             // on the real 6 m tile that is INSIDE the base looking at the back of a wall, which is what the
             // first render of this showed. Deriving it from EdgeLength means the shot survives the next
