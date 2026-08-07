@@ -83,9 +83,9 @@ Note the `--` before the game args, and that `--shot=` takes a **file** path, no
 ./test.sh --l1 --only 'structure.*'
 ```
 
-120 checks across `structure.lattice`, `structure.damage_save`, `structure.query`,
-`structure.repair_salvage`, `structure.explosion`, `structure.charge_raid`, `structure.doorway` and
-`structure.barricade_seam`.
+134 checks across `structure.lattice`, `structure.damage_save`, `structure.query`,
+`structure.repair_salvage`, `structure.explosion`, `structure.charge_raid`, `structure.doorway`,
+`structure.aimed_actions` and `structure.barricade_seam`.
 
 Two of these were verified by deliberately breaking the code and confirming the test goes red — the
 explosion suite with the line-of-sight rule removed (the far wall then takes 148 damage through a wall), and
@@ -131,10 +131,18 @@ Placement, snapping, support, damage, upgrade, repair, salvage and save/load are
 assert on outcomes — where a piece physically ends up, what the manager actually returns — rather than
 re-deriving the rule under test.
 
-The **melee wiring** is the exception and is called out deliberately: the manager-level `Damage`/`Repair` are
-tested, but the input path that calls them needs a live camera and physics raycast, which L1 doesn't give.
-That's the classic "logic tested, never actually called" gap, so treat step 6 above as the real check on it
-until it has a harness of its own.
+The **crosshair path** (melee / salvage / upgrade) has its own harness now — `structure.aimed_actions` drives
+a real `PlayerController` with a real camera and raycast. It was previously listed here as untested, and that
+gap was hiding a live bug: `AimedStructure` took the nearest piece within 3 m of the hit, measured to each
+piece's *origin*, and an origin sits at its base. Aiming at the upper half of a wall found the floor beside it,
+and past 3 m up found nothing — so melee, salvage and upgrade silently did nothing near the top of a wall,
+with every manager-level test green because none went through the aim. It resolves by collider now.
+
+That test is also a lesson in its own right. It passed alone and failed in the full suite, because
+`Rigs.Player` blocks ~3 s loading gun assets when run cold; warm, it returns instantly and the player's
+deferred setup lands in the gap between aiming and checking, resetting the camera. The aim is a
+**precondition**, so it is re-established immediately before each action with no yield in between, and
+asserted rather than assumed.
 
 ## The integration branch
 
