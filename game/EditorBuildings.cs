@@ -66,6 +66,29 @@ namespace UnturnedGodot
         public int SelectedOpening => _selOpening;
         public void Arm(int archetype) => _armed = archetype;
 
+        /// <summary>The palette new walls are drawn with. A retail "material" is only a choice of eight flat
+        /// colours -- there are no textures on these buildings -- so this is an index, not an asset.</summary>
+        public int ActiveMaterial;
+
+        public void SetMaterial(WallSurface w, int id)
+        {
+            if (w == null) return;
+            int before = w.MaterialId;
+            w.MaterialId = Mathf.PosMod(id, Mathf.Max(1, WallMaterials.Count));
+            w.Rebuild();
+            _editor?.PushUndo("wall material", () => { if (IsInstanceValid(w)) { w.MaterialId = before; w.Rebuild(); } });
+        }
+
+        /// <summary>Step the palette of the selected wall, or of every wall when nothing is selected -- a
+        /// building is normally one material, so recolouring all of it is the common case.</summary>
+        public void CycleMaterial(int delta)
+        {
+            if (WallMaterials.Count == 0) return;
+            if (_selWall != null) { SetMaterial(_selWall, _selWall.MaterialId + delta); ActiveMaterial = _selWall.MaterialId; return; }
+            ActiveMaterial = Mathf.PosMod(ActiveMaterial + delta, WallMaterials.Count);
+            foreach (var w in _walls) { w.MaterialId = ActiveMaterial; w.Rebuild(); }
+        }
+
         // ---- public seams, driven by tests as well as by the mouse ------------------------------------
 
         public WallSurface AddWall(Vector3 origin, float yawDeg, float length)
@@ -74,7 +97,7 @@ namespace UnturnedGodot
             // structures grid; free-length walls would drift off it for no gain
             float snapped = Mathf.Max(WallOpenings.LatticeStep,
                 Mathf.Round(length / WallOpenings.LatticeStep) * WallOpenings.LatticeStep);
-            var w = new WallSurface { Length = snapped, Position = origin, RotationDegrees = new Vector3(0f, yawDeg, 0f) };
+            var w = new WallSurface { Length = snapped, Position = origin, RotationDegrees = new Vector3(0f, yawDeg, 0f), MaterialId = ActiveMaterial };
             AddChild(w);
             _walls.Add(w);
             _pickToWall[w.BodyRid] = w;

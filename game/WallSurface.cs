@@ -21,11 +21,17 @@ namespace UnturnedGodot
         public float Thickness = WallOpenings.DefaultThickness;   // 0.70 exterior, 0.50 for partitions
         public readonly List<WallOpening> Openings = new();
 
-        // Retail palette values (House_00_tex.png, a 4x2 8-texel palette). The reveal is NOT a contrasting
-        // frame: all 74 reveal strips in House_00 point at texel (2,1), which 20 big wall panels also use. So
-        // the lining is the same colour family as the wall -- lining GEOMETRY, wall COLOUR.
-        public Color Tint = new(119f / 255f, 97f / 255f, 77f / 255f);        // texel (0,1)
-        public Color TrimTint = new(80f / 255f, 64f / 255f, 48f / 255f);     // texel (2,1), the reveal colour
+        /// <summary>Which retail palette this wall wears. A "material" on these buildings is nothing but a
+        /// palette -- there are no textures, only eight flat colours per model -- so the editor picks an id and
+        /// the wall and its reveal take two MEASURED texels from it.
+        ///
+        /// The reveal IS a contrasting frame, and obviously so once the texture is sampled the way the engine
+        /// samples it: Post_0 is orange trim on grey, Fire_0 white on red, Police_0 blue on tan. An earlier
+        /// pass concluded the opposite because it read the palette without the V-flip that ObjMesh.cs applies
+        /// to these same textures, which lands one row low -- every building came back a shade of brown.</summary>
+        public int MaterialId;
+        public Color Tint => WallMaterials.At(MaterialId).Wall;
+        public Color TrimTint => WallMaterials.At(MaterialId).Reveal;
         public bool ShowTrim = true;
 
         /// <summary>Trim sits proud of BOTH faces and never scales with the opening -- widen a garage and the
@@ -67,6 +73,7 @@ namespace UnturnedGodot
             float t = Thickness * 0.5f;
             var st = new SurfaceTool();
             st.Begin(Mesh.PrimitiveType.Triangles);
+            st.SetSmoothGroup(uint.MaxValue);     // = flat. See AddTrim's note; a box wants creased corners.
             foreach (var s in solids)
                 AddWallBox(st, s, solids, t);
             // GenerateNormals BEFORE Index: indexing welds vertices, and welding before normals exist lights
@@ -80,6 +87,11 @@ namespace UnturnedGodot
             {
                 var tt = new SurfaceTool();
                 tt.Begin(Mesh.PrimitiveType.Triangles);
+                // FLAT, explicitly. SurfaceTool's default smooth group averages the normals of every face
+                // meeting at a position, so an indexed pile of boxes lights as one rounded shell: the jamb of
+                // a window bulges and necks like a turned spindle. On a 0.20 bar that is not subtle, and it
+                // survives a shadows-off render, which is what rules out the obvious suspect.
+                tt.SetSmoothGroup(uint.MaxValue);
                 foreach (var o in Openings) AddTrim(tt, o);
                 tt.GenerateNormals();
                 tt.Index();
@@ -112,13 +124,22 @@ namespace UnturnedGodot
             //
             // A bar on the face leaves the wall's own cut faces exposed inside the frame -- a pale band on all
             // four sides of every opening, which is exactly what it looked like.
+            // Every lining is grown by BURY past the hole edge so it INTERPENETRATES the wall, and the four
+            // linings run edge to edge so they interpenetrate each other at the corners. Sized to meet exactly
+            // instead, each lining's outer face lands on the wall's jamb face at the same depth -- coplanar
+            // duplicates, which z-fight into a bowtie down the middle of the jamb that reads as broken frame
+            // geometry. Overlap is free here: the surfaces that intersect are buried, and the two meshes are
+            // one flat colour each, so there is nothing for the seam to show.
             float t = Thickness * 0.5f + TrimProud, w = TrimProfile;
+            const float BURY = 0.01f;
             float u0 = o.U, u1 = o.U1, v0 = o.V, v1 = o.V1;
-            AddBox(st, new Vector3(u0, v0, -t), new Vector3(u0 + w, v1, t));          // left lining
-            AddBox(st, new Vector3(u1 - w, v0, -t), new Vector3(u1, v1, t));          // right lining
-            AddBox(st, new Vector3(u0 + w, v1 - w, -t), new Vector3(u1 - w, v1, t));  // head lining
-            if (o.V > WallOpenings.Eps)                                                // floor-pinned openings have no sill
-                AddBox(st, new Vector3(u0 + w, v0, -t), new Vector3(u1 - w, v0 + w, t));
+            bool sill = o.V > WallOpenings.Eps;                    // floor-pinned openings have none
+            float vb = sill ? v0 - BURY : v0;
+            AddBox(st, new Vector3(u0 - BURY, vb, -t), new Vector3(u0 + w, v1 + BURY, t));      // left lining
+            AddBox(st, new Vector3(u1 - w, vb, -t), new Vector3(u1 + BURY, v1 + BURY, t));      // right lining
+            AddBox(st, new Vector3(u0 - BURY, v1 - w, -t), new Vector3(u1 + BURY, v1 + BURY, t)); // head
+            if (sill)
+                AddBox(st, new Vector3(u0 - BURY, v0 - BURY, -t), new Vector3(u1 + BURY, v0 + w, t));
         }
 
         static void AddWallBox(SurfaceTool st, WallSolid s, List<WallSolid> all, float t)

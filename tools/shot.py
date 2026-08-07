@@ -62,6 +62,11 @@ SCENES = {
     # `PROP=Street_Light_0 tools/shot.py prop`
     "prop":     (["--proptest=" + os.environ.get("PROP", "Street_Light_0"), "--shot={OUT}"], {}, False, 200,
                  "ONE prop at identity + RGB axes (set PROP=Name)"),
+    # building tool. `walls` is the room; `wallclose` is the frame/reveal detail straight on, because
+    # frame width is invisible at room distance; `wallswatch` is one panel per retail palette.
+    "walls":     (["--walls", "--shot={OUT}"], {}, False, 200, "building tool: a drawn room with openings"),
+    "wallclose": (["--walls", "--shot={OUT}"], {"UG_WALLCLOSE": "1"}, False, 200, "close on one opening: reveal + frame"),
+    "wallswatch":(["--walls", "--shot={OUT}"], {"UG_WALLSWATCH": "1"}, False, 200, "all 52 retail palettes, one panel each"),
 }
 MULTI = {"menu": "menu_00.png", "vehicle": "rig_00.png"}   # scenes whose capture lands under {TMP}
 

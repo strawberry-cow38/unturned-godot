@@ -4249,7 +4249,14 @@ namespace UnturnedGodot
                 AmbientLightEnergy = 0.9f,
             };
             AddChild(new WorldEnvironment { Environment = env });
-            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-48f, -52f, 0f), LightEnergy = 1.25f, ShadowEnabled = true });
+            // UG_WALLNOSHADOW / UG_WALLNOMESH exist to separate a GEOMETRY fault from a SHADING one. A thin
+            // box at grazing incidence to the sun and a bowtie quad look identical in a beauty shot, and
+            // guessing between them from one render is how you fix the wrong thing twice.
+            AddChild(new DirectionalLight3D
+            {
+                RotationDegrees = new Vector3(-48f, -52f, 0f), LightEnergy = 1.25f,
+                ShadowEnabled = System.Environment.GetEnvironmentVariable("UG_WALLNOSHADOW") != "1",
+            });
 
             var ground = new StaticBody3D { CollisionLayer = 1 << 0 };
             ground.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
@@ -4264,11 +4271,62 @@ namespace UnturnedGodot
             float pitch = UnturnedSim.WallOpenings.StoreyPitch;     // 4.75
             const float L = 12f, D = 9f;
 
+            // UG_WALLMAT picks the retail palette; default 0. There are 52 sampled from the buildings.
+            int matId = int.TryParse(System.Environment.GetEnvironmentVariable("UG_WALLMAT"), out var mi) ? mi : 0;
+            GD.Print($"[walls] material {matId} of {WallMaterials.Count}: {WallMaterials.At(matId).Name}");
+
             WallSurface Wall(float len, Vector3 pos, float yaw)
             {
-                var w = new WallSurface { Length = len, Height = H, Position = pos, RotationDegrees = new Vector3(0f, yaw, 0f) };
+                var w = new WallSurface { Length = len, Height = H, Position = pos, RotationDegrees = new Vector3(0f, yaw, 0f), MaterialId = matId };
                 AddChild(w);
                 return w;
+            }
+
+            // UG_WALLSWATCH renders one panel per palette instead of the room -- the whole material range in a
+            // single frame, which is the only way to see that the roles were sampled right across all 52 and
+            // not just on the house they were derived from.
+            if (System.Environment.GetEnvironmentVariable("UG_WALLSWATCH") == "1")
+            {
+                ground.Visible = false;          // a swatch is a chart, not a scene
+                int n = WallMaterials.Count, cols = 7;
+                const float PW = 11f, GAP = 2.0f;
+                for (int i = 0; i < n; i++)
+                {
+                    int cx = i % cols, cy = i / cols;
+                    const float LIFT = 3.0f;   // clear of the ground plane, so no row is half-buried
+                    var m = WallMaterials.At(i);
+                    var w = new WallSurface
+                    {
+                        Length = PW, Height = H, Thickness = m.Thickness, MaterialId = i,
+                        Position = new Vector3(cx * (PW + GAP), LIFT + cy * (H + GAP), 0f),
+                    };
+                    AddChild(w);
+                    w.Openings.Add(new UnturnedSim.WallOpening(1.5f, 0f, 2.5f, H - 0.5f));      // door
+                    w.Openings.Add(new UnturnedSim.WallOpening(6.5f, sill, 2.81f, wh));         // window
+                    w.Rebuild();
+                    // name each panel: an id is useless if you cannot tell which building it came off
+                    w.AddChild(new Label3D
+                    {
+                        Text = $"{i}  {m.Name}", FontSize = 96, PixelSize = 0.006f,
+                        Modulate = new Color(1f, 1f, 1f), OutlineSize = 24,
+                        Position = new Vector3(PW * 0.5f, -0.55f, 0.4f),
+                        Billboard = BaseMaterial3D.BillboardModeEnum.Disabled,
+                    });
+                }
+                float wide = cols * (PW + GAP) - GAP, tall = Mathf.Ceil(n / (float)cols) * (H + GAP) - GAP;
+                // Frame the grid rather than guessing a distance: a swatch you have to squint at proves the
+                // palettes loaded and nothing else, which is not what the shot is for.
+                const float Fov = 50f;
+                float vt = Mathf.Tan(Mathf.DegToRad(Fov) * 0.5f);
+                var vp = GetViewport().GetVisibleRect().Size;
+                float dist = Mathf.Max(tall * 0.5f / vt, wide * 0.5f / (vt * (vp.X / vp.Y))) * 1.06f;
+                var target = new Vector3(wide / 2f, 3.0f + tall / 2f, 0f);
+                var scam = new Camera3D { Current = true, Fov = Fov };
+                AddChild(scam);
+                scam.Position = target + new Vector3(0f, 0f, dist);
+                scam.LookAt(target, Vector3.Up);
+                GD.Print($"[walls] swatch: {n} palettes");
+                return;
             }
 
             // A closed room, so corners are visible. Walls run along local +X; yaw -90 turns +X into +Z.
@@ -4302,7 +4360,34 @@ namespace UnturnedGodot
             var cam = new Camera3D { Current = true, Fov = 52f };
             AddChild(cam);
             if (System.Environment.GetEnvironmentVariable("UG_WALLCLOSE") == "1")
-            {   // close on the front-wall window: the frame/reveal detail, straight on
+            {   // close on the front-wall window: the frame/reveal detail, straight on. Every OTHER wall is
+                // hidden -- at this range the far side of the room shows through the openings, and a jamb seen
+                // edge-on through a window reads exactly like a broken frame on the near one.
+                foreach (var w in new[] { back, left, right, up, upSide }) w.Visible = false;
+                if (System.Environment.GetEnvironmentVariable("UG_WALLNOMESH") == "1")
+                    front.GetNode<MeshInstance3D>("Mesh").Visible = false;   // trim alone, nothing to intersect
+                if (System.Environment.GetEnvironmentVariable("UG_WALLDUMP") == "1")
+                {
+                    // Inspect the COMMITTED mesh, not a re-derivation of what it should be: the suspect step is
+                    // what SurfaceTool does to the boxes, so a second copy of the box maths proves nothing.
+                    //
+                    // The ratio is the tell. Flat-shaded boxes cannot share a vertex between two faces, so
+                    // indexing leaves roughly two verts per triangle; smoothed, every face meeting at a corner
+                    // collapses onto one vertex and it drops below one. That is what a jamb necking like a
+                    // turned spindle looks like from the data, and it is visible here long before it is
+                    // obvious in a beauty shot.
+                    foreach (var (label, node) in new[] { ("wall", "Mesh"), ("trim", "TrimMesh") })
+                    {
+                        var m = front.GetNode<MeshInstance3D>(node).Mesh;
+                        if (m == null || m.GetSurfaceCount() == 0) { GD.Print($"[walldump] {label}: empty"); continue; }
+                        var arr = m.SurfaceGetArrays(0);
+                        int nv = ((Vector3[])arr[(int)Mesh.ArrayType.Vertex]).Length;
+                        int nt = ((int[])arr[(int)Mesh.ArrayType.Index]).Length / 3;
+                        float ratio = nt > 0 ? nv / (float)nt : 0f;
+                        GD.Print($"[walldump] {label}: {nt} tris, {nv} verts, {ratio:F2} verts/tri"
+                                 + (ratio < 1.5f ? "  <-- SMOOTHED, corners will bulge" : ""));
+                    }
+                }
                 cam.Position = new Vector3(-0.5f, 2.4f, 6.5f);
                 cam.LookAt(new Vector3(-0.5f, 2.4f, 0f), Vector3.Up);
             }
