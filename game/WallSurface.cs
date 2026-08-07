@@ -1,0 +1,174 @@
+using Godot;
+using System.Collections.Generic;
+using UnturnedSim;
+
+namespace UnturnedGodot
+{
+    // One wall: a rectangle plus a list of openings, materialised into boxes.
+    //
+    // The wall is GENERATED from its data, never cut. Rebuild() is called on every change -- including every
+    // frame of a drag -- because a wall is a handful of boxes and regenerating is cheaper than reconciling.
+    // That is what removes the bake step: the geometry you drag IS the final geometry, so a preview can never
+    // disagree with a result. (Preview/result divergence is not hypothetical in this repo -- a barricade ghost
+    // once lay on its side while the placed object stood upright, because the two had drifted apart.)
+    //
+    // The mesh node and the body are created ONCE and reused, so the Rid stays stable for picking and Jolt
+    // sees shape swaps rather than body churn.
+    public partial class WallSurface : Node3D
+    {
+        public float Length = 6f;                       // along local +X
+        public float Height = WallOpenings.DoorHeight;  // along local +Y
+        public float Thickness = WallOpenings.DefaultThickness;
+        public readonly List<WallOpening> Openings = new();
+
+        public Color Tint = new(0.78f, 0.74f, 0.66f);
+        public Color TrimTint = new(0.34f, 0.30f, 0.27f);
+        public bool ShowTrim = true;
+
+        /// <summary>Trim sits proud of BOTH faces and never scales with the opening -- widen a garage and the
+        /// jambs move apart at constant thickness. Scaling the frame with the hole is what makes a parametric
+        /// editor look like a stretched sprite.</summary>
+        public const float TrimProfile = 0.09f, TrimProud = 0.02f;
+
+        MeshInstance3D _mesh, _trimMesh;
+        StaticBody3D _body;          // wall solids: layer 0, the layer player movement collides against
+        StaticBody3D _trimBody;      // trim: layer 6 (props) -- bullets and look-rays hit it, movement does not,
+                                     // so a doorframe is shootable without snagging you on every doorway
+        readonly List<CollisionShape3D> _shapes = new();
+
+        public override void _Ready()
+        {
+            _mesh = new MeshInstance3D { Name = "Mesh" };
+            AddChild(_mesh);
+            _trimMesh = new MeshInstance3D { Name = "TrimMesh" };
+            AddChild(_trimMesh);
+            _body = new StaticBody3D { Name = "Solids", CollisionLayer = 1u << 0, CollisionMask = 0 };
+            AddChild(_body);
+            _trimBody = new StaticBody3D { Name = "Trim", CollisionLayer = 1u << 6, CollisionMask = 0 };
+            AddChild(_trimBody);
+            Rebuild();
+        }
+
+        public Rid BodyRid => _body != null ? _body.GetRid() : default;
+
+        /// <summary>Regenerate mesh + collision from the current data. Safe to call every frame.</summary>
+        public void Rebuild()
+        {
+            if (_mesh == null) return;
+            var solids = WallOpenings.Solids(Length, Height, Openings);
+
+            // Two meshes, two materials -- walls and trim are genuinely different surfaces, and a plain
+            // AlbedoColor is what the rest of the repo uses. (Vertex colours needed the material to opt in and
+            // silently rendered everything white, which is a bad way to find out your trim is invisible.)
+            float t = Thickness * 0.5f;
+            var st = new SurfaceTool();
+            st.Begin(Mesh.PrimitiveType.Triangles);
+            foreach (var s in solids)
+                AddBox(st, new Vector3(s.U0, s.V0, -t), new Vector3(s.U1, s.V1, t));
+            // GenerateNormals BEFORE Index: indexing welds vertices, and welding before normals exist lights
+            // the mesh as one smooth blob instead of crisp box faces.
+            st.GenerateNormals();
+            st.Index();
+            _mesh.Mesh = st.Commit();
+            _mesh.MaterialOverride = new StandardMaterial3D { AlbedoColor = Tint, Roughness = 0.95f };
+
+            if (ShowTrim && Openings.Count > 0)
+            {
+                var tt = new SurfaceTool();
+                tt.Begin(Mesh.PrimitiveType.Triangles);
+                foreach (var o in Openings) AddTrim(tt, o);
+                tt.GenerateNormals();
+                tt.Index();
+                _trimMesh.Mesh = tt.Commit();
+                _trimMesh.MaterialOverride = new StandardMaterial3D { AlbedoColor = TrimTint, Roughness = 0.9f };
+            }
+            else _trimMesh.Mesh = null;
+
+            // collision: one box per solid. Because the solids ARE the partition, the hole in the collider is
+            // exactly the hole you can see -- the see-through-but-not-walk-through class of bug is impossible.
+            foreach (var sh in _shapes) { sh.QueueFree(); }
+            _shapes.Clear();
+            foreach (var s in solids)
+            {
+                var cs = new CollisionShape3D
+                {
+                    Shape = new BoxShape3D { Size = new Vector3(s.Width, s.Height, Thickness) },
+                    Position = new Vector3((s.U0 + s.U1) * 0.5f, (s.V0 + s.V1) * 0.5f, 0f),
+                };
+                _body.AddChild(cs);
+                _shapes.Add(cs);
+            }
+        }
+
+        void AddTrim(SurfaceTool st, WallOpening o)
+        {
+            float p = Thickness * 0.5f + TrimProud, w = TrimProfile;
+            // four constant-profile bars around the hole; only their LENGTHS come from the opening
+            AddBox(st, new Vector3(o.U - w, o.V - w, -p), new Vector3(o.U, o.V1 + w, p));   // left jamb
+            AddBox(st, new Vector3(o.U1, o.V - w, -p), new Vector3(o.U1 + w, o.V1 + w, p)); // right jamb
+            AddBox(st, new Vector3(o.U, o.V1, -p), new Vector3(o.U1, o.V1 + w, p));         // head
+            if (o.V > WallOpenings.Eps)                                                      // no sill on a floor-pinned opening
+                AddBox(st, new Vector3(o.U, o.V - w, -p), new Vector3(o.U1, o.V, p));
+        }
+
+        static void AddBox(SurfaceTool st, Vector3 a, Vector3 b)
+        {
+            Vector3[] v =
+            {
+                new(a.X, a.Y, a.Z), new(b.X, a.Y, a.Z), new(b.X, b.Y, a.Z), new(a.X, b.Y, a.Z),
+                new(a.X, a.Y, b.Z), new(b.X, a.Y, b.Z), new(b.X, b.Y, b.Z), new(a.X, b.Y, b.Z),
+            };
+            int[,] faces =
+            {
+                {0,3,2},{0,2,1},   // -Z
+                {4,5,6},{4,6,7},   // +Z
+                {0,4,7},{0,7,3},   // -X
+                {1,2,6},{1,6,5},   // +X
+                {0,1,5},{0,5,4},   // -Y
+                {3,7,6},{3,6,2},   // +Y
+            };
+            for (int f = 0; f < faces.GetLength(0); f++)
+                for (int k = 0; k < 3; k++)
+                    st.AddVertex(v[faces[f, k]]);
+        }
+
+        // ---- wall space <-> world -------------------------------------------------------------------
+        // ONE projection pair, used by every caller. A second copy that disagrees on the sign of U is the
+        // mirror bug that makes openings jump when the camera crosses the wall.
+
+        public Vector3 UVToWorld(float u, float v) => ToGlobal(new Vector3(u, v, 0f));
+
+        public bool WorldToUV(Vector3 world, out float u, out float v)
+        {
+            var l = ToLocal(world);
+            u = l.X; v = l.Y;
+            return u >= -WallOpenings.Eps && u <= Length + WallOpenings.Eps
+                && v >= -WallOpenings.Eps && v <= Height + WallOpenings.Eps;
+        }
+
+        /// <summary>Where a camera ray meets this wall's plane, in wall space. Takes an explicit ray so it is
+        /// testable without a camera or a mouse.</summary>
+        public bool RayToUV(Vector3 from, Vector3 dir, out float u, out float v)
+        {
+            u = v = 0f;
+            Vector3 n = GlobalTransform.Basis.Z.Normalized();
+            float denom = n.Dot(dir);
+            if (Mathf.Abs(denom) < 1e-6f) return false;
+            float dist = n.Dot(GlobalPosition - from) / denom;
+            if (dist < 0f) return false;
+            var hit = from + dir * dist;
+            WorldToUV(hit, out u, out v);
+            return true;
+        }
+
+        public int OpeningAt(float u, float v)
+        {
+            for (int i = 0; i < Openings.Count; i++)
+            {
+                var o = Openings[i];
+                if (u >= o.U && u <= o.U1 && v >= o.V && v <= o.V1) return i;
+            }
+            return -1;
+        }
+    }
+}

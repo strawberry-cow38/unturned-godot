@@ -85,6 +85,7 @@ namespace UnturnedGodot
             bool doorTest = false;
             string doorTestName = null;
             bool containerTest = false; string containerTestName = null;
+            bool wallDemo = false;
             bool play = false, demo = false, netdemo = false, server = false, dedicated = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, lightTest = false, trafficTest = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, objects = false, peidrive = false, craftui = false, bakenav = false, navPathTest = false, zombieTest = false, zdirTest = false, editorMode = false;
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
@@ -181,6 +182,7 @@ namespace UnturnedGodot
                 else if (arg == "--lighttest") lightTest = true;   // one lit streetlight at night: cone + motes eyeball (UG_LIGHTCAM=under looks up from inside)
                 else if (arg == "--trafficlight") trafficTest = true;   // one signal, both heads (UG_TL_STATE=green|amber|red|flash|dark, UG_TL_SIDE=1 for the side-road mast, UG_TL_DAY=1 for daylight)
                 else if (arg == "--build") buildmode = true;
+                else if (arg == "--walls") wallDemo = true;   // building tool: generated walls + openings, no editor needed
                 else if (arg == "--extractblueprints") { RunExtractBlueprints(); GetTree().Quit(); return; }   // walk retail item .dats -> content/blueprints.tsv catalog
                 else if (arg == "--tests" || arg.StartsWith("--tests="))   // L1 in-engine test host (phase 2): boot once, run all GameTests, self-quit 0/1. `--tests=power.*` globs.
                 {
@@ -433,6 +435,14 @@ namespace UnturnedGodot
                 _shotPath = shot;
                 GetWindow().Size = new Vector2I(1280, 720);
                 BuildDayNightDemo();
+                return;
+            }
+
+            if (wallDemo)   // the building tool's geometry, straight from WallOpenings -> WallSurface
+            {
+                GetWindow().Size = new Vector2I(1280, 720);
+                _shotPath = shot; _shotRequested = shot;
+                BuildWallDemo();
                 return;
             }
 
@@ -4218,6 +4228,77 @@ namespace UnturnedGodot
             overview.Position = new Vector3(6f, 4.5f, 7f);
             overview.LookAt(new Vector3(0f, 1f, 0f), Vector3.Up);
             GD.Print("[BUILD] scripted a small structure (floor + walls)");
+        }
+
+        // Building-tool demo: walls carrying openings at the MEASURED retail dimensions, so the first thing
+        // anyone looks at is the real geometry rather than a mock-up. Every wall here goes through the same
+        // WallOpenings.Solids the editor drag path uses -- there is no separate preview code.
+        void BuildWallDemo()
+        {
+            var env = new Godot.Environment
+            {
+                BackgroundMode = Godot.Environment.BGMode.Color,
+                BackgroundColor = new Color(0.42f, 0.55f, 0.72f),
+                AmbientLightSource = Godot.Environment.AmbientSource.Color,
+                AmbientLightColor = new Color(0.62f, 0.64f, 0.67f),
+                AmbientLightEnergy = 0.9f,
+            };
+            AddChild(new WorldEnvironment { Environment = env });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-48f, -52f, 0f), LightEnergy = 1.25f, ShadowEnabled = true });
+
+            var ground = new StaticBody3D { CollisionLayer = 1 << 0 };
+            ground.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
+            var gm = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(120, 120) } };
+            gm.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.31f, 0.35f, 0.29f) };
+            ground.AddChild(gm);
+            AddChild(ground);
+
+            float H = UnturnedSim.WallOpenings.DoorHeight;          // 4.25
+            float sill = UnturnedSim.WallOpenings.WindowSill;       // 1.00
+            float wh = UnturnedSim.WallOpenings.WindowHeight;       // 2.75
+            float pitch = UnturnedSim.WallOpenings.StoreyPitch;     // 4.75
+            const float L = 12f, D = 9f;
+
+            WallSurface Wall(float len, Vector3 pos, float yaw)
+            {
+                var w = new WallSurface { Length = len, Height = H, Position = pos, RotationDegrees = new Vector3(0f, yaw, 0f) };
+                AddChild(w);
+                return w;
+            }
+
+            // A closed room, so corners are visible. Walls run along local +X; yaw -90 turns +X into +Z.
+            var front = Wall(L, new Vector3(-L / 2f, 0f, 0f), 0f);
+            front.Openings.Add(new UnturnedSim.WallOpening(1.0f, 0f, 2.5f, H - 0.5f));    // person door, floor-pinned
+            front.Openings.Add(new UnturnedSim.WallOpening(5.0f, sill, 3.31f, wh));       // measured window widths
+            front.Openings.Add(new UnturnedSim.WallOpening(9.0f, sill, 2.81f, wh));
+
+            var back = Wall(L, new Vector3(-L / 2f, 0f, -D), 0f);
+            back.Openings.Add(new UnturnedSim.WallOpening(2.0f, 0f, 8.0f, H - 0.25f));    // 8m garage: only reachable because walls are DRAWN, not 6m tiles
+
+            var left = Wall(D, new Vector3(-L / 2f, 0f, -D), -90f);
+            left.Openings.Add(new UnturnedSim.WallOpening(2.5f, sill, 3.31f, wh));
+
+            var right = Wall(D, new Vector3(L / 2f, 0f, -D), -90f);
+            right.Openings.Add(new UnturnedSim.WallOpening(1.5f, sill, 2.81f, wh));
+            right.Openings.Add(new UnturnedSim.WallOpening(5.5f, sill, 2.81f, wh));
+
+            // second storey at the measured 4.75 pitch (4.25 opening + 0.50 slab)
+            var up = Wall(L, new Vector3(-L / 2f, pitch, 0f), 0f);
+            up.Openings.Add(new UnturnedSim.WallOpening(2.0f, sill, 2.81f, wh));
+            up.Openings.Add(new UnturnedSim.WallOpening(7.0f, sill, 3.31f, wh));
+            var upSide = Wall(D, new Vector3(-L / 2f, pitch, -D), -90f);
+            upSide.Openings.Add(new UnturnedSim.WallOpening(3.0f, sill, 2.81f, wh));
+
+            // Rebuild AFTER the openings are added. WallSurface builds itself on _Ready, which fires the moment
+            // it is added to the tree -- so anything that mutates Openings afterwards has to say so. Without
+            // this every wall renders solid and looks like the partition is broken when it never ran.
+            foreach (var w in new[] { front, back, left, right, up, upSide }) w.Rebuild();
+
+            var cam = new Camera3D { Current = true, Fov = 52f };
+            AddChild(cam);
+            cam.Position = new Vector3(13f, 7.5f, 24f);
+            cam.LookAt(new Vector3(0f, 3.4f, -3f), Vector3.Up);
+            GD.Print($"[walls] 6 walls; front run partitions into {UnturnedSim.WallOpenings.Solids(L, H, front.Openings).Count} solids, garage wall into {UnturnedSim.WallOpenings.Solids(L, H, back.Openings).Count}");
         }
 
         // A few bundled ripped crates as cover/scenery (portable res:// assets).
