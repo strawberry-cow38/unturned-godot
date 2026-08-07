@@ -205,6 +205,14 @@ namespace UnturnedGodot.Testing
             // noise on every fresh start.
             T.Check("a missing save loads 0 quietly", sm.LoadFromDisk("user://structures_does_not_exist.json") == 0);
 
+            // THE guard that protects a real player's base: auto-persist is OFF unless the game explicitly
+            // turns it on. Every manager a test constructs must be inert on disk -- an L1 run that quietly
+            // wrote its fixtures over user://structures.json would destroy someone's base and pass while doing
+            // it. This is the one failure here that is not recoverable by re-running anything.
+            var plain = new StructureManager();
+            T.Check("a test-constructed manager does NOT auto-persist", !plain.AutoPersist);
+            plain.QueueFree();
+
             if (Godot.FileAccess.FileExists(path)) DirAccess.RemoveAbsolute(ProjectSettings.GlobalizePath(path));
         }
     }

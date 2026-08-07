@@ -51,8 +51,36 @@ namespace UnturnedGodot
         public int Count => _all.Count;
         public IReadOnlyList<Piece> All => _all;
 
-        public override void _EnterTree() { Instance = this; }
-        public override void _ExitTree() { if (Instance == this) Instance = null; }
+        /// <summary>Load on entry / save on exit. OFF by default and switched on only by the game's own
+        /// provisioning (BuildTool.EnsureManager), so a test that news up a manager never touches the player's
+        /// real save file -- an L1 run that silently overwrote user://structures.json with its fixtures would
+        /// destroy a base and pass while doing it.</summary>
+        public bool AutoPersist;
+
+        public override void _EnterTree()
+        {
+            Instance = this;
+            if (AutoPersist)
+            {
+                int n = LoadFromDisk();
+                if (n > 0) GD.Print($"[structures] restored {n} piece(s) from {SavePath}");
+            }
+        }
+
+        public override void _ExitTree()
+        {
+            if (AutoPersist) SaveToDisk();
+            if (Instance == this) Instance = null;
+        }
+
+        /// <summary>Godot delivers this on a clean quit. _ExitTree alone is not enough: a window close tears the
+        /// tree down in an order where the save can be missed, and losing a base on quit is the one failure
+        /// nobody forgives.</summary>
+        public override void _Notification(int what)
+        {
+            if (what == NotificationWMCloseRequest || what == NotificationPredelete)
+                if (AutoPersist) SaveToDisk();
+        }
 
         // ---- the seam other systems build against (published to cow tools' barricade branch) ---------------
 

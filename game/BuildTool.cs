@@ -54,7 +54,7 @@ namespace UnturnedGodot
         {
             if (StructureManager.Instance != null) return;
             var host = GetParent() ?? (Node)this;
-            var sm = new StructureManager { Name = "StructureManager" };
+            var sm = new StructureManager { Name = "StructureManager", AutoPersist = true };   // the GAME persists; tests construct their own without this
             host.CallDeferred(Node.MethodName.AddChild, sm);
         }
 
