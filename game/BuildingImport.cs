@@ -22,14 +22,20 @@ namespace UnturnedGodot
         /// <summary>A recovered wall face: one plane of the mesh, flattened.</summary>
         sealed class Face
         {
-            public Vector3 Normal;                 // outward, horizontal
+            public Vector3 Normal;                 // outward
             public float Dist;                     // plane offset along the normal
-            public readonly List<WallSolid> Panels = new();
+            public Vector3 Right, Up;              // the plane's own 2D basis
+            public bool Sloped;                    // roof/floor rather than wall
+            public readonly List<WallImport.Tri2> Tris = new();
         }
 
         /// <summary>Import a retail building .obj as wall plans, in the prop's own local space (Y up, origin at
         /// the building's centre on the ground). Returns an empty list if the mesh will not load.</summary>
-        public static List<WallPlan> FromObj(string globalObjPath, int materialId = 0)
+        // readRoofs defaults FALSE. My first attempt at it emitted every non-vertical plane as a Roof surface,
+        // which swept up all 174 of House_00's horizontal triangles -- its floors and ceilings -- as enormous
+        // slabs and made the import visibly worse than no roof at all. Separating a roof plane from a ceiling
+        // plane needs more than "is it not vertical", and until it does this stays off by default.
+        public static List<WallPlan> FromObj(string globalObjPath, int materialId = 0, bool readRoofs = false)
         {
             var plans = new List<WallPlan>();
             var mesh = ObjMesh.Load(globalObjPath);
@@ -53,32 +59,38 @@ namespace UnturnedGodot
                 var n = (b - a).Cross(c - a);
                 if (n.LengthSquared() < 1e-9f) continue;
                 n = n.Normalized();
-                if (Mathf.Abs(n.Y) > 0.25f) continue;                 // not a wall: floor, roof or a slope
+                bool sloped = Mathf.Abs(n.Y) > 0.25f;
+                if (sloped && n.Y < 0.25f) continue;      // downward-facing: a soffit or the underside of a slab
+                if (sloped && !readRoofs) continue;
 
                 float d = n.Dot(a);
                 // Quantised so the two triangles of one quad, and the many quads of one wall, land in the same
                 // bucket. 5 degrees and 5 cm: tight enough to keep two walls 0.5 m apart separate, loose
                 // enough to survive a ripped mesh's noise.
-                var key = (Mathf.RoundToInt(n.X * 20f), Mathf.RoundToInt(n.Z * 20f), Mathf.RoundToInt(d * 20f));
+                var key = (Mathf.RoundToInt(n.X * 20f) * 131 + Mathf.RoundToInt(n.Y * 20f),
+                           Mathf.RoundToInt(n.Z * 20f), Mathf.RoundToInt(d * 20f));
                 if (!faces.TryGetValue(key, out var f))
                 {
-                    f = new Face { Normal = n, Dist = d };
+                    // The plane's own 2D frame. For a wall that is (horizontal along the run, world up); for a
+                    // slope it is (horizontal along the eave, up the slope) -- the same basis the surface will
+                    // be reconstructed in, so the recovered rectangle needs no second transform.
+                    var right = sloped ? new Vector3(-n.Z, 0f, n.X) : new Vector3(-n.Z, 0f, n.X);
+                    if (right.LengthSquared() < 1e-8f) right = Vector3.Right;
+                    right = right.Normalized();
+                    var up = sloped ? n.Cross(right).Normalized() : Vector3.Up;
+                    if (sloped && up.Y < 0f) up = -up;
+                    f = new Face { Normal = n, Dist = d, Right = right, Up = up, Sloped = sloped };
                     faces[key] = f;
                 }
 
-                // Its 2D bounding box IS the quad it half-covers: these buildings are box-modelled, so every
-                // triangle is half of an axis-aligned rectangle and the two halves give the same box. That is
-                // what lets the panels be recovered without reassembling triangle pairs.
-                var (u0, v0) = Project(f, a);
-                float uMin = u0, uMax = u0, vMin = v0, vMax = v0;
-                foreach (var p in new[] { b, c })
-                {
-                    var (pu, pv) = Project(f, p);
-                    uMin = Mathf.Min(uMin, pu); uMax = Mathf.Max(uMax, pu);
-                    vMin = Mathf.Min(vMin, pv); vMax = Mathf.Max(vMax, pv);
-                }
-                if (uMax - uMin > WallOpenings.Eps && vMax - vMin > WallOpenings.Eps)
-                    f.Panels.Add(new WallSolid(uMin, vMin, uMax, vMax));
+                // The TRIANGLE, not its bounding box. Treating each triangle's bbox as a solid panel assumed
+                // every one was half of an axis-aligned rectangle; measured on House_00 that holds for 49% of
+                // the vertical-plane triangles, so the other half fabricated solid that is not in the mesh and
+                // the leftovers came back as windows in the wrong places.
+                var (au, av) = Project(f, a);
+                var (bu, bv) = Project(f, b);
+                var (cu, cv) = Project(f, c);
+                f.Tris.Add(new WallImport.Tri2(au, av, bu, bv, cu, cv));
             }
 
             // One wall per CONNECTED CLUSTER of panels, not one per plane.
@@ -89,13 +101,19 @@ namespace UnturnedGodot
             // of the building came from -- it described "everything on this side of the house, minus the
             // gaps" instead of "a wall with a window in it".
             var candidates = new List<Cand>();
+            var roofs = new List<(Face F, WallImport.Recovered R)>();
             foreach (var f in faces.Values)
-                foreach (var cluster in Cluster(f.Panels))
+            {
+                if (f.Tris.Count == 0) continue;
+                var r = WallImport.FromTriangles(f.Tris);
+                if (f.Sloped)
                 {
-                    var r = WallImport.FromPanels(cluster);
-                    if (r.Width < 2f || r.Height < 1.5f) continue;       // clutter, not a wall
-                    candidates.Add(new Cand { F = f, Rec = r });
+                    if (r.Width >= 2f && r.Height >= 1f) roofs.Add((f, r));
+                    continue;
                 }
+                if (r.Width < 2f || r.Height < 1.5f) continue;           // clutter, not a wall
+                candidates.Add(new Cand { F = f, Rec = r });
+            }
 
             // Pair each candidate with the one looking back at it: those are the two sides of one wall, and
             // the gap between them is its thickness. Emitting both faces would double every wall in the
@@ -149,6 +167,24 @@ namespace UnturnedGodot
                 }
                 plans.Add(plan);
             }
+            // Roof and floor planes, emitted as pitched surfaces. Each sloped plane becomes one Roof surface
+            // in its own frame, so a HIPPED roof comes back as its four slopes rather than being forced into
+            // the gable the roof tool builds -- retail hips are common and a gable is not a substitute.
+            foreach (var (f, r) in roofs)
+            {
+                float pitch = Mathf.RadToDeg(Mathf.Asin(Mathf.Clamp(f.Up.Y, -1f, 1f)));
+                float yaw = Mathf.RadToDeg(Mathf.Atan2(f.Right.X, f.Right.Z)) - 90f;
+                var origin = f.Normal * f.Dist + f.Right * r.U0 + f.Up * r.V0;
+                var plan = new WallPlan
+                {
+                    X = origin.X, Y = origin.Y, Z = origin.Z,
+                    Yaw = yaw, Pitch = pitch - 90f, Kind = SurfaceKind.Roof,
+                    Length = r.Width, Height = r.Height,
+                    Thickness = EditorBuildings.SlabThickness, Material = materialId,
+                };
+                foreach (var o in r.Openings) plan.Openings.Add(o);   // chimney/skylight holes, unsnapped
+                plans.Add(plan);
+            }
             return plans;
         }
 
@@ -188,10 +224,6 @@ namespace UnturnedGodot
 
         static Vector3 Right(Face f) => new Vector3(-f.Normal.Z, 0f, f.Normal.X).Normalized();
 
-        static (float U, float V) Project(Face f, Vector3 p)
-        {
-            var r = Right(f);
-            return (p.Dot(r), p.Y);
-        }
+        static (float U, float V) Project(Face f, Vector3 p) => (p.Dot(f.Right), p.Dot(f.Up));
     }
 }

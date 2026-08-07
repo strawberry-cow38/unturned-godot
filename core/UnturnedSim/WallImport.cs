@@ -57,6 +57,109 @@ namespace UnturnedSim
             return new Recovered(u0, v0, w, h, openings);
         }
 
+        /// <summary>A triangle in a plane's own 2D space.</summary>
+        public readonly struct Tri2
+        {
+            public readonly float AX, AY, BX, BY, CX, CY;
+            public Tri2(float ax, float ay, float bx, float by, float cx, float cy)
+            { AX = ax; AY = ay; BX = bx; BY = by; CX = cx; CY = cy; }
+        }
+
+        /// <summary>Recover a wall and its openings from a plane's TRIANGLES, by rasterising what they
+        /// actually cover.
+        ///
+        /// This replaces treating each triangle's bounding box as a solid panel. That assumption -- "these
+        /// buildings are box-modelled, so every triangle is half of an axis-aligned rectangle" -- is simply
+        /// false: measured on House_00, only 49% of the vertical-plane triangles have two edges along their
+        /// plane's axes. For the other half the bounding box is a rectangle that does not exist in the mesh,
+        /// so the importer invented solid where there was none and then reported the leftovers as windows.
+        /// That is what "windows overlapping in the wrong places" looks like from the inside.
+        ///
+        /// Rasterising is not clever, but it is CORRECT for any triangle soup, which is what a ripped mesh
+        /// is. A hole is then a connected region of cells nothing covers.</summary>
+        public static Recovered FromTriangles(IReadOnlyList<Tri2> tris, float cell = 0.05f,
+                                              float minOpening = WallOpenings.MinOpening)
+        {
+            var empty = new Recovered(0f, 0f, 0f, 0f, new List<WallOpening>());
+            if (tris == null || tris.Count == 0) return empty;
+
+            float u0 = float.MaxValue, v0 = float.MaxValue, u1 = float.MinValue, v1 = float.MinValue;
+            foreach (var t in tris)
+            {
+                u0 = Math.Min(u0, Math.Min(t.AX, Math.Min(t.BX, t.CX)));
+                u1 = Math.Max(u1, Math.Max(t.AX, Math.Max(t.BX, t.CX)));
+                v0 = Math.Min(v0, Math.Min(t.AY, Math.Min(t.BY, t.CY)));
+                v1 = Math.Max(v1, Math.Max(t.AY, Math.Max(t.BY, t.CY)));
+            }
+            float w = u1 - u0, h = v1 - v0;
+            if (w <= WallOpenings.Eps || h <= WallOpenings.Eps) return new Recovered(u0, v0, Math.Max(0f, w), Math.Max(0f, h), new List<WallOpening>());
+
+            int nx = Math.Clamp((int)Math.Ceiling(w / cell), 1, 2048);
+            int ny = Math.Clamp((int)Math.Ceiling(h / cell), 1, 2048);
+            var covered = new bool[nx * ny];
+            float cw = w / nx, ch = h / ny;
+
+            foreach (var t in tris)
+            {
+                float tu0 = Math.Min(t.AX, Math.Min(t.BX, t.CX)), tu1 = Math.Max(t.AX, Math.Max(t.BX, t.CX));
+                float tv0 = Math.Min(t.AY, Math.Min(t.BY, t.CY)), tv1 = Math.Max(t.AY, Math.Max(t.BY, t.CY));
+                int x0 = Math.Max(0, (int)((tu0 - u0) / cw)), x1 = Math.Min(nx - 1, (int)((tu1 - u0) / cw));
+                int y0 = Math.Max(0, (int)((tv0 - v0) / ch)), y1 = Math.Min(ny - 1, (int)((tv1 - v0) / ch));
+                for (int y = y0; y <= y1; y++)
+                    for (int x = x0; x <= x1; x++)
+                    {
+                        if (covered[y * nx + x]) continue;
+                        float pu = u0 + (x + 0.5f) * cw, pv = v0 + (y + 0.5f) * ch;
+                        if (Inside(t, pu, pv)) covered[y * nx + x] = true;
+                    }
+            }
+
+            // holes = connected components of uncovered cells that do NOT touch the boundary. A region open
+            // to the edge is the wall's outline being non-rectangular, not a window.
+            var openings = new List<WallOpening>();
+            var seen = new bool[nx * ny];
+            var stack = new Stack<int>();
+            for (int start = 0; start < nx * ny; start++)
+            {
+                if (covered[start] || seen[start]) continue;
+                stack.Clear();
+                stack.Push(start);
+                seen[start] = true;
+                int minx = nx, maxx = -1, miny = ny, maxy = -1;
+                bool touchesEdge = false;
+                while (stack.Count > 0)
+                {
+                    int i = stack.Pop();
+                    int x = i % nx, y = i / nx;
+                    if (x == 0 || y == 0 || x == nx - 1 || y == ny - 1) touchesEdge = true;
+                    if (x < minx) minx = x;
+                    if (x > maxx) maxx = x;
+                    if (y < miny) miny = y;
+                    if (y > maxy) maxy = y;
+                    if (x > 0 && !covered[i - 1] && !seen[i - 1]) { seen[i - 1] = true; stack.Push(i - 1); }
+                    if (x < nx - 1 && !covered[i + 1] && !seen[i + 1]) { seen[i + 1] = true; stack.Push(i + 1); }
+                    if (y > 0 && !covered[i - nx] && !seen[i - nx]) { seen[i - nx] = true; stack.Push(i - nx); }
+                    if (y < ny - 1 && !covered[i + nx] && !seen[i + nx]) { seen[i + nx] = true; stack.Push(i + nx); }
+                }
+                if (touchesEdge) continue;
+                float ou = u0 + minx * cw, ov = v0 + miny * ch;
+                float ow = (maxx - minx + 1) * cw, oh = (maxy - miny + 1) * ch;
+                if (ow >= minOpening && oh >= minOpening)
+                    openings.Add(new WallOpening(ou - u0, ov - v0, ow, oh));
+            }
+            return new Recovered(u0, v0, w, h, openings);
+        }
+
+        static bool Inside(Tri2 t, float px, float py)
+        {
+            float d1 = (px - t.BX) * (t.AY - t.BY) - (t.AX - t.BX) * (py - t.BY);
+            float d2 = (px - t.CX) * (t.BY - t.CY) - (t.BX - t.CX) * (py - t.CY);
+            float d3 = (px - t.AX) * (t.CY - t.AY) - (t.CX - t.AX) * (py - t.AY);
+            bool neg = d1 < 0 || d2 < 0 || d3 < 0;
+            bool pos = d1 > 0 || d2 > 0 || d3 > 0;
+            return !(neg && pos);
+        }
+
         /// <summary>Snap a recovered opening onto the measured retail ladder, so an imported building lands on
         /// the same numbers a hand-drawn one would. Ripped geometry is a hair off round values, and without
         /// this an imported door is 2.4997 wide and stops matching anything.</summary>

@@ -130,6 +130,59 @@ namespace UnturnedSim.Tests
             Assert.That(rec.Openings[0].V, Is.EqualTo(1f).Within(1e-2f));
         }
 
+        // The panel-bbox assumption -- "every triangle is half of an axis-aligned rectangle" -- holds for only
+        // 49% of House_00's vertical-plane triangles, measured. For the other half a bounding box is solid
+        // that is not in the mesh, which is where "windows overlapping in the wrong places" came from.
+        //
+        // The hole here is a DIAMOND, triangulated by fanning the wall's corners onto it. Every one of those
+        // eight triangles has a bounding box that overlaps the diamond, so bbox-coverage fills the hole in
+        // completely while triangle-coverage leaves it open. My first attempt at this test used axis-aligned
+        // strips, whose boxes equal the strips -- so it passed under the very mutation it was written to
+        // catch, which is worth more as a lesson than the test is.
+        //
+        // BREAK IT: mark the whole bbox covered instead of testing the triangle -> 0 openings recovered.
+        [Test]
+        public void CoverageRecoveryDoesNotInventSolidFromATriangleBoundingBox()
+        {
+            const float W2 = 12f, H2 = 4.25f;
+            // wall corners
+            (float X, float Y) A = (0f, 0f), B = (W2, 0f), C = (W2, H2), D = (0f, H2);
+            // a diamond hole, centre (6, 2.125), half-diagonal 1
+            (float X, float Y) p0 = (5f, 2.125f), p1 = (6f, 3.125f), p2 = (7f, 2.125f), p3 = (6f, 1.125f);
+            WallImport.Tri2 T((float X, float Y) a, (float X, float Y) b, (float X, float Y) c)
+                => new WallImport.Tri2(a.X, a.Y, b.X, b.Y, c.X, c.Y);
+
+            var tris = new List<WallImport.Tri2>
+            {
+                T(A, B, p3), T(B, p2, p3), T(B, C, p2), T(C, p1, p2),
+                T(C, D, p1), T(D, p0, p1), T(D, A, p0), T(A, p3, p0),
+            };
+
+            var rec = WallImport.FromTriangles(tris, cell: 0.05f);
+            Assert.That(rec.Width, Is.EqualTo(W2).Within(0.06f));
+            Assert.That(rec.Height, Is.EqualTo(H2).Within(0.06f));
+            Assert.That(rec.Openings.Count, Is.EqualTo(1), "the diamond, and nothing invented");
+            var o = rec.Openings[0];
+            Assert.That(o.U, Is.EqualTo(5f).Within(0.1f));
+            Assert.That(o.V, Is.EqualTo(1.125f).Within(0.1f));
+            Assert.That(o.Width, Is.EqualTo(2f).Within(0.15f));
+            Assert.That(o.Height, Is.EqualTo(2f).Within(0.15f));
+        }
+
+        // BREAK IT: treat a region open to the wall's edge as an opening -- an L-shaped or stepped wall
+        // outline then imports with a giant phantom "window" filling the missing corner.
+        [Test]
+        public void ANotchOpenToTheEdgeIsNotAnOpening()
+        {
+            var tris = new List<WallImport.Tri2>
+            {
+                new WallImport.Tri2(0f, 0f, 8f, 0f, 0f, 4f), new WallImport.Tri2(8f, 0f, 8f, 4f, 0f, 4f),
+                new WallImport.Tri2(8f, 0f, 12f, 0f, 8f, 2f), new WallImport.Tri2(12f, 0f, 12f, 2f, 8f, 2f),
+            };
+            var rec = WallImport.FromTriangles(tris);
+            Assert.That(rec.Openings.Count, Is.EqualTo(0), "the stepped top-right corner is an outline, not a hole");
+        }
+
         [Test]
         public void EmptyAndDegenerateInputDoNotThrow()
         {
