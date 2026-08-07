@@ -79,6 +79,25 @@ namespace UnturnedGodot.Testing
             T.Check("a wood wall on the floor's edge is supported",
                 sm.Place(new Vector3(2.9f, 0f, 0f), EConstruct.Wall, 0) != null);
 
+            // Extending outward onto the NEXT tile is the commonest real build action, and it is the case the
+            // neighbour-lookup rewrite could most easily have broken: support moved from a distance scan over
+            // every piece to a fixed set of lattice probes, so an adjacent tile has to be in that set. A base
+            // you cannot grow sideways is not a base.
+            T.Check("a floor extends onto the adjacent tile",
+                sm.Place(new Vector3(StructureCatalog.EdgeLength, 0f, 0f), EConstruct.Floor, 0) != null);
+            T.Check("...and onto the one after that",
+                sm.Place(new Vector3(StructureCatalog.EdgeLength * 2f, 0f, 0f), EConstruct.Floor, 0) != null);
+
+            // Upward, too: a wall one level up, above a piece that supports it.
+            T.Check("a wall stacks a level above supported ground",
+                sm.Place(new Vector3(2.9f, StructureCatalog.WallHeight, 0f), EConstruct.Wall, 0) != null);
+
+            // ...but two levels up with nothing between is still refused. If the probe set ever widens far
+            // enough to accept this, wood floats again and the support rule has quietly stopped meaning
+            // anything.
+            T.Check("wood still cannot skip a level into thin air",
+                sm.Place(new Vector3(2.9f, StructureCatalog.WallHeight * 3f, 0f), EConstruct.Wall, 0) == null);
+
             yield return Ticks(1);
             T.Check($"every placed piece joined the \"{StructureManager.Group}\" group (barricades query it)",
                 floor.Node.IsInGroup(StructureManager.Group));
@@ -150,6 +169,65 @@ namespace UnturnedGodot.Testing
 
             T.Check("garbage json loads nothing rather than throwing", sm.Deserialize("not json at all") == 0);
             T.Check("empty save clears cleanly", sm.Deserialize("") == 0 && sm.Count == 0);
+        }
+    }
+
+    // QueryAt is the seam barricades attach through, and it was rewritten from a scan over every piece to a
+    // bounded lattice probe for speed. A faster lookup that MISSES a piece is worse than a slow one: a
+    // barricade would simply refuse to mount on a wall that is plainly there, and nothing would error.
+    //
+    // So these compare the probe against the ground truth -- the pieces actually placed -- rather than against
+    // itself. Every placed piece must be findable from its own position, and from a point offset within the
+    // query radius.
+    public class StructureQueryProbe : GameTest
+    {
+        public override string Name => "structure.query";
+
+        public override IEnumerable<Step> Run()
+        {
+            var sm = new StructureManager();
+            World.AddChild(sm);
+            yield return Ticks(1);
+
+            // a small base: a run of floors with walls along their edges
+            var placed = new List<StructureManager.Piece>();
+            for (int i = 0; i < 4; i++)
+            {
+                var f = sm.Place(new Vector3(i * StructureCatalog.EdgeLength, 0f, 0f), EConstruct.Floor, 0);
+                if (f != null) placed.Add(f);
+                var w = sm.Place(new Vector3(i * StructureCatalog.EdgeLength - StructureCatalog.HalfEdge, 0f, 0f), EConstruct.Wall, 0);
+                if (w != null) placed.Add(w);
+            }
+            T.Check($"built a {placed.Count}-piece base to query against", placed.Count >= 6);
+
+            // EVERY piece must be findable from its own position -- the probe missing even one means a
+            // barricade silently refuses to mount on a wall that is right there.
+            int found = 0, missed = 0;
+            foreach (var p in placed)
+            {
+                var hit = sm.QueryAt(p.Pos, 1.0f);
+                if (hit != null && hit.Value.Node == p.Node) found++;
+                else { missed++; if (missed <= 3) GD.Print($"[structure.query] MISSED {p.Construct} at {p.Pos}"); }
+            }
+            T.Check($"every placed piece is findable at its own position ({found}/{placed.Count})", missed == 0);
+
+            // and from a point offset inside the radius, which is how a raycast hit actually arrives -- never
+            // exactly on the anchor
+            int nearFound = 0;
+            foreach (var p in placed)
+                if (sm.QueryAt(p.Pos + new Vector3(0.4f, 0.2f, 0.3f), 1.5f) != null) nearFound++;
+            T.Check($"findable from an offset hit point too ({nearFound}/{placed.Count})", nearFound == placed.Count);
+
+            // empty space must still come back empty -- a probe that returns the nearest piece regardless of
+            // radius would let barricades mount on thin air
+            T.Check("empty space returns nothing", sm.QueryAt(new Vector3(500f, 50f, 500f), 1.0f) == null);
+
+            // a wide radius takes the full-scan fallback; it must not silently return a near-miss
+            var far = sm.QueryAt(new Vector3(400f, 0f, 0f), 1000f);
+            T.Check("a wide query falls back to the full scan and still finds the base", far != null);
+
+            T.Check("CanAttach agrees with a real piece", sm.CanAttach(placed[0].Pos, Vector3.Zero));
+            T.Check("CanAttach refuses empty space", !sm.CanAttach(new Vector3(500f, 50f, 500f), Vector3.Zero));
         }
     }
 

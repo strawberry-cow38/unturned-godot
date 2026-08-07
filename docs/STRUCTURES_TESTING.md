@@ -38,6 +38,7 @@ In game:
 | `V` | cycle tier — wood / brick / metal |
 | `LMB` | place |
 | `R` | salvage the piece you're aiming at |
+| `G` | melee the piece you're aiming at (blowtorch equipped → repairs instead) |
 
 The readout at the bottom of the screen shows the current construct, tier and health, and **why** a slot is
 refused — "slot taken" and "no support" are different mistakes and the ghost alone can't tell you which.
@@ -69,7 +70,12 @@ Note the `--` before the game args, and that `--shot=` takes a **file** path, no
 3. **Place two pieces in the same slot.** Second is refused, reason "slot taken".
 4. **Upgrade path**: place wood, check the tint and the health in the readout, then place metal alongside.
 5. **Salvage** with `R` — confirm it takes down the piece you're *looking at*, not the ghost's slot.
-6. **Quit and relaunch.** Your base should still be there.
+6. **Hit a wood wall with a melee weapon** (`G`). It should lose health and eventually break. Now try the
+   same on a **metal** wall — it should shrug the hit off entirely. That asymmetry is retail's `isVulnerable`
+   and it's the reason climbing the tier ladder is worth doing.
+7. **Blowtorch a damaged piece** — it repairs rather than hits, matching how vehicles and generators already
+   behave.
+8. **Quit and relaunch.** Your base should still be there.
 
 ## Deliberate choices worth arguing with
 
@@ -84,6 +90,17 @@ Note the `--` before the game args, and that `--shot=` takes a **file** path, no
   a real base and pass while doing it.
 - **Repair returns what it actually restored** and salvage returns `-1` for "nothing there" rather than `0`,
   because `0` is a legitimate tier and callers charge/refund materials off those return values.
+
+## Verified how
+
+Placement, snapping, support, damage, upgrade, repair, salvage and save/load are covered by L1 checks that
+assert on outcomes — where a piece physically ends up, what the manager actually returns — rather than
+re-deriving the rule under test.
+
+The **melee wiring** is the exception and is called out deliberately: the manager-level `Damage`/`Repair` are
+tested, but the input path that calls them needs a live camera and physics raycast, which L1 doesn't give.
+That's the classic "logic tested, never actually called" gap, so treat step 6 above as the real check on it
+until it has a harness of its own.
 
 ## Known, not-mine
 

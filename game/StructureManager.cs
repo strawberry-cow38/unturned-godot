@@ -89,16 +89,56 @@ namespace UnturnedGodot
         public StructureHit? QueryAt(Vector3 world, float radius = 1.0f)
         {
             Piece best = null; float bestD = radius * radius;
-            foreach (var p in _all)
+
+            // Bounded lattice probe rather than a scan over every piece. This matters most for the OTHER
+            // caller: a barricade placement ghost calls this every frame while it follows the aim, so a linear
+            // pass would make placing a barricade get slower the more base you had already built. Pieces only
+            // exist at lattice slots, so probing the neighbourhood around the query point finds the same
+            // answer at a fixed cost.
+            //
+            // Falls back to the full scan when the radius exceeds the probed neighbourhood -- a caller asking
+            // for a genuinely wide search must not silently get a near-miss answer.
+            if (radius <= StructureCatalog.EdgeLength)
             {
-                float d = p.Pos.DistanceSquaredTo(world);
-                if (d <= bestD) { bestD = d; best = p; }
+                float e = StructureCatalog.EdgeLength, h = StructureCatalog.HalfEdge;
+                System.Span<float> offs = stackalloc float[] { 0f, e, -e };
+                for (int li = -1; li <= 1; li++)
+                {
+                    float y = Mathf.Round(world.Y / StructureCatalog.WallHeight) * StructureCatalog.WallHeight
+                              + li * StructureCatalog.WallHeight;
+                    foreach (float ox in offs)
+                        foreach (float oz in offs)
+                        {
+                            float cx = Mathf.Round((world.X + ox) / e) * e;
+                            float cz = Mathf.Round((world.Z + oz) / e) * e;
+                            Probe(new Vector3(cx, y, cz), EConstruct.Floor, world, ref best, ref bestD);
+                            Probe(new Vector3(cx + h, y, cz), EConstruct.Wall, world, ref best, ref bestD);
+                            Probe(new Vector3(cx - h, y, cz), EConstruct.Wall, world, ref best, ref bestD);
+                            Probe(new Vector3(cx, y, cz + h), EConstruct.Wall, world, ref best, ref bestD);
+                            Probe(new Vector3(cx, y, cz - h), EConstruct.Wall, world, ref best, ref bestD);
+                        }
+                }
+            }
+            else
+            {
+                foreach (var p in _all)
+                {
+                    float d = p.Pos.DistanceSquaredTo(world);
+                    if (d <= bestD) { bestD = d; best = p; }
+                }
             }
             if (best == null) return null;
             Vector3 n = StructureCatalog.IsFace(best.Construct)
                 ? Vector3.Up
                 : new Vector3(Mathf.Sin(Mathf.DegToRad(best.YawDeg)), 0f, Mathf.Cos(Mathf.DegToRad(best.YawDeg))).Normalized();
             return new StructureHit(best.Node, n, best.Tier, best.Construct);
+        }
+
+        void Probe(Vector3 at, EConstruct c, Vector3 world, ref Piece best, ref float bestD)
+        {
+            if (!_bySlot.TryGetValue(StructureCatalog.SlotKey(at, c), out var p)) return;
+            float d = p.Pos.DistanceSquaredTo(world);
+            if (d <= bestD) { bestD = d; best = p; }
         }
 
         /// <summary>Can a barricade attach here? True when a structure piece is close enough AND the surface
@@ -133,15 +173,32 @@ namespace UnturnedGodot
         {
             if (!StructureCatalog.TierAt(tier).RequiresPillars) return true;
             if (c == EConstruct.Floor && Mathf.Abs(snapped.Y) < StructureCatalog.WallHeight * 0.5f) return true;
-            if (_all.Count == 0) return false;
+            if (_bySlot.Count == 0) return false;
 
-            // anything in the ring of neighbouring slots (same level or one below) counts as support
-            foreach (var p in _all)
+            // Neighbour LOOKUP, not a scan over every piece. This ran as a linear pass over _all, and
+            // CanPlace is called every frame while the build ghost follows the aim -- so the cost of deciding
+            // "can I place here" grew with the size of the base you had already built. That is the shape of
+            // problem that is invisible on a test fixture with four pieces and unpleasant in a real base.
+            //
+            // The candidate set is the lattice neighbourhood the scan approximated: this tile and the four
+            // adjacent tiles, at this level and one level below. Each is checked as BOTH a face and an edge
+            // slot, because a floor supports a wall on its edge and vice versa.
+            // Probe at HALF-EDGE resolution. The first cut of this offset by +-HalfEdge only for WALL slots,
+            // so a wall sitting at a tile SIDE could never see the floor at that tile's CENTRE 3 m away -- the
+            // single commonest support relationship in the game, and it silently refused every wall on a
+            // floor. The lattice interleaves centres and side-midpoints 3 m apart, so the neighbourhood has to
+            // be walked at that spacing and each point tried as both a face and an edge slot.
+            float h = StructureCatalog.HalfEdge;
+            for (int level = 0; level <= 1; level++)
             {
-                float dy = snapped.Y - p.Pos.Y;
-                if (dy < -0.01f || dy > StructureCatalog.WallHeight + 0.01f) continue;
-                float dxz = new Vector2(snapped.X - p.Pos.X, snapped.Z - p.Pos.Z).Length();
-                if (dxz <= StructureCatalog.EdgeLength + StructureCatalog.OverlapPadding) return true;
+                float y = snapped.Y - level * StructureCatalog.WallHeight;
+                for (int ix = -2; ix <= 2; ix++)
+                    for (int iz = -2; iz <= 2; iz++)
+                    {
+                        var at = new Vector3(snapped.X + ix * h, y, snapped.Z + iz * h);
+                        if (_bySlot.ContainsKey(StructureCatalog.SlotKey(at, EConstruct.Floor))) return true;
+                        if (_bySlot.ContainsKey(StructureCatalog.SlotKey(at, EConstruct.Wall))) return true;
+                    }
             }
             return false;
         }

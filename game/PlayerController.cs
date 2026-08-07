@@ -60,6 +60,44 @@ namespace UnturnedGodot
         SkillsUI _skillsUI;                 // the skills menu (J to open) -- spend XP to level skills
         BuildTool _build;                   // B = build mode. C = construct, V = tier, LMB place, R salvage.
 
+        /// <summary>Swing at the structure piece under the crosshair. Returns true if one was hit, so the melee
+        /// chain stops there rather than also swinging at whatever is behind it. A blowtorch repairs instead of
+        /// hitting, matching how vehicles and deployables already behave.</summary>
+        bool MeleeStructure(float amount, float range)
+        {
+            var sm = StructureManager.Instance;
+            if (sm == null || _cam == null) return false;
+            var space = GetWorld3D()?.DirectSpaceState;
+            if (space == null) return false;
+            Vector3 from = _cam.GlobalPosition, dir = -_cam.GlobalTransform.Basis.Z;
+            var q = PhysicsRayQueryParameters3D.Create(from, from + dir * (range + 1.5f));
+            q.CollisionMask = 1u << 0;
+            var hit = space.IntersectRay(q);
+            if (hit.Count == 0) return false;
+            var found = sm.QueryAt((Vector3)hit["position"], StructureCatalog.HalfEdge);
+            if (found == null) return false;
+            foreach (var piece in sm.All)
+            {
+                if (piece.Node != found.Value.Node) continue;
+                var pos = (Vector3)hit["position"];
+                if (HasBlowtorch)
+                {
+                    int healed = sm.Repair(piece, Mathf.RoundToInt(amount));
+                    if (healed > 0) GD.Print($"[build] repaired {piece.Construct} +{healed}");
+                }
+                else
+                {
+                    bool broke = sm.Damage(piece, Mathf.RoundToInt(amount));
+                    MeleeImpactFx(pos, false, StructureCatalog.TierAt(piece.Tier).Name == "metal" ? Surf.Metal : Surf.Wood);
+                    GD.Print(broke
+                        ? $"[build] destroyed {StructureCatalog.TierAt(piece.Tier).Name} {piece.Construct}"
+                        : $"[build] hit {piece.Construct} for {amount:0} ({piece.Health}/{piece.MaxHealth})");
+                }
+                return true;
+            }
+            return false;
+        }
+
         /// <summary>Salvage the structure piece under the crosshair. Uses the eye ray rather than the build
         /// ghost: the ghost sits at the slot you would BUILD into, which is next to the piece you are looking
         /// at, so salvaging off the ghost takes down the wrong thing (or nothing).</summary>
@@ -2296,6 +2334,13 @@ namespace UnturnedGodot
                 _focusBed.TakeDamage((_melee?.VehicleDamage ?? 10f) * mult); MeleeImpactFx(_focusBed.GlobalPosition, false, Surf.Wood);
                 return;
             }
+
+            // Structures take melee too, or a placed base carries Health that nothing in the game can ever
+            // reduce -- the same gap doors and beds had before their block above was added, where the tests
+            // exercised TakeDamage directly and proved only that the method worked. Vulnerability is the
+            // catalog's (retail's isVulnerable): metal shrugs off a hatchet, which is why the tier ladder is
+            // worth climbing.
+            if (MeleeStructure((_melee?.VehicleDamage ?? 10f) * mult, range)) return;
 
             float dmg = (_melee?.ZombieDamage ?? 45f) * mult * Skills.OverkillMeleeMultiplier();   // weapon .dat Zombie_Damage x OVERKILL skill
             Vector3 origin = GlobalPosition + Vector3.Up * 1.2f, fwd = -_cam.GlobalTransform.Basis.Z;
