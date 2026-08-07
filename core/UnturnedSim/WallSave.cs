@@ -28,6 +28,9 @@ namespace UnturnedSim
         /// palette says a WALL is". A retail building is one palette but not one colour -- its roof is a
         /// different texel from its walls -- so a roof imported without this comes back cream.</summary>
         public int Texel = -1;
+        /// <summary>Trapezoid edges: how far the surface is set in from each side at its base and at its top.
+        /// All zero is a plain rectangle. See WallImport.Recovered.</summary>
+        public float InsetL0, InsetL1, InsetR0, InsetR1;
         public readonly List<WallOpening> Openings = new();
     }
 
@@ -47,7 +50,7 @@ namespace UnturnedSim
         {
             var sb = new StringBuilder();
             sb.Append(Header).Append('\n');
-            sb.Append("# wall <x> <y> <z> <yawDeg> <length> <thickness> <materialId> [height] [pitchDeg] [kind] [gableRise] [texel]\n");
+            sb.Append("# wall <x> <y> <z> <yawDeg> <length> <thickness> <materialId> [height] [pitchDeg] [kind] [gableRise] [texel] [insetL0 insetL1 insetR0 insetR1]\n");
             sb.Append("#   open <u> <v> <width> <height> <depth> <archetype>\n");
             if (walls != null)
                 foreach (var w in walls)
@@ -61,6 +64,8 @@ namespace UnturnedSim
                       .Append(' ').Append(w.Kind.ToString())
                       .Append(' ').Append(F(w.GableRise))
                       .Append(' ').Append(w.Texel.ToString(CultureInfo.InvariantCulture))
+                      .Append(' ').Append(F(w.InsetL0)).Append(' ').Append(F(w.InsetL1))
+                      .Append(' ').Append(F(w.InsetR0)).Append(' ').Append(F(w.InsetR1))
                       .Append('\n');
                     foreach (var o in w.Openings)
                         sb.Append("  open ").Append(F(o.U)).Append(' ').Append(F(o.V)).Append(' ')
@@ -96,6 +101,9 @@ namespace UnturnedSim
                     if (p.Length < 11 || !System.Enum.TryParse(p[10], out w.Kind)) w.Kind = SurfaceKind.Wall;
                     if (p.Length < 12 || !N(p[11], out w.GableRise)) w.GableRise = 0f;
                     if (p.Length < 13 || !int.TryParse(p[12], out w.Texel)) w.Texel = -1;
+                    if (p.Length < 17 || !N(p[13], out w.InsetL0) || !N(p[14], out w.InsetL1)
+                        || !N(p[15], out w.InsetR0) || !N(p[16], out w.InsetR1))
+                    { w.InsetL0 = w.InsetL1 = w.InsetR0 = w.InsetR1 = 0f; }
                     outp.Add(w);
                     cur = w;
                 }

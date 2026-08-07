@@ -17,8 +17,61 @@ namespace UnturnedSim
         {
             public readonly float U0, V0, Width, Height;
             public readonly List<WallOpening> Openings;
-            public Recovered(float u0, float v0, float w, float h, List<WallOpening> openings)
-            { U0 = u0; V0 = v0; Width = w; Height = h; Openings = openings; }
+            /// <summary>How far the covered area is set in from each side, at the BOTTOM edge and at the TOP.
+            /// All zero for a rectangle, which is the overwhelmingly common case. A retail cross-wing roof
+            /// slope is a trapezoid -- measured on House_00, one edge runs from 5.10 m in at the eave to
+            /// 0.10 m at the ridge, dead linear -- and emitting it as its bounding rectangle overshoots into
+            /// the valley by a quarter of its area.</summary>
+            public readonly float InsetL0, InsetL1, InsetR0, InsetR1;
+            public Recovered(float u0, float v0, float w, float h, List<WallOpening> openings,
+                             float insetL0 = 0f, float insetL1 = 0f, float insetR0 = 0f, float insetR1 = 0f)
+            {
+                U0 = u0; V0 = v0; Width = w; Height = h; Openings = openings;
+                InsetL0 = insetL0; InsetL1 = insetL1; InsetR0 = insetR0; InsetR1 = insetR1;
+            }
+            public bool Tapered => InsetL0 > 0.02f || InsetL1 > 0.02f || InsetR0 > 0.02f || InsetR1 > 0.02f;
+        }
+
+        /// <summary>Fit the left and right outlines of the covered area as straight lines, and report how far
+        /// in they sit at the bottom and top. Zeros unless BOTH sides fit well -- an outline that is stepped,
+        /// curved or ragged is not a trapezoid, and guessing one would eat real wall.</summary>
+        static (float L0, float L1, float R0, float R1) FitTaper(bool[] covered, int nx, int ny,
+                                                                 float cw, float ch, float w)
+        {
+            int rows = 0;
+            double sy = 0, syy = 0, sl = 0, syl = 0, sr = 0, syr = 0;
+            var lo = new int[ny];
+            var hi = new int[ny];
+            for (int y = 0; y < ny; y++)
+            {
+                int a = -1, b = -1;
+                for (int x = 0; x < nx; x++) if (covered[y * nx + x]) { if (a < 0) a = x; b = x; }
+                lo[y] = a; hi[y] = b;
+                if (a < 0) continue;
+                double yy = y + 0.5;
+                rows++; sy += yy; syy += yy * yy; sl += a; syl += yy * a; sr += b + 1; syr += yy * (b + 1);
+            }
+            if (rows < 4) return (0f, 0f, 0f, 0f);
+            double den = rows * syy - sy * sy;
+            if (Math.Abs(den) < 1e-9) return (0f, 0f, 0f, 0f);
+            double lSlope = (rows * syl - sy * sl) / den, lIcpt = (sl - lSlope * sy) / rows;
+            double rSlope = (rows * syr - sy * sr) / den, rIcpt = (sr - rSlope * sy) / rows;
+
+            // the fit has to actually describe the outline; 1.5 cells of slack for a ripped mesh
+            for (int y = 0; y < ny; y++)
+            {
+                if (lo[y] < 0) continue;
+                double yy = y + 0.5;
+                if (Math.Abs(lo[y] - (lIcpt + lSlope * yy)) > 1.5) return (0f, 0f, 0f, 0f);
+                if (Math.Abs(hi[y] + 1 - (rIcpt + rSlope * yy)) > 1.5) return (0f, 0f, 0f, 0f);
+            }
+
+            float l0 = (float)(lIcpt * cw), l1 = (float)((lIcpt + lSlope * ny) * cw);
+            float r0 = w - (float)(rIcpt * cw), r1 = w - (float)((rIcpt + rSlope * ny) * cw);
+            l0 = Math.Max(0f, l0); l1 = Math.Max(0f, l1); r0 = Math.Max(0f, r0); r1 = Math.Max(0f, r1);
+            // a couple of centimetres is grid noise, not a taper -- keep rectangles exactly rectangular
+            if (l0 < 0.15f && l1 < 0.15f && r0 < 0.15f && r1 < 0.15f) return (0f, 0f, 0f, 0f);
+            return (l0, l1, r0, r1);
         }
 
         /// <summary>Recover the wall rectangle and its openings from the solid panels of one plane.
@@ -204,7 +257,8 @@ namespace UnturnedSim
                 if (ow >= minOpening && oh >= minOpening)
                     openings.Add(new WallOpening(ou - u0, ov - v0, ow, oh));
             }
-            return new Recovered(u0, v0, w, h, openings);
+            var (tl0, tl1, tr0, tr1) = FitTaper(covered, nx, ny, cw, ch, w);
+            return new Recovered(u0, v0, w, h, openings, tl0, tl1, tr0, tr1);
         }
 
         static bool Inside(Tri2 t, float px, float py)

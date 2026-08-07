@@ -51,6 +51,18 @@ namespace UnturnedGodot
         /// special case through Solids, the collider and every test that leans on them.</summary>
         public float GableRise;
 
+        /// <summary>Trapezoid edges: how far this surface is set in from its left and right sides, at the
+        /// BASE (…0) and at the TOP (…1), straight-line between. All zero -- the default, and every wall,
+        /// floor and rectangular roof -- takes the plain box path below untouched.
+        ///
+        /// This exists because a cross-wing roof slope is not a rectangle. On House_00 the two 14-degree
+        /// planes are trapezoids at 0.77 fill: one edge runs 5.10 m in at the eave to 0.10 m at the ridge,
+        /// dead linear, which is the valley where the wing meets the main roof. Emitted as their bounding
+        /// rectangles they overshot that valley by a quarter of their area each. A hip end is the same
+        /// primitive with both top insets meeting.</summary>
+        public float InsetL0, InsetL1, InsetR0, InsetR1;
+        public bool Tapered => InsetL0 > 0.02f || InsetL1 > 0.02f || InsetR0 > 0.02f || InsetR1 > 0.02f;
+
         /// <summary>Trim sits proud of BOTH faces and never scales with the opening -- widen a garage and the
         /// jambs move apart at constant thickness. Scaling the frame with the hole is what makes a parametric
         /// editor look like a stretched sprite.</summary>
@@ -97,7 +109,8 @@ namespace UnturnedGodot
             st.Begin(Mesh.PrimitiveType.Triangles);
             st.SetSmoothGroup(uint.MaxValue);     // = flat. See AddTrim's note; a box wants creased corners.
             foreach (var s in solids)
-                AddWallBox(st, s, solids, t);
+                if (Tapered) AddTaperedSolid(st, s, t);
+                else AddWallBox(st, s, solids, t);
             // GenerateNormals BEFORE Index: indexing welds vertices, and welding before normals exist lights
             // the mesh as one smooth blob instead of crisp box faces.
             if (GableRise > WallOpenings.Eps) AddGableCap(st, t);
@@ -148,9 +161,26 @@ namespace UnturnedGodot
             for (int i = 0; i < solids.Count; i++)
             {
                 var s = solids[i];
-                if (_shapes[i].Shape is not BoxShape3D box) _shapes[i].Shape = box = new BoxShape3D();
-                box.Size = new Vector3(s.Width, s.Height, Thickness);
-                _shapes[i].Position = new Vector3((s.U0 + s.U1) * 0.5f, (s.V0 + s.V1) * 0.5f, 0f);
+                if (!Tapered)
+                {
+                    if (_shapes[i].Shape is not BoxShape3D box) _shapes[i].Shape = box = new BoxShape3D();
+                    box.Size = new Vector3(s.Width, s.Height, Thickness);
+                    _shapes[i].Position = new Vector3((s.U0 + s.U1) * 0.5f, (s.V0 + s.V1) * 0.5f, 0f);
+                    continue;
+                }
+                // A box around a trapezoid is solid where the mesh is not, which is the see-through-but-
+                // not-walk-through bug this partition exists to make impossible. Same polygon as the mesh.
+                var poly = ClipToTaper(s);
+                if (poly.Count < 3) { _shapes[i].Shape = null; continue; }
+                var pts = new Vector3[poly.Count * 2];
+                for (int k = 0; k < poly.Count; k++)
+                {
+                    pts[k] = new Vector3(poly[k].X, poly[k].Y, -Thickness * 0.5f);
+                    pts[k + poly.Count] = new Vector3(poly[k].X, poly[k].Y, Thickness * 0.5f);
+                }
+                if (_shapes[i].Shape is not ConvexPolygonShape3D hull) _shapes[i].Shape = hull = new ConvexPolygonShape3D();
+                hull.Points = pts;
+                _shapes[i].Position = Vector3.Zero;     // the points are already in surface space
             }
             RebuildTrimCollision();
 
@@ -264,6 +294,66 @@ namespace UnturnedGodot
             AddBox(st, new Vector3(u0 - BURY, v1 - w, -t), new Vector3(u1 + BURY, v1 + BURY, t)); // head
             if (sill)
                 AddBox(st, new Vector3(u0 - BURY, v0 - BURY, -t), new Vector3(u1 + BURY, v0 + w, t));
+        }
+
+        /// <summary>The left and right cut lines, as u for a given v.</summary>
+        float CutL(float v) => Mathf.Lerp(InsetL0, InsetL1, Height > WallOpenings.Eps ? v / Height : 0f);
+        float CutR(float v) => Length - Mathf.Lerp(InsetR0, InsetR1, Height > WallOpenings.Eps ? v / Height : 0f);
+
+        /// <summary>One solid of the partition, clipped to the trapezoid and extruded.
+        ///
+        /// Kept entirely separate from AddWallBox rather than generalising it: the box path runs for every
+        /// wall in the game and knows which faces to omit where solids abut, and none of that needed to
+        /// change to put a slanted edge on a roof.</summary>
+        void AddTaperedSolid(SurfaceTool st, WallSolid s, float t)
+        {
+            var poly = ClipToTaper(s);
+            if (poly.Count < 3) return;
+            for (int i = 1; i + 1 < poly.Count; i++)          // +Z face
+            {
+                Tri(st, new Vector3(poly[0].X, poly[0].Y, t), new Vector3(poly[i].X, poly[i].Y, t),
+                        new Vector3(poly[i + 1].X, poly[i + 1].Y, t));
+                Tri(st, new Vector3(poly[0].X, poly[0].Y, -t), new Vector3(poly[i + 1].X, poly[i + 1].Y, -t),
+                        new Vector3(poly[i].X, poly[i].Y, -t));
+            }
+            for (int i = 0; i < poly.Count; i++)              // the rim
+            {
+                var a = poly[i];
+                var b = poly[(i + 1) % poly.Count];
+                Quad(st, new Vector3(a.X, a.Y, -t), new Vector3(b.X, b.Y, -t),
+                         new Vector3(b.X, b.Y, t), new Vector3(a.X, a.Y, t));
+            }
+        }
+
+        /// <summary>A solid rectangle clipped by the two cut lines. Sutherland-Hodgman against two
+        /// half-planes; the result is convex, so a fan triangulates it and a convex hull collides it.</summary>
+        List<Vector2> ClipToTaper(WallSolid s)
+        {
+            var poly = new List<Vector2>
+            {
+                new(s.U0, s.V0), new(s.U1, s.V0), new(s.U1, s.V1), new(s.U0, s.V1),
+            };
+            // keep u >= CutL(v), then u <= CutR(v)
+            poly = ClipHalfPlane(poly, p => p.X - CutL(p.Y));
+            poly = ClipHalfPlane(poly, p => CutR(p.Y) - p.X);
+            return poly;
+        }
+
+        static List<Vector2> ClipHalfPlane(List<Vector2> poly, System.Func<Vector2, float> keep)
+        {
+            var outp = new List<Vector2>(poly.Count + 2);
+            for (int i = 0; i < poly.Count; i++)
+            {
+                Vector2 a = poly[i], b = poly[(i + 1) % poly.Count];
+                float da = keep(a), db = keep(b);
+                if (da >= 0f) outp.Add(a);
+                if ((da >= 0f) != (db >= 0f))
+                {
+                    float f = da / (da - db);
+                    if (float.IsFinite(f)) outp.Add(a.Lerp(b, Mathf.Clamp(f, 0f, 1f)));
+                }
+            }
+            return outp;
         }
 
         static void AddWallBox(SurfaceTool st, WallSolid s, List<WallSolid> all, float t)

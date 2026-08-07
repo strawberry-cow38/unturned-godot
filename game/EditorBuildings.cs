@@ -132,7 +132,8 @@ namespace UnturnedGodot
         WallSurface SpawnWall(Vector3 origin, float yawDeg, float length, float thickness, int material,
                               IReadOnlyList<WallOpening> openings, float height = WallOpenings.DoorHeight,
                               float pitchDeg = 0f, SurfaceKind kind = SurfaceKind.Wall, float gableRise = 0f,
-                              int texel = -1)
+                              int texel = -1, float insetL0 = 0f, float insetL1 = 0f,
+                              float insetR0 = 0f, float insetR1 = 0f)
         {
             // NO SNAPPING HERE. This is the path Load() and ImportRetail() come through, and rounding a
             // length on the way in makes loading lossy: an imported wall measured off the mesh to the
@@ -144,6 +145,7 @@ namespace UnturnedGodot
             {
                 Length = Mathf.Max(0.01f, length), Height = height, Thickness = thickness, MaterialId = material, Kind = kind,
                 GableRise = gableRise, Texel = texel,
+                InsetL0 = insetL0, InsetL1 = insetL1, InsetR0 = insetR0, InsetR1 = insetR1,
                 Position = origin, RotationDegrees = new Vector3(pitchDeg, yawDeg, 0f),
             };
             AddChild(w);
@@ -542,6 +544,7 @@ namespace UnturnedGodot
                     X = w.Position.X, Y = w.Position.Y, Z = w.Position.Z,
                     Yaw = w.RotationDegrees.Y, Pitch = w.RotationDegrees.X, Kind = w.Kind,
                     Length = w.Length, Height = w.Height, GableRise = w.GableRise, Texel = w.Texel,
+                    InsetL0 = w.InsetL0, InsetL1 = w.InsetL1, InsetR0 = w.InsetR0, InsetR1 = w.InsetR1,
                     Thickness = w.Thickness, Material = w.MaterialId,
                 };
                 pl.Openings.AddRange(w.Openings);
@@ -570,7 +573,8 @@ namespace UnturnedGodot
             foreach (var w in _walls.ToArray()) RemoveWall(w);
             foreach (var pl in plans)
                 SpawnWall(new Vector3(pl.X, pl.Y, pl.Z), pl.Yaw, pl.Length, pl.Thickness, pl.Material,
-                          pl.Openings, pl.Height, pl.Pitch, pl.Kind, pl.GableRise, pl.Texel);
+                          pl.Openings, pl.Height, pl.Pitch, pl.Kind, pl.GableRise, pl.Texel,
+                          pl.InsetL0, pl.InsetL1, pl.InsetR0, pl.InsetR1);
             GD.Print($"[editor-buildings] loaded {plans.Count} walls");
             return plans.Count;
         }
@@ -810,6 +814,7 @@ namespace UnturnedGodot
                     X = w.Position.X, Y = w.Position.Y, Z = w.Position.Z,
                     Yaw = w.RotationDegrees.Y, Pitch = w.RotationDegrees.X, Kind = w.Kind,
                     Length = w.Length, Height = w.Height, GableRise = w.GableRise, Texel = w.Texel,
+                    InsetL0 = w.InsetL0, InsetL1 = w.InsetL1, InsetR0 = w.InsetR0, InsetR1 = w.InsetR1,
                     Thickness = w.Thickness, Material = w.MaterialId,
                 };
                 pl.Openings.AddRange(w.Openings);
@@ -961,7 +966,8 @@ namespace UnturnedGodot
             foreach (var w in new List<WallSurface>(_walls)) RemoveWall(w);
             foreach (var pl in plans)
                 SpawnWall(StageOrigin + new Vector3(pl.X, pl.Y, pl.Z), pl.Yaw, pl.Length, pl.Thickness,
-                          pl.Material, pl.Openings, pl.Height, pl.Pitch, pl.Kind, pl.GableRise, pl.Texel);
+                          pl.Material, pl.Openings, pl.Height, pl.Pitch, pl.Kind, pl.GableRise, pl.Texel,
+                          pl.InsetL0, pl.InsetL1, pl.InsetR0, pl.InsetR1);
             ActiveMaterial = mat;
             int nw = 0, nr = 0, nf = 0, nop = 0, ngab = 0;
             foreach (var pl in plans)
@@ -983,6 +989,7 @@ namespace UnturnedGodot
                     var e = o + rt * pl.Length + Vector3.Up * pl.Height;
                     GD.Print($"[import]  {pl.Kind,-10} {pl.Length,6:0.0} x {pl.Height,5:0.0}  yaw {pl.Yaw,7:0.0}  pitch {pl.Pitch,6:0.0}"
                              + $"  thick {pl.Thickness:0.00}  gable {pl.GableRise:0.0}  ops {pl.Openings.Count}"
+                             + $"  inset L {pl.InsetL0:0.0}/{pl.InsetL1:0.0} R {pl.InsetR0:0.0}/{pl.InsetR1:0.0}"
                              + $"   X {Mathf.Min(o.X, e.X),6:0.0}..{Mathf.Max(o.X, e.X),6:0.0}"
                              + $"  Y {Mathf.Min(o.Y, e.Y),6:0.0}..{Mathf.Max(o.Y, e.Y),6:0.0}"
                              + $"  Z {Mathf.Min(o.Z, e.Z),6:0.0}..{Mathf.Max(o.Z, e.Z),6:0.0}");

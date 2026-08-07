@@ -193,6 +193,7 @@ namespace UnturnedGodot
                     // which is the only thing that can see a mirror.
                     Yaw = yaw, Pitch = 90f - pitch, Kind = SurfaceKind.Roof,
                     Length = r.Width, Height = r.Height, Texel = roofTexel,
+                    InsetL0 = r.InsetL0, InsetL1 = r.InsetL1, InsetR0 = r.InsetR0, InsetR1 = r.InsetR1,
                     Thickness = EditorBuildings.SlabThickness, Material = materialId,
                 };
                 foreach (var o in r.Openings) plan.Openings.Add(o);   // chimney/skylight holes, unsnapped

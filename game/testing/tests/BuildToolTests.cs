@@ -875,14 +875,20 @@ namespace UnturnedGodot.Testing
             var v = (Vector3[])mesh.SurfaceGetArrays(0)[(int)Mesh.ArrayType.Vertex];
             var xf = EditorObjects.Upright(0f);
             var srcPlanes = new List<(Vector3 N, float D)>();
+            var srcArea = new Dictionary<(int, int, int, int), float>();      // real area per roof plane
             for (int i = 0; i + 2 < v.Length; i += 3)
             {
                 Vector3 a = xf * v[i], b = xf * v[i + 1], c = xf * v[i + 2];
-                var n = (b - a).Cross(c - a);
-                if (n.LengthSquared() < 1e-9f) continue;
-                n = -n.Normalized();
+                var cr = (b - a).Cross(c - a);
+                if (cr.LengthSquared() < 1e-9f) continue;
+                var n = -cr.Normalized();
                 if (n.Y <= 0.25f || n.Y > 0.98f) continue;         // sloped and upward: a roof
-                srcPlanes.Add((n, n.Dot(a)));
+                float d = n.Dot(a);
+                srcPlanes.Add((n, d));
+                var key = (Mathf.RoundToInt(n.X * 20f), Mathf.RoundToInt(n.Y * 20f),
+                           Mathf.RoundToInt(n.Z * 20f), Mathf.RoundToInt(d * 20f));
+                srcArea.TryGetValue(key, out float had);
+                srcArea[key] = had + cr.Length() * 0.5f;
             }
             T.Check($"the mesh has sloped roof planes to compare against ({srcPlanes.Count} triangles)",
                     srcPlanes.Count > 0);
@@ -952,6 +958,27 @@ namespace UnturnedGodot.Testing
             float eLo = float.MaxValue, eHi = float.MinValue;
             foreach (float e in eaves) { eLo = Mathf.Min(eLo, e); eHi = Mathf.Max(eHi, e); }
             T.Check($"the slopes share an eave height ({eLo:0.00}..{eHi:0.00})", eHi - eLo < 0.5f);
+
+            // AREA, which is the whole point of the trapezoid support. A cross-wing slope is cut by the
+            // valley where it meets the main roof; emitted as its bounding rectangle it is 0.77 of its own
+            // plane and the surplus hangs out over the valley. BREAK IT: drop the insets and two of the four
+            // planes come back ~30% too big.
+            foreach (var pl in roofs)
+            {
+                float area = pl.Length * pl.Height
+                             - (pl.InsetL0 + pl.InsetL1) * 0.5f * pl.Height
+                             - (pl.InsetR0 + pl.InsetR1) * 0.5f * pl.Height;
+                var o = new Vector3(pl.X, pl.Y, pl.Z);
+                float want = 0f;
+                foreach (var kv in srcArea)
+                {
+                    var n = new Vector3(kv.Key.Item1 / 20f, kv.Key.Item2 / 20f, kv.Key.Item3 / 20f).Normalized();
+                    if (Mathf.Abs(n.Dot(o) - kv.Key.Item4 / 20f) > 0.35f) continue;
+                    want = Mathf.Max(want, kv.Value);
+                }
+                T.Check($"roof surface area {area:0.0} m2 matches its source plane's {want:0.0} m2",
+                        want > 0f && Mathf.Abs(area - want) <= want * 0.06f);
+            }
         }
     }
 }
