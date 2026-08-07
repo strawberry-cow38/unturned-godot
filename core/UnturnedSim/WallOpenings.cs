@@ -202,7 +202,12 @@ namespace UnturnedSim
         public const float WindowHeight = 2.75f;
         public const float WindowSill = 1.00f;
         public const float LatticeStep = 3.0f;       // wall lengths snap to multiples of this (retail half-edge)
-        public const float DefaultThickness = 0.73f; // the reveal depth retail draws openings for
+        // Measured off the loose panels of House_00/03, Apartment_0, Office_0: a reveal strip spans the wall
+        // thickness by definition, and 0.70 dominates every building (74/212/145/184 panels). 0.50 is the
+        // second cluster -- interior partitions are a thinner wall. 0.20 is the trim profile.
+        public const float DefaultThickness = 0.70f;   // exterior wall
+        public const float InteriorThickness = 0.50f;  // partitions
+        public const float TrimProfile = 0.20f;        // frame bar width, retail-measured
         public const float MinOpening = 0.5f;
     }
 }

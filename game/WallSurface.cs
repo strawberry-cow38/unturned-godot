@@ -18,7 +18,7 @@ namespace UnturnedGodot
     {
         public float Length = 6f;                       // along local +X
         public float Height = WallOpenings.DoorHeight;  // along local +Y
-        public float Thickness = WallOpenings.DefaultThickness;
+        public float Thickness = WallOpenings.DefaultThickness;   // 0.70 exterior, 0.50 for partitions
         public readonly List<WallOpening> Openings = new();
 
         public Color Tint = new(0.78f, 0.74f, 0.66f);
@@ -28,7 +28,8 @@ namespace UnturnedGodot
         /// <summary>Trim sits proud of BOTH faces and never scales with the opening -- widen a garage and the
         /// jambs move apart at constant thickness. Scaling the frame with the hole is what makes a parametric
         /// editor look like a stretched sprite.</summary>
-        public const float TrimProfile = 0.09f, TrimProud = 0.02f;
+        public const float TrimProfile = WallOpenings.TrimProfile;   // 0.20, retail-measured
+        public const float TrimProud = 0.035f;                       // how far the bar stands off each face
 
         MeshInstance3D _mesh, _trimMesh;
         StaticBody3D _body;          // wall solids: layer 0, the layer player movement collides against
@@ -64,7 +65,7 @@ namespace UnturnedGodot
             var st = new SurfaceTool();
             st.Begin(Mesh.PrimitiveType.Triangles);
             foreach (var s in solids)
-                AddBox(st, new Vector3(s.U0, s.V0, -t), new Vector3(s.U1, s.V1, t));
+                AddWallBox(st, s, solids, t);
             // GenerateNormals BEFORE Index: indexing welds vertices, and welding before normals exist lights
             // the mesh as one smooth blob instead of crisp box faces.
             st.GenerateNormals();
@@ -102,37 +103,80 @@ namespace UnturnedGodot
 
         void AddTrim(SurfaceTool st, WallOpening o)
         {
-            float p = Thickness * 0.5f + TrimProud, w = TrimProfile;
-            // four constant-profile bars around the hole; only their LENGTHS come from the opening
-            AddBox(st, new Vector3(o.U - w, o.V - w, -p), new Vector3(o.U, o.V1 + w, p));   // left jamb
-            AddBox(st, new Vector3(o.U1, o.V - w, -p), new Vector3(o.U1 + w, o.V1 + w, p)); // right jamb
-            AddBox(st, new Vector3(o.U, o.V1, -p), new Vector3(o.U1, o.V1 + w, p));         // head
-            if (o.V > WallOpenings.Eps)                                                      // no sill on a floor-pinned opening
-                AddBox(st, new Vector3(o.U, o.V - w, -p), new Vector3(o.U1, o.V, p));
+            // A band on EACH face, standing off it -- never a box that encloses the wall edge. An enclosing box
+            // shares volume with the wall solids, so every shared face is two coincident polygons fighting for
+            // the depth buffer, which is the flicker around every frame.
+            float t = Thickness * 0.5f, w = TrimProfile;
+            foreach (float sign in new[] { 1f, -1f })
+            {
+                float z0 = sign > 0 ? t : -t - TrimProud;
+                float z1 = sign > 0 ? t + TrimProud : -t;
+                AddBox(st, new Vector3(o.U - w, o.V - w, z0), new Vector3(o.U, o.V1 + w, z1));     // left jamb
+                AddBox(st, new Vector3(o.U1, o.V - w, z0), new Vector3(o.U1 + w, o.V1 + w, z1));   // right jamb
+                AddBox(st, new Vector3(o.U, o.V1, z0), new Vector3(o.U1, o.V1 + w, z1));           // head
+                if (o.V > WallOpenings.Eps)                                                         // floor-pinned openings have no sill
+                    AddBox(st, new Vector3(o.U, o.V - w, z0), new Vector3(o.U1, o.V, z1));
+            }
+        }
+
+        /// <summary>One solid, minus any side face that another solid is flush against. The partition emits
+        /// boxes that share edges, so drawing all six faces of each leaves two coincident polygons at every
+        /// internal boundary -- they z-fight and self-shadow, and the wall reads as a grid of tiles rather than
+        /// one surface. Only faces on the OUTSIDE of the union get drawn.</summary>
+        static void AddWallBox(SurfaceTool st, WallSolid s, List<WallSolid> all, float t)
+        {
+            bool left = !Abuts(all, s, -1, 0), right = !Abuts(all, s, 1, 0);
+            bool down = !Abuts(all, s, 0, -1), up = !Abuts(all, s, 0, 1);
+            AddBoxFaces(st, new Vector3(s.U0, s.V0, -t), new Vector3(s.U1, s.V1, t),
+                        front: true, back: true, minU: left, maxU: right, minV: down, maxV: up);
+        }
+
+        /// <summary>Is another solid flush against this side, covering it completely?</summary>
+        static bool Abuts(List<WallSolid> all, WallSolid s, int du, int dv)
+        {
+            const float E = 1e-3f;
+            foreach (var o in all)
+            {
+                if (du != 0)
+                {
+                    float mine = du < 0 ? s.U0 : s.U1, theirs = du < 0 ? o.U1 : o.U0;
+                    if (Mathf.Abs(mine - theirs) > E) continue;
+                    if (o.V0 <= s.V0 + E && o.V1 >= s.V1 - E) return true;
+                }
+                else
+                {
+                    float mine = dv < 0 ? s.V0 : s.V1, theirs = dv < 0 ? o.V1 : o.V0;
+                    if (Mathf.Abs(mine - theirs) > E) continue;
+                    if (o.U0 <= s.U0 + E && o.U1 >= s.U1 - E) return true;
+                }
+            }
+            return false;
         }
 
         static void AddBox(SurfaceTool st, Vector3 a, Vector3 b)
+            => AddBoxFaces(st, a, b, true, true, true, true, true, true);
+
+        static void AddBoxFaces(SurfaceTool st, Vector3 a, Vector3 b,
+                                bool front, bool back, bool minU, bool maxU, bool minV, bool maxV)
         {
             Vector3[] v =
             {
                 new(a.X, a.Y, a.Z), new(b.X, a.Y, a.Z), new(b.X, b.Y, a.Z), new(a.X, b.Y, a.Z),
                 new(a.X, a.Y, b.Z), new(b.X, a.Y, b.Z), new(b.X, b.Y, b.Z), new(a.X, b.Y, b.Z),
             };
-            int[,] faces =
-            {
-                {0,3,2},{0,2,1},   // -Z
-                {4,5,6},{4,6,7},   // +Z
-                {0,4,7},{0,7,3},   // -X
-                {1,2,6},{1,6,5},   // +X
-                {0,1,5},{0,5,4},   // -Y
-                {3,7,6},{3,6,2},   // +Y
-            };
+            var tris = new List<int[]>();
+            if (back)  { tris.Add(new[]{0,3,2}); tris.Add(new[]{0,2,1}); }   // -Z
+            if (front) { tris.Add(new[]{4,5,6}); tris.Add(new[]{4,6,7}); }   // +Z
+            if (minU)  { tris.Add(new[]{0,4,7}); tris.Add(new[]{0,7,3}); }   // -X
+            if (maxU)  { tris.Add(new[]{1,2,6}); tris.Add(new[]{1,6,5}); }   // +X
+            if (minV)  { tris.Add(new[]{0,1,5}); tris.Add(new[]{0,5,4}); }   // -Y
+            if (maxV)  { tris.Add(new[]{3,7,6}); tris.Add(new[]{3,6,2}); }   // +Y
             // Godot treats CLOCKWISE as front-facing. The index table below is wound counter-clockwise-outward
             // (right-hand rule, outward normals), so emit each triangle REVERSED -- otherwise every face is
             // culled when seen from outside and lit from within, which reads as the whole thing being inside out.
-            for (int f = 0; f < faces.GetLength(0); f++)
+            foreach (var tri in tris)
                 for (int k = 2; k >= 0; k--)
-                    st.AddVertex(v[faces[f, k]]);
+                    st.AddVertex(v[tri[k]]);
         }
 
         // ---- wall space <-> world -------------------------------------------------------------------
