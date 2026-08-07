@@ -58,7 +58,32 @@ namespace UnturnedGodot
         InventoryUI _invUI;                 // the dashboard (Tab to open)
         CraftingUI _craftUI;                // the crafting menu (K to open)
         SkillsUI _skillsUI;                 // the skills menu (J to open) -- spend XP to level skills
-        BuildTool _build;                   // B = build mode (grid-snapped structures)
+        BuildTool _build;                   // B = build mode. C = construct, V = tier, LMB place, R salvage.
+
+        /// <summary>Salvage the structure piece under the crosshair. Uses the eye ray rather than the build
+        /// ghost: the ghost sits at the slot you would BUILD into, which is next to the piece you are looking
+        /// at, so salvaging off the ghost takes down the wrong thing (or nothing).</summary>
+        void SalvageAimedStructure()
+        {
+            var sm = StructureManager.Instance;
+            if (sm == null || _cam == null) return;
+            var space = GetWorld3D()?.DirectSpaceState;
+            if (space == null) return;
+            Vector3 from = _cam.GlobalPosition, dir = -_cam.GlobalTransform.Basis.Z;
+            var q = PhysicsRayQueryParameters3D.Create(from, from + dir * StructureCatalog.MaxPlacementDistance);
+            q.CollisionMask = 1u << 0;
+            var hit = space.IntersectRay(q);
+            if (hit.Count == 0) return;
+            var found = sm.QueryAt((Vector3)hit["position"], StructureCatalog.HalfEdge);
+            if (found == null) return;
+            foreach (var piece in sm.All)
+                if (piece.Node == found.Value.Node)
+                {
+                    int tier = sm.Salvage(piece);
+                    if (tier >= 0) GD.Print($"[build] salvaged {StructureCatalog.TierAt(tier).Name} {piece.Construct}");
+                    return;
+                }
+        }
         string _gunName = "eaglefire";   // gun folder name (eaglefire | maplestrike), derived from the .dat path
         float _pitchDeg;
         Vehicle _driving; bool _fp = true;   // vehicle being driven + camera mode: true = 1st person (spawn default, strawberry), false = 3rd; H toggles (on foot + driving)
@@ -3816,7 +3841,10 @@ namespace UnturnedGodot
                 EquipHotbar((int)hk.Keycode - (int)Key.Key0);   // hotbar keys (bag CLOSED): 1/2 = primary/secondary slot, 3-9 = bound item. Binding (RMB item + 3-9) is handled in InventoryUI while the bag's open.
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.V })
             {
-                if (_driving == null && HasGunOut) CycleFiremode();   // V on foot: cycle firemode (only with a gun out)
+                // Gated on build mode the same way C already splits crouch-vs-cycle-structure: while the build
+                // ghost is up, firemode is meaningless and the tier selector is what you want.
+                if (_build != null && _build.Active) _build.CycleTier();
+                else if (_driving == null && HasGunOut) CycleFiremode();   // V on foot: cycle firemode (only with a gun out)
             }
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.H })
                 _fp = !_fp;   // H: toggle 3rd / 1st person camera (on foot + driving)
@@ -3885,7 +3913,9 @@ namespace UnturnedGodot
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.B })
                 _build?.Toggle();     // toggle build mode
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.C })
-                _build?.CycleType();  // cycle the structure type (floor/wall)
+                _build?.CycleType();  // cycle the structure type (floor/wall/pillar/rampart/roof)
+            else if (@event is InputEventKey { Pressed: true, Keycode: Key.R } && (_build?.Active ?? false))
+                SalvageAimedStructure();   // R while building: take the aimed piece back down (reload is meaningless here)
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.G })
                 MeleeAttack();        // melee swing at a zombie in reach
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.H })

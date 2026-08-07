@@ -43,6 +43,10 @@ namespace UnturnedGodot
             AddChild(_ghost);
             RebuildGhost();
             EnsureManager();
+            // The readout rides with the tool, so build mode stays self-contained: no HUD.cs edit, and nothing
+            // to tear down when build mode is off.
+            var hud = new BuildHud { Tool = this, Name = "BuildHud" };
+            CallDeferred(Node.MethodName.AddChild, hud);
         }
 
         /// <summary>Provision the StructureManager if the world has none. Deliberately done HERE rather than in
