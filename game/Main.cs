@@ -3397,7 +3397,11 @@ namespace UnturnedGodot
             editor.AddChild(buildings);
             buildings.Setup(editor, cam, cam);   // EditorCamera IS a Camera3D
             editor.Buildings = buildings;
-            editor.LevelTool = Editor.ELevelTool.Objects;   // Objects owns the mouse until you switch (B)
+            // UG_EDITTOOL picks which Level-tab tool starts armed, so a capture can show the building panel.
+            // Without it the only way to see that panel in a screenshot is to already be holding the mouse.
+            editor.LevelTool = System.Environment.GetEnvironmentVariable("UG_EDITTOOL") == "buildings"
+                ? Editor.ELevelTool.Buildings : Editor.ELevelTool.Objects;   // Objects owns the mouse until the
+                                                                             // dashboard's Level-tool switch says otherwise
             var spawns = new EditorSpawns(editor, cam, _mapRoot);   // Phase 3: visualize/edit spawn points (Spawns tab)
             editor.AddChild(spawns);
             editor.Spawns = spawns;

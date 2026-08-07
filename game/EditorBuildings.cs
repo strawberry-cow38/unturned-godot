@@ -59,6 +59,7 @@ namespace UnturnedGodot
             _editor = editor; _cam = cam; _flyCam = flyCam;
             _handles = new Node3D { Name = "Handles" };
             AddChild(_handles);
+            Load();
         }
 
         public IReadOnlyList<WallSurface> Walls => _walls;
@@ -69,6 +70,26 @@ namespace UnturnedGodot
         /// <summary>The palette new walls are drawn with. A retail "material" is only a choice of eight flat
         /// colours -- there are no textures on these buildings -- so this is an index, not an asset.</summary>
         public int ActiveMaterial;
+
+        /// <summary>Thickness new walls start at. 0.70 exterior / 0.50 partition are both measured off retail,
+        /// and neither is law -- the point of the slider is that you find out by looking.</summary>
+        public float NewWallThickness = WallOpenings.DefaultThickness;
+
+        /// <summary>Click-click wall laying. Armed from the panel; the first click drops a wall and the second
+        /// commits it.</summary>
+        public bool WallDrawMode;
+
+        // The wall being laid is a REAL WallSurface being resized under the cursor, not a ghost that is later
+        // swapped for the real thing. Same reason the openings have no preview object: two representations of
+        // one wall is two chances to disagree, and this repo already shipped a barricade whose ghost lay on
+        // its side while the placed object stood upright.
+        WallSurface _drawing;
+        Vector3 _drawAnchor;
+
+        public bool Drawing => _drawing != null;
+        public string ToolText => WallDrawMode ? (_drawing != null ? "drawing wall — click to finish, Esc cancels" : "wall: click to start")
+                                : _armed >= 0 ? $"placing {Archetypes[Mathf.PosMod(_armed, Archetypes.Length)].Name}"
+                                : "select";
 
         public void SetMaterial(WallSurface w, int id)
         {
@@ -93,16 +114,45 @@ namespace UnturnedGodot
 
         public WallSurface AddWall(Vector3 origin, float yawDeg, float length)
         {
+            var w = SpawnWall(origin, yawDeg, length, NewWallThickness, ActiveMaterial, null);
+            _editor?.PushUndo("wall place", () => RemoveWall(w));
+            return w;
+        }
+
+        /// <summary>Build a wall and register it, WITHOUT touching the undo stack. Undo actions run through
+        /// here: a restore that called AddWall would push a fresh entry onto the stack it is being replayed
+        /// from.</summary>
+        WallSurface SpawnWall(Vector3 origin, float yawDeg, float length, float thickness, int material,
+                              IReadOnlyList<WallOpening> openings, float height = WallOpenings.DoorHeight)
+        {
             // wall runs snap to the lattice so drawn walls stay interoperable with anything built on the
             // structures grid; free-length walls would drift off it for no gain
             float snapped = Mathf.Max(WallOpenings.LatticeStep,
                 Mathf.Round(length / WallOpenings.LatticeStep) * WallOpenings.LatticeStep);
-            var w = new WallSurface { Length = snapped, Position = origin, RotationDegrees = new Vector3(0f, yawDeg, 0f), MaterialId = ActiveMaterial };
+            var w = new WallSurface
+            {
+                Length = snapped, Height = height, Thickness = thickness, MaterialId = material,
+                Position = origin, RotationDegrees = new Vector3(0f, yawDeg, 0f),
+            };
             AddChild(w);
+            if (openings != null) { w.Openings.AddRange(openings); w.Rebuild(); }
             _walls.Add(w);
             _pickToWall[w.BodyRid] = w;
-            _editor?.PushUndo("wall place", () => RemoveWall(w));
             return w;
+        }
+
+        /// <summary>Delete a wall and make it come back on undo. It used to push an EMPTY undo action, which
+        /// is worse than pushing none: the step is consumed, so Ctrl+Z looks like it fired and did nothing,
+        /// and the wall is gone for good. A wall is only data, so undo rebuilds it from a snapshot.</summary>
+        public void DeleteWall(WallSurface w)
+        {
+            if (w == null || !IsInstanceValid(w)) return;
+            Vector3 pos = w.Position, rot = w.RotationDegrees;
+            float len = w.Length, th = w.Thickness, h = w.Height;
+            int mat = w.MaterialId;
+            var ops = w.Openings.ToArray();
+            RemoveWall(w);
+            _editor?.PushUndo("wall delete", () => SpawnWall(pos, rot.Y, len, th, mat, ops, h));
         }
 
         public void RemoveWall(WallSurface w)
@@ -247,15 +297,25 @@ namespace UnturnedGodot
                     if (cap != null && w != null) _editor.PushUndo("opening edit", () => Restore(w, cap));
                 }
             }
-            else if (ev is InputEventMouseMotion && _drag != Drag.None) OnDrag(GetViewport().GetMousePosition());
+            else if (ev is InputEventMouseMotion)
+            {
+                if (_drag != Drag.None) OnDrag(GetViewport().GetMousePosition());
+                else if (_drawing != null) StretchDraw(GetViewport().GetMousePosition());
+            }
             else if (ev is InputEventKey { Pressed: true, Echo: false } k)
             {
                 if (k.Keycode == Key.Delete || k.Keycode == Key.Backspace)
                 {
                     if (_selOpening >= 0) DeleteOpening(_selWall, _selOpening);
-                    else if (_selWall != null) { var w = _selWall; var snap = w.Openings.ToArray(); RemoveWall(w); _editor.PushUndo("wall delete", () => { }); }
+                    else if (_selWall != null) DeleteWall(_selWall);
                 }
-                else if (k.Keycode == Key.Escape) { if (_selOpening >= 0) _selOpening = -1; else _selWall = null; PositionHandles(); }
+                else if (k.Keycode == Key.Escape)
+                {
+                    if (_drawing != null) { RemoveWall(_drawing); _drawing = null; }
+                    else if (_selOpening >= 0) _selOpening = -1;
+                    else _selWall = null;
+                    PositionHandles();
+                }
                 else if (k.Keycode >= Key.Key1 && k.Keycode <= Key.Key6) _armed = (int)(k.Keycode - Key.Key1);
             }
         }
@@ -264,6 +324,19 @@ namespace UnturnedGodot
         {
             var from = _cam.ProjectRayOrigin(screen);
             var dir = _cam.ProjectRayNormal(screen);
+
+            if (WallDrawMode)
+            {
+                if (_drawing == null)
+                {
+                    if (!GroundAt(from, dir, out var p)) return;
+                    _drawAnchor = p;
+                    _selWall = null; _selOpening = -1; PositionHandles();
+                    _drawing = AddWall(p, 0f, WallOpenings.LatticeStep);
+                }
+                else _drawing = null;      // second click commits; AddWall already pushed the undo
+                return;
+            }
 
             // a handle on the selected opening wins over everything behind it
             if (_selWall != null && _selOpening >= 0 && _selWall.RayToUV(from, dir, out float hu, out float hv))
@@ -289,6 +362,104 @@ namespace UnturnedGodot
                 else _selOpening = -1;
                 PositionHandles();
             }
+        }
+
+        /// <summary>Where the cursor meets the ground, ignoring walls. Walls sit on collision layer 0 along
+        /// with the terrain, so an un-excluded pick starts the next wall on top of the last one you drew --
+        /// which looks like the tool randomly placing walls in the air.</summary>
+        bool GroundAt(Vector3 from, Vector3 dir, out Vector3 point)
+        {
+            point = default;
+            var excl = new Godot.Collections.Array<Rid>();
+            foreach (var w in _walls) if (IsInstanceValid(w)) excl.Add(w.BodyRid);
+            var q = new PhysicsRayQueryParameters3D { From = from, To = from + dir * 8000f, CollisionMask = 1u << 0, Exclude = excl };
+            var hit = GetWorld3D().DirectSpaceState.IntersectRay(q);
+            if (hit.Count > 0) { point = (Vector3)hit["position"]; return true; }
+            // no terrain under the cursor (aimed at the sky, or an empty test scene): fall back to y=0 so the
+            // tool still works rather than silently doing nothing
+            var plane = new Plane(Vector3.Up, 0f);
+            var p = plane.IntersectsRay(from, dir);
+            if (p == null) return false;
+            point = p.Value;
+            return true;
+        }
+
+        /// <summary>Resize the wall being laid to reach the cursor. Length snaps to the lattice and yaw to 15
+        /// degrees, so a run drawn by hand still lines up with anything built on the structures grid.</summary>
+        void StretchDraw(Vector2 screen)
+        {
+            if (_drawing == null || !IsInstanceValid(_drawing)) { _drawing = null; return; }
+            var from = _cam.ProjectRayOrigin(screen);
+            var dir = _cam.ProjectRayNormal(screen);
+            var plane = new Plane(Vector3.Up, _drawAnchor.Y);
+            var hit = plane.IntersectsRay(from, dir);
+            if (hit == null) return;
+            var d = hit.Value - _drawAnchor;
+            var flat = new Vector2(d.X, d.Z);
+            if (flat.Length() < 0.05f) return;
+            float yaw = Mathf.Snapped(Mathf.RadToDeg(Mathf.Atan2(-flat.Y, flat.X)), 15f);
+            float len = Mathf.Max(WallOpenings.LatticeStep,
+                                  Mathf.Round(flat.Length() / WallOpenings.LatticeStep) * WallOpenings.LatticeStep);
+            _drawing.RotationDegrees = new Vector3(0f, yaw, 0f);
+            _drawing.Length = len;
+            _drawing.Rebuild();
+        }
+
+        // ---- persistence -------------------------------------------------------------------------------
+        // Drawn walls used to live only in the session: you could lay out a building, hit Save, exit, and find
+        // nothing. Same file convention as the other sub-editors (editor_<map>_*.dat beside the content).
+
+        string SavePath => ProjectSettings.GlobalizePath("res://content/buildings/")
+                           + $"editor_{_editor?.MapName ?? "none"}_Walls.dat";
+
+        /// <summary>Editor.Save() fan-out. Returns the number of walls written.</summary>
+        public int Save()
+        {
+            var plans = new List<WallPlan>();
+            foreach (var w in _walls)
+            {
+                if (!IsInstanceValid(w)) continue;
+                var pl = new WallPlan
+                {
+                    X = w.Position.X, Y = w.Position.Y, Z = w.Position.Z,
+                    Yaw = w.RotationDegrees.Y, Length = w.Length, Height = w.Height,
+                    Thickness = w.Thickness, Material = w.MaterialId,
+                };
+                pl.Openings.AddRange(w.Openings);
+                plans.Add(pl);
+            }
+            // An empty layout still writes: otherwise deleting your last wall and saving leaves the previous
+            // file on disk, and the building you deleted comes back next time you open the map.
+            try
+            {
+                System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(SavePath));
+                System.IO.File.WriteAllText(SavePath, WallSave.Write(plans));
+            }
+            catch (System.Exception e) { GD.PrintErr($"[editor-buildings] save failed: {e.Message}"); return 0; }
+            GD.Print($"[editor-buildings] saved {plans.Count} walls -> {SavePath}");
+            return plans.Count;
+        }
+
+        /// <summary>Read the map's walls back. Called once at setup; replaces whatever is loaded.</summary>
+        public int Load()
+        {
+            if (!System.IO.File.Exists(SavePath)) return 0;
+            List<WallPlan> plans;
+            try { plans = WallSave.Read(System.IO.File.ReadAllLines(SavePath)); }
+            catch (System.Exception e) { GD.PrintErr($"[editor-buildings] load failed: {e.Message}"); return 0; }
+
+            foreach (var w in _walls.ToArray()) RemoveWall(w);
+            foreach (var pl in plans)
+                SpawnWall(new Vector3(pl.X, pl.Y, pl.Z), pl.Yaw, pl.Length, pl.Thickness, pl.Material, pl.Openings, pl.Height);
+            GD.Print($"[editor-buildings] loaded {plans.Count} walls");
+            return plans.Count;
+        }
+
+        /// <summary>Set the palette for the selection if there is one, else for the next wall drawn.</summary>
+        public void SelectMaterial(int id)
+        {
+            ActiveMaterial = WallMaterials.Count == 0 ? 0 : Mathf.PosMod(id, WallMaterials.Count);
+            if (_selWall != null) SetMaterial(_selWall, ActiveMaterial);
         }
 
         void Begin(Drag d)
