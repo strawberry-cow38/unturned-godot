@@ -94,7 +94,45 @@ namespace UnturnedGodot
             _catalog.Insert(1, StoreShelfName);  // store shelf right below it
             _catalog.Insert(2, GridPowerName);   // grid power box below that
             _catalog.Insert(3, GasPumpName);     // gas pump (station-id configurable) below that
+            LoadBakedBuildings();
         }
+
+        /// <summary>Buildings baked by the Buildings tab, listed separately from the retail catalogue.
+        ///
+        /// Their names go in their own file rather than into guid_mesh.txt, which is derived from the bundles
+        /// and gets regenerated -- appending there would silently eat every building anyone had made. They
+        /// need no other special handling: a baked building is an .obj plus a palette PNG in this same
+        /// directory, so MeshFor and MatFor already know what to do with it.</summary>
+        void LoadBakedBuildings()
+        {
+            string list = Dir + "baked_buildings.txt";
+            if (!System.IO.File.Exists(list)) return;
+            int n = 0;
+            foreach (var raw in System.IO.File.ReadLines(list))
+            {
+                var name = raw.Trim();
+                if (name.Length == 0 || name[0] == '#') continue;
+                if (!System.IO.File.Exists(Dir + name + ".obj")) continue;   // listed but never written: skip quietly
+                if (_catalog.Contains(name)) continue;
+                _catalog.Insert(4 + n, name);   // grouped just under the pinned specials, above the retail list
+                n++;
+            }
+            if (n > 0) GD.Print($"[editor-objects] {n} baked building(s) in the palette");
+        }
+
+        /// <summary>Rebuild the palette after a bake, so a building you just made is placeable without
+        /// reopening the editor.</summary>
+        public void ReloadCatalog()
+        {
+            _catalog.Clear();
+            _nameToGuid.Clear();
+            _guidToName.Clear();
+            _meshCache.Clear();     // a re-bake under the same name must not serve the previous mesh
+            LoadCatalog();
+            CatalogChanged?.Invoke();
+        }
+
+        public event System.Action CatalogChanged;
 
         ArrayMesh MeshFor(string name)
         {

@@ -3397,11 +3397,34 @@ namespace UnturnedGodot
             editor.AddChild(buildings);
             buildings.Setup(editor, cam, cam);   // EditorCamera IS a Camera3D
             editor.Buildings = buildings;
-            // UG_EDITTOOL picks which Level-tab tool starts armed, so a capture can show the building panel.
-            // Without it the only way to see that panel in a screenshot is to already be holding the mouse.
-            editor.LevelTool = System.Environment.GetEnvironmentVariable("UG_EDITTOOL") == "buildings"
-                ? Editor.ELevelTool.Buildings : Editor.ELevelTool.Objects;   // Objects owns the mouse until the
-                                                                             // dashboard's Level-tool switch says otherwise
+            // UG_EDITTOOL opens straight onto the Buildings mode, so a capture can show that editor. Without
+            // it the only way to see it in a screenshot is to already be clicking the tab. UG_EDITBAKE then
+            // bakes what it drew and places the result back on the map -- the whole build->bake->place round
+            // trip in one frame, which is the only way to SEE that a baked building is a real prop.
+            if (System.Environment.GetEnvironmentVariable("UG_EDITTOOL") == "buildings")
+            {
+                editor.Mode = EEditorMode.Buildings;
+                if (buildings.Walls.Count == 0) DrawDemoBuilding(buildings);
+                if (System.Environment.GetEnvironmentVariable("UG_EDITBAKE") == "1")
+                {
+                    string baked = buildings.Bake("Demo_House");
+                    editor.Mode = EEditorMode.Level;
+                    if (baked != null)
+                    {
+                        var at = new Vector3(0f, 0f, 0f);
+                        var hit = WorldBuilder.InteractableAnchor(_mapRoot);
+                        if (hit != Vector3.Zero) at = hit;
+                        objs.SetPlaceType(baked);
+                        var placed = objs.Place(baked, at, EditorObjects.Upright(0f));
+                        if (placed != null)
+                        {
+                            cam.GlobalPosition = at + new Vector3(17f, 11f, 24f);
+                            cam.LookAt(at + new Vector3(0f, 2.5f, 0f), Vector3.Up);
+                        }
+                        GD.Print($"[editor] baked+placed '{baked}' at {at}");
+                    }
+                }
+            }
             var spawns = new EditorSpawns(editor, cam, _mapRoot);   // Phase 3: visualize/edit spawn points (Spawns tab)
             editor.AddChild(spawns);
             editor.Spawns = spawns;
@@ -4401,6 +4424,36 @@ namespace UnturnedGodot
                 cam.LookAt(new Vector3(0f, 3.4f, -3f), Vector3.Up);
             }
             GD.Print($"[walls] 6 walls; front run partitions into {UnturnedSim.WallOpenings.Solids(L, H, front.Openings).Count} solids, garage wall into {UnturnedSim.WallOpenings.Solids(L, H, back.Openings).Count}");
+        }
+
+        // The same room the --walls demo builds, laid out on the Buildings stage so the editor capture shows a
+        // real building rather than an empty plane. Deliberately the SAME numbers, so the tool and the demo
+        // cannot drift into disagreeing about what a wall of a given size looks like.
+        static void DrawDemoBuilding(EditorBuildings b)
+        {
+            float H = UnturnedSim.WallOpenings.DoorHeight;
+            float sill = UnturnedSim.WallOpenings.WindowSill;
+            float wh = UnturnedSim.WallOpenings.WindowHeight;
+            var o = EditorBuildings.StageOrigin;
+            const float L = 12f, D = 9f;
+            b.ActiveMaterial = 24;                                   // House_00
+
+            var front = b.AddWall(o + new Vector3(-L / 2f, 0f, 0f), 0f, L);
+            front.Openings.Add(new UnturnedSim.WallOpening(1.0f, 0f, 2.5f, H - 0.5f));
+            front.Openings.Add(new UnturnedSim.WallOpening(5.0f, sill, 3.31f, wh));
+            front.Openings.Add(new UnturnedSim.WallOpening(9.0f, sill, 2.81f, wh));
+
+            var back = b.AddWall(o + new Vector3(-L / 2f, 0f, -D), 0f, L);
+            back.Openings.Add(new UnturnedSim.WallOpening(2.0f, 0f, 8.0f, H - 0.25f));
+
+            var left = b.AddWall(o + new Vector3(-L / 2f, 0f, -D), -90f, D);
+            left.Openings.Add(new UnturnedSim.WallOpening(2.5f, sill, 3.31f, wh));
+
+            var right = b.AddWall(o + new Vector3(L / 2f, 0f, -D), -90f, D);
+            right.Openings.Add(new UnturnedSim.WallOpening(1.5f, sill, 2.81f, wh));
+            right.Openings.Add(new UnturnedSim.WallOpening(5.5f, sill, 2.81f, wh));
+
+            foreach (var w in b.Walls) w.Rebuild();
         }
 
         // A few bundled ripped crates as cover/scenery (portable res:// assets).

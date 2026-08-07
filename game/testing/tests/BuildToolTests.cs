@@ -216,4 +216,158 @@ namespace UnturnedGodot.Testing
             System.IO.File.Delete(Path);
         }
     }
+
+    public class BuildToolBakeRoundTripsThroughThePropPipeline : GameTest
+    {
+        public override string Name => "buildtool.bake_round_trips_through_the_prop_pipeline";
+
+        static string Dir => ProjectSettings.GlobalizePath("res://content/objects/");
+        const string Nm = "__l1_bake_test";
+
+        static void Clean()
+        {
+            foreach (var f in new[] { Dir + Nm + ".obj", Dir + Nm + "_tex.png",
+                                      EditorBuildings.BuildingSourcePath(Nm) })
+                if (System.IO.File.Exists(f)) System.IO.File.Delete(f);
+            // and take the name back out of the registry: LoadBakedBuildings already skips entries with no
+            // .obj, so leaving it is harmless in the editor -- but it accumulates test names in a file that
+            // lives in the content tree, and litter nobody put there is litter nobody dares delete.
+            string list = EditorBuildings.BakedListPath();
+            if (!System.IO.File.Exists(list)) return;
+            var keep = new List<string>();
+            foreach (var l in System.IO.File.ReadAllLines(list))
+                if (l.Trim() != Nm && l.Trim().Length > 0) keep.Add(l.Trim());
+            if (keep.Count > 0) System.IO.File.WriteAllLines(list, keep);
+            else System.IO.File.Delete(list);
+        }
+
+        /// <summary>Mean agreement between each triangle's winding normal and its stored vertex normal.
+        /// Sign, not magnitude, is the answer -- and it is only meaningful compared against a mesh known to be
+        /// right, which is why this is also run on a retail prop below.</summary>
+        static float WindingAgreement(ArrayMesh m)
+        {
+            var arr = m.SurfaceGetArrays(0);
+            var v = (Vector3[])arr[(int)Mesh.ArrayType.Vertex];
+            var n = (Vector3[])arr[(int)Mesh.ArrayType.Normal];
+            // ObjMesh.Load commits UNINDEXED triangles, and an absent index array arrives as an EMPTY one
+            // rather than null -- so a plain null check still left the count at zero and this returned 0 for
+            // the retail prop as well as the baked one. A blind instrument agreeing with itself reads exactly
+            // like a real failure, and it cost two rounds here. Length, not null.
+            var ix = (int[])arr[(int)Mesh.ArrayType.Index];
+            bool indexed = ix != null && ix.Length > 0;
+            int count = indexed ? ix.Length : v.Length;
+            int At(int i) => indexed ? ix[i] : i;
+            float sum = 0f; int c = 0;
+            for (int i = 0; i + 2 < count; i += 3)
+            {
+                Vector3 a = v[At(i)], b = v[At(i + 1)], d = v[At(i + 2)];
+                var g = (b - a).Cross(d - a);
+                if (g.LengthSquared() < 1e-12f) continue;
+                var stored = (n[At(i)] + n[At(i + 1)] + n[At(i + 2)]);
+                if (stored.LengthSquared() < 1e-12f) continue;
+                sum += g.Normalized().Dot(stored.Normalized());
+                c++;
+            }
+            return c == 0 ? 0f : sum / c;
+        }
+
+        public override IEnumerable<Step> Run()
+        {
+            // A baked building is an .obj plus a palette PNG, placed by the same code as every ripped prop --
+            // so the only thing that can really go wrong is the FRAME. Prop meshes are authored lying down and
+            // pitched 270 about X at placement, and a sign error there bakes a building that loads on its side
+            // or mirrored. Both look deliberate in a screenshot, so this compares geometry instead: the mesh
+            // that comes back out through the real loader must occupy the same box the walls did.
+            Clean();
+            var ed = new Editor();
+            World.AddChild(ed);
+            var tool = new EditorBuildings();
+            World.AddChild(tool);
+            tool.Setup(ed, null, null);
+            foreach (var old in new List<WallSurface>(tool.Walls)) tool.RemoveWall(old);
+
+            var o = EditorBuildings.StageOrigin;
+            var a = tool.AddWall(o + new Vector3(-6f, 0f, 0f), 0f, 12f);
+            tool.AddOpening(a, 3f, 0f, 0);
+            var b = tool.AddWall(o + new Vector3(-6f, 0f, -9f), -90f, 9f);
+            yield return Step.Ticks(1);
+
+            // the box the walls actually occupy, in building-local space
+            var want = new Aabb();
+            bool first = true;
+            foreach (var w in tool.Walls)
+                foreach (var node in new[] { "Mesh", "TrimMesh" })
+                {
+                    var mi = w.GetNodeOrNull<MeshInstance3D>(node);
+                    if (mi?.Mesh == null || mi.Mesh.GetSurfaceCount() == 0) continue;
+                    var box = (w.GlobalTransform * mi.Mesh.GetAabb()).Position - o;
+                    var full = new Aabb(box, mi.Mesh.GetAabb().Size);
+                    want = first ? full : want.Merge(full);
+                    first = false;
+                }
+
+            T.Check("baked", tool.Bake(Nm) == Nm);
+            T.Check("wrote the mesh", System.IO.File.Exists(Dir + Nm + ".obj"));
+            T.Check("wrote the palette", System.IO.File.Exists(Dir + Nm + "_tex.png"));
+            T.Check("kept the source so it stays editable", System.IO.File.Exists(EditorBuildings.BuildingSourcePath(Nm)));
+
+            var loaded = ObjMesh.Load(Dir + Nm + ".obj");
+            if (loaded == null || loaded.GetSurfaceCount() == 0) { T.Fail("the baked obj did not load"); Clean(); yield break; }
+
+            // through the REAL placement basis, not a hand-written one
+            var placed = new Transform3D(EditorObjects.Upright(0f), Vector3.Zero) * loaded.GetAabb();
+            T.Check($"stands the right way up: height {placed.Size.Y:0.##} vs {want.Size.Y:0.##}",
+                    Mathf.Abs(placed.Size.Y - want.Size.Y) < 0.05f);
+            T.Check($"and the right way round: footprint {placed.Size.X:0.##}x{placed.Size.Z:0.##} vs {want.Size.X:0.##}x{want.Size.Z:0.##}",
+                    Mathf.Abs(placed.Size.X - want.Size.X) < 0.05f && Mathf.Abs(placed.Size.Z - want.Size.Z) < 0.05f);
+            T.Check($"and in the right place: origin {placed.Position} vs {want.Position}",
+                    (placed.Position - want.Position).Length() < 0.05f);
+
+            // Winding judged against a mesh known to be right rather than against a convention I reasoned out:
+            // whatever sign a retail prop gives through this loader is the correct one.
+            float mine = WindingAgreement(loaded);
+            var retail = ObjMesh.Load(Dir + "House_00.obj");
+            if (retail == null || retail.GetSurfaceCount() == 0) T.Fail("House_00.obj missing -- cannot judge winding");
+            else
+            {
+                float theirs = WindingAgreement(retail);
+                // |theirs| > 0.3 is the instrument's own self-check: a reading near zero means it is not
+                // measuring winding at all, and must not be read as agreement.
+                T.Check($"the reference reading is meaningful (House_00 {theirs:0.00}, near 0 = blind)", Mathf.Abs(theirs) > 0.3f);
+                T.Check($"faces point the same way as a retail prop (baked {mine:0.00}, House_00 {theirs:0.00})",
+                        Mathf.Abs(mine) > 0.3f && Mathf.Sign(mine) == Mathf.Sign(theirs));
+            }
+
+            // Every UV must land on a texel that actually holds a colour. The unused texels are filled
+            // MAGENTA on purpose, and the first bake sampled nothing else: V was inverted here and again in
+            // the writer, so every face read the wrong palette row. Geometry and winding were both perfect,
+            // which is why neither check above noticed -- the building was the right shape in the wrong paint.
+            var tex = new Image();
+            if (tex.Load(Dir + Nm + "_tex.png") != Error.Ok) T.Fail("baked palette did not load");
+            else
+            {
+                var ua = (Vector2[])loaded.SurfaceGetArrays(0)[(int)Mesh.ArrayType.TexUV];
+                int bad = 0, sampled = 0;
+                var seen = new HashSet<int>();
+                foreach (var uvp in ua)
+                {
+                    int px = Mathf.Clamp((int)(uvp.X * tex.GetWidth()), 0, tex.GetWidth() - 1);
+                    int py = Mathf.Clamp((int)(uvp.Y * tex.GetHeight()), 0, tex.GetHeight() - 1);
+                    seen.Add(py * tex.GetWidth() + px);
+                    sampled++;
+                    var c = tex.GetPixel(px, py);
+                    if (c.R8 == 255 && c.G8 == 0 && c.B8 == 255) bad++;
+                }
+                T.Check($"no face samples an unused palette texel ({bad} of {sampled} landed on the magenta fill)", bad == 0);
+                T.Check($"and it uses BOTH the wall and the reveal colour ({seen.Count} distinct texels)", seen.Count >= 2);
+            }
+
+            // and it is now a placeable prop, without reopening the editor
+            var objs = new EditorObjects(ed, World, null);
+            World.AddChild(objs);
+            T.Check("it is in the props palette", new List<string>(objs.Catalog).Contains(Nm));
+
+            Clean();
+        }
+    }
 }

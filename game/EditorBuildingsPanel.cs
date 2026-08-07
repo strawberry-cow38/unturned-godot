@@ -87,13 +87,42 @@ namespace UnturnedGodot
             box.AddChild(Dim("Material — a retail palette"));
             var drop = new OptionButton { CustomMinimumSize = new Vector2(240, 0) };
             for (int i = 0; i < WallMaterials.Count; i++) drop.AddItem($"{i}  {WallMaterials.At(i).Name}", i);
-            if (WallMaterials.Count > 0) drop.Select(0);
+            // Seeded from the TOOL, not from 0: a dropdown that disagrees with the material the next wall will
+            // actually get is worse than no dropdown, because it looks authoritative.
+            if (WallMaterials.Count > 0) drop.Select(Mathf.PosMod(_b.ActiveMaterial, WallMaterials.Count));
             drop.ItemSelected += id => _b.SelectMaterial((int)id);
             box.AddChild(drop);
             box.AddChild(Dim(WallMaterials.Count > 0
                 ? $"{WallMaterials.Count} sampled from the retail buildings"
                 : "no palettes loaded — check content/wall_palettes.tsv"));
+
+            box.AddChild(new HSeparator());
+            box.AddChild(Dim("Bake — becomes a prop in the Level tab"));
+            _name = new LineEdit { PlaceholderText = "building name", CustomMinimumSize = new Vector2(240, 0) };
+            box.AddChild(_name);
+            var bake = new Button { Text = "Bake to prop" };
+            bake.Pressed += DoBake;
+            _name.TextSubmitted += _ => DoBake();
+            box.AddChild(bake);
+            _bakeMsg = Dim("");
+            box.AddChild(_bakeMsg);
         }
+
+        LineEdit _name;
+        Label _bakeMsg;
+
+        void DoBake()
+        {
+            // The result is reported IN the panel. A bake that only prints to the console is, from the chair,
+            // a button that does nothing -- and the failure cases here are ordinary ones (no name, no walls)
+            // that a user needs to be told about rather than left guessing at.
+            if (_b.Walls.Count == 0) { Say("nothing to bake — draw a wall first"); return; }
+            if (_name.Text.Trim().Length == 0) { Say("give it a name first"); return; }
+            var made = _b.Bake(_name.Text);
+            Say(made == null ? "bake failed — see the log" : $"baked '{made}' → it's in the Level tab's props list");
+        }
+
+        void Say(string t) { if (_bakeMsg != null) _bakeMsg.Text = t; }
 
         static Label Dim(string t)
         {

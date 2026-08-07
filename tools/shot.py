@@ -57,7 +57,9 @@ SCENES = {
     "navfull":  (["--navshot={OUT}"], {"UG_NAVFULL": "1"}, True, 300, "top-down island map of all 19 nav pockets"),
     "pei":      (["--peidrive", "--shot={OUT}"], {}, True, 400, "PEI world, drivable"),
     "editor":   (["--editor", "--shot={OUT}"], {}, True, 400, "map editor over PEI"),
-    "editbuild":(["--editor", "--shot={OUT}"], {"UG_EDITTOOL": "buildings"}, True, 400, "map editor, building tool armed"),
+    "editbuild":(["--editor", "--shot={OUT}"], {"UG_EDITTOOL": "buildings"}, True, 400, "the Buildings editor: a drawn building on the stage"),
+    "editbake": (["--editor", "--shot={OUT}"], {"UG_EDITTOOL": "buildings", "UG_EDITBAKE": "1"}, True, 400,
+                 "build -> bake -> placed back on the map as a prop"),
     "objects":  (["--objects", "--shot={OUT}"], {}, True, 400, "ripped prop showcase"),
     # one named prop at identity + RGB axes -- the diagnostic view for a model that looks wrong.
     # `PROP=Street_Light_0 tools/shot.py prop`

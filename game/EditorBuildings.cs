@@ -14,7 +14,7 @@ namespace UnturnedGodot
     // definition of "no bake step", and it is why a ghost can never disagree with a result here.
     public partial class EditorBuildings : Node3D
     {
-        public bool Active;                    // the Level tab can host several tools; only one may consume clicks
+        public bool Active;                    // true only while the Buildings mode is open
         Editor _editor;
         Camera3D _cam;
         EditorCamera _flyCam;
@@ -280,7 +280,7 @@ namespace UnturnedGodot
         public override void _UnhandledInput(InputEvent ev)
         {
             if (!Active || _editor == null) return;
-            if (_editor.Mode != EEditorMode.Level || (_flyCam != null && _flyCam.Flying)) return;
+            if (_editor.Mode != EEditorMode.Buildings || (_flyCam != null && _flyCam.Flying)) return;
 
             if (ev is InputEventMouseButton mb && mb.ButtonIndex == MouseButton.Left)
             {
@@ -405,6 +405,84 @@ namespace UnturnedGodot
             _drawing.Rebuild();
         }
 
+        /// <summary>Enter or leave the Buildings mode. A building is authored AGAINST A BLANK PLANE, not over
+        /// the map: it is a prop being made, and every terrain pick, every existing prop and every bit of the
+        /// island is something for the cursor to catch on while you are drawing a 12m wall. The map is put
+        /// back exactly as it was on the way out.</summary>
+        public void SetActive(bool on)
+        {
+            if (Active == on) return;
+            Active = on;
+            if (_stage == null) BuildStage();
+            if (_stage != null) _stage.Visible = on;
+            if (on)
+            {
+                if (_cam != null) { _camReturn = _cam.GlobalTransform; _haveReturn = true; }
+                MoveCameraToStage();
+            }
+            else
+            {
+                if (_drawing != null) { RemoveWall(_drawing); _drawing = null; }
+                if (_haveReturn && _cam != null) { _cam.GlobalTransform = _camReturn; _haveReturn = false; }
+            }
+        }
+
+        /// <summary>The build stage sits well above the island rather than the map being hidden for it. There
+        /// is no single node holding the map -- terrain, props and resources are all separate children of the
+        /// scene root -- so "hide the world" would be a list of nodes to keep in step with worldgen forever,
+        /// and the first one anybody forgot would leave a hill sticking through the building. An offset needs
+        /// to know nothing, and it also keeps map colliders out of reach of the wall picker.</summary>
+        public static readonly Vector3 StageOrigin = new(0f, 2000f, 0f);
+
+        Node3D _stage;      // the blank build plane + its grid, shown only in Buildings mode
+        Transform3D _camReturn;
+        bool _haveReturn;
+
+        void MoveCameraToStage()
+        {
+            if (_cam == null) return;
+            var eye = StageOrigin + new Vector3(0f, 11f, 30f);
+            _cam.GlobalPosition = eye;
+            _cam.LookAt(StageOrigin + new Vector3(0f, 3f, 0f), Vector3.Up);
+        }
+
+        void BuildStage()
+        {
+            _stage = new Node3D { Name = "Stage", Visible = false, Position = StageOrigin };
+            AddChild(_stage);
+
+            // A ground plane you can pick against, on the world layer, because GroundAt raycasts layer 0 and
+            // with the map hidden there would otherwise be nothing under the cursor at all.
+            var body = new StaticBody3D { CollisionLayer = 1u << 0, CollisionMask = 0 };
+            body.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
+            // WorldBoundaryShape3D's plane is in the BODY's space, so parenting it under the offset stage puts
+            // the pick plane at the stage height and not at world y=0.
+            // Big enough that its edge is off-screen at working distances -- otherwise the map, 2 km below,
+            // shows past the rim and the "blank stage" has scenery in it.
+            var floor = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(900f, 900f) } };
+            floor.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.26f, 0.28f, 0.26f), Roughness = 1f };
+            body.AddChild(floor);
+            _stage.AddChild(body);
+
+            // Lattice lines at the same 3m pitch walls snap to, so the snapping is something you can SEE
+            // rather than something you infer from where the wall lands.
+            var st = new SurfaceTool();
+            st.Begin(Mesh.PrimitiveType.Lines);
+            const float Half = 60f, Y = 0.02f;
+            for (float x = -Half; x <= Half + 1e-3f; x += WallOpenings.LatticeStep)
+            {
+                st.AddVertex(new Vector3(x, Y, -Half)); st.AddVertex(new Vector3(x, Y, Half));
+                st.AddVertex(new Vector3(-Half, Y, x)); st.AddVertex(new Vector3(Half, Y, x));
+            }
+            var grid = new MeshInstance3D { Mesh = st.Commit() };
+            grid.MaterialOverride = new StandardMaterial3D
+            {
+                AlbedoColor = new Color(0.42f, 0.46f, 0.42f),
+                ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
+            };
+            _stage.AddChild(grid);
+        }
+
         // ---- persistence -------------------------------------------------------------------------------
         // Drawn walls used to live only in the session: you could lay out a building, hit Save, exit, and find
         // nothing. Same file convention as the other sub-editors (editor_<map>_*.dat beside the content).
@@ -454,6 +532,199 @@ namespace UnturnedGodot
             GD.Print($"[editor-buildings] loaded {plans.Count} walls");
             return plans.Count;
         }
+
+        // ---- bake ----------------------------------------------------------------------------------------
+
+        /// <summary>Bake the drawn walls into a placeable prop and register it, returning its name or null.
+        ///
+        /// The output is an .obj plus a small palette PNG in the objects directory -- exactly what a retail
+        /// building already is -- so a baked building goes down the SAME placement, material and collision path
+        /// as every ripped prop, with no branch anywhere asking whether a prop came from us. MatFor already
+        /// treats any texture up to 16x16 as a nearest-filtered palette; that is not a coincidence, it is how
+        /// the retail buildings render.
+        ///
+        /// The geometry is read back off the COMMITTED meshes rather than regenerated from the wall data. A
+        /// second copy of the box maths could disagree with the first, and then what you baked would not be
+        /// what you drew -- which is the whole failure this tool exists to avoid.</summary>
+        public string Bake(string name)
+        {
+            if (string.IsNullOrWhiteSpace(name) || _walls.Count == 0) return null;
+            name = SafeName(name);
+
+            // one palette for the building: every distinct wall/reveal colour in use, laid out 4 across
+            var colours = new List<Color>();
+            int TexelOf(Color c)
+            {
+                for (int i = 0; i < colours.Count; i++) if (colours[i].IsEqualApprox(c)) return i;
+                if (colours.Count >= 16) return 0;      // MatFor's palette ceiling; 16 colours is four materials
+                colours.Add(c);
+                return colours.Count - 1;
+            }
+
+            var verts = new List<Vector3>();
+            var norms = new List<Vector3>();
+            var uvs = new List<Vector2>();
+            var tris = new List<int>();
+
+            foreach (var w in _walls)
+            {
+                if (!IsInstanceValid(w)) continue;
+                var mat = WallMaterials.At(w.MaterialId);
+                foreach (var (node, colour) in new[] { ("Mesh", mat.Wall), ("TrimMesh", mat.Reveal) })
+                {
+                    var mi = w.GetNodeOrNull<MeshInstance3D>(node);
+                    if (mi?.Mesh == null || mi.Mesh.GetSurfaceCount() == 0) continue;
+                    var arr = mi.Mesh.SurfaceGetArrays(0);
+                    var mv = (Vector3[])arr[(int)Mesh.ArrayType.Vertex];
+                    var mn = (Vector3[])arr[(int)Mesh.ArrayType.Normal];
+                    var mi2 = (int[])arr[(int)Mesh.ArrayType.Index];
+                    if (mv == null || mi2 == null) continue;
+
+                    int texel = TexelOf(colour);
+                    var xf = w.GlobalTransform;
+                    int b = verts.Count;
+                    for (int i = 0; i < mv.Length; i++)
+                    {
+                        verts.Add(xf * mv[i] - StageOrigin);         // building-local: the prop's own origin
+                        norms.Add((xf.Basis * (mn != null && i < mn.Length ? mn[i] : Vector3.Up)).Normalized());
+                        uvs.Add(new Vector2(texel, 0f));             // resolved once the palette size is known
+                    }
+                    foreach (int idx in mi2) tris.Add(b + idx);
+                }
+            }
+            if (verts.Count == 0 || tris.Count == 0) return null;
+
+            int pw = 4, ph = Mathf.Max(2, Mathf.CeilToInt(colours.Count / 4f));
+            for (int i = 0; i < uvs.Count; i++)
+            {
+                int t = (int)uvs[i].X;
+                // GODOT-space UV, texel centre. The single V-flip lives in ObjText, which is the only place
+                // that knows about file space -- inverting here as well flipped it twice and every face
+                // sampled the wrong row, which showed up as a building baked entirely in the unused-texel
+                // magenta. That fill colour is deliberate: a UV slip has to be unmistakable, not plausible.
+                uvs[i] = new Vector2((t % pw + 0.5f) / pw, ((t / pw) + 0.5f) / ph);
+            }
+
+            string dir = ProjectSettings.GlobalizePath("res://content/objects/");
+            try
+            {
+                System.IO.Directory.CreateDirectory(dir);
+                System.IO.File.WriteAllText(dir + name + ".obj", ObjText(name, verts, norms, uvs, tris));
+                PaletteImage(colours, pw, ph).SavePng(dir + name + "_tex.png");
+                System.IO.File.WriteAllText(BuildingSourcePath(name), WallSave.Write(Plans()));
+                RegisterBaked(name);
+            }
+            catch (System.Exception e) { GD.PrintErr($"[editor-buildings] bake failed: {e.Message}"); return null; }
+
+            GD.Print($"[editor-buildings] baked '{name}': {tris.Count / 3} tris, {colours.Count} palette colours");
+            _editor?.Objects?.ReloadCatalog();
+            return name;
+        }
+
+        public static string BuildingSourcePath(string name) =>
+            ProjectSettings.GlobalizePath("res://content/buildings/") + name + ".dat";
+
+        /// <summary>Baked names live in their OWN list, never appended to guid_mesh.txt: that file is derived
+        /// from the retail bundles and gets regenerated, which would silently eat every building anyone
+        /// made.</summary>
+        public static string BakedListPath() =>
+            ProjectSettings.GlobalizePath("res://content/objects/") + "baked_buildings.txt";
+
+        static void RegisterBaked(string name)
+        {
+            var have = new HashSet<string>();
+            if (System.IO.File.Exists(BakedListPath()))
+                foreach (var l in System.IO.File.ReadAllLines(BakedListPath()))
+                    if (l.Trim().Length > 0) have.Add(l.Trim());
+            if (!have.Add(name)) return;                 // re-baking an existing building overwrites, not duplicates
+            var sorted = new List<string>(have);
+            sorted.Sort(System.StringComparer.Ordinal);
+            System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(BakedListPath()));
+            System.IO.File.WriteAllLines(BakedListPath(), sorted);
+        }
+
+        static string SafeName(string raw)
+        {
+            var sb = new System.Text.StringBuilder();
+            foreach (char c in raw.Trim())
+                sb.Append(char.IsLetterOrDigit(c) || c == '_' || c == '-' ? c : '_');
+            return sb.Length == 0 ? "Building" : sb.ToString();
+        }
+
+        List<WallPlan> Plans()
+        {
+            var plans = new List<WallPlan>();
+            foreach (var w in _walls)
+            {
+                if (!IsInstanceValid(w)) continue;
+                var pl = new WallPlan
+                {
+                    X = w.Position.X, Y = w.Position.Y, Z = w.Position.Z,
+                    Yaw = w.RotationDegrees.Y, Length = w.Length, Height = w.Height,
+                    Thickness = w.Thickness, Material = w.MaterialId,
+                };
+                pl.Openings.AddRange(w.Openings);
+                plans.Add(pl);
+            }
+            return plans;
+        }
+
+        static Image PaletteImage(List<Color> colours, int w, int h)
+        {
+            var img = Image.CreateEmpty(w, h, false, Image.Format.Rgb8);
+            for (int y = 0; y < h; y++)
+                for (int x = 0; x < w; x++)
+                {
+                    int i = y * w + x;
+                    img.SetPixel(x, y, i < colours.Count ? colours[i] : Colors.Magenta);
+                }
+            return img;
+        }
+
+        /// <summary>Write the prop .obj in the frame ObjMesh.Load + EditorObjects.Upright expect.
+        ///
+        /// Those two are the only authority on it, so this inverts them step by step rather than restating the
+        /// convention: Upright pitches the loaded mesh 270 about X, which maps mesh (x,y,z) to node (x,z,-y),
+        /// and the loader itself negates Z off the file. Winding is inverted here too because the loader
+        /// ALWAYS reverses -- reversing twice is what leaves the faces pointing out.</summary>
+        static string ObjText(string name, List<Vector3> v, List<Vector3> n, List<Vector2> uv, List<int> tris)
+        {
+            var ci = System.Globalization.CultureInfo.InvariantCulture;
+            string F(float x) => x.ToString("0.#####", ci);
+            var sb = new System.Text.StringBuilder();
+            sb.Append("# baked by the unturned-godot building tool\n");
+            sb.Append("g ").Append(name).Append('\n');
+            foreach (var p in v)
+            {
+                var f = ToObj(p);
+                sb.Append("v ").Append(F(f.X)).Append(' ').Append(F(f.Y)).Append(' ').Append(F(f.Z)).Append('\n');
+            }
+            foreach (var t in uv) sb.Append("vt ").Append(F(t.X)).Append(' ').Append(F(1f - t.Y)).Append('\n');
+            foreach (var d in n)
+            {
+                var f = ToObj(d);
+                sb.Append("vn ").Append(F(f.X)).Append(' ').Append(F(f.Y)).Append(' ').Append(F(f.Z)).Append('\n');
+            }
+            for (int i = 0; i + 2 < tris.Count; i += 3)
+                for (int k = 2; k >= 0; k--)      // reversed: the loader reverses again
+                {
+                    int a = tris[i + k] + 1;
+                    sb.Append(k == 2 ? "f " : " ").Append(a).Append('/').Append(a).Append('/').Append(a);
+                    if (k == 0) sb.Append('\n');
+                }
+            return sb.ToString();
+        }
+
+        /// <summary>node space -> prop .obj space. The inverse of what ObjMesh.Load + EditorObjects.Upright
+        /// do, composed in that order:
+        ///   Load (CONV 1, the default) takes the file's xyz RAW -- the old negate-Z reflected every mesh
+        ///   Upright pitches 270 about X, mapping mesh (x,y,z) to node (x,z,-y)
+        /// so node = (f.x, f.z, -f.y), and inverting gives f = (n.x, -n.z, n.y).
+        ///
+        /// Derived wrong the first time by assuming the negate-Z branch, which put the building upside down --
+        /// base at -4.25, roof at 0. It survived every size check, because a mirrored box is the same size.
+        /// Hence the round-trip test: sizes agree with a sign error, positions do not.</summary>
+        public static Vector3 ToObj(Vector3 nodeSpace) => new(nodeSpace.X, -nodeSpace.Z, nodeSpace.Y);
 
         /// <summary>Set the palette for the selection if there is one, else for the next wall drawn.</summary>
         public void SelectMaterial(int id)

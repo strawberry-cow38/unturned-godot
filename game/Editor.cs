@@ -6,7 +6,11 @@ namespace UnturnedGodot
     // owns the edit session -- the active mode (which sub-editor is live) + the loaded map -- and fans Save()
     // out to the sub-editors. The heavy lifting lives in per-mode sub-editors (Objects/Terrain/Spawns/...),
     // ported phase by phase. Phase 1 = the shell + mode switching + the free-fly cam + dashboard.
-    public enum EEditorMode { Terrain, Environment, Spawns, Level }   // the source dashboard's 4 tabs (EditorDashboardUI); Objects live UNDER Level (EditorLevelObjectsUI)
+    // The source dashboard's 4 tabs (EditorDashboardUI); Objects live UNDER Level (EditorLevelObjectsUI).
+    // Buildings is OURS and deliberately its own mode rather than a second Level tool: a building is authored
+    // once and then placed many times, which is what retail buildings already are -- props. So you leave the
+    // map, build one against a blank plane, bake it, and it turns up in the Level tab's props list.
+    public enum EEditorMode { Terrain, Environment, Spawns, Level, Buildings }
 
     public partial class Editor : Node3D
     {
@@ -19,18 +23,8 @@ namespace UnturnedGodot
         public EditorEnvironment Environment;             // Phase 4 environment sub-editor (set by BuildEditor)
         public EditorTerrain TerrainEd;                   // Phase 5 terrain sub-editor (set by BuildEditor)
         public EditorRoads RoadsEd;                       // Phase 6 roads sub-editor (Environment tab, paving mode)
-        public EditorBuildings Buildings;                 // building tool: draw walls, carve openings (Level tab)
+        public EditorBuildings Buildings;                 // building tool: its own mode -- draw walls, bake a prop
 
-        /// <summary>Which Level-tab tool owns the mouse. Both EditorObjects and EditorBuildings live on the
-        /// Level tab, and a click must reach exactly one of them -- otherwise placing a window also drops a
-        /// prop behind it.</summary>
-        public enum ELevelTool { Objects, Buildings }
-        ELevelTool _levelTool = ELevelTool.Objects;
-        public ELevelTool LevelTool
-        {
-            get => _levelTool;
-            set { _levelTool = value; if (Buildings != null) Buildings.Active = value == ELevelTool.Buildings; }
-        }
 
         [Signal] public delegate void ModeChangedEventHandler(int mode);
 
@@ -38,7 +32,14 @@ namespace UnturnedGodot
         public EEditorMode Mode
         {
             get => _mode;
-            set { if (_mode == value) return; _mode = value; EmitSignal(SignalName.ModeChanged, (int)value); }
+            set
+            {
+                if (_mode == value) return;
+                _mode = value;
+                // Buildings owns the mouse for its whole mode; the other sub-editors already gate on Mode.
+                if (Buildings != null) Buildings.SetActive(value == EEditorMode.Buildings);
+                EmitSignal(SignalName.ModeChanged, (int)value);
+            }
         }
 
         public void Setup(string mapName, Node3D world, EditorCamera cam)
