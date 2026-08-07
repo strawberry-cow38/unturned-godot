@@ -19,6 +19,18 @@ namespace UnturnedGodot
         public EditorEnvironment Environment;             // Phase 4 environment sub-editor (set by BuildEditor)
         public EditorTerrain TerrainEd;                   // Phase 5 terrain sub-editor (set by BuildEditor)
         public EditorRoads RoadsEd;                       // Phase 6 roads sub-editor (Environment tab, paving mode)
+        public EditorBuildings Buildings;                 // building tool: draw walls, carve openings (Level tab)
+
+        /// <summary>Which Level-tab tool owns the mouse. Both EditorObjects and EditorBuildings live on the
+        /// Level tab, and a click must reach exactly one of them -- otherwise placing a window also drops a
+        /// prop behind it.</summary>
+        public enum ELevelTool { Objects, Buildings }
+        ELevelTool _levelTool = ELevelTool.Objects;
+        public ELevelTool LevelTool
+        {
+            get => _levelTool;
+            set { _levelTool = value; if (Buildings != null) Buildings.Active = value == ELevelTool.Buildings; }
+        }
 
         [Signal] public delegate void ModeChangedEventHandler(int mode);
 

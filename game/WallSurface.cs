@@ -127,8 +127,11 @@ namespace UnturnedGodot
                 {0,1,5},{0,5,4},   // -Y
                 {3,7,6},{3,6,2},   // +Y
             };
+            // Godot treats CLOCKWISE as front-facing. The index table below is wound counter-clockwise-outward
+            // (right-hand rule, outward normals), so emit each triangle REVERSED -- otherwise every face is
+            // culled when seen from outside and lit from within, which reads as the whole thing being inside out.
             for (int f = 0; f < faces.GetLength(0); f++)
-                for (int k = 0; k < 3; k++)
+                for (int k = 2; k >= 0; k--)
                     st.AddVertex(v[faces[f, k]]);
         }
 

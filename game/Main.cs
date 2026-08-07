@@ -3393,6 +3393,11 @@ namespace UnturnedGodot
             var objs = new EditorObjects(editor, this, cam);   // Phase 2: place/select/delete props (picks the WorldMode.Editor colliders)
             editor.AddChild(objs);
             editor.Objects = objs;
+            var buildings = new EditorBuildings();   // building tool: walls + openings, shares the Level tab with Objects
+            editor.AddChild(buildings);
+            buildings.Setup(editor, cam, cam);   // EditorCamera IS a Camera3D
+            editor.Buildings = buildings;
+            editor.LevelTool = Editor.ELevelTool.Objects;   // Objects owns the mouse until you switch (B)
             var spawns = new EditorSpawns(editor, cam, _mapRoot);   // Phase 3: visualize/edit spawn points (Spawns tab)
             editor.AddChild(spawns);
             editor.Spawns = spawns;
