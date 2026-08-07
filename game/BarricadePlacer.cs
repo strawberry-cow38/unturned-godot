@@ -35,10 +35,14 @@ namespace UnturnedGodot
         public float Yaw { get; private set; }                 // the final yaw fed to StandBasis (player aim for Floor; wall-facing for Wall)
         public float YawOffset;   // R accumulates here: manual spin about the mount axis (src input_y, UseableBarricade.cs:2041)
 
-        // Attachment predicate (world point, surface normal) -> can a barricade mount here? At merge:
-        //   placer.CanAttach = (p, n) => StructureManager.Instance.CanAttach(p, n);
+        // Attachment predicate (world point, surface normal, hit collider) -> can a barricade mount here? At merge:
+        //   placer.CanAttach = StructureManager.BarricadeAttachHook;   // NOT Instance.CanAttach -- see that method
         // Kept as a hook so feat/barricades builds standalone; null falls back to DefaultAttachable below.
-        public System.Func<Vector3, Vector3, bool> CanAttach;
+        // The hook ABSTAINS (returns true) off-structure rather than refusing -- a false is read as "may not build
+        // here", so wiring CanAttach = "is there a structure face" would brick every ground deployable on open terrain.
+        // Carries the COLLIDER as well as the point/normal: the structure gate has to know WHICH piece was hit,
+        // and no radius around the point can tell it that (a wall's origin is its base, metres below the hit).
+        public System.Func<Vector3, Vector3, Node, bool> CanAttach;
 
         MeshInstance3D _ghost;
         Aabb _localAabb;
@@ -133,7 +137,11 @@ namespace UnturnedGodot
             // and the spot is attachable (a structure/terrain, or StructureManager.CanAttach when wired).
             bool surf = SurfaceOk(Mount, n);
             bool clear = !Overlap(space, hp + n * Def.Offset, Def.Radius, hitRid);   // src OverlapSphere(point, radius, BLOCK_BARRICADE), UseableBarricade.cs:883
-            bool attach = CanAttach != null ? CanAttach(hp, n) : DefaultAttachable(collider);
+            // BOTH gates, not either/or. This was `CanAttach != null ? CanAttach(...) : DefaultAttachable(...)`, so
+            // supplying the structure hook silently DROPPED the no-stacking rule and you could plant a barricade on
+            // the face of another barricade. The two answer different questions -- "is this surface a legal thing to
+            // build on at all" and "does the structure under it agree" -- and both must hold.
+            bool attach = DefaultAttachable(collider) && (CanAttach == null || CanAttach(hp, n, collider));
             Valid = surf && clear && attach;
             // submersible device (fluid inlet) parity: valid only on submerged seabed within its water-depth band
             if (Valid && Def.WaterDepthMin >= 0f)
