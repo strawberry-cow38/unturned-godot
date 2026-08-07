@@ -183,6 +183,66 @@ namespace UnturnedGodot
             return true;
         }
 
+        /// <summary>Repair toward full health. Returns the amount actually restored, which is 0 at full -- so a
+        /// caller can tell "already fine" from "repaired" and not consume a resource for nothing.</summary>
+        public int Repair(Piece p, int amount)
+        {
+            if (p == null || amount <= 0 || !_all.Contains(p)) return 0;
+            int before = p.Health;
+            p.Health = Mathf.Min(p.MaxHealth, p.Health + amount);
+            return p.Health - before;
+        }
+
+        /// <summary>How long taking this piece back down should take, in seconds. Retail scales a base duration
+        /// by the asset's Salvage_Duration_Multiplier (ItemStructureAsset.cs:79) -- sturdier tiers are slower,
+        /// which is what stops a raider dismantling a metal wall as quickly as a wooden one.</summary>
+        public float SalvageSeconds(Piece p, float baseSeconds = 2f)
+            => p == null ? 0f : baseSeconds * StructureCatalog.TierAt(p.Tier).SalvageDurationMultiplier;
+
+        /// <summary>Take a piece back down, freeing its slot. Returns the tier salvaged, or -1 if there was
+        /// nothing there -- callers refund materials off that, so "nothing happened" must be distinguishable
+        /// from "salvaged tier 0".</summary>
+        public int Salvage(Piece p)
+        {
+            if (p == null || !_all.Contains(p)) return -1;
+            int tier = p.Tier;
+            Remove(p);
+            return tier;
+        }
+
+        // ---- disk persistence ------------------------------------------------------------------------------
+        // There is no general world-save in the port yet (only user://map_settings.cfg), so structures own their
+        // file. user:// rather than res://: it is the writable per-user dir and it survives an exported build,
+        // which res:// does not.
+
+        public const string SavePath = "user://structures.json";
+
+        public bool SaveToDisk(string path = SavePath)
+        {
+            try
+            {
+                using var f = Godot.FileAccess.Open(path, Godot.FileAccess.ModeFlags.Write);
+                if (f == null) { GD.PrintErr($"[structures] save open failed: {Godot.FileAccess.GetOpenError()}"); return false; }
+                f.StoreString(Serialize());
+                return true;
+            }
+            catch (System.Exception e) { GD.PrintErr($"[structures] save failed: {e.Message}"); return false; }
+        }
+
+        /// <summary>Load, returning how many pieces came back. A MISSING file is not an error -- it is a world
+        /// nobody has built in yet, and treating it as a failure would spam the log on every fresh start.</summary>
+        public int LoadFromDisk(string path = SavePath)
+        {
+            if (!Godot.FileAccess.FileExists(path)) return 0;
+            try
+            {
+                using var f = Godot.FileAccess.Open(path, Godot.FileAccess.ModeFlags.Read);
+                if (f == null) { GD.PrintErr($"[structures] load open failed: {Godot.FileAccess.GetOpenError()}"); return 0; }
+                return Deserialize(f.GetAsText());
+            }
+            catch (System.Exception e) { GD.PrintErr($"[structures] load failed: {e.Message}"); return 0; }
+        }
+
         public void Remove(Piece p)
         {
             if (p == null) return;

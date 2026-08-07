@@ -152,4 +152,60 @@ namespace UnturnedGodot.Testing
             T.Check("empty save clears cleanly", sm.Deserialize("") == 0 && sm.Count == 0);
         }
     }
+
+    // Repair, salvage, and the on-disk round trip.
+    public class StructureRepairSalvageDisk : GameTest
+    {
+        public override string Name => "structure.repair_salvage";
+
+        public override IEnumerable<Step> Run()
+        {
+            var sm = new StructureManager();
+            World.AddChild(sm);
+            yield return Ticks(1);
+
+            var p = sm.Place(Vector3.Zero, EConstruct.Floor, 0);
+            T.Check("placed a floor", p != null);
+
+            sm.Damage(p, 100);
+            int hurt = p.Health;
+            T.Check($"took damage ({p.MaxHealth} -> {hurt})", hurt == p.MaxHealth - 100);
+            T.Check("repair restores what it says it restores", sm.Repair(p, 60) == 60 && p.Health == hurt + 60);
+            // Repair must CAP at max and report the real amount -- a caller charges materials off the return
+            // value, so an over-repair that reported 9999 would bill for health it never gave.
+            int room = p.MaxHealth - p.Health;
+            T.Check($"over-repair returns only what fit ({room})", sm.Repair(p, 9999) == room && p.Health == p.MaxHealth);
+            T.Check("repairing a full piece restores 0", sm.Repair(p, 50) == 0);
+
+            // salvage duration scales with tier, or a metal wall comes down as fast as a wooden one
+            var metal = sm.Place(new Vector3(90f, 30f, 90f), EConstruct.Wall, 2);
+            T.Check($"tougher tiers salvage slower ({sm.SalvageSeconds(p):0.##}s wood vs {sm.SalvageSeconds(metal):0.##}s metal)",
+                sm.SalvageSeconds(metal) > sm.SalvageSeconds(p));
+
+            int n = sm.Count;
+            T.Check("salvage returns the tier it took down", sm.Salvage(p) == 0);
+            yield return Ticks(1);
+            T.Check($"salvage frees the piece ({n} -> {sm.Count})", sm.Count == n - 1);
+            T.Check("the freed slot is buildable again", sm.Place(Vector3.Zero, EConstruct.Floor, 0) != null);
+            // -1, not 0: callers refund materials off this, so "nothing there" must not read as "tier 0".
+            T.Check("salvaging nothing returns -1, not tier 0", sm.Salvage(null) == -1);
+
+            // ---- disk round trip ----
+            string path = "user://structures_test.json";
+            int saved = sm.Count;
+            T.Check($"saved {saved} pieces to disk", sm.SaveToDisk(path));
+            sm.Clear();
+            yield return Ticks(1);
+            T.Check("cleared", sm.Count == 0);
+            int back = sm.LoadFromDisk(path);
+            yield return Ticks(1);
+            T.Check($"loaded them back ({back} of {saved})", back == saved && sm.Count == saved);
+
+            // A world nobody has built in yet is NOT an error -- treating a missing file as a failure would log
+            // noise on every fresh start.
+            T.Check("a missing save loads 0 quietly", sm.LoadFromDisk("user://structures_does_not_exist.json") == 0);
+
+            if (Godot.FileAccess.FileExists(path)) DirAccess.RemoveAbsolute(ProjectSettings.GlobalizePath(path));
+        }
+    }
 }

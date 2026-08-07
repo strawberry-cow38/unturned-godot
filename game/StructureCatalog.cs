@@ -71,16 +71,20 @@ namespace UnturnedGodot
             public readonly bool RequiresPillars;
             public readonly bool Vulnerable;     // retail's isVulnerable: can melee/bullets hurt it at all
             public readonly Color Tint;
-            public Tier(string name, int health, bool requiresPillars, bool vulnerable, Color tint)
-            { Name = name; Health = health; RequiresPillars = requiresPillars; Vulnerable = vulnerable; Tint = tint; }
+            /// <summary>Retail's Salvage_Duration_Multiplier (ItemStructureAsset.cs:79,246): how much LONGER
+            /// than the base time this takes to take back down. Sturdier tiers are slower to salvage, which is
+            /// what stops a raider quietly dismantling a metal wall as fast as a wooden one.</summary>
+            public readonly float SalvageDurationMultiplier;
+            public Tier(string name, int health, bool requiresPillars, bool vulnerable, Color tint, float salvageMul = 1f)
+            { Name = name; Health = health; RequiresPillars = requiresPillars; Vulnerable = vulnerable; Tint = tint; SalvageDurationMultiplier = salvageMul; }
         }
 
         // Ordered weakest -> strongest; the order IS the upgrade path.
         public static readonly Tier[] Tiers =
         {
-            new Tier("wood",   300,  true,  true,  new Color(0.52f, 0.37f, 0.20f)),
-            new Tier("brick",  600,  true,  false, new Color(0.55f, 0.31f, 0.26f)),
-            new Tier("metal", 1000,  false, false, new Color(0.55f, 0.57f, 0.60f)),
+            new Tier("wood",   300,  true,  true,  new Color(0.52f, 0.37f, 0.20f), 1.0f),
+            new Tier("brick",  600,  true,  false, new Color(0.55f, 0.31f, 0.26f), 1.5f),
+            new Tier("metal", 1000,  false, false, new Color(0.55f, 0.57f, 0.60f), 2.0f),
         };
 
         public static Tier TierAt(int i) => Tiers[Mathf.Clamp(i, 0, Tiers.Length - 1)];
