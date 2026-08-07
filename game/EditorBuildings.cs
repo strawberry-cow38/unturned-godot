@@ -131,7 +131,8 @@ namespace UnturnedGodot
         /// from.</summary>
         WallSurface SpawnWall(Vector3 origin, float yawDeg, float length, float thickness, int material,
                               IReadOnlyList<WallOpening> openings, float height = WallOpenings.DoorHeight,
-                              float pitchDeg = 0f, SurfaceKind kind = SurfaceKind.Wall, float gableRise = 0f)
+                              float pitchDeg = 0f, SurfaceKind kind = SurfaceKind.Wall, float gableRise = 0f,
+                              int texel = -1)
         {
             // NO SNAPPING HERE. This is the path Load() and ImportRetail() come through, and rounding a
             // length on the way in makes loading lossy: an imported wall measured off the mesh to the
@@ -142,7 +143,7 @@ namespace UnturnedGodot
             var w = new WallSurface
             {
                 Length = Mathf.Max(0.01f, length), Height = height, Thickness = thickness, MaterialId = material, Kind = kind,
-                GableRise = gableRise,
+                GableRise = gableRise, Texel = texel,
                 Position = origin, RotationDegrees = new Vector3(pitchDeg, yawDeg, 0f),
             };
             AddChild(w);
@@ -467,8 +468,21 @@ namespace UnturnedGodot
             // Three-quarter, not straight on. A frontal view of a building shows one elevation and flattens
             // everything else -- you cannot see a roof's pitch, a wall's depth or which way a corner turns
             // from it, so it is the wrong camera both to build from and to judge a change by.
-            var eye = StageOrigin + new Vector3(22f, 14f, 26f);
-            _cam.GlobalPosition = eye;
+            var off = new Vector3(22f, 14f, 26f);
+            // UG_EDITCAM=yaw,dist,height orbits this view for a capture. One three-quarter frame is enough to
+            // build from and nowhere near enough to JUDGE from: I read a correctly-placed T-shaped roof off
+            // this exact angle as "wings overhanging the building" and went looking for a bug that was not
+            // there. A second angle is cheaper than that mistake.
+            var spec = System.Environment.GetEnvironmentVariable("UG_EDITCAM");
+            if (!string.IsNullOrEmpty(spec))
+            {
+                var p = spec.Split(',');
+                float yaw = p.Length > 0 && float.TryParse(p[0], out var y) ? y : 0f;
+                float dist = p.Length > 1 && float.TryParse(p[1], out var d) ? d : 34f;
+                float high = p.Length > 2 && float.TryParse(p[2], out var h) ? h : 14f;
+                off = new Vector3(0f, high, dist).Rotated(Vector3.Up, Mathf.DegToRad(yaw));
+            }
+            _cam.GlobalPosition = StageOrigin + off;
             _cam.LookAt(StageOrigin + new Vector3(0f, 2f, -4.5f), Vector3.Up);
         }
 
@@ -527,7 +541,7 @@ namespace UnturnedGodot
                 {
                     X = w.Position.X, Y = w.Position.Y, Z = w.Position.Z,
                     Yaw = w.RotationDegrees.Y, Pitch = w.RotationDegrees.X, Kind = w.Kind,
-                    Length = w.Length, Height = w.Height, GableRise = w.GableRise,
+                    Length = w.Length, Height = w.Height, GableRise = w.GableRise, Texel = w.Texel,
                     Thickness = w.Thickness, Material = w.MaterialId,
                 };
                 pl.Openings.AddRange(w.Openings);
@@ -556,7 +570,7 @@ namespace UnturnedGodot
             foreach (var w in _walls.ToArray()) RemoveWall(w);
             foreach (var pl in plans)
                 SpawnWall(new Vector3(pl.X, pl.Y, pl.Z), pl.Yaw, pl.Length, pl.Thickness, pl.Material,
-                          pl.Openings, pl.Height, pl.Pitch, pl.Kind, pl.GableRise);
+                          pl.Openings, pl.Height, pl.Pitch, pl.Kind, pl.GableRise, pl.Texel);
             GD.Print($"[editor-buildings] loaded {plans.Count} walls");
             return plans.Count;
         }
@@ -616,8 +630,11 @@ namespace UnturnedGodot
             foreach (var w in _walls)
             {
                 if (!IsInstanceValid(w)) continue;
-                var mat = WallMaterials.At(w.MaterialId);
-                foreach (var (node, colour) in new[] { ("Mesh", mat.Wall), ("TrimMesh", mat.Reveal) })
+                // w.Tint, not WallMaterials.At(w.MaterialId).Wall -- the SAME accessor the live surface
+                // paints itself with. Reading the palette directly here meant a surface with a texel
+                // override looked right in the editor and baked out in the wall colour: the imported roof
+                // was dark grey on the stage and cream the moment it became a prop.
+                foreach (var (node, colour) in new[] { ("Mesh", w.Tint), ("TrimMesh", w.TrimTint) })
                 {
                     var mi = w.GetNodeOrNull<MeshInstance3D>(node);
                     if (mi?.Mesh == null || mi.Mesh.GetSurfaceCount() == 0) continue;
@@ -792,7 +809,7 @@ namespace UnturnedGodot
                 {
                     X = w.Position.X, Y = w.Position.Y, Z = w.Position.Z,
                     Yaw = w.RotationDegrees.Y, Pitch = w.RotationDegrees.X, Kind = w.Kind,
-                    Length = w.Length, Height = w.Height, GableRise = w.GableRise,
+                    Length = w.Length, Height = w.Height, GableRise = w.GableRise, Texel = w.Texel,
                     Thickness = w.Thickness, Material = w.MaterialId,
                 };
                 pl.Openings.AddRange(w.Openings);
@@ -944,9 +961,34 @@ namespace UnturnedGodot
             foreach (var w in new List<WallSurface>(_walls)) RemoveWall(w);
             foreach (var pl in plans)
                 SpawnWall(StageOrigin + new Vector3(pl.X, pl.Y, pl.Z), pl.Yaw, pl.Length, pl.Thickness,
-                          pl.Material, pl.Openings, pl.Height, pl.Pitch, pl.Kind, pl.GableRise);
+                          pl.Material, pl.Openings, pl.Height, pl.Pitch, pl.Kind, pl.GableRise, pl.Texel);
             ActiveMaterial = mat;
-            GD.Print($"[editor-buildings] imported {buildingName}: {plans.Count} walls");
+            int nw = 0, nr = 0, nf = 0, nop = 0, ngab = 0;
+            foreach (var pl in plans)
+            {
+                if (pl.Kind == SurfaceKind.Roof) nr++;
+                else if (pl.Kind == SurfaceKind.Foundation) nf++;
+                else nw++;
+                if (pl.GableRise > 0.01f) ngab++;
+                nop += pl.Openings.Count;
+            }
+            // UG_EDITIMPORT_DUMP=1 lists every emitted surface with its world extent. A render shows you
+            // THAT the import is wrong; only the extents tell you which surface is missing, and I read one
+            // three-quarter frame as an oversized roof when the roof was right and the walls were absent.
+            if (System.Environment.GetEnvironmentVariable("UG_EDITIMPORT_DUMP") == "1")
+                foreach (var pl in plans)
+                {
+                    var rt = new Vector3(Mathf.Cos(Mathf.DegToRad(pl.Yaw)), 0f, -Mathf.Sin(Mathf.DegToRad(pl.Yaw)));
+                    var o = new Vector3(pl.X, pl.Y, pl.Z);
+                    var e = o + rt * pl.Length + Vector3.Up * pl.Height;
+                    GD.Print($"[import]  {pl.Kind,-10} {pl.Length,6:0.0} x {pl.Height,5:0.0}  yaw {pl.Yaw,7:0.0}  pitch {pl.Pitch,6:0.0}"
+                             + $"  thick {pl.Thickness:0.00}  gable {pl.GableRise:0.0}  ops {pl.Openings.Count}"
+                             + $"   X {Mathf.Min(o.X, e.X),6:0.0}..{Mathf.Max(o.X, e.X),6:0.0}"
+                             + $"  Y {Mathf.Min(o.Y, e.Y),6:0.0}..{Mathf.Max(o.Y, e.Y),6:0.0}"
+                             + $"  Z {Mathf.Min(o.Z, e.Z),6:0.0}..{Mathf.Max(o.Z, e.Z),6:0.0}");
+                }
+            GD.Print($"[editor-buildings] imported {buildingName}: {plans.Count} surfaces "
+                     + $"({nw} wall, {nr} roof, {nf} foundation, {ngab} gabled) with {nop} openings");
             return plans.Count;
         }
 

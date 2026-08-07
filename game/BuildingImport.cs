@@ -10,8 +10,16 @@ namespace UnturnedGodot
     // WallImport's job, and it does it by running the generator's own partition backwards. This file only has
     // to find the panels -- which planes of the mesh are walls, which face pairs are the two sides of one
     // wall, and where each wall sits in the world.
+    //
+    // Three things decide what a triangle IS, and it took getting each of them wrong to find that out:
+    // its ORIENTATION (which way it faces, and the loader reverses winding so the raw cross product points
+    // the wrong way), its COLOUR (retail buildings are painted from a 4x2 palette, and on House_00 60% of
+    // the triangles are window trim that orientation alone cannot tell from wall), and its EXTENT (a plane
+    // holds every coplanar thing in the building, so one plane is many walls).
+    //
     // KNOWN LIMITATIONS, all of which show up as "the import is close but wrong somewhere":
-    //   - only near-vertical planes are read, so an import has NO floors, roofs or foundations -- walls only
+    //   - floors and ceilings are still not read, so an import has walls, roofs and foundations only
+    //   - a flat roof is only found on a building that ALSO has a slope to calibrate the roof colour from
     //   - if face pairing fails, BOTH faces emit as separate default-thickness walls: a silent double wall
     //   - a recovered face under 2 m in either dimension is dropped, so a short jog in a facade vanishes
     //   - the plane bucket is plain rounding with no hysteresis, so a wall straddling a quantum splits in two
@@ -25,17 +33,23 @@ namespace UnturnedGodot
             public Vector3 Normal;                 // outward
             public float Dist;                     // plane offset along the normal
             public Vector3 Right, Up;              // the plane's own 2D basis
-            public bool Sloped;                    // roof/floor rather than wall
+            public bool Sloped;                    // roof rather than wall
+            public float MinY = float.MaxValue;    // world extent, for finding the eave
             public readonly List<WallImport.Tri2> Tris = new();
+        }
+
+        /// <summary>One triangle of the source mesh, already in the upright frame and already classified.</summary>
+        struct SrcTri
+        {
+            public Vector3 A, B, C, N;
+            public float Area;
+            public int Texel;
+            public bool Vertical, Up;
         }
 
         /// <summary>Import a retail building .obj as wall plans, in the prop's own local space (Y up, origin at
         /// the building's centre on the ground). Returns an empty list if the mesh will not load.</summary>
-        // readRoofs defaults FALSE. My first attempt at it emitted every non-vertical plane as a Roof surface,
-        // which swept up all 174 of House_00's horizontal triangles -- its floors and ceilings -- as enormous
-        // slabs and made the import visibly worse than no roof at all. Separating a roof plane from a ceiling
-        // plane needs more than "is it not vertical", and until it does this stays off by default.
-        public static List<WallPlan> FromObj(string globalObjPath, int materialId = 0, bool readRoofs = false)
+        public static List<WallPlan> FromObj(string globalObjPath, int materialId = 0, bool readRoofs = true)
         {
             var plans = new List<WallPlan>();
             var mesh = ObjMesh.Load(globalObjPath);
@@ -43,6 +57,7 @@ namespace UnturnedGodot
 
             var arr = mesh.SurfaceGetArrays(0);
             var v = (Vector3[])arr[(int)Mesh.ArrayType.Vertex];
+            var uv = (Vector2[])arr[(int)Mesh.ArrayType.TexUV];
             if (v == null || v.Length < 3) return plans;
 
             // Into the frame the prop is actually SEEN in. The mesh is authored lying down and stood up at
@@ -51,19 +66,23 @@ namespace UnturnedGodot
             var pts = new Vector3[v.Length];
             for (int i = 0; i < v.Length; i++) pts[i] = upright * v[i];
 
-            // group the vertical triangles into planes
-            var faces = new Dictionary<(int, int, int), Face>();
-            for (int i = 0; i + 2 < pts.Length; i += 3)
-            {
-                Vector3 a = pts[i], b = pts[i + 1], c = pts[i + 2];
-                var n = (b - a).Cross(c - a);
-                if (n.LengthSquared() < 1e-9f) continue;
-                n = n.Normalized();
-                bool sloped = Mathf.Abs(n.Y) > 0.25f;
-                if (sloped && n.Y < 0.25f) continue;      // downward-facing: a soffit or the underside of a slab
-                if (sloped && !readRoofs) continue;
+            var src = ReadTriangles(pts, uv);
+            var roofTexels = RoofTexels(src);
+            int roofTexel = -1;                        // paint the roof in its own colour, not the wall's
+            foreach (var t in roofTexels) { roofTexel = t; break; }
+            int revealTexel = WallMaterials.At(materialId).RevealTexel;
 
-                float d = n.Dot(a);
+            // group into planes, gating on PALETTE as well as orientation
+            var faces = new Dictionary<(int, int, int), Face>();
+            foreach (var t in src)
+            {
+                bool wantWall = t.Vertical && t.Texel != revealTexel && !roofTexels.Contains(t.Texel);
+                bool wantRoof = readRoofs && !t.Vertical && t.Up && roofTexels.Contains(t.Texel);
+                if (!wantWall && !wantRoof) continue;
+                bool sloped = wantRoof;
+
+                var n = t.N;
+                float d = n.Dot(t.A);
                 // Quantised so the two triangles of one quad, and the many quads of one wall, land in the same
                 // bucket. 5 degrees and 5 cm: tight enough to keep two walls 0.5 m apart separate, loose
                 // enough to survive a ripped mesh's noise.
@@ -74,7 +93,7 @@ namespace UnturnedGodot
                     // The plane's own 2D frame. For a wall that is (horizontal along the run, world up); for a
                     // slope it is (horizontal along the eave, up the slope) -- the same basis the surface will
                     // be reconstructed in, so the recovered rectangle needs no second transform.
-                    var right = sloped ? new Vector3(-n.Z, 0f, n.X) : new Vector3(-n.Z, 0f, n.X);
+                    var right = new Vector3(-n.Z, 0f, n.X);
                     if (right.LengthSquared() < 1e-8f) right = Vector3.Right;
                     right = right.Normalized();
                     var up = sloped ? n.Cross(right).Normalized() : Vector3.Up;
@@ -82,18 +101,19 @@ namespace UnturnedGodot
                     f = new Face { Normal = n, Dist = d, Right = right, Up = up, Sloped = sloped };
                     faces[key] = f;
                 }
+                f.MinY = Mathf.Min(f.MinY, Mathf.Min(t.A.Y, Mathf.Min(t.B.Y, t.C.Y)));
 
                 // The TRIANGLE, not its bounding box. Treating each triangle's bbox as a solid panel assumed
                 // every one was half of an axis-aligned rectangle; measured on House_00 that holds for 49% of
                 // the vertical-plane triangles, so the other half fabricated solid that is not in the mesh and
                 // the leftovers came back as windows in the wrong places.
-                var (au, av) = Project(f, a);
-                var (bu, bv) = Project(f, b);
-                var (cu, cv) = Project(f, c);
+                var (au, av) = Project(f, t.A);
+                var (bu, bv) = Project(f, t.B);
+                var (cu, cv) = Project(f, t.C);
                 f.Tris.Add(new WallImport.Tri2(au, av, bu, bv, cu, cv));
             }
 
-            // One wall per CONNECTED CLUSTER of panels, not one per plane.
+            // One wall per CONNECTED REGION of covered area, not one per plane.
             //
             // Taking a whole plane's bounding box as one wall is what made the first version a mess: a plane
             // holding two separate wall segments came back as one enormous wall with the space between them
@@ -102,17 +122,23 @@ namespace UnturnedGodot
             // gaps" instead of "a wall with a window in it".
             var candidates = new List<Cand>();
             var roofs = new List<(Face F, WallImport.Recovered R)>();
+            float eave = float.MaxValue;
             foreach (var f in faces.Values)
             {
                 if (f.Tris.Count == 0) continue;
-                var r = WallImport.FromTriangles(f.Tris);
                 if (f.Sloped)
                 {
-                    if (r.Width >= 2f && r.Height >= 1f) roofs.Add((f, r));
+                    var rr = WallImport.FromTriangles(f.Tris);
+                    if (rr.Width < 2f || rr.Height < 1f) continue;
+                    roofs.Add((f, rr));
+                    eave = Mathf.Min(eave, f.MinY);
                     continue;
                 }
-                if (r.Width < 2f || r.Height < 1.5f) continue;           // clutter, not a wall
-                candidates.Add(new Cand { F = f, Rec = r });
+                foreach (var r in WallImport.FromTrianglesSplit(f.Tris))
+                {
+                    if (r.Width < 2f || r.Height < 1.5f) continue;       // clutter, not a wall
+                    candidates.Add(new Cand { F = f, Rec = r });
+                }
             }
 
             // Pair each candidate with the one looking back at it: those are the two sides of one wall, and
@@ -144,32 +170,11 @@ namespace UnturnedGodot
                 used.Add(c);
                 if (pair != null) used.Add(pair);
 
-                var rec = c.Rec;
-                var right = Right(c.F);
-                var origin = c.F.Normal * (c.F.Dist - (pair != null ? thickness * 0.5f : 0f))
-                             + right * rec.U0 + Vector3.Up * rec.V0;
-                float yaw = Mathf.RadToDeg(Mathf.Atan2(right.X, right.Z)) - 90f;
-
-                var plan = new WallPlan
-                {
-                    X = origin.X, Y = origin.Y, Z = origin.Z,
-                    Yaw = yaw, Length = rec.Width, Height = rec.Height,
-                    Thickness = Mathf.Clamp(thickness, 0.2f, 1.2f), Material = materialId,
-                };
-                foreach (var o in rec.Openings)
-                {
-                    var snapped = WallImport.SnapToRetail(o);
-                    // Archetype is presentation, but MoveOpening branches on its FloorPinned flag -- so
-                    // importing everything as archetype 0 (door, floor-pinned) meant grabbing an imported
-                    // window to slide it slammed it down to sill 0. Pick by what the opening actually is.
-                    snapped.Archetype = snapped.V <= WallOpenings.MinOpening ? 0 : 1;   // door : window
-                    plan.Openings.Add(snapped);
-                }
-                plans.Add(plan);
+                EmitWall(plans, c, thickness, materialId, eave);
             }
-            // Roof and floor planes, emitted as pitched surfaces. Each sloped plane becomes one Roof surface
-            // in its own frame, so a HIPPED roof comes back as its four slopes rather than being forced into
-            // the gable the roof tool builds -- retail hips are common and a gable is not a substitute.
+            // Roof planes, emitted as pitched surfaces. Each sloped plane becomes one Roof surface in its own
+            // frame, so a HIPPED roof comes back as its four slopes rather than being forced into the gable
+            // the roof tool builds -- retail hips are common and a gable is not a substitute.
             foreach (var (f, r) in roofs)
             {
                 float pitch = Mathf.RadToDeg(Mathf.Asin(Mathf.Clamp(f.Up.Y, -1f, 1f)));
@@ -178,8 +183,16 @@ namespace UnturnedGodot
                 var plan = new WallPlan
                 {
                     X = origin.X, Y = origin.Y, Z = origin.Z,
-                    Yaw = yaw, Pitch = pitch - 90f, Kind = SurfaceKind.Roof,
-                    Length = r.Width, Height = r.Height,
+                    // 90 - pitch, NOT pitch - 90, and the difference is a mirror rather than an offset.
+                    // Both put the surface at the same angle to the horizontal, so the plane looks right from
+                    // any single camera; they differ in WHICH WAY it leans, so pitch - 90 gave four roof
+                    // planes that each rose toward their own eave and met nothing. The tool's own AddGableRoof
+                    // uses pitch - 90 correctly, because it picks the yaw to suit -- it spawns the south slope
+                    // facing north. Here the yaw is dictated by the plane we read, so the sign has to absorb
+                    // it. Checked by rebuilding the surface and testing its plane against the source mesh's,
+                    // which is the only thing that can see a mirror.
+                    Yaw = yaw, Pitch = 90f - pitch, Kind = SurfaceKind.Roof,
+                    Length = r.Width, Height = r.Height, Texel = roofTexel,
                     Thickness = EditorBuildings.SlabThickness, Material = materialId,
                 };
                 foreach (var o in r.Openings) plan.Openings.Add(o);   // chimney/skylight holes, unsnapped
@@ -188,39 +201,140 @@ namespace UnturnedGodot
             return plans;
         }
 
-        sealed class Cand { public Face F; public WallImport.Recovered Rec; }
-
-        /// <summary>Split a plane's panels into groups that actually touch. Two panels belong to the same wall
-        /// only if you can walk between them across panels -- the space between two separate segments of one
-        /// plane is a gap in the BUILDING, not a window in a wall.</summary>
-        static List<List<WallSolid>> Cluster(List<WallSolid> panels)
+        /// <summary>Flatten the mesh to classified triangles.
+        ///
+        /// The normal is the cross product NEGATED, and that one sign is worth a paragraph. ObjMesh reverses
+        /// every triangle's winding on load (Unity and Godot disagree on front-face order), so the naive
+        /// cross product of the loaded vertices points INTO the solid. Checked rather than reasoned about:
+        /// computing it both ways on House_00 and comparing against the file's own vn records gives 0 of 732
+        /// agreeing and 732 of 732 anti-parallel. Every wall then sat a full thickness outside the facade,
+        /// because the origin is offset along this normal, and the roof pass selected ceilings.</summary>
+        static List<SrcTri> ReadTriangles(Vector3[] pts, Vector2[] uv)
         {
-            const float Touch = 0.06f;      // ripped panel edges do not meet exactly
-            int n = panels.Count;
-            var parent = new int[n];
-            for (int i = 0; i < n; i++) parent[i] = i;
-            int Find(int i) { while (parent[i] != i) { parent[i] = parent[parent[i]]; i = parent[i]; } return i; }
-            void Union(int i, int j) { int a = Find(i), b = Find(j); if (a != b) parent[a] = b; }
-
-            for (int i = 0; i < n; i++)
-                for (int j = i + 1; j < n; j++)
-                {
-                    var p = panels[i];
-                    var q = panels[j];
-                    bool uOverlap = p.U0 <= q.U1 + Touch && q.U0 <= p.U1 + Touch;
-                    bool vOverlap = p.V0 <= q.V1 + Touch && q.V0 <= p.V1 + Touch;
-                    if (uOverlap && vOverlap) Union(i, j);
-                }
-
-            var groups = new Dictionary<int, List<WallSolid>>();
-            for (int i = 0; i < n; i++)
+            var outp = new List<SrcTri>();
+            for (int i = 0; i + 2 < pts.Length; i += 3)
             {
-                int r = Find(i);
-                if (!groups.TryGetValue(r, out var g)) groups[r] = g = new List<WallSolid>();
-                g.Add(panels[i]);
+                Vector3 a = pts[i], b = pts[i + 1], c = pts[i + 2];
+                var n = (b - a).Cross(c - a);
+                float len = n.Length();
+                if (len < 1e-6f) continue;
+                n = -n / len;                                   // see above: the loader reversed the winding
+                outp.Add(new SrcTri
+                {
+                    A = a, B = b, C = c, N = n, Area = len * 0.5f,
+                    Texel = TexelOf(uv, i),
+                    Vertical = Mathf.Abs(n.Y) <= 0.25f,
+                    Up = n.Y > 0.25f,
+                });
             }
-            return new List<List<WallSolid>>(groups.Values);
+            return outp;
         }
+
+        /// <summary>Which palette texels the ROOF is painted in, measured off this model rather than assumed.
+        ///
+        /// Orientation alone cannot tell a roof from a ceiling -- both are horizontal and face up, which is
+        /// how the first roof attempt swept 174 of House_00's floor and ceiling triangles in as building-sized
+        /// slabs. Colour can: retail paints roofs in their own texel. So calibrate on the unambiguous case,
+        /// the planes that are sloped AND upward (nothing but a roof is), and take the texels holding real
+        /// area there. On House_00 that is exactly texel 1, covering all 20 sloped-up triangles and none of
+        /// anything else -- and it also identifies the 34 vertical dark-grey triangles as fascia boards.
+        ///
+        /// A building with no sloped plane at all calibrates to nothing, so its flat roof is not recovered;
+        /// that is the honest failure, not a guess.</summary>
+        static HashSet<int> RoofTexels(List<SrcTri> src)
+        {
+            var area = new Dictionary<int, float>();
+            float total = 0f;
+            foreach (var t in src)
+            {
+                if (t.Vertical || !t.Up || t.N.Y > 0.98f) continue;    // sloped and upward: only a roof is
+                area.TryGetValue(t.Texel, out float had);
+                area[t.Texel] = had + t.Area;
+                total += t.Area;
+            }
+            var set = new HashSet<int>();
+            if (total <= 0f) return set;
+            foreach (var kv in area)
+                if (kv.Value >= total * 0.1f) set.Add(kv.Key);
+            return set;
+        }
+
+        /// <summary>The palette texel a triangle is painted in. Building textures are 4x2 -- eight flat
+        /// colours -- so the UV picks a cell, not a pixel. ObjMesh already flipped V on load, so this reads
+        /// in Godot texture space (v=0 is the top row); getting that backwards lands one row low and reports
+        /// the walls as trim.</summary>
+        static int TexelOf(Vector2[] uv, int i)
+        {
+            if (uv == null || i + 2 >= uv.Length) return -1;
+            var t = (uv[i] + uv[i + 1] + uv[i + 2]) / 3f;          // the centroid, so a seam does not decide it
+            int col = Mathf.Clamp(Mathf.FloorToInt(t.X * 4f), 0, 3);
+            int row = Mathf.Clamp(Mathf.FloorToInt(t.Y * 2f), 0, 1);
+            return row * 4 + col;
+        }
+
+        /// <summary>Emit one recovered face as a wall, splitting off whatever falls outside [ground, eave].
+        ///
+        /// A retail facade is modelled as one continuous sheet from the bottom of the foundation to the ridge.
+        /// Imported whole it is a single 9 m wall that starts underground and pokes through the roof. The two
+        /// ends are different things: below ground is the foundation skirt, above the eave is the gable
+        /// triangle. Only a gable END reaches above the eave, so the clip selects them on its own.</summary>
+        static void EmitWall(List<WallPlan> plans, Cand c, float thickness, int materialId, float eave)
+        {
+            var rec = c.Rec;
+            var right = Right(c.F);
+            float yaw = Mathf.RadToDeg(Mathf.Atan2(right.X, right.Z)) - 90f;
+            float inset = thickness * 0.5f;
+            float baseY = rec.V0, top = rec.V0 + rec.Height;
+
+            float below = Mathf.Max(0f, -baseY);
+            if (below > 0.25f)
+            {
+                var fo = c.F.Normal * (c.F.Dist - inset) + right * rec.U0 + Vector3.Up * baseY;
+                plans.Add(new WallPlan
+                {
+                    X = fo.X, Y = fo.Y, Z = fo.Z, Yaw = yaw, Kind = SurfaceKind.Foundation,
+                    Length = rec.Width, Height = below,
+                    Thickness = Mathf.Clamp(thickness, 0.2f, 1.2f), Material = materialId,
+                });
+                baseY = 0f;
+            }
+
+            float rise = 0f;
+            if (eave < float.MaxValue && top > eave + 0.25f && baseY < eave - 0.25f)
+            {
+                rise = top - eave;                 // the gable triangle, rebuilt by the surface as a peak
+                top = eave;
+            }
+            float height = top - baseY;
+            if (height < 1.5f) return;
+
+            var origin = c.F.Normal * (c.F.Dist - inset) + right * rec.U0 + Vector3.Up * baseY;
+            var plan = new WallPlan
+            {
+                X = origin.X, Y = origin.Y, Z = origin.Z,
+                Yaw = yaw, Length = rec.Width, Height = height, GableRise = rise,
+                Thickness = Mathf.Clamp(thickness, 0.2f, 1.2f), Material = materialId,
+            };
+            float shift = baseY - rec.V0;
+            foreach (var o in rec.Openings)
+            {
+                var s = WallImport.SnapToRetail(o);
+                s.V -= shift;                                        // openings are wall-relative; the base moved
+                if (s.V + s.Height <= WallOpenings.MinOpening) continue;
+                if (s.V >= height - WallOpenings.MinOpening) continue;
+                if (s.V < 0f) { s.Height += s.V; s.V = 0f; }
+                if (s.V + s.Height > height) s.Height = height - s.V;
+                if (s.Width < WallOpenings.MinOpening || s.Height < WallOpenings.MinOpening) continue;
+                // Archetype is presentation, but MoveOpening branches on its FloorPinned flag -- so importing
+                // everything as archetype 0 (door, floor-pinned) meant grabbing an imported window to slide it
+                // slammed it down to sill 0. Pick by what the opening actually is.
+                s.Archetype = s.V <= WallOpenings.MinOpening ? 0 : 1;   // door : window
+                plan.Openings.Add(s);
+            }
+            plans.Add(plan);
+        }
+
+        sealed class Cand { public Face F; public WallImport.Recovered Rec; }
 
         static Vector3 Right(Face f) => new Vector3(-f.Normal.Z, 0f, f.Normal.X).Normalized();
 

@@ -24,6 +24,10 @@ namespace UnturnedSim
         public float Height = WallOpenings.DoorHeight;
         public float Thickness = WallOpenings.DefaultThickness;
         public int Material;
+        /// <summary>Which of the palette's eight texels this surface is painted in, or -1 for "whatever the
+        /// palette says a WALL is". A retail building is one palette but not one colour -- its roof is a
+        /// different texel from its walls -- so a roof imported without this comes back cream.</summary>
+        public int Texel = -1;
         public readonly List<WallOpening> Openings = new();
     }
 
@@ -43,7 +47,7 @@ namespace UnturnedSim
         {
             var sb = new StringBuilder();
             sb.Append(Header).Append('\n');
-            sb.Append("# wall <x> <y> <z> <yawDeg> <length> <thickness> <materialId> [height] [pitchDeg] [kind] [gableRise]\n");
+            sb.Append("# wall <x> <y> <z> <yawDeg> <length> <thickness> <materialId> [height] [pitchDeg] [kind] [gableRise] [texel]\n");
             sb.Append("#   open <u> <v> <width> <height> <depth> <archetype>\n");
             if (walls != null)
                 foreach (var w in walls)
@@ -56,6 +60,7 @@ namespace UnturnedSim
                       .Append(' ').Append(F(w.Pitch))
                       .Append(' ').Append(w.Kind.ToString())
                       .Append(' ').Append(F(w.GableRise))
+                      .Append(' ').Append(w.Texel.ToString(CultureInfo.InvariantCulture))
                       .Append('\n');
                     foreach (var o in w.Openings)
                         sb.Append("  open ").Append(F(o.U)).Append(' ').Append(F(o.V)).Append(' ')
@@ -90,6 +95,7 @@ namespace UnturnedSim
                     if (p.Length < 10 || !N(p[9], out w.Pitch)) w.Pitch = 0f;
                     if (p.Length < 11 || !System.Enum.TryParse(p[10], out w.Kind)) w.Kind = SurfaceKind.Wall;
                     if (p.Length < 12 || !N(p[11], out w.GableRise)) w.GableRise = 0f;
+                    if (p.Length < 13 || !int.TryParse(p[12], out w.Texel)) w.Texel = -1;
                     outp.Add(w);
                     cur = w;
                 }

@@ -3412,7 +3412,10 @@ namespace UnturnedGodot
                 else if (buildings.Walls.Count == 0) DrawDemoBuilding(buildings);
                 if (System.Environment.GetEnvironmentVariable("UG_EDITBAKE") == "1")
                 {
-                    string baked = buildings.Bake("Demo_House");
+                    // Name the bake after what it came from. It used to always bake "Demo_House", so baking
+                    // an IMPORT overwrote the committed demo prefab with a ported building under the demo's
+                    // name -- two different buildings sharing one file, and whichever ran last won.
+                    string baked = buildings.Bake(string.IsNullOrEmpty(imp) ? "Demo_House" : imp + "_ported");
                     editor.Mode = EEditorMode.Level;
                     if (baked != null)
                     {

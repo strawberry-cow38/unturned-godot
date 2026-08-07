@@ -35,7 +35,11 @@ namespace UnturnedGodot
         /// this same rectangle pitched flat, which is why there is no FloorSurface: the partition, the
         /// collider, the reveal lining and the bake all work already, and a stairwell is an opening.</summary>
         public SurfaceKind Kind = SurfaceKind.Wall;
-        public Color Tint => WallMaterials.At(MaterialId).Wall;
+        /// <summary>Paint this surface in a specific palette texel instead of the palette's wall colour.
+        /// -1 (the default) means "the wall colour". One retail building is one PALETTE, not one colour.</summary>
+        public int Texel = -1;
+        public Color Tint => Texel >= 0 && Texel < 8 ? WallMaterials.At(MaterialId).Texels[Texel]
+                                                     : WallMaterials.At(MaterialId).Wall;
         public Color TrimTint => WallMaterials.At(MaterialId).Reveal;
         public bool ShowTrim = true;
 

@@ -852,4 +852,106 @@ namespace UnturnedGodot.Testing
             T.Check("and the wall beside it still stops movement", Hit(1f, 2f, World0));
         }
     }
+
+    // An imported roof, checked against the MESH IT CAME FROM rather than against a screenshot.
+    //
+    // This exists because a render cannot check it. Every roof plane the importer emitted was in the right
+    // place, at the right pitch, inside the source bounding box -- and every one of them was mirrored about
+    // the vertical, rising toward its eave instead of toward the ridge. From a three-quarter view that is
+    // four dark slabs at plausible angles; I read the same frame twice and concluded the geometry was fine.
+    // The only thing that settles it is putting the rebuilt surface and the source plane in one assertion.
+    public class BuildToolImportedRoofsMatchTheSourcePlanes : GameTest
+    {
+        public override string Name => "buildtool.imported_roofs_match_the_source_planes";
+
+        public override IEnumerable<Step> Run()
+        {
+            string obj = ProjectSettings.GlobalizePath("res://content/objects/House_00.obj");
+            if (!System.IO.File.Exists(obj)) { T.Fail("House_00.obj missing"); yield break; }
+
+            // The source planes, derived here independently of the importer -- same negation, because that
+            // one is separately established (0 of 732 agree with the file's vn without it).
+            var mesh = ObjMesh.Load(obj);
+            var v = (Vector3[])mesh.SurfaceGetArrays(0)[(int)Mesh.ArrayType.Vertex];
+            var xf = EditorObjects.Upright(0f);
+            var srcPlanes = new List<(Vector3 N, float D)>();
+            for (int i = 0; i + 2 < v.Length; i += 3)
+            {
+                Vector3 a = xf * v[i], b = xf * v[i + 1], c = xf * v[i + 2];
+                var n = (b - a).Cross(c - a);
+                if (n.LengthSquared() < 1e-9f) continue;
+                n = -n.Normalized();
+                if (n.Y <= 0.25f || n.Y > 0.98f) continue;         // sloped and upward: a roof
+                srcPlanes.Add((n, n.Dot(a)));
+            }
+            T.Check($"the mesh has sloped roof planes to compare against ({srcPlanes.Count} triangles)",
+                    srcPlanes.Count > 0);
+
+            var plans = BuildingImport.FromObj(obj);
+            var roofs = new List<WallPlan>();
+            foreach (var pl in plans) if (pl.Kind == SurfaceKind.Roof) roofs.Add(pl);
+            T.Check($"the importer emitted roofs ({roofs.Count})", roofs.Count > 0);
+            if (roofs.Count == 0) yield break;
+
+            // Rebuild each one as the real surface -- not as arithmetic repeating the importer's own
+            // formula, which would agree with the bug.
+            var built = new List<WallSurface>();
+            foreach (var pl in roofs)
+            {
+                var w = new WallSurface
+                {
+                    Length = pl.Length, Height = pl.Height, Thickness = pl.Thickness, Kind = pl.Kind,
+                    Position = new Vector3(pl.X, pl.Y, pl.Z),
+                    RotationDegrees = new Vector3(pl.Pitch, pl.Yaw, 0f),
+                };
+                World.AddChild(w);
+                built.Add(w);
+            }
+            yield return Step.Ticks(2);
+
+            // the source mesh's own extent, for "is this roof even over the building"
+            Vector3 lo = new(float.MaxValue, float.MaxValue, float.MaxValue), hi = -lo;
+            foreach (var raw in v) { var pw = xf * raw; lo = lo.Min(pw); hi = hi.Max(pw); }
+
+            int matched = 0;
+            var eaves = new List<float>();
+            foreach (var w in built)
+            {
+                var p00 = w.UVToWorld(0f, 0f);
+                var p10 = w.UVToWorld(w.Length, 0f);
+                var p01 = w.UVToWorld(0f, w.Height);
+                var n = (p10 - p00).Cross(p01 - p00).Normalized();
+                float best = -1f;
+                foreach (var (sn, sd) in srcPlanes)
+                {
+                    if (Mathf.Abs(sn.Dot(p00) - sd) > 0.30f) continue;      // on that plane at all
+                    best = Mathf.Max(best, Mathf.Abs(n.Dot(sn)));
+                }
+                // A mirrored surface still passes through its eave line, so an offset test alone would let
+                // it through -- the direction is what has to agree.
+                if (best > 0.99f) matched++;
+                else GD.Print($"[roofcheck] roof at {p00} normal {n} matches no source plane (best |dot| {best:0.###})");
+
+                // Two cheap independent properties. Deliberately NOT "the ridge end is nearer the building's
+                // vertical axis than the eave end": I wrote that first and it failed a slope that is
+                // correct, because House_00's main ridge crosses the origin, so moving inward along that
+                // slope increases the radius. A heuristic that is only usually true is worse than no check.
+                var eave = (p00 + p10) * 0.5f;
+                var ridge = (p01 + w.UVToWorld(w.Length, w.Height)) * 0.5f;
+                T.Check($"the slope rises ({eave.Y:0.00} -> {ridge.Y:0.00})", ridge.Y > eave.Y + 0.2f);
+                eaves.Add(eave.Y);
+                foreach (var c in new[] { p00, p10, p01, w.UVToWorld(w.Length, w.Height) })
+                    T.Check($"roof corner {c} is over the building",
+                            c.X >= lo.X - 1f && c.X <= hi.X + 1f && c.Z >= lo.Z - 1f && c.Z <= hi.Z + 1f
+                            && c.Y <= hi.Y + 1f);
+            }
+            T.Check($"every rebuilt roof lies in a plane of the source mesh ({matched} of {built.Count})",
+                    matched == built.Count);
+            // one roof, so one eave line -- slopes landing at different heights cannot close against
+            // each other whatever their individual pitches say
+            float eLo = float.MaxValue, eHi = float.MinValue;
+            foreach (float e in eaves) { eLo = Mathf.Min(eLo, e); eHi = Mathf.Max(eHi, e); }
+            T.Check($"the slopes share an eave height ({eLo:0.00}..{eHi:0.00})", eHi - eLo < 0.5f);
+        }
+    }
 }

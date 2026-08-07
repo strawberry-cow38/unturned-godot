@@ -77,6 +77,63 @@ namespace UnturnedSim
         ///
         /// Rasterising is not clever, but it is CORRECT for any triangle soup, which is what a ripped mesh
         /// is. A hole is then a connected region of cells nothing covers.</summary>
+        /// <summary>Split a plane's triangles into CONNECTED REGIONS of covered area and recover each as its
+        /// own wall.
+        ///
+        /// One wall per plane is wrong for the same reason one wall per bounding box was: a plane holds every
+        /// coplanar thing in the building. On House_00 that merged the reveal boards of every window on one
+        /// axis into a 22 m slab at window height, and merged two real wall segments across the 0.5 m gap
+        /// where a crossing wall passes. The coverage grid already knows where the solid actually is.</summary>
+        public static List<Recovered> FromTrianglesSplit(IReadOnlyList<Tri2> tris, float cell = 0.05f,
+                                                         float minOpening = WallOpenings.MinOpening)
+        {
+            var outp = new List<Recovered>();
+            if (tris == null || tris.Count == 0) return outp;
+            var groups = SplitConnected(tris, cell);
+            foreach (var g in groups)
+            {
+                var r = FromTriangles(g, cell, minOpening);
+                if (r.Width > WallOpenings.Eps && r.Height > WallOpenings.Eps) outp.Add(r);
+            }
+            return outp;
+        }
+
+        /// <summary>Group triangles whose covered areas touch. Cheap and approximate on purpose: two
+        /// triangles are connected if their bounding boxes overlap, which over-groups slightly but never
+        /// splits a genuinely connected wall -- and the coverage step then measures the truth.</summary>
+        static List<List<Tri2>> SplitConnected(IReadOnlyList<Tri2> tris, float cell)
+        {
+            int n = tris.Count;
+            var parent = new int[n];
+            for (int i = 0; i < n; i++) parent[i] = i;
+            int Find(int i) { while (parent[i] != i) { parent[i] = parent[parent[i]]; i = parent[i]; } return i; }
+
+            var box = new (float U0, float V0, float U1, float V1)[n];
+            for (int i = 0; i < n; i++)
+            {
+                var t = tris[i];
+                box[i] = (Math.Min(t.AX, Math.Min(t.BX, t.CX)), Math.Min(t.AY, Math.Min(t.BY, t.CY)),
+                          Math.Max(t.AX, Math.Max(t.BX, t.CX)), Math.Max(t.AY, Math.Max(t.BY, t.CY)));
+            }
+            float tol = cell * 1.5f;
+            for (int i = 0; i < n; i++)
+                for (int j = i + 1; j < n; j++)
+                {
+                    if (box[i].U0 > box[j].U1 + tol || box[j].U0 > box[i].U1 + tol) continue;
+                    if (box[i].V0 > box[j].V1 + tol || box[j].V0 > box[i].V1 + tol) continue;
+                    int a = Find(i), b = Find(j);
+                    if (a != b) parent[a] = b;
+                }
+            var map = new Dictionary<int, List<Tri2>>();
+            for (int i = 0; i < n; i++)
+            {
+                int r = Find(i);
+                if (!map.TryGetValue(r, out var g)) map[r] = g = new List<Tri2>();
+                g.Add(tris[i]);
+            }
+            return new List<List<Tri2>>(map.Values);
+        }
+
         public static Recovered FromTriangles(IReadOnlyList<Tri2> tris, float cell = 0.05f,
                                               float minOpening = WallOpenings.MinOpening)
         {
