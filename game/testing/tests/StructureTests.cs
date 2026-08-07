@@ -62,6 +62,20 @@ namespace UnturnedGodot.Testing
             T.Check("a wood floor places on open ground", floor != null);
             T.Check($"it holds the tier's health ({floor?.Health})", floor != null && floor.Health == StructureCatalog.TierAt(0).Health);
 
+            // PIN the values that are OURS rather than retail's, with LITERALS. The check above re-derives from
+            // the same constant it is checking, so it agrees with any value including a typo -- and the docs
+            // claimed these were "pinned by a test" on the strength of it. A pin has to state the number.
+            T.Check($"wood/brick/metal health is 300/600/1000 ({StructureCatalog.TierAt(0).Health}/{StructureCatalog.TierAt(1).Health}/{StructureCatalog.TierAt(2).Health})",
+                StructureCatalog.TierAt(0).Health == 300 && StructureCatalog.TierAt(1).Health == 600 && StructureCatalog.TierAt(2).Health == 1000);
+            T.Check($"the door opening is 2.0 x 3.0 ({StructureCatalog.DoorOpeningWidth} x {StructureCatalog.DoorOpeningHeight})",
+                Mathf.IsEqualApprox(StructureCatalog.DoorOpeningWidth, 2.0f) && Mathf.IsEqualApprox(StructureCatalog.DoorOpeningHeight, 3.0f));
+            // and a RETAIL one the reviewer caught us getting wrong: floors/roofs were built 0.25 thick, which
+            // is HALF_ROOF_THICKNESS used as the full extent. Retail's ROOF_THICKNESS is 0.5
+            // (HousingConnections.cs:295-296).
+            T.Check($"floor/roof are ROOF_THICKNESS 0.5 thick, not the half ({StructureCatalog.Extents(EConstruct.Floor).Y})",
+                Mathf.IsEqualApprox(StructureCatalog.Extents(EConstruct.Floor).Y, 0.5f)
+                && Mathf.IsEqualApprox(StructureCatalog.Extents(EConstruct.Roof).Y, 0.5f));
+
             T.Check("the same slot cannot be taken twice", sm.Place(new Vector3(0.5f, 0f, 0.5f), EConstruct.Floor, 0) == null);
             sm.CanPlace(new Vector3(0.5f, 0f, 0.5f), EConstruct.Floor, 0, out var why);
             T.Check($"and it says WHY ({why})", why == "occupied");
@@ -320,6 +334,24 @@ namespace UnturnedGodot.Testing
             var plain = new StructureManager();
             T.Check("a test-constructed manager does NOT auto-persist", !plain.AutoPersist);
             plain.QueueFree();
+
+            // THE guard that actually matters, and the one the check above only pretended to be. It asserted
+            // `!new StructureManager().AutoPersist` -- i.e. that C# zero-initialises a bool. Unfalsifiable, and
+            // aimed at the wrong manager entirely: the one that reached the disk was created by the GAME, via
+            // Rigs.Player -> PlayerController._Ready -> BuildTool.EnsureManager -> AutoPersist = true. Around 25
+            // suites call Rigs.Player, so every L1 run was silently overwriting the real save with "[]".
+            T.Check("the L1 harness has disk persistence switched OFF globally", !StructureManager.PersistenceEnabled);
+            var gameLike = new StructureManager { AutoPersist = true };   // exactly what EnsureManager builds
+            World.AddChild(gameLike);
+            gameLike.Place(Vector3.Zero, EConstruct.Floor, 2);
+            string real = StructureManager.SavePath;
+            bool existedBefore = Godot.FileAccess.FileExists(real);
+            string beforeText = existedBefore ? Godot.FileAccess.GetFileAsString(real) : null;
+            gameLike.QueueFree();          // _ExitTree would SaveToDisk() if the switch were on
+            yield return Ticks(3);
+            string afterText = Godot.FileAccess.FileExists(real) ? Godot.FileAccess.GetFileAsString(real) : null;
+            T.Check("an AutoPersist manager tearing down does NOT write the real save file",
+                existedBefore == Godot.FileAccess.FileExists(real) && beforeText == afterText);
 
             if (Godot.FileAccess.FileExists(path)) DirAccess.RemoveAbsolute(ProjectSettings.GlobalizePath(path));
         }

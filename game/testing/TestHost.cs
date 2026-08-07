@@ -22,6 +22,7 @@ namespace UnturnedGodot.Testing
 
         public override void _Ready()
         {
+            StructureManager.PersistenceEnabled = false;   // L1 must never touch the real user://structures.json -- see that field
             Deployable.InstantRampForTests = true;   // L1: generators settle their spin-up/cooldown instantly so power-flow checks see steady state (the gradual ramp is gameplay-verified in-render)
             Discover();
             _t0 = Time.GetTicksMsec();
@@ -46,7 +47,12 @@ namespace UnturnedGodot.Testing
         public override void _PhysicsProcess(double delta)
         {
             if (_cooldown > 0) { _cooldown--; return; }        // let the previous sandbox's QueueFree flush through the groups
-            if (_cur == null) { if (!StartNext()) return; }    // StartNext false => all done + quit already issued
+            // StartNext can itself reach FinishTest -- a test whose Run() has no `yield return` completes on the
+            // first AdvanceStep, and a test that throws while being built fails immediately. Both null _cur while
+            // StartNext still returns true, so the old `if (!StartNext()) return;` fell straight through and
+            // dereferenced _cur below. Godot logs the NullReferenceException and carries on, so it never failed
+            // the run -- .testresults/l1.log had 24 of them, each a test that printed PASS and then threw.
+            if (_cur == null) { if (!StartNext() || _cur == null) return; }
 
             _testSim += delta;
             if (_testSim > _cur.TimeoutSimSeconds) { _ctx.Fail($"TIMEOUT after {_testSim:0.0}s sim (watchdog)"); FinishTest(); return; }

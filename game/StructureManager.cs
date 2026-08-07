@@ -58,10 +58,23 @@ namespace UnturnedGodot
         /// destroy a base and pass while doing it.</summary>
         public bool AutoPersist;
 
+        /// <summary>Kill switch for ALL disk access, set false by the L1 harness. AutoPersist alone was not
+        /// enough: it guards managers a TEST constructs, but the one that actually wrote to disk was created by
+        /// the GAME -- Rigs.Player builds a PlayerController, whose _Ready adds a BuildTool, whose EnsureManager
+        /// news up a manager with AutoPersist = true. ~25 suites call Rigs.Player, so every L1 run was loading
+        /// and then overwriting the real user://structures.json with "[]" -- silently, because the load only
+        /// logs when it finds something and the save logs nothing at all.
+        ///
+        /// The test that was supposed to catch this asserted `!new StructureManager().AutoPersist`, which only
+        /// proves C# zero-initialises a bool. It could not fail, and it was guarding the wrong manager.</summary>
+        public static bool PersistenceEnabled = true;
+
+        bool Persists => AutoPersist && PersistenceEnabled;
+
         public override void _EnterTree()
         {
             Instance = this;
-            if (AutoPersist)
+            if (Persists)
             {
                 int n = LoadFromDisk();
                 if (n > 0) GD.Print($"[structures] restored {n} piece(s) from {SavePath}");
@@ -70,7 +83,7 @@ namespace UnturnedGodot
 
         public override void _ExitTree()
         {
-            if (AutoPersist) SaveToDisk();
+            if (Persists) SaveToDisk();
             if (Instance == this) Instance = null;
         }
 
@@ -80,7 +93,7 @@ namespace UnturnedGodot
         public override void _Notification(int what)
         {
             if (what == NotificationWMCloseRequest || what == NotificationPredelete)
-                if (AutoPersist) SaveToDisk();
+                if (Persists) SaveToDisk();
         }
 
         // ---- the seam other systems build against (published to cow tools' barricade branch) ---------------
@@ -382,19 +395,21 @@ namespace UnturnedGodot
                 float range = near.DistanceTo(point);
                 if (range > radius) continue;
 
-                // LOS: is another piece in the way? A ray that stops short on a DIFFERENT piece means this one
-                // is shielded. Zero range (the charge is inside/touching it) needs no test and must not
-                // normalize a zero vector.
+                // LOS: is ANYTHING in the way? Retail blocks on any hit under RayMasks.BLOCK_EXPLOSION --
+                // large/medium props, GROUND, barricades, structures, resources (StructureDrop.cs:60-65) --
+                // and only ignores a blocker that is part of the target itself. This deliberately does NOT
+                // narrow that to structures: a hill, a shipping container or a parked truck between the charge
+                // and the wall shields it in retail, and a version that only lets walls shield walls quietly
+                // makes cover useless for exactly the raids where cover is the point.
+                //
+                // The 0.01 m floor matches retail's MIN_LINE_OF_SIGHT_DISTANCE (DamageTool.cs:67): a charge
+                // touching the piece needs no test, and a zero-length ray has no direction to test with.
                 if (range > 0.01f && space != null)
                 {
                     var q = PhysicsRayQueryParameters3D.Create(point, near);
                     q.CollisionMask = 1u << 0;
                     var hit = space.IntersectRay(q);
-                    if (hit.Count > 0)
-                    {
-                        var blocker = PieceForCollider(hit["collider"].As<Node>());
-                        if (blocker != null && blocker != p) continue;   // shielded by another piece
-                    }
+                    if (hit.Count > 0 && PieceForCollider(hit["collider"].As<Node>()) != p) continue;   // blocked by anything that is not the target
                 }
 
                 int dealt = Mathf.RoundToInt(damage * (1f - range / radius));

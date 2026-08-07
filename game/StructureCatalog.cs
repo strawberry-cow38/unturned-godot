@@ -34,6 +34,8 @@ namespace UnturnedGodot
         public const float MaxSlotSearchDistance = 8.0f;       // how far the snap search looks for a free slot
         public const float MinSlotSearchCosine = 0.9f;         // the slot must be roughly in front of you
         public const float OverlapPadding = 0.02f;             // 2 cm of slack before two pieces count as clashing
+        public const float RoofThickness = 0.5f;               // ROOF_THICKNESS (HousingConnections.cs:295); the HALF is 0.25
+        public const float HalfRoofThickness = 0.25f;          // HALF_ROOF_THICKNESS (HousingConnections.cs:296)
 
         /// <summary>Vertical offset from a piece's anchor point to its visual/collision centre. Retail keeps
         /// these apart per construct (a wall pivots at its middle, a rampart near its foot, a foundation hangs
@@ -63,8 +65,8 @@ namespace UnturnedGodot
         /// <summary>Vertical extent, used for the overlap check and for the render/collision box.</summary>
         public static Vector3 Extents(EConstruct c) => c switch
         {
-            EConstruct.Floor => new Vector3(EdgeLength, 0.25f, EdgeLength),
-            EConstruct.Roof => new Vector3(EdgeLength, 0.25f, EdgeLength),
+            EConstruct.Floor => new Vector3(EdgeLength, RoofThickness, EdgeLength),
+            EConstruct.Roof => new Vector3(EdgeLength, RoofThickness, EdgeLength),
             EConstruct.Wall => new Vector3(EdgeLength, WallHeight, 0.25f),
             EConstruct.Doorway => new Vector3(EdgeLength, WallHeight, 0.25f),
             EConstruct.Rampart => new Vector3(EdgeLength, RampartPivotOffset * 2f, 0.25f),
