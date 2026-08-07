@@ -78,7 +78,7 @@ namespace UnturnedGodot
             string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null, drivetest = null, proptest = null, animrig = null, rottest = null, itemtest = null, navShot = null, croptest = null, menuShot = null, clothtest = null, boattest = null;
             bool zperf = false;
             bool zbody = false;
-            bool deployTest = false;
+            bool deployTest = false, barricadeTest = false;
             bool wearcloth = false;
             bool skillsui = false;
             bool fluidTest = false;
@@ -107,6 +107,7 @@ namespace UnturnedGodot
                 else if (arg == "--zperf") zperf = true;   // GPU perf probe: N zombies, render counters ON vs OFF (MUST run with a rendering driver, not --headless)
                 else if (arg == "--zbody") zbody = true;   // MECHANISM probe: N bare kinematic capsules, moving vs parked -> is the physics cost the BODIES?
                 else if (arg == "--deploytest") deployTest = true;   // both deployables placed on a ground plane + a valid(blue)+invalid(red) ghost -> verify models/palette/stand-up/ghost materials
+                else if (arg == "--barricadetest") barricadeTest = true;   // barricades mounted on a STRUCTURE wall (upright, facing out) + a valid ghost + a floor barricade -> verify surface placement
                 else if (arg == "--skillsui") skillsui = true;   // render the skills menu (showcase/validate the SkillsUI)
                 else if (arg.StartsWith("--itemtest=")) itemtest = arg["--itemtest=".Length..];   // drop a row of loot items (ids) as physics WorldItems -> validate real mesh/tex/scale/settle
                 else if (arg.StartsWith("--animrig=")) { animrig = arg["--animrig=".Length..]; _shotRequested = animrig; }   // build a rigged animal (content/NAME_rig.json) at rest + 3/4 cam -> validate the static pose stands
@@ -338,6 +339,14 @@ namespace UnturnedGodot
                 GetWindow().Size = new Vector2I(1280, 720);
                 _shotPath = shot;
                 BuildDeployTest();
+                return;
+            }
+
+            if (barricadeTest)   // barricades-on-structures showcase: upright wall-mounts facing out + a valid ghost + a floor barricade
+            {
+                GetWindow().Size = new Vector2I(1280, 720);
+                _shotPath = shot;
+                BuildBarricadeTest();
                 return;
             }
 
@@ -1977,6 +1986,64 @@ namespace UnturnedGodot
         {
             if (root is GeometryInstance3D gi) gi.CastShadow = on ? GeometryInstance3D.ShadowCastingSetting.On : GeometryInstance3D.ShadowCastingSetting.Off;
             foreach (var c in root.GetChildren()) SetZombieShadows(c, on);
+        }
+
+        // --barricadetest : the barricades-on-structures showcase. A grey STRUCTURE wall (in the "structures" group)
+        // with two barricades mounted UPRIGHT on its face, each yawed to face straight out of the wall (Wall mount);
+        // a blue VALID placement ghost snapped to the wall; and a floor barricade in front for contrast. Demonstrates
+        // the surface-placement gap the ground DeployablePlacer couldn't do (it rejects any normal.y < 0.01).
+        void BuildBarricadeTest()
+        {
+            var env = new Godot.Environment
+            {
+                BackgroundMode = Godot.Environment.BGMode.Color,
+                BackgroundColor = new Color(0.30f, 0.34f, 0.42f),
+                AmbientLightSource = Godot.Environment.AmbientSource.Color,
+                AmbientLightColor = new Color(0.72f, 0.72f, 0.75f), AmbientLightEnergy = 1.0f,
+            };
+            AddChild(new WorldEnvironment { Environment = env });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-48f, -40f, 0f), LightEnergy = 1.3f, ShadowEnabled = true });
+
+            AddChild(new MeshInstance3D
+            {
+                Mesh = new PlaneMesh { Size = new Vector2(40f, 40f) },
+                MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.34f, 0.40f, 0.28f), Roughness = 1f },
+            });
+            var groundBody = new StaticBody3D();
+            groundBody.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
+            groundBody.AddToGroup("terrain");
+            AddChild(groundBody);
+
+            // a STRUCTURE wall (grey, in the "structures" group -- where StructureManager parents its pieces)
+            var wallSize = new Vector3(6f, 4f, 0.4f);
+            var wallPos = new Vector3(0f, 2f, -2f);
+            var wall = new StaticBody3D { Position = wallPos };
+            wall.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = wallSize } });
+            wall.AddChild(new MeshInstance3D { Mesh = new BoxMesh { Size = wallSize }, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.56f, 0.57f, 0.61f), Roughness = 0.85f } });
+            wall.AddToGroup("structures");
+            AddChild(wall);
+
+            var n = Vector3.Back;                                   // the wall's front face normal (+Z, toward the camera)
+            float faceZ = wallPos.Z + wallSize.Z * 0.5f;
+            float wallYaw = BarricadePlacer.YawFacing(n);           // face straight out of the wall
+
+            // two barricades mounted on the wall: UPRIGHT, facing out (Wall mount family)
+            Barricade.PlaceOnSurface(this, DeployableDef.Generator, new Vector3(-1.7f, 1.4f, faceZ), n, wallYaw, BarricadeMount.Wall);
+            Barricade.PlaceOnSurface(this, DeployableDef.Spotlight, new Vector3(1.7f, 1.4f, faceZ), n, wallYaw, BarricadeMount.Wall);
+
+            // a blue VALID placement ghost snapped to the wall (the placer preview)
+            var placer = new BarricadePlacer { Mount = BarricadeMount.Wall };
+            AddChild(placer);
+            placer.SetDef(DeployableDef.Generator);
+            placer.Freeze(new Vector3(0.2f, 2.7f, faceZ), n, wallYaw);
+
+            // contrast: a FLOOR barricade on the ground in front (upright, free yaw)
+            Barricade.PlaceOnSurface(this, DeployableDef.Generator, new Vector3(0f, 0f, 2.6f), Vector3.Up, 20f, BarricadeMount.Floor);
+
+            var cam = new Camera3D { Current = true, Fov = 54f, Far = 10000f };
+            AddChild(cam);
+            cam.Position = new Vector3(5.0f, 3.1f, 7.8f);
+            cam.LookAt(new Vector3(0f, 1.3f, -0.4f), Vector3.Up);
         }
 
         void BuildDeployTest()
