@@ -325,6 +325,82 @@ namespace UnturnedGodot.Testing
         }
     }
 
+    // Doorways: a wall-class piece with a hole, and the socket a door leaf hangs in.
+    //
+    // The mutual exclusion is the interesting part and it is deliberately NOT written as a rule anywhere. A
+    // doorway and a wall both resolve to the same "E" slot namespace, so an edge holds one or the other and
+    // nothing has to remember to check. Asserted here because it is the kind of property that survives only as
+    // long as someone knows it is load-bearing.
+    public class StructureDoorway : GameTest
+    {
+        public override string Name => "structure.doorway";
+
+        public override IEnumerable<Step> Run()
+        {
+            Rigs.Ground(World);
+            var sm = new StructureManager();
+            World.AddChild(sm);
+            yield return Ticks(1);
+
+            var floor = sm.Place(Vector3.Zero, EConstruct.Floor, 0);
+            var door = sm.Place(new Vector3(StructureCatalog.HalfEdge, 0f, 0f), EConstruct.Doorway, 0);
+            T.Check("fixture: a floor and a doorway", floor != null && door != null);
+
+            // ---- it snaps and sits exactly like a wall ----
+            var (dp, dyaw) = StructureCatalog.Snap(new Vector3(2.9f, 0f, 0.2f), EConstruct.Doorway);
+            var (wp, wyaw) = StructureCatalog.Snap(new Vector3(2.9f, 0f, 0.2f), EConstruct.Wall);
+            T.Check($"a doorway snaps to the same edge slot a wall would ({dp} vs {wp})", dp == wp && Mathf.IsEqualApprox(dyaw, wyaw));
+            T.Check("and shares the wall's pivot",
+                Mathf.IsEqualApprox(StructureCatalog.PivotOffset(EConstruct.Doorway), StructureCatalog.WallPivotOffset));
+            T.Check("it is wall-class, but not a face or a corner",
+                StructureCatalog.IsWallClass(EConstruct.Doorway)
+                && !StructureCatalog.IsFace(EConstruct.Doorway) && !StructureCatalog.IsCorner(EConstruct.Doorway));
+
+            // ---- one edge, one piece: a wall cannot also occupy the doorway's slot ----
+            T.Check("the same edge cannot hold a wall as well",
+                sm.Place(new Vector3(StructureCatalog.HalfEdge, 0f, 0f), EConstruct.Wall, 0) == null);
+            sm.CanPlace(new Vector3(StructureCatalog.HalfEdge, 0f, 0f), EConstruct.Wall, 0, out var why);
+            T.Check($"...and the reason is occupancy ({why})", why == "occupied");
+            T.Check("a doorway and a wall share one slot key",
+                StructureCatalog.SlotKey(dp, EConstruct.Doorway) == StructureCatalog.SlotKey(dp, EConstruct.Wall));
+
+            // ---- a doorway supports what a wall supports ----
+            T.Check("a wood floor can rest against the doorway's edge",
+                sm.Place(new Vector3(StructureCatalog.EdgeLength, 0f, 0f), EConstruct.Floor, 0) != null);
+
+            // ---- the door socket ----
+            var sock = StructureManager.DoorSocket(door);
+            T.Check("a doorway exposes a door socket", sock.HasValue);
+            T.Check($"the socket is centred in the OPENING, not on the piece origin ({sock.Value.Origin.Y:0.00})",
+                Mathf.IsEqualApprox(sock.Value.Origin.Y, door.Pos.Y + StructureCatalog.DoorOpeningHeight * 0.5f));
+            T.Check("the socket sits at the doorway's edge in plan",
+                Mathf.IsEqualApprox(sock.Value.Origin.X, door.Pos.X) && Mathf.IsEqualApprox(sock.Value.Origin.Z, door.Pos.Z));
+            T.Check("the socket faces the way the doorway does",
+                sock.Value.Basis.GetEuler().Y - Mathf.DegToRad(door.YawDeg) < 0.001f);
+            // a wall is NOT a doorway: returning a plausible transform here would mount a door inside a solid wall
+            var solid = sm.Place(new Vector3(0f, 0f, StructureCatalog.HalfEdge), EConstruct.Wall, 0);
+            T.Check("a plain wall has NO socket rather than a plausible one",
+                solid != null && !StructureManager.DoorSocket(solid).HasValue);
+
+            // ---- the hole is real: the collider has it too ----
+            // three solids (two jambs + a lintel), not one box with a painted-on gap. A doorway you can see
+            // through and cannot walk through reads as a stuck door, not as missing geometry.
+            yield return Ticks(2);
+            int bodies = 0;
+            foreach (var ch in door.Node.GetChildren()) if (ch is StaticBody3D) bodies++;
+            T.Check($"the doorway's collider is built around the opening ({bodies} solids)", bodies == 3);
+            var space = World.GetWorld3D().DirectSpaceState;
+            var q = PhysicsRayQueryParameters3D.Create(
+                new Vector3(door.Pos.X - 2f, 1.0f, 0f), new Vector3(door.Pos.X + 2f, 1.0f, 0f));
+            q.CollisionMask = 1u << 0;
+            T.Check("you can see (and walk) straight through the opening", space.IntersectRay(q).Count == 0);
+            var qh = PhysicsRayQueryParameters3D.Create(
+                new Vector3(door.Pos.X - 2f, 1.0f, 2.4f), new Vector3(door.Pos.X + 2f, 1.0f, 2.4f));
+            qh.CollisionMask = 1u << 0;
+            T.Check("but the jamb beside it is solid", space.IntersectRay(qh).Count > 0);
+        }
+    }
+
     // Explosions against a base, reimplemented from SDK StructureDrop.cs:52-70.
     //
     // The check that matters is the LINE-OF-SIGHT one. Distance falloff alone looks perfectly reasonable and

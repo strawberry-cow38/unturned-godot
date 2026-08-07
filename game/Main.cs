@@ -4368,6 +4368,11 @@ namespace UnturnedGodot
             // two branches -- the ground DeployablePlacer rejected any surface with normal.y < 0.01, so before
             // this a barricade could only ever sit on the floor. Mounted through Barricade.PlaceOnSurface with
             // the wall's real outward face, the same call the held-item place flow makes.
+            // a doorway on the front edge: same slot class as a wall, with a hole you can actually walk through
+            float frontZ = StructureCatalog.EdgeLength + StructureCatalog.HalfEdge;
+            bool doorway = bt.Spawn(new Vector3(0f, 0f, frontZ), EConstruct.Doorway, 2) != null;
+            GD.Print($"[BUILD] doorway: {doorway}");
+
             int mounted = 0;
             foreach (var pc in StructureManager.Instance.All)
             {

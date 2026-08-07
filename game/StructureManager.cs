@@ -276,13 +276,52 @@ namespace UnturnedGodot
             var ext = StructureCatalog.Extents(c);
             var root = new Node3D { Name = $"{c}_{t.Name}", Position = pos + Vector3.Up * StructureCatalog.PivotOffset(c) };
             root.RotationDegrees = new Vector3(0f, yawDeg, 0f);
-            var mi = new MeshInstance3D { Mesh = new BoxMesh { Size = ext } };
-            mi.MaterialOverride = new StandardMaterial3D { AlbedoColor = t.Tint };
-            root.AddChild(mi);
-            var body = new StaticBody3D { CollisionLayer = 1u << 0 };
-            body.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = ext } });
-            root.AddChild(body);
+            var mat = new StandardMaterial3D { AlbedoColor = t.Tint };
+
+            if (c == EConstruct.Doorway)
+            {
+                // Built as three solids around the hole rather than one box with a decorative gap: the collider
+                // has to have the hole too, or you get a doorway you can see through and cannot walk through --
+                // which reads as the door being stuck rather than as missing geometry.
+                float ow = StructureCatalog.DoorOpeningWidth, oh = StructureCatalog.DoorOpeningHeight;
+                float jamb = (ext.X - ow) * 0.5f;                 // solid either side of the opening
+                float lintel = ext.Y - oh;                        // solid above it
+                AddSlab(root, mat, new Vector3(jamb, ext.Y, ext.Z), new Vector3(-(ow + jamb) * 0.5f, 0f, 0f));
+                AddSlab(root, mat, new Vector3(jamb, ext.Y, ext.Z), new Vector3((ow + jamb) * 0.5f, 0f, 0f));
+                if (lintel > 0.01f)
+                    AddSlab(root, mat, new Vector3(ow, lintel, ext.Z), new Vector3(0f, (ext.Y - lintel) * 0.5f, 0f));
+                return root;
+            }
+
+            AddSlab(root, mat, ext, Vector3.Zero);
             return root;
+        }
+
+        /// <summary>One mesh+collider box in the piece's local frame. Factored out so a doorway can be three of
+        /// them; every piece stays a single node with its collider on layer 0.</summary>
+        static void AddSlab(Node3D root, StandardMaterial3D mat, Vector3 size, Vector3 localOffset)
+        {
+            var mi = new MeshInstance3D { Mesh = new BoxMesh { Size = size }, Position = localOffset };
+            mi.MaterialOverride = mat;
+            root.AddChild(mi);
+            var body = new StaticBody3D { CollisionLayer = 1u << 0, Position = localOffset };
+            body.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = size } });
+            root.AddChild(body);
+        }
+
+        /// <summary>Where a door leaf hangs in a doorway, in world space: the centre of the opening, facing the
+        /// way the doorway faces. Published for the barricade lane -- a door is a barricade that mounts to this
+        /// socket rather than to a flat surface, so it needs the opening's frame, not the piece's origin (which
+        /// sits at the doorway's base, below the floor of the hole).
+        ///
+        /// Returns null for anything that is not a doorway, rather than a plausible-looking transform: a caller
+        /// that silently got the middle of a solid wall would mount a door inside it.</summary>
+        public static Transform3D? DoorSocket(Piece p)
+        {
+            if (p == null || p.Construct != EConstruct.Doorway) return null;
+            var basis = new Basis(Vector3.Up, Mathf.DegToRad(p.YawDeg));
+            var origin = p.Pos + Vector3.Up * (StructureCatalog.DoorOpeningHeight * 0.5f);
+            return new Transform3D(basis, origin);
         }
 
         // ---- damage / upgrade / salvage --------------------------------------------------------------------

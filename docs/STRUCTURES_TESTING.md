@@ -19,6 +19,12 @@ It's now just input + preview over `StructureManager`, which owns the real thing
 - **Corner snapping for pillars/posts.** Faces snap to tile centres and edges to side midpoints, but a pillar
   belongs at the tile *corner* — the odd multiples of the half edge. Snapping it like a floor would park it in
   the middle of the tile it is supposed to hold up.
+- **Doorways.** A wall-class piece with a real hole — three solids around the opening, so the *collider* has
+  the hole too. A doorway you can see through but not walk through reads as a stuck door, not as missing
+  geometry. A doorway and a wall resolve to the same slot key, so an edge holds one or the other and the
+  mutual exclusion is structural rather than a rule someone has to remember. `StructureManager.DoorSocket`
+  gives the frame a door leaf hangs in, and returns null for a plain wall rather than a plausible transform
+  that would mount a door inside solid geometry. Opening size (2.0 × 3.0 m) is **ours**, like the tier health.
 - **Support rules.** Wood and brick need a neighbouring piece; metal places free-standing. A floor at ground
   level always stands.
 - **Tiers** wood → brick → metal, with health, upgrade, and a salvage-duration multiplier.
@@ -45,7 +51,7 @@ In game:
 | key | what |
 |---|---|
 | `B` | toggle build mode |
-| `C` | cycle construct — floor / wall / pillar / rampart / roof |
+| `C` | cycle construct — floor / wall / doorway / pillar / rampart / roof |
 | `V` | cycle tier — wood / brick / metal |
 | `LMB` | place |
 | `R` | salvage the piece you're aiming at |
@@ -72,8 +78,8 @@ Note the `--` before the game args, and that `--shot=` takes a **file** path, no
 ./test.sh --l1 --only 'structure.*'
 ```
 
-98 checks across `structure.lattice`, `structure.damage_save`, `structure.query`,
-`structure.repair_salvage`, `structure.explosion` and `structure.barricade_seam`.
+114 checks across `structure.lattice`, `structure.damage_save`, `structure.query`,
+`structure.repair_salvage`, `structure.explosion`, `structure.doorway` and `structure.barricade_seam`.
 
 Two of these were verified by deliberately breaking the code and confirming the test goes red — the
 explosion suite with the line-of-sight rule removed (the far wall then takes 148 damage through a wall), and

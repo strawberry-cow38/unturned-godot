@@ -16,7 +16,7 @@ namespace UnturnedGodot
     // stand-in used `GRID = 3f` with the comment "Unturned's structure tile size" -- that is HALF_EDGE_LENGTH,
     // the half-step used for pivot maths, not the tile. Everything built on a 3 m lattice sits on a grid retail
     // has no concept of, so nothing a player builds could ever align with a real foundation.
-    public enum EConstruct { Floor, Wall, Rampart, Roof, Pillar, Post }
+    public enum EConstruct { Floor, Wall, Rampart, Roof, Pillar, Post, Doorway }
 
     public static class StructureCatalog
     {
@@ -41,6 +41,7 @@ namespace UnturnedGodot
         public static float PivotOffset(EConstruct c) => c switch
         {
             EConstruct.Wall => WallPivotOffset,
+            EConstruct.Doorway => WallPivotOffset,   // a doorway IS a wall with a hole: same slot, same pivot
             EConstruct.Rampart => RampartPivotOffset,
             EConstruct.Pillar => HalfWallHeight,
             EConstruct.Post => HalfWallHeight,
@@ -65,6 +66,7 @@ namespace UnturnedGodot
             EConstruct.Floor => new Vector3(EdgeLength, 0.25f, EdgeLength),
             EConstruct.Roof => new Vector3(EdgeLength, 0.25f, EdgeLength),
             EConstruct.Wall => new Vector3(EdgeLength, WallHeight, 0.25f),
+            EConstruct.Doorway => new Vector3(EdgeLength, WallHeight, 0.25f),
             EConstruct.Rampart => new Vector3(EdgeLength, RampartPivotOffset * 2f, 0.25f),
             EConstruct.Pillar => new Vector3(0.4f, WallHeight, 0.4f),
             _ => new Vector3(0.4f, WallHeight, 0.4f),
@@ -99,7 +101,7 @@ namespace UnturnedGodot
 
         public static readonly EConstruct[] Buildable =
         {
-            EConstruct.Floor, EConstruct.Wall, EConstruct.Pillar, EConstruct.Rampart, EConstruct.Roof,
+            EConstruct.Floor, EConstruct.Wall, EConstruct.Doorway, EConstruct.Pillar, EConstruct.Rampart, EConstruct.Roof,
         };
 
         /// <summary>Snap a world point to the structure lattice for this construct. FACES land on tile centres;
@@ -133,6 +135,19 @@ namespace UnturnedGodot
         /// <summary>The lattice key a piece occupies. Two pieces sharing a key are the same slot -- the cheap
         /// form of retail's LINK_TOLERANCE edge match, quantised so floating-point drift cannot make two pieces
         /// 2 cm apart read as different slots.</summary>
+        // ---- doorway opening (OURS, not retail) ------------------------------------------------------------
+        // Retail keeps a doorway's hole in the asset mesh, which we do not have locally. Rather than guess a
+        // number and present it as ported, these are declared here and pinned by a test -- the same treatment
+        // the tier health values get. Sized so a player capsule fits with clearance.
+        public const float DoorOpeningWidth = 2.0f;
+        public const float DoorOpeningHeight = 3.0f;
+
+        /// <summary>Is this construct a wall-class piece -- something that fills a tile EDGE? Doorways share the
+        /// wall's slot deliberately: an edge holds a wall OR a doorway, never both, and because SlotKey maps
+        /// every non-face non-corner construct to the same "E" namespace, that mutual exclusion is automatic
+        /// rather than a rule someone has to remember to write.</summary>
+        public static bool IsWallClass(EConstruct c) => c == EConstruct.Wall || c == EConstruct.Doorway;
+
         public static string SlotKey(Vector3 snapped, EConstruct c)
         {
             int q(float v) => Mathf.RoundToInt(v / LinkTolerance);
