@@ -3430,13 +3430,18 @@ namespace UnturnedGodot
                         };
                         var ground = cam.GetWorld3D().DirectSpaceState.IntersectRay(down);
                         if (ground.ContainsKey("position")) at = (Vector3)ground["position"];
-                        objs.SetPlaceType(baked);
-                        var placed = objs.Place(baked, at, EditorObjects.Upright(0f));
-                        if (placed != null)
-                        {
-                            cam.GlobalPosition = at + new Vector3(17f, 11f, 24f);
-                            cam.LookAt(at + new Vector3(0f, 2.5f, 0f), Vector3.Up);
-                        }
+                        // UG_EDITCOMPARE=retail places the SOURCE prop at the same spot with the same camera
+                        // INSTEAD of the port, so the two captures differ in nothing but the building.
+                        // Two buildings side by side in one frame does not work: 34 m apart they are seen
+                        // from 20 degrees apart, present different elevations, and the comparison is worthless
+                        // -- which is exactly the trap of judging a port against a picture of itself.
+                        bool retailOnly = System.Environment.GetEnvironmentVariable("UG_EDITCOMPARE") == "retail"
+                                          && !string.IsNullOrEmpty(imp);
+                        string show = retailOnly ? imp : baked;
+                        objs.SetPlaceType(show);
+                        objs.Place(show, at, EditorObjects.Upright(0f));
+                        cam.GlobalPosition = at + new Vector3(17f, 11f, 24f);
+                        cam.LookAt(at + new Vector3(0f, 2.5f, 0f), Vector3.Up);
                         GD.Print($"[editor] baked+placed '{baked}' at {at}");
                     }
                 }

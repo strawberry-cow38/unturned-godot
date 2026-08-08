@@ -34,6 +34,7 @@ namespace UnturnedGodot
             public float Dist;                     // plane offset along the normal
             public Vector3 Right, Up;              // the plane's own 2D basis
             public bool Sloped;                    // roof rather than wall
+            public int Texel;                      // the palette colour this whole plane is painted in
             public float MinY = float.MaxValue;    // world extent, for finding the eave
             public readonly List<WallImport.Tri2> Tris = new();
         }
@@ -66,6 +67,11 @@ namespace UnturnedGodot
             var pts = new Vector3[v.Length];
             for (int i = 0; i < v.Length; i++) pts[i] = upright * v[i];
 
+            var lo = new Vector3(float.MaxValue, float.MaxValue, float.MaxValue);
+            var hi = -lo;
+            foreach (var pw in pts) { lo = lo.Min(pw); hi = hi.Max(pw); }
+            var centre = new Vector3((lo.X + hi.X) * 0.5f, 0f, (lo.Z + hi.Z) * 0.5f);
+
             var src = ReadTriangles(pts, uv);
             var roofTexels = RoofTexels(src);
             int roofTexel = -1;                        // paint the roof in its own colour, not the wall's
@@ -76,7 +82,12 @@ namespace UnturnedGodot
             var faces = new Dictionary<(int, int, int), Face>();
             foreach (var t in src)
             {
-                bool wantWall = t.Vertical && t.Texel != revealTexel && !roofTexels.Contains(t.Texel);
+                // Roof-coloured VERTICAL planes are kept now, not skipped as fascia. They are the 0.50 m
+                // band of roof-slab edge that runs round the top of every retail wall, and dropping it was
+                // the difference strawberry_cow called out: the port had cream where the original has a grey
+                // stripe under the eaves. It reads as a missing overhang even though nothing overhangs --
+                // measured, the roof's outer edge and the wall face are both at 8.25.
+                bool wantWall = t.Vertical && t.Texel != revealTexel;
                 bool wantRoof = readRoofs && !t.Vertical && t.Up && roofTexels.Contains(t.Texel);
                 if (!wantWall && !wantRoof) continue;
                 bool sloped = wantRoof;
@@ -86,8 +97,11 @@ namespace UnturnedGodot
                 // Quantised so the two triangles of one quad, and the many quads of one wall, land in the same
                 // bucket. 5 degrees and 5 cm: tight enough to keep two walls 0.5 m apart separate, loose
                 // enough to survive a ripped mesh's noise.
+                // COLOUR is part of the key. A wall and the grey band above it are the same plane facing the
+                // same way, so bucketing on geometry alone merges them into one surface -- and a surface has
+                // one colour, so one of the two has to come out wrong. The whole file is this lesson.
                 var key = (Mathf.RoundToInt(n.X * 20f) * 131 + Mathf.RoundToInt(n.Y * 20f),
-                           Mathf.RoundToInt(n.Z * 20f), Mathf.RoundToInt(d * 20f));
+                           Mathf.RoundToInt(n.Z * 20f), Mathf.RoundToInt(d * 20f) * 17 + t.Texel);
                 if (!faces.TryGetValue(key, out var f))
                 {
                     // The plane's own 2D frame. For a wall that is (horizontal along the run, world up); for a
@@ -98,7 +112,7 @@ namespace UnturnedGodot
                     right = right.Normalized();
                     var up = sloped ? n.Cross(right).Normalized() : Vector3.Up;
                     if (sloped && up.Y < 0f) up = -up;
-                    f = new Face { Normal = n, Dist = d, Right = right, Up = up, Sloped = sloped };
+                    f = new Face { Normal = n, Dist = d, Right = right, Up = up, Sloped = sloped, Texel = t.Texel };
                     faces[key] = f;
                 }
                 f.MinY = Mathf.Min(f.MinY, Mathf.Min(t.A.Y, Mathf.Min(t.B.Y, t.C.Y)));
@@ -134,9 +148,12 @@ namespace UnturnedGodot
                     eave = Mathf.Min(eave, f.MinY);
                     continue;
                 }
+                // A roof-coloured band is 0.50 m tall by construction, so it cannot share the wall's minimum
+                // or it is filtered out as clutter -- which is exactly how it went missing.
+                float minH = roofTexels.Contains(f.Texel) ? 0.35f : 1.5f;
                 foreach (var r in WallImport.FromTrianglesSplit(f.Tris))
                 {
-                    if (r.Width < 2f || r.Height < 1.5f) continue;       // clutter, not a wall
+                    if (r.Width < 2f || r.Height < minH) continue;       // clutter, not a wall
                     candidates.Add(new Cand { F = f, Rec = r });
                 }
             }
@@ -144,6 +161,7 @@ namespace UnturnedGodot
             // Pair each candidate with the one looking back at it: those are the two sides of one wall, and
             // the gap between them is its thickness. Emitting both faces would double every wall in the
             // building and leave each one paper-thin.
+            var bands = new List<WallPlan>();     // the strip between the wall and the roof
             var used = new HashSet<Cand>();
             foreach (var c in candidates)
             {
@@ -156,21 +174,55 @@ namespace UnturnedGodot
                     if (c.F.Normal.Dot(d.F.Normal) > -0.94f) continue;   // must face back at it
                     float gap = Mathf.Abs(c.F.Dist + d.F.Dist);          // opposite normals: sum = -separation
                     if (gap > 1.6f || gap < 0.05f) continue;             // a wall, not the far side of the building
-                    // The two faces of ONE wall cover the same run at the same height, so check both. Width
-                    // alone pairs a wall with any similar-length wall elsewhere in the building.
-                    if (Mathf.Abs(d.Rec.Width - c.Rec.Width) > 1.0f) continue;
+                    // The two faces of one wall start at the same height and cover the same run -- but NOT
+                    // necessarily the same LENGTH. Requiring their widths to match within a metre was wrong:
+                    // an exterior facade is one clean 16 m face outside and several shorter ones inside,
+                    // chopped up where cross-walls land on it. Every one of those failed to pair, so both
+                    // sides emitted as separate walls. That was always happening; it only became visible when
+                    // surfaces started wearing their real colour and the interior's tan surfaced through the
+                    // cream. Overlap against the SHORTER of the two is the test that actually means "the same
+                    // run of wall".
                     if (Mathf.Abs(d.Rec.V0 - c.Rec.V0) > 0.6f) continue;
                     float overlap = Mathf.Min(c.Rec.U0 + c.Rec.Width, d.Rec.U0 + d.Rec.Width)
                                     - Mathf.Max(c.Rec.U0, d.Rec.U0);
-                    if (overlap < c.Rec.Width * 0.5f) continue;          // not the same run along the wall
+                    if (overlap < Mathf.Min(c.Rec.Width, d.Rec.Width) * 0.5f) continue;
                     if (gap < bestGap) { bestGap = gap; pair = d; }
                 }
 
-                float thickness = pair != null ? bestGap : WallOpenings.DefaultThickness;
+                // The per-model measured thickness, not the global 0.70. House_00's walls are 0.533, so
+                // every wall that failed to pair was built 0.17 too thick AND -- because the surface sits on
+                // its centreline, half a thickness in from the facade plane -- parked 0.08 too far inside the
+                // building. Two walls each off by that much do not line up where they meet, which is
+                // "the wall corners are off" with no corner solver involved.
+                float thickness = pair != null ? bestGap : WallMaterials.At(materialId).Thickness;
                 used.Add(c);
                 if (pair != null) used.Add(pair);
 
-                EmitWall(plans, c, thickness, materialId, eave);
+                // Take the colour off the OUTWARD face of the pair. Both sides of a wall are in the list and
+                // the loop reaches whichever comes first, so half the exterior walls came back painted in the
+                // interior's tan. Outward is decided by geometry, not by iteration order: a face is outward
+                // when its own plane sits on the far side of the building's centre from it.
+                var skin = c.F;
+                if (pair != null && (pair.F.Dist - pair.F.Normal.Dot(centre)) > (c.F.Dist - c.F.Normal.Dot(centre)))
+                    skin = pair.F;
+
+                    int before = plans.Count;
+                    EmitWall(plans, c, thickness, materialId, eave,
+                             roofTexels.Contains(c.F.Texel) ? 0.35f : 1.5f,
+// Everything vertical takes the palette's WALL colour, including the eave band.
+                             // The band reads as texel 1 in the mesh -- the same dark grey as the roof -- and
+                             // I emitted it that way on the measurement. strawberry_cow, who has the game in
+                             // front of him: "the roof parts themselves are the right colors but the eaves
+                             // are supposed to be wall color." The texel is what the model stores; it is not
+                             // what the eave is meant to look like, and only the sloped planes are roof.
+                             //
+                             // Painting each wall its own measured texel was tried and reverted for a
+                             // separate reason: it turned exteriors tan, because a facade's inner face emits
+                             // as its own wall whenever pairing misses and the interior colour then wins the
+                             // depth fight.
+                             -1);
+                    if (roofTexels.Contains(c.F.Texel))
+                        for (int k = before; k < plans.Count; k++) bands.Add(plans[k]);
             }
             // Roof planes, emitted as pitched surfaces. Each sloped plane becomes one Roof surface in its own
             // frame, so a HIPPED roof comes back as its four slopes rather than being forced into the gable
@@ -199,6 +251,7 @@ namespace UnturnedGodot
                 foreach (var o in r.Openings) plan.Openings.Add(o);   // chimney/skylight holes, unsnapped
                 plans.Add(plan);
             }
+            ClipBandsToRoofs(plans, bands);
             return plans;
         }
 
@@ -279,7 +332,8 @@ namespace UnturnedGodot
         /// Imported whole it is a single 9 m wall that starts underground and pokes through the roof. The two
         /// ends are different things: below ground is the foundation skirt, above the eave is the gable
         /// triangle. Only a gable END reaches above the eave, so the clip selects them on its own.</summary>
-        static void EmitWall(List<WallPlan> plans, Cand c, float thickness, int materialId, float eave)
+        static void EmitWall(List<WallPlan> plans, Cand c, float thickness, int materialId, float eave,
+                             float minHeight = 1.5f, int texel = -1)
         {
             var rec = c.Rec;
             var right = Right(c.F);
@@ -307,7 +361,10 @@ namespace UnturnedGodot
                 top = eave;
             }
             float height = top - baseY;
-            if (height < 1.5f) return;
+            // The SAME floor the candidate passed, not a second hard-coded one. A 0.50 m band of roof-slab
+            // edge cleared the 0.35 m filter at selection and was then silently dropped here by a 1.5 that
+            // only ever meant "a wall this short is clutter".
+            if (height < minHeight) return;
 
             var origin = c.F.Normal * (c.F.Dist - inset) + right * rec.U0 + Vector3.Up * baseY;
             var plan = new WallPlan
@@ -315,6 +372,13 @@ namespace UnturnedGodot
                 X = origin.X, Y = origin.Y, Z = origin.Z,
                 Yaw = yaw, Length = rec.Width, Height = height, GableRise = rise,
                 Thickness = Mathf.Clamp(thickness, 0.2f, 1.2f), Material = materialId,
+                // The measured colour of THIS plane, not the palette's idea of a wall. A retail building is
+                // one palette and several colours: cream outside, tan inside, grey for the band under the
+                // eaves. Painting all of it the wall colour is why the port read as flat.
+                Texel = texel,
+                // Walls get the trapezoid too, not just roofs -- a gable end is a triangle, and it is the
+                // same primitive with both top insets meeting.
+                InsetL0 = rec.InsetL0, InsetL1 = rec.InsetL1, InsetR0 = rec.InsetR0, InsetR1 = rec.InsetR1,
             };
             float shift = baseY - rec.V0;
             foreach (var o in rec.Openings)
@@ -333,6 +397,56 @@ namespace UnturnedGodot
                 plan.Openings.Add(s);
             }
             plans.Add(plan);
+        }
+
+        /// <summary>Trim the wall-to-roof strip so it runs only as far as the roof above it does.
+        ///
+        /// strawberry_cow: "scale those sections to match the roof width". The strip is recovered from its own
+        /// plane, so it inherits the length of the WALL -- on House_00 that is a 16.5 m band across a side
+        /// where the roof above it is 11.1 m, and the surplus carries on past the roof into open air. Where a
+        /// band has no roof above it at all it is dropped: that is a gable end, and a gable end has no strip.
+        ///
+        /// Matching is by the roof's EAVE line -- its bottom edge in world space -- because that is the edge
+        /// the strip sits under. A band keeps only the part of its run that lies beneath some eave.</summary>
+        static void ClipBandsToRoofs(List<WallPlan> plans, List<WallPlan> bands)
+        {
+            if (bands.Count == 0) return;
+            var eaves = new List<(Vector3 A, Vector3 B)>();
+            foreach (var p in plans)
+            {
+                if (p.Kind != SurfaceKind.Roof) continue;
+                var dir = new Vector3(Mathf.Cos(Mathf.DegToRad(p.Yaw)), 0f, -Mathf.Sin(Mathf.DegToRad(p.Yaw)));
+                var a = new Vector3(p.X, p.Y, p.Z);
+                eaves.Add((a, a + dir * p.Length));
+            }
+            foreach (var b in bands)
+            {
+                var dir = new Vector3(Mathf.Cos(Mathf.DegToRad(b.Yaw)), 0f, -Mathf.Sin(Mathf.DegToRad(b.Yaw)));
+                var o = new Vector3(b.X, b.Y, b.Z);
+                float keep0 = float.MaxValue, keep1 = float.MinValue;
+                foreach (var (ea, eb) in eaves)
+                {
+                    var ed = eb - ea;
+                    if (ed.LengthSquared() < 1e-6f) continue;
+                    // the strip runs under an eave only if they are PARALLEL in plan and close by
+                    var edn = new Vector3(ed.X, 0f, ed.Z).Normalized();
+                    if (Mathf.Abs(edn.Dot(dir)) < 0.94f) continue;
+                    // both ends of the eave, measured along the band's own run
+                    float t0 = (ea - o).Dot(dir), t1 = (eb - o).Dot(dir);
+                    if (t0 > t1) (t0, t1) = (t1, t0);
+                    // and it has to be the eave over THIS wall, not the one on the far side
+                    var mid = (ea + eb) * 0.5f;
+                    var toMid = mid - (o + dir * Mathf.Clamp((mid - o).Dot(dir), 0f, b.Length));
+                    if (new Vector2(toMid.X, toMid.Z).Length() > 1.5f) continue;
+                    keep0 = Mathf.Min(keep0, Mathf.Max(0f, t0));
+                    keep1 = Mathf.Max(keep1, Mathf.Min(b.Length, t1));
+                }
+                if (keep1 - keep0 < 0.5f) { b.Length = 0f; continue; }   // no roof over it: a gable end
+                var start = o + dir * keep0;
+                b.X = start.X; b.Y = start.Y; b.Z = start.Z;
+                b.Length = keep1 - keep0;
+            }
+            plans.RemoveAll(p => p.Length <= 0.01f);
         }
 
         sealed class Cand { public Face F; public WallImport.Recovered Rec; }

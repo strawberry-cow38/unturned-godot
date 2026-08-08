@@ -714,6 +714,10 @@ namespace UnturnedGodot
             // LIMITATION: extending by half the neighbour's thickness fills the notch EXACTLY at 90 degrees.
             // At the 30-60 degree corners the 15-degree yaw snap allows, a true mitre needs more, so a sliver
             // of notch survives the bake (or the extension pushes through the far face).
+            // 0.35 m, flat. I briefly scaled this with thickness so that imported corners would match, which
+            // widened the search to over a metre and made walls that merely pass near each other count as a
+            // corner. Imported walls do not need it -- see ImportRetail, they already overlap -- and drawn
+            // walls meet exactly, so the slack was pure false-positive surface.
             const float Tol = 0.35f;
             var undo = new List<(WallSurface, float, Vector3)>();
             // Foundations are corner-solved too. A foundation is a wall, so it has the same missing quarter at
@@ -968,6 +972,16 @@ namespace UnturnedGodot
                 SpawnWall(StageOrigin + new Vector3(pl.X, pl.Y, pl.Z), pl.Yaw, pl.Length, pl.Thickness,
                           pl.Material, pl.Openings, pl.Height, pl.Pitch, pl.Kind, pl.GableRise, pl.Texel,
                           pl.InsetL0, pl.InsetL1, pl.InsetR0, pl.InsetR1);
+            // NO corner solving on an import, and the reason is worth keeping: an imported wall does not
+            // have the notch the solver exists to fill.
+            //
+            // Corner solving is for DRAWN walls, which are laid endpoint to endpoint on their centrelines and
+            // so leave a missing quarter at every corner. An imported wall is recovered from a facade PLANE
+            // that spans the whole building, so it already runs into its neighbour: measured on House_00 the
+            // west facade ends at Z 8.00 and the south wall occupies Z 7.35..8.05, so it terminates inside it
+            // and the corner is already solid. Extending it another half-thickness pushes it out to 8.35 --
+            // 0.30 m proud of the building -- and every corner grows a pilaster. strawberry_cow, immediately:
+            // "nope now its extending wayyy too far."
             ActiveMaterial = mat;
             int nw = 0, nr = 0, nf = 0, nop = 0, ngab = 0;
             foreach (var pl in plans)
@@ -990,6 +1004,7 @@ namespace UnturnedGodot
                     GD.Print($"[import]  {pl.Kind,-10} {pl.Length,6:0.0} x {pl.Height,5:0.0}  yaw {pl.Yaw,7:0.0}  pitch {pl.Pitch,6:0.0}"
                              + $"  thick {pl.Thickness:0.00}  gable {pl.GableRise:0.0}  ops {pl.Openings.Count}"
                              + $"  inset L {pl.InsetL0:0.0}/{pl.InsetL1:0.0} R {pl.InsetR0:0.0}/{pl.InsetR1:0.0}"
+                             + $"  texel {pl.Texel}"
                              + $"   X {Mathf.Min(o.X, e.X),6:0.0}..{Mathf.Max(o.X, e.X),6:0.0}"
                              + $"  Y {Mathf.Min(o.Y, e.Y),6:0.0}..{Mathf.Max(o.Y, e.Y),6:0.0}"
                              + $"  Z {Mathf.Min(o.Z, e.Z),6:0.0}..{Mathf.Max(o.Z, e.Z),6:0.0}");
