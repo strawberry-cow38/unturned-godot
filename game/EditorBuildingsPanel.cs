@@ -75,10 +75,8 @@ namespace UnturnedGodot
             _del.Pressed += () => SetTool(_del.ButtonPressed ? Tool.Delete : Tool.None);
             box.AddChild(_del);
 
-            var backSide = new CheckBox { Text = "paint back side",
-                                          TooltipText = "the material picker paints the far face of the wall" };
-            backSide.Toggled += on => _b.PaintBackSide = on;
-            box.AddChild(backSide);
+            // No "paint back side" checkbox: click the face you mean and the ghost shows which one you have.
+            box.AddChild(Dim("click a wall face to select that side — the picker paints it"));
 
             // Thickness is a slider rather than an exterior/interior toggle: 0.70 and 0.50 are the two
             // measured clusters, not the only two legal answers, and the ask was for things to be tweakable.

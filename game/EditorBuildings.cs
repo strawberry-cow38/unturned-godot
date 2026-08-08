@@ -212,15 +212,33 @@ namespace UnturnedGodot
                                 : _armed >= 0 ? $"placing {Archetypes[Mathf.PosMod(_armed, Archetypes.Length)].Name}"
                                 : "select";
 
-        /// <summary>When true the material picker paints the BACK face of a wall rather than the front, so
-        /// the two rooms a wall separates can disagree about what colour it is.</summary>
-        public bool PaintBackSide;
+        /// <summary>Which SIDE of the selected wall the material picker will paint. Set by which face you
+        /// clicked, not by a mode.
+        ///
+        /// This was a "paint back side" checkbox, which is a modal flag standing in for a selection: you had
+        /// to remember which way it was set and there was nothing on screen telling you. strawberry_cow:
+        /// "why is the painting tool a paint back side toggle instead of just being able to select (with a
+        /// selection ghost) either side of the wall and painting it." Click the side you mean; the ghost
+        /// shows you which one you have.</summary>
+        public bool SelectedBack { get; private set; }
+        MeshInstance3D _sideGhost;
+
+        /// <summary>Select a wall and which of its two faces you are working on. The click path and the
+        /// tests both come through here, so there is one definition of "the selected side".</summary>
+        public void SelectSide(WallSurface w, bool back)
+        {
+            _selWall = w;
+            _selOpening = -1;
+            SelectedBack = back;
+            if (w == null) HideSideGhost(); else ShowSideGhost(w, back);
+            PositionHandles();
+        }
 
         public void SetMaterial(WallSurface w, int id)
         {
             if (w == null) return;
             int wrapped = Mathf.PosMod(id, Mathf.Max(1, WallMaterials.Count));
-            if (PaintBackSide)
+            if (SelectedBack)
             {
                 int wasBack = w.MaterialIdBack;
                 w.MaterialIdBack = wrapped;
@@ -566,11 +584,31 @@ namespace UnturnedGodot
                 else if (_drawingSlab != null)
                 {
                     StretchSlab(mp);
-                    // a slab dragged to nothing is a misclick, not a surface
-                    if (_drawingSlab.Length < 0.5f || _drawingSlab.Height < 0.5f)
-                    { RemoveWall(_drawingSlab); _editor?.PopUndo(); }
+                    var slab = _drawingSlab;
                     _drawingSlab = null;
                     HideReadout();
+                    // a slab dragged to nothing is a misclick, not a surface
+                    if (slab.Length < 0.5f || slab.Height < 0.5f) { RemoveWall(slab); _editor?.PopUndo(); }
+                    else if (SlabDrawKind == SurfaceKind.Roof && ActiveRoofPitch > 0.1f)
+                    {
+                        // A PITCHED roof drawn as a rect is a gable over that footprint, not the single
+                        // slope the drag showed. The drag draws the footprint flat -- honest about being an
+                        // area rather than pretending to be the result -- and the release builds the gable
+                        // and raises the end walls, exactly as Add roof does.
+                        var c0 = slab.UVToWorld(0f, 0f);
+                        var c1 = slab.UVToWorld(slab.Length, slab.Height);
+                        float y = slab.Position.Y + SlabThickness * 0.5f;
+                        int mat = slab.MaterialId;
+                        RemoveWall(slab);
+                        _editor?.PopUndo();
+                        // BuildGableOver pushes its OWN step, which also puts the raised gable-end walls
+                        // back. Wrapping it in a second one here would make the gesture take two Ctrl+Z
+                        // presses -- the exact thing the wall-move and cross-wall-drag paths go out of
+                        // their way to avoid.
+                        BuildGableOver(Mathf.Min(c0.X, c1.X), Mathf.Max(c0.X, c1.X),
+                                       Mathf.Min(c0.Z, c1.Z), Mathf.Max(c0.Z, c1.Z),
+                                       y, ActiveRoofPitch, mat, WallOpenings.DefaultThickness);
+                    }
                 }
             }
             else if (ev is InputEventMouseMotion)
@@ -594,7 +632,7 @@ namespace UnturnedGodot
                     else if (_room.Count > 0) { foreach (var w in new List<WallSurface>(_room)) RemoveWall(w); _room.Clear(); _editor?.PopUndo(); }
                     else if (_drawingSlab != null) { RemoveWall(_drawingSlab); _drawingSlab = null; _editor?.PopUndo(); }
                     else if (_selOpening >= 0) _selOpening = -1;
-                    else _selWall = null;
+                    else { _selWall = null; HideSideGhost(); }
                     PositionHandles();
                 }
                 else if (k.Keycode >= Key.Key1 && k.Keycode <= Key.Key6) _armed = (int)(k.Keycode - Key.Key1);
@@ -646,8 +684,14 @@ namespace UnturnedGodot
                     _selWall = null; _selOpening = -1; PositionHandles();
                     _drawingSlab = SpawnWall(_slabAnchor, 0f, 0.01f, SlabThickness, ActiveMaterial, null,
                                              0.01f, -90f, SlabDrawKind);
+                    // Capture the SURFACE in a local, not the _drawingSlab field. The closure used to read
+                    // the field, which is nulled the moment the drag ends -- so by the time you pressed
+                    // Ctrl+Z it removed nothing and the step silently did nothing. Auto-fit Add roof was
+                    // fine because it already captured a local, which is exactly why this only ever failed
+                    // "sometimes". strawberry_cow: "it doesnt undo roofs properly sometimes".
+                    var drawn = _drawingSlab;
                     _editor?.PushUndo(SlabDrawKind == SurfaceKind.Roof ? "roof draw" : "floor draw",
-                                      () => RemoveWall(_drawingSlab));
+                                      () => RemoveWall(drawn));
                 }
                 return;
             }
@@ -706,6 +750,9 @@ namespace UnturnedGodot
                 else if (_armed >= 0) _selOpening = AddOpening(w2, u, v, _armed);
                 else
                 {
+                    // WHICH SIDE. The ray travelling the same way as the surface's +Z means it struck the
+                    // back; opposed means the front. That is the side the material picker will paint.
+                    SelectSide(w2, dir.Dot(w2.GlobalTransform.Basis.Z) > 0f);
                     // nothing else claimed the click, so this is a wall move. Grabbing on the GROUND plane
                     // at the wall's own height rather than on the wall's surface: dragging a wall sideways
                     // has to keep tracking once the cursor leaves the wall, which surface UVs cannot do.
@@ -1034,14 +1081,16 @@ namespace UnturnedGodot
             // Same convention as AddGableRoof -- pitch - 90, spawned at maxZ with yaw 0 so it rises toward
             // -Z -- and that sign is only correct BECAUSE the yaw is fixed here. Reading a yaw off geometry
             // instead needs 90 - pitch; see BuildingImport.
-            float deg = SlabDrawKind == SurfaceKind.Roof ? Mathf.Clamp(ActiveRoofPitch, 0f, 70f) : 0f;
-            // the drag rect is the FOOTPRINT, so a pitched surface is longer than the run it covers
-            _drawingSlab.Height = deg > 0.1f ? run / Mathf.Cos(Mathf.DegToRad(deg)) : run;
-            _drawingSlab.RotationDegrees = new Vector3(deg - 90f, yawDeg, 0f);
+            // The preview is the FOOTPRINT, laid flat. A pitched roof drawn here becomes a whole gable on
+            // release, so showing one tilted plane mid-drag would be a preview of something you do not get.
+            _drawingSlab.Height = run;
+            _drawingSlab.RotationDegrees = new Vector3(-90f, yawDeg, 0f);
             _drawingSlab.Rebuild();
             EnsureReadout();
+            bool gable = SlabDrawKind == SurfaceKind.Roof && ActiveRoofPitch > 0.1f;
             Billboard(new Vector3((minX + maxX) * 0.5f, _slabAnchor.Y + 0.6f, (minZ + maxZ) * 0.5f),
-                      $"{maxX - minX:0.0} × {run:0.0} m" + (deg > 0.1f ? $"  ·  {deg:0.#}°" : ""));
+                      $"{maxX - minX:0.0} × {maxZ - minZ:0.0} m"
+                      + (gable ? $"\ngable {ActiveRoofPitch:0.#}°" : ""));
         }
 
         void StretchDraw(Vector2 screen)
@@ -1751,6 +1800,19 @@ namespace UnturnedGodot
             float halfW = maxWallThickness * 0.5f;
             minX -= halfW; maxX += halfW; minZ -= halfW; maxZ += halfW;
 
+            return BuildGableOver(minX, maxX, minZ, maxZ, topY, pitchDeg, material, maxWallThickness);
+        }
+
+        /// <summary>Build a gable roof over an explicit footprint: two slopes meeting at a ridge, and the
+        /// walls that run across the ridge raised into gable ends to close it.
+        ///
+        /// Split out of AddGableRoof so the DRAG-RECT roof can use it. Drawing one slope at a time was me
+        /// exposing the primitive instead of the thing you want -- strawberry_cow: "why am i placing one
+        /// slope at a time instead of drawing a gable zone over a rect".</summary>
+        public int BuildGableOver(float minX, float maxX, float minZ, float maxZ, float topY,
+                                  float pitchDeg, int material, float maxWallThickness)
+        {
+            pitchDeg = Mathf.Clamp(pitchDeg, 1f, 70f);
             float spanX = maxX - minX, spanZ = maxZ - minZ;
             bool ridgeAlongX = spanX >= spanZ;                 // the ridge runs the LONG way, as a roof does
             float half = (ridgeAlongX ? spanZ : spanX) * 0.5f;
@@ -1920,6 +1982,37 @@ namespace UnturnedGodot
             _ghost.Visible = true;
             ShowReadout(best, o);
         }
+
+        /// <summary>Translucent panel over the face you have selected, so "which side am I painting" is a
+        /// thing you can see rather than a checkbox you have to remember.</summary>
+        void ShowSideGhost(WallSurface w, bool back)
+        {
+            if (w == null) { HideSideGhost(); return; }
+            if (_sideGhost == null)
+            {
+                _sideGhost = new MeshInstance3D
+                {
+                    Mesh = new QuadMesh { Size = Vector2.One },
+                    MaterialOverride = new StandardMaterial3D
+                    {
+                        AlbedoColor = new Color(1f, 0.75f, 0.2f, 0.22f),
+                        Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
+                        ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
+                        CullMode = BaseMaterial3D.CullModeEnum.Disabled,
+                    },
+                };
+                AddChild(_sideGhost);
+            }
+            ((QuadMesh)_sideGhost.Mesh).Size = new Vector2(Mathf.Max(0.05f, w.Length),
+                                                           Mathf.Max(0.05f, w.Height));
+            float off = w.Thickness * 0.5f + 0.03f;
+            _sideGhost.GlobalTransform = new Transform3D(w.GlobalTransform.Basis,
+                w.UVToWorld(w.Length * 0.5f, w.Height * 0.5f)
+                + w.GlobalTransform.Basis.Z.Normalized() * (back ? -off : off));
+            _sideGhost.Visible = true;
+        }
+
+        void HideSideGhost() { if (_sideGhost != null) _sideGhost.Visible = false; }
 
         void HideGhost()
         {

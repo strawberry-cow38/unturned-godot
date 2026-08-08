@@ -1414,7 +1414,9 @@ namespace UnturnedGodot.Testing
             T.Check("a plain wall has no back surface", w.GetNodeOrNull<MeshInstance3D>("BackMesh")?.Mesh == null);
             T.Check("and both sides report the same colour", w.Tint.IsEqualApprox(w.BackTint));
 
-            tool.PaintBackSide = true;
+            // selecting the BACK face is what makes the picker paint it -- no mode to remember
+            tool.SelectSide(w, back: true);
+            T.Check("selecting a face reports which side", tool.SelectedBack);
             tool.SetMaterial(w, 7);
             yield return Step.Ticks(1);
             T.Check($"painting the back does not touch the front ({w.MaterialId})", w.MaterialId == 0);
@@ -1528,6 +1530,59 @@ namespace UnturnedGodot.Testing
             int backFloors = 0;
             foreach (var pl in back) if (pl.Kind == SurfaceKind.Floor) backFloors++;
             T.Check($"floors round-trip through save ({backFloors})", backFloors == floors.Count);
+        }
+    }
+    // "it doesnt undo roofs properly sometimes" -- the drawn roof's undo closed over the _drawingSlab
+    // FIELD, which is nulled on release, so Ctrl+Z removed nothing. Auto-fit Add roof captured a local and
+    // worked, which is exactly what made it "sometimes".
+    public class BuildToolUndoRemovesDrawnSlabs : GameTest
+    {
+        public override string Name => "buildtool.drawn_slab_undo";
+
+        public override IEnumerable<Step> Run()
+        {
+            var tool = new EditorBuildings();
+            World.AddChild(tool);
+            var ed = new Editor();
+            World.AddChild(ed);
+            tool.Setup(ed, null, null);
+            yield return Step.Ticks(1);
+
+            // the auto-fit path, which always worked -- kept as the control
+            tool.AddWall(Vector3.Zero, 0f, 9f);
+            tool.AddWall(new Vector3(9f, 0f, 0f), 90f, 9f);
+            tool.AddWall(new Vector3(9f, 0f, -9f), 180f, 9f);
+            tool.AddWall(Vector3.Zero, 270f, 9f);
+            yield return Step.Ticks(1);
+            int before = tool.Walls.Count;
+            var slab = tool.AddSlab(SurfaceKind.Roof);
+            yield return Step.Ticks(1);
+            T.Check($"auto-fit roof placed ({tool.Walls.Count})", slab != null && tool.Walls.Count == before + 1);
+            ed.Undo();
+            yield return Step.Ticks(1);
+            T.Check($"and undoes ({tool.Walls.Count})", tool.Walls.Count == before);
+
+            // BREAK IT: capture the field instead of the surface and this is where it shows -- the step
+            // fires, removes nothing, and the count never drops. Silent, which is the worst kind.
+            var stage = tool.Snapshot();
+            var drawn = tool.AddSlab(SurfaceKind.Floor);
+            yield return Step.Ticks(1);
+            T.Check($"a second slab placed ({tool.Walls.Count})", tool.Walls.Count == before + 1);
+            ed.Undo();
+            yield return Step.Ticks(1);
+            T.Check($"undo actually removed it, not just fired ({tool.Walls.Count} vs {before})",
+                    tool.Walls.Count == before);
+
+            // and a gable drawn over a footprint is ONE undo step, not one per surface it made
+            int depth = ed.UndoDepth;
+            int made = tool.BuildGableOver(0f, 12f, -12f, 0f, 4.25f, 30f, 0, 0.7f);
+            yield return Step.Ticks(1);
+            T.Check($"a gable makes several surfaces ({made})", made >= 2);
+            T.Check($"but pushes one step ({ed.UndoDepth - depth})", ed.UndoDepth - depth == 1);
+            ed.Undo();
+            yield return Step.Ticks(1);
+            T.Check($"and one Ctrl+Z takes the whole roof back ({tool.Walls.Count} vs {before})",
+                    tool.Walls.Count == before);
         }
     }
 }
