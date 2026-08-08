@@ -1089,63 +1089,105 @@ namespace UnturnedGodot
         /// Each wall simply runs on past the junction by half its neighbour's thickness. The overlap that
         /// creates is inside the corner post where nothing can see it, which is the same reason the reveal
         /// linings are allowed to interpenetrate the wall.</summary>
+        /// <summary>Extend wall ends so corners close -- including TEE and CROSS junctions.
+        ///
+        /// The old rule was endpoint-to-endpoint: two walls form a corner only when their ENDS coincide, and
+        /// the fix was to grow by half the neighbour's thickness. That misses both cases strawberry_cow hit
+        /// in the editor, three walls meeting in a tee and four in a cross, because a stem wall's end lands
+        /// MID-SPAN of the wall it runs into and matches neither of its endpoints.
+        ///
+        /// It also could not be run twice. Growing by a RELATIVE half-thickness walks the wall further out
+        /// on every call, so running it over an already-overlapping imported building put a 0.30 m pilaster
+        /// on every corner -- which is why imports had to skip corner solving entirely.
+        ///
+        /// The target is ABSOLUTE instead. For each end, find where this wall's own line crosses a
+        /// neighbour's CENTRELINE; if the end falls short of that crossing, extend to it. Never past it,
+        /// never shrink. A wall already through its neighbour is left alone, so the pass is idempotent and
+        /// safe on anything, drawn or imported.
+        ///
+        /// LIMITATION: reaching the centreline fills the junction because the neighbour's own body covers
+        /// the rest. At the 15-degree yaw snap's sharper angles a true mitre would need more, so a sliver of
+        /// notch can survive on a very acute corner.</summary>
         public List<(WallSurface W, float Len, Vector3 Pos)> SolveCorners()
         {
-            // LIMITATION: extending by half the neighbour's thickness fills the notch EXACTLY at 90 degrees.
-            // At the 30-60 degree corners the 15-degree yaw snap allows, a true mitre needs more, so a sliver
-            // of notch survives the bake (or the extension pushes through the far face).
-            // 0.35 m, flat. I briefly scaled this with thickness so that imported corners would match, which
-            // widened the search to over a metre and made walls that merely pass near each other count as a
-            // corner. Imported walls do not need it -- see ImportRetail, they already overlap -- and drawn
-            // walls meet exactly, so the slack was pure false-positive surface.
-            const float Tol = 0.35f;
+            const float MaxGrow = 1.6f;        // a wall thickness and a bit; past that it is not a junction
             var undo = new List<(WallSurface, float, Vector3)>();
-            // Foundations are corner-solved too. A foundation is a wall, so it has the same missing quarter at
-            // every corner -- and being underground is exactly why it would never get noticed: the notch is a
-            // hole in the buried skirt that only shows when the ground falls away beside it.
-            //
-            // Wall and foundation corners cannot be confused for each other: the endpoints compared below are
-            // at each surface's BASE, and a foundation's base is a storey underground, far outside Tol.
+            // Foundations solve too: a foundation is a wall, so it has the same missing quarter at every
+            // corner, and being underground is exactly why nobody would notice.
             var walls = new List<WallSurface>();
             foreach (var w in _walls)
                 if (IsInstanceValid(w) && (w.Kind == SurfaceKind.Wall || w.Kind == SurfaceKind.Foundation)) walls.Add(w);
 
-            // grow[i] = how far to push wall i's start back and its end forward
             var growStart = new float[walls.Count];
             var growEnd = new float[walls.Count];
             for (int i = 0; i < walls.Count; i++)
+            {
+                var a = walls[i];
+                var a0 = a.UVToWorld(0f, 0f);
+                var ad = new Vector3(a.UVToWorld(a.Length, 0f).X - a0.X, 0f, a.UVToWorld(a.Length, 0f).Z - a0.Z);
+                if (ad.LengthSquared() < 1e-6f) continue;
+                ad = ad.Normalized();
+
                 for (int j = 0; j < walls.Count; j++)
                 {
                     if (i == j) continue;
-                    var a = walls[i];
                     var b = walls[j];
-                    // parallel walls do not form a corner -- they form a seam, and extending them just makes
-                    // two walls overlap end to end
+                    // parallel walls are a seam, not a corner -- extending them just overlaps two walls
                     float dy = Mathf.Abs(Mathf.Wrap(a.RotationDegrees.Y - b.RotationDegrees.Y, -90f, 90f));
                     if (dy < 20f) continue;
+                    // and they must be the same storey, or a foundation solves against the wall above it
+                    if (Mathf.Abs(a.Position.Y - b.Position.Y) > 0.6f) continue;
 
-                    foreach (var (mine, isStart) in new[] { (a.UVToWorld(0f, 0f), true), (a.UVToWorld(a.Length, 0f), false) })
-                        foreach (var theirs in new[] { b.UVToWorld(0f, 0f), b.UVToWorld(b.Length, 0f) })
-                        {
-                            if ((mine - theirs).Length() > Tol) continue;
-                            float grow = b.Thickness * 0.5f;
-                            if (isStart) growStart[i] = Mathf.Max(growStart[i], grow);
-                            else growEnd[i] = Mathf.Max(growEnd[i], grow);
-                        }
+                    if (!CrossOnPlan(a0, ad, b.UVToWorld(0f, 0f), b.UVToWorld(b.Length, 0f), out float t, out float s2))
+                        continue;
+                    if (s2 < -0.02f || s2 > 1.02f) continue;          // the crossing is off the end of b
+
+                    // How far PAST the crossing to run, and the two junctions want different answers.
+                    //
+                    // At a CORNER -- the crossing is at one of b's own ends -- stopping on b's centreline
+                    // leaves the outer quarter square uncovered by either wall. That square IS the notch,
+                    // so run on to b's far face. At a TEE the crossing is mid-span of b, b's own body
+                    // already fills everything past it, and running to the far face would poke out the
+                    // other side of the wall you just joined.
+                    bool atEndOfB = s2 < 0.08f || s2 > 0.92f;
+                    float target = t + (atEndOfB ? b.Thickness * 0.5f : 0f);
+
+                    // target is ABSOLUTE, so an end already past it grows by nothing and the pass stays
+                    // idempotent -- that is what makes it safe to run over an import.
+                    if (target < 0f && target >= -MaxGrow) growStart[i] = Mathf.Max(growStart[i], -target);
+                    else if (target > a.Length && target <= a.Length + MaxGrow)
+                        growEnd[i] = Mathf.Max(growEnd[i], target - a.Length);
                 }
+            }
 
             for (int i = 0; i < walls.Count; i++)
             {
-                if (growStart[i] <= 0f && growEnd[i] <= 0f) continue;
+                if (growStart[i] <= 1e-4f && growEnd[i] <= 1e-4f) continue;
                 var w = walls[i];
                 undo.Add((w, w.Length, w.Position));
-                // the run direction in world, from the surface's own projection rather than from the yaw
                 var dir = (w.UVToWorld(1f, 0f) - w.UVToWorld(0f, 0f)).Normalized();
                 w.Position -= dir * growStart[i];
                 w.Length += growStart[i] + growEnd[i];
                 w.Rebuild();
             }
             return undo;
+        }
+
+        /// <summary>Where the ray (from, dir) crosses the segment b0..b1, in PLAN. `t` is distance along the
+        /// ray, `s` the 0..1 parameter along the segment.</summary>
+        static bool CrossOnPlan(Vector3 from, Vector3 dir, Vector3 b0, Vector3 b1, out float t, out float s)
+        {
+            t = s = 0f;
+            var p = new Vector2(from.X, from.Z);
+            var d = new Vector2(dir.X, dir.Z);
+            var q = new Vector2(b0.X, b0.Z);
+            var e = new Vector2(b1.X, b1.Z) - q;
+            float den = d.X * e.Y - d.Y * e.X;
+            if (Mathf.Abs(den) < 1e-6f) return false;          // parallel in plan
+            var r = q - p;
+            t = (r.X * e.Y - r.Y * e.X) / den;
+            s = (r.X * d.Y - r.Y * d.X) / den;
+            return true;
         }
 
         public void RestoreCorners(List<(WallSurface W, float Len, Vector3 Pos)> undo)
@@ -1352,16 +1394,17 @@ namespace UnturnedGodot
                 SpawnWall(StageOrigin + new Vector3(pl.X, pl.Y, pl.Z), pl.Yaw, pl.Length, pl.Thickness,
                           pl.Material, pl.Openings, pl.Height, pl.Pitch, pl.Kind, pl.GableRise, pl.Texel,
                           pl.InsetL0, pl.InsetL1, pl.InsetR0, pl.InsetR1);
-            // NO corner solving on an import, and the reason is worth keeping: an imported wall does not
-            // have the notch the solver exists to fill.
+            // Corner solving runs on imports again, now that it is safe to.
             //
-            // Corner solving is for DRAWN walls, which are laid endpoint to endpoint on their centrelines and
-            // so leave a missing quarter at every corner. An imported wall is recovered from a facade PLANE
-            // that spans the whole building, so it already runs into its neighbour: measured on House_00 the
-            // west facade ends at Z 8.00 and the south wall occupies Z 7.35..8.05, so it terminates inside it
-            // and the corner is already solid. Extending it another half-thickness pushes it out to 8.35 --
-            // 0.30 m proud of the building -- and every corner grows a pilaster. strawberry_cow, immediately:
-            // "nope now its extending wayyy too far."
+            // The first attempt at this grew a 0.30 m pilaster on every corner, because the old rule added a
+            // RELATIVE half-thickness to any end near a neighbour -- and an imported wall, recovered from a
+            // facade plane spanning the whole building, already runs into its neighbour. The rule is an
+            // ABSOLUTE target now, so an end already past the junction grows by nothing and this is a no-op
+            // wherever the import was already correct. What it does fix is the case that was never covered
+            // either way: strawberry_cow's tee, "the 3 wall meet appears on house 00, which is where a gap
+            // was" -- an interior wall running into the middle of a facade, matching neither of its ends.
+            int solved = SolveCorners().Count;
+
             ActiveMaterial = mat;
             int nw = 0, nr = 0, nf = 0, nop = 0, ngab = 0;
             foreach (var pl in plans)
@@ -1389,6 +1432,7 @@ namespace UnturnedGodot
                              + $"  Y {Mathf.Min(o.Y, e.Y),6:0.0}..{Mathf.Max(o.Y, e.Y),6:0.0}"
                              + $"  Z {Mathf.Min(o.Z, e.Z),6:0.0}..{Mathf.Max(o.Z, e.Z),6:0.0}");
                 }
+            GD.Print($"[editor-buildings] {solved} surfaces extended to close corners");
             GD.Print($"[editor-buildings] imported {buildingName}: {plans.Count} surfaces "
                      + $"({nw} wall, {nr} roof, {nf} foundation, {ngab} gabled) with {nop} openings");
             return plans.Count;

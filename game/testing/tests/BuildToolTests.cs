@@ -1120,4 +1120,71 @@ namespace UnturnedGodot.Testing
                     tool.Walls.Count == 3);
         }
     }
+    // Tee and cross junctions, which the endpoint-to-endpoint solver could not see, plus the idempotency
+    // that lets the pass run over an import without growing a pilaster on every corner.
+    public class BuildToolSolvesTeeAndCrossJunctions : GameTest
+    {
+        public override string Name => "buildtool.tee_and_cross_junctions";
+
+        public override IEnumerable<Step> Run()
+        {
+            var tool = new EditorBuildings();
+            World.AddChild(tool);
+            var ed = new Editor();
+            World.AddChild(ed);
+            tool.Setup(ed, null, null);
+            yield return Step.Ticks(1);
+
+            // ---- TEE: a stem running into the middle of a through wall, stopping 0.5 m short -----------
+            // BREAK IT: match endpoints only and the stem never sees the through wall at all, because its
+            // end is nowhere near either of that wall's ends. Growth 0, gap stays.
+            var through = tool.AddWall(Vector3.Zero, 0f, 12f);              // x 0..12 at z = 0
+            var stem = tool.AddWall(new Vector3(6f, 0f, -6f), 270f, 6f);    // runs +Z toward the through wall
+            stem.Length = 5.5f; stem.Rebuild();                             // ...and stops 0.5 m short
+            yield return Step.Ticks(1);
+
+            tool.SolveCorners();
+            yield return Step.Ticks(1);
+            T.Check($"the stem of a tee reaches the wall it runs into ({stem.Length:0.00} m, was 5.50)",
+                    Mathf.Abs(stem.Length - 6f) < 0.02f);
+            // and NOT past it: a tee is not a corner, the through wall's own body fills everything beyond
+            T.Check($"but does not punch out the far side ({stem.Length:0.00} vs corner would be "
+                    + $"{6f + through.Thickness * 0.5f:0.00})", stem.Length < 6f + 0.05f);
+            T.Check("the through wall itself is untouched", Mathf.Abs(through.Length - 12f) < 1e-3f);
+
+            // ---- IDEMPOTENT: the property that makes this safe on an import --------------------------
+            // BREAK IT: grow by a relative half-thickness instead of to an absolute target and every call
+            // walks the wall further out -- which is exactly the pilaster an imported building grew.
+            float lenAfterFirst = stem.Length;
+            var second = tool.SolveCorners();
+            yield return Step.Ticks(1);
+            T.Check($"a second solve changes nothing ({second.Count} walls touched)", second.Count == 0);
+            T.Check($"and the stem did not creep ({stem.Length:0.00} vs {lenAfterFirst:0.00})",
+                    Mathf.Abs(stem.Length - lenAfterFirst) < 1e-4f);
+
+            // ---- CROSS: four walls all ending at one point --------------------------------------------
+            foreach (var w in new List<WallSurface>(tool.Walls)) tool.RemoveWall(w);
+            var arms = new List<WallSurface>();
+            for (int k = 0; k < 4; k++)
+            {
+                float yaw = k * 90f;
+                var dir = new Vector3(Mathf.Cos(Mathf.DegToRad(yaw)), 0f, -Mathf.Sin(Mathf.DegToRad(yaw)));
+                arms.Add(tool.AddWall(-dir * 6f, yaw, 6f));                  // each ends at the origin
+            }
+            yield return Step.Ticks(1);
+            var lens = new List<float>();
+            foreach (var a in arms) lens.Add(a.Length);
+            tool.SolveCorners();
+            yield return Step.Ticks(1);
+
+            int grew = 0;
+            for (int k = 0; k < 4; k++) if (arms[k].Length > lens[k] + 1e-3f) grew++;
+            T.Check($"every arm of a cross is carried through the junction ({grew} of 4)", grew == 4);
+            foreach (var a in arms)
+                T.Check($"...by half a wall, not more ({a.Length - 6f:0.00} m)",
+                        a.Length - 6f > 0.1f && a.Length - 6f < 0.45f);
+            var third = tool.SolveCorners();
+            T.Check($"and a cross is idempotent too ({third.Count})", third.Count == 0);
+        }
+    }
 }
