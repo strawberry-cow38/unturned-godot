@@ -60,23 +60,43 @@ namespace UnturnedGodot
             head.AddThemeFontSizeOverride("font_size", 18);
             box.AddChild(head);
 
-            box.AddChild(Dim("Wall"));
-            _draw = new Button { Text = "Draw wall", ToggleMode = true };
-            _draw.Pressed += () => SetTool(_draw.ButtonPressed ? Tool.Wall : Tool.None);
-            box.AddChild(_draw);
+            // BUILD: the four things you reach for constantly, big, then the destructive one set apart.
+            // Icons rather than words was the ask; the words survive as tooltips, so nothing is lost -- you
+            // just stop reading a column of sentences to find the button you already know the shape of.
+            box.AddChild(Dim("BUILD"));
+            var build = new GridContainer { Columns = 4 };
+            build.AddThemeConstantOverride("h_separation", 4);
+            _draw = ToolButton(build, EditorIcons.Glyph.Wall, 60, "Draw wall",
+                               "press and drag — snaps to the 3 m grid",
+                               () => SetTool(_draw.ButtonPressed ? Tool.Wall : Tool.None));
+            _room = ToolButton(build, EditorIcons.Glyph.Room, 60, "Draw room",
+                               "drag a rectangle — four walls on the grid, shared edges merged",
+                               () => SetTool(_room.ButtonPressed ? Tool.Room : Tool.None));
+            _drawFloor = ToolButton(build, EditorIcons.Glyph.Floor, 60, "Draw floor",
+                                    "drag the footprint of a floor slab",
+                                    () => SetTool(_drawFloor.ButtonPressed ? Tool.Floor : Tool.None));
+            _drawRoof = ToolButton(build, EditorIcons.Glyph.Roof, 60, "Draw roof",
+                                   "drag a footprint — a pitched roof becomes a whole gable over it",
+                                   () => SetTool(_drawRoof.ButtonPressed ? Tool.Roof : Tool.None));
+            box.AddChild(build);
 
-            _room = new Button { Text = "Draw room", ToggleMode = true,
-                                 TooltipText = "drag a rectangle — four walls on the grid, shared edges merged" };
-            _room.Pressed += () => SetTool(_room.ButtonPressed ? Tool.Room : Tool.None);
-            box.AddChild(_room);
-
-            _del = new Button { Text = "Delete / cut", ToggleMode = true,
-                                TooltipText = "click a wall to remove it, or drag along one to cut a piece out" };
-            _del.Pressed += () => SetTool(_del.ButtonPressed ? Tool.Delete : Tool.None);
-            box.AddChild(_del);
+            var second = new GridContainer { Columns = 4 };
+            second.AddThemeConstantOverride("h_separation", 4);
+            _del = ToolButton(second, EditorIcons.Glyph.Delete, 44, "Delete / cut",
+                              "click a wall to remove it, or drag along one to cut a piece out",
+                              () => SetTool(_del.ButtonPressed ? Tool.Delete : Tool.None));
+            IconAction(second, EditorIcons.Glyph.Foundation, 44, "Add foundation",
+                       $"a skirt under the walls — retail sinks {WallOpenings.FoundationDepth:0.#} m",
+                       () => Say(_b.AddFoundation() is int n && n > 0 ? $"foundation under {n} wall(s)"
+                                                                      : "draw some walls first"));
+            IconAction(second, EditorIcons.Glyph.Import, 44, "Import",
+                       "port the retail building selected below onto the stage", () => DoImport());
+            IconAction(second, EditorIcons.Glyph.Bake, 44, "Bake to prop",
+                       "turn this building into a placeable prop in the Level tab", () => DoBake());
+            box.AddChild(second);
 
             // No "paint back side" checkbox: click the face you mean and the ghost shows which one you have.
-            box.AddChild(Dim("click a wall face to select that side — the picker paints it"));
+            box.AddChild(Dim("click a wall face to select that side"));
 
             // Thickness is a slider rather than an exterior/interior toggle: 0.70 and 0.50 are the two
             // measured clusters, not the only two legal answers, and the ask was for things to be tweakable.
@@ -98,34 +118,22 @@ namespace UnturnedGodot
             // Flat is the DEFAULT roof because it is what retail overwhelmingly is: 80% of the sloped-and-flat
             // roof area across the 52 sampled buildings is flat. A pitched roof is the special case, not the
             // norm, and a flat one is this same slab.
-            var slabs = new HBoxContainer();
-            var addFloor = new Button { Text = "Add floor", CustomMinimumSize = new Vector2(120, 0),
-                                        TooltipText = "a slab under the walls you have drawn" };
-            addFloor.Pressed += () => Say(_b.AddSlab(SurfaceKind.Floor) != null ? "floor added" : "draw some walls first");
-            var addRoof = new Button { Text = "Add roof", CustomMinimumSize = new Vector2(120, 0),
-                                       TooltipText = "flat at 0 pitch — 80% of retail roof area is flat" };
-            addRoof.Pressed += () =>
-            {
-                int n = _b.AddGableRoof(_b.ActiveRoofPitch);
-                Say(n > 0 ? (_b.ActiveRoofPitch <= 0.1f ? "flat roof added" : $"gable roof at {_b.ActiveRoofPitch:0.#}°")
-                          : "draw some walls first");
-            };
-            slabs.AddChild(addFloor);
-            slabs.AddChild(addRoof);
-            box.AddChild(slabs);
-
-            // Draw the slab yourself. Add roof/Add floor fit one to the bounding box of every wall present,
-            // which is a guess you cannot argue with -- an L-shaped plan gets a slab over the courtyard.
-            var drawSlabs = new HBoxContainer();
-            _drawFloor = new Button { Text = "Draw floor", ToggleMode = true, CustomMinimumSize = new Vector2(120, 0),
-                                      TooltipText = "drag a rectangle instead of auto-fitting to the walls" };
-            _drawRoof = new Button { Text = "Draw roof", ToggleMode = true, CustomMinimumSize = new Vector2(120, 0),
-                                     TooltipText = "drag a rectangle instead of auto-fitting to the walls" };
-            _drawFloor.Pressed += () => SetTool(_drawFloor.ButtonPressed ? Tool.Floor : Tool.None);
-            _drawRoof.Pressed += () => SetTool(_drawRoof.ButtonPressed ? Tool.Roof : Tool.None);
-            drawSlabs.AddChild(_drawFloor);
-            drawSlabs.AddChild(_drawRoof);
-            box.AddChild(drawSlabs);
+            // Auto-fit stays available as the quick path -- it fits a slab to every wall present, which is
+            // right for a simple box and a guess you cannot argue with on an L-shaped plan.
+            var autos = new GridContainer { Columns = 4 };
+            autos.AddThemeConstantOverride("h_separation", 4);
+            IconAction(autos, EditorIcons.Glyph.Floor, 40, "Auto floor", "fit a slab under every wall",
+                       () => Say(_b.AddSlab(SurfaceKind.Floor) != null ? "floor added" : "draw some walls first"));
+            IconAction(autos, EditorIcons.Glyph.Roof, 40, "Auto roof", "fit a roof over every wall",
+                       () =>
+                       {
+                           int n = _b.AddGableRoof(_b.ActiveRoofPitch);
+                           Say(n > 0 ? (_b.ActiveRoofPitch <= 0.1f ? "flat roof added"
+                                                                   : $"gable roof at {_b.ActiveRoofPitch:0.#}°")
+                                     : "draw some walls first");
+                       });
+            box.AddChild(Dim("AUTO-FIT"));
+            box.AddChild(autos);
 
             // Snapped to the measured retail pitches rather than free: those are where real roofs sit, and 0
             // (flat) is first because it is 80% of them.
@@ -146,28 +154,27 @@ namespace UnturnedGodot
 
             // Measured, not guessed: all 52 retail buildings sink a hollow skirt 5-6 m down. Without one a
             // building on any slope has daylight under it.
-            var found = new Button { Text = $"Add foundation ({WallOpenings.FoundationDepth:0.#}m)",
-                                     TooltipText = "a skirt under the walls — retail sinks 5-6m" };
-            found.Pressed += () =>
-            {
-                int n = _b.AddFoundation();
-                Say(n > 0 ? $"foundation under {n} wall(s)" : "draw some walls first");
-            };
-            box.AddChild(found);
 
             box.AddChild(new HSeparator());
-            box.AddChild(Dim("Opening — click a wall to place"));
-            var grid = new GridContainer { Columns = 2 };
+            box.AddChild(Dim("OPENINGS — click a wall to place"));
+            var grid = new GridContainer { Columns = 6 };
+            grid.AddThemeConstantOverride("h_separation", 3);
+            var og = new[] { EditorIcons.Glyph.Door, EditorIcons.Glyph.Window, EditorIcons.Glyph.TallWindow,
+                             EditorIcons.Glyph.Garage, EditorIcons.Glyph.Porch, EditorIcons.Glyph.Vent };
             for (int i = 0; i < EditorBuildings.Archetypes.Length; i++)
             {
                 int ai = i;
                 var a = EditorBuildings.Archetypes[i];
+                // Every opening glyph is the same wall square with a different hole, so the row reads as one
+                // family -- the hole shape is the only thing that actually differs between these presets.
                 var btn = new Button
                 {
-                    Text = $"{a.Name}  {a.Width:0.#}×{a.Height:0.#}",
                     ToggleMode = true,
-                    CustomMinimumSize = new Vector2(120, 0),
-                    TooltipText = a.FloorPinned ? "sits on the floor" : $"sill {a.Sill:0.##}m",
+                    Icon = EditorIcons.Get(og[Mathf.Min(i, og.Length - 1)], 34),
+                    ExpandIcon = true,
+                    CustomMinimumSize = new Vector2(38, 38),
+                    TooltipText = $"{a.Name} — {a.Width:0.#}×{a.Height:0.#} m, "
+                                  + (a.FloorPinned ? "sits on the floor" : $"sill {a.Sill:0.##} m"),
                 };
                 btn.Pressed += () => SetTool(btn.ButtonPressed ? Tool.Opening : Tool.None, ai);
                 _arch.Add(btn);
@@ -196,24 +203,13 @@ namespace UnturnedGodot
             for (int i = 0; i < WallMaterials.Count; i++) imp.AddItem(WallMaterials.At(i).Name, i);
             if (WallMaterials.Count > 0) imp.Select(0);
             box.AddChild(imp);
-            var impBtn = new Button { Text = "Import (replaces stage)" };
-            impBtn.Pressed += () =>
-            {
-                if (imp.Selected < 0) return;
-                string nm = imp.GetItemText(imp.Selected);
-                int n = _b.ImportRetail(nm);
-                Say(n > 0 ? $"imported {nm}: {n} walls" : $"could not import {nm}");
-            };
-            box.AddChild(impBtn);
+            _importPick = imp;
 
             box.AddChild(new HSeparator());
             box.AddChild(Dim("Bake — becomes a prop in the Level tab"));
             _name = new LineEdit { PlaceholderText = "building name", CustomMinimumSize = new Vector2(240, 0) };
             box.AddChild(_name);
-            var bake = new Button { Text = "Bake to prop" };
-            bake.Pressed += DoBake;
             _name.TextSubmitted += _ => DoBake();
-            box.AddChild(bake);
             _bakeMsg = Dim("");
             box.AddChild(_bakeMsg);
         }
@@ -221,6 +217,48 @@ namespace UnturnedGodot
         LineEdit _name;
         Label _bakeMsg;
         Label _pitchLbl;
+        OptionButton _importPick;
+
+        /// <summary>A toggle in the tool palette: icon, no text, the words in the tooltip. Returns the button
+        /// so SetTool can drive its pressed state -- one place still owns "which tool is on".</summary>
+        Button ToolButton(Container into, EditorIcons.Glyph g, int size, string name, string help,
+                          System.Action onPress)
+        {
+            var b = new Button
+            {
+                ToggleMode = true,
+                Icon = EditorIcons.Get(g, size - 8),
+                ExpandIcon = true,
+                CustomMinimumSize = new Vector2(size, size),
+                TooltipText = $"{name} — {help}",
+            };
+            b.Pressed += onPress;
+            into.AddChild(b);
+            return b;
+        }
+
+        /// <summary>Same look, but it DOES something rather than arming a mode.</summary>
+        void IconAction(Container into, EditorIcons.Glyph g, int size, string name, string help,
+                        System.Action onPress)
+        {
+            var b = new Button
+            {
+                Icon = EditorIcons.Get(g, size - 8),
+                ExpandIcon = true,
+                CustomMinimumSize = new Vector2(size, size),
+                TooltipText = $"{name} — {help}",
+            };
+            b.Pressed += onPress;
+            into.AddChild(b);
+        }
+
+        void DoImport()
+        {
+            if (_importPick == null || _importPick.Selected < 0) { Say("pick a building below first"); return; }
+            string nm = _importPick.GetItemText(_importPick.Selected);
+            int n = _b.ImportRetail(nm);
+            Say(n > 0 ? $"imported {nm}: {n} surfaces" : $"could not import {nm}");
+        }
 
         static string PitchText(float p) => p <= 0.1f ? "Roof pitch: flat" : $"Roof pitch: {p:0.#}°";
 
