@@ -14,6 +14,7 @@ namespace UnturnedGodot
     {
         readonly EditorBuildings _b;
         Button _draw;
+        Button _drawFloor, _drawRoof;
         readonly System.Collections.Generic.List<Button> _arch = new();
         Label _thickLbl;
 
@@ -37,7 +38,13 @@ namespace UnturnedGodot
             _draw.Pressed += () =>
             {
                 _b.WallDrawMode = _draw.ButtonPressed;
-                if (_b.WallDrawMode) { _b.Arm(-1); foreach (var a in _arch) a.ButtonPressed = false; }
+                if (_b.WallDrawMode)
+                {
+                    _b.Arm(-1); foreach (var a in _arch) a.ButtonPressed = false;
+                    _b.SlabDrawMode = false;
+                    if (_drawFloor != null) _drawFloor.ButtonPressed = false;
+                    if (_drawRoof != null) _drawRoof.ButtonPressed = false;
+                }
             };
             box.AddChild(_draw);
 
@@ -76,6 +83,29 @@ namespace UnturnedGodot
             slabs.AddChild(addFloor);
             slabs.AddChild(addRoof);
             box.AddChild(slabs);
+
+            // Draw the slab yourself. Add roof/Add floor fit one to the bounding box of every wall present,
+            // which is a guess you cannot argue with -- an L-shaped plan gets a slab over the courtyard.
+            var drawSlabs = new HBoxContainer();
+            _drawFloor = new Button { Text = "Draw floor", ToggleMode = true, CustomMinimumSize = new Vector2(120, 0),
+                                      TooltipText = "drag a rectangle instead of auto-fitting to the walls" };
+            _drawRoof = new Button { Text = "Draw roof", ToggleMode = true, CustomMinimumSize = new Vector2(120, 0),
+                                     TooltipText = "drag a rectangle instead of auto-fitting to the walls" };
+            void SetSlabDraw(bool on, SurfaceKind kind)
+            {
+                _b.SlabDrawMode = on;
+                _b.SlabDrawKind = kind;
+                if (!on) return;
+                _b.WallDrawMode = false; _draw.ButtonPressed = false;
+                _b.Arm(-1); foreach (var a in _arch) a.ButtonPressed = false;
+                _drawFloor.ButtonPressed = kind == SurfaceKind.Floor;
+                _drawRoof.ButtonPressed = kind == SurfaceKind.Roof;
+            }
+            _drawFloor.Pressed += () => SetSlabDraw(_drawFloor.ButtonPressed, SurfaceKind.Floor);
+            _drawRoof.Pressed += () => SetSlabDraw(_drawRoof.ButtonPressed, SurfaceKind.Roof);
+            drawSlabs.AddChild(_drawFloor);
+            drawSlabs.AddChild(_drawRoof);
+            box.AddChild(drawSlabs);
 
             // Snapped to the measured retail pitches rather than free: those are where real roofs sit, and 0
             // (flat) is first because it is 80% of them.

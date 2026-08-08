@@ -142,10 +142,20 @@ namespace UnturnedSim
         /// Resolved per axis, U first using the opening's current V-extent, then V using the clamped U. Only
         /// siblings that actually overlap on the other axis can block, so a window at a different height
         /// never stops you sliding past it.</summary>
+        /// <param name="fromU">Where the opening currently IS, for deciding which side of it a sibling is
+        /// on. Pass it when clamping a DRAG. Deciding from the proposed position instead lets an opening
+        /// teleport: drag it rightward far enough that its centre passes the blocker's centre and the
+        /// blocker reclassifies as being on the LEFT, so the lower bound jumps to the blocker's far edge and
+        /// the opening reappears on the other side of it. It never overlaps at any point, so an
+        /// overlap check does not catch it -- measured, a 3 m opening dragged through a neighbour landed at
+        /// u 9..12 instead of stopping at 6.</param>
         public static WallOpening Clamp(WallOpening o, float wallWidth, float wallHeight,
-                                        IReadOnlyList<WallOpening> siblings, int skipIndex = -1)
+                                        IReadOnlyList<WallOpening> siblings, int skipIndex = -1,
+                                        float fromU = float.NaN, float fromV = float.NaN)
         {
             float w = Math.Min(o.Width, wallWidth), h = Math.Min(o.Height, wallHeight);
+            float sideU = float.IsNaN(fromU) ? o.U + w * 0.5f : fromU;
+            float sideV = float.IsNaN(fromV) ? o.V + h * 0.5f : fromV;
 
             float lo = 0f, hi = wallWidth - w;
             if (siblings != null)
@@ -158,7 +168,7 @@ namespace UnturnedSim
                     // the proposed rect already clears it. The proposed rect is usually mid-overlap -- that is
                     // the whole reason clamp is being called -- so an "is it left of me" test on the proposal
                     // matches neither branch and the opening slides straight through its neighbour.
-                    if (s2.U + s2.Width * 0.5f < o.U + w * 0.5f) lo = Math.Max(lo, s2.U1);   // blocker on the left
+                    if (s2.U + s2.Width * 0.5f < sideU) lo = Math.Max(lo, s2.U1);            // blocker on the left
                     else hi = Math.Min(hi, s2.U - w);                                        // blocker on the right
                 }
             float u = hi < lo ? lo : Math.Max(lo, Math.Min(o.U, hi));
@@ -170,12 +180,34 @@ namespace UnturnedSim
                     if (i == skipIndex) continue;
                     var s2 = siblings[i];
                     if (s2.U1 <= u + Eps || s2.U >= u + w - Eps) continue;       // no U overlap at the clamped U
-                    if (s2.V + s2.Height * 0.5f < o.V + h * 0.5f) vlo = Math.Max(vlo, s2.V1);   // blocker below
+                    if (s2.V + s2.Height * 0.5f < sideV) vlo = Math.Max(vlo, s2.V1);            // blocker below
                     else vhi = Math.Min(vhi, s2.V - h);                                        // blocker above
                 }
             float v = vhi < vlo ? vlo : Math.Max(vlo, Math.Min(o.V, vhi));
 
             return new WallOpening(u, v, w, h, o.Depth, o.Archetype);
+        }
+
+        /// <summary>Snap one world coordinate onto the placement grid.</summary>
+        public static float SnapGrid(float v) => (float)Math.Round(v / GridStep) * GridStep;
+
+        /// <summary>Does this rect overlap any sibling? Used to REFUSE a move rather than relocate it.
+        ///
+        /// Clamp's job is to find the nearest legal spot, and when a drag leaves no legal spot at all its
+        /// two-sided fallback parks the opening on top of a neighbour. That reads as the editor shoving
+        /// things around. A caller that would rather nothing happened asks this first.</summary>
+        public static bool Overlaps(WallOpening o, IReadOnlyList<WallOpening> siblings, int skipIndex = -1)
+        {
+            if (siblings == null) return false;
+            for (int i = 0; i < siblings.Count; i++)
+            {
+                if (i == skipIndex) continue;
+                var s = siblings[i];
+                if (s.U1 <= o.U + Eps || s.U >= o.U1 - Eps) continue;
+                if (s.V1 <= o.V + Eps || s.V >= o.V1 - Eps) continue;
+                return true;
+            }
+            return false;
         }
 
         /// <summary>Snap a value to the nearest target within tolerance, else return it unchanged.
@@ -205,6 +237,10 @@ namespace UnturnedSim
         public const float WindowHeight = 2.75f;
         public const float WindowSill = 1.00f;
         public const float LatticeStep = 3.0f;       // wall lengths snap to multiples of this (retail half-edge)
+        /// <summary>Wall ENDPOINTS snap to this in world X/Z. Snapping only the length is what leaves the
+        /// "weird little gaps": two walls can each be an exact 3 m and still not meet, because nothing pins
+        /// where they start. Same step as the length, so a run of walls always closes.</summary>
+        public const float GridStep = LatticeStep;
         // Measured off the loose panels of House_00/03, Apartment_0, Office_0: a reveal strip spans the wall
         // thickness by definition, and 0.70 dominates every building (74/212/145/184 panels). 0.50 is the
         // second cluster -- interior partitions are a thinner wall. 0.20 is the trim profile.

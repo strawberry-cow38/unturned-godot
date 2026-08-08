@@ -33,7 +33,49 @@ namespace UnturnedGodot
         WallOpening[] _dragCapture;
 
         Node3D _handles;
+        Label3D _readout;                      // the size billboard shown while dragging
         const float HandlePx = 14f, SnapPx = 12f;
+
+        /// <summary>The billboard that says how big the thing you are dragging currently is, and which
+        /// measured preset it is sitting on. The snapping was already there and invisible: you could feel an
+        /// edge catch without knowing what it caught on, or whether 3.31 was a retail size or a number you
+        /// happened to stop at. strawberry_cow: "show like a text billboard that tells us the width + the
+        /// standard size".</summary>
+        void ShowReadout(WallSurface w, WallOpening o)
+        {
+            if (w == null) { HideReadout(); return; }
+            if (_readout == null)
+            {
+                _readout = new Label3D
+                {
+                    Billboard = BaseMaterial3D.BillboardModeEnum.Enabled,
+                    NoDepthTest = true, FontSize = 96, PixelSize = 0.004f,
+                    Modulate = new Color(1f, 0.95f, 0.6f),
+                    OutlineSize = 24, OutlineModulate = new Color(0f, 0f, 0f, 0.85f),
+                };
+                AddChild(_readout);
+            }
+            string near = NearestPresetName(o);
+            _readout.Text = near == null ? $"{o.Width:0.00} × {o.Height:0.00} m"
+                                         : $"{o.Width:0.00} × {o.Height:0.00} m\n{near}";
+            _readout.GlobalPosition = w.UVToWorld(o.U + o.Width * 0.5f, o.V + o.Height + 0.35f);
+            _readout.Visible = true;
+        }
+
+        void HideReadout() { if (_readout != null) _readout.Visible = false; }
+
+        /// <summary>Which retail preset this opening is currently sitting on, or null if it is between
+        /// them. Naming the preset is the point -- "3.31 x 2.97" means nothing, "window" does.</summary>
+        static string NearestPresetName(WallOpening o)
+        {
+            foreach (var a in Archetypes)
+                if (Mathf.Abs(o.Width - a.Width) < 0.02f && Mathf.Abs(o.Height - a.Height) < 0.02f)
+                    return a.Name;
+            // not a whole preset, but the width alone may still be a measured one
+            foreach (float wd in WallOpenings.Widths)
+                if (Mathf.Abs(o.Width - wd) < 0.02f) return $"{wd:0.##} m (retail width)";
+            return null;
+        }
 
         /// <summary>Archetypes are PRESETS of the same struct, never distinct types -- picking "garage" sets two
         /// numbers. Sizes are the measured retail values; they are defaults you drag away from, not law.</summary>
@@ -79,6 +121,18 @@ namespace UnturnedGodot
         /// commits it.</summary>
         public bool WallDrawMode;
 
+        /// <summary>Draw a roof or floor as a RECTANGLE you drag, instead of one auto-fitted to the current
+        /// walls. Auto-fit is a guess about what you meant and there is no way to argue with it -- it takes
+        /// the bounding box of every wall, so an L-shaped building gets a slab over the courtyard and a
+        /// building mid-edit gets a slab over whatever happens to exist. strawberry_cow: "roof tool should
+        /// be a drag rect instead of an auto-bake tool." Add roof/Add floor still auto-fit for the simple
+        /// case; this is the one you reach for when it guesses wrong.</summary>
+        public bool SlabDrawMode;
+        public SurfaceKind SlabDrawKind = SurfaceKind.Roof;
+        WallSurface _drawingSlab;
+        Vector3 _slabAnchor;
+        public bool DrawingSlab => _drawingSlab != null;
+
         // The wall being laid is a REAL WallSurface being resized under the cursor, not a ghost that is later
         // swapped for the real thing. Same reason the openings have no preview object: two representations of
         // one wall is two chances to disagree, and this repo already shipped a barricade whose ghost lay on
@@ -87,7 +141,8 @@ namespace UnturnedGodot
         Vector3 _drawAnchor;
 
         public bool Drawing => _drawing != null;
-        public string ToolText => WallDrawMode ? (_drawing != null ? "drawing wall — click to finish, Esc cancels" : "wall: click to start")
+        public string ToolText => SlabDrawMode ? (_drawingSlab != null ? $"drag the {SlabDrawKind.ToString().ToLower()} out — release to place" : $"{SlabDrawKind.ToString().ToLower()}: drag a rectangle")
+                                : WallDrawMode ? (_drawing != null ? "drag the wall out — release to place, Esc cancels" : "wall: press and drag")
                                 : _armed >= 0 ? $"placing {Archetypes[Mathf.PosMod(_armed, Archetypes.Length)].Name}"
                                 : "select";
 
@@ -116,7 +171,7 @@ namespace UnturnedGodot
         /// drawing -- it is a drafting aid for a hand on a mouse.</summary>
         public WallSurface AddWall(Vector3 origin, float yawDeg, float length)
         {
-            var w = SpawnWall(origin, yawDeg, SnapRun(length), NewWallThickness, ActiveMaterial, null);
+            var w = SpawnWall(SnapOrigin(origin), yawDeg, SnapRun(length), NewWallThickness, ActiveMaterial, null);
             _editor?.PushUndo("wall place", () => RemoveWall(w));
             return w;
         }
@@ -125,6 +180,12 @@ namespace UnturnedGodot
         /// structures grid.</summary>
         public static float SnapRun(float length) => Mathf.Max(WallOpenings.LatticeStep,
             Mathf.Round(length / WallOpenings.LatticeStep) * WallOpenings.LatticeStep);
+
+        /// <summary>Wall ENDS land on the same grid their lengths snap to. Snapping the length alone still
+        /// lets two exact-3 m walls miss each other, because nothing pinned where either one started -- which
+        /// is the source of the small gaps between drawn walls. Y is left alone; the grid is a floor plan.</summary>
+        public static Vector3 SnapOrigin(Vector3 p)
+            => new(WallOpenings.SnapGrid(p.X), p.Y, WallOpenings.SnapGrid(p.Z));
 
         /// <summary>Build a wall and register it, WITHOUT touching the undo stack. Undo actions run through
         /// here: a restore that called AddWall would push a fresh entry onto the stack it is being replayed
@@ -216,11 +277,25 @@ namespace UnturnedGodot
             o.V = a.FloorPinned ? 0f : v - o.Height * 0.5f;
             if (!a.FloorPinned)
             {
-                o.V = WallOpenings.Snap(o.V, WallOpenings.SillHeights, snapTol);
-                float head = WallOpenings.Snap(o.V + o.Height, WallOpenings.HeadHeights, snapTol);
+                // Shift PINS to the measured sill/head heights; without it the snap is the ordinary
+                // screen-space one you can pull away from. strawberry_cow wanted the standard heights on
+                // demand rather than always -- "they stay at the standard fixed heights while holding
+                // shift" -- because the old behaviour snapped whether you wanted it or not.
+                float tol = Input.IsKeyPressed(Key.Shift) ? float.MaxValue : snapTol;
+                o.V = WallOpenings.Snap(o.V, WallOpenings.SillHeights, tol);
+                float head = WallOpenings.Snap(o.V + o.Height, WallOpenings.HeadHeights, tol);
                 o.V = head - o.Height;
             }
-            o = WallOpenings.Clamp(o, w.Length, w.Height, w.Openings, index);
+            var was = w.Openings[index];
+            o = WallOpenings.Clamp(o, w.Length, w.Height, w.Openings, index,
+                                   was.U + was.Width * 0.5f, was.V + was.Height * 0.5f);
+            // A hard edge, not a shove. When a drag leaves no legal spot between two neighbours, Clamp's
+            // two-sided fallback parks the opening on top of one of them, and the editor looks like it is
+            // rearranging your building behind your back. Refusing instead makes a neighbour feel like a
+            // wall you slide along. strawberry_cow: "just prevent them from overlapping, not by moving,
+            // just like a hard edge".
+            if (WallOpenings.Overlaps(o, w.Openings, index)) return;
+            if (Mathf.Abs(o.U - was.U) < 1e-5f && Mathf.Abs(o.V - was.V) < 1e-5f) return;
             w.Openings[index] = o;
             w.Rebuild();
         }
@@ -263,6 +338,9 @@ namespace UnturnedGodot
                 }
             }
             o = WallOpenings.Clamp(o, w.Length, w.Height, w.Openings, index);
+            // Same hard edge when RESIZING: an edge dragged into a neighbour stops against it rather than
+            // growing through it and displacing it.
+            if (WallOpenings.Overlaps(o, w.Openings, index)) return;
             w.Openings[index] = o;
             w.Rebuild();
         }
@@ -310,13 +388,31 @@ namespace UnturnedGodot
                 {
                     var cap = _dragCapture; var w = _selWall;
                     _drag = Drag.None; _dragCapture = null;
+                    HideReadout();
                     if (cap != null && w != null) _editor.PushUndo("opening edit", () => Restore(w, cap));
+                }
+                // Release finishes the wall. Click-to-start/click-to-finish left the tool in a state that
+                // looks identical to idle while it is actually mid-wall, and every other drag in this editor
+                // is press-move-release.
+                else if (_drawing != null)
+                {
+                    StretchDraw(mp);
+                    _drawing = null;               // AddWall already pushed the undo
+                }
+                else if (_drawingSlab != null)
+                {
+                    StretchSlab(mp);
+                    // a slab dragged to nothing is a misclick, not a surface
+                    if (_drawingSlab.Length < 0.5f || _drawingSlab.Height < 0.5f)
+                    { RemoveWall(_drawingSlab); _editor?.PopUndo(); }
+                    _drawingSlab = null;
                 }
             }
             else if (ev is InputEventMouseMotion)
             {
                 if (_drag != Drag.None) OnDrag(GetViewport().GetMousePosition());
                 else if (_drawing != null) StretchDraw(GetViewport().GetMousePosition());
+                else if (_drawingSlab != null) StretchSlab(GetViewport().GetMousePosition());
             }
             else if (ev is InputEventKey { Pressed: true, Echo: false } k)
             {
@@ -328,11 +424,21 @@ namespace UnturnedGodot
                 else if (k.Keycode == Key.Escape)
                 {
                     if (_drawing != null) { CancelDraw(); }
+                    else if (_drawingSlab != null) { RemoveWall(_drawingSlab); _drawingSlab = null; _editor?.PopUndo(); }
                     else if (_selOpening >= 0) _selOpening = -1;
                     else _selWall = null;
                     PositionHandles();
                 }
                 else if (k.Keycode >= Key.Key1 && k.Keycode <= Key.Key6) _armed = (int)(k.Keycode - Key.Key1);
+                // Ctrl+Z. The undo STACK was always here -- every wall, opening and edit pushes onto it --
+                // but the key was only ever bound in EditorObjects, so in Buildings mode there was nothing
+                // to press. An undo history nobody can reach is the same as no undo history.
+                else if (k.CtrlPressed && k.Keycode == Key.Z)
+                {
+                    if (_drawing != null) CancelDraw();
+                    else if (_drawingSlab != null) { RemoveWall(_drawingSlab); _drawingSlab = null; _editor?.PopUndo(); }
+                    else { _editor.Undo(); _selOpening = -1; PositionHandles(); }
+                }
             }
         }
 
@@ -340,6 +446,20 @@ namespace UnturnedGodot
         {
             var from = _cam.ProjectRayOrigin(screen);
             var dir = _cam.ProjectRayNormal(screen);
+
+            if (SlabDrawMode)
+            {
+                if (_drawingSlab == null && GroundAt(from, dir, out var sp))
+                {
+                    _slabAnchor = new Vector3(WallOpenings.SnapGrid(sp.X), SlabTopY(sp.Y), WallOpenings.SnapGrid(sp.Z));
+                    _selWall = null; _selOpening = -1; PositionHandles();
+                    _drawingSlab = SpawnWall(_slabAnchor, 0f, 0.01f, SlabThickness, ActiveMaterial, null,
+                                             0.01f, -90f, SlabDrawKind);
+                    _editor?.PushUndo(SlabDrawKind == SurfaceKind.Roof ? "roof draw" : "floor draw",
+                                      () => RemoveWall(_drawingSlab));
+                }
+                return;
+            }
 
             if (WallDrawMode)
             {
@@ -350,7 +470,7 @@ namespace UnturnedGodot
                     _selWall = null; _selOpening = -1; PositionHandles();
                     _drawing = AddWall(p, 0f, WallOpenings.LatticeStep);
                 }
-                else _drawing = null;      // second click commits; AddWall already pushed the undo
+                // press starts it; the release handler commits it
                 return;
             }
 
@@ -413,6 +533,37 @@ namespace UnturnedGodot
 
         /// <summary>Resize the wall being laid to reach the cursor. Length snaps to the lattice and yaw to 15
         /// degrees, so a run drawn by hand still lines up with anything built on the structures grid.</summary>
+        /// <summary>The height a drawn slab sits at: on top of the walls if there are any, otherwise where
+        /// you clicked. A roof you draw before there are walls is a roof at ground level, which is at least
+        /// somewhere you can see it and drag.</summary>
+        float SlabTopY(float fallback)
+        {
+            float top = float.MinValue;
+            foreach (var w in _walls)
+                if (IsInstanceValid(w) && w.Kind == SurfaceKind.Wall)
+                    top = Mathf.Max(top, w.Position.Y + w.Height);
+            if (top <= float.MinValue) return fallback;
+            return SlabDrawKind == SurfaceKind.Roof ? top + SlabThickness * 0.5f : fallback;
+        }
+
+        void StretchSlab(Vector2 screen)
+        {
+            if (_drawingSlab == null || !IsInstanceValid(_drawingSlab)) { _drawingSlab = null; return; }
+            var from = _cam.ProjectRayOrigin(screen);
+            var dir = _cam.ProjectRayNormal(screen);
+            var plane = new Plane(Vector3.Up, _slabAnchor.Y);
+            var hit = plane.IntersectsRay(from, dir);
+            if (hit == null) return;
+            float x1 = WallOpenings.SnapGrid(hit.Value.X), z1 = WallOpenings.SnapGrid(hit.Value.Z);
+            float minX = Mathf.Min(_slabAnchor.X, x1), maxX = Mathf.Max(_slabAnchor.X, x1);
+            float minZ = Mathf.Min(_slabAnchor.Z, z1), maxZ = Mathf.Max(_slabAnchor.Z, z1);
+            // same frame AddSlab builds in: origin at (minX, y, maxZ), run along +X, depth along -Z
+            _drawingSlab.Position = new Vector3(minX, _slabAnchor.Y, maxZ);
+            _drawingSlab.Length = Mathf.Max(0.01f, maxX - minX);
+            _drawingSlab.Height = Mathf.Max(0.01f, maxZ - minZ);
+            _drawingSlab.Rebuild();
+        }
+
         void StretchDraw(Vector2 screen)
         {
             if (_drawing == null || !IsInstanceValid(_drawing)) { _drawing = null; return; }
@@ -1147,6 +1298,8 @@ namespace UnturnedGodot
             float tol = SnapTolerance(_selWall, u, v);
             if (_drag == Drag.Move) MoveOpening(_selWall, _selOpening, u - _grabDU, v - _grabDV, tol);
             else DragEdge(_selWall, _selOpening, _drag, u, v, tol);
+            if (_selOpening >= 0 && _selOpening < _selWall.Openings.Count)
+                ShowReadout(_selWall, _selWall.Openings[_selOpening]);
             PositionHandles();
         }
 

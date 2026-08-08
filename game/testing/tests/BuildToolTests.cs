@@ -981,4 +981,84 @@ namespace UnturnedGodot.Testing
             }
         }
     }
+    // The two correctness changes from strawberry_cow's editor pass: walls land on a shared grid, and
+    // openings stop against each other instead of being shoved out of the way.
+    public class BuildToolGridAndHardEdges : GameTest
+    {
+        public override string Name => "buildtool.grid_snap_and_opening_hard_edges";
+
+        public override IEnumerable<Step> Run()
+        {
+            var tool = new EditorBuildings();
+            World.AddChild(tool);
+            var ed = new Editor();
+            World.AddChild(ed);
+            tool.Setup(ed, null, null);
+            tool.Active = true;
+            yield return Step.Ticks(1);
+
+            // ---- a wall's ENDS land on the grid, not just its length -------------------------------
+            // BREAK IT: snap only the length (what it did before) -- the wall is an exact 3 m and still
+            // starts at 1.4, so the next wall along cannot meet it and you get a hairline gap.
+            foreach (var w in new List<WallSurface>(tool.Walls)) tool.RemoveWall(w);
+            var off = tool.AddWall(new Vector3(1.4f, 0f, -2.2f), 0f, 4.1f);
+            yield return Step.Ticks(1);
+            float g = WallOpenings.GridStep;
+            T.Check($"wall origin snapped to the grid ({off.Position.X:0.##}, {off.Position.Z:0.##})",
+                    Mathf.Abs(off.Position.X / g - Mathf.Round(off.Position.X / g)) < 1e-3f
+                    && Mathf.Abs(off.Position.Z / g - Mathf.Round(off.Position.Z / g)) < 1e-3f);
+            T.Check($"and its length is still on the lattice ({off.Length:0.##})",
+                    Mathf.Abs(off.Length / g - Mathf.Round(off.Length / g)) < 1e-3f);
+
+            // two walls drawn from nearby off-grid points must end up sharing an endpoint exactly
+            var a = tool.AddWall(new Vector3(0.4f, 0f, 0.3f), 0f, 3f);
+            var b = tool.AddWall(new Vector3(2.6f, 0f, -0.4f), 90f, 3f);
+            yield return Step.Ticks(1);
+            // a runs +X from its origin, so it is a's END that must meet b's START
+            T.Check($"two off-grid clicks produce walls that actually touch "
+                    + $"({a.UVToWorld(a.Length, 0f)} / {b.Position})",
+                    a.UVToWorld(a.Length, 0f).DistanceTo(b.Position) < 1e-3f);
+
+            // ---- an opening stops against its neighbour ---------------------------------------------
+            foreach (var w in new List<WallSurface>(tool.Walls)) tool.RemoveWall(w);
+            var wall = tool.AddWall(Vector3.Zero, 0f, 12f);
+            wall.Openings.Add(new WallOpening(1f, 1f, 3f, 2f));       // index 0, the one we drag
+            wall.Openings.Add(new WallOpening(6f, 1f, 3f, 2f));       // index 1, the blocker
+            wall.Rebuild();
+            yield return Step.Ticks(1);
+
+            // drag 0 hard right, straight through 1
+            for (int i = 0; i < 12; i++) tool.MoveOpening(wall, 0, 4f + i * 0.8f, 2f, 0f);
+            yield return Step.Ticks(1);
+            var moved = wall.Openings[0];
+            var block = wall.Openings[1];
+            // BREAK IT: let Clamp's two-sided fallback stand -- the dragged opening ends up sitting on top
+            // of its neighbour, which is exactly the "pushing things around" this replaced.
+            T.Check($"the dragged opening did not end up overlapping its neighbour "
+                    + $"(u {moved.U:0.##}..{moved.U1:0.##} vs {block.U:0.##}..{block.U1:0.##})",
+                    !WallOpenings.Overlaps(moved, wall.Openings, 0));
+            T.Check($"it stopped against it rather than stopping short ({moved.U1:0.##} vs {block.U:0.##})",
+                    moved.U1 <= block.U + 1e-3f && moved.U1 > block.U - 0.35f);
+            T.Check("and the blocker did not move", Mathf.Abs(block.U - 6f) < 1e-3f);
+
+            // resizing into it stops too
+            float before = wall.Openings[1].Width;
+            for (int i = 0; i < 8; i++) tool.DragEdge(wall, 1, EditorBuildings.Drag.EdgeU0, 4f - i * 0.3f, 2f, 0f);
+            yield return Step.Ticks(1);
+            T.Check($"an edge dragged into a neighbour stops as well "
+                    + $"({wall.Openings[1].U:0.##}, was 6.00, width {before:0.##} -> {wall.Openings[1].Width:0.##})",
+                    !WallOpenings.Overlaps(wall.Openings[1], wall.Openings, 1));
+
+            // ---- undo is reachable from this mode ---------------------------------------------------
+            // Ctrl+Z is bound in _UnhandledInput, which a headless test cannot press; what it calls is
+            // Editor.Undo, and what matters is that the building tool actually filled the stack.
+            int depth = ed.UndoDepth;
+            T.Check($"the building tool pushed undo steps ({depth})", depth > 0);
+            int wallsBefore = tool.Walls.Count;
+            ed.Undo();
+            yield return Step.Ticks(1);
+            T.Check($"and undo takes one back ({wallsBefore} -> {tool.Walls.Count})",
+                    tool.Walls.Count == wallsBefore - 1);
+        }
+    }
 }
