@@ -4330,6 +4330,7 @@ namespace UnturnedGodot
                     else if (collider is Deployable dep && !dep.IsWreck) { dep.TakeDamage(b.VehicleDamage); SpawnSurfaceImpact(point, hit["normal"].AsVector3(), Surf.Metal); HitmarkerHUD.Instance?.ShowCircle(); }   // gunfire damages a placed generator (metal sparks) -- Vehicle_Damage; circle hitmarker
                     else if (collider is Door bdoor) { bdoor.TakeDamage(b.VehicleDamage); SpawnSurfaceImpact(point, hit["normal"].AsVector3(), Surf.Wood); HitmarkerHUD.Instance?.ShowCircle(); }   // you can shoot a door open the hard way; circle hitmarker
                     else if (collider is Bed bbed) { bbed.TakeDamage(b.VehicleDamage); SpawnSurfaceImpact(point, hit["normal"].AsVector3(), Surf.Wood); HitmarkerHUD.Instance?.ShowCircle(); }   // circle hitmarker
+                    else if (collider is GlassPane gpane) { gpane.TakeDamage(b.ObjectDamage); HitmarkerHUD.Instance?.ShowCircle(); }   // glass pane -> shatter; the pane's own Glass_0 shards ARE the impact (no surface burst)
                     else   // world/prop/terrain -> material impact; terrain samples its splatmap PER-POINT (sand/road/dirt/grass) for the real ground material
                     {
                         Surf sf = Surf.Concrete;

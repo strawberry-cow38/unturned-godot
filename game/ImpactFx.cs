@@ -18,7 +18,12 @@ namespace UnturnedGodot
     {
         // A burst big enough that a fast particle never leaves it -> the auto-AABB frustum cull can't hide the effect.
         // (This single missing line is why hard-surface + blood impacts "didn't exist" on screen.)
-        static readonly Aabb Guard = new Aabb(new Vector3(-10f, -10f, -10f), new Vector3(20f, 20f, 20f));
+        // HUGE fixed cull box -> effectively KILLS engine frustum-culling on the burst (master). CpuParticles3D's
+        // auto-AABB does NOT follow fast launched particles, so a one-shot burst with velocity+gravity leaves any
+        // tightly-sized box within a frame and godot culls the whole system mid-flight -> "flicker + derender"
+        // (master/tinyclaw; same bug + fix family as DestructibleField.PlayBreakEffect). A ±100 m box is never culled
+        // while the impact is anywhere near view; the cost is negligible for a 1 s burst.
+        static readonly Aabb Guard = new Aabb(new Vector3(-100f, -100f, -100f), new Vector3(200f, 200f, 200f));
 
         // --- caches (static: ProjectSettings/File are static; the tree comes in via `scene`) ---
         static readonly Dictionary<Surf, ImageTexture> _debris = new();
@@ -26,7 +31,6 @@ namespace UnturnedGodot
         static readonly Dictionary<Surf, AudioStream> _snd = new();
         static ImageTexture _blood; static bool _bloodTried;
         static AudioStream _bloodSnd; static bool _bloodSndTried;
-        static Texture2D _flashTex; static bool _flashTried;
 
         static ImageTexture LoadTex(string rel)
         {
@@ -71,7 +75,7 @@ namespace UnturnedGodot
             var dtex = hard ? DecalTex(surf) : null;
             if (dtex != null)
             {
-                var dec = new Decal { TextureAlbedo = dtex, Size = new Vector3(0.55f, 0.35f, 0.55f), AlbedoMix = 1f, Modulate = new Color(0.22f, 0.21f, 0.20f) };   // DARK hole so it reads on light surfaces (a grey decal on a grey wall was invisible); bigger for range
+                var dec = new Decal { TextureAlbedo = dtex, Size = new Vector3(0.4f, 0.3f, 0.4f), AlbedoMix = 1f, Modulate = Colors.White };   // the retail bullet hole, left ALONE (master: the decal wasn't the problem)
                 (attachTo ?? (Node)scene).AddChild(dec);
                 Vector3 t = Mathf.Abs(up.Dot(Vector3.Up)) < 0.95f ? Vector3.Up : Vector3.Right;
                 Vector3 right = up.Cross(t).Normalized();
@@ -86,9 +90,9 @@ namespace UnturnedGodot
             bool sheet = itex != null && itex.GetWidth() >= itex.GetHeight() * 3;
             var mat = new StandardMaterial3D
             {
-                ShadingMode = BaseMaterial3D.ShadingModeEnum.PerPixel,   // source: Unity Standard shader -> LIT (+ casts/receives shadow)
-                Transparency = BaseMaterial3D.TransparencyEnum.AlphaScissor, AlphaScissorThreshold = 0.46f,   // source Cutout (_Mode 1, _Cutoff ~0.46)
-                AlbedoColor = Colors.White,   // source startColor is white; the texture carries the material's colour
+                ShadingMode = BaseMaterial3D.ShadingModeEnum.PerPixel,   // source: LIT chips (master: contrast/colour was NOT the problem -- the cull was)
+                Transparency = BaseMaterial3D.TransparencyEnum.AlphaScissor, AlphaScissorThreshold = 0.46f,   // source Cutout; keeps the chip shape + renders reliably
+                AlbedoColor = Colors.White,   // take the sprite straight (source colour) -- tinting via VertexColorUseAsAlbedo is fragile on CpuParticles3D (tinyclaw)
                 BillboardMode = BaseMaterial3D.BillboardModeEnum.Particles,
                 Roughness = 1f, Metallic = 0f, SpecularMode = BaseMaterial3D.SpecularModeEnum.Disabled,
                 TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest,
@@ -100,23 +104,18 @@ namespace UnturnedGodot
             var dust = new CpuParticles3D
             {
                 Emitting = true, OneShot = true, Explosiveness = 1f,
-                Amount = metal ? 16 : 8, Lifetime = 1.0f,
-                Direction = up, Spread = 45f,   // source ShapeModule Cone angle 45deg
-                InitialVelocityMin = metal ? 4f : 2f, InitialVelocityMax = metal ? 8f : 4f,
+                Amount = metal ? 28 : 20, Lifetime = 1.0f,   // a DENSE cone (master wants a visible cone of chips, not a brief flash)
+                Direction = up, Spread = 50f,   // cone spraying off the surface, back toward the shooter
+                InitialVelocityMin = metal ? 5f : 3f, InitialVelocityMax = metal ? 9f : 6f,
                 Gravity = new Vector3(0f, -9.8f, 0f),
-                ScaleAmountMin = metal ? 0.3f : 0.5f, ScaleAmountMax = metal ? 0.6f : 1.0f,   // scaled up ~2x from source (0.25-0.5m) -- source size is invisible at play distance
+                ScaleAmountMin = metal ? 0.3f : 0.5f, ScaleAmountMax = metal ? 0.6f : 1.0f,   // reasonable chip size (bigger than source 0.25-0.5m for a readable cone, not huge)
                 Mesh = new QuadMesh { Size = Vector2.One, Material = mat },
-                VisibilityAabb = Guard,   // <-- THE FIX: without this the fast chips are frustum-culled and the burst vanishes
+                VisibilityAabb = Guard,   // fast chips would otherwise be frustum-culled (no auto-AABB)
             };
             if (sheet) { dust.AnimOffsetMin = 0f; dust.AnimOffsetMax = 1f; }
             scene.AddChild(dust);
             dust.GlobalPosition = point + up * 0.03f;
             Kill(tree, dust, 1.4);
-
-            // readability element: a brief additive FLASH pop at the hit -- reads on ANY surface (the source debris chips
-            // are near-invisible in a bright scene at range: grey chips on a grey wall vanish, which the point-blank +
-            // dark-background --impacttest harness never revealed). The dark decal above is the persistent read.
-            Flash(scene, point);
 
             PlaySound(scene, Snd(surf), point);
         }
@@ -191,44 +190,6 @@ namespace UnturnedGodot
             Kill(scene.GetTree(), ps, 1.4);
             if (!_bloodSndTried) { _bloodSndTried = true; _bloodSnd = LoadWav("res://content/impact_flesh.wav"); }
             PlaySound(scene, _bloodSnd, point);
-        }
-
-        static Texture2D FlashTex()
-        {
-            if (!_flashTried) { _flashTried = true; _flashTex = LoadTex("res://content/muzzleflash.png"); }
-            return _flashTex;
-        }
-
-        // A brief bright ADDITIVE flash at the impact -- the eye-catcher that reads on ANY surface (additive is always
-        // brighter than the background, light or dark). Short-lived; the dust + decal carry the lingering read.
-        static void Flash(Node scene, Vector3 point)
-        {
-            if (scene == null) return;
-            var shrink = new Curve(); shrink.AddPoint(new Vector2(0f, 1f)); shrink.AddPoint(new Vector2(1f, 0f));
-            var mat = new StandardMaterial3D
-            {
-                ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
-                Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
-                BlendMode = BaseMaterial3D.BlendModeEnum.Add,
-                AlbedoColor = new Color(1f, 0.88f, 0.55f),
-                BillboardMode = BaseMaterial3D.BillboardModeEnum.Particles,
-                CullMode = BaseMaterial3D.CullModeEnum.Disabled,
-            };
-            var tex = FlashTex(); if (tex != null) mat.AlbedoTexture = tex;
-            var ps = new CpuParticles3D
-            {
-                Emitting = true, OneShot = true, Explosiveness = 1f,
-                Amount = 3, Lifetime = 0.17f,
-                Direction = Vector3.Up, Spread = 0f,
-                InitialVelocityMin = 0f, InitialVelocityMax = 0f,
-                ScaleAmountMin = 1.3f, ScaleAmountMax = 2.0f, ScaleAmountCurve = shrink,
-                AngleMin = -180f, AngleMax = 180f,
-                Mesh = new QuadMesh { Size = Vector2.One, Material = mat },
-                VisibilityAabb = Guard,
-            };
-            scene.AddChild(ps);
-            ps.GlobalPosition = point;
-            Kill(scene.GetTree(), ps, 0.35);
         }
 
         static void PlaySound(Node scene, AudioStream a, Vector3 pos)
