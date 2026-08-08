@@ -14,9 +14,9 @@ namespace UnturnedGodot
     {
         readonly EditorBuildings _b;
         Button _draw;
-        Button _drawFloor, _drawRoof, _room;
+        Button _drawFloor, _drawRoof, _room, _del;
 
-        enum Tool { None, Wall, Room, Floor, Roof, Opening }
+        enum Tool { None, Wall, Room, Floor, Roof, Opening, Delete }
 
         /// <summary>Exactly one tool is active. Selection used to be done by each button clearing the others
         /// by hand, in five places, and every one of them cleared a DIFFERENT subset -- the opening presets
@@ -29,6 +29,7 @@ namespace UnturnedGodot
             _b.WallDrawMode = t == Tool.Wall;
             _b.RoomDrawMode = t == Tool.Room;
             _b.SlabDrawMode = t == Tool.Floor || t == Tool.Roof;
+            _b.DeleteDrawMode = t == Tool.Delete;
             if (t == Tool.Floor) _b.SlabDrawKind = SurfaceKind.Floor;
             if (t == Tool.Roof) _b.SlabDrawKind = SurfaceKind.Roof;
             _b.Arm(t == Tool.Opening ? archetype : -1);
@@ -37,6 +38,7 @@ namespace UnturnedGodot
             if (_room != null) _room.ButtonPressed = t == Tool.Room;
             if (_drawFloor != null) _drawFloor.ButtonPressed = t == Tool.Floor;
             if (_drawRoof != null) _drawRoof.ButtonPressed = t == Tool.Roof;
+            if (_del != null) _del.ButtonPressed = t == Tool.Delete;
             for (int i = 0; i < _arch.Count; i++)
                 _arch[i].ButtonPressed = t == Tool.Opening && i == archetype;
         }
@@ -67,6 +69,11 @@ namespace UnturnedGodot
                                  TooltipText = "drag a rectangle — four walls on the grid, shared edges merged" };
             _room.Pressed += () => SetTool(_room.ButtonPressed ? Tool.Room : Tool.None);
             box.AddChild(_room);
+
+            _del = new Button { Text = "Delete / cut", ToggleMode = true,
+                                TooltipText = "click a wall to remove it, or drag along one to cut a piece out" };
+            _del.Pressed += () => SetTool(_del.ButtonPressed ? Tool.Delete : Tool.None);
+            box.AddChild(_del);
 
             // Thickness is a slider rather than an exterior/interior toggle: 0.70 and 0.50 are the two
             // measured clusters, not the only two legal answers, and the ask was for things to be tweakable.

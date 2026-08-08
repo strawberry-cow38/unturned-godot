@@ -27,10 +27,11 @@ namespace UnturnedGodot
         int _armed = -1;                       // archetype index armed for placement, -1 = none
 
         // drag state
-        public enum Drag { None, Move, EdgeU0, EdgeU1, EdgeV0, EdgeV1 }
+        public enum Drag { None, Move, EdgeU0, EdgeU1, EdgeV0, EdgeV1, MoveWall }
         Drag _drag = Drag.None;
         float _grabDU, _grabDV;
         WallOpening[] _dragCapture;
+        Vector3 _wallGrab, _wallFrom;          // where the drag started, and where the wall was
 
         // Hold-to-repeat undo. The lead-in stops a normal Ctrl+Z from firing twice on a slow keypress;
         // after it, repeats run fast enough to walk back a bad five minutes without hammering the key.
@@ -184,6 +185,11 @@ namespace UnturnedGodot
         Vector3 _roomAnchor;
         public bool DrawingRoom => _room.Count > 0;
 
+        /// <summary>Delete tool. Click a wall to remove it; drag along one to cut that span out of it.</summary>
+        public bool DeleteDrawMode;
+        WallSurface _cutWall;
+        float _cutFrom;
+
         public bool SlabDrawMode;
         public SurfaceKind SlabDrawKind = SurfaceKind.Roof;
         WallSurface _drawingSlab;
@@ -198,7 +204,8 @@ namespace UnturnedGodot
         Vector3 _drawAnchor;
 
         public bool Drawing => _drawing != null;
-        public string ToolText => SlabDrawMode ? (_drawingSlab != null ? $"drag the {SlabDrawKind.ToString().ToLower()} out — release to place" : $"{SlabDrawKind.ToString().ToLower()}: drag a rectangle")
+        public string ToolText => DeleteDrawMode ? "delete: click a wall, or drag along one to cut a piece out"
+                                : SlabDrawMode ? (_drawingSlab != null ? $"drag the {SlabDrawKind.ToString().ToLower()} out — release to place" : $"{SlabDrawKind.ToString().ToLower()}: drag a rectangle")
                                 : WallDrawMode ? (_drawing != null ? "drag the wall out — release to place, Esc cancels" : "wall: press and drag")
                                 : _armed >= 0 ? $"placing {Archetypes[Mathf.PosMod(_armed, Archetypes.Length)].Name}"
                                 : "select";
@@ -479,6 +486,20 @@ namespace UnturnedGodot
                     if (Editor.PointerOverUI(this)) return;
                     OnPress(mp);
                 }
+                else if (_drag == Drag.MoveWall)
+                {
+                    var w = _selWall; var was = _wallFrom;
+                    _drag = Drag.None;
+                    HideReadout();
+                    if (w != null && IsInstanceValid(w) && w.Position != was)
+                    {
+                        var moved = w;
+                        _editor?.PushUndo("wall move", () =>
+                        { if (IsInstanceValid(moved)) { moved.Position = was; moved.Rebuild(); } });
+                        Undoable("merge after move", MergeDuplicateWalls);
+                        SolveCornersNow();
+                    }
+                }
                 else if (_drag != Drag.None)
                 {
                     var cap = _dragCapture; var w = _selWall;
@@ -505,6 +526,19 @@ namespace UnturnedGodot
                     _room.Clear();
                     HideReadout();
                     if (!tiny) { Undoable("merge duplicate walls", MergeDuplicateWalls); SolveCornersNow(); }
+                }
+                else if (_cutWall != null)
+                {
+                    // a click deletes the wall; a drag takes out the span you dragged over
+                    var w = _cutWall; _cutWall = null;
+                    if (!IsInstanceValid(w)) return;
+                    float to = _cutFrom;
+                    if (PickWallAt(_cam.ProjectRayOrigin(mp), _cam.ProjectRayNormal(mp), out var same, out float u)
+                        && same == w) to = u;
+                    var before = Snapshot();
+                    if (Mathf.Abs(to - _cutFrom) < 0.15f) RemoveWall(w);
+                    else if (RemoveSpan(w, _cutFrom, to) == 0) return;
+                    _editor?.PushUndo("wall cut", () => RestoreAll(before));
                 }
                 else if (_drawingSlab != null)
                 {
@@ -556,6 +590,16 @@ namespace UnturnedGodot
         {
             var from = _cam.ProjectRayOrigin(screen);
             var dir = _cam.ProjectRayNormal(screen);
+
+            if (DeleteDrawMode)
+            {
+                if (PickWallAt(from, dir, out var dw, out float du))
+                {
+                    _cutWall = dw; _cutFrom = du;
+                    _selWall = null; _selOpening = -1; PositionHandles();
+                }
+                return;
+            }
 
             if (RoomDrawMode)
             {
@@ -637,7 +681,15 @@ namespace UnturnedGodot
                 int idx = w2.OpeningAt(u, v);
                 if (idx >= 0) { _selOpening = idx; var o = w2.Openings[idx]; _grabDU = u - (o.U + o.Width * 0.5f); _grabDV = v - (o.V + o.Height * 0.5f); Begin(Drag.Move); }
                 else if (_armed >= 0) _selOpening = AddOpening(w2, u, v, _armed);
-                else _selOpening = -1;
+                else
+                {
+                    // nothing else claimed the click, so this is a wall move. Grabbing on the GROUND plane
+                    // at the wall's own height rather than on the wall's surface: dragging a wall sideways
+                    // has to keep tracking once the cursor leaves the wall, which surface UVs cannot do.
+                    _selOpening = -1;
+                    if (GroundAtY(from, dir, w2.Position.Y, out var g))
+                    { _wallGrab = g; _wallFrom = w2.Position; _drag = Drag.MoveWall; }
+                }
                 PositionHandles();
             }
         }
@@ -743,6 +795,66 @@ namespace UnturnedGodot
         ///
         /// Two walls are the same wall when they lie on the same line, at the same height, and their runs
         /// touch. The survivor is stretched to cover both and inherits both sets of openings.</summary>
+        /// <summary>Cut a span out of a wall: shorten it, or split it in two if the span is in the middle.
+        ///
+        /// Openings travel with whichever piece still contains them, and one straddling the cut is dropped
+        /// rather than clipped -- half a window is not a window, and silently resizing someone's door to fit
+        /// a cut they made somewhere else is worse than removing it.</summary>
+        public int RemoveSpan(WallSurface w, float u0, float u1)
+        {
+            if (w == null || !IsInstanceValid(w)) return 0;
+            if (u0 > u1) (u0, u1) = (u1, u0);
+            u0 = Mathf.Max(0f, u0);
+            u1 = Mathf.Min(w.Length, u1);
+            if (u1 - u0 < 0.05f) return 0;
+
+            var dir = (w.UVToWorld(1f, 0f) - w.UVToWorld(0f, 0f)).Normalized();
+            bool head = u0 <= 0.02f, tail = u1 >= w.Length - 0.02f;
+            if (head && tail) { RemoveWall(w); return 1; }
+
+            var kept = new List<WallOpening>(w.Openings);
+            if (head)                                   // trim the start back to u1
+            {
+                w.Position += dir * u1;
+                w.Length -= u1;
+                w.Openings.Clear();
+                foreach (var o in kept)
+                {
+                    var m = o; m.U -= u1;
+                    if (m.U >= -0.02f && m.U + m.Width <= w.Length + 0.02f) w.Openings.Add(m);
+                }
+                w.Rebuild();
+                return 1;
+            }
+            if (tail)                                   // trim the end back to u0
+            {
+                w.Length = u0;
+                w.Openings.Clear();
+                foreach (var o in kept)
+                    if (o.U + o.Width <= w.Length + 0.02f) w.Openings.Add(o);
+                w.Rebuild();
+                return 1;
+            }
+
+            // a bite out of the middle: this wall keeps [0,u0], a new one takes [u1,Length]
+            float fullLen = w.Length;
+            var rightOrigin = w.UVToWorld(u1, 0f);
+            float yaw = w.RotationDegrees.Y, pitch = w.RotationDegrees.X;
+            var tailOpenings = new List<WallOpening>();
+            foreach (var o in kept)
+                if (o.U >= u1 - 0.02f) { var m = o; m.U -= u1; tailOpenings.Add(m); }
+
+            w.Length = u0;
+            w.Openings.Clear();
+            foreach (var o in kept) if (o.U + o.Width <= u0 + 0.02f) w.Openings.Add(o);
+            w.Rebuild();
+
+            SpawnWall(rightOrigin, yaw, fullLen - u1, w.Thickness, w.MaterialId, tailOpenings,
+                      w.Height, pitch, w.Kind, w.GableRise, w.Texel,
+                      w.InsetL0, w.InsetL1, w.InsetR0, w.InsetR1);
+            return 2;
+        }
+
         /// <summary>Every surface on the stage, as plans. Used for the coarse undo steps -- the operations
         /// that rearrange the whole building rather than touch one wall.</summary>
         public List<WallPlan> Snapshot()
@@ -1662,6 +1774,32 @@ namespace UnturnedGodot
             _dragCapture = _selWall?.Openings.ToArray();
         }
 
+        /// <summary>The wall under the cursor, and how far along its run the cursor is.</summary>
+        /// <summary>Where a ray meets the horizontal plane at height y.</summary>
+        static bool GroundAtY(Vector3 from, Vector3 dir, float y, out Vector3 hit)
+        {
+            hit = Vector3.Zero;
+            var p = new Plane(Vector3.Up, y).IntersectsRay(from, dir);
+            if (p == null) return false;
+            hit = p.Value;
+            return true;
+        }
+
+        bool PickWallAt(Vector3 from, Vector3 dir, out WallSurface wall, out float u)
+        {
+            wall = null; u = 0f;
+            float best = float.MaxValue;
+            foreach (var w in _walls)
+            {
+                if (!IsInstanceValid(w)) continue;
+                if (!w.RayToUVInside(from, dir, out float wu, out float wv)) continue;
+                float d = from.DistanceSquaredTo(w.UVToWorld(wu, wv));
+                if (d >= best) continue;
+                best = d; wall = w; u = wu;
+            }
+            return wall != null;
+        }
+
         /// <summary>Find the opening under the cursor by intersecting the ray with each wall's PLANE, taking
         /// the nearest. Needed because an opening is a hole in the collider and therefore invisible to a
         /// physics ray -- see the note in OnPress.</summary>
@@ -1734,6 +1872,22 @@ namespace UnturnedGodot
 
         void OnDrag(Vector2 screen)
         {
+            if (_drag == Drag.MoveWall)
+            {
+                if (_selWall == null || !IsInstanceValid(_selWall)) { _drag = Drag.None; return; }
+                var f = _cam.ProjectRayOrigin(screen);
+                var d = _cam.ProjectRayNormal(screen);
+                if (!GroundAtY(f, d, _wallFrom.Y, out var now)) return;
+                var moved = _wallFrom + (now - _wallGrab);
+                _selWall.Position = new Vector3(WallOpenings.SnapGrid(moved.X), _wallFrom.Y,
+                                                WallOpenings.SnapGrid(moved.Z));
+                _selWall.Rebuild();
+                EnsureReadout();
+                Billboard(_selWall.UVToWorld(_selWall.Length * 0.5f, _selWall.Height + 0.4f),
+                          $"{_selWall.Position.X:0.#}, {_selWall.Position.Z:0.#}");
+                PositionHandles();
+                return;
+            }
             if (_selWall == null || _selOpening < 0) return;
             var from = _cam.ProjectRayOrigin(screen);
             var dir = _cam.ProjectRayNormal(screen);

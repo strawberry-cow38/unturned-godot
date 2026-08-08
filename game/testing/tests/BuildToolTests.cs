@@ -1328,4 +1328,60 @@ namespace UnturnedGodot.Testing
             }
         }
     }
+    // "add delete wall tool, drag remove parts of walls."
+    public class BuildToolCutsSpansOutOfWalls : GameTest
+    {
+        public override string Name => "buildtool.cut_span_out_of_wall";
+
+        public override IEnumerable<Step> Run()
+        {
+            var tool = new EditorBuildings();
+            World.AddChild(tool);
+            var ed = new Editor();
+            World.AddChild(ed);
+            tool.Setup(ed, null, null);
+            yield return Step.Ticks(1);
+
+            // ---- a bite out of the middle splits the wall in two ------------------------------------
+            var w = tool.AddWall(Vector3.Zero, 0f, 12f);
+            w.Openings.Add(new WallOpening(1f, 1f, 2f, 2f));      // lives in the left piece
+            w.Openings.Add(new WallOpening(9f, 1f, 2f, 2f));      // lives in the right piece
+            w.Openings.Add(new WallOpening(5.2f, 1f, 1.5f, 2f));  // straddles the cut
+            w.Rebuild();
+            var startWorld = w.UVToWorld(0f, 0f);
+            yield return Step.Ticks(1);
+
+            T.Check($"cutting the middle makes two walls ({tool.RemoveSpan(w, 5f, 7f)} pieces)",
+                    tool.Walls.Count == 2);
+            yield return Step.Ticks(1);
+            var left = tool.Walls[0];
+            var right = tool.Walls[1];
+            T.Check($"the left piece stops at the cut ({left.Length:0.00})", Mathf.Abs(left.Length - 5f) < 0.05f);
+            T.Check($"the right piece starts after it ({right.Length:0.00})", Mathf.Abs(right.Length - 5f) < 0.05f);
+            T.Check($"and it starts where the cut ended ({right.UVToWorld(0f, 0f)})",
+                    right.UVToWorld(0f, 0f).DistanceTo(startWorld + new Vector3(7f, 0f, 0f)) < 0.05f);
+            T.Check($"the opening in the left piece stayed ({left.Openings.Count})", left.Openings.Count == 1);
+            T.Check($"the one in the right piece came with it, re-based "
+                    + $"({right.Openings.Count}, u={(right.Openings.Count > 0 ? right.Openings[0].U : -1f):0.0})",
+                    right.Openings.Count == 1 && Mathf.Abs(right.Openings[0].U - 2f) < 0.05f);
+            // BREAK IT: keep the straddling opening and it survives as a hole hanging off the cut edge,
+            // half of it in a wall that no longer exists.
+            T.Check("the one straddling the cut was dropped, not clipped",
+                    left.Openings.Count + right.Openings.Count == 2);
+
+            // ---- a cut at the end just shortens --------------------------------------------------------
+            foreach (var x in new List<WallSurface>(tool.Walls)) tool.RemoveWall(x);
+            var e = tool.AddWall(Vector3.Zero, 0f, 12f);
+            yield return Step.Ticks(1);
+            tool.RemoveSpan(e, 9f, 12f);
+            yield return Step.Ticks(1);
+            T.Check($"an end cut shortens rather than splits ({tool.Walls.Count} wall, {e.Length:0.0} m)",
+                    tool.Walls.Count == 1 && Mathf.Abs(e.Length - 9f) < 0.05f);
+
+            // ---- and a cut over the whole thing removes it ---------------------------------------------
+            tool.RemoveSpan(e, -1f, 99f);
+            yield return Step.Ticks(1);
+            T.Check($"a full-length cut removes the wall ({tool.Walls.Count})", tool.Walls.Count == 0);
+        }
+    }
 }
