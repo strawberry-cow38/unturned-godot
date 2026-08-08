@@ -202,9 +202,15 @@ namespace UnturnedGodot
         /// case; this is the one you reach for when it guesses wrong.</summary>
         /// <summary>Drag a rectangle and get four walls on the grid. The common case is a room and laying it
         /// one wall at a time is four draws that all have to agree with each other.</summary>
+        /// <summary>Drag a rectangle and get a foundation skirt around it, without needing walls first.
+        /// AddFoundation puts one under each wall you have already drawn, which is no use when the
+        /// foundation is the thing you want to lay out first.</summary>
+        public bool FoundationDrawMode;
+
         public bool RoomDrawMode;
         readonly List<WallSurface> _room = new();
         Vector3 _roomAnchor;
+        SurfaceKind _roomKind = SurfaceKind.Wall;
         public bool DrawingRoom => _room.Count > 0;
 
         /// <summary>Delete tool. Click a wall to remove it; drag along one to cut that span out of it.</summary>
@@ -227,7 +233,8 @@ namespace UnturnedGodot
 
         public bool Drawing => _drawing != null;
         public string ToolText => $"floor {ActiveFloor} (Q/E) · " + ToolName;
-        string ToolName => DeleteDrawMode ? "delete: click a wall, or drag along one to cut a piece out"
+        string ToolName => FoundationDrawMode ? "foundation: drag a rectangle"
+                                : DeleteDrawMode ? "delete: click a wall, or drag along one to cut a piece out"
                                 : SlabDrawMode ? (_drawingSlab != null ? $"drag the {SlabDrawKind.ToString().ToLower()} out — release to place" : $"{SlabDrawKind.ToString().ToLower()}: drag a rectangle")
                                 : WallDrawMode ? (_drawing != null ? "drag the wall out — release to place, Esc cancels" : "wall: press and drag")
                                 : _armed >= 0 ? $"placing {Archetypes[Mathf.PosMod(_armed, Archetypes.Length)].Name}"
@@ -685,16 +692,23 @@ namespace UnturnedGodot
                 return;
             }
 
-            if (RoomDrawMode)
+            if (RoomDrawMode || FoundationDrawMode)
             {
                 if (_room.Count == 0 && GroundOnFloor(from, dir, out var rp))
                 {
                     _roomAnchor = new Vector3(WallOpenings.SnapGrid(rp.X), rp.Y, WallOpenings.SnapGrid(rp.Z));
                     _selWall = null; _selOpening = -1; PositionHandles();
+                    _roomKind = FoundationDrawMode ? SurfaceKind.Foundation : SurfaceKind.Wall;
+                    float h = _roomKind == SurfaceKind.Foundation ? WallOpenings.FoundationDepth
+                                                                  : WallOpenings.DoorHeight;
+                    // a foundation hangs BELOW the level you drew it on; a room stands on it
+                    if (_roomKind == SurfaceKind.Foundation) _roomAnchor.Y -= h;
                     for (int i = 0; i < 4; i++)
-                        _room.Add(SpawnWall(_roomAnchor, i * 90f, 0.01f, NewWallThickness, ActiveMaterial, null));
+                        _room.Add(SpawnWall(_roomAnchor, i * 90f, 0.01f, NewWallThickness, ActiveMaterial, null,
+                                            h, 0f, _roomKind));
                     var made = new List<WallSurface>(_room);
-                    _editor?.PushUndo("room place", () => { foreach (var w in made) RemoveWall(w); });
+                    _editor?.PushUndo(_roomKind == SurfaceKind.Foundation ? "foundation draw" : "room place",
+                                      () => { foreach (var w in made) RemoveWall(w); });
                 }
                 return;
             }
@@ -1683,12 +1697,25 @@ namespace UnturnedGodot
             {
                 if (!IsInstanceValid(w) || w.Kind != SurfaceKind.Wall) continue;   // slabs do not stack on slabs
                 maxWallThickness = Mathf.Max(maxWallThickness, w.Thickness);
+                // Bound the walls' OUTER FACES, not their centrelines.
+                //
+                // This measured centrelines and then grew the result by half a thickness to reach the face.
+                // That was right while walls stopped at their centreline corners -- and wrong the moment
+                // corner solving started running on draw, because a solved wall ALREADY runs past the
+                // junction to the outer face, so the half-thickness got added to a wall that had it. The
+                // slab then hung over every corner by exactly that much. strawberry_cow spotted it in a
+                // render and correctly guessed floors over foundations.
+                //
+                // Taking the real face corners is right in both cases rather than right in the one I
+                // happened to write it in.
+                var face = w.GlobalTransform.Basis.Z.Normalized() * (w.Thickness * 0.5f);
                 foreach (float u in new[] { 0f, w.Length })
-                {
-                    var p = w.UVToWorld(u, 0f);
-                    minX = Mathf.Min(minX, p.X); maxX = Mathf.Max(maxX, p.X);
-                    minZ = Mathf.Min(minZ, p.Z); maxZ = Mathf.Max(maxZ, p.Z);
-                }
+                    foreach (var side in new[] { face, -face })
+                    {
+                        var p = w.UVToWorld(u, 0f) + side;
+                        minX = Mathf.Min(minX, p.X); maxX = Mathf.Max(maxX, p.X);
+                        minZ = Mathf.Min(minZ, p.Z); maxZ = Mathf.Max(maxZ, p.Z);
+                    }
                 baseY = Mathf.Min(baseY, w.Position.Y);
                 topY = Mathf.Max(topY, w.Position.Y + w.Height);
                 // (the slab used to copy this from the walls; it takes the ACTIVE material now -- see below)
@@ -1704,10 +1731,9 @@ namespace UnturnedGodot
             // The footprint above is measured on the wall MID-planes (UVToWorld's v=0 line lies at local z=0),
             // so flush means growing by half a wall. Stopping at the centre-line instead leaves the outer half
             // of every wall poking through the roof, which is a thin bright seam rather than an obvious fault.
-            // Flush, for both a floor and a FLAT roof. Only a pitched roof overhangs -- see RoofOverhang,
-            // which AddGableRoof applies; a flat slab hanging past the walls reads as a ledge.
-            float half = maxWallThickness * 0.5f;
-            minX -= half; maxX += half; minZ -= half; maxZ += half;
+            // No growth: the bounds above are already the outer faces. Only a pitched roof overhangs, and
+            // AddGableRoof applies that; a flat slab hanging past the walls reads as a ledge.
+
 
             // The slab's top lands where you would stand on it: at the walls' base for a floor, at their head
             // for a roof. Thickness runs along local Z, which the -90 pitch turns into world up.

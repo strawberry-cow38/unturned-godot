@@ -14,9 +14,9 @@ namespace UnturnedGodot
     {
         readonly EditorBuildings _b;
         Button _draw;
-        Button _drawFloor, _drawRoof, _room, _del;
+        Button _drawFloor, _drawRoof, _room, _del, _found;
 
-        enum Tool { None, Wall, Room, Floor, Roof, Opening, Delete }
+        enum Tool { None, Wall, Room, Floor, Roof, Opening, Delete, Foundation }
 
         /// <summary>Exactly one tool is active. Selection used to be done by each button clearing the others
         /// by hand, in five places, and every one of them cleared a DIFFERENT subset -- the opening presets
@@ -30,6 +30,7 @@ namespace UnturnedGodot
             _b.RoomDrawMode = t == Tool.Room;
             _b.SlabDrawMode = t == Tool.Floor || t == Tool.Roof;
             _b.DeleteDrawMode = t == Tool.Delete;
+            _b.FoundationDrawMode = t == Tool.Foundation;
             if (t == Tool.Floor) _b.SlabDrawKind = SurfaceKind.Floor;
             if (t == Tool.Roof) _b.SlabDrawKind = SurfaceKind.Roof;
             _b.Arm(t == Tool.Opening ? archetype : -1);
@@ -39,6 +40,7 @@ namespace UnturnedGodot
             if (_drawFloor != null) _drawFloor.ButtonPressed = t == Tool.Floor;
             if (_drawRoof != null) _drawRoof.ButtonPressed = t == Tool.Roof;
             if (_del != null) _del.ButtonPressed = t == Tool.Delete;
+            if (_found != null) _found.ButtonPressed = t == Tool.Foundation;
             for (int i = 0; i < _arch.Count; i++)
                 _arch[i].ButtonPressed = t == Tool.Opening && i == archetype;
         }
@@ -82,13 +84,12 @@ namespace UnturnedGodot
 
             var second = new GridContainer { Columns = 4 };
             second.AddThemeConstantOverride("h_separation", 4);
+            _found = ToolButton(second, EditorIcons.Glyph.Foundation, 44, "Draw foundation",
+                                "drag a rectangle — a skirt, no walls needed first",
+                                () => SetTool(_found.ButtonPressed ? Tool.Foundation : Tool.None));
             _del = ToolButton(second, EditorIcons.Glyph.Delete, 44, "Delete / cut",
                               "click a wall to remove it, or drag along one to cut a piece out",
                               () => SetTool(_del.ButtonPressed ? Tool.Delete : Tool.None));
-            IconAction(second, EditorIcons.Glyph.Foundation, 44, "Add foundation",
-                       $"a skirt under the walls — retail sinks {WallOpenings.FoundationDepth:0.#} m",
-                       () => Say(_b.AddFoundation() is int n && n > 0 ? $"foundation under {n} wall(s)"
-                                                                      : "draw some walls first"));
             IconAction(second, EditorIcons.Glyph.Import, 44, "Import",
                        "port the retail building selected below onto the stage", () => DoImport());
             IconAction(second, EditorIcons.Glyph.Bake, 44, "Bake to prop",
@@ -124,6 +125,10 @@ namespace UnturnedGodot
             autos.AddThemeConstantOverride("h_separation", 4);
             IconAction(autos, EditorIcons.Glyph.Floor, 40, "Auto floor", "fit a slab under every wall",
                        () => Say(_b.AddSlab(SurfaceKind.Floor) != null ? "floor added" : "draw some walls first"));
+            IconAction(autos, EditorIcons.Glyph.Foundation, 40, "Auto foundation",
+                       $"a skirt under every wall — retail sinks {WallOpenings.FoundationDepth:0.#} m",
+                       () => Say(_b.AddFoundation() is int fn && fn > 0 ? $"foundation under {fn} wall(s)"
+                                                                        : "draw some walls first"));
             IconAction(autos, EditorIcons.Glyph.Roof, 40, "Auto roof", "fit a roof over every wall",
                        () =>
                        {

@@ -398,9 +398,15 @@ namespace UnturnedGodot.Testing
             tool.Setup(ed, null, null);
             foreach (var old in new List<WallSurface>(tool.Walls)) tool.RemoveWall(old);
 
+            // FOUR walls, not two. With only a front and a back, "flush with the outer wall face" has no
+            // answer along X -- there is no wall at those ends to be flush with -- and the old assertion
+            // silently pinned the half-thickness the code happened to pad it by. Closing the room makes the
+            // expected footprint a fact about the walls rather than about the implementation.
             var o = EditorBuildings.StageOrigin;
             tool.AddWall(o + new Vector3(-6f, 0f, 0f), 0f, 12f);
             tool.AddWall(o + new Vector3(-6f, 0f, -9f), 0f, 12f);
+            tool.AddWall(o + new Vector3(-6f, 0f, -9f), -90f, 9f);
+            tool.AddWall(o + new Vector3(6f, 0f, -9f), -90f, 9f);
             yield return Step.Ticks(1);
 
             var floor = tool.AddSlab(SurfaceKind.Floor);
@@ -425,6 +431,11 @@ namespace UnturnedGodot.Testing
             // It spans the walls and stops FLUSH with their outer face -- not overhanging (retail does not)
             // and not stopping at the centre-line (which leaves the outer half of every wall poking through).
             // Walls run x -6..6 and z 0..-9 on their mid-planes, at 0.70 thick, so 12.7 x 9.7.
+            //
+            // BREAK IT: derive the footprint from the centrelines and add half a thickness. That is what this
+            // did, and it was right only while walls stopped at their centreline corners -- once corner
+            // solving ran on draw, a solved wall already reached the outer face and the slab hung over every
+            // corner by that half-thickness. Bounding the real face corners is right either way.
             float want = WallOpenings.DefaultThickness;
             T.Check($"it stops flush with the outer wall face ({floor.Length:0.###} x {floor.Height:0.###}, want {12f + want:0.###} x {9f + want:0.###})",
                     Mathf.Abs(floor.Length - (12f + want)) < 1e-2f && Mathf.Abs(floor.Height - (9f + want)) < 1e-2f);
