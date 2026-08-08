@@ -764,16 +764,23 @@ namespace UnturnedGodot.Testing
             // Heights are the sharpest check on the FRAME. Import off the raw mesh instead of the upright one
             // and the building comes back on its side: the walls are still walls, still rectangular, still
             // paired -- they are just 16 m "tall" and 4 m long, which no other assertion here would notice.
-            int sane = 0, tall = 0;
+            // WALLS only, and that is not the test being loosened to fit. Height means different things per
+            // kind: on a wall it is how tall it stands, on a floor or roof it is how far the slab reaches in
+            // plan, so House_00's ground floor is legitimately 21 m "high". Judging those by a wall's range
+            // would fail correct data. The frame check for a slab is that it lies flat at the right level,
+            // which is what buildtool.imports_floors asserts.
+            int sane = 0, tall = 0, judged = 0;
             float maxLen = 0f;
             foreach (var p in plans)
             {
+                maxLen = Mathf.Max(maxLen, p.Length);
+                if (p.Kind != SurfaceKind.Wall) continue;
+                judged++;
                 if (p.Height > 1.5f && p.Height < 14f) sane++;
                 if (p.Height >= 14f) tall++;
-                maxLen = Mathf.Max(maxLen, p.Length);
             }
-            T.Check($"wall heights are wall-shaped ({sane} of {plans.Count} between 1.5 and 14 m, {tall} absurd)",
-                    sane > plans.Count / 2 && tall == 0);
+            T.Check($"wall heights are wall-shaped ({sane} of {judged} between 1.5 and 14 m, {tall} absurd)",
+                    judged > 0 && sane > judged / 2 && tall == 0);
             T.Check($"and the longest run matches a house, not a continent ({maxLen:0.#} m)", maxLen > 4f && maxLen < 40f);
 
             int withOpenings = 0, openings = 0;
@@ -1482,6 +1489,45 @@ namespace UnturnedGodot.Testing
             yield return Step.Ticks(1);
             T.Check("and so is one too big for the wall it is dropped on",
                     !tool.ReparentOpening(a, 0, tiny, 0.75f, 2f));
+        }
+    }
+    // The last of the importer's "not read at all" list: floors.
+    public class BuildToolImportsFloors : GameTest
+    {
+        public override string Name => "buildtool.imports_floors";
+
+        public override IEnumerable<Step> Run()
+        {
+            string obj = ProjectSettings.GlobalizePath("res://content/objects/House_00.obj");
+            if (!System.IO.File.Exists(obj)) { T.Fail("House_00.obj missing"); yield break; }
+
+            var plans = BuildingImport.FromObj(obj);
+            var floors = new List<WallPlan>();
+            foreach (var pl in plans) if (pl.Kind == SurfaceKind.Floor) floors.Add(pl);
+            T.Check($"a floor came back ({floors.Count})", floors.Count >= 1);
+            if (floors.Count == 0) yield break;
+
+            // Measured off the mesh independently: the only substantial horizontal upward plane is the
+            // brown ground slab at y = 0, 270 m2. Everything else up there is a sill or a ledge.
+            var f = floors[0];
+            T.Check($"it sits at ground level ({f.Y:0.00})", Mathf.Abs(f.Y) < 0.6f);
+            T.Check($"and covers the building, not a ledge ({f.Length:0.#} x {f.Height:0.#} m)",
+                    f.Length > 10f && f.Height > 10f && f.Length < 30f && f.Height < 30f);
+            T.Check($"lying flat ({f.Pitch:0.#} deg)", Mathf.Abs(f.Pitch + 90f) < 1f);
+
+            // BREAK IT: drop the roof-colour gate and the roof planes come back as floors too -- the exact
+            // failure the first roof attempt had in the opposite direction, 174 horizontal triangles read as
+            // building-sized slabs.
+            int roofs = 0;
+            foreach (var pl in plans) if (pl.Kind == SurfaceKind.Roof) roofs++;
+            T.Check($"and the roofs are still roofs, not floors ({roofs} roof, {floors.Count} floor)",
+                    roofs == 4 && floors.Count <= 2);
+
+            // it has to survive the save format like everything else
+            var back = WallSave.Read(WallSave.Write(plans).Split('\n'));
+            int backFloors = 0;
+            foreach (var pl in back) if (pl.Kind == SurfaceKind.Floor) backFloors++;
+            T.Check($"floors round-trip through save ({backFloors})", backFloors == floors.Count);
         }
     }
 }

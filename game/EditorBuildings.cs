@@ -1670,11 +1670,12 @@ namespace UnturnedGodot
             int solved = SolveCorners().Count;
 
             ActiveMaterial = mat;
-            int nw = 0, nr = 0, nf = 0, nop = 0, ngab = 0;
+            int nw = 0, nr = 0, nf = 0, nfl = 0, nop = 0, ngab = 0;
             foreach (var pl in plans)
             {
                 if (pl.Kind == SurfaceKind.Roof) nr++;
                 else if (pl.Kind == SurfaceKind.Foundation) nf++;
+                else if (pl.Kind == SurfaceKind.Floor) nfl++;
                 else nw++;
                 if (pl.GableRise > 0.01f) ngab++;
                 nop += pl.Openings.Count;
@@ -1698,7 +1699,7 @@ namespace UnturnedGodot
                 }
             GD.Print($"[editor-buildings] {solved} surfaces extended to close corners");
             GD.Print($"[editor-buildings] imported {buildingName}: {plans.Count} surfaces "
-                     + $"({nw} wall, {nr} roof, {nf} foundation, {ngab} gabled) with {nop} openings");
+                     + $"({nw} wall, {nr} roof, {nfl} floor, {nf} foundation, {ngab} gabled) with {nop} openings");
             return plans.Count;
         }
 

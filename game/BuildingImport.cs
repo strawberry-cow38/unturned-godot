@@ -18,7 +18,6 @@ namespace UnturnedGodot
     // holds every coplanar thing in the building, so one plane is many walls).
     //
     // KNOWN LIMITATIONS, all of which show up as "the import is close but wrong somewhere":
-    //   - floors and ceilings are still not read, so an import has walls, roofs and foundations only
     //   - a flat roof is only found on a building that ALSO has a slope to calibrate the roof colour from
     //   - if face pairing fails, BOTH faces emit as separate default-thickness walls: a silent double wall
     //   - a recovered face under 2 m in either dimension is dropped, so a short jog in a facade vanishes
@@ -34,6 +33,7 @@ namespace UnturnedGodot
             public float Dist;                     // plane offset along the normal
             public Vector3 Right, Up;              // the plane's own 2D basis
             public bool Sloped;                    // roof rather than wall
+            public bool Flat;                      // a floor slab
             public int Texel;                      // the palette colour this whole plane is painted in
             public float MinY = float.MaxValue;    // world extent, for finding the eave
             public readonly List<WallImport.Tri2> Tris = new();
@@ -50,7 +50,8 @@ namespace UnturnedGodot
 
         /// <summary>Import a retail building .obj as wall plans, in the prop's own local space (Y up, origin at
         /// the building's centre on the ground). Returns an empty list if the mesh will not load.</summary>
-        public static List<WallPlan> FromObj(string globalObjPath, int materialId = 0, bool readRoofs = true)
+        public static List<WallPlan> FromObj(string globalObjPath, int materialId = 0, bool readRoofs = true,
+                                            bool readFloors = true)
         {
             var plans = new List<WallPlan>();
             var mesh = ObjMesh.Load(globalObjPath);
@@ -89,8 +90,15 @@ namespace UnturnedGodot
                 // measured, the roof's outer edge and the wall face are both at 8.25.
                 bool wantWall = t.Vertical && t.Texel != revealTexel;
                 bool wantRoof = readRoofs && !t.Vertical && t.Up && roofTexels.Contains(t.Texel);
-                if (!wantWall && !wantRoof) continue;
+                // FLOORS: horizontal, facing up, and NOT roof-coloured. Orientation alone cannot separate a
+                // floor from a roof -- both are horizontal and face up -- which is why the first roof attempt
+                // swept in 174 floor and ceiling triangles. Colour separates them, the same way it does for
+                // the roof itself. The DOWNWARD-facing twin of each is the underside of the same slab and is
+                // skipped, exactly as an unpaired inward-facing wall is.
+                bool wantFloor = readFloors && !t.Vertical && t.Up && !roofTexels.Contains(t.Texel);
+                if (!wantWall && !wantRoof && !wantFloor) continue;
                 bool sloped = wantRoof;
+                bool flat = wantFloor;
 
                 var n = t.N;
                 float d = n.Dot(t.A);
@@ -112,7 +120,16 @@ namespace UnturnedGodot
                     right = right.Normalized();
                     var up = sloped ? n.Cross(right).Normalized() : Vector3.Up;
                     if (sloped && up.Y < 0f) up = -up;
-                    f = new Face { Normal = n, Dist = d, Right = right, Up = up, Sloped = sloped, Texel = t.Texel };
+                    if (flat)
+                    {
+                        // A slab is a surface at pitch -90 with yaw 0: its local X runs +X and its local Y
+                        // runs -Z. Recovering in that same frame means the rectangle needs no second
+                        // transform, the same reason the wall and roof frames are chosen the way they are.
+                        right = Vector3.Right;
+                        up = Vector3.Forward;      // -Z
+                    }
+                    f = new Face { Normal = n, Dist = d, Right = right, Up = up, Sloped = sloped,
+                                   Flat = flat, Texel = t.Texel };
                     faces[key] = f;
                 }
                 f.MinY = Mathf.Min(f.MinY, Mathf.Min(t.A.Y, Mathf.Min(t.B.Y, t.C.Y)));
@@ -136,10 +153,19 @@ namespace UnturnedGodot
             // gaps" instead of "a wall with a window in it".
             var candidates = new List<Cand>();
             var roofs = new List<(Face F, WallImport.Recovered R)>();
+            var floors = new List<(Face F, WallImport.Recovered R)>();
             float eave = float.MaxValue;
             foreach (var f in faces.Values)
             {
                 if (f.Tris.Count == 0) continue;
+                if (f.Flat)
+                {
+                    foreach (var fr in WallImport.FromTrianglesSplit(f.Tris))
+                        // 4 m2, so the countless little ledges and sills a ripped mesh is full of do not each
+                        // become a floor you have to delete by hand
+                        if (fr.Width >= 2f && fr.Height >= 2f) floors.Add((f, fr));
+                    continue;
+                }
                 if (f.Sloped)
                 {
                     var rr = WallImport.FromTriangles(f.Tris);
@@ -270,6 +296,19 @@ namespace UnturnedGodot
                 };
                 foreach (var o in r.Openings) plan.Openings.Add(o);   // chimney/skylight holes, unsnapped
                 plans.Add(plan);
+            }
+            foreach (var (f, r) in floors)
+            {
+                // origin at (minX, y, maxZ): local X runs +X for Length, local Y runs -Z for Height
+                var origin = new Vector3(r.U0, f.Dist * f.Normal.Y > 0f ? f.Dist : -f.Dist, -r.V0);
+                origin.Y = f.Normal.Y > 0f ? f.Dist : -f.Dist;
+                plans.Add(new WallPlan
+                {
+                    X = origin.X, Y = origin.Y - EditorBuildings.SlabThickness * 0.5f, Z = origin.Z,
+                    Yaw = 0f, Pitch = -90f, Kind = SurfaceKind.Floor,
+                    Length = r.Width, Height = r.Height, Texel = f.Texel,
+                    Thickness = EditorBuildings.SlabThickness, Material = materialId,
+                });
             }
             ClipBandsToRoofs(plans, bands);
             return plans;
