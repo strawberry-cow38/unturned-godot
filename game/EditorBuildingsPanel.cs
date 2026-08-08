@@ -14,7 +14,7 @@ namespace UnturnedGodot
     {
         readonly EditorBuildings _b;
         Button _draw;
-        Button _drawFloor, _drawRoof;
+        Button _drawFloor, _drawRoof, _room;
         readonly System.Collections.Generic.List<Button> _arch = new();
         Label _thickLbl;
 
@@ -42,11 +42,27 @@ namespace UnturnedGodot
                 {
                     _b.Arm(-1); foreach (var a in _arch) a.ButtonPressed = false;
                     _b.SlabDrawMode = false;
+                    _b.RoomDrawMode = false;
+                    if (_room != null) _room.ButtonPressed = false;
                     if (_drawFloor != null) _drawFloor.ButtonPressed = false;
                     if (_drawRoof != null) _drawRoof.ButtonPressed = false;
                 }
             };
             box.AddChild(_draw);
+
+            _room = new Button { Text = "Draw room", ToggleMode = true,
+                                 TooltipText = "drag a rectangle — four walls on the grid, shared edges merged" };
+            _room.Pressed += () =>
+            {
+                _b.RoomDrawMode = _room.ButtonPressed;
+                if (!_b.RoomDrawMode) return;
+                _b.WallDrawMode = false; _draw.ButtonPressed = false;
+                _b.SlabDrawMode = false;
+                if (_drawFloor != null) _drawFloor.ButtonPressed = false;
+                if (_drawRoof != null) _drawRoof.ButtonPressed = false;
+                _b.Arm(-1); foreach (var a in _arch) a.ButtonPressed = false;
+            };
+            box.AddChild(_room);
 
             // Thickness is a slider rather than an exterior/interior toggle: 0.70 and 0.50 are the two
             // measured clusters, not the only two legal answers, and the ask was for things to be tweakable.
@@ -97,6 +113,7 @@ namespace UnturnedGodot
                 _b.SlabDrawKind = kind;
                 if (!on) return;
                 _b.WallDrawMode = false; _draw.ButtonPressed = false;
+                _b.RoomDrawMode = false; if (_room != null) _room.ButtonPressed = false;
                 _b.Arm(-1); foreach (var a in _arch) a.ButtonPressed = false;
                 _drawFloor.ButtonPressed = kind == SurfaceKind.Floor;
                 _drawRoof.ButtonPressed = kind == SurfaceKind.Roof;

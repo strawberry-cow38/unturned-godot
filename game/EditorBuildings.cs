@@ -33,6 +33,8 @@ namespace UnturnedGodot
         WallOpening[] _dragCapture;
 
         Node3D _handles;
+        MeshInstance3D _ghost;                 // translucent preview of the armed opening
+        MeshInstance3D _gridFlag;              // where the next draw will start
         Label3D _readout;                      // the size billboard shown while dragging
         const float HandlePx = 14f, SnapPx = 12f;
 
@@ -44,25 +46,68 @@ namespace UnturnedGodot
         void ShowReadout(WallSurface w, WallOpening o)
         {
             if (w == null) { HideReadout(); return; }
-            if (_readout == null)
-            {
-                _readout = new Label3D
-                {
-                    Billboard = BaseMaterial3D.BillboardModeEnum.Enabled,
-                    NoDepthTest = true, FontSize = 96, PixelSize = 0.004f,
-                    Modulate = new Color(1f, 0.95f, 0.6f),
-                    OutlineSize = 24, OutlineModulate = new Color(0f, 0f, 0f, 0.85f),
-                };
-                AddChild(_readout);
-            }
+            EnsureReadout();
             string near = NearestPresetName(o);
-            _readout.Text = near == null ? $"{o.Width:0.00} × {o.Height:0.00} m"
-                                         : $"{o.Width:0.00} × {o.Height:0.00} m\n{near}";
-            _readout.GlobalPosition = w.UVToWorld(o.U + o.Width * 0.5f, o.V + o.Height + 0.35f);
+            Billboard(w.UVToWorld(o.U + o.Width * 0.5f, o.V + o.Height + 0.35f),
+                      near == null ? $"{o.Width:0.00} × {o.Height:0.00} m"
+                                   : $"{o.Width:0.00} × {o.Height:0.00} m\n{near}");
+        }
+
+        /// <summary>Put the billboard somewhere with some text on it.</summary>
+        void Billboard(Vector3 at, string text)
+        {
+            if (_readout == null) return;
+            _readout.Text = text;
+            _readout.GlobalPosition = at;
             _readout.Visible = true;
         }
 
         void HideReadout() { if (_readout != null) _readout.Visible = false; }
+
+        void EnsureReadout()
+        {
+            if (_readout != null) return;
+            _readout = new Label3D
+            {
+                Billboard = BaseMaterial3D.BillboardModeEnum.Enabled,
+                NoDepthTest = true, FontSize = 96, PixelSize = 0.004f,
+                Modulate = new Color(1f, 0.95f, 0.6f),
+                OutlineSize = 24, OutlineModulate = new Color(0f, 0f, 0f, 0.85f),
+            };
+            AddChild(_readout);
+        }
+
+        /// <summary>A marker on the grid square the wall will start from, so you can see where a draw is
+        /// going to land BEFORE you commit to it. The grid is 3 m and invisible until something lands on it,
+        /// which made placement feel like a guess. strawberry_cow: "a visual flag that follows the grid to
+        /// show where my wall draw is gonna be".</summary>
+        void UpdateGridFlag(Vector2 screen)
+        {
+            if (_cam == null || !(WallDrawMode || RoomDrawMode || SlabDrawMode)) { HideGridFlag(); return; }
+            var from = _cam.ProjectRayOrigin(screen);
+            var dir = _cam.ProjectRayNormal(screen);
+            if (!GroundAt(from, dir, out var p)) { HideGridFlag(); return; }
+            var snapped = new Vector3(WallOpenings.SnapGrid(p.X), p.Y, WallOpenings.SnapGrid(p.Z));
+            if (_gridFlag == null)
+            {
+                _gridFlag = new MeshInstance3D
+                {
+                    Mesh = new BoxMesh { Size = new Vector3(0.25f, 2.2f, 0.25f) },
+                    MaterialOverride = new StandardMaterial3D
+                    {
+                        AlbedoColor = new Color(1f, 0.85f, 0.2f, 0.75f),
+                        Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
+                        ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
+                        NoDepthTest = true,
+                    },
+                };
+                AddChild(_gridFlag);
+            }
+            _gridFlag.GlobalPosition = snapped + new Vector3(0f, 1.1f, 0f);
+            _gridFlag.Visible = true;
+        }
+
+        void HideGridFlag() { if (_gridFlag != null) _gridFlag.Visible = false; }
 
         /// <summary>Which retail preset this opening is currently sitting on, or null if it is between
         /// them. Naming the preset is the point -- "3.31 x 2.97" means nothing, "window" does.</summary>
@@ -107,7 +152,7 @@ namespace UnturnedGodot
         public IReadOnlyList<WallSurface> Walls => _walls;
         public WallSurface SelectedWall => _selWall;
         public int SelectedOpening => _selOpening;
-        public void Arm(int archetype) => _armed = archetype;
+        public void Arm(int archetype) { _armed = archetype; if (archetype < 0) { HideGhost(); HideReadout(); } }
 
         /// <summary>The palette new walls are drawn with. A retail "material" is only a choice of eight flat
         /// colours -- there are no textures on these buildings -- so this is an index, not an asset.</summary>
@@ -127,6 +172,13 @@ namespace UnturnedGodot
         /// building mid-edit gets a slab over whatever happens to exist. strawberry_cow: "roof tool should
         /// be a drag rect instead of an auto-bake tool." Add roof/Add floor still auto-fit for the simple
         /// case; this is the one you reach for when it guesses wrong.</summary>
+        /// <summary>Drag a rectangle and get four walls on the grid. The common case is a room and laying it
+        /// one wall at a time is four draws that all have to agree with each other.</summary>
+        public bool RoomDrawMode;
+        readonly List<WallSurface> _room = new();
+        Vector3 _roomAnchor;
+        public bool DrawingRoom => _room.Count > 0;
+
         public bool SlabDrawMode;
         public SurfaceKind SlabDrawKind = SurfaceKind.Roof;
         WallSurface _drawingSlab;
@@ -242,13 +294,22 @@ namespace UnturnedGodot
         }
 
         /// <summary>Add an opening at a wall-space point, clamped and snapped. Returns its index, or -1.</summary>
-        public int AddOpening(WallSurface w, float u, float v, int archetype)
+        /// <summary>Where an armed opening would land on this wall. The PREVIEW and the PLACEMENT both call
+        /// this, so the ghost cannot describe a different opening from the one you get -- which is the whole
+        /// reason this tool avoided preview objects in the first place. A ghost is fine; a ghost with its own
+        /// copy of the placement rules is not.</summary>
+        public WallOpening PlannedOpening(WallSurface w, float u, float v, int archetype)
         {
-            if (w == null) return -1;
             var a = Archetypes[Mathf.PosMod(archetype, Archetypes.Length)];
             var o = new WallOpening(u - a.Width * 0.5f, a.FloorPinned ? 0f : v - a.Height * 0.5f,
                                     a.Width, a.Height, 999f, archetype);
-            o = WallOpenings.Clamp(o, w.Length, w.Height, w.Openings);
+            return WallOpenings.Clamp(o, w.Length, w.Height, w.Openings);
+        }
+
+        public int AddOpening(WallSurface w, float u, float v, int archetype)
+        {
+            if (w == null) return -1;
+            var o = PlannedOpening(w, u, v, archetype);
             var before = w.Openings.ToArray();
             w.Openings.Add(o);
             w.Rebuild();
@@ -398,6 +459,18 @@ namespace UnturnedGodot
                 {
                     StretchDraw(mp);
                     _drawing = null;               // AddWall already pushed the undo
+                    HideReadout();
+                    MergeDuplicateWalls();
+                    SolveCornersNow();
+                }
+                else if (_room.Count > 0)
+                {
+                    StretchRoom(mp);
+                    bool tiny = _room[0].Length < 0.5f || _room[1].Length < 0.5f;
+                    if (tiny) { foreach (var w in new List<WallSurface>(_room)) RemoveWall(w); _editor?.PopUndo(); }
+                    _room.Clear();
+                    HideReadout();
+                    if (!tiny) { MergeDuplicateWalls(); SolveCornersNow(); }
                 }
                 else if (_drawingSlab != null)
                 {
@@ -406,13 +479,16 @@ namespace UnturnedGodot
                     if (_drawingSlab.Length < 0.5f || _drawingSlab.Height < 0.5f)
                     { RemoveWall(_drawingSlab); _editor?.PopUndo(); }
                     _drawingSlab = null;
+                    HideReadout();
                 }
             }
             else if (ev is InputEventMouseMotion)
             {
                 if (_drag != Drag.None) OnDrag(GetViewport().GetMousePosition());
                 else if (_drawing != null) StretchDraw(GetViewport().GetMousePosition());
+                else if (_room.Count > 0) StretchRoom(GetViewport().GetMousePosition());
                 else if (_drawingSlab != null) StretchSlab(GetViewport().GetMousePosition());
+                else { UpdateGhost(GetViewport().GetMousePosition()); UpdateGridFlag(GetViewport().GetMousePosition()); }
             }
             else if (ev is InputEventKey { Pressed: true, Echo: false } k)
             {
@@ -424,6 +500,7 @@ namespace UnturnedGodot
                 else if (k.Keycode == Key.Escape)
                 {
                     if (_drawing != null) { CancelDraw(); }
+                    else if (_room.Count > 0) { foreach (var w in new List<WallSurface>(_room)) RemoveWall(w); _room.Clear(); _editor?.PopUndo(); }
                     else if (_drawingSlab != null) { RemoveWall(_drawingSlab); _drawingSlab = null; _editor?.PopUndo(); }
                     else if (_selOpening >= 0) _selOpening = -1;
                     else _selWall = null;
@@ -446,6 +523,20 @@ namespace UnturnedGodot
         {
             var from = _cam.ProjectRayOrigin(screen);
             var dir = _cam.ProjectRayNormal(screen);
+
+            if (RoomDrawMode)
+            {
+                if (_room.Count == 0 && GroundAt(from, dir, out var rp))
+                {
+                    _roomAnchor = new Vector3(WallOpenings.SnapGrid(rp.X), rp.Y, WallOpenings.SnapGrid(rp.Z));
+                    _selWall = null; _selOpening = -1; PositionHandles();
+                    for (int i = 0; i < 4; i++)
+                        _room.Add(SpawnWall(_roomAnchor, i * 90f, 0.01f, NewWallThickness, ActiveMaterial, null));
+                    var made = new List<WallSurface>(_room);
+                    _editor?.PushUndo("room place", () => { foreach (var w in made) RemoveWall(w); });
+                }
+                return;
+            }
 
             if (SlabDrawMode)
             {
@@ -483,6 +574,24 @@ namespace UnturnedGodot
                 if (Mathf.Abs(hu - o.U1) < tol && hv > o.V && hv < o.V1) { Begin(Drag.EdgeU1); return; }
                 if (Mathf.Abs(hv - o.V) < tol && hu > o.U && hu < o.U1) { Begin(Drag.EdgeV0); return; }
                 if (Mathf.Abs(hv - o.V1) < tol && hu > o.U && hu < o.U1) { Begin(Drag.EdgeV1); return; }
+            }
+
+            // An opening is picked GEOMETRICALLY, before the collider pick, and that is not an optimisation.
+            // The partition puts a real hole in the collider wherever there is a hole in the mesh -- that is
+            // the whole point of it -- so a ray aimed at an opening passes straight through and hits nothing.
+            // The click then fell through to "place a new one", which is exactly what it looked like from the
+            // outside: strawberry_cow, "i'm not sure how to move openings? clicking them seems to just make
+            // new ones". You could only ever grab one by its frame.
+            if (PickOpening(from, dir, out var ow, out int oi, out float ou, out float ov))
+            {
+                _selWall = ow;
+                _selOpening = oi;
+                var so = ow.Openings[oi];
+                _grabDU = ou - (so.U + so.Width * 0.5f);
+                _grabDV = ov - (so.V + so.Height * 0.5f);
+                Begin(Drag.Move);
+                PositionHandles();
+                return;
             }
 
             // otherwise pick a wall by its collider
@@ -546,6 +655,103 @@ namespace UnturnedGodot
             return SlabDrawKind == SurfaceKind.Roof ? top + SlabThickness * 0.5f : fallback;
         }
 
+        /// <summary>Close the corners of what has been drawn so far, as its own undoable step.
+        ///
+        /// Corner solving used to happen only at BAKE, so a building looked notched the entire time you were
+        /// working on it and tidied itself only on the way out. Drawn walls genuinely do need it -- they are
+        /// laid endpoint to endpoint on their centrelines, which leaves a missing quarter at every corner.
+        /// (An IMPORTED wall does not: it comes from a facade plane spanning the whole building and already
+        /// overlaps its neighbour. Running this on an import puts a pilaster on every corner.)</summary>
+        void SolveCornersNow()
+        {
+            var undo = SolveCorners();
+            if (undo.Count > 0) _editor?.PushUndo("corner solve", () => RestoreCorners(undo));
+        }
+
+        /// <summary>Resize the four walls of the room being dragged. They are laid corner to corner going
+        /// round, so the corner solver has real coincident endpoints to work with.</summary>
+        void StretchRoom(Vector2 screen)
+        {
+            if (_room.Count < 4) return;
+            foreach (var w in _room) if (!IsInstanceValid(w)) { _room.Clear(); return; }
+            var from = _cam.ProjectRayOrigin(screen);
+            var dir = _cam.ProjectRayNormal(screen);
+            var plane = new Plane(Vector3.Up, _roomAnchor.Y);
+            var hit = plane.IntersectsRay(from, dir);
+            if (hit == null) return;
+            float x1 = WallOpenings.SnapGrid(hit.Value.X), z1 = WallOpenings.SnapGrid(hit.Value.Z);
+            float minX = Mathf.Min(_roomAnchor.X, x1), maxX = Mathf.Max(_roomAnchor.X, x1);
+            float minZ = Mathf.Min(_roomAnchor.Z, z1), maxZ = Mathf.Max(_roomAnchor.Z, z1);
+            float w0 = Mathf.Max(0.01f, maxX - minX), d0 = Mathf.Max(0.01f, maxZ - minZ);
+            float y = _roomAnchor.Y;
+
+            // yaw 0 runs +X, 90 runs -Z, 180 runs -X, 270 runs +Z -- corner to corner, anticlockwise
+            Set(_room[0], new Vector3(minX, y, maxZ), 0f, w0);
+            Set(_room[1], new Vector3(maxX, y, maxZ), 90f, d0);
+            Set(_room[2], new Vector3(maxX, y, minZ), 180f, w0);
+            Set(_room[3], new Vector3(minX, y, minZ), 270f, d0);
+            EnsureReadout();
+            Billboard(new Vector3((minX + maxX) * 0.5f, y + 3f, (minZ + maxZ) * 0.5f), $"{w0:0.0} × {d0:0.0} m");
+
+            static void Set(WallSurface w, Vector3 pos, float yaw, float len)
+            {
+                w.Position = pos;
+                w.RotationDegrees = new Vector3(0f, yaw, 0f);
+                w.Length = len;
+                w.Rebuild();
+            }
+        }
+
+        /// <summary>Fold walls that are duplicates of each other into one.
+        ///
+        /// Drawing a room against an existing one puts two walls on the shared edge, and two coincident walls
+        /// are not a thicker wall -- they are z-fighting, doubled collision, and an opening cut in one of them
+        /// that the other quietly fills back in. strawberry_cow: "shared dupe walls become one real wall".
+        ///
+        /// Two walls are the same wall when they lie on the same line, at the same height, and their runs
+        /// touch. The survivor is stretched to cover both and inherits both sets of openings.</summary>
+        public int MergeDuplicateWalls()
+        {
+            int merged = 0;
+            for (int i = 0; i < _walls.Count; i++)
+            {
+                var a = _walls[i];
+                if (!IsInstanceValid(a) || a.Kind != SurfaceKind.Wall) continue;
+                for (int j = _walls.Count - 1; j > i; j--)
+                {
+                    var b = _walls[j];
+                    if (!IsInstanceValid(b) || b.Kind != SurfaceKind.Wall) continue;
+                    // same line: parallel (either direction), same base height, and b's ends on a's axis
+                    float dy = Mathf.Abs(Mathf.Wrap(a.RotationDegrees.Y - b.RotationDegrees.Y, -90f, 90f));
+                    if (dy > 5f) continue;
+                    if (Mathf.Abs(a.Position.Y - b.Position.Y) > 0.05f) continue;
+                    var ax = (a.UVToWorld(a.Length, 0f) - a.UVToWorld(0f, 0f)).Normalized();
+                    var b0 = b.UVToWorld(0f, 0f);
+                    var b1 = b.UVToWorld(b.Length, 0f);
+                    var rel = b0 - a.UVToWorld(0f, 0f);
+                    var perp = rel - ax * rel.Dot(ax);
+                    if (new Vector2(perp.X, perp.Z).Length() > 0.2f) continue;      // a different line
+                    float t0 = (b0 - a.UVToWorld(0f, 0f)).Dot(ax), t1 = (b1 - a.UVToWorld(0f, 0f)).Dot(ax);
+                    if (t0 > t1) (t0, t1) = (t1, t0);
+                    if (t1 < -0.05f || t0 > a.Length + 0.05f) continue;             // no overlap: two walls in a row
+                    float lo = Mathf.Min(0f, t0), hi = Mathf.Max(a.Length, t1);
+                    if (lo < -0.001f) a.Position = a.UVToWorld(lo, 0f);
+                    foreach (var o in b.Openings)
+                    {
+                        var moved = o;
+                        moved.U += t0 - lo;                                          // into the survivor's frame
+                        if (!WallOpenings.Overlaps(moved, a.Openings)) a.Openings.Add(moved);
+                    }
+                    a.Length = hi - lo;
+                    a.Height = Mathf.Max(a.Height, b.Height);
+                    a.Rebuild();
+                    RemoveWall(b);
+                    merged++;
+                }
+            }
+            return merged;
+        }
+
         void StretchSlab(Vector2 screen)
         {
             if (_drawingSlab == null || !IsInstanceValid(_drawingSlab)) { _drawingSlab = null; return; }
@@ -558,10 +764,30 @@ namespace UnturnedGodot
             float minX = Mathf.Min(_slabAnchor.X, x1), maxX = Mathf.Max(_slabAnchor.X, x1);
             float minZ = Mathf.Min(_slabAnchor.Z, z1), maxZ = Mathf.Max(_slabAnchor.Z, z1);
             // same frame AddSlab builds in: origin at (minX, y, maxZ), run along +X, depth along -Z
+            float run = Mathf.Max(0.01f, maxZ - minZ);
             _drawingSlab.Position = new Vector3(minX, _slabAnchor.Y, maxZ);
             _drawingSlab.Length = Mathf.Max(0.01f, maxX - minX);
-            _drawingSlab.Height = Mathf.Max(0.01f, maxZ - minZ);
+
+            // The pitch slider applies to a DRAWN roof too; it used to be flat whatever the slider said.
+            // Same convention as AddGableRoof -- pitch - 90, spawned at maxZ with yaw 0 so it rises toward
+            // -Z -- and that sign is only correct BECAUSE the yaw is fixed here. Reading a yaw off geometry
+            // instead needs 90 - pitch; see BuildingImport.
+            float deg = SlabDrawKind == SurfaceKind.Roof ? Mathf.Clamp(ActiveRoofPitch, 0f, 70f) : 0f;
+            if (deg > 0.1f)
+            {
+                // the drag rect is the FOOTPRINT, so the surface itself is longer than the run it covers
+                _drawingSlab.Height = run / Mathf.Cos(Mathf.DegToRad(deg));
+                _drawingSlab.RotationDegrees = new Vector3(deg - 90f, 0f, 0f);
+            }
+            else
+            {
+                _drawingSlab.Height = run;
+                _drawingSlab.RotationDegrees = new Vector3(-90f, 0f, 0f);
+            }
             _drawingSlab.Rebuild();
+            EnsureReadout();
+            Billboard(new Vector3((minX + maxX) * 0.5f, _slabAnchor.Y + 0.6f, (minZ + maxZ) * 0.5f),
+                      $"{maxX - minX:0.0} × {run:0.0} m" + (deg > 0.1f ? $"  ·  {deg:0.#}°" : ""));
         }
 
         void StretchDraw(Vector2 screen)
@@ -580,6 +806,9 @@ namespace UnturnedGodot
             _drawing.RotationDegrees = new Vector3(0f, yaw, 0f);
             _drawing.Length = len;
             _drawing.Rebuild();
+            EnsureReadout();
+            Billboard(_drawing.UVToWorld(len * 0.5f, _drawing.Height + 0.4f),
+                      $"{len:0.0} m  ·  {Mathf.Wrap(yaw, 0f, 360f):0}°");
         }
 
         /// <summary>Enter or leave the Buildings mode. A building is authored AGAINST A BLANK PLANE, not over
@@ -1287,6 +1516,76 @@ namespace UnturnedGodot
         {
             _drag = d;
             _dragCapture = _selWall?.Openings.ToArray();
+        }
+
+        /// <summary>Find the opening under the cursor by intersecting the ray with each wall's PLANE, taking
+        /// the nearest. Needed because an opening is a hole in the collider and therefore invisible to a
+        /// physics ray -- see the note in OnPress.</summary>
+        bool PickOpening(Vector3 from, Vector3 dir, out WallSurface wall, out int index, out float u, out float v)
+        {
+            wall = null; index = -1; u = v = 0f;
+            float best = float.MaxValue;
+            foreach (var w in _walls)
+            {
+                if (!IsInstanceValid(w)) continue;
+                if (!w.RayToUV(from, dir, out float wu, out float wv)) continue;
+                int idx = w.OpeningAt(wu, wv);
+                if (idx < 0) continue;
+                float d = from.DistanceSquaredTo(w.UVToWorld(wu, wv));
+                if (d >= best) continue;
+                best = d; wall = w; index = idx; u = wu; v = wv;
+            }
+            return index >= 0;
+        }
+
+        /// <summary>Show where the armed opening would go, on the wall under the cursor. Deliberately a
+        /// flat translucent panel and not a second copy of the wall: it marks the RECT, and the rect comes
+        /// from PlannedOpening, the same call that places it.</summary>
+        void UpdateGhost(Vector2 screen)
+        {
+            if (_armed < 0 || _cam == null) { HideGhost(); return; }
+            var from = _cam.ProjectRayOrigin(screen);
+            var dir = _cam.ProjectRayNormal(screen);
+            WallSurface best = null;
+            float bu = 0f, bv = 0f, bd = float.MaxValue;
+            foreach (var w in _walls)
+            {
+                if (!IsInstanceValid(w) || w.Kind != SurfaceKind.Wall) continue;
+                if (!w.RayToUV(from, dir, out float u, out float v)) continue;
+                float d = from.DistanceSquaredTo(w.UVToWorld(u, v));
+                if (d < bd) { bd = d; best = w; bu = u; bv = v; }
+            }
+            if (best == null) { HideGhost(); return; }
+
+            var o = PlannedOpening(best, bu, bv, _armed);
+            if (_ghost == null)
+            {
+                _ghost = new MeshInstance3D
+                {
+                    Mesh = new QuadMesh { Size = Vector2.One },
+                    MaterialOverride = new StandardMaterial3D
+                    {
+                        AlbedoColor = new Color(0.35f, 0.8f, 1f, 0.35f),
+                        Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
+                        ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
+                        CullMode = BaseMaterial3D.CullModeEnum.Disabled,
+                        NoDepthTest = true,
+                    },
+                };
+                AddChild(_ghost);
+            }
+            ((QuadMesh)_ghost.Mesh).Size = new Vector2(Mathf.Max(0.05f, o.Width), Mathf.Max(0.05f, o.Height));
+            _ghost.GlobalTransform = new Transform3D(best.GlobalTransform.Basis,
+                best.UVToWorld(o.U + o.Width * 0.5f, o.V + o.Height * 0.5f)
+                + best.GlobalTransform.Basis.Z.Normalized() * (best.Thickness * 0.5f + 0.02f));
+            _ghost.Visible = true;
+            ShowReadout(best, o);
+        }
+
+        void HideGhost()
+        {
+            if (_ghost != null) _ghost.Visible = false;
+            if (_armed >= 0) HideReadout();
         }
 
         void OnDrag(Vector2 screen)

@@ -1061,4 +1061,63 @@ namespace UnturnedGodot.Testing
                     tool.Walls.Count == wallsBefore - 1);
         }
     }
+    // Two rooms drawn against each other put two walls on the shared edge. Coincident walls are not a
+    // thicker wall -- they z-fight, double the collision, and an opening cut in one is filled back in by
+    // the other.
+    public class BuildToolMergesDuplicateWalls : GameTest
+    {
+        public override string Name => "buildtool.duplicate_walls_merge";
+
+        public override IEnumerable<Step> Run()
+        {
+            var tool = new EditorBuildings();
+            World.AddChild(tool);
+            var ed = new Editor();
+            World.AddChild(ed);
+            tool.Setup(ed, null, null);
+            yield return Step.Ticks(1);
+
+            // exactly coincident -- the shared edge of two rooms
+            var a = tool.AddWall(Vector3.Zero, 0f, 6f);
+            var b = tool.AddWall(Vector3.Zero, 0f, 6f);
+            a.Openings.Add(new WallOpening(1f, 0f, 2.5f, 3f));
+            b.Openings.Add(new WallOpening(4.5f, 1f, 1f, 1f));
+            a.Rebuild(); b.Rebuild();
+            yield return Step.Ticks(1);
+            T.Check($"two coincident walls fold into one ({tool.MergeDuplicateWalls()} merged, "
+                    + $"{tool.Walls.Count} left)", tool.Walls.Count == 1);
+            T.Check($"and the survivor kept both openings ({tool.Walls[0].Openings.Count})",
+                    tool.Walls[0].Openings.Count == 2);
+
+            // partial overlap: one long wall and a short one lying on top of half of it
+            foreach (var w in new List<WallSurface>(tool.Walls)) tool.RemoveWall(w);
+            tool.AddWall(Vector3.Zero, 0f, 12f);
+            tool.AddWall(new Vector3(6f, 0f, 0f), 0f, 6f);
+            yield return Step.Ticks(1);
+            tool.MergeDuplicateWalls();
+            T.Check($"an overlapping pair folds too ({tool.Walls.Count} left)", tool.Walls.Count == 1);
+            T.Check($"and the survivor spans both ({tool.Walls[0].Length:0.#} m)",
+                    Mathf.Abs(tool.Walls[0].Length - 12f) < 0.2f);
+
+            // BREAK IT: merge on "same line" alone and this pair -- two walls END TO END, which is a
+            // perfectly normal run -- collapses into one, silently deleting a wall the user placed.
+            foreach (var w in new List<WallSurface>(tool.Walls)) tool.RemoveWall(w);
+            tool.AddWall(Vector3.Zero, 0f, 6f);
+            tool.AddWall(new Vector3(9f, 0f, 0f), 0f, 6f);          // a 3 m gap between them
+            yield return Step.Ticks(1);
+            tool.MergeDuplicateWalls();
+            T.Check($"two walls in a row with a gap are left alone ({tool.Walls.Count})",
+                    tool.Walls.Count == 2);
+
+            // and walls on DIFFERENT lines are never confused for each other
+            foreach (var w in new List<WallSurface>(tool.Walls)) tool.RemoveWall(w);
+            tool.AddWall(Vector3.Zero, 0f, 6f);
+            tool.AddWall(new Vector3(0f, 0f, 3f), 0f, 6f);          // parallel, 3 m apart
+            tool.AddWall(Vector3.Zero, 90f, 6f);                    // perpendicular, shares a corner
+            yield return Step.Ticks(1);
+            tool.MergeDuplicateWalls();
+            T.Check($"parallel-but-separate and perpendicular walls survive ({tool.Walls.Count})",
+                    tool.Walls.Count == 3);
+        }
+    }
 }
