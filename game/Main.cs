@@ -1388,6 +1388,16 @@ namespace UnturnedGodot
                 wall.SetMeta(PlayerController.SurfMeta, (int)PlayerController.Surf.Concrete);
                 GD.Print("[FIRETEST] UG_HITWALL: concrete wall at +Z 18 m (player fires into it)");
             }
+
+            // UG_HITGLASS: a full window-sized DESTRUCTIBLE glass pane 6 m downrange -> the player shoots it + it shatters
+            // into Glass_0 shards. Close so the shatter reads clearly. (Glass Health 1 -> the first bullet breaks it.)
+            if (System.Environment.GetEnvironmentVariable("UG_HITGLASS") == "1")
+            {
+                var pane = GlassPane.Build(1.2f, 1.5f);
+                AddChild(pane);
+                pane.GlobalPosition = new Vector3(0f, 1.5f, 6f);
+                GD.Print("[FIRETEST] UG_HITGLASS: destructible glass pane at +Z 6 m (player shatters it)");
+            }
             env.TonemapMode = Godot.Environment.ToneMapper.Aces;   // match the game's ACES so this harness validates the scope PiP color/tonemap (was default Linear)
             GD.Print($"[FIRETEST] suppressed={suppressed} -- firing away from a zombie 25 m off; expect [ALERT] ONLY when unsuppressed");
         }
