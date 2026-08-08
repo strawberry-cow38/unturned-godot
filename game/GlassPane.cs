@@ -54,12 +54,7 @@ namespace UnturnedGodot
 
         public void TakeDamage(float amount)
         {
-            if (_shattered) return;
-            // Indestructible is checked HERE and not in Shatter(). It was set by Build and read by nothing at
-            // all until 2026-08-08, so a pane marked unbreakable shattered on the first shot and the building
-            // editor had a checkbox that did nothing -- the flag being stored is what made it look wired.
-            // Damage cannot break it; an explicit Shatter() still can, so a scripted break stays possible.
-            if (Indestructible) return;
+            if (_shattered || Indestructible) return;   // an indestructible pane takes hits but never shatters (tinyclaw caught this missing -- guard in TakeDamage, NOT Shatter, so a scripted Shatter() still works)
             Health -= amount;
             if (Health <= 0f) Shatter();
         }
@@ -87,7 +82,7 @@ namespace UnturnedGodot
                 Vector3 halfExt = new Vector3(Mathf.Max(_half.X, 0.2f), Mathf.Max(_half.Y, 0.2f), 0.2f);   // emit across the pane's whole face
                 var ps = new CpuParticles3D
                 {
-                    Emitting = true, OneShot = true,
+                    Emitting = false, OneShot = true,   // fired below AFTER positioning. GlassPane.Shatter runs from TakeDamage INSIDE StepBullets (a 50Hz physics tick); Emitting=true in the ctor arms the one-shot at construction and it burns its cycle before the first _process -> fires EMPTY -> shards never appear (the pane still vanishes + marks broken, so it looks deliberate). Same bug + fix as ImpactFx.
                     Amount = Mathf.Clamp(Mathf.RoundToInt(fx.Count * 2f), 16, 40),   // a pane throws more glass than a fragment
                     Lifetime = Mathf.Max(1.2f, fx.LifeMax * 1.2f), Explosiveness = 0.9f, Randomness = 0.5f,
                     Direction = faceN, Spread = 85f,   // fan out of the pane face
@@ -103,6 +98,7 @@ namespace UnturnedGodot
                 };
                 scene.AddChild(ps);
                 ps.GlobalPosition = centre;
+                ps.Emitting = true;   // THE FIX: arm the one-shot AFTER AddChild+position -> a clean emission cycle regardless of the spawning (physics) tick
                 var t = GetTree().CreateTimer(ps.Lifetime + 0.6f);
                 t.Timeout += () => { if (IsInstanceValid(ps)) ps.QueueFree(); };
             }
