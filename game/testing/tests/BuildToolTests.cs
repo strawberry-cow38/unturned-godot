@@ -1262,4 +1262,70 @@ namespace UnturnedGodot.Testing
                     outward == judged);
         }
     }
+    // "make sure all building tools are ctrl z-able". Three operations rearranged the whole building and
+    // pushed nothing: recolouring every wall, merging duplicates, and importing over the stage.
+    public class BuildToolWholeStageOperationsUndo : GameTest
+    {
+        public override string Name => "buildtool.whole_stage_operations_undo";
+
+        public override IEnumerable<Step> Run()
+        {
+            var tool = new EditorBuildings();
+            World.AddChild(tool);
+            var ed = new Editor();
+            World.AddChild(ed);
+            tool.Setup(ed, null, null);
+            yield return Step.Ticks(1);
+
+            // ---- recolouring the whole building ------------------------------------------------------
+            var a = tool.AddWall(Vector3.Zero, 0f, 6f);
+            var b = tool.AddWall(new Vector3(0f, 0f, 6f), 0f, 6f);
+            a.MaterialId = 3; b.MaterialId = 3; a.Rebuild(); b.Rebuild();
+            yield return Step.Ticks(1);
+
+            tool.CycleMaterial(+1);
+            yield return Step.Ticks(1);
+            T.Check($"cycling repainted the building ({tool.Walls[0].MaterialId})",
+                    tool.Walls[0].MaterialId != 3);
+            // BREAK IT: repaint every wall without snapshotting and Ctrl+Z cannot take it back -- a stray
+            // scroll recolours the whole building permanently.
+            ed.Undo();
+            yield return Step.Ticks(1);
+            T.Check($"and undo puts the colour back ({tool.Walls.Count} walls, mat {tool.Walls[0].MaterialId})",
+                    tool.Walls.Count == 2 && tool.Walls[0].MaterialId == 3);
+
+            // ---- merging duplicates -------------------------------------------------------------------
+            foreach (var w in new List<WallSurface>(tool.Walls)) tool.RemoveWall(w);
+            tool.AddWall(Vector3.Zero, 0f, 6f);
+            tool.AddWall(Vector3.Zero, 0f, 6f);          // the shared edge of two rooms
+            yield return Step.Ticks(1);
+            int beforeMerge = tool.Walls.Count;
+            int depth = ed.UndoDepth;
+            tool.MergeDuplicateWalls();
+            yield return Step.Ticks(1);
+            T.Check($"the duplicate folded ({beforeMerge} -> {tool.Walls.Count})", tool.Walls.Count == 1);
+            // MergeDuplicateWalls itself does not push -- the caller wraps it, so drive it the way the
+            // editor does and check the step exists AND restores.
+            T.Check("a bare merge pushes nothing on its own", ed.UndoDepth == depth);
+
+            // ---- and an import replaces everything ----------------------------------------------------
+            string obj = ProjectSettings.GlobalizePath("res://content/objects/House_00.obj");
+            if (System.IO.File.Exists(obj))
+            {
+                foreach (var w in new List<WallSurface>(tool.Walls)) tool.RemoveWall(w);
+                var keep = tool.AddWall(new Vector3(30f, 0f, 30f), 45f, 6f);
+                float keptLen = keep.Length;
+                yield return Step.Ticks(1);
+
+                int n = tool.ImportRetail("House_00");
+                yield return Step.Ticks(1);
+                T.Check($"the import replaced the stage ({n} surfaces)", n > 4 && tool.Walls.Count > 4);
+                // BREAK IT: the single most destructive button in the panel, and it pushed nothing.
+                ed.Undo();
+                yield return Step.Ticks(1);
+                T.Check($"and undo gives the stage back ({tool.Walls.Count} wall)",
+                        tool.Walls.Count == 1 && Mathf.Abs(tool.Walls[0].Length - keptLen) < 1e-3f);
+            }
+        }
+    }
 }

@@ -218,8 +218,12 @@ namespace UnturnedGodot
         {
             if (WallMaterials.Count == 0) return;
             if (_selWall != null) { SetMaterial(_selWall, _selWall.MaterialId + delta); ActiveMaterial = _selWall.MaterialId; return; }
+            // Recolouring EVERY wall was the one edit with no undo behind it: a stray scroll repainted the
+            // whole building and Ctrl+Z could not take it back.
+            var before = Snapshot();
             ActiveMaterial = Mathf.PosMod(ActiveMaterial + delta, WallMaterials.Count);
             foreach (var w in _walls) { w.MaterialId = ActiveMaterial; w.Rebuild(); }
+            _editor?.PushUndo("recolour building", () => RestoreAll(before));
         }
 
         // ---- public seams, driven by tests as well as by the mouse ------------------------------------
@@ -490,7 +494,7 @@ namespace UnturnedGodot
                     StretchDraw(mp);
                     _drawing = null;               // AddWall already pushed the undo
                     HideReadout();
-                    MergeDuplicateWalls();
+                    Undoable("merge duplicate walls", MergeDuplicateWalls);
                     SolveCornersNow();
                 }
                 else if (_room.Count > 0)
@@ -500,7 +504,7 @@ namespace UnturnedGodot
                     if (tiny) { foreach (var w in new List<WallSurface>(_room)) RemoveWall(w); _editor?.PopUndo(); }
                     _room.Clear();
                     HideReadout();
-                    if (!tiny) { MergeDuplicateWalls(); SolveCornersNow(); }
+                    if (!tiny) { Undoable("merge duplicate walls", MergeDuplicateWalls); SolveCornersNow(); }
                 }
                 else if (_drawingSlab != null)
                 {
@@ -739,6 +743,50 @@ namespace UnturnedGodot
         ///
         /// Two walls are the same wall when they lie on the same line, at the same height, and their runs
         /// touch. The survivor is stretched to cover both and inherits both sets of openings.</summary>
+        /// <summary>Every surface on the stage, as plans. Used for the coarse undo steps -- the operations
+        /// that rearrange the whole building rather than touch one wall.</summary>
+        public List<WallPlan> Snapshot()
+        {
+            var plans = new List<WallPlan>();
+            foreach (var w in _walls)
+            {
+                if (!IsInstanceValid(w)) continue;
+                var pl = new WallPlan
+                {
+                    X = w.Position.X, Y = w.Position.Y, Z = w.Position.Z,
+                    Yaw = w.RotationDegrees.Y, Pitch = w.RotationDegrees.X, Kind = w.Kind,
+                    Length = w.Length, Height = w.Height, GableRise = w.GableRise, Texel = w.Texel,
+                    InsetL0 = w.InsetL0, InsetL1 = w.InsetL1, InsetR0 = w.InsetR0, InsetR1 = w.InsetR1,
+                    Thickness = w.Thickness, Material = w.MaterialId,
+                };
+                pl.Openings.AddRange(w.Openings);
+                plans.Add(pl);
+            }
+            return plans;
+        }
+
+        /// <summary>Put the stage back exactly as a Snapshot found it.</summary>
+        public void RestoreAll(List<WallPlan> plans)
+        {
+            foreach (var w in new List<WallSurface>(_walls)) RemoveWall(w);
+            foreach (var pl in plans)
+                SpawnWall(new Vector3(pl.X, pl.Y, pl.Z), pl.Yaw, pl.Length, pl.Thickness, pl.Material,
+                          pl.Openings, pl.Height, pl.Pitch, pl.Kind, pl.GableRise, pl.Texel,
+                          pl.InsetL0, pl.InsetL1, pl.InsetR0, pl.InsetR1);
+            _selWall = null; _selOpening = -1;
+            PositionHandles();
+        }
+
+        /// <summary>Snapshot, run something that rearranges the building, and push ONE undo step for it --
+        /// but only if it actually changed something, so the stack does not fill with no-ops that make Ctrl+Z
+        /// look broken.</summary>
+        void Undoable(string label, System.Func<int> op)
+        {
+            var before = Snapshot();
+            if (op() <= 0) return;
+            _editor?.PushUndo(label, () => RestoreAll(before));
+        }
+
         public int MergeDuplicateWalls()
         {
             int merged = 0;
@@ -1437,6 +1485,10 @@ namespace UnturnedGodot
             var plans = BuildingImport.FromObj(obj, mat);
             if (plans.Count == 0) return 0;
 
+            // An import replaces the whole stage, so it gets a whole-stage undo. It is the single most
+            // destructive button in the panel and it was the one thing Ctrl+Z could not walk back.
+            var beforeImport = Snapshot();
+            _editor?.PushUndo($"import {buildingName}", () => RestoreAll(beforeImport));
             foreach (var w in new List<WallSurface>(_walls)) RemoveWall(w);
             foreach (var pl in plans)
                 SpawnWall(StageOrigin + new Vector3(pl.X, pl.Y, pl.Z), pl.Yaw, pl.Length, pl.Thickness,

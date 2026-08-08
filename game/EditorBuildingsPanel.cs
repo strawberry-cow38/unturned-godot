@@ -15,6 +15,31 @@ namespace UnturnedGodot
         readonly EditorBuildings _b;
         Button _draw;
         Button _drawFloor, _drawRoof, _room;
+
+        enum Tool { None, Wall, Room, Floor, Roof, Opening }
+
+        /// <summary>Exactly one tool is active. Selection used to be done by each button clearing the others
+        /// by hand, in five places, and every one of them cleared a DIFFERENT subset -- the opening presets
+        /// only turned off wall-draw, so arming a window while the room tool was live left both armed and the
+        /// next click did whichever the input handler reached first. strawberry_cow: "prevent multiple tools
+        /// being selected at once, ie wall and an opening." One place that sets all of them is the only way
+        /// this stays true as tools get added.</summary>
+        void SetTool(Tool t, int archetype = -1)
+        {
+            _b.WallDrawMode = t == Tool.Wall;
+            _b.RoomDrawMode = t == Tool.Room;
+            _b.SlabDrawMode = t == Tool.Floor || t == Tool.Roof;
+            if (t == Tool.Floor) _b.SlabDrawKind = SurfaceKind.Floor;
+            if (t == Tool.Roof) _b.SlabDrawKind = SurfaceKind.Roof;
+            _b.Arm(t == Tool.Opening ? archetype : -1);
+
+            if (_draw != null) _draw.ButtonPressed = t == Tool.Wall;
+            if (_room != null) _room.ButtonPressed = t == Tool.Room;
+            if (_drawFloor != null) _drawFloor.ButtonPressed = t == Tool.Floor;
+            if (_drawRoof != null) _drawRoof.ButtonPressed = t == Tool.Roof;
+            for (int i = 0; i < _arch.Count; i++)
+                _arch[i].ButtonPressed = t == Tool.Opening && i == archetype;
+        }
         readonly System.Collections.Generic.List<Button> _arch = new();
         Label _thickLbl;
 
@@ -35,33 +60,12 @@ namespace UnturnedGodot
 
             box.AddChild(Dim("Wall"));
             _draw = new Button { Text = "Draw wall", ToggleMode = true };
-            _draw.Pressed += () =>
-            {
-                _b.WallDrawMode = _draw.ButtonPressed;
-                if (_b.WallDrawMode)
-                {
-                    _b.Arm(-1); foreach (var a in _arch) a.ButtonPressed = false;
-                    _b.SlabDrawMode = false;
-                    _b.RoomDrawMode = false;
-                    if (_room != null) _room.ButtonPressed = false;
-                    if (_drawFloor != null) _drawFloor.ButtonPressed = false;
-                    if (_drawRoof != null) _drawRoof.ButtonPressed = false;
-                }
-            };
+            _draw.Pressed += () => SetTool(_draw.ButtonPressed ? Tool.Wall : Tool.None);
             box.AddChild(_draw);
 
             _room = new Button { Text = "Draw room", ToggleMode = true,
                                  TooltipText = "drag a rectangle — four walls on the grid, shared edges merged" };
-            _room.Pressed += () =>
-            {
-                _b.RoomDrawMode = _room.ButtonPressed;
-                if (!_b.RoomDrawMode) return;
-                _b.WallDrawMode = false; _draw.ButtonPressed = false;
-                _b.SlabDrawMode = false;
-                if (_drawFloor != null) _drawFloor.ButtonPressed = false;
-                if (_drawRoof != null) _drawRoof.ButtonPressed = false;
-                _b.Arm(-1); foreach (var a in _arch) a.ButtonPressed = false;
-            };
+            _room.Pressed += () => SetTool(_room.ButtonPressed ? Tool.Room : Tool.None);
             box.AddChild(_room);
 
             // Thickness is a slider rather than an exterior/interior toggle: 0.70 and 0.50 are the two
@@ -107,19 +111,8 @@ namespace UnturnedGodot
                                       TooltipText = "drag a rectangle instead of auto-fitting to the walls" };
             _drawRoof = new Button { Text = "Draw roof", ToggleMode = true, CustomMinimumSize = new Vector2(120, 0),
                                      TooltipText = "drag a rectangle instead of auto-fitting to the walls" };
-            void SetSlabDraw(bool on, SurfaceKind kind)
-            {
-                _b.SlabDrawMode = on;
-                _b.SlabDrawKind = kind;
-                if (!on) return;
-                _b.WallDrawMode = false; _draw.ButtonPressed = false;
-                _b.RoomDrawMode = false; if (_room != null) _room.ButtonPressed = false;
-                _b.Arm(-1); foreach (var a in _arch) a.ButtonPressed = false;
-                _drawFloor.ButtonPressed = kind == SurfaceKind.Floor;
-                _drawRoof.ButtonPressed = kind == SurfaceKind.Roof;
-            }
-            _drawFloor.Pressed += () => SetSlabDraw(_drawFloor.ButtonPressed, SurfaceKind.Floor);
-            _drawRoof.Pressed += () => SetSlabDraw(_drawRoof.ButtonPressed, SurfaceKind.Roof);
+            _drawFloor.Pressed += () => SetTool(_drawFloor.ButtonPressed ? Tool.Floor : Tool.None);
+            _drawRoof.Pressed += () => SetTool(_drawRoof.ButtonPressed ? Tool.Roof : Tool.None);
             drawSlabs.AddChild(_drawFloor);
             drawSlabs.AddChild(_drawRoof);
             box.AddChild(drawSlabs);
@@ -166,13 +159,7 @@ namespace UnturnedGodot
                     CustomMinimumSize = new Vector2(120, 0),
                     TooltipText = a.FloorPinned ? "sits on the floor" : $"sill {a.Sill:0.##}m",
                 };
-                btn.Pressed += () =>
-                {
-                    bool on = btn.ButtonPressed;
-                    foreach (var o in _arch) if (o != btn) o.ButtonPressed = false;
-                    _b.Arm(on ? ai : -1);
-                    if (on) { _b.WallDrawMode = false; _draw.ButtonPressed = false; }
-                };
+                btn.Pressed += () => SetTool(btn.ButtonPressed ? Tool.Opening : Tool.None, ai);
                 _arch.Add(btn);
                 grid.AddChild(btn);
             }
