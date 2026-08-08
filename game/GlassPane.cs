@@ -55,6 +55,11 @@ namespace UnturnedGodot
         public void TakeDamage(float amount)
         {
             if (_shattered) return;
+            // Indestructible is checked HERE and not in Shatter(). It was set by Build and read by nothing at
+            // all until 2026-08-08, so a pane marked unbreakable shattered on the first shot and the building
+            // editor had a checkbox that did nothing -- the flag being stored is what made it look wired.
+            // Damage cannot break it; an explicit Shatter() still can, so a scripted break stays possible.
+            if (Indestructible) return;
             Health -= amount;
             if (Health <= 0f) Shatter();
         }

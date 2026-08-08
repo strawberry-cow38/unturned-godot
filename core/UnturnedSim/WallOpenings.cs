@@ -22,11 +22,46 @@ namespace UnturnedSim
         public float Depth;         // intended: centred on the wall mid-plane; >= thickness means it pierces
         public int Archetype;       // index into the preset table; presentation only, never read by the geometry
 
+        // ---- glazing -------------------------------------------------------------------------------
+        // A hole can be FILLED with glass. This lives on the opening rather than on a separate pane list
+        // because the pane's existence, size and position are all consequences of the hole -- a second list
+        // would have to be kept in step through move, resize, reparent, delete and undo, and would drift.
+        // The pane itself (game/GlassPane.cs) persists nothing; these are the fields it is rebuilt from.
+
+        /// <summary>Fill this opening with glass. OFF by default -- strawberry_cow: "toggleable on/off so not
+        /// every opening is a window", and a door is an opening too.</summary>
+        public bool Glazed;
+        /// <summary>Packed 0xRRGGBB glass tint. An int rather than a colour type so UnturnedSim stays
+        /// engine-free and the save line stays one token. 0 means "unset" -> GlassPane.DefaultHue.</summary>
+        public int GlassTint;
+        public float GlassHp;           // <= 0 means "unset" -> the pane's own default of 1 (retail glass is one shot)
+        public bool GlassIndestructible;
+        /// <summary>Already smashed. Kept so a broken window survives save/load and undo as broken, instead of
+        /// silently repairing itself the next time the wall rebuilds.</summary>
+        public bool GlassBroken;
+
+        /// <summary>Is there glass to build right now? Glazed but broken is a hole, which is the point.</summary>
+        public bool HasGlass => Glazed && !GlassBroken;
+
         public float U1 => U + Width;
         public float V1 => V + Height;
 
         public WallOpening(float u, float v, float w, float h, float depth = 999f, int archetype = 0)
-        { U = u; V = v; Width = w; Height = h; Depth = depth; Archetype = archetype; }
+        { U = u; V = v; Width = w; Height = h; Depth = depth; Archetype = archetype;
+          Glazed = false; GlassTint = 0; GlassHp = 0f; GlassIndestructible = false; GlassBroken = false; }
+
+        /// <summary>This opening moved/resized to (u,v,w,h), keeping EVERYTHING ELSE.
+        ///
+        /// Use this instead of `new WallOpening(...)` when deriving one opening from another. The constructor
+        /// takes four of the eleven fields, so rebuilding through it silently drops the rest -- which is how a
+        /// dragged window would lose its glazing, its tint and its broken flag, with no error and no failing
+        /// test. A struct copy keeps fields that do not exist yet, so this stays correct as the type grows.</summary>
+        public WallOpening MovedTo(float u, float v, float w, float h)
+        {
+            var r = this;
+            r.U = u; r.V = v; r.Width = w; r.Height = h;
+            return r;
+        }
     }
 
     /// <summary>An axis-aligned solid region of wall left over after the openings are removed. Wall space,
@@ -185,7 +220,7 @@ namespace UnturnedSim
                 }
             float v = vhi < vlo ? vlo : Math.Max(vlo, Math.Min(o.V, vhi));
 
-            return new WallOpening(u, v, w, h, o.Depth, o.Archetype);
+            return o.MovedTo(u, v, w, h);   // NOT `new WallOpening(...)` -- that drops glazing. See MovedTo.
         }
 
         /// <summary>Snap one world coordinate onto the placement grid.</summary>

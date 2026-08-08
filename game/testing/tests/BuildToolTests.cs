@@ -1661,4 +1661,236 @@ namespace UnturnedGodot.Testing
                     reach - wallMaxX > EditorBuildings.RoofOverhang * 0.8f);
         }
     }
+
+    // ---- glazing ------------------------------------------------------------------------------------
+    // strawberry_cow: "implement nyatools' glass window fill for window pane openings, complete with plenty
+    // of options. color hue, mark indestructable, set hp, etc. toggleable on/off so not every opening is a
+    // window."
+
+    public class BuildToolGlassSurvivesEditing : GameTest
+    {
+        public override string Name => "buildtool.glass_survives_editing";
+
+        public override IEnumerable<Step> Run()
+        {
+            var tool = new EditorBuildings();
+            World.AddChild(tool);
+            var ed = new Editor();
+            World.AddChild(ed);
+            tool.Setup(ed, null, null);
+            yield return Step.Ticks(1);
+
+            var w = tool.AddWall(Vector3.Zero, 0f, 12f);
+            yield return Step.Ticks(1);
+
+            tool.ActiveGlassTint = 0x8FBFA0;
+            tool.ActiveGlassHp = 7f;
+            tool.ActiveGlassIndestructible = true;
+            int i = tool.AddOpening(w, 3f, WallOpenings.WindowSill + 1f, 1);   // archetype 1 = window, glazed by preset
+            yield return Step.Ticks(1);
+            T.Check($"an opening was placed ({i})", i >= 0);
+            T.Check("the window preset glazes itself", w.Openings[i].Glazed);
+            T.Check($"and carries the panel's options ({w.Openings[i].GlassHp:0})",
+                    w.Openings[i].GlassTint == 0x8FBFA0 && w.Openings[i].GlassHp == 7f
+                    && w.Openings[i].GlassIndestructible);
+
+            // THE TRAP. WallOpening is a STRUCT and its constructor takes 4 of its 11 fields, so anything that
+            // rebuilds one through `new WallOpening(...)` drops the rest. Clamp did exactly that, and Clamp
+            // runs on every drag -- so a window would arrive at its destination unglazed, with no error, no
+            // exception and every position assertion still passing. MovedTo copies the struct instead.
+            tool.MoveOpening(w, i, 8f, WallOpenings.WindowSill + 1f, 0.1f);
+            yield return Step.Ticks(1);
+            var moved = w.Openings[i];
+            T.Check($"the drag moved it (u {moved.U:0.0})", moved.U > 5f);
+            T.Check("and the glass came with it", moved.Glazed && moved.GlassTint == 0x8FBFA0);
+            T.Check($"including hp and indestructible ({moved.GlassHp:0})",
+                    moved.GlassHp == 7f && moved.GlassIndestructible);
+
+            // BREAK IT: put `new WallOpening(u, v, w, h, o.Depth, o.Archetype)` back in WallOpenings.Clamp and
+            // every glass field above reads as its default the moment the window is nudged.
+
+            var unglazed = tool.AddOpening(w, 1.5f, 0f, 0);       // archetype 0 = door
+            yield return Step.Ticks(1);
+            T.Check("a door is not glazed by default", !w.Openings[unglazed].Glazed);
+        }
+    }
+
+    public class BuildToolGlassPanes : GameTest
+    {
+        public override string Name => "buildtool.glass_panes_fill_and_shatter";
+
+        static int PaneCount(WallSurface w)
+        {
+            int n = 0;
+            foreach (var c in w.GetChildren()) if (c is GlassPane p && GodotObject.IsInstanceValid(p)) n++;
+            return n;
+        }
+
+        static GlassPane FirstPane(WallSurface w)
+        {
+            foreach (var c in w.GetChildren()) if (c is GlassPane p && GodotObject.IsInstanceValid(p)) return p;
+            return null;
+        }
+
+        public override IEnumerable<Step> Run()
+        {
+            var w = new WallSurface { Length = 12f, Height = WallOpenings.DoorHeight };
+            World.AddChild(w);
+            var o = new WallOpening(3f, 1f, 3f, 2.75f) { Glazed = true, GlassHp = 3f };
+            w.Openings.Add(o);
+            w.Rebuild();
+            yield return Step.Ticks(1);
+
+            T.Check($"a glazed opening gets exactly one pane ({PaneCount(w)})", PaneCount(w) == 1);
+            var pane = FirstPane(w);
+            T.Check($"centred in the hole ({pane?.Position})",
+                    pane != null && pane.Position.IsEqualApprox(new Vector3(4.5f, 2.375f, 0f)));
+            // Assert the pane's actual GEOMETRY, not its transform. Position alone passes for a pane of any
+            // size, so a half-height pane would sit perfectly centred in the opening with a gap top and
+            // bottom and this test would still be green -- and a gap round the glass is precisely what you
+            // would go looking for in a render.
+            Vector3 box = default;
+            foreach (var c in pane.GetChildren())
+                if (c is MeshInstance3D mi && mi.Mesh is BoxMesh bm) box = bm.Size;
+            T.Check($"and fills it edge to edge ({box.X:0.00} x {box.Y:0.00}, want 3.00 x 2.75)",
+                    Mathf.Abs(box.X - 3f) < 0.001f && Mathf.Abs(box.Y - 2.75f) < 0.001f);
+            T.Check($"as a thin sheet ({box.Z:0.00})", box.Z > 0f && box.Z < 0.1f);
+
+            // Rebuild runs on every mouse move during a drag. If it respawned panes each time, a drag would
+            // leave a trail of them -- and QueueFree defers, so the stale ones are still hittable that frame.
+            w.Rebuild(); w.Rebuild(); w.Rebuild();
+            yield return Step.Ticks(1);
+            T.Check($"and rebuilding does not stack up more ({PaneCount(w)})", PaneCount(w) == 1);
+
+            // hp is honoured: 3 hp does not fall to one point of damage
+            pane.TakeDamage(1f);
+            yield return Step.Ticks(1);
+            T.Check($"a 3 hp pane survives 1 damage ({PaneCount(w)})", PaneCount(w) == 1);
+
+            pane.TakeDamage(5f);
+            yield return Step.Ticks(2);
+            T.Check("shooting it out marks the opening broken", w.Openings[0].GlassBroken);
+            T.Check("and a broken opening is no longer glass-filled", !w.Openings[0].HasGlass);
+            w.Rebuild();
+            yield return Step.Ticks(2);
+            T.Check($"so a rebuild leaves the hole empty ({PaneCount(w)})", PaneCount(w) == 0);
+
+            // BREAK IT: drop the GlassBroken write in MarkPaneBroken and the window repairs itself on the
+            // next Rebuild -- you shoot it, it comes back, and nothing anywhere reports a problem.
+
+            // indestructible: Build stored the flag and NOTHING read it until this test existed, so a pane
+            // marked unbreakable shattered on the first shot while the editor checkbox looked wired.
+            var w2 = new WallSurface { Length = 8f, Height = WallOpenings.DoorHeight };
+            World.AddChild(w2);
+            w2.Openings.Add(new WallOpening(2f, 1f, 3f, 2.75f) { Glazed = true, GlassIndestructible = true });
+            w2.Rebuild();
+            yield return Step.Ticks(1);
+            var tough = FirstPane(w2);
+            T.Check("an indestructible opening still gets a pane", tough != null);
+            tough.TakeDamage(9999f);
+            yield return Step.Ticks(2);
+            T.Check($"and no amount of damage breaks it ({PaneCount(w2)})", PaneCount(w2) == 1);
+            T.Check("nor does it mark itself broken", !w2.Openings[0].GlassBroken);
+        }
+    }
+
+    public class BuildToolGlassPersists : GameTest
+    {
+        public override string Name => "buildtool.glass_survives_save_and_load";
+
+        public override IEnumerable<Step> Run()
+        {
+            var plan = new WallPlan
+            {
+                X = 0f, Y = 0f, Z = 0f, Yaw = 0f, Length = 12f, Thickness = 0.7f,
+                Material = 0, Height = WallOpenings.DoorHeight, Kind = SurfaceKind.Wall,
+            };
+            plan.Openings.Add(new WallOpening(3f, 1f, 3f, 2.75f)
+            { Glazed = true, GlassTint = 0x6A9BC8, GlassHp = 5f, GlassIndestructible = true });
+            plan.Openings.Add(new WallOpening(8f, 1f, 2f, 2f) { Glazed = true, GlassBroken = true });
+            plan.Openings.Add(new WallOpening(0.5f, 0f, 2f, 3.75f));      // a plain door, no glazing
+
+            string text = WallSave.Write(new List<WallPlan> { plan });
+            var back = WallSave.Read(text.Split('\n'));
+            yield return Step.Ticks(1);
+
+            T.Check($"one wall read back ({back.Count})", back.Count == 1);
+            T.Check($"with its three openings ({back[0].Openings.Count})", back[0].Openings.Count == 3);
+            var a = back[0].Openings[0];
+            T.Check($"tint survives ({a.GlassTint:X})", a.Glazed && a.GlassTint == 0x6A9BC8);
+            T.Check($"hp survives ({a.GlassHp:0})", a.GlassHp == 5f);
+            T.Check("indestructible survives", a.GlassIndestructible);
+            // A window that was smashed has to come back smashed. Otherwise every save/load quietly repairs
+            // the building, which looks like the save worked right up until you notice the glass is back.
+            T.Check("a broken window loads back broken", back[0].Openings[1].GlassBroken);
+            T.Check("and is still not filled", !back[0].Openings[1].HasGlass);
+            T.Check("an unglazed opening stays unglazed", !back[0].Openings[2].Glazed);
+
+            // Glazing is trailing and optional, so a building with no windows writes exactly what it always
+            // did -- a format change that rewrites every existing save is a format change that can corrupt
+            // one. The door line is the control.
+            string doorLine = null;
+            foreach (var l in text.Split('\n'))
+                if (l.TrimStart().StartsWith("open 0.5")) doorLine = l.Trim();
+            T.Check($"an unglazed opening writes the old 7 tokens ({doorLine})",
+                    doorLine != null && doorLine.Split(' ').Length == 7);
+
+            // and a file written before glass existed still loads
+            var old = WallSave.Read(new[]
+            {
+                "wall 0 0 0 0 12 0.7 0 4.25 0 Wall 0 -1",
+                "  open 3 1 3 2.75 999 1",
+            });
+            T.Check($"a pre-glass save still loads ({old.Count} wall)", old.Count == 1 && old[0].Openings.Count == 1);
+            T.Check("as unglazed", !old[0].Openings[0].Glazed);
+        }
+    }
+
+    public class BuildToolGlassUndo : GameTest
+    {
+        public override string Name => "buildtool.glass_edits_undo";
+
+        public override IEnumerable<Step> Run()
+        {
+            var tool = new EditorBuildings();
+            World.AddChild(tool);
+            var ed = new Editor();
+            World.AddChild(ed);
+            tool.Setup(ed, null, null);
+            yield return Step.Ticks(1);
+
+            var w = tool.AddWall(Vector3.Zero, 0f, 12f);
+            int i = tool.AddOpening(w, 3f, WallOpenings.WindowSill + 1f, 1);
+            yield return Step.Ticks(1);
+            T.Check("placed glazed", w.Openings[i].Glazed);
+
+            int depth = ed.UndoDepth;
+            tool.ToggleGlass(w, i);
+            yield return Step.Ticks(1);
+            T.Check("toggling takes the glass out", !w.Openings[i].Glazed);
+            T.Check($"and pushes exactly one step ({ed.UndoDepth - depth})", ed.UndoDepth - depth == 1);
+
+            ed.Undo();
+            yield return Step.Ticks(1);
+            T.Check("Ctrl+Z puts it back", w.Openings[i].Glazed);
+
+            // A no-op must not consume a step: an undo that fires and changes nothing is the failure mode
+            // this editor has already shipped twice, and it reads as "Ctrl+Z is broken".
+            depth = ed.UndoDepth;
+            tool.SetOpeningGlass(w, i, glazed: true);
+            yield return Step.Ticks(1);
+            T.Check($"setting glass to what it already was pushes nothing ({ed.UndoDepth - depth})",
+                    ed.UndoDepth == depth);
+
+            // Re-glazing a smashed window has to un-smash it, or "turn it off and on again" leaves an opening
+            // that claims to be glazed and shows nothing.
+            tool.SetOpeningGlass(w, i, broken: true);
+            yield return Step.Ticks(1);
+            T.Check("marked broken", w.Openings[i].GlassBroken);
+            tool.SetOpeningGlass(w, i, glazed: false);
+            tool.SetOpeningGlass(w, i, glazed: true);
+            yield return Step.Ticks(1);
+            T.Check("re-glazing clears the break", w.Openings[i].Glazed && !w.Openings[i].GlassBroken);
+        }
+    }
 }

@@ -15,6 +15,58 @@ namespace UnturnedGodot
         readonly EditorBuildings _b;
         Button _draw;
         Button _drawFloor, _drawRoof, _room, _del, _found;
+        CheckBox _glaze, _indestructible;
+        Label _hpLbl;
+
+        /// <summary>The glass controls edit the SELECTED opening when there is one and set the default for the
+        /// next placement when there is not. Asked in one place so the four controls cannot disagree about
+        /// which they are doing.</summary>
+        bool HasSelectedOpening => _b.SelectedWall != null && _b.SelectedOpening >= 0;
+
+        static string HpText(float hp) =>
+            hp <= 1.01f ? "HP: 1 (retail glass — one shot)" : $"HP: {hp:0}";
+
+        // What the glass controls were last shown as, so _Process only touches them when something changed.
+        // Writing ButtonPressed every frame would re-enter the Toggled handler and push an undo step per
+        // frame -- the control would fight the user for the checkbox.
+        (WallSurface W, int I, bool G, bool Ind) _glassShown = (null, -2, false, false);
+
+        /// <summary>Make the glass controls show the SELECTED opening. Without this they keep displaying the
+        /// last thing that was set, and this file's own rule about the material dropdown applies: a control
+        /// that disagrees with what it claims to describe is worse than no control, because it looks
+        /// authoritative. Polled rather than event-driven because selection is plain fields on the tool and
+        /// every other readout in this editor is polled the same way.</summary>
+        public override void _Process(double delta)
+        {
+            var w = _b.SelectedWall;
+            int i = _b.SelectedOpening;
+            bool has = w != null && IsInstanceValid(w) && i >= 0 && i < w.Openings.Count;
+            var o = has ? w.Openings[i] : default;
+            bool glazed = has ? o.Glazed : (_b.GlazeNew ?? true);
+            bool ind = has ? o.GlassIndestructible : _b.ActiveGlassIndestructible;
+            var now = (has ? w : null, has ? i : -1, glazed, ind);
+            if (now == _glassShown) return;
+            _glassShown = now;
+            // SetPressedNoSignal, not ButtonPressed: assigning it fires Toggled, which would write the value
+            // straight back onto the opening and push an undo step for a change nobody made.
+            _glaze?.SetPressedNoSignal(glazed);
+            _indestructible?.SetPressedNoSignal(ind);
+            if (_hpLbl != null) _hpLbl.Text = HpText(has ? (o.GlassHp > 0f ? o.GlassHp : 1f) : _b.ActiveGlassHp);
+        }
+
+        /// <summary>Tint swatches. 0 = the pane's own default, which is first so "no opinion" is the easy pick.
+        /// The rest are the glass colours that actually turn up in buildings rather than a full colour wheel --
+        /// a picker with 16M answers to a question with about six is not more capable, just slower.</summary>
+        static readonly (string Label, int Rgb)[] GlassTints =
+        {
+            ("default blue-grey", 0),
+            ("clear",     0xDCE8EC),
+            ("green",     0x8FBFA0),
+            ("bronze",    0xB08A5A),
+            ("smoked",    0x6B6E72),
+            ("blue",      0x6A9BC8),
+            ("amber",     0xD8A65A),
+        };
 
         enum Tool { None, Wall, Room, Floor, Roof, Opening, Delete, Foundation }
 
@@ -186,6 +238,69 @@ namespace UnturnedGodot
                 grid.AddChild(btn);
             }
             box.AddChild(grid);
+
+            // ---- glazing -------------------------------------------------------------------------------
+            // These are the settings a NEW opening is stamped with, and they retarget to the selected opening
+            // the moment there is one -- so the same four controls both set the default and edit what you
+            // clicked, instead of the tool having a second panel that says the same words.
+            box.AddChild(new HSeparator());
+            box.AddChild(Dim("GLASS — window / tall win are glazed by default"));
+
+            _glaze = new CheckBox { Text = "glass in the opening", ButtonPressed = true, FocusMode = FocusModeEnum.None };
+            _glaze.Toggled += on =>
+            {
+                if (HasSelectedOpening) _b.SetOpeningGlass(_b.SelectedWall, _b.SelectedOpening, glazed: on);
+                else _b.GlazeNew = on;                 // no selection -> this is the default for the next one
+            };
+            box.AddChild(_glaze);
+
+            _indestructible = new CheckBox { Text = "indestructible", FocusMode = FocusModeEnum.None };
+            _indestructible.Toggled += on =>
+            {
+                if (HasSelectedOpening) _b.SetOpeningGlass(_b.SelectedWall, _b.SelectedOpening, indestructible: on);
+                else _b.ActiveGlassIndestructible = on;
+            };
+            box.AddChild(_indestructible);
+
+            _hpLbl = new Label { Text = HpText(_b.ActiveGlassHp) };
+            box.AddChild(_hpLbl);
+            var hp = new HSlider
+            {
+                // 1 is retail glass: one shot. The range above it is for the "reinforced" case strawberry
+                // asked for, and it is a slider rather than a number box because the useful values are few.
+                MinValue = 1, MaxValue = 20, Step = 1, Value = Mathf.Max(1f, _b.ActiveGlassHp),
+                CustomMinimumSize = new Vector2(240, 0), FocusMode = FocusModeEnum.None,
+            };
+            hp.ValueChanged += v =>
+            {
+                _hpLbl.Text = HpText((float)v);
+                if (HasSelectedOpening) _b.SetOpeningGlass(_b.SelectedWall, _b.SelectedOpening, hp: (float)v);
+                else _b.ActiveGlassHp = (float)v;
+            };
+            box.AddChild(hp);
+
+            box.AddChild(Dim("tint"));
+            var tints = new GridContainer { Columns = 7 };
+            tints.AddThemeConstantOverride("h_separation", 3);
+            foreach (var (label, rgb) in GlassTints)
+            {
+                int packed = rgb;
+                var sw = new Button
+                {
+                    CustomMinimumSize = new Vector2(30, 24), TooltipText = label, FocusMode = FocusModeEnum.None,
+                };
+                // A swatch has to LOOK like its colour -- a row of identical grey buttons labelled in a tooltip
+                // is not a colour picker.
+                var sb = new StyleBoxFlat { BgColor = packed == 0 ? GlassPane.DefaultHue : WallSurface.TintFromRgb(packed) };
+                foreach (var st in new[] { "normal", "hover", "pressed" }) sw.AddThemeStyleboxOverride(st, sb);
+                sw.Pressed += () =>
+                {
+                    if (HasSelectedOpening) _b.SetOpeningGlass(_b.SelectedWall, _b.SelectedOpening, tint: packed);
+                    else _b.ActiveGlassTint = packed;
+                };
+                tints.AddChild(sw);
+            }
+            box.AddChild(tints);
 
             box.AddChild(new HSeparator());
             box.AddChild(Dim("Material — a retail palette"));

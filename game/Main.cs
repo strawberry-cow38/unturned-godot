@@ -4447,27 +4447,32 @@ namespace UnturnedGodot
             }
 
             // A closed room, so corners are visible. Walls run along local +X; yaw -90 turns +X into +Z.
+            //
+            // Windows are GLAZED here and in DrawDemoBuilding, and the two have to agree. They are already
+            // two hand-written copies of one room -- the note below DrawDemoBuilding says so -- and glazing
+            // only one of them is exactly how that drift shows up: the first render of this scene came back
+            // with empty holes because the OTHER copy was the one that got the glass.
             var front = Wall(L, new Vector3(-L / 2f, 0f, 0f), 0f);
-            front.Openings.Add(new UnturnedSim.WallOpening(1.0f, 0f, 2.5f, H - 0.5f));    // person door, floor-pinned
-            front.Openings.Add(new UnturnedSim.WallOpening(5.0f, sill, 3.31f, wh));       // measured window widths
-            front.Openings.Add(new UnturnedSim.WallOpening(9.0f, sill, 2.81f, wh));
+            front.Openings.Add(new UnturnedSim.WallOpening(1.0f, 0f, 2.5f, H - 0.5f));    // person door, floor-pinned, no glass
+            front.Openings.Add(GlazedOpening(new UnturnedSim.WallOpening(5.0f, sill, 3.31f, wh)));       // measured window widths
+            front.Openings.Add(GlazedOpening(new UnturnedSim.WallOpening(9.0f, sill, 2.81f, wh), 0x8FBFA0));
 
             var back = Wall(L, new Vector3(-L / 2f, 0f, -D), 0f);
             back.Openings.Add(new UnturnedSim.WallOpening(2.0f, 0f, 8.0f, H - 0.25f));    // 8m garage: only reachable because walls are DRAWN, not 6m tiles
 
             var left = Wall(D, new Vector3(-L / 2f, 0f, -D), -90f);
-            left.Openings.Add(new UnturnedSim.WallOpening(2.5f, sill, 3.31f, wh));
+            left.Openings.Add(GlazedOpening(new UnturnedSim.WallOpening(2.5f, sill, 3.31f, wh)));
 
             var right = Wall(D, new Vector3(L / 2f, 0f, -D), -90f);
-            right.Openings.Add(new UnturnedSim.WallOpening(1.5f, sill, 2.81f, wh));
-            right.Openings.Add(new UnturnedSim.WallOpening(5.5f, sill, 2.81f, wh));
+            right.Openings.Add(GlazedOpening(new UnturnedSim.WallOpening(1.5f, sill, 2.81f, wh)));
+            right.Openings.Add(GlazedOpening(new UnturnedSim.WallOpening(5.5f, sill, 2.81f, wh)));
 
             // second storey at the measured 4.75 pitch (4.25 opening + 0.50 slab)
             var up = Wall(L, new Vector3(-L / 2f, pitch, 0f), 0f);
-            up.Openings.Add(new UnturnedSim.WallOpening(2.0f, sill, 2.81f, wh));
-            up.Openings.Add(new UnturnedSim.WallOpening(7.0f, sill, 3.31f, wh));
+            up.Openings.Add(GlazedOpening(new UnturnedSim.WallOpening(2.0f, sill, 2.81f, wh)));
+            up.Openings.Add(GlazedOpening(new UnturnedSim.WallOpening(7.0f, sill, 3.31f, wh)));
             var upSide = Wall(D, new Vector3(-L / 2f, pitch, -D), -90f);
-            upSide.Openings.Add(new UnturnedSim.WallOpening(3.0f, sill, 2.81f, wh));
+            upSide.Openings.Add(GlazedOpening(new UnturnedSim.WallOpening(3.0f, sill, 2.81f, wh)));
 
             // Rebuild AFTER the openings are added. WallSurface builds itself on _Ready, which fires the moment
             // it is added to the tree -- so anything that mutates Openings afterwards has to say so. Without
@@ -4519,6 +4524,13 @@ namespace UnturnedGodot
         // The same room the --walls demo builds, laid out on the Buildings stage so the editor capture shows a
         // real building rather than an empty plane. Deliberately the SAME numbers, so the tool and the demo
         // cannot drift into disagreeing about what a wall of a given size looks like.
+        /// <summary>Mark an opening as glass-filled. Windows come glazed and doors/garage spans do not, which
+        /// is the same rule the archetype presets apply -- so both demo rooms show what the tool actually
+        /// produces instead of a special case. ONE helper because there are two hand-written copies of this
+        /// room and they have already drifted once.</summary>
+        static UnturnedSim.WallOpening GlazedOpening(UnturnedSim.WallOpening o, int tint = 0)
+        { o.Glazed = true; o.GlassTint = tint; return o; }
+
         static void DrawDemoBuilding(EditorBuildings b)
         {
             float H = UnturnedSim.WallOpenings.DoorHeight;
@@ -4531,19 +4543,19 @@ namespace UnturnedGodot
             b.ActiveMaterial = 24;                                   // House_00
 
             var front = b.AddWall(o + new Vector3(-L / 2f, 0f, 0f), 0f, L);
-            front.Openings.Add(new UnturnedSim.WallOpening(1.0f, 0f, 2.5f, H - 0.5f));
-            front.Openings.Add(new UnturnedSim.WallOpening(5.0f, sill, 3.31f, wh));
-            front.Openings.Add(new UnturnedSim.WallOpening(9.0f, sill, 2.81f, wh));
+            front.Openings.Add(new UnturnedSim.WallOpening(1.0f, 0f, 2.5f, H - 0.5f));            // door: no glass
+            front.Openings.Add(GlazedOpening(new UnturnedSim.WallOpening(5.0f, sill, 3.31f, wh)));
+            front.Openings.Add(GlazedOpening(new UnturnedSim.WallOpening(9.0f, sill, 2.81f, wh), 0x8FBFA0));
 
             var back = b.AddWall(o + new Vector3(-L / 2f, 0f, -D), 0f, L);
-            back.Openings.Add(new UnturnedSim.WallOpening(2.0f, 0f, 8.0f, H - 0.25f));
+            back.Openings.Add(new UnturnedSim.WallOpening(2.0f, 0f, 8.0f, H - 0.25f));            // garage: no glass
 
             var left = b.AddWall(o + new Vector3(-L / 2f, 0f, -D), -90f, D);
-            left.Openings.Add(new UnturnedSim.WallOpening(2.5f, sill, 3.31f, wh));
+            left.Openings.Add(GlazedOpening(new UnturnedSim.WallOpening(2.5f, sill, 3.31f, wh)));
 
             var right = b.AddWall(o + new Vector3(L / 2f, 0f, -D), -90f, D);
-            right.Openings.Add(new UnturnedSim.WallOpening(1.5f, sill, 2.81f, wh));
-            right.Openings.Add(new UnturnedSim.WallOpening(5.5f, sill, 2.81f, wh));
+            right.Openings.Add(GlazedOpening(new UnturnedSim.WallOpening(1.5f, sill, 2.81f, wh)));
+            right.Openings.Add(GlazedOpening(new UnturnedSim.WallOpening(5.5f, sill, 2.81f, wh)));
 
             foreach (var w in b.Walls) w.Rebuild();
             // Close the corners, which a user gets for free and this did not. Corner solving runs from the

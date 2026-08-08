@@ -53,7 +53,7 @@ namespace UnturnedSim
             var sb = new StringBuilder();
             sb.Append(Header).Append('\n');
             sb.Append("# wall <x> <y> <z> <yawDeg> <length> <thickness> <materialId> [height] [pitchDeg] [kind] [gableRise] [texel] [insetL0 insetL1 insetR0 insetR1] [matBack texelBack]\n");
-            sb.Append("#   open <u> <v> <width> <height> <depth> <archetype>\n");
+            sb.Append("#   open <u> <v> <width> <height> <depth> <archetype> [glazed tint hp indestructible broken]\n");
             if (walls != null)
                 foreach (var w in walls)
                 {
@@ -72,10 +72,21 @@ namespace UnturnedSim
                       .Append(' ').Append(w.TexelBack.ToString(CultureInfo.InvariantCulture))
                       .Append('\n');
                     foreach (var o in w.Openings)
+                    {
                         sb.Append("  open ").Append(F(o.U)).Append(' ').Append(F(o.V)).Append(' ')
                           .Append(F(o.Width)).Append(' ').Append(F(o.Height)).Append(' ')
-                          .Append(F(o.Depth)).Append(' ').Append(o.Archetype.ToString(CultureInfo.InvariantCulture))
-                          .Append('\n');
+                          .Append(F(o.Depth)).Append(' ').Append(o.Archetype.ToString(CultureInfo.InvariantCulture));
+                        // Glazing is written only when there IS some, so a building with no windows saves
+                        // byte-for-byte as it did before glass existed. Trailing and optional, like every
+                        // field added to this format after the fact.
+                        if (o.Glazed || o.GlassBroken)
+                            sb.Append(' ').Append(o.Glazed ? '1' : '0')
+                              .Append(' ').Append(o.GlassTint.ToString(CultureInfo.InvariantCulture))
+                              .Append(' ').Append(F(o.GlassHp))
+                              .Append(' ').Append(o.GlassIndestructible ? '1' : '0')
+                              .Append(' ').Append(o.GlassBroken ? '1' : '0');
+                        sb.Append('\n');
+                    }
                 }
             return sb.ToString();
         }
@@ -129,7 +140,18 @@ namespace UnturnedSim
                     // silently. A loader's job is to return what was written.
                     float cu = Math.Clamp(u, 0f, Math.Max(0f, cur.Length - Math.Min(ow, cur.Length)));
                     float cv = Math.Clamp(v, 0f, Math.Max(0f, cur.Height - Math.Min(oh, cur.Height)));
-                    cur.Openings.Add(new WallOpening(cu, cv, Math.Min(ow, cur.Length), Math.Min(oh, cur.Height), d, arch));
+                    var op = new WallOpening(cu, cv, Math.Min(ow, cur.Length), Math.Min(oh, cur.Height), d, arch);
+                    // Glazing: trailing and optional, so a file written before glass existed loads as
+                    // unglazed rather than failing. Parsed as a block -- a half-written set is not honoured
+                    // in part, because a window that came back with its tint but not its "broken" flag would
+                    // repair itself on load and look like the save had worked.
+                    if (p.Length >= 12 && int.TryParse(p[7], out int gz) && int.TryParse(p[8], out int tint)
+                        && N(p[9], out float ghp) && int.TryParse(p[10], out int gind) && int.TryParse(p[11], out int gbr))
+                    {
+                        op.Glazed = gz != 0; op.GlassTint = tint; op.GlassHp = ghp;
+                        op.GlassIndestructible = gind != 0; op.GlassBroken = gbr != 0;
+                    }
+                    cur.Openings.Add(op);
                 }
                 // anything else: a newer editor's field. Skip it and keep the building.
             }

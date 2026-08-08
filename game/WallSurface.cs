@@ -253,6 +253,95 @@ namespace UnturnedGodot
                 });
                 gcs.Position = Vector3.Zero;
             }
+            RebuildGlass();
+        }
+
+        // ---- glazing -----------------------------------------------------------------------------------
+        // A pane per glazed, unbroken opening. The wall owns WHETHER and WHERE; GlassPane owns what a pane
+        // does when it is shot. Deliberately no reaching into the pane past its Build arguments -- the
+        // shatter, its effect and its sound are cow tools' side of the line.
+
+        readonly List<GlassPane> _panes = new();
+        /// <summary>What each live pane was built from, so a Rebuild during a drag can tell "this pane is
+        /// still right, just move it" from "this one has to be remade". Rebuild runs on every mouse move.</summary>
+        readonly List<(int Op, float W, float H, int Tint, float Hp, bool Ind)> _paneSpec = new();
+
+        /// <summary>0xRRGGBB -> Color. 0 means UNSET rather than black, so a tint of pure black is not
+        /// expressible; that is a deliberate trade for keeping the save token a single int, and black glass
+        /// is not a thing anyone has asked for. Everything else in the 24-bit space round-trips.</summary>
+        public static Color TintFromRgb(int rgb) =>
+            new Color(((rgb >> 16) & 0xFF) / 255f, ((rgb >> 8) & 0xFF) / 255f, (rgb & 0xFF) / 255f);
+        // (no RgbFromTint: nothing packs a Color back to an int -- the swatches ARE ints. An unused inverse
+        // is the same dead-API smell as a flag nothing reads; add it when something needs it.)
+
+        void RebuildGlass()
+        {
+            // A shattered pane frees ITSELF, so the list can hold dead instances before we have looked at it.
+            for (int i = _panes.Count - 1; i >= 0; i--)
+                if (!IsInstanceValid(_panes[i])) { _panes.RemoveAt(i); _paneSpec.RemoveAt(i); }
+
+            var want = new List<int>();
+            for (int i = 0; i < Openings.Count; i++)
+                if (Openings[i].HasGlass) want.Add(i);
+
+            while (_panes.Count > want.Count)
+            {
+                var last = _panes[_panes.Count - 1];
+                _panes.RemoveAt(_panes.Count - 1);
+                _paneSpec.RemoveAt(_paneSpec.Count - 1);
+                if (IsInstanceValid(last)) { RemoveChild(last); last.QueueFree(); }   // RemoveChild FIRST: QueueFree defers to end of frame, and until then a ray still hits it
+            }
+
+            for (int k = 0; k < want.Count; k++)
+            {
+                var o = Openings[want[k]];
+                float hp = o.GlassHp > 0f ? o.GlassHp : 1f;
+                var spec = (want[k], o.Width, o.Height, o.GlassTint, hp, o.GlassIndestructible);
+                if (k < _panes.Count && _paneSpec[k] == spec)
+                {
+                    _panes[k].Position = new Vector3(o.U + o.Width * 0.5f, o.V + o.Height * 0.5f, 0f);
+                    continue;
+                }
+                var pane = GlassPane.Build(new Vector2(o.Width, o.Height),
+                                           o.GlassTint != 0 ? TintFromRgb(o.GlassTint) : GlassPane.DefaultHue,
+                                           hp, o.GlassIndestructible);
+                // Resolve the opening at SHATTER time, not now: this closure outlives any number of Rebuilds,
+                // and an index captured today points at a different opening once one is deleted.
+                pane.OnShattered += () => MarkPaneBroken(pane);
+                if (k < _panes.Count)
+                {
+                    var old = _panes[k];
+                    if (IsInstanceValid(old)) { RemoveChild(old); old.QueueFree(); }
+                    _panes[k] = pane; _paneSpec[k] = spec;
+                }
+                else { _panes.Add(pane); _paneSpec.Add(spec); }
+                AddChild(pane);
+                pane.Position = new Vector3(o.U + o.Width * 0.5f, o.V + o.Height * 0.5f, 0f);
+            }
+        }
+
+        /// <summary>A pane shattered: record it on its opening so the hole stays a hole through save, load and
+        /// rebuild. Looked up by pane REFERENCE rather than a captured index -- see the subscription above.</summary>
+        void MarkPaneBroken(GlassPane pane)
+        {
+            int k = _panes.IndexOf(pane);
+            if (k < 0 || k >= _paneSpec.Count) return;
+            int op = _paneSpec[k].Op;
+            if (op < 0 || op >= Openings.Count) return;
+            var o = Openings[op];
+            o.GlassBroken = true;
+            Openings[op] = o;                     // struct: write it back or nothing happened
+
+            // Flag only -- deliberately NO Rebuild() and no notification from in here.
+            //
+            // GlassPane.Shatter raises OnShattered and only AFTERWARDS reads GetTree() and GlobalPosition to
+            // spawn its shards. Anything on this path that takes the pane out of the tree makes GetTree()
+            // return null, and the shatter effect silently does not happen -- a broken window with no
+            // breaking. Nothing needs the callback anyway: Save() reads the openings, so the flag alone
+            // survives a save, and the pane has already removed itself from view.
+            //
+            // If a listener is ever genuinely needed here, defer it (Callable.From(...).CallDeferred()) so
+            // the shatter finishes the frame it is in.
         }
 
         /// <summary>The triangular prism that turns a flat-topped wall into a gable end: apex over the middle

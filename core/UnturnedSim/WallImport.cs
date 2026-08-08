@@ -280,7 +280,7 @@ namespace UnturnedSim
             float v = WallOpenings.Snap(o.V, WallOpenings.SillHeights, tolerance);
             float head = WallOpenings.Snap(o.V + o.Height, WallOpenings.HeadHeights, tolerance);
             float h = Math.Max(WallOpenings.MinOpening, head - v);
-            return new WallOpening(o.U, v, w, h, o.Depth, o.Archetype);
+            return o.MovedTo(o.U, v, w, h);   // NOT `new WallOpening(...)` -- that drops glazing. See MovedTo.
         }
     }
 }

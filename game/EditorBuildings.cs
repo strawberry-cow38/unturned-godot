@@ -135,19 +135,36 @@ namespace UnturnedGodot
         public struct Archetype
         {
             public string Name; public float Width, Height, Sill; public bool FloorPinned;
-            public Archetype(string n, float w, float h, float sill, bool pinned)
-            { Name = n; Width = w; Height = h; Sill = sill; FloorPinned = pinned; }
+            /// <summary>Does a freshly placed one of these come with glass in it? strawberry_cow: "toggleable
+            /// on/off so not every opening is a window". The preset is the default, not a lock -- any opening
+            /// can be glazed or unglazed afterwards, including a garage door if that is what you want.</summary>
+            public bool Glazed;
+            public Archetype(string n, float w, float h, float sill, bool pinned, bool glazed = false)
+            { Name = n; Width = w; Height = h; Sill = sill; FloorPinned = pinned; Glazed = glazed; }
         }
 
         public static readonly Archetype[] Archetypes =
         {
             new("door",    2.5f,  WallOpenings.DoorHeight - 0.5f, 0f,   true),
-            new("window",  3.31f, WallOpenings.WindowHeight,      WallOpenings.WindowSill, false),
-            new("tall win",2.81f, 2.97f,                          0.88f, false),
+            new("window",  3.31f, WallOpenings.WindowHeight,      WallOpenings.WindowSill, false, glazed: true),
+            new("tall win",2.81f, 2.97f,                          0.88f, false, glazed: true),
             new("garage",  8.0f,  WallOpenings.DoorHeight - 0.25f, 0f,  true),
             new("porch",   5.5f,  WallOpenings.DoorHeight,        0f,   true),
             new("vent",    1.0f,  1.0f,                           2.5f, false),
         };
+
+        // ---- glazing options applied to NEWLY placed openings ------------------------------------------
+        // "complete with plenty of options. color hue, mark indestructable, set hp, etc." -- these are the
+        // panel's current settings, stamped onto an opening as it is placed. Editing an existing opening
+        // goes through SetOpeningGlass instead, so the two paths cannot drift into different rules.
+
+        /// <summary>0xRRGGBB, or 0 for the pane's own default glass blue-grey.</summary>
+        public int ActiveGlassTint;
+        public float ActiveGlassHp = 1f;
+        public bool ActiveGlassIndestructible;
+        /// <summary>Force glazing on/off for new openings regardless of the archetype preset. Null = follow
+        /// the preset, which is what makes "window" glazed and "garage" not without anyone choosing.</summary>
+        public bool? GlazeNew;
 
         public void Setup(Editor editor, Camera3D cam, EditorCamera flyCam)
         {
@@ -383,6 +400,10 @@ namespace UnturnedGodot
             var a = Archetypes[Mathf.PosMod(archetype, Archetypes.Length)];
             var o = new WallOpening(u - a.Width * 0.5f, a.FloorPinned ? 0f : v - a.Height * 0.5f,
                                     a.Width, a.Height, 999f, archetype);
+            o.Glazed = GlazeNew ?? a.Glazed;
+            o.GlassTint = ActiveGlassTint;
+            o.GlassHp = ActiveGlassHp;
+            o.GlassIndestructible = ActiveGlassIndestructible;
             return WallOpenings.Clamp(o, w.Length, w.Height, w.Openings);
         }
 
@@ -395,6 +416,37 @@ namespace UnturnedGodot
             w.Rebuild();
             _editor?.PushUndo("opening add", () => Restore(w, before));
             return w.Openings.Count - 1;
+        }
+
+        /// <summary>Change one opening's glazing. Every field is optional so the panel can flip one control
+        /// without restating the rest -- a tint picker that also had to resend "hp" would eventually send a
+        /// stale one. Undoable, because strawberry_cow's standing complaint about this tool is things that
+        /// Ctrl+Z cannot walk back.</summary>
+        public void SetOpeningGlass(WallSurface w, int index, bool? glazed = null, int? tint = null,
+                                    float? hp = null, bool? indestructible = null, bool? broken = null)
+        {
+            if (w == null || !IsInstanceValid(w) || index < 0 || index >= w.Openings.Count) return;
+            var before = w.Openings.ToArray();
+            var o = w.Openings[index];
+            if (glazed.HasValue) o.Glazed = glazed.Value;
+            if (tint.HasValue) o.GlassTint = tint.Value;
+            if (hp.HasValue) o.GlassHp = hp.Value;
+            if (indestructible.HasValue) o.GlassIndestructible = indestructible.Value;
+            if (broken.HasValue) o.GlassBroken = broken.Value;
+            // Re-glazing a smashed window has to clear the smash, or turning glass off and on again leaves an
+            // opening that claims to be glazed and shows nothing.
+            if (glazed == true && !broken.HasValue) o.GlassBroken = false;
+            if (o.Equals(w.Openings[index])) return;      // no-op: pushing an undo step here makes Ctrl+Z look broken
+            w.Openings[index] = o;
+            w.Rebuild();
+            _editor?.PushUndo("glass", () => Restore(w, before));
+        }
+
+        /// <summary>Flip glazing on the selected opening. Bound to a key + the panel button.</summary>
+        public void ToggleGlass(WallSurface w, int index)
+        {
+            if (w == null || index < 0 || index >= w.Openings.Count) return;
+            SetOpeningGlass(w, index, glazed: !w.Openings[index].Glazed);
         }
 
         void Restore(WallSurface w, WallOpening[] snapshot)
