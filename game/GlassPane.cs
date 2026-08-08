@@ -54,7 +54,7 @@ namespace UnturnedGodot
 
         public void TakeDamage(float amount)
         {
-            if (_shattered) return;
+            if (_shattered || Indestructible) return;   // an indestructible pane takes hits but never shatters (tinyclaw caught this missing -- guard in TakeDamage, NOT Shatter, so a scripted Shatter() still works)
             Health -= amount;
             if (Health <= 0f) Shatter();
         }
