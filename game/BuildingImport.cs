@@ -311,6 +311,7 @@ namespace UnturnedGodot
                 });
             }
             ClipBandsToRoofs(plans, bands);
+            TrimCoplanarOverlap(plans, bands);
             return plans;
         }
 
@@ -469,6 +470,69 @@ namespace UnturnedGodot
                 plan.Openings.Add(s);
             }
             plans.Add(plan);
+        }
+
+        /// <summary>Lift each strip's base to the top of the wall it sits on.
+        ///
+        /// Both are recovered honestly from the mesh and they OVERLAP: measured on House_00 the cream wall's
+        /// coverage runs to 4.25 and the grey strip's starts at 4.19, six centimetres of the same plane
+        /// described twice. Retail gets away with it because that is one mesh with one surface; we build two,
+        /// so the depth test has to pick between coincident triangles and the seam shimmers from a distance
+        /// as the camera moves. strawberry_cow: "the geometry is fine. no gap. but it renders weird from a
+        /// distance" -- which is exactly what a coplanar overlap looks like and NOT what a gap looks like.
+        ///
+        /// Trimming rather than nudging one forward: an offset is a fudge that has to be bigger than the
+        /// depth precision at every distance you might view from, and there is no such number.</summary>
+        static void TrimCoplanarOverlap(List<WallPlan> plans, List<WallPlan> bands)
+        {
+            foreach (var b in bands)
+            {
+                if (b.Length <= 0.01f) continue;
+                float lift = 0f;
+                foreach (var w in plans)
+                {
+                    if (ReferenceEquals(w, b) || w.Kind != SurfaceKind.Wall) continue;
+                    if (bands.Contains(w)) continue;
+                    // same plane: same facing, and the same offset along it
+                    if (Mathf.Abs(Mathf.Wrap(w.Yaw - b.Yaw, -180f, 180f)) > 5f) continue;
+                    var n = new Vector3(-Mathf.Sin(Mathf.DegToRad(b.Yaw)), 0f, -Mathf.Cos(Mathf.DegToRad(b.Yaw)));
+                    float dw = new Vector3(w.X, 0f, w.Z).Dot(n), db = new Vector3(b.X, 0f, b.Z).Dot(n);
+                    // 0.6, not 0.25. Instrumented rather than guessed: the real separation between a strip
+                    // and the wall under it came out at exactly 0.25, so a `> 0.25` test rejected the very
+                    // pairs it existed to find, on two facades out of three, while a genuinely different
+                    // facade sat at 5.75 and was never in danger of matching. Their recovered insets differ
+                    // because they are separate faces of the same wall, not the same face.
+                    if (Mathf.Abs(dw - db) > 0.6f) continue;
+                    // and it has to be underneath this strip, reaching into it
+                    float top = w.Y + w.Height;
+                    if (top <= b.Y + 0.01f || w.Y > b.Y) continue;
+                    lift = Mathf.Max(lift, top - b.Y);
+                }
+                if (lift <= 0.005f) continue;
+                if (lift >= b.Height - 0.05f)
+                {
+                    // The wall already reaches past the top of this strip, so the strip is entirely inside it
+                    // and describes a plane the wall is already covering. That happens on a GABLE END, where
+                    // the wall carries on up to the roof line. Redundant, not untrimmable -- drop it. My
+                    // first version skipped these to avoid trimming a strip out of existence, which left
+                    // exactly the coplanar overlap the pass was written to remove on two of three facades.
+                    b.Length = 0f;
+                    continue;
+                }
+                // Bury the strip 2 cm INTO the wall rather than seating it exactly on top.
+                //
+                // Trimming to exactly the wall's top removed the overlapping VOLUME but left the wall's top
+                // face and the strip's bottom face as two coincident horizontal quads at the same height --
+                // which is the same z-fight in a different orientation. strawberry_cow, after the first fix:
+                // "its like the top face of the wall renders over the roof wall." Exactly that face.
+                // Overlapping slightly puts each of those quads INSIDE the other's solid, where neither is
+                // visible from outside, instead of leaving them fighting in the open.
+                const float Bury = 0.02f;
+                float move = Mathf.Max(0f, lift - Bury);
+                b.Y += move;
+                b.Height -= move;
+            }
+            plans.RemoveAll(p => p.Length <= 0.01f);
         }
 
         /// <summary>Trim the wall-to-roof strip so it runs only as far as the roof above it does.

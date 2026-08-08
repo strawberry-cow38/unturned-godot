@@ -4534,6 +4534,12 @@ namespace UnturnedGodot
             right.Openings.Add(new UnturnedSim.WallOpening(5.5f, sill, 2.81f, wh));
 
             foreach (var w in b.Walls) w.Rebuild();
+            // Close the corners, which a user gets for free and this did not. Corner solving runs from the
+            // draw-release handler, and the demo lays its walls by calling AddWall directly -- so every
+            // screenshot of the editor has been showing a building with an open notch at every corner while
+            // the same building drawn by hand came out solid. strawberry_cow, off a render: "corners arent
+            // getting solved in ur render?"
+            b.SolveCorners();
             var floor = b.AddSlab(UnturnedSim.SurfaceKind.Floor);
             // a stairwell, to show that a hole in a floor is the same opening as a hole in a wall
             if (floor != null)

@@ -1585,4 +1585,69 @@ namespace UnturnedGodot.Testing
                     tool.Walls.Count == before);
         }
     }
+    // "add q & e to switch between 'floors'" -- and the pitched-roof overhang that landed with it.
+    public class BuildToolFloorsAndOverhang : GameTest
+    {
+        public override string Name => "buildtool.floors_and_roof_overhang";
+
+        public override IEnumerable<Step> Run()
+        {
+            var tool = new EditorBuildings();
+            World.AddChild(tool);
+            var ed = new Editor();
+            World.AddChild(ed);
+            tool.Setup(ed, null, null);
+            yield return Step.Ticks(1);
+
+            T.Check($"starts on the ground floor ({tool.ActiveFloor}, y {tool.FloorY:0.00})",
+                    tool.ActiveFloor == 0 && Mathf.Abs(tool.FloorY) < 1e-4f);
+            tool.ActiveFloor = 2;
+            T.Check($"floor 2 is two storeys up ({tool.FloorY:0.00} vs {2 * EditorBuildings.StoreyHeight:0.00})",
+                    Mathf.Abs(tool.FloorY - 2 * EditorBuildings.StoreyHeight) < 1e-3f);
+            T.Check("a storey is a door height, so floors stack without a gap",
+                    Mathf.Abs(EditorBuildings.StoreyHeight - WallOpenings.DoorHeight) < 1e-4f);
+            tool.ActiveFloor = 0;
+
+            // ---- a PITCHED roof overhangs; a FLAT one does not -------------------------------------
+            // BREAK IT: apply the overhang in AddSlab and the flat roof grows a ledge, which is the half
+            // strawberry corrected me on within a minute of my shipping both.
+            foreach (var w in new List<WallSurface>(tool.Walls)) tool.RemoveWall(w);
+            tool.AddWall(Vector3.Zero, 0f, 9f);
+            tool.AddWall(new Vector3(9f, 0f, 0f), 90f, 9f);
+            tool.AddWall(new Vector3(9f, 0f, -9f), 180f, 9f);
+            tool.AddWall(Vector3.Zero, 270f, 9f);
+            yield return Step.Ticks(1);
+
+            float wallMinX = float.MaxValue, wallMaxX = float.MinValue;
+            foreach (var w in tool.Walls)
+                foreach (float u in new[] { 0f, w.Length })
+                {
+                    var p = w.UVToWorld(u, 0f);
+                    wallMinX = Mathf.Min(wallMinX, p.X); wallMaxX = Mathf.Max(wallMaxX, p.X);
+                }
+
+            tool.ActiveRoofPitch = 0f;
+            var flat = tool.AddSlab(SurfaceKind.Roof);
+            yield return Step.Ticks(1);
+            float flatOver = flat.UVToWorld(flat.Length, 0f).X - wallMaxX;
+            T.Check($"a flat roof stays flush ({flatOver:0.00} m past the wall line)", flatOver < 0.45f);
+            tool.RemoveWall(flat);
+
+            int n = tool.BuildGableOver(wallMinX - EditorBuildings.RoofOverhang - 0.35f,
+                                        wallMaxX + EditorBuildings.RoofOverhang + 0.35f,
+                                        -9.35f - EditorBuildings.RoofOverhang, 0.35f + EditorBuildings.RoofOverhang,
+                                        4.25f, 20f, 0, 0.7f);
+            yield return Step.Ticks(1);
+            T.Check($"a pitched roof builds ({n} surfaces)", n >= 2);
+            float reach = float.MinValue;
+            foreach (var w in tool.Walls)
+            {
+                if (w.Kind != SurfaceKind.Roof) continue;
+                foreach (float u in new[] { 0f, w.Length })
+                    reach = Mathf.Max(reach, w.UVToWorld(u, 0f).X);
+            }
+            T.Check($"and it runs past the walls ({reach - wallMaxX:0.00} m past, want ~{EditorBuildings.RoofOverhang:0.00}+)",
+                    reach - wallMaxX > EditorBuildings.RoofOverhang * 0.8f);
+        }
+    }
 }

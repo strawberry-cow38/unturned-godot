@@ -172,6 +172,15 @@ namespace UnturnedGodot
 
         /// <summary>Click-click wall laying. Armed from the panel; the first click drops a wall and the second
         /// commits it.</summary>
+        /// <summary>Which storey you are building on. Everything you place lands at this height instead of
+        /// on the terrain, so a second floor is a thing you switch to rather than a height you have to hit.
+        ///
+        /// Q and E move down and up. They are the camera's ascend/descend while RMB-flying, and this input
+        /// handler already returns early in that case, so the two never both fire.</summary>
+        public int ActiveFloor;
+        public static float StoreyHeight => WallOpenings.DoorHeight;
+        public float FloorY => ActiveFloor * StoreyHeight;
+
         public bool WallDrawMode;
 
         /// <summary>Draw a roof or floor as a RECTANGLE you drag, instead of one auto-fitted to the current
@@ -206,7 +215,8 @@ namespace UnturnedGodot
         Vector3 _drawAnchor;
 
         public bool Drawing => _drawing != null;
-        public string ToolText => DeleteDrawMode ? "delete: click a wall, or drag along one to cut a piece out"
+        public string ToolText => $"floor {ActiveFloor} (Q/E) · " + ToolName;
+        string ToolName => DeleteDrawMode ? "delete: click a wall, or drag along one to cut a piece out"
                                 : SlabDrawMode ? (_drawingSlab != null ? $"drag the {SlabDrawKind.ToString().ToLower()} out — release to place" : $"{SlabDrawKind.ToString().ToLower()}: drag a rectangle")
                                 : WallDrawMode ? (_drawing != null ? "drag the wall out — release to place, Esc cancels" : "wall: press and drag")
                                 : _armed >= 0 ? $"placing {Archetypes[Mathf.PosMod(_armed, Archetypes.Length)].Name}"
@@ -636,6 +646,8 @@ namespace UnturnedGodot
                     PositionHandles();
                 }
                 else if (k.Keycode >= Key.Key1 && k.Keycode <= Key.Key6) _armed = (int)(k.Keycode - Key.Key1);
+                else if (k.Keycode == Key.E) ActiveFloor = Mathf.Min(ActiveFloor + 1, 12);
+                else if (k.Keycode == Key.Q) ActiveFloor = Mathf.Max(ActiveFloor - 1, 0);
                 // Ctrl+Z. The undo STACK was always here -- every wall, opening and edit pushes onto it --
                 // but the key was only ever bound in EditorObjects, so in Buildings mode there was nothing
                 // to press. An undo history nobody can reach is the same as no undo history.
@@ -664,7 +676,7 @@ namespace UnturnedGodot
 
             if (RoomDrawMode)
             {
-                if (_room.Count == 0 && GroundAt(from, dir, out var rp))
+                if (_room.Count == 0 && GroundOnFloor(from, dir, out var rp))
                 {
                     _roomAnchor = new Vector3(WallOpenings.SnapGrid(rp.X), rp.Y, WallOpenings.SnapGrid(rp.Z));
                     _selWall = null; _selOpening = -1; PositionHandles();
@@ -678,7 +690,7 @@ namespace UnturnedGodot
 
             if (SlabDrawMode)
             {
-                if (_drawingSlab == null && GroundAt(from, dir, out var sp))
+                if (_drawingSlab == null && GroundOnFloor(from, dir, out var sp))
                 {
                     _slabAnchor = new Vector3(WallOpenings.SnapGrid(sp.X), SlabTopY(sp.Y), WallOpenings.SnapGrid(sp.Z));
                     _selWall = null; _selOpening = -1; PositionHandles();
@@ -700,7 +712,7 @@ namespace UnturnedGodot
             {
                 if (_drawing == null)
                 {
-                    if (!GroundAt(from, dir, out var p)) return;
+                    if (!GroundOnFloor(from, dir, out var p)) return;
                     _drawAnchor = p;
                     _selWall = null; _selOpening = -1; PositionHandles();
                     _drawing = AddWall(p, 0f, WallOpenings.LatticeStep);
@@ -778,6 +790,15 @@ namespace UnturnedGodot
         /// <summary>Where the cursor meets the ground, ignoring walls. Walls sit on collision layer 0 along
         /// with the terrain, so an un-excluded pick starts the next wall on top of the last one you drew --
         /// which looks like the tool randomly placing walls in the air.</summary>
+        /// <summary>Where a placement lands: the terrain under the cursor, raised to the active storey.
+        /// On floor 0 this is just the ground.</summary>
+        bool GroundOnFloor(Vector3 from, Vector3 dir, out Vector3 point)
+        {
+            if (!GroundAt(from, dir, out point)) return false;
+            point.Y += FloorY;
+            return true;
+        }
+
         bool GroundAt(Vector3 from, Vector3 dir, out Vector3 point)
         {
             point = default;
@@ -1631,6 +1652,15 @@ namespace UnturnedGodot
         /// allows -- and the slab is the AABB of the rotated footprint, overhanging on every side, which is
         /// exactly what the retail measurement says should not happen. Mixed thicknesses also grow by the
         /// MAX half-thickness on all four sides, so a 0.50 partition meeting a 0.70 wall overhangs by 0.10.</summary>
+        /// <summary>How far a PITCHED roof runs past the walls it covers. A flat roof does not -- it stays
+        /// flush with the wall face.
+        ///
+        /// Retail measures flush for both: 24 of 26 buildings end the roof on the wall face within 6 cm, and
+        /// this was 0 for that reason. strawberry_cow overrode it from the result, then corrected the
+        /// correction -- "flat roofs SHOULDNT*". Measurement wins on what retail IS; the person looking at
+        /// the game wins on what it should look like, including which half of it.</summary>
+        public const float RoofOverhang = 0.4f;
+
         public WallSurface AddSlab(SurfaceKind kind)
         {
             if (_walls.Count == 0) return null;
@@ -1663,6 +1693,8 @@ namespace UnturnedGodot
             // The footprint above is measured on the wall MID-planes (UVToWorld's v=0 line lies at local z=0),
             // so flush means growing by half a wall. Stopping at the centre-line instead leaves the outer half
             // of every wall poking through the roof, which is a thin bright seam rather than an obvious fault.
+            // Flush, for both a floor and a FLAT roof. Only a pitched roof overhangs -- see RoofOverhang,
+            // which AddGableRoof applies; a flat slab hanging past the walls reads as a ledge.
             float half = maxWallThickness * 0.5f;
             minX -= half; maxX += half; minZ -= half; maxZ += half;
 
@@ -1741,7 +1773,7 @@ namespace UnturnedGodot
                     GD.Print($"[import]  {pl.Kind,-10} {pl.Length,6:0.0} x {pl.Height,5:0.0}  yaw {pl.Yaw,7:0.0}  pitch {pl.Pitch,6:0.0}"
                              + $"  thick {pl.Thickness:0.00}  gable {pl.GableRise:0.0}  ops {pl.Openings.Count}"
                              + $"  inset L {pl.InsetL0:0.0}/{pl.InsetL1:0.0} R {pl.InsetR0:0.0}/{pl.InsetR1:0.0}"
-                             + $"  texel {pl.Texel}"
+                             + $"  texel {pl.Texel}  y0 {pl.Y:0.000} y1 {pl.Y + pl.Height:0.000}"
                              + $"   X {Mathf.Min(o.X, e.X),6:0.0}..{Mathf.Max(o.X, e.X),6:0.0}"
                              + $"  Y {Mathf.Min(o.Y, e.Y),6:0.0}..{Mathf.Max(o.Y, e.Y),6:0.0}"
                              + $"  Z {Mathf.Min(o.Z, e.Z),6:0.0}..{Mathf.Max(o.Z, e.Z),6:0.0}");
@@ -1797,7 +1829,7 @@ namespace UnturnedGodot
             if (seen == 0) return 0;
 
             // flush with the outer wall face, same as a flat roof -- see AddSlab
-            float halfW = maxWallThickness * 0.5f;
+            float halfW = maxWallThickness * 0.5f + RoofOverhang;
             minX -= halfW; maxX += halfW; minZ -= halfW; maxZ += halfW;
 
             return BuildGableOver(minX, maxX, minZ, maxZ, topY, pitchDeg, material, maxWallThickness);
