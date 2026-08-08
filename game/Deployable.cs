@@ -428,7 +428,7 @@ namespace UnturnedGodot
             if (parent == null) return;
             var chunks = new CpuParticles3D
             {
-                Emitting = true, OneShot = true, Amount = 20, Lifetime = 2.6f, Explosiveness = 1f, TopLevel = true,
+                Emitting = false, OneShot = true, Amount = 20, Lifetime = 2.6f, Explosiveness = 1f, TopLevel = true,   // fired AFTER positioning (below) -- true-in-ctor fires empty when a BULLET destroys the deployable (a physics tick); same fix as ImpactFx
                 Mesh = new BoxMesh { Size = Vector3.One * 0.12f },
                 EmissionShape = CpuParticles3D.EmissionShapeEnum.Box, EmissionBoxExtents = new Vector3(0.4f, 0.7f, 0.4f),   // pieces originate ACROSS the body, then fall
                 Direction = Vector3.Up, Spread = 80f, Gravity = new Vector3(0f, -9.8f, 0f),
@@ -438,6 +438,7 @@ namespace UnturnedGodot
             };
             parent.AddChild(chunks);
             chunks.GlobalPosition = GlobalPosition + Vector3.Up * 0.7f;
+            chunks.Emitting = true;   // fire the one-shot AFTER AddChild+position -> a clean cycle even inside a physics tick (a bullet destroying the deployable)
             var t = GetTree()?.CreateTimer(3f);
             if (t != null) t.Timeout += () => { if (IsInstanceValid(chunks)) chunks.QueueFree(); };
         }
