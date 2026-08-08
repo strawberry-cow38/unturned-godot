@@ -26,6 +26,7 @@ namespace UnturnedGodot
         static readonly Dictionary<Surf, AudioStream> _snd = new();
         static ImageTexture _blood; static bool _bloodTried;
         static AudioStream _bloodSnd; static bool _bloodSndTried;
+        static Texture2D _flashTex; static bool _flashTried;
 
         static ImageTexture LoadTex(string rel)
         {
@@ -70,7 +71,7 @@ namespace UnturnedGodot
             var dtex = hard ? DecalTex(surf) : null;
             if (dtex != null)
             {
-                var dec = new Decal { TextureAlbedo = dtex, Size = new Vector3(0.4f, 0.3f, 0.4f), AlbedoMix = 1f, Modulate = Colors.White };   // source decal quad ~0.5x0.5
+                var dec = new Decal { TextureAlbedo = dtex, Size = new Vector3(0.55f, 0.35f, 0.55f), AlbedoMix = 1f, Modulate = new Color(0.22f, 0.21f, 0.20f) };   // DARK hole so it reads on light surfaces (a grey decal on a grey wall was invisible); bigger for range
                 (attachTo ?? (Node)scene).AddChild(dec);
                 Vector3 t = Mathf.Abs(up.Dot(Vector3.Up)) < 0.95f ? Vector3.Up : Vector3.Right;
                 Vector3 right = up.Cross(t).Normalized();
@@ -103,7 +104,7 @@ namespace UnturnedGodot
                 Direction = up, Spread = 45f,   // source ShapeModule Cone angle 45deg
                 InitialVelocityMin = metal ? 4f : 2f, InitialVelocityMax = metal ? 8f : 4f,
                 Gravity = new Vector3(0f, -9.8f, 0f),
-                ScaleAmountMin = metal ? 0.125f : 0.25f, ScaleAmountMax = metal ? 0.25f : 0.5f,
+                ScaleAmountMin = metal ? 0.3f : 0.5f, ScaleAmountMax = metal ? 0.6f : 1.0f,   // scaled up ~2x from source (0.25-0.5m) -- source size is invisible at play distance
                 Mesh = new QuadMesh { Size = Vector2.One, Material = mat },
                 VisibilityAabb = Guard,   // <-- THE FIX: without this the fast chips are frustum-culled and the burst vanishes
             };
@@ -111,6 +112,11 @@ namespace UnturnedGodot
             scene.AddChild(dust);
             dust.GlobalPosition = point + up * 0.03f;
             Kill(tree, dust, 1.4);
+
+            // readability element: a brief additive FLASH pop at the hit -- reads on ANY surface (the source debris chips
+            // are near-invisible in a bright scene at range: grey chips on a grey wall vanish, which the point-blank +
+            // dark-background --impacttest harness never revealed). The dark decal above is the persistent read.
+            Flash(scene, point);
 
             PlaySound(scene, Snd(surf), point);
         }
@@ -185,6 +191,44 @@ namespace UnturnedGodot
             Kill(scene.GetTree(), ps, 1.4);
             if (!_bloodSndTried) { _bloodSndTried = true; _bloodSnd = LoadWav("res://content/impact_flesh.wav"); }
             PlaySound(scene, _bloodSnd, point);
+        }
+
+        static Texture2D FlashTex()
+        {
+            if (!_flashTried) { _flashTried = true; _flashTex = LoadTex("res://content/muzzleflash.png"); }
+            return _flashTex;
+        }
+
+        // A brief bright ADDITIVE flash at the impact -- the eye-catcher that reads on ANY surface (additive is always
+        // brighter than the background, light or dark). Short-lived; the dust + decal carry the lingering read.
+        static void Flash(Node scene, Vector3 point)
+        {
+            if (scene == null) return;
+            var shrink = new Curve(); shrink.AddPoint(new Vector2(0f, 1f)); shrink.AddPoint(new Vector2(1f, 0f));
+            var mat = new StandardMaterial3D
+            {
+                ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
+                Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
+                BlendMode = BaseMaterial3D.BlendModeEnum.Add,
+                AlbedoColor = new Color(1f, 0.88f, 0.55f),
+                BillboardMode = BaseMaterial3D.BillboardModeEnum.Particles,
+                CullMode = BaseMaterial3D.CullModeEnum.Disabled,
+            };
+            var tex = FlashTex(); if (tex != null) mat.AlbedoTexture = tex;
+            var ps = new CpuParticles3D
+            {
+                Emitting = true, OneShot = true, Explosiveness = 1f,
+                Amount = 3, Lifetime = 0.17f,
+                Direction = Vector3.Up, Spread = 0f,
+                InitialVelocityMin = 0f, InitialVelocityMax = 0f,
+                ScaleAmountMin = 1.3f, ScaleAmountMax = 2.0f, ScaleAmountCurve = shrink,
+                AngleMin = -180f, AngleMax = 180f,
+                Mesh = new QuadMesh { Size = Vector2.One, Material = mat },
+                VisibilityAabb = Guard,
+            };
+            scene.AddChild(ps);
+            ps.GlobalPosition = point;
+            Kill(scene.GetTree(), ps, 0.35);
         }
 
         static void PlaySound(Node scene, AudioStream a, Vector3 pos)

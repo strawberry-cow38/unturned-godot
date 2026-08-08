@@ -1371,6 +1371,23 @@ namespace UnturnedGodot
             var z = new ZombieController { Target = player, Speciality = ZombieController.ESpeciality.NORMAL };
             AddChild(z);
             z.GlobalPosition = new Vector3(0, 1.0f, System.Environment.GetEnvironmentVariable("UG_HITZOMBIE") == "1" ? -6f : -25f);   // UG_HITZOMBIE: point-blank so shots connect -> verify blood
+
+            // UG_HITWALL: a concrete wall 18 m downrange in the player's default (+Z) fire direction, so the firetest
+            // reproduces shooting a hard surface at PLAY DISTANCE -> diagnose the real in-game bullet-impact FX (the
+            // --impacttest harness fired point-blank, which never actually exercised the frustum-cull path). Tagged
+            // Concrete so it takes the debris burst + decal.
+            if (System.Environment.GetEnvironmentVariable("UG_HITWALL") == "1")
+            {
+                var wall = new StaticBody3D { CollisionLayer = 1 << 0 };
+                wall.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = new Vector3(12f, 8f, 0.5f) } });
+                var wm = new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(12f, 8f, 0.5f) } };
+                wm.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.60f, 0.60f, 0.62f) };
+                wall.AddChild(wm);
+                AddChild(wall);
+                wall.GlobalPosition = new Vector3(0, 2.5f, 18f);
+                wall.SetMeta(PlayerController.SurfMeta, (int)PlayerController.Surf.Concrete);
+                GD.Print("[FIRETEST] UG_HITWALL: concrete wall at +Z 18 m (player fires into it)");
+            }
             env.TonemapMode = Godot.Environment.ToneMapper.Aces;   // match the game's ACES so this harness validates the scope PiP color/tonemap (was default Linear)
             GD.Print($"[FIRETEST] suppressed={suppressed} -- firing away from a zombie 25 m off; expect [ALERT] ONLY when unsuppressed");
         }
