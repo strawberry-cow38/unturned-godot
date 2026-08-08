@@ -28,7 +28,6 @@ namespace UnturnedGodot
         Node3D _gun;
         CanvasLayer _layer;
         TextureRect _vpRect;   // the composited viewmodel image; rolled 2D about screen-centre for the 1P lean tilt
-        Vector2 _vpOversize = new Vector2(1.2f, 1.85f);   // the vm viewport renders this much BIGGER than the screen so the lean image-roll (up to ~30deg total: lean 20 + input-roll ±10 + sway) never swings its own corners into frame
         // Source-accurate: horizontal offset is ZERO (PlayerAnimator.cs:1653 base = Vector3.zero,
         // PreferenceData Offset_Horizontal defaults 0). The gun reads right-handed because the RIG holds
         // it in the right hand (lefties get localScale.x=-1, PlayerAnimator:1613 — a mirror, not a shift).
@@ -259,13 +258,10 @@ namespace UnturnedGodot
                 RenderTargetUpdateMode = SubViewport.UpdateMode.Always,
                 HandleInputLocally = false,
             };
-            _vp.Size = (Vector2I)(GetViewport().GetVisibleRect().Size * _vpOversize);   // OVERSIZED render (see _vpOversize) so the roll has margin
+            _vp.Size = (Vector2I)GetViewport().GetVisibleRect().Size;   // REVERTED (master): the oversize-and-crop read as a zoom-in. Back to screen-sized render at SourceFov; the lean-roll corner margin will be re-done as a wider vm-cam FOV ("render more") instead.
             AddChild(_vp);
 
-            // FOV widened for the oversized viewport so the CENTRAL screen-region still shows SourceFov (gun same apparent
-            // size): vertical FOV = 2*atan(oversizeH * tan(SourceFov/2)); the projection is tan-linear so the central crop
-            // lands back on exactly SourceFov both axes (horizontal follows from the oversized aspect). No distortion.
-            _cam = new Camera3D { Fov = Mathf.RadToDeg(2f * Mathf.Atan(_vpOversize.Y * Mathf.Tan(Mathf.DegToRad(SourceFov * 0.5f)))), Current = true };
+            _cam = new Camera3D { Fov = SourceFov, Current = true };
             _vp.AddChild(_cam);
             _vpLight = new DirectionalLight3D { RotationDegrees = new Vector3(-40f, -25f, 10f), LightEnergy = 1.2f };
             _vp.AddChild(_vpLight);
@@ -571,12 +567,7 @@ namespace UnturnedGodot
             // Composite the viewmodel viewport on top of the main view.
             _layer = new CanvasLayer { Layer = 5 };
             _vpRect = new TextureRect { Texture = _vp.GetTexture(), StretchMode = TextureRect.StretchModeEnum.Scale };
-            // The oversized render is shown 1:1 with its CENTRE on screen-centre, so the screen sees the central SourceFov
-            // region and the extra margin extends off every edge -- there to be swung IN when the lean roll turns it.
-            var _sz = (Vector2)_vp.Size;
-            _vpRect.Size = _sz;
-            _vpRect.Position = (GetViewport().GetVisibleRect().Size - _sz) * 0.5f;   // centre the oversize (negative offsets)
-            _vpRect.PivotOffset = _sz * 0.5f;                                        // roll about its own centre = screen centre
+            _vpRect.SetAnchorsPreset(Control.LayoutPreset.FullRect);   // REVERTED (master): screen-sized composite. The lean-roll self-sets its centre pivot at :1285, so the roll still turns about screen-centre.
             _layer.AddChild(_vpRect);
             AddChild(_layer);
         }

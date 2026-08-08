@@ -4431,27 +4431,6 @@ namespace UnturnedGodot
             return rv;
         }
 
-        Texture2D _bulletHoleTex; bool _bhTried;
-        Texture2D BulletHoleTex()
-        {
-            if (!_bhTried) { _bhTried = true; string p = ProjectSettings.GlobalizePath("res://content/bullet_hole.png"); if (System.IO.File.Exists(p)) { var img = Image.LoadFromFile(p); if (img != null) _bulletHoleTex = ImageTexture.CreateFromImage(img); } }
-            return _bulletHoleTex;
-        }
-
-        // Real per-material bullet-hole decal (Effects/Impacts/<mat>_WithDecal, MeshRenderer _MainTex extracted), cached.
-        // Only hard surfaces (concrete/metal/wood) leave a hole; falls back to the generated bullet_hole if a texture's missing.
-        readonly System.Collections.Generic.Dictionary<Surf, Texture2D> _decalTex = new System.Collections.Generic.Dictionary<Surf, Texture2D>();
-        Texture2D DecalTex(Surf surf)
-        {
-            if (_decalTex.TryGetValue(surf, out var cached)) return cached;
-            string name = surf switch { Surf.Metal => "metal", Surf.Wood => "wood", _ => "concrete" };
-            string p = ProjectSettings.GlobalizePath($"res://content/decal_{name}.png");
-            Texture2D t = null;
-            if (System.IO.File.Exists(p)) { var img = Image.LoadFromFile(p); if (img != null) { img.GenerateMipmaps(); t = ImageTexture.CreateFromImage(img); } }
-            _decalTex[surf] = t ??= BulletHoleTex();
-            return t;
-        }
-
         // surface materials for bullet impacts (a slice of the source EPhysicsMaterial set). Tagged on colliders via
         // SetMeta("surf", (int)Surf) -- terrain = Grass, vehicles = Metal, untagged (buildings/props) = Concrete.
         public enum Surf { Concrete, Grass, Dirt, Metal, Wood, Sand, Water }
@@ -4470,58 +4449,9 @@ namespace UnturnedGodot
         // Bullet impact: a projected bullet-hole DECAL (hard surfaces only) + the REAL source impact effect debris burst
         // at the hit, oriented to the surface normal (Effects/Impacts/<mat>_static, extracted textures + params). Metal =
         // additive sparks; soft ground (grass/dirt/sand) = no decal.
+        // Ripped out + reimplemented as our own culling-fixed ImpactFx (master 2026-08-08). This stays the call-site entry.
         void SpawnSurfaceImpact(Vector3 point, Vector3 normal, Surf surf, Node3D attachTo = null)
-        {
-            if (System.Environment.GetEnvironmentVariable("UG_IMPACTDEBUG") == "1") GD.Print($"[impact] surf={surf} @ {point.Round()} tex={(ImpactTex(surf) != null)}");
-            var scene = GetTree().CurrentScene;
-            if (scene == null) { GD.PrintErr("[impact] CurrentScene NULL -> no impact spawned"); return; }
-            Vector3 up = normal.Normalized();
-            if (surf == Surf.Water)   // the REAL retail water splash (lit alpha-cutout droplets), not the generic debris burst
-            {
-                SpawnWaterSplash(scene, point, 1f);
-                PlayImpactSound(ImpactSnd(surf), point);
-                return;
-            }
-            bool hard = surf is Surf.Concrete or Surf.Metal or Surf.Wood;
-            bool metal = surf == Surf.Metal;
-            var tex = DecalTex(surf);
-            if (hard && tex != null)
-            {
-                var dec = new Decal { TextureAlbedo = tex, Size = new Vector3(0.16f, 0.3f, 0.16f), AlbedoMix = 1f, Modulate = Colors.White };   // real per-material decal carries its own colour
-                (attachTo ?? (Node)scene).AddChild(dec);   // vehicle hits: parent to the car so the hole FOLLOWS it (master); world hits: static in the scene
-                Vector3 t = Mathf.Abs(up.Dot(Vector3.Up)) < 0.95f ? Vector3.Up : Vector3.Right;
-                Vector3 right = up.Cross(t).Normalized();
-                dec.GlobalTransform = new Transform3D(new Basis(right, up, right.Cross(up)), point + up * 0.06f);   // +Y = normal -> projects DOWN into the surface (local-to-parent once attached)
-                var t1 = GetTree().CreateTimer(18.0); t1.Timeout += () => { if (IsInstanceValid(dec)) dec.QueueFree(); };
-            }
-            // Source ParticleSystem (Effects/Impacts/<mat>_static): a one-shot BURST of debris -- concrete/wood/gravel/foliage
-            // = 8 @ 0.25-0.5m, 2-4 m/s; metal = 16 @ 0.125-0.25m, 4-8 m/s; all gravityModifier 1 (fall), ~1s life. The debris
-            // sheets are 4 frames (a random chip per particle); metal is one spark sprite.
-            var itex = ImpactTex(surf);
-            bool sheet = itex != null && itex.GetWidth() >= itex.GetHeight() * 3;   // 32x8 debris strip = 4 chips; 16x16 metal = single
-            var mat = new StandardMaterial3D
-            {
-                ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
-                AlbedoColor = Colors.White, BillboardMode = BaseMaterial3D.BillboardModeEnum.Particles,
-                BlendMode = metal ? BaseMaterial3D.BlendModeEnum.Add : BaseMaterial3D.BlendModeEnum.Mix,
-                TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest,
-            };
-            if (itex != null) mat.AlbedoTexture = itex;
-            if (sheet) { mat.ParticlesAnimHFrames = 4; mat.ParticlesAnimVFrames = 1; mat.ParticlesAnimLoop = false; }
-            if (metal) { mat.EmissionEnabled = true; if (itex != null) mat.EmissionTexture = itex; mat.Emission = new Color(1f, 0.7f, 0.2f); mat.EmissionEnergyMultiplier = 2.5f; }
-            var dust = new CpuParticles3D
-            {
-                Emitting = true, OneShot = true, Amount = metal ? 16 : 8, Lifetime = 1.0f, Explosiveness = 1f,
-                Direction = up, Spread = 70f, InitialVelocityMin = metal ? 4f : 2f, InitialVelocityMax = metal ? 8f : 4f,
-                Gravity = new Vector3(0f, -9.8f, 0f), ScaleAmountMin = metal ? 0.125f : 0.25f, ScaleAmountMax = metal ? 0.25f : 0.5f,
-                Mesh = new QuadMesh { Size = Vector2.One, Material = mat },
-            };
-            if (sheet) { dust.AnimOffsetMin = 0f; dust.AnimOffsetMax = 1f; }   // random static chip frame per particle
-            scene.AddChild(dust);
-            dust.GlobalPosition = point + up * 0.03f;
-            var t2 = GetTree().CreateTimer(1.4); t2.Timeout += () => { if (IsInstanceValid(dust)) dust.QueueFree(); };
-            PlayImpactSound(ImpactSnd(surf), point);   // source impact effects carry per-material audio
-        }
+            => ImpactFx.Spawn(GetTree().CurrentScene, point, normal, surf, attachTo);
 
         // The retail water splash (Effects/Impacts/water_static for a bullet hit, Effects/Explosions/water_0 for a blast).
         // Retail renders these on Unity's Standard shader (Specular) in CUTOUT mode (_Mode=1, _Cutoff 0.5, ZWrite on) --
@@ -4529,58 +4459,11 @@ namespace UnturnedGodot
         // 45deg cone, 3-6 m/s); scale>=2 = an explosion column (tight upward jet, many fast droplets). Extracted params +
         // the pale water sprite (impact_water_static_0.png). Droplets shrink over life + tumble; VisibilityAabb guards the
         // fast particles from the auto-AABB frustum cull (same lesson as the rubble chips).
-        void SpawnWaterSplash(Node scene, Vector3 point, float scale)
-        {
-            bool big = scale >= 2f;
-            var shrink = new Curve(); shrink.AddPoint(new Vector2(0f, 1f)); shrink.AddPoint(new Vector2(1f, 0f));   // size-over-life
-            var mat = new StandardMaterial3D
-            {
-                ShadingMode = BaseMaterial3D.ShadingModeEnum.PerPixel,   // LIT (retail Standard Specular) -> darkens at night
-                Transparency = BaseMaterial3D.TransparencyEnum.AlphaScissor, AlphaScissorThreshold = 0.5f,   // retail cutout _Cutoff 0.5
-                BillboardMode = BaseMaterial3D.BillboardModeEnum.Particles,
-                Roughness = 1f, Metallic = 0f, SpecularMode = BaseMaterial3D.SpecularModeEnum.Disabled,
-                AlbedoColor = new Color(0.82f, 0.9f, 1f), AlbedoTexture = ImpactTex(Surf.Water),
-                TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest,
-            };
-            var ps = new CpuParticles3D
-            {
-                Emitting = true, OneShot = true, Amount = big ? 96 : 10, Lifetime = big ? 2.5f : 1.0f, Explosiveness = 1f, Randomness = 0.4f,
-                Direction = Vector3.Up, Spread = big ? 18f : 45f,   // explosion = tight tall column; bullet = a 45deg cone
-                InitialVelocityMin = big ? 8f : 3f, InitialVelocityMax = big ? 22f : 6f,
-                Gravity = new Vector3(0f, -9.8f, 0f),
-                ScaleAmountMin = 0.28f * scale, ScaleAmountMax = 0.5f * scale, ScaleAmountCurve = shrink,
-                AngleMin = -180f, AngleMax = 180f, AngularVelocityMin = -220f, AngularVelocityMax = 220f,
-                EmissionShape = CpuParticles3D.EmissionShapeEnum.Sphere, EmissionSphereRadius = 0.2f * scale,
-                Mesh = new QuadMesh { Size = Vector2.One, Material = mat },
-            };
-            scene.AddChild(ps);
-            ps.GlobalPosition = point;
-            ps.VisibilityAabb = new Aabb(new Vector3(-8f, -8f, -8f) * scale, new Vector3(16f, 16f, 16f) * scale);
-            var t = GetTree().CreateTimer((big ? 2.5f : 1.0f) + 0.6f); t.Timeout += () => { if (IsInstanceValid(ps)) ps.QueueFree(); };
-        }
-
-        // Real impact-effect debris texture per surface (Effects/Impacts/<mat>_static extracted PNG), cached. Surf->effect:
-        // grass=foliage, dirt/sand=gravel, metal/wood/concrete same-named.
-        readonly System.Collections.Generic.Dictionary<Surf, ImageTexture> _impactTex = new System.Collections.Generic.Dictionary<Surf, ImageTexture>();
-        ImageTexture ImpactTex(Surf surf)
-        {
-            if (_impactTex.TryGetValue(surf, out var cached)) return cached;
-            string name = surf switch
-            {
-                Surf.Metal => "metal", Surf.Wood => "wood", Surf.Sand => "gravel",
-                Surf.Grass => "foliage", Surf.Dirt => "gravel", Surf.Water => "water", _ => "concrete",
-            };
-            string p = ProjectSettings.GlobalizePath($"res://content/impact_{name}_static_0.png");
-            ImageTexture tex = null;
-            if (System.IO.File.Exists(p)) { var img = Image.LoadFromFile(p); if (img != null) tex = ImageTexture.CreateFromImage(img); }
-            _impactTex[surf] = tex;
-            return tex;
-        }
+        void SpawnWaterSplash(Node scene, Vector3 point, float scale) => ImpactFx.WaterSplash(scene, point, scale);
 
         // Impact SOUND — each source impact effect carries its own audio (Effects/Impacts/<mat>/<mat>.mp3), extracted to WAV.
         // A 3D one-shot at the hit point, cached per surface. grass=foliage, dirt/sand=gravel, else same-named.
         static readonly System.Collections.Generic.Dictionary<Surf, AudioStream> _impactSnd = new System.Collections.Generic.Dictionary<Surf, AudioStream>();
-        static AudioStream _fleshSnd; static bool _fleshSndTried;
         static AudioStream LoadWav(string rel)
         {
             string p = ProjectSettings.GlobalizePath(rel);
@@ -4680,45 +4563,7 @@ namespace UnturnedGodot
         // burst of the 4-frame blood sprite, size 0.5-1.0m, 3-6 m/s, gravityModifier 1, ~1s life, sprayed back out of the
         // wound (-dir). One-shot GpuParticles3D at the world hit point, auto-freed. (Was a flat-red placeholder quad @ 24
         // particles / 0.1m — now the real blood texture at source counts/sizes.)
-        void SpawnFleshImpact(Vector3 point, Vector3 dir)
-        {
-            if (!_fleshTexTried)
-            {
-                _fleshTexTried = true;
-                string fp = ProjectSettings.GlobalizePath("res://content/impact_flesh_dynamic_0.png");
-                if (System.IO.File.Exists(fp)) { var fi = Image.LoadFromFile(fp); if (fi != null) _fleshTex = ImageTexture.CreateFromImage(fi); }
-            }
-            var pm = new ParticleProcessMaterial
-            {
-                Direction = -dir, Spread = 60f,
-                InitialVelocityMin = 3f, InitialVelocityMax = 6f,       // source startSpeed 3-6
-                Gravity = new Vector3(0f, -9.8f, 0f),                   // gravityModifier 1
-                ScaleMin = 0.5f, ScaleMax = 1.0f,                       // source startSize 0.5-1.0m (QuadMesh Size 1 -> metres)
-                Color = Colors.White,                                   // texture supplies the blood red
-                AnimOffsetMin = 0f, AnimOffsetMax = 1f,                 // random static blood frame per particle (4-frame sheet)
-            };
-            var mat = new StandardMaterial3D
-            {
-                AlbedoColor = Colors.White, ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
-                BillboardMode = BaseMaterial3D.BillboardModeEnum.Particles, Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
-                TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest,
-            };
-            if (_fleshTex != null) { mat.AlbedoTexture = _fleshTex; mat.ParticlesAnimHFrames = 4; mat.ParticlesAnimVFrames = 1; mat.ParticlesAnimLoop = false; }
-            else mat.AlbedoColor = new Color(0.5f, 0.02f, 0.02f);       // fallback: red if the texture is missing
-            var ps = new GpuParticles3D
-            {
-                Amount = 16, Lifetime = 1.0, OneShot = true, Explosiveness = 1f,   // source burst of 16
-                ProcessMaterial = pm,
-                DrawPass1 = new QuadMesh { Size = Vector2.One, Material = mat },
-                Emitting = true,
-            };
-            GetTree().CurrentScene?.AddChild(ps);
-            ps.GlobalPosition = point;
-            var timer = GetTree().CreateTimer(1.4);
-            timer.Timeout += () => { if (IsInstanceValid(ps)) ps.QueueFree(); };
-            if (!_fleshSndTried) { _fleshSndTried = true; _fleshSnd = LoadWav("res://content/impact_flesh.wav"); }
-            PlayImpactSound(_fleshSnd, point);   // source flesh impact carries blood-splat audio
-        }
+        void SpawnFleshImpact(Vector3 point, Vector3 dir) => ImpactFx.Blood(GetTree().CurrentScene, point, dir);
 
         // D1 (PEI_COMBAT_PLAN §3): render a SERVER-asserted bullet end (the broadcast ImpactFx event) through
         // the same local spawners SP bullets use. The MP shell's own bullets are cosmetic (no impact fx), so
@@ -4756,7 +4601,6 @@ namespace UnturnedGodot
 
         static Texture2D _tracerTex;      // the "Bullet" sprite, loaded once (shared by MakeTracer)
         static bool _tracerTexTried;
-        static Texture2D _fleshTex; static bool _fleshTexTried;   // the real Flesh_Dynamic blood sprite (loaded once)
 
         // Brief world-space muzzle flash light. The source Muzzle_0 effect illuminates the environment on each shot;
         // our viewmodel flash lives in an isolated SubViewport world, so it can't light the main scene. Warm Muzzle_0

@@ -86,7 +86,7 @@ namespace UnturnedGodot
             string doorTestName = null;
             bool containerTest = false; string containerTestName = null;
             bool wallDemo = false;
-            bool play = false, demo = false, netdemo = false, server = false, dedicated = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, lightTest = false, trafficTest = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, objects = false, peidrive = false, craftui = false, bakenav = false, navPathTest = false, zombieTest = false, zdirTest = false, editorMode = false;
+            bool play = false, demo = false, netdemo = false, server = false, dedicated = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, lightTest = false, trafficTest = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, objects = false, peidrive = false, craftui = false, bakenav = false, navPathTest = false, zombieTest = false, zdirTest = false, editorMode = false, impactTest = false;
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
                 if (arg.StartsWith("--catalog=")) catalog = arg["--catalog=".Length..];
@@ -108,6 +108,7 @@ namespace UnturnedGodot
                 else if (arg == "--zperf") zperf = true;   // GPU perf probe: N zombies, render counters ON vs OFF (MUST run with a rendering driver, not --headless)
                 else if (arg == "--zbody") zbody = true;   // MECHANISM probe: N bare kinematic capsules, moving vs parked -> is the physics cost the BODIES?
                 else if (arg == "--deploytest") deployTest = true;   // both deployables placed on a ground plane + a valid(blue)+invalid(red) ghost -> verify models/palette/stand-up/ghost materials
+                else if (arg == "--impacttest") impactTest = true;   // one bullet-impact FX per surface (concrete/metal/wood/dirt/grass/sand/water/blood) across a wall -> verify the reimplemented ImpactFx
                 else if (arg == "--skillsui") skillsui = true;   // render the skills menu (showcase/validate the SkillsUI)
                 else if (arg.StartsWith("--itemtest=")) itemtest = arg["--itemtest=".Length..];   // drop a row of loot items (ids) as physics WorldItems -> validate real mesh/tex/scale/settle
                 else if (arg.StartsWith("--animrig=")) { animrig = arg["--animrig=".Length..]; _shotRequested = animrig; }   // build a rigged animal (content/NAME_rig.json) at rest + 3/4 cam -> validate the static pose stands
@@ -340,6 +341,14 @@ namespace UnturnedGodot
                 GetWindow().Size = new Vector2I(1280, 720);
                 _shotPath = shot;
                 BuildDeployTest();
+                return;
+            }
+
+            if (impactTest)   // bullet-impact FX showcase: one per surface across a wall, captured mid-burst
+            {
+                GetWindow().Size = new Vector2I(1280, 720);
+                _shotPath = shot;
+                BuildImpactTest();
                 return;
             }
 
@@ -1372,6 +1381,23 @@ namespace UnturnedGodot
             var z = new ZombieController { Target = player, Speciality = ZombieController.ESpeciality.NORMAL };
             AddChild(z);
             z.GlobalPosition = new Vector3(0, 1.0f, System.Environment.GetEnvironmentVariable("UG_HITZOMBIE") == "1" ? -6f : -25f);   // UG_HITZOMBIE: point-blank so shots connect -> verify blood
+
+            // UG_HITWALL: a concrete wall 18 m downrange in the player's default (+Z) fire direction, so the firetest
+            // reproduces shooting a hard surface at PLAY DISTANCE -> diagnose the real in-game bullet-impact FX (the
+            // --impacttest harness fired point-blank, which never actually exercised the frustum-cull path). Tagged
+            // Concrete so it takes the debris burst + decal.
+            if (System.Environment.GetEnvironmentVariable("UG_HITWALL") == "1")
+            {
+                var wall = new StaticBody3D { CollisionLayer = 1 << 0 };
+                wall.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = new Vector3(12f, 8f, 0.5f) } });
+                var wm = new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(12f, 8f, 0.5f) } };
+                wm.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.60f, 0.60f, 0.62f) };
+                wall.AddChild(wm);
+                AddChild(wall);
+                wall.GlobalPosition = new Vector3(0, 2.5f, 18f);
+                wall.SetMeta(PlayerController.SurfMeta, (int)PlayerController.Surf.Concrete);
+                GD.Print("[FIRETEST] UG_HITWALL: concrete wall at +Z 18 m (player fires into it)");
+            }
             env.TonemapMode = Godot.Environment.ToneMapper.Aces;   // match the game's ACES so this harness validates the scope PiP color/tonemap (was default Linear)
             GD.Print($"[FIRETEST] suppressed={suppressed} -- firing away from a zombie 25 m off; expect [ALERT] ONLY when unsuppressed");
         }
@@ -1987,6 +2013,39 @@ namespace UnturnedGodot
         {
             if (root is GeometryInstance3D gi) gi.CastShadow = on ? GeometryInstance3D.ShadowCastingSetting.On : GeometryInstance3D.ShadowCastingSetting.Off;
             foreach (var c in root.GetChildren()) SetZombieShadows(c, on);
+        }
+
+        // --impacttest : fire ONE reimplemented ImpactFx per surface across a grey wall (concrete / metal / wood / dirt
+        // / grass / sand, then a water plip + a blood spray), captured a few frames into the burst so the debris is
+        // mid-flight -- the exact thing the old (culled, no-VisibilityAabb) bursts couldn't show.
+        void BuildImpactTest()
+        {
+            var env = new Godot.Environment
+            {
+                BackgroundMode = Godot.Environment.BGMode.Color, BackgroundColor = new Color(0.15f, 0.16f, 0.19f),   // dark so sparks/debris read
+                AmbientLightSource = Godot.Environment.AmbientSource.Color, AmbientLightColor = new Color(0.55f, 0.55f, 0.6f), AmbientLightEnergy = 1.0f,
+            };
+            AddChild(new WorldEnvironment { Environment = env });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-45f, -35f, 0f), LightEnergy = 1.2f });
+
+            var wallSize = new Vector3(22f, 8f, 0.6f);
+            var wallPos = new Vector3(0f, 3f, -3f);
+            var wall = new StaticBody3D { Position = wallPos };
+            wall.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = wallSize } });
+            wall.AddChild(new MeshInstance3D { Mesh = new BoxMesh { Size = wallSize }, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.46f, 0.46f, 0.49f), Roughness = 0.9f } });
+            AddChild(wall);
+            float faceZ = wallPos.Z + wallSize.Z * 0.5f;
+
+            var surfs = new[] { PlayerController.Surf.Concrete, PlayerController.Surf.Metal, PlayerController.Surf.Wood, PlayerController.Surf.Dirt, PlayerController.Surf.Grass, PlayerController.Surf.Sand };
+            for (int i = 0; i < surfs.Length; i++)
+                ImpactFx.Spawn(this, new Vector3(-7f + i * 2.1f, 3.4f, faceZ), Vector3.Back, surfs[i]);
+            ImpactFx.WaterSplash(this, new Vector3(6.3f, 3.4f, faceZ), 1f);
+            ImpactFx.Blood(this, new Vector3(8.4f, 3.4f, faceZ), Vector3.Forward);
+
+            var cam = new Camera3D { Current = true, Fov = 62f, Far = 10000f };
+            AddChild(cam);
+            cam.Position = new Vector3(0.7f, 3.4f, 10.5f);
+            cam.LookAt(new Vector3(0.7f, 3.3f, -1f), Vector3.Up);
         }
 
         void BuildDeployTest()
