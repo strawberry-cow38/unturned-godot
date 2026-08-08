@@ -591,15 +591,36 @@ namespace UnturnedGodot.Testing
             float got = Mathf.RadToDeg(Mathf.Atan2(ridgeA.Y - eaveA.Y, run));
             T.Check($"and the slope is the pitch asked for ({got:0.#} deg vs {Pitch:0.#})", Mathf.Abs(got - Pitch) < 0.5f);
 
-            // the walls across the ridge become gable ends; the ones along it stay flat-topped
-            int gabled = 0, flatTop = 0;
+            // The ends carry a gable; the walls along the ridge stay flat-topped.
+            //
+            // Found by ORIENTATION rather than by asking endA directly. Once the roof overhangs, the gable
+            // rides a band stacked on the end wall instead of the end wall itself (the wall's own half-length
+            // sets the triangle's slope; the leftover straight bit is the band). Naming endA here would be
+            // asserting which OBJECT holds the gable, when what matters is that the end is closed and the
+            // sides are not.
+            var gabledEnds = new List<WallSurface>();
+            int alongRidgeGabled = 0;
             foreach (var w in tool.Walls)
             {
-                if (w.Kind != SurfaceKind.Wall) continue;
-                if (w.GableRise > 0.01f) gabled++; else flatTop++;
+                if (w.Kind != SurfaceKind.Wall || w.GableRise <= 0.01f) continue;
+                float yaw = Mathf.Wrap(w.RotationDegrees.Y, 0f, 180f);
+                bool runsAlongX = yaw < 45f || yaw > 135f;
+                if (runsAlongX) alongRidgeGabled++; else gabledEnds.Add(w);
             }
-            T.Check($"only the two end walls are gabled ({gabled} gabled, {flatTop} flat-topped)", gabled == 2 && flatTop == 2);
-            T.Check("and they are the ones across the ridge", endA.GableRise > 0.01f && endB.GableRise > 0.01f);
+            T.Check($"both ends across the ridge are gabled ({gabledEnds.Count})", gabledEnds.Count == 2);
+            T.Check($"and nothing along the ridge is ({alongRidgeGabled})", alongRidgeGabled == 0);
+            if (gabledEnds.Count == 0) yield break;
+            var gEnd = gabledEnds[0];
+
+            // the gable end reaches the ridge, whether it does it in one surface or as wall + band
+            float endTop = gEnd.Position.Y + gEnd.Height + gEnd.GableRise;
+            T.Check($"the gable end meets the ridge ({endTop:0.##} vs {ridgeA.Y:0.##})",
+                    Mathf.Abs(endTop - ridgeA.Y) < 5e-2f);
+            // and it does so at the ROOF's slope -- a gable steeper than the roof touches only at the apex
+            // and leaves a wedge of daylight down both edges, which every count above still passes through.
+            float gSlope = gEnd.GableRise / (gEnd.Length * 0.5f);
+            T.Check($"at the roof's own slope ({Mathf.RadToDeg(Mathf.Atan(gSlope)):0.#} deg vs {Pitch:0.#})",
+                    Mathf.Abs(Mathf.RadToDeg(Mathf.Atan(gSlope)) - Pitch) < 0.5f);
 
             // A gable's collider must be the TRIANGLE, not a box round it -- a box fills the two wedges of air
             // beside the peak, and you collide with a roof corner that is not there.
@@ -610,8 +631,8 @@ namespace UnturnedGodot.Testing
                 { From = at + new Vector3(0.9f, 0f, 0f), To = at - new Vector3(0.9f, 0f, 0f), CollisionMask = 1u << 0 };
                 return space.IntersectRay(q).Count > 0;
             }
-            var peak = endA.UVToWorld(endA.Length * 0.5f, endA.Height + endA.GableRise * 0.5f);
-            var corner = endA.UVToWorld(endA.Length * 0.06f, endA.Height + endA.GableRise * 0.85f);
+            var peak = gEnd.UVToWorld(gEnd.Length * 0.5f, gEnd.Height + gEnd.GableRise * 0.5f);
+            var corner = gEnd.UVToWorld(gEnd.Length * 0.06f, gEnd.Height + gEnd.GableRise * 0.85f);
             T.Check("the gable itself is solid", Solid(peak));
             T.Check("but the air beside the peak is not", !Solid(corner));
         }
@@ -1891,6 +1912,81 @@ namespace UnturnedGodot.Testing
             tool.SetOpeningGlass(w, i, glazed: true);
             yield return Step.Ticks(1);
             T.Check("re-glazing clears the break", w.Openings[i].Glazed && !w.Openings[i].GlassBroken);
+        }
+    }
+
+    public class BuildToolDrawnRoofOverhang : GameTest
+    {
+        public override string Name => "buildtool.drawn_roof_overhangs_and_meets_its_gable";
+
+        public override IEnumerable<Step> Run()
+        {
+            var tool = new EditorBuildings();
+            World.AddChild(tool);
+            var ed = new Editor();
+            World.AddChild(ed);
+            tool.Setup(ed, null, null);
+            yield return Step.Ticks(1);
+
+            // a closed room: two walls along X, two across (the across ones become the gable ends)
+            const float L = 12f, D = 9f;
+            tool.AddWall(new Vector3(-L / 2f, 0f, 0f), 0f, L);
+            tool.AddWall(new Vector3(-L / 2f, 0f, -D), 0f, L);
+            var endA = tool.AddWall(new Vector3(-L / 2f, 0f, -D), -90f, D);
+            var endB = tool.AddWall(new Vector3(L / 2f, 0f, -D), -90f, D);
+            yield return Step.Ticks(1);
+
+            const float Pitch = 20f;
+            float wallTop = endA.Position.Y + endA.Height;
+            // drawn EXACTLY on the walls -- the tool is what adds the overhang, which is the report
+            float oh = WallOpenings.DefaultThickness * 0.5f + EditorBuildings.RoofOverhang;
+            tool.BuildGableOver(-L / 2f - oh, L / 2f + oh, -D - oh, 0f + oh, wallTop, Pitch,
+                                0, WallOpenings.DefaultThickness);
+            yield return Step.Ticks(1);
+
+            float roofMaxX = float.MinValue, roofMinX = float.MaxValue;
+            foreach (var w in tool.Walls)
+            {
+                if (w.Kind != SurfaceKind.Roof) continue;
+                foreach (float u in new[] { 0f, w.Length })
+                {
+                    var p = w.UVToWorld(u, 0f);
+                    roofMaxX = Mathf.Max(roofMaxX, p.X); roofMinX = Mathf.Min(roofMinX, p.X);
+                }
+            }
+            T.Check($"the roof runs past the wall line ({roofMaxX - L / 2f:0.00} m, want ~{oh:0.00})",
+                    roofMaxX - L / 2f > EditorBuildings.RoofOverhang * 0.8f);
+
+            // THE REAL CHECK. A gable triangle whose rise comes from the ROOF FOOTPRINT instead of its own
+            // wall is steeper than the roof above it: it touches at the apex and opens a wedge of daylight
+            // down both sloped edges. Every count, every position and the overhang check above all pass
+            // while that is happening, so the only thing that catches it is comparing the two SLOPES.
+            float want = Mathf.Tan(Mathf.DegToRad(Pitch));
+            float steepest = 0f;
+            int gabled = 0;
+            foreach (var w in tool.Walls)
+            {
+                if (w.Kind != SurfaceKind.Wall || w.GableRise <= WallOpenings.Eps) continue;
+                gabled++;
+                steepest = Mathf.Max(steepest, w.GableRise / (w.Length * 0.5f));
+            }
+            T.Check($"both ends are gabled ({gabled})", gabled == 2);
+            T.Check($"and the gable slope matches the roof ({steepest:0.000} vs {want:0.000})",
+                    Mathf.Abs(steepest - want) < 0.01f);
+
+            // BREAK IT: go back to GableRise = rise, taken from the footprint's half-span. The footprint is
+            // wider than the wall by exactly the overhang, so the ratio comes out ABOVE tan(pitch) and this
+            // check fails -- while the overhang check above, the surface counts and every position stay
+            // green, which is how it survived until someone looked at the building.
+
+            // the straight band that fills between the wall top and the now-shallower triangle
+            float bandTop = float.MinValue;
+            foreach (var w in tool.Walls)
+                if (w.Kind == SurfaceKind.Wall && w.GableRise > WallOpenings.Eps)
+                    bandTop = Mathf.Max(bandTop, w.Position.Y + w.Height + w.GableRise);
+            float ridge = wallTop + (Mathf.Min(L + 2f * oh, D + 2f * oh) * 0.5f) * want;
+            T.Check($"and the gable still reaches the ridge ({bandTop:0.00} vs {ridge:0.00})",
+                    Mathf.Abs(bandTop - ridge) < 0.05f);
         }
     }
 }

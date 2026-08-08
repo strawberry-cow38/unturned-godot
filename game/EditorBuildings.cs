@@ -685,8 +685,13 @@ namespace UnturnedGodot
                         // back. Wrapping it in a second one here would make the gesture take two Ctrl+Z
                         // presses -- the exact thing the wall-move and cross-wall-drag paths go out of
                         // their way to avoid.
-                        BuildGableOver(Mathf.Min(c0.X, c1.X), Mathf.Max(c0.X, c1.X),
-                                       Mathf.Min(c0.Z, c1.Z), Mathf.Max(c0.Z, c1.Z),
+                        // The rect you drag is the BUILDING footprint, not the roof's outer edge, so it
+                        // gets the same overhang auto-fit applies -- strawberry_cow: "the draw roof tool
+                        // doesnt do overhangs". A drawn FLAT roof deliberately does not come through here
+                        // and stays flush, which is the correction they made earlier.
+                        float oh = WallOpenings.DefaultThickness * 0.5f + RoofOverhang;
+                        BuildGableOver(Mathf.Min(c0.X, c1.X) - oh, Mathf.Max(c0.X, c1.X) + oh,
+                                       Mathf.Min(c0.Z, c1.Z) - oh, Mathf.Max(c0.Z, c1.Z) + oh,
                                        y, ActiveRoofPitch, mat, WallOpenings.DefaultThickness);
                     }
                 }
@@ -1956,24 +1961,52 @@ namespace UnturnedGodot
 
             // Raise the walls that run ACROSS the ridge into gable ends. A wall parallel to the ridge stays
             // flat-topped -- putting a peak on all four is the classic wrong-looking roof.
+            //
+            // The gable triangle's SLOPE has to be the roof's slope, which means it is set by the WALL's own
+            // half-length, not by the roof footprint's. Those differ the moment the roof overhangs, and
+            // setting GableRise = rise (the footprint's) made the triangle steeper than the roof it sits
+            // under: measured on a 9 m wall at 20 deg with a 0.75 m overhang, 3.01 deg steeper, meeting the
+            // roof only at the apex and opening a 0.27 m wedge of daylight along both sloped edges.
+            //
+            // What closes it is a straight band between the wall top and the triangle -- strawberry_cow's
+            // "the wall portion between the roof part and the actual walls". It is a separate surface rather
+            // than a taller wall because raising w.Height would COMPOUND on a second roof build (the same
+            // relative-vs-absolute trap that grew a pilaster on every corner), and because that band wears
+            // the wall's colour, which is what they asked for when the importer met the same shape.
+            float tanP = Mathf.Tan(th);
             var raised = new List<(WallSurface W, float Prev)>();
-            foreach (var w in _walls)
+            var bands = new List<WallSurface>();
+            // A COPY: spawning a band appends to _walls, and mutating it mid-foreach throws. Same reason
+            // AddFoundation iterates a copy.
+            foreach (var w in new List<WallSurface>(_walls))
             {
                 if (!IsInstanceValid(w) || w.Kind != SurfaceKind.Wall) continue;
                 float yaw = Mathf.Wrap(w.RotationDegrees.Y, 0f, 180f);
                 bool runsAlongX = yaw < 45f || yaw > 135f;
                 if (runsAlongX == ridgeAlongX) continue;       // parallel to the ridge: no gable
-                raised.Add((w, w.GableRise));
-                w.GableRise = rise;
-                w.Rebuild();
+                float triRise = w.Length * 0.5f * tanP;        // slope-matched to the roof above it
+                float band = rise - triRise;                   // 0 when the roof does not overhang this wall
+                if (band > 0.01f)
+                {
+                    bands.Add(SpawnWall(w.Position + new Vector3(0f, w.Height, 0f), w.RotationDegrees.Y,
+                                        w.Length, w.Thickness, w.MaterialId, null, band,
+                                        w.RotationDegrees.X, SurfaceKind.Wall, triRise));
+                }
+                else
+                {
+                    raised.Add((w, w.GableRise));
+                    w.GableRise = triRise;
+                    w.Rebuild();
+                }
             }
 
             _editor?.PushUndo("gable roof", () =>
             {
                 foreach (var m in made) RemoveWall(m);
+                foreach (var b in bands) RemoveWall(b);
                 foreach (var (w, prev) in raised) if (IsInstanceValid(w)) { w.GableRise = prev; w.Rebuild(); }
             });
-            return made.Count + raised.Count;
+            return made.Count + raised.Count + bands.Count;
         }
 
         /// <summary>Hang a foundation under every wall drawn: a hollow skirt, which is what retail is.
