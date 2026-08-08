@@ -67,6 +67,14 @@ fi
 # is worse than the collisions it exists to stop. (Found the hard way: two dotnet MSBuild.dll processes
 # holding /tmp/.ug-test-*.lock long after the suite finished.) Disabling node reuse keeps every build
 # child mortal; it costs a little build warm-up and buys a lock that always releases.
+#
+# The two MSBuild knobs below are NOT sufficient on their own: the ROSLYN compiler server (VBCSCompiler)
+# is a THIRD daemon, spawned by the compile task rather than by MSBuild's node pool, and neither MSBuild
+# variable touches it. Caught 2026-08-08 -- a single VBCSCompiler held the lock with no suite running and
+# no MSBuild node alive, so `--only` refused to start and the log blamed a run that had finished.
+# So the real fix is not to keep naming daemons: the lock is held by whatever INHERITS fd 9, and the
+# build invocations below pass `9>&-` to close it for their children. Killing daemons by name is
+# whack-a-mole against every tool dotnet adds next; withholding the fd covers the ones we have not met.
 export MSBUILDDISABLENODEREUSE=1
 export DOTNET_CLI_USE_MSBUILD_SERVER=0
 
@@ -91,8 +99,11 @@ run_suite() {  # $1 = suite dir under tests/
   local dir="$1" name; name="$(basename "$dir")"
   case "$name" in $ONLY) ;; *) return ;; esac   # --only glob filter
   local log="$RESULTS/$name.log"
+  # 9>&- closes the LOCK FD for this child. See the lock block above: any daemon that outlives the run
+  # while holding fd 9 wedges every future run. Naming daemons to disable is whack-a-mole; not handing
+  # them the fd in the first place covers the ones we have not met yet.
   dotnet test "$dir" -c Debug --nologo -v q \
-    --logger "trx;LogFileName=$name.trx" --results-directory "$RESULTS" >"$log" 2>&1
+    --logger "trx;LogFileName=$name.trx" --results-directory "$RESULTS" >"$log" 2>&1 9>&-
   local code=$?
   # the dotnet summary line: "Passed!/Failed!  - Failed: F, Passed: P, Skipped: S, Total: T, Duration: D ms"
   local line; line="$(grep -E 'Failed:[[:space:]]*[0-9]+, Passed:' "$log" | tail -1)"
@@ -124,7 +135,7 @@ run_suite() {  # $1 = suite dir under tests/
 
 run_l1() {  # batched in-engine tests: build the game once, boot headless godot, run every GameTest, parse its report
   echo "== L1: in-engine tests (headless godot, one boot) =="
-  if ! dotnet build game/UnturnedGodot.csproj -c Debug -v q -nologo >"$RESULTS/l1_build.log" 2>&1; then
+  if ! dotnet build game/UnturnedGodot.csproj -c Debug -v q -nologo >"$RESULTS/l1_build.log" 2>&1 9>&-; then
     echo "[SUITE] L1 | ERROR | game build failed (see $RESULTS/l1_build.log)"
     grep -E 'error|Build FAILED' "$RESULTS/l1_build.log" | head -3 | sed 's/^/         /'
     INFRA_FAIL=1; return

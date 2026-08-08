@@ -235,8 +235,7 @@ namespace UnturnedGodot
                     pts[k] = new Vector3(poly[k].X, poly[k].Y, -Thickness * 0.5f);
                     pts[k + poly.Count] = new Vector3(poly[k].X, poly[k].Y, Thickness * 0.5f);
                 }
-                if (_shapes[i].Shape is not ConvexPolygonShape3D hull) _shapes[i].Shape = hull = new ConvexPolygonShape3D();
-                hull.Points = pts;
+                SetHull(_shapes[i], pts);
                 _shapes[i].Position = Vector3.Zero;     // the points are already in surface space
             }
             RebuildTrimCollision();
@@ -247,12 +246,11 @@ namespace UnturnedGodot
                 // triangles of air beside the peak, and you would collide with a roof corner that is not there.
                 float t2 = Thickness * 0.5f;
                 var gcs = _shapes[solids.Count];
-                if (gcs.Shape is not ConvexPolygonShape3D hull) gcs.Shape = hull = new ConvexPolygonShape3D();
-                hull.Points = new[]
+                SetHull(gcs, new[]
                 {
                     new Vector3(0f, Height, -t2), new Vector3(Length, Height, -t2), new Vector3(Length * 0.5f, Height + GableRise, -t2),
                     new Vector3(0f, Height, t2), new Vector3(Length, Height, t2), new Vector3(Length * 0.5f, Height + GableRise, t2),
-                };
+                });
                 gcs.Position = Vector3.Zero;
             }
         }
@@ -385,6 +383,23 @@ namespace UnturnedGodot
 
         /// <summary>A solid rectangle clipped by the two cut lines. Sutherland-Hodgman against two
         /// half-planes; the result is convex, so a fan triangulates it and a convex hull collides it.</summary>
+        /// <summary>Give a CollisionShape3D a convex hull of `pts`, POPULATING IT BEFORE IT IS ATTACHED.
+        ///
+        /// The order matters and is not cosmetic. Assigning a fresh empty ConvexPolygonShape3D to .Shape and
+        /// filling in .Points afterwards makes the engine hull an EMPTY point set at the moment of assignment,
+        /// which prints `ERROR: Failed to build convex hull` and a full C# backtrace. The collision that
+        /// eventually lands is correct, so every test still passes -- the only cost is log noise, and log
+        /// noise is not free: this repo has already had a real bug (leaked statics wiping a save) hide inside
+        /// a green run because nobody reads a log that always has errors in it. 15 of these per full sweep.
+        ///
+        /// Both hull sites route through here rather than repeating the dance, because the version of this
+        /// that only fixed the gable would have left the tapered path printing the same error on every import.</summary>
+        static void SetHull(CollisionShape3D cs, Vector3[] pts)
+        {
+            if (cs.Shape is ConvexPolygonShape3D existing) { existing.Points = pts; return; }
+            cs.Shape = new ConvexPolygonShape3D { Points = pts };
+        }
+
         List<Vector2> ClipToTaper(WallSolid s)
         {
             var poly = new List<Vector2>
