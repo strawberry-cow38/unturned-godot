@@ -1187,4 +1187,79 @@ namespace UnturnedGodot.Testing
             T.Check($"and a cross is idempotent too ({third.Count})", third.Count == 0);
         }
     }
+    // strawberry_cow: "the under roof walls? may be rendered inside out." Derived, this looks true of
+    // EVERY imported wall -- but a sign derivation is exactly what burned the roof pitch, so measure it.
+    // The surface's own +Z must be the outward normal of the mesh face it was recovered from.
+    public class BuildToolImportedWallsFaceOutward : GameTest
+    {
+        public override string Name => "buildtool.imported_walls_face_outward";
+
+        public override IEnumerable<Step> Run()
+        {
+            string obj = ProjectSettings.GlobalizePath("res://content/objects/House_00.obj");
+            if (!System.IO.File.Exists(obj)) { T.Fail("House_00.obj missing"); yield break; }
+
+            var plans = BuildingImport.FromObj(obj);
+            var walls = new List<WallPlan>();
+            foreach (var pl in plans) if (pl.Kind == SurfaceKind.Wall) walls.Add(pl);
+            T.Check($"there are walls to check ({walls.Count})", walls.Count > 0);
+            if (walls.Count == 0) yield break;
+
+            // the building's own centre, so "outward" is a fact about the mesh and not about the importer
+            var mesh = ObjMesh.Load(obj);
+            var v = (Vector3[])mesh.SurfaceGetArrays(0)[(int)Mesh.ArrayType.Vertex];
+            var xf = EditorObjects.Upright(0f);
+            Vector3 lo = new(float.MaxValue, float.MaxValue, float.MaxValue), hi = -lo;
+            foreach (var raw in v) { var pw = xf * raw; lo = lo.Min(pw); hi = hi.Max(pw); }
+            var centre = new Vector3((lo.X + hi.X) * 0.5f, 0f, (lo.Z + hi.Z) * 0.5f);
+
+            var built = new List<WallSurface>();
+            foreach (var pl in walls)
+            {
+                var w = new WallSurface
+                {
+                    Length = pl.Length, Height = pl.Height, Thickness = pl.Thickness, Kind = pl.Kind,
+                    Position = new Vector3(pl.X, pl.Y, pl.Z),
+                    RotationDegrees = new Vector3(pl.Pitch, pl.Yaw, 0f),
+                };
+                World.AddChild(w);
+                built.Add(w);
+            }
+            yield return Step.Ticks(2);
+
+            // Judge only the OUTERMOST wall in each of the four directions. My first pass took every wall
+            // within a metre of the bounding box, which swept in the inner faces of the double-wall the
+            // importer still emits when pairing misses -- and an inner face SHOULD point inward, so the test
+            // was demanding the wrong thing of half its sample and could never pass. The extreme wall along
+            // each axis is the one case where "outward" is not a judgement call.
+            var pick = new WallSurface[4];
+            var bestProj = new float[4] { float.MinValue, float.MinValue, float.MinValue, float.MinValue };
+            var dirs = new[] { Vector3.Right, Vector3.Left, Vector3.Back, Vector3.Forward };
+            foreach (var w in built)
+            {
+                var mid = w.UVToWorld(w.Length * 0.5f, w.Height * 0.5f);
+                for (int d = 0; d < 4; d++)
+                {
+                    float proj = new Vector3(mid.X - centre.X, 0f, mid.Z - centre.Z).Dot(dirs[d]);
+                    if (proj > bestProj[d]) { bestProj[d] = proj; pick[d] = w; }
+                }
+            }
+
+            int judged = 0, outward = 0;
+            for (int d = 0; d < 4; d++)
+            {
+                var w = pick[d];
+                if (w == null) continue;
+                judged++;
+                var face = w.GlobalTransform.Basis.Z.Normalized();
+                float dot = face.Dot(dirs[d]);
+                if (dot > 0f) outward++;
+                else GD.Print($"[facing] INWARD toward {dirs[d]}: mid={w.UVToWorld(w.Length * 0.5f, w.Height * 0.5f)} "
+                              + $"yaw={w.RotationDegrees.Y:0.#} len={w.Length:0.0} dot={dot:0.00}");
+            }
+            T.Check($"the outermost wall in each direction was found ({judged} of 4)", judged == 4);
+            T.Check($"each one's front face points OUT of the building ({outward} of {judged})",
+                    outward == judged);
+        }
+    }
 }

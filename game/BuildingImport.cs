@@ -194,21 +194,41 @@ namespace UnturnedGodot
                 // its centreline, half a thickness in from the facade plane -- parked 0.08 too far inside the
                 // building. Two walls each off by that much do not line up where they meet, which is
                 // "the wall corners are off" with no corner solver involved.
+                // An UNPAIRED face that looks inward is the back of a wall, not a wall.
+                //
+                // Every wall in the mesh has two faces and both are candidates. When they pair we emit one;
+                // when pairing misses we were emitting BOTH, which is the double wall that has been behind
+                // three separate symptoms tonight: exterior walls wearing the interior's tan, the roof-band
+                // z-fighting, and the outermost surface of the building facing inward. A face whose normal
+                // points back toward the building's centre is the inside of something, and the outside of
+                // that same thing is its own candidate -- so dropping it loses nothing. An interior
+                // partition still survives, because exactly one of ITS two faces points away from centre.
+                if (pair == null && (c.F.Dist - c.F.Normal.Dot(centre)) < 0f) { used.Add(c); continue; }
+
                 float thickness = pair != null ? bestGap : WallMaterials.At(materialId).Thickness;
                 used.Add(c);
                 if (pair != null) used.Add(pair);
 
-                // Take the colour off the OUTWARD face of the pair. Both sides of a wall are in the list and
-                // the loop reaches whichever comes first, so half the exterior walls came back painted in the
-                // interior's tan. Outward is decided by geometry, not by iteration order: a face is outward
-                // when its own plane sits on the far side of the building's centre from it.
-                var skin = c.F;
+                // Emit the wall from the OUTWARD face of the pair -- its geometry, not just its colour.
+                //
+                // Both sides of a wall are in the candidate list and the loop reaches whichever comes first,
+                // so the wall was being built from the inner face half the time. Measured on House_00: 6 of
+                // 12 exterior walls had their front face pointing INTO the building, a straight coin flip on
+                // iteration order. strawberry_cow saw it as "the under roof walls may be rendered inside
+                // out"; it is every wall, and only half of them.
+                //
+                // I first fixed this for the TEXEL alone and left the geometry on whichever candidate came
+                // first, which is why exterior walls could still come out wearing the interior's tan.
+                // Outward is decided by geometry rather than iteration order: a face is outward when its own
+                // plane sits on the far side of the building's centre from it.
+                var outer = c;
                 if (pair != null && (pair.F.Dist - pair.F.Normal.Dot(centre)) > (c.F.Dist - c.F.Normal.Dot(centre)))
-                    skin = pair.F;
+                    outer = pair;
+                var skin = outer.F;
 
                     int before = plans.Count;
-                    EmitWall(plans, c, thickness, materialId, eave,
-                             roofTexels.Contains(c.F.Texel) ? 0.35f : 1.5f,
+                    EmitWall(plans, outer, thickness, materialId, eave,
+                             roofTexels.Contains(outer.F.Texel) ? 0.35f : 1.5f,
 // Everything vertical takes the palette's WALL colour, including the eave band.
                              // The band reads as texel 1 in the mesh -- the same dark grey as the roof -- and
                              // I emitted it that way on the measurement. strawberry_cow, who has the game in
@@ -337,14 +357,26 @@ namespace UnturnedGodot
         {
             var rec = c.Rec;
             var right = Right(c.F);
-            float yaw = Mathf.RadToDeg(Mathf.Atan2(right.X, right.Z)) - 90f;
+            // +90, not -90, and the wall is laid along -right as a result.
+            //
+            // A yaw-only surface has local +Z = (-Rz, 0, Rx); with Right = (-nz, 0, nx)/h that works out to
+            // exactly -n, so at -90 every imported wall's FRONT FACE pointed into the building. Measured on
+            // House_00: all four exterior facades at dot = -1.00 against the outward direction.
+            // strawberry_cow spotted it as "the under roof walls may be rendered inside out" -- it was every
+            // facade, and it hid because a wall is a two-sided box, so only shading and the trim gave it away.
+            //
+            // Flipping the yaw flips local X too, so the run now starts at the FAR end of the recovered
+            // rectangle and travels back: the origin moves to U1, and everything measured along the run --
+            // the openings, and the left/right taper insets -- mirrors with it. Getting the yaw right and
+            // leaving those alone would put every window on the wrong side of its wall.
+            float yaw = Mathf.RadToDeg(Mathf.Atan2(right.X, right.Z)) + 90f;
             float inset = thickness * 0.5f;
             float baseY = rec.V0, top = rec.V0 + rec.Height;
 
             float below = Mathf.Max(0f, -baseY);
             if (below > 0.25f)
             {
-                var fo = c.F.Normal * (c.F.Dist - inset) + right * rec.U0 + Vector3.Up * baseY;
+                var fo = c.F.Normal * (c.F.Dist - inset) + right * (rec.U0 + rec.Width) + Vector3.Up * baseY;
                 plans.Add(new WallPlan
                 {
                     X = fo.X, Y = fo.Y, Z = fo.Z, Yaw = yaw, Kind = SurfaceKind.Foundation,
@@ -366,7 +398,7 @@ namespace UnturnedGodot
             // only ever meant "a wall this short is clutter".
             if (height < minHeight) return;
 
-            var origin = c.F.Normal * (c.F.Dist - inset) + right * rec.U0 + Vector3.Up * baseY;
+            var origin = c.F.Normal * (c.F.Dist - inset) + right * (rec.U0 + rec.Width) + Vector3.Up * baseY;
             var plan = new WallPlan
             {
                 X = origin.X, Y = origin.Y, Z = origin.Z,
@@ -377,13 +409,14 @@ namespace UnturnedGodot
                 // eaves. Painting all of it the wall colour is why the port read as flat.
                 Texel = texel,
                 // Walls get the trapezoid too, not just roofs -- a gable end is a triangle, and it is the
-                // same primitive with both top insets meeting.
-                InsetL0 = rec.InsetL0, InsetL1 = rec.InsetL1, InsetR0 = rec.InsetR0, InsetR1 = rec.InsetR1,
+                // same primitive with both top insets meeting. L and R swap with the reversed run.
+                InsetL0 = rec.InsetR0, InsetL1 = rec.InsetR1, InsetR0 = rec.InsetL0, InsetR1 = rec.InsetL1,
             };
             float shift = baseY - rec.V0;
             foreach (var o in rec.Openings)
             {
                 var s = WallImport.SnapToRetail(o);
+                s.U = rec.Width - (s.U + s.Width);                   // the run reversed; mirror along it
                 s.V -= shift;                                        // openings are wall-relative; the base moved
                 if (s.V + s.Height <= WallOpenings.MinOpening) continue;
                 if (s.V >= height - WallOpenings.MinOpening) continue;
