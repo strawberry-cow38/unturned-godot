@@ -1403,7 +1403,7 @@ namespace UnturnedGodot
             // into Glass_0 shards. Close so the shatter reads clearly. (Glass Health 1 -> the first bullet breaks it.)
             if (System.Environment.GetEnvironmentVariable("UG_HITGLASS") == "1")
             {
-                var pane = GlassPane.Build(1.2f, 1.5f);
+                var pane = GlassPane.Build(new Vector2(1.2f, 1.5f));
                 AddChild(pane);
                 pane.GlobalPosition = new Vector3(0f, 1.5f, 6f);
                 GD.Print("[FIRETEST] UG_HITGLASS: destructible glass pane at +Z 6 m (player shatters it)");
