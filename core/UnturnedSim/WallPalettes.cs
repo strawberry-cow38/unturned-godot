@@ -18,10 +18,15 @@ namespace UnturnedSim
         public int[] Rgb;             // eight 0xRRGGBB texels, image row-major
         public int WallTexel;
         public int RevealTexel;
+        /// <summary>The texel this model's ROOF is painted in, or -1 when it has no sloped roof to measure
+        /// one from (Office_2 and Office_3, both flat-topped). Derived the same way the importer does it at
+        /// runtime: calibrate on the planes that are sloped AND upward, because nothing but a roof is.</summary>
+        public int RoofTexel;
         public float Thickness;       // that model's measured wall thickness
 
         public int Wall => Rgb[Math.Clamp(WallTexel, 0, 7)];
         public int Reveal => Rgb[Math.Clamp(RevealTexel, 0, 7)];
+        public int Roof => Rgb[Math.Clamp(RoofTexel < 0 ? WallTexel : RoofTexel, 0, 7)];
     }
 
     /// <summary>Parse of the palette table, kept engine-free so the data can be tested without a running
@@ -38,7 +43,8 @@ namespace UnturnedSim
                 if (string.IsNullOrEmpty(raw) || raw[0] == '#' || raw.StartsWith("name\t")) continue;
                 var p = raw.Split('\t');
                 if (p.Length < 9) continue;
-                var pal = new WallPalette { Name = p[0], Rgb = new int[8], RevealTexel = 2, Thickness = WallOpenings.DefaultThickness };
+                var pal = new WallPalette { Name = p[0], Rgb = new int[8], RevealTexel = 2, RoofTexel = -1,
+                                            Thickness = WallOpenings.DefaultThickness };
                 bool ok = true;
                 for (int i = 0; i < 8; i++)
                     if (!int.TryParse(p[i + 1], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out pal.Rgb[i])) { ok = false; break; }
@@ -48,6 +54,7 @@ namespace UnturnedSim
                     if (int.TryParse(p[9], out var wt)) pal.WallTexel = wt;
                     if (int.TryParse(p[10], out var rt)) pal.RevealTexel = rt;
                     if (float.TryParse(p[11], NumberStyles.Float, CultureInfo.InvariantCulture, out var th)) pal.Thickness = th;
+                    if (p.Length > 12 && int.TryParse(p[12], out var rf)) pal.RoofTexel = rf;
                 }
                 list.Add(pal);
             }

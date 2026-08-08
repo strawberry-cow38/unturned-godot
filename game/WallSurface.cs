@@ -38,8 +38,23 @@ namespace UnturnedGodot
         /// <summary>Paint this surface in a specific palette texel instead of the palette's wall colour.
         /// -1 (the default) means "the wall colour". One retail building is one PALETTE, not one colour.</summary>
         public int Texel = -1;
-        public Color Tint => Texel >= 0 && Texel < 8 ? WallMaterials.At(MaterialId).Texels[Texel]
-                                                     : WallMaterials.At(MaterialId).Wall;
+        /// <summary>The colour this surface wears, chosen from its palette by WHAT IT IS.
+        ///
+        /// One retail building is one palette and several colours -- cream walls, grey roof, white reveals --
+        /// so a palette is not a colour, it is a set of roles. A roof painted the wall colour is the bug
+        /// strawberry_cow spotted; picking by Kind is the general form of the fix rather than remembering to
+        /// pass the right texel at each of the half-dozen places a surface gets spawned.
+        /// Texel still overrides everything, for the importer's measured bands.</summary>
+        public Color Tint
+        {
+            get
+            {
+                var m = WallMaterials.At(MaterialId);
+                if (Texel >= 0 && Texel < 8) return m.Texels[Texel];
+                return Kind == SurfaceKind.Roof && m.RoofTexel >= 0 && m.RoofTexel < 8
+                       ? m.Texels[m.RoofTexel] : m.Wall;
+            }
+        }
         public Color TrimTint => WallMaterials.At(MaterialId).Reveal;
         public bool ShowTrim = true;
 
@@ -428,6 +443,17 @@ namespace UnturnedGodot
 
         /// <summary>Where a camera ray meets this wall's plane, in wall space. Takes an explicit ray so it is
         /// testable without a camera or a mouse.</summary>
+        /// <summary>Like RayToUV, but only true when the hit lands ON the surface rather than merely on
+        /// the infinite plane it lies in. RayToUV deliberately stays loose -- dragging an opening past the
+        /// edge has to keep tracking so it can clamp -- but PICKING must not, or the nearest PLANE wins over
+        /// the wall you are actually pointing at, which is the whole "preview jumps to the wrong wall" bug.</summary>
+        public bool RayToUVInside(Vector3 from, Vector3 dir, out float u, out float v)
+        {
+            if (!RayToUV(from, dir, out u, out v)) return false;
+            const float E = WallOpenings.Eps;
+            return u >= -E && u <= Length + E && v >= -E && v <= Height + E;
+        }
+
         public bool RayToUV(Vector3 from, Vector3 dir, out float u, out float v)
         {
             u = v = 0f;

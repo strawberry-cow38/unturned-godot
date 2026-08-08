@@ -21,6 +21,9 @@ namespace UnturnedGodot
             // the reveal in 47, but Mall/Apartment_2/Police_1/Ship break both, so the roles are stored per
             // material rather than hardcoded.
             public int WallTexel, RevealTexel = 2;
+            /// <summary>Texel the roof is painted in, -1 if this model has no sloped roof to measure one
+            /// from. A roof is NOT the wall colour, and a drawn roof used to come out as one.</summary>
+            public int RoofTexel = -1;
             public float Thickness = WallOpenings.DefaultThickness;   // that model's measured wall thickness
             public Color Wall => Texels[Mathf.Clamp(WallTexel, 0, 7)];
             public Color Reveal => Texels[Mathf.Clamp(RevealTexel, 0, 7)];
@@ -53,7 +56,8 @@ namespace UnturnedGodot
             }
             foreach (var pal in WallPalettes.Parse(System.IO.File.ReadAllLines(path)))
             {
-                var m = new Mat { Name = pal.Name, WallTexel = pal.WallTexel, RevealTexel = pal.RevealTexel, Thickness = pal.Thickness };
+                var m = new Mat { Name = pal.Name, WallTexel = pal.WallTexel, RevealTexel = pal.RevealTexel,
+                                  RoofTexel = pal.RoofTexel, Thickness = pal.Thickness };
                 for (int i = 0; i < 8; i++)
                 {
                     var (r, g, b) = WallPalettes.Split(pal.Rgb[i]);

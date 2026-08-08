@@ -32,6 +32,11 @@ namespace UnturnedGodot
         float _grabDU, _grabDV;
         WallOpening[] _dragCapture;
 
+        // Hold-to-repeat undo. The lead-in stops a normal Ctrl+Z from firing twice on a slow keypress;
+        // after it, repeats run fast enough to walk back a bad five minutes without hammering the key.
+        const double UndoRepeatDelay = 0.45, UndoRepeatEvery = 0.07;
+        double _undoHeld = -1.0, _undoNext;
+
         Node3D _handles;
         MeshInstance3D _ghost;                 // translucent preview of the armed opening
         MeshInstance3D _gridFlag;              // where the next draw will start
@@ -432,6 +437,31 @@ namespace UnturnedGodot
 
         // ---- input ------------------------------------------------------------------------------------
 
+        public override void _Process(double delta)
+        {
+            // Hold Z (with Ctrl) to keep undoing. Driven from _Process rather than key auto-repeat so the
+            // rate is ours and not the OS keyboard setting, which varies per machine and is usually far too
+            // slow to be useful for walking back a mistake.
+            if (_undoHeld < 0.0) return;
+            if (!Active || _editor == null || _editor.Mode != EEditorMode.Buildings
+                || !Input.IsKeyPressed(Key.Z) || !Input.IsKeyPressed(Key.Ctrl))
+            { _undoHeld = -1.0; return; }
+            _undoHeld += delta;
+            if (_undoHeld < _undoNext) return;
+            _undoNext += UndoRepeatEvery;
+            UndoOnce();
+        }
+
+        void UndoOnce()
+        {
+            if (_drawing != null) { CancelDraw(); return; }
+            if (_room.Count > 0) { foreach (var w in new List<WallSurface>(_room)) RemoveWall(w); _room.Clear(); _editor?.PopUndo(); return; }
+            if (_drawingSlab != null) { RemoveWall(_drawingSlab); _drawingSlab = null; _editor?.PopUndo(); return; }
+            _editor?.Undo();
+            _selOpening = -1;
+            PositionHandles();
+        }
+
         public override void _UnhandledInput(InputEvent ev)
         {
             if (!Active || _editor == null) return;
@@ -512,9 +542,8 @@ namespace UnturnedGodot
                 // to press. An undo history nobody can reach is the same as no undo history.
                 else if (k.CtrlPressed && k.Keycode == Key.Z)
                 {
-                    if (_drawing != null) CancelDraw();
-                    else if (_drawingSlab != null) { RemoveWall(_drawingSlab); _drawingSlab = null; _editor?.PopUndo(); }
-                    else { _editor.Undo(); _selOpening = -1; PositionHandles(); }
+                    UndoOnce();
+                    _undoHeld = 0.0; _undoNext = UndoRepeatDelay;   // arm hold-to-repeat
                 }
             }
         }
@@ -764,26 +793,41 @@ namespace UnturnedGodot
             float minX = Mathf.Min(_slabAnchor.X, x1), maxX = Mathf.Max(_slabAnchor.X, x1);
             float minZ = Mathf.Min(_slabAnchor.Z, z1), maxZ = Mathf.Max(_slabAnchor.Z, z1);
             // same frame AddSlab builds in: origin at (minX, y, maxZ), run along +X, depth along -Z
-            float run = Mathf.Max(0.01f, maxZ - minZ);
-            _drawingSlab.Position = new Vector3(minX, _slabAnchor.Y, maxZ);
-            _drawingSlab.Length = Mathf.Max(0.01f, maxX - minX);
+            // DIRECTIONAL. The ridge runs along the longer axis, as a real roof does, and the slope rises
+            // from the edge you STARTED the drag on toward the one you finished on -- so dragging north to
+            // south gives you a roof falling to the north. It used to always build the same way round
+            // regardless of the drag, which made the tool feel like it was ignoring you.
+            float spanX = Mathf.Max(0.01f, maxX - minX), spanZ = Mathf.Max(0.01f, maxZ - minZ);
+            bool ridgeAlongX = spanX >= spanZ;
+            float run, yawDeg, lengthAlong;
+            Vector3 origin;
+            if (ridgeAlongX)
+            {
+                run = spanZ; lengthAlong = spanX;
+                bool startedAtMaxZ = Mathf.Abs(_slabAnchor.Z - maxZ) < Mathf.Abs(_slabAnchor.Z - minZ);
+                yawDeg = startedAtMaxZ ? 0f : 180f;
+                origin = startedAtMaxZ ? new Vector3(minX, _slabAnchor.Y, maxZ)
+                                       : new Vector3(maxX, _slabAnchor.Y, minZ);
+            }
+            else
+            {
+                run = spanX; lengthAlong = spanZ;
+                bool startedAtMaxX = Mathf.Abs(_slabAnchor.X - maxX) < Mathf.Abs(_slabAnchor.X - minX);
+                yawDeg = startedAtMaxX ? 90f : -90f;
+                origin = startedAtMaxX ? new Vector3(maxX, _slabAnchor.Y, maxZ)
+                                       : new Vector3(minX, _slabAnchor.Y, minZ);
+            }
+            _drawingSlab.Position = origin;
+            _drawingSlab.Length = lengthAlong;
 
             // The pitch slider applies to a DRAWN roof too; it used to be flat whatever the slider said.
             // Same convention as AddGableRoof -- pitch - 90, spawned at maxZ with yaw 0 so it rises toward
             // -Z -- and that sign is only correct BECAUSE the yaw is fixed here. Reading a yaw off geometry
             // instead needs 90 - pitch; see BuildingImport.
             float deg = SlabDrawKind == SurfaceKind.Roof ? Mathf.Clamp(ActiveRoofPitch, 0f, 70f) : 0f;
-            if (deg > 0.1f)
-            {
-                // the drag rect is the FOOTPRINT, so the surface itself is longer than the run it covers
-                _drawingSlab.Height = run / Mathf.Cos(Mathf.DegToRad(deg));
-                _drawingSlab.RotationDegrees = new Vector3(deg - 90f, 0f, 0f);
-            }
-            else
-            {
-                _drawingSlab.Height = run;
-                _drawingSlab.RotationDegrees = new Vector3(-90f, 0f, 0f);
-            }
+            // the drag rect is the FOOTPRINT, so a pitched surface is longer than the run it covers
+            _drawingSlab.Height = deg > 0.1f ? run / Mathf.Cos(Mathf.DegToRad(deg)) : run;
+            _drawingSlab.RotationDegrees = new Vector3(deg - 90f, yawDeg, 0f);
             _drawingSlab.Rebuild();
             EnsureReadout();
             Billboard(new Vector3((minX + maxX) * 0.5f, _slabAnchor.Y + 0.6f, (minZ + maxZ) * 0.5f),
@@ -1345,7 +1389,7 @@ namespace UnturnedGodot
                 }
                 baseY = Mathf.Min(baseY, w.Position.Y);
                 topY = Mathf.Max(topY, w.Position.Y + w.Height);
-                material = w.MaterialId;      // a slab wears the walls' palette, not whatever the picker last showed
+                // (the slab used to copy this from the walls; it takes the ACTIVE material now -- see below)
                 seen++;
             }
             if (seen == 0) return null;
@@ -1365,6 +1409,10 @@ namespace UnturnedGodot
             // for a roof. Thickness runs along local Z, which the -90 pitch turns into world up.
             float top = kind == SurfaceKind.Roof ? topY + SlabThickness : baseY;
             var origin = new Vector3(minX, top - SlabThickness * 0.5f, maxZ);
+            // What you PICKED, not what the walls happen to be wearing. strawberry_cow: "make all things u
+            // place after selecting a material BE that material automatically." Copying it off the walls
+            // meant the material picker silently did nothing for slabs.
+            material = ActiveMaterial;
             var slab = SpawnWall(origin, 0f, maxX - minX, SlabThickness, material, null,
                                  maxZ - minZ, -90f, kind);
             _editor?.PushUndo(kind == SurfaceKind.Roof ? "roof place" : "floor place", () => RemoveWall(slab));
@@ -1572,7 +1620,7 @@ namespace UnturnedGodot
             foreach (var w in _walls)
             {
                 if (!IsInstanceValid(w)) continue;
-                if (!w.RayToUV(from, dir, out float wu, out float wv)) continue;
+                if (!w.RayToUVInside(from, dir, out float wu, out float wv)) continue;
                 int idx = w.OpeningAt(wu, wv);
                 if (idx < 0) continue;
                 float d = from.DistanceSquaredTo(w.UVToWorld(wu, wv));
@@ -1595,7 +1643,7 @@ namespace UnturnedGodot
             foreach (var w in _walls)
             {
                 if (!IsInstanceValid(w) || w.Kind != SurfaceKind.Wall) continue;
-                if (!w.RayToUV(from, dir, out float u, out float v)) continue;
+                if (!w.RayToUVInside(from, dir, out float u, out float v)) continue;
                 float d = from.DistanceSquaredTo(w.UVToWorld(u, v));
                 if (d < bd) { bd = d; best = w; bu = u; bv = v; }
             }
