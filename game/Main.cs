@@ -1400,13 +1400,30 @@ namespace UnturnedGodot
             }
 
             // UG_HITGLASS: a full window-sized DESTRUCTIBLE glass pane 6 m downrange -> the player shoots it + it shatters
-            // into Glass_0 shards. Close so the shatter reads clearly. (Glass Health 1 -> the first bullet breaks it.)
+            // into Glass_0 shards. Close so the shatter reads clearly.
+            //
+            // UG_HITGLASS_HP exists because at the stock Health 1 THIS HARNESS CANNOT SHOW THE SHARDS. The pane
+            // breaks on the first bullet (frame 60) and the shards live ~1.2s, but the firetest only captures
+            // once ammo <= 20 and frame >= 75 -- it fires every 15 frames from 60, so that is frame ~195. The
+            // capture lands ~135 frames after the glass is gone and photographs an empty space whether the
+            // shards work or not. Give the pane enough health to survive to the capture frame and it is a real
+            // verification instead of a picture of nothing.
+            //
+            // It is a knob rather than a computed number because a bullet deals the GUN's ObjectDamage, not 1,
+            // so "survives nine shots" is not something to derive on paper -- the shatter frame is printed
+            // below so one run tells you what to set.
             if (System.Environment.GetEnvironmentVariable("UG_HITGLASS") == "1")
             {
-                var pane = GlassPane.Build(new Vector2(1.2f, 1.5f));
+                float ghp = 1f;
+                if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_HITGLASS_HP"),
+                                   System.Globalization.NumberStyles.Float,
+                                   System.Globalization.CultureInfo.InvariantCulture, out float hpv) && hpv > 0f)
+                    ghp = hpv;
+                var pane = GlassPane.Build(new Vector2(1.2f, 1.5f), hp: ghp);
+                pane.OnShattered += () => GD.Print($"[FIRETEST] glass SHATTERED at frame {_ftFrame} (capture wants ~195)");
                 AddChild(pane);
                 pane.GlobalPosition = new Vector3(0f, 1.5f, 6f);
-                GD.Print("[FIRETEST] UG_HITGLASS: destructible glass pane at +Z 6 m (player shatters it)");
+                GD.Print($"[FIRETEST] UG_HITGLASS: destructible glass pane at +Z 6 m, hp {ghp:0.#} (player shatters it)");
             }
             env.TonemapMode = Godot.Environment.ToneMapper.Aces;   // match the game's ACES so this harness validates the scope PiP color/tonemap (was default Linear)
             GD.Print($"[FIRETEST] suppressed={suppressed} -- firing away from a zombie 25 m off; expect [ALERT] ONLY when unsuppressed");
