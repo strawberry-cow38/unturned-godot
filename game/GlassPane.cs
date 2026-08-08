@@ -14,29 +14,43 @@ namespace UnturnedGodot
     {
         public const int GlassEffectId = 64;      // Glass_0/Glass_1 -> Rubble_Effect 64 (content/objects/rubble.txt)
         public float Health = 1f, HealthMax = 1f; // glass = one shot (the retail fragment ships at 1 hp)
+        public bool Indestructible;               // a window-fill can mark a pane unbreakable (master's per-opening options)
+        public static readonly Color DefaultHue = new Color(0.62f, 0.73f, 0.78f);   // light blue-grey glass (WorldBuilder.MatFor's Glass_ look)
+        /// <summary>Fired the instant the pane shatters (BEFORE it frees itself). The window-fill subscribes so it can mark
+        /// its opening broken -- a same-frame save then agrees with the screen. The pane persists nothing itself (tinyclaw).</summary>
+        public event System.Action OnShattered;
         bool _shattered;
         Vector3 _half = new Vector3(0.5f, 0.7f, 0.02f);
+        Color _hue = DefaultHue;                  // the pane's glass tint; the material + shatter shards both colour off it
 
-        /// <summary>Build a pane `width` x `height` metres (thin). Local +Z is the pane's face normal.</summary>
-        public static GlassPane Build(float width = 1.0f, float height = 1.4f, float thickness = 0.04f)
+        /// <summary>Build a pane sized to the opening (`size` = width x height metres, thin). Position is the CALLER's -- the
+        /// wall places the returned node itself (no position passed in). `tint` colours the glass AND its shatter shards;
+        /// `hp` / `indestructible` are the per-opening options. The damage path + shatter stay ours; the caller sets numbers.</summary>
+        public static GlassPane Build(Vector2 size, Color? tint = null, float hp = 1f, bool indestructible = false, float thickness = 0.04f)
         {
             var pane = new GlassPane { CollisionLayer = 1u << 6, CollisionMask = 0u };   // bit6 = glass/see-through layer (bullets hit it; doesn't block item line-of-sight, per ItemTests)
-            pane._half = new Vector3(width * 0.5f, height * 0.5f, thickness * 0.5f);
-            var size = new Vector3(width, height, thickness);
-            pane.AddChild(new MeshInstance3D { Mesh = new BoxMesh { Size = size }, MaterialOverride = GlassMat() });
-            pane.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = size } });
+            pane._hue = tint ?? DefaultHue;
+            pane.Health = pane.HealthMax = Mathf.Max(1f, hp);
+            pane.Indestructible = indestructible;
+            pane._half = new Vector3(size.X * 0.5f, size.Y * 0.5f, thickness * 0.5f);
+            var box = new Vector3(size.X, size.Y, thickness);
+            pane.AddChild(new MeshInstance3D { Mesh = new BoxMesh { Size = box }, MaterialOverride = GlassMat(pane._hue) });
+            pane.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = box } });
             pane.SetMeta(PlayerController.SurfMeta, (int)PlayerController.Surf.Concrete);   // a stray hit reads as a hard 'tink'; the shatter carries the real read
             return pane;
         }
 
-        // The see-through glass material (matches WorldBuilder.MatFor's Glass_ look: light blue-grey, mostly transparent, glossy).
-        static StandardMaterial3D GlassMat() => new StandardMaterial3D
+        // The see-through glass material (matches WorldBuilder.MatFor's Glass_ look: mostly transparent, glossy), tinted by `hue`.
+        static StandardMaterial3D GlassMat(Color hue) => new StandardMaterial3D
         {
-            AlbedoColor = new Color(0.62f, 0.73f, 0.78f, 0.26f),
+            AlbedoColor = new Color(hue.R, hue.G, hue.B, 0.26f),
             Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
             Metallic = 0f, Roughness = 0.06f,
             CullMode = BaseMaterial3D.CullModeEnum.Disabled,
         };
+
+        // The shard colour: the pane's glass hue lightened toward white, so broken glass reads bright.
+        static Color ShardTint(Color hue) => new Color(Mathf.Lerp(hue.R, 1f, 0.35f), Mathf.Lerp(hue.G, 1f, 0.35f), Mathf.Lerp(hue.B, 1f, 0.35f));
 
         public void TakeDamage(float amount)
         {
@@ -52,6 +66,7 @@ namespace UnturnedGodot
         {
             if (_shattered) return;
             _shattered = true;
+            OnShattered?.Invoke();   // tell the window-fill NOW (before we free) so its opening + a same-frame save agree with the screen
             var scene = GetTree()?.CurrentScene;
             Vector3 centre = GlobalPosition;
             Vector3 faceN = GlobalTransform.Basis.Z.Normalized();
@@ -62,7 +77,7 @@ namespace UnturnedGodot
                     ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, Transparency = BaseMaterial3D.TransparencyEnum.Alpha,   // flat glass colour (not lit-dark) so the shards read as glass
                     BillboardMode = BaseMaterial3D.BillboardModeEnum.Particles,
                     CullMode = BaseMaterial3D.CullModeEnum.Disabled,
-                    AlbedoColor = new Color(0.72f, 0.84f, 0.9f), AlbedoTexture = fx.Tex,   // shards COLOURED OFF THE PROP (the pane's light glass blue-grey) via AlbedoColor -- a reliable multiply, NOT the fragile per-particle vertex-colour buffer (master + tc)
+                    AlbedoColor = ShardTint(_hue), AlbedoTexture = fx.Tex,   // shards COLOURED OFF THE PROP (the pane's glass hue, lightened) via AlbedoColor -- a reliable multiply, NOT the fragile per-particle vertex-colour buffer (master + tc)
                 };
                 Vector3 halfExt = new Vector3(Mathf.Max(_half.X, 0.2f), Mathf.Max(_half.Y, 0.2f), 0.2f);   // emit across the pane's whole face
                 var ps = new CpuParticles3D
