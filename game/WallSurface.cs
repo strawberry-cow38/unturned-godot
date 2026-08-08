@@ -76,6 +76,27 @@ namespace UnturnedGodot
         /// rectangles they overshot that valley by a quarter of their area each. A hip end is the same
         /// primitive with both top insets meeting.</summary>
         public float InsetL0, InsetL1, InsetR0, InsetR1;
+
+        /// <summary>Paint the BACK face of this wall from a different palette entry. -1 (the default) means
+        /// both sides are the same, and takes the original single-surface path untouched.
+        ///
+        /// A real building is rarely one colour through: the outside is siding and the inside is plaster, and
+        /// a wall is the boundary between two rooms that need not agree. strawberry_cow: "make walls painted
+        /// material-wise per side, not just overall material." Only the -Z face moves -- the edges stay with
+        /// the front, because a jamb belongs to the opening it lines rather than to either room.</summary>
+        public int MaterialIdBack = -1;
+        public int TexelBack = -1;
+        public bool TwoSided => MaterialIdBack >= 0;
+        public Color BackTint
+        {
+            get
+            {
+                var m = WallMaterials.At(MaterialIdBack < 0 ? MaterialId : MaterialIdBack);
+                if (TexelBack >= 0 && TexelBack < 8) return m.Texels[TexelBack];
+                return Kind == SurfaceKind.Roof && m.RoofTexel >= 0 && m.RoofTexel < 8
+                       ? m.Texels[m.RoofTexel] : m.Wall;
+            }
+        }
         public bool Tapered => InsetL0 > 0.02f || InsetL1 > 0.02f || InsetR0 > 0.02f || InsetR1 > 0.02f;
 
         /// <summary>Trim sits proud of BOTH faces and never scales with the opening -- widen a garage and the
@@ -84,7 +105,8 @@ namespace UnturnedGodot
         public const float TrimProfile = WallOpenings.TrimProfile;   // 0.20, retail-measured
         public const float TrimProud = 0.035f;                       // how far the bar stands off each face
 
-        MeshInstance3D _mesh, _trimMesh;
+        MeshInstance3D _mesh, _trimMesh, _backMesh;
+        StandardMaterial3D _backMat;
         // Materials are made ONCE and recoloured. Rebuild() runs every frame of a drag, so allocating a
         // StandardMaterial3D per call hands the GC two new resources per wall per frame for a colour that
         // almost never changes.
@@ -101,6 +123,8 @@ namespace UnturnedGodot
             AddChild(_mesh);
             _trimMesh = new MeshInstance3D { Name = "TrimMesh" };
             AddChild(_trimMesh);
+            _backMesh = new MeshInstance3D { Name = "BackMesh" };
+            AddChild(_backMesh);
             _body = new StaticBody3D { Name = "Solids", CollisionLayer = 1u << 0, CollisionMask = 0 };
             AddChild(_body);
             _trimBody = new StaticBody3D { Name = "Trim", CollisionLayer = 1u << 6, CollisionMask = 0 };
@@ -123,9 +147,16 @@ namespace UnturnedGodot
             var st = new SurfaceTool();
             st.Begin(Mesh.PrimitiveType.Triangles);
             st.SetSmoothGroup(uint.MaxValue);     // = flat. See AddTrim's note; a box wants creased corners.
+            SurfaceTool back = null;
+            if (TwoSided)
+            {
+                back = new SurfaceTool();
+                back.Begin(Mesh.PrimitiveType.Triangles);
+                back.SetSmoothGroup(uint.MaxValue);
+            }
             foreach (var s in solids)
-                if (Tapered) AddTaperedSolid(st, s, t);
-                else AddWallBox(st, s, solids, t);
+                if (Tapered) AddTaperedSolid(st, s, t, back);
+                else AddWallBox(st, s, solids, t, back);
             // GenerateNormals BEFORE Index: indexing welds vertices, and welding before normals exist lights
             // the mesh as one smooth blob instead of crisp box faces.
             if (GableRise > WallOpenings.Eps) AddGableCap(st, t);
@@ -135,6 +166,17 @@ namespace UnturnedGodot
             _mat ??= new StandardMaterial3D { Roughness = 0.95f };
             _mat.AlbedoColor = Tint;
             _mesh.MaterialOverride = _mat;
+
+            if (back != null)
+            {
+                back.GenerateNormals();
+                back.Index();
+                _backMesh.Mesh = back.Commit();
+                _backMat ??= new StandardMaterial3D { Roughness = 0.95f };
+                _backMat.AlbedoColor = BackTint;
+                _backMesh.MaterialOverride = _backMat;
+            }
+            else _backMesh.Mesh = null;
 
             if (ShowTrim && Openings.Count > 0)
             {
@@ -320,15 +362,16 @@ namespace UnturnedGodot
         /// Kept entirely separate from AddWallBox rather than generalising it: the box path runs for every
         /// wall in the game and knows which faces to omit where solids abut, and none of that needed to
         /// change to put a slanted edge on a roof.</summary>
-        void AddTaperedSolid(SurfaceTool st, WallSolid s, float t)
+        void AddTaperedSolid(SurfaceTool st, WallSolid s, float t, SurfaceTool backTool = null)
         {
             var poly = ClipToTaper(s);
             if (poly.Count < 3) return;
+            var bt = backTool ?? st;
             for (int i = 1; i + 1 < poly.Count; i++)          // +Z face
             {
                 Tri(st, new Vector3(poly[0].X, poly[0].Y, t), new Vector3(poly[i].X, poly[i].Y, t),
                         new Vector3(poly[i + 1].X, poly[i + 1].Y, t));
-                Tri(st, new Vector3(poly[0].X, poly[0].Y, -t), new Vector3(poly[i + 1].X, poly[i + 1].Y, -t),
+                Tri(bt, new Vector3(poly[0].X, poly[0].Y, -t), new Vector3(poly[i + 1].X, poly[i + 1].Y, -t),
                         new Vector3(poly[i].X, poly[i].Y, -t));
             }
             for (int i = 0; i < poly.Count; i++)              // the rim
@@ -371,12 +414,13 @@ namespace UnturnedGodot
             return outp;
         }
 
-        static void AddWallBox(SurfaceTool st, WallSolid s, List<WallSolid> all, float t)
+        static void AddWallBox(SurfaceTool st, WallSolid s, List<WallSolid> all, float t,
+                               SurfaceTool backTool = null)
         {
             bool left = !Abuts(all, s, -1, 0), right = !Abuts(all, s, 1, 0);
             bool down = !Abuts(all, s, 0, -1), up = !Abuts(all, s, 0, 1);
             AddBoxFaces(st, new Vector3(s.U0, s.V0, -t), new Vector3(s.U1, s.V1, t),
-                        front: true, back: true, minU: left, maxU: right, minV: down, maxV: up);
+                        front: true, back: true, minU: left, maxU: right, minV: down, maxV: up, backTool);
         }
 
         /// <summary>Is another solid flush against this side, covering it completely?</summary>
@@ -405,7 +449,8 @@ namespace UnturnedGodot
             => AddBoxFaces(st, a, b, true, true, true, true, true, true);
 
         static void AddBoxFaces(SurfaceTool st, Vector3 a, Vector3 b,
-                                bool front, bool back, bool minU, bool maxU, bool minV, bool maxV)
+                                bool front, bool back, bool minU, bool maxU, bool minV, bool maxV,
+                                SurfaceTool backTool = null)
         {
             Vector3[] v =
             {
@@ -413,7 +458,9 @@ namespace UnturnedGodot
                 new(a.X, a.Y, b.Z), new(b.X, a.Y, b.Z), new(b.X, b.Y, b.Z), new(a.X, b.Y, b.Z),
             };
             var tris = new List<int[]>();
-            if (back)  { tris.Add(new[]{0,3,2}); tris.Add(new[]{0,2,1}); }   // -Z
+            var backTris = new List<int[]>();
+            // the -Z face goes to its own surface when the wall is painted per side
+            if (back) (backTool != null ? backTris : tris).AddRange(new[] { new[]{0,3,2}, new[]{0,2,1} });
             if (front) { tris.Add(new[]{4,5,6}); tris.Add(new[]{4,6,7}); }   // +Z
             if (minU)  { tris.Add(new[]{0,4,7}); tris.Add(new[]{0,7,3}); }   // -X
             if (maxU)  { tris.Add(new[]{1,2,6}); tris.Add(new[]{1,6,5}); }   // +X
@@ -425,6 +472,9 @@ namespace UnturnedGodot
             foreach (var tri in tris)
                 for (int k = 2; k >= 0; k--)
                     st.AddVertex(v[tri[k]]);
+            foreach (var tri in backTris)
+                for (int k = 2; k >= 0; k--)
+                    backTool.AddVertex(v[tri[k]]);
         }
 
         // ---- wall space <-> world -------------------------------------------------------------------

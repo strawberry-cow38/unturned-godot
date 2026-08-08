@@ -210,11 +210,25 @@ namespace UnturnedGodot
                                 : _armed >= 0 ? $"placing {Archetypes[Mathf.PosMod(_armed, Archetypes.Length)].Name}"
                                 : "select";
 
+        /// <summary>When true the material picker paints the BACK face of a wall rather than the front, so
+        /// the two rooms a wall separates can disagree about what colour it is.</summary>
+        public bool PaintBackSide;
+
         public void SetMaterial(WallSurface w, int id)
         {
             if (w == null) return;
+            int wrapped = Mathf.PosMod(id, Mathf.Max(1, WallMaterials.Count));
+            if (PaintBackSide)
+            {
+                int wasBack = w.MaterialIdBack;
+                w.MaterialIdBack = wrapped;
+                w.Rebuild();
+                _editor?.PushUndo("wall material (back)",
+                    () => { if (IsInstanceValid(w)) { w.MaterialIdBack = wasBack; w.Rebuild(); } });
+                return;
+            }
             int before = w.MaterialId;
-            w.MaterialId = Mathf.PosMod(id, Mathf.Max(1, WallMaterials.Count));
+            w.MaterialId = wrapped;
             w.Rebuild();
             _editor?.PushUndo("wall material", () => { if (IsInstanceValid(w)) { w.MaterialId = before; w.Rebuild(); } });
         }
@@ -262,7 +276,8 @@ namespace UnturnedGodot
                               IReadOnlyList<WallOpening> openings, float height = WallOpenings.DoorHeight,
                               float pitchDeg = 0f, SurfaceKind kind = SurfaceKind.Wall, float gableRise = 0f,
                               int texel = -1, float insetL0 = 0f, float insetL1 = 0f,
-                              float insetR0 = 0f, float insetR1 = 0f)
+                              float insetR0 = 0f, float insetR1 = 0f,
+                              int materialBack = -1, int texelBack = -1)
         {
             // NO SNAPPING HERE. This is the path Load() and ImportRetail() come through, and rounding a
             // length on the way in makes loading lossy: an imported wall measured off the mesh to the
@@ -275,6 +290,7 @@ namespace UnturnedGodot
                 Length = Mathf.Max(0.01f, length), Height = height, Thickness = thickness, MaterialId = material, Kind = kind,
                 GableRise = gableRise, Texel = texel,
                 InsetL0 = insetL0, InsetL1 = insetL1, InsetR0 = insetR0, InsetR1 = insetR1,
+                MaterialIdBack = materialBack, TexelBack = texelBack,
                 Position = origin, RotationDegrees = new Vector3(pitchDeg, yawDeg, 0f),
             };
             AddChild(w);
@@ -869,6 +885,7 @@ namespace UnturnedGodot
                     Yaw = w.RotationDegrees.Y, Pitch = w.RotationDegrees.X, Kind = w.Kind,
                     Length = w.Length, Height = w.Height, GableRise = w.GableRise, Texel = w.Texel,
                     InsetL0 = w.InsetL0, InsetL1 = w.InsetL1, InsetR0 = w.InsetR0, InsetR1 = w.InsetR1,
+                    MaterialBack = w.MaterialIdBack, TexelBack = w.TexelBack,
                     Thickness = w.Thickness, Material = w.MaterialId,
                 };
                 pl.Openings.AddRange(w.Openings);
@@ -884,7 +901,7 @@ namespace UnturnedGodot
             foreach (var pl in plans)
                 SpawnWall(new Vector3(pl.X, pl.Y, pl.Z), pl.Yaw, pl.Length, pl.Thickness, pl.Material,
                           pl.Openings, pl.Height, pl.Pitch, pl.Kind, pl.GableRise, pl.Texel,
-                          pl.InsetL0, pl.InsetL1, pl.InsetR0, pl.InsetR1);
+                          pl.InsetL0, pl.InsetL1, pl.InsetR0, pl.InsetR1, pl.MaterialBack, pl.TexelBack);
             _selWall = null; _selOpening = -1;
             PositionHandles();
         }
@@ -1129,6 +1146,7 @@ namespace UnturnedGodot
                     Yaw = w.RotationDegrees.Y, Pitch = w.RotationDegrees.X, Kind = w.Kind,
                     Length = w.Length, Height = w.Height, GableRise = w.GableRise, Texel = w.Texel,
                     InsetL0 = w.InsetL0, InsetL1 = w.InsetL1, InsetR0 = w.InsetR0, InsetR1 = w.InsetR1,
+                    MaterialBack = w.MaterialIdBack, TexelBack = w.TexelBack,
                     Thickness = w.Thickness, Material = w.MaterialId,
                 };
                 pl.Openings.AddRange(w.Openings);
@@ -1158,7 +1176,7 @@ namespace UnturnedGodot
             foreach (var pl in plans)
                 SpawnWall(new Vector3(pl.X, pl.Y, pl.Z), pl.Yaw, pl.Length, pl.Thickness, pl.Material,
                           pl.Openings, pl.Height, pl.Pitch, pl.Kind, pl.GableRise, pl.Texel,
-                          pl.InsetL0, pl.InsetL1, pl.InsetR0, pl.InsetR1);
+                          pl.InsetL0, pl.InsetL1, pl.InsetR0, pl.InsetR1, pl.MaterialBack, pl.TexelBack);
             GD.Print($"[editor-buildings] loaded {plans.Count} walls");
             return plans.Count;
         }
@@ -1445,6 +1463,7 @@ namespace UnturnedGodot
                     Yaw = w.RotationDegrees.Y, Pitch = w.RotationDegrees.X, Kind = w.Kind,
                     Length = w.Length, Height = w.Height, GableRise = w.GableRise, Texel = w.Texel,
                     InsetL0 = w.InsetL0, InsetL1 = w.InsetL1, InsetR0 = w.InsetR0, InsetR1 = w.InsetR1,
+                    MaterialBack = w.MaterialIdBack, TexelBack = w.TexelBack,
                     Thickness = w.Thickness, Material = w.MaterialId,
                 };
                 pl.Openings.AddRange(w.Openings);
@@ -1605,7 +1624,7 @@ namespace UnturnedGodot
             foreach (var pl in plans)
                 SpawnWall(StageOrigin + new Vector3(pl.X, pl.Y, pl.Z), pl.Yaw, pl.Length, pl.Thickness,
                           pl.Material, pl.Openings, pl.Height, pl.Pitch, pl.Kind, pl.GableRise, pl.Texel,
-                          pl.InsetL0, pl.InsetL1, pl.InsetR0, pl.InsetR1);
+                          pl.InsetL0, pl.InsetL1, pl.InsetR0, pl.InsetR1, pl.MaterialBack, pl.TexelBack);
             // Corner solving runs on imports again, now that it is safe to.
             //
             // The first attempt at this grew a 0.30 m pilaster on every corner, because the old rule added a

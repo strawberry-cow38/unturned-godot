@@ -1384,4 +1384,53 @@ namespace UnturnedGodot.Testing
             T.Check($"a full-length cut removes the wall ({tool.Walls.Count})", tool.Walls.Count == 0);
         }
     }
+    // "make walls painted material-wise per side, not just overall material."
+    public class BuildToolPaintsWallsPerSide : GameTest
+    {
+        public override string Name => "buildtool.per_side_wall_materials";
+
+        public override IEnumerable<Step> Run()
+        {
+            var tool = new EditorBuildings();
+            World.AddChild(tool);
+            var ed = new Editor();
+            World.AddChild(ed);
+            tool.Setup(ed, null, null);
+            yield return Step.Ticks(1);
+
+            var w = tool.AddWall(Vector3.Zero, 0f, 6f);
+            w.MaterialId = 0;
+            w.Rebuild();
+            yield return Step.Ticks(1);
+
+            // one-sided is the default and must stay on the original single-surface path
+            T.Check("a plain wall has no back surface", w.GetNodeOrNull<MeshInstance3D>("BackMesh")?.Mesh == null);
+            T.Check("and both sides report the same colour", w.Tint.IsEqualApprox(w.BackTint));
+
+            tool.PaintBackSide = true;
+            tool.SetMaterial(w, 7);
+            yield return Step.Ticks(1);
+            T.Check($"painting the back does not touch the front ({w.MaterialId})", w.MaterialId == 0);
+            T.Check($"the back took the new palette ({w.MaterialIdBack})", w.MaterialIdBack == 7);
+            var backMesh = w.GetNodeOrNull<MeshInstance3D>("BackMesh");
+            T.Check("a back surface now exists", backMesh?.Mesh != null);
+            // BREAK IT: leave the -Z faces on the front surface and both sides wear one colour -- the
+            // feature silently does nothing while every count and flag still says it worked.
+            T.Check($"and the two sides are actually different colours ({w.Tint} vs {w.BackTint})",
+                    !w.Tint.IsEqualApprox(w.BackTint));
+
+            // it has to survive being written out and read back, or it is lost the moment you reopen
+            var plans = tool.Snapshot();
+            string text = WallSave.Write(plans);
+            var back = WallSave.Read(text.Split('\n'));
+            T.Check($"per-side survives save + load ({back.Count} walls, back mat "
+                    + $"{(back.Count > 0 ? back[0].MaterialBack : -99)})",
+                    back.Count == 1 && back[0].MaterialBack == 7 && back[0].Material == 0);
+
+            // and undo puts it back
+            ed.Undo();
+            yield return Step.Ticks(1);
+            T.Check($"undo restores the one-sided wall ({w.MaterialIdBack})", w.MaterialIdBack < 0);
+        }
+    }
 }

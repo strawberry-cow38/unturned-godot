@@ -31,6 +31,8 @@ namespace UnturnedSim
         /// <summary>Trapezoid edges: how far the surface is set in from each side at its base and at its top.
         /// All zero is a plain rectangle. See WallImport.Recovered.</summary>
         public float InsetL0, InsetL1, InsetR0, InsetR1;
+        /// <summary>Palette + texel for the BACK face, -1 for "same as the front".</summary>
+        public int MaterialBack = -1, TexelBack = -1;
         public readonly List<WallOpening> Openings = new();
     }
 
@@ -50,7 +52,7 @@ namespace UnturnedSim
         {
             var sb = new StringBuilder();
             sb.Append(Header).Append('\n');
-            sb.Append("# wall <x> <y> <z> <yawDeg> <length> <thickness> <materialId> [height] [pitchDeg] [kind] [gableRise] [texel] [insetL0 insetL1 insetR0 insetR1]\n");
+            sb.Append("# wall <x> <y> <z> <yawDeg> <length> <thickness> <materialId> [height] [pitchDeg] [kind] [gableRise] [texel] [insetL0 insetL1 insetR0 insetR1] [matBack texelBack]\n");
             sb.Append("#   open <u> <v> <width> <height> <depth> <archetype>\n");
             if (walls != null)
                 foreach (var w in walls)
@@ -66,6 +68,8 @@ namespace UnturnedSim
                       .Append(' ').Append(w.Texel.ToString(CultureInfo.InvariantCulture))
                       .Append(' ').Append(F(w.InsetL0)).Append(' ').Append(F(w.InsetL1))
                       .Append(' ').Append(F(w.InsetR0)).Append(' ').Append(F(w.InsetR1))
+                      .Append(' ').Append(w.MaterialBack.ToString(CultureInfo.InvariantCulture))
+                      .Append(' ').Append(w.TexelBack.ToString(CultureInfo.InvariantCulture))
                       .Append('\n');
                     foreach (var o in w.Openings)
                         sb.Append("  open ").Append(F(o.U)).Append(' ').Append(F(o.V)).Append(' ')
@@ -104,6 +108,9 @@ namespace UnturnedSim
                     if (p.Length < 17 || !N(p[13], out w.InsetL0) || !N(p[14], out w.InsetL1)
                         || !N(p[15], out w.InsetR0) || !N(p[16], out w.InsetR1))
                     { w.InsetL0 = w.InsetL1 = w.InsetR0 = w.InsetR1 = 0f; }
+                    if (p.Length < 19 || !int.TryParse(p[17], out w.MaterialBack)
+                        || !int.TryParse(p[18], out w.TexelBack))
+                    { w.MaterialBack = -1; w.TexelBack = -1; }
                     outp.Add(w);
                     cur = w;
                 }
