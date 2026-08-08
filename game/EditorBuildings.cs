@@ -181,6 +181,17 @@ namespace UnturnedGodot
         public static float StoreyHeight => WallOpenings.DoorHeight;
         public float FloorY => ActiveFloor * StoreyHeight;
 
+        /// <summary>How far a building's floor line sits ABOVE the ground it stands on.
+        ///
+        /// At zero the floor slab is exactly at ground level and the foundation is entirely buried, so two
+        /// of the things the tool builds are invisible in every view -- you are asked to trust that the floor
+        /// and the skirt are down there. strawberry_cow: "make buildings sit slightly above the ground (and
+        /// all the tools adapted to the new height) so we can see the floor/foundys."
+        ///
+        /// Applied at the single seam where a placement turns terrain into a height, so everything derived
+        /// from the walls -- slabs, roofs, foundations, gables -- follows without knowing about it.</summary>
+        public const float GroundClearance = 0.25f;
+
         public bool WallDrawMode;
 
         /// <summary>Draw a roof or floor as a RECTANGLE you drag, instead of one auto-fitted to the current
@@ -795,7 +806,7 @@ namespace UnturnedGodot
         bool GroundOnFloor(Vector3 from, Vector3 dir, out Vector3 point)
         {
             if (!GroundAt(from, dir, out point)) return false;
-            point.Y += FloorY;
+            point.Y += FloorY + GroundClearance;
             return true;
         }
 
@@ -1736,7 +1747,7 @@ namespace UnturnedGodot
             _editor?.PushUndo($"import {buildingName}", () => RestoreAll(beforeImport));
             foreach (var w in new List<WallSurface>(_walls)) RemoveWall(w);
             foreach (var pl in plans)
-                SpawnWall(StageOrigin + new Vector3(pl.X, pl.Y, pl.Z), pl.Yaw, pl.Length, pl.Thickness,
+                SpawnWall(StageOrigin + new Vector3(pl.X, pl.Y + GroundClearance, pl.Z), pl.Yaw, pl.Length, pl.Thickness,
                           pl.Material, pl.Openings, pl.Height, pl.Pitch, pl.Kind, pl.GableRise, pl.Texel,
                           pl.InsetL0, pl.InsetL1, pl.InsetR0, pl.InsetR1, pl.MaterialBack, pl.TexelBack);
             // Corner solving runs on imports again, now that it is safe to.

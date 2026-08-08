@@ -4514,7 +4514,9 @@ namespace UnturnedGodot
             float H = UnturnedSim.WallOpenings.DoorHeight;
             float sill = UnturnedSim.WallOpenings.WindowSill;
             float wh = UnturnedSim.WallOpenings.WindowHeight;
-            var o = EditorBuildings.StageOrigin;
+            // Sits on the same clearance a hand-placed building does, so the demo shows what the tool
+            // actually produces rather than a special case with its floor buried.
+            var o = EditorBuildings.StageOrigin + new Vector3(0f, EditorBuildings.GroundClearance, 0f);
             const float L = 12f, D = 9f;
             b.ActiveMaterial = 24;                                   // House_00
 
