@@ -1433,4 +1433,55 @@ namespace UnturnedGodot.Testing
             T.Check($"undo restores the one-sided wall ({w.MaterialIdBack})", w.MaterialIdBack < 0);
         }
     }
+    // "id also like to be able to select openings again once they are placed" was one half; carrying one
+    // to a DIFFERENT wall was the other, and it is the last of the editor list.
+    public class BuildToolMovesOpeningsBetweenWalls : GameTest
+    {
+        public override string Name => "buildtool.opening_moves_between_walls";
+
+        public override IEnumerable<Step> Run()
+        {
+            var tool = new EditorBuildings();
+            World.AddChild(tool);
+            var ed = new Editor();
+            World.AddChild(ed);
+            tool.Setup(ed, null, null);
+            yield return Step.Ticks(1);
+
+            var a = tool.AddWall(Vector3.Zero, 0f, 12f);
+            var b = tool.AddWall(new Vector3(0f, 0f, 6f), 0f, 12f);
+            a.Openings.Add(new WallOpening(2f, 1f, 3f, 2f, 999f, 1));
+            a.Rebuild();
+            yield return Step.Ticks(1);
+            T.Check("it starts on the first wall", a.Openings.Count == 1 && b.Openings.Count == 0);
+
+            T.Check("carrying it across succeeds", tool.ReparentOpening(a, 0, b, 6f, 2f));
+            yield return Step.Ticks(1);
+            T.Check($"it left the first wall ({a.Openings.Count})", a.Openings.Count == 0);
+            T.Check($"and arrived on the second ({b.Openings.Count})", b.Openings.Count == 1);
+            var moved = b.Openings[0];
+            T.Check($"keeping its size ({moved.Width:0.#}x{moved.Height:0.#})",
+                    Mathf.Abs(moved.Width - 3f) < 1e-3f && Mathf.Abs(moved.Height - 2f) < 1e-3f);
+            T.Check($"and landing under the cursor ({moved.U + moved.Width * 0.5f:0.#}, wanted 6)",
+                    Mathf.Abs(moved.U + moved.Width * 0.5f - 6f) < 0.35f);
+
+            // BREAK IT: drop it wherever the cursor is without checking -- it lands on top of a neighbour
+            // and the two holes merge into one ragged gap.
+            b.Openings.Add(new WallOpening(0.5f, 1f, 2f, 2f));
+            a.Openings.Add(new WallOpening(1f, 1f, 3f, 2f, 999f, 1));
+            a.Rebuild(); b.Rebuild();
+            yield return Step.Ticks(1);
+            T.Check("a hop onto an occupied spot is refused",
+                    !tool.ReparentOpening(a, a.Openings.Count - 1, b, 1.5f, 2f));
+            T.Check($"and nothing moved ({a.Openings.Count} / {b.Openings.Count})",
+                    a.Openings.Count == 1 && b.Openings.Count == 2);
+
+            // an opening that cannot fit the target is refused too
+            var tiny = tool.AddWall(new Vector3(0f, 0f, 12f), 0f, 3f);
+            tiny.Length = 1.5f; tiny.Rebuild();
+            yield return Step.Ticks(1);
+            T.Check("and so is one too big for the wall it is dropped on",
+                    !tool.ReparentOpening(a, 0, tiny, 0.75f, 2f));
+        }
+    }
 }

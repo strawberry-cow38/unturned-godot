@@ -32,6 +32,8 @@ namespace UnturnedGodot
         float _grabDU, _grabDV;
         WallOpening[] _dragCapture;
         Vector3 _wallGrab, _wallFrom;          // where the drag started, and where the wall was
+        WallSurface _dragWall;                 // the wall the drag STARTED on, which may not be where it ends
+        List<WallPlan> _dragStage;             // stage snapshot, for a drag that crosses walls
 
         // Hold-to-repeat undo. The lead-in stops a normal Ctrl+Z from firing twice on a slow keypress;
         // after it, repeats run fast enough to walk back a bad five minutes without hammering the key.
@@ -518,10 +520,15 @@ namespace UnturnedGodot
                 }
                 else if (_drag != Drag.None)
                 {
-                    var cap = _dragCapture; var w = _selWall;
-                    _drag = Drag.None; _dragCapture = null;
+                    var cap = _dragCapture; var w = _dragWall;
+                    var stage = _dragStage;
+                    _drag = Drag.None; _dragCapture = null; _dragWall = null; _dragStage = null;
                     HideReadout();
-                    if (cap != null && w != null) _editor.PushUndo("opening edit", () => Restore(w, cap));
+                    // If the opening hopped walls, one wall's snapshot cannot undo it -- two walls changed.
+                    // Fall back to the whole-stage step so the gesture is still a single Ctrl+Z.
+                    if (stage != null && w != _selWall) _editor?.PushUndo("opening moved to another wall",
+                                                                         () => RestoreAll(stage));
+                    else if (cap != null && w != null) _editor.PushUndo("opening edit", () => Restore(w, cap));
                 }
                 // Release finishes the wall. Click-to-start/click-to-finish left the tool in a state that
                 // looks identical to idle while it is actually mid-wall, and every other drag in this editor
@@ -811,6 +818,32 @@ namespace UnturnedGodot
         ///
         /// Two walls are the same wall when they lie on the same line, at the same height, and their runs
         /// touch. The survivor is stretched to cover both and inherits both sets of openings.</summary>
+        /// <summary>Move an opening from one wall to another, keeping its size and archetype.
+        ///
+        /// An opening belongs to the wall it is cut into, so crossing to a neighbour is a remove and an add
+        /// rather than a move -- but it has to LOOK like one drag, so the caller wraps the whole gesture in
+        /// a single undo step. Refused if it will not fit or would land on something.</summary>
+        public bool ReparentOpening(WallSurface from, int index, WallSurface to, float u, float v)
+        {
+            if (from == null || to == null || from == to) return false;
+            if (index < 0 || index >= from.Openings.Count) return false;
+            var o = from.Openings[index];
+            if (o.Width > to.Length + WallOpenings.Eps || o.Height > to.Height + WallOpenings.Eps) return false;
+
+            var moved = o;
+            moved.U = u - o.Width * 0.5f;
+            moved.V = Archetypes[Mathf.PosMod(o.Archetype, Archetypes.Length)].FloorPinned
+                      ? 0f : v - o.Height * 0.5f;
+            moved = WallOpenings.Clamp(moved, to.Length, to.Height, to.Openings);
+            if (WallOpenings.Overlaps(moved, to.Openings)) return false;
+
+            from.Openings.RemoveAt(index);
+            from.Rebuild();
+            to.Openings.Add(moved);
+            to.Rebuild();
+            return true;
+        }
+
         /// <summary>Cut a span out of a wall: shorten it, or split it in two if the span is in the middle.
         ///
         /// Openings travel with whichever piece still contains them, and one straddling the cut is dropped
@@ -1791,6 +1824,10 @@ namespace UnturnedGodot
         {
             _drag = d;
             _dragCapture = _selWall?.Openings.ToArray();
+            _dragWall = _selWall;
+            // Only a MOVE can cross to another wall, and only then is a two-wall undo needed. Snapshotting
+            // the stage on every edge-resize would be waste.
+            _dragStage = d == Drag.Move ? Snapshot() : null;
         }
 
         /// <summary>The wall under the cursor, and how far along its run the cursor is.</summary>
@@ -1910,6 +1947,29 @@ namespace UnturnedGodot
             if (_selWall == null || _selOpening < 0) return;
             var from = _cam.ProjectRayOrigin(screen);
             var dir = _cam.ProjectRayNormal(screen);
+
+            // Dragging an opening onto ANOTHER wall carries it across. Checked before the own-wall path,
+            // because while the cursor is over a neighbour the ray still meets this wall's infinite plane
+            // somewhere and the opening would otherwise slide to that phantom point.
+            if (_drag == Drag.Move && PickWallAt(from, dir, out var over, out float ou)
+                && over != _selWall && over.Kind == SurfaceKind.Wall
+                && over.RayToUVInside(from, dir, out float nu, out float nv))
+            {
+                var src = _selWall;
+                int idx = _selOpening;
+                if (ReparentOpening(src, idx, over, nu, nv))
+                {
+                    _selWall = over;
+                    _selOpening = over.Openings.Count - 1;
+                    var no = over.Openings[_selOpening];
+                    _grabDU = nu - (no.U + no.Width * 0.5f);
+                    _grabDV = nv - (no.V + no.Height * 0.5f);
+                    ShowReadout(over, no);
+                    PositionHandles();
+                }
+                return;
+            }
+
             if (!_selWall.RayToUV(from, dir, out float u, out float v)) return;
             float tol = SnapTolerance(_selWall, u, v);
             if (_drag == Drag.Move) MoveOpening(_selWall, _selOpening, u - _grabDU, v - _grabDV, tol);
