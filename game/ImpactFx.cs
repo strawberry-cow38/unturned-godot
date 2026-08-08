@@ -87,7 +87,7 @@ namespace UnturnedGodot
             // concrete/wood/gravel/foliage = 8 @ 0.25-0.5m, 2-4 m/s; metal = 16 @ 0.125-0.25m, 4-8 m/s; gravityModifier 1,
             // ~1s life. The debris texture is a 4-frame chip sheet (a random chip per particle); metal is a single spark sprite.
             var itex = DebrisTex(surf);
-            bool sheet = itex != null && itex.GetWidth() >= itex.GetHeight() * 3;
+            bool sheet = itex != null && itex.GetWidth() >= itex.GetHeight() * 3;   // 4-frame chip sheet (32x8 = 4x 8x8)
             var mat = new StandardMaterial3D
             {
                 ShadingMode = BaseMaterial3D.ShadingModeEnum.PerPixel,   // source: LIT chips (master: contrast/colour was NOT the problem -- the cull was)
@@ -99,7 +99,7 @@ namespace UnturnedGodot
                 CullMode = BaseMaterial3D.CullModeEnum.Disabled,
             };
             if (itex != null) mat.AlbedoTexture = itex;
-            if (sheet) { mat.ParticlesAnimHFrames = 4; mat.ParticlesAnimVFrames = 1; mat.ParticlesAnimLoop = false; }
+            if (sheet) { mat.ParticlesAnimHFrames = 4; mat.ParticlesAnimVFrames = 1; mat.ParticlesAnimLoop = true; }   // LOOP (not clamp): a chip's anim value can drift past the last frame -> with Loop=false it clamped onto the blank past-the-end frame instead of a chip
 
             var dust = new CpuParticles3D
             {
@@ -112,7 +112,7 @@ namespace UnturnedGodot
                 Mesh = new QuadMesh { Size = Vector2.One, Material = mat },
                 VisibilityAabb = Guard,   // fast chips would otherwise be frustum-culled (no auto-AABB)
             };
-            if (sheet) { dust.AnimOffsetMin = 0f; dust.AnimOffsetMax = 1f; }
+            if (sheet) { dust.AnimOffsetMin = 0f; dust.AnimOffsetMax = 1f; dust.AnimSpeedMin = 0f; dust.AnimSpeedMax = 0f; }   // AnimSpeed 0 -> each chip HOLDS one static random frame for its whole life. THE BUG: the anim advanced over the 1 s lifetime and (Loop=false) clamped onto the blank past-the-end frame, so a chip sat blank early and only landed on a real frame ~1 lifetime later -> "nothing at impact, a lone straggler ~1 s later" (master + tinyclaw). Loop=true + AnimSpeed 0 = a solid chip from frame 0.
             scene.AddChild(dust);
             dust.GlobalPosition = point + up * 0.03f;
             Kill(tree, dust, 1.4);
