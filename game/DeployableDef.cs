@@ -268,6 +268,41 @@ namespace UnturnedGodot
             Ports = new[] { new Port { Kind = PortKind.Consumer, Pos = new Vector3(0f, 0.25f, -0.36f), Watts = UnturnedGodot.Refrigerator.Watts } },
         };
 
+        // ---- WOODEN BARRICADE DOORS -------------------------------------------------------------------
+        // strawberry_cow 2026-08-09: "im gonna have u working on functional doors ... use the prop doors we
+        // have and give them functionality ... i want doors to open 90 degrees."
+        //
+        // One def per ripped prop, built from a table rather than twelve hand-written blocks -- the only thing
+        // that differs between a Birch and a Pine door is the mesh name, and three near-identical literals is
+        // how one of them ends up with a stale Size nobody notices.
+        //
+        // DoorProp routes placement to DoorDeploy (hinge from the catalog, swing from ObjectDoor). Doubledoor
+        // is deliberately ABSENT: its rip is two hinges against a single mesh and the panel split is not
+        // written yet, so a def for it would place a door that swings two copies of itself.
+        static DeployableDef WoodDoor(ushort id, string form, string wood, Vector3 size, float health) => new()
+        {
+            Id = id, Name = $"{wood} {form}", DoorProp = $"{form}_{wood}", Model = $"{form}_{wood}",
+            Size = size, Offset = 0f, Radius = 0.5f, Range = 4.5f, Health = health,
+            PlaceSound = "woodplacement",
+        };
+
+        static readonly Vector3 DoorSize = new(1.2f, 0.15f, 2.4f);    // leaf footprint, flat-frame (Z stands up)
+        static readonly Vector3 GateSize = new(4.0f, 0.15f, 3.0f);    // garage door: wide, tilts up about X
+        static readonly Vector3 HatchSize = new(1.6f, 0.15f, 1.6f);   // floor hatch
+
+        public static readonly DeployableDef DoorBirch = WoodDoor(9140, "Door", "Birch", DoorSize, 250f);
+        public static readonly DeployableDef DoorMaple = WoodDoor(9141, "Door", "Maple", DoorSize, 300f);
+        public static readonly DeployableDef DoorPine  = WoodDoor(9142, "Door", "Pine",  DoorSize, 275f);
+        public static readonly DeployableDef GateBirch = WoodDoor(9143, "Gate", "Birch", GateSize, 350f);
+        public static readonly DeployableDef GateMaple = WoodDoor(9144, "Gate", "Maple", GateSize, 400f);
+        public static readonly DeployableDef GatePine  = WoodDoor(9145, "Gate", "Pine",  GateSize, 375f);
+        public static readonly DeployableDef HatchBirch = WoodDoor(9146, "Hatch", "Birch", HatchSize, 250f);
+        public static readonly DeployableDef HatchMaple = WoodDoor(9147, "Hatch", "Maple", HatchSize, 300f);
+        public static readonly DeployableDef HatchPine  = WoodDoor(9148, "Hatch", "Pine",  HatchSize, 275f);
+
+        public static readonly DeployableDef[] WoodDoors =
+            { DoorBirch, DoorMaple, DoorPine, GateBirch, GateMaple, GatePine, HatchBirch, HatchMaple, HatchPine };
+
         // Merge (SP/MP-unify -> main): union of both sides' devices. main's Battery/Switch/WindTurbine +
         // the unification's GridSource/GasPump fixtures. Switch is defined above (auto-merged from main).
         // SOURCE-EXACT from retail Landmine.dat (Bundles/Items/Barricades/Landmine) -- read directly; .dat is text, the
@@ -327,7 +362,8 @@ namespace UnturnedGodot
         };
 
         public static readonly DeployableDef[] All = { Generator, Spotlight, Splitter2, Splitter3, Splitter4, Combiner2, Battery, Switch, WindTurbine, GridSource, GasPump,
-            FluidTank, WaterSource, FluidSplitter, FluidCombiner, FluidPumpDef, FluidValve, Refinery, Sluice, WaterInlet, WaterOutlet, Purifier, Refrigerator, Landmine, Spike, Charge, Barbedwire };
+            FluidTank, WaterSource, FluidSplitter, FluidCombiner, FluidPumpDef, FluidValve, Refinery, Sluice, WaterInlet, WaterOutlet, Purifier, Refrigerator, Landmine, Spike, Charge, Barbedwire,
+            DoorBirch, DoorMaple, DoorPine, GateBirch, GateMaple, GatePine, HatchBirch, HatchMaple, HatchPine };
         public static DeployableDef ById(ushort id) => id switch
         {
             1101 => Landmine,
@@ -336,6 +372,15 @@ namespace UnturnedGodot
             386 => Barbedwire,
             458 => Generator,
             459 => Spotlight,
+            9140 => DoorBirch,
+            9141 => DoorMaple,
+            9142 => DoorPine,
+            9143 => GateBirch,
+            9144 => GateMaple,
+            9145 => GatePine,
+            9146 => HatchBirch,
+            9147 => HatchMaple,
+            9148 => HatchPine,
             9101 => Splitter2,
             9102 => Splitter3,
             9103 => Splitter4,

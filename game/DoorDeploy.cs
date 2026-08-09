@@ -36,7 +36,9 @@ namespace UnturnedGodot
 
             string dir = ProjectSettings.GlobalizePath("res://content/objects/");
             _cat ??= WorldBuilder.LoadDoorCatalog(dir);
-            if (_cat == null || !_cat.TryGetValue(def.DoorProp, out var leaves) || leaves.Count == 0) return null;
+            if (_cat == null || !_cat.TryGetValue(def.DoorProp, out var leaves) || leaves.Count == 0)
+                leaves = WoodenLeaves(def.DoorProp, dir);
+            if (leaves == null || leaves.Count == 0) return null;
 
             var host = new Node3D { Name = def.DoorProp };
             parent.AddChild(host);
@@ -62,7 +64,10 @@ namespace UnturnedGodot
             foreach (var e in leaves)
             {
                 var leaf = ObjMesh.Load(dir + e.MeshFile);
-                if (leaf == null) continue;
+                // SAY SO. A silent `continue` here spawns a door with a working hinge, a working collider and
+                // no visible leaf -- which reads in game as "the door is invisible", not as "the mesh is
+                // missing", and sends you looking at the wrong system.
+                if (leaf == null) { GD.PrintErr($"[door] {def.DoorProp}: leaf mesh '{e.MeshFile}' failed to load"); continue; }
                 string curveBase = e.MeshFile.EndsWith("_door.obj")
                     ? e.MeshFile.Substring(0, e.MeshFile.Length - "_door.obj".Length)
                     : def.DoorProp;
@@ -79,6 +84,66 @@ namespace UnturnedGodot
             // two hinges out for this reason.
             if (made.Count > 1) foreach (var d in made) d.SetGroup(made);
             return host;
+        }
+
+        // ---- the WOODEN barricade doors -------------------------------------------------------------
+        // A second catalog, deliberately not merged into doors.txt. Each file is the output of its own
+        // extractor (tools/extract_doors.py for the container props, tools/extract_wooden_door_anims.py for
+        // these), so hand-appending these twelve into doors.txt would put rows in a generated file that the
+        // next regeneration silently deletes. Two producers, two files, one consumer -- here.
+        //
+        // The anim rows are keyed by FORM (Door / Doubledoor / Gate / Hatch) while the meshes are per form AND
+        // wood (Door_Birch, Door_Maple, ...), so "Door_Birch" resolves its hinge from the "Door" row and its
+        // mesh from its own name. The pivots and axes are in the flat authored frame, which is exactly the
+        // space the leaf transform stands up from.
+        static Dictionary<string, List<(Vector3 Pivot, Vector3 Axis, float Angle, float Dur)>> _wood;
+
+        static List<WorldBuilder.DoorCatalogEntry> WoodenLeaves(string prop, string dir)
+        {
+            if (_wood == null)
+            {
+                _wood = new Dictionary<string, List<(Vector3, Vector3, float, float)>>();
+                string p = dir + "wooden_door_anims.txt";
+                if (System.IO.File.Exists(p))
+                {
+                    float F(string s) => float.Parse(s, System.Globalization.CultureInfo.InvariantCulture);
+                    foreach (var line in System.IO.File.ReadLines(p))
+                    {
+                        var f = line.Split(' ', System.StringSplitOptions.RemoveEmptyEntries);
+                        if (f.Length < 10) continue;
+                        if (!_wood.TryGetValue(f[0], out var list))
+                            _wood[f[0]] = list = new List<(Vector3, Vector3, float, float)>();
+                        list.Add((new Vector3(F(f[2]), F(f[3]), F(f[4])),
+                                  new Vector3(F(f[5]), F(f[6]), F(f[7])), F(f[8]), F(f[9])));
+                    }
+                }
+            }
+            int us = prop.IndexOf('_');
+            string form = us > 0 ? prop.Substring(0, us) : prop;
+            if (!_wood.TryGetValue(form, out var hinges) || hinges.Count == 0) return null;
+
+            // Doubledoor is TWO hinges against ONE mesh, so honouring both would draw the whole door twice and
+            // swing each copy from a different edge. Splitting the mesh into panels is real work and is not
+            // done yet -- until it is, this refuses rather than shipping a door that looks like two doors
+            // clipping through each other.
+            if (hinges.Count > 1)
+            {
+                GD.PrintErr($"[door] {prop}: {hinges.Count} hinges but one mesh -- the panel split is not implemented, skipping");
+                return null;
+            }
+
+            var h = hinges[0];
+            // strawberry_cow asked for 90 and the rips are 90-100 (retail), so the magnitude is clamped and
+            // the SIGN kept -- the sign is which way it swings, and flipping it mirrors the door.
+            float angle = Mathf.Sign(h.Angle) * Mathf.Min(90f, Mathf.Abs(h.Angle));
+            return new List<WorldBuilder.DoorCatalogEntry>
+            {
+                new WorldBuilder.DoorCatalogEntry
+                {
+                    MeshFile = prop + ".obj", Pivot = h.Pivot, Axis = h.Axis,
+                    AngleDeg = angle, DurationSec = h.Dur, DefaultOpen = false, Sound = "DoorHandle",
+                },
+            };
         }
 
         static Material MatFor(string prop, string dir)
@@ -98,6 +163,6 @@ namespace UnturnedGodot
         }
 
         /// <summary>Test seam: forget the cached catalog so a test can write doors.txt and have it re-read.</summary>
-        public static void ForgetCatalog() { _cat = null; _mats.Clear(); }
+        public static void ForgetCatalog() { _cat = null; _wood = null; _mats.Clear(); }
     }
 }

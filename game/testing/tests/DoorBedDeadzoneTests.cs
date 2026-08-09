@@ -423,4 +423,82 @@ namespace UnturnedGodot.Testing
             T.Check("which stays unlocked", !theirs.IsLocked);
         }
     }
+
+    // strawberry_cow 2026-08-09: "im gonna have u working on functional doors ... i want doors to open 90
+    // degrees." The door this replaces had ELEVEN green tests and did not work -- nothing could place one and
+    // its leaf was a BoxMesh. So the two claims worth checking are the two those tests never made: that a
+    // PLACEMENT yields a door, and that the door is the real ripped asset rather than a stand-in.
+    public class DoorPlacedWoodenSwings : GameTest
+    {
+        public override string Name => "door.placed_wooden_door_swings_90";
+
+        static ObjectDoor LeafOf(Node host)
+        {
+            foreach (var c in host.GetChildren()) if (c is ObjectDoor d) return d;
+            return null;
+        }
+        // the hinge pivot is ObjectDoor's first Node3D child (see ObjectDoor._Ready) -- read off the live tree
+        // rather than adding a debug seam to someone else's file
+        static Node3D PivotOf(ObjectDoor d)
+        {
+            foreach (var c in d.GetChildren()) if (c is Node3D n && c is not CollisionShape3D) return n;
+            return null;
+        }
+        static float SweptDeg(Node3D pivot)
+        {
+            var q = pivot.Basis.GetRotationQuaternion();
+            return Mathf.RadToDeg(2f * Mathf.Acos(Mathf.Clamp(Mathf.Abs(q.W), -1f, 1f)));
+        }
+
+        public override IEnumerable<Step> Run()
+        {
+            DoorDeploy.ForgetCatalog();
+            var host = DoorDeploy.SpawnFor(DeployableDef.DoorPine, World, Vector3.Zero, 0f);
+            T.Check("placing a door prop produces a door", host != null);
+            if (host == null) yield break;
+            yield return Step.Ticks(2);
+
+            var leaf = LeafOf(host);
+            T.Check("with a swinging leaf", leaf != null);
+            if (leaf == null) yield break;
+            var pivot = PivotOf(leaf);
+            T.Check("and a hinge pivot", pivot != null);
+            if (pivot == null) yield break;
+
+            // The RIPPED mesh, not a placeholder. "a door exists" is exactly what the old door passed while
+            // being a brown box, so the discriminating check is that real geometry came through.
+            // Count from the INDEX array when there is one and the VERTEX array when there is not: ObjMesh
+            // hands back an unindexed mesh, so reading only the index array counts a perfectly good door as
+            // zero triangles -- which is what this check did on its first run, and it looked exactly like a
+            // missing mesh rather than like a wrong test.
+            long tris = 0;
+            foreach (var c in pivot.GetChildren())
+            {
+                if (c is not MeshInstance3D m || m.Mesh == null || m.Mesh.GetSurfaceCount() == 0) continue;
+                var arr = m.Mesh.SurfaceGetArrays(0);
+                var idx = arr[(int)Mesh.ArrayType.Index].As<int[]>();
+                var vts = arr[(int)Mesh.ArrayType.Vertex].As<Vector3[]>();
+                tris += (idx != null && idx.Length > 0 ? idx.Length : (vts?.Length ?? 0)) / 3;
+            }
+            T.Check($"carrying the ripped door mesh, not a box ({tris} tris)", tris > 12);
+
+            T.Check($"starts closed ({SweptDeg(pivot):0.#} deg)", !leaf.IsOpen && SweptDeg(pivot) < 3f);
+
+            // ObjectDoor's re-toggle cooldown is WALL CLOCK (Time.GetTicksMsec), and a headless test steps
+            // physics far faster than real time -- so a single Toggle() call is legitimately refused and the
+            // door just sits there. Retry until it takes rather than pretending the cooldown is not real.
+            for (int i = 0; i < 240 && !leaf.Toggle(); i++) yield return Step.Ticks(1);
+            for (int i = 0; i < 240 && SweptDeg(pivot) < 89f; i++) yield return Step.Ticks(1);
+            T.Check("toggling opens it", leaf.IsOpen);
+            // Assert the POSE it reached, not the angle it was asked for. A sign error on the axis mirrors the
+            // swing while every catalog number still reads correct, so the request is not the evidence.
+            float open = SweptDeg(pivot);
+            T.Check($"and it swings to 90 deg ({open:0.#})", Mathf.Abs(open - 90f) < 6f);
+
+            for (int i = 0; i < 240 && !leaf.Toggle(); i++) yield return Step.Ticks(1);
+            for (int i = 0; i < 240 && SweptDeg(pivot) > 1f; i++) yield return Step.Ticks(1);
+            T.Check("toggling again closes it", !leaf.IsOpen);
+            T.Check($"back to the closed pose ({SweptDeg(pivot):0.#} deg)", SweptDeg(pivot) < 3f);
+        }
+    }
 }
