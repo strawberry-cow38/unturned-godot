@@ -2,8 +2,9 @@ using Godot;
 
 namespace UnturnedGodot
 {
-    // Simple indoor light fixture (Light_0 = CEILING light, Light_1 = standing lamp, Lamp_0 = desk lamp, Lamp_1 =
-    // table lamp -- master 2026-08-09 corrected the earlier wrong labels), sharing the grid-power /
+    // Simple indoor light fixture (Light_0 = CEILING light, Lamp_0 = desk lamp, Lamp_1 = table lamp -- master
+    // 2026-08-09 corrected the earlier wrong labels; master also names a "standing lamp" Light_1, but it is NOT yet
+    // extracted to content/, so the Light_1 arm of WorldBuilder's condition is inert-but-ready), sharing the grid-power /
     // reaction-delay-flicker machinery with StreetLight via GridLight. Unlike a streetlight an indoor lamp is NOT
     // night-gated -- it is ON WHENEVER the grid is live (master).
     //
@@ -24,6 +25,7 @@ namespace UnturnedGodot
         MeshInstance3D _fixture;               // the prop's own mesh (LOD0), handed in by WorldBuilder
         MeshInstance3D _tube;                  // the bulb/tube sub-mesh split off the fixture -- the ONLY part that glows
         Material _fixtureOffMat, _fixtureLitMat;
+        bool _built;                           // BuildVisual is idempotent (guarded) -- a 2nd SplitLens(body) has no lens tris and would fall back to glowing the housing
 
         protected override bool NightGated => false;             // always-on when powered (master), not dusk->dawn
         protected override string LightGroup => "gridlights";    // DayNightCycle sweeps this with SetPowered only (no SetNight)
@@ -37,6 +39,8 @@ namespace UnturnedGodot
 
         protected override void BuildVisual()
         {
+            if (_built) return;   // a 2nd call would SplitLens(body) -> no lens -> glow falls back to the housing = the bug restored (tinyclaw)
+            _built = true;
             _omni = new OmniLight3D
             {
                 LightColor = BulbColor, OmniRange = Range, LightEnergy = Energy * _worn, ShadowEnabled = false,

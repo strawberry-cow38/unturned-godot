@@ -689,12 +689,14 @@ namespace UnturnedGodot
                     placedLamp = StreetLight.Make(lampWorld, System.Math.Max(4f, lampWorld.Y - gpos.Y), lensMi);
                     root.AddChild(placedLamp);
                 }
-                // INDOOR LIGHTS (master 2026-08-09 fixed the labels: Light_0 = CEILING light, Light_1 = standing lamp,
-                // Lamp_0 = desk lamp, Lamp_1 = table lamp -- the code long MISLABELLED Lamp_0 as "the ceiling light",
-                // so the real ceiling light Light_0 was never wired here at all and never lit). All always-on grid
+                // INDOOR LIGHTS (master 2026-08-09 fixed the labels: Light_0 = CEILING light, Lamp_0 = desk lamp,
+                // Lamp_1 = table lamp -- the code long MISLABELLED Lamp_0 as "the ceiling light", so the real ceiling
+                // light Light_0 was never wired here at all and never lit). Master also names a "standing lamp" Light_1,
+                // but it is NOT yet extracted to content/ (tinyclaw), so that arm is inert-but-ready. All always-on grid
                 // consumers -- NOT night-gated like a streetlight (LampLight.NightGated=false) -- sharing the same
-                // grid-power + reaction-delay-flicker machinery via GridLight. Simple OmniLight3D + glow bulb; no lens
-                // to split off (no prop lens like Street_Light_0) and no fake beam cone (indoors, short throw).
+                // grid-power + reaction-delay-flicker machinery via GridLight. LampLight splits the warm DIFFUSER faces
+                // off the housing (ObjMesh.SplitLens, same texel identity as Street_Light_0's lens) so only the diffuser
+                // glows when lit; no fake beam cone (indoors, short throw).
                 if ((name == "Light_0" || name == "Light_1" || name == "Lamp_0" || name == "Lamp_1") && mode != WorldMode.Dedicated)
                 {
                     var lampCenter = mesh != null ? mesh.GetAabb().GetCenter() : Vector3.Zero;
