@@ -822,6 +822,10 @@ namespace UnturnedGodot
                         bool losBlocker = maxDim >= 5f && MatFor(matName).Transparency == BaseMaterial3D.TransparencyEnum.Disabled;
                         var body = new StaticBody3D { Transform = new Transform3D(basis, gpos), CollisionLayer = losBlocker ? 1u << 0 : 1u << 6 };
                         body.SetMeta(PlayerController.SurfMeta, (int)(fmesh != null ? PlayerController.Surf.Wood : PlayerController.Surf.Concrete));   // trees (have foliage) = wood impacts; buildings/props = concrete
+                        // Climbable: the player's forward probe resolves a hit collider back to the prop through
+                        // this meta, and reads the ladder's facing off the BODY's basis (retail keys off the
+                        // collider's transform the same way). 76 of these are already placed across the map.
+                        if (Ladder.IsLadderProp(name)) body.SetMeta(Ladder.Meta, body);
                         // A2: the gas pump's interaction collider is now the fixture node's OWN gaspump-meta box
                         // (GasPump.AddInteractionCollider), not this world-mesh collider -- so no tag here.
                         body.AddChild(new CollisionShape3D { Shape = shp });
