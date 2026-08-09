@@ -2048,10 +2048,19 @@ namespace UnturnedGodot.Testing
                                         wl = Mathf.Min(wl, pw.X); wr = Mathf.Max(wr, pw.X);
                                     }
                                 }
-            T.Check($"scaled to the hole's height ({hi - lo:0.00} m vs the opening's {o.Height:0.00})",
-                    Mathf.Abs((hi - lo) - o.Height) < 0.25f);
-            T.Check($"and its width ({wr - wl:0.00} m vs {o.Width:0.00})",
-                    Mathf.Abs((wr - wl) - o.Width) < 0.06f);
+            // Sized to the CLEAR span inside the trim, NOT the raw hole. This used to assert the raw hole and
+            // therefore encoded the bug: AddTrim eats TrimProfile off each jamb and the head, so a door built
+            // to o.Width x o.Height fouls its own frame (strawberry_cow: "scaled perfectly for the raw
+            // opening, but not the opening trim"). The height check also PASSED through that bug, because its
+            // 0.25 tolerance was wider than the 0.20 the trim takes -- so it is tightened to the exact value
+            // now that there is one.
+            var clear = WallSurface.ClearOpeningSize(o);
+            T.Check($"scaled to the trim's clear height ({hi - lo:0.00} m vs clear {clear.Y:0.00}, hole {o.Height:0.00})",
+                    Mathf.Abs((hi - lo) - clear.Y) < 0.06f);
+            T.Check($"and its clear width ({wr - wl:0.00} m vs clear {clear.X:0.00}, hole {o.Width:0.00})",
+                    Mathf.Abs((wr - wl) - clear.X) < 0.06f);
+            T.Check($"so it fits INSIDE the hole rather than filling it ({wr - wl:0.00} < {o.Width:0.00})",
+                    (wr - wl) < o.Width - 0.1f && (hi - lo) < o.Height - 0.05f);
             T.Check($"sitting on the opening's sill, not the wall base (y {lo:0.00}, sill {o.V:0.00})",
                     Mathf.Abs(lo - o.V) < 0.25f);
             // CENTRED in the hole. The leaf is not centred on its own origin -- Door_Pine's geometry sits at
@@ -2286,6 +2295,45 @@ namespace UnturnedGodot.Testing
                 T.Check($"control {file}: its row already sits on its mesh ({px:0.00} in {b.Position.X:0.00}..{b.Position.X + b.Size.X:0.00})",
                         px >= b.Position.X - 0.05f && px <= b.Position.X + b.Size.X + 0.05f);
             }
+            yield break;
+        }
+    }
+
+    /// <summary>Two things that must not overlap, and one that must fit inside another. Both are geometry
+    /// nobody re-derives when they move a control, so both regress silently and only ever get reported by a
+    /// person looking at the screen.</summary>
+    public class EditorHudAndDoorFitGeometry : GameTest
+    {
+        public override string Name => "buildtool.hud_and_door_fit_geometry";
+
+        public override IEnumerable<Step> Run()
+        {
+            // 1) The playtest button vs the dashboard's Save/Exit group, both TopRight-anchored. Compared as
+            // rects rather than eyeballed, because "does it cover Save" is invisible to every other test and
+            // was reported by a human after I made the button show on every tab.
+            float pTop = EditorPlayMode.PlayBtnTop, pBot = pTop + EditorPlayMode.PlayBtnHeight;
+            float dTop = EditorPlayMode.DashRightTop, dBot = dTop + EditorPlayMode.DashRightHeight;
+            bool xOverlap = true;   // both span roughly the same x band on the right edge, so y is what separates them
+            T.Check($"playtest button clears Save/Exit (button y {pTop:0}..{pBot:0} vs dashboard {dTop:0}..{dBot:0})",
+                    !(xOverlap && pTop < dBot && dTop < pBot));
+            T.Check($"and sits below rather than off-screen ({pBot:0} within a sane HUD height)", pBot > dBot && pBot < 400f);
+
+            // 2) A door must fit the CLEAR span inside the trim, not the raw hole. AddTrim takes TrimProfile
+            // off each jamb and the head, plus a sill when the opening is not floor-pinned.
+            float w = WallSurface.TrimProfile;
+            var doorway = new WallOpening(3f, 0f, 2.5f, 2.85f);          // floor-pinned: no sill lining
+            var clear = WallSurface.ClearOpeningSize(doorway);
+            T.Check($"doorway clear width = raw - 2 trim ({clear.X:0.00} = {doorway.Width:0.00} - {2 * w:0.00})",
+                    Mathf.Abs(clear.X - (doorway.Width - 2f * w)) < 1e-3f);
+            T.Check($"doorway clear height = raw - 1 trim, no sill ({clear.Y:0.00} = {doorway.Height:0.00} - {w:0.00})",
+                    Mathf.Abs(clear.Y - (doorway.Height - w)) < 1e-3f);
+            T.Check($"and it is genuinely SMALLER than the hole ({clear.X:0.00}x{clear.Y:0.00} vs {doorway.Width:0.00}x{doorway.Height:0.00})",
+                    clear.X < doorway.Width - 1e-3f && clear.Y < doorway.Height - 1e-3f);
+
+            var window = new WallOpening(3f, 1f, 3.31f, 2.75f);          // has a sill -> trim on all four sides
+            var wc = WallSurface.ClearOpeningSize(window);
+            T.Check($"a silled opening loses trim top AND bottom ({wc.Y:0.00} = {window.Height:0.00} - {2 * w:0.00})",
+                    Mathf.Abs(wc.Y - (window.Height - 2f * w)) < 1e-3f);
             yield break;
         }
     }
