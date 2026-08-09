@@ -78,23 +78,23 @@ namespace UnturnedGodot
         const string SkyShaderCode = @"
 shader_type sky;
 
-uniform vec3 sky_color;
-uniform vec3 equator_color;
-uniform vec3 ground_color;
-uniform vec3 ambient_ground;      // _SkyHackAmbientGround
-uniform vec3 ambient_equator;     // _SkyHackAmbientEquator
+uniform vec3 sky_color : source_color;
+uniform vec3 equator_color : source_color;
+uniform vec3 ground_color : source_color;
+uniform vec3 ambient_ground : source_color;      // _SkyHackAmbientGround
+uniform vec3 ambient_equator : source_color;     // _SkyHackAmbientEquator
 uniform vec3 sun_direction;       // direction the sunlight travels
-uniform vec3 sun_color;
+uniform vec3 sun_color : source_color;
 uniform float sun_inner;
 uniform float sun_outer;
 uniform sampler2D stars_tex : repeat_enable, filter_linear;
 uniform float stars_cutoff;
 uniform vec3 moon_direction;
 uniform vec3 moon_light_direction;
-uniform vec3 moon_color;
+uniform vec3 moon_color : source_color;
 uniform float sqr_moon_radius;
 uniform sampler2D clouds_tex : repeat_enable, filter_linear;
-uniform vec3 cloud_rim_color;
+uniform vec3 cloud_rim_color : source_color;
 uniform float cloud_intensity;
 uniform vec4 cloud_params;        // R: macro cutoff, G: macro saturation
 
@@ -323,15 +323,15 @@ void sky() {
             _skyMat.SetShaderParameter("clouds_tex", LoadTex("res://content/sky_clouds.png"));
             _skyMat.SetShaderParameter("stars_tex", LoadTex("res://content/sky_stars.png"));
             // constants straight from Skybox.mat
-            _skyMat.SetShaderParameter("ambient_ground", new Vector3(0.8f, 0.8f, 0.8f));
-            _skyMat.SetShaderParameter("ambient_equator", new Vector3(0.8f, 0.8f, 0.8f));
+            _skyMat.SetShaderParameter("ambient_ground", new Color(0.8f, 0.8f, 0.8f));
+            _skyMat.SetShaderParameter("ambient_equator", new Color(0.8f, 0.8f, 0.8f));
             _skyMat.SetShaderParameter("sun_inner", 0.995f);        // _SunInnerThreshold
             _skyMat.SetShaderParameter("sun_outer", 0.993f);        // _SunOuterThreshold
             _skyMat.SetShaderParameter("stars_cutoff", 0.0f);       // _StarsCutoff
             _skyMat.SetShaderParameter("moon_light_direction", new Vector3(0f, -1f, 0f));
-            _skyMat.SetShaderParameter("moon_color", new Vector3(0.749f, 0.804f, 0.808f));
+            _skyMat.SetShaderParameter("moon_color", new Color(0.749f, 0.804f, 0.808f));
             _skyMat.SetShaderParameter("sqr_moon_radius", 0.01f);   // _SqrMoonRadius
-            _skyMat.SetShaderParameter("cloud_rim_color", new Vector3(0.8f, 0.6f, 0.4f));
+            _skyMat.SetShaderParameter("cloud_rim_color", new Color(0.8f, 0.6f, 0.4f));
             _skyMat.SetShaderParameter("cloud_intensity", 1.0f);    // _CloudIntensity
             _skyMat.SetShaderParameter("cloud_params", new Vector4(0.6f, 10f, 0f, 0f));  // _CloudParams
             _sky = new Sky { SkyMaterial = _skyMat };
@@ -386,20 +386,20 @@ void sky() {
             {
                 EnsureSky();
                 // day/night colours + sun/moon directions drive the ported sky shader
-                _skyMat.SetShaderParameter("sky_color", V3(Grad(SkyTop)));
-                _skyMat.SetShaderParameter("equator_color", V3(Grad(SkyHorizon)));
-                _skyMat.SetShaderParameter("ground_color", V3(Grad(Ground)));
+                _skyMat.SetShaderParameter("sky_color", Grad(SkyTop));
+                _skyMat.SetShaderParameter("equator_color", Grad(SkyHorizon));
+                _skyMat.SetShaderParameter("ground_color", Grad(Ground));
                 _skyMat.SetShaderParameter("sun_direction", sunDir);
                 _skyMat.SetShaderParameter("moon_direction", -sunDir);    // moon rides opposite the sun
-                _skyMat.SetShaderParameter("sun_color", V3(Sun != null ? Sun.LightColor : Colors.White));
+                _skyMat.SetShaderParameter("sun_color", Sun != null ? Sun.LightColor : Colors.White);
                 // Day->night factor from the sun's height (1 = day, 0 = night). ambient_ground/equator + cloud_rim_color were
                 // CONSTANTS (bright 0.8), so the clouds (cloudBodyColor = ambient_ground + cloud_rim_color) GLOWED at night.
                 // Darken them with the sun so night clouds go dim blue-grey (master: clouds shouldn't glow at night).
                 float dayF = Mathf.Clamp(-sunDir.Y * 1.0f + 0.15f, 0f, 1f);
                 float amb = Mathf.Lerp(0.05f, 0.8f, dayF);
-                _skyMat.SetShaderParameter("ambient_ground", new Vector3(amb, amb, amb));
-                _skyMat.SetShaderParameter("ambient_equator", new Vector3(amb, amb, amb));
-                _skyMat.SetShaderParameter("cloud_rim_color", V3(new Color(0.8f, 0.6f, 0.4f).Lerp(new Color(0.05f, 0.06f, 0.10f), 1f - dayF)));
+                _skyMat.SetShaderParameter("ambient_ground", new Color(amb, amb, amb));
+                _skyMat.SetShaderParameter("ambient_equator", new Color(amb, amb, amb));
+                _skyMat.SetShaderParameter("cloud_rim_color", new Color(0.8f, 0.6f, 0.4f).Lerp(new Color(0.05f, 0.06f, 0.10f), 1f - dayF));
 
                 Env.AmbientLightColor = Grad(Amb);
                 // depth fog tinted to the horizon -- thin at noon, thick at dawn/dusk/night (extra when Overcast)
@@ -424,7 +424,9 @@ void sky() {
             return null;
         }
 
-        static Vector3 V3(Color c) => new(c.R, c.G, c.B);
+        // The sky-shader colour uniforms are declared `: source_color`, so passing a Color to SetShaderParameter
+        // does the sRGB->linear conversion in-engine -- the repo standard (e.g. clothes.gdshader skin_color). NB: only a
+        // Color converts, NOT a Vector3 -- that gotcha is Vehicle.cs:438, which is why every sky uniform is fed a Color.
 
         Color Grad(Color[] keys)
         {
