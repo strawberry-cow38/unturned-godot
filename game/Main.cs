@@ -4379,13 +4379,10 @@ namespace UnturnedGodot
             LampLight.DebugNoOmni = System.Environment.GetEnvironmentVariable("UG_LAMP_NOOMNI") == "1";   // proof shot: only the emissive part, no room light
             var bulbSideStr = System.Environment.GetEnvironmentVariable("UG_BULB_SIDE");                 // DeskBulb render-pick: +1 / -1
             if (!string.IsNullOrEmpty(bulbSideStr) && float.TryParse(bulbSideStr, out var bs)) LampLight.DebugBulbSide = bs;
-            var lampKind = (which == "Light_0" || which == "Light_1") ? LampLight.Kind.CeilingStrip
-                         : which == "Lamp_1" ? LampLight.Kind.FloorShade
-                         : which == "Lamp_0" ? LampLight.Kind.DeskBulb
-                         : LampLight.Kind.Generic;
-            var lamp = LampLight.Make(new Vector3(0f, mountY, 0f), mi, lampKind);   // hand the fixture mesh in so the right part glows when lit
+            var lamp = LampLight.Make(new Vector3(0f, mountY, 0f), mi, LampLight.KindFor(which));   // hand the fixture mesh in so the right part glows when lit (LampLight.KindFor = the one prop->kind table)
             AddChild(lamp);
             lamp.SetPowered(!off);
+            if (System.Environment.GetEnvironmentVariable("UG_LAMP_OUTLINE") == "1") lamp.SetLookFocused(true);   // verify the whole-lamp look-outline (toggle lamps only)
             GD.Print($"[LAMPTEST] {which} + LampLight, powered={!off}, lit={lamp.LitForTest}");
 
             var cam = new Camera3D { Current = true, Fov = 60f };

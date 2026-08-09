@@ -230,6 +230,7 @@ namespace UnturnedGodot
         TVDevice _focusTV;            // the TV being LOOKED AT -> F toggles it on/off
         HeartMonitor _focusMonitor;   // ...and the patient monitor, same deal
         GridPowerSource _focusGrid;   // the grid-power box being LOOKED AT (outline + "Grid Power - <name>: <watts>" tooltip)
+        LampLight _focusLamp;         // the standing/desk lamp being LOOKED AT -> F toggles it on/off
         SDG.Unturned.Item _heldFuelItem;  // a gas can equipped in hand -> RMB a powered pump to fill it (master's fluids)
         SDG.Unturned.Item _heldFluidItem; // a fluid CONTAINER (water bottle / soda / cola / canteen) in hand -> RMB a tank to fill it, LMB to sip clean water (strawberry)
         Deployable _fHeldDeploy;      // the deployable F is being HELD on (hold-F = pick it up; a quick tap = toggle, on release)
@@ -295,6 +296,7 @@ namespace UnturnedGodot
             WorldItem hitItem = null; Vehicle hitVeh = null; Deployable hitDeploy = null; GasPump hitGasPump = null; GridPowerSource hitGrid = null; FluidContainer hitFluid = null;
             Door hitDoor = null; Bed hitBed = null; ObjectDoor hitObjectDoor = null; TVDevice hitTV = null; NoteBody hitNote = null;
             HeartMonitor hitMonitor = null;   // patient monitor under the ray -> F toggles it
+            LampLight hitLamp = null;         // standing/desk lamp under the ray -> F on/off + outline
             ShelfItemBody hitShelfItem = null; StoreShelf hitShelf = null;   // shelf display item / its shelf under the look-sphere
             IPuppetFocusable hitPuppet = null;   // MP ONLY: nearest replicated car/item puppet under the look-sphere (SP hits real Vehicle/WorldItem instead)
             bool rayTerminal = false, rayShelfItem = false;   // did the RAY claim the target, and was it a shelf item? (see the arbitration below)
@@ -335,6 +337,7 @@ namespace UnturnedGodot
                     else if (rcol is Node grn2 && grn2.HasMeta("gridpower") && grn2.GetMeta("gridpower").As<GridPowerSource>() is GridPowerSource gsn && IsInstanceValid(gsn)) hitGrid = gsn;   // grid-power box collider tagged in SpawnEditorGridPower
                     else if (rcol is Node hmn && hmn.HasMeta(HeartMonitor.HitMeta) && hmn.GetMeta(HeartMonitor.HitMeta).As<HeartMonitor>() is HeartMonitor hmd && IsInstanceValid(hmd)) hitMonitor = hmd;   // patient monitor body -> its device (F toggles; the bullet path shoots the screen out)
                     else if (rcol is Node tvn && tvn.HasMeta(TVDevice.HitMeta) && tvn.GetMeta(TVDevice.HitMeta).As<TVDevice>() is TVDevice tvd && IsInstanceValid(tvd)) hitTV = tvd;   // TV body collider tagged in WorldBuilder -> its device (F toggles; the bullet path uses the same meta to find the screen)
+                    else if (rcol is Node lmn && lmn.HasMeta(LampLight.LookMeta) && lmn.GetMeta(LampLight.LookMeta).As<LampLight>() is LampLight lmd && IsInstanceValid(lmd)) hitLamp = lmd;   // standing/desk lamp body tagged in WorldBuilder -> its LampLight (F on/off)
                     else if (rcol is ShelfItemBody sibr && IsInstanceValid(sibr)) hitShelfItem = sibr;   // ray hit an item on a shelf directly -> lock onto it (the orb is a backup)
                     else if (rcol is Node rn && ShelfOf(rn) is StoreShelf rshelf) hitShelf = rshelf;   // looked-at shelf -> whole-shelf outline + F-open (look-based, not proximity)
                     // Which pass claimed the target decides who wins below. The ray is you POINTING at something;
@@ -346,7 +349,7 @@ namespace UnturnedGodot
                 // sphere is still allowed to speak, because picking an individual item off a shelf you are looking at
                 // is exactly what it is for. The ray chain above is else-if, so at most one of these is ever set.
                 rayTerminal = hitDoor != null || hitObjectDoor != null || hitBed != null || hitDeploy != null
-                           || hitFluid != null || hitGasPump != null || hitGrid != null || hitTV != null || hitMonitor != null || hitNote != null || rayShelfItem;
+                           || hitFluid != null || hitGasPump != null || hitGrid != null || hitTV != null || hitMonitor != null || hitLamp != null || hitNote != null || rayShelfItem;
                 // 2) sphere at the ray end -> nearest ITEM (bit 7) or VEHICLE (bit 5) it overlaps is focusable
                 _lookSphereQ ??= new PhysicsShapeQueryParameters3D { Shape = new SphereShape3D { Radius = LookSphereR }, CollisionMask = WorldItem.ItemHitLayer | (1u << 5) | StoreShelf.ShelfItemHitLayer, Exclude = _lookExclude };
                 _lookSphereQ.Transform = new Transform3D(Basis.Identity, _lookEnd);
@@ -391,7 +394,7 @@ namespace UnturnedGodot
                 _debugLookCandidates = (rayTerminal ? 1 : 0) + (hitShelf != null ? 1 : 0)
                                      + (hitItem != null ? 1 : 0) + (hitVeh != null ? 1 : 0)
                                      + (hitShelfItem != null && !rayShelfItem ? 1 : 0) + (hitPuppet != null ? 1 : 0);
-                if (won != Look.RayOther) { hitDoor = null; hitObjectDoor = null; hitBed = null; hitDeploy = null; hitFluid = null; hitGasPump = null; hitGrid = null; hitTV = null; hitMonitor = null; }
+                if (won != Look.RayOther) { hitDoor = null; hitObjectDoor = null; hitBed = null; hitDeploy = null; hitFluid = null; hitGasPump = null; hitGrid = null; hitTV = null; hitMonitor = null; hitLamp = null; }
                 if (won != Look.Shelf) hitShelf = null;
                 if (won != Look.ShelfItem) hitShelfItem = null;
                 if (won != Look.Item) hitItem = null;
@@ -472,6 +475,12 @@ namespace UnturnedGodot
                 if (IsInstanceValid(_focusTV)) _focusTV.SetLookFocused(false);
                 _focusTV = hitTV;
                 _focusTV?.SetLookFocused(true);
+            }
+            if (hitLamp != _focusLamp)   // standing/desk lamp look-focus: whole-lamp white outline, same pattern as the TV
+            {
+                if (IsInstanceValid(_focusLamp)) _focusLamp.SetLookFocused(false);
+                _focusLamp = hitLamp;
+                _focusLamp?.SetLookFocused(true);
             }
             if (hitNote != _focusNote)   // readable note look-focus: white outline, F reads it
             {
@@ -3856,6 +3865,7 @@ namespace UnturnedGodot
                 else if (_focusDoor != null && IsInstanceValid(_focusDoor)) { _fHeldDoor = _focusDoor; _doorLockTimer = 0f; }   // looking at a door: F starts a HOLD -> lock/unlock (UpdateDoorLockHold); a quick TAP opens/closes it (fired on release)
                 else if (_focusObjectDoor != null && IsInstanceValid(_focusObjectDoor)) RequestToggleObjectDoor(_focusObjectDoor);   // looking at an openable prop door (fridge): F toggles it directly, no hold/lock semantics for this MVP (unlike a building Door)
                 else if (_focusTV != null && IsInstanceValid(_focusTV)) _focusTV.Toggle();   // looking at a TV: F toggles it on/off (per-TV state)
+                else if (_focusLamp != null && IsInstanceValid(_focusLamp)) _focusLamp.Toggle();   // looking at a standing/desk lamp: F toggles it on/off
                 else if (_focusMonitor != null && IsInstanceValid(_focusMonitor)) _focusMonitor.Toggle();   // ...same for a patient monitor
                 else if (_focusNote != null && IsInstanceValid(_focusNote)) _noteReader?.Show(_focusNote);   // looking at a readable note: F reads it
                 else if (_focusBed != null && IsInstanceValid(_focusBed)) ClaimFocusedBed();       // looking at a bed: claim it as your respawn point
