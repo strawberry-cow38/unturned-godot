@@ -567,4 +567,46 @@ namespace UnturnedGodot.Testing
                     mpivot != null && LeafBottomY(mpivot) > 5.8f - 6f - 0.2f && LeafTopY(mpivot) > 2.0f);
         }
     }
+
+    // Deployable defs and inventory items share ONE id space, and nothing enforces it. AttachmentFit already
+    // carries a scar comment -- "IDs are 9140+, NOT 9110-9112: those are already the Fluid Tank / Water
+    // Source / Splitter, and the later Add() calls silently overwrote the magazines registered under them" --
+    // and I read that comment while looking for something else, AFTER having just assigned the doors
+    // 9140-9151, straight on top of four magazines. A warning in a comment is only as good as whoever happens
+    // to open that file. This makes the collision fail a run instead.
+    public class DeployableIdsAreUnique : GameTest
+    {
+        public override string Name => "deploy.ids_do_not_collide";
+
+        public override IEnumerable<Step> Run()
+        {
+            var seen = new Dictionary<ushort, string>();
+            var clashes = new List<string>();
+            foreach (var d in DeployableDef.All)
+            {
+                if (d == null) continue;
+                if (seen.TryGetValue(d.Id, out var other)) clashes.Add($"{d.Id}: {other} vs {d.Name}");
+                else seen[d.Id] = d.Name;
+            }
+            T.Check($"no two deployables share an id ({seen.Count} defs{(clashes.Count > 0 ? " -- " + string.Join("; ", clashes) : "")})",
+                    clashes.Count == 0);
+
+            // and none of them lands on a magazine id, the specific collision that already happened once
+            var mags = new ushort[] { 9140, 9141, 9142, 9143 };
+            var onMags = new List<string>();
+            foreach (var d in DeployableDef.All)
+                if (d != null && System.Array.IndexOf(mags, d.Id) >= 0) onMags.Add($"{d.Id} {d.Name}");
+            T.Check($"none sits on a magazine id 9140-9143 ({(onMags.Count == 0 ? "clear" : string.Join("; ", onMags))})",
+                    onMags.Count == 0);
+
+            // every def reachable through ById -- an id in the table but missing from the switch places nothing,
+            // which is the silent half of this failure rather than the loud half
+            var unreachable = new List<string>();
+            foreach (var d in DeployableDef.All)
+                if (d != null && DeployableDef.ById(d.Id) == null) unreachable.Add($"{d.Id} {d.Name}");
+            T.Check($"and every def resolves through ById ({(unreachable.Count == 0 ? "all" : string.Join("; ", unreachable))})",
+                    unreachable.Count == 0);
+            yield break;
+        }
+    }
 }

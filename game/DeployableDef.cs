@@ -268,6 +268,11 @@ namespace UnturnedGodot
             Ports = new[] { new Port { Kind = PortKind.Consumer, Pos = new Vector3(0f, 0.25f, -0.36f), Watts = UnturnedGodot.Refrigerator.Watts } },
         };
 
+        // IDS ARE 9160+, NOT 9140+. 9140-9143 are ALREADY the Augewehr / Nightraider / .300 Blackout /
+        // Heartbreaker magazines (see AttachmentFit, which carries the same warning for the same reason:
+        // "the later Add() calls silently overwrote the magazines registered under them"). Deployable defs
+        // and inventory items share one id space, so a door on 9140 shadows a magazine and neither errors.
+        // In use when this block was written: 9101-9106, 9110-9121, 9130, 9140-9143, 9200-9201.
         // ---- WOODEN BARRICADE DOORS -------------------------------------------------------------------
         // strawberry_cow 2026-08-09: "im gonna have u working on functional doors ... use the prop doors we
         // have and give them functionality ... i want doors to open 90 degrees."
@@ -290,23 +295,23 @@ namespace UnturnedGodot
         static readonly Vector3 GateSize = new(4.0f, 0.15f, 3.0f);    // garage door: wide, tilts up about X
         static readonly Vector3 HatchSize = new(1.6f, 0.15f, 1.6f);   // floor hatch
 
-        public static readonly DeployableDef DoorBirch = WoodDoor(9140, "Door", "Birch", DoorSize, 250f);
-        public static readonly DeployableDef DoorMaple = WoodDoor(9141, "Door", "Maple", DoorSize, 300f);
-        public static readonly DeployableDef DoorPine  = WoodDoor(9142, "Door", "Pine",  DoorSize, 275f);
-        public static readonly DeployableDef GateBirch = WoodDoor(9143, "Gate", "Birch", GateSize, 350f);
-        public static readonly DeployableDef GateMaple = WoodDoor(9144, "Gate", "Maple", GateSize, 400f);
-        public static readonly DeployableDef GatePine  = WoodDoor(9145, "Gate", "Pine",  GateSize, 375f);
-        public static readonly DeployableDef HatchBirch = WoodDoor(9146, "Hatch", "Birch", HatchSize, 250f);
-        public static readonly DeployableDef HatchMaple = WoodDoor(9147, "Hatch", "Maple", HatchSize, 300f);
-        public static readonly DeployableDef HatchPine  = WoodDoor(9148, "Hatch", "Pine",  HatchSize, 275f);
+        public static readonly DeployableDef DoorBirch = WoodDoor(9160, "Door", "Birch", DoorSize, 250f);
+        public static readonly DeployableDef DoorMaple = WoodDoor(9161, "Door", "Maple", DoorSize, 300f);
+        public static readonly DeployableDef DoorPine  = WoodDoor(9162, "Door", "Pine",  DoorSize, 275f);
+        public static readonly DeployableDef GateBirch = WoodDoor(9163, "Gate", "Birch", GateSize, 350f);
+        public static readonly DeployableDef GateMaple = WoodDoor(9164, "Gate", "Maple", GateSize, 400f);
+        public static readonly DeployableDef GatePine  = WoodDoor(9165, "Gate", "Pine",  GateSize, 375f);
+        public static readonly DeployableDef HatchBirch = WoodDoor(9166, "Hatch", "Birch", HatchSize, 250f);
+        public static readonly DeployableDef HatchMaple = WoodDoor(9167, "Hatch", "Maple", HatchSize, 300f);
+        public static readonly DeployableDef HatchPine  = WoodDoor(9168, "Hatch", "Pine",  HatchSize, 275f);
 
         // METAL, and it cost four lines because the hinge lookup keys on the FORM rather than the material:
         // Door_Metal resolves the same "Door" row Door_Pine does. cow tools diffed the rigs before extracting
         // rather than assuming the twins matched -- they came back byte-identical in both geometry and hinge,
         // differing only in palette -- so there is no anim row and no code here, just the defs.
-        public static readonly DeployableDef DoorMetal  = WoodDoor(9149, "Door", "Metal", DoorSize, 500f);
-        public static readonly DeployableDef GateMetal  = WoodDoor(9150, "Gate", "Metal", GateSize, 700f);
-        public static readonly DeployableDef HatchMetal = WoodDoor(9151, "Hatch", "Metal", HatchSize, 500f);
+        public static readonly DeployableDef DoorMetal  = WoodDoor(9169, "Door", "Metal", DoorSize, 500f);
+        public static readonly DeployableDef GateMetal  = WoodDoor(9170, "Gate", "Metal", GateSize, 700f);
+        public static readonly DeployableDef HatchMetal = WoodDoor(9171, "Hatch", "Metal", HatchSize, 500f);
 
         public static readonly DeployableDef[] WoodDoors =
             { DoorBirch, DoorMaple, DoorPine, GateBirch, GateMaple, GatePine, HatchBirch, HatchMaple, HatchPine,
@@ -382,18 +387,18 @@ namespace UnturnedGodot
             386 => Barbedwire,
             458 => Generator,
             459 => Spotlight,
-            9149 => DoorMetal,
-            9150 => GateMetal,
-            9151 => HatchMetal,
-            9140 => DoorBirch,
-            9141 => DoorMaple,
-            9142 => DoorPine,
-            9143 => GateBirch,
-            9144 => GateMaple,
-            9145 => GatePine,
-            9146 => HatchBirch,
-            9147 => HatchMaple,
-            9148 => HatchPine,
+            9169 => DoorMetal,
+            9170 => GateMetal,
+            9171 => HatchMetal,
+            9160 => DoorBirch,
+            9161 => DoorMaple,
+            9162 => DoorPine,
+            9163 => GateBirch,
+            9164 => GateMaple,
+            9165 => GatePine,
+            9166 => HatchBirch,
+            9167 => HatchMaple,
+            9168 => HatchPine,
             9101 => Splitter2,
             9102 => Splitter3,
             9103 => Splitter4,
