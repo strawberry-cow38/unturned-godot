@@ -227,4 +227,48 @@ namespace UnturnedGodot.Testing
                     LookRayHit(dirPos + new Vector3(0f, 1f, 4f), dirPos) == dir);
         }
     }
+
+    // strawberry_cow 2026-08-09: "make the grid snap only on the axis we're moving the prop on, not global."
+    // Pure maths, so this needs no camera, no viewport and no drag in flight.
+    public class EditorSnapIsAxisRelative : GameTest
+    {
+        public override string Name => "editor.grid_snap_follows_the_drag_axis";
+
+        public override IEnumerable<Step> Run()
+        {
+            // a prop sitting deliberately OFF the grid on every axis
+            var start = new Vector3(2.3f, 5.7f, -1.4f);
+
+            // dragged along X: X lands on the grid, Y and Z must not move at all. The old behaviour snapped
+            // all three, so a nudge sideways also shifted the prop vertically -- on an axis you never touched.
+            var alongX = EditorGizmo.SnapTranslate(start, Vector3.Right, 1.4f, start + Vector3.Right * 1.4f);
+            T.Check($"X snaps to the grid ({alongX.X:0.00})", Mathf.Abs(alongX.X - Mathf.Round(alongX.X)) < 1e-3f);
+            T.Check($"Y is untouched ({alongX.Y:0.00} vs {start.Y:0.00})", Mathf.Abs(alongX.Y - start.Y) < 1e-4f);
+            T.Check($"Z is untouched ({alongX.Z:0.00} vs {start.Z:0.00})", Mathf.Abs(alongX.Z - start.Z) < 1e-4f);
+
+            var alongY = EditorGizmo.SnapTranslate(start, Vector3.Up, 2.2f, start + Vector3.Up * 2.2f);
+            T.Check($"dragging Y snaps only Y ({alongY.Y:0.00})",
+                    Mathf.Abs(alongY.Y - Mathf.Round(alongY.Y)) < 1e-3f
+                    && Mathf.Abs(alongY.X - start.X) < 1e-4f && Mathf.Abs(alongY.Z - start.Z) < 1e-4f);
+
+            // a PLANE drag (two axes at once) snaps both of those and still leaves the third alone -- this
+            // falls out of deciding per component, rather than needing its own case
+            var diag = new Vector3(1f, 0f, 1f).Normalized();
+            var onPlane = EditorGizmo.SnapTranslate(start, diag, 2f, start + diag * 2f);
+            T.Check($"a plane drag snaps both its axes ({onPlane.X:0.00}, {onPlane.Z:0.00})",
+                    Mathf.Abs(onPlane.X - Mathf.Round(onPlane.X)) < 1e-3f
+                    && Mathf.Abs(onPlane.Z - Mathf.Round(onPlane.Z)) < 1e-3f);
+            T.Check($"and leaves the axis it does not touch ({onPlane.Y:0.00})", Mathf.Abs(onPlane.Y - start.Y) < 1e-4f);
+
+            // LOCAL space on a rotated prop: no axis is world-aligned, so snapping components would quantise
+            // all three and be exactly the bug. Travel is quantised instead and the prop stays on its own axis.
+            var tilted = new Vector3(0.5f, 0.6f, 0.62f).Normalized();
+            var local = EditorGizmo.SnapTranslate(start, tilted, 2.4f, start + tilted * 2.4f);
+            float travel = (local - start).Length();
+            T.Check($"a rotated-axis drag quantises TRAVEL ({travel:0.00})", Mathf.Abs(travel - 2f) < 1e-3f);
+            T.Check("and stays exactly on its own axis",
+                    (local - start).Normalized().Dot(tilted) > 0.9999f);
+            yield break;
+        }
+    }
 }

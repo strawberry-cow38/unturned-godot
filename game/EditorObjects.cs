@@ -542,6 +542,12 @@ namespace UnturnedGodot
                 if (mb.Pressed)
                 {
                     if (Editor.PointerOverUI(this)) return;                                  // clicking the dashboard/browser must not fire tools into the world
+                    // Clicking into the WORLD gives the world the keyboard back. A focused LineEdit (the prop
+                    // search) swallows every key before _UnhandledInput ever runs, which is correct Godot
+                    // behaviour and reads as the editor ignoring you -- strawberry_cow: "the prop search box
+                    // is really 'sticky' my inputs keep getting eaten by it". Nothing releases focus on its
+                    // own, so clicking the viewport does it.
+                    GetViewport().GuiGetFocusOwner()?.ReleaseFocus();
                     if (_gizmo.TryBeginDrag(mp)) { BeginGroupDrag(); _dragCapture = CaptureSelection(); return; }   // gizmo grab -> drag (+ capture for undo)
                     if (!TrySelect(mp)) { _boxDragging = true; _boxStart = mp; }            // click selects a prop; empty ground -> arm a box drag-select
                 }
@@ -563,7 +569,16 @@ namespace UnturnedGodot
                 else if (ctrl && k.Keycode == Key.N) PasteTransform();                   // Ctrl+N paste transform (source)
                 else if (ctrl && k.Keycode == Key.Z) _editor.Undo();                      // Ctrl+Z undo (source EditorInteract)
                 else if (k.Keycode == Key.E) PlaceOrMoveAtCursor();                     // E = source tool_2: move the selection to the cursor, or summon the list-selected prop
-                else if (k.Keycode == Key.T) _gizmo.CycleMode();                        // T = cycle translate/rotate/scale gizmo (source TransformHandles EMode)
+                // ONE KEY PER MODE, taken from retail rather than invented: ControlsSettings binds
+                // TOOL_0=Q -> TRANSFORM, TOOL_1=W -> ROTATE, TOOL_3=R -> SCALE (EditorObjects.cs Hotkeys),
+                // with TOOL_2=E the place/move tool this editor already matches. Source ALSO binds Q and E to
+                // ascend/descend -- the two never collide because the whole handler is gated on
+                // `!_flyCam.Flying`, so Q means "climb" while you hold RMB and "translate" when you do not,
+                // exactly as it does in the real editor.
+                else if (k.Keycode == Key.Q) _gizmo.SetMode(EditorGizmo.EMode.Translate);
+                else if (k.Keycode == Key.W) _gizmo.SetMode(EditorGizmo.EMode.Rotate);
+                else if (k.Keycode == Key.R) _gizmo.SetMode(EditorGizmo.EMode.Scale);
+                else if (k.Keycode == Key.T) _gizmo.CycleMode();                        // kept: it was the only way to switch for months and costs nothing
                 else if (k.Keycode == Key.G) _gizmo.LocalSpace = !_gizmo.LocalSpace;    // G = toggle gizmo local/global space
                 else if (k.Keycode == Key.Escape) Select(null);
             }
