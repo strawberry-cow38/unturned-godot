@@ -109,18 +109,28 @@ namespace UnturnedGodot
                 if (c is CanvasLayer cl) cl.Visible = on;
         }
 
+        // Footprint centre = the middle of the bbox of every wall's two base ends (UVToWorld(0,0) and
+        // UVToWorld(Length,0)) -- the SAME walk the roof/floor code does. Averaging wall origins (tried first)
+        // averages start-CORNERS, so it biases the spawn toward wherever the walls happen to begin and lands
+        // in a wall in a draw-order-dependent way (tinyclaw caught this).
         Vector3 ComputeSpawn()
         {
             float groundY = EditorBuildings.StageOrigin.Y;   // BuildStage() lays the ground plane at the stage height
+            Vector3 fallback = new Vector3(EditorBuildings.StageOrigin.X, groundY + 1.2f, EditorBuildings.StageOrigin.Z);
             var walls = _buildings?.Walls;
-            if (walls == null || walls.Count == 0)
-                return new Vector3(EditorBuildings.StageOrigin.X, groundY + 1.2f, EditorBuildings.StageOrigin.Z);
-            Vector3 sum = Vector3.Zero; int n = 0;
+            if (walls == null || walls.Count == 0) return fallback;
+            float minX = float.MaxValue, minZ = float.MaxValue, maxX = float.MinValue, maxZ = float.MinValue;
+            int n = 0;
             foreach (var w in walls)
-                if (GodotObject.IsInstanceValid(w)) { sum += w.GlobalPosition; n++; }
-            if (n == 0) return new Vector3(EditorBuildings.StageOrigin.X, groundY + 1.2f, EditorBuildings.StageOrigin.Z);
-            Vector3 c = sum / n;
-            return new Vector3(c.X, groundY + 1.2f, c.Z);
+            {
+                if (!GodotObject.IsInstanceValid(w)) continue;
+                Vector3 a = w.UVToWorld(0f, 0f), b = w.UVToWorld(w.Length, 0f);
+                minX = Mathf.Min(minX, Mathf.Min(a.X, b.X)); maxX = Mathf.Max(maxX, Mathf.Max(a.X, b.X));
+                minZ = Mathf.Min(minZ, Mathf.Min(a.Z, b.Z)); maxZ = Mathf.Max(maxZ, Mathf.Max(a.Z, b.Z));
+                n++;
+            }
+            if (n == 0) return fallback;
+            return new Vector3((minX + maxX) * 0.5f, groundY + 1.2f, (minZ + maxZ) * 0.5f);
         }
     }
 }
