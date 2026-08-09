@@ -87,6 +87,11 @@ namespace UnturnedGodot
             _scaleH[3].Visible = Mode == EMode.Scale;
         }
         public void CycleMode() { Mode = (EMode)(((int)Mode + 1) % 3); RefreshVis(); }
+        /// <summary>Set the mode directly. Retail binds one key PER mode rather than cycling
+        /// (ControlsSettings: TOOL_0=Q transform, TOOL_1=W rotate, TOOL_3=R scale), which is what
+        /// strawberry_cow asked for -- a cycle makes you press a key up to three times and look at the gizmo
+        /// to find out where you landed.</summary>
+        public void SetMode(EMode m) { if (Mode == m) return; Mode = m; RefreshVis(); }
 
         Basis SpaceBasis => LocalSpace && _target != null ? _target.GlobalTransform.Basis.Orthonormalized() : Basis.Identity;
 
@@ -168,7 +173,13 @@ namespace UnturnedGodot
             {
                 float delta = ProjectRayOntoRay(from, dir, _startPos, _dragDir) - _startDist;
                 var pos = _startPos + _dragDir * delta;
-                if (snap) pos = pos.Snapped(Vector3.One);
+                // SNAP ONLY THE AXES BEING DRAGGED. `pos.Snapped(Vector3.One)` quantises all three, so
+                // nudging a prop along X also yanked its Y and Z onto whole numbers -- it moved on axes you
+                // never touched (strawberry_cow: "make the grid snap only on the axis we're moving the prop
+                // on, not global"). Deciding per-component off the drag direction also means a PLANE handle
+                // gets both of its axes snapped and neither of the others, with no extra case, whenever
+                // plane handles exist.
+                if (snap) pos = SnapTranslate(_startPos, _dragDir, delta, pos);
                 _target.GlobalPosition = pos; GlobalPosition = pos;
             }
             else if (_rotAxis >= 0)
@@ -186,6 +197,28 @@ namespace UnturnedGodot
                 var ns = new Vector3(Mathf.Max(0.01f, _scaleStart.X * f.X), Mathf.Max(0.01f, _scaleStart.Y * f.Y), Mathf.Max(0.01f, _scaleStart.Z * f.Z));
                 _target.GlobalTransform = new Transform3D(_scaleRotBasis * Basis.FromScale(ns), _target.GlobalPosition);
             }
+        }
+
+        /// <summary>Grid-snap a translate drag, touching ONLY the axes actually being dragged.
+        ///
+        /// `pos.Snapped(Vector3.One)` quantises all three, so nudging a prop along X also yanked its Y and Z
+        /// onto whole numbers -- it moved on axes you never touched (strawberry_cow: "make the grid snap only
+        /// on the axis we're moving the prop on, not global"). Deciding per-component off the drag direction
+        /// also gives a PLANE handle both of its axes and neither of the others, with no extra case, if plane
+        /// handles are ever added.
+        ///
+        /// A LOCAL-space drag on a rotated prop has no axis-aligned direction, so "snap this component to the
+        /// world grid" is not a meaningful request -- every component counts as dragged and it degenerates
+        /// back into the global snap this exists to fix. There, quantise the TRAVEL instead: the prop stays
+        /// exactly on its own axis and moves in whole units.
+        ///
+        /// Static and pure so it can be tested without a camera, a viewport or a drag in flight.</summary>
+        public static Vector3 SnapTranslate(Vector3 startPos, Vector3 dragDir, float delta, Vector3 pos)
+        {
+            bool ax = Mathf.Abs(dragDir.X) > 1e-3f, ay = Mathf.Abs(dragDir.Y) > 1e-3f, az = Mathf.Abs(dragDir.Z) > 1e-3f;
+            if (ax && ay && az) return startPos + dragDir * Mathf.Round(delta);
+            var g = pos.Snapped(Vector3.One);
+            return new Vector3(ax ? g.X : pos.X, ay ? g.Y : pos.Y, az ? g.Z : pos.Z);
         }
 
         public void EndDrag() { _dragAxis = -1; _rotAxis = -1; _scaleIdx = -1; }

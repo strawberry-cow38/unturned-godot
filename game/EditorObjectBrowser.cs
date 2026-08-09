@@ -92,8 +92,22 @@ namespace UnturnedGodot
             sel.Pressed += () => { _objects.ClearPlaceType(); _list.DeselectAll(); };
             box.AddChild(sel);
 
-            _search = new LineEdit { PlaceholderText = "search…" };
+            // The search box has to be EASY TO LEAVE. While it holds focus every keypress goes into it and
+            // never reaches the editor's _UnhandledInput -- correct Godot behaviour that reads as the editor
+            // ignoring you (strawberry_cow: "really 'sticky', my inputs keep getting eaten by it"). Nothing
+            // releases focus by itself, so there are three ways out: Enter, Escape, or clicking the world
+            // (EditorObjects releases it on any viewport click).
+            _search = new LineEdit { PlaceholderText = "search…  (Enter or Esc to get back to the editor)" };
             _search.TextChanged += _ => Rebuild();
+            _search.TextSubmitted += _ => _search.ReleaseFocus();
+            _search.GuiInput += ev =>
+            {
+                if (ev is InputEventKey { Pressed: true } ke && ke.Keycode == Key.Escape)
+                {
+                    _search.ReleaseFocus();
+                    AcceptEvent();   // swallow it -- Escape here means "leave the box", not "clear the selection"
+                }
+            };
             box.AddChild(_search);
 
             _list = new ItemList { CustomMinimumSize = new Vector2(240, 500), SizeFlagsVertical = SizeFlags.ExpandFill, FocusMode = Control.FocusModeEnum.None };
