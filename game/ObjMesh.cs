@@ -167,6 +167,73 @@ namespace UnturnedGodot
             return res;
         }
 
+        // General UV-predicate cousin of SplitLens: carve every triangle whose UV CENTROID satisfies `uvIn` onto its
+        // own surface, hand back the rest as body. For palette regions outside SplitLens's hardcoded u>0.5,v>0.5 lens
+        // quadrant -- e.g. Lamp_1's shade is the top-left 181-grey texel, which after Load's V-flip is u<0.5, v>0.5.
+        // No cache (callers pass a stable ArrayMesh) and no hole-cap (the region is an overlay, not a solid).
+        public static (ArrayMesh Body, ArrayMesh Region) SplitByUvCentroid(ArrayMesh src, System.Func<Vector2, bool> uvIn)
+        {
+            if (src == null || src.GetSurfaceCount() < 1) return (src, null);
+            var a0 = src.SurfaceGetArrays(0);
+            var V = a0[(int)Mesh.ArrayType.Vertex].AsVector3Array();
+            var N = a0[(int)Mesh.ArrayType.Normal].AsVector3Array();
+            var U = a0[(int)Mesh.ArrayType.TexUV].AsVector2Array();
+            var C = a0[(int)Mesh.ArrayType.Color].AsColorArray();
+            if (V.Length < 3 || U.Length != V.Length) return (src, null);
+
+            var bv = new List<Vector3>(); var bn = new List<Vector3>(); var bu = new List<Vector2>(); var bc = new List<Color>();
+            var rv = new List<Vector3>(); var rn = new List<Vector3>(); var ru = new List<Vector2>(); var rc = new List<Color>();
+            for (int i = 0; i + 2 < V.Length; i += 3)
+            {
+                Vector2 ctr = (U[i] + U[i + 1] + U[i + 2]) / 3f;
+                bool hit = uvIn(ctr);
+                var dv = hit ? rv : bv; var dn = hit ? rn : bn; var du = hit ? ru : bu; var dc = hit ? rc : bc;
+                for (int k = 0; k < 3; k++)
+                {
+                    dv.Add(V[i + k]);
+                    dn.Add(i + k < N.Length ? N[i + k] : Vector3.Up);
+                    du.Add(U[i + k]);
+                    dc.Add(i + k < C.Length ? C[i + k] : Colors.White);
+                }
+            }
+            if (rv.Count == 0) return (src, null);
+            return (Build(bv, bn, bu, bc), Build(rv, rn, ru, rc));
+        }
+
+        // Geometry-predicate split: carve every triangle whose CENTROID + average vertex NORMAL satisfy `faceIn` onto
+        // its own surface. For emitters with NO palette texel that must be found by shape -- e.g. Lamp_0's desk-lamp
+        // head has no "bulb" texel, so the down-facing opening face is picked by (on the head Z>0.6, normal points down
+        // and to the chosen side).
+        public static (ArrayMesh Body, ArrayMesh Region) SplitByFace(ArrayMesh src, System.Func<Vector3, Vector3, bool> faceIn)
+        {
+            if (src == null || src.GetSurfaceCount() < 1) return (src, null);
+            var a0 = src.SurfaceGetArrays(0);
+            var V = a0[(int)Mesh.ArrayType.Vertex].AsVector3Array();
+            var N = a0[(int)Mesh.ArrayType.Normal].AsVector3Array();
+            var U = a0[(int)Mesh.ArrayType.TexUV].AsVector2Array();
+            var C = a0[(int)Mesh.ArrayType.Color].AsColorArray();
+            if (V.Length < 3) return (src, null);
+
+            var bv = new List<Vector3>(); var bn = new List<Vector3>(); var bu = new List<Vector2>(); var bc = new List<Color>();
+            var rv = new List<Vector3>(); var rn = new List<Vector3>(); var ru = new List<Vector2>(); var rc = new List<Color>();
+            for (int i = 0; i + 2 < V.Length; i += 3)
+            {
+                Vector3 ctr = (V[i] + V[i + 1] + V[i + 2]) / 3f;
+                Vector3 nrm = (i + 2 < N.Length) ? (N[i] + N[i + 1] + N[i + 2]).Normalized() : Vector3.Up;
+                bool hit = faceIn(ctr, nrm);
+                var dv = hit ? rv : bv; var dn = hit ? rn : bn; var du = hit ? ru : bu; var dc = hit ? rc : bc;
+                for (int k = 0; k < 3; k++)
+                {
+                    dv.Add(V[i + k]);
+                    dn.Add(i + k < N.Length ? N[i + k] : Vector3.Up);
+                    du.Add(i + k < U.Length ? U[i + k] : Vector2.Zero);
+                    dc.Add(i + k < C.Length ? C[i + k] : Colors.White);
+                }
+            }
+            if (rv.Count == 0) return (src, null);
+            return (Build(bv, bn, bu, bc), Build(rv, rn, ru, rc));
+        }
+
         // ---- multi-way UV split -------------------------------------------------------------------------
         // SplitLens is binary (lens vs body) because a streetlight has one bulb. A traffic light has THREE
         // lenses that must light independently, so this generalises it: N predicates over a triangle's UVs, N+1
