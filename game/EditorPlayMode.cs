@@ -14,6 +14,11 @@ namespace UnturnedGodot
     // Kept ENTIRELY self-contained (its own CanvasLayer button) so it never touches EditorBuildingsPanel.
     public partial class EditorPlayMode : Node3D
     {
+        /// <summary>Top-right layout, shared with the overlap test so the two cannot drift apart.
+        /// EditorDashboard's Save/Exit group is TopRight at (-206, 10), 188 wide x 40 tall.</summary>
+        public const float PlayBtnTop = 58f, PlayBtnHeight = 36f;
+        public const float DashRightTop = 10f, DashRightHeight = 40f;
+
         Editor _editor;
         EditorBuildings _buildings;
         Camera3D _flyCam;
@@ -36,8 +41,13 @@ namespace UnturnedGodot
             _playBtn = new Button { Text = "▶  Playtest" };
             _playBtn.AddThemeFontSizeOverride("font_size", 18);
             _playBtn.AnchorLeft = 1f; _playBtn.AnchorRight = 1f;
+            // BELOW the dashboard's Save/Exit row, not on top of it. That group is TopRight-anchored at
+            // (-206, 10) and is 188x40, so y 10..50 on the right edge is taken. This button used to sit at
+            // y 12..48 -- directly over it -- which only became visible when I made it show on every tab
+            // instead of just Buildings (strawberry_cow: "the playtest button covers the save and exit
+            // buttons"). PlayBtnTop is shared with the test that keeps the two apart.
             _playBtn.OffsetLeft = -188f; _playBtn.OffsetRight = -16f;
-            _playBtn.OffsetTop = 12f; _playBtn.OffsetBottom = 48f;
+            _playBtn.OffsetTop = PlayBtnTop; _playBtn.OffsetBottom = PlayBtnTop + PlayBtnHeight;
             _playBtn.Pressed += EnterPlay;
             _ui.AddChild(_playBtn);
 

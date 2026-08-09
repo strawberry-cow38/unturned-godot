@@ -310,7 +310,7 @@ namespace UnturnedGodot
                 var spec = (want[k], o.DoorProp, o.Width, o.Height);
                 if (k < _doors.Count && _doorSpec[k] == spec) { PlaceDoor(_doors[k], o); continue; }
 
-                var made = DoorDeploy.SpawnProp(o.DoorProp, this, Vector3.Zero, 0f, new Vector2(o.Width, o.Height));
+                var made = DoorDeploy.SpawnProp(o.DoorProp, this, Vector3.Zero, 0f, ClearOpeningSize(o));
                 if (made == null)
                 {
                     // SAY SO rather than leaving an empty hole that looks like a design choice.
@@ -362,9 +362,14 @@ namespace UnturnedGodot
                                         lo.Y = Mathf.Min(lo.Y, q.Y); hi.Y = Mathf.Max(hi.Y, q.Y);
                                     }
                                 }
+            // Land it on the TRIM, not on the raw hole. The leaf is now fitted to ClearOpeningSize, so its
+            // foot belongs on top of the sill lining where one exists; a floor-pinned doorway has no sill
+            // lining and its foot stays on the floor. Getting the size right and the datum wrong just moves
+            // the same 0.20 gap from the bottom of the door to the top of it.
+            float footV = o.V + (o.V > WallOpenings.Eps ? TrimProfile : 0f);
             if (lo.X < float.MaxValue)
                 host.Position += new Vector3((o.U + o.Width * 0.5f) - (lo.X + hi.X) * 0.5f,   // centre in the hole
-                                             o.V - lo.Y,                                      // and sit on its sill
+                                             footV - lo.Y,                                    // and sit on its sill/floor
                                              0f);
         }
 
@@ -532,6 +537,23 @@ namespace UnturnedGodot
             AddBox(st, new Vector3(u0 - BURY, v1 - w, -t), new Vector3(u1 + BURY, v1 + BURY, t)); // head
             if (sill)
                 AddBox(st, new Vector3(u0 - BURY, v0 - BURY, -t), new Vector3(u1 + BURY, v0 + w, t));
+        }
+
+        /// <summary>The CLEAR span inside an opening's trim -- what a door or a pane actually has to fit.
+        ///
+        /// AddTrim lays a lining of TrimProfile down each jamb and across the head, plus a sill only when the
+        /// opening is NOT floor-pinned (`o.V > Eps`). So a doorway loses 2x0.20 across and 0.20 up, and a
+        /// window loses 0.20 on all four sides. Fitting a door to o.Width x o.Height sizes it to the HOLE and
+        /// it then fouls its own frame -- strawberry_cow: "scaled perfectly for the raw opening, but not the
+        /// opening trim".
+        ///
+        /// Kept immediately next to AddTrim because they are one rule in two places, and this file's recurring
+        /// defect is exactly that shape: a rule duplicated across call sites that has quietly drifted.</summary>
+        public static Vector2 ClearOpeningSize(WallOpening o)
+        {
+            bool sill = o.V > WallOpenings.Eps;
+            return new Vector2(Mathf.Max(0.01f, o.Width - TrimProfile * 2f),
+                               Mathf.Max(0.01f, o.Height - TrimProfile * (sill ? 2f : 1f)));
         }
 
         /// <summary>The left and right cut lines, as u for a given v.</summary>
