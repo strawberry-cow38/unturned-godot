@@ -12,7 +12,7 @@ namespace UnturnedGodot
     {
         const string GateGuid = "fb9428c7b8df82e4eb9642dacfaf9567"; // Aprix_Mask_0, ripped from core.masterbundle
 
-        string _shotPath;
+        string _shotPath; float _shotElapsed;   // UG_SHOTTIME: capture at an elapsed-time target (real-time frame counts drift off fixed-fps -- tinyclaw)
         Deployable _spotDbg;    // UG_WIRETEST: spotlight, probed for lamp-lit state at the shot frame
         Vector3 _vAim; bool _vHave;   // first real (Police/Fire/Ambulance) vehicle, for the demo cam
         bool _noZombies;   // --nozombies: a quiet test environment (skip the horde spawner)
@@ -85,7 +85,7 @@ namespace UnturnedGodot
             bool doorTest = false;
             string doorTestName = null;
             bool containerTest = false; string containerTestName = null;
-            bool play = false, demo = false, netdemo = false, server = false, dedicated = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, lightTest = false, trafficTest = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, objects = false, peidrive = false, craftui = false, bakenav = false, navPathTest = false, zombieTest = false, zdirTest = false, editorMode = false, impactTest = false;
+            bool play = false, demo = false, netdemo = false, server = false, dedicated = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, lightTest = false, trafficTest = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, objects = false, peidrive = false, craftui = false, bakenav = false, navPathTest = false, zombieTest = false, zdirTest = false, editorMode = false, impactTest = false, doorGallery = false;
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
                 if (arg.StartsWith("--catalog=")) catalog = arg["--catalog=".Length..];
@@ -108,6 +108,7 @@ namespace UnturnedGodot
                 else if (arg == "--zbody") zbody = true;   // MECHANISM probe: N bare kinematic capsules, moving vs parked -> is the physics cost the BODIES?
                 else if (arg == "--deploytest") deployTest = true;   // both deployables placed on a ground plane + a valid(blue)+invalid(red) ghost -> verify models/palette/stand-up/ghost materials
                 else if (arg == "--impacttest") impactTest = true;   // one bullet-impact FX per surface (concrete/metal/wood/dirt/grass/sand/water/blood) across a wall -> verify the reimplemented ImpactFx
+                else if (arg == "--doorgallery") doorGallery = true;   // --shot=OUT : lineup of the 12 ripped WOODEN door barricade models (Door/Doubledoor/Gate/Hatch x Birch/Maple/Pine) for master to eyeball
                 else if (arg == "--skillsui") skillsui = true;   // render the skills menu (showcase/validate the SkillsUI)
                 else if (arg.StartsWith("--itemtest=")) itemtest = arg["--itemtest=".Length..];   // drop a row of loot items (ids) as physics WorldItems -> validate real mesh/tex/scale/settle
                 else if (arg.StartsWith("--animrig=")) { animrig = arg["--animrig=".Length..]; _shotRequested = animrig; }   // build a rigged animal (content/NAME_rig.json) at rest + 3/4 cam -> validate the static pose stands
@@ -304,6 +305,14 @@ namespace UnturnedGodot
                 GetWindow().Size = new Vector2I(1280, 720);
                 _shotPath = shot; _shotRequested = shot;
                 BuildContainerTest(containerTestName);
+                return;
+            }
+
+            if (doorGallery)   // --doorgallery --shot=OUT : a front-on lineup of the 12 ripped WOODEN door barricade models for master to eyeball
+            {
+                GetWindow().Size = new Vector2I(2560, 1440);
+                _shotPath = shot; _shotRequested = shot;
+                BuildDoorGallery();
                 return;
             }
 
@@ -1494,6 +1503,97 @@ namespace UnturnedGodot
             cam.Position = c + new Vector3(r * 1.15f, r * 0.85f, r * 1.15f);
             cam.LookAt(c, Vector3.Up);
             GD.Print($"[PROPTEST] {name} aabb size={aabb.Size} center={c}");
+        }
+
+        // --doorgallery --shot=OUT : a lit, front-on LINEUP of the 12 ripped WOODEN door barricade models
+        // (Door / Doubledoor / Gate / Hatch, each in Birch / Maple / Pine), grouped by form with the three wood
+        // tints adjacent, a name label under each + the form name above -- so master can eyeball every wooden door
+        // model at once. The meshes are barricade SkinnedMeshRenderer leaves (tools/extract_wooden_doors.py);
+        // barricades are authored lying flat, so a +90 X stands them up (override UG_DOORROT="x,y,z", no rebuild).
+        void BuildDoorGallery()
+        {
+            var env = new Godot.Environment
+            {
+                BackgroundMode = Godot.Environment.BGMode.Color,
+                BackgroundColor = new Color(0.44f, 0.56f, 0.72f),
+                AmbientLightSource = Godot.Environment.AmbientSource.Color,
+                AmbientLightColor = new Color(0.62f, 0.64f, 0.67f),
+                AmbientLightEnergy = 0.8f,
+            };
+            AddChild(new WorldEnvironment { Environment = env });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-48f, -36f, 0f), LightEnergy = 1.15f, ShadowEnabled = true });
+
+            var gmesh = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(160, 160) } };
+            gmesh.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.34f, 0.37f, 0.33f), Roughness = 1f };
+            AddChild(gmesh);
+
+            // barricades are authored lying flat -> +90 X stands them up (DeployableDef). UG_DOORROT overrides.
+            Vector3 rot = new Vector3(90f, 0f, 0f);
+            var rr = System.Environment.GetEnvironmentVariable("UG_DOORROT");
+            if (!string.IsNullOrEmpty(rr)) { var pp = rr.Split(','); if (pp.Length == 3 && float.TryParse(pp[0], out var rx) && float.TryParse(pp[1], out var ry) && float.TryParse(pp[2], out var rz)) rot = new Vector3(rx, ry, rz); }
+            Basis standUp = Basis.FromEuler(new Vector3(Mathf.DegToRad(rot.X), Mathf.DegToRad(rot.Y), Mathf.DegToRad(rot.Z)));
+
+            string odir = ProjectSettings.GlobalizePath("res://content/objects/");
+            // Swing pose (UG_DOOROPEN=frac 0..1): swing single-hinge doors by frac*angle about their hinge, read from
+            // tools/extract_wooden_door_anims.py's wooden_door_anims.txt. The Doubledoor (2 hinges) needs a panel split -> stays shut here.
+            float openFrac = 0f; { var ov = System.Environment.GetEnvironmentVariable("UG_DOOROPEN"); if (!string.IsNullOrEmpty(ov)) float.TryParse(ov, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out openFrac); }
+            float F(string s) => float.Parse(s, System.Globalization.CultureInfo.InvariantCulture);
+            var anims = new System.Collections.Generic.Dictionary<string, System.Collections.Generic.List<(Vector3 pivot, Vector3 axis, float ang)>>();
+            { string ap = odir + "wooden_door_anims.txt"; if (System.IO.File.Exists(ap)) foreach (var ln in System.IO.File.ReadAllLines(ap)) { var pp = ln.Split(' ', System.StringSplitOptions.RemoveEmptyEntries); if (pp.Length < 9) continue; if (!anims.ContainsKey(pp[0])) anims[pp[0]] = new System.Collections.Generic.List<(Vector3, Vector3, float)>(); anims[pp[0]].Add((new Vector3(F(pp[2]), F(pp[3]), F(pp[4])), new Vector3(F(pp[5]), F(pp[6]), F(pp[7])), F(pp[8]))); } }
+            void PlaceDoor(string form, string wood, Vector3 pos)
+            {
+                string nm = form + "_" + wood;
+                var m = ObjMesh.Load(odir + nm + ".obj");
+                if (m == null) { GD.Print($"[DOORS] {nm}.obj MISSING"); return; }
+                var lb = m.GetAabb();
+                // The Gate is a GARAGE DOOR (master): wide + tilts UP (ripped anim axis = X-tilt). Its handle rips at the
+                // TOP but a garage door's handle belongs at the BOTTOM (front/back, master), so flip it 180 deg in-plane
+                // about the face normal -- stays wide + forward-facing, just moves the handle top->bottom.
+                Basis su = form == "Gate" ? new Basis(new Vector3(0f, 0f, 1f), Mathf.DegToRad(180f)) * standUp : standUp;
+                var mat = new StandardMaterial3D { Roughness = 0.85f, CullMode = BaseMaterial3D.CullModeEnum.Disabled, TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest };
+                string tp = odir + nm + "_tex.png";
+                if (System.IO.File.Exists(tp)) { var img = new Image(); if (img.Load(tp) == Error.Ok) mat.AlbedoTexture = ImageTexture.CreateFromImage(img); else mat.AlbedoColor = new Color(0.5f, 0.36f, 0.22f); }
+                else mat.AlbedoColor = new Color(0.5f, 0.36f, 0.22f);
+                // stood-up AABB: transform the 8 local corners by standUp -> sit the base on the ground, centre in X/Z.
+                Vector3 mn = new Vector3(1e9f, 1e9f, 1e9f), mx = new Vector3(-1e9f, -1e9f, -1e9f);
+                for (int cx = 0; cx < 2; cx++) for (int cy = 0; cy < 2; cy++) for (int cz = 0; cz < 2; cz++)
+                {
+                    Vector3 wc = su * (lb.Position + new Vector3(cx * lb.Size.X, cy * lb.Size.Y, cz * lb.Size.Z));
+                    mn = new Vector3(Mathf.Min(mn.X, wc.X), Mathf.Min(mn.Y, wc.Y), Mathf.Min(mn.Z, wc.Z));
+                    mx = new Vector3(Mathf.Max(mx.X, wc.X), Mathf.Max(mx.Y, wc.Y), Mathf.Max(mx.Z, wc.Z));
+                }
+                Vector3 c = (mn + mx) * 0.5f;
+                GD.Print($"[DOORS] {nm} stood-up size={mx - mn} (w={mx.X - mn.X:0.00} h={mx.Y - mn.Y:0.00} d={mx.Z - mn.Z:0.00})");
+                var placement = new Transform3D(su, new Vector3(pos.X - c.X, -mn.Y, pos.Z - c.Z));
+                var world = placement;
+                if (openFrac > 0f && anims.TryGetValue(form, out var hs) && hs.Count == 1)   // single-hinge -> swing the whole mesh about its hinge; Doubledoor (2 hinges) needs a panel split, stays shut here
+                {
+                    var h = hs[0];
+                    var sb = new Basis(h.axis.Normalized(), Mathf.DegToRad(h.ang * openFrac));
+                    world = placement * new Transform3D(sb, h.pivot - sb * h.pivot);   // rotate the mesh about its hinge (mesh-local) THEN place it
+                }
+                AddChild(new MeshInstance3D { Mesh = m, MaterialOverride = mat, Transform = world });
+            }
+
+            // 4x3 grid: columns = form (Door/Doubledoor/Gate/Hatch), rows = wood (Birch front / Maple / Pine back),
+            // wide gates/doubledoors get their own column so nothing overlaps. Seen from a high 3/4 so no door hides
+            // another; column labels (form) above the front row + row labels (wood) at the left, not a label per door.
+            string[] forms = { "Door", "Doubledoor", "Gate", "Hatch" };
+            string[] woods = { "Birch", "Maple", "Pine" };
+            float[] colX = { -10f, -3.3f, 3.3f, 10f };
+            float[] rowZ = { 6f, 0f, -6f };
+            for (int wi = 0; wi < woods.Length; wi++)
+                for (int fi = 0; fi < forms.Length; fi++)
+                    PlaceDoor(forms[fi], woods[wi], new Vector3(colX[fi], 0f, rowZ[wi]));
+            for (int fi = 0; fi < forms.Length; fi++)   // small form header floating above each column (clear of the wood row labels)
+                AddChild(new Label3D { Text = forms[fi], FontSize = 120, PixelSize = 0.0065f, Modulate = new Color(1f, 0.92f, 0.58f), OutlineSize = 14, OutlineModulate = Colors.Black, Billboard = BaseMaterial3D.BillboardModeEnum.Enabled, Position = new Vector3(colX[fi], 5.9f, rowZ[0] + 1.2f) });
+            for (int wi = 0; wi < woods.Length; wi++)   // wood label at the left end of each row (low, so it never meets a form header)
+                AddChild(new Label3D { Text = woods[wi], FontSize = 100, PixelSize = 0.009f, Modulate = Colors.White, OutlineSize = 12, OutlineModulate = Colors.Black, Billboard = BaseMaterial3D.BillboardModeEnum.Enabled, Position = new Vector3(-12.2f, 1.9f, rowZ[wi]) });
+
+            var cam = new Camera3D { Current = true, Fov = 44f, Far = 10000f };
+            AddChild(cam);
+            cam.Position = new Vector3(0f, 18.5f, 24f);
+            cam.LookAt(new Vector3(0f, 0.5f, -1f), Vector3.Up);
         }
 
         // --doortest[=NAME]: openable prop door MVP render harness (default Fridge_0). Builds the body mesh
@@ -4804,7 +4904,9 @@ namespace UnturnedGodot
             }
             if (_worldReady && !_treeChecked && System.Environment.GetEnvironmentVariable("UG_TREECHECK") == "1" && ++_treeCheckFrame > 15) { _treeChecked = true; DoTreeCheck(); }
             if (_shotPath == null) return;
-            if (_peiPlay) { if (_peiFrame < (_peiHorde ? 130 : 160)) return; }   // peiplay: drop(~25f)+enter(50f)+drive(55f+); --horde captures mid-plow through the zombie field
+            float _shotTimeTarget = 0f; { var _ste = System.Environment.GetEnvironmentVariable("UG_SHOTTIME"); if (!string.IsNullOrEmpty(_ste)) float.TryParse(_ste, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out _shotTimeTarget); }
+            if (_shotTimeTarget > 0f) { _shotElapsed += (float)delta; if (_shotElapsed < _shotTimeTarget) return; }   // UG_SHOTTIME: capture at an ELAPSED-TIME target (real-time frame counts drift off fixed-fps)
+            else if (_peiPlay) { if (_peiFrame < (_peiHorde ? 130 : 160)) return; }   // peiplay: drop(~25f)+enter(50f)+drive(55f+); --horde captures mid-plow through the zombie field
             else if (_itemTest) { if (++_frame < 90) return; }   // itemtest: let the dropped items FALL + settle onto the plane before the shot
             else if (_driveTest) { if (++_frame < 120) return; }   // drivetest: let the car spawn+enter+drive (+ --demo damage->explosion) play out before the shot
             else if (_fireTest) { if (System.Environment.GetEnvironmentVariable("UG_ADS") == "1") { if (_ftFrame < 70) return; } else if (_ftPlayer == null || _ftPlayer.Ammo > 20 || _ftFrame < 75) return; }   // firetest: capture once ~10 shots fired (high-cap: Ammo<=20); the _ftFrame>=75 floor lets a low-cap gun (launcher = 1 rocket at frame 60) actually fire + impact before the quit. UG_ADS: capture the settled aim frame (70) instead
