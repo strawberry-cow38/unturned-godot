@@ -50,7 +50,9 @@ namespace UnturnedGodot
         };
 
         // The shard colour: the pane's glass hue lightened toward white, so broken glass reads bright.
-        static Color ShardTint(Color hue) => new Color(Mathf.Lerp(hue.R, 1f, 0.35f), Mathf.Lerp(hue.G, 1f, 0.35f), Mathf.Lerp(hue.B, 1f, 0.35f));
+        // shards TRANSLUCENT (master 2026-08-09): glass fragments should read see-through, not solid glass-coloured chips.
+        // Alpha 0.5 with the material's Alpha transparency -> the shard sprite becomes half-transparent (glassy).
+        static Color ShardTint(Color hue) => new Color(Mathf.Lerp(hue.R, 1f, 0.35f), Mathf.Lerp(hue.G, 1f, 0.35f), Mathf.Lerp(hue.B, 1f, 0.35f), 0.5f);
 
         public void TakeDamage(float amount)
         {
