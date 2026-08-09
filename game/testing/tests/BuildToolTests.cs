@@ -2102,4 +2102,45 @@ namespace UnturnedGodot.Testing
                     !back[0].Openings[2].HasDoor && !back[0].Openings[2].Glazed);
         }
     }
+
+    /// <summary>The "door" archetype has to be sized off a DOOR. It was DoorHeight - 0.5 = 3.75, and DoorHeight
+    /// is misnamed -- it is retail WALL_HEIGHT, which StoreyHeight and WallSurface.Height also read. So the
+    /// default doorway was "a wall, less half a metre", 0.95 m taller than any door that goes in it, and
+    /// PlaceDoor dutifully stretched the leaf ~34% to fill it.
+    ///
+    /// Measured against the real mesh rather than a second copy of the number, so re-extracting the door moves
+    /// the test with it. Asserting the archetype is "about 2.85" would pass by construction and prove nothing;
+    /// the claim worth making is that it FITS THE ASSET.</summary>
+    public class DoorArchetypeFitsARealDoor : GameTest
+    {
+        public override string Name => "buildtool.door_archetype_fits_a_real_door";
+        static string Dir => ProjectSettings.GlobalizePath("res://content/objects/");
+
+        public override IEnumerable<Step> Run()
+        {
+            var leaf = ObjMesh.Load(Dir + "Door_Pine.obj");
+            if (leaf == null) { T.Check("Door_Pine.obj loads", false); yield break; }
+            var ab = leaf.GetAabb();
+            // The rip carries height on +Z and width on X (it is stood up by 270 about X when hung).
+            float leafW = ab.Size.X, leafH = ab.Size.Z;
+
+            var a = EditorBuildings.Archetypes[0];
+            T.Check($"archetype 0 is the door ('{a.Name}')", a.Name == "door");
+
+            // Clearance, not equality: the hole must be at least the leaf and not meaningfully more. 0.20 is
+            // generous -- the old 3.75 misses by 0.95, so this has teeth without being brittle about trim.
+            T.Check($"doorway is tall enough for the leaf ({a.Height:0.00} >= {leafH:0.00})", a.Height >= leafH - 0.01f);
+            T.Check($"and not gaping above it ({a.Height:0.00} vs leaf {leafH:0.00}, slack {a.Height - leafH:0.00})",
+                    a.Height - leafH <= 0.20f);
+            T.Check($"wide enough ({a.Width:0.00} >= {leafW:0.00})", a.Width >= leafW - 0.01f);
+            T.Check($"and not gaping beside it (slack {a.Width - leafW:0.00})", a.Width - leafW <= 0.20f);
+
+            // The consequence, stated directly: a door hung in the DEFAULT doorway is not visibly stretched.
+            // PlaceDoor scales the leaf to the hole, so an oversized archetype cannot be seen by any check that
+            // only looks at the door -- it fills whatever it is given. The ratio is where it shows.
+            float stretch = a.Height / leafH;
+            T.Check($"so a default door is not stretched ({stretch:0.00}x)", stretch <= 1.08f);
+            yield break;
+        }
+    }
 }

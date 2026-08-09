@@ -145,7 +145,13 @@ namespace UnturnedGodot
 
         public static readonly Archetype[] Archetypes =
         {
-            new("door",    2.5f,  WallOpenings.DoorHeight - 0.5f, 0f,   true),
+            // 2.85 is the DOOR LEAF (Door_Pine/Door_Metal measure 2.45 x 0.51 x 2.80) plus the same 0.05 of
+            // clearance the width already carried. It used to be DoorHeight - 0.5 = 3.75, which came from the
+            // WALL: DoorHeight is misnamed -- it is retail WALL_HEIGHT, and StoreyHeight/WallSurface.Height
+            // both read it. So the doorway was "a wall, less half a metre" and never had anything to do with a
+            // door; 3.75 is in fact GATE_Pine's height. A door hung in it got scaled up ~34% to fill it
+            // (strawberry_cow: "the default doorways opening size is too big? where did it come from lol").
+            new("door",    2.5f,  2.85f,                          0f,   true),
             new("window",  3.31f, WallOpenings.WindowHeight,      WallOpenings.WindowSill, false, glazed: true),
             new("tall win",2.81f, 2.97f,                          0.88f, false, glazed: true),
             new("garage",  8.0f,  WallOpenings.DoorHeight - 0.25f, 0f,  true),
@@ -165,6 +171,12 @@ namespace UnturnedGodot
         /// <summary>Force glazing on/off for new openings regardless of the archetype preset. Null = follow
         /// the preset, which is what makes "window" glazed and "garage" not without anyone choosing.</summary>
         public bool? GlazeNew;
+
+        /// <summary>Prop name hung in new FLOOR-PINNED openings; null = leave the hole empty (the default, so
+        /// nothing starts carrying a door nobody asked for). Only floor-pinned archetypes take it -- a door
+        /// stamped into a window is not a thing anyone means by "default door", and FloorPinned is already the
+        /// flag that separates door/garage/porch from window/vent.</summary>
+        public string ActiveDoorProp;
 
         public void Setup(Editor editor, Camera3D cam, EditorCamera flyCam)
         {
@@ -404,6 +416,7 @@ namespace UnturnedGodot
             o.GlassTint = ActiveGlassTint;
             o.GlassHp = ActiveGlassHp;
             o.GlassIndestructible = ActiveGlassIndestructible;
+            if (a.FloorPinned) o.DoorProp = ActiveDoorProp;   // door/garage/porch can carry one; a window cannot
             return WallOpenings.Clamp(o, w.Length, w.Height, w.Openings);
         }
 
@@ -440,6 +453,28 @@ namespace UnturnedGodot
             w.Openings[index] = o;
             w.Rebuild();
             _editor?.PushUndo("glass", () => Restore(w, before));
+        }
+
+        /// <summary>Hang a door in one opening, or clear it with null. Same shape as SetOpeningGlass -- undoable,
+        /// no-ops when nothing changes -- because the door rides the opening exactly like the glass does and a
+        /// second set of rules for it would be a second set of bugs.
+        ///
+        /// The whole data path for this existed for hours before this method did: WallOpening.DoorProp,
+        /// WallSurface.PlaceDoor, save/load, bake and undo all handled it, and it had green tests. The only
+        /// callers were the demo room and the tests, so the feature was real and unreachable at the same time
+        /// (strawberry_cow: "how do i add a door to a door opening?" -- you could not).</summary>
+        public void SetOpeningDoor(WallSurface w, int index, string prop)
+        {
+            if (w == null || !IsInstanceValid(w) || index < 0 || index >= w.Openings.Count) return;
+            if (string.IsNullOrEmpty(prop)) prop = null;    // "" and null both mean no door; store one of them
+            var before = w.Openings.ToArray();
+            var o = w.Openings[index];
+            if (o.DoorProp == prop) return;                 // no-op: an undo step here makes Ctrl+Z look broken
+            o.DoorProp = prop;
+            if (prop == null) o.DoorOpen = false;           // a hole cannot be ajar; leaving it set re-opens the next door hung here
+            w.Openings[index] = o;
+            w.Rebuild();
+            _editor?.PushUndo("door", () => Restore(w, before));
         }
 
         /// <summary>Flip glazing on the selected opening. Bound to a key + the panel button.</summary>
