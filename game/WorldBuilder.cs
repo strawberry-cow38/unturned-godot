@@ -274,6 +274,10 @@ namespace UnturnedGodot
             // (--peidrive) is the mode master actually plays, so THIS is the one that has to carry the src-accurate lighting.
             var env = new Godot.Environment { AmbientLightSource = Godot.Environment.AmbientSource.Color };
             root.AddChild(new WorldEnvironment { Environment = env });
+            // Point-light shadows are rationed, not free: 324 of them are placed across the map and a
+            // shadowed omni is a six-face cube per frame. The budget hands shadows to the few that matter
+            // to this camera. Skipped on the dedicated server, which renders nothing.
+            if (mode != WorldMode.Dedicated) root.AddChild(new LightShadowBudget { Name = "LightShadowBudget" });
             // dedicated fx hygiene (§2.1/§5): the headless server keeps the CLOCK (day-night time is
             // authoritative state now, §3.7) but skips shadow maps + the per-frame sky/fog/glow work
             var sun = new DirectionalLight3D { LightEnergy = 1.2f, ShadowEnabled = mode != WorldMode.Dedicated, DirectionalShadowMaxDistance = 40f };   // cap shadow cascade reach (was Godot-default 100m): the high, pulled-back 3p vehicle cam stretched the 100m cascades to blanket a whole POI -> every zombie/building re-rendered into the shadow map every frame (strawberry: 3p-car-in-POI gpu tank). Demos cap at 14m; 40m keeps gameplay shadows.
@@ -1450,6 +1454,10 @@ namespace UnturnedGodot
             // lighting rework at all. The DayNightCycle drives Env (sky + warm ambient) + the sun each frame.
             var env = new Godot.Environment { AmbientLightSource = Godot.Environment.AmbientSource.Color };
             root.AddChild(new WorldEnvironment { Environment = env });
+            // Point-light shadows are rationed, not free: 324 of them are placed across the map and a
+            // shadowed omni is a six-face cube per frame. The budget hands shadows to the few that matter to
+            // this camera. No dedicated-server guard here -- this path only ever builds a rendering client.
+            root.AddChild(new LightShadowBudget { Name = "LightShadowBudget" });
             var sun = new DirectionalLight3D { LightEnergy = 1.2f, ShadowEnabled = true, DirectionalShadowMaxDistance = 40f };   // cap shadow cascade reach (was default 100m) -- see the 3p-vehicle-POI shadow-tank note on the other sun (strawberry)
             root.AddChild(sun);
             var dayNight = new DayNightCycle { Sun = sun, Env = env, DayLength = DayNightCycle.DefaultDayLength };

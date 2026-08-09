@@ -254,6 +254,7 @@ namespace UnturnedGodot
                 SpotRange = len + 24f, SpotAngle = 42f, SpotAngleAttenuation = 1.9f, SpotAttenuation = 1.0f,
                 LightColor = col, LightEnergy = Energy * _worn, ShadowEnabled = false,
             };
+            _spot.AddToGroup(LightShadowBudget.Group);
             AddChild(_spot);
 
             // 2) THE EMISSIVE LENS: the part of the fixture that visibly glows when the lamp is on.
