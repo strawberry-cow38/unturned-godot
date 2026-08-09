@@ -444,6 +444,34 @@ namespace UnturnedGodot.Testing
             foreach (var c in d.GetChildren()) if (c is Node3D n && c is not CollisionShape3D) return n;
             return null;
         }
+        /// <summary>Highest point of the leaf mesh in WORLD space -- the discriminator between a door that
+        /// swings and one that falls over, both of which sweep the same 90 degrees.</summary>
+        static float LeafTopY(Node3D pivot)
+        {
+            float top = float.MinValue;
+            foreach (var c in pivot.GetChildren())
+            {
+                if (c is not MeshInstance3D m || m.Mesh == null) continue;
+                var ab = m.Mesh.GetAabb();
+                for (int i = 0; i < 8; i++)
+                    top = Mathf.Max(top, (m.GlobalTransform * ab.GetEndpoint(i)).Y);
+            }
+            return top;
+        }
+
+        static float LeafBottomY(Node3D pivot)
+        {
+            float bot = float.MaxValue;
+            foreach (var c in pivot.GetChildren())
+            {
+                if (c is not MeshInstance3D m || m.Mesh == null) continue;
+                var ab = m.Mesh.GetAabb();
+                for (int i = 0; i < 8; i++)
+                    bot = Mathf.Min(bot, (m.GlobalTransform * ab.GetEndpoint(i)).Y);
+            }
+            return bot;
+        }
+
         static float SweptDeg(Node3D pivot)
         {
             var q = pivot.Basis.GetRotationQuaternion();
@@ -483,6 +511,23 @@ namespace UnturnedGodot.Testing
             T.Check($"carrying the ripped door mesh, not a box ({tris} tris)", tris > 12);
 
             T.Check($"starts closed ({SweptDeg(pivot):0.#} deg)", !leaf.IsOpen && SweptDeg(pivot) < 3f);
+            // STANDS UP, checked against the ASSET rather than a floor value. "taller than 1 m" passes for a
+            // door lying on its side, which is exactly what shipped: I stood these up with the deployable
+            // table's +90 when these rips carry their height on +Z and need 270, and strawberry_cow caught it
+            // in one look at a render while two of my checks sat green. So compare the placed height to the
+            // mesh's OWN Z extent -- that fails for any wrong stand-up, in either direction.
+            float meshH = 0f;
+            foreach (var c in pivot.GetChildren())
+                if (c is MeshInstance3D m0 && m0.Mesh != null) meshH = Mathf.Max(meshH, m0.Mesh.GetAabb().Size.Z);
+            float closedTop = LeafTopY(pivot), closedBot = LeafBottomY(pivot);
+            // UP from the placement point, not down from it. Height EXTENT is the wrong discriminator and I
+            // tried it: rotating +-90 about X maps the mesh's +Z onto -+Y either way, so a door standing up
+            // and a door hanging through the floor both measure 2.80 m tall. The bug is an INVERSION, so the
+            // thing that differs is the SIGN -- placed at y=0 the leaf must occupy [0, +h], and the broken
+            // stand-up puts it in [-h, 0]. Ask what the check prints when it is broken, before writing it.
+            T.Check($"stands UP from where it was placed, not down through the floor "
+                    + $"(y {closedBot:0.00}..{closedTop:0.00}, mesh {meshH:0.00} m)",
+                    meshH > 0.5f && closedBot > -0.2f && closedTop > meshH * 0.8f);
 
             // ObjectDoor's re-toggle cooldown is WALL CLOCK (Time.GetTicksMsec), and a headless test steps
             // physics far faster than real time -- so a single Toggle() call is legitimately refused and the
@@ -494,6 +539,15 @@ namespace UnturnedGodot.Testing
             // swing while every catalog number still reads correct, so the request is not the evidence.
             float open = SweptDeg(pivot);
             T.Check($"and it swings to 90 deg ({open:0.#})", Mathf.Abs(open - 90f) < 6f);
+
+            // ...but 90 degrees ABOUT WHAT? The swept magnitude is identical whether the leaf yaws open like a
+            // door or tips over like a drawbridge, so the angle alone cannot tell those apart -- and a
+            // three-quarter render cannot either, which is what sent me looking for a real check. A vertical
+            // hinge PRESERVES the leaf's height; a horizontal one collapses it. So compare the world-space top
+            // of the leaf, closed vs open.
+            float openTop = LeafTopY(pivot);
+            T.Check($"about a VERTICAL hinge -- the door stays as tall open as shut ({closedTop:0.00} -> {openTop:0.00})",
+                    Mathf.Abs(openTop - closedTop) < 0.15f);
 
             for (int i = 0; i < 240 && !leaf.Toggle(); i++) yield return Step.Ticks(1);
             for (int i = 0; i < 240 && SweptDeg(pivot) > 1f; i++) yield return Step.Ticks(1);

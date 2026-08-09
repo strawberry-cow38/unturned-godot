@@ -1645,6 +1645,46 @@ namespace UnturnedGodot
             AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-45f, -35f, 0f), LightEnergy = 1.2f });
 
             string dir = ProjectSettings.GlobalizePath("res://content/objects/");
+
+            // A WOODEN barricade door (Door_Pine, Gate_Birch, ...) is not a container prop: it has no separate
+            // body, its leaf IS the whole model, and its hinge lives in wooden_door_anims.txt rather than
+            // doors.txt. Route those through DoorDeploy -- the SAME call the placement path makes -- so this
+            // harness shows the thing production builds rather than a second construction that could agree
+            // with itself while the real one is wrong.
+            foreach (var wd in DeployableDef.WoodDoors)
+            {
+                if (wd.DoorProp != name) continue;
+                var placed = DoorDeploy.SpawnFor(wd, this, Vector3.Zero, 0f);
+                if (placed == null) { GD.Print($"[DOORTEST] {name}: DoorDeploy refused it (no hinge row / no mesh)"); GetTree().Quit(1); return; }
+                if (System.Environment.GetEnvironmentVariable("UG_DOOR_OPEN") == "1")
+                    foreach (var c in placed.GetChildren()) if (c is ObjectDoor od) od.SetInitialState(true);
+                var wcam = new Camera3D { Current = true, Fov = 55f };
+                AddChild(wcam);
+                // Framed WIDE and from above rather than close and level. A door swinging 90 deg sweeps a
+                // quarter circle, and from a tight three-quarter view an open door fills the frame at an angle
+                // that reads the same whether it hinged about the vertical axis or tipped over about a
+                // horizontal one -- the magnitude is identical and only the axis differs. The whole point of
+                // looking is to tell those apart, so the shot has to contain the swept arc, not just the leaf.
+                // UG_DOORCAM="x,y,z" to move it.
+                var cp = new Vector3(6.5f, 5.5f, 6.5f);
+                var cs = System.Environment.GetEnvironmentVariable("UG_DOORCAM");
+                if (!string.IsNullOrEmpty(cs))
+                {
+                    var q = cs.Split(',');
+                    if (q.Length == 3) cp = new Vector3(float.Parse(q[0], System.Globalization.CultureInfo.InvariantCulture),
+                                                        float.Parse(q[1], System.Globalization.CultureInfo.InvariantCulture),
+                                                        float.Parse(q[2], System.Globalization.CultureInfo.InvariantCulture));
+                }
+                wcam.Position = cp;
+                wcam.LookAt(new Vector3(0f, 0.9f, 0f), Vector3.Up);
+                // a ground plane, so "standing up" and "fallen over" are distinguishable at all
+                var gnd = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(14f, 14f) } };
+                gnd.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.30f, 0.34f, 0.30f) };
+                AddChild(gnd);
+                GD.Print($"[DOORTEST] wooden door {name} placed via DoorDeploy");
+                return;
+            }
+
             var bodyMesh = ObjMesh.Load(dir + name + ".obj");
             if (bodyMesh == null) { GD.Print($"[DOORTEST] no body mesh {name}"); GetTree().Quit(1); return; }
             var doorCatalog = WorldBuilder.LoadDoorCatalog(dir);

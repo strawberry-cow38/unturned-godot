@@ -45,19 +45,28 @@ namespace UnturnedGodot
             host.GlobalPosition = pos;
             host.RotationDegrees = new Vector3(0f, yawDeg, 0f);
 
-            // The leaf .obj is authored LYING FLAT and DeployableDef.StandRotX (90) stands it up. Taken from
-            // the shared constant, not written as a literal: it is env-tunable (UG_DEPLOYROT) and a door that
-            // hard-coded the number would silently stop matching every other deployable the moment someone
-            // tuned it. I first copied StoreShelf's 270 here, which is the SHELF family's convention -- that
-            // is the opposite rotation, and it would have stood the door up mirrored, hinging on the wrong
-            // edge while looking perfectly plausible (cow tools caught it: "barricades authored lying flat ->
-            // +90 X stands them up").
+            // STAND-UP = 270 about X, and this number has been wrong once already, so here is the measurement
+            // rather than an appeal to convention.
             //
-            // Yaw stays on the HOST rather than being folded in here, so the catalog's pivot and axis are
-            // consumed in the flat authored frame the extractor wrote them in -- "hinge params are
-            // pre-stand-up, compose accordingly" -- and nothing has to re-derive them. Composed, host-yaw x
-            // this = DeployableDef.StandBasis(yaw), the same basis a normal deployable gets.
-            var xform = new Transform3D(new Basis(Vector3.Right, Mathf.DegToRad(DeployableDef.StandRotX)), Vector3.Zero);
+            // These rips carry their HEIGHT on +Z: Door_Pine measures 2.45 x 0.51 x 2.80 (X x Y x Z), the
+            // container leaves are the same shape (Container_0 = 1.44 x 0.37 x 3.24). +270 about X maps +Z to
+            // +Y and the door stands up. +90 maps +Z to -Y and it points at the floor.
+            //
+            // I had 270, switched it to DeployableDef.StandRotX (90) on the "barricades stand up with +90"
+            // convention, and shipped a door lying on its side -- strawberry_cow spotted it in one look:
+            // "genuinely i have no idea where u went wrong. its laying on its side." The convention is real
+            // and correct for the deployable TABLE's meshes; it is just not true of these assets, and I
+            // checked the convention instead of checking the asset. StoreShelf uses 270 on the container
+            // leaves for exactly this reason.
+            //
+            // Deliberately NOT auto-derived from "make the longest axis vertical": Hatch_Pine is 1.80 x 1.80 x
+            // 0.40 and is SUPPOSED to lie flat -- it is a floor hatch. A heuristic that stands every door up
+            // would break the one door that belongs on the ground. The regression test asserts the placed
+            // height against the mesh's own Z extent, which catches a wrong rotation whatever the cause.
+            //
+            // Yaw stays on the HOST so the catalog's pivot and axis are consumed in the flat authored frame
+            // the extractor wrote them in -- "hinge params are pre-stand-up, compose accordingly".
+            var xform = new Transform3D(new Basis(Vector3.Right, Mathf.DegToRad(270f)), Vector3.Zero);
             var mat = MatFor(def.DoorProp, dir);
 
             var made = new List<ObjectDoor>();
@@ -78,6 +87,28 @@ namespace UnturnedGodot
                     soundName: e.Sound));
             }
             if (made.Count == 0) { host.QueueFree(); return null; }
+
+            // SIT ON THE SURFACE. These meshes are centred on their own origin (Door_Pine spans z -1.40..+1.40),
+            // so placing the host at the surface buries half the door -- which does not read as "sunk", it
+            // reads as a squat door, and strawberry_cow called it "laying on its side" from a render. It is
+            // standing; it is just half underground.
+            //
+            // MEASURED off the placed result rather than derived: DeployableDef.GroundLift computes the same
+            // thing but bakes StandRotX into its own basis, so it silently disagrees with any door that does
+            // not use that rotation. Reading back the actual lowest corner is correct for whatever basis the
+            // leaf ended up with, and it is also right for Hatch, which lies flat on purpose.
+            float lowest = float.MaxValue;
+            foreach (var d in made)
+                foreach (var n in d.GetChildren())
+                    if (n is Node3D piv)
+                        foreach (var c in piv.GetChildren())
+                            if (c is MeshInstance3D mi && mi.Mesh != null)
+                            {
+                                var ab = mi.Mesh.GetAabb();
+                                for (int i = 0; i < 8; i++)
+                                    lowest = Mathf.Min(lowest, (mi.GlobalTransform * ab.GetEndpoint(i)).Y);
+                            }
+            if (lowest < float.MaxValue) host.GlobalPosition += Vector3.Up * (pos.Y - lowest);
 
             // A double door is two catalog lines under one prop name, exactly like Wardrobe_0's Left/Right --
             // grouping makes both leaves answer one interaction, and cow tools split the wooden Doubledoor's
