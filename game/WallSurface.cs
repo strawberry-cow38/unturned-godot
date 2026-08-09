@@ -254,6 +254,7 @@ namespace UnturnedGodot
                 gcs.Position = Vector3.Zero;
             }
             RebuildGlass();
+            RebuildDoors();
         }
 
         // ---- glazing -----------------------------------------------------------------------------------
@@ -273,6 +274,99 @@ namespace UnturnedGodot
             new Color(((rgb >> 16) & 0xFF) / 255f, ((rgb >> 8) & 0xFF) / 255f, (rgb & 0xFF) / 255f);
         // (no RgbFromTint: nothing packs a Color back to an int -- the swatches ARE ints. An unused inverse
         // is the same dead-API smell as a flag nothing reads; add it when something needs it.)
+
+        // ---- a DOOR in an opening ----------------------------------------------------------------------
+        // strawberry_cow 2026-08-09: "what i want is to have these doors as things i can enable on relevant
+        // openings". Same ownership rule as the glass above: the OPENING carries which door it has, and this
+        // materialises it. Built through DoorDeploy.SpawnProp -- the identical call a standalone placement
+        // makes -- so the hinge, the stand-up, the easing curves and the sound cannot diverge between "a door
+        // you planted" and "a door in a wall you drew".
+        readonly List<Node3D> _doors = new();
+        /// <summary>What each live door was built from, so a Rebuild mid-drag can tell "still right, just move
+        /// it" from "remake it". Rebuild runs on every mouse move; respawning a door per frame would leave a
+        /// trail of them, and QueueFree defers so the stale ones stay hittable for the rest of the frame.</summary>
+        readonly List<(int Op, string Prop, float W, float H)> _doorSpec = new();
+
+        void RebuildDoors()
+        {
+            for (int i = _doors.Count - 1; i >= 0; i--)
+                if (!IsInstanceValid(_doors[i])) { _doors.RemoveAt(i); _doorSpec.RemoveAt(i); }
+
+            var want = new List<int>();
+            for (int i = 0; i < Openings.Count; i++)
+                if (Openings[i].HasDoor) want.Add(i);
+
+            while (_doors.Count > want.Count)
+            {
+                var last = _doors[_doors.Count - 1];
+                _doors.RemoveAt(_doors.Count - 1);
+                _doorSpec.RemoveAt(_doorSpec.Count - 1);
+                if (IsInstanceValid(last)) { RemoveChild(last); last.QueueFree(); }
+            }
+
+            for (int k = 0; k < want.Count; k++)
+            {
+                var o = Openings[want[k]];
+                var spec = (want[k], o.DoorProp, o.Width, o.Height);
+                if (k < _doors.Count && _doorSpec[k] == spec) { PlaceDoor(_doors[k], o); continue; }
+
+                var made = DoorDeploy.SpawnProp(o.DoorProp, this, Vector3.Zero, 0f, new Vector2(o.Width, o.Height));
+                if (made == null)
+                {
+                    // SAY SO rather than leaving an empty hole that looks like a design choice.
+                    GD.PrintErr($"[door] opening {want[k]}: '{o.DoorProp}' has no catalog entry -- no door built");
+                    continue;
+                }
+                if (k < _doors.Count)
+                {
+                    var old2 = _doors[k];
+                    if (IsInstanceValid(old2)) { RemoveChild(old2); old2.QueueFree(); }
+                    _doors[k] = made; _doorSpec[k] = spec;
+                }
+                else { _doors.Add(made); _doorSpec.Add(spec); }
+                PlaceDoor(made, o);
+            }
+        }
+
+        /// <summary>Sit the door in its hole, in WALL-LOCAL space. DoorDeploy places into world space for a
+        /// standalone drop, so the host's own transform is overwritten here rather than passing a world point
+        /// in -- the wall may be rotated, pitched, or lying down as a floor, and the hole's u/v is the only
+        /// frame that is true in all of those.</summary>
+        void PlaceDoor(Node3D host, WallOpening o)
+        {
+            if (host == null || !IsInstanceValid(host)) return;
+            host.Transform = new Transform3D(Basis.Identity, new Vector3(o.U + o.Width * 0.5f, o.V, 0f));
+
+            // Then align by MEASURING the leaf, on BOTH axes. These meshes are not centred on their own
+            // origin: Door_Pine spans x -2.35..+0.10 (centre -1.12, it is anchored at the hinge) and
+            // z -1.40..+1.40 (centred). So putting the host at the hole's centre hangs the door a metre to the
+            // left of it -- strawberry_cow, off a render: "door looks like its half in the left wall."
+            //
+            // I fixed the VERTICAL offset this way an hour ago and did not think to ask the same question
+            // about the horizontal, because the vertical one was visibly wrong and this one was not. Measure
+            // both; the mesh's own anchor is not a thing to assume per axis.
+            var lo = new Vector3(float.MaxValue, float.MaxValue, 0f);
+            var hi = new Vector3(float.MinValue, float.MinValue, 0f);
+            foreach (var d in host.GetChildren())
+                if (d is Node3D dn)
+                    foreach (var pv in dn.GetChildren())
+                        if (pv is Node3D piv)
+                            foreach (var c in piv.GetChildren())
+                                if (c is MeshInstance3D mi && mi.Mesh != null)
+                                {
+                                    var ab = mi.Mesh.GetAabb();
+                                    for (int i = 0; i < 8; i++)
+                                    {
+                                        var q = ToLocal(mi.GlobalTransform * ab.GetEndpoint(i));
+                                        lo.X = Mathf.Min(lo.X, q.X); hi.X = Mathf.Max(hi.X, q.X);
+                                        lo.Y = Mathf.Min(lo.Y, q.Y); hi.Y = Mathf.Max(hi.Y, q.Y);
+                                    }
+                                }
+            if (lo.X < float.MaxValue)
+                host.Position += new Vector3((o.U + o.Width * 0.5f) - (lo.X + hi.X) * 0.5f,   // centre in the hole
+                                             o.V - lo.Y,                                      // and sit on its sill
+                                             0f);
+        }
 
         void RebuildGlass()
         {

@@ -1989,4 +1989,117 @@ namespace UnturnedGodot.Testing
                     Mathf.Abs(bandTop - ridge) < 0.05f);
         }
     }
+
+    // strawberry_cow 2026-08-09: "what i want is to have these doors as things i can enable on relevant
+    // openings". Same ownership as the glass fill -- the OPENING carries the door, the wall materialises it.
+    public class BuildToolOpeningDoors : GameTest
+    {
+        public override string Name => "buildtool.opening_can_hold_a_door";
+
+        static int DoorCount(WallSurface w)
+        {
+            int n = 0;
+            foreach (var c in w.GetChildren())
+                if (c is Node3D h && h is not MeshInstance3D && h is not StaticBody3D && h is not GlassPane)
+                    foreach (var g in h.GetChildren()) if (g is ObjectDoor) { n++; break; }
+            return n;
+        }
+        static Node3D HostOf(WallSurface w)
+        {
+            foreach (var c in w.GetChildren())
+                if (c is Node3D h)
+                    foreach (var g in h.GetChildren()) if (g is ObjectDoor) return h;
+            return null;
+        }
+
+        public override IEnumerable<Step> Run()
+        {
+            var w = new WallSurface { Length = 12f, Height = WallOpenings.DoorHeight };
+            World.AddChild(w);
+            var o = new WallOpening(3f, 0f, 2.5f, 3.75f) { DoorProp = "Door_Pine" };
+            w.Openings.Add(o);
+            w.Rebuild();
+            yield return Step.Ticks(2);
+
+            T.Check($"a doored opening gets exactly one door ({DoorCount(w)})", DoorCount(w) == 1);
+            var host = HostOf(w);
+            if (host == null) yield break;
+
+            // IN the hole -- asserted on the door's GEOMETRY further down, not on the host's transform. The
+            // host is deliberately offset from the opening centre to compensate for the leaf not being
+            // centred on its own origin, so "host.Position.X == opening centre" is a check on the mechanism
+            // that FAILS when the behaviour is right. Where the door actually is, is the claim worth making.
+
+            // SIZED to the hole. The Door_Pine leaf is natively 2.45 x 2.80 and this hole is 2.5 x 3.75, so an
+            // unscaled door is visibly short -- and "a door exists at the right place" passes either way.
+            float lo = float.MaxValue, hi = float.MinValue, wl = float.MaxValue, wr = float.MinValue;
+            foreach (var g in host.GetChildren())
+                if (g is ObjectDoor d)
+                    foreach (var pv in d.GetChildren())
+                        if (pv is Node3D piv)
+                            foreach (var c in piv.GetChildren())
+                                if (c is MeshInstance3D mi && mi.Mesh != null)
+                                {
+                                    var ab = mi.Mesh.GetAabb();
+                                    for (int i = 0; i < 8; i++)
+                                    {
+                                        var pw = mi.GlobalTransform * ab.GetEndpoint(i);
+                                        lo = Mathf.Min(lo, pw.Y); hi = Mathf.Max(hi, pw.Y);
+                                        wl = Mathf.Min(wl, pw.X); wr = Mathf.Max(wr, pw.X);
+                                    }
+                                }
+            T.Check($"scaled to the hole's height ({hi - lo:0.00} m vs the opening's {o.Height:0.00})",
+                    Mathf.Abs((hi - lo) - o.Height) < 0.25f);
+            T.Check($"and its width ({wr - wl:0.00} m vs {o.Width:0.00})",
+                    Mathf.Abs((wr - wl) - o.Width) < 0.06f);
+            T.Check($"sitting on the opening's sill, not the wall base (y {lo:0.00}, sill {o.V:0.00})",
+                    Mathf.Abs(lo - o.V) < 0.25f);
+            // CENTRED in the hole. The leaf is not centred on its own origin -- Door_Pine's geometry sits at
+            // x -2.35..+0.10 about the hinge -- so a door positioned by its host lands a metre off and hangs
+            // half inside the wall beside the opening. Asserting the door's WIDTH and the HOST's position both
+            // pass while that is happening; only the leaf's own centre catches it.
+            T.Check($"centred on the opening ({(wl + wr) * 0.5f:0.00} vs {o.U + o.Width * 0.5f:0.00})",
+                    Mathf.Abs((wl + wr) * 0.5f - (o.U + o.Width * 0.5f)) < 0.06f);
+
+            // reuse, not respawn: Rebuild runs every frame of a drag
+            w.Rebuild(); w.Rebuild();
+            yield return Step.Ticks(1);
+            T.Check($"rebuilding does not stack up more ({DoorCount(w)})", DoorCount(w) == 1);
+
+            // and taking the door off removes it
+            var off = w.Openings[0]; off.DoorProp = null; w.Openings[0] = off;
+            w.Rebuild();
+            yield return Step.Ticks(2);
+            T.Check($"clearing the door empties the hole ({DoorCount(w)})", DoorCount(w) == 0);
+        }
+    }
+
+    public class BuildToolOpeningDoorPersists : GameTest
+    {
+        public override string Name => "buildtool.opening_door_survives_save";
+
+        public override IEnumerable<Step> Run()
+        {
+            var plan = new WallPlan { Length = 12f, Thickness = 0.7f, Height = WallOpenings.DoorHeight };
+            plan.Openings.Add(new WallOpening(3f, 0f, 2.5f, 3.75f) { DoorProp = "Door_Pine", DoorOpen = true });
+            plan.Openings.Add(new WallOpening(8f, 1f, 3f, 2.75f) { Glazed = true, GlassTint = 0x6A9BC8 });
+            plan.Openings.Add(new WallOpening(0.5f, 0f, 2f, 3f));
+
+            string text = WallSave.Write(new List<WallPlan> { plan });
+            var back = WallSave.Read(text.Split('\n'));
+            yield return Step.Ticks(1);
+
+            T.Check($"one wall, three openings ({back.Count}/{back[0].Openings.Count})",
+                    back.Count == 1 && back[0].Openings.Count == 3);
+            T.Check($"the door survives ('{back[0].Openings[0].DoorProp}')", back[0].Openings[0].DoorProp == "Door_Pine");
+            T.Check("open/shut survives with it", back[0].Openings[0].DoorOpen);
+            // the door tokens trail the GLAZING block, so a doored-but-unglazed opening still has to write the
+            // glazing fields or the door name lands in the "glazed" slot
+            T.Check("a doored opening is not accidentally glazed", !back[0].Openings[0].Glazed);
+            T.Check($"glass still round-trips beside it ({back[0].Openings[1].GlassTint:X})",
+                    back[0].Openings[1].Glazed && back[0].Openings[1].GlassTint == 0x6A9BC8);
+            T.Check("and a plain opening stays plain",
+                    !back[0].Openings[2].HasDoor && !back[0].Openings[2].Glazed);
+        }
+    }
 }

@@ -31,8 +31,23 @@ namespace UnturnedGodot
         /// host node, or null if the prop has no catalog entry / no loadable leaf mesh -- callers treat null
         /// as "not a door" and fall through, same as FridgeDeploy.</summary>
         public static Node3D SpawnFor(DeployableDef def, Node parent, Vector3 pos, float yawDeg)
+            => SpawnProp(def?.DoorProp, parent, pos, yawDeg);
+
+        /// <summary>Place a door by PROP NAME, optionally scaled to fit an opening.
+        ///
+        /// Split out of SpawnFor so a wall can hang a door in one of its holes (strawberry_cow: "have these
+        /// doors as things i can enable on relevant openings") through the same catalog lookup, the same
+        /// hinge data and the same stand-up as a standalone placement. Two callers, one implementation --
+        /// a second copy would be a second thing to get the stand-up wrong in.
+        ///
+        /// `fit` scales the leaf to a hole of that width/height. The scale is baked into the MESH and the
+        /// PIVOT rather than set on a node: a non-uniform Scale on an ancestor of the hinge shears the leaf
+        /// as it swings, because the rotation would then happen in scaled space. Scaling the geometry keeps
+        /// the swing rigid.</summary>
+        public static Node3D SpawnProp(string prop, Node parent, Vector3 pos, float yawDeg, Vector2? fit = null)
         {
-            if (string.IsNullOrEmpty(def?.DoorProp) || parent == null) return null;
+            if (string.IsNullOrEmpty(prop) || parent == null) return null;
+            var def = new DeployableDef { DoorProp = prop };
 
             string dir = ProjectSettings.GlobalizePath("res://content/objects/");
             _cat ??= WorldBuilder.LoadDoorCatalog(dir);
@@ -77,10 +92,22 @@ namespace UnturnedGodot
                 // no visible leaf -- which reads in game as "the door is invisible", not as "the mesh is
                 // missing", and sends you looking at the wrong system.
                 if (leaf == null) { GD.PrintErr($"[door] {def.DoorProp}: leaf mesh '{e.MeshFile}' failed to load"); continue; }
+
+                // Fit to the hole. Width is authored X and height is authored Z (these rips stand up via 270),
+                // so a hole of w x h wants scale (w/sizeX, 1, h/sizeZ) IN THE FLAT FRAME -- the same frame the
+                // pivot is expressed in, which is why the pivot scales with it.
+                var pivotL = e.Pivot;
+                if (fit is Vector2 f)
+                {
+                    var sz = leaf.GetAabb().Size;
+                    var sc = new Vector3(sz.X > 1e-3f ? f.X / sz.X : 1f, 1f, sz.Z > 1e-3f ? f.Y / sz.Z : 1f);
+                    leaf = Scaled(leaf, sc);
+                    pivotL *= sc;
+                }
                 string curveBase = e.MeshFile.EndsWith("_door.obj")
                     ? e.MeshFile.Substring(0, e.MeshFile.Length - "_door.obj".Length)
                     : def.DoorProp;
-                made.Add(ObjectDoor.Spawn(host, xform, e.Pivot, e.Axis, e.AngleDeg, e.DurationSec, leaf, mat,
+                made.Add(ObjectDoor.Spawn(host, xform, pivotL, e.Axis, e.AngleDeg, e.DurationSec, leaf, mat,
                     startOpen: false,
                     openCurve: WorldBuilder.LoadDoorCurve(dir, curveBase, "open"),
                     closeCurve: WorldBuilder.LoadDoorCurve(dir, curveBase, "close"),
@@ -175,6 +202,37 @@ namespace UnturnedGodot
                     AngleDeg = angle, DurationSec = h.Dur, DefaultOpen = false, Sound = "DoorHandle",
                 },
             };
+        }
+
+        /// <summary>A copy of `src` with its vertices scaled. Scaling the GEOMETRY rather than putting a Scale
+        /// on a node above the hinge: a non-uniform scale on an ancestor makes the swing shear, because the
+        /// rotation then happens in scaled space and a rotated non-uniform scale is not a rigid transform.
+        /// cow tools' warning about stretched planks is about the fit itself; this is about the swing.</summary>
+        static ArrayMesh Scaled(Mesh src, Vector3 s)
+        {
+            var outm = new ArrayMesh();
+            for (int i = 0; i < src.GetSurfaceCount(); i++)
+            {
+                var arr = src.SurfaceGetArrays(i);
+                var vs = arr[(int)Mesh.ArrayType.Vertex].As<Vector3[]>();
+                if (vs == null) continue;
+                for (int k = 0; k < vs.Length; k++) vs[k] *= s;
+                arr[(int)Mesh.ArrayType.Vertex] = vs;
+                // normals do not survive a non-uniform scale unchanged -- rescale by the INVERSE and
+                // renormalise, or a stretched door lights as if it were still its original shape
+                var ns = arr[(int)Mesh.ArrayType.Normal].As<Vector3[]>();
+                if (ns != null)
+                {
+                    var inv = new Vector3(s.X != 0f ? 1f / s.X : 1f, s.Y != 0f ? 1f / s.Y : 1f, s.Z != 0f ? 1f / s.Z : 1f);
+                    for (int k = 0; k < ns.Length; k++) ns[k] = (ns[k] * inv).Normalized();
+                    arr[(int)Mesh.ArrayType.Normal] = ns;
+                }
+                // SurfaceGetPrimitiveType lives on ArrayMesh, not Mesh. These are all ObjMesh output (triangles),
+                // but ask when we can rather than assuming -- a silently-wrong primitive type renders nothing.
+                var prim = src is ArrayMesh am ? am.SurfaceGetPrimitiveType(i) : Mesh.PrimitiveType.Triangles;
+                outm.AddSurfaceFromArrays(prim, arr);
+            }
+            return outm;
         }
 
         static Material MatFor(string prop, string dir)

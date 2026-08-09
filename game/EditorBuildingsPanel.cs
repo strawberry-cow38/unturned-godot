@@ -144,6 +144,10 @@ namespace UnturnedGodot
                               () => SetTool(_del.ButtonPressed ? Tool.Delete : Tool.None));
             IconAction(second, EditorIcons.Glyph.Import, 44, "Import",
                        "port the retail building selected below onto the stage", () => DoImport());
+            IconAction(second, EditorIcons.Glyph.Delete, 44, "Clear plot",
+                       "wipe every wall, floor, roof and foundation — Ctrl+Z brings it all back",
+                       () => Say(_b.ClearPlot() is int cn && cn > 0 ? $"cleared {cn} surface(s) — Ctrl+Z to undo"
+                                                                    : "the plot is already empty"));
             IconAction(second, EditorIcons.Glyph.Bake, 44, "Bake to prop",
                        "turn this building into a placeable prop in the Level tab", () => DoBake());
             box.AddChild(second);

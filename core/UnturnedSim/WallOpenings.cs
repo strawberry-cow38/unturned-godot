@@ -43,12 +43,28 @@ namespace UnturnedSim
         /// <summary>Is there glass to build right now? Glazed but broken is a hole, which is the point.</summary>
         public bool HasGlass => Glazed && !GlassBroken;
 
+        // ---- a DOOR in the hole ----------------------------------------------------------------------
+        // strawberry_cow 2026-08-09: "what i want is to have these doors as things i can enable on relevant
+        // openings". Same shape as the glazing above and for the same reason: a door's existence, size and
+        // position are all consequences of its hole, so the hole owns it and there is no second list to keep
+        // in step through move / resize / reparent / delete / undo.
+        //
+        // The prop NAME rather than an index: the door catalog is keyed by name, ids have already collided
+        // once tonight, and a name survives the table being reordered. Empty = no door.
+        public string DoorProp;
+        /// <summary>Persisted so a door you left open is still open after a save, a load or an undo -- the
+        /// same reason GlassBroken exists rather than being recomputed.</summary>
+        public bool DoorOpen;
+
+        public bool HasDoor => !string.IsNullOrEmpty(DoorProp);
+
         public float U1 => U + Width;
         public float V1 => V + Height;
 
         public WallOpening(float u, float v, float w, float h, float depth = 999f, int archetype = 0)
         { U = u; V = v; Width = w; Height = h; Depth = depth; Archetype = archetype;
-          Glazed = false; GlassTint = 0; GlassHp = 0f; GlassIndestructible = false; GlassBroken = false; }
+          Glazed = false; GlassTint = 0; GlassHp = 0f; GlassIndestructible = false; GlassBroken = false;
+          DoorProp = null; DoorOpen = false; }
 
         /// <summary>This opening moved/resized to (u,v,w,h), keeping EVERYTHING ELSE.
         ///

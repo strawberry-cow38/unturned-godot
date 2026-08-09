@@ -4612,7 +4612,7 @@ namespace UnturnedGodot
             // only one of them is exactly how that drift shows up: the first render of this scene came back
             // with empty holes because the OTHER copy was the one that got the glass.
             var front = Wall(L, new Vector3(-L / 2f, 0f, 0f), 0f);
-            front.Openings.Add(new UnturnedSim.WallOpening(1.0f, 0f, 2.5f, H - 0.5f));    // person door, floor-pinned, no glass
+            front.Openings.Add(DooredOpening(new UnturnedSim.WallOpening(1.0f, 0f, 2.5f, H - 0.5f)));   // person door, floor-pinned -- a real swinging door
             front.Openings.Add(GlazedOpening(new UnturnedSim.WallOpening(5.0f, sill, 3.31f, wh)));       // measured window widths
             front.Openings.Add(GlazedOpening(new UnturnedSim.WallOpening(9.0f, sill, 2.81f, wh), 0x8FBFA0));
 
@@ -4690,6 +4690,12 @@ namespace UnturnedGodot
         static UnturnedSim.WallOpening GlazedOpening(UnturnedSim.WallOpening o, int tint = 0)
         { o.Glazed = true; o.GlassTint = tint; return o; }
 
+        /// <summary>Hang a door in an opening. The door opening in both demo rooms carries one, so every editor
+        /// render shows what the tool produces rather than an empty hole -- the same reason the windows are
+        /// glazed there.</summary>
+        static UnturnedSim.WallOpening DooredOpening(UnturnedSim.WallOpening o, string prop = "Door_Pine")
+        { o.DoorProp = prop; return o; }
+
         static void DrawDemoBuilding(EditorBuildings b)
         {
             float H = UnturnedSim.WallOpenings.DoorHeight;
@@ -4702,7 +4708,7 @@ namespace UnturnedGodot
             b.ActiveMaterial = 24;                                   // House_00
 
             var front = b.AddWall(o + new Vector3(-L / 2f, 0f, 0f), 0f, L);
-            front.Openings.Add(new UnturnedSim.WallOpening(1.0f, 0f, 2.5f, H - 0.5f));            // door: no glass
+            front.Openings.Add(DooredOpening(new UnturnedSim.WallOpening(1.0f, 0f, 2.5f, H - 0.5f)));   // a real swinging door
             front.Openings.Add(GlazedOpening(new UnturnedSim.WallOpening(5.0f, sill, 3.31f, wh)));
             front.Openings.Add(GlazedOpening(new UnturnedSim.WallOpening(9.0f, sill, 2.81f, wh), 0x8FBFA0));
 

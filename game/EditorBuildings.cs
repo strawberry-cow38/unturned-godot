@@ -1099,6 +1099,28 @@ namespace UnturnedGodot
             _editor?.PushUndo(label, () => RestoreAll(before));
         }
 
+        /// <summary>Wipe the plot -- every wall, floor, roof and foundation on the stage.
+        ///
+        /// UNDOABLE, which is the whole reason this is not a two-line loop. A clear button is the single most
+        /// destructive control in the editor, and an editor that can lose an hour's building to one misclick
+        /// is worse than one with no clear button. RestoreAll rebuilds the lot from the snapshot, exactly as
+        /// the delete and import paths already do.
+        ///
+        /// Returns how many surfaces went, so the caller can say "nothing to clear" rather than reporting a
+        /// success that did nothing -- and so an empty plot does not consume an undo step.</summary>
+        public int ClearPlot()
+        {
+            int n = 0;
+            foreach (var w in _walls) if (IsInstanceValid(w)) n++;
+            if (n == 0) return 0;
+            var before = Snapshot();
+            foreach (var w in new List<WallSurface>(_walls)) RemoveWall(w);
+            _selWall = null; _selOpening = -1;
+            PositionHandles();
+            _editor?.PushUndo("clear plot", () => RestoreAll(before));
+            return n;
+        }
+
         public int MergeDuplicateWalls()
         {
             int merged = 0;

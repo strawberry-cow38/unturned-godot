@@ -53,7 +53,7 @@ namespace UnturnedSim
             var sb = new StringBuilder();
             sb.Append(Header).Append('\n');
             sb.Append("# wall <x> <y> <z> <yawDeg> <length> <thickness> <materialId> [height] [pitchDeg] [kind] [gableRise] [texel] [insetL0 insetL1 insetR0 insetR1] [matBack texelBack]\n");
-            sb.Append("#   open <u> <v> <width> <height> <depth> <archetype> [glazed tint hp indestructible broken]\n");
+            sb.Append("#   open <u> <v> <width> <height> <depth> <archetype> [glazed tint hp indestructible broken] [doorProp doorOpen]\n");
             if (walls != null)
                 foreach (var w in walls)
                 {
@@ -79,12 +79,18 @@ namespace UnturnedSim
                         // Glazing is written only when there IS some, so a building with no windows saves
                         // byte-for-byte as it did before glass existed. Trailing and optional, like every
                         // field added to this format after the fact.
-                        if (o.Glazed || o.GlassBroken)
+                        // A DOOR needs the glazing block written first even when there is none, because these
+                        // are POSITIONAL trailing tokens -- skipping five of them would slide the door name
+                        // into the "glazed" slot. Cheap to be explicit; silent to get wrong.
+                        if (o.Glazed || o.GlassBroken || o.HasDoor)
                             sb.Append(' ').Append(o.Glazed ? '1' : '0')
                               .Append(' ').Append(o.GlassTint.ToString(CultureInfo.InvariantCulture))
                               .Append(' ').Append(F(o.GlassHp))
                               .Append(' ').Append(o.GlassIndestructible ? '1' : '0')
                               .Append(' ').Append(o.GlassBroken ? '1' : '0');
+                        if (o.HasDoor)
+                            sb.Append(' ').Append(o.DoorProp)
+                              .Append(' ').Append(o.DoorOpen ? '1' : '0');
                         sb.Append('\n');
                     }
                 }
@@ -151,6 +157,9 @@ namespace UnturnedSim
                         op.Glazed = gz != 0; op.GlassTint = tint; op.GlassHp = ghp;
                         op.GlassIndestructible = gind != 0; op.GlassBroken = gbr != 0;
                     }
+                    // door: trailing after the glazing block, same optional-block rule
+                    if (p.Length >= 14 && int.TryParse(p[13], out int dop))
+                    { op.DoorProp = p[12]; op.DoorOpen = dop != 0; }
                     cur.Openings.Add(op);
                 }
                 // anything else: a newer editor's field. Skip it and keep the building.
