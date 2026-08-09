@@ -16,7 +16,8 @@ namespace UnturnedGodot
         public static float BeamLen   = 200f;                         // how far the shaft reaches
         public static float SrcRadius = 2.0f;                         // half-width at the lamp room
         public static float FarRadius = 22f;                          // half-width at the far end (a widening beam)
-        public static Color BeamColor = new Color(1f, 0.95f, 0.82f);  // warm white
+        // colour = the streetlight's sodium colour (master), derived in _Ready off StreetLight.KelvinToColor(ColorTempK)
+        // so it tracks the map's lamp temp (2000K warm sodium for the BC towns) rather than a hardcoded warm white.
 
         MeshInstance3D _cone;
         float _spin;
@@ -45,6 +46,7 @@ namespace UnturnedGodot
             // BeamMesh runs along -Y; rotate it -90 about X so the shaft points HORIZONTALLY (+Z), then the NODE spins
             // around world-Y so the beam sweeps the horizon. Narrow at the lamp, widening to FarRadius far out.
             var mesh = StreetLight.BeamMesh(BeamLen, SrcRadius, SrcRadius, FarRadius, morphEnd: 0.12f, seg: 20, rings: 22);
+            var col = StreetLight.KelvinToColor(StreetLight.ColorTempK);   // the streetlight's sodium colour (master), computed here so StreetLight's statics are live
             _cone = new MeshInstance3D
             {
                 Mesh = mesh,
@@ -54,7 +56,7 @@ namespace UnturnedGodot
                 MaterialOverride = new StandardMaterial3D
                 {
                     // additive + unshaded + gradient-faded, same recipe as StreetLight's cone (soft, dissolves at the far end)
-                    AlbedoColor = new Color(BeamColor.R, BeamColor.G, BeamColor.B, 0.06f),   // master: LESS opaque -- more see-through
+                    AlbedoColor = new Color(col.R, col.G, col.B, 0.06f),   // master: LESS opaque -- more see-through; sodium colour
                     AlbedoTexture = BeamGradient(),                    // master: fade out toward the WIDE (far) end, not the streetlight's fade-at-the-ground
                     Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
                     BlendMode = BaseMaterial3D.BlendModeEnum.Add,
