@@ -405,7 +405,11 @@ void sky() {
                 // depth fog tinted to the horizon -- thin at noon, thick at dawn/dusk/night (extra when Overcast)
                 float noon = 1f - Mathf.Abs(Time - 0.5f) * 2f;             // 1 at noon, 0 at midnight
                 Env.FogEnabled = true;
-                Env.FogLightColor = Grad(SkyHorizon).Lerp(new Color(0.55f, 0.57f, 0.6f), 0.35f);
+                // master: derive the fog straight from the (corrected) sky horizon so it tracks the sky day/night.
+                // ⚠ RAW sRGB, NOT SrgbToLinear -- Env properties take sRGB and linearise internally, the OPPOSITE of the
+                // sky SHADER uniforms one screen up (tinyclaw). The old `.Lerp` toward a fixed light-grey (0.55/0.57/0.6)
+                // read too light against the now-correct dark night sky, which is what master flagged.
+                Env.FogLightColor = Grad(SkyHorizon);
                 // Thinned AGAIN (master: "turn down the global fog a little more"), 0.012/0.0008 -> 0.008/0.0005.
                 // Scaled both ends by the same ~2/3 rather than flattening the curve: the day/night contrast is the
                 // part that reads as weather, so dropping only the night end would leave noon unchanged and take the
