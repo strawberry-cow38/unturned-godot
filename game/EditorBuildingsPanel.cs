@@ -17,6 +17,7 @@ namespace UnturnedGodot
         Button _drawFloor, _drawRoof, _room, _del, _found;
         CheckBox _glaze, _indestructible;
         Label _hpLbl;
+        OptionButton _doorDrop;
 
         /// <summary>The glass controls edit the SELECTED opening when there is one and set the default for the
         /// next placement when there is not. Asked in one place so the four controls cannot disagree about
@@ -29,7 +30,7 @@ namespace UnturnedGodot
         // What the glass controls were last shown as, so _Process only touches them when something changed.
         // Writing ButtonPressed every frame would re-enter the Toggled handler and push an undo step per
         // frame -- the control would fight the user for the checkbox.
-        (WallSurface W, int I, bool G, bool Ind) _glassShown = (null, -2, false, false);
+        (WallSurface W, int I, bool G, bool Ind, string Door, bool CanDoor) _glassShown = (null, -2, false, false, "\0", false);
 
         /// <summary>Make the glass controls show the SELECTED opening. Without this they keep displaying the
         /// last thing that was set, and this file's own rule about the material dropdown applies: a control
@@ -44,9 +45,22 @@ namespace UnturnedGodot
             var o = has ? w.Openings[i] : default;
             bool glazed = has ? o.Glazed : (_b.GlazeNew ?? true);
             bool ind = has ? o.GlassIndestructible : _b.ActiveGlassIndestructible;
-            var now = (has ? w : null, has ? i : -1, glazed, ind);
+            // A door only goes in a floor-pinned opening, so the dropdown greys out on a window rather than
+            // silently accepting a door that PlannedOpening/SetOpeningDoor would never show.
+            string door = has ? o.DoorProp : _b.ActiveDoorProp;
+            bool canDoor = !has || EditorBuildings.Archetypes[Mathf.PosMod(o.Archetype, EditorBuildings.Archetypes.Length)].FloorPinned;
+            var now = (has ? w : null, has ? i : -1, glazed, ind, door, canDoor);
             if (now == _glassShown) return;
             _glassShown = now;
+            if (_doorDrop != null)
+            {
+                _doorDrop.Disabled = !canDoor;
+                // Select, not Selected=: the id IS the index here, but going through the lookup keeps this
+                // honest if the list ever gains a separator or a filtered entry.
+                int want = 0;
+                for (int d = 0; d < DoorProps.Length; d++) if (DoorProps[d].Prop == door) { want = d; break; }
+                if (_doorDrop.Selected != want) _doorDrop.Select(want);   // Select() does NOT fire ItemSelected, so this cannot write back
+            }
             // SetPressedNoSignal, not ButtonPressed: assigning it fires Toggled, which would write the value
             // straight back onto the opening and push an undo step for a change nobody made.
             _glaze?.SetPressedNoSignal(glazed);
@@ -67,6 +81,23 @@ namespace UnturnedGodot
             ("blue",      0x6A9BC8),
             ("amber",     0xD8A65A),
         };
+
+        /// <summary>What the door dropdown offers. Derived from the def table rather than typed out, so a door
+        /// added there shows up here, and filtered to the `Door_` FORM on purpose:
+        ///   - Gate is an X-tilt garage door and Hatch is a floor hatch (see wooden_door_anims.txt -- Gate's
+        ///     hinge axis is (1,0,0), Hatch's is (-1,0,0) with a z offset). Neither is a wall-opening swing door.
+        ///   - Doubledoor's two-hinge panel split is not built, so it refuses to place.
+        /// Offering an untested door is exactly how the last door bug shipped, so the list is the four that
+        /// strawberry_cow has actually seen swing.</summary>
+        static readonly (string Label, string Prop)[] DoorProps = BuildDoorProps();
+
+        static (string, string)[] BuildDoorProps()
+        {
+            var list = new System.Collections.Generic.List<(string, string)> { ("— no door (open hole)", null) };
+            foreach (var d in DeployableDef.WoodDoors)
+                if (d.DoorProp != null && d.DoorProp.StartsWith("Door_")) list.Add((d.Name, d.DoorProp));
+            return list.ToArray();
+        }
 
         enum Tool { None, Wall, Room, Floor, Roof, Opening, Delete, Foundation }
 
@@ -305,6 +336,21 @@ namespace UnturnedGodot
                 tints.AddChild(sw);
             }
             box.AddChild(tints);
+
+            // ---- door ----------------------------------------------------------------------------------
+            // Same double duty as the glass controls: edits the selected opening, or sets what the next
+            // floor-pinned one gets. Greys out on a window, because a door there would be silently dropped.
+            box.AddChild(new HSeparator());
+            box.AddChild(Dim("DOOR — door / garage / porch openings only"));
+            _doorDrop = new OptionButton { CustomMinimumSize = new Vector2(240, 0), FocusMode = FocusModeEnum.None };
+            foreach (var (label, _) in DoorProps) _doorDrop.AddItem(label);
+            _doorDrop.ItemSelected += id =>
+            {
+                var prop = DoorProps[Mathf.Clamp((int)id, 0, DoorProps.Length - 1)].Prop;
+                if (HasSelectedOpening) _b.SetOpeningDoor(_b.SelectedWall, _b.SelectedOpening, prop);
+                else _b.ActiveDoorProp = prop;
+            };
+            box.AddChild(_doorDrop);
 
             box.AddChild(new HSeparator());
             box.AddChild(Dim("Material — a retail palette"));
