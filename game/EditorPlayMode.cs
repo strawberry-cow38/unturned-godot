@@ -2,12 +2,16 @@ using Godot;
 
 namespace UnturnedGodot
 {
-    // Building-editor PLAY MODE (master 2026-08-09): a floating "Test Build" button drops the user in as a
-    // first-person player to walk the building they just drew; Esc returns to the editor. The drawn walls are
-    // already solid (WallSurface = StaticBody3D on layer 0) and BuildStage() lays a WorldBoundary ground + floor
-    // plane at the stage height, so this just spawns a PlayerController on the stage, swaps the fly-cam + build
-    // tool + editor UI off, and restores them on exit. Kept ENTIRELY self-contained (its own CanvasLayer button)
-    // so it never touches EditorBuildingsPanel -- tinyclaw is in there for the door-on-openings fill.
+    // Editor PLAYTEST (master 2026-08-09): a floating button that SAVES the map and drops the user in as a
+    // first-person player on the ground under the fly camera; Esc returns to the editor. Spawns a
+    // PlayerController, swaps the fly-cam + build tool + editor UI off, and restores them on exit.
+    //
+    // Began life as a Buildings-tab-only "Test Build" that spawned at the building stage. It is now on every
+    // tab and spawns under the camera, because wanting to walk terrain you just sculpted is the same wish as
+    // wanting to walk a building you just drew. The stage-footprint spawn survives as the FALLBACK for when
+    // there is no ground under the camera at all.
+    //
+    // Kept ENTIRELY self-contained (its own CanvasLayer button) so it never touches EditorBuildingsPanel.
     public partial class EditorPlayMode : Node3D
     {
         Editor _editor;
@@ -29,7 +33,7 @@ namespace UnturnedGodot
             _ui = new CanvasLayer { Name = "PlayModeUI", Layer = 160 };
             AddChild(_ui);
 
-            _playBtn = new Button { Text = "▶  Test Build" };
+            _playBtn = new Button { Text = "▶  Playtest" };
             _playBtn.AddThemeFontSizeOverride("font_size", 18);
             _playBtn.AnchorLeft = 1f; _playBtn.AnchorRight = 1f;
             _playBtn.OffsetLeft = -188f; _playBtn.OffsetRight = -16f;
@@ -37,29 +41,34 @@ namespace UnturnedGodot
             _playBtn.Pressed += EnterPlay;
             _ui.AddChild(_playBtn);
 
-            _hint = new Label { Text = "TEST MODE  —  press Esc to return to the editor", Visible = false };
+            _hint = new Label { Text = "PLAYTEST  —  map saved · press Esc to return to the editor", Visible = false };
             _hint.AddThemeFontSizeOverride("font_size", 16);
             _hint.AnchorLeft = 0.5f; _hint.AnchorRight = 0.5f;
             _hint.OffsetLeft = -240f; _hint.OffsetRight = 240f; _hint.OffsetTop = 12f;
             _hint.HorizontalAlignment = HorizontalAlignment.Center;
             _ui.AddChild(_hint);
 
-            _editor.ModeChanged += _ => UpdateButtonVisibility();   // the Test Build button belongs to the Buildings tab
+            _editor.ModeChanged += _ => UpdateButtonVisibility();
             UpdateButtonVisibility();
         }
 
-        // Show the Test Build button only on the Buildings tab (and never mid-test). Master asked for a
-        // BUILDING-editor play mode, so it has no business on the map / terrain / spawns tabs.
+        // Available on EVERY tab now (master 2026-08-09: "a playtest button in the editor"). It began as a
+        // Buildings-only "Test Build", but wanting to walk the terrain you just sculpted or check a prop you
+        // placed is the same wish, and a button that exists on one tab reads as a bug on the others.
         void UpdateButtonVisibility()
         {
-            if (_playBtn != null)
-                _playBtn.Visible = !_playing && _editor != null && _editor.Mode == EEditorMode.Buildings;
+            if (_playBtn != null) _playBtn.Visible = !_playing;
         }
 
-        void EnterPlay()
+        public void EnterPlay()
         {
             if (_playing || _editor == null) return;
             _playing = true;
+
+            // SAVE FIRST (master: "saves current map and then spawns u"). Playtesting is when a crash or a
+            // hard exit is most likely, and losing the edits you were about to test is the worst possible
+            // moment to lose them.
+            _editor.Save();
 
             _player = new PlayerController { CaptureMouse = true };
             _editor.AddChild(_player);
@@ -86,7 +95,7 @@ namespace UnturnedGodot
             if (_buildings != null) _buildings.Active = true;
             SetEditorUiVisible(true);
 
-            UpdateButtonVisibility();   // restored, but only on the Buildings tab
+            UpdateButtonVisibility();   // the button comes back
             _hint.Visible = false;
         }
 
@@ -109,12 +118,39 @@ namespace UnturnedGodot
                 if (c is CanvasLayer cl) cl.Visible = on;
         }
 
+        /// <summary>The spawn point, without entering play. Exposed so a test can check WHERE it lands without
+        /// spawning a PlayerController and capturing the mouse.</summary>
+        public Vector3 ComputeSpawnForTest() => ComputeSpawn();
+
         // Footprint centre = the middle of the bbox of every wall's two base ends (UVToWorld(0,0) and
         // UVToWorld(Length,0)) -- the SAME walk the roof/floor code does. Averaging wall origins (tried first)
         // averages start-CORNERS, so it biases the spawn toward wherever the walls happen to begin and lands
         // in a wall in a draw-order-dependent way (tinyclaw caught this).
+        /// <summary>Where the playtest drops you: on the ground UNDER THE FLY CAMERA, so you land looking at
+        /// whatever you were just editing (master: "spawns u to walk around somewhere near the editor camera").
+        ///
+        /// It has to be a downward RAY, not the camera position. The editor cam commonly sits 130 m up, and
+        /// spawning there means a long fall onto terrain you cannot see yet, or straight through a roof you
+        /// were looking down at. Falls back to the building stage when the ray finds nothing -- off the edge of
+        /// a flat map there genuinely is no ground beneath the camera.</summary>
         Vector3 ComputeSpawn()
         {
+            var cam = _flyCam;
+            if (cam != null && GodotObject.IsInstanceValid(cam) && cam.IsInsideTree())
+            {
+                var from = cam.GlobalPosition;
+                var space = cam.GetWorld3D()?.DirectSpaceState;
+                if (space != null)
+                {
+                    // Start slightly above the camera so a cam sitting just under a surface still resolves,
+                    // and reach well below the lowest thing a map is likely to have.
+                    var q = PhysicsRayQueryParameters3D.Create(from + Vector3.Up * 2f, from + Vector3.Down * 4000f);
+                    var hit = space.IntersectRay(q);
+                    if (hit != null && hit.Count > 0 && hit.ContainsKey("position"))
+                        return (Vector3)hit["position"] + Vector3.Up * 1.2f;
+                }
+            }
+
             float groundY = EditorBuildings.StageOrigin.Y;   // BuildStage() lays the ground plane at the stage height
             Vector3 fallback = new Vector3(EditorBuildings.StageOrigin.X, groundY + 1.2f, EditorBuildings.StageOrigin.Z);
             var walls = _buildings?.Walls;
