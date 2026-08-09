@@ -22,6 +22,21 @@ namespace UnturnedGodot
     {
         public enum Kind { Generic, CeilingStrip, FloorShade, DeskBulb }
 
+        // ONE source of truth for prop-name -> kind + which kinds are player-toggleable, so WorldBuilder and
+        // --lamptest can't drift into disagreeing (tinyclaw: keep the prop list next to the kind table, not as a
+        // separate name test per caller).
+        public static Kind KindFor(string name) => name switch
+        {
+            "Light_0" or "Light_1" => Kind.CeilingStrip,
+            "Lamp_1"               => Kind.FloorShade,
+            "Lamp_0"               => Kind.DeskBulb,
+            _                      => Kind.Generic,
+        };
+        // The STANDING (Lamp_1) + DESK (Lamp_0) lamps get the look-outline + F on/off toggle (master 2026-08-09);
+        // the ceiling strip is grid-only, no manual switch.
+        public static bool IsToggle(Kind k) => k is Kind.FloorShade or Kind.DeskBulb;
+        public const string LookMeta = "lampdevice";   // meta on the prop body collider -> this lamp (PlayerController look-ray)
+
         public static Color BulbColor = new Color(1f, 0.90f, 0.72f);   // warm white (incandescent-ish)
         public static float Range = 8f;                // OmniLight3D radius -- a room, not a street
         public static float Energy = 2.2f;             // base LightEnergy, scaled by _worn
@@ -30,12 +45,18 @@ namespace UnturnedGodot
         public static float DebugBulbSide = 1f;        // DeskBulb render-pick: +1 = the +X-facing head opening (f18/f19), -1 = -X (f0/f1)
 
         Kind _kind = Kind.Generic;
+        public Kind LampKind => _kind;         // so WorldBuilder can gate the look-meta on IsToggle without re-deriving from the name
         OmniLight3D _omni;
         float _omniEnergy;                     // resolved energy (incl. the DeskBulb half-scale), reused by ApplyLit
         MeshInstance3D _fixture;               // the prop's own mesh (LOD0), handed in by WorldBuilder
         MeshInstance3D _emissive;              // the light-emitting sub-mesh split off the fixture -- the ONLY part that glows
         Material _fixtureOffMat, _fixtureLitMat;
+        MeshInstance3D _outline;               // whole-lamp white silhouette (OutlineOverlay), shown while looked at -- toggle lamps only
+        AudioStreamPlayer3D _hum;              // ceiling-strip fluorescent hum, looping; volume RIDES the flicker (ApplyEffective) + hard-mutes off/broken
+        float _humDb;                          // the hum's full volume in dB (dropped to -80 = silent when the light is off)
         bool _built;                           // BuildVisual is idempotent -- a 2nd split of `body` has no emitter tris and would glow the housing
+        bool _on = true;                       // player F-toggle state, INDEPENDENT of the grid -- ON by default (master)
+        bool _lastLit;                         // last grid-lit state; effective visual = _lastLit && _on
 
         protected override bool NightGated => false;
         protected override string LightGroup => "gridlights";
@@ -81,10 +102,34 @@ namespace UnturnedGodot
                     _emissive = new MeshInstance3D { Name = "Emissive", Mesh = emit, MaterialOverride = _fixtureOffMat };
                     _fixture.AddChild(_emissive);   // overlays the fixture in its own local space
                 }
+
+                // Toggle lamps get a whole-lamp white silhouette for the look-at affordance (mirrors GasPump/ObjectDoor).
+                if (IsToggle(_kind) && src != null)
+                {
+                    _outline = OutlineOverlay.MakeOutline(src);
+                    _fixture.AddChild(_outline);
+                }
             }
 
             AddChild(_omni);
             _omni.Position = ComputeOmniLocal();   // after the split, so FloorShade/DeskBulb can anchor to the emitter
+
+            // Fluorescent ballast hum on the CEILING strip only (an incandescent desk/table lamp doesn't hum). A quiet
+            // looping 3D tone whose volume rides the flicker -- ApplyEffective runs per stutter frame, so the hum stutters
+            // WITH the light and hard-mutes when it's off or smashed (not a fade). Random phase per fixture so a corridor
+            // of tubes isn't one giant phase-locked tube (tinyclaw's spec).
+            if (_kind == Kind.CeilingStrip)
+            {
+                var hum = PlayerController.LoadWavOneShot("res://content/sounds/fluorescent_hum.wav", loop: true);
+                if (hum != null)
+                {
+                    _humDb = Mathf.LinearToDb(0.35f);
+                    _hum = new AudioStreamPlayer3D { Stream = hum, UnitSize = 2.2f, MaxDistance = 13f, VolumeDb = -80f };
+                    AddChild(_hum);
+                    _hum.Play();
+                    _hum.Seek(GD.Randf() * 6f);   // 6.000s loop -> random offset decorrelates neighbouring tubes
+                }
+            }
         }
 
         // Where the point light sits, in this node's local space (LampLight is TopLevel at the fixture centre). Always
@@ -135,15 +180,26 @@ namespace UnturnedGodot
             return s.Length() > 0.001f ? s.Normalized() : Vector3.Down;
         }
 
-        protected override void ApplyLit(bool lit)
+        protected override void ApplyLit(bool lit) { _lastLit = lit; ApplyEffective(); }
+
+        // Effective visual = grid-lit AND the player toggle. Split out so Toggle() can re-apply it without a grid event.
+        // Swaps ONLY the emitter's material to emissive (if we split one off); the housing keeps its matte material.
+        void ApplyEffective()
         {
-            if (_omni != null) _omni.LightEnergy = (lit && !DebugNoOmni) ? _omniEnergy : 0f;
+            bool eff = _lastLit && _on;
+            if (_omni != null) _omni.LightEnergy = (eff && !DebugNoOmni) ? _omniEnergy : 0f;
+            if (_hum != null) _hum.VolumeDb = eff ? _humDb : -80f;   // hum stutters with the flicker (per-frame during a transition) + hard-mutes off/broken
             if (_fixtureLitMat == null) return;
-            // Swap ONLY the emitter's material to emissive (if we split one off); the housing keeps its matte material.
-            var glow = (_emissive != null && IsInstanceValid(_emissive)) ? _emissive : _fixture;
-            if (glow != null && IsInstanceValid(glow))
-                glow.MaterialOverride = lit ? _fixtureLitMat : _fixtureOffMat;
+            var emitMi = (_emissive != null && IsInstanceValid(_emissive)) ? _emissive : _fixture;
+            if (emitMi != null && IsInstanceValid(emitMi))
+                emitMi.MaterialOverride = eff ? _fixtureLitMat : _fixtureOffMat;
         }
+
+        // F while looking at a standing/desk lamp flips its manual on/off (grid power is still required to actually emit).
+        public void Toggle() { _on = !_on; ApplyEffective(); }
+
+        // Whole-lamp white silhouette while looked at (mirrors ObjectDoor/GasPump/TVDevice's SetLookFocused).
+        public void SetLookFocused(bool on) { if (_outline != null && IsInstanceValid(_outline)) OutlineOverlay.ShowOutline(on, Colors.White, _outline); }
 
         public bool LitForTest => _omni != null && _omni.LightEnergy > 0f;
     }
