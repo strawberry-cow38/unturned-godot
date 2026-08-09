@@ -25,6 +25,10 @@ namespace UnturnedGodot
         public string PlaceName;   // the prop to place on click; null = select mode
         public bool GizmoLocalSpace => _gizmo?.LocalSpace ?? false;   // dashboard readout
         public string GizmoModeText => (_gizmo?.Mode ?? EditorGizmo.EMode.Translate) switch { EditorGizmo.EMode.Rotate => "rotate", EditorGizmo.EMode.Scale => "scale", _ => "move" };
+        /// <summary>Set the gizmo mode from the palette's tool buttons. Retail puts the same three tools on
+        /// buttons (SleekButtonIcon) AND on Q/W/R -- the keys keep working, the buttons just make them
+        /// discoverable, and both go through the one setter so they cannot disagree.</summary>
+        public void SetGizmoMode(EditorGizmo.EMode m) => _gizmo?.SetMode(m);
 
         readonly Dictionary<string, ArrayMesh> _meshCache = new();
         readonly List<Node3D> _placed = new();
@@ -139,6 +143,13 @@ namespace UnturnedGodot
             if (_meshCache.TryGetValue(name, out var m)) return m;
             m = ObjMesh.Load(Dir + name + ".obj"); _meshCache[name] = m; return m;
         }
+
+        /// <summary>The palette's preview renderer loads props through THESE, not through its own copy of the
+        /// loader, so a thumbnail is drawn from the same mesh and material the editor will actually place. A
+        /// second loading path would eventually disagree with this one, and the failure -- a picture of
+        /// something subtly other than what you get -- is worse than no picture.</summary>
+        public ArrayMesh PreviewMesh(string name) => name == null ? null : MeshFor(name);
+        public StandardMaterial3D PreviewMaterial(string name) => name == null ? null : MatFor(name);
 
         // mirrors WorldBuilder.MatFor (the common textured path): VertexColorUseAsAlbedo, nearest-filtered albedo,
         // palette textures skip mipmaps. Glass/foliage nuances are simplified for the editor.

@@ -11,6 +11,9 @@ namespace UnturnedGodot
         readonly EditorObjects _objects;
         ItemList _list;
         LineEdit _search;
+        EditorPropPreview _preview;
+        Label _stageName;
+        readonly System.Collections.Generic.Dictionary<string, int> _rowOf = new();   // prop name -> its row, for attaching a thumbnail when it finishes
         OptionButton _tableDrop;   // loot-crate table picker (shown only when a loot crate is selected)
         Control _crateBox;
         OptionButton _presetDrop;  // grid-power preset picker (shown only when a grid box is selected)
@@ -24,20 +27,70 @@ namespace UnturnedGodot
         public override void _Ready()
         {
             Position = new Vector2(12, 60);   // top-left, just under the dashboard's mode-tab bar
-            var panel = new PanelContainer { CustomMinimumSize = new Vector2(252, 580) };
+            // Sized off the retail editor rather than guessed: EditorLevelObjectsUI runs a 230-wide column of
+            // 200x30 controls on a 40px pitch. Ours was a 252 panel of 240-wide controls with 11px hint text,
+            // which is why it read as cramped (strawberry_cow: "make the entire ui bigger and more user
+            // friendly, using the source as a reference"). W is the one number to change.
+            const int W = 330, CTRL = W - 24;
+            var panel = new PanelContainer { CustomMinimumSize = new Vector2(W, 700) };
             AddChild(panel);
             var box = new VBoxContainer();
-            box.AddThemeConstantOverride("separation", 5);
+            box.AddThemeConstantOverride("separation", 8);
             panel.AddChild(box);
 
             var head = new Label { Text = $"OBJECTS  ({_objects.Catalog.Count})" };
-            head.AddThemeFontSizeOverride("font_size", 18);
+            head.AddThemeFontSizeOverride("font_size", 22);
             box.AddChild(head);
 
-            var hint = new Label { Text = "click a prop below → E places it\nclick a placed prop → E moves it\nT gizmo · Del · Ctrl+Z undo" };
-            hint.AddThemeFontSizeOverride("font_size", 11);
+            // Retail puts the KEY on the tool button (SleekButtonIcon + ControlsSettings.tool_N) instead of
+            // hiding the bindings in a legend. Same three tools, same keys, and they read as buttons you can
+            // press rather than as a list of things to memorise.
+            var tools = new HBoxContainer();
+            tools.AddThemeConstantOverride("separation", 4);
+            foreach (var (label, mode) in new (string, EditorGizmo.EMode)[]
+                     { ("Move  Q", EditorGizmo.EMode.Translate),
+                       ("Rotate  W", EditorGizmo.EMode.Rotate),
+                       ("Scale  R", EditorGizmo.EMode.Scale) })
+            {
+                var m = mode;
+                var tb = new Button { Text = label, CustomMinimumSize = new Vector2((CTRL - 8) / 3f, 34), FocusMode = FocusModeEnum.None };
+                tb.Pressed += () => _objects.SetGizmoMode(m);
+                tools.AddChild(tb);
+            }
+            box.AddChild(tools);
+
+            var hint = new Label { Text = "click a prop → E places it · click a placed one → E moves it\nDel removes · Ctrl+Z undoes" };
+            hint.AddThemeFontSizeOverride("font_size", 13);
             hint.AddThemeColorOverride("font_color", new Color(0.75f, 0.8f, 0.85f));
             box.AddChild(hint);
+
+            // ---- turntable ---------------------------------------------------------------------------
+            // "maybe a 3d spinning preview of the selected prop". It shows the SELECTED prop, which is the one
+            // E is about to place -- a preview of something other than what the button does would be worse
+            // than none.
+            _preview = new EditorPropPreview(_objects.PreviewMesh, _objects.PreviewMaterial);
+            AddChild(_preview);
+            _preview.ThumbReady += (name, tex) =>
+            {
+                if (_rowOf.TryGetValue(name, out var row) && row < _list.ItemCount) _list.SetItemIcon(row, tex);
+            };
+
+            var stageWrap = new SubViewportContainer
+            {
+                CustomMinimumSize = new Vector2(CTRL, EditorPropPreview.StagePx),
+                Stretch = false, MouseFilter = MouseFilterEnum.Ignore,
+            };
+            box.AddChild(stageWrap);
+            // The preview builds its viewports in _Ready, which has already run -- AddChild on a node that is
+            // itself in the tree fires _Ready synchronously -- so Stage exists by now. Move it under the
+            // container that displays it; it was parented to the preview only so it had somewhere to live.
+            var stage = _preview.Stage;
+            stage.GetParent()?.RemoveChild(stage);
+            stageWrap.AddChild(stage);
+
+            _stageName = new Label { Text = "—", HorizontalAlignment = HorizontalAlignment.Center };
+            _stageName.AddThemeFontSizeOverride("font_size", 14);
+            box.AddChild(_stageName);
 
             // loot-crate table picker -- appears when a placed ★ Loot Crate is selected
             var cbox = new VBoxContainer { Visible = false };
@@ -46,7 +99,7 @@ namespace UnturnedGodot
             cl.AddThemeFontSizeOverride("font_size", 13);
             cl.AddThemeColorOverride("font_color", new Color(1f, 0.85f, 0.4f));
             cbox.AddChild(cl);
-            _tableDrop = new OptionButton { CustomMinimumSize = new Vector2(240, 0) };
+            _tableDrop = new OptionButton { CustomMinimumSize = new Vector2(CTRL, 32) };
             for (int i = 0; i < LootTables.TableCount; i++) _tableDrop.AddItem($"{i}: {LootTables.TableName(i)}", i);
             _tableDrop.ItemSelected += idx => _objects.SetSelectedCrateTable((int)idx);
             cbox.AddChild(_tableDrop);
@@ -59,15 +112,15 @@ namespace UnturnedGodot
             gl.AddThemeFontSizeOverride("font_size", 13);
             gl.AddThemeColorOverride("font_color", new Color(0.5f, 0.85f, 1f));
             gbox.AddChild(gl);
-            _presetDrop = new OptionButton { CustomMinimumSize = new Vector2(240, 0) };
+            _presetDrop = new OptionButton { CustomMinimumSize = new Vector2(CTRL, 32) };
             for (int i = 0; i < GridPowerSource.Presets.Length; i++) { var pr = GridPowerSource.Presets[i]; _presetDrop.AddItem($"{pr.name} ({pr.watts:0}W)"); }
             _presetDrop.AddItem("Custom");   // last item -> keep the current custom value
             _presetDrop.ItemSelected += id => { if ((int)id >= 0 && (int)id < GridPowerSource.Presets.Length) { var pr = GridPowerSource.Presets[(int)id]; _objects.SetSelectedGridName(pr.name); _objects.SetSelectedGridWatts(pr.watts); SyncGridPicker(); } };
             gbox.AddChild(_presetDrop);
-            _gridNameEdit = new LineEdit { PlaceholderText = "name (e.g. Main Substation)", CustomMinimumSize = new Vector2(240, 0) };
+            _gridNameEdit = new LineEdit { PlaceholderText = "name (e.g. Main Substation)", CustomMinimumSize = new Vector2(CTRL, 32) };
             _gridNameEdit.TextChanged += t => _objects.SetSelectedGridName(t);
             gbox.AddChild(_gridNameEdit);
-            _gridWattEdit = new LineEdit { PlaceholderText = "watts (Enter to set)", CustomMinimumSize = new Vector2(240, 0) };
+            _gridWattEdit = new LineEdit { PlaceholderText = "watts (Enter to set)", CustomMinimumSize = new Vector2(CTRL, 32) };
             _gridWattEdit.TextSubmitted += t => { if (float.TryParse(t, out var w)) { _objects.SetSelectedGridWatts(w); SyncGridPicker(); } };
             gbox.AddChild(_gridWattEdit);
             box.AddChild(gbox);
@@ -79,7 +132,7 @@ namespace UnturnedGodot
             pl.AddThemeFontSizeOverride("font_size", 13);
             pl.AddThemeColorOverride("font_color", new Color(0.95f, 0.75f, 0.3f));
             pbox.AddChild(pl);
-            _stationEdit = new LineEdit { PlaceholderText = "station id (Enter to set)", CustomMinimumSize = new Vector2(240, 0) };
+            _stationEdit = new LineEdit { PlaceholderText = "station id (Enter to set)", CustomMinimumSize = new Vector2(CTRL, 32) };
             _stationEdit.TextSubmitted += t => { if (int.TryParse(t, out var s)) { _objects.SetSelectedStationId(s); SyncPumpPicker(); } };
             pbox.AddChild(_stationEdit);
             box.AddChild(pbox);
@@ -88,8 +141,8 @@ namespace UnturnedGodot
             _objects.SelectionChanged += SyncGridPicker;
             _objects.SelectionChanged += SyncPumpPicker;
 
-            var sel = new Button { Text = "Select-only (clear place type)" };
-            sel.Pressed += () => { _objects.ClearPlaceType(); _list.DeselectAll(); };
+            var sel = new Button { Text = "Select / move only", CustomMinimumSize = new Vector2(CTRL, 34), FocusMode = FocusModeEnum.None };
+            sel.Pressed += () => { _objects.ClearPlaceType(); _list.DeselectAll(); ShowPreview(null); };
             box.AddChild(sel);
 
             // The search box has to be EASY TO LEAVE. While it holds focus every keypress goes into it and
@@ -97,7 +150,7 @@ namespace UnturnedGodot
             // ignoring you (strawberry_cow: "really 'sticky', my inputs keep getting eaten by it"). Nothing
             // releases focus by itself, so there are three ways out: Enter, Escape, or clicking the world
             // (EditorObjects releases it on any viewport click).
-            _search = new LineEdit { PlaceholderText = "search…  (Enter or Esc to get back to the editor)" };
+            _search = new LineEdit { PlaceholderText = "search…  (Enter or Esc returns to the editor)", CustomMinimumSize = new Vector2(CTRL, 34) };
             _search.TextChanged += _ => Rebuild();
             _search.TextSubmitted += _ => _search.ReleaseFocus();
             _search.GuiInput += ev =>
@@ -110,23 +163,55 @@ namespace UnturnedGodot
             };
             box.AddChild(_search);
 
-            _list = new ItemList { CustomMinimumSize = new Vector2(240, 500), SizeFlagsVertical = SizeFlags.ExpandFill, FocusMode = Control.FocusModeEnum.None };
-            _list.ItemSelected += idx => _objects.SetPlaceType(_list.GetItemText((int)idx));   // pick the type to E-place (+ clears any instance selection)
+            _list = new ItemList
+            {
+                CustomMinimumSize = new Vector2(CTRL, 300),
+                SizeFlagsVertical = SizeFlags.ExpandFill,
+                FocusMode = Control.FocusModeEnum.None,
+                FixedIconSize = new Vector2I(EditorPropPreview.ThumbPx / 2, EditorPropPreview.ThumbPx / 2),
+            };
+            _list.AddThemeFontSizeOverride("font_size", 15);
+            _list.ItemSelected += idx =>
+            {
+                var n = _list.GetItemText((int)idx);
+                _objects.SetPlaceType(n);   // pick the type to E-place (+ clears any instance selection)
+                ShowPreview(n);
+            };
             box.AddChild(_list);
 
             // A building baked in the Buildings tab has to show up here without reopening the editor, or the
             // bake looks like it silently failed.
-            _objects.CatalogChanged += Rebuild;
+            // A re-bake under the same name must not keep serving the old prop's picture, so the cached
+            // thumbnails go with the catalog -- same reason EditorObjects drops its mesh cache on reload.
+            _objects.CatalogChanged += () => { _preview.Clear(); Rebuild(); };
 
             Rebuild();
+            ShowPreview(_objects.PlaceName);   // the palette opens with a prop already armed; show THAT one
         }
 
         void Rebuild()
         {
             string q = _search.Text.Trim().ToLower();
             _list.Clear();
+            _rowOf.Clear();
             foreach (var name in _objects.Catalog)
-                if (q.Length == 0 || name.ToLower().Contains(q)) _list.AddItem(name);
+            {
+                if (q.Length > 0 && !name.ToLower().Contains(q)) continue;
+                int row = _list.AddItem(name);
+                _rowOf[name] = row;
+                // Ask for a picture. Already-drawn props come back instantly; the rest arrive via ThumbReady,
+                // which is why the row index is kept. Asking for all of them at once is fine -- the preview
+                // renders one per couple of frames and a filtered search is usually a handful of rows.
+                var tex = _preview.Thumb(name);
+                if (tex != null) _list.SetItemIcon(row, tex);
+            }
+        }
+
+        /// <summary>Put a prop on the turntable and name it underneath.</summary>
+        void ShowPreview(string name)
+        {
+            _preview.ShowOnStage(name);
+            if (_stageName != null) _stageName.Text = name ?? "—";
         }
 
         void SyncCratePicker()   // selection changed: show the table dropdown for a selected loot crate + reflect its table
