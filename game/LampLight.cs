@@ -99,7 +99,7 @@ namespace UnturnedGodot
             {
                 case Kind.CeilingStrip:
                 {
-                    float bottomY = WorldBottomY(fA, xf) - 0.5f;   // FLOATING below the prop (master 2026-08-09: "a lil bit lower, floating below it")
+                    float bottomY = WorldBottomY(fA, xf) - 0.9f;   // FLOATING well below the prop (master 2026-08-09: "a lil bit lower" then "lower still")
                     return new Vector3(fCenterW.X, bottomY, fCenterW.Z) - GlobalPosition;
                 }
                 case Kind.FloorShade:
