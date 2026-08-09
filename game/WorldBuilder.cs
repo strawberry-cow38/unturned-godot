@@ -697,14 +697,10 @@ namespace UnturnedGodot
                 // grid-power + reaction-delay-flicker machinery via GridLight. LampLight splits the warm DIFFUSER faces
                 // off the housing (ObjMesh.SplitLens, same texel identity as Street_Light_0's lens) so only the diffuser
                 // glows when lit; no fake beam cone (indoors, short throw).
-                if ((name == "Light_0" || name == "Light_1" || name == "Lamp_0" || name == "Lamp_1") && mode != WorldMode.Dedicated)
+                if (LampLight.KindFor(name) != LampLight.Kind.Generic && mode != WorldMode.Dedicated)   // Light_0 ceiling / Lamp_1 standing / Lamp_0 desk (LampLight.KindFor is the one prop->kind table)
                 {
                     var lampCenter = mesh != null ? mesh.GetAabb().GetCenter() : Vector3.Zero;
-                    var lampKind = (name == "Light_0" || name == "Light_1") ? LampLight.Kind.CeilingStrip   // flush ceiling strip: diffuser glows, omni below
-                                 : name == "Lamp_1" ? LampLight.Kind.FloorShade                             // standing lamp: shade glows, omni at shade centre
-                                 : name == "Lamp_0" ? LampLight.Kind.DeskBulb                               // desk lamp: bulb face glows, omni in front, half energy
-                                 : LampLight.Kind.Generic;
-                    placedIndoorLamp = LampLight.Make(gpos + basis * lampCenter, mainMi, lampKind);   // captured so a break darkens it
+                    placedIndoorLamp = LampLight.Make(gpos + basis * lampCenter, mainMi, LampLight.KindFor(name));   // captured so a break darkens it
                     root.AddChild(placedIndoorLamp);
                 }
                 // SCREENS (master): Television_0/1 (flatscreen / CRT television) and Computer_0/3 (CRT / flatscreen
@@ -835,6 +831,7 @@ namespace UnturnedGodot
                         if (doorForBody != null) body.SetMeta("objectdoor", doorForBody);   // issue 3: look-at the body resolves to the door (PlayerController)
                         if (placedToaster != null) body.SetMeta(Toaster.HitMeta, placedToaster);   // shoot the toaster body -> its bread pop
                         if (placedTV != null) body.SetMeta(TVDevice.HitMeta, placedTV);   // look-at OR shoot the TV body resolves to its device (F toggle; screen shoot-out)
+                        if (placedIndoorLamp != null && LampLight.IsToggle(placedIndoorLamp.LampKind)) body.SetMeta(LampLight.LookMeta, placedIndoorLamp);   // look-at the standing/desk lamp body -> its LampLight (F on/off + outline)
                         if (placedMonitor != null) body.SetMeta(HeartMonitor.HitMeta, placedMonitor);   // same route for the patient monitor
                     }
                 }

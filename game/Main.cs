@@ -635,7 +635,11 @@ namespace UnturnedGodot
                     menu.OnMultiplayer = () => { menu.QueueFree(); _connectHost = "claw.bitvox.me"; _playableClient = true; BuildClient(); };   // legacy MP-test entry (fallback)
                     menu.OnJoinServer = (host, port) => { menu.QueueFree(); _connectHost = host; _connectPort = port; _playableClient = true; BuildClient(); };   // server browser JOIN / direct-connect -> real client join
                     menu.OnEditor = () => { menu.QueueFree(); BuildEditor(); };   // Workshop -> the singleplayer map editor (PEI)
-                    menu.OnNewMap = () => { menu.QueueFree(); BuildEditorNew(); };   // Workshop -> a fresh blank map
+                    menu.OnOpenMap = name => { menu.QueueFree(); BuildEditorNew(name); };   // Workshop -> a custom map by name (creates or opens)
+                    // Play a custom map: open it exactly as the editor does, then enter play immediately. NOT a
+                    // second world-building path -- a "play build" that assembles the map its own way is how the
+                    // thing you test stops being the thing you edited.
+                    menu.OnPlayMap = name => { menu.QueueFree(); BuildEditorNew(name); _autoPlayMap = true; };
                     AddChild(menu);
                 });
                 return;
@@ -3005,8 +3009,16 @@ namespace UnturnedGodot
 
         // Workshop -> "New Map": boot the editor with a fresh FLAT all-grass map (no props/spawns/roads) to build from
         // scratch. Reuses every sub-editor; map name "NewMap" so its saves stay separate from PEI's (per-map save paths).
-        void BuildEditorNew()
+        /// <summary>Open a CUSTOM map by name -- the same path whether it already exists or not.
+        ///
+        /// There is no separate "load": every sub-editor reads `editor_&lt;MapName&gt;_*` when it starts, so
+        /// naming the map IS opening it. A blank name would have been the old hardcoded "NewMap", which
+        /// meant every new map silently opened on top of the previous one's files.</summary>
+        bool _autoPlayMap;   // Workshop 'Play' -> enter play as soon as the map finishes building
+
+        void BuildEditorNew(string mapName = null)
         {
+            mapName = EditorMaps.Sanitise(mapName) ?? "NewMap";
             _worldBuild = true;
             var terr = Terrain.CreateFlat(3, 3);
             AddChild(terr);
@@ -3026,10 +3038,10 @@ namespace UnturnedGodot
             AddChild(editor);
             var cam = new EditorCamera { Position = new Vector3(0f, 130f, 190f), RotationDegrees = new Vector3(-30f, 0f, 0f) };
             editor.AddChild(cam);
-            editor.Setup("NewMap", null, cam);
+            editor.Setup(mapName, null, cam);
             LootTables.Load(_mapRoot + "/Spawns/Items.dat");   // new maps use PEI's loot tables as the pool (for loot crates)
             var objs = new EditorObjects(editor, this, cam); editor.AddChild(objs); editor.Objects = objs;
-            var spawns = new EditorSpawns(editor, cam, MapDir("NewMap")); editor.AddChild(spawns); editor.Spawns = spawns;   // dir doesn't exist -> starts empty
+            var spawns = new EditorSpawns(editor, cam, MapDir(mapName)); editor.AddChild(spawns); editor.Spawns = spawns;   // dir doesn't exist -> starts empty
             var envEd = new EditorEnvironment(editor, dayNight, SetCleanEditorLighting); editor.AddChild(envEd); editor.Environment = envEd;
             var terrainEd = new EditorTerrain(editor, cam, terr); editor.AddChild(terrainEd); editor.TerrainEd = terrainEd;
             var rf = new RoadField { Terr = terr };
@@ -3037,8 +3049,14 @@ namespace UnturnedGodot
             AddChild(rf);
             var roadsEd = new EditorRoads(editor, cam, rf); editor.AddChild(roadsEd); editor.RoadsEd = roadsEd;
             editor.AddChild(new EditorDashboard { Editor = editor, OnExit = ReturnToMenu });
+            var play = new EditorPlayMode();   // playtest button -- custom maps get it too, not just PEI
+            editor.AddChild(play);
+            play.Setup(editor, null, cam);
+            // Workshop's per-map Play opens the editor and goes straight in, so the map you play is the
+            // map the editor built -- one world-building path, not two that can disagree.
+            if (_autoPlayMap) { _autoPlayMap = false; play.CallDeferred(nameof(EditorPlayMode.EnterPlay)); }
             _worldReady = true;
-            GD.Print("[editor] NEW blank map (flat 3x3) up");
+            GD.Print($"[editor] custom map '{mapName}' (flat 3x3 base) up");
         }
 
         // Workshop -> the map EDITOR (singleplayer, ported from SDG.Unturned Edit/). Phase 1: load PEI as the
@@ -4379,13 +4397,10 @@ namespace UnturnedGodot
             LampLight.DebugNoOmni = System.Environment.GetEnvironmentVariable("UG_LAMP_NOOMNI") == "1";   // proof shot: only the emissive part, no room light
             var bulbSideStr = System.Environment.GetEnvironmentVariable("UG_BULB_SIDE");                 // DeskBulb render-pick: +1 / -1
             if (!string.IsNullOrEmpty(bulbSideStr) && float.TryParse(bulbSideStr, out var bs)) LampLight.DebugBulbSide = bs;
-            var lampKind = (which == "Light_0" || which == "Light_1") ? LampLight.Kind.CeilingStrip
-                         : which == "Lamp_1" ? LampLight.Kind.FloorShade
-                         : which == "Lamp_0" ? LampLight.Kind.DeskBulb
-                         : LampLight.Kind.Generic;
-            var lamp = LampLight.Make(new Vector3(0f, mountY, 0f), mi, lampKind);   // hand the fixture mesh in so the right part glows when lit
+            var lamp = LampLight.Make(new Vector3(0f, mountY, 0f), mi, LampLight.KindFor(which));   // hand the fixture mesh in so the right part glows when lit (LampLight.KindFor = the one prop->kind table)
             AddChild(lamp);
             lamp.SetPowered(!off);
+            if (System.Environment.GetEnvironmentVariable("UG_LAMP_OUTLINE") == "1") lamp.SetLookFocused(true);   // verify the whole-lamp look-outline (toggle lamps only)
             GD.Print($"[LAMPTEST] {which} + LampLight, powered={!off}, lit={lamp.LitForTest}");
 
             var cam = new Camera3D { Current = true, Fov = 60f };

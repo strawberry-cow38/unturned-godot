@@ -21,7 +21,11 @@ namespace UnturnedGodot
         public System.Action OnMultiplayer;       // legacy top-level hard-connect to the MP test server (kept as a fallback)
         public System.Action<string, ushort> OnJoinServer;   // server browser JOIN / direct-connect: real client join to host:port
         public System.Action OnEditor;            // Workshop -> the singleplayer map editor (PEI)
-        public System.Action OnNewMap;            // Workshop -> a fresh blank map in the editor
+        // Workshop -> a custom map by NAME. The same entry point does new-and-load: the sub-editors read
+        // `editor_<name>_*` when they start, so "create" and "open" differ only in whether those files exist.
+        // Two entry points would be two ways to start a map, and they drift.
+        public System.Action<string> OnOpenMap;
+        public System.Action<string> OnPlayMap;   // Workshop -> open a custom map and drop straight into play
 
         // --- camera anchors (framings of the barn). Tuned against the render; index 0 = Title (idle). ---
         // pos + look-at, world space. Title is a pulled-back 3/4 hero shot; each tab reframes the barn.
@@ -301,23 +305,96 @@ namespace UnturnedGodot
         }
 
         // Workshop submenu -- vanilla has Editor / Manage / browse; ours ships the Editor (PEI) for now.
+        LineEdit _newMapName;
+        VBoxContainer _mapList;
+
         void BuildWorkshopPanel(CanvasLayer layer)
         {
-            _workshopPanel = new PanelContainer { Position = new Vector2(240f, 410f), Visible = false };
+            // Anchored higher than before because the panel now grows with the saved-map list. At the old
+            // y=410 a third map pushed the buttons off the bottom of the screen.
+            _workshopPanel = new PanelContainer { Position = new Vector2(240f, 150f), Visible = false };
             var box = new VBoxContainer();
             box.AddThemeConstantOverride("separation", 10);
             ((PanelContainer)_workshopPanel).AddChild(box);
             var head = new Label { Text = "WORKSHOP" };
             head.AddThemeFontSizeOverride("font_size", 22);
             box.AddChild(head);
+
             box.AddChild(SubButton("Editor — Prince Edward Island", () => OnEditor?.Invoke()));
-            box.AddChild(SubButton("Create New Map", () => OnNewMap?.Invoke()));
+
+            box.AddChild(new HSeparator());
+            box.AddChild(Dim("NEW MAP"));
+            var row = new HBoxContainer();
+            row.AddThemeConstantOverride("separation", 6);
+            _newMapName = new LineEdit { PlaceholderText = "map name", CustomMinimumSize = new Vector2(212f, 40f) };
+            _newMapName.TextSubmitted += _ => CreateMap();
+            row.AddChild(_newMapName);
+            var create = new Button { Text = "Create", CustomMinimumSize = new Vector2(102f, 40f) };
+            create.Pressed += CreateMap;
+            row.AddChild(create);
+            box.AddChild(row);
+
+            box.AddChild(new HSeparator());
+            box.AddChild(Dim("SAVED MAPS  —  open to edit, or play it"));
+            _mapList = new VBoxContainer();
+            _mapList.AddThemeConstantOverride("separation", 4);
+            box.AddChild(_mapList);
+
             layer.AddChild(_workshopPanel);
+            RefreshMapList();
+        }
+
+        static Label Dim(string t)
+        {
+            var l = new Label { Text = t };
+            l.AddThemeFontSizeOverride("font_size", 13);
+            l.AddThemeColorOverride("font_color", new Color(0.72f, 0.78f, 0.84f));
+            return l;
+        }
+
+        /// <summary>Create refuses rather than guessing. An empty or unusable name (see EditorMaps.Sanitise --
+        /// the name becomes a FILE PATH) leaves the field alone and says so, instead of silently opening
+        /// something called "NewMap" that the user then can't find. Names are made unique too, so a second
+        /// "Test" is "Test 2" and never quietly opens on top of the first one's files.</summary>
+        void CreateMap()
+        {
+            var typed = EditorMaps.Sanitise(_newMapName.Text);
+            if (typed == null)
+            {
+                _newMapName.Text = "";
+                _newMapName.PlaceholderText = "letters, numbers, - and _ only";
+                return;
+            }
+            OnOpenMap?.Invoke(EditorMaps.Unique(typed));
+        }
+
+        /// <summary>Rebuild the saved-map rows. Called when the panel is opened, not only at construction --
+        /// coming back from the editor after saving a new map must show it.</summary>
+        void RefreshMapList()
+        {
+            if (_mapList == null) return;
+            foreach (var c in _mapList.GetChildren()) ((Node)c).QueueFree();
+            var maps = EditorMaps.List();
+            if (maps.Count == 0) { _mapList.AddChild(Dim("  (none yet — create one above)")); return; }
+            foreach (var name in maps)
+            {
+                var n = name;
+                var r = new HBoxContainer();
+                r.AddThemeConstantOverride("separation", 6);
+                var open = new Button { Text = n, CustomMinimumSize = new Vector2(212f, 38f), Alignment = HorizontalAlignment.Left };
+                open.Pressed += () => OnOpenMap?.Invoke(n);
+                r.AddChild(open);
+                var play = new Button { Text = "▶ Play", CustomMinimumSize = new Vector2(102f, 38f) };
+                play.Pressed += () => OnPlayMap?.Invoke(n);
+                r.AddChild(play);
+                _mapList.AddChild(r);
+            }
         }
 
         void ToggleWorkshopPanel()
         {
             bool show = !_workshopPanel.Visible;
+            if (show) RefreshMapList();   // a map saved since the menu was built has to appear without a restart
             _workshopPanel.Visible = show;
             if (_playPanel != null) _playPanel.Visible = false;
             if (_stubPanel != null) _stubPanel.Visible = false;
