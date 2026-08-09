@@ -38,7 +38,7 @@ namespace UnturnedGodot
                 MaterialOverride = new StandardMaterial3D
                 {
                     // additive + unshaded + gradient-faded, same recipe as StreetLight's cone (soft, dissolves at the far end)
-                    AlbedoColor = new Color(BeamColor.R, BeamColor.G, BeamColor.B, 0.05f),
+                    AlbedoColor = new Color(BeamColor.R, BeamColor.G, BeamColor.B, 0.09f),   // brighter than a streetlight cone -- this is meant to be seen from distance
                     AlbedoTexture = StreetLight.ConeGradient(),
                     Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
                     BlendMode = BaseMaterial3D.BlendModeEnum.Add,

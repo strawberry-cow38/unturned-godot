@@ -4374,9 +4374,9 @@ namespace UnturnedGodot
             float topY = float.MinValue, botY = float.MaxValue; Vector3 sum = Vector3.Zero;
             for (int i = 0; i < 8; i++) { var w = basis * ab.GetEndpoint(i); topY = Mathf.Max(topY, w.Y); botY = Mathf.Min(botY, w.Y); sum += w; }
             mi.Position = new Vector3(0f, -botY, 0f);
-            var lampRoom = new Vector3(sum.X / 8f, (topY - botY) - 4f, sum.Z / 8f);
+            var lampRoom = new Vector3(sum.X / 8f, (topY - botY) - 4.5f, sum.Z / 8f);   // gallery ring at roof-4.5 (tinyclaw)
             AddChild(LighthouseBeam.Make(lampRoom));
-            GD.Print($"[BEAMTEST] Lighthouse_0 + beam, tower {(topY - botY):0.0}m, lampRoom Y={lampRoom.Y:0.0}");
+            GD.Print($"[BEAMTEST] Lighthouse_0 + beam, roof {(topY - botY):0.0}m, lampRoom Y={lampRoom.Y:0.0} (want ~roof-4.5)");
 
             var cam = new Camera3D { Current = true, Fov = 62f, Far = 900f };
             AddChild(cam);

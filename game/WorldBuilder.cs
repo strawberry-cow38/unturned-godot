@@ -712,7 +712,7 @@ namespace UnturnedGodot
                     var ab = mesh.GetAabb();
                     float topY = float.MinValue; Vector3 sum = Vector3.Zero;
                     for (int i = 0; i < 8; i++) { var w = gpos + basis * ab.GetEndpoint(i); topY = Mathf.Max(topY, w.Y); sum += w; }
-                    root.AddChild(LighthouseBeam.Make(new Vector3(sum.X / 8f, topY - 4f, sum.Z / 8f)));   // just under the very top
+                    root.AddChild(LighthouseBeam.Make(new Vector3(sum.X / 8f, topY - 4.5f, sum.Z / 8f)));   // the gallery ring, ~4.5m under the roof (tinyclaw: widest ring at roof-4.5)
                 }
                 // SCREENS (master): Television_0/1 (flatscreen / CRT television) and Computer_0/3 (CRT / flatscreen
                 // computer monitor) become interactive sets -- look at it + F toggles it on/off, all of them start ON,
