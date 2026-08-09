@@ -28,6 +28,11 @@ namespace UnturnedGodot
         public string PlaceSound;  // src .dat PlacementAudioClip stem (content/sounds/<stem>.wav) played when planted; null = silent
         public string HoldMesh, HoldAlbedo;   // content/<mesh>.obj + palette for the 1st-person carry model (item.prefab); null -> EmptyHands fallback (ghost only)
         public bool ShatterOnDeath;   // true -> explodes into flying debris + vanishes (no salvageable husk, drops nothing); false -> charred blowtorch-salvageable wreck
+        /// <summary>A placeable DOOR: the prop name to look up in content/objects/doors.txt (the SAME catalog
+        /// the container doors use). Non-null routes placement through DoorDeploy.SpawnFor instead of spawning a
+        /// plain Deployable body, mirroring IsStorage -> FridgeDeploy and Fluid -> FluidDeploy.</summary>
+        public string DoorProp;
+
         public bool ProcBox;          // true -> a plain gray BoxMesh of Size (no .obj/palette); the custom splitters use it
         public bool ExplosionProof;   // src Proof_Explosion: immune to OTHER explosions' damage (the Charge) so a stack doesn't chain-detonate -- you blow them on the Detonator's command, not from one stray blast
 

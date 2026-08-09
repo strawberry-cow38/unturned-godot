@@ -2060,11 +2060,18 @@ namespace UnturnedGodot
                         _viewmodel?.PlayDeployHold();
                         return;
                     }
-                    if (_deployable.Fluid != null)   // FLUID device: spawn a FluidContainer LOCALLY (rides the ghost/place flow; device MP replication = fast-follow)
+                    // FLUID device, or a placeable DOOR: spawn LOCALLY (rides the ghost/place flow; device MP
+                    // replication = fast-follow). Doors ride this branch rather than getting a third copy of it
+                    // -- everything below the spawn call (place sound, the net-vs-SP item spend, the revert on
+                    // the last one) is identical for all three, and the storage/fluid pair have ALREADY drifted
+                    // slightly apart from each other. One more copy is one more thing to fix in three places.
+                    if (_deployable.Fluid != null || _deployable.DoorProp != null)
                     {
-                        FluidDeploy.SpawnFor(_deployable, GetParent(), _placePoint, _placeYaw);
+                        bool isDoor = _deployable.DoorProp != null;
+                        if (isDoor) DoorDeploy.SpawnFor(_deployable, GetParent(), _placePoint, _placeYaw);
+                        else FluidDeploy.SpawnFor(_deployable, GetParent(), _placePoint, _placeYaw);
                         PlayPlaceSound(_deployable.PlaceSound, _placePoint);
-                        GD.Print($"[fluid] placed {_deployable.Name} at {_placePoint}");
+                        GD.Print($"[{(isDoor ? "door" : "fluid")}] placed {_deployable.Name} at {_placePoint}");
                         if (_deployItem != null && Inventory != null)
                         {
                             ushort id = _deployItem.id;
