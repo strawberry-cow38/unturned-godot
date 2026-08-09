@@ -56,7 +56,7 @@ namespace UnturnedGodot
                 MaterialOverride = new StandardMaterial3D
                 {
                     // additive + unshaded + gradient-faded, same recipe as StreetLight's cone (soft, dissolves at the far end)
-                    AlbedoColor = new Color(col.R, col.G, col.B, 0.06f),   // master: LESS opaque -- more see-through; sodium colour
+                    AlbedoColor = new Color(col.R, col.G, col.B, 0.12f),   // master: more opaque again (the wide-end fade thinned it); sodium colour
                     AlbedoTexture = BeamGradient(),                    // master: fade out toward the WIDE (far) end, not the streetlight's fade-at-the-ground
                     Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
                     BlendMode = BaseMaterial3D.BlendModeEnum.Add,
