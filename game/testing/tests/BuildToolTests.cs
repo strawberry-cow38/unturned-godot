@@ -2226,4 +2226,67 @@ namespace UnturnedGodot.Testing
             prev.QueueFree();
         }
     }
+
+    /// <summary>A door's hinge must lie ON its own leaf.
+    ///
+    /// The wooden anim rows were authored against a leaf centred on its origin; the rips are not. Door_Pine
+    /// spans x -2.35..+0.10 while its row says the hinge is at +1.125 -- the exact negation of the mesh's
+    /// centre, and a full metre clear of any geometry -- so the door swung around a point out in mid-air
+    /// beside itself.
+    ///
+    /// The check is "the pivot is inside the leaf's own bounds", not "the pivot equals 0.0". Asserting the
+    /// corrected NUMBER would just restate the fix and would still pass if a future re-extract moved the mesh
+    /// again; asserting the RELATION is what actually has to hold, and it holds for every door.
+    ///
+    /// Container doors are in here too as the control: their rows already agree with their meshes, so they
+    /// must pass WITHOUT any rebasing -- which is what makes the rebase provably specific to the wooden path
+    /// rather than something applied everywhere until the symptom went away.</summary>
+    public class DoorHingesLieOnTheirLeaf : GameTest
+    {
+        public override string Name => "door.hinge_lies_on_its_leaf";
+        static string Dir => ProjectSettings.GlobalizePath("res://content/objects/");
+
+        static bool Inside(Aabb b, Vector3 p, float slack)
+        {
+            var lo = b.Position - Vector3.One * slack;
+            var hi = b.Position + b.Size + Vector3.One * slack;
+            return p.X >= lo.X && p.X <= hi.X && p.Y >= lo.Y && p.Y <= hi.Y && p.Z >= lo.Z && p.Z <= hi.Z;
+        }
+
+        public override IEnumerable<Step> Run()
+        {
+            // WOODEN: the path that was broken. Ask DoorDeploy for the catalogue entry it will actually use.
+            foreach (var prop in new[] { "Door_Pine", "Door_Birch", "Door_Maple", "Door_Metal" })
+            {
+                var entries = DoorDeploy.WoodenLeavesForTest(prop, Dir);
+                if (entries == null || entries.Count == 0) { T.Check($"{prop}: has a hinge row", false); continue; }
+                var mesh = ObjMesh.Load(Dir + entries[0].MeshFile);
+                if (mesh == null) { T.Check($"{prop}: leaf loads", false); continue; }
+                var b = mesh.GetAabb();
+                var pv = entries[0].Pivot;
+                T.Check($"{prop}: hinge {pv.X:0.00} lies on the leaf (x {b.Position.X:0.00}..{b.Position.X + b.Size.X:0.00})",
+                        Inside(b, pv, 0.15f));
+                T.Check($"{prop}: and near an EDGE, not the middle (|{pv.X:0.00}| vs half-width {b.Size.X * 0.5f:0.00})",
+                        Mathf.Abs(pv.X - b.GetCenter().X) > b.Size.X * 0.25f);
+                T.Check($"{prop}: swings quicker than retail's 0.6333 ({entries[0].DurationSec:0.000}s)",
+                        entries[0].DurationSec < 0.55f);
+            }
+
+            // CONTAINER control: untouched by the rebase, and already correct.
+            foreach (var (file, px) in new[]
+            {
+                ("Fridge_0_door.obj", 0.613031f),
+                ("Oven_0_door.obj", 0.5f),
+                ("Wardrobe_0_Left_Hinge_0_door.obj", -0.972499f),
+            })
+            {
+                var m = ObjMesh.Load(Dir + file);
+                if (m == null) { T.Check($"{file} loads", false); continue; }
+                var b = m.GetAabb();
+                T.Check($"control {file}: its row already sits on its mesh ({px:0.00} in {b.Position.X:0.00}..{b.Position.X + b.Size.X:0.00})",
+                        px >= b.Position.X - 0.05f && px <= b.Position.X + b.Size.X + 0.05f);
+            }
+            yield break;
+        }
+    }
 }
