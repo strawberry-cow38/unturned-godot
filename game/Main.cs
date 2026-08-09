@@ -86,7 +86,7 @@ namespace UnturnedGodot
             string doorTestName = null;
             bool containerTest = false; string containerTestName = null;
             bool wallDemo = false;
-            bool play = false, demo = false, netdemo = false, server = false, dedicated = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, lightTest = false, trafficTest = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, objects = false, peidrive = false, craftui = false, bakenav = false, navPathTest = false, zombieTest = false, zdirTest = false, editorMode = false, impactTest = false, doorGallery = false, lampTest = false;
+            bool play = false, demo = false, netdemo = false, server = false, dedicated = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, lightTest = false, trafficTest = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, objects = false, peidrive = false, craftui = false, bakenav = false, navPathTest = false, zombieTest = false, zdirTest = false, editorMode = false, impactTest = false, doorGallery = false, lampTest = false, beamTest = false;
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
                 if (arg.StartsWith("--catalog=")) catalog = arg["--catalog=".Length..];
@@ -183,6 +183,7 @@ namespace UnturnedGodot
                 else if (arg == "--daynight") daynight = true;
                 else if (arg == "--lighttest") lightTest = true;   // one lit streetlight at night: cone + motes eyeball (UG_LIGHTCAM=under looks up from inside)
                 else if (arg == "--lamptest") lampTest = true;   // one lit INDOOR light over dark ground: UG_LAMP=Light_0(ceiling,default)/Light_1/Lamp_0/Lamp_1, UG_LAMPOFF=1 unlit
+                else if (arg == "--beamtest") beamTest = true;   // the lighthouse's sweeping beam at night (static frame)
                 else if (arg == "--trafficlight") trafficTest = true;   // one signal, both heads (UG_TL_STATE=green|amber|red|flash|dark, UG_TL_SIDE=1 for the side-road mast, UG_TL_DAY=1 for daylight)
                 else if (arg == "--build") buildmode = true;
                 else if (arg == "--walls") wallDemo = true;   // building tool: generated walls + openings, no editor needed
@@ -446,6 +447,14 @@ namespace UnturnedGodot
                 _shotPath = shot;
                 GetWindow().Size = new Vector2I(1280, 720);
                 BuildLampTest();
+                return;
+            }
+
+            if (beamTest)   // the lighthouse's sweeping beam over a night ground -- one static frame (the spin needs an eye)
+            {
+                _shotPath = shot;
+                GetWindow().Size = new Vector2I(1280, 720);
+                BuildBeamTest();
                 return;
             }
 
@@ -4351,6 +4360,46 @@ namespace UnturnedGodot
             cam.Position = new Vector3(-9f, 6.6f, -5.4f);
             cam.LookAt(new Vector3(0f, 6.3f, -5.4f), Vector3.Up);
             GD.Print($"[TRAFFICLIGHT] side={side} day={day} heads={headMeshes?.Length ?? 0}");
+        }
+
+        // --beamtest: the lighthouse's sweeping BEAM over a dark night ground -- one static frame (the spin needs an eye).
+        void BuildBeamTest()
+        {
+            var env = new Godot.Environment
+            {
+                BackgroundMode = Godot.Environment.BGMode.Color, BackgroundColor = new Color(0.02f, 0.03f, 0.06f),
+                AmbientLightSource = Godot.Environment.AmbientSource.Color, AmbientLightColor = new Color(0.05f, 0.06f, 0.09f), AmbientLightEnergy = 1f,
+                GlowEnabled = true, GlowIntensity = 0.9f, GlowBloom = 0.2f, GlowHdrThreshold = 0.8f,
+            };
+            AddChild(new WorldEnvironment { Environment = env });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-32f, 40f, 0f), LightEnergy = 0.18f, LightColor = new Color(0.55f, 0.65f, 0.85f) });   // faint moonlight so the tower reads
+
+            var gmesh = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(700, 700) } };
+            gmesh.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.05f, 0.06f, 0.07f), Roughness = 1f };
+            AddChild(gmesh);
+
+            string objDir = ProjectSettings.GlobalizePath("res://content/objects/");
+            var m = ObjMesh.Load(objDir + "Lighthouse_0.obj");
+            if (m == null) { GD.PrintErr("[beamtest] Lighthouse_0.obj missing"); return; }
+            var mat = new StandardMaterial3D { Roughness = 0.9f, CullMode = BaseMaterial3D.CullModeEnum.Disabled, TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest };
+            string tex = objDir + "Lighthouse_0_tex.png";
+            if (System.IO.File.Exists(tex)) { var img = Image.LoadFromFile(tex); if (img != null) mat.AlbedoTexture = ImageTexture.CreateFromImage(img); }
+            var mi = new MeshInstance3D { Mesh = m, MaterialOverride = mat, RotationDegrees = new Vector3(270f, 194f, 0f) };   // the tower's real placement euler
+            AddChild(mi);
+
+            // Sit the tower base on the ground + the lamp room off its world AABB (same math WorldBuilder uses).
+            var ab = m.GetAabb(); var basis = mi.Basis;
+            float topY = float.MinValue, botY = float.MaxValue; Vector3 sum = Vector3.Zero;
+            for (int i = 0; i < 8; i++) { var w = basis * ab.GetEndpoint(i); topY = Mathf.Max(topY, w.Y); botY = Mathf.Min(botY, w.Y); sum += w; }
+            mi.Position = new Vector3(0f, -botY, 0f);
+            var lampRoom = new Vector3(sum.X / 8f, (topY - botY) - 4.5f, sum.Z / 8f);   // gallery ring at roof-4.5 (tinyclaw)
+            AddChild(LighthouseBeam.Make(lampRoom));
+            GD.Print($"[BEAMTEST] Lighthouse_0 + beam, roof {(topY - botY):0.0}m, lampRoom Y={lampRoom.Y:0.0} (want ~roof-4.5)");
+
+            var cam = new Camera3D { Current = true, Fov = 62f, Far = 900f };
+            AddChild(cam);
+            cam.Position = new Vector3(130f, 45f, 140f);
+            cam.LookAt(new Vector3(0f, lampRoom.Y - 8f, 0f), Vector3.Up);
         }
 
         // --lamptest: a single lit INDOOR light fixture over a dark ground -- Light_0 (ceiling) by default, or

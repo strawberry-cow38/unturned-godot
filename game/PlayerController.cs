@@ -5432,13 +5432,67 @@ namespace UnturnedGodot
             // feel nothing like it: you would lose your sights every time a sprint key was brushed.
             bool equipmentAllowsSprint = _viewmodel == null || !_viewmodel.IsAiming;
             _move.Stance = _stance.Step(crouchKey, proneKey, sprintKey, Stamina, Broken, scriptedStance, _capStance, HeadroomFor, equipmentAllowsSprint);
+            // A ladder outranks everything, including water -- retail's simulate() runs the ladder block first
+            // and RETURNS out of the stance function while attached, so a ladder in the shallows keeps you
+            // climbing rather than dropping you into a swim.
+            if (!NetAvatar && StepLadder()) _move.Stance = EPlayerStance.CLIMB;
             // Water overrides the key-driven stance. NetAvatars hold the replicated stance (NetHoldPose), so
             // only a locally-simulated shell decides here.
-            if (!NetAvatar && BodyUnderwater)
+            else if (!NetAvatar && BodyUnderwater)
                 _move.Stance = EPlayerStance.SWIM;   // feet+1.25 body probe submerged -> swim (PlayerStance.cs:636-673)
             else if (!NetAvatar && FeetUnderwater && (_move.Stance == EPlayerStance.CROUCH || _move.Stance == EPlayerStance.PRONE))
                 _move.Stance = EPlayerStance.STAND;  // wading (feet wet, not deep enough to swim) blocks crouch/crawl (PlayerStance.cs:340-346, 865-869)
             UpdateHitbox(_move.Stance);   // resize the collision capsule to match the stance (source HeightForStance)
+        }
+
+        PhysicsShapeQueryParameters3D _ladderFitQ;
+
+        /// <summary>Ladder attach/hold/detach, once per tick. True = we are on a ladder this frame.
+        ///
+        /// Retail (PlayerStance.simulate): probe forward 0.75 m from 0.5 m above the feet; the hit must be a
+        /// ladder, must be its front/back FACE rather than an edge, and the ladder must be upright. First
+        /// attach snaps you to the ladder's centre line. Losing the probe drops you off, which is what makes
+        /// stepping sideways off a ladder work without any explicit dismount.</summary>
+        bool StepLadder()
+        {
+            var space = GetWorld3D()?.DirectSpaceState;
+            if (space == null) return false;
+
+            var from = GlobalPosition + Vector3.Up * Ladder.ProbeHeight;
+            var fwd = -GlobalTransform.Basis.Z;                       // body facing, not the camera's
+            var q = PhysicsRayQueryParameters3D.Create(from, from + fwd * Ladder.ProbeDist);
+            q.Exclude = new Godot.Collections.Array<Rid> { GetRid() };
+            var hit = space.IntersectRay(q);
+            // Any of these failing means "not on a ladder", and the caller turns that into STAND -- which is
+            // the whole dismount mechanism: step sideways, the probe misses, you are walking again.
+            if (hit == null || hit.Count == 0 || !hit.ContainsKey("collider")) return false;
+            if (hit["collider"].As<GodotObject>() is not Node3D body || !body.HasMeta(Ladder.Meta)) return false;
+            if (!Ladder.IsClimbable((Vector3)hit["normal"], Ladder.FaceAxis(body))) return false;
+
+            if (_move.Stance == EPlayerStance.CLIMB) return true;     // already on it; nothing to re-snap
+
+            var target = Ladder.ClimbPoint(body.GlobalPosition, (Vector3)hit["position"], (Vector3)hit["normal"]);
+            // Refuse if the destination is occupied. Tested with IntersectShape AT the target rather than a
+            // motion cast on purpose: a sweep reports CLEAR through a wall in this engine (that cost a day on
+            // the barricade work), and it also cannot see a collider we are already overlapping -- which is the
+            // exploit retail's second CheckCapsule exists to close.
+            // Inset from the feet by FloorInset. The climb point sits at roughly FOOT level -- hitY is
+            // taken 0.5 m above the feet and the point drops 0.5 back down -- so a capsule starting exactly
+            // at `target` grazes the very ground the ladder is standing on and reports "blocked" at the foot
+            // of every ladder in the world. The check wants HEADROOM, not "is there a floor here".
+            const float FloorInset = 0.12f;
+            _ladderFitQ ??= new PhysicsShapeQueryParameters3D
+            {
+                Shape = new CapsuleShape3D { Height = PlayerMovementDef.HEIGHT_STAND - FloorInset * 1.5f, Radius = 0.28f },
+                CollisionMask = 1u << 0,
+            };
+            _ladderFitQ.Transform = new Transform3D(Basis.Identity,
+                target + Vector3.Up * (FloorInset + (PlayerMovementDef.HEIGHT_STAND - FloorInset * 1.5f) * 0.5f));
+            _ladderFitQ.Exclude = new Godot.Collections.Array<Rid> { GetRid() };
+            if (space.IntersectShape(_ladderFitQ, 1).Count > 0) return false;   // blocked -> stay off, keep walking
+
+            GlobalPosition = target;
+            return true;
         }
 
         /// <summary>Movement half: grounded resolve -> sim Step -> StepUp -> MoveAndSlide.
@@ -5455,6 +5509,17 @@ namespace UnturnedGodot
                 wasAirborne = false;               // swimming is never airborne -> the caller skips fall damage (retail: SWIM branch never onLanded)
                 verticalVel = Velocity.Y;
                 groundedEntering = false;
+                return;
+            }
+            if (_move.Stance == EPlayerStance.CLIMB)
+            {
+                // Purely vertical: PlayerMovement's CLIMB branch is `velocity = (0, move.z * speed * 0.5, 0)`.
+                // No horizontal term at all, which is what keeps you glued to the rungs while you look around.
+                Velocity = new Vector3(0f, Ladder.ClimbVelocity(forward), 0f);
+                MoveAndSlide();
+                wasAirborne = false;    // retail forces isGrounded while climbing -> stepping off a ladder is never a fall
+                verticalVel = 0f;       // ...and so must never book fall damage
+                groundedEntering = true;
                 return;
             }
             bool grounded = IsOnFloor();
