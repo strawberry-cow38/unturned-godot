@@ -703,6 +703,17 @@ namespace UnturnedGodot
                     placedIndoorLamp = LampLight.Make(gpos + basis * lampCenter, mainMi, LampLight.KindFor(name));   // captured so a break darkens it
                     root.AddChild(placedIndoorLamp);
                 }
+                if (name == "Lighthouse_0" && mesh != null && mode != WorldMode.Dedicated)
+                {
+                    // The sweeping beam (master 2026-08-09): a spinning cone at the lamp room, night-gated, no real light.
+                    // Derive the room off the REAL instance transform (the tower is placed ex=270/194/0) and take the
+                    // height from the mesh AABB (~51 m on Z) rather than a typed number (tinyclaw). Its own world-space
+                    // node so it spins + culls independently of the tower mesh.
+                    var ab = mesh.GetAabb();
+                    float topY = float.MinValue; Vector3 sum = Vector3.Zero;
+                    for (int i = 0; i < 8; i++) { var w = gpos + basis * ab.GetEndpoint(i); topY = Mathf.Max(topY, w.Y); sum += w; }
+                    root.AddChild(LighthouseBeam.Make(new Vector3(sum.X / 8f, topY - 4.5f, sum.Z / 8f)));   // the gallery ring, ~4.5m under the roof (tinyclaw: widest ring at roof-4.5)
+                }
                 // SCREENS (master): Television_0/1 (flatscreen / CRT television) and Computer_0/3 (CRT / flatscreen
                 // computer monitor) become interactive sets -- look at it + F toggles it on/off, all of them start ON,
                 // and each carries a wire-able power plug so it survives a blackout on its own generator. TVDevice
