@@ -52,6 +52,8 @@ namespace UnturnedGodot
         MeshInstance3D _emissive;              // the light-emitting sub-mesh split off the fixture -- the ONLY part that glows
         Material _fixtureOffMat, _fixtureLitMat;
         MeshInstance3D _outline;               // whole-lamp white silhouette (OutlineOverlay), shown while looked at -- toggle lamps only
+        AudioStreamPlayer3D _hum;              // ceiling-strip fluorescent hum, looping; volume RIDES the flicker (ApplyEffective) + hard-mutes off/broken
+        float _humDb;                          // the hum's full volume in dB (dropped to -80 = silent when the light is off)
         bool _built;                           // BuildVisual is idempotent -- a 2nd split of `body` has no emitter tris and would glow the housing
         bool _on = true;                       // player F-toggle state, INDEPENDENT of the grid -- ON by default (master)
         bool _lastLit;                         // last grid-lit state; effective visual = _lastLit && _on
@@ -111,6 +113,23 @@ namespace UnturnedGodot
 
             AddChild(_omni);
             _omni.Position = ComputeOmniLocal();   // after the split, so FloorShade/DeskBulb can anchor to the emitter
+
+            // Fluorescent ballast hum on the CEILING strip only (an incandescent desk/table lamp doesn't hum). A quiet
+            // looping 3D tone whose volume rides the flicker -- ApplyEffective runs per stutter frame, so the hum stutters
+            // WITH the light and hard-mutes when it's off or smashed (not a fade). Random phase per fixture so a corridor
+            // of tubes isn't one giant phase-locked tube (tinyclaw's spec).
+            if (_kind == Kind.CeilingStrip)
+            {
+                var hum = PlayerController.LoadWavOneShot("res://content/sounds/fluorescent_hum.wav", loop: true);
+                if (hum != null)
+                {
+                    _humDb = Mathf.LinearToDb(0.35f);
+                    _hum = new AudioStreamPlayer3D { Stream = hum, UnitSize = 2.2f, MaxDistance = 13f, VolumeDb = -80f };
+                    AddChild(_hum);
+                    _hum.Play();
+                    _hum.Seek(GD.Randf() * 6f);   // 6.000s loop -> random offset decorrelates neighbouring tubes
+                }
+            }
         }
 
         // Where the point light sits, in this node's local space (LampLight is TopLevel at the fixture centre). Always
@@ -169,6 +188,7 @@ namespace UnturnedGodot
         {
             bool eff = _lastLit && _on;
             if (_omni != null) _omni.LightEnergy = (eff && !DebugNoOmni) ? _omniEnergy : 0f;
+            if (_hum != null) _hum.VolumeDb = eff ? _humDb : -80f;   // hum stutters with the flicker (per-frame during a transition) + hard-mutes off/broken
             if (_fixtureLitMat == null) return;
             var emitMi = (_emissive != null && IsInstanceValid(_emissive)) ? _emissive : _fixture;
             if (emitMi != null && IsInstanceValid(emitMi))
