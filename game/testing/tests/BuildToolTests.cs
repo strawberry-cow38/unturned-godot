@@ -2103,43 +2103,76 @@ namespace UnturnedGodot.Testing
         }
     }
 
-    /// <summary>The "door" archetype has to be sized off a DOOR. It was DoorHeight - 0.5 = 3.75, and DoorHeight
-    /// is misnamed -- it is retail WALL_HEIGHT, which StoreyHeight and WallSurface.Height also read. So the
-    /// default doorway was "a wall, less half a metre", 0.95 m taller than any door that goes in it, and
-    /// PlaceDoor dutifully stretched the leaf ~34% to fill it.
+    /// <summary>Every opening archetype that gets FILLED must be sized to the thing that fills it.
     ///
-    /// Measured against the real mesh rather than a second copy of the number, so re-extracting the door moves
-    /// the test with it. Asserting the archetype is "about 2.85" would pass by construction and prove nothing;
+    /// The doorway was DoorHeight - 0.5 = 3.75, and DoorHeight is misnamed -- it is retail WALL_HEIGHT, which
+    /// StoreyHeight and WallSurface.Height also read. So the default doorway was "a wall, less half a metre",
+    /// 0.95 m taller than any door, and PlaceDoor dutifully stretched the leaf ~34% to fill it.
+    ///
+    /// The first version of this test checked archetype[0] and reported the sizing verified. The GARAGE had the
+    /// same bug at the same time -- an 8.0 m opening for a 4.00 m gate -- and sailed through, because a test
+    /// that checks one member of a family and calls the family covered is the same mistake as the bug it is
+    /// chasing. Hence the loop and the explicit NoFill list.
+    ///
+    /// Measured against the real meshes rather than a second copy of the numbers, so re-extracting a prop moves
+    /// the test with it. Asserting the doorway is "about 2.85" would pass by construction and prove nothing;
     /// the claim worth making is that it FITS THE ASSET.</summary>
-    public class DoorArchetypeFitsARealDoor : GameTest
+    public class OpeningArchetypesFitTheirFills : GameTest
     {
-        public override string Name => "buildtool.door_archetype_fits_a_real_door";
+        public override string Name => "buildtool.opening_archetypes_fit_their_fills";
         static string Dir => ProjectSettings.GlobalizePath("res://content/objects/");
+
+        // archetype name -> the prop that fills it. Gate IS the garage door: wooden_door_anims.txt gives it the
+        // hinge axis (1,0,0), an X-tilt -- a door that lifts rather than swings.
+        static readonly (string Arch, string Prop)[] Fills =
+        {
+            ("door",   "Door_Pine"),
+            ("garage", "Gate_Pine"),
+        };
+
+        // Openings that are holes on purpose. A porch is an open bay; the window family takes glass, which is
+        // generated TO the opening instead of being a fixed-size prop.
+        static readonly string[] NoFill = { "porch", "window", "tall win", "vent" };
+
+        const float Slack = 0.20f;        // generous -- the doorway missed by 0.95 and the garage by 3.95
+        const float MaxStretch = 1.08f;
 
         public override IEnumerable<Step> Run()
         {
-            var leaf = ObjMesh.Load(Dir + "Door_Pine.obj");
-            if (leaf == null) { T.Check("Door_Pine.obj loads", false); yield break; }
-            var ab = leaf.GetAabb();
-            // The rip carries height on +Z and width on X (it is stood up by 270 about X when hung).
-            float leafW = ab.Size.X, leafH = ab.Size.Z;
+            foreach (var (arch, prop) in Fills)
+            {
+                int ai = System.Array.FindIndex(EditorBuildings.Archetypes, x => x.Name == arch);
+                if (ai < 0) { T.Check($"archetype '{arch}' exists", false); continue; }
+                var a = EditorBuildings.Archetypes[ai];
 
-            var a = EditorBuildings.Archetypes[0];
-            T.Check($"archetype 0 is the door ('{a.Name}')", a.Name == "door");
+                var mesh = ObjMesh.Load(Dir + prop + ".obj");
+                if (mesh == null) { T.Check($"{prop}.obj loads", false); continue; }
+                // These rips carry width on X and height on +Z (stood up by 270 about X when hung).
+                var ab = mesh.GetAabb();
+                float leafW = ab.Size.X, leafH = ab.Size.Z;
 
-            // Clearance, not equality: the hole must be at least the leaf and not meaningfully more. 0.20 is
-            // generous -- the old 3.75 misses by 0.95, so this has teeth without being brittle about trim.
-            T.Check($"doorway is tall enough for the leaf ({a.Height:0.00} >= {leafH:0.00})", a.Height >= leafH - 0.01f);
-            T.Check($"and not gaping above it ({a.Height:0.00} vs leaf {leafH:0.00}, slack {a.Height - leafH:0.00})",
-                    a.Height - leafH <= 0.20f);
-            T.Check($"wide enough ({a.Width:0.00} >= {leafW:0.00})", a.Width >= leafW - 0.01f);
-            T.Check($"and not gaping beside it (slack {a.Width - leafW:0.00})", a.Width - leafW <= 0.20f);
+                T.Check($"{arch}: wide enough for {prop} ({a.Width:0.00} >= {leafW:0.00})", a.Width >= leafW - 0.01f);
+                T.Check($"{arch}: not gaping beside it (slack {a.Width - leafW:0.00})", a.Width - leafW <= Slack);
+                T.Check($"{arch}: tall enough ({a.Height:0.00} >= {leafH:0.00})", a.Height >= leafH - 0.01f);
+                T.Check($"{arch}: not gaping above it (slack {a.Height - leafH:0.00})", a.Height - leafH <= Slack);
 
-            // The consequence, stated directly: a door hung in the DEFAULT doorway is not visibly stretched.
-            // PlaceDoor scales the leaf to the hole, so an oversized archetype cannot be seen by any check that
-            // only looks at the door -- it fills whatever it is given. The ratio is where it shows.
-            float stretch = a.Height / leafH;
-            T.Check($"so a default door is not stretched ({stretch:0.00}x)", stretch <= 1.08f);
+                // The consequence, stated directly. PlaceDoor scales the fill to whatever hole it is given, so
+                // an oversized archetype is invisible to any check that only looks at the fill -- it obediently
+                // fills the frame at any size. The RATIO is the only place it shows.
+                T.Check($"{arch}: a default fill is not stretched ({a.Width / leafW:0.00}x wide, {a.Height / leafH:0.00}x tall)",
+                        a.Width / leafW <= MaxStretch && a.Height / leafH <= MaxStretch);
+            }
+
+            // Completeness. This is the guard the first version of this test lacked: it checked archetype[0],
+            // reported the sizing verified, and the garage was 2x its own gate the whole time it passed. The
+            // garage was not knowingly exempt -- it was simply not looked at. An archetype in neither list now
+            // fails here rather than shipping unsized.
+            foreach (var a in EditorBuildings.Archetypes)
+            {
+                bool filled = System.Array.Exists(Fills, f => f.Arch == a.Name);
+                bool exempt = System.Array.IndexOf(NoFill, a.Name) >= 0;
+                T.Check($"archetype '{a.Name}' is either fitted to a fill or listed as fill-less", filled ^ exempt);
+            }
             yield break;
         }
     }

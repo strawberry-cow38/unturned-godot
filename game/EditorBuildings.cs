@@ -154,7 +154,10 @@ namespace UnturnedGodot
             new("door",    2.5f,  2.85f,                          0f,   true),
             new("window",  3.31f, WallOpenings.WindowHeight,      WallOpenings.WindowSill, false, glazed: true),
             new("tall win",2.81f, 2.97f,                          0.88f, false, glazed: true),
-            new("garage",  8.0f,  WallOpenings.DoorHeight - 0.25f, 0f,  true),
+            // Sized to the GATE that fills it (Gate_Birch/Maple/Pine/Metal are all exactly 4.00 x 0.51 x 3.75),
+            // plus the same 0.05. It was 8.0 x 4.0 -- twice the gate's width. Not a double bay: a WallOpening
+            // carries ONE DoorProp, so an 8.0 hole cannot hold two 4.0 gates whatever was intended.
+            new("garage",  4.05f, 3.80f,                          0f,  true),
             new("porch",   5.5f,  WallOpenings.DoorHeight,        0f,   true),
             new("vent",    1.0f,  1.0f,                           2.5f, false),
         };
