@@ -13,6 +13,9 @@ import ug_paths
 
 BUND = ug_paths.bundles()
 OUT = ug_paths.objects_out()
+# Metal barricade variants reuse these rows via tinyclaw's FORM-key (Door_Metal->Door, Gate_Metal->Gate, etc.):
+# verified byte-identical to the wooden hinges 2026-08-09, so no metal rows are needed. To re-check a future metal
+# door, append ("Door_Metal","door_metal") etc. here and diff its printed hinge against the wooden twin.
 FORMS = [("Door", "door_birch"), ("Doubledoor", "doubledoor_birch"), ("Gate", "gate_birch"), ("Hatch", "hatch_birch")]
 
 env = UnityPy.load(os.path.join(BUND, "core.masterbundle"))
