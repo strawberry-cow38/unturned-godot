@@ -12,11 +12,12 @@ namespace UnturnedGodot
     // culls with the tower, which is retail-accurate (tinyclaw: retail region-culls the lighthouse at 447 too).
     public partial class LighthouseBeam : Node3D
     {
-        public static float SpinRate  = 0.30f;                        // rad/s -- a slow, calm sweep (~21s per revolution)
+        public static float SpinRate  = 0.08f;                        // rad/s -- a slow lighthouse sweep, ~78s per revolution (master: much slower)
         public static float BeamLen   = 200f;                         // how far the shaft reaches
         public static float SrcRadius = 2.0f;                         // half-width at the lamp room
         public static float FarRadius = 22f;                          // half-width at the far end (a widening beam)
-        public static Color BeamColor = new Color(1f, 0.95f, 0.82f);  // warm white
+        // colour = the streetlight's sodium colour (master), derived in _Ready off StreetLight.KelvinToColor(ColorTempK)
+        // so it tracks the map's lamp temp (2000K warm sodium for the BC towns) rather than a hardcoded warm white.
 
         MeshInstance3D _cone;
         float _spin;
@@ -24,11 +25,28 @@ namespace UnturnedGodot
         public static LighthouseBeam Make(Vector3 lampRoomWorld)
             => new LighthouseBeam { Position = lampRoomWorld, TopLevel = true };
 
+        // Fade toward the WIDE (far) end (master): dense at the apex near the lamp, transparent by the tip. The beam
+        // mesh samples v = t*0.5 (apex t=0 -> v=0, far t=1 -> v=0.5), so this fades fully across rows 0..n/2. (The
+        // streetlight's ConeGradient does the opposite -- dense at the far/ground end -- which is wrong for a beam.)
+        static ImageTexture BeamGradient()
+        {
+            int n = 64;
+            var img = Image.CreateEmpty(1, n, false, Image.Format.Rgba8);
+            for (int y = 0; y < n; y++)
+            {
+                float t = Mathf.Clamp(y / (n * 0.5f), 0f, 1f);   // 0 at the apex row, 1 by row n/2 (the far end the beam reaches)
+                float a = Mathf.Pow(1f - t, 1.5f);               // bright at the apex, faded to nothing at the wide end
+                img.SetPixel(0, y, new Color(1f, 1f, 1f, a));
+            }
+            return ImageTexture.CreateFromImage(img);
+        }
+
         public override void _Ready()
         {
             // BeamMesh runs along -Y; rotate it -90 about X so the shaft points HORIZONTALLY (+Z), then the NODE spins
             // around world-Y so the beam sweeps the horizon. Narrow at the lamp, widening to FarRadius far out.
             var mesh = StreetLight.BeamMesh(BeamLen, SrcRadius, SrcRadius, FarRadius, morphEnd: 0.12f, seg: 20, rings: 22);
+            var col = StreetLight.KelvinToColor(StreetLight.ColorTempK);   // the streetlight's sodium colour (master), computed here so StreetLight's statics are live
             _cone = new MeshInstance3D
             {
                 Mesh = mesh,
@@ -38,8 +56,8 @@ namespace UnturnedGodot
                 MaterialOverride = new StandardMaterial3D
                 {
                     // additive + unshaded + gradient-faded, same recipe as StreetLight's cone (soft, dissolves at the far end)
-                    AlbedoColor = new Color(BeamColor.R, BeamColor.G, BeamColor.B, 0.09f),   // brighter than a streetlight cone -- this is meant to be seen from distance
-                    AlbedoTexture = StreetLight.ConeGradient(),
+                    AlbedoColor = new Color(col.R, col.G, col.B, 0.06f),   // master: LESS opaque -- more see-through; sodium colour
+                    AlbedoTexture = BeamGradient(),                    // master: fade out toward the WIDE (far) end, not the streetlight's fade-at-the-ground
                     Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
                     BlendMode = BaseMaterial3D.BlendModeEnum.Add,
                     ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
