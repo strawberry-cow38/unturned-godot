@@ -4370,17 +4370,29 @@ namespace UnturnedGodot
             if (System.IO.File.Exists(tex)) { var img = Image.LoadFromFile(tex); if (img != null) mat.AlbedoTexture = ImageTexture.CreateFromImage(img); }
 
             float mountY = 3.0f;   // hang it where a ceiling light sits
-            var mi = new MeshInstance3D { Mesh = m, MaterialOverride = mat, Position = new Vector3(0f, mountY, 0f) };
+            // Light_0 lies FLAT on a ceiling -- all 34 world placements carry pitch ex=270 (tinyclaw), which turns its
+            // 4-unit "height" into LENGTH and points the diffuser straight down. UG_LAMP_PITCH=270 renders it in-situ.
+            float pitch = 0f; float.TryParse(System.Environment.GetEnvironmentVariable("UG_LAMP_PITCH"), out pitch);
+            var mi = new MeshInstance3D { Mesh = m, MaterialOverride = mat, Position = new Vector3(0f, mountY, 0f), RotationDegrees = new Vector3(pitch, 0f, 0f) };
             AddChild(mi);
+            LampLight.DebugNoOmni = System.Environment.GetEnvironmentVariable("UG_LAMP_NOOMNI") == "1";   // proof shot: only the emissive tube, no room light
             var lamp = LampLight.Make(new Vector3(0f, mountY, 0f), mi);   // hand the fixture mesh in so it glows when lit
             AddChild(lamp);
             lamp.SetPowered(!off);
             GD.Print($"[LAMPTEST] {which} + LampLight, powered={!off}, lit={lamp.LitForTest}");
 
-            var cam = new Camera3D { Current = true, Fov = 55f };
+            var cam = new Camera3D { Current = true, Fov = 60f };
             AddChild(cam);
-            cam.Position = new Vector3(3.6f, 1.5f, 4.6f);
-            cam.LookAt(new Vector3(0f, mountY - 0.5f, 0f), Vector3.Up);
+            if (pitch != 0f)   // flat ceiling strip: stand at eye level off to the side and look UP at the underside (diffuser)
+            {
+                cam.Position = new Vector3(3.4f, 0.9f, 3.0f);
+                cam.LookAt(new Vector3(0f, mountY - 0.15f, 0f), Vector3.Up);
+            }
+            else
+            {
+                cam.Position = new Vector3(3.6f, 1.5f, 4.6f);
+                cam.LookAt(new Vector3(0f, mountY - 0.5f, 0f), Vector3.Up);
+            }
         }
 
         void BuildStreetLightDemo()
