@@ -300,8 +300,17 @@ namespace UnturnedGodot
         public static readonly DeployableDef HatchMaple = WoodDoor(9147, "Hatch", "Maple", HatchSize, 300f);
         public static readonly DeployableDef HatchPine  = WoodDoor(9148, "Hatch", "Pine",  HatchSize, 275f);
 
+        // METAL, and it cost four lines because the hinge lookup keys on the FORM rather than the material:
+        // Door_Metal resolves the same "Door" row Door_Pine does. cow tools diffed the rigs before extracting
+        // rather than assuming the twins matched -- they came back byte-identical in both geometry and hinge,
+        // differing only in palette -- so there is no anim row and no code here, just the defs.
+        public static readonly DeployableDef DoorMetal  = WoodDoor(9149, "Door", "Metal", DoorSize, 500f);
+        public static readonly DeployableDef GateMetal  = WoodDoor(9150, "Gate", "Metal", GateSize, 700f);
+        public static readonly DeployableDef HatchMetal = WoodDoor(9151, "Hatch", "Metal", HatchSize, 500f);
+
         public static readonly DeployableDef[] WoodDoors =
-            { DoorBirch, DoorMaple, DoorPine, GateBirch, GateMaple, GatePine, HatchBirch, HatchMaple, HatchPine };
+            { DoorBirch, DoorMaple, DoorPine, GateBirch, GateMaple, GatePine, HatchBirch, HatchMaple, HatchPine,
+              DoorMetal, GateMetal, HatchMetal };
 
         // Merge (SP/MP-unify -> main): union of both sides' devices. main's Battery/Switch/WindTurbine +
         // the unification's GridSource/GasPump fixtures. Switch is defined above (auto-merged from main).
@@ -363,7 +372,8 @@ namespace UnturnedGodot
 
         public static readonly DeployableDef[] All = { Generator, Spotlight, Splitter2, Splitter3, Splitter4, Combiner2, Battery, Switch, WindTurbine, GridSource, GasPump,
             FluidTank, WaterSource, FluidSplitter, FluidCombiner, FluidPumpDef, FluidValve, Refinery, Sluice, WaterInlet, WaterOutlet, Purifier, Refrigerator, Landmine, Spike, Charge, Barbedwire,
-            DoorBirch, DoorMaple, DoorPine, GateBirch, GateMaple, GatePine, HatchBirch, HatchMaple, HatchPine };
+            DoorBirch, DoorMaple, DoorPine, GateBirch, GateMaple, GatePine, HatchBirch, HatchMaple, HatchPine,
+            DoorMetal, GateMetal, HatchMetal };
         public static DeployableDef ById(ushort id) => id switch
         {
             1101 => Landmine,
@@ -372,6 +382,9 @@ namespace UnturnedGodot
             386 => Barbedwire,
             458 => Generator,
             459 => Spotlight,
+            9149 => DoorMetal,
+            9150 => GateMetal,
+            9151 => HatchMetal,
             9140 => DoorBirch,
             9141 => DoorMaple,
             9142 => DoorPine,

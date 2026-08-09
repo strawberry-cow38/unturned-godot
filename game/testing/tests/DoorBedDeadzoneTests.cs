@@ -553,6 +553,18 @@ namespace UnturnedGodot.Testing
             for (int i = 0; i < 240 && SweptDeg(pivot) > 1f; i++) yield return Step.Ticks(1);
             T.Check("toggling again closes it", !leaf.IsOpen);
             T.Check($"back to the closed pose ({SweptDeg(pivot):0.#} deg)", SweptDeg(pivot) < 3f);
+
+            // METAL for free. The hinge lookup keys on the FORM, so Door_Metal is supposed to resolve the same
+            // "Door" row with no anim data of its own -- which is a claim, and claims of the form "that should
+            // just work" are the ones worth executing. Places and stands, or the form-key is wrong.
+            var mhost = DoorDeploy.SpawnFor(DeployableDef.DoorMetal, World, new Vector3(6f, 0f, 0f), 0f);
+            T.Check("a METAL door places off the same form row, with no anims of its own", mhost != null);
+            if (mhost == null) yield break;
+            yield return Step.Ticks(2);
+            var mleaf = LeafOf(mhost);
+            var mpivot = mleaf == null ? null : PivotOf(mleaf);
+            T.Check("and stands up the same way",
+                    mpivot != null && LeafBottomY(mpivot) > 5.8f - 6f - 0.2f && LeafTopY(mpivot) > 2.0f);
         }
     }
 }
