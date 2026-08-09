@@ -76,6 +76,7 @@ namespace UnturnedGodot
             float scale = _kind == Kind.DeskBulb ? 0.5f : 1f;   // master: desk lamp at half intensity
             _omniEnergy = Energy * _worn * scale;
             _omni = new OmniLight3D { LightColor = BulbColor, OmniRange = Range, LightEnergy = _omniEnergy, ShadowEnabled = false };
+            _omni.AddToGroup(LightShadowBudget.Group);   // opt in to the shadow budget; it decides when this one casts
 
             if (_fixture != null && IsInstanceValid(_fixture))
             {
