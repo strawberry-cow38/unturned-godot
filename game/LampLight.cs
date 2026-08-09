@@ -123,8 +123,10 @@ namespace UnturnedGodot
                 var hum = PlayerController.LoadWavOneShot("res://content/sounds/fluorescent_hum.wav", loop: true);
                 if (hum != null)
                 {
-                    _humDb = Mathf.LinearToDb(0.35f);
-                    _hum = new AudioStreamPlayer3D { Stream = hum, UnitSize = 2.2f, MaxDistance = 13f, VolumeDb = -80f };
+                    _humDb = Mathf.LinearToDb(0.24f);   // master: quieter overall, but heard from FARTHER --
+                    // stretch the falloff (UnitSize) + push the cutoff (MaxDistance) FIRST, THEN trim the volume, or
+                    // dropping VolumeDb alone shrinks the audible radius too and undoes half the request (tinyclaw).
+                    _hum = new AudioStreamPlayer3D { Stream = hum, UnitSize = 8f, MaxDistance = 32f, VolumeDb = -80f };
                     AddChild(_hum);
                     _hum.Play();
                     _hum.Seek(GD.Randf() * 6f);   // 6.000s loop -> random offset decorrelates neighbouring tubes
