@@ -2176,4 +2176,54 @@ namespace UnturnedGodot.Testing
             yield break;
         }
     }
+
+    /// <summary>The palette's 3D preview must SPIN a prop, not swing it around the room.
+    ///
+    /// Prop geometry is not centred on its own origin -- Door_Pine's sits at x -2.35..+0.10, so its bulk is
+    /// about 1.1 m off the node it hangs from. Rotating the mesh node therefore orbits the prop instead of
+    /// turning it, and it leaves frame. Everything else about that render is correct: right mesh, right
+    /// material, right size, right camera. Only the distance from the pivot shows it.
+    ///
+    /// Checked at rest AND after turning. Those catch different things: at rest catches the recentre being
+    /// missing altogether (which is the bug that was here -- it reads 1.125 m, Door_Pine's whole offset), and
+    /// the rotations catch the subtler version where the prop is recentred but the turntable turns about some
+    /// other point, which is invisible until something actually moves.</summary>
+    public class PalettePreviewSpinsInPlace : GameTest
+    {
+        public override string Name => "editor.palette_preview_spins_in_place";
+        static string Dir => ProjectSettings.GlobalizePath("res://content/objects/");
+
+        public override IEnumerable<Step> Run()
+        {
+            // Deliberately the WORST case in the catalog for this: a door leaf, anchored at its hinge.
+            var mesh = ObjMesh.Load(Dir + "Door_Pine.obj");
+            if (mesh == null) { T.Check("Door_Pine.obj loads", false); yield break; }
+            float off = mesh.GetAabb().GetCenter().Length();
+            T.Check($"Door_Pine is genuinely off its own origin ({off:0.00} m) -- else this proves nothing", off > 0.5f);
+
+            var prev = new EditorPropPreview(_ => mesh, _ => new StandardMaterial3D());
+            World.AddChild(prev);
+            yield return Step.Ticks(1);
+
+            prev.ShowOnStage("Door_Pine");
+            yield return Step.Ticks(1);
+
+            var at0 = prev.StageCentreForTest();
+            T.Check($"at rest the prop sits on the pivot ({at0.Length():0.000} m)", at0.Length() < 0.02f);
+
+            // A quarter turn and a half turn. An orbiting prop swings out by ~its own offset; a spinning one
+            // does not move at all. Both angles, because a half turn alone would also pass for a prop mirrored
+            // through the pivot.
+            foreach (float deg in new[] { 90f, 180f })
+            {
+                prev.SpinToForTest(Mathf.DegToRad(deg));
+                yield return Step.Ticks(1);
+                var c = prev.StageCentreForTest();
+                T.Check($"still on the pivot after {deg:0}° ({c.Length():0.000} m, was {off:0.00} off-origin)",
+                        c.Length() < 0.02f);
+            }
+
+            prev.QueueFree();
+        }
+    }
 }
