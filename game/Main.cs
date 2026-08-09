@@ -86,7 +86,7 @@ namespace UnturnedGodot
             string doorTestName = null;
             bool containerTest = false; string containerTestName = null;
             bool wallDemo = false;
-            bool play = false, demo = false, netdemo = false, server = false, dedicated = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, lightTest = false, trafficTest = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, objects = false, peidrive = false, craftui = false, bakenav = false, navPathTest = false, zombieTest = false, zdirTest = false, editorMode = false, impactTest = false, doorGallery = false;
+            bool play = false, demo = false, netdemo = false, server = false, dedicated = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, lightTest = false, trafficTest = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, objects = false, peidrive = false, craftui = false, bakenav = false, navPathTest = false, zombieTest = false, zdirTest = false, editorMode = false, impactTest = false, doorGallery = false, lampTest = false;
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
                 if (arg.StartsWith("--catalog=")) catalog = arg["--catalog=".Length..];
@@ -182,6 +182,7 @@ namespace UnturnedGodot
                 else if (arg == "--invcrate") invcrate = true;
                 else if (arg == "--daynight") daynight = true;
                 else if (arg == "--lighttest") lightTest = true;   // one lit streetlight at night: cone + motes eyeball (UG_LIGHTCAM=under looks up from inside)
+                else if (arg == "--lamptest") lampTest = true;   // one lit INDOOR light over dark ground: UG_LAMP=Light_0(ceiling,default)/Light_1/Lamp_0/Lamp_1, UG_LAMPOFF=1 unlit
                 else if (arg == "--trafficlight") trafficTest = true;   // one signal, both heads (UG_TL_STATE=green|amber|red|flash|dark, UG_TL_SIDE=1 for the side-road mast, UG_TL_DAY=1 for daylight)
                 else if (arg == "--build") buildmode = true;
                 else if (arg == "--walls") wallDemo = true;   // building tool: generated walls + openings, no editor needed
@@ -437,6 +438,14 @@ namespace UnturnedGodot
                 _shotPath = shot;
                 GetWindow().Size = new Vector2I(1280, 720);
                 BuildStreetLightDemo();
+                return;
+            }
+
+            if (lampTest)   // one indoor light, lit, over a dark ground -- the fixture glow is only checkable by eye
+            {
+                _shotPath = shot;
+                GetWindow().Size = new Vector2I(1280, 720);
+                BuildLampTest();
                 return;
             }
 
@@ -4324,6 +4333,54 @@ namespace UnturnedGodot
             cam.Position = new Vector3(-9f, 6.6f, -5.4f);
             cam.LookAt(new Vector3(0f, 6.3f, -5.4f), Vector3.Up);
             GD.Print($"[TRAFFICLIGHT] side={side} day={day} heads={headMeshes?.Length ?? 0}");
+        }
+
+        // --lamptest: a single lit INDOOR light fixture over a dark ground -- Light_0 (ceiling) by default, or
+        // UG_LAMP=Light_1/Lamp_0/Lamp_1. The "on" look is the fixture MESH glowing warm + an OmniLight lighting the
+        // room; UG_LAMPOFF=1 renders it unlit in daylight. Exists because master's ceiling light "never worked": the
+        // real ceiling light Light_0 was never wired to a LampLight (fixed in WorldBuilder), and the only proof it
+        // works now is seeing it lit.
+        void BuildLampTest()
+        {
+            string which = System.Environment.GetEnvironmentVariable("UG_LAMP");
+            if (string.IsNullOrEmpty(which)) which = "Light_0";
+            bool off = System.Environment.GetEnvironmentVariable("UG_LAMPOFF") == "1";
+            var env = new Godot.Environment
+            {
+                BackgroundMode = Godot.Environment.BGMode.Color,
+                BackgroundColor = off ? new Color(0.42f, 0.52f, 0.68f) : new Color(0.02f, 0.03f, 0.05f),
+                AmbientLightSource = Godot.Environment.AmbientSource.Color,
+                AmbientLightColor = off ? new Color(0.55f, 0.60f, 0.68f) : new Color(0.035f, 0.045f, 0.06f),
+                AmbientLightEnergy = 1f,
+                GlowEnabled = true, GlowIntensity = 0.85f, GlowBloom = 0.15f, GlowHdrThreshold = 0.85f,
+            };
+            AddChild(new WorldEnvironment { Environment = env });
+            if (off) AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-52f, 34f, 0f), LightEnergy = 1.1f });
+
+            var gmesh = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(16, 16) } };
+            gmesh.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.30f, 0.30f, 0.29f), Roughness = 1f };
+            AddChild(gmesh);
+
+            string objDir = ProjectSettings.GlobalizePath("res://content/objects/");
+            var m = ObjMesh.Load(objDir + which + ".obj");
+            if (m == null) { GD.PrintErr($"[lamptest] {which}.obj missing"); return; }
+            var mat = new StandardMaterial3D { Roughness = 0.85f, CullMode = BaseMaterial3D.CullModeEnum.Disabled,
+                                               TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest };
+            string tex = objDir + which + "_tex.png";
+            if (System.IO.File.Exists(tex)) { var img = Image.LoadFromFile(tex); if (img != null) mat.AlbedoTexture = ImageTexture.CreateFromImage(img); }
+
+            float mountY = 3.0f;   // hang it where a ceiling light sits
+            var mi = new MeshInstance3D { Mesh = m, MaterialOverride = mat, Position = new Vector3(0f, mountY, 0f) };
+            AddChild(mi);
+            var lamp = LampLight.Make(new Vector3(0f, mountY, 0f), mi);   // hand the fixture mesh in so it glows when lit
+            AddChild(lamp);
+            lamp.SetPowered(!off);
+            GD.Print($"[LAMPTEST] {which} + LampLight, powered={!off}, lit={lamp.LitForTest}");
+
+            var cam = new Camera3D { Current = true, Fov = 55f };
+            AddChild(cam);
+            cam.Position = new Vector3(3.6f, 1.5f, 4.6f);
+            cam.LookAt(new Vector3(0f, mountY - 0.5f, 0f), Vector3.Up);
         }
 
         void BuildStreetLightDemo()

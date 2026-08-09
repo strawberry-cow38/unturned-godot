@@ -2,7 +2,8 @@ using Godot;
 
 namespace UnturnedGodot
 {
-    // Simple indoor light fixture (Lamp_0 ceiling light, Lamp_1 standing lamp), sharing the grid-power /
+    // Simple indoor light fixture (Light_0 = CEILING light, Light_1 = standing lamp, Lamp_0 = desk lamp, Lamp_1 =
+    // table lamp -- master 2026-08-09 corrected the earlier wrong labels), sharing the grid-power /
     // reaction-delay-flicker machinery with StreetLight via GridLight. Unlike a streetlight an indoor lamp is NOT
     // night-gated -- it is ON WHENEVER the grid is live (master).
     //
