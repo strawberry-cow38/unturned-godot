@@ -78,6 +78,9 @@ def walk(go_pid, parentM, gomap):
     M = parentM @ trs(trt["m_LocalPosition"], trt["m_LocalRotation"], trt["m_LocalScale"])
     mf = comp_of(tt, ("MeshFilter",))
     mp = mf.read_typetree().get("m_Mesh", {}).get("m_PathID") if mf else None
+    if mp is None:   # rigged doors (slide/swing/blast/carrier) are SkinnedMeshRenderer, no MeshFilter -- read the SMR mesh
+        smr = comp_of(tt, ("SkinnedMeshRenderer",))
+        mp = smr.read_typetree().get("m_Mesh", {}).get("m_PathID") if smr else None
     gomap[go_pid] = (M, mp)
     for ch in trt.get("m_Children", []):
         ct = by_id.get(ch.get("m_PathID"))
@@ -155,7 +158,7 @@ best = None
 for gp, (M, mp) in gomap.items():
     go = by_id.get(gp)
     if not go: continue
-    mr = comp_of(go.read_typetree(), ("MeshRenderer",))
+    mr = comp_of(go.read_typetree(), ("MeshRenderer", "SkinnedMeshRenderer"))
     if not mr: continue
     for matref in mr.read_typetree().get("m_Materials", []):
         mat = by_id.get(matref.get("m_PathID"))
