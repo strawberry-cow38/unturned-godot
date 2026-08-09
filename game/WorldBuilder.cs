@@ -700,7 +700,11 @@ namespace UnturnedGodot
                 if ((name == "Light_0" || name == "Light_1" || name == "Lamp_0" || name == "Lamp_1") && mode != WorldMode.Dedicated)
                 {
                     var lampCenter = mesh != null ? mesh.GetAabb().GetCenter() : Vector3.Zero;
-                    placedIndoorLamp = LampLight.Make(gpos + basis * lampCenter, mainMi);   // hand the prop mesh in so the fixture glows when lit; captured so a break darkens it
+                    var lampKind = (name == "Light_0" || name == "Light_1") ? LampLight.Kind.CeilingStrip   // flush ceiling strip: diffuser glows, omni below
+                                 : name == "Lamp_1" ? LampLight.Kind.FloorShade                             // standing lamp: shade glows, omni at shade centre
+                                 : name == "Lamp_0" ? LampLight.Kind.DeskBulb                               // desk lamp: bulb face glows, omni in front, half energy
+                                 : LampLight.Kind.Generic;
+                    placedIndoorLamp = LampLight.Make(gpos + basis * lampCenter, mainMi, lampKind);   // captured so a break darkens it
                     root.AddChild(placedIndoorLamp);
                 }
                 // SCREENS (master): Television_0/1 (flatscreen / CRT television) and Computer_0/3 (CRT / flatscreen
