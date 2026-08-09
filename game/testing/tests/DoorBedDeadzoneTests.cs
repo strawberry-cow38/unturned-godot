@@ -606,6 +606,24 @@ namespace UnturnedGodot.Testing
                 if (d != null && DeployableDef.ById(d.Id) == null) unreachable.Add($"{d.Id} {d.Name}");
             T.Check($"and every def resolves through ById ({(unreachable.Count == 0 ? "all" : string.Join("; ", unreachable))})",
                     unreachable.Count == 0);
+
+            // OBTAINABLE. A def with no item is a thing that exists in code and cannot be got -- which is
+            // precisely the state the old building door was in: complete, tested, and unreachable. Check the
+            // whole chain the player actually walks: item asset exists -> its id resolves to a def -> that def
+            // is the door it claims to be.
+            SDG.Unturned.ItemCatalog.RegisterAll();
+            var missing = new List<string>();
+            var mismatched = new List<string>();
+            foreach (var d in DeployableDef.WoodDoors)
+            {
+                var asset = SDG.Unturned.Assets.find(d.Id);
+                if (asset == null) { missing.Add($"{d.Id} {d.Name}"); continue; }
+                if (DeployableDef.ById(asset.id) != d) mismatched.Add($"{d.Id} {d.Name}");
+            }
+            T.Check($"every door is an obtainable item ({(missing.Count == 0 ? "all 12" : string.Join("; ", missing) + " have no item")})",
+                    missing.Count == 0);
+            T.Check($"and each item equips the door it names ({(mismatched.Count == 0 ? "all" : string.Join("; ", mismatched))})",
+                    mismatched.Count == 0);
             yield break;
         }
     }

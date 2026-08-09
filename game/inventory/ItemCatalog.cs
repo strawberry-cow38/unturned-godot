@@ -63,6 +63,20 @@ namespace SDG.Unturned
             Add(9120, "Fluid Drain",      2, 2, EItemType.GENERIC, EItemRarity.UNCOMMON, 0, 0, "A drain that deletes whatever fluid is piped into it. Place it anywhere and hose your overflow / waste line into it.");
             Add(9121, "Fluid Purifier",   2, 2, EItemType.GENERIC, EItemRarity.RARE,     0, 0, "A powered water purifier. Wire it to power, hose tainted or dirty water into its input, and clean drinkable water comes out. Dead without power.");
             Add(9130, "Refrigerator",     3, 3, EItemType.GENERIC, EItemRarity.RARE,     0, 0, "A powered fridge. Wire it to power -- while powered, [F] opens its storage and the food inside won't spoil. Cut its power and it warms up again.");
+            // DOORS -- ids from DeployableDef.WoodDoors (9160-9171), NOT the 9140 block: that is already the
+            // Augewehr / Nightraider / .300 Blackout / Heartbreaker magazines, and a duplicate id here does not
+            // error, it silently overwrites whichever entry was registered first. deploy.ids_do_not_collide
+            // guards it now.
+            //
+            // Registered from the DEF TABLE rather than typed out twelve times, so the item list cannot drift
+            // from the placement list -- an item whose id has no def equips to nothing, and a def with no item
+            // is unobtainable, which is exactly the state doors were in before this.
+            foreach (var d in UnturnedGodot.DeployableDef.WoodDoors)
+                Add(d.Id, d.Name, 3, 3, EItemType.GENERIC, EItemRarity.UNCOMMON, 0, 0,
+                    d.DoorProp.StartsWith("Hatch") ? "A hinged floor hatch. Place it and [F] flips it open."
+                    : d.DoorProp.StartsWith("Gate") ? "A wide tilt-up garage door. Place it and [F] raises it."
+                    : "A swinging door. Place it in a gap and [F] opens it 90 degrees; solid while shut.");
+
             Add(1101, "Landmine",         2, 2, EItemType.GENERIC, EItemRarity.EPIC,     0, 0, "A proximity mine. Plant it, and anything that wanders within ~1.4 m sets off a heavy blast. Fragile -- a stray shot detonates it. Consumed by its own explosion.");
             Add(385,  "Wooden Spikes",    2, 2, EItemType.GENERIC, EItemRarity.RARE,     0, 0, "A bed of sharpened stakes. Anything that steps onto it gets shredded (60 to zombies, 30 to players); it wears ~5 HP per hit and breaks after ~8. Unrepairable, and not explosive -- a shot just snaps it.");
             Add(1241, "Remote Explosive", 2, 2, EItemType.GENERIC, EItemRarity.EPIC,     0, 0, "A plantable raiding charge -- placed INERT (no proximity/contact trigger); blows only when you set it off with a Detonator or shoot it. Huge blast: 200 to bodies, 500 to vehicles, 1000 to structures. Fragile + unrepairable.");
