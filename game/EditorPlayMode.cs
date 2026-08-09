@@ -43,6 +43,17 @@ namespace UnturnedGodot
             _hint.OffsetLeft = -240f; _hint.OffsetRight = 240f; _hint.OffsetTop = 12f;
             _hint.HorizontalAlignment = HorizontalAlignment.Center;
             _ui.AddChild(_hint);
+
+            _editor.ModeChanged += _ => UpdateButtonVisibility();   // the Test Build button belongs to the Buildings tab
+            UpdateButtonVisibility();
+        }
+
+        // Show the Test Build button only on the Buildings tab (and never mid-test). Master asked for a
+        // BUILDING-editor play mode, so it has no business on the map / terrain / spawns tabs.
+        void UpdateButtonVisibility()
+        {
+            if (_playBtn != null)
+                _playBtn.Visible = !_playing && _editor != null && _editor.Mode == EEditorMode.Buildings;
         }
 
         void EnterPlay()
@@ -58,7 +69,7 @@ namespace UnturnedGodot
             if (_flyCam != null) { _flyCam.SetProcess(false); _flyCam.SetProcessUnhandledInput(false); }
             SetEditorUiVisible(false);
 
-            _playBtn.Visible = false;
+            UpdateButtonVisibility();   // hidden while _playing
             _hint.Visible = true;
         }
 
@@ -75,7 +86,7 @@ namespace UnturnedGodot
             if (_buildings != null) _buildings.Active = true;
             SetEditorUiVisible(true);
 
-            _playBtn.Visible = true;
+            UpdateButtonVisibility();   // restored, but only on the Buildings tab
             _hint.Visible = false;
         }
 
