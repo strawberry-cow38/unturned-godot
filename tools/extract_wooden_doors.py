@@ -22,6 +22,8 @@ DOORS = [
     ("doubledoor_birch", "Doubledoor_Birch"), ("doubledoor_maple", "Doubledoor_Maple"), ("doubledoor_pine", "Doubledoor_Pine"),
     ("gate_birch", "Gate_Birch"), ("gate_maple", "Gate_Maple"), ("gate_pine", "Gate_Pine"),
     ("hatch_birch", "Hatch_Birch"), ("hatch_maple", "Hatch_Maple"), ("hatch_pine", "Hatch_Pine"),
+    # metal barricade variants (2026-08-09, master: "extract the metal ones") -- same barricade.prefab structure
+    ("door_metal", "Door_Metal"), ("doubledoor_metal", "Doubledoor_Metal"), ("gate_metal", "Gate_Metal"), ("hatch_metal", "Hatch_Metal"),
 ]
 
 env = UnityPy.load(os.path.join(BUND, "core.masterbundle"))

@@ -1554,8 +1554,10 @@ namespace UnturnedGodot
             gmesh.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.34f, 0.37f, 0.33f), Roughness = 1f };
             AddChild(gmesh);
 
-            // barricades are authored lying flat -> +90 X stands them up (DeployableDef). UG_DOORROT overrides.
-            Vector3 rot = new Vector3(90f, 0f, 0f);
+            // these rips are authored CONTAINER-STYLE (height on +Z, like the fridge/container leaves) -> +270 X
+            // stands them up (like StoreShelf). NOT the +90 DeployableDef-table convention -- that maps +Z to -Y and
+            // points them at the floor (my handoff bug: quoted the rule, not the asset). UG_DOORROT overrides.
+            Vector3 rot = new Vector3(270f, 0f, 0f);
             var rr = System.Environment.GetEnvironmentVariable("UG_DOORROT");
             if (!string.IsNullOrEmpty(rr)) { var pp = rr.Split(','); if (pp.Length == 3 && float.TryParse(pp[0], out var rx) && float.TryParse(pp[1], out var ry) && float.TryParse(pp[2], out var rz)) rot = new Vector3(rx, ry, rz); }
             Basis standUp = Basis.FromEuler(new Vector3(Mathf.DegToRad(rot.X), Mathf.DegToRad(rot.Y), Mathf.DegToRad(rot.Z)));
