@@ -670,6 +670,7 @@ namespace UnturnedGodot
                 // Auto-grid municipal consumer: lit only when it's NIGHT and the town grid is live (DayNightCycle drives
                 // both; StreetLight.Watts is the nominal draw). toggleGlobalPower darkens the whole town.
                 StreetLight placedLamp = null;   // captured so a break can darken it (see the Register call below)
+                LampLight placedIndoorLamp = null;   // indoor ceiling/standing/desk light -- captured so a break darkens it too (master 2026-08-09)
                 HeartMonitor placedMonitor = null;   // captured so its body collider can carry the hit meta
                 LightTap placedTap = null;      // wire-able power tap on this light's base (INPUT intact / OUTPUT once smashed)
                 TVDevice placedTV = null;        // captured so the body collider below can meta-link the look-ray to it
@@ -697,7 +698,8 @@ namespace UnturnedGodot
                 if ((name == "Light_0" || name == "Light_1" || name == "Lamp_0" || name == "Lamp_1") && mode != WorldMode.Dedicated)
                 {
                     var lampCenter = mesh != null ? mesh.GetAabb().GetCenter() : Vector3.Zero;
-                    root.AddChild(LampLight.Make(gpos + basis * lampCenter, mainMi));   // hand the prop mesh in so the fixture itself glows when lit
+                    placedIndoorLamp = LampLight.Make(gpos + basis * lampCenter, mainMi);   // hand the prop mesh in so the fixture glows when lit; captured so a break darkens it
+                    root.AddChild(placedIndoorLamp);
                 }
                 // SCREENS (master): Television_0/1 (flatscreen / CRT television) and Computer_0/3 (CRT / flatscreen
                 // computer monitor) become interactive sets -- look at it + F toggles it on/off, all of them start ON,
@@ -867,13 +869,15 @@ namespace UnturnedGodot
                     // left its hose ports floating over the rubble (master: "hose points arent destroyed when the hydrant is").
                     var mns = mains;
                     var toast = placedToaster;
+                    var indoorLamp = placedIndoorLamp;   // indoor ceiling/standing/desk light darkens on break like the streetlight above
                     System.Action<bool> onAlive = null;
-                    if (lamp != null || sigs != null || tap != null || tv != null || mns != null || toast != null)
+                    if (lamp != null || sigs != null || tap != null || tv != null || mns != null || toast != null || indoorLamp != null)
                         onAlive = alive =>
                         {
                             if (toast != null && GodotObject.IsInstanceValid(toast)) toast.SetBroken(!alive);
                             if (tap != null && GodotObject.IsInstanceValid(tap)) tap.SetBroken(!alive);
                             if (lamp != null && GodotObject.IsInstanceValid(lamp)) lamp.SetBroken(!alive);
+                            if (indoorLamp != null && GodotObject.IsInstanceValid(indoorLamp)) indoorLamp.SetBroken(!alive);   // indoor light off when smashed, back on when it respawns
                             if (tv != null && GodotObject.IsInstanceValid(tv)) tv.SetBroken(!alive);
                             if (mns != null && GodotObject.IsInstanceValid(mns)) mns.SetBroken(!alive);
                             if (sigs != null)
