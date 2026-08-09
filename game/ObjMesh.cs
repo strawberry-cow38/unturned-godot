@@ -22,6 +22,21 @@ namespace UnturnedGodot
         // Load cache: the launch WARMUP preloads every core (vanilla) mesh into here, so the world build reuses
         // them instead of re-parsing the .obj on first use (kills the first-use hitch). Keyed by absolute path.
         static readonly Dictionary<string, ArrayMesh> _cache = new();
+
+        /// <summary>Forget a cached mesh so the next Load re-reads it from disk.
+        ///
+        /// Needed because a file on this path can CHANGE at runtime: the building tool bakes a prop and can
+        /// bake it again under the same name. Clearing the caller's own cache is not enough -- this one is
+        /// keyed by path with no expiry, so the second bake kept serving the first bake's geometry (and its
+        /// collider) until a restart, which breaks the edit-bake-look loop on its second lap.</summary>
+        public static void Forget(string globalPath)
+        {
+            _cache.Remove(globalPath);
+            var drop = new List<ArrayMesh>();
+            foreach (var kv in _lensCache) if (kv.Key == null) drop.Add(kv.Key);
+            _lensCache.Clear();      // keyed by the mesh instance we just dropped; cheap to rebuild
+            _multiCache.Clear();
+        }
         public static int CachedCount => _cache.Count;
         public static bool IsCached(string globalPath) => _cache.ContainsKey(globalPath);
 

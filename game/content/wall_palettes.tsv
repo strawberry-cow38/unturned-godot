@@ -1,0 +1,58 @@
+# Wall materials sampled from the retail buildings. A 'material' here is a PALETTE: these models
+# carry no textures, only a 4x2 image of eight flat colours that the mesh indexes per vertex.
+# wall/reveal are texel INDICES measured off the model -- wall = the texel covering the most vertical
+# area, reveal = the texel on the strips whose short side is the wall thickness. thick is that
+# measured thickness. UVs sampled V-flipped, the same convention ObjMesh.cs uses on these textures.
+name	c0	c1	c2	c3	c4	c5	c6	c7	wall	reveal	thick	roof
+Airport_0	c4bc9a	6a6a6a	b0aa90	c1c1c1	b5b5b5	a0a0a0	7e7e7e	a0a0a0	0	2	0.70	2
+Apartment_0	7c7a72	6b6b6b	6f6c5f	bfbfbf	6a5947	766350	7e7e7e	a0a0a0	0	2	0.70	4
+Apartment_1	5f3e3e	6b6b6b	6a6359	bfbfbf	6a5947	766350	7e7e7e	a0a0a0	0	2	0.70	4
+Apartment_2	836347	6b6b6b	775a40	bfbfbf	6a5947	766350	7e7e7e	a0a0a0	3	2	0.70	4
+Apartment_3	93453d	6b6b6b	a49686	b5a797	77614d	5c4a39	4d664b	a0a0a0	3	2	0.70	6
+Bank_0	596a59	6b6b6b	3e583e	cbcbcb	6a5947	8a7763	7e7e7e	a0a0a0	0	2	0.70	2
+Barn_0	8c3737	323232	dcdcdc	762f2f	77614d	5c4a39	504030	47392b	0	5	0.50	1
+Barn_1	8c3737	323232	dcdcdc	762f2f	777777	6f6f6f	504030	47392b	0	1	0.50	1
+Barracks_0	437c44	6b6b6b	2c5f2e	5c8e5e	a0a0a0	8e8e8e	7e7e7e	a0a0a0	0	1	0.50	1
+Barracks_2	a69884	6b6b6b	938776	b5aa9a	a0a0a0	8e8e8e	7e7e7e	a0a0a0	0	1	0.50	1
+Botanist_0	577c4d	7e7e7e	bfbfbf	719d65	77614d	5c4a39	7e7e7e	a0a0a0	0	2	0.70	2
+Cafe_0	9d8166	6b6b6b	857463	c9bea8	bababa	a2a2a2	962626	962626	0	2	0.70	6
+Cafe_1	c3c3c3	6b6b6b	a2a2a2	bababa	795d49	6a5343	7e7e7e	a0a0a0	0	2	0.70	2
+Castle_0	76644b	88755a	808080	8f8f8f	76644b	88755a	9f9f9f	ababab	6	6	0.50	5
+Clothes_0	ab93a8	6b6b6b	8a6185	e0c2dc	dbdbdb	c8c8c8	7e7e7e	a0a0a0	0	2	0.70	2
+Clothes_1	aeaeae	6b6b6b	7d9392	a7a7a7	dbdbdb	c8c8c8	7e7e7e	a0a0a0	0	2	0.70	2
+Diner_0	c3a3a3	6b6b6b	cb7777	cbcbcb	6a5947	8a7763	7e7e7e	a0a0a0	0	2	0.70	2
+Diner_1	cf9c6b	6b6b6b	881f1f	bababa	d5d5d5	c8c8c8	7e7e7e	a0a0a0	0	2	0.70	2
+Diner_2	d29f15	941818	353535	969696	d5d5d5	c6c6c6	b7b7b7	a9a9a9	5	0	0.70	2
+Drill	c19727	d5a72c	292929	292929	7e7e7e	8a8a8a	464646	666666	1	1	0.50	5
+Fire_0	a02a2a	7e7e7e	dbdbdb	cbcbcb	795941	bababa	7e7e7e	a0a0a0	0	2	0.70	2
+Grocer_0	d2ae69	6b6b6b	a67e30	dec493	c6c6c6	bababa	7e7e7e	a0a0a0	0	2	0.70	2
+Guns_0	4b4a45	585858	635e4b	747474	8c8c8c	838383	585858	707070	0	2	0.70	2
+Hardware_0	4e574f	7e7e7e	646464	9c9c9c	a0a0a0	959595	7e7e7e	a0a0a0	0	2	0.70	2
+House_00	cbc7a6	424242	dcdcdc	9a8a70	77614d	5c4a39	504030	47392b	0	2	0.73	1
+House_01	a4c0c4	424242	ba9877	c8c8c8	8e8e8e	5c4a39	7e7e7e	a0a0a0	0	2	0.70	1
+House_02	cfb495	424242	d9d9d9	e0cfbb	8e8e8e	7b6855	7e7e7e	a0a0a0	0	2	0.70	1
+House_03	796c5d	424242	635b51	8c7e6e	72614b	615341	7e7e7e	a0a0a0	0	2	0.70	1
+House_04	7e9b7a	424242	8a7861	a1b89e	72614b	bababa	7e7e7e	a0a0a0	0	2	0.70	1
+House_05	e7e7e7	424242	cfcfcf	dcdcdc	8c7e6c	bababa	7e7e7e	a0a0a0	0	2	0.70	1
+House_06	6b3e3e	424242	948879	bdb09f	796f62	d5c7b5	7e7e7e	a0a0a0	0	2	0.50	1
+House_07	dcdaad	424242	a7a680	e3e2cd	796f62	b7b695	7e7e7e	a0a0a0	0	2	0.50	1
+House_08	836e54	424242	726048	887154	685740	7e6b52	7e7e7e	a0a0a0	0	2	0.70	1
+House_09	bababa	424242	ababab	e0e0e0	6a5944	a0a0a0	7e7e7e	a0a0a0	0	2	0.50	1
+Library_0	936e52	7e7e7e	805747	bdb09f	826f5d	8e7f71	7e7e7e	a0a0a0	0	2	0.70	2
+Mall_0	a2a2a2	6b6b6b	4d4d4d	bfbfbf	b5b5b5	acacac	6b6b6b	858585	3	2	0.70	6
+Mechanic_0	acacac	6b6b6b	538a44	cdcdcd	7e7e7e	a0a0a0	7e7e7e	a0a0a0	0	2	0.70	1
+Medic_0	96afb8	6b6b6b	c6d0d4	cbcbcb	c3c3c3	b1b0b0	7e7e7e	a0a0a0	0	2	0.50	2
+Medic_1	bcbcbc	838383	b0b0b0	c9c9c9	aeaeae	bcbcbc	bf1f1f	bf1f1f	0	2	0.70	0
+Medic_2	83a28c	6b6b6b	6b8573	cbcbcb	c3c3c3	b1b0b0	7e7e7e	a0a0a0	0	2	0.70	2
+Office_0	6a7374	6b6b6b	79726d	bfbfbf	8c8c8c	9a9a9a	7e7e7e	a0a0a0	0	2	0.70	4
+Office_1	8f8063	747474	85775b	c3c3c3	939393	a0a0a0	868686	a6a6a6	0	2	0.70	4
+Office_2	9b9b9b	838383	919191	c9c9c9	aeaeae	bcbcbc	7e7e7e	a0a0a0	0	2	0.70	-1
+Office_3	866655	6b6b6b	7c5a4a	bfbfbf	8c8c8c	9a9a9a	7e7e7e	a0a0a0	0	2	0.70	-1
+Police_0	a0987e	424242	3d5d85	bdb69c	7c7c7c	bababa	505050	a0a0a0	0	2	0.50	2
+Police_1	796c5d	6a5a45	635b51	8c7e6e	72614b	615341	505050	a0a0a0	3	2	0.70	4
+Post_0	b5b5b5	7e7e7e	d0691e	c3c3c3	c8c8c8	bababa	7e7e7e	a0a0a0	0	2	0.70	2
+Research_0	c1d0c3	6b6b6b	719b6f	c1d0c3	c6c6c6	bcbcbc	7e7e7e	a0a0a0	3	2	0.70	4
+School_0	835a4f	7e7e7e	7e7e7e	e5e0d3	826f5d	8e7f71	7e7e7e	a0a0a0	0	2	0.70	2
+School_1	bababa	424242	ababab	e0e0e0	826f5d	8e7f71	7e7e7e	a0a0a0	0	2	0.70	1
+Ship_0	a1a9b1	61666b	737980	adb5bd	53565a	4d5053	32373d	533838	7	2	0.50	4
+Ship_1	a1a9b1	61666b	737980	adb5bd	53565a	4d5053	32373d	385349	7	2	0.50	4

@@ -47,6 +47,12 @@ namespace UnturnedGodot.Testing
         {
             if (_cooldown > 0) { _cooldown--; return; }        // let the previous sandbox's QueueFree flush through the groups
             if (_cur == null) { if (!StartNext()) return; }    // StartNext false => all done + quit already issued
+            // ...and StartNext returning TRUE does not mean a test is now running: it pulls the first step, so
+            // a body that reaches its end without a pending yield finishes inside it and clears _cur. Falling
+            // through then dereferenced null and threw, once per such test -- 31 NullReferenceExceptions in a
+            // 201-test run, all logged, none failing anything. Harmless on its own; corrosive because grepping
+            // l1.log for NREs is how a REAL one gets noticed, and 31 of these drown it.
+            if (_cur == null) return;
 
             _testSim += delta;
             if (_testSim > _cur.TimeoutSimSeconds) { _ctx.Fail($"TIMEOUT after {_testSim:0.0}s sim (watchdog)"); FinishTest(); return; }

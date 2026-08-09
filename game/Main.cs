@@ -12,7 +12,7 @@ namespace UnturnedGodot
     {
         const string GateGuid = "fb9428c7b8df82e4eb9642dacfaf9567"; // Aprix_Mask_0, ripped from core.masterbundle
 
-        string _shotPath;
+        string _shotPath; float _shotElapsed;   // UG_SHOTTIME: capture at an elapsed-time target (real-time frame counts drift off fixed-fps -- tinyclaw)
         Deployable _spotDbg;    // UG_WIRETEST: spotlight, probed for lamp-lit state at the shot frame
         Vector3 _vAim; bool _vHave;   // first real (Police/Fire/Ambulance) vehicle, for the demo cam
         bool _noZombies;   // --nozombies: a quiet test environment (skip the horde spawner)
@@ -85,7 +85,8 @@ namespace UnturnedGodot
             bool doorTest = false;
             string doorTestName = null;
             bool containerTest = false; string containerTestName = null;
-            bool play = false, demo = false, netdemo = false, server = false, dedicated = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, lightTest = false, trafficTest = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, objects = false, peidrive = false, craftui = false, bakenav = false, navPathTest = false, zombieTest = false, zdirTest = false, editorMode = false;
+            bool wallDemo = false;
+            bool play = false, demo = false, netdemo = false, server = false, dedicated = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, lightTest = false, trafficTest = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, objects = false, peidrive = false, craftui = false, bakenav = false, navPathTest = false, zombieTest = false, zdirTest = false, editorMode = false, impactTest = false, doorGallery = false;
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
                 if (arg.StartsWith("--catalog=")) catalog = arg["--catalog=".Length..];
@@ -107,6 +108,8 @@ namespace UnturnedGodot
                 else if (arg == "--zperf") zperf = true;   // GPU perf probe: N zombies, render counters ON vs OFF (MUST run with a rendering driver, not --headless)
                 else if (arg == "--zbody") zbody = true;   // MECHANISM probe: N bare kinematic capsules, moving vs parked -> is the physics cost the BODIES?
                 else if (arg == "--deploytest") deployTest = true;   // both deployables placed on a ground plane + a valid(blue)+invalid(red) ghost -> verify models/palette/stand-up/ghost materials
+                else if (arg == "--impacttest") impactTest = true;   // one bullet-impact FX per surface (concrete/metal/wood/dirt/grass/sand/water/blood) across a wall -> verify the reimplemented ImpactFx
+                else if (arg == "--doorgallery") doorGallery = true;   // --shot=OUT : lineup of the 12 ripped WOODEN door barricade models (Door/Doubledoor/Gate/Hatch x Birch/Maple/Pine) for master to eyeball
                 else if (arg == "--skillsui") skillsui = true;   // render the skills menu (showcase/validate the SkillsUI)
                 else if (arg.StartsWith("--itemtest=")) itemtest = arg["--itemtest=".Length..];   // drop a row of loot items (ids) as physics WorldItems -> validate real mesh/tex/scale/settle
                 else if (arg.StartsWith("--animrig=")) { animrig = arg["--animrig=".Length..]; _shotRequested = animrig; }   // build a rigged animal (content/NAME_rig.json) at rest + 3/4 cam -> validate the static pose stands
@@ -181,6 +184,7 @@ namespace UnturnedGodot
                 else if (arg == "--lighttest") lightTest = true;   // one lit streetlight at night: cone + motes eyeball (UG_LIGHTCAM=under looks up from inside)
                 else if (arg == "--trafficlight") trafficTest = true;   // one signal, both heads (UG_TL_STATE=green|amber|red|flash|dark, UG_TL_SIDE=1 for the side-road mast, UG_TL_DAY=1 for daylight)
                 else if (arg == "--build") buildmode = true;
+                else if (arg == "--walls") wallDemo = true;   // building tool: generated walls + openings, no editor needed
                 else if (arg == "--extractblueprints") { RunExtractBlueprints(); GetTree().Quit(); return; }   // walk retail item .dats -> content/blueprints.tsv catalog
                 else if (arg == "--tests" || arg.StartsWith("--tests="))   // L1 in-engine test host (phase 2): boot once, run all GameTests, self-quit 0/1. `--tests=power.*` globs.
                 {
@@ -306,6 +310,14 @@ namespace UnturnedGodot
                 return;
             }
 
+            if (doorGallery)   // --doorgallery --shot=OUT : a front-on lineup of the 12 ripped WOODEN door barricade models for master to eyeball
+            {
+                GetWindow().Size = new Vector2I(2560, 1440);
+                _shotPath = shot; _shotRequested = shot;
+                BuildDoorGallery();
+                return;
+            }
+
 
 
             if (navPathTest) { _bakeNav = true; _peiPlayable = true; BuildObjectsTest(); _navPathTest = true; return; }   // sync-load; RunNavPathTest fires after a few frames (the nav map merges its regions on a physics tick, not in _Ready)
@@ -338,6 +350,14 @@ namespace UnturnedGodot
                 GetWindow().Size = new Vector2I(1280, 720);
                 _shotPath = shot;
                 BuildDeployTest();
+                return;
+            }
+
+            if (impactTest)   // bullet-impact FX showcase: one per surface across a wall, captured mid-burst
+            {
+                GetWindow().Size = new Vector2I(1280, 720);
+                _shotPath = shot;
+                BuildImpactTest();
                 return;
             }
 
@@ -433,6 +453,14 @@ namespace UnturnedGodot
                 _shotPath = shot;
                 GetWindow().Size = new Vector2I(1280, 720);
                 BuildDayNightDemo();
+                return;
+            }
+
+            if (wallDemo)   // the building tool's geometry, straight from WallOpenings -> WallSurface
+            {
+                GetWindow().Size = new Vector2I(1280, 720);
+                _shotPath = shot; _shotRequested = shot;
+                BuildWallDemo();
                 return;
             }
 
@@ -1362,6 +1390,50 @@ namespace UnturnedGodot
             var z = new ZombieController { Target = player, Speciality = ZombieController.ESpeciality.NORMAL };
             AddChild(z);
             z.GlobalPosition = new Vector3(0, 1.0f, System.Environment.GetEnvironmentVariable("UG_HITZOMBIE") == "1" ? -6f : -25f);   // UG_HITZOMBIE: point-blank so shots connect -> verify blood
+
+            // UG_HITWALL: a concrete wall 18 m downrange in the player's default (+Z) fire direction, so the firetest
+            // reproduces shooting a hard surface at PLAY DISTANCE -> diagnose the real in-game bullet-impact FX (the
+            // --impacttest harness fired point-blank, which never actually exercised the frustum-cull path). Tagged
+            // Concrete so it takes the debris burst + decal.
+            if (System.Environment.GetEnvironmentVariable("UG_HITWALL") == "1")
+            {
+                var wall = new StaticBody3D { CollisionLayer = 1 << 0 };
+                wall.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = new Vector3(12f, 8f, 0.5f) } });
+                var wm = new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(12f, 8f, 0.5f) } };
+                wm.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.60f, 0.60f, 0.62f) };
+                wall.AddChild(wm);
+                AddChild(wall);
+                wall.GlobalPosition = new Vector3(0, 2.5f, 18f);
+                wall.SetMeta(PlayerController.SurfMeta, (int)PlayerController.Surf.Concrete);
+                GD.Print("[FIRETEST] UG_HITWALL: concrete wall at +Z 18 m (player fires into it)");
+            }
+
+            // UG_HITGLASS: a full window-sized DESTRUCTIBLE glass pane 6 m downrange -> the player shoots it + it shatters
+            // into Glass_0 shards. Close so the shatter reads clearly.
+            //
+            // UG_HITGLASS_HP exists because at the stock Health 1 THIS HARNESS CANNOT SHOW THE SHARDS. The pane
+            // breaks on the first bullet (frame 60) and the shards live ~1.2s, but the firetest only captures
+            // once ammo <= 20 and frame >= 75 -- it fires every 15 frames from 60, so that is frame ~195. The
+            // capture lands ~135 frames after the glass is gone and photographs an empty space whether the
+            // shards work or not. Give the pane enough health to survive to the capture frame and it is a real
+            // verification instead of a picture of nothing.
+            //
+            // It is a knob rather than a computed number because a bullet deals the GUN's ObjectDamage, not 1,
+            // so "survives nine shots" is not something to derive on paper -- the shatter frame is printed
+            // below so one run tells you what to set.
+            if (System.Environment.GetEnvironmentVariable("UG_HITGLASS") == "1")
+            {
+                float ghp = 1f;
+                if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_HITGLASS_HP"),
+                                   System.Globalization.NumberStyles.Float,
+                                   System.Globalization.CultureInfo.InvariantCulture, out float hpv) && hpv > 0f)
+                    ghp = hpv;
+                var pane = GlassPane.Build(new Vector2(1.2f, 1.5f), hp: ghp);
+                pane.OnShattered += () => GD.Print($"[FIRETEST] glass SHATTERED at frame {_ftFrame} (capture wants ~195)");
+                AddChild(pane);
+                pane.GlobalPosition = new Vector3(0f, 1.5f, 6f);
+                GD.Print($"[FIRETEST] UG_HITGLASS: destructible glass pane at +Z 6 m, hp {ghp:0.#} (player shatters it)");
+            }
             env.TonemapMode = Godot.Environment.ToneMapper.Aces;   // match the game's ACES so this harness validates the scope PiP color/tonemap (was default Linear)
             GD.Print($"[FIRETEST] suppressed={suppressed} -- firing away from a zombie 25 m off; expect [ALERT] ONLY when unsuppressed");
         }
@@ -1460,6 +1532,99 @@ namespace UnturnedGodot
             GD.Print($"[PROPTEST] {name} aabb size={aabb.Size} center={c}");
         }
 
+        // --doorgallery --shot=OUT : a lit, front-on LINEUP of the 12 ripped WOODEN door barricade models
+        // (Door / Doubledoor / Gate / Hatch, each in Birch / Maple / Pine), grouped by form with the three wood
+        // tints adjacent, a name label under each + the form name above -- so master can eyeball every wooden door
+        // model at once. The meshes are barricade SkinnedMeshRenderer leaves (tools/extract_wooden_doors.py);
+        // barricades are authored lying flat, so a +90 X stands them up (override UG_DOORROT="x,y,z", no rebuild).
+        void BuildDoorGallery()
+        {
+            var env = new Godot.Environment
+            {
+                BackgroundMode = Godot.Environment.BGMode.Color,
+                BackgroundColor = new Color(0.44f, 0.56f, 0.72f),
+                AmbientLightSource = Godot.Environment.AmbientSource.Color,
+                AmbientLightColor = new Color(0.62f, 0.64f, 0.67f),
+                AmbientLightEnergy = 0.8f,
+            };
+            AddChild(new WorldEnvironment { Environment = env });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-48f, -36f, 0f), LightEnergy = 1.15f, ShadowEnabled = true });
+
+            var gmesh = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(160, 160) } };
+            gmesh.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.34f, 0.37f, 0.33f), Roughness = 1f };
+            AddChild(gmesh);
+
+            // these rips are authored CONTAINER-STYLE (height on +Z, like the fridge/container leaves) -> +270 X
+            // stands them up (like StoreShelf). NOT the +90 DeployableDef-table convention -- that maps +Z to -Y and
+            // points them at the floor (my handoff bug: quoted the rule, not the asset). UG_DOORROT overrides.
+            Vector3 rot = new Vector3(270f, 0f, 0f);
+            var rr = System.Environment.GetEnvironmentVariable("UG_DOORROT");
+            if (!string.IsNullOrEmpty(rr)) { var pp = rr.Split(','); if (pp.Length == 3 && float.TryParse(pp[0], out var rx) && float.TryParse(pp[1], out var ry) && float.TryParse(pp[2], out var rz)) rot = new Vector3(rx, ry, rz); }
+            Basis standUp = Basis.FromEuler(new Vector3(Mathf.DegToRad(rot.X), Mathf.DegToRad(rot.Y), Mathf.DegToRad(rot.Z)));
+
+            string odir = ProjectSettings.GlobalizePath("res://content/objects/");
+            // Swing pose (UG_DOOROPEN=frac 0..1): swing single-hinge doors by frac*angle about their hinge, read from
+            // tools/extract_wooden_door_anims.py's wooden_door_anims.txt. The Doubledoor (2 hinges) needs a panel split -> stays shut here.
+            float openFrac = 0f; { var ov = System.Environment.GetEnvironmentVariable("UG_DOOROPEN"); if (!string.IsNullOrEmpty(ov)) float.TryParse(ov, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out openFrac); }
+            float F(string s) => float.Parse(s, System.Globalization.CultureInfo.InvariantCulture);
+            var anims = new System.Collections.Generic.Dictionary<string, System.Collections.Generic.List<(Vector3 pivot, Vector3 axis, float ang)>>();
+            { string ap = odir + "wooden_door_anims.txt"; if (System.IO.File.Exists(ap)) foreach (var ln in System.IO.File.ReadAllLines(ap)) { var pp = ln.Split(' ', System.StringSplitOptions.RemoveEmptyEntries); if (pp.Length < 9) continue; if (!anims.ContainsKey(pp[0])) anims[pp[0]] = new System.Collections.Generic.List<(Vector3, Vector3, float)>(); anims[pp[0]].Add((new Vector3(F(pp[2]), F(pp[3]), F(pp[4])), new Vector3(F(pp[5]), F(pp[6]), F(pp[7])), F(pp[8]))); } }
+            void PlaceDoor(string form, string wood, Vector3 pos)
+            {
+                string nm = form + "_" + wood;
+                var m = ObjMesh.Load(odir + nm + ".obj");
+                if (m == null) { GD.Print($"[DOORS] {nm}.obj MISSING"); return; }
+                var lb = m.GetAabb();
+                // The Gate is a GARAGE DOOR (master): wide + tilts UP (ripped anim axis = X-tilt). Its handle rips at the
+                // TOP but a garage door's handle belongs at the BOTTOM (front/back, master), so flip it 180 deg in-plane
+                // about the face normal -- stays wide + forward-facing, just moves the handle top->bottom.
+                Basis su = form == "Gate" ? new Basis(new Vector3(0f, 0f, 1f), Mathf.DegToRad(180f)) * standUp : standUp;
+                var mat = new StandardMaterial3D { Roughness = 0.85f, CullMode = BaseMaterial3D.CullModeEnum.Disabled, TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest };
+                string tp = odir + nm + "_tex.png";
+                if (System.IO.File.Exists(tp)) { var img = new Image(); if (img.Load(tp) == Error.Ok) mat.AlbedoTexture = ImageTexture.CreateFromImage(img); else mat.AlbedoColor = new Color(0.5f, 0.36f, 0.22f); }
+                else mat.AlbedoColor = new Color(0.5f, 0.36f, 0.22f);
+                // stood-up AABB: transform the 8 local corners by standUp -> sit the base on the ground, centre in X/Z.
+                Vector3 mn = new Vector3(1e9f, 1e9f, 1e9f), mx = new Vector3(-1e9f, -1e9f, -1e9f);
+                for (int cx = 0; cx < 2; cx++) for (int cy = 0; cy < 2; cy++) for (int cz = 0; cz < 2; cz++)
+                {
+                    Vector3 wc = su * (lb.Position + new Vector3(cx * lb.Size.X, cy * lb.Size.Y, cz * lb.Size.Z));
+                    mn = new Vector3(Mathf.Min(mn.X, wc.X), Mathf.Min(mn.Y, wc.Y), Mathf.Min(mn.Z, wc.Z));
+                    mx = new Vector3(Mathf.Max(mx.X, wc.X), Mathf.Max(mx.Y, wc.Y), Mathf.Max(mx.Z, wc.Z));
+                }
+                Vector3 c = (mn + mx) * 0.5f;
+                GD.Print($"[DOORS] {nm} stood-up size={mx - mn} (w={mx.X - mn.X:0.00} h={mx.Y - mn.Y:0.00} d={mx.Z - mn.Z:0.00})");
+                var placement = new Transform3D(su, new Vector3(pos.X - c.X, -mn.Y, pos.Z - c.Z));
+                var world = placement;
+                if (openFrac > 0f && anims.TryGetValue(form, out var hs) && hs.Count == 1)   // single-hinge -> swing the whole mesh about its hinge; Doubledoor (2 hinges) needs a panel split, stays shut here
+                {
+                    var h = hs[0];
+                    var sb = new Basis(h.axis.Normalized(), Mathf.DegToRad(h.ang * openFrac));
+                    world = placement * new Transform3D(sb, h.pivot - sb * h.pivot);   // rotate the mesh about its hinge (mesh-local) THEN place it
+                }
+                AddChild(new MeshInstance3D { Mesh = m, MaterialOverride = mat, Transform = world });
+            }
+
+            // 4x3 grid: columns = form (Door/Doubledoor/Gate/Hatch), rows = wood (Birch front / Maple / Pine back),
+            // wide gates/doubledoors get their own column so nothing overlaps. Seen from a high 3/4 so no door hides
+            // another; column labels (form) above the front row + row labels (wood) at the left, not a label per door.
+            string[] forms = { "Door", "Doubledoor", "Gate", "Hatch" };
+            string[] woods = { "Birch", "Maple", "Pine" };
+            float[] colX = { -10f, -3.3f, 3.3f, 10f };
+            float[] rowZ = { 6f, 0f, -6f };
+            for (int wi = 0; wi < woods.Length; wi++)
+                for (int fi = 0; fi < forms.Length; fi++)
+                    PlaceDoor(forms[fi], woods[wi], new Vector3(colX[fi], 0f, rowZ[wi]));
+            for (int fi = 0; fi < forms.Length; fi++)   // small form header floating above each column (clear of the wood row labels)
+                AddChild(new Label3D { Text = forms[fi], FontSize = 120, PixelSize = 0.0065f, Modulate = new Color(1f, 0.92f, 0.58f), OutlineSize = 14, OutlineModulate = Colors.Black, Billboard = BaseMaterial3D.BillboardModeEnum.Enabled, Position = new Vector3(colX[fi], 5.9f, rowZ[0] + 1.2f) });
+            for (int wi = 0; wi < woods.Length; wi++)   // wood label at the left end of each row (low, so it never meets a form header)
+                AddChild(new Label3D { Text = woods[wi], FontSize = 100, PixelSize = 0.009f, Modulate = Colors.White, OutlineSize = 12, OutlineModulate = Colors.Black, Billboard = BaseMaterial3D.BillboardModeEnum.Enabled, Position = new Vector3(-12.2f, 1.9f, rowZ[wi]) });
+
+            var cam = new Camera3D { Current = true, Fov = 44f, Far = 10000f };
+            AddChild(cam);
+            cam.Position = new Vector3(0f, 18.5f, 24f);
+            cam.LookAt(new Vector3(0f, 0.5f, -1f), Vector3.Up);
+        }
+
         // --doortest[=NAME]: openable prop door MVP render harness (default Fridge_0). Builds the body mesh
         // plus EVERY one of the prop's door leaves (one ObjectDoor per leaf, grouped via ObjectDoor.SetGroup so
         // a multi-leaf prop like Wardrobe_0 opens/closes both doors together) standalone -- like BuildPropTest,
@@ -1482,6 +1647,46 @@ namespace UnturnedGodot
             AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-45f, -35f, 0f), LightEnergy = 1.2f });
 
             string dir = ProjectSettings.GlobalizePath("res://content/objects/");
+
+            // A WOODEN barricade door (Door_Pine, Gate_Birch, ...) is not a container prop: it has no separate
+            // body, its leaf IS the whole model, and its hinge lives in wooden_door_anims.txt rather than
+            // doors.txt. Route those through DoorDeploy -- the SAME call the placement path makes -- so this
+            // harness shows the thing production builds rather than a second construction that could agree
+            // with itself while the real one is wrong.
+            foreach (var wd in DeployableDef.WoodDoors)
+            {
+                if (wd.DoorProp != name) continue;
+                var placed = DoorDeploy.SpawnFor(wd, this, Vector3.Zero, 0f);
+                if (placed == null) { GD.Print($"[DOORTEST] {name}: DoorDeploy refused it (no hinge row / no mesh)"); GetTree().Quit(1); return; }
+                if (System.Environment.GetEnvironmentVariable("UG_DOOR_OPEN") == "1")
+                    foreach (var c in placed.GetChildren()) if (c is ObjectDoor od) od.SetInitialState(true);
+                var wcam = new Camera3D { Current = true, Fov = 55f };
+                AddChild(wcam);
+                // Framed WIDE and from above rather than close and level. A door swinging 90 deg sweeps a
+                // quarter circle, and from a tight three-quarter view an open door fills the frame at an angle
+                // that reads the same whether it hinged about the vertical axis or tipped over about a
+                // horizontal one -- the magnitude is identical and only the axis differs. The whole point of
+                // looking is to tell those apart, so the shot has to contain the swept arc, not just the leaf.
+                // UG_DOORCAM="x,y,z" to move it.
+                var cp = new Vector3(6.5f, 5.5f, 6.5f);
+                var cs = System.Environment.GetEnvironmentVariable("UG_DOORCAM");
+                if (!string.IsNullOrEmpty(cs))
+                {
+                    var q = cs.Split(',');
+                    if (q.Length == 3) cp = new Vector3(float.Parse(q[0], System.Globalization.CultureInfo.InvariantCulture),
+                                                        float.Parse(q[1], System.Globalization.CultureInfo.InvariantCulture),
+                                                        float.Parse(q[2], System.Globalization.CultureInfo.InvariantCulture));
+                }
+                wcam.Position = cp;
+                wcam.LookAt(new Vector3(0f, 0.9f, 0f), Vector3.Up);
+                // a ground plane, so "standing up" and "fallen over" are distinguishable at all
+                var gnd = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(14f, 14f) } };
+                gnd.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.30f, 0.34f, 0.30f) };
+                AddChild(gnd);
+                GD.Print($"[DOORTEST] wooden door {name} placed via DoorDeploy");
+                return;
+            }
+
             var bodyMesh = ObjMesh.Load(dir + name + ".obj");
             if (bodyMesh == null) { GD.Print($"[DOORTEST] no body mesh {name}"); GetTree().Quit(1); return; }
             var doorCatalog = WorldBuilder.LoadDoorCatalog(dir);
@@ -1977,6 +2182,39 @@ namespace UnturnedGodot
         {
             if (root is GeometryInstance3D gi) gi.CastShadow = on ? GeometryInstance3D.ShadowCastingSetting.On : GeometryInstance3D.ShadowCastingSetting.Off;
             foreach (var c in root.GetChildren()) SetZombieShadows(c, on);
+        }
+
+        // --impacttest : fire ONE reimplemented ImpactFx per surface across a grey wall (concrete / metal / wood / dirt
+        // / grass / sand, then a water plip + a blood spray), captured a few frames into the burst so the debris is
+        // mid-flight -- the exact thing the old (culled, no-VisibilityAabb) bursts couldn't show.
+        void BuildImpactTest()
+        {
+            var env = new Godot.Environment
+            {
+                BackgroundMode = Godot.Environment.BGMode.Color, BackgroundColor = new Color(0.15f, 0.16f, 0.19f),   // dark so sparks/debris read
+                AmbientLightSource = Godot.Environment.AmbientSource.Color, AmbientLightColor = new Color(0.55f, 0.55f, 0.6f), AmbientLightEnergy = 1.0f,
+            };
+            AddChild(new WorldEnvironment { Environment = env });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-45f, -35f, 0f), LightEnergy = 1.2f });
+
+            var wallSize = new Vector3(22f, 8f, 0.6f);
+            var wallPos = new Vector3(0f, 3f, -3f);
+            var wall = new StaticBody3D { Position = wallPos };
+            wall.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = wallSize } });
+            wall.AddChild(new MeshInstance3D { Mesh = new BoxMesh { Size = wallSize }, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.46f, 0.46f, 0.49f), Roughness = 0.9f } });
+            AddChild(wall);
+            float faceZ = wallPos.Z + wallSize.Z * 0.5f;
+
+            var surfs = new[] { PlayerController.Surf.Concrete, PlayerController.Surf.Metal, PlayerController.Surf.Wood, PlayerController.Surf.Dirt, PlayerController.Surf.Grass, PlayerController.Surf.Sand };
+            for (int i = 0; i < surfs.Length; i++)
+                ImpactFx.Spawn(this, new Vector3(-7f + i * 2.1f, 3.4f, faceZ), Vector3.Back, surfs[i]);
+            ImpactFx.WaterSplash(this, new Vector3(6.3f, 3.4f, faceZ), 1f);
+            ImpactFx.Blood(this, new Vector3(8.4f, 3.4f, faceZ), Vector3.Forward);
+
+            var cam = new Camera3D { Current = true, Fov = 62f, Far = 10000f };
+            AddChild(cam);
+            cam.Position = new Vector3(0.7f, 3.4f, 10.5f);
+            cam.LookAt(new Vector3(0.7f, 3.3f, -1f), Vector3.Up);
         }
 
         void BuildDeployTest()
@@ -3383,6 +3621,59 @@ namespace UnturnedGodot
             var objs = new EditorObjects(editor, this, cam);   // Phase 2: place/select/delete props (picks the WorldMode.Editor colliders)
             editor.AddChild(objs);
             editor.Objects = objs;
+            var buildings = new EditorBuildings();   // building tool: walls + openings, shares the Level tab with Objects
+            editor.AddChild(buildings);
+            buildings.Setup(editor, cam, cam);   // EditorCamera IS a Camera3D
+            editor.Buildings = buildings;
+            // UG_EDITTOOL opens straight onto the Buildings mode, so a capture can show that editor. Without
+            // it the only way to see it in a screenshot is to already be clicking the tab. UG_EDITBAKE then
+            // bakes what it drew and places the result back on the map -- the whole build->bake->place round
+            // trip in one frame, which is the only way to SEE that a baked building is a real prop.
+            if (System.Environment.GetEnvironmentVariable("UG_EDITTOOL") == "buildings")
+            {
+                editor.Mode = EEditorMode.Buildings;
+                // UG_EDITIMPORT ports a retail building in instead of drawing the demo, so the translator can
+                // be LOOKED at. The L1 test proves its numbers are wall-shaped; only a render shows whether
+                // the building it rebuilt is the building it read.
+                string imp = System.Environment.GetEnvironmentVariable("UG_EDITIMPORT");
+                if (!string.IsNullOrEmpty(imp)) buildings.ImportRetail(imp);
+                else if (buildings.Walls.Count == 0) DrawDemoBuilding(buildings);
+                if (System.Environment.GetEnvironmentVariable("UG_EDITBAKE") == "1")
+                {
+                    // Name the bake after what it came from. It used to always bake "Demo_House", so baking
+                    // an IMPORT overwrote the committed demo prefab with a ported building under the demo's
+                    // name -- two different buildings sharing one file, and whichever ran last won.
+                    string baked = buildings.Bake(string.IsNullOrEmpty(imp) ? "Demo_House" : imp + "_ported");
+                    editor.Mode = EEditorMode.Level;
+                    if (baked != null)
+                    {
+                        var at = WorldBuilder.InteractableAnchor(_mapRoot);
+                        // Drop it ON the ground. A building's origin is its floor line and its foundation
+                        // hangs 6 m below that, so placing at y=0 over water leaves the foundation dangling in
+                        // mid-air -- which looks like the bake got the origin wrong when it did not.
+                        var down = new PhysicsRayQueryParameters3D
+                        {
+                            From = at + new Vector3(0f, 300f, 0f), To = at - new Vector3(0f, 100f, 0f),
+                            CollisionMask = 1u << 0,
+                        };
+                        var ground = cam.GetWorld3D().DirectSpaceState.IntersectRay(down);
+                        if (ground.ContainsKey("position")) at = (Vector3)ground["position"];
+                        // UG_EDITCOMPARE=retail places the SOURCE prop at the same spot with the same camera
+                        // INSTEAD of the port, so the two captures differ in nothing but the building.
+                        // Two buildings side by side in one frame does not work: 34 m apart they are seen
+                        // from 20 degrees apart, present different elevations, and the comparison is worthless
+                        // -- which is exactly the trap of judging a port against a picture of itself.
+                        bool retailOnly = System.Environment.GetEnvironmentVariable("UG_EDITCOMPARE") == "retail"
+                                          && !string.IsNullOrEmpty(imp);
+                        string show = retailOnly ? imp : baked;
+                        objs.SetPlaceType(show);
+                        objs.Place(show, at, EditorObjects.Upright(0f));
+                        cam.GlobalPosition = at + new Vector3(17f, 11f, 24f);
+                        cam.LookAt(at + new Vector3(0f, 2.5f, 0f), Vector3.Up);
+                        GD.Print($"[editor] baked+placed '{baked}' at {at}");
+                    }
+                }
+            }
             var spawns = new EditorSpawns(editor, cam, _mapRoot);   // Phase 3: visualize/edit spawn points (Spawns tab)
             editor.AddChild(spawns);
             editor.Spawns = spawns;
@@ -3403,6 +3694,9 @@ namespace UnturnedGodot
             editor.AddChild(roadsEd);
             editor.RoadsEd = roadsEd;
             editor.AddChild(new EditorDashboard { Editor = editor, OnExit = ReturnToMenu });
+            var playMode = new EditorPlayMode();   // "Test Build" button -> walk the drawn building as a player (master 2026-08-09)
+            editor.AddChild(playMode);
+            playMode.Setup(editor, buildings, cam);
             if (res.Ready) _worldReady = true;
             // headless render-verify: scatter a few props once the colliders are live (UG_EDITORDEMO=1)
             if (System.Environment.GetEnvironmentVariable("UG_EDITORDEMO") == "1")
@@ -4220,6 +4514,235 @@ namespace UnturnedGodot
             GD.Print("[BUILD] scripted a small structure (floor + walls)");
         }
 
+        // Building-tool demo: walls carrying openings at the MEASURED retail dimensions, so the first thing
+        // anyone looks at is the real geometry rather than a mock-up. Every wall here goes through the same
+        // WallOpenings.Solids the editor drag path uses -- there is no separate preview code.
+        void BuildWallDemo()
+        {
+            var env = new Godot.Environment
+            {
+                BackgroundMode = Godot.Environment.BGMode.Color,
+                BackgroundColor = new Color(0.42f, 0.55f, 0.72f),
+                AmbientLightSource = Godot.Environment.AmbientSource.Color,
+                AmbientLightColor = new Color(0.62f, 0.64f, 0.67f),
+                AmbientLightEnergy = 0.9f,
+            };
+            AddChild(new WorldEnvironment { Environment = env });
+            // UG_WALLNOSHADOW / UG_WALLNOMESH exist to separate a GEOMETRY fault from a SHADING one. A thin
+            // box at grazing incidence to the sun and a bowtie quad look identical in a beauty shot, and
+            // guessing between them from one render is how you fix the wrong thing twice.
+            AddChild(new DirectionalLight3D
+            {
+                RotationDegrees = new Vector3(-48f, -52f, 0f), LightEnergy = 1.25f,
+                ShadowEnabled = System.Environment.GetEnvironmentVariable("UG_WALLNOSHADOW") != "1",
+            });
+
+            var ground = new StaticBody3D { CollisionLayer = 1 << 0 };
+            ground.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
+            var gm = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(120, 120) } };
+            gm.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.31f, 0.35f, 0.29f) };
+            ground.AddChild(gm);
+            AddChild(ground);
+
+            float H = UnturnedSim.WallOpenings.DoorHeight;          // 4.25
+            float sill = UnturnedSim.WallOpenings.WindowSill;       // 1.00
+            float wh = UnturnedSim.WallOpenings.WindowHeight;       // 2.75
+            float pitch = UnturnedSim.WallOpenings.StoreyPitch;     // 4.75
+            const float L = 12f, D = 9f;
+
+            // UG_WALLMAT picks the retail palette; default 0. There are 52 sampled from the buildings.
+            int matId = int.TryParse(System.Environment.GetEnvironmentVariable("UG_WALLMAT"), out var mi) ? mi : 0;
+            GD.Print($"[walls] material {matId} of {WallMaterials.Count}: {WallMaterials.At(matId).Name}");
+
+            WallSurface Wall(float len, Vector3 pos, float yaw)
+            {
+                var w = new WallSurface { Length = len, Height = H, Position = pos, RotationDegrees = new Vector3(0f, yaw, 0f), MaterialId = matId };
+                AddChild(w);
+                return w;
+            }
+
+            // UG_WALLSWATCH renders one panel per palette instead of the room -- the whole material range in a
+            // single frame, which is the only way to see that the roles were sampled right across all 52 and
+            // not just on the house they were derived from.
+            if (System.Environment.GetEnvironmentVariable("UG_WALLSWATCH") == "1")
+            {
+                ground.Visible = false;          // a swatch is a chart, not a scene
+                int n = WallMaterials.Count, cols = 7;
+                const float PW = 11f, GAP = 2.0f;
+                for (int i = 0; i < n; i++)
+                {
+                    int cx = i % cols, cy = i / cols;
+                    const float LIFT = 3.0f;   // clear of the ground plane, so no row is half-buried
+                    var m = WallMaterials.At(i);
+                    var w = new WallSurface
+                    {
+                        Length = PW, Height = H, Thickness = m.Thickness, MaterialId = i,
+                        Position = new Vector3(cx * (PW + GAP), LIFT + cy * (H + GAP), 0f),
+                    };
+                    AddChild(w);
+                    w.Openings.Add(new UnturnedSim.WallOpening(1.5f, 0f, 2.5f, H - 0.5f));      // door
+                    w.Openings.Add(new UnturnedSim.WallOpening(6.5f, sill, 2.81f, wh));         // window
+                    w.Rebuild();
+                    // name each panel: an id is useless if you cannot tell which building it came off
+                    w.AddChild(new Label3D
+                    {
+                        Text = $"{i}  {m.Name}", FontSize = 96, PixelSize = 0.006f,
+                        Modulate = new Color(1f, 1f, 1f), OutlineSize = 24,
+                        Position = new Vector3(PW * 0.5f, -0.55f, 0.4f),
+                        Billboard = BaseMaterial3D.BillboardModeEnum.Disabled,
+                    });
+                }
+                float wide = cols * (PW + GAP) - GAP, tall = Mathf.Ceil(n / (float)cols) * (H + GAP) - GAP;
+                // Frame the grid rather than guessing a distance: a swatch you have to squint at proves the
+                // palettes loaded and nothing else, which is not what the shot is for.
+                const float Fov = 50f;
+                float vt = Mathf.Tan(Mathf.DegToRad(Fov) * 0.5f);
+                var vp = GetViewport().GetVisibleRect().Size;
+                float dist = Mathf.Max(tall * 0.5f / vt, wide * 0.5f / (vt * (vp.X / vp.Y))) * 1.06f;
+                var target = new Vector3(wide / 2f, 3.0f + tall / 2f, 0f);
+                var scam = new Camera3D { Current = true, Fov = Fov };
+                AddChild(scam);
+                scam.Position = target + new Vector3(0f, 0f, dist);
+                scam.LookAt(target, Vector3.Up);
+                GD.Print($"[walls] swatch: {n} palettes");
+                return;
+            }
+
+            // A closed room, so corners are visible. Walls run along local +X; yaw -90 turns +X into +Z.
+            //
+            // Windows are GLAZED here and in DrawDemoBuilding, and the two have to agree. They are already
+            // two hand-written copies of one room -- the note below DrawDemoBuilding says so -- and glazing
+            // only one of them is exactly how that drift shows up: the first render of this scene came back
+            // with empty holes because the OTHER copy was the one that got the glass.
+            var front = Wall(L, new Vector3(-L / 2f, 0f, 0f), 0f);
+            front.Openings.Add(DooredOpening(new UnturnedSim.WallOpening(1.0f, 0f, 2.5f, H - 0.5f)));   // person door, floor-pinned -- a real swinging door
+            front.Openings.Add(GlazedOpening(new UnturnedSim.WallOpening(5.0f, sill, 3.31f, wh)));       // measured window widths
+            front.Openings.Add(GlazedOpening(new UnturnedSim.WallOpening(9.0f, sill, 2.81f, wh), 0x8FBFA0));
+
+            var back = Wall(L, new Vector3(-L / 2f, 0f, -D), 0f);
+            back.Openings.Add(new UnturnedSim.WallOpening(2.0f, 0f, 8.0f, H - 0.25f));    // 8m garage: only reachable because walls are DRAWN, not 6m tiles
+
+            var left = Wall(D, new Vector3(-L / 2f, 0f, -D), -90f);
+            left.Openings.Add(GlazedOpening(new UnturnedSim.WallOpening(2.5f, sill, 3.31f, wh)));
+
+            var right = Wall(D, new Vector3(L / 2f, 0f, -D), -90f);
+            right.Openings.Add(GlazedOpening(new UnturnedSim.WallOpening(1.5f, sill, 2.81f, wh)));
+            right.Openings.Add(GlazedOpening(new UnturnedSim.WallOpening(5.5f, sill, 2.81f, wh)));
+
+            // second storey at the measured 4.75 pitch (4.25 opening + 0.50 slab)
+            var up = Wall(L, new Vector3(-L / 2f, pitch, 0f), 0f);
+            up.Openings.Add(GlazedOpening(new UnturnedSim.WallOpening(2.0f, sill, 2.81f, wh)));
+            up.Openings.Add(GlazedOpening(new UnturnedSim.WallOpening(7.0f, sill, 3.31f, wh)));
+            var upSide = Wall(D, new Vector3(-L / 2f, pitch, -D), -90f);
+            upSide.Openings.Add(GlazedOpening(new UnturnedSim.WallOpening(3.0f, sill, 2.81f, wh)));
+
+            // Rebuild AFTER the openings are added. WallSurface builds itself on _Ready, which fires the moment
+            // it is added to the tree -- so anything that mutates Openings afterwards has to say so. Without
+            // this every wall renders solid and looks like the partition is broken when it never ran.
+            foreach (var w in new[] { front, back, left, right, up, upSide }) w.Rebuild();
+
+            var cam = new Camera3D { Current = true, Fov = 52f };
+            AddChild(cam);
+            if (System.Environment.GetEnvironmentVariable("UG_WALLCLOSE") == "1")
+            {   // close on the front-wall window: the frame/reveal detail, straight on. Every OTHER wall is
+                // hidden -- at this range the far side of the room shows through the openings, and a jamb seen
+                // edge-on through a window reads exactly like a broken frame on the near one.
+                foreach (var w in new[] { back, left, right, up, upSide }) w.Visible = false;
+                if (System.Environment.GetEnvironmentVariable("UG_WALLNOMESH") == "1")
+                    front.GetNode<MeshInstance3D>("Mesh").Visible = false;   // trim alone, nothing to intersect
+                if (System.Environment.GetEnvironmentVariable("UG_WALLDUMP") == "1")
+                {
+                    // Inspect the COMMITTED mesh, not a re-derivation of what it should be: the suspect step is
+                    // what SurfaceTool does to the boxes, so a second copy of the box maths proves nothing.
+                    //
+                    // The ratio is the tell. Flat-shaded boxes cannot share a vertex between two faces, so
+                    // indexing leaves roughly two verts per triangle; smoothed, every face meeting at a corner
+                    // collapses onto one vertex and it drops below one. That is what a jamb necking like a
+                    // turned spindle looks like from the data, and it is visible here long before it is
+                    // obvious in a beauty shot.
+                    foreach (var (label, node) in new[] { ("wall", "Mesh"), ("trim", "TrimMesh") })
+                    {
+                        var m = front.GetNode<MeshInstance3D>(node).Mesh;
+                        if (m == null || m.GetSurfaceCount() == 0) { GD.Print($"[walldump] {label}: empty"); continue; }
+                        var arr = m.SurfaceGetArrays(0);
+                        int nv = ((Vector3[])arr[(int)Mesh.ArrayType.Vertex]).Length;
+                        int nt = ((int[])arr[(int)Mesh.ArrayType.Index]).Length / 3;
+                        float ratio = nt > 0 ? nv / (float)nt : 0f;
+                        GD.Print($"[walldump] {label}: {nt} tris, {nv} verts, {ratio:F2} verts/tri"
+                                 + (ratio < 1.5f ? "  <-- SMOOTHED, corners will bulge" : ""));
+                    }
+                }
+                cam.Position = new Vector3(-0.5f, 2.4f, 6.5f);
+                cam.LookAt(new Vector3(-0.5f, 2.4f, 0f), Vector3.Up);
+            }
+            else
+            {
+                cam.Position = new Vector3(13f, 7.5f, 24f);
+                cam.LookAt(new Vector3(0f, 3.4f, -3f), Vector3.Up);
+            }
+            GD.Print($"[walls] 6 walls; front run partitions into {UnturnedSim.WallOpenings.Solids(L, H, front.Openings).Count} solids, garage wall into {UnturnedSim.WallOpenings.Solids(L, H, back.Openings).Count}");
+        }
+
+        // The same room the --walls demo builds, laid out on the Buildings stage so the editor capture shows a
+        // real building rather than an empty plane. Deliberately the SAME numbers, so the tool and the demo
+        // cannot drift into disagreeing about what a wall of a given size looks like.
+        /// <summary>Mark an opening as glass-filled. Windows come glazed and doors/garage spans do not, which
+        /// is the same rule the archetype presets apply -- so both demo rooms show what the tool actually
+        /// produces instead of a special case. ONE helper because there are two hand-written copies of this
+        /// room and they have already drifted once.</summary>
+        static UnturnedSim.WallOpening GlazedOpening(UnturnedSim.WallOpening o, int tint = 0)
+        { o.Glazed = true; o.GlassTint = tint; return o; }
+
+        /// <summary>Hang a door in an opening. The door opening in both demo rooms carries one, so every editor
+        /// render shows what the tool produces rather than an empty hole -- the same reason the windows are
+        /// glazed there.</summary>
+        static UnturnedSim.WallOpening DooredOpening(UnturnedSim.WallOpening o, string prop = "Door_Pine")
+        { o.DoorProp = prop; return o; }
+
+        static void DrawDemoBuilding(EditorBuildings b)
+        {
+            float H = UnturnedSim.WallOpenings.DoorHeight;
+            float sill = UnturnedSim.WallOpenings.WindowSill;
+            float wh = UnturnedSim.WallOpenings.WindowHeight;
+            // Sits on the same clearance a hand-placed building does, so the demo shows what the tool
+            // actually produces rather than a special case with its floor buried.
+            var o = EditorBuildings.StageOrigin + new Vector3(0f, EditorBuildings.GroundClearance, 0f);
+            const float L = 12f, D = 9f;
+            b.ActiveMaterial = 24;                                   // House_00
+
+            var front = b.AddWall(o + new Vector3(-L / 2f, 0f, 0f), 0f, L);
+            front.Openings.Add(DooredOpening(new UnturnedSim.WallOpening(1.0f, 0f, 2.5f, H - 0.5f)));   // a real swinging door
+            front.Openings.Add(GlazedOpening(new UnturnedSim.WallOpening(5.0f, sill, 3.31f, wh)));
+            front.Openings.Add(GlazedOpening(new UnturnedSim.WallOpening(9.0f, sill, 2.81f, wh), 0x8FBFA0));
+
+            var back = b.AddWall(o + new Vector3(-L / 2f, 0f, -D), 0f, L);
+            back.Openings.Add(new UnturnedSim.WallOpening(2.0f, 0f, 8.0f, H - 0.25f));            // garage: no glass
+
+            var left = b.AddWall(o + new Vector3(-L / 2f, 0f, -D), -90f, D);
+            left.Openings.Add(GlazedOpening(new UnturnedSim.WallOpening(2.5f, sill, 3.31f, wh)));
+
+            var right = b.AddWall(o + new Vector3(L / 2f, 0f, -D), -90f, D);
+            right.Openings.Add(GlazedOpening(new UnturnedSim.WallOpening(1.5f, sill, 2.81f, wh)));
+            right.Openings.Add(GlazedOpening(new UnturnedSim.WallOpening(5.5f, sill, 2.81f, wh)));
+
+            foreach (var w in b.Walls) w.Rebuild();
+            // Close the corners, which a user gets for free and this did not. Corner solving runs from the
+            // draw-release handler, and the demo lays its walls by calling AddWall directly -- so every
+            // screenshot of the editor has been showing a building with an open notch at every corner while
+            // the same building drawn by hand came out solid. strawberry_cow, off a render: "corners arent
+            // getting solved in ur render?"
+            b.SolveCorners();
+            var floor = b.AddSlab(UnturnedSim.SurfaceKind.Floor);
+            // a stairwell, to show that a hole in a floor is the same opening as a hole in a wall
+            if (floor != null)
+            {
+                floor.Openings.Add(new UnturnedSim.WallOpening(floor.Length - 3.6f, floor.Height * 0.5f - 1.4f, 2.8f, 2.8f));
+                floor.Rebuild();
+            }
+            b.AddFoundation();
+            b.AddGableRoof(20f);
+        }
+
         // A few bundled ripped crates as cover/scenery (portable res:// assets).
         void BuildCrates()
         {
@@ -4735,7 +5258,9 @@ namespace UnturnedGodot
             }
             if (_worldReady && !_treeChecked && System.Environment.GetEnvironmentVariable("UG_TREECHECK") == "1" && ++_treeCheckFrame > 15) { _treeChecked = true; DoTreeCheck(); }
             if (_shotPath == null) return;
-            if (_peiPlay) { if (_peiFrame < (_peiHorde ? 130 : 160)) return; }   // peiplay: drop(~25f)+enter(50f)+drive(55f+); --horde captures mid-plow through the zombie field
+            float _shotTimeTarget = 0f; { var _ste = System.Environment.GetEnvironmentVariable("UG_SHOTTIME"); if (!string.IsNullOrEmpty(_ste)) float.TryParse(_ste, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out _shotTimeTarget); }
+            if (_shotTimeTarget > 0f) { _shotElapsed += (float)delta; if (_shotElapsed < _shotTimeTarget) return; }   // UG_SHOTTIME: capture at an ELAPSED-TIME target (real-time frame counts drift off fixed-fps)
+            else if (_peiPlay) { if (_peiFrame < (_peiHorde ? 130 : 160)) return; }   // peiplay: drop(~25f)+enter(50f)+drive(55f+); --horde captures mid-plow through the zombie field
             else if (_itemTest) { if (++_frame < 90) return; }   // itemtest: let the dropped items FALL + settle onto the plane before the shot
             else if (_driveTest) { if (++_frame < 120) return; }   // drivetest: let the car spawn+enter+drive (+ --demo damage->explosion) play out before the shot
             else if (_fireTest) { if (System.Environment.GetEnvironmentVariable("UG_ADS") == "1") { if (_ftFrame < 70) return; } else if (_ftPlayer == null || _ftPlayer.Ammo > 20 || _ftFrame < 75) return; }   // firetest: capture once ~10 shots fired (high-cap: Ammo<=20); the _ftFrame>=75 floor lets a low-cap gun (launcher = 1 rocket at frame 60) actually fire + impact before the quit. UG_ADS: capture the settled aim frame (70) instead

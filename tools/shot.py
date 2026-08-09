@@ -57,11 +57,23 @@ SCENES = {
     "navfull":  (["--navshot={OUT}"], {"UG_NAVFULL": "1"}, True, 300, "top-down island map of all 19 nav pockets"),
     "pei":      (["--peidrive", "--shot={OUT}"], {}, True, 400, "PEI world, drivable"),
     "editor":   (["--editor", "--shot={OUT}"], {}, True, 400, "map editor over PEI"),
+    "editbuild":(["--editor", "--shot={OUT}"], {"UG_EDITTOOL": "buildings"}, True, 400, "the Buildings editor: a drawn building on the stage"),
+    "editbake": (["--editor", "--shot={OUT}"], {"UG_EDITTOOL": "buildings", "UG_EDITBAKE": "1"}, True, 400,
+                 "build -> bake -> placed back on the map as a prop"),
+    # the translator, looked at rather than trusted. IMPORT=House_03 tools/shot.py editimport
+    "editimport": (["--editor", "--shot={OUT}"],
+                   {"UG_EDITTOOL": "buildings", "UG_EDITIMPORT": os.environ.get("IMPORT", "House_00")}, True, 400,
+                   "a retail building ported into editable walls (set IMPORT=Name)"),
     "objects":  (["--objects", "--shot={OUT}"], {}, True, 400, "ripped prop showcase"),
     # one named prop at identity + RGB axes -- the diagnostic view for a model that looks wrong.
     # `PROP=Street_Light_0 tools/shot.py prop`
     "prop":     (["--proptest=" + os.environ.get("PROP", "Street_Light_0"), "--shot={OUT}"], {}, False, 200,
                  "ONE prop at identity + RGB axes (set PROP=Name)"),
+    # building tool. `walls` is the room; `wallclose` is the frame/reveal detail straight on, because
+    # frame width is invisible at room distance; `wallswatch` is one panel per retail palette.
+    "walls":     (["--walls", "--shot={OUT}"], {}, False, 200, "building tool: a drawn room with openings"),
+    "wallclose": (["--walls", "--shot={OUT}"], {"UG_WALLCLOSE": "1"}, False, 200, "close on one opening: reveal + frame"),
+    "wallswatch":(["--walls", "--shot={OUT}"], {"UG_WALLSWATCH": "1"}, False, 200, "all 52 retail palettes, one panel each"),
 }
 MULTI = {"menu": "menu_00.png", "vehicle": "rig_00.png"}   # scenes whose capture lands under {TMP}
 
@@ -120,7 +132,7 @@ def check(path):
     return None
 
 
-def take(scene, out, verbose):
+def take(scene, out, verbose, realtime=False):
     args, scene_env, needs_map, budget, _ = SCENES[scene]
     os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
     tmp = os.path.dirname(out)
@@ -131,9 +143,22 @@ def take(scene, out, verbose):
         return 2
 
     a = [x.replace("{OUT}", out).replace("{TMP}", tmp) for x in args]
+    # MOVIE MODE IS THE DEFAULT AND IT IS A BLIND SPOT. --write-movie runs Godot at a fixed
+    # deterministic step, which the real game never does, so anything real-time-specific cannot appear in
+    # any shot taken here. That is not hypothetical: on 2026-08-08 impact chips were invisible in game for
+    # hours while every harness render showed perfect cones -- the old, known-broken build rendered them
+    # just as cleanly, so the instrument could not see the bug it was certifying.
+    #
+    # --realtime drops it. --shot= is an IN-ENGINE viewport capture, not a grab off the movie writer, so a
+    # single-frame scene does not need movie mode at all (verified on claw, which has no GPU and renders
+    # on lavapipe under xvfb). Movie mode stays the default because the multi-frame scenes -- menu, vehicle
+    # -- depend on the fixed step to land their frames.
+    #
+    # GOTCHA when you use it: captures fire on a frame COUNT, so without --fixed-fps "frame 6" arrives at a
+    # different wall-clock moment. Sample too early and you get a clean picture of a broken effect.
+    movie = [] if realtime else ["--write-movie", os.path.join(tmp, f".{scene}.avi"), "--fixed-fps", "30"]
     cmd = ["xvfb-run", "-a", GODOT, "--path", os.path.join(ROOT, "game"),
-           "--rendering-driver", "vulkan",
-           "--write-movie", os.path.join(tmp, f".{scene}.avi"), "--fixed-fps", "30", "--"] + a
+           "--rendering-driver", "vulkan", "--audio-driver", "Dummy"] + movie + ["--"] + a
     env = dict(os.environ, VK_ICD_FILENAMES=VK_ICD, UG_UNTURNED_DIR=UNTURNED,
                UG_SHOT_TIMEOUT=str(budget), **scene_env)
     log = os.path.join(tmp, f".{scene}.log")
@@ -185,6 +210,10 @@ def main():
     ap.add_argument("scene", nargs="?", help="scene name, or 'list'")
     ap.add_argument("-o", "--out", help="output png (default .testresults/shots/<scene>.png)")
     ap.add_argument("-v", "--verbose", action="store_true")
+    ap.add_argument("--realtime", action="store_true",
+                    help="drop movie mode and render in REAL TIME. Movie mode is a fixed deterministic "
+                         "step and hides real-time-only bugs -- use this to verify anything timing "
+                         "dependent (particles, one-shot bursts, anything spawned in a physics tick).")
     args = ap.parse_args()
 
     if not args.scene or args.scene == "list":
@@ -197,7 +226,7 @@ def main():
         print(f"unknown scene '{args.scene}'. try: {', '.join(sorted(SCENES))}", file=sys.stderr)
         return 2
     out = args.out or os.path.join(OUT_DIR, f"{args.scene}.png")
-    return take(args.scene, os.path.abspath(out), args.verbose)
+    return take(args.scene, os.path.abspath(out), args.verbose, args.realtime)
 
 
 if __name__ == "__main__":

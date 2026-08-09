@@ -28,6 +28,11 @@ namespace UnturnedGodot
         public string PlaceSound;  // src .dat PlacementAudioClip stem (content/sounds/<stem>.wav) played when planted; null = silent
         public string HoldMesh, HoldAlbedo;   // content/<mesh>.obj + palette for the 1st-person carry model (item.prefab); null -> EmptyHands fallback (ghost only)
         public bool ShatterOnDeath;   // true -> explodes into flying debris + vanishes (no salvageable husk, drops nothing); false -> charred blowtorch-salvageable wreck
+        /// <summary>A placeable DOOR: the prop name to look up in content/objects/doors.txt (the SAME catalog
+        /// the container doors use). Non-null routes placement through DoorDeploy.SpawnFor instead of spawning a
+        /// plain Deployable body, mirroring IsStorage -> FridgeDeploy and Fluid -> FluidDeploy.</summary>
+        public string DoorProp;
+
         public bool ProcBox;          // true -> a plain gray BoxMesh of Size (no .obj/palette); the custom splitters use it
         public bool ExplosionProof;   // src Proof_Explosion: immune to OTHER explosions' damage (the Charge) so a stack doesn't chain-detonate -- you blow them on the Detonator's command, not from one stray blast
 
@@ -263,6 +268,55 @@ namespace UnturnedGodot
             Ports = new[] { new Port { Kind = PortKind.Consumer, Pos = new Vector3(0f, 0.25f, -0.36f), Watts = UnturnedGodot.Refrigerator.Watts } },
         };
 
+        // IDS ARE 9160+, NOT 9140+. 9140-9143 are ALREADY the Augewehr / Nightraider / .300 Blackout /
+        // Heartbreaker magazines (see AttachmentFit, which carries the same warning for the same reason:
+        // "the later Add() calls silently overwrote the magazines registered under them"). Deployable defs
+        // and inventory items share one id space, so a door on 9140 shadows a magazine and neither errors.
+        // In use when this block was written: 9101-9106, 9110-9121, 9130, 9140-9143, 9200-9201.
+        // ---- WOODEN BARRICADE DOORS -------------------------------------------------------------------
+        // strawberry_cow 2026-08-09: "im gonna have u working on functional doors ... use the prop doors we
+        // have and give them functionality ... i want doors to open 90 degrees."
+        //
+        // One def per ripped prop, built from a table rather than twelve hand-written blocks -- the only thing
+        // that differs between a Birch and a Pine door is the mesh name, and three near-identical literals is
+        // how one of them ends up with a stale Size nobody notices.
+        //
+        // DoorProp routes placement to DoorDeploy (hinge from the catalog, swing from ObjectDoor). Doubledoor
+        // is deliberately ABSENT: its rip is two hinges against a single mesh and the panel split is not
+        // written yet, so a def for it would place a door that swings two copies of itself.
+        static DeployableDef WoodDoor(ushort id, string form, string wood, Vector3 size, float health) => new()
+        {
+            Id = id, Name = $"{wood} {form}", DoorProp = $"{form}_{wood}", Model = $"{form}_{wood}",
+            Size = size, Offset = 0f, Radius = 0.5f, Range = 4.5f, Health = health,
+            PlaceSound = "woodplacement",
+        };
+
+        static readonly Vector3 DoorSize = new(1.2f, 0.15f, 2.4f);    // leaf footprint, flat-frame (Z stands up)
+        static readonly Vector3 GateSize = new(4.0f, 0.15f, 3.0f);    // garage door: wide, tilts up about X
+        static readonly Vector3 HatchSize = new(1.6f, 0.15f, 1.6f);   // floor hatch
+
+        public static readonly DeployableDef DoorBirch = WoodDoor(9160, "Door", "Birch", DoorSize, 250f);
+        public static readonly DeployableDef DoorMaple = WoodDoor(9161, "Door", "Maple", DoorSize, 300f);
+        public static readonly DeployableDef DoorPine  = WoodDoor(9162, "Door", "Pine",  DoorSize, 275f);
+        public static readonly DeployableDef GateBirch = WoodDoor(9163, "Gate", "Birch", GateSize, 350f);
+        public static readonly DeployableDef GateMaple = WoodDoor(9164, "Gate", "Maple", GateSize, 400f);
+        public static readonly DeployableDef GatePine  = WoodDoor(9165, "Gate", "Pine",  GateSize, 375f);
+        public static readonly DeployableDef HatchBirch = WoodDoor(9166, "Hatch", "Birch", HatchSize, 250f);
+        public static readonly DeployableDef HatchMaple = WoodDoor(9167, "Hatch", "Maple", HatchSize, 300f);
+        public static readonly DeployableDef HatchPine  = WoodDoor(9168, "Hatch", "Pine",  HatchSize, 275f);
+
+        // METAL, and it cost four lines because the hinge lookup keys on the FORM rather than the material:
+        // Door_Metal resolves the same "Door" row Door_Pine does. cow tools diffed the rigs before extracting
+        // rather than assuming the twins matched -- they came back byte-identical in both geometry and hinge,
+        // differing only in palette -- so there is no anim row and no code here, just the defs.
+        public static readonly DeployableDef DoorMetal  = WoodDoor(9169, "Door", "Metal", DoorSize, 500f);
+        public static readonly DeployableDef GateMetal  = WoodDoor(9170, "Gate", "Metal", GateSize, 700f);
+        public static readonly DeployableDef HatchMetal = WoodDoor(9171, "Hatch", "Metal", HatchSize, 500f);
+
+        public static readonly DeployableDef[] WoodDoors =
+            { DoorBirch, DoorMaple, DoorPine, GateBirch, GateMaple, GatePine, HatchBirch, HatchMaple, HatchPine,
+              DoorMetal, GateMetal, HatchMetal };
+
         // Merge (SP/MP-unify -> main): union of both sides' devices. main's Battery/Switch/WindTurbine +
         // the unification's GridSource/GasPump fixtures. Switch is defined above (auto-merged from main).
         // SOURCE-EXACT from retail Landmine.dat (Bundles/Items/Barricades/Landmine) -- read directly; .dat is text, the
@@ -322,7 +376,9 @@ namespace UnturnedGodot
         };
 
         public static readonly DeployableDef[] All = { Generator, Spotlight, Splitter2, Splitter3, Splitter4, Combiner2, Battery, Switch, WindTurbine, GridSource, GasPump,
-            FluidTank, WaterSource, FluidSplitter, FluidCombiner, FluidPumpDef, FluidValve, Refinery, Sluice, WaterInlet, WaterOutlet, Purifier, Refrigerator, Landmine, Spike, Charge, Barbedwire };
+            FluidTank, WaterSource, FluidSplitter, FluidCombiner, FluidPumpDef, FluidValve, Refinery, Sluice, WaterInlet, WaterOutlet, Purifier, Refrigerator, Landmine, Spike, Charge, Barbedwire,
+            DoorBirch, DoorMaple, DoorPine, GateBirch, GateMaple, GatePine, HatchBirch, HatchMaple, HatchPine,
+            DoorMetal, GateMetal, HatchMetal };
         public static DeployableDef ById(ushort id) => id switch
         {
             1101 => Landmine,
@@ -331,6 +387,18 @@ namespace UnturnedGodot
             386 => Barbedwire,
             458 => Generator,
             459 => Spotlight,
+            9169 => DoorMetal,
+            9170 => GateMetal,
+            9171 => HatchMetal,
+            9160 => DoorBirch,
+            9161 => DoorMaple,
+            9162 => DoorPine,
+            9163 => GateBirch,
+            9164 => GateMaple,
+            9165 => GatePine,
+            9166 => HatchBirch,
+            9167 => HatchMaple,
+            9168 => HatchPine,
             9101 => Splitter2,
             9102 => Splitter3,
             9103 => Splitter4,

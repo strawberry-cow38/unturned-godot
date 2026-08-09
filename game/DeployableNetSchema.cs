@@ -13,7 +13,7 @@ namespace UnturnedGodot
         {
             foreach (var def in DeployableDef.All)
             {
-                if (def.Fluid != null || def.IsStorage) continue;   // FLUID + STORAGE (fridge) devices spawn LOCALLY (device replication = fast-follow), so they're NOT
+                if (def.Fluid != null || def.IsStorage || def.DoorProp != null) continue;   // FLUID + STORAGE (fridge) + DOOR devices spawn LOCALLY (device replication = fast-follow), so they're NOT
                                                     // server-replicated deployables. Keeping them out of the schema makes the server's
                                                     // ServerPlace no-op a fluid id (no phantom replica) while OnPlaceDeployable still
                                                     // SPENDS the item -> the fluid place routes its spend server-side without a spawn.

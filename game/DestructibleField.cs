@@ -119,10 +119,8 @@ namespace UnturnedGodot
 
             var propMat = mesh.MaterialOverride as StandardMaterial3D;
 
-            // Every break kicks up a visible DUST poof. Retail rubble ALSO drops the section mesh as physics debris +
-            // plays a bigger FINALE effect (InteractableObjectRubble.updateRubble) -- the raw Rubble_Effect is a sparse
-            // 8-16 chip burst, too easy to miss on its own; the dust gives the "it came apart" read on every break.
-            SpawnDust(scene, tree, centre, halfExt, radius, propMat != null ? propMat.AlbedoColor : new Color(0.62f, 0.58f, 0.52f));
+            // NO dust/smoke poof on break (master 2026-08-09: "remove the smoke particle which appears on every
+            // destruction"). The retail Rubble_Effect chips (or fallback debris) below carry the break read on their own.
 
             // the prop's ACTUAL retail Rubble_Effect debris chips on TOP of the dust, if we extracted it
             if (RubbleFx.TryGet(r.EffectId, out var fx) && fx.Tex != null)
@@ -143,7 +141,7 @@ namespace UnturnedGodot
                 // real sprite/shape but ~3x the count, slower, a gentle arc + a longer life so the chips linger near the break.
                 var ps = new CpuParticles3D
                 {
-                    Emitting = true, OneShot = true, Amount = Mathf.Clamp(Mathf.RoundToInt(fx.Count * 1.5f), 8, 28), Lifetime = Mathf.Max(1.1f, fx.LifeMax * 1.2f),
+                    Emitting = false, OneShot = true, Amount = Mathf.Clamp(Mathf.RoundToInt(fx.Count * 1.5f), 8, 28), Lifetime = Mathf.Max(1.1f, fx.LifeMax * 1.2f),   // Emitting fired AFTER positioning (below) -- true-in-ctor fires empty when a BULLET break routes here via NetDamageObject (a physics tick); same fix as ImpactFx
                     Explosiveness = 0.9f, Randomness = 0.5f, Direction = Vector3.Up,
                     Spread = fx.Shape == "cone" ? Mathf.Clamp(fx.ConeAngle * 1.4f, 35f, 90f) : (fx.Shape == "sphere" ? 180f : 60f),
                     InitialVelocityMin = fx.SpeedMin * 0.5f, InitialVelocityMax = fx.SpeedMax * 0.6f,
@@ -161,18 +159,19 @@ namespace UnturnedGodot
                 // fast chips leave it within a frame and the whole system gets frustum-culled -> invisible (the "chips don't
                 // render" bug). The slow dust never tripped it. Force a bound covering the emission box + the chips' arc.
                 ps.VisibilityAabb = new Aabb(-halfExt - Vector3.One * 6f, (halfExt + Vector3.One * 6f) * 2f);
+                ps.Emitting = true;   // fire the one-shot AFTER AddChild+position -> a clean cycle even when spawned inside a physics tick (a bullet break)
                 var tr = tree.CreateTimer(ps.Lifetime + 0.6f);
                 tr.Timeout += () => { if (GodotObject.IsInstanceValid(ps)) ps.QueueFree(); };
                 return;
             }
 
             // FALLBACK (effect id 0 / no extracted sprite): generic tumbling debris cubes wearing the prop's own material
-            // (the dust above already fired). Falls under gravity, ~1.6 s.
+            // (no dust anymore -- master removed the break smoke). Falls under gravity, ~1.6 s.
             Material debrisMat = propMat ?? new StandardMaterial3D { AlbedoColor = new Color(0.55f, 0.5f, 0.44f) };
             int n = Mathf.Clamp(Mathf.RoundToInt(radius * 14f), 12, 48);
             var debris = new CpuParticles3D
             {
-                Emitting = true, OneShot = true, Amount = n, Lifetime = 1.6f, Explosiveness = 1f, Randomness = 0.4f,
+                Emitting = false, OneShot = true, Amount = n, Lifetime = 1.6f, Explosiveness = 1f, Randomness = 0.4f,   // fired AFTER positioning (below) -- physics-tick-safe (see the chip burst above)
                 Direction = Vector3.Up, Spread = 90f, InitialVelocityMin = 1.5f, InitialVelocityMax = 4.5f,
                 Gravity = new Vector3(0f, -9.8f, 0f),
                 ScaleAmountMin = radius * 0.07f, ScaleAmountMax = radius * 0.18f,
@@ -183,36 +182,14 @@ namespace UnturnedGodot
             scene.AddChild(debris);
             debris.GlobalPosition = centre;
             debris.VisibilityAabb = new Aabb(-halfExt - Vector3.One * 6f, (halfExt + Vector3.One * 6f) * 2f);   // same fast-particle cull guard as the chip path (review)
+            debris.Emitting = true;   // fire the one-shot AFTER positioning (physics-tick-safe; see the chip burst)
             var t = tree.CreateTimer(2.4);
             t.Timeout += () => { if (GodotObject.IsInstanceValid(debris)) debris.QueueFree(); };
         }
 
-        /// <summary>A soft dust poof (veh_smoke sprite -- mipmapped so dense particles don't sample black, the vehicle-
-        /// smoke bug), sized to the prop + tinted toward its albedo. Fired on EVERY break so a break always reads, with
-        /// the real Rubble_Effect chips (or generic debris) layered on top.</summary>
-        static void SpawnDust(Node scene, SceneTree tree, Vector3 centre, Vector3 halfExt, float radius, Color tint)
-        {
-            var dustMat = new StandardMaterial3D
-            {
-                ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
-                BillboardMode = BaseMaterial3D.BillboardModeEnum.Particles, VertexColorUseAsAlbedo = true,
-                AlbedoColor = new Color(Mathf.Lerp(tint.R, 0.85f, 0.65f), Mathf.Lerp(tint.G, 0.82f, 0.65f), Mathf.Lerp(tint.B, 0.76f, 0.65f), 0.55f),
-            };
-            string sp = ProjectSettings.GlobalizePath("res://content/veh_smoke_1.png");   // the LIGHTER smoke sprite -> reads as dust
-            if (File.Exists(sp)) { var simg = Image.LoadFromFile(sp); if (simg != null) { simg.GenerateMipmaps(); dustMat.AlbedoTexture = ImageTexture.CreateFromImage(simg); } }
-            var dust = new CpuParticles3D
-            {
-                Emitting = true, OneShot = true, Amount = Mathf.Clamp(Mathf.RoundToInt(radius * 8f), 8, 24), Lifetime = 1.15f, Explosiveness = 0.85f, Randomness = 0.5f,
-                Direction = Vector3.Up, Spread = 70f, InitialVelocityMin = 0.4f, InitialVelocityMax = 1.4f,
-                Gravity = new Vector3(0f, 0.3f, 0f), ScaleAmountMin = radius * 0.5f, ScaleAmountMax = radius * 1.1f,
-                EmissionShape = CpuParticles3D.EmissionShapeEnum.Box, EmissionBoxExtents = halfExt,
-                Mesh = new QuadMesh { Size = Vector2.One, Material = dustMat },
-            };
-            scene.AddChild(dust);
-            dust.GlobalPosition = centre + Vector3.Up * radius * 0.3f;
-            var t = tree.CreateTimer(2.4);
-            t.Timeout += () => { if (GodotObject.IsInstanceValid(dust)) dust.QueueFree(); };
-        }
+        // SpawnDust REMOVED 2026-08-09 (master: "remove the smoke particle which appears on every destruction").
+        // The break now reads off the Rubble_Effect chips / fallback debris alone. History: a veh_smoke poof tinted to
+        // the prop albedo, fired on every break for an "it came apart" puff. git has it if the read ever needs bulking up.
 
         // ---- catalog: guid -> rubble scalars, parsed from content/objects/rubble.txt ----
         // one line: "<guid> <health> <reset> <mode> <effectId> <ndrops> <dropId>..." (tools/extract_rubble.py)

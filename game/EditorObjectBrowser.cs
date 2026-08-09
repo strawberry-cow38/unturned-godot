@@ -100,6 +100,10 @@ namespace UnturnedGodot
             _list.ItemSelected += idx => _objects.SetPlaceType(_list.GetItemText((int)idx));   // pick the type to E-place (+ clears any instance selection)
             box.AddChild(_list);
 
+            // A building baked in the Buildings tab has to show up here without reopening the editor, or the
+            // bake looks like it silently failed.
+            _objects.CatalogChanged += Rebuild;
+
             Rebuild();
         }
 
