@@ -414,7 +414,10 @@ void sky() {
                 // Scaled both ends by the same ~2/3 rather than flattening the curve: the day/night contrast is the
                 // part that reads as weather, so dropping only the night end would leave noon unchanged and take the
                 // atmosphere out of dusk, which is the opposite of "a little more".
-                Env.FogDensity = Mathf.Lerp(0.008f, 0.0005f, noon) * (Overcast ? 2.4f : 1f);   // much thinner by DAY (master: "sunny isle, not a dreary foggy mess"); night/overcast stay atmospheric
+                // master "push fog end back a lot, start back a little": dropped 0.008->0.003 (night). Exponential fog ->
+                // lowering density moves the thick/FAR end back a LOT and the near/START only a little (same %, but a much
+                // bigger ABSOLUTE shift far out), which is exactly the ask -- no FogMode.Depth begin/end switch needed.
+                Env.FogDensity = Mathf.Lerp(0.003f, 0.0004f, noon) * (Overcast ? 2.4f : 1f);   // noon already "sunny isle" thin; night/overcast stay atmospheric but pushed back
                 Env.FogSkyAffect = Mathf.Lerp(0.4f, 0.15f, noon);   // sky stays clear/blue at noon, fogged at dawn/dusk/night
             }
         }
