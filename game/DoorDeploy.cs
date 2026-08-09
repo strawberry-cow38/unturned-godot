@@ -156,6 +156,10 @@ namespace UnturnedGodot
         // space the leaf transform stands up from.
         static Dictionary<string, List<(Vector3 Pivot, Vector3 Axis, float Angle, float Dur)>> _wood;
 
+        /// <summary>The wooden catalogue entry a placement would use, for tests -- so a test checks the entry
+        /// the game builds rather than re-reading the file and re-deriving the rebase itself.</summary>
+        public static List<WorldBuilder.DoorCatalogEntry> WoodenLeavesForTest(string prop, string dir) => WoodenLeaves(prop, dir);
+
         static List<WorldBuilder.DoorCatalogEntry> WoodenLeaves(string prop, string dir)
         {
             if (_wood == null)
@@ -194,12 +198,37 @@ namespace UnturnedGodot
             // strawberry_cow asked for 90 and the rips are 90-100 (retail), so the magnitude is clamped and
             // the SIGN kept -- the sign is which way it swings, and flipping it mirrors the door.
             float angle = Mathf.Sign(h.Angle) * Mathf.Min(90f, Mathf.Abs(h.Angle));
+
+            // REBASE THE PIVOT INTO THE LEAF MESH'S OWN FRAME. The anim rows were authored against a leaf
+            // CENTRED on its origin; these rips are not. Door_Pine spans x -2.35..+0.10, so its centre sits at
+            // -1.125 while the row says the hinge is at +1.125 -- the exact negation, and 1.02 m clear of any
+            // geometry. The door then swung around a point out in mid-air beside itself
+            // (strawberry_cow: "it hinges on a weird point far off from where it should").
+            //
+            // Adding the mesh's own centre puts it back: 1.125 + (-1.125) = 0.0, which is 0.10 m inside the
+            // leaf's +X edge -- the SAME inset the authored frame had (1.125 of a 1.225 half-width). Not a
+            // fudge factor; the two frames differ by exactly the mesh's offset.
+            //
+            // Only the WOODEN path needs this. Every container leaf in doors.txt already carries a pivot
+            // inside its own mesh (Fridge_0 0.613 in -0.66..0.66, Oven_0 0.500 in -0.75..0.75) -- those rows
+            // and those meshes came out of the same extraction, and rebasing them would break them.
+            var pivot = h.Pivot;
+            var leafMesh = ObjMesh.Load(dir + prop + ".obj");
+            if (leafMesh != null)
+            {
+                var c = leafMesh.GetAabb().GetCenter();
+                pivot += new Vector3(c.X, c.Y, c.Z);
+            }
+
             return new List<WorldBuilder.DoorCatalogEntry>
             {
                 new WorldBuilder.DoorCatalogEntry
                 {
-                    MeshFile = prop + ".obj", Pivot = h.Pivot, Axis = h.Axis,
-                    AngleDeg = angle, DurationSec = h.Dur, DefaultOpen = false, Sound = "DoorHandle",
+                    MeshFile = prop + ".obj", Pivot = pivot, Axis = h.Axis,
+                    // Retail's 0.6333 s reads sluggish next to the container doors' 0.4667 (master: "make it
+                    // open way quicker"), so the wooden leaves take the same duration the fridges and wardrobes
+                    // already use rather than a number invented for them.
+                    AngleDeg = angle, DurationSec = 0.4667f, DefaultOpen = false, Sound = "DoorHandle",
                 },
             };
         }
