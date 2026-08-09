@@ -3694,6 +3694,9 @@ namespace UnturnedGodot
             editor.AddChild(roadsEd);
             editor.RoadsEd = roadsEd;
             editor.AddChild(new EditorDashboard { Editor = editor, OnExit = ReturnToMenu });
+            var playMode = new EditorPlayMode();   // "Test Build" button -> walk the drawn building as a player (master 2026-08-09)
+            editor.AddChild(playMode);
+            playMode.Setup(editor, buildings, cam);
             if (res.Ready) _worldReady = true;
             // headless render-verify: scatter a few props once the colliders are live (UG_EDITORDEMO=1)
             if (System.Environment.GetEnvironmentVariable("UG_EDITORDEMO") == "1")
