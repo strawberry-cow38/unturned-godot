@@ -2198,8 +2198,13 @@ namespace UnturnedGodot
                     float n = EngineRpmNorm;
                     _engineAudio.PitchScale = Mathf.Lerp(_idlePitch, _maxPitch, n);
                     _engineAudio.VolumeDb = Mathf.LinearToDb(Mathf.Lerp(_idleVol, _maxVol, n) * EngineVolumeBoost);
+                    if (!_engineAudio.Playing) _engineAudio.Play();   // resume the loop STOPPED below
                 }
-                else _engineAudio.VolumeDb = -80f;   // engine off -> kill the noise
+                // STOP it, don't just silence it. Autoplay=true starts this loop the moment the vehicle enters
+                // the tree, and -80 dB is still a playing stream: the mixer keeps decoding the ogg every frame
+                // for something nobody can hear. PEI places ~89 vehicles, so the map booted with ~89 permanently
+                // inaudible loops running. Volume alone was never going to stop that; Playing is the switch.
+                else if (_engineAudio.Playing) { _engineAudio.VolumeDb = -80f; _engineAudio.Stop(); }
             }
             // Phase 3 hearing: a running, MOVING car makes engine/tire noise zombies hear -- source DRIVING stealth
             // radius DETECT_FORWARD(48) x forward-speed% (parked/idling ~silent since speed~0). Throttled like footsteps.
