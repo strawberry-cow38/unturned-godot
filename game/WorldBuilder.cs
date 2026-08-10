@@ -1163,7 +1163,14 @@ namespace UnturnedGodot
                     // holiday the server used, or every replicated fell/respawn index lands on the wrong
                     // tree. Pre-join there is no camera, so nobody sees the empty field.
                     if (mode != WorldMode.Client)
+                    {
                         rsf.LoadResources(activeHoliday);   // gate CHRISTMAS resources (candy canes/snow piles) like the objects
+                        // Far-field tree billboards. Separate from LoadResources because the impostor picture is
+                        // RENDERED through a SubViewport, and a viewport only has a texture the frame after it
+                        // draws -- which a synchronous loader cannot wait for. No-ops when there are no trees or
+                        // when VisualInstances is off, so the dedicated path costs nothing.
+                        await rsf.BuildTreeImpostorsAsync();
+                    }
                     result.Resources = rsf;
                 }
             }
@@ -1489,7 +1496,14 @@ namespace UnturnedGodot
                     if (deferredHoliday != null)
                         foreach (var (p, name, ph, destIdx) in deferredHoliday)
                             if (ph == holiday) PlaceObject(p, name, destIdx);
-                    if (rsfDeferred != null && GodotObject.IsInstanceValid(rsfDeferred)) rsfDeferred.LoadResources(holiday);
+                    if (rsfDeferred != null && GodotObject.IsInstanceValid(rsfDeferred))
+                    {
+                        rsfDeferred.LoadResources(holiday);
+                        // Not awaited: this runs from a synchronous callback fired when the server's holiday
+                        // arrives, so there is nothing to await into. The billboards simply appear a couple of
+                        // frames later than the trees, which is invisible -- they only draw past 335 m anyway.
+                        _ = rsfDeferred.BuildTreeImpostorsAsync();
+                    }
                     GD.Print($"[WORLD] client holiday content applied: {holiday} ({placed - before} props of {deferredHoliday?.Count ?? 0} deferred, + resources)");
                 };
             }

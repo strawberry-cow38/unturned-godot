@@ -135,6 +135,10 @@ namespace UnturnedGodot
                     // NB the cull is per 64m CELL, so a cell's instances survive to roughly cullRange + Cell.
                     float cullRange = LodTable.ResourceCull(name, LodTable.SourceFov);
                     if (cullRange <= 0f) cullRange = isTree ? 320f : 180f;
+                    // Trees stop 25% closer than retail (strawberry), because the IMPOSTORS below take over from
+                    // there and run far past where the real meshes ever did. Only trees: a bush that vanishes early
+                    // has nothing standing in for it.
+                    if (isTree) cullRange *= TreeCullScale;
                     var byCell = new Dictionary<(int, int), List<int>>();
                     for (int k = 0; k < xf.Count; k++)
                     {
@@ -165,11 +169,184 @@ namespace UnturnedGodot
                             AddChild(mmi);
                         }
                     }
+                    // Queued, not built: the impostor texture is RENDERED, and a SubViewport needs a frame to
+                    // produce one. LoadResources is synchronous, so the bake happens in BuildTreeImpostorsAsync
+                    // once the caller can await frames.
+                    if (isTree && TreeImpostors)
+                        _pendingImpostors.Add(new ImpostorSpec { Name = name, Dir = dir, Parts = parts, Xf = xf, ByCell = byCell, RealCull = cullRange });
                 }
                 total += xf.Count; types++;
                 GD.Print($"[resources] {name}: {xf.Count} x {parts} part(s)");
             }
             GD.Print($"[resources] {total} instances across {types} types (MultiMesh), {treeCols} tree trunk colliders");
+        }
+
+        // ---------------------------------------------------------------------------------------------------
+        // TREE IMPOSTORS (strawberry: "tree imposters with a very very high render dist ... and lower the actual
+        // tree render dist by ~25%").
+        //
+        // Beyond the real trees' (now shortened) cull, each tree becomes ONE camera-facing quad wearing a picture
+        // of itself. The swap is entirely engine-side: two MultiMeshInstances over the same transforms, the real
+        // one ending at RealCull and the impostor one BEGINNING there. Godot's VisibilityRange does the handover,
+        // so nothing per-frame decides which to draw, and BillboardMode.FixedY turns the quads to face the camera
+        // in the shader -- no per-instance CPU work either. The whole feature costs one extra MultiMesh per cell.
+        //
+        // The picture is BAKED AT LOAD from the tree's own meshes through a SubViewport, not shipped as an asset.
+        // A baked PNG in content/ would be one silent mismatch away from wrong -- swap a tree model and the far
+        // field still shows the old one, with nothing to catch it. Rendering from the same .obj the near mesh uses
+        // means they cannot disagree.
+        //
+        // Baked from UNSHADED copies of the real materials, so the texture is pure albedo with no lighting cooked
+        // in. The quad is then lit normally at runtime; bake it lit and every distant tree would stay bright at
+        // midnight.
+        public static bool TreeImpostors = System.Environment.GetEnvironmentVariable("UG_TREEIMP") != "0";
+        public static float TreeCullScale = EnvF("UG_TREECULL", 0.75f);      // real trees stop this fraction of the way out
+        public static float ImpostorRange = EnvF("UG_TREEIMPDIST", 2000f);   // how far the billboards carry
+
+        static float EnvF(string name, float fallback)
+            => float.TryParse(System.Environment.GetEnvironmentVariable(name), System.Globalization.NumberStyles.Float,
+                              System.Globalization.CultureInfo.InvariantCulture, out float v) && v > 0f ? v : fallback;
+        public static int ImpostorTexW = 192, ImpostorTexH = 256;
+
+        sealed class ImpostorSpec
+        {
+            public string Name, Dir;
+            public int Parts;
+            public List<Transform3D> Xf;
+            public Dictionary<(int, int), List<int>> ByCell;
+            public float RealCull;
+        }
+        readonly List<ImpostorSpec> _pendingImpostors = new();
+        readonly List<(string Name, StandardMaterial3D Mat, float W, float H)> _impostorMats = new();
+        /// <summary>Render-harness seam (--imptest): the baked billboard materials and the world size each was
+        /// framed at, so a human can stand them up next to the real trees and judge them.</summary>
+        public List<(string Name, StandardMaterial3D Mat, float W, float H)> DebugImpostorMaterialsForTest() => _impostorMats;
+        public int PendingImpostorTypesForTest => _pendingImpostors.Count;
+        public int ImpostorInstancesForTest { get; private set; }
+
+        /// <summary>Bake one billboard per tree species and hang the far-field MultiMeshes off it. Async because a
+        /// SubViewport only produces a texture after the frame it renders on.</summary>
+        public async System.Threading.Tasks.Task BuildTreeImpostorsAsync()
+        {
+            if (_pendingImpostors.Count == 0) return;
+            int made = 0;
+            foreach (var spec in _pendingImpostors)
+            {
+                var (tex, quadW, quadH) = await BakeImpostorAsync(spec);
+                if (tex == null) continue;   // a species whose bake failed simply has no far field, rather than a black quad
+                var mat = new StandardMaterial3D
+                {
+                    AlbedoTexture = tex,
+                    Transparency = BaseMaterial3D.TransparencyEnum.AlphaScissor,
+                    AlphaScissorThreshold = 0.5f,
+                    BillboardMode = BaseMaterial3D.BillboardModeEnum.FixedY,   // yaw only: a tree must not tip toward the camera
+                    BillboardKeepScale = true,
+                    CullMode = BaseMaterial3D.CullModeEnum.Disabled,
+                    TextureFilter = BaseMaterial3D.TextureFilterEnum.LinearWithMipmaps,
+                    Roughness = 1f,
+                    // The quad's own normal points at the viewer, which would make every tree in the far field
+                    // flare identically as the sun swings past. Fixed up-ish normals read as foliage instead.
+                    SpecularMode = BaseMaterial3D.SpecularModeEnum.Disabled,
+                };
+                foreach (var kv in spec.ByCell)
+                {
+                    var lst = kv.Value;
+                    var quad = new QuadMesh { Size = new Vector2(quadW, quadH), Orientation = PlaneMesh.OrientationEnum.Z };
+                    var mm = new MultiMesh { Mesh = quad, TransformFormat = MultiMesh.TransformFormatEnum.Transform3D, InstanceCount = lst.Count };
+                    for (int k = 0; k < lst.Count; k++)
+                    {
+                        var t = spec.Xf[lst[k]];
+                        // Centred on the trunk at half the baked height: a QuadMesh is centred on its origin, so
+                        // planting it at the tree's base would bury the bottom half of the picture in the ground.
+                        var basis = Basis.Identity.Scaled(new Vector3(t.Basis.Scale.Y, t.Basis.Scale.Y, 1f));
+                        mm.SetInstanceTransform(k, new Transform3D(basis, t.Origin + new Vector3(0f, quadH * 0.5f * t.Basis.Scale.Y, 0f)));
+                    }
+                    var mmi = new MultiMeshInstance3D
+                    {
+                        Multimesh = mm, MaterialOverride = mat,
+                        CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,   // a flat card casts a flat wrong shadow, and nothing this far out needs one
+                        VisibilityRangeBegin = spec.RealCull,
+                        VisibilityRangeEnd = ImpostorRange,
+                        VisibilityRangeFadeMode = GeometryInstance3D.VisibilityRangeFadeModeEnum.Dependencies,
+                    };
+                    mmi.AddToGroup(NearestFilter.KeepFilterGroup);
+                    AddChild(mmi);
+                    made += lst.Count;
+                }
+                _impostorMats.Add((spec.Name, mat, quadW, quadH));
+                GD.Print($"[imposter] {spec.Name}: {spec.Xf.Count} billboards, {spec.RealCull:0}m -> {ImpostorRange:0}m");
+            }
+            ImpostorInstancesForTest = made;
+            GD.Print($"[imposter] {made} billboards across {_pendingImpostors.Count} species");
+            _pendingImpostors.Clear();
+        }
+
+        // Returns the picture AND the world size it was framed at. Deliberately a return value rather than a
+        // field the caller reads afterwards: the quad has to be exactly the box the camera framed, and a shared
+        // field would silently hand the next species the previous one's dimensions.
+        async System.Threading.Tasks.Task<(ImageTexture Tex, float W, float H)> BakeImpostorAsync(ImpostorSpec spec)
+        {
+            var meshes = new List<(ArrayMesh Mesh, StandardMaterial3D Mat)>();
+            for (int i = 0; i < spec.Parts; i++)
+            {
+                string objP = spec.Dir + spec.Name + "_" + i + ".obj";
+                if (!File.Exists(objP)) continue;
+                var m = ObjMesh.Load(objP);
+                if (m == null) continue;
+                var lit = MakeMat(spec.Dir + spec.Name + "_" + i + "_tex.png", false);
+                var flat = (StandardMaterial3D)lit.Duplicate();
+                flat.ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded;   // albedo only -- see the note above
+                meshes.Add((m, flat));
+            }
+            if (meshes.Count == 0) return (null, 0f, 0f);
+
+            var whole = new Aabb();
+            for (int i = 0; i < meshes.Count; i++)
+                whole = i == 0 ? meshes[i].Mesh.GetAabb() : whole.Merge(meshes[i].Mesh.GetAabb());
+            if (whole.Size.Y <= 0.001f) return (null, 0f, 0f);
+            float bakeW = Mathf.Max(whole.Size.X, whole.Size.Z), bakeH = whole.Size.Y;
+
+            var vp = new SubViewport
+            {
+                Size = new Vector2I(ImpostorTexW, ImpostorTexH),
+                TransparentBg = true,
+                RenderTargetUpdateMode = SubViewport.UpdateMode.Always,
+                RenderTargetClearMode = SubViewport.ClearMode.Always,
+                OwnWorld3D = true,   // its own World3D, or the real map's sun and fog land in the bake
+            };
+            AddChild(vp);
+            foreach (var (mesh, mat) in meshes)
+                vp.AddChild(new MeshInstance3D { Mesh = mesh, MaterialOverride = mat });
+            var cam = new Camera3D
+            {
+                Projection = Camera3D.ProjectionType.Orthogonal,
+                Size = bakeH,
+                Near = 0.05f, Far = 4f * (bakeH + bakeW) + 10f,
+                Current = true,
+            };
+            vp.AddChild(cam);
+            var centre = whole.GetCenter();
+            cam.LookAtFromPosition(centre + new Vector3(0f, 0f, 2f * (bakeH + bakeW)), centre, Vector3.Up);
+
+            // Two frames: one for the viewport to be laid out and drawn, one for the texture to be readable.
+            await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+            await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+            var img = vp.GetTexture()?.GetImage();
+            vp.QueueFree();
+            if (img == null || img.IsEmpty()) return (null, 0f, 0f);
+            // A fully transparent bake means the camera framed nothing -- return null so the species just has no
+            // far field, instead of every distant tree becoming an invisible quad that still costs a draw.
+            if (!HasAnyOpaque(img)) { GD.PrintErr($"[imposter] {spec.Name}: bake came out empty, skipping"); return (null, 0f, 0f); }
+            img.GenerateMipmaps();
+            return (ImageTexture.CreateFromImage(img), bakeW, bakeH);
+        }
+
+        static bool HasAnyOpaque(Image img)
+        {
+            for (int y = 0; y < img.GetHeight(); y += 4)
+                for (int x = 0; x < img.GetWidth(); x += 4)
+                    if (img.GetPixel(x, y).A > 0.5f) return true;
+            return false;
         }
 
         /// <summary>How far a tree is dropped below its spawn point, per unit of instance Y-scale (strawberry).

@@ -97,7 +97,7 @@ namespace UnturnedGodot
             bool containerTest = false; string containerTestName = null;
             bool wallDemo = false;
             bool clockTest = false;
-            bool play = false, demo = false, netdemo = false, server = false, dedicated = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, lightTest = false, trafficTest = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, objects = false, peidrive = false, craftui = false, bakenav = false, navPathTest = false, zombieTest = false, zdirTest = false, editorMode = false, impactTest = false, doorGallery = false, lampTest = false, beamTest = false;
+            bool play = false, demo = false, netdemo = false, server = false, dedicated = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, lightTest = false, trafficTest = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, objects = false, peidrive = false, craftui = false, bakenav = false, navPathTest = false, zombieTest = false, zdirTest = false, editorMode = false, impactTest = false, doorGallery = false, lampTest = false, beamTest = false, impTest = false;
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
                 if (arg.StartsWith("--catalog=")) catalog = arg["--catalog=".Length..];
@@ -193,6 +193,7 @@ namespace UnturnedGodot
                 else if (arg == "--invcrate") invcrate = true;
                 else if (arg == "--daynight") daynight = true;
                 else if (arg == "--lighttest") lightTest = true;   // one lit streetlight at night: cone + motes eyeball (UG_LIGHTCAM=under looks up from inside)
+                else if (arg == "--imptest") impTest = true;   // bake the tree billboards and DUMP them side by side -- the only check that answers "does it look like a tree"
                 else if (arg == "--lamptest") lampTest = true;   // one lit INDOOR light over dark ground: UG_LAMP=Light_0(ceiling,default)/Light_1/Lamp_0/Lamp_1, UG_LAMPOFF=1 unlit
                 else if (arg == "--beamtest") beamTest = true;   // the lighthouse's sweeping beam at night (static frame)
                 else if (arg == "--trafficlight") trafficTest = true;   // one signal, both heads (UG_TL_STATE=green|amber|red|flash|dark, UG_TL_SIDE=1 for the side-road mast, UG_TL_DAY=1 for daylight)
@@ -451,6 +452,13 @@ namespace UnturnedGodot
                 _shotPath = shot;
                 GetWindow().Size = new Vector2I(1280, 720);
                 BuildStreetLightDemo();
+                return;
+            }
+
+            if (impTest)   // tree impostor bake: render the billboards to a sheet so a human can see whether they read as trees
+            {
+                GetWindow().Size = new Vector2I(1280, 720);
+                _ = BuildImpostorTest(shot);   // _shotPath is armed INSIDE, after the bake -- see the note there
                 return;
             }
 
@@ -4427,6 +4435,64 @@ namespace UnturnedGodot
         // room; UG_LAMPOFF=1 renders it unlit in daylight. Exists because master's ceiling light "never worked": the
         // real ceiling light Light_0 was never wired to a LampLight (fixed in WorldBuilder), and the only proof it
         // works now is seeing it lit.
+        // --imptest --shot=OUT : bake the tree impostors and stand each billboard up in a row next to the REAL
+        // tree it was baked from, so the two can be compared at a glance.
+        //
+        // This exists because the L1 suite CANNOT check this feature at all. L1 runs headless, a SubViewport
+        // renders nothing headless, so the bake returns an empty image and the graceful path quietly skips every
+        // species -- a green suite that proved nothing. The question here is "does this read as a tree", and only
+        // an eye answers it.
+        async System.Threading.Tasks.Task BuildImpostorTest(string shot)
+        {
+            var env = new Godot.Environment
+            {
+                BackgroundMode = Godot.Environment.BGMode.Color,
+                BackgroundColor = new Color(0.35f, 0.45f, 0.58f),
+                AmbientLightSource = Godot.Environment.AmbientSource.Color,
+                AmbientLightColor = new Color(0.55f, 0.58f, 0.62f), AmbientLightEnergy = 1f,
+            };
+            AddChild(new WorldEnvironment { Environment = env });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-48f, 40f, 0f), LightEnergy = 1.2f });
+
+            var field = new ResourceField();
+            AddChild(field);
+            field.LoadResources("NONE");
+            GD.Print($"[imptest] {field.InstanceCount} instances, {field.PendingImpostorTypesForTest} tree species queued");
+            await field.BuildTreeImpostorsAsync();
+            GD.Print($"[imptest] {field.ImpostorInstancesForTest} billboards built");
+
+            // The field placed everything at its map position, which is nowhere near the camera. Hide it and
+            // rebuild a tidy row from the same baked materials instead.
+            field.Visible = false;
+
+            var mats = field.DebugImpostorMaterialsForTest();
+            float x = 0f;
+            foreach (var (name, mat, w, h) in mats)
+            {
+                var quad = new QuadMesh { Size = new Vector2(w, h), Orientation = PlaneMesh.OrientationEnum.Z };
+                AddChild(new MeshInstance3D { Mesh = quad, MaterialOverride = mat, Position = new Vector3(x, h * 0.5f, 0f) });
+                GD.Print($"[imptest] {name}: quad {w:0.0} x {h:0.0} m");
+                x += w * 1.25f;
+            }
+            if (mats.Count == 0) { GD.PrintErr("[imptest] NO impostor materials -- the bake produced nothing"); return; }
+
+            var ground = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(400, 400) } };
+            ground.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.28f, 0.34f, 0.24f), Roughness = 1f };
+            AddChild(ground);
+
+            float span = Mathf.Max(x, 12f), tall = 0f;
+            foreach (var m in mats) tall = Mathf.Max(tall, m.H);
+            var cam = new Camera3D { Current = true, Fov = 55f };
+            AddChild(cam);
+            cam.Position = new Vector3(span * 0.5f - 4f, tall * 0.55f, span * 0.95f + tall);
+            cam.LookAt(new Vector3(span * 0.5f - 4f, tall * 0.45f, 0f), Vector3.Up);
+
+            // Arm the capture only NOW. Setting it before the bake raced it: each species costs two frames, so
+            // the shot fired after three of six and the other three looked like failed bakes -- no error, no
+            // billboards, nothing to distinguish "broken" from "not finished yet".
+            _shotPath = shot;
+        }
+
         void BuildLampTest()
         {
             string which = System.Environment.GetEnvironmentVariable("UG_LAMP");
