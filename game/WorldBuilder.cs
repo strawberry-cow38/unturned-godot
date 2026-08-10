@@ -446,12 +446,23 @@ namespace UnturnedGodot
             // the ONE place that knows which props are special -- each entry below mirrors a branch further down
             // in PlaceObject that constructs something from `mainMi` or hangs a node off the placement.
             var propBatch = new PropBatcher();
-            // UG_NOBATCH=1 keeps every prop as its own MeshInstance3D -- the A/B control for what batching
-            // changed, the same escape hatch UG_NOLOD=1 gives the LOD table. Worth having permanently: the
-            // headless test tiers cannot see a MultiMesh at all (PropBatcher.Slot.Visible), and none of the
-            // visual goldens load the real map, so an A/B render of PEI is the ONLY way to check that batched
-            // props still draw in the right places.
-            bool batchOpen = System.Environment.GetEnvironmentVariable("UG_NOBATCH") != "1";   // also closed after the scan: deferred holiday props (Client) arrive post-Flush and take the node path
+            // OFF BY DEFAULT, because measured it is a net LOSS. Opt in with UG_BATCH=1.
+            //
+            // The pitch was fewer draw calls: 4329 placements collapse to ~1947 (type, cell) groups. That
+            // arithmetic is about how many batches EXIST, and only what survives culling costs anything. A
+            // MultiMeshInstance3D is culled as one unit, so a cell renders in full if any single member is
+            // visible -- which drags in props that per-prop frustum and distance culling was discarding.
+            // A/B rendered at a fixed camera, batched vs not:
+            //     hillside  1199 -> 1232 draws (prims flat)    town  973 -> 1031 draws, 847k -> 881k prims
+            // Worse at both, and worse where props are DENSE (a Fence_Wood_0 line, the best case there is).
+            // Primitives going UP is the tell: the merge cannot repay what coarser culling gives away.
+            //
+            // Kept rather than deleted because one counter did improve -- scene objects 1703 -> 1499, i.e. less
+            // per-object culling work, which is CPU, which is the actual bottleneck (strawberry). That cannot
+            // be measured on this box: lavapipe frame times are a software rasteriser's and say nothing about
+            // real hardware. So the code stays behind a flag for an A/B on a real GPU with the F3 overlay,
+            // and the DEFAULT is the behaviour that is known not to be slower.
+            bool batchOpen = System.Environment.GetEnvironmentVariable("UG_BATCH") == "1";   // also closed after the scan: deferred holiday props (Client) arrive post-Flush and take the node path
             bool Batchable(string n) =>
                 n != "Street_Light_0" &&                         // lens split + stump + SpotLight + LightTap
                 n != "Traffic_Light_0" &&                        // stump + per-head lens split + TrafficLight + LightTap
@@ -1260,6 +1271,26 @@ namespace UnturnedGodot
                 {
                     var regs = LevelSpawns.PlayerSpawns(mapRoot);
                     if (regs.Count > 0) { var pick = regs[new RandomNumberGenerator { Seed = 7 }.RandiRange(0, regs.Count - 1)]; sx = pick.x; sz = pick.z; spawnYaw = pick.yaw; gotSpawn = true; }
+                }
+                // UG_SPAWNAT=x,z[,yaw] puts the player somewhere specific instead of a random spawn point.
+                // The default spawn is a grass hillside with almost no props in frame, which is the WORST case
+                // for anything that trades culling granularity for fewer draw calls -- measuring prop batching
+                // there says nothing about the towns it was built for. A fixed camera you can aim is the
+                // difference between an A/B and an anecdote.
+                {
+                    var at = System.Environment.GetEnvironmentVariable("UG_SPAWNAT");
+                    if (!string.IsNullOrEmpty(at))
+                    {
+                        var q = at.Split(',');
+                        var ci = System.Globalization.CultureInfo.InvariantCulture;
+                        if (q.Length >= 2 && float.TryParse(q[0], System.Globalization.NumberStyles.Float, ci, out float ax)
+                                          && float.TryParse(q[1], System.Globalization.NumberStyles.Float, ci, out float az))
+                        {
+                            sx = ax; sz = az; gotSpawn = true;
+                            if (q.Length >= 3 && float.TryParse(q[2], System.Globalization.NumberStyles.Float, ci, out float ay)) spawnYaw = ay;
+                            GD.Print($"[spawn] UG_SPAWNAT override -> ({sx}, {sz}) yaw {spawnYaw}");
+                        }
+                    }
                 }
                 if (!gotSpawn)   // fallback: most-inland grass
                 {
