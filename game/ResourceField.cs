@@ -113,6 +113,11 @@ namespace UnturnedGodot
                         body.AddToGroup("tree");   // for the UG_TREECHECK raycast self-test
                         body.AddChild(new CollisionShape3D { Shape = new CylinderShape3D { Radius = 0.5f * sr, Height = 8f * sh }, Position = new Vector3(0f, 2.5f * sh, 0f) });
                         AddChild(body);
+                        body.AddToGroup(ColliderBudget.Group);   // 1124 tree trunks, same streaming as the prop colliders
+                        {   // same rule as props: collision lasts as long as the tree is drawn (trees compute far, so they keep it far)
+                            float tcull = LodTable.ResourceCull(name, LodTable.SourceFov);
+                            body.SetMeta(ColliderBudget.RadiusMeta, tcull > 0f ? tcull : (isTree ? 320f : 180f));
+                        }
                         recs[k].Trunk = body;
                         recs[k].TrunkLayer = body.CollisionLayer;
                         treeCols++;

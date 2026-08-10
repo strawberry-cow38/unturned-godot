@@ -278,6 +278,10 @@ namespace UnturnedGodot
             // shadowed omni is a six-face cube per frame. The budget hands shadows to the few that matter
             // to this camera. Skipped on the dedicated server, which renders nothing.
             if (mode != WorldMode.Dedicated) root.AddChild(new LightShadowBudget { Name = "LightShadowBudget" });
+            // ...and collision is streamed for the same reason: 13,900 collider nodes sit in the broadphase
+            // permanently while the solver has ~13 active bodies. Client/SP only -- a dedicated server has
+            // many players and no single point to stream around.
+            if (mode != WorldMode.Dedicated) root.AddChild(new ColliderBudget { Name = "ColliderBudget" });
             // dedicated fx hygiene (§2.1/§5): the headless server keeps the CLOCK (day-night time is
             // authoritative state now, §3.7) but skips shadow maps + the per-frame sky/fog/glow work
             var sun = new DirectionalLight3D { LightEnergy = 1.2f, ShadowEnabled = mode != WorldMode.Dedicated, DirectionalShadowMaxDistance = 40f };   // cap shadow cascade reach (was Godot-default 100m): the high, pulled-back 3p vehicle cam stretched the 100m cascades to blanket a whole POI -> every zombie/building re-rendered into the shadow map every frame (strawberry: 3p-car-in-POI gpu tank). Demos cap at 14m; 40m keeps gameplay shadows.
@@ -973,6 +977,8 @@ namespace UnturnedGodot
                         // (GasPump.AddInteractionCollider), not this world-mesh collider -- so no tag here.
                         body.AddChild(new CollisionShape3D { Shape = shp });
                         root.AddChild(body);
+                        body.AddToGroup(ColliderBudget.Group);   // distance-streamed: 13.9k collision nodes is a third of the scene tree
+                        body.SetMeta(ColliderBudget.RadiusMeta, cull);   // collision outlives the MESH, never less: a prop you can still see must still be shootable
                         destBody = body;   // the collider a server bullet/melee ray tags for destructible damage
                         // A streetlight's collider carries the lamp too, so a bullet landing on the fixture can ask
                         // whether it hit the BULB (StreetLight.IsBulbHit) and shoot it out instead of just chipping
@@ -1638,6 +1644,7 @@ namespace UnturnedGodot
             // shadowed omni is a six-face cube per frame. The budget hands shadows to the few that matter to
             // this camera. No dedicated-server guard here -- this path only ever builds a rendering client.
             root.AddChild(new LightShadowBudget { Name = "LightShadowBudget" });
+            root.AddChild(new ColliderBudget { Name = "ColliderBudget" });   // stream prop collision in around the view; see the other call site
             var sun = new DirectionalLight3D { LightEnergy = 1.2f, ShadowEnabled = true, DirectionalShadowMaxDistance = 40f };   // cap shadow cascade reach (was default 100m) -- see the 3p-vehicle-POI shadow-tank note on the other sun (strawberry)
             root.AddChild(sun);
             var dayNight = new DayNightCycle { Sun = sun, Env = env, DayLength = DayNightCycle.DefaultDayLength };

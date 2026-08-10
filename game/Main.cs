@@ -5477,6 +5477,7 @@ namespace UnturnedGodot
             // Draw calls + primitives at the capture frame. Frame MILLISECONDS on a software rasteriser say
             // nothing about a real GPU, but what the culler admitted into the frame is hardware-independent --
             // so this is the number to compare when changing draw distances, not fps.
+            NodeCensus();
             GD.Print($"[lodperf] drawcalls {RenderingServer.GetRenderingInfo(RenderingServer.RenderingInfo.TotalDrawCallsInFrame)}" +
                      $" | primitives {RenderingServer.GetRenderingInfo(RenderingServer.RenderingInfo.TotalPrimitivesInFrame)}" +
                      $" | objects {RenderingServer.GetRenderingInfo(RenderingServer.RenderingInfo.TotalObjectsInFrame)}");
@@ -5485,6 +5486,37 @@ namespace UnturnedGodot
             img.SavePng(_shotPath);
             GD.Print($"[SHOT] saved {_shotPath} ({img.GetWidth()}x{img.GetHeight()})");
             GetTree().Quit();
+        }
+
+        /// <summary>Tally the scene tree by node CLASS, biggest first.
+        ///
+        /// The F3 profiler can only ever attribute what a script does; on the real map it accounts for ~6% of
+        /// the frame while the scene holds ~40,000 nodes and ~70,000 objects. Per-node engine work -- transform
+        /// propagation, visibility/culling bookkeeping, physics broadphase membership -- costs CPU with no
+        /// script running, so no `Prof.Scope` can ever see it and the profiler will keep reporting it as
+        /// unattributed no matter how many callbacks get instrumented. Knowing WHICH classes make up 40k nodes
+        /// is the difference between guessing at that and going after it. Counts only; free to run.</summary>
+        void NodeCensus()
+        {
+            if (System.Environment.GetEnvironmentVariable("UG_NODECENSUS") != "1") return;
+            var byClass = new System.Collections.Generic.Dictionary<string, int>();
+            int total = 0;
+            var stack = new System.Collections.Generic.Stack<Node>();
+            stack.Push(GetTree().Root);
+            while (stack.Count > 0)
+            {
+                var n = stack.Pop();
+                total++;
+                string k = n.GetType().Name;   // the C# type, so UnturnedGodot classes show by their own name
+                byClass.TryGetValue(k, out int c); byClass[k] = c + 1;
+                foreach (var ch in n.GetChildren()) stack.Push(ch);
+            }
+            var list = new System.Collections.Generic.List<System.Collections.Generic.KeyValuePair<string, int>>(byClass);
+            list.Sort((a, b) => b.Value.CompareTo(a.Value));
+            var sb = new System.Text.StringBuilder();
+            for (int i = 0; i < list.Count && i < 25; i++) sb.Append($"{list[i].Key} {list[i].Value}   ");
+            GD.Print($"[census] {total} nodes across {byClass.Count} classes");
+            GD.Print($"[census] top: {sb}");
         }
 
         // Frames to let the world settle before capturing. 45 is right for a golden image, but each frame on
