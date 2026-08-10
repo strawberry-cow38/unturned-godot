@@ -8,14 +8,26 @@ namespace UnturnedGodot
     // WHY THIS EXISTS. The map places 324 point lights (148 streetlights, 63 traffic, 34 ceiling strips, 79
     // lamps) and every one ships with ShadowEnabled = false, which is why light passes through walls. You
     // cannot simply turn them on: a shadowed OmniLight3D is not one shadow map, it is a CUBE -- six renders of
-    // everything in range, per light, per frame. The ten or so visible at once in a lit town would be sixty
-    // extra passes. The sun is the only shadowed light in the game and it is already capped to a 40 m cascade
-    // because a pulled-back third-person car camera tanked the GPU at 100 m.
+    // everything in range. OmniShadowMode is never set anywhere in this project, so every one of them is on
+    // the engine default, and the default is Cube: verified 2026-08-10 by constructing an OmniLight3D under
+    // 4.6 headless (omni_shadow_mode == 1 == SHADOW_CUBE). DualParaboloid would be 2 faces instead of 6.
     //
-    // So shadows become a BUDGET: each update, the few lights that matter most to this camera get shadows and
-    // everyone else does not. A light 60 m away casts a shadow nobody can resolve and costs exactly as much as
-    // one at arm's length -- distance is invisible to the renderer's bill, which is the whole reason the naive
-    // "just enable them" approach falls over.
+    // WHAT THAT COSTS is NOT six renders per light per frame -- an earlier version of this comment said that
+    // and it was wrong. Godot caches positional shadow maps. Per the docs, each frame per light it (1) checks
+    // the light is on an atlas slot of the right size, re-rendering if it must move, (2) re-renders if any
+    // object affecting the map changed, and (3) otherwise LEAVES THE SHADOW UNTOUCHED. A static light over
+    // static geometry is close to free after its first frame.
+    //
+    // The real bill is the GRANULARITY of that invalidation: it is all-or-nothing, so one zombie walking
+    // through re-renders every caster in the light's radius across all six faces, static props included.
+    // Splitting static from dynamic casters is godot-proposals#4635 and is not implemented; the lever that
+    // does exist is Light3D.ShadowCasterMask, which shrinks what a re-render has to draw.
+    //
+    // So shadows are still a BUDGET, for two reasons that survive the correction: the sun is already capped to
+    // a 40 m cascade because a pulled-back third-person car camera tanked the GPU at 100 m, and a town full of
+    // moving zombies invalidates constantly, which is exactly the case where caching stops saving anything.
+    // Note the budget is itself an invalidation source -- toggling ShadowEnabled on, and any atlas slot resize
+    // it causes, both force a re-render. That is what SwapMargin and Interval are really paying for.
     //
     // Lights opt in by joining the `shadowbudget` group; nothing central has to know they exist.
     public partial class LightShadowBudget : Node
