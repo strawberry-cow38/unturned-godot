@@ -440,6 +440,85 @@ namespace UnturnedGodot
             var rubbleCat = DestructibleField.LoadCatalog();
             var destField = new DestructibleField();
             int destN = 0;
+            // PROP BATCHING (see PropBatcher). Only props with nothing per-instance about them beyond a
+            // transform can go in a shared MultiMesh; anything that owns a light, a device, a door, an outline
+            // or a split-off sub-mesh needs a node of its own, and every one of those is named here. The list is
+            // the ONE place that knows which props are special -- each entry below mirrors a branch further down
+            // in PlaceObject that constructs something from `mainMi` or hangs a node off the placement.
+            var propBatch = new PropBatcher();
+            // UG_NOBATCH=1 keeps every prop as its own MeshInstance3D -- the A/B control for what batching
+            // changed, the same escape hatch UG_NOLOD=1 gives the LOD table. Worth having permanently: the
+            // headless test tiers cannot see a MultiMesh at all (PropBatcher.Slot.Visible), and none of the
+            // visual goldens load the real map, so an A/B render of PEI is the ONLY way to check that batched
+            // props still draw in the right places.
+            bool batchOpen = System.Environment.GetEnvironmentVariable("UG_NOBATCH") != "1";   // also closed after the scan: deferred holiday props (Client) arrive post-Flush and take the node path
+            bool Batchable(string n) =>
+                n != "Street_Light_0" &&                         // lens split + stump + SpotLight + LightTap
+                n != "Traffic_Light_0" &&                        // stump + per-head lens split + TrafficLight + LightTap
+                n != "Lighthouse_0" &&                           // sweeping beam node placed off its AABB
+                n != "Toaster_0" &&                              // Toaster.Make(mainMi)
+                n != "Gas_Pump_0" && n != "Circuit_0" &&         // deployable fixtures (own colliders/outlines)
+                n != "Tower_Water_0" && n != "Fire_Hydrant_0" && n != "Well_0" && !IsSinkProp(n) &&   // fluid sources
+                LampLight.KindFor(n) == LampLight.Kind.Generic &&   // LampLight.Make(..., mainMi, ...)
+                !TVDevice.IsDeviceProp(n) &&                     // TVDevice.Make(mainMi, ...)
+                !HeartMonitor.IsMonitorProp(n) &&                // HeartMonitor.Make(mainMi, ...)
+                !doorCatalog.ContainsKey(n);                     // openable leaves + whole-prop outline
+            // The LOD band plan for a prop TYPE: which mesh draws over which distance band. Identical for every
+            // placement of a GUID, so it is resolved once and reused -- and it applies the same absorb rule the
+            // node path uses, where a level whose .obj was never extracted hands its band back to the level
+            // before it rather than letting the prop pop out of existence early.
+            var lodPlanCache = new System.Collections.Generic.Dictionary<string, System.Collections.Generic.List<(Mesh Mesh, float Begin, float End)>>();
+            System.Collections.Generic.List<(Mesh Mesh, float Begin, float End)> LodPlanFor(string guid, string n, Mesh vis, float cullDist)
+            {
+                if (lodPlanCache.TryGetValue(guid, out var pl)) return pl;
+                pl = new System.Collections.Generic.List<(Mesh, float, float)>();
+                var rg = LodTable.LevelRanges(guid, LodTable.SourceFov);
+                if (rg == null || rg.Length <= 1) pl.Add((vis, 0f, cullDist));
+                else
+                {
+                    pl.Add((vis, 0f, rg[0].End));
+                    for (int lv = 1; lv < rg.Length; lv++)
+                    {
+                        var (b, e2) = rg[lv];
+                        if (e2 <= b) continue;                       // band collapsed by the layer cull
+                        string lodKey = n + "_lod" + lv;
+                        if (!cache.TryGetValue(lodKey, out var lmesh))
+                        {
+                            string lp = dir + lodKey + ".obj";
+                            lmesh = System.IO.File.Exists(lp) ? ObjMesh.Load(lp) : null;
+                            cache[lodKey] = lmesh;
+                        }
+                        if (lmesh == null) { var t = pl[pl.Count - 1]; pl[pl.Count - 1] = (t.Item1, t.Item2, e2); continue; }
+                        pl.Add((lmesh, b, e2));
+                    }
+                }
+                lodPlanCache[guid] = pl;
+                return pl;
+            }
+            // The DEBRIS mesh a broken prop leaves behind, by convention `<name>_Debris.obj`.
+            //
+            // NOT `<name>_Broken_<n>.obj`, which is a different asset and the obvious wrong guess: those are
+            // full-size fences with their boards knocked out of plane -- Fence_Wood_Broken_0 keeps the intact
+            // prop's 2.31 height and 4.2 width and only widens in Y (+-0.10 -> -0.45..1.88). They are
+            // smashed-THROUGH fences the mapper places as a gap in a fence line, not rubble (strawberry).
+            //
+            // Cutting a stub off the prop's own mesh does not substitute either, which is worth recording so
+            // nobody re-derives it: ObjMesh.SplitBelow keeps only WHOLE faces, and on Fence_Wood_0 everything
+            // below 0.5 is the bottom rail (X -2.00..2.00, Z 0.05..0.41) -- a plank floating at ankle height,
+            // not boards in the ground. Fence_Metal_0 is 24 full-height faces and yields nothing at any cut.
+            //
+            // So no PEI prop currently has debris geometry, and the lookup below finds nothing until one is
+            // authored. The alive/dead plumbing is wired and waiting: drop in a `_Debris.obj` and that prop
+            // starts leaving rubble, at no extra draw cost, with no further code.
+            var debrisCache = new System.Collections.Generic.Dictionary<string, Mesh>();
+            Mesh DebrisMeshFor(string n)
+            {
+                if (debrisCache.TryGetValue(n, out var bm)) return bm;
+                string bp = dir + n + "_Debris.obj";
+                bm = System.IO.File.Exists(bp) ? ObjMesh.Load(bp) : null;
+                debrisCache[n] = bm;
+                return bm;
+            }
             void PlaceObject(string[] p, string name, int destIndex)
             {
                 if (!cache.TryGetValue(name, out var mesh)) { mesh = ObjMesh.Load(dir + name + ".obj"); cache[name] = mesh; }
@@ -557,9 +636,14 @@ namespace UnturnedGodot
                         }
                     }
                 }
-                var mainMi = new MeshInstance3D { Mesh = visMesh, MaterialOverride = MatFor(matName), Transform = new Transform3D(basis, gpos),
+                // BATCHED or not. A plain prop -- no lens split, no device, no door, no light of its own -- has
+                // nothing per-instance about it but its transform, so it goes into a shared MultiMesh instead of
+                // getting a node each (PropBatcher). Everything below that needs a real `mainMi` belongs to a
+                // prop Batchable() already excludes, so mainMi stays null only on paths that never read it.
+                bool batched = batchOpen && Batchable(name);
+                var mainMi = batched ? null : new MeshInstance3D { Mesh = visMesh, MaterialOverride = MatFor(matName), Transform = new Transform3D(basis, gpos),
                     VisibilityRangeEnd = cull, VisibilityRangeFadeMode = GeometryInstance3D.VisibilityRangeFadeModeEnum.Disabled };   // individual props already frustum-cull behind the player; add a distance cutoff (master)
-                root.AddChild(mainMi);
+                if (mainMi != null) root.AddChild(mainMi);
                 // MESH LOD: retail ships lower-detail meshes (mean 55% fewer triangles, some 98%) that the port
                 // never extracted. Each level draws in its own distance band, LOD0 nearest, so a prop gets CHEAPER
                 // with distance instead of only vanishing at the end of one.
@@ -569,7 +653,7 @@ namespace UnturnedGodot
                 // existence at the LOD0->LOD1 distance instead of at its cull distance.
                 lodMis.Clear();
                 var ranges = mesh != null ? LodTable.LevelRanges(p[0], LodTable.SourceFov) : null;
-                if (ranges != null && ranges.Length > 1)
+                if (!batched && ranges != null && ranges.Length > 1)   // batched props get the same bands per (type, level, cell) group -- see LodPlanFor
                 {
                     mainMi.VisibilityRangeEnd = ranges[0].End;
                     // The lens belongs to LOD0 -- the coarser levels keep the bulb in their body mesh, unsplit -- so it
@@ -613,9 +697,42 @@ namespace UnturnedGodot
                     folCache[name] = fmesh;
                 }
                 MeshInstance3D folMi = null;
-                if (fmesh != null) { folMi = new MeshInstance3D { Mesh = fmesh, MaterialOverride = MatFor(name + "_foliage"), Transform = new Transform3D(basis, gpos),
+                if (fmesh != null && !batched) { folMi = new MeshInstance3D { Mesh = fmesh, MaterialOverride = MatFor(name + "_foliage"), Transform = new Transform3D(basis, gpos),
                     VisibilityRangeEnd = cull * FoliageCullFraction, VisibilityRangeFadeMode = GeometryInstance3D.VisibilityRangeFadeModeEnum.Disabled };   // leaves cull closer, same 0.75 ratio the flat 240/320 pair used
                     root.AddChild(folMi); }
+                // The batched visual: one slot per LOD level (plus foliage, plus the debris that replaces it if
+                // it is destructible). Queued now, wired to a real MultiMesh when the scan finishes and the
+                // group sizes are known -- so nothing may read these slots before PropBatcher.Flush.
+                PropBatcher.Slot[] batchSlots = null, batchDead = null;
+                if (batched)
+                {
+                    var bxf = new Transform3D(basis, gpos);
+                    var bmat = MatFor(matName);
+                    var sl = new System.Collections.Generic.List<PropBatcher.Slot>(4);
+                    var plan = LodPlanFor(p[0], name, visMesh, cull);
+                    for (int lv = 0; lv < plan.Count; lv++)
+                    {
+                        var s = propBatch.Add(p[0], matName, lv, false, plan[lv].Mesh, bmat, plan[lv].Begin, plan[lv].End,
+                                              GeometryInstance3D.ShadowCastingSetting.On, bxf);
+                        if (s != null) sl.Add(s);
+                    }
+                    if (fmesh != null)
+                    {
+                        var fs = propBatch.Add(p[0], name + "_foliage", 0, false, fmesh, MatFor(name + "_foliage"),
+                                               0f, cull * FoliageCullFraction, GeometryInstance3D.ShadowCastingSetting.On, bxf);
+                        if (fs != null) sl.Add(fs);
+                    }
+                    batchSlots = sl.ToArray();
+                    // DEBRIS: hidden until the prop dies, then swapped in where it stood. Nothing on PEI ships
+                    // one yet -- see DebrisMeshFor for what is and isn't a debris asset.
+                    var broken = destIndex >= 0 ? DebrisMeshFor(name) : null;
+                    if (broken != null)
+                    {
+                        var ds = propBatch.Add(p[0], matName, 0, true, broken, bmat, 0f, cull,
+                                               GeometryInstance3D.ShadowCastingSetting.On, bxf);
+                        if (ds != null) batchDead = new[] { ds };
+                    }
+                }
                 // gas pumps (A2): every Gas_Pump_0 is a 750W-consumer fuel PUMP over a shared station tank. RECORD
                 // it in EVERY mode (the mesh + collider below stay byte-identical); the caller realizes it -- the
                 // dedicated / consuming-loopback server ServerPlaces it into the deployable graph (so it rides
@@ -910,7 +1027,16 @@ namespace UnturnedGodot
                             if (sigs != null)
                                 foreach (var s in sigs) if (GodotObject.IsInstanceValid(s)) s.SetBroken(!alive);
                         };
-                    destField.Register(destIndex, destBody, mis, rub.Health, rub.ResetTicks, rub.EffectId, onAlive);
+                    // A batched prop has no mesh nodes to hide, so it registers by SLOT instead -- same index,
+                    // same health, same reset clock, same effect. The bounds/transform/material it would
+                    // otherwise have read off `mainMi` are handed over for the break burst to size itself on.
+                    if (batched)
+                        destField.RegisterBatched(destIndex, destBody, batchSlots, batchDead,
+                                                  mesh?.GetAabb() ?? new Aabb(Vector3.Zero, Vector3.One),
+                                                  new Transform3D(basis, gpos), MatFor(matName),
+                                                  rub.Health, rub.ResetTicks, rub.EffectId, onAlive);
+                    else
+                        destField.Register(destIndex, destBody, mis, rub.Health, rub.ResetTicks, rub.EffectId, onAlive);
                 }
                 placed++;
                 var cell = new Vector2I(Mathf.FloorToInt(px / 96f), Mathf.FloorToInt(pz / 96f));
@@ -959,6 +1085,18 @@ namespace UnturnedGodot
                 if (mode == WorldMode.Playable && NoteTexts.TryGet(p[0], out var noteName, out var noteLines)) { PlaceNote(p, name, noteName, noteLines); continue; }   // readable lore note -> a NoteBody (mesh + look-focus, F reads it); non-Playable just shows the mesh
                 PlaceObject(p, name, destIdx);
             }
+            // Build the batches. AFTER the scan, because a MultiMesh's instance count has to be known before its
+            // transforms can be written -- every Slot handed out above is dangling until this runs. Closing
+            // batchOpen sends anything placed later (Client holiday props at the join handshake) down the node
+            // path, since their groups would never be flushed.
+            propBatch.Flush(root);
+            batchOpen = false;
+            if (propBatch.Batched > 0)
+                // NODES, not simultaneous draws -- the LOD levels of one prop are separate groups but their
+                // distance bands do not overlap, so at most one of them can draw at a time, and frustum +
+                // distance culling then takes most of what is left. Counting these as "draws" would overstate
+                // the runtime cost and understate the saving; the honest figure is what replaced what.
+                GD.Print($"[batch] {propBatch.Batched} prop visuals -> {propBatch.GroupCount} MultiMesh nodes ({PropBatcher.Cell:0}m cells x LOD level x material)");
             destField.SetCount(destN);   // reserve the whole deterministic index space (built + unbuilt holiday slots)
             result.Destructibles = destField;
             if (destN > 0) GD.Print($"[rubble] {destField.BuiltCount} destructible props wired ({destN} reserved, {destField.InstanceCount} slots)");

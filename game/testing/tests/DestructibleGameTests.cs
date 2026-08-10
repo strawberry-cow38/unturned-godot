@@ -93,4 +93,72 @@ namespace UnturnedGodot.Testing
             T.Check("a registered slot's collider drops", b0.CollisionLayer == 0u);
         }
     }
+
+    // The BATCHED destructible path (PropBatcher). The tests above hand-build a MeshInstance3D per prop, which
+    // is the path a batched prop does NOT take -- they cannot observe this code at all, so passing them says
+    // nothing here. A batched prop has no node: its visual is one instance inside a shared MultiMesh, and
+    // breaking it means rewriting that instance's transform.
+    //
+    // Every assertion below reads MultiMesh.GetInstanceTransform -- the value the RENDERER consumes -- rather
+    // than the Slot bookkeeping that put it there, so a slot that agrees with itself while drawing in the wrong
+    // place still fails. Two instances share the batch on purpose: with one, a bug that always writes slot 0
+    // would be invisible, and the neighbour check is what catches it.
+    public class DestructibleBatchedBreakContract : GameTest
+    {
+        public override string Name => "destructible.batched_break_swaps_slots";
+
+        // NOT GetInstanceTransform: a headless boot has no RenderingServer, so a MultiMesh reads back empty
+        // (measured -- see PropBatcher.Slot.Visible). Asserting on the buffer here would pass and fail
+        // identically, which is no test at all. These read the recorded decision instead, which proves the
+        // routing and the swap but says nothing about pixels.
+        static bool Hidden(PropBatcher.Slot s) => !s.Visible;
+        static bool At(PropBatcher.Slot s, Transform3D want) => s.Visible && s.Xf.Origin.IsEqualApprox(want.Origin);
+
+        public override IEnumerable<Step> Run()
+        {
+            var batcher = new PropBatcher();
+            var mat = new StandardMaterial3D();
+            Mesh intact = new BoxMesh { Size = Vector3.One };
+            Mesh rubbleMesh = new BoxMesh { Size = new Vector3(1f, 0.2f, 1f) };
+            var xf = new Transform3D(Basis.Identity, new Vector3(3f, 1f, -7f));
+            var xf2 = new Transform3D(Basis.Identity, new Vector3(9f, 1f, -7f));   // same 64m cell -> same batch
+
+            var alive = batcher.Add("guid", "m", 0, false, intact, mat, 0f, 100f, GeometryInstance3D.ShadowCastingSetting.On, xf);
+            var neighbour = batcher.Add("guid", "m", 0, false, intact, mat, 0f, 100f, GeometryInstance3D.ShadowCastingSetting.On, xf2);
+            var debris = batcher.Add("guid", "m", 0, true, rubbleMesh, mat, 0f, 100f, GeometryInstance3D.ShadowCastingSetting.On, xf);
+            batcher.Flush(World);
+            yield return Ticks(1);
+
+            T.Check("the two props really do share one MultiMesh (else the neighbour check proves nothing)",
+                    alive.Mm != null && ReferenceEquals(alive.Mm, neighbour.Mm) && alive.Index != neighbour.Index);
+            T.Check("the debris is in a DIFFERENT batch from the intact prop", !ReferenceEquals(alive.Mm, debris.Mm));
+            T.Check("intact: the prop draws at its placed transform", At(alive, xf));
+            T.Check("intact: the debris is parked out of sight", Hidden(debris));
+
+            var body = new StaticBody3D { CollisionLayer = 1u << 6, Position = xf.Origin };
+            body.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = Vector3.One } });
+            World.AddChild(body);
+            var field = new DestructibleField();
+            field.SetCount(1);
+            body.SetMeta(DestructibleField.MetaKey, 0);
+            field.RegisterBatched(0, body, new[] { alive }, new[] { debris },
+                                  new Aabb(-Vector3.One * 0.5f, Vector3.One), xf, mat, maxHealth: 50f, resetTicks: 100);
+            yield return Ticks(1);
+
+            field.SetAlive(0, false);   // the break
+            yield return Ticks(1);
+            T.Check("broken: the prop's instance left the batch", Hidden(alive));
+            T.Check("broken: the debris took EXACTLY the place the prop stood", At(debris, xf));
+            T.Check("broken: the neighbour sharing the batch is untouched", At(neighbour, xf2));
+            T.Check("broken: the collider dropped", body.CollisionLayer == 0u);
+            T.Check("broken: the field reports the slot dead", !field.IsAlive(0));
+
+            field.SetAlive(0, true);    // the rubble reset
+            yield return Ticks(1);
+            T.Check("respawned: the prop is back at its exact transform", At(alive, xf));
+            T.Check("respawned: the debris is hidden again", Hidden(debris));
+            T.Check("respawned: the neighbour STILL untouched", At(neighbour, xf2));
+            T.Check("respawned: the collider is back", body.CollisionLayer == 1u << 6);
+        }
+    }
 }

@@ -21,6 +21,17 @@ namespace UnturnedGodot
         {
             public MeshInstance3D[] Meshes;   // main mesh + optional foliage mesh (null slot = never built: out-of-season holiday / no colliders)
             public StaticBody3D Body;
+            // BATCHED props (PropBatcher) have no MeshInstance3D of their own -- their visual is a handful of
+            // slots inside shared MultiMeshes. Breaking one hides its alive slots and REVEALS its dead ones, so
+            // the debris costs no extra draw: it is another instance in a batch that is already being drawn.
+            // Meshes and Slots are mutually exclusive; whichever is non-null is how this prop renders.
+            public PropBatcher.Slot[] Slots;
+            public PropBatcher.Slot[] DeadSlots;
+            // ...and PlayBreakEffect sizes its burst off the prop's mesh node, which a batched prop does not
+            // have, so the geometry it needs is carried here instead of being read back off a node.
+            public Aabb BatchAabb;
+            public Transform3D BatchXf;
+            public StandardMaterial3D BatchMat;
             public uint BodyLayer;
             public float MaxHealth;           // 0 = unregistered slot (indestructible)
             public long ResetTicks;
@@ -74,6 +85,23 @@ namespace UnturnedGodot
                                      OnAliveChanged = onAliveChanged };
         }
 
+        /// <summary>Bind a BATCHED destructible (PropBatcher) to its index. Same contract as Register -- the
+        /// index space, health, reset clock and effect id are identical -- but the visual is MultiMesh slots
+        /// rather than nodes, and an optional set of dead slots carries the debris that appears in its place.
+        /// `localAabb`/`worldXf`/`mat` stand in for the mesh node PlayBreakEffect would otherwise measure.</summary>
+        public void RegisterBatched(int index, StaticBody3D body, PropBatcher.Slot[] slots, PropBatcher.Slot[] deadSlots,
+                                    Aabb localAabb, Transform3D worldXf, StandardMaterial3D mat,
+                                    float maxHealth, long resetTicks, int effectId = 0, System.Action<bool> onAliveChanged = null)
+        {
+            if (index < 0) return;
+            EnsureSize(index + 1);
+            if (_recs[index] == null) BuiltCount++;
+            _recs[index] = new Rec { Slots = slots, DeadSlots = deadSlots, Body = body, BodyLayer = body?.CollisionLayer ?? 0u,
+                                     BatchAabb = localAabb, BatchXf = worldXf, BatchMat = mat,
+                                     MaxHealth = maxHealth, ResetTicks = resetTicks, EffectId = effectId,
+                                     OnAliveChanged = onAliveChanged };
+        }
+
         /// <summary>Break (false) or respawn (true) one prop by index: hide/show its mesh(es) and toggle its
         /// collision. Idempotent. A reserved-but-unbuilt slot (out-of-season holiday) is a no-op.</summary>
         public void SetAlive(int index, bool alive)
@@ -85,6 +113,10 @@ namespace UnturnedGodot
             if (r.Meshes != null)
                 foreach (var m in r.Meshes)
                     if (m != null && GodotObject.IsInstanceValid(m)) m.Visible = alive;
+            // Batched: the intact instances leave their MultiMesh and the debris takes their place. Both sides
+            // are driven off the SAME alive bit, so a rubble reset restores the prop and retires the debris.
+            if (r.Slots != null) foreach (var s in r.Slots) s?.SetVisible(alive);
+            if (r.DeadSlots != null) foreach (var s in r.DeadSlots) s?.SetVisible(!alive);
             if (r.Body != null && GodotObject.IsInstanceValid(r.Body)) r.Body.CollisionLayer = alive ? r.BodyLayer : 0u;
             r.OnAliveChanged?.Invoke(alive);   // lights/effects the prop owns outside Meshes (see the field's comment)
         }
@@ -100,24 +132,37 @@ namespace UnturnedGodot
         {
             if (index < 0 || index >= _recs.Length) return;
             var r = _recs[index];
-            if (r == null || r.Meshes == null || r.Meshes.Length == 0) return;
-            var mesh = r.Meshes[0];
-            if (mesh == null || !GodotObject.IsInstanceValid(mesh)) return;
-            var tree = mesh.GetTree();
+            if (r == null) return;
+            // The burst is sized off the prop's geometry, which lives in one of two places: its own mesh node,
+            // or -- for a BATCHED prop, which has no node -- the bounds/transform/material recorded at
+            // registration, with its collider standing in as the tree anchor. Everything downstream works off
+            // the four locals below, so the two representations diverge here and nowhere else.
+            Aabb aabb; Transform3D xf; StandardMaterial3D propMat; Node anchor;
+            if (r.Meshes != null && r.Meshes.Length > 0 && r.Meshes[0] != null && GodotObject.IsInstanceValid(r.Meshes[0]))
+            {
+                var mesh = r.Meshes[0];
+                aabb = mesh.Mesh?.GetAabb() ?? new Aabb(Vector3.Zero, Vector3.One);
+                xf = mesh.GlobalTransform;
+                propMat = mesh.MaterialOverride as StandardMaterial3D;
+                anchor = mesh;
+            }
+            else if (r.Slots != null && r.Body != null && GodotObject.IsInstanceValid(r.Body))
+            {
+                aabb = r.BatchAabb; xf = r.BatchXf; propMat = r.BatchMat; anchor = r.Body;
+            }
+            else return;
+            var tree = anchor.GetTree();
             var scene = tree?.CurrentScene;
             if (scene == null) return;
 
             // prop bounds -> burst centre + radius (drives count/scale); clamp so a huge billboard or a tiny sign both read
-            var aabb = mesh.Mesh?.GetAabb() ?? new Aabb(Vector3.Zero, Vector3.One);
-            Vector3 gscale = mesh.GlobalTransform.Basis.Scale;
+            Vector3 gscale = xf.Basis.Scale;
             Vector3 worldSize = (aabb.Size * gscale).Abs();
             float radius = Mathf.Clamp(worldSize.Length() * 0.35f, 0.5f, 6f);
             // emit debris/dust ACROSS the prop's whole volume (a box matching its footprint), so a big barn crumbles
             // over its 15 m footprint instead of puffing at one point, while a small sign stays tight.
             Vector3 halfExt = new Vector3(Mathf.Clamp(worldSize.X * 0.5f, 0.2f, 8f), Mathf.Clamp(worldSize.Y * 0.5f, 0.2f, 8f), Mathf.Clamp(worldSize.Z * 0.5f, 0.2f, 8f));
-            Vector3 centre = mesh.GlobalTransform * (aabb.Position + aabb.Size * 0.5f);
-
-            var propMat = mesh.MaterialOverride as StandardMaterial3D;
+            Vector3 centre = xf * (aabb.Position + aabb.Size * 0.5f);
 
             // NO dust/smoke poof on break (master 2026-08-09: "remove the smoke particle which appears on every
             // destruction"). The retail Rubble_Effect chips (or fallback debris) below carry the break read on their own.
