@@ -45,6 +45,9 @@ namespace UnturnedGodot
         public static float DebugBulbSide = 1f;        // DeskBulb render-pick: +1 = the +X-facing head opening (f18/f19), -1 = -X (f0/f1)
         public static float CeilingSpotAngle = 78f;    // ceiling strip cone half-angle (UG_LAMP_CEILANGLE)
         public static float CeilingFillFraction = 1.0f;    // bounce-fill omni beside the cone, as a fraction of the spot's energy (UG_LAMP_FILL)
+        public static bool CeilingDecal;               // UG_LAMP_CEILDECAL=1: fake the lit ceiling with a projected decal instead of light
+        public static float CeilingDecalSize = 6f;     // decal footprint on the ceiling, metres square (UG_LAMP_DECALSIZE)
+        public static float CeilingDecalEnergy = 3.0f; // decal emission (UG_LAMP_DECALENERGY)
         public static bool DebugLightPose;             // UG_LAMP_POSE=1: print the built light's world pose/aim -- a dark render does not say WHY
         public static bool CeilingSpot;                // UG_LAMP_CEILSPOT=1: ceiling strip as a downward cone instead of an omni.
                                                        // DEFAULT OFF -- measured, and the trade does not pay. See MakeLight.
@@ -53,6 +56,7 @@ namespace UnturnedGodot
         public Kind LampKind => _kind;         // so WorldBuilder can gate the look-meta on IsToggle without re-deriving from the name
         Light3D _light;                        // Spot for CeilingStrip (1 shadow face), Omni for the rest (6) -- see MakeLight
         OmniLight3D _fill;                     // ceiling strip only: dim un-budgeted omni standing in for bounce (BuildVisual)
+        Decal _decal;                          // ceiling strip only: FAKE glow projected up onto the slab, costs no light
         float _omniEnergy;                     // resolved energy (incl. the DeskBulb half-scale), reused by ApplyLit
         MeshInstance3D _fixture;               // the prop's own mesh (LOD0), handed in by WorldBuilder
         MeshInstance3D _emissive;              // the light-emitting sub-mesh split off the fixture -- the ONLY part that glows
@@ -135,6 +139,38 @@ namespace UnturnedGodot
                 };
                 AddChild(_fill);   // deliberately NOT in LightShadowBudget.Group
             }
+
+            // THE CEILING DECAL (strawberry). The fill omni above restores the room but destroys the point of the
+            // exercise, because it is REAL light pouring back into the shadow the spot casts. A decal is not light:
+            // it is a texture projected onto whatever surface is inside its box, so it can make the ceiling LOOK lit
+            // while the spot stays the only actual light source and keeps its shadow at full contrast.
+            //
+            // Projected UPWARD: a Decal casts along its local -Y, so pitching it 180 aims it at the ceiling. It sits
+            // at the TOP of the fixture's own bounds, which is where the ceiling is by definition for a flush strip
+            // -- LampLight has no idea where the room's surfaces are, and does not need to.
+            if (_light is SpotLight3D && CeilingDecal)
+            {
+                _decal = new Decal
+                {
+                    Size = new Vector3(CeilingDecalSize, 0.7f, CeilingDecalSize),
+                    // TextureAlbedo is NOT optional even though we tint nothing: a decal's COVERAGE comes from the
+                    // albedo texture's alpha, so with it unset the whole decal is transparent and the emission never
+                    // appears. Emission-only produced a render byte-identical to no decal at all, at every energy.
+                    // AlbedoMix 0 keeps it from staining the surface while the alpha still shapes the glow.
+                    TextureAlbedo = GlowTexture(),
+                    TextureEmission = GlowTexture(),
+                    EmissionEnergy = CeilingDecalEnergy,
+                    Modulate = BulbColor,
+                    AlbedoMix = 0f,
+                    UpperFade = 0.2f, LowerFade = 0.2f,
+                    RotationDegrees = new Vector3(180f, 0f, 0f),
+                    Position = ComputeCeilingLocal(),
+                };
+                AddChild(_decal);
+            }
+            if (DebugLightPose && _decal != null)
+                GD.Print($"[lampdecal] gpos={_decal.GlobalPosition} size={_decal.Size} " +
+                         $"emit={_decal.EmissionEnergy} albedoTex={_decal.TextureAlbedo != null} visible={_decal.Visible}");
             if (DebugLightPose)
                 GD.Print($"[lamplight] kind={_kind} node={_light.GetType().Name} gpos={_light.GlobalPosition} " +
                          $"fwd={-_light.GlobalTransform.Basis.Z} energy={_light.LightEnergy} " +
@@ -241,6 +277,52 @@ namespace UnturnedGodot
             }
         }
 
+        /// <summary>Where the ceiling decal sits: directly over the fixture, at the TOP of its own bounds. For a
+        /// flush strip that IS the ceiling plane, so the projection box straddles the slab without this class ever
+        /// having to know the room's geometry.</summary>
+        Vector3 ComputeCeilingLocal()
+        {
+            if (_fixture == null || !IsInstanceValid(_fixture)) return Vector3.Zero;
+            var xf = _fixture.GlobalTransform;
+            var fA = _fixture.GetAabb();
+            Vector3 c = xf * fA.GetCenter();
+            return new Vector3(c.X, WorldTopY(fA, xf), c.Z) - GlobalPosition;
+        }
+
+        /// <summary>A soft radial falloff, built once and shared. Procedural so no art asset has to exist for a
+        /// thing that is just "bright in the middle, nothing at the edge".</summary>
+        static ImageTexture _glowTex;
+        static ImageTexture GlowTexture()
+        {
+            if (_glowTex != null) return _glowTex;
+            const int N = 96;
+            var img = Image.CreateEmpty(N, N, false, Image.Format.Rgba8);
+            for (int y = 0; y < N; y++)
+                for (int x = 0; x < N; x++)
+                {
+                    float dx = (x + 0.5f) / N * 2f - 1f, dy = (y + 0.5f) / N * 2f - 1f;
+                    float r = Mathf.Sqrt(dx * dx + dy * dy);
+                    // smoothstep to zero at the rim: a hard edge would read as a lit RECTANGLE on the ceiling,
+                    // which is the tell that gives a fake away instantly.
+                    float a = Mathf.Clamp(1f - r, 0f, 1f);
+                    a = a * a * (3f - 2f * a);
+                    // The falloff goes in the RGB as well as the alpha. A decal's EMISSION is not shaped by the
+                    // albedo alpha -- only the albedo blend is -- so a texture that was white RGB with a radial
+                    // alpha emitted a uniform, hard-edged BOX on the ceiling. The regional luminance average
+                    // happily reported a matching brightness for it; only looking at the render showed the shape.
+                    img.SetPixel(x, y, new Color(a, a, a, a));
+                }
+            _glowTex = ImageTexture.CreateFromImage(img);
+            return _glowTex;
+        }
+
+        static float WorldTopY(Aabb local, Transform3D xf)
+        {
+            float max = float.MinValue;
+            for (int i = 0; i < 8; i++) max = Mathf.Max(max, (xf * local.GetEndpoint(i)).Y);
+            return max;
+        }
+
         static float WorldBottomY(Aabb local, Transform3D xf)
         {
             float min = float.MaxValue;
@@ -265,6 +347,7 @@ namespace UnturnedGodot
             bool eff = _lastLit && _on;
             if (_light != null) _light.LightEnergy = (eff && !DebugNoOmni) ? _omniEnergy : 0f;
             if (_fill != null) _fill.LightEnergy = (eff && !DebugNoOmni) ? _omniEnergy * CeilingFillFraction : 0f;   // the bounce fill flickers WITH the tube, or it reads as a second light source
+            if (_decal != null) _decal.Visible = eff && !DebugNoOmni;   // a glow left painted on the ceiling of a dark room is worse than no glow
             if (_hum != null) _hum.VolumeDb = eff ? _humDb : -80f;   // hum stutters with the flicker (per-frame during a transition) + hard-mutes off/broken
             if (_fixtureLitMat == null) return;
             var emitMi = (_emissive != null && IsInstanceValid(_emissive)) ? _emissive : _fixture;

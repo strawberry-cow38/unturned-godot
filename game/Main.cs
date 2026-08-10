@@ -4456,7 +4456,11 @@ namespace UnturnedGodot
             // difference lands on, or do not claim to have checked it.
             if (System.Environment.GetEnvironmentVariable("UG_LAMP_ROOM") == "1")
             {
-                const float half = 4f, ceilY = 3.2f;
+                // ceilY must clear the fixture's own bounds. Light_0 at mountY 3.0 with the in-situ pitch reaches
+                // Y=3.75, so the first version of this room -- ceiling at 3.2 -- ran the slab straight THROUGH the
+                // prop, and a ceiling decal anchored to the fixture's top projected into empty air above it. The
+                // render was byte-identical to having no decal, which reads as "the feature does nothing".
+                const float half = 4f, ceilY = 3.85f;
                 var wallMat = new StandardMaterial3D { AlbedoColor = new Color(0.52f, 0.50f, 0.47f), Roughness = 1f };
                 void Surface(Vector3 pos, Vector3 rotDeg)
                 {
@@ -4497,6 +4501,9 @@ namespace UnturnedGodot
             if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_LAMP_CEILANGLE"), out var ca) && ca > 0f) LampLight.CeilingSpotAngle = ca;   // sweep the cone width
             if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_LAMP_ENERGY"), out var ce) && ce > 0f) LampLight.Energy = ce;
             if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_LAMP_FILL"), out var cf) && cf >= 0f) LampLight.CeilingFillFraction = cf;   // 0 = cone only, to see what the fill is actually buying
+            LampLight.CeilingDecal = System.Environment.GetEnvironmentVariable("UG_LAMP_CEILDECAL") == "1";   // fake the lit ceiling with a projected decal instead of a fill light
+            if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_LAMP_DECALSIZE"), out var ds) && ds > 0f) LampLight.CeilingDecalSize = ds;
+            if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_LAMP_DECALENERGY"), out var de) && de >= 0f) LampLight.CeilingDecalEnergy = de;
             var bulbSideStr = System.Environment.GetEnvironmentVariable("UG_BULB_SIDE");                 // DeskBulb render-pick: +1 / -1
             if (!string.IsNullOrEmpty(bulbSideStr) && float.TryParse(bulbSideStr, out var bs)) LampLight.DebugBulbSide = bs;
             var lamp = LampLight.Make(new Vector3(0f, mountY, 0f), mi, LampLight.KindFor(which));   // hand the fixture mesh in so the right part glows when lit (LampLight.KindFor = the one prop->kind table)
