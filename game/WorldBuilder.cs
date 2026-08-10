@@ -457,6 +457,7 @@ namespace UnturnedGodot
                 n != "Traffic_Light_0" &&                        // stump + per-head lens split + TrafficLight + LightTap
                 n != "Lighthouse_0" &&                           // sweeping beam node placed off its AABB
                 n != "Toaster_0" &&                              // Toaster.Make(mainMi)
+                n != "Clock_0" &&                                // ClockDevice.Make(mainMi) -- hands are carved off the body mesh and spun per instance
                 n != "Gas_Pump_0" && n != "Circuit_0" &&         // deployable fixtures (own colliders/outlines)
                 n != "Tower_Water_0" && n != "Fire_Hydrant_0" && n != "Well_0" && !IsSinkProp(n) &&   // fluid sources
                 LampLight.KindFor(n) == LampLight.Kind.Generic &&   // LampLight.Make(..., mainMi, ...)
@@ -854,8 +855,13 @@ namespace UnturnedGodot
                 }
                 if (name == "Clock_0" && mode != WorldMode.Dedicated)   // baked hands split off + spun to in-game time (master 2026-08-10)
                 {
-                    var cd = ClockDevice.Make(mainMi, MatFor(matName), 0f);   // local time for now; the Alberton bank's per-clock world zones + upright pass are a follow-up
-                    if (cd != null) root.AddChild(cd);
+                    // A device carves its sub-meshes off THIS prop's own node, so a batched prop cannot have
+                    // one -- Batchable() must exclude every prop that reaches a branch like this. Saying so out
+                    // loud rather than passing null: the clock landed while prop batching was on a branch, the
+                    // rebase merged clean because the two edits never touched the same line, and batched clocks
+                    // would simply have stopped ticking with nothing in the log to say why.
+                    if (mainMi == null) GD.PushError($"[batch] BUG: {name} is Batchable() but needs its own mesh node -- add it to the deny list");
+                    else { var cd = ClockDevice.Make(mainMi, MatFor(matName), 0f); if (cd != null) root.AddChild(cd); }   // local time for now; the Alberton bank's per-clock world zones + upright pass are a follow-up
                 }
                 // Patient monitors (strawberry: "for now give it to random units across the map. it'll be a map making
                 // feature"). Random per unit rather than per map, so a ward has a mix -- and seeded off nothing but
