@@ -214,6 +214,7 @@ namespace UnturnedGodot
 
         public override void _PhysicsProcess(double delta)
         {
+            using var _prof = Prof.Scope("ObjectDoor.phys");
             float want = IsOpen ? 1f : 0f;
             if (Mathf.IsEqualApprox(_swing, want)) { if (_pendingSolid) TrySolidify(); return; }
             float step = (float)delta / _duration;

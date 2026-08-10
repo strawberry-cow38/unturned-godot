@@ -541,6 +541,7 @@ namespace UnturnedGodot
 
         public override void _Process(double delta)
         {
+            using var _prof = Prof.Scope("Deployable");
             // TRAP (landmine): proximity-armed. Watch for a victim inside TrapTrigger, then detonate. Throttled to ~5 Hz
             // -- a mine is cheap, but N mines x M zombies EVERY frame is exactly the _PhysicsProcess-shaped cost we just
             // spent a day chasing; a proximity trap doesn't need per-frame resolution. A MANUAL charge (TrapManual) skips

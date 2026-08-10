@@ -119,6 +119,7 @@ namespace UnturnedGodot
 
         public override void _Process(double delta)
         {
+            using var _prof = Prof.Scope("GasPump");
             if (!_focused || _info == null) return;   // only the looked-at pump keeps its tooltip live
             _info.GlobalPosition = GlobalPosition + Vector3.Up * 2.6f;   // float above the ~2.4m pump
             _info.SetName("Gas Pump", PumpColor);

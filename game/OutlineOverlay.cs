@@ -84,6 +84,7 @@ namespace UnturnedGodot
 
         public override void _Process(double delta)
         {
+            using var _prof = Prof.Scope("OutlineOverlay");
             var cam = GetViewport().GetCamera3D();
             if (cam == null) return;
             // While driving, disable the whole pass (no second cull, no dilate, no stale mask on screen) --

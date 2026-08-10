@@ -70,6 +70,7 @@ namespace UnturnedGodot
 
         public override void _Process(double delta)
         {
+            using var _prof = Prof.Scope("LighthouseBeam");
             // NIGHT-GATE: only sweep at night. Self-gated off DayNightCycle.IsNightTime (default night if no cycle),
             // so this touches nothing shared -- no group registration, no edit to the day/night sweep.
             var dn = GetTree().GetFirstNodeInGroup("daynight") as DayNightCycle;

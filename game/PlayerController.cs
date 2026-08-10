@@ -4665,6 +4665,7 @@ namespace UnturnedGodot
 
         public override void _Process(double delta)
         {
+            using var _prof = Prof.Scope("PlayerController");
             if (NetAvatar) return;   // per-frame work is all client-side (render interp, look focus, recoil drain, cam) -- none of it on a server avatar
             UpdateGrassDisplacement();
             if (_interpReady && !_dead && _driving == null)   // RENDER INTERPOLATION (master): lerp the visual position between the last two 50Hz ticks so it doesn't step at 50Hz while rendering at 60+
@@ -4998,6 +4999,7 @@ namespace UnturnedGodot
 
         public override void _PhysicsProcess(double delta)
         {
+            using var _prof = Prof.Scope("PlayerController.phys");
             if (_pdieTest > 0) { _pdieTest -= delta; if (_pdieTest <= 0) { _pdieTest = -1; TakeDamage(9999f); } }
             // below-map kill: Unturned Level.isPointWithinValidHeight = y in [-1024,1024]; fall past the map floor -> die + respawn (covers driving too)
             if (!NetAvatar && !_dead && GlobalPosition.Y < -1030f) { GD.Print("[oob] fell below the map -> killed"); TakeDamage(9999f); }   // NetAvatar: TakeDamage is a no-op (invulnerable) -- gate here too so a pathological fall can't spam the log every tick

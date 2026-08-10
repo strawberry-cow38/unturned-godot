@@ -15,6 +15,7 @@ namespace UnturnedGodot
 
         public override void _PhysicsProcess(double delta)
         {
+            using var _prof = Prof.Scope("SimDriver.phys");
             Sim.Frame(delta);
         }
     }

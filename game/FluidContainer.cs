@@ -265,6 +265,7 @@ namespace UnturnedGodot
 
         public override void _Process(double delta)
         {
+            using var _prof = Prof.Scope("FluidContainer");
             // a powered pump with fluid moving through it VIBRATES its motor drum (strawberry: powered AND flowing, not
             // just powered). Idle / unpowered / dry -> the drum sits still at its base position.
             if (_pumpDrum != null && GodotObject.IsInstanceValid(_pumpDrum))

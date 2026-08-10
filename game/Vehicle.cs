@@ -2078,6 +2078,7 @@ namespace UnturnedGodot
 
         public override void _PhysicsProcess(double delta)
         {
+            using var _prof = Prof.Scope("Vehicle.phys");
             if (_lookFocused && _info != null)   // keep the info billboard at the cabin + live (before any perf early-return)
             {
                 _info.GlobalPosition = GlobalPosition + Vector3.Up * InfoH;

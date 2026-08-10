@@ -142,6 +142,7 @@ namespace UnturnedGodot
         int _prewarm = 3;
         public override void _Process(double delta)
         {
+            using var _prof = Prof.Scope("PowerNet");
             PowerNet.RecomputeIfDirty(GetTree());
             if (_prewarm > 0) { PowerNet.PrewarmWireArrows(GetTree(), _prewarm > 1); _prewarm--; }
         }

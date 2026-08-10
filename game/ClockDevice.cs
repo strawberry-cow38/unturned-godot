@@ -57,6 +57,7 @@ namespace UnturnedGodot
 
         public override void _Process(double delta)
         {
+            using var _prof = Prof.Scope("ClockDevice");
             var dn = GetTree().GetFirstNodeInGroup("daynight") as DayNightCycle;
             float t = dn?.Time ?? 0.5f;                                  // 0..1, 0 = midnight, 0.5 = noon
             float local = Mathf.PosMod(t + TimezoneHours / 24f, 1f);

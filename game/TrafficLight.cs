@@ -253,6 +253,7 @@ namespace UnturnedGodot
 
         public override void _Process(double delta)
         {
+            using var _prof = Prof.Scope("TrafficLight");
             if (_broken || Frozen) return;
             float t = ClockSeconds();
             Phase p;

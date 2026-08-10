@@ -230,6 +230,7 @@ namespace UnturnedGodot
 
         public override void _Process(double delta)
         {
+            using var _prof = Prof.Scope("HeartMonitor");
             // Poll the WHOLE feed, mains and wire together -- the same lesson TVDevice learned today: relying on a
             // push means the one caller that pushes works and every other route leaves the unit lit through a
             // blackout.
