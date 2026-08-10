@@ -5558,6 +5558,19 @@ namespace UnturnedGodot
             list.Sort((a, b) => b.Value.CompareTo(a.Value));
             var sb = new System.Text.StringBuilder();
             for (int i = 0; i < list.Count && i < 25; i++) sb.Append($"{list[i].Key} {list[i].Value}   ");
+            // Dropped items settle by freezing, so Freeze is an EXTERNAL read of "did physics do its job" --
+            // no need to reach into WorldItem's privates. A map where most items are still unfrozen at capture
+            // is a map where they never fell, which is the report being chased. Also the control for whether
+            // ColliderBudget broke them: run it against UG_COLLDIST=0 and compare the fraction.
+            int items = 0, settled = 0, airborne = 0;
+            foreach (var n in GetTree().GetNodesInGroup("worlditems"))
+                if (n is RigidBody3D rb && GodotObject.IsInstanceValid(rb))
+                {
+                    items++;
+                    if (rb.Freeze) settled++; else if (rb.LinearVelocity.LengthSquared() > 0.02f) airborne++;
+                }
+            if (items > 0)
+                GD.Print($"[census] worlditems {items}: {settled} settled (frozen), {airborne} still moving, {items - settled - airborne} idle-unfrozen");
             GD.Print($"[census] {total} nodes across {byClass.Count} classes");
             GD.Print($"[census] top: {sb}");
         }
