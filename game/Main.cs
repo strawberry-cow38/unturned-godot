@@ -5478,6 +5478,7 @@ namespace UnturnedGodot
             // nothing about a real GPU, but what the culler admitted into the frame is hardware-independent --
             // so this is the number to compare when changing draw distances, not fps.
             NodeCensus();
+            ProfDump();
             GD.Print($"[lodperf] drawcalls {RenderingServer.GetRenderingInfo(RenderingServer.RenderingInfo.TotalDrawCallsInFrame)}" +
                      $" | primitives {RenderingServer.GetRenderingInfo(RenderingServer.RenderingInfo.TotalPrimitivesInFrame)}" +
                      $" | objects {RenderingServer.GetRenderingInfo(RenderingServer.RenderingInfo.TotalObjectsInFrame)}");
@@ -5486,6 +5487,48 @@ namespace UnturnedGodot
             img.SavePng(_shotPath);
             GD.Print($"[SHOT] saved {_shotPath} ({img.GetWidth()}x{img.GetHeight()})");
             GetTree().Quit();
+        }
+
+        /// <summary>Dump the Prof breakdown at capture, so per-system cost is measurable from a HEADLESS-ish
+        /// render instead of only off a screenshot of the F3 overlay.
+        ///
+        /// Prof accumulates whenever instrumented code runs, but only the overlay ever reads or resets it, and
+        /// the overlay needs a keypress -- which the shot harness cannot give. That left every per-system
+        /// number in this project unmeasurable except by asking a human to press F3 and photograph it, which
+        /// is not a before/after. Same camera, same seed, two runs: now it is.
+        ///
+        /// Absolute microseconds here are a software rasteriser's and do not transfer to real hardware; the
+        /// CALL COUNTS and the RATIO between runs do.</summary>
+        void ProfDump()
+        {
+            if (System.Environment.GetEnvironmentVariable("UG_PROFDUMP") != "1") return;
+            var list = new System.Collections.Generic.List<System.Collections.Generic.KeyValuePair<string, long>>(Prof.Us);
+            list.Sort((a, b) => b.Value.CompareTo(a.Value));
+            var sb = new System.Text.StringBuilder();
+            foreach (var kv in list)
+            {
+                Prof.Calls.TryGetValue(kv.Key, out int n);
+                sb.Append($"{kv.Key} {kv.Value / 1000.0:0.0}ms(x{n})   ");
+            }
+            var (tot, phys) = Prof.Totals();
+            GD.Print($"[prof] since boot: total {tot / 1000.0:0.0}ms (physics {phys / 1000.0:0.0}ms) over {Engine.GetProcessFrames()} process / {Engine.GetPhysicsFrames()} physics frames");
+            GD.Print($"[prof] {sb}");
+            // Counts are printed SEPARATELY and as whole numbers -- Prof.Counts exists precisely because a
+            // tally parked in the millisecond dictionary renders as "0.0" and reads as "this never ran".
+            if (Prof.Counts.Count > 0)
+            {
+                var cs = new System.Text.StringBuilder();
+                foreach (var kv in Prof.Counts)
+                {
+                    cs.Append($"{kv.Key} {kv.Value}");
+                    // Per-call is the useful form for anything that also has a timing key: 9 rays a call and
+                    // 1 ray a call are the same total from very different problems.
+                    if (Prof.Calls.TryGetValue(kv.Key.Replace("_rays", "_LOS"), out int calls) && calls > 0)
+                        cs.Append($" ({(double)kv.Value / calls:0.00}/call)");
+                    cs.Append("   ");
+                }
+                GD.Print($"[prof] counts: {cs}");
+            }
         }
 
         /// <summary>Tally the scene tree by node CLASS, biggest first.

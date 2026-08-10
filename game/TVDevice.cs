@@ -266,6 +266,11 @@ namespace UnturnedGodot
         bool _broken;             // prop smashed -> screen + light + tone stay dead through any grid sweep
         bool _screenShot;         // GLASS shot out, cabinet still standing -- dead until the prop itself resets
         bool _lit;                // last EFFECTIVE state (_on && grid power) actually applied to the visuals
+        VisibleOnScreenNotifier3D _seen;
+        // Defaults TRUE and that direction matters: if the notifier never fires (no camera, an odd viewport)
+        // the set animates exactly as it always did. Failing the other way would leave frozen pictures around
+        // the map with nothing in the log to explain them.
+        bool _onScreen = true;
 
         MeshInstance3D _screen;   // the emissive SMPTE screen sub-mesh (hidden when dark)
         ShaderMaterial _screenMat;   // one shader, one program per set -- see ScreenProgram
@@ -671,6 +676,21 @@ namespace UnturnedGodot
             SetMono(false);   // establishes the uniform; a mono SET is handled by its texture + channels, not by this
             _screen = new MeshInstance3D { Mesh = projected, MaterialOverride = _screenMat, Visible = false, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off, Position = _screenOffset };
             AddChild(_screen);
+
+            // ONLY ANIMATE A PICTURE SOMEONE CAN SEE (strawberry). The channel is picked once in Make and never
+            // re-decided; what costs per frame is the picture -- time_s, the DVD blob position, flicker phase,
+            // tube levels -- and those are shader parameter writes into the RenderingServer, ~34 sets' worth,
+            // for screens that are frequently behind a wall or behind you.
+            //
+            // VISIBILITY, not distance: a television in the next room is 5 m away and completely hidden, while
+            // one across a field at 200 m is in plain sight. A distance gate gets both of those backwards.
+            // Sized off the screen's own bounds, padded so the notifier trips slightly before the picture is
+            // actually on camera rather than a frame late.
+            var sab = projected.GetAabb();
+            _seen = new VisibleOnScreenNotifier3D { Aabb = sab.Grow(0.5f), Position = _screenOffset };
+            _seen.ScreenEntered += () => _onScreen = true;
+            _seen.ScreenExited += () => _onScreen = false;
+            AddChild(_seen);
 
             // DIRECTIONAL spill (master: "the light should also be directional"). An OmniLight threw light backwards
             // through the cabinet and sideways into the wall the set is against; a TV only lights what is in front of
@@ -1586,7 +1606,10 @@ namespace UnturnedGodot
 
             // A TUBE breathes for as long as it is lit -- so this no longer early-outs on !_warming, which it did back
             // when warmup was the only thing that animated.
-            if (_lit)
+            // The state machines below (collapse already returned; brownout, banner, warmup) deliberately keep
+            // running off-screen: they TRANSITION state, and a set frozen mid-warmup would sit wrong until
+            // something poked it. Only the picture animation is gated.
+            if (_lit && _onScreen)
             {
                 // The programs animate off this rather than off a global clock, so every set is offset by its own seed
                 // and a room of televisions does not blink in unison. Only advanced while LIT: a set switched back on

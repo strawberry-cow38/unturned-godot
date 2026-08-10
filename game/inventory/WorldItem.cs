@@ -76,6 +76,7 @@ namespace UnturnedGodot
             return false;
         }
         Vector3[] _hitPts;          // hitbox sample points (centre + 8 corners, local) for the full-hitbox LOS cull (master)
+        PhysicsRayQueryParameters3D _losQuery;   // reused across the nine LOS rays; see the cull loop
         Vector3 _boxCtr;
         Godot.Collections.Array<Rid> _excludeSelf;   // cached ray-exclude (this body) so the LOS rays don't re-alloc
 
@@ -337,6 +338,11 @@ namespace UnturnedGodot
                     LinearVelocity = Vector3.Zero; AngularVelocity = Vector3.Zero;
                     FreezeMode = FreezeModeEnum.Static; Freeze = true;
                     _settled = true;
+                    // Stop being CALLED, not just return early. The `if (_settled) return` above is cheap but
+                    // it still costs a managed callback per item per step forever, and a town's worth of
+                    // dropped loot never moves again once it lands. Nothing re-enables this because nothing
+                    // can: the body is Frozen Static from here, so there is no motion left to track.
+                    SetPhysicsProcess(false);
                     DespawnIfStuck();
                 }
             }
@@ -386,13 +392,23 @@ namespace UnturnedGodot
                         show = false;
                         var space = GetWorld3D().DirectSpaceState;
                         Transform3D gt = GlobalTransform;
+                        // ONE query object, reused. Create() allocates a RefCounted per ray, and an occluded
+                        // item casts all nine sample points -- so this path was allocating 9 query objects a
+                        // call, 4x a second, per item, on top of the Dictionary IntersectRay hands back. The
+                        // mask and the self-exclusion never change, so they are set once at build.
+                        _losQuery ??= new PhysicsRayQueryParameters3D { CollisionMask = 1, Exclude = _excludeSelf };
+                        _losQuery.From = cam.GlobalPosition;
+                        int _rays = 0;
                         foreach (var lp in _hitPts)
                         {
-                            var q = PhysicsRayQueryParameters3D.Create(cam.GlobalPosition, gt * lp);
-                            q.CollisionMask = 1;   // only large world/terrain geometry (bit0) breaks line of sight
-                            q.Exclude = _excludeSelf;
-                            if (space.IntersectRay(q).Count == 0) { show = true; break; }
+                            _losQuery.To = gt * lp;
+                            _rays++;
+                            if (space.IntersectRay(_losQuery).Count == 0) { show = true; break; }
                         }
+                        // How many of the nine we actually spend. Break-on-first-clear means a VISIBLE item is
+                        // 1 and an occluded one is 9, so rays-per-call is the number that says whether cutting
+                        // the sample count is worth anything or is a rounding error. Measure, then decide.
+                        Prof.Count("los_rays", _rays);
                     }
                 }
                 if (Visible != show) Visible = show;   // hide the whole prop when occluded/behind -- physics keeps running so it still settles

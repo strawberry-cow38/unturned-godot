@@ -22,8 +22,8 @@ namespace UnturnedGodot
         // would skip the recompute. (Under --spconsume the mains ride the replicated ToggledOn, seeded ON in MpLoopback.)
         static bool _globalPower = true;
         public static bool GlobalPower => _globalPower;
-        public static bool ToggleGlobalPower() { _globalPower = !_globalPower; MarkDirty(); return _globalPower; }
-        public static void SetGlobalPower(bool on) { if (_globalPower != on) { _globalPower = on; MarkDirty(); } }
+        public static bool ToggleGlobalPower() { _globalPower = !_globalPower; MarkDirty(); RefreshMains(); return _globalPower; }
+        public static void SetGlobalPower(bool on) { if (_globalPower != on) { _globalPower = on; MarkDirty(); RefreshMains(); } }
 
         // ---- MAINS AUTHORITY, which is NOT always the flag above -----------------------------------------------------
         //
@@ -49,29 +49,42 @@ namespace UnturnedGodot
         {
             _anyReplicatedGrid = true;
             if (on) _netMainsOn.Add(src); else _netMainsOn.Remove(src);
+            RefreshMains();
             MarkDirty();
         }
 
         /// <summary>Is the mains live? The replicated bit where there IS one, the local flag otherwise. This is what a
         /// mains-fed fixture must gate on -- never GlobalPower, for the reasons above.</summary>
-        public static bool MainsLive
+        public static bool MainsLive => _mains;
+
+        // CACHED, because this is read by every mains-fed consumer every frame and the replicated branch is not
+        // free: it did a RemoveWhere validity sweep of the source set on EVERY read. With ~34 televisions plus
+        // monitors, lamps and hydrants all polling HasFeed per frame, that was N set-scans a frame to answer a
+        // question that changes a handful of times a session.
+        //
+        // Refreshed from the four places that can change the answer -- all of them in this file -- plus once per
+        // frame from RecomputeIfDirty, which is what catches the case a setter cannot: a replicated source that
+        // was freed without telling anyone. That per-frame sweep is why the validity check lived in the getter
+        // in the first place; doing it once instead of once-per-reader is the whole change.
+        static bool _mains = true;   // matches _globalPower's initial value
+
+        internal static void RefreshMains()
         {
-            get
-            {
-                if (!_anyReplicatedGrid) return _globalPower;
-                _netMainsOn.RemoveWhere(o => !GodotObject.IsInstanceValid(o));   // a despawned source is not a supply
-                return _netMainsOn.Count > 0;
-            }
+            if (!_anyReplicatedGrid) { _mains = _globalPower; return; }
+            _netMainsOn.RemoveWhere(o => !GodotObject.IsInstanceValid(o));   // a despawned source is not a supply
+            _mains = _netMainsOn.Count > 0;
         }
 
         public static void ResetForTests()
         {
             _dirty = true; _lastWires = -1; _lastDeployables = -1; _globalPower = false;
             _netMainsOn.Clear(); _anyReplicatedGrid = false;   // or one sandbox's replicas decide the next one's mains
+            RefreshMains();
         }
 
         public static void RecomputeIfDirty(SceneTree tree)
         {
+            RefreshMains();   // once a frame, not once per reader -- and it is what notices a freed replicated source
             int w = tree.GetNodeCountInGroup("wires"), d = tree.GetNodeCountInGroup("deployables");
             if (!_dirty && w == _lastWires && d == _lastDeployables) return;   // idle: nothing changed -> skip the whole O(W*(W+D)) pass
             _dirty = false; _lastWires = w; _lastDeployables = d;

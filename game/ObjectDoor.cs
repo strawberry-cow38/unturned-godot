@@ -48,7 +48,18 @@ namespace UnturnedGodot
         Vector3 _leafColliderCenter;      // collider box's closed-pose centre (leaf AABB centre); ApplySwing re-places it about the pivot each frame
         bool _pendingSolid;   // at an endpoint but the collider is held OFF because a body stands in its volume (see TrySolidify)
 
-        public bool IsOpen { get; private set; }
+        bool _isOpen;
+        /// <summary>Setting this WAKES the physics callback. Doors spend almost all their life at rest, so the
+        /// callback turns itself off when the swing finishes (see _PhysicsProcess) -- 449 doors were costing
+        /// 41,795 no-op calls per 93 steps. Making the property do the waking rather than each call site means
+        /// no site can be missed, which matters because SyncGroup assigns `sib.IsOpen` on OTHER instances
+        /// (C# access control is per-class, so that compiles) and a hand-placed wake would have skipped it --
+        /// leaving a wardrobe's second leaf stuck mid-swing.</summary>
+        public bool IsOpen
+        {
+            get => _isOpen;
+            private set { if (_isOpen == value) return; _isOpen = value; SetPhysicsProcess(true); }
+        }
         double _lastToggleSec = double.NegativeInfinity;
         const double CooldownSec = 0.35;   // re-toggle cooldown, like IOBS's interactabilityDelay gate (checkCanReset/isUsable) -- just enough to swallow key-repeat spam, not to block a mid-swing reversal
 
@@ -216,7 +227,12 @@ namespace UnturnedGodot
         {
             using var _prof = Prof.Scope("ObjectDoor.phys");
             float want = IsOpen ? 1f : 0f;
-            if (Mathf.IsEqualApprox(_swing, want)) { if (_pendingSolid) TrySolidify(); return; }
+            if (Mathf.IsEqualApprox(_swing, want))
+            {
+                if (_pendingSolid) { TrySolidify(); return; }   // still work to do -> stay awake for it
+                SetPhysicsProcess(false);   // at rest with nothing pending: stop being called until IsOpen moves
+                return;
+            }
             float step = (float)delta / _duration;
             _swing = Mathf.MoveToward(_swing, want, step);
             ApplySwing(_swing);

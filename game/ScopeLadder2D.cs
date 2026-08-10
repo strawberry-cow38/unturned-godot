@@ -17,7 +17,11 @@ namespace UnturnedGodot
             if (System.Environment.GetEnvironmentVariable("UG_UNITS") is string u && u.Length > 0) Units.TrySet(u);   // render-harness: pick the measurement system for the shot
         }
 
-        public override void _Process(double delta) => QueueRedraw();
+        public override void _Process(double delta)
+        {
+            using var _prof = Prof.Scope("ScopeLadder2D");   // the other expression-bodied callback the pass missed
+            QueueRedraw();
+        }
 
         public override void _Draw()
         {

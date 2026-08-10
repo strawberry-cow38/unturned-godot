@@ -286,9 +286,13 @@ namespace UnturnedGodot
         public override void _PhysicsProcess(double delta)
         {
             if (IsPuppet) return;   // puppet: ZombiePuppets drives the node from replicated state (PuppetFrame)
-            ulong _tz = Time.GetTicksUsec();
+            // A SCOPE, not a bare Add, because z.total CONTAINS z.move/z.rig/z.sense/z.cull/z.nav/z.sweep.
+            // Prof's coverage total counts only scopes that close at depth 0; a manual Add cannot raise the
+            // depth, so every inner key also counted as a root and the zombie tick was summed twice over
+            // (a boot dump read total 2795 ms when ~900 ms of it was z.total's own children counted again).
+            // Per-key numbers were always right -- it was only the total that lied.
+            using var _prof = Prof.Scope("z.total");
             PhysicsTick(delta);
-            Prof.Add("z.total", _tz);
         }
 
         void PhysicsTick(double delta)

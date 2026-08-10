@@ -305,6 +305,14 @@ namespace UnturnedGodot
     public partial class FluidManager : Node
     {
         public override void _Ready() => AddToGroup("fluid_managers");
-        public override void _Process(double delta) => FluidNet.Tick(GetTree(), (float)delta);
+        public override void _Process(double delta)
+        {
+            // Instrumented late: an expression-bodied callback slipped past the pass that wrapped the other 23,
+            // so the whole-network re-solve was sitting in the UNATTRIBUTED pile by accident rather than by
+            // nature. FluidNet deliberately has no dirty flag (see the note at the top of this file) -- it
+            // rebuilds from scratch every frame -- which is exactly the shape that needs to be visible.
+            using var _prof = Prof.Scope("FluidNet");
+            FluidNet.Tick(GetTree(), (float)delta);
+        }
     }
 }
