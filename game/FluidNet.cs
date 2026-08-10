@@ -155,10 +155,18 @@ namespace UnturnedGodot
             // and has nothing to do with the graph, so skipping it would be a behaviour change rather than an
             // optimisation. And the frame the LAST hose is removed still takes the full path once, so ports
             // get zeroed properly instead of freezing on their final flowing state.
+            //
+            // ...but only the devices that IMPLEMENT it. The first version of this early-out walked all of
+            // `fluid_devices`, which allocates a fresh node array across the C#/C++ boundary and costs an
+            // IsInstanceValid interop call per device, to invoke a method that is EMPTY on everything except
+            // SinkSource and FluidFuelInlet. It measured 2.5 ms/window on the real map with no hose connected
+            // anywhere on it -- spotted by strawberry, who noticed FluidNet billing time while nothing fluid
+            // was happening. Counting the group first means the common case touches no arrays at all.
             int hoseCount = tree.GetNodeCountInGroup("hoses");
             if (hoseCount == 0 && !_hadHoses)
             {
-                foreach (var n in tree.GetNodesInGroup("fluid_devices"))
+                if (tree.GetNodeCountInGroup(FluidContainer.PostTickGroup) == 0) return;
+                foreach (var n in tree.GetNodesInGroup(FluidContainer.PostTickGroup))
                     if (n is FluidContainer idle && GodotObject.IsInstanceValid(idle)) idle.OnPostTick(dt);
                 return;
             }

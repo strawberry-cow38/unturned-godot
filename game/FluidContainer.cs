@@ -96,6 +96,7 @@ namespace UnturnedGodot
         public override void _Ready()
         {
             AddToGroup("fluid_devices");
+            if (OverridesPostTick(GetType())) AddToGroup(PostTickGroup);
             BuildPorts();
             BuildVisuals();
             OnReadyExtra();   // subclass hook (a FluidPump adds its power ConnectionPort here)
@@ -103,8 +104,32 @@ namespace UnturnedGodot
 
         protected virtual void OnReadyExtra() { }
 
+        /// <summary>The devices that actually DO something in OnPostTick. Everything else inherits the empty base
+        /// and does not need visiting at all.</summary>
+        public const string PostTickGroup = "fluid_posttick";
+
+        // Membership is decided by ASKING whether the type overrides OnPostTick, not by a flag a subclass has to
+        // remember to set. A flag would be one `override` away from a device silently never post-ticking again --
+        // a bug with no error and no visible symptom until someone notices a sink that stopped refilling. Reflection
+        // runs once per type, cached, and a new override joins the group by existing.
+        static readonly System.Collections.Generic.Dictionary<System.Type, bool> _postTickTypes = new();
+        static bool OverridesPostTick(System.Type t)
+        {
+            if (_postTickTypes.TryGetValue(t, out bool known)) return known;
+            var m = t.GetMethod(nameof(OnPostTick), new[] { typeof(float) });
+            bool over = m != null && m.DeclaringType != typeof(FluidContainer);
+            _postTickTypes[t] = over;
+            return over;
+        }
+
         // Called by FluidNet after each tick's fluid move (a subclass hook; FluidFuelInlet empties its buffer into a
         // generator's fuel tank here). Tick-driven, not _Process, so it's authoritative even in headless tests.
+        //
+        // BASE IS EMPTY, AND THAT IS LOAD-BEARING. FluidNet's idle path used to call this on every device in
+        // `fluid_devices` every frame -- marshalling a fresh node array over the C#/C++ boundary, an IsInstanceValid
+        // interop call each, to invoke an empty method on nearly all of them. 2.5 ms/window on the real map with no
+        // hose connected anywhere (strawberry spotted it: "nothing fluid related is happening, yet 2.5ms").
+        // Overriders join PostTickGroup so the idle path can visit only them.
         public virtual void OnPostTick(float dt) { }
 
         // Prop destruction (master: "fire hydrants' hose points arent destroyed when the hydrant is"). A mains riding a
@@ -119,6 +144,12 @@ namespace UnturnedGodot
             _brokenProp = broken;
             Visible = !broken;
             if (broken) RemoveFromGroup("fluid_devices"); else AddToGroup("fluid_devices");
+            // PostTickGroup has to move WITH fluid_devices or a smashed sink keeps post-ticking from the rubble --
+            // the whole point of dropping out of the solver group.
+            if (OverridesPostTick(GetType()))
+            {
+                if (broken) RemoveFromGroup(PostTickGroup); else AddToGroup(PostTickGroup);
+            }
         }
 
         protected virtual void BuildPorts()
