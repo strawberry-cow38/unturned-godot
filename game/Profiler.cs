@@ -110,7 +110,7 @@ namespace UnturnedGodot
             _label.Text =
                 $"FPS {fps:0}    frame {frameMs:0.0} ms    worst {_worstFrame * 1000.0:0.0} ms{gcFlag}\n" +
                 $"cpu: process {procMs:0.0} ms   physics {physMs:0.0} ms   (window avg)\n" +
-                $"{Coverage(procMs, physMs, _frames, (long)Engine.GetPhysicsFrames() - _physFrames0)}\n" +
+                $"{Coverage(frameMs, procMs, physMs, _frames, (long)Engine.GetPhysicsFrames() - _physFrames0)}\n" +
                 $"GC/window: gen0 +{d0}  gen1 +{d1}  gen2 +{d2}    managed heap {heapMB:0.0} MB\n" +
                 $"physics: {M(Performance.Monitor.Physics3DActiveObjects):0} active   {M(Performance.Monitor.Physics3DCollisionPairs):0} pairs   {M(Performance.Monitor.Physics3DIslandCount):0} islands\n" +
                 $"render: {M(Performance.Monitor.RenderTotalDrawCallsInFrame):0} draws   {M(Performance.Monitor.RenderTotalObjectsInFrame):0} objs   {M(Performance.Monitor.RenderTotalPrimitivesInFrame) / 1.0e6:0.0}M prims\n" +
@@ -146,15 +146,23 @@ namespace UnturnedGodot
         /// Physics is divided by PHYSICS STEPS, not process frames. At 169 fps against a 60 Hz physics tick
         /// those differ by nearly 3x, and dividing physics microseconds by frames would report a third of the
         /// real per-step cost -- flattering coverage exactly where the time is suspected to be.</summary>
-        static string Coverage(double procMs, double physMs, int frames, long physSteps)
+        static string Coverage(double frameMs, double procMs, double physMs, int frames, long physSteps)
         {
             var (totalUs, physUs) = Prof.Totals();
-            double attrProc = frames > 0 ? ((totalUs - physUs) / 1000.0) / frames : 0.0;
+            // Denominator is the FRAME, not TimeProcess. Every instrumented scope -- process and physics
+            // alike -- divided by rendered frames is directly comparable to frame time, and frame time is
+            // both what you care about and independently corroborated by the FPS counter.
+            //
+            // TimeProcess is NOT trustworthy as a denominator: observed reading 12.9 ms on a 6.8 ms frame at
+            // 150 fps, which is impossible -- a frame cannot contain more process than frame. Rather than
+            // quietly divide by it and publish a percentage built on a broken number, it is shown as raw
+            // engine detail and CALLED OUT when it exceeds the frame.
+            double attr = frames > 0 ? (totalUs / 1000.0) / frames : 0.0;
+            double pct = frameMs > 0.01 ? 100.0 * attr / frameMs : 0.0;
             double attrPhys = physSteps > 0 ? (physUs / 1000.0) / physSteps : 0.0;
-            double pp = procMs > 0.01 ? 100.0 * attrProc / procMs : 0.0;
-            double hp = physMs > 0.01 ? 100.0 * attrPhys / physMs : 0.0;
-            return $"coverage: process {attrProc:0.0}/{procMs:0.0} ms ({pp:0}%)   physics {attrPhys:0.0}/{physMs:0.0} ms ({hp:0}%)" +
-                   $"   UNATTRIBUTED {System.Math.Max(0.0, procMs - attrProc):0.0} ms/frame + {System.Math.Max(0.0, physMs - attrPhys):0.0} ms/step";
+            string suspect = procMs > frameMs * 1.05 ? "  <-- engine process>frame, monitor suspect" : "";
+            return $"coverage: {attr:0.00} of {frameMs:0.0} ms frame ({pct:0}%)   UNATTRIBUTED {System.Math.Max(0.0, frameMs - attr):0.0} ms/frame" +
+                   $"   [engine: process {procMs:0.0} ms, physics {physMs:0.0} ms/step, attributed {attrPhys:0.00}/step]{suspect}";
         }
 
         /// Biggest spender first, with the two things a bare total cannot tell apart: how many CALLS made it

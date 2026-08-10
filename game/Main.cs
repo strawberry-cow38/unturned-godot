@@ -75,6 +75,16 @@ namespace UnturnedGodot
         public override void _Ready()
         {
             if (System.Environment.GetEnvironmentVariable("UG_COLLVIS") == "1") GetTree().DebugCollisionsHint = true;   // diagnostic: overlay physics collision shapes (must be set before bodies enter the tree)
+            // VSYNC OFF GLOBALLY (strawberry 2026-08-10). With a pacer on, frame time is pinned to the display's
+            // refresh interval, so the number you profile against is one the monitor chose and headroom reads as
+            // zero -- the F3 frame time cannot tell 6 ms of work from 16 ms of work behind a 60 Hz wall.
+            // Also set in project.godot; repeated here so it holds however that setting is read, and the ACTUAL
+            // mode is logged rather than assumed. Skipped headless, which has no window to set it on.
+            if (DisplayServer.GetName() != "headless")
+            {
+                DisplayServer.WindowSetVsyncMode(DisplayServer.VSyncMode.Disabled);
+                GD.Print($"[display] vsync -> {DisplayServer.WindowGetVsyncMode()}");
+            }
             string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null, drivetest = null, proptest = null, animrig = null, rottest = null, itemtest = null, navShot = null, croptest = null, menuShot = null, clothtest = null, boattest = null;
             bool zperf = false;
             bool zbody = false;
