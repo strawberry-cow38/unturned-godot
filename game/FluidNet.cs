@@ -140,9 +140,29 @@ namespace UnturnedGodot
             return null;
         }
 
+        static bool _hadHoses;
+
         public static void Tick(SceneTree tree, float dt)
         {
             if (dt <= 0f) return;
+            // NO HOSE, NO SOLVE. Every transfer in this system travels a hose between two devices, so with
+            // zero hoses connected no fluid can move no matter what any device wants -- yet the solve below
+            // rebuilt the whole graph anyway, allocating five collections and a dictionary and running the
+            // pump-lift relaxation, every frame. Measured at 1.52 ms/frame on the real map, which at 150 fps
+            // is ~228 ms of CPU a second to compute that nothing is connected.
+            //
+            // Per-device work still runs: OnPostTick is what a device does on its own (regen, decay, visuals)
+            // and has nothing to do with the graph, so skipping it would be a behaviour change rather than an
+            // optimisation. And the frame the LAST hose is removed still takes the full path once, so ports
+            // get zeroed properly instead of freezing on their final flowing state.
+            int hoseCount = tree.GetNodeCountInGroup("hoses");
+            if (hoseCount == 0 && !_hadHoses)
+            {
+                foreach (var n in tree.GetNodesInGroup("fluid_devices"))
+                    if (n is FluidContainer idle && GodotObject.IsInstanceValid(idle)) idle.OnPostTick(dt);
+                return;
+            }
+            _hadHoses = hoseCount > 0;
             float inv = 1f / dt;
             var devices = new System.Collections.Generic.List<FluidDevice>();
             var portMap = new System.Collections.Generic.Dictionary<FluidPortNode, FluidPort>();
