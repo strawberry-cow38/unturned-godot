@@ -86,6 +86,7 @@ namespace UnturnedGodot
             string doorTestName = null;
             bool containerTest = false; string containerTestName = null;
             bool wallDemo = false;
+            bool clockTest = false;
             bool play = false, demo = false, netdemo = false, server = false, dedicated = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, lightTest = false, trafficTest = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, objects = false, peidrive = false, craftui = false, bakenav = false, navPathTest = false, zombieTest = false, zdirTest = false, editorMode = false, impactTest = false, doorGallery = false, lampTest = false, beamTest = false;
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
@@ -187,6 +188,7 @@ namespace UnturnedGodot
                 else if (arg == "--trafficlight") trafficTest = true;   // one signal, both heads (UG_TL_STATE=green|amber|red|flash|dark, UG_TL_SIDE=1 for the side-road mast, UG_TL_DAY=1 for daylight)
                 else if (arg == "--build") buildmode = true;
                 else if (arg == "--walls") wallDemo = true;   // building tool: generated walls + openings, no editor needed
+                else if (arg == "--clocktest") clockTest = true;   // Clock_0 facing the camera, hands split off + spun to UG_TIME (verify the reach split + hand angles)
                 else if (arg == "--extractblueprints") { RunExtractBlueprints(); GetTree().Quit(); return; }   // walk retail item .dats -> content/blueprints.tsv catalog
                 else if (arg == "--tests" || arg.StartsWith("--tests="))   // L1 in-engine test host (phase 2): boot once, run all GameTests, self-quit 0/1. `--tests=power.*` globs.
                 {
@@ -471,6 +473,14 @@ namespace UnturnedGodot
                 _shotPath = shot;
                 GetWindow().Size = new Vector2I(1280, 720);
                 BuildDayNightDemo();
+                return;
+            }
+
+            if (clockTest)   // one Clock_0 facing the camera, hands spun to UG_TIME (default 0.375 = 09:00)
+            {
+                _shotPath = shot;
+                GetWindow().Size = new Vector2I(1280, 720);
+                BuildClockTest();
                 return;
             }
 
@@ -4619,6 +4629,44 @@ namespace UnturnedGodot
             cam.Position = new Vector3(0f, 2.5f, 6f);
             cam.LookAt(new Vector3(0f, 1.4f, -4f), Vector3.Up);   // boxes + horizon/sky
             GD.Print("[DAYNIGHT] cycle demo");
+        }
+
+        // --clocktest: one Clock_0 stood upright facing the camera, its hands carved off by ClockDevice and spun to
+        // UG_TIME. Verifies the reach split (hands vs dial+markers) AND the hand angles/direction before wiring it into
+        // the world. UG_TIME 0..1 (0=midnight, .5=noon); default 0.375 = 09:00 so the two hands sit apart, easy to read.
+        void BuildClockTest()
+        {
+            var env = new Godot.Environment
+            {
+                BackgroundMode = Godot.Environment.BGMode.Color,
+                BackgroundColor = new Color(0.28f, 0.30f, 0.34f),
+                AmbientLightSource = Godot.Environment.AmbientSource.Color,
+                AmbientLightColor = new Color(0.85f, 0.85f, 0.85f),
+                AmbientLightEnergy = 1.0f,
+            };
+            AddChild(new WorldEnvironment { Environment = env });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-40f, -25f, 0f) });
+
+            float ct = 0.375f;   // 09:00
+            var te = System.Environment.GetEnvironmentVariable("UG_TIME");
+            if (te != null && float.TryParse(te, out var tv)) ct = tv;
+            var dn = new DayNightCycle { Time = ct, Speed = 0f };   // frozen at the test time
+            AddChild(dn);
+
+            var mesh = ObjMesh.Load(ProjectSettings.GlobalizePath("res://content/objects/Clock_0.obj"));
+            var mat = new StandardMaterial3D { AlbedoColor = new Color(0.82f, 0.82f, 0.82f) };
+            var basis = Basis.Identity;   // dial FLAT in XZ (face up +Y), viewed straight down from above -- NO rotation, so nothing mirrors the reading (tinyclaw: the mesh has no -Y geometry, +Y is the face)
+            var mi = new MeshInstance3D { Mesh = mesh, MaterialOverride = mat, Transform = new Transform3D(basis, Vector3.Zero) };
+            AddChild(mi);
+            var handMat = new StandardMaterial3D { AlbedoColor = new Color(0.90f, 0.15f, 0.10f) };   // hands RED so the split + sweep read clearly in the shot
+            var cd = ClockDevice.Make(mi, handMat, 0f);
+            if (cd != null) AddChild(cd);
+
+            var cam = new Camera3D { Current = true, Fov = 28f };
+            AddChild(cam);
+            cam.Position = new Vector3(0f, 3f, 0f);   // straight above, looking down -Y at the +Y face
+            cam.LookAt(Vector3.Zero, new Vector3(0f, 0f, 1f));   // up-hint = mesh +Z (tinyclaw measured 12 o'clock at +Z) -> 12 at screen-top
+            GD.Print($"[CLOCK] time={ct}");
         }
 
         // Scripts a small structure (floor tiles + walls) to show the build system, viewed from an overview.

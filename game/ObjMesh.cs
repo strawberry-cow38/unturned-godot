@@ -234,6 +234,61 @@ namespace UnturnedGodot
             return (Build(bv, bn, bu, bc), Build(rv, rn, ru, rc));
         }
 
+        // Like SplitByFace but the predicate gets the triangle's three VERTICES, not just centroid+normal -- needed when
+        // the rule is about a vertex EXTENT rather than an average. A clock hand is identified by its MAX reach from the
+        // dial centre (the hand's tip); a centroid can't tell a 0-to-0.37 hand from a 0-to-0.50 dial-disc triangle whose
+        // average radius happens to land in the hand's band. Passing the verts lets the caller test max-reach directly.
+        public static (ArrayMesh Body, ArrayMesh Region) SplitByFaceVerts(ArrayMesh src, System.Func<Vector3, Vector3, Vector3, bool> triIn)
+        {
+            if (src == null || src.GetSurfaceCount() < 1) return (src, null);
+            var a0 = src.SurfaceGetArrays(0);
+            var V = a0[(int)Mesh.ArrayType.Vertex].AsVector3Array();
+            var N = a0[(int)Mesh.ArrayType.Normal].AsVector3Array();
+            var U = a0[(int)Mesh.ArrayType.TexUV].AsVector2Array();
+            var C = a0[(int)Mesh.ArrayType.Color].AsColorArray();
+            if (V.Length < 3) return (src, null);
+
+            var bv = new List<Vector3>(); var bn = new List<Vector3>(); var bu = new List<Vector2>(); var bc = new List<Color>();
+            var rv = new List<Vector3>(); var rn = new List<Vector3>(); var ru = new List<Vector2>(); var rc = new List<Color>();
+            for (int i = 0; i + 2 < V.Length; i += 3)
+            {
+                bool hit = triIn(V[i], V[i + 1], V[i + 2]);
+                var dv = hit ? rv : bv; var dn = hit ? rn : bn; var du = hit ? ru : bu; var dc = hit ? rc : bc;
+                for (int k = 0; k < 3; k++)
+                {
+                    dv.Add(V[i + k]);
+                    dn.Add(i + k < N.Length ? N[i + k] : Vector3.Up);
+                    du.Add(i + k < U.Length ? U[i + k] : Vector2.Zero);
+                    dc.Add(i + k < C.Length ? C[i + k] : Colors.White);
+                }
+            }
+            if (rv.Count == 0) return (src, null);
+            return (Build(bv, bn, bu, bc), Build(rv, rn, ru, rc));
+        }
+
+        // Rotate a mesh's vertices AND normals about the Y axis by `rad`, returning a new mesh. Used to bake a clock hand's
+        // angular offset into its geometry so it points at 12 in its own frame -- then the runtime rotation is the raw time
+        // angle with no per-hand constant to apply to the wrong hand (tinyclaw: pay the offset once in geometry, not per frame).
+        public static ArrayMesh RotateAboutY(ArrayMesh src, float rad)
+        {
+            if (src == null || src.GetSurfaceCount() < 1) return src;
+            var a0 = src.SurfaceGetArrays(0);
+            var V = a0[(int)Mesh.ArrayType.Vertex].AsVector3Array();
+            var N = a0[(int)Mesh.ArrayType.Normal].AsVector3Array();
+            var U = a0[(int)Mesh.ArrayType.TexUV].AsVector2Array();
+            var C = a0[(int)Mesh.ArrayType.Color].AsColorArray();
+            var b = new Basis(Vector3.Up, rad);
+            var v = new List<Vector3>(); var n = new List<Vector3>(); var u = new List<Vector2>(); var c = new List<Color>();
+            for (int i = 0; i < V.Length; i++)
+            {
+                v.Add(b * V[i]);
+                n.Add(i < N.Length ? b * N[i] : Vector3.Up);
+                u.Add(i < U.Length ? U[i] : Vector2.Zero);
+                c.Add(i < C.Length ? C[i] : Colors.White);
+            }
+            return Build(v, n, u, c);
+        }
+
         // ---- multi-way UV split -------------------------------------------------------------------------
         // SplitLens is binary (lens vs body) because a streetlight has one bulb. A traffic light has THREE
         // lenses that must light independently, so this generalises it: N predicates over a triangle's UVs, N+1

@@ -735,6 +735,11 @@ namespace UnturnedGodot
                     placedToaster = Toaster.Make(mainMi);
                     root.AddChild(placedToaster);
                 }
+                if (name == "Clock_0" && mode != WorldMode.Dedicated)   // baked hands split off + spun to in-game time (master 2026-08-10)
+                {
+                    var cd = ClockDevice.Make(mainMi, MatFor(matName), 0f);   // local time for now; the Alberton bank's per-clock world zones + upright pass are a follow-up
+                    if (cd != null) root.AddChild(cd);
+                }
                 // Patient monitors (strawberry: "for now give it to random units across the map. it'll be a map making
                 // feature"). Random per unit rather than per map, so a ward has a mix -- and seeded off nothing but
                 // GD.Randf, because until it IS a map-making feature there is no authored flag to read.
