@@ -41,12 +41,18 @@ namespace UnturnedGodot
         public static float Range = 8f;                // OmniLight3D radius -- a room, not a street
         public static float Energy = 2.2f;             // base LightEnergy, scaled by _worn
         public static float FixtureEmission = 0.9f;    // emissive multiplier (SHADED -> HDR/bloom); a warm glow, not blown white
-        public static bool DebugNoOmni;                // --lamptest UG_LAMP_NOOMNI=1: kill the room OmniLight so only the emissive shows
+        public static bool DebugNoOmni;                // --lamptest UG_LAMP_NOOMNI=1: kill the room light so only the emissive shows
         public static float DebugBulbSide = 1f;        // DeskBulb render-pick: +1 = the +X-facing head opening (f18/f19), -1 = -X (f0/f1)
+        public static float CeilingSpotAngle = 78f;    // ceiling strip cone half-angle (UG_LAMP_CEILANGLE)
+        public static float CeilingFillFraction = 1.0f;    // bounce-fill omni beside the cone, as a fraction of the spot's energy (UG_LAMP_FILL)
+        public static bool DebugLightPose;             // UG_LAMP_POSE=1: print the built light's world pose/aim -- a dark render does not say WHY
+        public static bool CeilingSpot;                // UG_LAMP_CEILSPOT=1: ceiling strip as a downward cone instead of an omni.
+                                                       // DEFAULT OFF -- measured, and the trade does not pay. See MakeLight.
 
         Kind _kind = Kind.Generic;
         public Kind LampKind => _kind;         // so WorldBuilder can gate the look-meta on IsToggle without re-deriving from the name
-        OmniLight3D _omni;
+        Light3D _light;                        // Spot for CeilingStrip (1 shadow face), Omni for the rest (6) -- see MakeLight
+        OmniLight3D _fill;                     // ceiling strip only: dim un-budgeted omni standing in for bounce (BuildVisual)
         float _omniEnergy;                     // resolved energy (incl. the DeskBulb half-scale), reused by ApplyLit
         MeshInstance3D _fixture;               // the prop's own mesh (LOD0), handed in by WorldBuilder
         MeshInstance3D _emissive;              // the light-emitting sub-mesh split off the fixture -- the ONLY part that glows
@@ -75,8 +81,8 @@ namespace UnturnedGodot
 
             float scale = _kind == Kind.DeskBulb ? 0.5f : 1f;   // master: desk lamp at half intensity
             _omniEnergy = Energy * _worn * scale;
-            _omni = new OmniLight3D { LightColor = BulbColor, OmniRange = Range, LightEnergy = _omniEnergy, ShadowEnabled = false };
-            _omni.AddToGroup(LightShadowBudget.Group);   // opt in to the shadow budget; it decides when this one casts
+            _light = MakeLight(_kind, _omniEnergy);
+            _light.AddToGroup(LightShadowBudget.Group);   // opt in to the shadow budget; it decides when this one casts
 
             if (_fixture != null && IsInstanceValid(_fixture))
             {
@@ -112,8 +118,27 @@ namespace UnturnedGodot
                 }
             }
 
-            AddChild(_omni);
-            _omni.Position = ComputeOmniLocal();   // after the split, so FloorShade/DeskBulb can anchor to the emitter
+            AddChild(_light);
+            _light.Position = ComputeLightLocal();   // after the split, so FloorShade/DeskBulb can anchor to the emitter
+
+            // THE BOUNCE FILL. A downward cone lights the floor and nothing else, and with no GI in this project the
+            // ceiling and upper walls fall to pure black -- the omni was silently doing the job of indirect bounce.
+            // So keep a second, DIM omni at the same point that is NOT in the shadow budget: it can never be chosen
+            // to cast, so it never costs a shadow face. The shadowed light stays the 1-face spot; the room keeps its
+            // bounce. Six faces become one without the render going dark.
+            if (_light is SpotLight3D && CeilingFillFraction > 0f)
+            {
+                _fill = new OmniLight3D
+                {
+                    LightColor = BulbColor, OmniRange = Range, LightEnergy = _omniEnergy * CeilingFillFraction,
+                    ShadowEnabled = false, Position = _light.Position,
+                };
+                AddChild(_fill);   // deliberately NOT in LightShadowBudget.Group
+            }
+            if (DebugLightPose)
+                GD.Print($"[lamplight] kind={_kind} node={_light.GetType().Name} gpos={_light.GlobalPosition} " +
+                         $"fwd={-_light.GlobalTransform.Basis.Z} energy={_light.LightEnergy} " +
+                         (_light is SpotLight3D sp ? $"angle={sp.SpotAngle} range={sp.SpotRange}" : $"range={((OmniLight3D)_light).OmniRange}"));
 
             // Fluorescent ballast hum on the CEILING strip only (an incandescent desk/table lamp doesn't hum). A quiet
             // looping 3D tone whose volume rides the flicker -- ApplyEffective runs per stutter frame, so the hum stutters
@@ -134,9 +159,58 @@ namespace UnturnedGodot
             }
         }
 
+        // WHICH LIGHT NODE a fixture gets. Everything is an OmniLight3D. The CEILING STRIP can be built as a downward
+        // SpotLight3D instead (UG_LAMP_CEILSPOT=1) and it is OFF BY DEFAULT because the idea was measured and lost.
+        //
+        // THE IDEA. Only StreetLight and LampLight ever join the shadow budget, so a lamp that wins a slot is one of
+        // the handful of shadowed lights in the frame. A shadowed omni is a CUBE -- six faces; a spot is one. Godot's
+        // omni default is Cube (verified under 4.6 headless: omni_shadow_mode == SHADOW_CUBE) and nothing sets it.
+        // 34 of the ~113 lamps are ceiling strips, and a flush strip is a diffuser panel aimed at the floor, so it
+        // looked like 6 faces -> 1 on a third of the budget's omnis for free.
+        //
+        // WHY IT LOSES (rendered box room, --lamptest UG_LAMP_ROOM=1, mean luminance by region, 2026-08-10):
+        //
+        //     variant                all   ceiling  upperwall   floor
+        //     omni (today)          71.7      81.9       82.2    70.4
+        //     spot 78deg, no fill   22.5       2.9        2.9    59.1
+        //     spot 78deg + fill 1.0 76.7      81.9       82.2    91.2
+        //
+        // A downward cone CANNOT light the ceiling it hangs from: 81.9 -> 2.9, which is the ambient term and nothing
+        // else. No angle fixes that -- 45deg measures 2.9 as well -- and this project has no GI, so the omni had been
+        // quietly standing in for bounce. Restoring the room needs a fill omni at FULL energy, and a fill at 1.0 is
+        // just the original light back with a cone stapled beside it: identical ceiling and wall figures to the
+        // decimal, one extra clustered light per fixture, and a floor 30% hotter that would need re-tuning.
+        //
+        // The deeper problem is that the split defeats its own purpose. Only the SPOT is shadowed, so the unshadowed
+        // fill pours light straight back into the shadow it casts. At fill 1.0 the omni supplies ~70 of the floor's
+        // ~91 luminance, leaving any shadow at roughly a quarter contrast. You can keep the room's look or keep a
+        // readable shadow; splitting the light will not give you both.
+        //
+        // The face count is still the right target -- see LightShadowBudget, which now budgets FACES rather than
+        // lights, so a 1-face spot no longer costs the same slot as a 6-face omni. That gets the same saving without
+        // touching how any fixture looks.
+        //
+        // Kept behind the flag because the rig and the numbers are worth more than the deletion, and because it is
+        // the right build if a baked ceiling ever removes the need for the fill.
+        //
+        // Aimed by WORLD down, not the fixture basis: the light already sits at a world-Y offset below the prop
+        // (ComputeLightLocal / WorldBottomY), and LampLight is TopLevel with an identity basis, so local -90 pitch IS
+        // world down. A ceiling light points at the floor whatever yaw its prop was placed at.
+        static Light3D MakeLight(Kind kind, float energy)
+        {
+            if (kind == Kind.CeilingStrip && CeilingSpot)
+                return new SpotLight3D
+                {
+                    RotationDegrees = new Vector3(-90f, 0f, 0f),   // -Z is the beam axis -> straight down
+                    SpotRange = Range, SpotAngle = CeilingSpotAngle, SpotAngleAttenuation = 1.1f, SpotAttenuation = 1.0f,
+                    LightColor = BulbColor, LightEnergy = energy, ShadowEnabled = false,
+                };
+            return new OmniLight3D { LightColor = BulbColor, OmniRange = Range, LightEnergy = energy, ShadowEnabled = false };
+        }
+
         // Where the point light sits, in this node's local space (LampLight is TopLevel at the fixture centre). Always
         // off the fixture's real GlobalTransform, so the ex=295 outlier lands correctly.
-        Vector3 ComputeOmniLocal()
+        Vector3 ComputeLightLocal()
         {
             if (_fixture == null || !IsInstanceValid(_fixture)) return Vector3.Zero;
             var xf = _fixture.GlobalTransform;
@@ -189,7 +263,8 @@ namespace UnturnedGodot
         void ApplyEffective()
         {
             bool eff = _lastLit && _on;
-            if (_omni != null) _omni.LightEnergy = (eff && !DebugNoOmni) ? _omniEnergy : 0f;
+            if (_light != null) _light.LightEnergy = (eff && !DebugNoOmni) ? _omniEnergy : 0f;
+            if (_fill != null) _fill.LightEnergy = (eff && !DebugNoOmni) ? _omniEnergy * CeilingFillFraction : 0f;   // the bounce fill flickers WITH the tube, or it reads as a second light source
             if (_hum != null) _hum.VolumeDb = eff ? _humDb : -80f;   // hum stutters with the flicker (per-frame during a transition) + hard-mutes off/broken
             if (_fixtureLitMat == null) return;
             var emitMi = (_emissive != null && IsInstanceValid(_emissive)) ? _emissive : _fixture;
@@ -203,6 +278,6 @@ namespace UnturnedGodot
         // Whole-lamp white silhouette while looked at (mirrors ObjectDoor/GasPump/TVDevice's SetLookFocused).
         public void SetLookFocused(bool on) { if (_outline != null && IsInstanceValid(_outline)) OutlineOverlay.ShowOutline(on, Colors.White, _outline); }
 
-        public bool LitForTest => _omni != null && _omni.LightEnergy > 0f;
+        public bool LitForTest => _light != null && _light.LightEnergy > 0f;
     }
 }

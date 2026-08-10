@@ -4448,6 +4448,34 @@ namespace UnturnedGodot
             gmesh.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.30f, 0.30f, 0.29f), Roughness = 1f };
             AddChild(gmesh);
 
+            // UG_LAMP_ROOM=1 -- a plain box room (ceiling + four walls) around the fixture.
+            //
+            // The bare-plane lamptest CANNOT SEE the thing that matters when a ceiling strip stops being an omni and
+            // becomes a downward cone: what happens to the ceiling it is bolted to, and to the upper walls. With only
+            // a floor in the scene both forms paint the same pool and the shot proves nothing. Build the surfaces the
+            // difference lands on, or do not claim to have checked it.
+            if (System.Environment.GetEnvironmentVariable("UG_LAMP_ROOM") == "1")
+            {
+                const float half = 4f, ceilY = 3.2f;
+                var wallMat = new StandardMaterial3D { AlbedoColor = new Color(0.52f, 0.50f, 0.47f), Roughness = 1f };
+                void Surface(Vector3 pos, Vector3 rotDeg)
+                {
+                    AddChild(new MeshInstance3D
+                    {
+                        Mesh = new PlaneMesh { Size = new Vector2(half * 2f, ceilY + 1f) },
+                        MaterialOverride = wallMat, Position = pos, RotationDegrees = rotDeg,
+                    });
+                }
+                AddChild(new MeshInstance3D   // ceiling: a plane's face is +Y, so flip it to look down
+                {
+                    Mesh = new PlaneMesh { Size = new Vector2(half * 2f, half * 2f) },
+                    MaterialOverride = wallMat, Position = new Vector3(0f, ceilY, 0f), RotationDegrees = new Vector3(180f, 0f, 0f),
+                });
+                Surface(new Vector3(0f, ceilY / 2f, -half), new Vector3(90f, 0f, 0f));    // back  (faces +Z, toward camera)
+                Surface(new Vector3(-half, ceilY / 2f, 0f), new Vector3(90f, 90f, 0f));   // left  (faces +X)
+                Surface(new Vector3(half, ceilY / 2f, 0f), new Vector3(90f, -90f, 0f));   // right (faces -X)
+            }
+
             string objDir = ProjectSettings.GlobalizePath("res://content/objects/");
             var m = ObjMesh.Load(objDir + which + ".obj");
             if (m == null) { GD.PrintErr($"[lamptest] {which}.obj missing"); return; }
@@ -4464,6 +4492,11 @@ namespace UnturnedGodot
             var mi = new MeshInstance3D { Mesh = m, MaterialOverride = mat, Position = new Vector3(0f, mountY, 0f), RotationDegrees = new Vector3(pitch, 0f, 0f) };
             AddChild(mi);
             LampLight.DebugNoOmni = System.Environment.GetEnvironmentVariable("UG_LAMP_NOOMNI") == "1";   // proof shot: only the emissive part, no room light
+            LampLight.CeilingSpot = System.Environment.GetEnvironmentVariable("UG_LAMP_CEILSPOT") == "1";   // ceiling strip as a downward cone (default omni) -- A/B both forms from ONE build
+            LampLight.DebugLightPose = System.Environment.GetEnvironmentVariable("UG_LAMP_POSE") == "1";
+            if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_LAMP_CEILANGLE"), out var ca) && ca > 0f) LampLight.CeilingSpotAngle = ca;   // sweep the cone width
+            if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_LAMP_ENERGY"), out var ce) && ce > 0f) LampLight.Energy = ce;
+            if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_LAMP_FILL"), out var cf) && cf >= 0f) LampLight.CeilingFillFraction = cf;   // 0 = cone only, to see what the fill is actually buying
             var bulbSideStr = System.Environment.GetEnvironmentVariable("UG_BULB_SIDE");                 // DeskBulb render-pick: +1 / -1
             if (!string.IsNullOrEmpty(bulbSideStr) && float.TryParse(bulbSideStr, out var bs)) LampLight.DebugBulbSide = bs;
             var lamp = LampLight.Make(new Vector3(0f, mountY, 0f), mi, LampLight.KindFor(which));   // hand the fixture mesh in so the right part glows when lit (LampLight.KindFor = the one prop->kind table)
@@ -4474,7 +4507,16 @@ namespace UnturnedGodot
 
             var cam = new Camera3D { Current = true, Fov = 60f };
             AddChild(cam);
-            if (ceiling)   // flat ceiling strip: eye level off to the side, look UP at the underside (diffuser)
+            // UG_LAMP_ROOM reframes: the default ceiling shot looks UP at the diffuser, which is the one part of the
+            // scene a downward cone deliberately stops lighting -- judging "does this still light the room" from it
+            // reads as a total blackout when the floor may be fine. Room mode looks ACROSS instead, so floor, far
+            // wall and ceiling are all in frame at once.
+            if (ceiling && System.Environment.GetEnvironmentVariable("UG_LAMP_ROOM") == "1")
+            {
+                cam.Position = new Vector3(3.0f, 1.55f, 3.3f);
+                cam.LookAt(new Vector3(-0.6f, 1.35f, -1.6f), Vector3.Up);
+            }
+            else if (ceiling)   // flat ceiling strip: eye level off to the side, look UP at the underside (diffuser)
             {
                 cam.Position = new Vector3(3.4f, 0.9f, 3.0f);
                 cam.LookAt(new Vector3(0f, mountY - 0.15f, 0f), Vector3.Up);

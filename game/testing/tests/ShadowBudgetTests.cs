@@ -42,13 +42,19 @@ namespace UnturnedGodot.Testing
             World.AddChild(budget);
             yield return Step.Ticks(2);
 
-            GraphicsOptions.Shadows = GraphicsOptions.ShadowQuality.High;   // budget 6
+            GraphicsOptions.Shadows = GraphicsOptions.ShadowQuality.High;
             budget.Rebalance();
-            int want = LightShadowBudget.BudgetFor(GraphicsOptions.ShadowQuality.High);
+            int maxLights = LightShadowBudget.MaxLightsFor(GraphicsOptions.ShadowQuality.High);
+            int faceCap = LightShadowBudget.FaceBudgetFor(GraphicsOptions.ShadowQuality.High);
+            int perOmni = LightShadowBudget.FacesOf(lights[0]);
+            int want = faceCap / perOmni;   // these are all cubes, so FACES is the binding limit, not the light count
             int on = 0; foreach (var l in lights) if (l.ShadowEnabled) on++;
-            T.Check($"never exceeds the budget ({budget.HoldingCountForTest} held, cap {want})",
-                    budget.HoldingCountForTest <= want);
-            T.Check($"and actually uses it ({on} of 12 candidates lit)", on >= want - 1 && on <= want);
+            T.Check($"never exceeds the light cap ({budget.HoldingCountForTest} held, cap {maxLights})",
+                    budget.HoldingCountForTest <= maxLights);
+            T.Check($"never exceeds the FACE cap ({budget.FacesHeldForTest} faces, cap {faceCap})",
+                    budget.FacesHeldForTest <= faceCap);
+            T.Check($"and actually uses it ({on} of 12 candidates lit, {perOmni} faces each -> room for {want})",
+                    on == want);
 
             // Proximity, not arbitrary: the nearest must be in, the 12th must not.
             T.Check($"nearest light (2 m) casts", lights[0].ShadowEnabled);
@@ -81,6 +87,82 @@ namespace UnturnedGodot.Testing
             budget.QueueFree(); cam.QueueFree();
             foreach (var l in lights) l.QueueFree();
             far.QueueFree(); behind.QueueFree();
+        }
+    }
+
+    /// <summary>The budget is denominated in shadow-map FACES, not lights, because that is what the renderer bills.
+    ///
+    /// A shadowed spot renders one depth map and a shadowed omni renders a cube of six. Counting lights therefore
+    /// let the true cost of a full budget swing 6x depending on nothing but which fixtures you were standing near.
+    /// The check that matters is the one a light-count budget CANNOT make: given identical geometry, a field of
+    /// spots must be allowed strictly more shadow-casters than a field of cubes, and neither may exceed the face
+    /// ceiling. Both scenes below are the same twelve positions -- only the light TYPE differs.</summary>
+    public class ShadowBudgetChargesByFace : GameTest
+    {
+        public override string Name => "light.shadow_budget_charges_by_face";
+
+        static TLight Lamp<TLight>(Node parent, Vector3 at) where TLight : Light3D, new()
+        {
+            var l = new TLight { LightEnergy = 1f, ShadowEnabled = false };
+            parent.AddChild(l);
+            l.GlobalPosition = at;
+            l.AddToGroup(LightShadowBudget.Group);
+            return l;
+        }
+
+        public override IEnumerable<Step> Run()
+        {
+            var prevQ = GraphicsOptions.Shadows;
+            GraphicsOptions.Shadows = GraphicsOptions.ShadowQuality.Ultra;
+            int faceCap = LightShadowBudget.FaceBudgetFor(GraphicsOptions.ShadowQuality.Ultra);
+            int maxLights = LightShadowBudget.MaxLightsFor(GraphicsOptions.ShadowQuality.Ultra);
+
+            T.Check($"a spot costs 1 face", LightShadowBudget.FacesOf(new SpotLight3D()) == 1);
+            T.Check($"a cube omni costs 6", LightShadowBudget.FacesOf(new OmniLight3D()) == 6);
+            T.Check($"a dual-paraboloid omni costs 2",
+                    LightShadowBudget.FacesOf(new OmniLight3D { OmniShadowMode = OmniLight3D.ShadowMode.DualParaboloid }) == 2);
+            T.Check($"an unrecognised light is assumed EXPENSIVE, never cheap ({LightShadowBudget.FacesOf(new DirectionalLight3D())})",
+                    LightShadowBudget.FacesOf(new DirectionalLight3D()) == 6);
+
+            var cam = new Camera3D { Current = true };
+            World.AddChild(cam);
+            cam.LookAtFromPosition(Vector3.Zero, new Vector3(0, 0, -10), Vector3.Up);
+
+            // Scene A: twelve cubes.
+            var omnis = new List<OmniLight3D>();
+            for (int i = 1; i <= 12; i++) omnis.Add(Lamp<OmniLight3D>(World, new Vector3(0, 0, -2f * i)));
+            var b1 = new LightShadowBudget();
+            World.AddChild(b1);
+            yield return Step.Ticks(2);
+            b1.Rebalance();
+            int omniHeld = b1.HoldingCountForTest, omniFaces = b1.FacesHeldForTest;
+            foreach (var l in omnis) l.QueueFree();
+            b1.QueueFree();
+            yield return Step.Ticks(2);
+
+            // Scene B: the same twelve positions as spots.
+            var spots = new List<SpotLight3D>();
+            for (int i = 1; i <= 12; i++) spots.Add(Lamp<SpotLight3D>(World, new Vector3(0, 0, -2f * i)));
+            var b2 = new LightShadowBudget();
+            World.AddChild(b2);
+            yield return Step.Ticks(2);
+            b2.Rebalance();
+            int spotHeld = b2.HoldingCountForTest, spotFaces = b2.FacesHeldForTest;
+
+            T.Check($"cubes are throttled by faces, not by the light cap ({omniHeld} held, light cap {maxLights})",
+                    omniHeld == faceCap / 6 && omniHeld < maxLights);
+            T.Check($"neither scene exceeds the face ceiling (cubes {omniFaces}, spots {spotFaces}, cap {faceCap})",
+                    omniFaces <= faceCap && spotFaces <= faceCap);
+            T.Check($"cheap lights earn more casters than dear ones ({spotHeld} spots vs {omniHeld} cubes)",
+                    spotHeld > omniHeld);
+            // The teeth: a light-COUNT budget would hand both scenes the same number and this would fail. It is
+            // also the assertion that fails if FacesOf ever returns a constant, which is the tempting simplification.
+            T.Check($"spots are capped by the LIGHT limit once faces stop binding ({spotHeld} held, cap {maxLights})",
+                    spotHeld == maxLights);
+
+            GraphicsOptions.Shadows = prevQ;
+            b2.QueueFree(); cam.QueueFree();
+            foreach (var l in spots) l.QueueFree();
         }
     }
 }

@@ -45,6 +45,33 @@ namespace UnturnedGodot
             _ => 8,
         };
 
+        // BUDGETING FACES, NOT LIGHTS.
+        //
+        // A slot used to cost the same whatever took it, and that is not what the renderer charges. A shadowed spot
+        // renders ONE depth map; a shadowed omni renders a CUBE, six. So "8 shadowed lights" meant anywhere between 8
+        // and 48 shadow renders depending purely on which fixtures you happened to be standing near -- and the
+        // expensive case is indoors, among the lamps, which is exactly where the frame is already tight.
+        //
+        // So charge each light what it actually costs and cap the TOTAL. Two limits apply together:
+        //   * FaceBudgetFor -- half of what the old light budget could cost at each tier (8 lights x 6 = 48 -> 24).
+        //     In an all-omni room that is 4 shadowed lamps instead of 8, a straight halving where it hurt most.
+        //   * MaxLightsFor -- the old per-tier light count, unchanged, so a street of 1-face spots cannot balloon to
+        //     24 shadowed lights just because they are individually cheap. Fixed per-light overhead is real even
+        //     when the face count is not.
+        // Both are ceilings, so this can only ever hand out fewer shadows than before, never more.
+        public static int FaceBudgetFor(GraphicsOptions.ShadowQuality q) => BudgetFor(q) * 3;
+        public static int MaxLightsFor(GraphicsOptions.ShadowQuality q) => BudgetFor(q);
+
+        /// <summary>What one shadowed light costs in shadow-map renders. Omni is a cube unless it has been put in
+        /// dual-paraboloid mode; Godot's default is Cube (verified under 4.6 headless), and this reads the real
+        /// property rather than assuming, so flipping a fixture to DualParaboloid immediately buys more slots.</summary>
+        public static int FacesOf(Node3D n) => n switch
+        {
+            SpotLight3D => 1,
+            OmniLight3D o => o.OmniShadowMode == OmniLight3D.ShadowMode.DualParaboloid ? 2 : 6,
+            _ => 6,   // unknown light type: assume the expensive one, never the cheap one
+        };
+
         /// <summary>Beyond this a shadow is not resolvable, so it is never worth a cube. Cheap pre-filter that
         /// keeps the sort small in a dense town.</summary>
         public const float MaxShadowDistance = 28f;
@@ -88,10 +115,11 @@ namespace UnturnedGodot
         /// <summary>Pick the winners and apply. Public so a test can drive it without waiting real seconds.</summary>
         public void Rebalance()
         {
-            int budget = BudgetFor(GraphicsOptions.Shadows);
+            int faceBudget = FaceBudgetFor(GraphicsOptions.Shadows);
+            int maxLights = MaxLightsFor(GraphicsOptions.Shadows);
             _cam = GetViewport()?.GetCamera3D();
 
-            if (budget <= 0 || _cam == null)
+            if (faceBudget <= 0 || maxLights <= 0 || _cam == null)
             {
                 foreach (var l in _holding) SetShadow(l, false);
                 _holding.Clear();
@@ -115,13 +143,20 @@ namespace UnturnedGodot
             }
             scored.Sort((a, b) => a.Score.CompareTo(b.Score));
 
-            // Hysteresis: an incumbent keeps its slot unless a challenger is clearly better.
+            // Take lights in rank order while BOTH ceilings hold. A light that does not fit is skipped rather than
+            // ending the loop: a cheap spot further down the list can still fit in the faces a nearer cube left over,
+            // and dropping it would waste budget for no reason.
             var winners = new List<Node3D>();
+            int faces = 0;
             foreach (var (node, score) in scored)
             {
-                if (winners.Count >= budget) break;
-                winners.Add(node);
+                if (winners.Count >= maxLights) break;
+                int cost = FacesOf(node);
+                if (faces + cost > faceBudget) continue;
+                winners.Add(node); faces += cost;
             }
+
+            // Hysteresis: an incumbent keeps its slot unless a challenger is clearly better.
             if (_holding.Count > 0)
             {
                 for (int i = 0; i < winners.Count; i++)
@@ -130,10 +165,20 @@ namespace UnturnedGodot
                     // winners[i] is a challenger -- find the incumbent it would displace
                     Node3D victim = null;
                     foreach (var h in _holding)
-                        if (!winners.Contains(h) || winners.IndexOf(h) >= budget) { victim = h; break; }
+                        if (!winners.Contains(h)) { victim = h; break; }
                     if (victim == null || !GodotObject.IsInstanceValid(victim)) continue;
                     float cs = Score(winners[i], from, fwd), vs = Score(victim, from, fwd);
                     if (cs > vs * SwapMargin) winners[i] = victim;   // not decisively better -> incumbent stays
+                }
+
+                // A swap can trade a 1-face spot for a 6-face cube, so the ceiling has to be re-checked afterwards
+                // -- otherwise hysteresis quietly reintroduces exactly the overspend the face budget exists to stop.
+                faces = 0;
+                for (int i = 0; i < winners.Count; i++)
+                {
+                    int cost = FacesOf(winners[i]);
+                    if (faces + cost > faceBudget) { winners.RemoveAt(i); i--; continue; }
+                    faces += cost;
                 }
             }
 
@@ -156,6 +201,7 @@ namespace UnturnedGodot
         }
 
         public int HoldingCountForTest => _holding.Count;
+        public int FacesHeldForTest { get { int f = 0; foreach (var h in _holding) if (GodotObject.IsInstanceValid(h)) f += FacesOf(h); return f; } }
         public bool IsHoldingForTest(Node3D n) => _holding.Contains(n);
     }
 }
