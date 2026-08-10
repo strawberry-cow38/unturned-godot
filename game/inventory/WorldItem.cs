@@ -77,6 +77,14 @@ namespace UnturnedGodot
         }
         Vector3[] _hitPts;          // hitbox sample points (centre + 8 corners, local) for the full-hitbox LOS cull (master)
         PhysicsRayQueryParameters3D _losQuery;   // reused across the nine LOS rays; see the cull loop
+        static readonly int[] Los3 = { 0, 1, 8 };   // centre + two diagonally opposite corners
+        static readonly bool LosCompare = System.Environment.GetEnvironmentVariable("UG_LOSCOMPARE") == "1";
+        /// <summary>UG_LOSPTS=3 caps the occlusion scan at three spread points instead of all nine.
+        /// DEFAULT 9 -- the existing behaviour -- because the failure mode of cutting it is an item peeking
+        /// round a corner going invisible, and that is not something a geometry argument can rule out. Flip
+        /// the default only once an A/B render shows no pixels move on items.</summary>
+        static readonly int LosScanPoints =
+            int.TryParse(System.Environment.GetEnvironmentVariable("UG_LOSPTS"), out int v) && v == 3 ? 3 : 9;
         Vector3 _boxCtr;
         Godot.Collections.Array<Rid> _excludeSelf;   // cached ray-exclude (this body) so the LOS rays don't re-alloc
 
@@ -399,11 +407,36 @@ namespace UnturnedGodot
                         _losQuery ??= new PhysicsRayQueryParameters3D { CollisionMask = 1, Exclude = _excludeSelf };
                         _losQuery.From = cam.GlobalPosition;
                         int _rays = 0;
-                        foreach (var lp in _hitPts)
+                        // Which sample points to try, and in what order. Break-on-first-clear means a VISIBLE
+                        // item stops at the first entry, so the ordering matters more than the count: centre
+                        // first (usually clear), then two DIAGONALLY OPPOSITE corners, which cover the widest
+                        // spread for the fewest rays. Measured 2.03 rays/call overall -- ~87% of calls are one
+                        // ray and out, and only the ~13% that are fully occluded ever reach the end of the list.
+                        // So capping the scan only touches that 13%; it cannot make the common case slower.
+                        bool Scan(int[] order)
                         {
-                            _losQuery.To = gt * lp;
-                            _rays++;
-                            if (space.IntersectRay(_losQuery).Count == 0) { show = true; break; }
+                            int cnt = order?.Length ?? _hitPts.Length;
+                            for (int i = 0; i < cnt; i++)
+                            {
+                                _losQuery.To = gt * _hitPts[order != null ? order[i] : i];
+                                _rays++;
+                                if (space.IntersectRay(_losQuery).Count == 0) return true;
+                            }
+                            return false;
+                        }
+                        var order = LosScanPoints == 3 && _hitPts.Length >= 9 ? Los3 : null;
+                        show = Scan(order);
+                        // WITHIN-RUN A/B (UG_LOSCOMPARE=1). Comparing 3-point against 9-point across two
+                        // separate runs is hopeless: items are still settling, so positions differ, different
+                        // things are occluded, and two IDENTICAL 9-point runs disagreed by 3 visible items --
+                        // the exact size of the effect being measured. Evaluating both answers on the same
+                        // frame, same positions, same everything removes the noise entirely instead of trying
+                        // to average it away. Doubles the ray cost, which is fine for a diagnostic run.
+                        if (LosCompare && _hitPts.Length >= 9)
+                        {
+                            bool other = Scan(order == null ? Los3 : null);
+                            Prof.Count("los_checked", 1);
+                            if (other != show) Prof.Count("los_DISAGREE", 1);
                         }
                         // How many of the nine we actually spend. Break-on-first-clear means a VISIBLE item is
                         // 1 and an occluded one is 9, so rays-per-call is the number that says whether cutting

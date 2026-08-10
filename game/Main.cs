@@ -5499,6 +5499,9 @@ namespace UnturnedGodot
         ///
         /// Absolute microseconds here are a software rasteriser's and do not transfer to real hardware; the
         /// CALL COUNTS and the RATIO between runs do.</summary>
+        /// Which timing key a count belongs to, so counts can print as a per-call ratio.
+        static readonly System.Collections.Generic.Dictionary<string, string> CountOwner = new() { ["los_rays"] = "item_LOS" };
+
         void ProfDump()
         {
             if (System.Environment.GetEnvironmentVariable("UG_PROFDUMP") != "1") return;
@@ -5523,7 +5526,10 @@ namespace UnturnedGodot
                     cs.Append($"{kv.Key} {kv.Value}");
                     // Per-call is the useful form for anything that also has a timing key: 9 rays a call and
                     // 1 ray a call are the same total from very different problems.
-                    if (Prof.Calls.TryGetValue(kv.Key.Replace("_rays", "_LOS"), out int calls) && calls > 0)
+                    // Map a count key to its timing key so the ratio can be shown. "los_rays" belongs to
+                    // "item_LOS", which no string substitution derives -- the first attempt built "los_LOS",
+                    // matched nothing, and silently printed the raw total as if no pairing existed.
+                    if (CountOwner.TryGetValue(kv.Key, out string owner) && Prof.Calls.TryGetValue(owner, out int calls) && calls > 0)
                         cs.Append($" ({(double)kv.Value / calls:0.00}/call)");
                     cs.Append("   ");
                 }
@@ -5562,15 +5568,20 @@ namespace UnturnedGodot
             // no need to reach into WorldItem's privates. A map where most items are still unfrozen at capture
             // is a map where they never fell, which is the report being chased. Also the control for whether
             // ColliderBudget broke them: run it against UG_COLLDIST=0 and compare the fraction.
-            int items = 0, settled = 0, airborne = 0;
+            int items = 0, settled = 0, airborne = 0, shown = 0;
             foreach (var n in GetTree().GetNodesInGroup("worlditems"))
                 if (n is RigidBody3D rb && GodotObject.IsInstanceValid(rb))
                 {
                     items++;
                     if (rb.Freeze) settled++; else if (rb.LinearVelocity.LengthSquared() > 0.02f) airborne++;
+                    if (rb.Visible) shown++;
                 }
             if (items > 0)
-                GD.Print($"[census] worlditems {items}: {settled} settled (frozen), {airborne} still moving, {items - settled - airborne} idle-unfrozen");
+                // `shown` is the LOS verdict itself -- Visible is exactly what the occlusion cull writes. It is
+                // the right instrument for an A/B on the sample-point count, and a whole-frame pixel diff is
+                // the WRONG one: other systems (the shadow budget's timer, async load frame counts) differ
+                // between two runs, so the frame moves for reasons that have nothing to do with items.
+                GD.Print($"[census] worlditems {items}: {settled} settled (frozen), {airborne} still moving, {items - settled - airborne} idle-unfrozen, {shown} VISIBLE");
             GD.Print($"[census] {total} nodes across {byClass.Count} classes");
             GD.Print($"[census] top: {sb}");
         }
