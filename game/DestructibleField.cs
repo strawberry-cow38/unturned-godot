@@ -36,6 +36,7 @@ namespace UnturnedGodot
             public float MaxHealth;           // 0 = unregistered slot (indestructible)
             public long ResetTicks;
             public int EffectId;              // Rubble_Effect id -> the retail break VFX
+            public Mesh[] RagdollMeshes;      // retail Ragdoll pieces (content/objects/<name>_Ragdoll_N.obj) -- each becomes its own physics body on break
             public bool Alive = true;
             public System.Action<bool> OnAliveChanged;   // extra teardown/restore a prop needs beyond hiding meshes:
                                                         // a Street_Light_0 owns a SpotLight3D + glow cone that are NOT
@@ -75,14 +76,14 @@ namespace UnturnedGodot
 
         /// <summary>Bind a built destructible's live nodes + rubble scalars to its deterministic index. Grows
         /// the backing array to fit (Register runs before SetCount in the WorldBuilder scan order).</summary>
-        public void Register(int index, StaticBody3D body, MeshInstance3D[] meshes, float maxHealth, long resetTicks, int effectId = 0, System.Action<bool> onAliveChanged = null)
+        public void Register(int index, StaticBody3D body, MeshInstance3D[] meshes, float maxHealth, long resetTicks, int effectId = 0, System.Action<bool> onAliveChanged = null, Mesh[] ragdollMeshes = null)
         {
             if (index < 0) return;
             EnsureSize(index + 1);
             if (_recs[index] == null) BuiltCount++;
             _recs[index] = new Rec { Meshes = meshes, Body = body, BodyLayer = body?.CollisionLayer ?? 0u,
                                      MaxHealth = maxHealth, ResetTicks = resetTicks, EffectId = effectId,
-                                     OnAliveChanged = onAliveChanged };
+                                     OnAliveChanged = onAliveChanged, RagdollMeshes = ragdollMeshes };
         }
 
         /// <summary>Bind a BATCHED destructible (PropBatcher) to its index. Same contract as Register -- the
@@ -91,7 +92,7 @@ namespace UnturnedGodot
         /// `localAabb`/`worldXf`/`mat` stand in for the mesh node PlayBreakEffect would otherwise measure.</summary>
         public void RegisterBatched(int index, StaticBody3D body, PropBatcher.Slot[] slots, PropBatcher.Slot[] deadSlots,
                                     Aabb localAabb, Transform3D worldXf, StandardMaterial3D mat,
-                                    float maxHealth, long resetTicks, int effectId = 0, System.Action<bool> onAliveChanged = null)
+                                    float maxHealth, long resetTicks, int effectId = 0, System.Action<bool> onAliveChanged = null, Mesh[] ragdollMeshes = null)
         {
             if (index < 0) return;
             EnsureSize(index + 1);
@@ -99,7 +100,7 @@ namespace UnturnedGodot
             _recs[index] = new Rec { Slots = slots, DeadSlots = deadSlots, Body = body, BodyLayer = body?.CollisionLayer ?? 0u,
                                      BatchAabb = localAabb, BatchXf = worldXf, BatchMat = mat,
                                      MaxHealth = maxHealth, ResetTicks = resetTicks, EffectId = effectId,
-                                     OnAliveChanged = onAliveChanged };
+                                     OnAliveChanged = onAliveChanged, RagdollMeshes = ragdollMeshes };
         }
 
         /// <summary>Break (false) or respawn (true) one prop by index: hide/show its mesh(es) and toggle its
@@ -195,7 +196,10 @@ namespace UnturnedGodot
             // with force + drag, despawned after 8s; we have no authored ragdoll meshes, so we clone the prop's own
             // model (the mesh we already hold at break time). Fired here -- like the SFX, BEFORE the chip/fallback
             // branch -- so it drops on every break regardless of which VFX path runs.
-            SpawnModelDrop(scene, tree, xf, aabb, dropMesh, propMat);
+            if (r.RagdollMeshes != null && r.RagdollMeshes.Length > 0)
+                SpawnRagdollDrop(scene, tree, xf, r.RagdollMeshes, propMat);   // the REAL authored debris pieces, each scattering as its own body
+            else
+                SpawnModelDrop(scene, tree, xf, aabb, dropMesh, propMat);      // fallback: prop has no extracted ragdoll -> clone its whole model
 
             // the prop's ACTUAL retail Rubble_Effect debris chips on TOP of the dust, if we extracted it
             if (RubbleFx.TryGet(r.EffectId, out var fx) && fx.Tex != null)
@@ -307,6 +311,48 @@ namespace UnturnedGodot
             _debris.Add(body);
             var life = tree.CreateTimer(8.0);   // retail Destroy(obj, 8f). master OK'd 8s (2026-08-11); persistent settle = drop this timer
             life.Timeout += () => { if (GodotObject.IsInstanceValid(body)) body.QueueFree(); };
+        }
+
+        // Retail-faithful RAGDOLL: spawn each of the prop's authored Ragdoll pieces as its OWN physics body, so the
+        // debris SCATTERS -- retail InteractableObjectRubble.updateRubble Instantiates each Ragdoll/Model_x separately +
+        // adds a Rigidbody. The piece meshes are extracted in the prop's LOCAL space (tools/extract_debris_meshes.py),
+        // so each renders at its authored spot within the prop; Godot derives each body's COM from its (offset) box
+        // collider, so a piece tumbles about its own centre. Same drag / gravity / 8s / cap as the whole-model drop.
+        static void SpawnRagdollDrop(Node scene, SceneTree tree, Transform3D xf, Mesh[] pieces, StandardMaterial3D propMat)
+        {
+            if (scene == null || tree == null || pieces == null) return;
+            Vector3 scale = xf.Basis.Scale;
+            Basis rot = xf.Basis.Orthonormalized();   // unscaled body; scale baked into the mesh child + collider (Godot dislikes scaled rigidbodies)
+            foreach (var pm in pieces)
+            {
+                if (pm == null) continue;
+                _debris.RemoveAll(d => !GodotObject.IsInstanceValid(d));
+                while (_debris.Count >= DebrisCap)
+                {
+                    var oldest = _debris[0]; _debris.RemoveAt(0);
+                    if (GodotObject.IsInstanceValid(oldest)) oldest.QueueFree();
+                }
+                Aabb la = pm.GetAabb();
+                var body = new RigidBody3D
+                {
+                    Mass = 1f, GravityScale = 1f, LinearDamp = 0.5f, AngularDamp = 0.1f,
+                    CollisionLayer = 0u, CollisionMask = (1u << 0) | (1u << 6),
+                };
+                body.AddChild(new MeshInstance3D { Mesh = pm, MaterialOverride = propMat, Scale = scale });
+                body.AddChild(new CollisionShape3D
+                {
+                    Shape = new BoxShape3D { Size = la.Size * scale },
+                    Position = (la.Position + la.Size * 0.5f) * scale,   // collider at the piece's own centre -> Godot puts the COM there
+                });
+                scene.AddChild(body);
+                body.GlobalTransform = new Transform3D(rot, xf.Origin);   // prop-local piece meshes -> place the body at the prop's transform
+                body.ResetPhysicsInterpolation();
+                body.LinearVelocity = new Vector3((float)GD.RandRange(-1.5, 1.5), 1.0f + (float)GD.RandRange(0.0, 2.0), (float)GD.RandRange(-1.5, 1.5)) * 2f;
+                body.AngularVelocity = new Vector3((float)GD.RandRange(-4.0, 4.0), (float)GD.RandRange(-4.0, 4.0), (float)GD.RandRange(-4.0, 4.0));
+                _debris.Add(body);
+                var life = tree.CreateTimer(8.0);
+                life.Timeout += () => { if (GodotObject.IsInstanceValid(body)) body.QueueFree(); };
+            }
         }
 
         // SpawnDust REMOVED 2026-08-09 (master: "remove the smoke particle which appears on every destruction").

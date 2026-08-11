@@ -547,6 +547,26 @@ namespace UnturnedGodot
                 debrisCache[n] = bm;
                 return bm;
             }
+            // RAGDOLL: the prop's authored physics-debris pieces (content/objects/<name>_Ragdoll_N.obj), extracted by
+            // tools/extract_debris_meshes.py. Each becomes its own Rigidbody on break (DestructibleField.SpawnRagdollDrop)
+            // so the debris scatters -- retail Instantiates each Ragdoll/Model_x separately. Loaded once + cached; null
+            // when the prop has no ragdoll (it then falls back to a whole-model drop).
+            var ragdollCache = new System.Collections.Generic.Dictionary<string, Mesh[]>();
+            Mesh[] RagdollMeshesFor(string n)
+            {
+                if (ragdollCache.TryGetValue(n, out var rm)) return rm;
+                var list = new System.Collections.Generic.List<Mesh>();
+                for (int i = 0; ; i++)
+                {
+                    string rp = dir + n + "_Ragdoll_" + i + ".obj";
+                    if (!System.IO.File.Exists(rp)) break;
+                    var m = ObjMesh.Load(rp);
+                    if (m != null) list.Add(m);
+                }
+                rm = list.Count > 0 ? list.ToArray() : null;
+                ragdollCache[n] = rm;
+                return rm;
+            }
             void PlaceObject(string[] p, string name, int destIndex)
             {
                 if (!cache.TryGetValue(name, out var mesh)) { mesh = ObjMesh.Load(dir + name + ".obj"); cache[name] = mesh; }
@@ -1087,9 +1107,9 @@ namespace UnturnedGodot
                         destField.RegisterBatched(destIndex, destBody, batchSlots, batchDead,
                                                   mesh?.GetAabb() ?? new Aabb(Vector3.Zero, Vector3.One),
                                                   new Transform3D(basis, gpos), MatFor(matName),
-                                                  rub.Health, rub.ResetTicks, rub.EffectId, onAlive);
+                                                  rub.Health, rub.ResetTicks, rub.EffectId, onAlive, RagdollMeshesFor(name));
                     else
-                        destField.Register(destIndex, destBody, mis, rub.Health, rub.ResetTicks, rub.EffectId, onAlive);
+                        destField.Register(destIndex, destBody, mis, rub.Health, rub.ResetTicks, rub.EffectId, onAlive, RagdollMeshesFor(name));
                 }
                 placed++;
                 var cell = new Vector2I(Mathf.FloorToInt(px / 96f), Mathf.FloorToInt(pz / 96f));

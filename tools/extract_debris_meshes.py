@@ -3,12 +3,12 @@
 from core.masterbundle -> OBJs, in the SAME coordinate convention as extract_objects_v2.py (so they align
 with the prop's <name>.obj alive mesh).
 
-extract_objects_v2 SKIPs the `dead`/`ragdoll` nodes (its SKIP set) -- it only ever pulled the Alive mesh.
-This tool targets exactly those subtrees instead:
-  - Dead   -> <name>_Debris.obj   (WorldBuilder.DebrisMeshFor already reads this + swaps it in on destroy; 0 code)
-  - Ragdoll-> <name>_Ragdoll.obj  (the real physics pieces, to feed the break drop instead of a whole-model clone)
-Only the TOP-LEVEL Dead/Ragdoll is taken (Sections/ pruned) so the husk is one clean mesh, not doubled with
-per-section copies -- sectioned props (fences breaking panel-by-panel) are a separate phase.
+extract_objects_v2 SKIPs the `dead`/`ragdoll` nodes -- it only ever pulled the Alive mesh. This targets them:
+  - Dead    -> <name>_Debris.obj      (WorldBuilder.DebrisMeshFor reads it + swaps it in on destroy; combined husk)
+  - Ragdoll -> <name>_Ragdoll_<i>.obj (ONE obj PER PIECE -- retail Instantiates each Ragdoll/Model_x as its own
+                                       Rigidbody, so the port spawns each as a separate physics body = scattering)
+Only the TOP-LEVEL Dead/Ragdoll is taken (Sections/ pruned) -- sectioned props (fences panel-by-panel) are a
+separate phase.
 
     python extract_debris_meshes.py <BUNDLES_DIR> <rubble.txt> <OUT_DIR>
 """
@@ -16,7 +16,6 @@ import UnityPy, os, glob, re, numpy as np, sys, json
 
 BUND, RUBBLE, OUT = sys.argv[1], sys.argv[2], sys.argv[3]
 
-# guid -> (name, object.prefab container path)
 guid2info = {}
 for datp in glob.glob(os.path.join(BUND, "Objects", "**", "*.dat"), recursive=True):
     try: txt = open(datp, "r", errors="ignore").read()
@@ -53,41 +52,53 @@ def trs(pos, q, s):
                   [2*(x*z-y*w), 2*(y*z+x*w), 1-2*(x*x+y*y)]])
     M = np.eye(4); M[:3, :3] = R @ np.diag([s["x"], s["y"], s["z"]]); M[:3, 3] = [pos["x"], pos["y"], pos["z"]]
     return M
-
-# collect every mesh inside a subtree named `target`; prune the rest (alive/fx/nav + the OTHER state + sections)
-def walk_target(go_pid, parentM, gomap, target, inside):
-    go = by_id.get(go_pid)
-    if not go: return
-    tt = go.read_typetree()
-    nm = (tt.get("m_Name", "") or "").lower()
-    tr = comp_of(tt, ("Transform", "RectTransform"))
-    if not tr: return
-    trt = tr.read_typetree()
-    M = parentM @ trs(trt["m_LocalPosition"], trt["m_LocalRotation"], trt["m_LocalScale"])
-    now_inside = inside or (nm == target)
-    if now_inside:
-        mf = comp_of(tt, ("MeshFilter",))
-        mp = mf.read_typetree().get("m_Mesh", {}).get("m_PathID") if mf else None
-        if mp: gomap[go_pid] = (M, mp)
-    elif nm in ("effect", "nav", "block", "trap", "alive", "sections") or (nm in ("dead", "ragdoll") and nm != target):
-        return   # not the target subtree -> prune
-    for ch in trt.get("m_Children", []):
+def local_M(go):
+    tr = comp_of(go.read_typetree(), ("Transform", "RectTransform"))
+    if not tr: return None
+    t = tr.read_typetree()
+    return trs(t["m_LocalPosition"], t["m_LocalRotation"], t["m_LocalScale"])
+def child_gos(go):
+    tr = comp_of(go.read_typetree(), ("Transform", "RectTransform"))
+    if not tr: return []
+    out = []
+    for ch in tr.read_typetree().get("m_Children", []):
         ct = by_id.get(ch.get("m_PathID"))
-        if ct: walk_target(ct.read_typetree().get("m_GameObject", {}).get("m_PathID"), M, gomap, target, now_inside)
+        if ct:
+            g = by_id.get(ct.read_typetree().get("m_GameObject", {}).get("m_PathID"))
+            if g: out.append(g)
+    return out
 
-def mesh_name(mp):
-    try: return by_id[mp].read_typetree().get("m_Name", "")
-    except Exception: return ""
+# find the top-level node named `target` (pruning alive/fx/sections/the-other-state); return (go, M_at_node)
+def find_node(go, parentM, target):
+    lm = local_M(go)
+    if lm is None: return None
+    M = parentM @ lm
+    nm = (go.read_typetree().get("m_Name", "") or "").lower()
+    if nm == target: return (go, M)
+    if nm in ("effect", "nav", "block", "trap", "alive", "sections") or nm in ("dead", "ragdoll"):
+        return None
+    for c in child_gos(go):
+        r = find_node(c, M, target)
+        if r: return r
+    return None
 
-def extract_target(prefab, target):
-    rt = comp_of(prefab.read_typetree(), ("Transform", "RectTransform")).read_typetree()
-    root_local = trs(rt["m_LocalPosition"], rt["m_LocalRotation"], rt["m_LocalScale"])
-    gomap = {}; walk_target(prefab.path_id, np.linalg.inv(root_local), gomap, target, False)
+# collect every mesh at/under `go`, given go's already-computed world matrix M
+def collect(go, M, gomap):
+    tt = go.read_typetree()
+    mf = comp_of(tt, ("MeshFilter",))
+    mp = mf.read_typetree().get("m_Mesh", {}).get("m_PathID") if mf else None
+    if mp: gomap[go.path_id] = (M, mp)
+    for c in child_gos(go):
+        lm = local_M(c)
+        if lm is not None: collect(c, M @ lm, gomap)
+
+def combine(gomap):
     Vs, Ns, Ts, Fs, used = [], [], [], [], []
     for gp, (M, mp) in gomap.items():
         if not mp or mp not in by_id: continue
-        M = M.copy(); M[0, 3] = -M[0, 3]   # HALF POSITION SWAP -- match extract_objects_v2 (meshes pre-mirrored, part X offset isn't)
-        used.append(mesh_name(mp))
+        M = M.copy(); M[0, 3] = -M[0, 3]   # HALF POSITION SWAP -- match extract_objects_v2 (pre-mirrored meshes, part X offset isn't)
+        try: used.append(by_id[mp].read_typetree().get("m_Name", ""))
+        except Exception: used.append("")
         txt = by_id[mp].read().export()
         Rn = np.linalg.inv(M[:3, :3]).T
         vb, tb, nb = len(Vs), len(Ts), len(Ns)
@@ -121,25 +132,46 @@ def write_obj(path, Vs, Ns, Ts, Fs):
         L.append(s)
     open(path, "w").write("\n".join(L) + "\n")
 
+def root_start(prefab):
+    rlm = local_M(prefab)
+    return np.linalg.inv(rlm) if rlm is not None else np.eye(4)
+
 os.makedirs(OUT, exist_ok=True)
-manifest = {}; nd = nr = 0
+manifest = {}; nd = nr = npieces = 0
 for gid in destr:
     info = guid2info.get(gid)
     if not info: continue
     name, cont = info
     pf = prefabs.get(cont)
     if not pf: continue
+    start = root_start(pf)
     rec = {}
-    dv, dn, dt, df, du = extract_target(pf, "dead")
-    if dv:
-        write_obj(os.path.join(OUT, name + "_Debris.obj"), dv, dn, dt, df)
-        rec["dead"] = {"file": name + "_Debris.obj", "parts": len(du), "verts": len(dv)}; nd += 1
-    rv, rn, rt2, rf, ru = extract_target(pf, "ragdoll")
-    if rv:
-        write_obj(os.path.join(OUT, name + "_Ragdoll.obj"), rv, rn, rt2, rf)
-        rec["ragdoll"] = {"file": name + "_Ragdoll.obj", "parts": len(ru), "verts": len(rv)}; nr += 1
+    # DEAD: whole subtree combined -> one husk obj
+    dn = find_node(pf, start, "dead")
+    if dn:
+        gm = {}; collect(dn[0], dn[1], gm)
+        Vs, Ns, Ts, Fs, used = combine(gm)
+        if Vs:
+            write_obj(os.path.join(OUT, name + "_Debris.obj"), Vs, Ns, Ts, Fs)
+            rec["dead"] = {"file": name + "_Debris.obj", "parts": len(used), "verts": len(Vs)}; nd += 1
+    # RAGDOLL: one obj PER PIECE (each direct child of the Ragdoll node, or the node itself if childless)
+    rn = find_node(pf, start, "ragdoll")
+    if rn:
+        rgo, rM = rn
+        kids = child_gos(rgo)
+        pieces = [(c, rM @ local_M(c)) for c in kids if local_M(c) is not None] if kids else [(rgo, rM)]
+        files = []
+        for i, (pgo, pM) in enumerate(pieces):
+            gm = {}; collect(pgo, pM, gm)
+            Vs, Ns, Ts, Fs, used = combine(gm)
+            if not Vs: continue
+            fn = f"{name}_Ragdoll_{len(files)}.obj"
+            write_obj(os.path.join(OUT, fn), Vs, Ns, Ts, Fs)
+            files.append(fn); npieces += 1
+        if files:
+            rec["ragdoll"] = {"files": files, "pieces": len(files)}; nr += 1
     if rec: manifest[name] = rec
 json.dump(manifest, open(os.path.join(OUT, "debris_manifest.json"), "w"), indent=1, sort_keys=True)
-print(f"[debris] {len(manifest)} props with debris: {nd} Dead objs, {nr} Ragdoll objs -> {OUT}")
-for k, v in list(manifest.items())[:12]:
+print(f"[debris] {len(manifest)} props: {nd} Dead husks, {nr} Ragdoll sets ({npieces} pieces) -> {OUT}")
+for k, v in list(manifest.items())[:14]:
     print("   ", k, v)
