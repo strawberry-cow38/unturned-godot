@@ -24,6 +24,17 @@ namespace UnturnedGodot
             return new ShaderMaterial { Shader = sh };
         }
 
+        /// <summary>The up-normal material for flowers + pebbles -- same look as the plain StandardMaterial3D below,
+        /// but with the cull_disabled back-face normal forced world-up so it isn't permanently dark (the non-grass
+        /// side of the grass fix). Falls back to null (and therefore to the plain lit material) if the shader is
+        /// missing, so a bad path costs the EFFECT rather than the foliage.</summary>
+        static ShaderMaterial MakeFoliageUpMaterial()
+        {
+            var sh = GD.Load<Shader>("res://content/foliage_up.gdshader");
+            if (sh == null) { GD.PrintErr("[foliage] foliage_up.gdshader missing -- flowers/pebbles keep the dark-backface bug"); return null; }
+            return new ShaderMaterial { Shader = sh };
+        }
+
         /// <summary>Small-pebble size multiplier (master: "scale down the small pebbles foliage by 25% globally").
         /// 0.75 = 25% smaller, applied to every pebble instance's baked basis.</summary>
         const float PebbleScale = 0.75f;
@@ -63,10 +74,13 @@ namespace UnturnedGodot
                 // so the flat billboards are lit like ground -- no ugly per-face directional darkness.
             };
             // GRASS ONLY gets the displacement shader (master: "lets add grass displacement, grass only"). Flowers and
-            // pebbles keep the plain StandardMaterial3D -- a pebble that bends when you walk past would be worse than
-            // no effect at all, and flowers were not asked for.
+            // pebbles get the non-displacing foliage_up shader instead (up-normal fix, no bend) -- a pebble that bends
+            // when you walk past would be worse than no effect at all, and flowers were not asked for.
             bool isGrass = nm.StartsWith("grass");
             ShaderMaterial grassMat = isGrass ? MakeGrassMaterial() : null;
+            // FLOWERS + PEBBLES get the same up-normal fix via their own shader (see MakeFoliageUpMaterial) --
+            // no displacement, just the cull_disabled backface-darkness correction that grass already has.
+            ShaderMaterial foliageUpMat = isGrass ? null : MakeFoliageUpMaterial();
 
             string tp = dir + nm + "_tex.png";
             if (File.Exists(tp))
@@ -78,13 +92,27 @@ namespace UnturnedGodot
                     var tex = ImageTexture.CreateFromImage(img);
                     mat.AlbedoTexture = tex;
                     grassMat?.SetShaderParameter("albedo_tex", tex);
+                    if (foliageUpMat != null)
+                    {
+                        foliageUpMat.SetShaderParameter("albedo_tex", tex);
+                        foliageUpMat.SetShaderParameter("use_texture", true);
+                    }
                     // master: GRASS + FLOWERS get bilinear (smoother blades/petals); pebbles (+ the rest of the port) stay Nearest.
                     mat.TextureFilter = (nm.StartsWith("grass") || nm.StartsWith("flowers"))
                         ? BaseMaterial3D.TextureFilterEnum.LinearWithMipmaps
                         : BaseMaterial3D.TextureFilterEnum.NearestWithMipmaps;
                 }
             }
-            else mat.AlbedoColor = SolidColor.TryGetValue(nm, out var c) ? c : new Color(0.5f, 0.5f, 0.5f);
+            else
+            {
+                var solid = SolidColor.TryGetValue(nm, out var c) ? c : new Color(0.5f, 0.5f, 0.5f);
+                mat.AlbedoColor = solid;
+                if (foliageUpMat != null)
+                {
+                    foliageUpMat.SetShaderParameter("albedo_color", solid);
+                    foliageUpMat.SetShaderParameter("use_texture", false);
+                }
+            }
 
             // SMALL PEBBLES 25% SMALLER (master). Folded into the baked instance basis at parse rather than applied
             // to the mesh or the MultiMesh, because these transforms come straight out of PEI's Foliage.blob and the
@@ -124,7 +152,7 @@ namespace UnturnedGodot
                 var lst = kv.Value;
                 var mm = new MultiMesh { Mesh = mesh, TransformFormat = MultiMesh.TransformFormatEnum.Transform3D, InstanceCount = lst.Count };
                 for (int k = 0; k < lst.Count; k++) mm.SetInstanceTransform(k, lst[k]);   // scale already folded in at parse (see PebbleScale)
-                var fmi = new MultiMeshInstance3D { Multimesh = mm, MaterialOverride = (Material)grassMat ?? mat,
+                var fmi = new MultiMeshInstance3D { Multimesh = mm, MaterialOverride = (Material)(isGrass ? grassMat : foliageUpMat) ?? mat,
                     CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
                     VisibilityRangeEnd = CullRange,   // cell culls when the camera is beyond CullRange from it
                     VisibilityRangeFadeMode = GeometryInstance3D.VisibilityRangeFadeModeEnum.Disabled };
