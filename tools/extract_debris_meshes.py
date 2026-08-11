@@ -82,6 +82,19 @@ def find_node(go, parentM, target):
         if r: return r
     return None
 
+# find the `Sections` node (fences etc.) -- like find_node but does NOT prune sections
+def find_sections(go, parentM):
+    lm = local_M(go)
+    if lm is None: return None
+    M = parentM @ lm
+    nm = (go.read_typetree().get("m_Name", "") or "").lower()
+    if nm == "sections": return (go, M)
+    if nm in ("effect", "nav", "block", "trap", "alive", "dead", "ragdoll"): return None
+    for c in child_gos(go):
+        r = find_sections(c, M)
+        if r: return r
+    return None
+
 # collect every mesh at/under `go`, given go's already-computed world matrix M
 def collect(go, M, gomap):
     tt = go.read_typetree()
@@ -154,22 +167,37 @@ for gid in destr:
         if Vs:
             write_obj(os.path.join(OUT, name + "_Debris.obj"), Vs, Ns, Ts, Fs)
             rec["dead"] = {"file": name + "_Debris.obj", "parts": len(used), "verts": len(Vs)}; nd += 1
-    # RAGDOLL: one obj PER PIECE (each direct child of the Ragdoll node, or the node itself if childless)
+    # RAGDOLL: one obj PER PIECE. A prop with a Ragdoll node -> each of its pieces. A SECTIONED prop (fences: no
+    # Ragdoll node) -> each Section_i's Alive mesh is a falling PANEL (master: "a bunch of fence panels falling").
     rn = find_node(pf, start, "ragdoll")
+    files = []
     if rn:
         rgo, rM = rn
         kids = child_gos(rgo)
         pieces = [(c, rM @ local_M(c)) for c in kids if local_M(c) is not None] if kids else [(rgo, rM)]
-        files = []
-        for i, (pgo, pM) in enumerate(pieces):
+        for pgo, pM in pieces:
             gm = {}; collect(pgo, pM, gm)
             Vs, Ns, Ts, Fs, used = combine(gm)
             if not Vs: continue
-            fn = f"{name}_Ragdoll_{len(files)}.obj"
-            write_obj(os.path.join(OUT, fn), Vs, Ns, Ts, Fs)
-            files.append(fn); npieces += 1
-        if files:
-            rec["ragdoll"] = {"files": files, "pieces": len(files)}; nr += 1
+            fn = f"{name}_Ragdoll_{len(files)}.obj"; write_obj(os.path.join(OUT, fn), Vs, Ns, Ts, Fs); files.append(fn); npieces += 1
+    else:
+        sn = find_sections(pf, start)
+        if sn:
+            sgo, sM = sn
+            for sec in child_gos(sgo):                      # Section_0, Section_1, ...
+                lm = local_M(sec)
+                if lm is None: continue
+                secM = sM @ lm
+                for a in child_gos(sec):                    # the section's Alive panel
+                    if (a.read_typetree().get("m_Name", "") or "").lower() == "alive":
+                        alm = local_M(a)
+                        if alm is None: continue
+                        gm = {}; collect(a, secM @ alm, gm)
+                        Vs, Ns, Ts, Fs, used = combine(gm)
+                        if not Vs: continue
+                        fn = f"{name}_Ragdoll_{len(files)}.obj"; write_obj(os.path.join(OUT, fn), Vs, Ns, Ts, Fs); files.append(fn); npieces += 1
+    if files:
+        rec["ragdoll"] = {"files": files, "pieces": len(files)}; nr += 1
     if rec: manifest[name] = rec
 json.dump(manifest, open(os.path.join(OUT, "debris_manifest.json"), "w"), indent=1, sort_keys=True)
 print(f"[debris] {len(manifest)} props: {nd} Dead husks, {nr} Ragdoll sets ({npieces} pieces) -> {OUT}")

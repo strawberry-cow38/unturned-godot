@@ -196,10 +196,19 @@ namespace UnturnedGodot
             // with force + drag, despawned after 8s; we have no authored ragdoll meshes, so we clone the prop's own
             // model (the mesh we already hold at break time). Fired here -- like the SFX, BEFORE the chip/fallback
             // branch -- so it drops on every break regardless of which VFX path runs.
-            if (r.RagdollMeshes != null && r.RagdollMeshes.Length > 0)
-                SpawnRagdollDrop(scene, tree, xf, r.RagdollMeshes, propMat);   // the REAL authored debris pieces, each scattering as its own body
-            else
-                SpawnModelDrop(scene, tree, xf, aabb, dropMesh, propMat);      // fallback: prop has no extracted ragdoll -> clone its whole model
+            // PHYSICS DEBRIS: the prop's real authored Ragdoll pieces, else a whole-model clone -- UNLESS the prop is
+            // EXCLUDED (glass etc. shatter, they don't leave chunks). When a mesh drops it IS the break debris, so we
+            // RETURN before the retail sprite-chip VFX below; otherwise the prop shows the old sprite debris AND the
+            // real pieces (master 2026-08-11: "the old ragdoll AND the real ones"). No-mesh props fall through to chips.
+            bool droppedMesh = false;
+            if (!RagdollExcluded(r.EffectId))
+            {
+                if (r.RagdollMeshes != null && r.RagdollMeshes.Length > 0)
+                { SpawnRagdollDrop(scene, tree, xf, r.RagdollMeshes, propMat); droppedMesh = true; }   // REAL authored pieces, each scattering
+                else if (dropMesh != null)
+                { SpawnModelDrop(scene, tree, xf, aabb, dropMesh, propMat); droppedMesh = true; }       // fallback: clone the whole model
+            }
+            if (droppedMesh) return;   // the mesh pieces ARE the break debris -- don't ALSO fire the retail sprite chips (the double)
 
             // the prop's ACTUAL retail Rubble_Effect debris chips on TOP of the dust, if we extracted it
             if (RubbleFx.TryGet(r.EffectId, out var fx) && fx.Tex != null)
@@ -275,6 +284,13 @@ namespace UnturnedGodot
         // + settles. Capped so break-spam can't pile up bodies; 8s despawn (persistent settle = drop the timer).
         static readonly List<RigidBody3D> _debris = new List<RigidBody3D>();
         const int DebrisCap = 48;
+
+        // Props whose Rubble_Effect names a SHATTER/soft material don't leave physics chunks -- they break with their
+        // VFX instead (glass shatters via GlassPane; ice/web/paper puff). EXCLUDED from the ragdoll/clone mesh drop
+        // (master 2026-08-11: "a lot of props should be excluded from the ragdoll thing, ie glass"). Seeded with Glass;
+        // extend once master gives the full material/prop set.
+        static readonly HashSet<int> _noRagdollEffects = new HashSet<int> { 64 };   // 64 = Glass
+        static bool RagdollExcluded(int effectId) => _noRagdollEffects.Contains(effectId);
 
         static void SpawnModelDrop(Node scene, SceneTree tree, Transform3D xf, Aabb localAabb, Mesh dropMesh, StandardMaterial3D propMat)
         {
