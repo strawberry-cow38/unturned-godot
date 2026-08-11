@@ -97,7 +97,7 @@ namespace UnturnedGodot
             bool containerTest = false; string containerTestName = null;
             bool wallDemo = false;
             bool clockTest = false;
-            bool play = false, demo = false, netdemo = false, server = false, dedicated = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, lightTest = false, trafficTest = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, objects = false, peidrive = false, craftui = false, bakenav = false, navPathTest = false, zombieTest = false, zdirTest = false, editorMode = false, impactTest = false, doorGallery = false, lampTest = false, beamTest = false, impTest = false, treeSweep = false;
+            bool play = false, demo = false, netdemo = false, server = false, dedicated = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, lightTest = false, trafficTest = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, objects = false, peidrive = false, craftui = false, bakenav = false, navPathTest = false, zombieTest = false, zdirTest = false, editorMode = false, impactTest = false, doorGallery = false, lampTest = false, beamTest = false, impTest = false, treeSweep = false, bakeLods = false, bakeLodsDry = false;
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
                 if (arg.StartsWith("--catalog=")) catalog = arg["--catalog=".Length..];
@@ -193,6 +193,8 @@ namespace UnturnedGodot
                 else if (arg == "--invcrate") invcrate = true;
                 else if (arg == "--daynight") daynight = true;
                 else if (arg == "--lighttest") lightTest = true;   // one lit streetlight at night: cone + motes eyeball (UG_LIGHTCAM=under looks up from inside)
+                else if (arg == "--bakelods") bakeLods = true;        // OFFLINE tool: generate a lod1 for every prop retail shipped without one
+                else if (arg == "--bakelods-dry") { bakeLods = true; bakeLodsDry = true; }
                 else if (arg == "--treesweep") treeSweep = true;   // step the camera ACROSS the tree->imposter handover and count tree pixels at each distance
                 else if (arg == "--imptest") impTest = true;   // bake the tree billboards and DUMP them side by side -- the only check that answers "does it look like a tree"
                 else if (arg == "--lamptest") lampTest = true;   // one lit INDOOR light over dark ground: UG_LAMP=Light_0(ceiling,default)/Light_1/Lamp_0/Lamp_1, UG_LAMPOFF=1 unlit
@@ -453,6 +455,13 @@ namespace UnturnedGodot
                 _shotPath = shot;
                 GetWindow().Size = new Vector2I(1280, 720);
                 BuildStreetLightDemo();
+                return;
+            }
+
+            if (bakeLods)   // offline: write the LODs retail never authored, then quit. No world, no renderer needed.
+            {
+                LodBaker.BakeAll(ProjectSettings.GlobalizePath("res://content/objects/"), bakeLodsDry);
+                GetTree().Quit();
                 return;
             }
 
