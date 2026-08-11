@@ -85,8 +85,11 @@ namespace UnturnedGodot
         /// output only ever exists once the prop is smashed, and the stump's cut height IS the surface that is left.
         /// Tying it to the same constant rather than repeating 1.0 means moving the cut moves the port with it --
         /// otherwise the port floats above or sinks into the remnant and nothing says which.</summary>
-        static readonly Vector3 TapInLocal  = new(0.3f, 0f, 0.5f);
-        static readonly Vector3 TapOutLocal = new(0f, 0f, StreetLightBaseCut);
+        // Public so the map editor's placement path can give a hand-placed streetlight the same tap this one gets
+        // (SmartProps.AttachEditor). Copying the two numbers over there instead would put the port in one place
+        // for a loaded lamp and another for a placed one, on the same map.
+        public static readonly Vector3 TapInLocal  = new(0.3f, 0f, 0.5f);
+        public static readonly Vector3 TapOutLocal = new(0f, 0f, StreetLightBaseCut);
 
         /// <summary>Key a placed signal against traffic_side_roads.txt. NOTE THE -gpos.Z: the file is keyed in
         /// placements.txt coordinates so a line can be copied straight out of it, but gpos has already had Z negated
@@ -475,18 +478,15 @@ namespace UnturnedGodot
             // real hardware. So the code stays behind a flag for an A/B on a real GPU with the F3 overlay,
             // and the DEFAULT is the behaviour that is known not to be slower.
             bool batchOpen = System.Environment.GetEnvironmentVariable("UG_BATCH") == "1";   // also closed after the scan: deferred holiday props (Client) arrive post-Flush and take the node path
+            // DERIVED from the smart-prop table rather than restated here. Every entry this list used to hold by
+            // hand was a prop that carves sub-meshes off its own instance's node (a lens, a screen, clock hands, a
+            // door leaf) -- which a shared MultiMesh has nowhere to put -- and SmartProps.KindsFor already knows
+            // exactly which props those are. Keeping a second copy meant adding a device in one file and
+            // remembering to deny it in another, with the failure being a batched device that silently stops
+            // working; the PushError below is the apology that was left for that day.
             bool Batchable(string n) =>
-                n != "Street_Light_0" &&                         // lens split + stump + SpotLight + LightTap
-                n != "Traffic_Light_0" &&                        // stump + per-head lens split + TrafficLight + LightTap
-                n != "Lighthouse_0" &&                           // sweeping beam node placed off its AABB
-                n != "Toaster_0" &&                              // Toaster.Make(mainMi)
-                n != "Clock_0" &&                                // ClockDevice.Make(mainMi) -- hands are carved off the body mesh and spun per instance
-                n != "Gas_Pump_0" && n != "Circuit_0" &&         // deployable fixtures (own colliders/outlines)
-                n != "Tower_Water_0" && n != "Fire_Hydrant_0" && n != "Well_0" && !IsSinkProp(n) &&   // fluid sources
-                LampLight.KindFor(n) == LampLight.Kind.Generic &&   // LampLight.Make(..., mainMi, ...)
-                !TVDevice.IsDeviceProp(n) &&                     // TVDevice.Make(mainMi, ...)
-                !HeartMonitor.IsMonitorProp(n) &&                // HeartMonitor.Make(mainMi, ...)
-                !doorCatalog.ContainsKey(n);                     // openable leaves + whole-prop outline
+                !SmartProps.NeedsOwnNode(n, doorCatalog.ContainsKey) &&
+                n != "Gas_Pump_0" && n != "Circuit_0";           // deployable fixtures (own colliders/outlines), not devices
             // The LOD band plan for a prop TYPE: which mesh draws over which distance band. Identical for every
             // placement of a GUID, so it is resolved once and reused -- and it applies the same absorb rule the
             // node path uses, where a level whose .obj was never extracted hands its band back to the level

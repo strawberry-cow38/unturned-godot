@@ -26,7 +26,8 @@ namespace UnturnedGodot
         readonly Camera3D _cam;
         readonly EditorCamera _flyCam;
         readonly string _mapRoot;
-        const uint TerrainLayer = 1u << 0, SmallPropLayer = 1u << 6, EditorPickLayer = 1u << 7;
+        const uint TerrainLayer = 1u << 0, SmallPropLayer = 1u << 6;
+        const uint EditorPickLayer = EditorObjects.PickLayer;   // ONE constant: this raycast has to hit what EditorObjects actually placed
 
         ECategory _category = ECategory.Player;
         readonly List<Spawn> _spawns = new();

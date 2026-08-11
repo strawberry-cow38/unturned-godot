@@ -16,7 +16,16 @@ namespace UnturnedGodot
         readonly EditorCamera _flyCam;
 
         static string Dir => ProjectSettings.GlobalizePath("res://content/objects/");
-        const uint TerrainLayer = 1u << 0, SmallPropLayer = 1u << 6, EditorPickLayer = 1u << 7;
+        const uint TerrainLayer = 1u << 0, SmallPropLayer = 1u << 6;
+        /// <summary>Where a placed prop's collider goes so THIS editor can pick it. Public because EditorSpawns
+        /// raycasts it too (dropping a spawn point onto a placed prop), and two files each declaring their own
+        /// copy is a bug that waits for one of them to move.
+        ///
+        /// Bit 12, not bit 7. Bit 7 is WorldItem.ItemHitLayer -- the layer the PLAYER's look-ray scans for
+        /// dropped items -- which did not matter while the editor and the game were separate scenes, and started
+        /// mattering the moment playtest spawned a PlayerController into the editor's own tree: every prop you
+        /// had placed was being offered to the look-ray as though it were an item on the floor.</summary>
+        public const uint PickLayer = 1u << 12;
 
         readonly List<string> _catalog = new();
         readonly Dictionary<string, string> _nameToGuid = new();   // mesh name -> first guid (for writing placements)
@@ -31,6 +40,10 @@ namespace UnturnedGodot
         public void SetGizmoMode(EditorGizmo.EMode m) => _gizmo?.SetMode(m);
 
         readonly Dictionary<string, ArrayMesh> _meshCache = new();
+        // SMART PROPS: the door catalogue, loaded once. Placing a wardrobe has to know it has two openable
+        // leaves, and re-reading doors.txt per placement would be a quiet cost on a map with a hundred of them.
+        readonly Dictionary<string, List<WorldBuilder.DoorCatalogEntry>> _doorCatalog;
+        readonly Dictionary<string, ArrayMesh> _doorMeshCache = new();   // leaf meshes are shared across placements
         readonly List<Node3D> _placed = new();
         readonly Dictionary<Rid, Node3D> _pickToObj = new();
         readonly List<Node3D> _selection = new();                      // multi-select (source EditorObjects.selection list)
@@ -70,6 +83,7 @@ namespace UnturnedGodot
         public EditorObjects(Editor editor, Node world, EditorCamera cam)
         {
             _editor = editor; _world = world; _cam = cam; _flyCam = cam;
+            _doorCatalog = WorldBuilder.LoadDoorCatalog(Dir);   // the same doors.txt the world loader reads
             _gizmo = new EditorGizmo(cam); AddChild(_gizmo);   // the source TransformHandles translate gizmo, shown on the selection
             var cl = new CanvasLayer { Layer = 55 };            // marquee overlay for box drag-select
             _marquee = new MarqueeOverlay { Visible = false, MouseFilter = Control.MouseFilterEnum.Ignore };
@@ -207,12 +221,29 @@ namespace UnturnedGodot
             var root = new Node3D { Transform = new Transform3D(rot, pos) };
             root.SetMeta("obj_name", name);
             root.SetMeta("guid", _nameToGuid.TryGetValue(name, out var g) ? g : "");   // for the placements save
-            root.AddChild(new MeshInstance3D { Mesh = mesh, MaterialOverride = MatFor(name) });
-            var shp = mesh.CreateTrimeshShape();   // trimesh collider so the prop is pickable (+ later walkable)
+            var mat = MatFor(name);
+            var mainMi = new MeshInstance3D { Mesh = mesh, MaterialOverride = mat };
+            root.AddChild(mainMi);   // FIRST: PositionMarkers reads child 0 for the selection outline's bounds
+
+            // SMART PROPS (strawberry: "make all 'smart' props (tvs, clocks, lights, doors, etc etc) functional
+            // in the editor and editor play mode"). A prop placed here used to be a dead mesh: the clock's hands
+            // are baked into its dial, the television is a grey box, the wardrobe does not open. The world loader
+            // has attached these devices all along -- what was missing was anything asking for them on this path.
+            //
+            // SmartProps owns the decision (which prop gets which device) so the two paths cannot drift; the
+            // PLACEMENT stays split, because the conventions genuinely differ -- WorldBuilder puts world-space
+            // nodes under a root at the origin, and here the root carries the placement and the gizmo drags it.
+            float yawDeg = Mathf.RadToDeg(Mathf.Atan2(-rot.X.Z, rot.X.X));
+            var smart = SmartProps.AttachEditor(root, name, mainMi, mat, pos, yawDeg, Dir, _doorCatalog, _doorMeshCache);
+
+            // The collider comes off the ORIGINAL mesh, not mainMi's -- a device carves its lens/screen/hands out
+            // of the visual mesh, and collision should still cover the whole prop (the world loader does the same).
+            var shp = mesh.CreateTrimeshShape();   // trimesh collider so the prop is pickable + walkable
             if (shp != null)
             {
-                var body = new StaticBody3D { CollisionLayer = EditorPickLayer, CollisionMask = 0 };
+                var body = new StaticBody3D { CollisionLayer = PickLayer | WorldLayerFor(mesh, mat), CollisionMask = 0 };
                 body.AddChild(new CollisionShape3D { Shape = shp });
+                SmartProps.TagBody(body, smart);   // look-ray/bullet -> device, so F works on it in playtest
                 root.AddChild(body);
                 _world.AddChild(root);
                 _pickToObj[body.GetRid()] = root;
@@ -220,6 +251,20 @@ namespace UnturnedGodot
             else _world.AddChild(root);
             _placed.Add(root);
             return root;
+        }
+
+        /// <summary>The WORLD collision bit a placed prop belongs on, by the same rule the loader uses: large
+        /// opaque structures block the item line-of-sight ray (bit 0), everything else is see-through to it but
+        /// still solid to the player (bit 6).
+        ///
+        /// Placed props used to carry the pick bit ALONE, which made them intangible: a playtest walked through
+        /// every prop in the map you had just built, and the look-ray had nothing to focus. That reads as "the
+        /// editor doesn't really place things", and it is one missing layer bit.</summary>
+        static uint WorldLayerFor(ArrayMesh mesh, StandardMaterial3D mat)
+        {
+            var ab = mesh.GetAabb();
+            float maxDim = Mathf.Max(ab.Size.X, Mathf.Max(ab.Size.Y, ab.Size.Z));
+            return maxDim >= 5f && mat != null && mat.Transparency == BaseMaterial3D.TransparencyEnum.Disabled ? 1u << 0 : 1u << 6;
         }
 
         // a placeable loot CONTAINER marker (box) tagged with its PEI table; the SP loader spawns a real LootCrate here.
@@ -230,7 +275,7 @@ namespace UnturnedGodot
             root.SetMeta("loot_table", 0);   // default PEI table (retable later)
             root.AddChild(new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(0.75f, 0.75f, 0.75f) }, Position = new Vector3(0f, 0.375f, 0f), MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.55f, 0.42f, 0.2f), Roughness = 0.9f } });
             root.AddChild(new Label3D { Text = CrateLabelText(0), Billboard = BaseMaterial3D.BillboardModeEnum.Enabled, PixelSize = 0.006f, Position = new Vector3(0f, 1.05f, 0f), Modulate = new Color(1f, 0.85f, 0.4f), NoDepthTest = true, FontSize = 40, OutlineSize = 8 });
-            var body = new StaticBody3D { CollisionLayer = EditorPickLayer, CollisionMask = 0, Position = new Vector3(0f, 0.375f, 0f) };
+            var body = new StaticBody3D { CollisionLayer = PickLayer, CollisionMask = 0, Position = new Vector3(0f, 0.375f, 0f) };
             body.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = new Vector3(0.75f, 0.75f, 0.75f) } });
             root.AddChild(body);
             _world.AddChild(root);
@@ -255,7 +300,7 @@ namespace UnturnedGodot
             var shp = mesh.CreateTrimeshShape();
             if (shp != null)
             {
-                var body = new StaticBody3D { CollisionLayer = EditorPickLayer, CollisionMask = 0, Basis = stand };
+                var body = new StaticBody3D { CollisionLayer = PickLayer, CollisionMask = 0, Basis = stand };
                 body.AddChild(new CollisionShape3D { Shape = shp });
                 root.AddChild(body);
                 _pickToObj[body.GetRid()] = root;
@@ -300,7 +345,7 @@ namespace UnturnedGodot
             var shp = mesh.CreateTrimeshShape();
             if (shp != null)
             {
-                var body = new StaticBody3D { CollisionLayer = EditorPickLayer, CollisionMask = 0, Basis = stand };
+                var body = new StaticBody3D { CollisionLayer = PickLayer, CollisionMask = 0, Basis = stand };
                 body.AddChild(new CollisionShape3D { Shape = shp });
                 root.AddChild(body);
                 _pickToObj[body.GetRid()] = root;
@@ -349,7 +394,7 @@ namespace UnturnedGodot
             var shp = mesh.CreateTrimeshShape();
             if (shp != null)
             {
-                var body = new StaticBody3D { CollisionLayer = EditorPickLayer, CollisionMask = 0, Basis = stand };
+                var body = new StaticBody3D { CollisionLayer = PickLayer, CollisionMask = 0, Basis = stand };
                 body.AddChild(new CollisionShape3D { Shape = shp });
                 root.AddChild(body);
                 _pickToObj[body.GetRid()] = root;
@@ -391,7 +436,7 @@ namespace UnturnedGodot
         bool TrySelect(Vector2 screen)
         {
             bool additive = Input.IsKeyPressed(Key.Shift);
-            if (Raycast(screen, EditorPickLayer, out _, out var rid) && _pickToObj.TryGetValue(rid, out var obj))
+            if (Raycast(screen, PickLayer, out _, out var rid) && _pickToObj.TryGetValue(rid, out var obj))
                 { Select(obj, additive); return true; }
             return false;   // clicked empty ground
         }
@@ -401,7 +446,7 @@ namespace UnturnedGodot
         {
             if (Editor.PointerOverUI(this)) return;
             var mp = GetViewport().GetMousePosition();
-            if (!Raycast(mp, TerrainLayer | SmallPropLayer | EditorPickLayer, out var pt, out _)) return;
+            if (!Raycast(mp, TerrainLayer | SmallPropLayer | PickLayer, out var pt, out _)) return;
             if (Primary != null)   // E with a prop selected -> move it to the cursor
             {
                 var cap = CaptureSelection();
@@ -455,6 +500,11 @@ namespace UnturnedGodot
                 var mi = sel.GetChildCount() > 0 ? sel.GetChild(0) as MeshInstance3D : null;
                 var aabb = mi != null ? mi.GetAabb() : new Aabb(-Vector3.One * 0.5f, Vector3.One);
                 _markers[i].GlobalTransform = sel.GlobalTransform * new Transform3D(Basis.FromScale(aabb.Size * 1.06f), aabb.Position + aabb.Size * 0.5f);
+                // Smart props ride their root and need nothing -- except a fluid source, whose ports live in a
+                // YAW-ONLY frame and so cannot be parented to a root carrying the prop's full pitched basis. This
+                // is called on every drag frame, drag end, E-move, paste and undo, which is every way a placement
+                // moves. (SmartProps.Resync is a no-op on a prop that has no such child.)
+                SmartProps.Resync(sel);
             }
         }
 
