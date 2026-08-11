@@ -95,6 +95,16 @@ def find_sections(go, parentM):
         if r: return r
     return None
 
+# find a LODGroup anywhere under `go` (same idea as extract_objects_v2.find_lodgroup)
+def find_lodgroup(go, depth=0):
+    if not go or depth > 10: return None
+    for co in comps(go.read_typetree()):
+        if co.type.name == "LODGroup": return co
+    for c in child_gos(go):
+        r = find_lodgroup(c, depth + 1)
+        if r: return r
+    return None
+
 # collect every mesh at/under `go`, given go's already-computed world matrix M
 def collect(go, M, gomap):
     tt = go.read_typetree()
@@ -173,11 +183,26 @@ for gid in destr:
     files = []
     if rn:
         rgo, rM = rn
-        kids = child_gos(rgo)
-        pieces = [(c, rM @ local_M(c)) for c in kids if local_M(c) is not None] if kids else [(rgo, rM)]
-        for pgo, pM in pieces:
-            gm = {}; collect(pgo, pM, gm)
-            Vs, Ns, Ts, Fs, used = combine(gm)
+        gm = {}; collect(rgo, rM, gm)
+        # LOD0 ONLY: the Ragdoll authors LOD0=Model_0 / LOD1=Model_1 as a LODGroup (same bbox, fewer verts). Dumping
+        # every Model_x spawned the LOD1 as a SECOND overlapping body -- master's "two 3d models" / "old ragdoll AND
+        # real ones" (blocky low-poly LOD1 next to the detailed LOD0). Keep the LODGroup's LOD0 renderers, like
+        # extract_objects_v2 does for the alive mesh; each surviving renderer = one physics piece (genuine multi-piece
+        # ragdolls keep all their pieces, since those are separate LOD0 renderers).
+        piece_pids = list(gm.keys())
+        lg = find_lodgroup(rgo)
+        if lg:
+            lods = lg.read_typetree().get("m_LODs", [])
+            keep = []
+            if lods:
+                for rr in lods[0].get("renderers", lods[0].get("_renderers", [])):
+                    rp = (rr.get("renderer") or {}).get("m_PathID"); rc = by_id.get(rp)
+                    if rc:
+                        gp = rc.read_typetree().get("m_GameObject", {}).get("m_PathID")
+                        if gp in gm: keep.append(gp)
+            if keep: piece_pids = keep
+        for pid in piece_pids:
+            Vs, Ns, Ts, Fs, used = combine({pid: gm[pid]})
             if not Vs: continue
             fn = f"{name}_Ragdoll_{len(files)}.obj"; write_obj(os.path.join(OUT, fn), Vs, Ns, Ts, Fs); files.append(fn); npieces += 1
     else:

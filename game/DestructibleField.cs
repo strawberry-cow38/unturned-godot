@@ -197,18 +197,16 @@ namespace UnturnedGodot
             // model (the mesh we already hold at break time). Fired here -- like the SFX, BEFORE the chip/fallback
             // branch -- so it drops on every break regardless of which VFX path runs.
             // PHYSICS DEBRIS: the prop's real authored Ragdoll pieces, else a whole-model clone -- UNLESS the prop is
-            // EXCLUDED (glass etc. shatter, they don't leave chunks). When a mesh drops it IS the break debris, so we
-            // RETURN before the retail sprite-chip VFX below; otherwise the prop shows the old sprite debris AND the
-            // real pieces (master 2026-08-11: "the old ragdoll AND the real ones"). No-mesh props fall through to chips.
-            bool droppedMesh = false;
+            // EXCLUDED (glass etc. shatter, no chunks). The retail sprite chips below STILL fire (master: the particles
+            // are wanted). The "two 3d models" bug was NOT the sprites -- it was the extractor dumping the ragdoll's
+            // LOD0 AND LOD1 as two overlapping bodies; fixed in tools/extract_debris_meshes.py (LOD0 only).
             if (!RagdollExcluded(r.EffectId))
             {
                 if (r.RagdollMeshes != null && r.RagdollMeshes.Length > 0)
-                { SpawnRagdollDrop(scene, tree, xf, r.RagdollMeshes, propMat); droppedMesh = true; }   // REAL authored pieces, each scattering
+                    SpawnRagdollDrop(scene, tree, xf, r.RagdollMeshes, propMat);   // REAL authored pieces, each scattering
                 else if (dropMesh != null)
-                { SpawnModelDrop(scene, tree, xf, aabb, dropMesh, propMat); droppedMesh = true; }       // fallback: clone the whole model
+                    SpawnModelDrop(scene, tree, xf, aabb, dropMesh, propMat);      // fallback: clone the whole model
             }
-            if (droppedMesh) return;   // the mesh pieces ARE the break debris -- don't ALSO fire the retail sprite chips (the double)
 
             // the prop's ACTUAL retail Rubble_Effect debris chips on TOP of the dust, if we extracted it
             if (RubbleFx.TryGet(r.EffectId, out var fx) && fx.Tex != null)
