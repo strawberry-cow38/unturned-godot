@@ -4508,6 +4508,57 @@ namespace UnturnedGodot
             var cam = new Camera3D { Current = true, Fov = 50f };
             AddChild(cam);
 
+            // UG_SWEEP_FLY=1: the version that can actually see a one-frame hole. Drive the camera along a real
+            // route at real speed, sampling EVERY frame, and look for a frame whose tree pixels collapse relative
+            // to its neighbours. strawberry saw the flicker in exactly one place -- the road south out of Alberton
+            // over the hill above Pirate Cove -- so it flies that, rather than a spot I picked.
+            if (System.Environment.GetEnvironmentVariable("UG_SWEEP_FLY") == "1")
+            {
+                var a = new Vector3(-574.05f, 33.28f, -71.58f);    // Alberton   (content/nodes.tsv)
+                var b = new Vector3(-264.67f, 69.88f, 768.10f);    // Pirate Cove
+                float t0 = EnvOr("UG_FLY_T0", 0f), t1 = EnvOr("UG_FLY_T1", 1f);
+                int frames = (int)EnvOr("UG_FLY_FRAMES", 400f);
+                var prev = new System.Collections.Generic.List<int>();
+                for (int f = 0; f < frames; f++)
+                {
+                    float u = Mathf.Lerp(t0, t1, frames <= 1 ? 0f : f / (float)(frames - 1));
+                    var pos = a.Lerp(b, u) + new Vector3(0f, 2.5f, 0f);   // eye height above the node line
+                    cam.GlobalPosition = pos;
+                    cam.LookAt(pos + (b - a).Normalized() * 50f, Vector3.Up);   // looking where you're driving
+                    // TWO frames, matching the stepped sweep. With one, the readback can land on a frame the
+                    // renderer has not finished for the new camera pose, which manufactures exactly the artefact
+                    // this is hunting: a single frame far below both neighbours. UG_FLY_SETTLE=1 restores the
+                    // one-frame version, because "is the dip mine or the game's" has to stay answerable.
+                    await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+                    if (EnvOr("UG_FLY_SETTLE", 2f) >= 2f) await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+                    var im = GetViewport().GetTexture()?.GetImage();
+                    int n = 0;
+                    if (im != null)
+                        for (int y = 0; y < im.GetHeight(); y += 2)
+                            for (int x = 0; x < im.GetWidth(); x += 2)
+                            {
+                                var c = im.GetPixel(x, y);
+                                if (Mathf.Abs(c.R - sky.R) + Mathf.Abs(c.G - sky.G) + Mathf.Abs(c.B - sky.B) > 0.06f) n++;
+                            }
+                    prev.Add(n);
+                }
+                // A flicker is a SPIKE, not a trend: one frame far below both its neighbours. Comparing to the
+                // neighbours rather than to a global mean is what separates "a tree blinked" from "the view is
+                // opening up as we crest the hill", which changes the count massively and legitimately.
+                int dips = 0; float worst = 1f;
+                for (int i = 1; i < prev.Count - 1; i++)
+                {
+                    float nb = 0.5f * (prev[i - 1] + prev[i + 1]);
+                    if (nb < 50f) continue;
+                    float ratio = prev[i] / nb;
+                    if (ratio < worst) worst = ratio;
+                    if (ratio < 0.75f) { dips++; GD.Print($"[fly] DIP frame {i}: {prev[i]} px vs neighbours {nb:0} ({ratio:0.00}x)"); }
+                }
+                GD.Print($"[fly] overlap={ResourceField.ImpostorOverlap:0.###} frames={prev.Count} dips={dips} worstRatio={worst:0.000}");
+                GetTree().Quit();
+                return;
+            }
+
             var rows = new System.Collections.Generic.List<(float D, int Px)>();
             // Fine steps by default: a shared edge fails over a band narrower than the 5 m the first version used,
             // so a coarse sweep steps straight over the hole and reports health.
