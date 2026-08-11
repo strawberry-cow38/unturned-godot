@@ -203,6 +203,20 @@ namespace UnturnedGodot
         public static float TreeCullScale = EnvF("UG_TREECULL", 0.75f);      // real trees stop this fraction of the way out
         public static float ImpostorRange = EnvF("UG_TREEIMPDIST", 2000f);   // how far the billboards carry
 
+        // THE HANDOVER MUST OVERLAP, NOT MEET.
+        //
+        // The first version ended the real trees and began the billboards at the SAME distance, which looks
+        // correct and flickers on sight (strawberry, within minutes: "trees flicker in and out ... happens on the
+        // tree -> imposter line"). Two things go wrong at a shared edge. Sitting exactly on it, sub-metre camera
+        // jitter flips both nodes on the same frame and you get frames with NEITHER drawn. And the two
+        // MultiMeshes do not even measure from the same point -- the billboard quads are centred half a tree-
+        // height up, so their AABB crosses the threshold at a slightly different moment than the real mesh's.
+        //
+        // So the billboards now switch on BEFORE the real trees switch off. Through the overlap band both draw:
+        // negligible overdraw at 300m+, and no jitter can ever produce a hole, because no single toggle can turn
+        // the tree off. Cheaper and far more robust than trying to make two different AABBs agree to the metre.
+        public static float ImpostorOverlap = EnvF("UG_TREEIMPOVERLAP", 0.88f);
+
         static float EnvF(string name, float fallback)
             => float.TryParse(System.Environment.GetEnvironmentVariable(name), System.Globalization.NumberStyles.Float,
                               System.Globalization.CultureInfo.InvariantCulture, out float v) && v > 0f ? v : fallback;
@@ -222,6 +236,17 @@ namespace UnturnedGodot
         /// framed at, so a human can stand them up next to the real trees and judge them.</summary>
         public List<(string Name, StandardMaterial3D Mat, float W, float H)> DebugImpostorMaterialsForTest() => _impostorMats;
         public int PendingImpostorTypesForTest => _pendingImpostors.Count;
+
+        /// <summary>Test seam: the handover distances each queued species WILL be given. Read from the queue
+        /// rather than from the built nodes on purpose -- the bake needs a real renderer, so headless has no
+        /// impostor nodes to inspect, and the overlap invariant is exactly what a headless suite CAN still
+        /// check.</summary>
+        public List<(string Name, float RealEnd, float ImpostorBegin, float ImpostorEnd)> DebugImpostorRangesForTest()
+        {
+            var outp = new List<(string, float, float, float)>();
+            foreach (var s in _pendingImpostors) outp.Add((s.Name, s.RealCull, s.RealCull * ImpostorOverlap, ImpostorRange));
+            return outp;
+        }
         public int ImpostorInstancesForTest { get; private set; }
 
         /// <summary>Bake one billboard per tree species and hang the far-field MultiMeshes off it. Async because a
@@ -265,16 +290,19 @@ namespace UnturnedGodot
                     {
                         Multimesh = mm, MaterialOverride = mat,
                         CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,   // a flat card casts a flat wrong shadow, and nothing this far out needs one
-                        VisibilityRangeBegin = spec.RealCull,
+                        VisibilityRangeBegin = spec.RealCull * ImpostorOverlap,   // EARLY -- see the overlap note
                         VisibilityRangeEnd = ImpostorRange,
-                        VisibilityRangeFadeMode = GeometryInstance3D.VisibilityRangeFadeModeEnum.Dependencies,
+                        // Disabled, matching the real trees. Dependencies was wrong: it fades nodes that name this
+                        // one as their visibility PARENT, and nothing does, so it fades nothing while quietly
+                        // differing from the mode on the node it hands over from.
+                        VisibilityRangeFadeMode = GeometryInstance3D.VisibilityRangeFadeModeEnum.Disabled,
                     };
                     mmi.AddToGroup(NearestFilter.KeepFilterGroup);
                     AddChild(mmi);
                     made += lst.Count;
                 }
                 _impostorMats.Add((spec.Name, mat, quadW, quadH));
-                GD.Print($"[imposter] {spec.Name}: {spec.Xf.Count} billboards, {spec.RealCull:0}m -> {ImpostorRange:0}m");
+                GD.Print($"[imposter] {spec.Name}: {spec.Xf.Count} billboards, on at {spec.RealCull * ImpostorOverlap:0}m, real trees off at {spec.RealCull:0}m, out to {ImpostorRange:0}m");
             }
             ImpostorInstancesForTest = made;
             GD.Print($"[imposter] {made} billboards across {_pendingImpostors.Count} species");
