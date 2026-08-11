@@ -189,11 +189,14 @@ namespace UnturnedGodot
             ShowPreview(_objects.PlaceName);   // the palette opens with a prop already armed; show THAT one
         }
 
+        void DebugDumpIcons() => _preview.DebugQueueAll(_objects.Catalog);
+
         void Rebuild()
         {
             string q = _search.Text.Trim().ToLower();
             _list.Clear();
             _rowOf.Clear();
+            if (EditorPropPreview.DebugDump) CallDeferred(nameof(DebugDumpIcons));
             foreach (var name in _objects.Catalog)
             {
                 if (q.Length > 0 && !name.ToLower().Contains(q)) continue;

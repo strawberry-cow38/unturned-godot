@@ -105,6 +105,44 @@ namespace UnturnedGodot
             return (vp, pivot, mi, cam);
         }
 
+        /// <summary>UG_ICONDUMP=1: report every thumbnail's size and opaque-pixel count as it resolves. The
+        /// palette cannot tell a MISSING icon from a BLANK one -- both render as empty space -- and they have
+        /// different causes, so the count is the only thing that separates them.</summary>
+        public static bool DebugDump = System.Environment.GetEnvironmentVariable("UG_ICONDUMP") == "1";
+
+        const int SettleFrames = 2;    // frames between requesting the single render and reading it back
+        const int RetryLimit = 3;      // blank readbacks re-rendered before the emptiness is believed
+        int _tries;
+
+        /// <summary>Does this readback contain anything at all? Strided -- a thumbnail with ink has thousands of
+        /// opaque pixels, so sampling every 3rd finds it, and the cost lands on every thumbnail.</summary>
+        static bool HasInk(Image img)
+        {
+            for (int y = 0; y < img.GetHeight(); y += 3)
+                for (int x = 0; x < img.GetWidth(); x += 3)
+                    if (img.GetPixel(x, y).A > 0.15f) return true;
+            return false;
+        }
+
+        public int RetriesForTest { get; private set; }
+
+        static int OpaqueCount(Image img)
+        {
+            int n = 0;
+            for (int y = 0; y < img.GetHeight(); y++)
+                for (int x = 0; x < img.GetWidth(); x++)
+                    if (img.GetPixel(x, y).A > 0.15f) n++;
+            return n;
+        }
+
+        /// <summary>UG_ICONDUMP: queue every catalog name so the dump covers the whole palette, not just the
+        /// dozen rows that happen to be scrolled into view.</summary>
+        public void DebugQueueAll(System.Collections.Generic.IEnumerable<string> names)
+        {
+            foreach (var n in names) if (n != null && !_thumbs.ContainsKey(n) && _queued.Add(n)) _queue.Add(n);
+            GD.Print($"[icon] queued {_queue.Count} thumbnails for dump");
+        }
+
         /// <summary>Ask for a prop's thumbnail. Returns it immediately if it is already drawn; otherwise queues
         /// it and raises ThumbReady later. Safe to call every time a row scrolls into view -- a name already
         /// drawn or already queued costs one hash lookup.</summary>
@@ -212,14 +250,35 @@ namespace UnturnedGodot
             {
                 if (--_settle > 0) return;
                 var img = _thumbVp.GetTexture()?.GetImage();
+                // AN EMPTY READBACK IS A TIMING MISS, NOT A VERDICT. Measured: Demo_House came back with 1905
+                // opaque pixels on one boot and 0 on the next, same mesh, same catalog -- so a blank thumbnail is
+                // the render not having landed yet, not a prop that has nothing to draw. Because the result was
+                // cached either way, one unlucky frame blanked that prop for the whole session, which is what
+                // strawberry was looking at: "a lot of prop's small icons dont load ... their BIG spinning 3d
+                // preview shows fine". The stage never hits it because it runs UpdateMode.Always.
+                //
+                // So: re-render instead of believing it, up to RetryLimit. Bounded because a prop CAN legitimately
+                // be invisible, and an unbounded retry would re-queue it forever and starve every icon behind it.
+                if (img != null && img.GetWidth() > 0 && !HasInk(img) && _tries < RetryLimit)
+                {
+                    _tries++; RetriesForTest++;
+                    if (DebugDump) GD.Print($"[icon] {_inFlight,-24} blank, retry {_tries}/{RetryLimit}");
+                    _thumbVp.RenderTargetUpdateMode = SubViewport.UpdateMode.Once;
+                    _settle = SettleFrames + _tries;   // give each retry a longer runway than the attempt that failed
+                    return;
+                }
                 if (img != null && img.GetWidth() > 0)
                 {
                     var tex = ImageTexture.CreateFromImage(img);
                     _thumbs[_inFlight] = tex;
+                    // A thumbnail can succeed at every step and still be EMPTY -- the readback returns a valid
+                    // image of nothing. In the palette that is indistinguishable from no icon at all, and the two
+                    // have completely different causes, so count the ink rather than trusting the texture.
+                    if (DebugDump) GD.Print($"[icon] {_inFlight,-24} {img.GetWidth()}x{img.GetHeight()} opaque={OpaqueCount(img)}");
                     ThumbReady?.Invoke(_inFlight, tex);
                 }
-                else _thumbs[_inFlight] = null;   // remember the failure too, or it re-queues forever
-                _inFlight = null;
+                else { _thumbs[_inFlight] = null; if (DebugDump) GD.Print($"[icon] {_inFlight,-24} READBACK-NULL"); }   // remember the failure too, or it re-queues forever
+                _inFlight = null; _tries = 0;
                 return;
             }
 
@@ -228,10 +287,11 @@ namespace UnturnedGodot
             _queue.RemoveAt(0);
             _queued.Remove(name);
             _thumbPivot.Basis = Basis.Identity;
-            if (!Dress(_thumbPivot, _thumbMi, _thumbCam, name)) { _thumbs[name] = null; return; }
+            if (!Dress(_thumbPivot, _thumbMi, _thumbCam, name)) { _thumbs[name] = null; if (DebugDump) GD.Print($"[icon] {name,-24} NO-MESH"); return; }
             _thumbVp.RenderTargetUpdateMode = SubViewport.UpdateMode.Once;
             _inFlight = name;
-            _settle = 2;
+            _tries = 0;
+            _settle = SettleFrames;
         }
     }
 }
