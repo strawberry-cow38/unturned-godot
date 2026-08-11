@@ -121,7 +121,17 @@ namespace UnturnedGodot
             bool isPebble = nm.StartsWith("pebble");
 
             using var br = new BinaryReader(File.OpenRead(binPath));
+            // FORMAT, v1 AND v2. v1 (every file the python bakers have ever written) is `int32 count` then 12
+            // floats per instance. v2 adds a per-instance flag saying whether a human placed it, which the editor
+            // needs so a re-bake cannot wipe hand-placed foliage -- retail draws exactly that distinction
+            // (`clearWhenBaked = false; // Manually placed, should not be cleared`).
+            //
+            // Detected by SIGN rather than by a magic string: a v1 count is always >= 0, so a negative first int
+            // cannot be a v1 file and is free to mean "header follows". That keeps every existing baked .bin
+            // loading untouched -- a format break here would mean re-baking every map to gain a flag.
             int count = br.ReadInt32();
+            int version = 1;
+            if (count < 0) { version = br.ReadInt32(); count = br.ReadInt32(); }
             if (count <= 0) { GD.Print($"[foliage] {nm}: 0 instances"); return; }
             // Bucket into spatial CELLS -> one MultiMesh per cell, each with a distance cutoff, so foliage far from
             // the camera stops rendering (master: cull grass far from the player). Trees aren't foliage, untouched.
@@ -133,6 +143,7 @@ namespace UnturnedGodot
             // the tile draw distance is the whole rule.)
             const float Cell = 96f, CullRange = 5 * 32f;
             var byCell = new System.Collections.Generic.Dictionary<(int, int), System.Collections.Generic.List<Transform3D>>();
+            var manualByCell = new System.Collections.Generic.Dictionary<(int, int), System.Collections.Generic.List<bool>>();
             for (int i = 0; i < count; i++)
             {
                 // 12 floats: Unity basis cols X/Y/Z then pos. Unity(LH)->Godot(RH) = negate Z on each axis' z + pos.z.
@@ -144,8 +155,11 @@ namespace UnturnedGodot
                 if (isPebble) basis = basis.Scaled(Vector3.One * PebbleScale);   // master: small pebbles 25% smaller
                 var pos = new Vector3(px, py, -pz);
                 var key = ((int)Mathf.Floor(pos.X / Cell), (int)Mathf.Floor(pos.Z / Cell));
+                bool manual = version >= 2 && br.ReadByte() != 0;   // v1 predates the flag: everything in it was baked
                 if (!byCell.TryGetValue(key, out var lst)) { lst = new System.Collections.Generic.List<Transform3D>(); byCell[key] = lst; }
+                if (!manualByCell.TryGetValue(key, out var mfl)) { mfl = new System.Collections.Generic.List<bool>(); manualByCell[key] = mfl; }
                 lst.Add(new Transform3D(basis, pos));
+                mfl.Add(manual);
             }
             foreach (var kv in byCell)
             {
@@ -162,6 +176,7 @@ namespace UnturnedGodot
                 // "correctly" by accident is not the same as it being chosen here.
                 fmi.AddToGroup(NearestFilter.KeepFilterGroup);
                 AddChild(fmi);
+                RegisterAuthoringCell(nm, kv.Key, fmi, mesh, (Material)(isGrass ? grassMat : foliageUpMat) ?? mat, lst, manualByCell[kv.Key]);
             }
             GD.Print($"[foliage] {nm}: {count} instances in {byCell.Count} cells (culled beyond {CullRange}m)");
         }
