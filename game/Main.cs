@@ -3764,6 +3764,15 @@ namespace UnturnedGodot
             var terrainEd = new EditorTerrain(editor, cam, res.Terr);   // Phase 5: heightmap sculpt (Terrain tab)
             editor.AddChild(terrainEd);
             editor.TerrainEd = terrainEd;
+            // Foliage painting. Wired at construction rather than left as a class nobody instantiates -- an
+            // unreachable tool is the same failure as the generated LODs nothing loaded, and I have made that
+            // one twice today already.
+            if (res.Foliage != null)
+            {
+                var folEd = new EditorFoliage(editor, cam, res.Foliage);
+                editor.AddChild(folEd);
+                editor.FoliageEd = folEd;
+            }
             RoadField rf = null;   // Phase 6: WorldMode.Editor skips WorldBuilder's roads step, so build the road splines here
             if (res.Terr != null)
             {

@@ -38,6 +38,7 @@ namespace UnturnedGodot
         public DeadzoneField Deadzones;    // contaminated volumes ticking the player's vitals
         public DayNightCycle DayNight;     // the world clock -- MP Phase 8 syncs read/drive it (§3.7)
         public ResourceField Resources;    // trees/rocks -- MP Phase 8's alive-bitmap indexes into it (§3.7)
+        public FoliageField Foliage;       // grass/flowers/pebbles -- the editor's paint tool authors into it
         public DestructibleField Destructibles;   // destructible props (rubble) -- the DestructibleReplication(16) alive-bitmap indexes into it
         public DirectionalLight3D Sun;     // world sun + env (C3: the client session LinkWorldLightings its late-spawned shell)
         public Godot.Environment Env;
@@ -1203,6 +1204,7 @@ namespace UnturnedGodot
                     var ff = new FoliageField();
                     root.AddChild(ff);
                     ff.LoadGrass();
+                    result.Foliage = ff;   // the editor's foliage brush paints into this instance
                 }
                 // RESOURCES: Terrain/Trees.dat -> trees/bushes/ore-rocks/mushrooms (1694 spawns, 26 types) as MultiMeshes
                 {

@@ -23,6 +23,7 @@ namespace UnturnedGodot
         public EditorEnvironment Environment;             // Phase 4 environment sub-editor (set by BuildEditor)
         public EditorTerrain TerrainEd;                   // Phase 5 terrain sub-editor (set by BuildEditor)
         public EditorRoads RoadsEd;                       // Phase 6 roads sub-editor (Environment tab, paving mode)
+        public EditorFoliage FoliageEd;                   // foliage painting sub-editor (Environment tab)
         public EditorBuildings Buildings;                 // building tool: its own mode -- draw walls, bake a prop
 
 

@@ -72,6 +72,14 @@ namespace UnturnedGodot
             return n;
         }
 
+        /// <summary>Test seam: every placed transform for a type, so a test can assert WHERE the brush put
+        /// things rather than only how many -- a correct count at the wrong height is the failure that matters.</summary>
+        public IEnumerable<Transform3D> DebugInstancesForTest(string type)
+        {
+            if (!_authoring.TryGetValue(type, out var ts)) yield break;
+            foreach (var c in ts.Cells.Values) foreach (var x in c.Xf) yield return x;
+        }
+
         public int ManualCount(string type)
         {
             if (!_authoring.TryGetValue(type, out var ts)) return 0;
