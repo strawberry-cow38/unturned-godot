@@ -167,6 +167,26 @@ namespace UnturnedGodot
             // NO dust/smoke poof on break (master 2026-08-09: "remove the smoke particle which appears on every
             // destruction"). The retail Rubble_Effect chips (or fallback debris) below carry the break read on their own.
 
+            // The prop's retail break SOUND (material-keyed, extracted alongside the VFX by tools/extract_rubble_sfx.py).
+            // Keyed on the SAME effect id as the chips and fired here -- BEFORE the VFX branch -- so it plays on both the
+            // chip path and the fallback-debris path, i.e. for any prop whose effect has a sound. 3D-positional at the
+            // break point, one-shot, self-freeing (Finished signal, plus a 5 s backstop timer in case it never fires).
+            if (RubbleSnd.TryGet(r.EffectId, out var brkSnd))
+            {
+                var ap = new AudioStreamPlayer3D
+                {
+                    Stream = brkSnd,
+                    UnitSize = Mathf.Clamp(radius * 3f, 3f, 22f),   // full volume out to ~this range, so a barn carries further than a sign
+                    MaxDb = 3f,
+                };
+                scene.AddChild(ap);
+                ap.GlobalPosition = centre;
+                ap.Finished += () => { if (GodotObject.IsInstanceValid(ap)) ap.QueueFree(); };
+                var sndTimer = tree.CreateTimer(5.0);
+                sndTimer.Timeout += () => { if (GodotObject.IsInstanceValid(ap)) ap.QueueFree(); };
+                ap.Play();
+            }
+
             // the prop's ACTUAL retail Rubble_Effect debris chips on TOP of the dust, if we extracted it
             if (RubbleFx.TryGet(r.EffectId, out var fx) && fx.Tex != null)
             {

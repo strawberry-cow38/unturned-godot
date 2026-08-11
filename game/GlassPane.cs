@@ -112,8 +112,16 @@ namespace UnturnedGodot
         static void PlayBreakSound(Node scene, Vector3 pos)
         {
             if (scene == null) return;
-            if (!_sndTried) { _sndTried = true; string p = ProjectSettings.GlobalizePath("res://content/impact_glass.wav"); if (System.IO.File.Exists(p)) _snd = AudioStreamWav.LoadFromFile(p); }
-            if (_snd == null) return;   // no glass sfx extracted yet -> shatter is silent for now (asset follow-up)
+            if (!_sndTried)
+            {
+                _sndTried = true;
+                // Prefer the retail Glass rubble clip (effect 64) -- the same extracted source every other destructible
+                // now breaks with -- so glass is consistent + source-accurate. Fall back to the older impact_glass.wav
+                // (a bullet-ping sound) only if the rubble clip wasn't extracted.
+                if (RubbleSnd.TryGet(GlassEffectId, out var rs)) _snd = rs;
+                else { string p = ProjectSettings.GlobalizePath("res://content/impact_glass.wav"); if (System.IO.File.Exists(p)) _snd = AudioStreamWav.LoadFromFile(p); }
+            }
+            if (_snd == null) return;   // no glass sfx available -> shatter is silent (asset follow-up)
             var pl = new AudioStreamPlayer3D { Stream = _snd, UnitSize = 6f, MaxDistance = 80f, VolumeDb = -2f };
             scene.AddChild(pl); pl.GlobalPosition = pos; pl.Play();
             pl.Finished += () => { if (IsInstanceValid(pl)) pl.QueueFree(); };
