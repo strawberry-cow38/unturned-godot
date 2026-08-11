@@ -57,6 +57,10 @@ void fragment() {
 	ALPHA = c.a;
 	ALPHA_SCISSOR_THRESHOLD = alpha_scissor;
 	ROUGHNESS = 1.0;
-	// Foliage normals are baked straight UP by the extraction tools, so the flat billboards light like ground rather
-	// than showing per-face directional darkness. Keeping NORMAL untouched preserves that.
+	// Foliage should light like GROUND -- flat billboards lit evenly, no per-face directional darkness. The mesh
+	// normals ARE baked straight up (vn 0,1,0), but cull_disabled FLIPS the normal to (0,-1,0) on back faces, which
+	// points at the floor and stays permanently dark at every time of day -- the "one side always dark" bug
+	// (strawberry). Leaving NORMAL untouched only preserved the up-normal on the FRONT face. So force world-up in the
+	// fragment regardless of facing (NORMAL lives in VIEW space here). Shadows are positional, so this keeps them intact.
+	NORMAL = normalize((VIEW_MATRIX * vec4(0.0, 1.0, 0.0, 0.0)).xyz);
 }
