@@ -425,7 +425,14 @@ namespace UnturnedGodot
             var lodLoadSw = System.Diagnostics.Stopwatch.StartNew(); long lodLoadTicks = 0; int lodMeshesLoaded = 0;   // isolated cost of the LOD mesh parses
             // UG_NOLOD=1 skips the table so every prop falls back to the old flat 320m -- the A/B control for
             // measuring what the retail distances actually changed, in the same binary.
-            if (System.Environment.GetEnvironmentVariable("UG_NOLOD") != "1") LodTable.Load(dir + "lods.txt");
+            if (System.Environment.GetEnvironmentVariable("UG_NOLOD") != "1")
+            {
+                LodTable.Load(dir + "lods.txt");
+                // Bands for the 245 props retail shipped with no LODGroup. Without this the generated _lod1
+                // meshes are dead files: LevelRanges keys on the GUID table, misses, and the LOD block below
+                // never runs for exactly the props the generation was FOR.
+                LodTable.LoadGenerated(dir + LodBaker.GeneratedTable);
+            }
             // holiday gate: PEI's Objects.dat has ~285 Christmas/Halloween props placed that only show in-season
             // (src: ObjectAsset.holidayRestriction + HolidayUtil schedule). Skip any whose holiday != the active one.
             var holidayOf = new System.Collections.Generic.Dictionary<string, string>();
@@ -493,7 +500,7 @@ namespace UnturnedGodot
             {
                 if (lodPlanCache.TryGetValue(guid, out var pl)) return pl;
                 pl = new System.Collections.Generic.List<(Mesh, float, float)>();
-                var rg = LodTable.LevelRanges(guid, LodTable.SourceFov);
+                var rg = LodTable.LevelRanges(guid, n, LodTable.SourceFov);
                 if (rg == null || rg.Length <= 1) pl.Add((vis, 0f, cullDist));
                 else
                 {
@@ -673,7 +680,7 @@ namespace UnturnedGodot
                 // level by extending that level's End, otherwise a prop with an unextracted LOD1 would pop out of
                 // existence at the LOD0->LOD1 distance instead of at its cull distance.
                 lodMis.Clear();
-                var ranges = mesh != null ? LodTable.LevelRanges(p[0], LodTable.SourceFov) : null;
+                var ranges = mesh != null ? LodTable.LevelRanges(p[0], name, LodTable.SourceFov) : null;
                 if (!batched && ranges != null && ranges.Length > 1)   // batched props get the same bands per (type, level, cell) group -- see LodPlanFor
                 {
                     // CROSSFADE THE HANDOVER, don't hard-cut it. LodTable builds contiguous bands
@@ -1154,6 +1161,7 @@ namespace UnturnedGodot
             GD.Print($"[medical] {monitorsPlaced} patient monitors");   // printed unconditionally: a zero here is the tell that the prop stopped being placed
             if (signals > 0) GD.Print($"[signals] {signals} traffic signals, {signalsSide} flagged side-road (flash RED); {signals - signalsSide} main-road (flash amber)");
             GD.Print($"[lod] {placed - lodMissing}/{placed} placements got a retail draw distance; {lodMissing} fell back to the flat 320m; {lodLevels} extra LOD mesh instances");
+            GD.Print($"[lod] generated-band lookups: {LodTable.GeneratedHits} hit, {LodTable.GeneratedMisses} missed (table has {LodTable.GeneratedCount})");
             GD.Print($"[lod] LOD mesh parse cost: {lodMeshesLoaded} files in {lodLoadTicks * 1000.0 / System.Diagnostics.Stopwatch.Frequency:F0} ms (the load-time price of the runtime triangle saving)");
 
             // Player spawn points: LevelSpawns.PlayerSpawns (C2 promoted the C1 local parse to a shared static

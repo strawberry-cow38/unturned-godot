@@ -52,7 +52,17 @@ namespace UnturnedGodot
         /// cull: retail streams them by REGION and only keeps 3.5 regions of 128m in each direction --
         /// `RegularObjectMaxDistance = Mathf.Min(defaultCullDistance, 447)`, and RegularTreeMaxDistance is
         /// assigned from it. So nothing placed draws past this no matter what its layer or LODGroup says.</summary>
-        public const float RegionMaxDistance = 447f;
+        public static readonly float RegionMaxDistance = RegionMaxOverride();
+
+        /// <summary>UG_REGIONMAX overrides the 447m region cap, so the cost of a longer draw distance can be
+        /// MEASURED rather than argued from face counts. Not a shipping knob: the default is retail's value and
+        /// nothing in the game writes this.</summary>
+        static float RegionMaxOverride()
+        {
+            var v = System.Environment.GetEnvironmentVariable("UG_REGIONMAX");
+            return float.TryParse(v, System.Globalization.NumberStyles.Float,
+                                  System.Globalization.CultureInfo.InvariantCulture, out float f) && f > 0f ? f : 447f;
+        }
 
         public static float LayerCull(string layer) => Mathf.Min(RegionMaxDistance, layer switch
         {
@@ -116,9 +126,72 @@ namespace UnturnedGodot
         /// Bands are contiguous and monotone, and the LAST End is the cull distance, so this is a superset of
         /// CullDistance. Null for an unknown GUID. A band with Begin == End never draws -- the layer cull
         /// already ended the prop before that level would have started -- and the caller skips it.</summary>
+        // Props retail shipped with NO LODGroup have no GUID row here, so the guid-only overload returns null
+        // and every generated LOD stays unreachable. This name-keyed fallback is what makes them draw.
+        static readonly System.Collections.Generic.Dictionary<string, Entry> _byGeneratedName = new();
+        public static int GeneratedCount => _byGeneratedName.Count;
+        public static int GeneratedHits, GeneratedMisses;
+
+        public static void LoadGenerated(string path)
+        {
+            _byGeneratedName.Clear();
+            if (!System.IO.File.Exists(path)) return;
+            foreach (var line in System.IO.File.ReadAllLines(path))
+            {
+                if (line.StartsWith("#") || line.Trim().Length == 0) continue;
+                var p = line.Split('\t');
+                if (p.Length < 4) continue;
+                if (!float.TryParse(p[2], System.Globalization.NumberStyles.Float,
+                                    System.Globalization.CultureInfo.InvariantCulture, out float size)) continue;
+                var hs = new System.Collections.Generic.List<float>();
+                foreach (var h in p[3].Split(','))
+                    if (float.TryParse(h, System.Globalization.NumberStyles.Float,
+                                       System.Globalization.CultureInfo.InvariantCulture, out float hv)) hs.Add(hv);
+                if (hs.Count == 0) continue;
+                _byGeneratedName[p[0]] = new Entry { Layer = p[1], Size = size, Heights = hs.ToArray() };
+            }
+            GD.Print($"[lod] {_byGeneratedName.Count} generated bands (props retail shipped with no LODGroup)");
+        }
+
+        /// <summary>Bands for a prop, preferring retail's authored GUID row and falling back to a generated
+        /// name row. Retail always wins where it exists -- nothing Nelson authored is overridden.</summary>
+        public static (float Begin, float End)[] LevelRanges(string guid, string name, float fovDeg)
+        {
+            var r = LevelRanges(guid, fovDeg);
+            // "Retail authored something" is not the same as "retail authored a CHAIN". 137 props have a
+            // lods.txt row declaring only a cull distance -- one level, no lower mesh -- and the first version
+            // of this returned early on `r != null`, so those never reached the generated table at all while
+            // the apply block silently rejected them for having Length <= 1. The generated LODs stayed inert
+            // for 0 hits and 0 misses: the fallback was not firing, not failing.
+            if (r != null && r.Length > 1) return r;                      // a real retail chain: untouchable
+            if (name == null || !_byGeneratedName.TryGetValue(name, out var g)) { GeneratedMisses++; return r; }
+
+            GeneratedHits++;
+            var gen = RangesFor(g, fovDeg);
+            // Retail's own cull distance WINS where it exists. We are adding a LOD split inside the distance
+            // Nelson chose, not extending how far the prop draws -- those are different decisions and only the
+            // first one was asked for.
+            if (r != null && r.Length == 1 && gen.Length > 1)
+            {
+                float retailCull = r[0].End;
+                var last = gen[gen.Length - 1];
+                if (last.End > retailCull)
+                {
+                    gen[gen.Length - 1] = (Mathf.Min(last.Begin, retailCull), retailCull);
+                    if (gen[gen.Length - 1].Begin >= retailCull) return r;   // no room for a split inside it
+                }
+            }
+            return gen;
+        }
+
         public static (float Begin, float End)[] LevelRanges(string guid, float fovDeg)
         {
             if (!_byGuid.TryGetValue(guid.ToLowerInvariant(), out var e)) return null;
+            return RangesFor(e, fovDeg);
+        }
+
+        static (float Begin, float End)[] RangesFor(Entry e, float fovDeg)
+        {
             float layer = LayerCull(e.Layer);
             if (e.Heights == null || e.Heights.Length == 0 || e.Size <= 0f)
                 return new[] { (0f, layer) };

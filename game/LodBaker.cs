@@ -29,21 +29,54 @@ namespace UnturnedGodot
         const float NormalMergeAngle = 60f;
         const float NormalSplitAngle = 25f;
 
+        public const string GeneratedTable = "lods_generated.txt";
+
+        /// <summary>Screen heights for the generated bands: the MEDIAN of what retail authored across its own
+        /// 201 two-level props (h0 0.20294, h1 0.02813). Nelson's thresholds are near-uniform, so the median is
+        /// a real central value rather than a number I picked -- and it puts a 17m building's LOD1 switch at
+        /// ~73m and its cull at ~523m, which the 447m region cap then bites.</summary>
+        const float H0 = 0.20294f, H1 = 0.02813f;
+
+        /// <summary>Layer by size. SMALL and MEDIUM overlap heavily in retail's own table (both median ~2-3m),
+        /// so this cannot be exact; LARGE is the separable one (min 5.09, p25 12). It matters less than it
+        /// looks: for most props the per-height cull binds before the layer cap does.</summary>
+        static string LayerFor(float size) => size >= 12f ? "LARGE" : size >= 4f ? "MEDIUM" : "SMALL";
+
         public static void BakeAll(string dir, bool dryRun)
         {
             if (!Directory.Exists(dir)) { GD.PrintErr($"[bakelods] no such dir {dir}"); return; }
+            // WHICH PROPS ARE OURS TO TOUCH. The criterion is "retail authored a LODGroup for it", read from
+            // lods.txt -- NOT "a _lod1.obj exists on disk". Those differ the moment this tool has run once: the
+            // file-existence test skipped all 281 props it had just written, produced an empty band table, and
+            // reported success. Idempotence has to be judged against the SOURCE of truth, not against our own
+            // previous output.
+            var retailAuthored = new HashSet<string>();
+            string lodsTxt = Path.Combine(dir, "lods.txt");
+            if (File.Exists(lodsTxt))
+                foreach (var line in File.ReadAllLines(lodsTxt))
+                {
+                    if (line.StartsWith("#") || line.Trim().Length == 0) continue;
+                    var c = line.Split((char[])null, System.StringSplitOptions.RemoveEmptyEntries);
+                    if (c.Length < 5) continue;
+                    int levels = 0;
+                    foreach (var h in c[4].Split(',')) if (h.Trim().Length > 0 && h.Trim() != "-") levels++;
+                    if (levels > 1) retailAuthored.Add(c[1]);
+                }
+            GD.Print($"[bakelods] retail authored a lower LOD for {retailAuthored.Count} props -- leaving those alone");
+
             var bases = new List<string>();
             foreach (var p in Directory.GetFiles(dir, "*.obj"))
             {
                 string n = Path.GetFileNameWithoutExtension(p);
-                if (n.Contains("_lod")) continue;                          // already a LOD level
-                if (File.Exists(Path.Combine(dir, n + "_lod1.obj"))) continue;   // retail authored one; leave it alone
+                if (n.Contains("_lod")) continue;              // already a LOD level
+                if (retailAuthored.Contains(n)) continue;      // Nelson's -- never overwrite
                 bases.Add(n);
             }
             bases.Sort();
             GD.Print($"[bakelods] {bases.Count} props with no LOD chain{(dryRun ? " (DRY RUN)" : "")}");
 
             int made = 0, skipped = 0, totalBefore = 0, totalAfter = 0;
+            var table = new List<string>();
             foreach (var name in bases)
             {
                 var src = ObjMesh.Load(Path.Combine(dir, name + ".obj"));
@@ -84,6 +117,24 @@ namespace UnturnedGodot
                 made++;
                 GD.Print($"[bakelods] {name,-26} {beforeTris,6} -> {afterTris,6} tris  ({100f * (1f - (float)afterTris / beforeTris):0}% off, {levels} levels offered)");
                 if (!dryRun) WriteObj(Path.Combine(dir, name + "_lod1.obj"), arrays, lodIdx);
+                var ab = src.GetAabb();
+                float size = Mathf.Max(ab.Size.X, Mathf.Max(ab.Size.Y, ab.Size.Z));
+                table.Add($"{name}\t{LayerFor(size)}\t{size.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)}\t{H0.ToString("0.#####", System.Globalization.CultureInfo.InvariantCulture)},{H1.ToString("0.#####", System.Globalization.CultureInfo.InvariantCulture)}");
+            }
+            if (!dryRun && table.Count > 0)
+            {
+                // THE MESHES ALONE ARE INERT. LevelRanges keys on the retail lods.txt GUID table, and these props
+                // are precisely the ones absent from it -- so it returns null, WorldBuilder's `ranges != null &&
+                // ranges.Length > 1` gate never opens, and the generated files are never loaded by anything. I
+                // shipped a commit claiming "the loader picks them up because the files exist"; it does not.
+                // This companion table is what makes them reachable, keyed by NAME since they have no GUID entry.
+                table.Sort();
+                File.WriteAllText(Path.Combine(dir, GeneratedTable),
+                    "# name<TAB>layer<TAB>size<TAB>h0,h1 -- bands for props retail shipped with no LODGroup.\n"
+                  + "# h0/h1 are the MEDIAN authored screen heights across the 201 props retail DID author\n"
+                  + $"# ({H0} / {H1}); using retail's own central values rather than numbers of my choosing.\n"
+                  + string.Join("\n", table) + "\n");
+                GD.Print($"[bakelods] wrote {GeneratedTable} with {table.Count} bands");
             }
             GD.Print($"[bakelods] wrote {made}, skipped {skipped}; {totalBefore} -> {totalAfter} tris "
                    + $"({(totalBefore > 0 ? 100f * (1f - (float)totalAfter / totalBefore) : 0f):0}% off across the set)");
