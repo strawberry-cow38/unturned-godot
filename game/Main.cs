@@ -97,7 +97,7 @@ namespace UnturnedGodot
             bool containerTest = false; string containerTestName = null;
             bool wallDemo = false;
             bool clockTest = false;
-            bool play = false, demo = false, netdemo = false, server = false, dedicated = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, lightTest = false, trafficTest = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, objects = false, peidrive = false, craftui = false, bakenav = false, navPathTest = false, zombieTest = false, zdirTest = false, editorMode = false, impactTest = false, doorGallery = false, lampTest = false, beamTest = false, impTest = false;
+            bool play = false, demo = false, netdemo = false, server = false, dedicated = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, lightTest = false, trafficTest = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, objects = false, peidrive = false, craftui = false, bakenav = false, navPathTest = false, zombieTest = false, zdirTest = false, editorMode = false, impactTest = false, doorGallery = false, lampTest = false, beamTest = false, impTest = false, treeSweep = false;
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
                 if (arg.StartsWith("--catalog=")) catalog = arg["--catalog=".Length..];
@@ -193,6 +193,7 @@ namespace UnturnedGodot
                 else if (arg == "--invcrate") invcrate = true;
                 else if (arg == "--daynight") daynight = true;
                 else if (arg == "--lighttest") lightTest = true;   // one lit streetlight at night: cone + motes eyeball (UG_LIGHTCAM=under looks up from inside)
+                else if (arg == "--treesweep") treeSweep = true;   // step the camera ACROSS the tree->imposter handover and count tree pixels at each distance
                 else if (arg == "--imptest") impTest = true;   // bake the tree billboards and DUMP them side by side -- the only check that answers "does it look like a tree"
                 else if (arg == "--lamptest") lampTest = true;   // one lit INDOOR light over dark ground: UG_LAMP=Light_0(ceiling,default)/Light_1/Lamp_0/Lamp_1, UG_LAMPOFF=1 unlit
                 else if (arg == "--beamtest") beamTest = true;   // the lighthouse's sweeping beam at night (static frame)
@@ -452,6 +453,13 @@ namespace UnturnedGodot
                 _shotPath = shot;
                 GetWindow().Size = new Vector2I(1280, 720);
                 BuildStreetLightDemo();
+                return;
+            }
+
+            if (treeSweep)   // walk the handover band and prove a tree is never absent at any distance in it
+            {
+                GetWindow().Size = new Vector2I(640, 360);
+                _ = BuildTreeSweep();
                 return;
             }
 
@@ -4435,6 +4443,110 @@ namespace UnturnedGodot
         // room; UG_LAMPOFF=1 renders it unlit in daylight. Exists because master's ceiling light "never worked": the
         // real ceiling light Light_0 was never wired to a LampLight (fixed in WorldBuilder), and the only proof it
         // works now is seeing it lit.
+        // --treesweep : step a camera across the tree -> billboard handover and COUNT tree pixels at each distance.
+        //
+        // I shipped the overlap fix on reasoning alone -- shared edge, jitter, hole -- after that same reasoning
+        // produced the bug in the first place, and the regression test I wrote only checks the arithmetic of the
+        // two ranges. Nothing had ever confirmed a tree stays on screen while you cross the band. This does: a
+        // solid-colour sky with nothing in the world but trees, so every non-sky pixel IS tree, sampled every few
+        // metres from inside the real mesh's range to well past where it ends.
+        //
+        // The control is the whole point. UG_TREEIMPOVERLAP=1 restores the exact shipped bug, and if the sweep
+        // cannot make THAT show a hole then the sweep proves nothing about the fix either.
+        //
+        // IT CANNOT, AND THAT IS THE STANDING RESULT. Three versions of this -- dense clump at 5 m steps, isolated
+        // tree at 1 m, isolated tree 280-520 m at 2 m -- and the buggy config produced a pixel series BYTE-
+        // IDENTICAL to the fixed one (md5-equal over 121 distances, with the bake confirmed at 1124 billboards).
+        // Two reasons, both worth keeping written down:
+        //
+        //   1. The cull is per 64 m CELL, measured against a cell-sized AABB, so real trees survive far past their
+        //      nominal range. Across the whole band where the two configs differ (295-335 m) the real mesh is
+        //      still drawn in BOTH, hiding the difference behind itself.
+        //   2. The reported symptom is DYNAMIC -- flicker while moving. A camera parked at each distance samples
+        //      stable states, and a hole that exists for the single frame where two nodes disagree cannot be
+        //      found by standing still.
+        //
+        // So this harness measures continuity of the far field, which is worth having, but it is NOT evidence
+        // that the overlap fix cured the flicker. That claim remains unverified by anything but reasoning.
+        // Catching it needs a camera in MOTION across the band, sampling every frame, not a stepped sweep.
+        async System.Threading.Tasks.Task BuildTreeSweep()
+        {
+            var sky = new Color(0.25f, 0.45f, 0.75f);
+            AddChild(new WorldEnvironment { Environment = new Godot.Environment {
+                BackgroundMode = Godot.Environment.BGMode.Color, BackgroundColor = sky,
+                AmbientLightSource = Godot.Environment.AmbientSource.Color,
+                AmbientLightColor = new Color(0.7f, 0.7f, 0.7f), AmbientLightEnergy = 1f } });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-50f, 35f, 0f), LightEnergy = 1.1f });
+
+            var field = new ResourceField();
+            AddChild(field);
+            field.LoadResources("NONE");
+            await field.BuildTreeImpostorsAsync();
+            foreach (var (name, realEnd, impBegin, impEnd) in field.DebugImpostorRangesForTest())
+                GD.Print($"[sweep] {name}: imposter on {impBegin:0.#}m, real off {realEnd:0.#}m, out to {impEnd:0}m");
+
+            // ISOLATION IS THE WHOLE MEASUREMENT. The first version of this aimed at the DENSEST clump, on the
+            // reasoning that more trees is a stronger signal. It is the opposite: total non-sky pixels summed over
+            // five trees spread across several 64m cells can never reach zero, because each cell hands over at a
+            // different camera distance and the survivors mask the one that vanished. The control proved it --
+            // overlap=1.0, the exact shipped bug, produced a curve indistinguishable from the fix. So: the most
+            // ISOLATED tree, and pixels are then a proxy for that single tree being drawn at all.
+            int best = -1, bestN = int.MaxValue;
+            for (int i = 0; i < field.InstanceCount; i++)
+            {
+                if (field.DebugTrunk(i) == null) continue;   // not a tree
+                var p = field.DebugInstanceXf(i).Origin;
+                int n = 0;
+                for (int j = 0; j < field.InstanceCount; j++)
+                    if (j != i && field.DebugTrunk(j) != null && field.DebugInstanceXf(j).Origin.DistanceSquaredTo(p) < 14400f) n++;
+                if (n < bestN) { bestN = n; best = i; }
+            }
+            if (best < 0) { GD.PrintErr("[sweep] no trees found"); return; }
+            var target = field.DebugInstanceXf(best).Origin;
+            GD.Print($"[sweep] target instance {best} at {target}, {bestN} tree neighbours within 120m (isolated)");
+
+            var cam = new Camera3D { Current = true, Fov = 50f };
+            AddChild(cam);
+
+            var rows = new System.Collections.Generic.List<(float D, int Px)>();
+            // Fine steps by default: a shared edge fails over a band narrower than the 5 m the first version used,
+            // so a coarse sweep steps straight over the hole and reports health.
+            float from = EnvOr("UG_SWEEP_FROM", 300f), to = EnvOr("UG_SWEEP_TO", 370f), step = EnvOr("UG_SWEEP_STEP", 1f);
+            for (float d = from; d <= to; d += step)
+            {
+                cam.GlobalPosition = target + new Vector3(0f, 12f, d);
+                cam.LookAt(target + new Vector3(0f, 10f, 0f), Vector3.Up);
+                await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+                await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+                var img = GetViewport().GetTexture()?.GetImage();
+                int px = 0;
+                if (img != null)
+                    for (int y = 0; y < img.GetHeight(); y += 2)
+                        for (int x = 0; x < img.GetWidth(); x += 2)
+                        {
+                            var c = img.GetPixel(x, y);
+                            // Anything that is not the flat sky is geometry. Generous threshold so a dim distant
+                            // billboard still counts -- undercounting would invent a hole that isn't there.
+                            if (Mathf.Abs(c.R - sky.R) + Mathf.Abs(c.G - sky.G) + Mathf.Abs(c.B - sky.B) > 0.06f) px++;
+                        }
+                rows.Add((d, px));
+            }
+            GD.Print($"[sweep] overlap={ResourceField.ImpostorOverlap:0.###}");
+            int zeros = 0, minPx = int.MaxValue;
+            foreach (var (d, px) in rows)
+            {
+                if (px == 0) zeros++;
+                minPx = Mathf.Min(minPx, px);
+                GD.Print($"[sweep] {d,5:0}m  {px,7} tree px");
+            }
+            GD.Print($"[sweep] RESULT distances={rows.Count} empty={zeros} min={minPx}");
+            GetTree().Quit();
+        }
+
+        static float EnvOr(string n, float dflt)
+            => float.TryParse(System.Environment.GetEnvironmentVariable(n), System.Globalization.NumberStyles.Float,
+                              System.Globalization.CultureInfo.InvariantCulture, out float v) && v > 0f ? v : dflt;
+
         // --imptest --shot=OUT : bake the tree impostors and stand each billboard up in a row next to the REAL
         // tree it was baked from, so the two can be compared at a glance.
         //
