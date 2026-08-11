@@ -484,6 +484,11 @@ namespace UnturnedGodot
             // node path uses, where a level whose .obj was never extracted hands its band back to the level
             // before it rather than letting the prop pop out of existence early.
             var lodPlanCache = new System.Collections.Generic.Dictionary<string, System.Collections.Generic.List<(Mesh Mesh, float Begin, float End)>>();
+            // How wide the LOD crossfade is, in metres. 2m removed the pop in the probe; capped at a quarter of
+            // the band so a short band cannot fade over more distance than it occupies, and floored so a very
+            // short band still gets some blend rather than silently reverting to a hard cut.
+            static float LodFadeMargin(float band) => Mathf.Clamp(Mathf.Min(2f, band * 0.25f), 0.25f, 2f);
+
             System.Collections.Generic.List<(Mesh Mesh, float Begin, float End)> LodPlanFor(string guid, string n, Mesh vis, float cullDist)
             {
                 if (lodPlanCache.TryGetValue(guid, out var pl)) return pl;
@@ -671,7 +676,22 @@ namespace UnturnedGodot
                 var ranges = mesh != null ? LodTable.LevelRanges(p[0], LodTable.SourceFov) : null;
                 if (!batched && ranges != null && ranges.Length > 1)   // batched props get the same bands per (type, level, cell) group -- see LodPlanFor
                 {
+                    // CROSSFADE THE HANDOVER, don't hard-cut it. LodTable builds contiguous bands
+                    // (`r[i] = (prev, d); prev = d;`) so every level ends exactly where the next begins, and with
+                    // FadeMode.Disabled the swap is a single visible discontinuity. Walk back and forth across
+                    // that distance and the prop pops on every crossing -- strawberry, on the gas pumps: "i'm
+                    // noticing the gas pumps flicker as lods switch ... just walking in an out of LOD distance".
+                    //
+                    // Measured on the pump's real numbers (LOD0 104 verts vs LOD1 40, 2.5% smaller, 7cm centre
+                    // offset), camera swept across the boundary in 1cm steps, counting drawn pixels:
+                    //     hard cut:            max frame-to-frame jump 42 px, AT the boundary, 1 jump over 20px
+                    //     Self fade, 2m:       max jump 18 px, not at the boundary, 0 jumps over 20px
+                    // NOT a dropped frame -- empty frames were 0 either way. The first theory was a GAP from the
+                    // two LODs' differing AABBs; the control refused to reproduce it, so that theory is dead and
+                    // this is the pop itself, nothing more.
                     mainMi.VisibilityRangeEnd = ranges[0].End;
+                    mainMi.VisibilityRangeEndMargin = LodFadeMargin(ranges[0].End - 0f);
+                    mainMi.VisibilityRangeFadeMode = GeometryInstance3D.VisibilityRangeFadeModeEnum.Self;
                     // The lens belongs to LOD0 -- the coarser levels keep the bulb in their body mesh, unsplit -- so it
                     // has to retire on LOD0's band, not the prop's full cull distance, or a lit box hangs in the air
                     // after the detailed mesh it was cut from has already swapped out.
@@ -697,8 +717,11 @@ namespace UnturnedGodot
                             cache[lodKey] = lmesh;
                         }
                         if (lmesh == null) { last.VisibilityRangeEnd = e2; continue; }   // absorb the band into the level before it
+                        float fm = LodFadeMargin(e2 - b);
                         var lmi = new MeshInstance3D { Mesh = lmesh, MaterialOverride = MatFor(matName), Transform = new Transform3D(basis, gpos),
-                            VisibilityRangeBegin = b, VisibilityRangeEnd = e2, VisibilityRangeFadeMode = GeometryInstance3D.VisibilityRangeFadeModeEnum.Disabled };
+                            VisibilityRangeBegin = b, VisibilityRangeEnd = e2,
+                            VisibilityRangeBeginMargin = fm, VisibilityRangeEndMargin = fm,
+                            VisibilityRangeFadeMode = GeometryInstance3D.VisibilityRangeFadeModeEnum.Self };
                         root.AddChild(lmi);
                         lodMis.Add(lmi);
                         last = lmi;
