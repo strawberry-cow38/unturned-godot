@@ -137,7 +137,7 @@ namespace UnturnedGodot
             // or -- for a BATCHED prop, which has no node -- the bounds/transform/material recorded at
             // registration, with its collider standing in as the tree anchor. Everything downstream works off
             // the four locals below, so the two representations diverge here and nowhere else.
-            Aabb aabb; Transform3D xf; StandardMaterial3D propMat; Node anchor;
+            Aabb aabb; Transform3D xf; StandardMaterial3D propMat; Node anchor; Mesh dropMesh;
             if (r.Meshes != null && r.Meshes.Length > 0 && r.Meshes[0] != null && GodotObject.IsInstanceValid(r.Meshes[0]))
             {
                 var mesh = r.Meshes[0];
@@ -145,10 +145,12 @@ namespace UnturnedGodot
                 xf = mesh.GlobalTransform;
                 propMat = mesh.MaterialOverride as StandardMaterial3D;
                 anchor = mesh;
+                dropMesh = mesh.Mesh;   // the actual prop model, cloned as the falling physics body
             }
             else if (r.Slots != null && r.Body != null && GodotObject.IsInstanceValid(r.Body))
             {
                 aabb = r.BatchAabb; xf = r.BatchXf; propMat = r.BatchMat; anchor = r.Body;
+                dropMesh = (r.Slots.Length > 0 && r.Slots[0] != null) ? r.Slots[0].Mm?.Mesh : null;   // batched: the MultiMesh's shared prop mesh
             }
             else return;
             var tree = anchor.GetTree();
@@ -187,12 +189,13 @@ namespace UnturnedGodot
                 ap.Play();
             }
 
-            // Retail-faithful PHYSICS DEBRIS (the "dropped physics prop" on destroy): the broken prop drops tumbling
-            // physics chunks that fall + settle. Retail (InteractableObjectRubble.updateRubble) spawns each dead
-            // section's authored Ragdoll pieces as Rigidbodies launched with force + drag, despawned after 8s; we have
-            // no per-prop ragdoll meshes so the chunks wear the prop's own material. Fired here -- like the SFX, BEFORE
-            // the chip/fallback branch -- so it happens on every break regardless of which VFX path runs.
-            SpawnRubblePhysics(scene, tree, centre, halfExt, radius, propMat);
+            // Retail-faithful "dropped physics prop": the broken prop drops a physics CLONE OF ITS OWN MODEL that
+            // topples + falls + settles (master: "single clones of the models that fall", 2026-08-11). Retail
+            // (InteractableObjectRubble.updateRubble) instantiates each section's authored Ragdoll mesh as a Rigidbody
+            // with force + drag, despawned after 8s; we have no authored ragdoll meshes, so we clone the prop's own
+            // model (the mesh we already hold at break time). Fired here -- like the SFX, BEFORE the chip/fallback
+            // branch -- so it drops on every break regardless of which VFX path runs.
+            SpawnModelDrop(scene, tree, xf, aabb, dropMesh, propMat);
 
             // the prop's ACTUAL retail Rubble_Effect debris chips on TOP of the dust, if we extracted it
             if (RubbleFx.TryGet(r.EffectId, out var fx) && fx.Tex != null)
@@ -259,55 +262,51 @@ namespace UnturnedGodot
             t.Timeout += () => { if (GodotObject.IsInstanceValid(debris)) debris.QueueFree(); };
         }
 
-        // ---- retail-faithful PHYSICS DEBRIS: the "dropped physics prop" a destructible drops on destroy ----
-        // Retail InteractableObjectRubble.updateRubble spawns each dead section's authored Ragdoll pieces as
-        // Rigidbodies: AddForce(up +8, random +-16 sideways, then x2), drag 0.5 / angularDrag 0.1, gravity on, then
-        // Destroy after 8s -- globally capped (EffectManager.RegisterDebris) + gated on the debris gfx setting. We have
-        // no per-prop ragdoll meshes, so the chunks wear the prop's OWN material; the launch STRUCTURE (up bias +
-        // symmetric horizontal random, x2) is retail's, the magnitude authored to read right in Godot units (raw Unity
-        // force numbers don't transfer -- ForceMode/mass/scale differ). Capped so break-spam can't pile bodies up.
+        // ---- retail-faithful "dropped physics prop": clone the destroyed prop's own MODEL as a falling Rigidbody ----
+        // Retail InteractableObjectRubble.updateRubble instantiates each dead section's authored Ragdoll mesh, adds a
+        // Rigidbody (AddForce, drag 0.5 / angularDrag 0.1, gravity), globally caps it (RegisterDebris) + Destroy after
+        // 8s. We never extracted per-prop ragdoll meshes -- but the prop's OWN model mesh is in hand at break time, and
+        // master wants "single clones of the models that fall", so we clone THAT: one Rigidbody wearing the real mesh
+        // (shared resource, no duplication) + a box collider round its AABB, dislodged with a gentle topple so it falls
+        // + settles. Capped so break-spam can't pile up bodies; 8s despawn (persistent settle = drop the timer).
         static readonly List<RigidBody3D> _debris = new List<RigidBody3D>();
         const int DebrisCap = 48;
 
-        static void SpawnRubblePhysics(Node scene, SceneTree tree, Vector3 centre, Vector3 halfExt, float radius, StandardMaterial3D propMat)
+        static void SpawnModelDrop(Node scene, SceneTree tree, Transform3D xf, Aabb localAabb, Mesh dropMesh, StandardMaterial3D propMat)
         {
-            if (scene == null || tree == null) return;
-            int n = Mathf.Clamp(Mathf.RoundToInt(radius * 2.5f), 3, 8);   // more chunks for bigger props (retail scales piece count by authoring)
-            Material mat = propMat ?? new StandardMaterial3D { AlbedoColor = new Color(0.55f, 0.5f, 0.44f) };
-            float cs = Mathf.Clamp(radius * 0.18f, 0.12f, 0.6f);          // chunk edge length
-            var chunkMesh = new BoxMesh { Size = Vector3.One * cs, Material = mat };   // shared resources across this break's chunks
-            var chunkShape = new BoxShape3D { Size = Vector3.One * cs };
-            for (int i = 0; i < n; i++)
+            if (scene == null || tree == null || dropMesh == null) return;   // no readable mesh (rare batched case) -> skip the drop; VFX + SFX still play
+            _debris.RemoveAll(d => !GodotObject.IsInstanceValid(d));
+            while (_debris.Count >= DebrisCap)                               // cap: cull the oldest live drop when over budget
             {
-                _debris.RemoveAll(d => !GodotObject.IsInstanceValid(d));
-                while (_debris.Count >= DebrisCap)                        // cap: cull the oldest live chunk when over budget
-                {
-                    var oldest = _debris[0]; _debris.RemoveAt(0);
-                    if (GodotObject.IsInstanceValid(oldest)) oldest.QueueFree();
-                }
-                var body = new RigidBody3D
-                {
-                    Mass = 1f, GravityScale = 1f, LinearDamp = 0.5f, AngularDamp = 0.1f,   // retail drag 0.5 / angularDrag 0.1
-                    // layer 0 so nothing QUERIES the debris (bullet/interaction raycasts pass through it); mask world +
-                    // props so it still lands + settles on terrain/buildings. Chunks share layer 0 so they don't collide
-                    // with each other -- avoids jitter, and any overlap is unnoticeable on short-lived debris.
-                    CollisionLayer = 0u, CollisionMask = (1u << 0) | (1u << 6),
-                };
-                body.AddChild(new MeshInstance3D { Mesh = chunkMesh });
-                body.AddChild(new CollisionShape3D { Shape = chunkShape });   // CollisionShape3D must be a direct child of the body
-                scene.AddChild(body);
-                body.GlobalPosition = centre + new Vector3(
-                    (float)GD.RandRange(-halfExt.X, halfExt.X),
-                    (float)GD.RandRange(-halfExt.Y * 0.3f, halfExt.Y),
-                    (float)GD.RandRange(-halfExt.Z, halfExt.Z));
-                body.ResetPhysicsInterpolation();   // brand-new body: don't interpolate from world origin on frame 1 (streak guard, cf. WorldItem)
-                // launch: retail's structure (upward bias + symmetric horizontal random) x2, tuned to Godot units
-                body.LinearVelocity = new Vector3((float)GD.RandRange(-3.0, 3.0), 2.5f + (float)GD.RandRange(0.0, 2.0), (float)GD.RandRange(-3.0, 3.0)) * 2f;
-                body.AngularVelocity = new Vector3((float)GD.RandRange(-6.0, 6.0), (float)GD.RandRange(-6.0, 6.0), (float)GD.RandRange(-6.0, 6.0));
-                _debris.Add(body);
-                var life = tree.CreateTimer(8.0);   // retail Destroy(obj, 8f). Persist/settle instead = drop this timer (master's call)
-                life.Timeout += () => { if (GodotObject.IsInstanceValid(body)) body.QueueFree(); };
+                var oldest = _debris[0]; _debris.RemoveAt(0);
+                if (GodotObject.IsInstanceValid(oldest)) oldest.QueueFree();
             }
+            Vector3 scale = xf.Basis.Scale;
+            Basis rot = xf.Basis.Orthonormalized();   // rotation WITHOUT scale -> an unscaled body (Godot dislikes scaled rigidbodies); scale is baked into the children instead
+            var body = new RigidBody3D
+            {
+                Mass = 1f, GravityScale = 1f, LinearDamp = 0.5f, AngularDamp = 0.1f,   // retail drag 0.5 / angularDrag 0.1
+                // layer 0 so nothing QUERIES the drop (bullet/interaction raycasts pass through it); mask world + props
+                // so it still lands + settles on terrain/buildings, without being shot or shoving the player.
+                CollisionLayer = 0u, CollisionMask = (1u << 0) | (1u << 6),
+            };
+            // the ACTUAL prop model, scaled to how it stood (shared Mesh resource -> no per-drop duplication)
+            body.AddChild(new MeshInstance3D { Mesh = dropMesh, MaterialOverride = propMat, Scale = scale });
+            // box collider around the mesh's own AABB (cheap + robust for "falls + settles"), offset to the AABB centre
+            body.AddChild(new CollisionShape3D
+            {
+                Shape = new BoxShape3D { Size = localAabb.Size * scale },
+                Position = (localAabb.Position + localAabb.Size * 0.5f) * scale,
+            });
+            scene.AddChild(body);
+            body.GlobalTransform = new Transform3D(rot, xf.Origin);   // start exactly where the prop stood
+            body.ResetPhysicsInterpolation();                        // brand-new body: don't interpolate from world origin on frame 1 (streak guard, cf. WorldItem)
+            // a gentle dislodge -> it topples, falls + settles ("fall to the ground", not a launch). tune here.
+            body.LinearVelocity = new Vector3((float)GD.RandRange(-1.5, 1.5), 0.6f + (float)GD.RandRange(0.0, 1.2), (float)GD.RandRange(-1.5, 1.5));
+            body.AngularVelocity = new Vector3((float)GD.RandRange(-2.5, 2.5), (float)GD.RandRange(-2.0, 2.0), (float)GD.RandRange(-2.5, 2.5));
+            _debris.Add(body);
+            var life = tree.CreateTimer(8.0);   // retail Destroy(obj, 8f). master OK'd 8s (2026-08-11); persistent settle = drop this timer
+            life.Timeout += () => { if (GodotObject.IsInstanceValid(body)) body.QueueFree(); };
         }
 
         // SpawnDust REMOVED 2026-08-09 (master: "remove the smoke particle which appears on every destruction").
