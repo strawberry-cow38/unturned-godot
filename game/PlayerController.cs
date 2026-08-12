@@ -3973,10 +3973,14 @@ namespace UnturnedGodot
                 if (IsInstanceValid(_fHeldDoor) && _doorLockTimer < DeployPickupTime) RequestToggleDoor(_fHeldDoor);
                 _fHeldDoor = null; _doorLockTimer = 0f;
             }
-            else if (@event is InputEventKey { Pressed: true, Keycode: Key.B } && HoldingLight)
-                ToggleHeldLight();    // B is the source TACTICAL key -- a held flashlight claims it before build mode (see ToggleHeldLight)
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.B })
-                _build?.Toggle();     // toggle build mode
+                ToggleHeldLight();    // B is the source TACTICAL key: the held flashlight. Self-guards on actually holding one.
+            // BUILD MODE HAS NO KEY (strawberry 2026-08-12: "remove build mode toggle for now. just the hotkey").
+            // B used to toggle it and now belongs to the torch, which is the source binding. BuildTool itself is
+            // untouched and intact -- Toggle/CycleType/Place/Spawn all still work -- but nothing calls Toggle(),
+            // so `Active` can never become true and the tool is UNREACHABLE in game, not merely unbound. Say that
+            // plainly rather than leaving a dead C-cycles-structure branch reading like a live feature.
+            // Restoring it is one line here, on whichever key it should have.
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.C })
                 _build?.CycleType();  // cycle the structure type (floor/wall)
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.G })
