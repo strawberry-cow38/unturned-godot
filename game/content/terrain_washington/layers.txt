@@ -1,0 +1,8 @@
+Dirt
+Farm Corn
+Grass
+Gravel
+Road
+Gravel Shore
+Grass 01
+Stone

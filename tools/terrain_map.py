@@ -39,11 +39,25 @@ for ap in glob.glob(MATROOT + r"\**\*.asset", recursive=True):
 # 3) extract each layer's albedo
 env = UnityPy.load(BUND)
 cont = {p.lower(): o for p, o in env.container.items()}
+# "Washington_Grass_01_Material" -> "Grass 01"; "Russia_Road_00_Material" -> "Road". The editor paint UI shows
+# THESE per map (EditorTerrain reads layers.txt), so Washington's 2nd grass reads "Grass 01" instead of PEI's
+# hardcoded "Snow", its Farm_Corn reads "Corn" not "Wheat", etc. -- the labels match the ACTUAL materials.
+def simplify(matname):
+    s = re.sub(r"_Material$", "", matname or "")
+    s = re.sub(r"^(PEI|Washington|Yukon|Russia|Germany|Greece|France|Canada|Belgium)_", "", s, flags=re.I)
+    m = re.match(r"(.+?)_0*(\d+)$", s)
+    if m:
+        base = m.group(1).replace("_", " "); num = int(m.group(2))
+        return base if num == 0 else f"{base} {num:02d}"
+    return s.replace("_", " ")
+
+labels = [f"Layer {l}" for l in range(len(guids))]
 for l, g in enumerate(guids):
     hit = guid_tex.get(g.lower())
     if not hit:
         print(f"  layer{l} {g}: UNRESOLVED (no LandscapeMaterialAsset)"); continue
     texpath, matname = hit
+    labels[l] = simplify(matname)
     k = texpath.replace("\\", "/").lower()
     o = cont.get("assets/coremasterbundle/" + k) or next((v for kk, v in cont.items() if kk.endswith(k) and v.type.name == "Texture2D"), None)
     if o and o.type.name == "Texture2D":
@@ -51,4 +65,7 @@ for l, g in enumerate(guids):
         print(f"  layer{l} {g} -> {matname}  ({texpath})")
     else:
         print(f"  layer{l} {g} -> {matname}: TEXTURE NOT FOUND ({texpath})")
+# map-aware paint labels for the editor (EditorTerrain reads content/<dir>/layers.txt; falls back to PEI names if absent)
+open(os.path.join(OUT, "layers.txt"), "w").write("\n".join(labels) + "\n")
+print("layers:", labels)
 print("DONE ->", OUT)

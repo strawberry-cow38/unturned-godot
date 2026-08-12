@@ -1,0 +1,8 @@
+Dirt 01
+Farm Wheat
+Grass
+Gravel
+Road
+Sand 01
+Snow
+Stone 01

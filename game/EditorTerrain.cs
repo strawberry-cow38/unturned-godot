@@ -21,7 +21,23 @@ namespace UnturnedGodot
         bool _paint;   // false = height sculpt, true = Materials splat-paint
         int _layer;    // 0-7 splat layer to paint
         Vector3 _rampBegin; bool _rampArmed;   // RAMP: first click sets begin, second applies
-        static readonly string[] LayerNames = { "Dirt", "Wheat", "Grass", "Gravel", "Road", "Sand", "Snow", "Stone" };
+        // PEI's layer semantics -- the FALLBACK. Per map the real labels come from content/<Terrain.MapDir>/layers.txt
+        // (tools/terrain_map.py writes it from the actual materials), so e.g. Washington's layer6 reads "Grass 01" (a
+        // second grass) instead of PEI's hardcoded "Snow", its layer1 "Corn" not "Wheat", layer5 "Gravel Shore" not "Sand".
+        static readonly string[] DefaultLayerNames = { "Dirt", "Wheat", "Grass", "Gravel", "Road", "Sand", "Snow", "Stone" };
+        string[] LayerNames = DefaultLayerNames;
+
+        static string[] LoadLayerNames()
+        {
+            string p = ProjectSettings.GlobalizePath($"res://content/{Terrain.MapDir}/layers.txt");
+            if (System.IO.File.Exists(p))
+            {
+                var names = new System.Collections.Generic.List<string>();
+                foreach (var ln in System.IO.File.ReadAllLines(p)) { var t = ln.Trim(); if (t.Length > 0) names.Add(t); }
+                if (names.Count > 0) return names.ToArray();
+            }
+            return DefaultLayerNames;
+        }
         public static readonly string[] BrushNames = { "Raise", "Lower", "Flatten", "Smooth", "Ramp" };
 
         // --- accessors for the EditorTerrainPanel buttons/sliders ---
@@ -52,6 +68,7 @@ namespace UnturnedGodot
         public EditorTerrain(Editor editor, Camera3D cam, Terrain terr)
         {
             _editor = editor; _cam = cam; _flyCam = cam as EditorCamera; _terr = terr;
+            LayerNames = LoadLayerNames();   // map-aware paint labels -- Washington's layers differ from PEI's
             if (_terr != null && _terr.LoadHeightmap(SavePath)) GD.Print("[editor-terrain] loaded saved sculpt");
             _ring = new Node3D { Visible = false };
             _ring.AddChild(new MeshInstance3D { Mesh = new TorusMesh { InnerRadius = 0.93f, OuterRadius = 1f }, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(1f, 0.9f, 0.2f), ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, NoDepthTest = true } });
