@@ -32,6 +32,9 @@ GUID2NAME = {
  "4def378848484654ac8ac97560d59fd2":"Clay_0","40ce1b8f427d4188930df302423f6d1d":"Clay_2",
  "58ff3047e8ec4ccbbc2352faf529acef":"Clay_4","74192f26950545d8aabc0e84a2372f9e":"Clay_3",
  "f0707c1712804e6fbe1a7d925cb33ca4":"Ornament_0_XMAS",
+ # Yukon's dominant trees (birch variants) -- resolved from Bundles\Trees\<name>\<name>.dat by Metadata GUID (2026-08-12)
+ "99848480a28f41ebb3d752a47fd5b023":"Birch_2","ba311a4ddbe34121acd6899fd424813b":"Birch_4",
+ "da1c0b012d2947c78b06e4c6e032635d":"Metal_0",
 }
 HOLIDAY = {"Cane_00":"CHRISTMAS", "Snow_Pile_00":"CHRISTMAS", "Ornament_0_XMAS":"CHRISTMAS"}   # else NONE
 env = UnityPy.load(BUND)
