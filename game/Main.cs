@@ -4526,10 +4526,21 @@ namespace UnturnedGodot
             var cam = new Camera3D { Current = true, Fov = 50f };
             AddChild(cam);
 
-            // UG_SWEEP_FLY=1: the version that can actually see a one-frame hole. Drive the camera along a real
-            // route at real speed, sampling EVERY frame, and look for a frame whose tree pixels collapse relative
-            // to its neighbours. strawberry saw the flicker in exactly one place -- the road south out of Alberton
-            // over the hill above Pirate Cove -- so it flies that, rather than a spot I picked.
+            // UG_SWEEP_FLY=1: drive the camera along a real route at real speed, sampling EVERY frame, and look
+            // for a frame whose tree pixels collapse relative to its neighbours. strawberry saw the flicker in
+            // exactly one place -- the road south out of Alberton over the hill above Pirate Cove -- so it flies
+            // that, rather than a spot I picked.
+            //
+            // *** THE DIPS THIS REPORTS ARE NOT THE TREE->IMPOSTER HANDOVER. DO NOT READ THEM AS THAT BUG. ***
+            // This mode was committed claiming it "reproduces the flicker". That claim was wrong and this comment
+            // is the retraction. Run with the handover DELETED -- `UG_TREECULL=5 UG_TREEIMPOVERLAP=10`, which
+            // carries real trees to ~2235m and never switches an imposter on, so no handover exists anywhere on
+            // the route -- and the same six dips come back, three of them BIT-IDENTICAL (4405/4405, 153/153,
+            // 87/87) with worstRatio 0.173 in both. An instrument that reports the same six events with and
+            // without the mechanism it is pointed at is not measuring that mechanism.
+            // What they probably are: the route passing genuine gaps in a scene with no terrain to fill them.
+            // Unresolved. If you extend this, ALWAYS run the no-handover control alongside and diff the dip sets;
+            // a run without that control cannot distinguish a real blink from the route simply looking at sky.
             if (System.Environment.GetEnvironmentVariable("UG_SWEEP_FLY") == "1")
             {
                 var a = new Vector3(-574.05f, 33.28f, -71.58f);    // Alberton   (content/nodes.tsv)
@@ -4573,6 +4584,8 @@ namespace UnturnedGodot
                     if (ratio < 0.75f) { dips++; GD.Print($"[fly] DIP frame {i}: {prev[i]} px vs neighbours {nb:0} ({ratio:0.00}x)"); }
                 }
                 GD.Print($"[fly] overlap={ResourceField.ImpostorOverlap:0.###} frames={prev.Count} dips={dips} worstRatio={worst:0.000}");
+                GD.Print("[fly] NOTE: dips here are NOT known to be the tree->imposter handover -- the same six survive "
+                       + "with the handover removed (UG_TREECULL=5 UG_TREEIMPOVERLAP=10). Diff against that control before believing one.");
                 GetTree().Quit();
                 return;
             }
