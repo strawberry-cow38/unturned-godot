@@ -1,3 +1,4 @@
+using Godot;            // Color, for the spotlight tint
 using SDG.Unturned;   // DatParser + IDatDictionary (the ported UnturnedDat accessors, same as GunDef)
 
 namespace UnturnedGodot
@@ -17,6 +18,14 @@ namespace UnturnedGodot
         public float Alert;           // .dat Alert_Radius: a swing's noise radius (source AlertTool.alert); 0 = silent/stealthy
         public bool Repeated;   // .dat "Repeated": a continuous HOLD-to-use tool (blowtorch, chainsaw). Source ItemMeleeAsset: "'Repeated' melee weapons don't have strong attacks" -> LMB = continuous use (no weak click / no punch), RMB = nothing.
         public bool Repair;     // .dat "Repair": the continuous action REPAIRS the target (blowtorch) rather than damaging it.
+        public bool SpotEnabled = true;    // .dat SpotLight_Enabled -- source lets a modder opt out of the player spotlight entirely (their example: a lightsaber glow that shouldn't cast a beam)
+        public float SpotRange = 64f;      // .dat SpotLight_Range
+        public float SpotAngleFull = 90f;  // .dat SpotLight_Angle. FULL cone angle, Unity's convention. Godot's SpotAngle is the HALF-angle, so this is halved at build time -- getting that wrong doubles the cone and looks like a bug in the beam rather than in the units.
+        public float SpotIntensity = 1.3f; // .dat SpotLight_Intensity -> Godot LightEnergy. Source multiplies the COLOUR by intensity and pins light.intensity to 1.0; Godot separates them, so the colour stays normalised and this rides LightEnergy. Same result, and it dodges the >1 colour channel Nelson's own comment calls out as "very bright!".
+        /// <summary>.dat SpotLight_Color, source default Color32(245, 223, 147) — a warm filament white, not pure white.</summary>
+        public Color SpotColor = new Color(245f / 255f, 223f / 255f, 147f / 255f);
+
+        public bool Light;      // .dat "Light": this melee item IS a flashlight. Source ItemMeleeAsset: `_isLight = p.data.ContainsKey("Light")` -- a bare key with no value, which is why this is a presence test and not a bool parse. The handheld torch is a MELEE asset in retail (flashlight.dat: Type Melee / Useable Melee / Slot Secondary), NOT the gun-rail tactical light, which is a separate ItemTacticalAsset flag on a separate code path.
 
         // Bare FISTS = the src's hardcoded empty-hand punch (PlayerEquipment.simulate_PunchInput): LMB left / RMB right,
         // 15 base dmg (x hit-zone), 1.75 m reach, ~every 0.1 s, no strong-swing multiplier (both fists equal).
@@ -45,6 +54,15 @@ namespace UnturnedGodot
                 Alert = d.ParseFloat("Alert_Radius", 0f),
                 Repeated = d.ContainsKey("Repeated"),   // blowtorch/chainsaw: continuous hold, no weak/strong swings
                 Repair = d.ContainsKey("Repair"),       // blowtorch: continuous action heals instead of damaging
+                Light = d.ContainsKey("Light"),         // flashlight: held torch, toggled with the TACTICAL key
+                // Beam shape is DATA, not a constant: source builds `new PlayerSpotLightConfig(p.data)` from the
+                // same .dat, so a modded torch can carry its own. flashlight.dat declares none of these, so the
+                // stock torch runs on every default below -- which is why they are written out rather than left
+                // implicit. Defaults are source-exact (Player.cs PlayerSpotLightConfig(IDatDictionary)).
+                SpotEnabled = d.ParseBool("SpotLight_Enabled", true),
+                SpotRange = d.ParseFloat("SpotLight_Range", 64f),
+                SpotAngleFull = d.ParseFloat("SpotLight_Angle", 90f),
+                SpotIntensity = d.ParseFloat("SpotLight_Intensity", 1.3f),
             };
         }
     }

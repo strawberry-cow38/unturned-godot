@@ -2194,6 +2194,67 @@ namespace UnturnedGodot
         // Firemode.mp3. Master wired this same click to firemode-cycle + putting on/taking off attachments in the
         // attach UI. A 2D one-shot (your own gun) like PlayConsumeSound.
         AudioStreamPlayer _selectorAudio;
+        // ---- HANDHELD FLASHLIGHT (source: ItemMeleeAsset "Light" + UseableMelee) -------------------------------
+        //
+        // The torch is a MELEE item in retail, not a gun attachment: flashlight.dat is `Type Melee / Useable Melee /
+        // Slot Secondary` with a bare `Light` key, and UseableMelee carries the whole implementation (its own
+        // light hooks, its own net message, its own state byte). The gun-rail light is a DIFFERENT thing on a
+        // different path -- ItemTacticalAsset + UseableGun.askInteractGun with state[12]. Same key, two systems;
+        // wiring the handheld one through the gun path would be the wrong mechanism.
+        //
+        // Source toggle, UseableMelee.ReceiveInteractMelee():
+        //     if equipment.isBusy -> return; if asset == null -> return; if !isLight -> return
+        //     interact = !interact;  state[0] = interact ? 1 : 0;  sendUpdateState()
+        //     EffectManager.TriggerFiremodeEffect(position)          <- the same click the fire selector makes
+        // so the busy guard, the toggle, and the selector click below are all source shape, not invention.
+        //
+        // KEY: source binds this to ControlsSettings.tactical, default KeyCode.B (ControlsSettings.cs bind(TACTICAL,
+        // KeyCode.B)) -- NOT F (that is INTERACT) and not RMB. B was already the port's build-mode toggle, so a held
+        // light claims it and everything else falls through unchanged. That collision is real and worth knowing:
+        // you cannot open build mode while holding a lit torch. Flagged rather than silently rebinding either one.
+        public bool HoldingLight => _melee is { Light: true };
+        public bool HeldLightOn => _heldLightOn;
+        /// <summary>Is the held item actually IN hand — i.e. the equip (pull-out) animation has finished? This is
+        /// the port's stand-in for source's `player.equipment.isBusy`, and it gates the light toggle. Exposed so a
+        /// test can WAIT for it instead of guessing a tick count: the equip clip is roughly a second, and a fixed
+        /// "yield 4 ticks" both fails today and passes for the wrong reason the day the clip gets shorter.</summary>
+        public bool HeldItemReady => _viewmodel == null || _viewmodel.IsEquipComplete;
+        bool _heldLightOn;
+        SpotLight3D _heldLight;
+
+        public void ToggleHeldLight()
+        {
+            if (!HoldingLight) return;
+            // source guards on player.equipment.isBusy -- the port's equivalent is the equip animation still playing,
+            // which is the same "you are mid-swap, the item isn't really in your hand yet" state.
+            if (_viewmodel != null && !_viewmodel.IsEquipComplete) return;
+            _heldLightOn = !_heldLightOn;
+            ApplyHeldLight();
+            PlaySelectorSwitchSound();   // source fires the firemode effect on this toggle, not a bespoke click
+        }
+
+        void ApplyHeldLight()
+        {
+            bool want = _heldLightOn && HoldingLight && _melee.SpotEnabled;
+            if (!want) { if (IsInstanceValid(_heldLight)) _heldLight.Visible = false; return; }
+            if (!IsInstanceValid(_heldLight))
+            {
+                _heldLight = new SpotLight3D
+                {
+                    // SpotAngle is Godot's HALF-angle; the .dat carries Unity's FULL cone. Halving is the whole
+                    // difference between a 90-degree torch and a 180-degree floodlight.
+                    SpotRange = _melee.SpotRange,
+                    SpotAngle = _melee.SpotAngleFull * 0.5f,
+                    LightColor = _melee.SpotColor,
+                    LightEnergy = _melee.SpotIntensity,
+                    SpotAngleAttenuation = 1.0f,
+                    ShadowEnabled = false,   // a held light casting shadows re-renders the world every step; the streetlights don't either
+                };
+                _cam?.AddChild(_heldLight);   // rides the eye, so the beam points where you look
+            }
+            _heldLight.Visible = true;
+        }
+
         public void PlaySelectorSwitchSound()
         {
             var stream = LoadWavOneShot("res://content/sounds/firemode.wav");
@@ -3912,6 +3973,8 @@ namespace UnturnedGodot
                 if (IsInstanceValid(_fHeldDoor) && _doorLockTimer < DeployPickupTime) RequestToggleDoor(_fHeldDoor);
                 _fHeldDoor = null; _doorLockTimer = 0f;
             }
+            else if (@event is InputEventKey { Pressed: true, Keycode: Key.B } && HoldingLight)
+                ToggleHeldLight();    // B is the source TACTICAL key -- a held flashlight claims it before build mode (see ToggleHeldLight)
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.B })
                 _build?.Toggle();     // toggle build mode
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.C })
@@ -4683,6 +4746,11 @@ namespace UnturnedGodot
         {
             using var _prof = Prof.Scope("PlayerController");
             if (NetAvatar) return;   // per-frame work is all client-side (render interp, look focus, recoil drain, cam) -- none of it on a server avatar
+            // Source kills the held light on unequip (UseableMelee -> player.disableItemSpotLight()). There are
+            // EIGHT places that drop the held melee and more will appear, so this is DERIVED from what's in hand
+            // rather than cleared at each of them -- patching all eight is how the ninth ends up leaving a torch
+            // burning in your pocket. Costs one bool test per frame and cannot go stale.
+            if (_heldLightOn && !HoldingLight) { _heldLightOn = false; ApplyHeldLight(); }
             UpdateGrassDisplacement();
             if (_interpReady && !_dead && _driving == null)   // RENDER INTERPOLATION (master): lerp the visual position between the last two 50Hz ticks so it doesn't step at 50Hz while rendering at 60+
                 GlobalPosition = _interpPrev.Lerp(_interpCurr, (float)Engine.GetPhysicsInterpolationFraction());
