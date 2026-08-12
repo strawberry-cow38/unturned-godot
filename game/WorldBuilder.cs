@@ -372,13 +372,12 @@ namespace UnturnedGodot
             StandardMaterial3D MatFor(string nm)
             {
                 if (matCache.TryGetValue(nm, out var mm)) return mm;
-                if (nm.StartsWith("Biodome"))   // biodome = glass panels (transparent, NO albedo texture) -> the no-tex fallback rendered it FLAT GRAY (master, Yukon 2026-08-12). Give it glass. NOTE: the orange frame is baked into the same combined mesh, so it reads as glass too -- separating it needs a per-material re-extract (follow-up).
+                if (nm.StartsWith("Biodome"))   // biodome FRAME (Model_0 node -- re-extracted SPLIT from the glass, master wanted the orange out). Src material 'Material' (Standard Decalable) _Color (0.90,0.53,0.20) = opaque orange. The translucent Glass_0 panels are a SEPARATE companion mesh placed in PlaceObject.
                 {
                     mm = new StandardMaterial3D
                     {
-                        AlbedoColor = new Color(0.55f, 0.72f, 0.80f, 0.40f),   // pale glass, a touch more visible than window glass so the dome still reads as a dome
-                        Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
-                        Metallic = 0.1f, Roughness = 0.08f,
+                        AlbedoColor = new Color(0.90f, 0.53f, 0.20f),   // src _Color: orange painted frame
+                        Roughness = 0.6f, Metallic = 0.05f,
                         CullMode = BaseMaterial3D.CullModeEnum.Disabled,
                     };
                     matCache[nm] = mm;
@@ -632,6 +631,28 @@ namespace UnturnedGodot
                 // old flat cutoff -- better to draw an unknown prop too long than to pop a landmark out of the world.
                 float cull = LodTable.CullDistance(p[0], LodTable.SourceFov);
                 if (cull <= 0f) { cull = 320f; lodMissing++; }
+                // BIODOME (master: "re extract for the orange"): the dome is TWO src meshes -- Model_0 (the ORANGE
+                // frame = the main Biodome_0.obj, opaque) and Glass_0 (translucent panels). They were re-extracted
+                // SPLIT; the frame renders via MatFor("Biodome") orange, and here we lay the glass panels back over it
+                // as a companion instance with the real Glass material (src _Color 0.62,0.75,0.77 a0.5). Separate
+                // instances keep the frame in the opaque pass and the glass in the transparent pass = correct sorting.
+                if (name == "Biodome_0" && mode != WorldMode.Dedicated)
+                {
+                    var gm = ObjMesh.Load(dir + "Biodome_0_glass.obj");
+                    if (gm != null)
+                    {
+                        var glassMat = new StandardMaterial3D
+                        {
+                            AlbedoColor = new Color(0.62f, 0.75f, 0.77f, 0.5f),
+                            Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
+                            Metallic = 0f, Roughness = 0.06f,
+                            CullMode = BaseMaterial3D.CullModeEnum.Disabled,
+                        };
+                        root.AddChild(new MeshInstance3D { Mesh = gm, MaterialOverride = glassMat,
+                            Transform = new Transform3D(basis, gpos), VisibilityRangeEnd = cull,
+                            VisibilityRangeFadeMode = GeometryInstance3D.VisibilityRangeFadeModeEnum.Disabled });
+                    }
+                }
                 // EMISSIVE LENS (strawberry): a streetlight's bulb is already in the prop mesh -- a warm-tan box inside
                 // the head -- it was just drawn with the same grey material as the pole while a stand-in disc under the
                 // fixture did the glowing. Split those triangles onto their own instance so the REAL lens lights up.
