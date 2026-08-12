@@ -22,6 +22,7 @@ namespace UnturnedGodot
         static (string img, float size, string label) Info() => MapFolder switch
         {
             "Washington" => ("washington_map.png", 1920f, "Washington"),   // MEDIUM level (2048-2*64) despite a 4096 landscape -- verified by aligning the town nodes to the Map.png
+            "Yukon"      => ("yukon_map.png",      1920f, "Yukon"),         // MEDIUM level -- town nodes span ~+-830 (Mount Logan..Off Limits), fits 1920; verify M-map alignment in-render
             _            => ("pei_map.png",        1920f, "PEI"),
         };
 

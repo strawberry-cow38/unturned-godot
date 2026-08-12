@@ -76,7 +76,7 @@ namespace UnturnedGodot
             ("Washington",           "washington", true,  "Rainy state South-West of Canada. Several large civilian towns with extensive military presence. Tourist attractions include Seattle, golf and racing. Recommended for intermediate survivors."),
             ("Russia",               "russia",     false, "Multi-biome country neighboring Canada. Huge diversity of civilian destinations with varying military presence. Tourist attractions include historical monuments, picturesque countrysides and rock climbing. Recommended for experienced survivors."),
             ("Germany",              "germany",    false, "Mountainous country North of Canada. Modernized cities with active military presence. Tourist attractions include breathtaking vistas, hiking the alpine trails and the local celebration of Oktoberfest. Recommended for intermediate survivors."),
-            ("Yukon",                "yukon",      false, "Harsh, freezing territory in North-West Canada. Barren frozen wasteland scattered with camps and cabins. Tourist attractions include skiing, skating and train spotting. Recommended for experienced survivors."),
+            ("Yukon",                "yukon",      true,  "Harsh, freezing territory in North-West Canada. Barren frozen wasteland scattered with camps and cabins. Tourist attractions include skiing, skating and train spotting. Recommended for experienced survivors."),
             ("Hawaii",               "",           false, "Not installed."),
             ("Greece",               "",           false, "Not installed."),
             ("A6 Polaris",           "",           false, "Not installed."),

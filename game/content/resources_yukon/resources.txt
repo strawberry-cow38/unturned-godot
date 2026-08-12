@@ -1,5 +1,5 @@
-Birch_2 2 NONE
-Birch_4 2 NONE
+Pine_2 2 NONE
+Pine_3 2 NONE
 Clay_0 1 NONE
 Birch_1 2 NONE
 Maple_1 2 NONE
