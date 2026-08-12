@@ -99,6 +99,7 @@ namespace UnturnedGodot
                         // would hide most of the arsenal from a menu whose whole job is showing what you own.
                         if (mesh != null) VM.SetSlotMesh(sl, mesh);
                         else if (VM.SlotHasModel(sl)) VM.SetSlotAttached(sl, true);
+                        Player?.PlaySelectorSwitchSound();   // attach click (source: shared firemode/selector sound)
                         Refresh();
                     }, rounds: rounds, vertical: isMag));
                 }
@@ -129,6 +130,7 @@ namespace UnturnedGodot
                 AttachmentFit.SetInstalledId(Player?.HeldItemForTest, slot, -1);
             }
             VM.SetSlotAttached(slot, false);
+            Player?.PlaySelectorSwitchSound();   // detach click (source: shared firemode/selector sound)
             Refresh();
             return true;
         }

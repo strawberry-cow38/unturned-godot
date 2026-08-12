@@ -2189,6 +2189,19 @@ namespace UnturnedGodot
             _consumeAudio.Stream = stream;
             _consumeAudio.Play();
         }
+        // Fire-selector / attachment click. Source: toggling a tactical or flipping the fire-selector both fire
+        // EffectManager.TriggerFiremodeEffect -> the shared "Firemode" effect (GUID bc41e0fe...) whose AudioClip is
+        // Firemode.mp3. Master wired this same click to firemode-cycle + putting on/taking off attachments in the
+        // attach UI. A 2D one-shot (your own gun) like PlayConsumeSound.
+        AudioStreamPlayer _selectorAudio;
+        public void PlaySelectorSwitchSound()
+        {
+            var stream = LoadWavOneShot("res://content/sounds/firemode.wav");
+            if (stream == null) return;
+            if (_selectorAudio == null || !IsInstanceValid(_selectorAudio)) { _selectorAudio = new AudioStreamPlayer(); AddChild(_selectorAudio); }
+            _selectorAudio.Stream = stream;
+            _selectorAudio.Play();
+        }
         // Deployable placement sound (src: playSound(barricadeAsset.use) on build) -- a positional one-shot at the spot.
         void PlayPlaceSound(string stem, Vector3 at)
         {
@@ -4115,8 +4128,11 @@ namespace UnturnedGodot
         {
             var modes = AvailableModes();
             int i = System.Array.IndexOf(modes, _firemode);
-            _firemode = modes[(i + 1) % modes.Length];
+            var next = modes[(i + 1) % modes.Length];
+            bool changed = next != _firemode;
+            _firemode = next;
             _burstLeft = 0;
+            if (changed) PlaySelectorSwitchSound();   // fire-selector click (source: firemode effect / Firemode.mp3)
             SaveGunState();   // remember the fire mode on the backing item (master)
         }
 
