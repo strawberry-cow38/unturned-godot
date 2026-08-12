@@ -372,6 +372,18 @@ namespace UnturnedGodot
             StandardMaterial3D MatFor(string nm)
             {
                 if (matCache.TryGetValue(nm, out var mm)) return mm;
+                if (nm.StartsWith("Biodome"))   // biodome = glass panels (transparent, NO albedo texture) -> the no-tex fallback rendered it FLAT GRAY (master, Yukon 2026-08-12). Give it glass. NOTE: the orange frame is baked into the same combined mesh, so it reads as glass too -- separating it needs a per-material re-extract (follow-up).
+                {
+                    mm = new StandardMaterial3D
+                    {
+                        AlbedoColor = new Color(0.55f, 0.72f, 0.80f, 0.40f),   // pale glass, a touch more visible than window glass so the dome still reads as a dome
+                        Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
+                        Metallic = 0.1f, Roughness = 0.08f,
+                        CullMode = BaseMaterial3D.CullModeEnum.Disabled,
+                    };
+                    matCache[nm] = mm;
+                    return mm;
+                }
                 if (nm.StartsWith("Glass"))   // Glass_0/Glass_1 have NO albedo texture (src uses a shader-based transparent material) -> the brown fallback made them opaque. Give glass a proper see-through look.
                 {
                     mm = new StandardMaterial3D
