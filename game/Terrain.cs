@@ -600,6 +600,17 @@ void fragment() {
                     }
                 }
                 catch { /* keep PEI 0.1 */ }
+                // seaLevel 1.0 = the "no legacy ocean" sentinel: the map's water is PER-VOLUME (lakes/rivers via
+                // WaterVolumes -- e.g. Yukon's Kluane Lake -- not a global sea; its Config has no Use_Legacy_Water).
+                // A global plane at 1.0*256 = 256 floods the ENTIRE map -> the player swims everywhere (master, Yukon
+                // 2026-08-12). Skip the plane + leave HasWater false so submersion is off. TODO: model the WaterVolumes.
+                if (seaLevel01 >= 0.99f)
+                {
+                    HasWater = false;
+                    GD.Print($"[terrain] seaLevel {seaLevel01:F3} = no legacy ocean -> global water plane SKIPPED (map water is per-volume)");
+                }
+                else
+                {
                 float waterY = seaLevel01 * 256f;   // Unturned water surface = seaLevel * Level.TERRAIN(256), Use_Legacy_Water path
                 SeaLevelY = waterY;                 // swim submersion (PlayerController water state) + explosion splashes
                 GD.Print($"[terrain] sea level {seaLevel01:F3} -> world-Y {waterY:F1}");
@@ -619,6 +630,7 @@ void fragment() {
                 var wsize = ((PlaneMesh)water.Mesh).Size;
                 wbody.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = new Vector3(wsize.X, 0.2f, wsize.Y) } });
                 terr.AddChild(wbody);
+                }
             }
             _phase("water plane");
             if (_prof) GD.Print($"[terrain-prof] TOTAL {_sw.ElapsedMilliseconds} ms");
