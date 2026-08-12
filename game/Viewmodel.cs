@@ -916,7 +916,7 @@ namespace UnturnedGodot
             if (!_attachMesh.TryGetValue(slot, out var n)) return;
             var m = _gun?.GetNodeOrNull<MeshInstance3D>(n);
             if (m == null) return;
-            if (slot == "Sight") HideScopePiP();   // deactivate any prior scope's PiP before the swap (change or detach)
+            if (slot == "Sight") { HideScopePiP(); var _oldRet = m.GetNodeOrNull("Reticle"); if (_oldRet != null) { m.RemoveChild(_oldRet); _oldRet.QueueFree(); } }   // deactivate any prior scope's PiP + drop any prior red-dot reticle before the swap
             if (string.IsNullOrEmpty(txtName)) { m.Visible = false; return; }
             m.Mesh = ContentProvider.ParseObj($"res://content/{txtName}");
             if (slot == "Sight")   // scopes/optics: each scope's REAL body colour from source (7x gray, most near-black); satin metal
@@ -942,9 +942,42 @@ namespace UnturnedGodot
                     ConfigureScopePiP(_sc.Lens, _sc.Obj, _sc.Aim, _sc.Fov, _sc.Size, _sc.Sides, _retTex, _dot ? 0.056f : 1.0f, _dot ? new Color(1f, 0f, 0f) : new Color(1f, 1f, 1f));   // real PiP zoom + ADS aim + ripped reticle
                     _scopeHasLadder = txtName.StartsWith("scope_");   // the tube zoom scopes (8x/7x/16x) carry the numbered 100/200/300m range ladder
                 }
+                else if (RedDotCal.TryGetValue(txtName, out var _rd))
+                {
+                    // RED DOT / HOLO / KOBRA: their source `Reticule` is a transparent EMISSIVE billboard (red_dot's texture is
+                    // its own red, halo/kobra tinted red). The merged extraction rendered it as an OPAQUE BLACK disc, at its raw
+                    // authored spot OFF the optical axis (master: "solid black circle, not centered"). red_dot_extract.py split the
+                    // housing out (drops the disc); render the real reticle GLOWING + snapped to the aim axis (X,Z = the Aim hook)
+                    // so it sits dead-center like the scopes do.
+                    string _retName = txtName.Replace("_sight.txt", "_reticle.png");
+                    var _retMat = new StandardMaterial3D
+                    {
+                        ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
+                        Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
+                        AlbedoColor = _rd.Glow,
+                        EmissionEnabled = true, Emission = _rd.Glow, EmissionEnergyMultiplier = 2.5f,
+                        BillboardMode = BaseMaterial3D.BillboardModeEnum.Enabled,
+                        CullMode = BaseMaterial3D.CullModeEnum.Disabled,
+                        TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest,
+                    };
+                    string _rp = ProjectSettings.GlobalizePath($"res://content/{_retName}");
+                    if (System.IO.File.Exists(_rp)) { var _ri = Image.LoadFromFile(_rp); if (_ri != null) { var _rt = ImageTexture.CreateFromImage(_ri); _retMat.AlbedoTexture = _rt; _retMat.EmissionTexture = _rt; } }
+                    m.AddChild(new MeshInstance3D { Name = "Reticle", Mesh = new QuadMesh { Size = new Vector2(_rd.Size, _rd.Size) }, MaterialOverride = _retMat, Position = _rd.Pos, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off });
+                }
             }
             m.Visible = true;
         }
+
+        // Red-dot / holo / kobra reticle calibration. Pos = the glowing dot SNAPPED to the aim axis (X,Z = the sight's
+        // Aim hook, port (x,y,-z)) so it centers like the scopes; Y = the reticle's own depth. Size = apparent dot size
+        // (tunable). Glow = source _EmissionColor (red_dot white = its texture's own red; halo/kobra red). Housing +
+        // reticle textures come from tools/red_dot_extract.py (splits the Reticule off the housing mesh).
+        static readonly System.Collections.Generic.Dictionary<string, (Vector3 Pos, float Size, Color Glow)> RedDotCal = new()
+        {
+            { "red_dot_sight.txt",   (new Vector3(0f, 0.1826f, -0.072f), 0.014f, new Color(1f, 1f, 1f)) },
+            { "red_halo_sight.txt",  (new Vector3(0f, 0.074f,  -0.072f), 0.016f, new Color(1f, 0f, 0f)) },
+            { "red_kobra_sight.txt", (new Vector3(0f, 0.1826f, -0.072f), 0.02f,  new Color(1f, 0f, 0f)) },
+        };
 
         // ---- Generalized PiP scope (master: real zoom-THROUGH the attachment scopes, not the cheap fov-drop) ----
         // The aug's INTEGRATED scope builds this inline (gun-construction); attachment scopes (8x/7x/16x/makeshift/cross/
