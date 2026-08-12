@@ -384,6 +384,33 @@ namespace UnturnedGodot
                     matCache[nm] = mm;
                     return mm;
                 }
+                if (nm.StartsWith("Ice"))   // ice sheets (Ice_0/Ice_1): the src texture is a TRANSLUCENT ice material (alpha 0-94, EVERY pixel <127). MatFor's auto AlphaScissor(0.5) -- meant for foliage cutouts -- therefore discarded the WHOLE sheet = the "missing ice prop" (master, Yukon 2026-08-12). Render it as ice instead: keep the pattern RGB, drop the near-zero src alpha, faint translucency so it reads as ice not stone.
+                {
+                    mm = new StandardMaterial3D
+                    {
+                        AlbedoColor = new Color(1f, 1f, 1f, 0.78f),
+                        Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
+                        Metallic = 0.05f, Roughness = 0.18f,   // smooth, faintly glossy frozen surface
+                        CullMode = BaseMaterial3D.CullModeEnum.Disabled,
+                    };
+                    string itp = dir + nm + "_tex.png";
+                    bool iceTex = false;
+                    if (System.IO.File.Exists(itp))
+                    {
+                        var iimg = new Image();
+                        if (iimg.Load(itp) == Error.Ok)
+                        {
+                            iimg.Convert(Image.Format.Rgb8);   // drop the near-zero src alpha; alpha now comes from AlbedoColor so the sheet actually renders
+                            iimg.GenerateMipmaps();
+                            mm.AlbedoTexture = ImageTexture.CreateFromImage(iimg);
+                            mm.TextureFilter = BaseMaterial3D.TextureFilterEnum.NearestWithMipmaps;
+                            iceTex = true;
+                        }
+                    }
+                    if (!iceTex) mm.AlbedoColor = new Color(0.75f, 0.85f, 0.90f, 0.78f);   // fallback icy tint if the texture is missing/unreadable
+                    matCache[nm] = mm;
+                    return mm;
+                }
                 if (nm.StartsWith("Glass"))   // Glass_0/Glass_1 have NO albedo texture (src uses a shader-based transparent material) -> the brown fallback made them opaque. Give glass a proper see-through look.
                 {
                     mm = new StandardMaterial3D
