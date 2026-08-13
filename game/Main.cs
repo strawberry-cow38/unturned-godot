@@ -5686,7 +5686,7 @@ namespace UnturnedGodot
                 {
                     if (!_vmAimed && _vm.IsEquipComplete && ++_vmSettle >= 8)
                     { _vm.SetAiming(true); _vmAimed = true; _vmAimStart = _frame; }
-                    if (_vmAimed && _frame == _vmAimStart + 30) _vm.SetAiming(false);
+                    if (_vmAimed && _frame == _vmAimStart + 30 && System.Environment.GetEnvironmentVariable("UG_ADS") != "1") _vm.SetAiming(false);   // UG_ADS=1: HOLD ads for a sight/red-dot showcase render instead of releasing at +30
                     // after un-ADS, fire a few HIP shots so the test also exercises recoil shake + case ejection
                     // (real Eaglefire Shake_Min/Max_* — Z-heavy back-punch)
                     if (_frame == 88 || _frame == 91 || _frame == 94)

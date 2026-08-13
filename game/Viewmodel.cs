@@ -78,6 +78,8 @@ namespace UnturnedGodot
         // REFITTED iron sight restores its real per-gun colour instead of the near-black scope/red-dot default.
         Color _sightColor = new(0.3f, 0.3f, 0.3f);
         string _defaultSightTxt;
+        Vector3 _defaultSightPos = new(0f, 0.1312f, -0.118f);   // the gun's sight mount (SightPos = hook + iron Model_0); iron/scope/red-dot all mount here
+        Vector3 _defaultAimHook = new(0f, -0.4688f, -0.2098f);   // the gun's ADS aim (gv.AimHook) -- the eye point iron/scope/red-dot all aim down
         readonly System.Collections.Generic.List<Casing> _casings = new();
         readonly RandomNumberGenerator _rng = new();
         sealed class Casing { public MeshInstance3D Node; public Vector3 Vel; public Vector3 Spin; public float Life; }
@@ -429,6 +431,8 @@ namespace UnturnedGodot
                     // hardcoded guns (SightColor unset -> A==0).
                     var sightCol = gv.SightColor.A > 0f ? gv.SightColor : new Color(0.3f, 0.3f, 0.3f);
                     _sightColor = sightCol; _defaultSightTxt = gv.Sight;   // remembered so a re-fitted iron sight (SetSlotMesh) restores this colour, not the red-dot default
+                    _defaultSightPos = gv.SightPos != Vector3.Zero ? gv.SightPos : new Vector3(0f, 0.1312f, -0.118f);   // the sight mount (all optics mount here)
+                    _defaultAimHook = gv.AimHook;   // the ADS aim (all optics aim down this eye point)
                     var sightMat = new StandardMaterial3D { CullMode = BaseMaterial3D.CullModeEnum.Disabled, AlbedoColor = sightCol, Metallic = 0f, MetallicSpecular = 0f, Roughness = 1f };
                     var ironMesh = gv.Sight != null ? ContentProvider.ParseObj($"res://content/{gv.Sight}") : null;
                     if (ironMesh != null)
@@ -929,6 +933,8 @@ namespace UnturnedGodot
                 bool _isIron = txtName == _defaultSightTxt || txtName.Contains("iron_sights");
                 Color _bodyCol = _isSc ? _sc.Col : (_isIron ? _sightColor : new Color(0.06f, 0.065f, 0.075f));
                 m.MaterialOverride = new StandardMaterial3D { CullMode = BaseMaterial3D.CullModeEnum.Disabled, AlbedoColor = _bodyCol, Metallic = 0f, MetallicSpecular = 0f, Roughness = 1f };   // FULLY MATTE like the gun body/irons/mags -- Unturned guns are non-reflective (master: "why are the scope bodies so shiny"); the old satin 0.35/0.5 broke that convention
+                m.Position = _defaultSightPos;   // mount at the gun's SightPos (iron/scope/red-dot all share this)
+                if (_sight != null) _sight.Position = _defaultAimHook;   // ADS aim at the gun's eye point (iron/scope/red-dot all share this; a red dot just adds a reticle billboard, no aim override)
                 if (_isSc)
                 {
                     // Real ripped reticle (source): each scope's Reticule submesh texture, saved as <base>_reticle.png. The
@@ -944,11 +950,12 @@ namespace UnturnedGodot
                 }
                 else if (RedDotCal.TryGetValue(txtName, out var _rd))
                 {
-                    // RED DOT / HOLO / KOBRA: their source `Reticule` is a transparent EMISSIVE billboard (red_dot's texture is
-                    // its own red, halo/kobra tinted red). The merged extraction rendered it as an OPAQUE BLACK disc, at its raw
-                    // authored spot OFF the optical axis (master: "solid black circle, not centered"). red_dot_extract.py split the
-                    // housing out (drops the disc); render the real reticle GLOWING + snapped to the aim axis (X,Z = the Aim hook)
-                    // so it sits dead-center like the scopes do.
+                    // RED DOT / HOLO / KOBRA: the optic mesh renders as the housing (opaque near-black), mounted + ADS-aimed
+                    // exactly like the iron sight. On top of it we add a billboard reticle glowing red, snapped to the source
+                    // OPTICAL AXIS (RedDotCal.Pos, X=0 Z=-0.072 from the Aim/Reticule node) so it centers in the ring like the
+                    // scopes do. Reticle textures (<name>_reticle.png) are white shape-masks tinted by Glow. NoDepthTest keeps
+                    // it visible over the halo's opaque combiner glass. (The source Reticule is a runtime emissive billboard --
+                    // this reproduces that, vs. the old merged extraction that baked it into the mesh as a static black disc.)
                     string _retName = txtName.Replace("_sight.txt", "_reticle.png");
                     var _retMat = new StandardMaterial3D
                     {
@@ -959,6 +966,9 @@ namespace UnturnedGodot
                         BillboardMode = BaseMaterial3D.BillboardModeEnum.Enabled,
                         CullMode = BaseMaterial3D.CullModeEnum.Disabled,
                         TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest,
+                        NoDepthTest = true,   // a reflex reticle is a projected overlay -> always draws on top. The HALO's
+                        // Model_0 bakes an opaque combiner-glass plate at the optical center; without this it sits between the
+                        // eye and the reticle and occludes it (renders as a BLACK disc). red_dot/kobra are open rings (no-op there).
                     };
                     string _rp = ProjectSettings.GlobalizePath($"res://content/{_retName}");
                     if (System.IO.File.Exists(_rp)) { var _ri = Image.LoadFromFile(_rp); if (_ri != null) { var _rt = ImageTexture.CreateFromImage(_ri); _retMat.AlbedoTexture = _rt; _retMat.EmissionTexture = _rt; } }
@@ -968,15 +978,17 @@ namespace UnturnedGodot
             m.Visible = true;
         }
 
-        // Red-dot / holo / kobra reticle calibration. Pos = the glowing dot SNAPPED to the aim axis (X,Z = the sight's
-        // Aim hook, port (x,y,-z)) so it centers like the scopes; Y = the reticle's own depth. Size = apparent dot size
-        // (tunable). Glow = source _EmissionColor (red_dot white = its texture's own red; halo/kobra red). Housing +
-        // reticle textures come from tools/red_dot_extract.py (splits the Reticule off the housing mesh).
+        // Red-dot / holo / kobra reticle calibration. Pos = the glowing dot on the sight's OPTICAL AXIS so it centers
+        // in the ring like the scopes do. X=0 and Z=-0.072 are the SOURCE Aim/Reticule node: all three sit at
+        // Model_0-local (0, *, +0.07203), and export_mesh negates Z -> port -0.072 (measured, tools/reddot_axis_probe.py).
+        // In this sight-local frame Z is VERTICAL and Y is fore-aft/depth -- the reticle is a billboard, so Y only sets
+        // apparent size, not centering (that was the trap: nudging Y last night moved the dot in depth, never on screen).
+        // Size = apparent dot size (tunable per ring: halo/kobra rings are larger). Glow = RED (source _EmissionColor).
         static readonly System.Collections.Generic.Dictionary<string, (Vector3 Pos, float Size, Color Glow)> RedDotCal = new()
-        {
-            { "red_dot_sight.txt",   (new Vector3(0f, 0.1826f, -0.072f), 0.014f, new Color(1f, 1f, 1f)) },
-            { "red_halo_sight.txt",  (new Vector3(0f, 0.074f,  -0.072f), 0.016f, new Color(1f, 0f, 0f)) },
-            { "red_kobra_sight.txt", (new Vector3(0f, 0.1826f, -0.072f), 0.02f,  new Color(1f, 0f, 0f)) },
+        {   // Z=-0.072 = the measured optical axis; the old -0.04 sat above center so the dot read low/off-center.
+            { "red_dot_sight.txt",   (new Vector3(0f, -0.05f, -0.072f), 0.014f, new Color(1f, 0f, 0f)) },
+            { "red_halo_sight.txt",  (new Vector3(0f, -0.05f, -0.072f), 0.016f, new Color(1f, 0f, 0f)) },
+            { "red_kobra_sight.txt", (new Vector3(0f, -0.05f, -0.072f), 0.02f,  new Color(1f, 0f, 0f)) },
         };
 
         // ---- Generalized PiP scope (master: real zoom-THROUGH the attachment scopes, not the cheap fov-drop) ----
