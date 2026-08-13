@@ -4499,6 +4499,22 @@ namespace UnturnedGodot
             var field = new ResourceField();
             AddChild(field);
             field.LoadResources("NONE");
+            // A FLOOR UNDER THE ROUTE, ON BY DEFAULT -- because without one this harness invents dips.
+            // The scene is trees against flat sky, so a camera pitching over a crest sees NOTHING and the
+            // tree-pixel count collapses; the mode then reports that as a dropout. Measured 2026-08-13:
+            //     sky only    dips=6  worstRatio=0.173   (frames 177 178 247 325 386 387)
+            //     with ground dips=2  worstRatio=0.673   (frames 177 325)
+            // So FOUR of the six events this harness has been reporting all along were its own empty scene,
+            // and the headline "83% of the trees vanished for one frame" was 33% once there is a world below
+            // the horizon. The two survivors are shallow and may still be legitimate view changes.
+            // UG_SWEEP_NOGROUND=1 restores the old scene for comparison.
+            if (System.Environment.GetEnvironmentVariable("UG_SWEEP_NOGROUND") != "1")
+            {
+                var gmat = new StandardMaterial3D { AlbedoColor = new Color(0.30f, 0.33f, 0.26f), Roughness = 1f };
+                AddChild(new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(4000, 4000) }, MaterialOverride = gmat, Position = new Vector3(-400f, 0f, 350f) });
+                GD.Print("[fly] ground plane ON (default; UG_SWEEP_NOGROUND=1 restores the old sky-only scene)");
+            }
+
             await field.BuildTreeImpostorsAsync();
             foreach (var (name, realEnd, impBegin, impEnd) in field.DebugImpostorRangesForTest())
                 GD.Print($"[sweep] {name}: imposter on {impBegin:0.#}m, real off {realEnd:0.#}m, out to {impEnd:0}m");
@@ -4584,8 +4600,9 @@ namespace UnturnedGodot
                     if (ratio < 0.75f) { dips++; GD.Print($"[fly] DIP frame {i}: {prev[i]} px vs neighbours {nb:0} ({ratio:0.00}x)"); }
                 }
                 GD.Print($"[fly] overlap={ResourceField.ImpostorOverlap:0.###} frames={prev.Count} dips={dips} worstRatio={worst:0.000}");
-                GD.Print("[fly] NOTE: dips here are NOT known to be the tree->imposter handover -- the same six survive "
-                       + "with the handover removed (UG_TREECULL=5 UG_TREEIMPOVERLAP=10). Diff against that control before believing one.");
+                GD.Print("[fly] NOTE: dips here are NOT known to be the tree->imposter handover -- they survive with the "
+                       + "handover removed (UG_TREECULL=5 UG_TREEIMPOVERLAP=10). A floor is now drawn by default because "
+                       + "without one, 4 of 6 reported dips were the camera pitching into empty sky. Diff against a control before believing one.");
                 GetTree().Quit();
                 return;
             }
