@@ -20,6 +20,7 @@ Ammo_Max 250
 Auto
 
 Caliber 32
+Caliber_Name "7.62x51mm NATO"
 Real_Weapon "Minigun"
 
 Equipable_Movement_Speed_Multiplier 0.9
