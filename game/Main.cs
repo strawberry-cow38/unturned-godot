@@ -1594,8 +1594,12 @@ namespace UnturnedGodot
             }
             var cam = new Camera3D { Current = true, Fov = 50f, Far = 10000f };
             AddChild(cam);
-            cam.Position = c + new Vector3(r * 1.15f, r * 0.85f, r * 1.15f);
-            cam.LookAt(c, Vector3.Up);
+            // UG_CAM=front -> straight-on down -Z at the X-Y face (see board/plank gaps); =top -> top-down; else 3/4 diagnostic.
+            string _camMode = System.Environment.GetEnvironmentVariable("UG_CAM");
+            cam.Position = c + (_camMode == "front" ? new Vector3(0f, 0f, r * 2.4f)
+                              : _camMode == "top"   ? new Vector3(0f, r * 2.4f, r * 0.001f)
+                              : new Vector3(r * 1.15f, r * 0.85f, r * 1.15f));
+            cam.LookAt(c, _camMode == "top" ? Vector3.Back : Vector3.Up);
             GD.Print($"[PROPTEST] {name} aabb size={aabb.Size} center={c}");
         }
 
