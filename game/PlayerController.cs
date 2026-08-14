@@ -4287,10 +4287,24 @@ namespace UnturnedGodot
             // A seam that reports a value the production path does not use is worse than no seam: it is a green
             // check standing exactly where a real one should be.
             DebugLastShotOrigin = from; DebugLastShotDir = aim;
-            Vector3 muzzle = from + cb.X * (0.12f * (1f - aimA)) - cb.Y * 0.035f + aim * 0.4f;
-            DebugLastBulletOrigin = muzzle;   // where the PROJECTILE is actually spawned (SpawnBullet + NetFire both use this)
+            // THE RAYCAST IS DEAD CENTRE. ALWAYS. (strawberry: "the raycast is always meant to be dead center, the
+            // tracer launches from the muzzle and then converges gradually onto the raycast" / "raycast != muzzle".)
+            //
+            // The projectile leaves the EYE, straight down the sight line, with no lateral, vertical or forward
+            // offset. Anything else is a height-over-bore the player cannot zero out: the direction here is the raw
+            // look axis, so an offset origin never converges -- it just runs parallel, permanently beside or under
+            // the crosshair. The old 0.035 m down term did exactly that (4.3 cm low at 10 m on the eaglefire).
+            //
+            // The gun-shaped LOOK is the tracer's job and always was -- SpawnBullet anchors the tracer's near end at
+            // the viewmodel muzzle and bends it onto the real trajectory, and the comment there already said the
+            // bullet "fires from the EYE". It just wasn't true any more: these offsets had been added underneath a
+            // system built assuming they did not exist. This restores the split the tracer code documents.
+            Vector3 bulletOrigin = from;
+            Vector3 fxMuzzle = from + cb.X * (0.12f * (1f - aimA)) - cb.Y * 0.035f + aim * 0.4f;   // visual only: flash/light. NEVER the projectile.
+            DebugLastBulletOrigin = bulletOrigin;   // where the PROJECTILE is actually spawned (SpawnBullet + NetFire both use this)
+            DebugLastFxMuzzle = fxMuzzle;           // and the VISUAL-ONLY point, so a test can prove the two are still split
             Vector3? bodyMuzzle = (!_fp && _body != null) ? _body.MuzzleWorld : null;   // 3P: fire effects come off the 3P gun's OWN muzzle, not the camera-relative point
-            SpawnMuzzleLight(bodyMuzzle ?? muzzle);   // once per shot — the Muzzle_0 flash lights the world
+            SpawnMuzzleLight(bodyMuzzle ?? fxMuzzle);   // once per shot — the Muzzle_0 flash lights the world
             if (bodyMuzzle.HasValue) _body.FlashMuzzle();   // 3P: the visible flash quad on the gun's muzzle
 
             // Ballistics: each pellet is a SIMULATED PROJECTILE (travel + drop), not an instant ray. Velocity =
@@ -4305,7 +4319,7 @@ namespace UnturnedGodot
             for (int i = 0; i < pellets; i++)
             {
                 Vector3 dir = spread > 0.0001f ? DeviateInCone(aim, spread) : aim;
-                SpawnBullet(muzzle, dir * muzzleVel, steps, gravity, damage, vehDamage, objDamage);
+                SpawnBullet(bulletOrigin, dir * muzzleVel, steps, gravity, damage, vehDamage, objDamage);
             }
             // AlertTool point-noise: an unsuppressed gunshot pulls zombies within earshot over to investigate. A silenced
             // barrel skips the alert ENTIRELY (source UseableGun ~936: only alert if barrel==null || !isSilenced) -> stealth.
@@ -4314,7 +4328,7 @@ namespace UnturnedGodot
             if (Gun != null && Gun.RechamberAfterShotCount > 0 && ++_shotCountForRechamber >= Gun.RechamberAfterShotCount)
             { _needsRechamber = true; _rechamberDelayTimer = Gun.RechamberAfterShotDelay; }
             SaveGunState();   // keep the backing item's ammo current so a drop/holster mid-fight preserves it (master)
-            NetFire?.Invoke(muzzle, aim);   // D1: the UNDEVIATED aim ray over the wire -- the server spawns the authoritative bullet (spread is client fx; the bullets above went cosmetic in SpawnBullet)
+            NetFire?.Invoke(bulletOrigin, aim);   // D1: the UNDEVIATED aim ray over the wire -- the server spawns the authoritative bullet (spread is client fx; the bullets above went cosmetic in SpawnBullet)
             return true;   // shot fired; the actual hits/kills land later in StepBullets
         }
 
@@ -5308,6 +5322,10 @@ namespace UnturnedGodot
         /// claims against this; DebugLastShotOrigin is the eye basis the aim maths uses.</summary>
         public Vector3 DebugLastBulletOrigin { get; private set; }
         public Vector3 DebugLastShotDir { get; private set; }
+        /// <summary>The muzzle point used for FLASH/LIGHT only, never the projectile. Exposed so a test can assert
+        /// the split survives: collapse this onto the bullet origin and the flash silently moves to the player's
+        /// eye, which no other check here would notice.</summary>
+        public Vector3 DebugLastFxMuzzle { get; private set; }
 
         /// <summary>Where the interaction trace actually started this frame. Recorded in UpdateLookFocus for the same
         /// reason as the shot seam: a test that recomputes the origin agrees with a wrong one. Only written while the

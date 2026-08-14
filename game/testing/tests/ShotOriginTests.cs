@@ -23,6 +23,15 @@ namespace UnturnedGodot.Testing
 
         static float AngleBetween(Vector3 a, Vector3 b) => Mathf.RadToDeg(a.Normalized().AngleTo(b.Normalized()));
 
+        /// <summary>Perpendicular distance from the bullet's spawn point to the aim ray -- i.e. how far off the sight
+        /// line it starts. Distance-to-eye cannot express this: a point ALONG the ray is centred, one beside it is not.</summary>
+        static float OffAxis(PlayerController p)
+        {
+            Vector3 dir = p.DebugLastShotDir.Normalized();
+            Vector3 rel = p.DebugLastBulletOrigin - p.EyesWorld;
+            return (rel - dir * rel.Dot(dir)).Length();
+        }
+
         public override IEnumerable<Step> Run()
         {
             var floor = new StaticBody3D { CollisionLayer = 1u << 0, CollisionMask = 0, Position = new Vector3(0f, -0.5f, 0f) };
@@ -56,23 +65,56 @@ namespace UnturnedGodot.Testing
             T.Check("the gun actually fired (otherwise everything below is vacuous)", fired);
             yield return Ticks(1);
             // THE BULLET, not the eye basis. This block asserted `DebugLastShotOrigin` (= the eyes) was within 5cm
-            // of the eyes -- trivially true, and silent about the projectile, which spawns 0.43 m away at the muzzle.
-            // Measured with a probe before rewriting: asserting the real origin against the old 5cm bound fails at
-            // 0.429 m, so the old check could never have caught a wrong bullet origin. It is now split in two:
-            // where the AIM MATHS is based (eyes) and where the PROJECTILE leaves (muzzle), which are different
-            // points on purpose and were being conflated.
+            // of the eyes -- trivially true, and silent about the projectile, which at the time spawned 0.43 m away
+            // at the muzzle. Measured with a probe before rewriting: the real origin missed the old 5cm bound by
+            // 0.429 m, so the green check could never have caught a wrong bullet origin. That is why the two points
+            // are now read back separately.
             T.Check($"the aim basis is the eyes ({p.DebugLastShotOrigin.DistanceTo(p.EyesWorld):0.###} m off)",
                 p.DebugLastShotOrigin.DistanceTo(p.EyesWorld) < 0.05f);
-            // The bullet leaves from the muzzle: forward of the eyes, close to the player, never behind them. The
-            // bound is a metre because the muzzle offset is deliberately gun-relative (0.4 m forward, 0.12 m right
-            // at the hip lerping to centre on ADS) -- what matters is that it is ON the player, not that it is at
-            // one exact point.
-            float bulletOff = p.DebugLastBulletOrigin.DistanceTo(p.EyesWorld);
-            T.Check($"the BULLET leaves from the muzzle, forward of the eyes ({bulletOff:0.###} m)",
-                bulletOff > 0.15f && bulletOff < 1.0f);
-            T.Check($"...and in FRONT of the player, not behind ({(p.GlobalTransform.AffineInverse() * p.DebugLastBulletOrigin).Z:0.##} m)",
-                (p.GlobalTransform.AffineInverse() * p.DebugLastBulletOrigin).Z < 0f);
-            // ...and emphatically NOT at the camera. Stated separately: "near the eyes" and "not at the camera" are the
+
+            // ---- DEAD CENTRE, AT THE HIP TOO (strawberry: "the raycast is always meant to be dead center, the
+            // tracer launches from the muzzle and then converges gradually onto the raycast" / "raycast != muzzle").
+            //
+            // Every offset is off the projectile now: no 0.12 m lateral, no 0.035 m drop, no 0.4 m forward. This is
+            // the check that would have caught the version before it, so it is worth being exact about what it
+            // measures: the PERPENDICULAR distance from the aim ray. A plain distance-to-eye cannot do the job,
+            // because an origin 0.4 m ALONG the ray is still perfectly centred while one 3.5 cm under it is not,
+            // and both read as "a few centimetres from the eye".
+            //
+            // Asserted at the HIP first, deliberately. The hip is where the old lateral term lived, so it is the
+            // state that fails loudest if any of this comes back -- and an ADS-only assertion would have passed
+            // against the 12 cm hipfire offset the whole time.
+            T.Check($"at the HIP the bullet leaves dead centre ({OffAxis(p) * 100f:0.##} cm off the aim ray)",
+                OffAxis(p) < 0.005f);
+            T.Check($"...and starts AT the eye, not forward of it ({p.DebugLastBulletOrigin.DistanceTo(p.EyesWorld) * 100f:0.##} cm)",
+                p.DebugLastBulletOrigin.DistanceTo(p.EyesWorld) < 0.005f);
+
+            // THE SPLIT IS REAL AND STILL THERE. The gun-shaped look was the whole reason those offsets existed, so
+            // deleting them is only correct if the FX kept them: the flash and muzzle light still come off a point
+            // forward and to the side, and only the projectile moved. Without this, "make it centred" is
+            // indistinguishable from "collapse both onto the eye and put the muzzle flash in the player's face".
+            float fxGap = p.DebugLastFxMuzzle.DistanceTo(p.DebugLastBulletOrigin);
+            T.Check($"the muzzle FX still fires from the gun, not the eye ({fxGap:0.###} m apart)",
+                fxGap > 0.2f);
+            T.Check($"...forward of the player, where a barrel is ({(p.DebugLastFxMuzzle - p.EyesWorld).Dot(p.DebugLastShotDir.Normalized()):0.##} m along the aim)",
+                (p.DebugLastFxMuzzle - p.EyesWorld).Dot(p.DebugLastShotDir.Normalized()) > 0.2f);
+
+            // ...and ADS'd, where the lateral term used to lerp out. Same claim, other end of the aim blend: if the
+            // offset were merely SHRINKING with aim rather than gone, the hip check above catches it and this one
+            // does not -- which is exactly why the pair is worth more than either.
+            p.ForceAim(true);   // the existing headless ADS hook (UG_ADS firetest uses it)
+            yield return Until(() => p.CurrentAimAlpha > 0.999f, 5);
+            T.Check($"fully ADS'd for the second reading (alpha {p.CurrentAimAlpha:0.###})", p.CurrentAimAlpha > 0.999f);
+            // ASSERT THE SHOT. If the fire-rate cooldown refuses this one, every field below still holds the HIP
+            // shot's values and the ADS check re-reads the reading it already passed on -- a green check measuring
+            // the wrong shot, which is the same failure this whole suite exists because of.
+            T.Check("the ADS shot actually fired (else the reading below is the hip shot again)", p.Fire());
+            yield return Ticks(1);
+            T.Check($"ADS'd, still dead centre ({OffAxis(p) * 100f:0.##} cm off the aim ray)", OffAxis(p) < 0.005f);
+            p.ForceAim(false);
+            yield return Ticks(20);
+
+            // ...and emphatically NOT at the camera. Stated separately: "at the eyes" and "not at the camera" are the
             // same claim only while the two are far apart, and this is the assertion that names the reported bug.
             T.Check($"...and NOT at the camera ({p.DebugLastBulletOrigin.DistanceTo(p.Camera.GlobalPosition):0.##} m from it)",
                 p.DebugLastBulletOrigin.DistanceTo(p.Camera.GlobalPosition) > 1.5f);
