@@ -20,6 +20,7 @@ Ammo_Max 250
 Auto
 
 Caliber 32
+Real_Weapon "Minigun"
 
 Equipable_Movement_Speed_Multiplier 0.9
 

@@ -24,6 +24,8 @@ Safety
 Semi
 
 Caliber 38
+Caliber_Name "Railgun Slug"
+Real_Weapon "Rorsch MK2 (fictional)"
 
 Range 300
 Unplace 0.1
