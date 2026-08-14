@@ -40,7 +40,7 @@ namespace UnturnedGodot
             if (IsOpen) return;
             _sectors.Clear();
             foreach (var (asset, count, selected) in choices)   // one segment per CARRIED shell type
-                _sectors.Add(new AmmoPie.Sector { Id = (ushort)asset.id, Name = asset.itemName, CountText = $"x{count}", Selectable = true, Selected = selected, Icon = LoadIcon(asset.id) });
+                _sectors.Add(new AmmoPie.Sector { Id = (ushort)asset.id, Name = PlayerController.PluralAmmo(asset.itemName, count), CountText = $"x{count}", Selectable = true, Selected = selected, Icon = LoadIcon(asset.id) });
             // UNLOAD segment (master): ejects the loaded rounds back to the bag; greyed when nothing's chambered.
             _sectors.Add(new AmmoPie.Sector { Id = 0, Name = "unload", CountText = canUnload ? "eject" : "empty", Selectable = canUnload, IsUnload = true });
             int n = _sectors.Count;   // angles depend on the TOTAL (types + unload), so assign them after

@@ -3327,6 +3327,7 @@ namespace UnturnedGodot
         // --- shotgun ammo-type picker API (R-hold radial + attachment menu Magazine slot) ---
         public bool CanChooseShellType => UsesShells;   // only loose-shell shotguns have an ammo type to pick
         public string LoadedShellName => UsesShells ? ShellAsset?.itemName : null;   // HUD: the shell type currently loaded (e.g. "12 Gauge Slug"), null for non-shotguns
+        public static string PluralAmmo(string name, int count) => count > 1 && !string.IsNullOrEmpty(name) ? name + "s" : name;   // display only: "12 Gauge Slug" -> "12 Gauge Slugs" when >1 (master)
         int CountOfShell(ushort id)   // how many of ONE specific shell id the player carries across pages
         {
             if (Inventory == null || id == 0) return 0;

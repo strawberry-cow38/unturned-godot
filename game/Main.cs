@@ -2758,8 +2758,10 @@ namespace UnturnedGodot
             var choices = new System.Collections.Generic.List<(SDG.Unturned.ItemAsset asset, int count, bool selected)>();
             var buck = SDG.Unturned.Assets.find(113);    // 12 Gauge Shells (buckshot)
             var slug = SDG.Unturned.Assets.find(5000);   // 12 Gauge Slug
+            var bean = SDG.Unturned.Assets.find(5002);   // 12 Gauge Beanbag
             if (buck != null) choices.Add((buck, 12, false));
             if (slug != null) choices.Add((slug, 6, true));   // slug shown as the currently-selected type
+            if (bean != null) choices.Add((bean, 4, false));
             radial.OpenWith(choices, true);   // demo: show the unload segment too
             GD.Print($"[AMMORADIAL] demo: {choices.Count} choices (buck={buck?.itemName}, slug={slug?.itemName})");
         }

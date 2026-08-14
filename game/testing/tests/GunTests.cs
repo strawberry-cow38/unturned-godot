@@ -39,7 +39,7 @@ namespace UnturnedGodot.Testing
             for (byte b = 0; b < (byte)(PlayerInventory.PAGES - 2); b++) { var pg = p.Inventory.items[b]; for (int i = pg.getItemCount() - 1; i >= 0; i--) if (pg.getItem((byte)i)?.item?.id == 6) pg.removeItem((byte)i); }
             T.Check("no spare mag -> cannot reload", !p.DebugHasSpareMag());
 
-            // masterkey: a BREAK-action double-barrel feeding from loose 20 Gauge Shells (item 381, stack 32), no +1
+            // masterkey: a BREAK-action double-barrel feeding from loose 20 Gauge Buckshot (item 381, stack 32), no +1
             int Jars(ushort id) { int n = 0; var pg = p.Inventory.items[PlayerInventory.BACKPACK]; for (byte i = 0; i < pg.getItemCount(); i++) if (pg.getItem(i)?.item?.id == id) n++; return n; }
             p.LoadGun("res://content/masterkey.dat");
             T.Check("masterkey is a shotgun", p.DebugIsShotgun());
@@ -75,7 +75,16 @@ namespace UnturnedGodot.Testing
             T.Check("HUD reflects the loaded shell type (slug)", p.LoadedShellName == "12 Gauge Slug");
             p.ChooseShellType(113);    // back to buckshot
             T.Check("buckshot re-selected -> 6 pellets again", p.DebugPellets() == 6);
-            T.Check("HUD reflects the loaded shell type (buckshot)", p.LoadedShellName == "12 Gauge Shells");
+            // beanbag: a THIRD 12ga type (separate id, functionally like the slug -- 1 pellet -- but tunable apart later)
+            bag.tryAddItem(new Item(5002, 5));   // 12 Gauge Beanbag
+            T.Check("three 12ga shell types offered (buckshot + slug + beanbag)", p.ShellTypeChoices().Count == 3);
+            p.ChooseShellType(5002);
+            T.Check("beanbag selected -> fires 1 projectile", p.DebugPellets() == 1);
+            T.Check("HUD reflects the loaded shell type (beanbag)", p.LoadedShellName == "12 Gauge Beanbag");
+            p.ChooseShellType(113);    // reset to buckshot for the checks below
+            T.Check("HUD reflects the loaded shell type (buckshot)", p.LoadedShellName == "12 Gauge Buckshot");
+            T.Check("ammo name pluralises for >1 (master)", PlayerController.PluralAmmo("12 Gauge Slug", 6) == "12 Gauge Slugs");
+            T.Check("ammo name stays singular for 1", PlayerController.PluralAmmo("12 Gauge Slug", 1) == "12 Gauge Slug");
 
             // bolt/pump per-shot rechamber (source RechamberAfterShotCount)
             p.LoadGun("res://content/timberwolf.dat");

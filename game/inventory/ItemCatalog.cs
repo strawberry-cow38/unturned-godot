@@ -152,8 +152,8 @@ namespace SDG.Unturned
         static void WireShotgunShells()
         {
             void Shell(ushort id, int caliber, int pellets) { var a = Assets.find(id); if (a != null) { a.magCaliber = caliber; a.isAmmo = true; a.stackSize = 32; a.pellets = pellets; } }
-            Shell(113, 8, 6);    // 12 Gauge Shells (Bluntforce / Quadbarrel / Determinator) -- 6 pellets (retail Shells_8.dat)
-            Shell(381, 16, 8);   // 20 Gauge Shells (Masterkey / Sawed-Off) -- 8 pellets (retail Shells_2.dat)
+            Shell(113, 8, 6);    // 12 Gauge Buckshot (Bluntforce / Quadbarrel / Determinator) -- 6 pellets (retail Shells_8.dat)
+            Shell(381, 16, 8);   // 20 Gauge Buckshot (Masterkey / Sawed-Off) -- 8 pellets (retail Shells_2.dat)
             // Slugs (strawberry): green single-projectile rounds. Same caliber as their buckshot sibling so they feed
             // the SAME shotguns, but pellets=1 -- one solid slug, not a spread (each pellet is its own bullet doing the
             // gun's full shot damage, so a slug = one concentrated hit vs buckshot's 6-8). New items 5000/5001, defined
@@ -161,6 +161,10 @@ namespace SDG.Unturned
             // functional ammo here, same as the shells above.
             Shell(5000, 8, 1);    // 12 Gauge Slug  -> caliber 8  (12ga shotguns), 1 pellet
             Shell(5001, 16, 1);   // 20 Gauge Slug  -> caliber 16 (20ga shotguns), 1 pellet
+            // Beanbags (strawberry): less-lethal white/grey rounds, functionally identical to slugs (pellets=1) but
+            // WIRED SEPARATE (own item ids 5002/5003) so their damage can be tuned independently later.
+            Shell(5002, 8, 1);    // 12 Gauge Beanbag -> caliber 8  (12ga shotguns), 1 pellet
+            Shell(5003, 16, 1);   // 20 Gauge Beanbag -> caliber 16 (20ga shotguns), 1 pellet
         }
 
         // Load real ItemConsumeableAsset effects (content/consumable_stats.tsv: id health food water virus disinfectant

@@ -108,7 +108,7 @@
 110	Hawkhound Iron Sights	Sight	Common	1	1	Rail mounted iron sights.	b64aadf1128c4dad919b72e15e152b25
 111	Hawkhound Magazine	Magazine	Uncommon	1	1	Low caliber civilian grade <color=uncommon>Hawkhound</color> magazine. Designed to fit 8 rounds.	4201dc61ec7c4a7dad1695d278c4ba77
 112	Bluntforce	Gun	Rare	5	2	American shotgun chambered in 12 Gauge Shells.	2047f537c56442b5aabe535caf819bda
-113	12 Gauge Shells	Magazine	Rare	1	1	Civilian grade <color=rare>Bluntforce</color> shells.	8031e39dd5664b74ba0b104728413cef
+113	12 Gauge Buckshot	Magazine	Rare	1	1	Civilian grade <color=rare>Bluntforce</color> shells.	8031e39dd5664b74ba0b104728413cef
 114	Bluntforce Iron Sights	Sight	Common	1	1	Rail mounted iron sights.	93dcaa530e4543e58154ce888adc1a69
 115	Raw Ameberries	Water	Common	1	1	Very suspicious looking.	77c2168e6fb5405aadb5f41b074a96e0
 116	PDW	Gun	Legendary	3	2	American carbine chambered in Military ammunition. Internally suppressed.	953f584b63bb487eabafa2770be0a798
@@ -375,7 +375,7 @@
 378	Metal Door	Barricade	Epic	1	2	Metal door ideal for keeping out unwanted visitors.	8d0b21995b084db3a91bb7a75d777f75
 379	Metal Ladder	Barricade	Epic	1	2	Metal ladder ideal for keeping out unwanted visitors.	8593a19ecb7d40c1a6718fabafb83d0e
 380	Masterkey	Gun	Uncommon	4	2	American shotgun chambered in 20 Gauge Shells.	c5bfefd37b72416baf1941bf8253b4c6
-381	20 Gauge Shells	Magazine	Uncommon	1	1	Civilian grade <color=uncommon>Masterkey</color> shells.	9ca5b01e1e2d404fbed35f2645da707c
+381	20 Gauge Buckshot	Magazine	Uncommon	1	1	Civilian grade <color=uncommon>Masterkey</color> shells.	9ca5b01e1e2d404fbed35f2645da707c
 382	Caltrop	Trap	Uncommon	1	1	Spiky trap.	cd5e4300f6994424848392cecf72936d
 383	Maple Spikes	Trap	Uncommon	1	2	Spiky trap.	0340c4125623493698286a94bd6c8f29
 384	Birch Spikes	Trap	Common	1	2	Spiky trap.	6e5bf0b6b23e4dca866f513f7b0e12ff
@@ -1937,3 +1937,5 @@
 1996	Rain Hat	Hat	Uncommon	2	2	This sou'wester is perfect for singing in the rain.	c88cc2394c46482dadbb7d1a36a0e50c
 5000	12 Gauge Slug	Magazine	Rare	1	1	A single solid slug in place of buckshot. Chambered in 12 Gauge.	15e13a5e73944aac91082d1e70f82c96
 5001	20 Gauge Slug	Magazine	Uncommon	1	1	A single solid slug in place of buckshot. Chambered in 20 Gauge.	8d06796e3c064f32973733fccb112d9d
+5002	12 Gauge Beanbag	Magazine	Rare	1	1	A less-lethal beanbag round chambered in 12 Gauge.	e7fbf7676018439aa0723f9a30be0401
+5003	20 Gauge Beanbag	Magazine	Uncommon	1	1	A less-lethal beanbag round chambered in 20 Gauge.	7913739685f4407a87ecbd3d8fc9568a

@@ -293,10 +293,11 @@ namespace UnturnedGodot
                     // shotguns: show the LOADED SHELL TYPE right above the ammo count so the readout reflects buckshot
                     // vs slug (master); other guns keep the fire mode. Slug tints green to match its round, buckshot amber.
                     var shell = Player.LoadedShellName;
-                    _fireMode.Text = shell ?? Player.FiremodeName;
+                    _fireMode.Text = shell != null ? PlayerController.PluralAmmo(shell, Player.Ammo) : Player.FiremodeName;
                     _fireMode.Modulate = shell == null ? new Color(1f, 1f, 1f, 0.7f)
-                                       : shell.Contains("Slug") ? new Color(0.62f, 1f, 0.66f, 0.95f)
-                                       : new Color(1f, 0.92f, 0.7f, 0.9f);
+                                       : shell.Contains("Slug") ? new Color(0.62f, 1f, 0.66f, 0.95f)       // slug green
+                                       : shell.Contains("Beanbag") ? new Color(0.9f, 0.9f, 0.92f, 0.95f)   // beanbag white-grey
+                                       : new Color(1f, 0.92f, 0.7f, 0.9f);                                 // buckshot amber
                     var asset = Player.HeldItemForTest != null ? SDG.Unturned.Assets.find(Player.HeldItemForTest.id) : null;
                     _weaponName.Text = asset?.itemName ?? Player.Gun?.Id ?? "";   // Id is the .dat stem, a readable fallback when the asset is missing
                     _weaponName.Modulate = asset != null ? SDG.Unturned.ItemTool.RarityColorUI(asset.rarity) : Colors.White;

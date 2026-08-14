@@ -80,7 +80,7 @@ namespace UnturnedGodot
                     foreach (var (asset, count, selected) in Player.ShellTypeChoices())
                     {
                         var a = asset; ushort aid = (ushort)a.id;
-                        shells.Add(AddOption(slot, count > 0 ? $"{a.itemName} — {count}" : $"{a.itemName} — none", aid,
+                        shells.Add(AddOption(slot, count > 0 ? $"{PlayerController.PluralAmmo(a.itemName, count)} — {count}" : $"{a.itemName} — none", aid,
                             count > 0 ? () => { Player.ChooseShellType(aid); Refresh(); } : (System.Action)null,
                             tint: selected ? new Color(0.72f, 1f, 0.75f) : (Color?)null, rounds: count > 0 ? count : -1, vertical: true));
                     }
