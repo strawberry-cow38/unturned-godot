@@ -184,6 +184,23 @@ namespace SDG.Unturned
             // same round, same mesh, will not seat in the other rifle.
             Mag(1020, 20, 22, "7.62x51mm NATO");
 
+            // ---- .50 BMG: the Grizzly and the Ekho (strawberry: "possible to make the ekho take .50? weird to have
+            // a proprietary ammo").
+            //
+            // Same GROUP on purpose, which is the whole request: one .50 mag feeds both, so the Ekho stops needing
+            // its own ammo economy. That is the opposite of the schofield/nykorev/snayperskya case above, where one
+            // cartridge sits in three groups because a stripper clip, a belt and a box mag do not interchange -- two
+            // detachable box mags in the same round DO.
+            //
+            // Both were inert before this, not just one. Neither 298 nor 1384 was ever Add()ed, so both arrived from
+            // the TSV with magCapacity 0 and IsMagazine false: the right name, the right icon, and not a magazine.
+            // The rechamber alone would have been invisible in game, because there was no functioning .50 magazine
+            // for the Ekho to newly accept. Capacities are the real ones (M82 10, M200 7) and match each gun's own
+            // Ammo_Max -- the TSV's "Designed to fit 5 rounds" is stale retail flavour text from before the mag-size
+            // rebalance, not a capacity.
+            Mag(298,  10, 13, ".50 BMG");   // Grizzly Magazine -- Barrett M82's 10-round box
+            Mag(1384,  7, 13, ".50 BMG");   // Ekho Magazine -- CheyTac M200's 7-round box, same round, seats in both
+
             // ---- .45 ACP: the 1911 and the Avenger (strawberry: "change the Avenger to a 45 acp usp. reuses ammo and
             // has a niche as a bigger mag 1911").
             //

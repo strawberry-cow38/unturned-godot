@@ -225,13 +225,36 @@ namespace UnturnedGodot.Testing
             // 5c. Every gun touched here points at a magazine that is ACTUALLY a magazine and actually fits it.
             //     A TSV magazine arrives with magCapacity 0, so it has the right name and icon and silently is not a
             //     magazine -- which is exactly how the sabertooth shipped. Capacity>0 is the real test, not non-null.
-            foreach (var g in new[] { "eaglefire", "maplestrike", "honeybadger", "augewehr", "nightraider", "heartbreaker", "sabertooth" })
+            foreach (var g in new[] { "eaglefire", "maplestrike", "honeybadger", "augewehr", "nightraider", "heartbreaker", "sabertooth",
+                                      "grizzly", "ekho" })   // both were inert until the .50 share; they belong in this net now
             {
                 var d = Def(dir, g);
                 var a = Assets.find((ushort)d.MagazineId);
                 T.Check($"{g}'s mag {d.MagazineId} is a functioning magazine (cap {a?.magCapacity ?? -1})", a != null && a.IsMagazine);
                 T.Check($"...and fits it (mag cal {a?.magCaliber ?? -1} vs gun {d.Caliber})", a != null && a.magCaliber == d.Caliber);
             }
+
+            // 5c-ii. ONE ROUND, ONE GROUP: the .50 pair (strawberry: "possible to make the ekho take .50? weird to
+            //     have a proprietary ammo"). The point of the change is INTERCHANGE, so same-cartridge is not enough
+            //     to assert -- 7.62x54mmR is shared by three guns that cannot swap a single magazine between them.
+            //     What has to hold is the group, and it has to hold in the direction a player would notice: each
+            //     gun's own magazine seats in the OTHER gun.
+            var grz = Def(dir, "grizzly");
+            var ekh = Def(dir, "ekho");
+            T.Check($"grizzly and ekho share the .50 cartridge ({grz.CaliberName} / {ekh.CaliberName})",
+                grz.CaliberName == ".50 BMG" && ekh.CaliberName == ".50 BMG");
+            T.Check($"...and the SAME magazine group, so the ammo is not proprietary ({grz.Caliber} / {ekh.Caliber})",
+                grz.Caliber == ekh.Caliber);
+            var grzMag = Assets.find((ushort)grz.MagazineId);
+            var ekhMag = Assets.find((ushort)ekh.MagazineId);
+            T.Check($"the grizzly's own mag loads an ekho (cal {grzMag?.magCaliber ?? -1} vs {ekh.Caliber})",
+                grzMag != null && grzMag.IsMagazine && grzMag.magCaliber == ekh.Caliber);
+            T.Check($"...and the ekho's loads a grizzly (cal {ekhMag?.magCaliber ?? -1} vs {grz.Caliber})",
+                ekhMag != null && ekhMag.IsMagazine && ekhMag.magCaliber == grz.Caliber);
+            // Different BOXES of the same round -- an M82's 10 and an M200's 7. Equal capacities here would mean
+            // someone collapsed them into one item rather than sharing a cartridge.
+            T.Check($"...while staying different magazines ({grzMag?.magCapacity ?? -1} vs {ekhMag?.magCapacity ?? -1} rounds)",
+                grzMag != null && ekhMag != null && grzMag.magCapacity == 10 && ekhMag.magCapacity == 7);
 
             // 5d. The .300 BLK flag: same group, same mesh, different round. Without both values present the flag
             //     can never disagree with anything and proves nothing.

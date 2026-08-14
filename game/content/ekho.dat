@@ -23,13 +23,13 @@ Ammo_Max 7
 Safety
 Semi
 
-Caliber 36
-Caliber_Name ".408 CheyTac"
+Caliber 13
+Caliber_Name ".50 BMG"
 Real_Weapon "CheyTac M200 Intervention"
 
 Range 300
-Ballistic_Travel 18.2
-Real_Muzzle_Velocity 910
+Ballistic_Travel 17.06
+Real_Muzzle_Velocity 853
 Bullet_Gravity_Multiplier 1
 Firerate 50
 Replace 0.75

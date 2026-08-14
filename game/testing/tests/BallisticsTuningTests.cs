@@ -56,7 +56,7 @@ namespace UnturnedGodot.Testing
             {
                 ("grizzly",    853f),   // Barrett M82, .50 BMG
                 ("timberwolf", 900f),   // PGW C14 Timberwolf, .338 Lapua Magnum
-                ("ekho",       910f),   // CheyTac M200, .408 CheyTac
+                ("ekho",       853f),   // CheyTac M200 -- rechambered .50 BMG, so it shares the grizzly's round
             };
 
             foreach (var (gun, real) in heavy)
