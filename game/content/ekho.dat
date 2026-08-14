@@ -28,6 +28,9 @@ Caliber_Name ".408 CheyTac"
 Real_Weapon "CheyTac M200 Intervention"
 
 Range 300
+Ballistic_Travel 18.2
+Real_Muzzle_Velocity 910
+Bullet_Gravity_Multiplier 1
 Firerate 50
 Replace 0.75
 Action Bolt
@@ -65,8 +68,6 @@ Aim_In_Duration 0.25
 Spread_Aim 0.001
 Spread_Angle_Degrees 21.8
 
-Ballistic_Steps 20
-Ballistic_Travel 15
 
 Recoil_Min_X -10
 Recoil_Min_Y 30

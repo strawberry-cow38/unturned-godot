@@ -1,4 +1,4 @@
-﻿GUID beeeb5342e934d0ead5a3b37dbab3363
+GUID beeeb5342e934d0ead5a3b37dbab3363
 Type Gun
 Rarity Legendary
 Useable Gun
@@ -28,6 +28,9 @@ Caliber_Name ".50 BMG"
 Real_Weapon "Barrett M82"
 
 Range 300
+Ballistic_Travel 17.06
+Real_Muzzle_Velocity 853
+Bullet_Gravity_Multiplier 1
 Firerate 20
 Action Trigger
 
@@ -64,8 +67,6 @@ Aim_In_Duration 0.25
 Spread_Aim 0.001
 Spread_Angle_Degrees 24.23
 
-Ballistic_Steps 24
-Ballistic_Travel 12.5
 
 Recoil_Min_X -20
 Recoil_Min_Y 35

@@ -1,4 +1,4 @@
-﻿GUID 8550c31ea94c4bc5a7d30078c40012c0
+GUID 8550c31ea94c4bc5a7d30078c40012c0
 Type Gun
 Rarity Legendary
 Useable Gun
@@ -28,6 +28,9 @@ Caliber_Name ".338 Lapua Magnum"
 Real_Weapon "PGW C14 Timberwolf"
 
 Range 300
+Ballistic_Travel 18
+Real_Muzzle_Velocity 900
+Bullet_Gravity_Multiplier 1
 Firerate 50
 Action Bolt
 
@@ -64,8 +67,6 @@ Aim_In_Duration 0.25
 Spread_Aim 0.001
 Spread_Angle_Degrees 19.29
 
-Ballistic_Steps 24
-Ballistic_Travel 12.5
 
 Recoil_Min_X -4
 Recoil_Min_Y 25
