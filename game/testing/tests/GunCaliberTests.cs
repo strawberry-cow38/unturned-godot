@@ -65,40 +65,49 @@ namespace UnturnedGodot.Testing
             // TWO AXES, and they move independently, which is the thing this check now encodes:
             //   Real_Weapon  -- the firearm the MODEL is based on. Can exist even when the ammo is invented.
             //   Caliber_Name -- the REAL cartridge. Derived from Real_Weapon where there is one; absent otherwise.
-            // The guns with no real basis at all are the ones that must stay empty, or the next pass re-invents them.
-            var noRealBasis = new HashSet<string>
+            // The guns with no real basis were required to stay EMPTY, so that the next pass could not re-invent them.
+            // Emptiness has stopped being the right guard: master authored values for all four on 2026-08-14 ("just
+            // make it 7.62x51. its fine" / "nailgun and pbg are their respective new calibers" / "shadowstalker mk2
+            // fictional too"). Those are DESIGN DECISIONS about what the gun fires, not claims about what Nelson meant,
+            // and an empty-check would now delete them on sight.
+            //
+            // So the guard is PINNED VALUES instead, which has more teeth than emptiness ever did: an exact match
+            // fails both on a stripped annotation AND on a re-invented one. The original failure -- fury tagged
+            // "9x19mm Parabellum / Heckler & Koch MP5K" to satisfy a check -- fails here loudly rather than sitting
+            // green. Change one only when master says so, and change it here in the same commit.
+            //
+            // None of the four names a real firearm MODEL, which is the line that matters. "Minigun" is a category,
+            // "Nail gun" and "Paintball marker" are tools, and the mk2 is explicitly marked fictional like the mk1.
+            // A specific manufacturer and model appearing in this table is the tell that someone inferred it.
+            //
+            // The nailgun/paintballgun entries also settle the older THIRD case: a real model basis and no real
+            // cartridge, because the gun throws an OBJECT rather than firing a bullet -- decided by what the MAGAZINE
+            // holds ("Designed to fit 20 nails", "...35 paintballs"), never by the ammo's flavour name. `card` is a
+            // PPSh-41 firing "Calling Card" ammo whose magazine holds "71 rounds", and it was filed as a card-thrower
+            // on the strength of the name alone until master asked what I was talking about. Hell's Fury, Vonya and
+            // Calling Card are all just Unturned naming its ammo types. They now carry a caliber, but a made-up one
+            // that names no cartridge -- which is the distinction the old branch was reaching for.
+            var authored = new System.Collections.Generic.Dictionary<string, (string Caliber, string Weapon)>
             {
-                "fury",              // Russian minigun, "Hell's Fury"
-                "nailgun",           // construction tool
-                "paintballgun",      // painting tool
-                "shadowstalkermk2",  // prototype railgun -- was tagged with its OWN NAME as its basis
+                ["fury"]             = ("7.62x51mm NATO", "Minigun"),                  // Russian minigun, "Hell's Fury"
+                ["nailgun"]          = ("Nail",           "Nail gun"),                 // construction tool
+                ["paintballgun"]     = ("Paintball",      "Paintball marker"),         // painting tool
+                ["shadowstalkermk2"] = ("Railgun Slug",   "Rorsch MK2 (fictional)"),   // prototype railgun, like the mk1
             };
-            // ...and a THIRD case: a real model basis and NO cartridge, because the gun throws an OBJECT rather
-            // than firing a bullet. Decided by what the MAGAZINE holds, which is the only place that actually says:
-            // "Designed to fit 20 nails", "...35 paintballs". NOT by the ammo's flavour name -- `card` is a PPSh-41
-            // firing "Calling Card" ammo whose magazine holds "71 rounds", and I filed it here as a card-thrower on
-            // the strength of the name alone until master asked what I was talking about. Hell's Fury, Vonya and
-            // Calling Card are all just Unturned naming its ammo types.
-            var nonBallistic = new HashSet<string> { "nailgun", "paintballgun" };
             var untagged = new List<string>();
-            var invented = new List<string>();
+            var drifted = new List<string>();
             foreach (var g in guns)
             {
                 var d = Def(dir, g);
-                if (nonBallistic.Contains(g) && !noRealBasis.Contains(g))
+                if (authored.TryGetValue(g, out var want))
                 {
-                    T.Check($"{g} throws an object, so it carries no cartridge ({d.CaliberName ?? "-"})",
-                        string.IsNullOrWhiteSpace(d.CaliberName));
-                }
-                else if (noRealBasis.Contains(g))
-                {
-                    if (!string.IsNullOrWhiteSpace(d.CaliberName) || !string.IsNullOrWhiteSpace(d.RealWeapon))
-                        invented.Add($"{g}={d.CaliberName ?? "-"}/{d.RealWeapon ?? "-"}");
+                    if (d.CaliberName != want.Caliber || d.RealWeapon != want.Weapon)
+                        drifted.Add($"{g}={d.CaliberName ?? "-"}/{d.RealWeapon ?? "-"} (want {want.Caliber}/{want.Weapon})");
                 }
                 else if (string.IsNullOrWhiteSpace(d.CaliberName)) untagged.Add(g);
             }
             T.Check($"every gun with a real-world basis carries its cartridge ({(untagged.Count == 0 ? "all" : string.Join(",", untagged))})", untagged.Count == 0);
-            T.Check($"...and the ones with NO real basis invent nothing ({(invented.Count == 0 ? "none" : string.Join(",", invented))})", invented.Count == 0);
+            T.Check($"...and the ones with no real basis carry exactly what master authored ({(drifted.Count == 0 ? "all four" : string.Join("; ", drifted))})", drifted.Count == 0);
 
             // 1b. REAL rate of fire and magazine size (master: "rebalance all the new guns to have real ROF and
             //     mag sizes"). This is a DELIBERATE DIVERGENCE FROM RETAIL and needs pinning, because every one of

@@ -149,6 +149,15 @@ namespace UnturnedGodot
             { ".408 CheyTac", 2.00f },            // 10.36mm; heavier than .338 Lapua, lighter than .50 BMG,
                                                   // and sits between them here for the same reason (M200)
             { "Railgun Slug", 1.80f },            // not a real cartridge; sized to read as heavy
+            // Not cartridges either -- master gave the nailgun and paintball gun their own calibers rather than
+            // leaving them blank. They still need a width: every bullet draws a tracer sized by this table, and an
+            // unmapped name silently falls back to 1.00 and draws an EAGLEFIRE-sized streak, which is exactly the
+            // failure the coverage check in gun.caliber_field exists to catch. It caught these.
+            { "Nail", 0.30f },                    // ~3.1mm shank -- thinner than a buckshot pellet, the smallest
+                                                  // thing here, because it is the smallest thing fired
+            { "Paintball", 1.20f },               // 17.3mm is wider than a .50 BMG, but bore loses to ENERGY here
+                                                  // the same way it does for the .22 and for buckshot: a paintball
+                                                  // must not draw the fattest streak in the game
         };
 
         public static GunDef FromDatText(string datText)
