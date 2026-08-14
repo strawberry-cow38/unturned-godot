@@ -78,6 +78,7 @@ namespace UnturnedGodot
         // REFITTED iron sight restores its real per-gun colour instead of the near-black scope/red-dot default.
         Color _sightColor = new(0.3f, 0.3f, 0.3f);
         string _defaultSightTxt;
+        string _gunTxt;   // current gun's mesh name (gv.Gun) -- gates gun-specific attachment tuning (the red-dot ADS aim is eaglefire-tuned for now)
         Vector3 _defaultSightPos = new(0f, 0.1312f, -0.118f);   // the gun's sight mount (SightPos = hook + iron Model_0); iron/scope/red-dot all mount here
         Vector3 _defaultAimHook = new(0f, -0.4688f, -0.2098f);   // the gun's ADS aim (gv.AimHook) -- the eye point iron/scope/red-dot all aim down
         readonly System.Collections.Generic.List<Casing> _casings = new();
@@ -430,7 +431,7 @@ namespace UnturnedGodot
                     // greys 0.12-0.64, honeybadger tan); the old hardcoded 0.06 near-black was wrong. Grey default for the
                     // hardcoded guns (SightColor unset -> A==0).
                     var sightCol = gv.SightColor.A > 0f ? gv.SightColor : new Color(0.3f, 0.3f, 0.3f);
-                    _sightColor = sightCol; _defaultSightTxt = gv.Sight;   // remembered so a re-fitted iron sight (SetSlotMesh) restores this colour, not the red-dot default
+                    _sightColor = sightCol; _defaultSightTxt = gv.Sight; _gunTxt = gv.Gun;   // remembered so a re-fitted iron sight (SetSlotMesh) restores this colour, not the red-dot default; _gunTxt gates gun-specific tuning
                     _defaultSightPos = gv.SightPos != Vector3.Zero ? gv.SightPos : new Vector3(0f, 0.1312f, -0.118f);   // the sight mount (all optics mount here)
                     _defaultAimHook = gv.AimHook;   // the ADS aim (all optics aim down this eye point)
                     var sightMat = new StandardMaterial3D { CullMode = BaseMaterial3D.CullModeEnum.Disabled, AlbedoColor = sightCol, Metallic = 0f, MetallicSpecular = 0f, Roughness = 1f };
@@ -973,22 +974,33 @@ namespace UnturnedGodot
                     string _rp = ProjectSettings.GlobalizePath($"res://content/{_retName}");
                     if (System.IO.File.Exists(_rp)) { var _ri = Image.LoadFromFile(_rp); if (_ri != null) { var _rt = ImageTexture.CreateFromImage(_ri); _retMat.AlbedoTexture = _rt; _retMat.EmissionTexture = _rt; } }
                     m.AddChild(new MeshInstance3D { Name = "Reticle", Mesh = new QuadMesh { Size = new Vector2(_rd.Size, _rd.Size) }, MaterialOverride = _retMat, Position = _rd.Pos, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off });
+                    // ADS through the optic's OWN aim (gun-local composed aim), so the eye tucks behind the sight instead of
+                    // aligning to the gun's iron eye-point -- which parked the gun at the wrong height/angle in the sight
+                    // picture (master: gun pose wrong on the holos). Restored to iron on swap by HideScopePiP.
+                    // ⚠ _rd.Aim is EAGLEFIRE-TUNED (composed from its Sight hook) -- gate to the eaglefire so red-dots on OTHER
+                    // guns keep their working per-gun iron aim (the default set above) instead of regressing. TODO generalise:
+                    // compose port(SightHook + sightModel0 + sightAim) per gun (needs the per-gun Sight hook, e.g. guns_sighthook.tsv).
+                    if (_sight != null && _gunTxt != null && _gunTxt.Contains("eaglefire")) _sight.Position = _rd.Aim;
                 }
             }
             m.Visible = true;
         }
 
-        // Red-dot / holo / kobra reticle calibration. Pos = the glowing dot on the sight's OPTICAL AXIS so it centers
-        // in the ring like the scopes do. X=0 and Z=-0.072 are the SOURCE Aim/Reticule node: all three sit at
-        // Model_0-local (0, *, +0.07203), and export_mesh negates Z -> port -0.072 (measured, tools/reddot_axis_probe.py).
-        // In this sight-local frame Z is VERTICAL and Y is fore-aft/depth -- the reticle is a billboard, so Y only sets
-        // apparent size, not centering (that was the trap: nudging Y last night moved the dot in depth, never on screen).
-        // Size = apparent dot size (tunable per ring: halo/kobra rings are larger). Glow = RED (source _EmissionColor).
-        static readonly System.Collections.Generic.Dictionary<string, (Vector3 Pos, float Size, Color Glow)> RedDotCal = new()
-        {   // Z=-0.072 = the measured optical axis; the old -0.04 sat above center so the dot read low/off-center.
-            { "red_dot_sight.txt",   (new Vector3(0f, -0.05f, -0.072f), 0.014f, new Color(1f, 0f, 0f)) },
-            { "red_halo_sight.txt",  (new Vector3(0f, -0.05f, -0.072f), 0.016f, new Color(1f, 0f, 0f)) },
-            { "red_kobra_sight.txt", (new Vector3(0f, -0.05f, -0.072f), 0.02f,  new Color(1f, 0f, 0f)) },
+        // Red-dot / holo / kobra calibration. Pos = the glowing reticle on the sight's OPTICAL AXIS (X=0, Z=-0.072) so it
+        // centers in the ring. Aim = the sight's own `Aim` NODE (source, port) = the ADS eye-point behind the optic; ADS
+        // sets _sight.Position = mount + Aim so you look THROUGH the sight like the scopes do (ConfigureScopePiP line ~1098),
+        // NOT at iron-sight height/angle (master: "gun angle/position wrong on the holos"). Both come from the source node
+        // at Model_0-local (0,*,+0.07203) for Pos and (0, Y,+0.072) for Aim (measured, tools/reddot_axis_probe.py; export_mesh
+        // negates Z). In this sight-local frame Z is VERTICAL, Y is fore-aft/depth: the reticle billboard's Y only sets
+        // apparent size; the Aim's Y (-0.30/-0.32) is the eye relief behind the glass. Size = dot size. Glow = RED.
+        static readonly System.Collections.Generic.Dictionary<string, (Vector3 Pos, Vector3 Aim, float Size, Color Glow)> RedDotCal = new()
+        {   // Pos = reticle on the optical axis (rel the mount node). Aim = the ADS eye-point, GUN-LOCAL port =
+            // port(SightHook + sight Model_0 + sight Aim) -- the composed aim so ADS looks THROUGH the optic (source-
+            // accurate, same as extract_gun_sights.py real_aims / the scopes). NOTE: eaglefire-tuned (uses the eaglefire
+            // Sight hook 0,-0.2398,-0.1386); iron aim is 0,-0.4688,-0.2098, these tuck the eye ~0.05 higher + 0.03 forward.
+            { "red_dot_sight.txt",   (new Vector3(0f, -0.1884f, -0.0655f), new Vector3(0f, -0.4183f, -0.1831f), 0.014f, new Color(1f, 0f, 0f)) },
+            { "red_halo_sight.txt",  (new Vector3(0f, -0.2970f, -0.0813f), new Vector3(0f, -0.4576f, -0.1990f), 0.016f, new Color(1f, 0f, 0f)) },
+            { "red_kobra_sight.txt", (new Vector3(0f, -0.1884f, -0.0655f), new Vector3(0f, -0.4183f, -0.1831f), 0.02f,  new Color(1f, 0f, 0f)) },
         };
 
         // ---- Generalized PiP scope (master: real zoom-THROUGH the attachment scopes, not the cheap fov-drop) ----
