@@ -159,6 +159,20 @@ def root_start(prefab):
     rlm = local_M(prefab)
     return np.linalg.inv(rlm) if rlm is not None else np.eye(4)
 
+def collect_lod0(go, M, gm):
+    # like collect(), but SKIP any "Model_1" child. Dead nodes carry Model_0 (LOD0, the gappy plank detail) +
+    # Model_1 (LOD1, a low-poly slab that MERGES the board gaps) with NO LODGroup component (find_lodgroup misses
+    # them). Grabbing both filled the fence husk into a solid rail (master: "no board-board gaps, there should be").
+    # Keeping Model_0 only mirrors extract_objects_v2's LOD0 selection for the alive mesh -> gaps preserved.
+    tt = go.read_typetree()
+    mf = comp_of(tt, ("MeshFilter",))
+    mp = mf.read_typetree().get("m_Mesh", {}).get("m_PathID") if mf else None
+    if mp: gm[go.path_id] = (M, mp)
+    for c in child_gos(go):
+        if (c.read_typetree().get("m_Name", "") or "").lower() == "model_1": continue
+        lm = local_M(c)
+        if lm is not None: collect_lod0(c, M @ lm, gm)
+
 os.makedirs(OUT, exist_ok=True)
 manifest = {}; nd = nr = npieces = 0
 for gid in destr:
@@ -170,13 +184,25 @@ for gid in destr:
     start = root_start(pf)
     rec = {}
     # DEAD: whole subtree combined -> one husk obj
+    # DEAD husk = the whole-object `Dead` (e.g. a fence's centre POST) PLUS each `Sections/Section_i/Dead` (the PLANK
+    # remnants). find_node prunes Sections, so a sectioned prop's per-plank Dead pieces would be missed by the top-level
+    # find alone -- master: "that's the post's husk, each plank has its own". Collect them all into ONE husk. (Section
+    # Alive panels still become the falling ragdoll pieces below.) ⚠ pass sM (the Sections matrix) to find_node(sec,...):
+    # it applies sec's own local transform internally, so sM@local_M(sec) would double-apply it and stretch the bbox.
+    gm = {}; sectioned = False
     dn = find_node(pf, start, "dead")
-    if dn:
-        gm = {}; collect(dn[0], dn[1], gm)
+    if dn: collect_lod0(dn[0], dn[1], gm)
+    sn = find_sections(pf, start)
+    if sn:
+        sgo, sM = sn
+        for sec in child_gos(sgo):
+            dsec = find_node(sec, sM, "dead")
+            if dsec: collect_lod0(dsec[0], dsec[1], gm); sectioned = True
+    if gm:
         Vs, Ns, Ts, Fs, used = combine(gm)
         if Vs:
             write_obj(os.path.join(OUT, name + "_Debris.obj"), Vs, Ns, Ts, Fs)
-            rec["dead"] = {"file": name + "_Debris.obj", "parts": len(used), "verts": len(Vs)}; nd += 1
+            rec["dead"] = {"file": name + "_Debris.obj", "parts": len(used), "verts": len(Vs), "sectioned": sectioned}; nd += 1
     # RAGDOLL: one obj PER PIECE. A prop with a Ragdoll node -> each of its pieces. A SECTIONED prop (fences: no
     # Ragdoll node) -> each Section_i's Alive mesh is a falling PANEL (master: "a bunch of fence panels falling").
     rn = find_node(pf, start, "ragdoll")
