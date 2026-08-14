@@ -4597,7 +4597,16 @@ namespace UnturnedGodot
                     if (nb < 50f) continue;
                     float ratio = prev[i] / nb;
                     if (ratio < worst) worst = ratio;
-                    if (ratio < 0.75f) { dips++; GD.Print($"[fly] DIP frame {i}: {prev[i]} px vs neighbours {nb:0} ({ratio:0.00}x)"); }
+                    // Threshold is tunable because 0.75 was PICKED, not derived, and every "finding" this mode
+                    // reports is a function of it. Swept 2026-08-14 (with the ground plane, 400 frames):
+                    //     <0.60  0 frames        <0.85  2        <0.95  4
+                    //     <0.75  2 (177, 325)    <0.90  2
+                    // I expected a continuum -- shallow wobbles that only look like events because the line sits
+                    // at 0.75. It is not. Frames 177 (0.71x) and 325 (0.67x) sit alone, with NOTHING between them
+                    // and 0.90 across 400 frames. A ~0.2-wide empty band either side of two points is a bimodal
+                    // population, not an artefact of where I drew the line, so those two are genuine outliers and
+                    // the only surviving candidates for the flicker strawberry reported. Do not dismiss them.
+                    if (ratio < EnvOr("UG_FLY_DIP", 0.75f)) { dips++; GD.Print($"[fly] DIP frame {i}: {prev[i]} px vs neighbours {nb:0} ({ratio:0.00}x)"); }
                 }
                 GD.Print($"[fly] overlap={ResourceField.ImpostorOverlap:0.###} frames={prev.Count} dips={dips} worstRatio={worst:0.000}");
                 GD.Print("[fly] NOTE: dips here are NOT known to be the tree->imposter handover -- they survive with the "
