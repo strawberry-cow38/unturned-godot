@@ -59,6 +59,7 @@ namespace UnturnedGodot
         bool _driveTest, _swarm, _drivethru, _nade; PlayerController _dtPlayer;      // --drivetest=DIR [--swarm|--drivethru|--nade] : enter/drive a jeep; swarm = mob it; drivethru = loud drive wakes zombies; nade = grenade the parked car
         bool _fireTest; PlayerController _ftPlayer; int _ftFrame;   // --firetest [--supp] : player fires near a distant zombie -> gunshot alert (suppressed = none)
         bool _peiPlay; PlayerController _peiPlayer; int _peiFrame; bool _peiHorde;   // --peiplay [--horde] : drive a jeep on real PEI (--horde = a zombie horde swarms it, vehicle<->zombie loop on real ground)
+        int _tpFrame; double _tpPrims, _tpDraws, _tpMs; int _tpN;   // --- UG_TERRPERF terrain cost probe
         PlayerController _pdPlayer; int _pdFireT;   // --peidrive on-foot player -> UG_AUTOFIRE terrain-impact verification
         bool _peiPlayable;   // menu "Drive PEI": BuildObjectsTest spawns a player+jeep with REAL controls instead of the aerial cam
         bool _worldBuild, _worldReady;   // BuildObjectsTest (objects/peidrive) async load -> the --shot harness waits for _worldReady before capturing
@@ -5670,6 +5671,39 @@ namespace UnturnedGodot
                 else if (_zdFrames == 40) RunZombieDirTest();
                 else if (_zdFrames >= 130) { _zdirTest = false; RunZombieDirTest(); }
                 return;
+            }
+            // --- UG_TERRPERF=1 : what does the TERRAIN cost? (strawberry: "dumbing down terrain verts at a
+            // distance ... killing/reducing things the player cant see is a huge w")
+            //
+            // Toggles Terrain.Active off and back ON inside ONE run and reports each phase. Two separate runs would
+            // not do: the frame-to-frame spread under lavapipe is wide enough to swallow the effect, so the only
+            // readable signal is the same process measuring both states minutes apart. The trailing ON phase is the
+            // control -- if it does not come back to the first ON reading, the machine drifted and the middle
+            // number means nothing.
+            //
+            // WHAT THIS CAN AND CANNOT SEE: prims and draws are exact and hardware-independent -- they say how much
+            // geometry terrain actually submits, which is the question LOD answers. The ms is lavapipe, a software
+            // rasteriser, so its absolute value is meaningless on real hardware and only the RATIO hints at
+            // anything. Do not quote the milliseconds as a frame-time saving.
+            if (System.Environment.GetEnvironmentVariable("UG_TERRPERF") == "1" && Terrain.Active != null && _worldReady)
+            {
+                const int Phase = 40;    // frames per phase; the first 12 of each are discarded as settle
+                int ph = _tpFrame / Phase;
+                if (ph < 3)
+                {
+                    bool want = ph != 1;   // ON, OFF, ON
+                    if (_tpFrame == 0) GD.Print($"[terrperf] probe engaged, terrain has {Terrain.Active.GetChildCount()} children");
+                    if (Terrain.Active.Visible != want) Terrain.Active.Visible = want;
+                    int inPhase = _tpFrame % Phase;
+                    if (inPhase >= 12) { _tpPrims += Performance.GetMonitor(Performance.Monitor.RenderTotalPrimitivesInFrame); _tpDraws += Performance.GetMonitor(Performance.Monitor.RenderTotalDrawCallsInFrame); _tpMs += Performance.GetMonitor(Performance.Monitor.TimeProcess) * 1000.0; _tpN++; }
+                    if (inPhase == Phase - 1)
+                    {
+                        GD.Print($"[terrperf] {(want ? "terrain ON " : "terrain OFF")} n={_tpN} prims={_tpPrims / _tpN:0} draws={_tpDraws / _tpN:0} processMs={_tpMs / _tpN:0.00} (lavapipe: ratio only)");
+                        _tpPrims = _tpDraws = _tpMs = 0.0; _tpN = 0;
+                    }
+                    _tpFrame++;
+                }
+                else if (ph == 3) { GD.Print("[terrperf] done"); _tpFrame++; }
             }
             if (System.Environment.GetEnvironmentVariable("UG_PERF") == "1" && (_perfT -= (float)delta) <= 0f)
             {
