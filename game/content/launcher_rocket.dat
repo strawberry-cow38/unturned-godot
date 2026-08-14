@@ -1,4 +1,4 @@
-﻿GUID af47bb9e0ba7443fa69435f1f594a10b
+GUID af47bb9e0ba7443fa69435f1f594a10b
 Type Gun
 Rarity Legendary
 Useable Gun
@@ -42,6 +42,10 @@ Object_Damage 1000
 
 Range 12
 Explosion 45
+Explosion_Radius 9
+Explosion_Zombie_Damage 250
+Explosion_Player_Damage 200
+Explosion_Vehicle_Damage 300
 
 Durability 1
 Wear 5

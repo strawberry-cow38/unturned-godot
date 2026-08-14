@@ -60,6 +60,22 @@ namespace UnturnedGodot
         public float ZombieDamage;
         public float VehicleDamage;   // Vehicle_Damage: bullets hurt vehicles LESS than zombies (eaglefire 35 vs 99) -- was wrongly using ZombieDamage
         public float ObjectDamage;    // Object_Damage: bullets vs destructible props (rubble); mirrors ServerGunProfile.ObjectDamage (eaglefire 25)
+
+        // IMPACT BLAST. A round that detonates where it lands, rather than only damaging what it hit.
+        //
+        // These are PORT fields, not retail ones. Retail puts a blast on the MAGAZINE (ItemMagazineAsset carries the
+        // explosion + its damages), which is the better model long-term because it is the ROUND that explodes, not the
+        // gun -- but the port has no magazine-asset layer to hang it on yet, and the launcher's own `Explosion 45` key
+        // is an EFFECT id, not a radius, so it cannot supply these numbers either.
+        //
+        // What this replaces is worth naming: the rocket launcher's blast was four literals inline in the fire path,
+        // reached by `if (Gun?.Action == "Rocket")`. That is fine for exactly one gun and stops being fine at two --
+        // the second one either copies the branch or silently gets the first one's numbers. BlastRadius 0 = no blast,
+        // which is every gun that does not ask for one.
+        public float BlastRadius;           // Explosion_Radius, metres. 0 = this round does not detonate
+        public float BlastZombieDamage;     // Explosion_Zombie_Damage  -- linear falloff (DamageTool.explode)
+        public float BlastPlayerDamage;     // Explosion_Player_Damage  -- SQUARED falloff, and cut by explosion armour
+        public float BlastVehicleDamage;    // Explosion_Vehicle_Damage -- linear falloff
         public float Range;
         public float SpreadAngleDegrees;
         public float SpreadAim = 1f;   // spread multiplier while aiming (Eaglefire 0.05 = 5% of hip spread)
@@ -171,6 +187,10 @@ namespace UnturnedGodot
                 ZombieDamage = d.ParseFloat("Zombie_Damage"),
                 VehicleDamage = d.ParseFloat("Vehicle_Damage", 40f),   // .dat Vehicle_Damage (all stock guns specify it; 40 = fallback)
                 ObjectDamage = d.ParseFloat("Object_Damage", 25f),     // .dat Object_Damage vs destructible props (eaglefire 25); matches the server profile
+                BlastRadius = d.ParseFloat("Explosion_Radius", 0f),               // 0 = no impact blast, which is all but the launcher
+                BlastZombieDamage = d.ParseFloat("Explosion_Zombie_Damage", 0f),
+                BlastPlayerDamage = d.ParseFloat("Explosion_Player_Damage", 0f),
+                BlastVehicleDamage = d.ParseFloat("Explosion_Vehicle_Damage", 0f),
                 Range = d.ParseFloat("Range", 100f),
                 Firerate = d.ParseInt32("Firerate", 8),
                 AmmoMax = d.ParseInt32("Ammo_Max", 30),

@@ -4622,7 +4622,15 @@ namespace UnturnedGodot
                         }
                         SpawnSurfaceImpact(point, hit["normal"].AsVector3(), sf);
                     }
-                    if (Gun?.Action == "Rocket") { Explode(point, 9f, 250f, 200f, 300f); GD.Print("[rocket] launcher warhead detonated"); }   // rocket launcher: AoE blast on impact (vehicles hit hardest), reusing the grenade explode
+                    // An IMPACT BLAST if this round carries one -- driven by the gun's own .dat rather than by a
+                    // hardcoded `Action == "Rocket"` branch with the radius and all three damages as literals. Same
+                    // numbers for the launcher (they moved into launcher_rocket.dat unchanged), and any other round
+                    // that wants to detonate now says so in data instead of adding a second copy of this branch.
+                    if (Gun is { BlastRadius: > 0f } bg)
+                    {
+                        Explode(point, bg.BlastRadius, bg.BlastZombieDamage, bg.BlastPlayerDamage, bg.BlastVehicleDamage);
+                        GD.Print($"[blast] {bg.Id} warhead detonated (r={bg.BlastRadius})");
+                    }
                     RemoveBullet(i);
                     continue;
                 }
