@@ -4280,8 +4280,15 @@ namespace UnturnedGodot
             float aimA = _viewmodel?.AimAlpha ?? 0f;
             // muzzle: hip sits lower-right (where the barrel is); ADS pulls the gun onto the camera axis, so the
             // muzzle centres (X offset -> 0) as you aim -> the bullet + tracer keep originating from the barrel.
-            DebugLastShotOrigin = from; DebugLastShotDir = aim;   // test seam: what the REAL fire path actually used
+            // Test seams. TWO origins, because conflating them hid a bug in a green test for months:
+            // `from` is the EYES, which is what the aim/convergence maths is built on; the bullet actually leaves
+            // from `muzzle`, computed below as an offset from it. ShotOriginTests asserted "the shot starts at the
+            // eyes" against this variable and passed -- while the projectile it was describing spawned 40cm away.
+            // A seam that reports a value the production path does not use is worse than no seam: it is a green
+            // check standing exactly where a real one should be.
+            DebugLastShotOrigin = from; DebugLastShotDir = aim;
             Vector3 muzzle = from + cb.X * (0.12f * (1f - aimA)) - cb.Y * 0.035f + aim * 0.4f;
+            DebugLastBulletOrigin = muzzle;   // where the PROJECTILE is actually spawned (SpawnBullet + NetFire both use this)
             Vector3? bodyMuzzle = (!_fp && _body != null) ? _body.MuzzleWorld : null;   // 3P: fire effects come off the 3P gun's OWN muzzle, not the camera-relative point
             SpawnMuzzleLight(bodyMuzzle ?? muzzle);   // once per shot — the Muzzle_0 flash lights the world
             if (bodyMuzzle.HasValue) _body.FlashMuzzle();   // 3P: the visible flash quad on the gun's muzzle
@@ -5297,6 +5304,9 @@ namespace UnturnedGodot
         /// <summary>What the last real shot used. Recorded inside Fire() rather than recomputed by a test, so a test
         /// cannot quietly agree with a broken origin by deriving it the same wrong way.</summary>
         public Vector3 DebugLastShotOrigin { get; private set; }
+        /// <summary>Where the bullet is REALLY spawned — the muzzle point, not the eyes. Assert bullet-position
+        /// claims against this; DebugLastShotOrigin is the eye basis the aim maths uses.</summary>
+        public Vector3 DebugLastBulletOrigin { get; private set; }
         public Vector3 DebugLastShotDir { get; private set; }
 
         /// <summary>Where the interaction trace actually started this frame. Recorded in UpdateLookFocus for the same

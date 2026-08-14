@@ -55,14 +55,29 @@ namespace UnturnedGodot.Testing
             bool fired = p.Fire();
             T.Check("the gun actually fired (otherwise everything below is vacuous)", fired);
             yield return Ticks(1);
-            T.Check($"the shot starts at the eyes ({p.DebugLastShotOrigin.DistanceTo(p.EyesWorld):0.###} m off)",
+            // THE BULLET, not the eye basis. This block asserted `DebugLastShotOrigin` (= the eyes) was within 5cm
+            // of the eyes -- trivially true, and silent about the projectile, which spawns 0.43 m away at the muzzle.
+            // Measured with a probe before rewriting: asserting the real origin against the old 5cm bound fails at
+            // 0.429 m, so the old check could never have caught a wrong bullet origin. It is now split in two:
+            // where the AIM MATHS is based (eyes) and where the PROJECTILE leaves (muzzle), which are different
+            // points on purpose and were being conflated.
+            T.Check($"the aim basis is the eyes ({p.DebugLastShotOrigin.DistanceTo(p.EyesWorld):0.###} m off)",
                 p.DebugLastShotOrigin.DistanceTo(p.EyesWorld) < 0.05f);
+            // The bullet leaves from the muzzle: forward of the eyes, close to the player, never behind them. The
+            // bound is a metre because the muzzle offset is deliberately gun-relative (0.4 m forward, 0.12 m right
+            // at the hip lerping to centre on ADS) -- what matters is that it is ON the player, not that it is at
+            // one exact point.
+            float bulletOff = p.DebugLastBulletOrigin.DistanceTo(p.EyesWorld);
+            T.Check($"the BULLET leaves from the muzzle, forward of the eyes ({bulletOff:0.###} m)",
+                bulletOff > 0.15f && bulletOff < 1.0f);
+            T.Check($"...and in FRONT of the player, not behind ({(p.GlobalTransform.AffineInverse() * p.DebugLastBulletOrigin).Z:0.##} m)",
+                (p.GlobalTransform.AffineInverse() * p.DebugLastBulletOrigin).Z < 0f);
             // ...and emphatically NOT at the camera. Stated separately: "near the eyes" and "not at the camera" are the
             // same claim only while the two are far apart, and this is the assertion that names the reported bug.
-            T.Check($"...and NOT at the camera ({p.DebugLastShotOrigin.DistanceTo(p.Camera.GlobalPosition):0.##} m from it)",
-                p.DebugLastShotOrigin.DistanceTo(p.Camera.GlobalPosition) > 1.5f);
-            T.Check($"...nor behind the player ({(p.GlobalTransform.AffineInverse() * p.DebugLastShotOrigin).Z:0.##} m back)",
-                (p.GlobalTransform.AffineInverse() * p.DebugLastShotOrigin).Z < 0.3f);
+            T.Check($"...and NOT at the camera ({p.DebugLastBulletOrigin.DistanceTo(p.Camera.GlobalPosition):0.##} m from it)",
+                p.DebugLastBulletOrigin.DistanceTo(p.Camera.GlobalPosition) > 1.5f);
+            T.Check($"...nor behind the player ({(p.GlobalTransform.AffineInverse() * p.DebugLastBulletOrigin).Z:0.##} m back)",
+                (p.GlobalTransform.AffineInverse() * p.DebugLastBulletOrigin).Z < 0.3f);
 
             // ---- IT STILL HITS WHAT THE CROSSHAIR IS OVER. A pillar placed on the CAMERA's axis, which -- because the
             // camera is offset and toed in 5 degrees -- is NOT on the player's straight-ahead. Firing from the eyes
