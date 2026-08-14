@@ -63,6 +63,20 @@ namespace UnturnedGodot.Testing
             T.Check("bluntforce sees the 12 gauge shells (32)", p.DebugCountShells() == 32);
             T.Check("bluntforce fires 6 pellets (12ga shell)", p.DebugPellets() == 6);
 
+            // ammo-TYPE picker (R-hold radial / attachment-menu mag slot, master): choose slug vs buckshot for the 12ga
+            // gun. The choice drives ShellAsset -> the fire loop's pellet count -- slug = 1 solid projectile, buckshot
+            // keeps its 6. Both types must be carried to be pickable (the bag already holds 32 buckshot from above).
+            bag.tryAddItem(new Item(5000, 10));   // 12 Gauge Slug (caliber 8, 1 pellet)
+            T.Check("bluntforce (loose shells) can choose an ammo type", p.CanChooseShellType);
+            T.Check("two 12ga shell types offered (buckshot + slug)", p.ShellTypeChoices().Count == 2);
+            T.Check("default loads buckshot -> 6 pellets", p.DebugPellets() == 6);
+            p.ChooseShellType(5000);   // pick slug (as the radial / mag-slot click does)
+            T.Check("slug selected -> fires 1 solid projectile", p.DebugPellets() == 1);
+            T.Check("HUD reflects the loaded shell type (slug)", p.LoadedShellName == "12 Gauge Slug");
+            p.ChooseShellType(113);    // back to buckshot
+            T.Check("buckshot re-selected -> 6 pellets again", p.DebugPellets() == 6);
+            T.Check("HUD reflects the loaded shell type (buckshot)", p.LoadedShellName == "12 Gauge Shells");
+
             // bolt/pump per-shot rechamber (source RechamberAfterShotCount)
             p.LoadGun("res://content/timberwolf.dat");
             T.Check("timberwolf (bolt) rechambers after each shot", p.DebugRechamberCount() == 1);

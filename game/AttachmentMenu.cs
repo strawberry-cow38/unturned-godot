@@ -68,13 +68,33 @@ namespace UnturnedGodot
             int caliber = Player?.Gun?.Caliber ?? 0;
             foreach (var slot in Slots)
             {
+                bool isMag = slot == "Magazine";
+                // Loose-shell shotgun: the Magazine slot picks an AMMO TYPE (buckshot / slug), not a magazine item. A
+                // pump/break shotgun has no magazine MESH, so this runs BEFORE the SlotHasModel guard that would skip it
+                // (master: "in the attachment menu for the magazine slot show the relevant ammo types to load"). The ring
+                // still positions -- TryGetSlotScreen uses a fixed Magazine hook offset every gun has. Clicking a type
+                // selects + reloads it (ChooseShellType); pellets follow (slug=1, buckshot=6-8). The loaded type tints green.
+                if (isMag && (Player?.CanChooseShellType ?? false))
+                {
+                    var shells = new System.Collections.Generic.List<Button>();
+                    foreach (var (asset, count, selected) in Player.ShellTypeChoices())
+                    {
+                        var a = asset; ushort aid = (ushort)a.id;
+                        shells.Add(AddOption(slot, count > 0 ? $"{a.itemName} — {count}" : $"{a.itemName} — none", aid,
+                            count > 0 ? () => { Player.ChooseShellType(aid); Refresh(); } : (System.Action)null,
+                            tint: selected ? new Color(0.72f, 1f, 0.75f) : (Color?)null, rounds: count > 0 ? count : -1, vertical: true));
+                    }
+                    if (Player.HasLoadedShells)   // unload option, matching the radial's eject segment
+                        shells.Add(AddOption(slot, "Unload", null, () => { Player.UnloadShells(); Refresh(); }, tint: new Color(1f, 0.62f, 0.56f)));
+                    if (shells.Count > 0) _rings[slot] = shells;
+                    continue;
+                }
                 if (!VM.SlotHasModel(slot)) continue;   // a slot this gun cannot take shows nothing at all -- its icon is already greyed
                 var list = new System.Collections.Generic.List<Button>();
                 // ONE ICON PER PHYSICAL ITEM (master: "if we have multiple of the same relevant item, show it that
                 // many times in the orbit"). InBag collapses duplicates to (asset, count) because the old fan was a
                 // text list where "x6" was the readable answer; a ring of icons has nowhere to put a multiplier, and
                 // six magazines drawn six times is the point -- the ring IS the count.
-                bool isMag = slot == "Magazine";
                 foreach (var (asset, item, _, _) in AttachmentFit.InBagInstances(Player?.Inventory, slot, caliber))
                 {
                     var a = asset; var inst = item;

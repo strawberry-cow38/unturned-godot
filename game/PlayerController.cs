@@ -3181,6 +3181,8 @@ namespace UnturnedGodot
         const float GunshotRadius = 48f;   // earshot of an unsuppressed shot (AlertTool noise); suppressors would cut it
         bool _reloading;            // reloading -> can't fire; magazine refills when the timer elapses
         double _reloadTimer;
+        bool _unloading;            // shotgun UNLOAD state (master): plays the reload anim + ejects shells to the bag -- pump one-by-one, break-action all at once
+        double _unloadTimer;
         // Per-shot rechamber (bolt/pump). After a shot the action must cycle (bolt-cycle / pump) before firing/reloading again.
         bool _needsRechamber;        // fired -> awaiting the cycle (source needsRechamber: blocks fire/aim/reload/inspect)
         bool _rechambering;          // true while the bolt-cycle (Hammer) animation plays
@@ -3262,9 +3264,32 @@ namespace UnturnedGodot
         // Loose ammo (shotgun shells, master: real ammo types). A gun uses shells when a stackable isAmmo item matches its
         // caliber (12ga=113 -> caliber 8; 20ga=381 -> caliber 16). Reload CONSUMES shells from the stack (vs swapping a mag).
         bool UsesShells => Gun != null && Gun.Caliber > 0 && ShellAsset != null;
-        SDG.Unturned.ItemAsset ShellAsset   // the shell item whose caliber fits the equipped gun (null if none registered)
+        // Shotgun ammo-TYPE selection (buckshot vs slug). A gauge can carry several loose-shell types (12ga: buckshot
+        // 113 + slug 5000, same caliber 8); the player picks one via the R-hold radial or the attachment menu's
+        // Magazine slot. Keyed by caliber so all guns of that gauge share the choice. 0 = unset -> the default
+        // (first-registered match = buckshot), preserving the pre-feature behaviour.
+        readonly System.Collections.Generic.Dictionary<int, ushort> _selectedShellByCaliber = new();
+        ushort SelectedShellId
         {
-            get { foreach (var a in SDG.Unturned.Assets.all()) if (a.isAmmo && a.magCaliber == Gun.Caliber) return a; return null; }
+            get => Gun != null && _selectedShellByCaliber.TryGetValue(Gun.Caliber, out var id) ? id : (ushort)0;
+            set { if (Gun != null) _selectedShellByCaliber[Gun.Caliber] = value; }
+        }
+        SDG.Unturned.ItemAsset ShellAsset   // the loaded shell: the player's SELECTED type for this gauge, else the first registered caliber match (buckshot)
+        {
+            get
+            {
+                if (Gun == null) return null;
+                ushort sel = SelectedShellId;
+                if (sel != 0) { var s = SDG.Unturned.Assets.find(sel); if (s != null && s.isAmmo && s.magCaliber == Gun.Caliber) return s; }
+                foreach (var a in SDG.Unturned.Assets.all()) if (a.isAmmo && a.magCaliber == Gun.Caliber) return a;
+                return null;
+            }
+        }
+        bool ShellMatches(SDG.Unturned.ItemAsset a)   // is this bag item a shell the gun loads right now? the selected type if one is chosen, else any of the gun's caliber
+        {
+            if (a == null || !a.isAmmo || Gun == null || a.magCaliber != Gun.Caliber) return false;
+            ushort sel = SelectedShellId;
+            return sel == 0 || a.id == sel;
         }
         int CountShells()   // total loose shells of the gun's caliber carried across all pages
         {
@@ -3276,7 +3301,7 @@ namespace UnturnedGodot
                 for (byte i = 0; i < pg.getItemCount(); i++)
                 {
                     var jar = pg.getItem(i); var a = jar?.item != null ? SDG.Unturned.Assets.find(jar.item.id) : null;
-                    if (a != null && a.isAmmo && a.magCaliber == Gun.Caliber) n += jar.item.amount;
+                    if (ShellMatches(a)) n += jar.item.amount;
                 }
             }
             return n;
@@ -3291,13 +3316,68 @@ namespace UnturnedGodot
                 for (int i = pg.getItemCount() - 1; i >= 0 && taken < want; i--)
                 {
                     var jar = pg.getItem((byte)i); var a = jar?.item != null ? SDG.Unturned.Assets.find(jar.item.id) : null;
-                    if (a == null || !a.isAmmo || a.magCaliber != Gun.Caliber) continue;
+                    if (!ShellMatches(a)) continue;
                     int t = System.Math.Min(want - taken, jar.item.amount);
                     jar.item.amount = (byte)(jar.item.amount - t); taken += t;
                     if (jar.item.amount <= 0) pg.removeItem((byte)i);   // empty shell stack -> free the slot
                 }
             }
             return taken;
+        }
+        // --- shotgun ammo-type picker API (R-hold radial + attachment menu Magazine slot) ---
+        public bool CanChooseShellType => UsesShells;   // only loose-shell shotguns have an ammo type to pick
+        public string LoadedShellName => UsesShells ? ShellAsset?.itemName : null;   // HUD: the shell type currently loaded (e.g. "12 Gauge Slug"), null for non-shotguns
+        int CountOfShell(ushort id)   // how many of ONE specific shell id the player carries across pages
+        {
+            if (Inventory == null || id == 0) return 0;
+            int n = 0;
+            for (byte b = 0; b < (byte)(PlayerInventory.PAGES - 2); b++)
+            {
+                var pg = Inventory.items[b];
+                for (byte i = 0; i < pg.getItemCount(); i++)
+                { var jar = pg.getItem(i); if (jar?.item != null && jar.item.id == id) n += jar.item.amount; }
+            }
+            return n;
+        }
+        // The loose-shell types the player CARRIES that fit the gun's caliber, with count + which is selected. Drives
+        // the radial pie + the attachment menu -- ONLY carried types get a segment (master), so an empty type shows nothing.
+        public System.Collections.Generic.List<(SDG.Unturned.ItemAsset asset, int count, bool selected)> ShellTypeChoices()
+        {
+            var list = new System.Collections.Generic.List<(SDG.Unturned.ItemAsset, int, bool)>();
+            if (Gun == null || Gun.Caliber <= 0) return list;
+            ushort sel = SelectedShellId; if (sel == 0) { var d = ShellAsset; if (d != null) sel = (ushort)d.id; }
+            foreach (var a in SDG.Unturned.Assets.all())
+                if (a.isAmmo && a.magCaliber == Gun.Caliber)
+                {
+                    int cnt = CountOfShell((ushort)a.id);
+                    if (cnt > 0) list.Add((a, cnt, (ushort)a.id == sel));   // carried only -- an empty type gets no segment
+                }
+            return list;
+        }
+        // Pick a shell type + reload into it (the whole point of the radial/menu). No-op unless it's a real shell of this
+        // gun's caliber that the player actually carries. Pellets follow automatically (ShellAsset -> the fire loop).
+        public void ChooseShellType(ushort id)
+        {
+            if (!UsesShells) return;
+            var a = SDG.Unturned.Assets.find(id);
+            if (a == null || !a.isAmmo || a.magCaliber != Gun.Caliber || CountOfShell(id) <= 0) return;
+            SelectedShellId = id;
+            StartReload();   // source: picking ammo IS a reload
+        }
+        public bool HasLoadedShells => UsesShells && Ammo > 0;   // radial: is there anything to unload?
+        // Begin an animated UNLOAD (master: "trigger a new unload state, plays reload anim, shell count lowers 1 by 1
+        // like reloading adds"). The per-tick ejection in _Process mirrors the RELOAD: a pump ejects one shell per
+        // interval, a break-action (masterkey / quadbarrel) ejects all barrels at once. Rounds go back as their real
+        // loaded type, so unloading never loses or converts ammo. Shotguns only.
+        public void UnloadShells()
+        {
+            if (_reloading || _unloading || _dead || _needsRechamber || _rechambering) return;
+            if (!UsesShells || Ammo <= 0) return;
+            _unloading = true;
+            float rspeed = Skills.DexterityReloadSpeed();
+            _viewmodel?.SetReloading(true, rspeed);   // reuse the reload animation
+            double full = (_viewmodel?.ReloadLength ?? ReloadTime) / rspeed;
+            _unloadTimer = Gun?.ShellReload == true ? full / System.Math.Max(1, Ammo) : full;   // pump: per-shell; break: whole duration then eject all
         }
         const double ReloadTime = 1.633; // Eaglefire Gun_Reload clip length (no reload-time key in the .dat)
         float _recoilPending, _recoilYawPending;  // un-applied recoil kick (deg); drains additively into the real aim and STAYS -- never auto-returns (master: additive, no recover-to-origin)
@@ -3817,6 +3897,9 @@ namespace UnturnedGodot
 
         public PauseMenu PauseMenu;   // ESC viewmodel-tuning menu (set by BuildPlayable); null in demos
         public AttachmentMenu AttachMenu;   // T weapon-attachment menu (set by BuildPlayable); null in demos
+        public AmmoRadial AmmoRadial;       // R-hold ammo-type radial for loose-shell shotguns (wired beside AttachMenu); null in demos
+        bool _rHolding; ulong _rHeldSince;  // R-hold tracking on a shotgun: a quick tap reloads, holding past AmmoRadialHoldMs opens the ammo radial
+        const ulong AmmoRadialHoldMs = 220;
 
         public override void _UnhandledInput(InputEvent @event)
         {
@@ -3897,10 +3980,20 @@ namespace UnturnedGodot
                 else if (_melee != null) { if (rmb.Pressed && !IsRepeatedMelee) MeleeAttack(true); }   // RMB = STRONG swing on a normal melee; a Repeated tool (blowtorch/chainsaw) has NO strong attack (source startSecondary: if(!isRepeated)) and no ADS
                 else _viewmodel?.SetAiming(rmb.Pressed);   // hold RMB to ADS -- GUNS only (a melee weapon has no sights)
             }
-            else if (@event is InputEventKey { Pressed: true, Keycode: Key.R })
+            else if (@event is InputEventKey { Keycode: Key.R, Echo: false } rKey)
             {
-                if (HoldingDeployable && _placer != null) _placer.YawOffset += 90f;   // R rotates the deployable ghost 90 deg (strawberry)
-                else if (HasGunOut) StartReload();   // no reload without a gun out (master)
+                if (HoldingDeployable && _placer != null) { if (rKey.Pressed) _placer.YawOffset += 90f; }   // R rotates the deployable ghost 90 deg (strawberry)
+                else if (HasGunOut && CanChooseShellType)   // shotgun: quick TAP = reload, HOLD = ammo-type radial (master)
+                {
+                    if (rKey.Pressed) { if (!_rHolding) { _rHolding = true; _rHeldSince = Time.GetTicksMsec(); } }
+                    else   // release
+                    {
+                        _rHolding = false;
+                        if (AmmoRadial != null && AmmoRadial.IsOpen) { AmmoRadial.ConfirmAndClose(); Input.MouseMode = Input.MouseModeEnum.Captured; }   // held long enough -> pick the highlighted ammo, then recapture the look
+                        else StartReload();   // quick tap -> normal reload
+                    }
+                }
+                else if (rKey.Pressed && HasGunOut) StartReload();   // any other gun: instant reload on press (unchanged)
             }
             else if (@event is InputEventKey { Pressed: true } hk && hk.Keycode >= Key.Key1 && hk.Keycode <= Key.Key9)
                 EquipHotbar((int)hk.Keycode - (int)Key.Key0);   // hotbar keys (bag CLOSED): 1/2 = primary/secondary slot, 3-9 = bound item. Binding (RMB item + 3-9) is handled in InventoryUI while the bag's open.
@@ -4177,6 +4270,7 @@ namespace UnturnedGodot
             if (IsSwimming) return;   // no firing while swimming -- guns are canUseUnderwater=false (source PlayerEquipment: submerged/SWIM + !canUseUnderwater blocks the use)
             if (!HasGunOut) return;   // no gun in hand (fists / melee / held item) -> no firing at all (master: gun & held item mutually exclusive)
             if (_reloading) { if (Gun?.ShellReload == true && Ammo > 0) { _reloading = false; _viewmodel?.SetReloading(false); } else return; }   // shell-fed shotgun: firing CANCELS the shell-by-shell reload (shoot what's loaded); other guns ignore fire mid-reload (master)
+            if (_unloading) { if (Ammo > 0) { _unloading = false; _viewmodel?.SetReloading(false); } else return; }   // firing INTERRUPTS an unload -> keep what's still loaded (master: the pie reopens only once the action is finished/interrupted)
             if (_viewmodel != null && _viewmodel.InAttachView) return;   // no firing while the T attachment menu is up
             if (_viewmodel != null && _viewmodel.IsInspecting) { _viewmodel.CancelInspect(); return; }   // firing mid-inspect cancels it + snaps the gun to the shoot pose; no shot this click
             if (_firemode == FireMode.Safety) return;
@@ -4234,9 +4328,10 @@ namespace UnturnedGodot
         // come from the equipped gun's real ItemGunAsset .dat when loaded.
         public bool Fire()
         {
-            if (_fireCd > 0f || Ammo <= 0 || _reloading || _needsRechamber || _rechambering || _cam == null || _dead || _driving != null
+            if (_fireCd > 0f || Ammo <= 0 || _reloading || _unloading || _needsRechamber || _rechambering || _cam == null || _dead || _driving != null
                 || !HasGunOut || IsSwimming || (_invUI?.IsOpen ?? false)) return false;   // IsSwimming: guns are canUseUnderwater=false -> no shot while swimming, incl. the polled AUTO/burst tick (source PlayerEquipment). !HasGunOut: no gun in hand (melee/held item disarm it) -> no shot, even from the polled auto/burst tick after switching away mid-fire (master)
             // -- also while the bolt/pump still needs cycling -- kills a queued burst the frame we die (the tick calls Fire()) + ignores death-screen clicks (master). _driving guard fixes the "stray tracer flies straight south" bug: the auto/burst tick (_PhysicsProcess) calls Fire() on held-LMB WITHOUT a driving check, and while driving _cam is TopLevel (detached chase cam) -> aim = the chase cam's fixed heading, not the player's look. LMB honks while driving anyway.
+            if (AmmoRadial?.IsOpen ?? false) return false;   // no firing while the ammo radial is up -- you're picking ammo, not shooting
             if (_viewmodel != null && (!_viewmodel.IsEquipComplete || _viewmodel.IsInspecting || _viewmodel.InAttachView)) return false;   // no firing until equip finishes, or during inspect / attachment menu (source canFire gates)
             float damage = Gun?.ZombieDamage ?? 34f;   // range/travel are encoded in the bullet's steps + velocity
             float vehDamage = Gun?.VehicleDamage ?? 40f;   // bullets hurt vehicles less than zombies (source Vehicle_Damage)
@@ -4771,6 +4866,18 @@ namespace UnturnedGodot
         {
             using var _prof = Prof.Scope("PlayerController");
             if (NetAvatar) return;   // per-frame work is all client-side (render interp, look focus, recoil drain, cam) -- none of it on a server avatar
+            // R-HOLD ammo radial (shotguns): open the picker once R is held past the threshold (frees the mouse so its
+            // cursor angle selects a wedge). PlayerController owns the close + mouse recapture, so a gun swap while it's
+            // up can't strand the freed cursor.
+            if (AmmoRadial != null && AmmoRadial.IsOpen && (!CanChooseShellType || !HasGunOut))
+            { AmmoRadial.Close(); Input.MouseMode = Input.MouseModeEnum.Captured; _rHolding = false; }
+            else if (_rHolding && CanChooseShellType && HasGunOut && !_reloading && !_unloading
+                     && (AmmoRadial == null || !AmmoRadial.IsOpen)
+                     && Time.GetTicksMsec() - _rHeldSince >= AmmoRadialHoldMs)
+            {
+                if (AmmoRadial != null) { AmmoRadial.Open(this); if (AmmoRadial.IsOpen) Input.MouseMode = Input.MouseModeEnum.Visible; else _rHolding = false; }
+                else _rHolding = false;
+            }
             // Source kills the held light on unequip (UseableMelee -> player.disableItemSpotLight()). There are
             // EIGHT places that drop the held melee and more will appear, so this is DERIVED from what's in hand
             // rather than cleared at each of them -- patching all eight is how the ninth ends up leaving a torch
@@ -5161,6 +5268,31 @@ namespace UnturnedGodot
                         else { _reloading = false; _viewmodel?.SetReloading(false); }
                     }
                     SaveGunState();   // reload finished -> mirror the new ammo/mag onto the backing item (master persistence)
+                }
+            }
+            if (_unloading)   // shotgun UNLOAD (master): eject shells back to the bag, pump one-per-tick / break all at once, mirroring the reload
+            {
+                if (!UsesShells || !HasGunOut || _dead) { _unloading = false; _viewmodel?.SetReloading(false); }   // gun swapped/holstered mid-unload -> drop the state
+                else
+                {
+                    _unloadTimer -= delta;
+                    if (_unloadTimer <= 0)
+                    {
+                        var a = ShellAsset;
+                        if (Gun?.ShellReload == true)   // pump: eject ONE shell per interval (the count lowers 1 by 1)
+                        {
+                            if (Ammo > 0 && a != null) { Inventory?.tryAddItem(new Item((ushort)a.id, 1)); Ammo--; }
+                            if (Ammo <= 0) { _unloading = false; _viewmodel?.SetReloading(false); }
+                            else _unloadTimer = (_viewmodel?.ReloadLength ?? ReloadTime) / System.Math.Max(1, Gun?.AmmoMax ?? 1);
+                        }
+                        else   // break-action (masterkey / quadbarrel): eject ALL barrels at once
+                        {
+                            if (a != null && Ammo > 0) Inventory?.tryAddItem(new Item((ushort)a.id, (byte)Ammo));
+                            Ammo = 0;
+                            _unloading = false; _viewmodel?.SetReloading(false);
+                        }
+                        SaveGunState();
+                    }
                 }
             }
             TickRechamber(delta);   // bolt/pump: run the post-shot bolt-cycle timer -> the Hammer clip, then re-enable firing

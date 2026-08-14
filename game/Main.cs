@@ -85,7 +85,7 @@ namespace UnturnedGodot
                 DisplayServer.WindowSetVsyncMode(DisplayServer.VSyncMode.Disabled);
                 GD.Print($"[display] vsync -> {DisplayServer.WindowGetVsyncMode()}");
             }
-            string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null, drivetest = null, proptest = null, animrig = null, rottest = null, itemtest = null, navShot = null, croptest = null, menuShot = null, clothtest = null, boattest = null;
+            string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null, drivetest = null, proptest = null, animrig = null, rottest = null, itemtest = null, navShot = null, croptest = null, menuShot = null, clothtest = null, boattest = null, ammoRadial = null;
             bool zperf = false;
             bool zbody = false;
             bool deployTest = false;
@@ -123,6 +123,7 @@ namespace UnturnedGodot
                 else if (arg == "--doorgallery") doorGallery = true;   // --shot=OUT : lineup of the 12 ripped WOODEN door barricade models (Door/Doubledoor/Gate/Hatch x Birch/Maple/Pine) for master to eyeball
                 else if (arg == "--skillsui") skillsui = true;   // render the skills menu (showcase/validate the SkillsUI)
                 else if (arg.StartsWith("--itemtest=")) itemtest = arg["--itemtest=".Length..];   // drop a row of loot items (ids) as physics WorldItems -> validate real mesh/tex/scale/settle
+                else if (arg.StartsWith("--ammoradial=")) { ammoRadial = arg["--ammoradial=".Length..]; _shotRequested = ammoRadial; }   // open the R-hold shotgun ammo radial (mock 12ga choices) -> screenshot the picker UI
                 else if (arg.StartsWith("--animrig=")) { animrig = arg["--animrig=".Length..]; _shotRequested = animrig; }   // build a rigged animal (content/NAME_rig.json) at rest + 3/4 cam -> validate the static pose stands
                 else if (arg.StartsWith("--rottest=")) rottest = arg["--rottest=".Length..];   // place ONE prop with the placement euler (UG_EULER) under a rotation convention (UG_ROTCONV) -> hunt the upside-down
                 else if (arg.StartsWith("--bakeicon=")) bakeIcon = arg["--bakeicon=".Length..];   // MODEL[:ALBEDO] -> icon PNG (needs --shot=OUT)
@@ -401,6 +402,15 @@ namespace UnturnedGodot
                 _shotPath = shot;
                 _itemTest = true;
                 BuildItemTest(itemtest);
+                return;
+            }
+
+            if (ammoRadial != null)   // open the R-hold shotgun ammo radial with mock 12ga choices -> screenshot the picker UI
+            {
+                GetWindow().Size = new Vector2I(1280, 720);
+                _shotPath = ammoRadial;
+                SDG.Unturned.ItemCatalog.RegisterAll();   // so the shell assets + icons resolve
+                BuildAmmoRadialDemo();
                 return;
             }
 
@@ -1374,6 +1384,9 @@ namespace UnturnedGodot
                 var attach = new AttachmentMenu();   // T -> weapon-attachment menu (iron sights removable, etc.)
                 AddChild(attach);
                 player.AttachMenu = attach;
+                var ammoRadial = new AmmoRadial();   // R-hold -> shotgun ammo-type picker (buckshot / slug)
+                AddChild(ammoRadial);
+                player.AmmoRadial = ammoRadial;
                 GD.Print(_noZombies ? "[PLAY] interactive: NO-ZOMBIE test environment"
                                     : "[PLAY] interactive: WASD move / mouse look / LMB fire / Space jump");
             }
@@ -2731,6 +2744,24 @@ namespace UnturnedGodot
             cam.LookAt(new Vector3(0f, 0.15f, 0f), Vector3.Up);
             CallDeferred(Node.MethodName.AddChild, new OutlineOverlay());   // screen-space outline overlay (so UG_FOCUS previews it)
             GD.Print($"[ITEMTEST] dropped {parts.Length} items: {ids}");
+        }
+
+        // --ammoradial=OUT: open the R-hold shotgun ammo radial with mock 12ga choices (buckshot + slug) over a dim
+        // backdrop + screenshot it, so the picker UI can be eyeballed without a live gun. The general frame-6 capture
+        // (armed via _shotPath) saves + quits.
+        void BuildAmmoRadialDemo()
+        {
+            AddChild(new WorldEnvironment { Environment = new Godot.Environment { BackgroundMode = Godot.Environment.BGMode.Color, BackgroundColor = new Color(0.15f, 0.16f, 0.20f) } });
+            AddChild(new Camera3D { Current = true });   // a 3D cam so the viewport clears to the bg colour; the radial is a CanvasLayer on top
+            var radial = new AmmoRadial();
+            AddChild(radial);
+            var choices = new System.Collections.Generic.List<(SDG.Unturned.ItemAsset asset, int count, bool selected)>();
+            var buck = SDG.Unturned.Assets.find(113);    // 12 Gauge Shells (buckshot)
+            var slug = SDG.Unturned.Assets.find(5000);   // 12 Gauge Slug
+            if (buck != null) choices.Add((buck, 12, false));
+            if (slug != null) choices.Add((slug, 6, true));   // slug shown as the currently-selected type
+            radial.OpenWith(choices, true);   // demo: show the unload segment too
+            GD.Print($"[AMMORADIAL] demo: {choices.Count} choices (buck={buck?.itemName}, slug={slug?.itemName})");
         }
 
         // --animrig=NAME: build a rigged animal from content/NAME_rig.json at its REST pose (no clips) + RGB axes + auto-framed

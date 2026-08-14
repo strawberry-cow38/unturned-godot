@@ -1723,6 +1723,7 @@ namespace UnturnedGodot
             root.AddChild(new Profiler());   // F3 perf overlay (parity)
             root.AddChild(new ZombieAnimCut());   // F6 -> freeze rig anim (skeletons-cut, parity)
             { var attach = new AttachmentMenu(); root.AddChild(attach); player.AttachMenu = attach; }       // T weapon-attachment menu -- was never wired in PEI drive, so T did nothing (broken since PEI map)
+            { var ammo = new AmmoRadial(); root.AddChild(ammo); player.AmmoRadial = ammo; }                 // R-hold -> shotgun ammo-type picker (buckshot / slug)
         }
 
         // A3 (SP/MP-unify): realize the recorded world fixtures as DIRECT local nodes -- the pure-direct SP path
