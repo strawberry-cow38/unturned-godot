@@ -1,36 +1,39 @@
-# Zombie hit zones — damage by limb
+# Hit zones — two damage models, one zone geometry
 
-**Status: notes only.** strawberry, 2026-08-14: *"so i think almost all guns should 1 shot headshot
-zombies. and take considerably more shots on the body, even more on limbs. just take notes for now"*
+**Status: notes only.** Nothing here is implemented.
 
-Nothing here is implemented. This records the target, what is actually in the code today, and the
-decisions that have to be made before any of it can be written.
+strawberry, 2026-08-14:
 
-## The target
+> *"so i think almost all guns should 1 shot headshot zombies. and take considerably more shots on
+> the body, even more on limbs. just take notes for now"*
 
-| zone | intent |
-| --- | --- |
-| head | almost every gun kills in one |
-| body | considerably more shots than today |
-| limbs | more still |
+> *"okay. two damage models. player and zombie. forget the damage models we have rn. identical
+> hitbox zones."*
 
-## What exists today
+## The shape
 
-There **is** a limb table, and it applies to **players in multiplayer only** —
-`core/UnturnedNet/ServerCombat.cs:38-40`:
+**One zone resolver. Two multiplier tables.** A hit resolves to head / torso / limb by the same
+geometry whoever was hit; what that zone is *worth* is looked up in a per-target-kind table.
 
-```
-HeadMult  = 3.0f
-TorsoMult = 1.0f
-LegMult   = 0.6f
-```
+| | zones | damage model |
+| --- | --- | --- |
+| player | shared | player table |
+| zombie | shared | zombie table |
 
-Hardcoded, not per-gun, not read from any `.dat`. Zones are resolved by hit height against the
-avatar: head ≥ 1.45 m, torso ≥ 0.78 m, legs below (`PlayerHeadMinY` / `PlayerTorsoMinY`, applied at
-`ServerCombat.cs:389`).
+The existing numbers are discarded — both the player table (`3.0 / 1.0 / 0.6`) and the flat
+`Zombie_Damage`. They are recorded below only as the starting state to be replaced.
 
-**Against zombies there is no multiplier on any path.** Three paths, three different ways of not
-applying one:
+Zombie target, from the first message: head kills in one for almost every gun, body takes
+considerably more shots, limbs more still.
+
+## What exists today (to be replaced)
+
+There is a limb table, and it applies to **players in multiplayer only** —
+`core/UnturnedNet/ServerCombat.cs:38-40`: `HeadMult 3.0`, `TorsoMult 1.0`, `LegMult 0.6`. Hardcoded,
+not per-gun, not read from any `.dat`. Zones resolve by hit height against the avatar: head ≥ 1.45 m,
+torso ≥ 0.78 m, legs below (`ServerCombat.cs:389`).
+
+**Zombies get no multiplier on any path.** Three paths, three different ways of not applying one:
 
 | path | site | what happens |
 | --- | --- | --- |
@@ -38,44 +41,43 @@ applying one:
 | MP, node-backed zombie | `game/ZombieNetSync.cs:199` | `t.Brain.DamageHit(damage, …)` — the `headshot` bool is dropped entirely |
 | MP, sim zombie | `core/UnturnedSim/ZombieSim.cs:834` | limb IS passed in, recorded to `_killedBy[row]`, never multiplies |
 
-The sim path is the one to be careful about. It threads `ZombieLimb.Skull` vs `Spine` all the way
-through the call, so the code reads as wired — the value is used for kill attribution and nothing
-else. Reading the call site is not enough to tell; only the implementation says.
+The sim path is the one to be careful about: it threads `ZombieLimb.Skull` vs `Spine` all the way
+through the call, so the code reads as wired. The value is used for kill attribution and nothing
+else. The call site cannot tell you that; only the implementation can.
 
 A zombie headshot is therefore a red hitmarker and nothing else, in every mode.
 
-## Why nobody noticed
+## Why the body number is the work, not the head
 
 `Zombie_Damage` is ≥ 99 on **37 of 54 guns**. Most weapons already one-shot a normal zombie wherever
-they hit, so a missing head multiplier is invisible: the head result is already correct, by accident.
+they hit, so the missing head multiplier is invisible — the head result is already correct, by
+accident. Adding a head multiplier alone would change nothing observable. Body damage has to come
+down far enough that a torso hit takes several rounds before a head multiplier means anything.
 
-This also means **the body number is the actual work**, not the head one. Hitting the target is
-mostly a matter of bringing `Zombie_Damage` down far enough that a body shot takes several rounds,
-then letting a head multiplier restore the one-shot. Adding a head multiplier alone changes nothing
-observable.
+## Open, and blocking
 
-## Decisions needed before implementing
-
-1. **Crawlers.** `ZombieController.IsHeadshot` takes the top 18% of the collider, and a crawler's is
-   0.8 m rather than 1.8 m — so its head zone is ~14 cm tall and sits near the floor. A single
-   fraction cannot serve both. Needs either a per-speciality zone or an explicit "crawlers have no
-   head zone" call.
-2. **Which guns are "almost all".** A one-shot rule expressed as a multiplier depends on the body
-   number, so the two have to be retuned together, per gun or per tier. The `.22` (`sportshot`,
-   `Zombie_Damage 32`) and the LMGs (`nykorev` 33, `dragonfang` 38, `fury` 25) are the ones that will
-   not reach a kill on any sane multiplier — they are presumably the "almost".
-3. **Per-gun or global.** The player table is a global constant. Zombies could follow that, or read
-   a `.dat` field. Retail carries per-gun damage multipliers; this port does not parse any.
-4. **Specials.** Mega/boss zombies may want different zone behaviour than a normal one; not covered
-   by a single table.
-5. **Where the multiplier is applied.** It has to land in one place all three paths reach, or the
-   modes drift. `ZombieSim.Damage` already receives the limb and is engine-free — the natural home,
-   but the two node paths (`ZombieController.DamageHit`, SP and MP) do not route through it.
+1. **"Identical hitbox zones" — by absolute height, or by fraction of collider?** They agree on a
+   1.8 m zombie and diverge completely on a 0.8 m crawler. Absolute (the player's 1.45 m / 0.78 m)
+   puts a crawler's entire body below the torso line: **every hit on it is a limb hit and it has no
+   head at all.** By fraction it keeps a head zone, ~14 cm tall and near the floor. Neither is
+   obviously right and the choice decides whether crawlers are trivial or nearly unkillable.
+2. **The numbers themselves.** Both tables are being replaced, so head/torso/limb multipliers and the
+   base damage they multiply need setting together — a one-shot-head rule is a statement about the
+   product, not about the multiplier.
+3. **Which guns are "almost all".** On any sane multiplier the `.22` (`sportshot`, 32) and the LMGs
+   (`fury` 25, `nykorev` 33, `dragonfang` 38) will not reach a kill. Presumably the "almost".
+4. **Per-gun or global.** The player table is a global constant today. Retail carries per-gun damage
+   multipliers; this port parses none.
+5. **Specials.** Mega/boss zombies may want their own table rather than sharing the zombie one.
+6. **Where it lives.** The three zombie paths never meet, so a multiplier added to one silently does
+   not apply in the others. `ZombieSim.Damage` already receives the limb and is engine-free, which
+   makes it the natural home — but neither node path routes through it. Unifying that is most of the
+   work.
 
 ## Test shape
 
-Whatever lands needs a check that **fails when the multiplier is removed** — the current
-`IsHeadshot` is a live demonstration of how a wired-looking limb value passes review while doing
-nothing. Assert on damage dealt, per zone, per path (SP node / MP node / MP sim), because those are
-three separate code paths that today disagree silently. A test that only covers one of them would
-pass against exactly the bug that exists now.
+Whatever lands needs a check that **fails when the multiplier is removed** — today's `IsHeadshot` is
+a live demonstration of a limb value that reads as wired and does nothing. Assert damage dealt, per
+zone, **per path** (SP node / MP node / MP sim), because those three disagree silently right now and
+a test covering one of them would pass against exactly the bug that exists. Include a crawler case
+once decision 1 is made; it is the input that separates the two readings of "identical zones".
