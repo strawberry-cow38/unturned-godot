@@ -29,13 +29,12 @@ Replace 0.75
 Action Trigger
 Should_Delete_Empty_Magazines true
 
-Player_Damage 19
+Damage 5
 Player_Leg_Multiplier 0.6
 Player_Arm_Multiplier 0.6
 Player_Spine_Multiplier 0.8
 Player_Skull_Multiplier 1.1
 
-Zombie_Damage 23
 Zombie_Leg_Multiplier 0.3
 Zombie_Arm_Multiplier 0.3
 Zombie_Spine_Multiplier 0.6

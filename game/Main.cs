@@ -98,7 +98,7 @@ namespace UnturnedGodot
             bool containerTest = false; string containerTestName = null;
             bool wallDemo = false;
             bool clockTest = false;
-            bool play = false, demo = false, netdemo = false, server = false, dedicated = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, lightTest = false, trafficTest = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, objects = false, peidrive = false, craftui = false, bakenav = false, navPathTest = false, zombieTest = false, zdirTest = false, editorMode = false, impactTest = false, doorGallery = false, lampTest = false, beamTest = false, impTest = false, treeSweep = false, bakeLods = false, bakeLodsDry = false;
+            bool play = false, demo = false, netdemo = false, server = false, dedicated = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, lightTest = false, trafficTest = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, playground = false, objects = false, peidrive = false, craftui = false, bakenav = false, navPathTest = false, zombieTest = false, zdirTest = false, editorMode = false, impactTest = false, doorGallery = false, lampTest = false, beamTest = false, impTest = false, treeSweep = false, bakeLods = false, bakeLodsDry = false;
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
                 if (arg.StartsWith("--catalog=")) catalog = arg["--catalog=".Length..];
@@ -186,6 +186,7 @@ namespace UnturnedGodot
                     ResourceField.MapDir = mn == "PEI" ? "resources" : "resources_" + key.ToLower();
                     Terrain.MapDir = mn == "PEI" ? "terrain" : "terrain_" + key.ToLower();
                 }
+                else if (arg == "--playground") playground = true;   // GUN PLAYGROUND: flat lane + player-shaped dummies at 10/25/50/100/200/300 m, floating damage numbers
                 else if (arg == "--peiplay") peiplay = true;     // player standing/walking on real PEI terrain (with colliders)
                 else if (arg == "--invdemo") invdemo = true;
                 else if (arg == "--invsel") { invdemo = true; invsel = true; }
@@ -346,6 +347,7 @@ namespace UnturnedGodot
 
             if (navShot != null) { GetWindow().Size = new Vector2I(1280, 720); BuildNavShot(navShot); return; }
 
+            if (playground) { WorldBuilder.BuildPlaygroundWorld(this); return; }
             if (peiplay)   // drop the player onto real PEI terrain (colliders on) + walk -> the whole session's work on an actual map
             {
                 GetWindow().Size = System.Environment.GetEnvironmentVariable("UG_FUELCAN") == "1" ? new Vector2I(1600, 900) : new Vector2I(1280, 720);   // crisper capture for the gas-can viewmodel check
@@ -700,6 +702,7 @@ namespace UnturnedGodot
                     menu.OnMultiplayer = () => { menu.QueueFree(); _connectHost = "claw.bitvox.me"; _playableClient = true; BuildClient(); };   // legacy MP-test entry (fallback)
                     menu.OnJoinServer = (host, port) => { menu.QueueFree(); _connectHost = host; _connectPort = port; _playableClient = true; BuildClient(); };   // server browser JOIN / direct-connect -> real client join
                     menu.OnEditor = () => { menu.QueueFree(); BuildEditor(); };   // Workshop -> the singleplayer map editor (PEI)
+                    menu.OnPlayground = () => { menu.QueueFree(); WorldBuilder.BuildPlaygroundWorld(this); };   // Playground -> the gun range (same entry as --playground)
                     menu.OnOpenMap = name => { menu.QueueFree(); BuildEditorNew(name); };   // Workshop -> a custom map by name (creates or opens)
                     // Play a custom map: open it exactly as the editor does, then enter play immediately. NOT a
                     // second world-building path -- a "play build" that assembles the map its own way is how the

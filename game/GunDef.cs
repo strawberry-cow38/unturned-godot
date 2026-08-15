@@ -56,6 +56,11 @@ namespace UnturnedGodot
         // once per shell, now fixed (the sound plays once at the start). A BREAK-action (masterkey) is NOT shell-by-shell: it
         // cracks open and loads all barrels at once.
         public bool ShellReload => Action == "Pump";
+        // THE canonical per-shot damage (strawberry 2026-08-15: "standardize player and zombie damage as one
+        // DAMAGE field. and apply a multiplier later"). One number per cartridge; what a target actually takes is
+        // this times a per-target multiplier -- humanoid zones (Humanoid.HeadMult/Torso/Leg) or zombie limbs
+        // (ZombieCombat.MultFor). Falls back to Player_Damage so a .dat that predates the merge still loads.
+        public float Damage;
         public float PlayerDamage;
         public float ZombieDamage;
         public float VehicleDamage;   // Vehicle_Damage: bullets hurt vehicles LESS than zombies (eaglefire 35 vs 99) -- was wrongly using ZombieDamage
@@ -200,6 +205,7 @@ namespace UnturnedGodot
                 Firerate = d.ParseInt32("Firerate", 8),
                 AmmoMax = d.ParseInt32("Ammo_Max", 30),
                 MagazineId = d.ParseInt32("Magazine", 0),   // default magazine item id (eaglefire/maplestrike = 6, the Military STANAG)
+                Damage = d.ParseFloat("Damage", d.ParseFloat("Player_Damage", 0f)),   // canonical; legacy dats fall back
                 Caliber = d.ParseInt32("Caliber", 0),       // which magazines fit: a mag's caliber must match (eaglefire caliber 1)
                 CaliberName = d.GetString("Caliber_Name"),  // real cartridge; null for anything not yet tagged
                 RealWeapon = d.GetString("Real_Weapon"),

@@ -67,8 +67,8 @@ namespace UnturnedGodot.Testing
 
             // ---- SAME ROUND, SAME TERMINAL BALLISTICS. Left at 32 the Avenger would out-damage the 1911 while firing
             // the identical cartridge AND holding more of it, which is not a niche -- it is a replacement.
-            T.Check($"...hitting for what a .45 hits for ({usp.PlayerDamage} vs the 1911's {colt.PlayerDamage})",
-                Mathf.IsEqualApprox(usp.PlayerDamage, colt.PlayerDamage));
+            T.Check($"...hitting for what a .45 hits for ({usp.Damage} vs the 1911's {colt.Damage})",
+                Mathf.IsEqualApprox(usp.Damage, colt.Damage));
 
             // ---- THE NICHE: capacity, and ONLY capacity.
             T.Check($"the Avenger holds more ({usp.AmmoMax} vs {colt.AmmoMax})", usp.AmmoMax > colt.AmmoMax);

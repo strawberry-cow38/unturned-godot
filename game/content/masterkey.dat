@@ -28,13 +28,12 @@ Range 30
 Firerate 5
 Action Break
 
-Player_Damage 40
+Damage 3
 Player_Leg_Multiplier 0.7
 Player_Arm_Multiplier 0.7
 Player_Spine_Multiplier 0.8
 Player_Skull_Multiplier 1.2
 
-Zombie_Damage 40
 Zombie_Leg_Multiplier 0.7
 Zombie_Arm_Multiplier 0.7
 Zombie_Spine_Multiplier 0.8

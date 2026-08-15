@@ -31,13 +31,12 @@ Range 20
 Firerate 10
 Action Trigger
 
-Player_Damage 30
+Damage 12
 Player_Leg_Multiplier 0.7
 Player_Arm_Multiplier 0.7
 Player_Spine_Multiplier 0.8
 Player_Skull_Multiplier 1.2
 
-Zombie_Damage 30
 Zombie_Leg_Multiplier 0.7
 Zombie_Arm_Multiplier 0.7
 Zombie_Spine_Multiplier 0.8

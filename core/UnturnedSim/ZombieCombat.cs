@@ -89,6 +89,21 @@ namespace SDG.Unturned
             }
         }
 
+        // PER-LIMB zombie damage multipliers (strawberry 2026-08-15: "separate multipliers for each zombie body
+        // part"). Before this, DamageHit applied a FLAT amount and IsHeadshot only tinted the hitmarker -- a
+        // zombie headshot dealt exactly what a shin did.
+        //
+        // Sized against the design goal ("almost all guns should 1 shot headshot zombies, take considerably more
+        // shots on the body, even more on limbs") and a 100 HP zombie: at Skull 5.0 anything from 20 damage up
+        // one-shots a head (5.56 = 20 -> 100). Pistol cartridges do not -- 9x19 at 12 gives 60, so two. Raising
+        // Skull to 8.5 would pull the pistols in; that is a design call, not a derivation.
+        public const float SkullMult = 5.0f;
+        public const float SpineMult = 1.0f;
+        public const float LegMult = 0.5f;
+
+        public static float MultFor(ZombieLimb limb)
+            => limb == ZombieLimb.Skull ? SkullMult : limb == ZombieLimb.Spine ? SpineMult : LegMult;
+
         /// <summary>Which limb a world-space point corresponds to on a zombie standing at
         /// <paramref name="foot"/>. Skull is the top 18%, matching the old controller's headshot rule
         /// (worldPoint.Y - position.Y > height * 0.82).</summary>

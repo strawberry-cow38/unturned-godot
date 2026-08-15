@@ -35,7 +35,7 @@ namespace UnturnedGodot.Net
         // singleplayer bullet path uses on them -- a door that takes 25 per shot in MP and 35 in SP is the
         // same door with two different break times. Default 35 = Eaglefire, matching GunDef's parse.
         public float VehicleDamage = 35f;
-        public float HeadMult = 3.0f;           // the NetServer.Hitscan zone table (head/torso/leg)
+        public float HeadMult = 2.0f;           // the NetServer.Hitscan zone table (head/torso/leg). 2.0 per strawberry 2026-08-15 (was 3.0); MIRRORS Humanoid.HeadMult -- gun.zone_table_mirror asserts they agree
         public float TorsoMult = 1.0f;
         public float LegMult = 0.6f;
         public int FirerateTicks = 4;           // .dat Firerate; min shot gap = Firerate+1 ticks (the SP off-by-one rule)

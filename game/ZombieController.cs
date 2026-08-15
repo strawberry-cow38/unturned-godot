@@ -161,6 +161,22 @@ namespace UnturnedGodot
         // Gun hit: carries the impact point + bullet direction so the death ragdoll gets shoved there.
         public void DamageHit(float amount, Vector3 point, Vector3 dir) => ApplyDamage(amount, point, dir, true);
 
+        /// <summary>Damage scaled by WHICH PART was hit (ZombieCombat.MultFor). The flat DamageHit above stays for
+        /// the callers that already carry a resolved amount (explosions, melee, the wire) -- only bullets pick a
+        /// limb, and only bullets should, since a blast has no single impact point on the body.</summary>
+        public float DamageHitLimb(float baseAmount, Vector3 point, Vector3 dir)
+        {
+            float h = Speciality == ESpeciality.CRAWLER ? 0.8f : 1.8f;
+            var limb = SDG.Unturned.ZombieCombat.LimbAt(
+                new UnityEngine.Vector3(point.X, point.Y, point.Z),
+                new UnityEngine.Vector3(GlobalPosition.X, GlobalPosition.Y, GlobalPosition.Z), h);
+            float dmg = baseAmount * SDG.Unturned.ZombieCombat.MultFor(limb);
+            LastLimbMult = SDG.Unturned.ZombieCombat.MultFor(limb);   // test hook
+            ApplyDamage(dmg, point, dir, true);
+            return dmg;
+        }
+        public float LastLimbMult { get; private set; } = 1f;
+
         // Approximate the source SKULL-limb headshot (info.limb == ELimb.SKULL) from the hit height: the top ~18% of the
         // zombie's collider is its head. Crawlers stand 0.8m, everyone else 1.8m.
         public bool IsHeadshot(Vector3 worldPoint)

@@ -151,20 +151,20 @@ namespace SDG.Unturned
         // isAmmo so a reload consumes shells from the stack, and stackSize 32.
         static void WireShotgunShells()
         {
-            void Shell(ushort id, int caliber, int pellets) { var a = Assets.find(id); if (a != null) { a.magCaliber = caliber; a.isAmmo = true; a.stackSize = 32; a.pellets = pellets; } }
-            Shell(113, 8, 6);    // 12 Gauge Buckshot (Bluntforce / Quadbarrel / Determinator) -- 6 pellets (retail Shells_8.dat)
-            Shell(381, 16, 8);   // 20 Gauge Buckshot (Masterkey / Sawed-Off) -- 8 pellets (retail Shells_2.dat)
+            void Shell(ushort id, int caliber, int pellets, float damage = 0f) { var a = Assets.find(id); if (a != null) { a.magCaliber = caliber; a.isAmmo = true; a.stackSize = 32; a.pellets = pellets; a.damageOverride = damage; } }
+            Shell(113, 8, 9);    // 12 Gauge Buckshot (Bluntforce / Quadbarrel / Determinator) -- 6 pellets (retail Shells_8.dat)
+            Shell(381, 16, 18);   // 20 Gauge Buckshot (Masterkey / Sawed-Off) -- 8 pellets (retail Shells_2.dat)
             // Slugs (strawberry): green single-projectile rounds. Same caliber as their buckshot sibling so they feed
             // the SAME shotguns, but pellets=1 -- one solid slug, not a spread (each pellet is its own bullet doing the
             // gun's full shot damage, so a slug = one concentrated hit vs buckshot's 6-8). New items 5000/5001, defined
             // in items_catalog.tsv (+ green manifest color, models SWAPPED vs the shells so the 12ga reads bigger); made
             // functional ammo here, same as the shells above.
-            Shell(5000, 8, 1);    // 12 Gauge Slug  -> caliber 8  (12ga shotguns), 1 pellet
-            Shell(5001, 16, 1);   // 20 Gauge Slug  -> caliber 16 (20ga shotguns), 1 pellet
+            Shell(5000, 8, 1, 40f);    // 12 Gauge Slug  -> caliber 8  (12ga shotguns), 1 pellet
+            Shell(5001, 16, 1, 25f);   // 20 Gauge Slug  -> caliber 16 (20ga shotguns), 1 pellet
             // Beanbags (strawberry): less-lethal white/grey rounds, functionally identical to slugs (pellets=1) but
             // WIRED SEPARATE (own item ids 5002/5003) so their damage can be tuned independently later.
-            Shell(5002, 8, 1);    // 12 Gauge Beanbag -> caliber 8  (12ga shotguns), 1 pellet
-            Shell(5003, 16, 1);   // 20 Gauge Beanbag -> caliber 16 (20ga shotguns), 1 pellet
+            Shell(5002, 8, 1, 20f);    // 12 Gauge Beanbag -> caliber 8  (12ga shotguns), 1 pellet
+            Shell(5003, 16, 1, 12f);   // 20 Gauge Beanbag -> caliber 16 (20ga shotguns), 1 pellet
             // 5.56 FMJ loose round (strawberry: the chamber's rack output, stacks 120). Not loadable ammo yet -- just a stackable item.
             { var fmj = SDG.Unturned.Assets.find(5004); if (fmj != null) { fmj.stackSize = 120; fmj.ammoType = "FMJ"; fmj.magCaliber = 1; } }   // 5.56 FMJ: bullet type FMJ, caliber 1 (STANAG group) so the rack knows what it ejects (master)
         }

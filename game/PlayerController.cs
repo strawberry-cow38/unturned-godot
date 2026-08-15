@@ -2180,6 +2180,13 @@ namespace UnturnedGodot
         public void DebugFinishMagAnim() { _magSwapAnimTimer = 0; _magSwapAutoRack = false; _viewmodel?.SetReloading(false); }   // test: simulate the mag-swap / rack anim finishing so the cooldown clears (a follow-up mag action isn't blocked)
         public bool DebugUsesShells() => UsesShells;         // test: does the gun feed from loose shells
         public int DebugCountShells() => CountShells();      // test: shells of the gun's caliber carried
+        /// <summary>The damage ONE projectile of the next shot carries: the loaded shell's override if it has
+        /// one (slug 40 / beanbag 20), else the gun's cartridge Damage (12ga buckshot = 12 per pellet).</summary>
+        float ShotDamage() => (UsesShells && ShellAsset != null && ShellAsset.damageOverride > 0f)
+            ? ShellAsset.damageOverride
+            : (Gun?.Damage ?? 34f);
+        public float DebugShotDamage => ShotDamage();   // test hook -- the SAME call the fire path makes, not a copy
+
         public int DebugPellets() => UsesShells && ShellAsset != null ? System.Math.Max(1, ShellAsset.pellets) : System.Math.Max(1, Gun?.Pellets ?? 1);   // test: rays per shot (shotgun = shell pellets)
         public void DebugSetHeldItem(SDG.Unturned.Item it) => _heldItem = it;      // test: link a backing item to the held gun
         public void DebugSaveGunState() => SaveGunState();                          // test: mirror live gun state to the backing item
@@ -3868,7 +3875,7 @@ namespace UnturnedGodot
                       : System.Array.IndexOf(modes, FireMode.Auto) >= 0 ? FireMode.Auto
                       : modes[0];
             _burstLeft = 0;
-            GD.Print($"[gun] {Gun.Id}: zombieDmg={Gun.ZombieDamage} vehicleDmg={Gun.VehicleDamage} range={Gun.Range} firerate={Gun.Firerate} mag={Gun.AmmoMax} pellets={Gun.Pellets} mode={_firemode}");
+            GD.Print($"[gun] {Gun.Id}: dmg={Gun.Damage} vehicleDmg={Gun.VehicleDamage} range={Gun.Range} firerate={Gun.Firerate} mag={Gun.AmmoMax} pellets={Gun.Pellets} mode={_firemode}");
         }
 
         public string HeldGunName => _gunName;
@@ -4451,7 +4458,9 @@ namespace UnturnedGodot
             // -- also while the bolt/pump still needs cycling -- kills a queued burst the frame we die (the tick calls Fire()) + ignores death-screen clicks (master). _driving guard fixes the "stray tracer flies straight south" bug: the auto/burst tick (_PhysicsProcess) calls Fire() on held-LMB WITHOUT a driving check, and while driving _cam is TopLevel (detached chase cam) -> aim = the chase cam's fixed heading, not the player's look. LMB honks while driving anyway.
             if (AmmoRadial?.IsOpen ?? false) return false;   // no firing while the ammo radial is up -- you're picking ammo, not shooting
             if (_viewmodel != null && (!_viewmodel.IsEquipComplete || _viewmodel.IsInspecting || _viewmodel.InAttachView)) return false;   // no firing until equip finishes, or during inspect / attachment menu (source canFire gates)
-            float damage = Gun?.ZombieDamage ?? 34f;   // range/travel are encoded in the bullet's steps + velocity
+            // ONE damage field now; the target applies its own zone/limb multiplier. A loaded shell may override it
+            // (slug 40 / beanbag 20 vs the gun's per-pellet buckshot 12) -- same gun, different cartridge in the tube.
+            float damage = ShotDamage();   // range/travel are encoded in the bullet's steps + velocity
             float vehDamage = Gun?.VehicleDamage ?? 40f;   // bullets hurt vehicles less than zombies (source Vehicle_Damage)
             float objDamage = Gun?.ObjectDamage ?? 25f;    // bullets vs destructible props (source Object_Damage)
             _fireCd = Gun != null ? (Gun.Firerate + 1) / 50f : 0.1f;   // interval = firerate+1 ticks: source fires when clock-lastFire > firerate (STRICT >, UseableGun.tockShoot), so the real gap is firerate+1. Off-by-one made fast guns (zube firerate 4: 750rpm vs correct 600) fire ~25% too hot -- master's "very high ROF"
@@ -4553,7 +4562,7 @@ namespace UnturnedGodot
             for (int i = 0; i < pellets; i++)
             {
                 Vector3 dir = spread > 0.0001f ? DeviateInCone(aim, spread) : aim;
-                SpawnBullet(bulletOrigin, dir * muzzleVel, steps, gravity, damage, vehDamage, objDamage);
+                SpawnBullet(bulletOrigin, dir * muzzleVel, steps, gravity, damage, vehDamage, objDamage, damage);   // player + zombie both key off the same number
             }
             // AlertTool point-noise: an unsuppressed gunshot pulls zombies within earshot over to investigate. A silenced
             // barrel skips the alert ENTIRELY (source UseableGun ~936: only alert if barrel==null || !isSilenced) -> stealth.
@@ -4574,12 +4583,15 @@ namespace UnturnedGodot
         // event (single fx authority -- otherwise the shooter would render both its local impact AND the echo)
         // and the hitmarker moves to HitConfirmed so it only ever tells the truth. Never set in SP.
         const float TracerBaseW = 0.065f;   // 5.56's tracer half-width; every other cartridge is this times GunDef.TracerScale
-        sealed class Bullet { public Vector3 Pos, Vel, Origin; public int StepsLeft; public float Gravity, Damage, VehicleDamage, ObjectDamage; public bool Cosmetic; public MeshInstance3D Tracer; public Node3D RocketVis; public Vector3 MuzzleAnchor; public bool HasAnchor; public float TracerW = TracerBaseW; }
+        sealed class Bullet { public Vector3 Pos, Vel, Origin; public int StepsLeft; public float Gravity, Damage, VehicleDamage, ObjectDamage, PlayerDamage; public bool Cosmetic; public MeshInstance3D Tracer; public Node3D RocketVis; public Vector3 MuzzleAnchor; public bool HasAnchor; public float TracerW = TracerBaseW; }
         readonly System.Collections.Generic.List<Bullet> _bullets = new();
 
-        void SpawnBullet(Vector3 pos, Vector3 vel, int steps, float gravity, float damage, float vehicleDamage, float objectDamage)
+        // playerDamage is carried SEPARATELY from `damage` (which is the zombie number the SP path has always
+        // used). A player-shaped target resolves through the humanoid zone table, a zombie through its own limb
+        // model -- one field could not serve both without silently reporting the wrong model on one of them.
+        void SpawnBullet(Vector3 pos, Vector3 vel, int steps, float gravity, float damage, float vehicleDamage, float objectDamage, float playerDamage = 0f)
         {
-            var b = new Bullet { Pos = pos, Origin = pos, Vel = vel, StepsLeft = Mathf.Max(1, steps), Gravity = gravity, Damage = damage, VehicleDamage = vehicleDamage, ObjectDamage = objectDamage, Cosmetic = NetFire != null, Tracer = Suppressed ? null : MakeTracer(),   // a suppressed shot draws no streak; every tracer use site is already null-guarded
+            var b = new Bullet { Pos = pos, Origin = pos, Vel = vel, StepsLeft = Mathf.Max(1, steps), Gravity = gravity, Damage = damage, VehicleDamage = vehicleDamage, ObjectDamage = objectDamage, PlayerDamage = playerDamage, Cosmetic = NetFire != null, Tracer = Suppressed ? null : MakeTracer(),   // a suppressed shot draws no streak; every tracer use site is already null-guarded
                                  TracerW = TracerBaseW * GunDef.TracerScale(Gun?.CaliberName) };   // .22 thin, .50 BMG fat; buckshot deliberately tiny (each pellet is its own bullet, so a shot draws 8 of these)
             // LOCAL first-person only: anchor the tracer's near end at the VIEWMODEL MUZZLE (screen-bridged to the world
             // via the viewmodel cam -> world cam), so it looks like it leaves the barrel; it then BENDS onto the real
@@ -4679,7 +4691,13 @@ namespace UnturnedGodot
                     Vector3 point = hit["position"].AsVector3();
                     Vector3 hdir = b.Vel.Normalized();
                     var collider = hit["collider"].As<GodotObject>();
-                    if (collider is ZombieController z) { bool head = z.IsHeadshot(point); SpawnFleshImpact(point, hdir); bool wd = z.Dead; z.DamageHit(b.Damage, point, hdir); if (!wd && z.Dead) Kills++; HitmarkerHUD.Instance?.Show(head); }   // hitmarker: white body / red headshot (source EPlayerHit)
+                    if (collider is ZombieController z) { bool head = z.IsHeadshot(point); SpawnFleshImpact(point, hdir); bool wd = z.Dead; z.DamageHitLimb(b.Damage, point, hdir); if (!wd && z.Dead) Kills++; HitmarkerHUD.Instance?.Show(head); }   // hitmarker: white body / red headshot (source EPlayerHit)
+                    else if (collider is TargetDummy dummy)
+                    {   // playground target: PLAYER damage through the humanoid zones, floating number, hitmarker
+                        float dealt = dummy.TakeHit(b.PlayerDamage, point);
+                        SpawnFleshImpact(point, hdir);
+                        HitmarkerHUD.Instance?.Show(dummy.LastZone == TargetDummy.HitZone.Head);
+                    }
                     else if (collider is PhysicalBone3D pb) { SpawnFleshImpact(point, hdir); pb.ApplyImpulse(hdir * 7f, point - pb.GlobalPosition); }
                     else if (collider is Vehicle veh) { veh.TakeDamage(b.VehicleDamage); SpawnSurfaceImpact(point, hit["normal"].AsVector3(), Surf.Metal, veh); HitmarkerHUD.Instance?.ShowCircle(); }   // source Vehicle_Damage (35) + metal sparks, hole follows the car; circle hitmarker (master)
                     else if (collider is Deployable dep && !dep.IsWreck) { dep.TakeDamage(b.VehicleDamage); SpawnSurfaceImpact(point, hit["normal"].AsVector3(), Surf.Metal); HitmarkerHUD.Instance?.ShowCircle(); }   // gunfire damages a placed generator (metal sparks) -- Vehicle_Damage; circle hitmarker

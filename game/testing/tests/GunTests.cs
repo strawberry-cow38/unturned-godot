@@ -46,7 +46,7 @@ namespace UnturnedGodot.Testing
             T.Check("masterkey break-action is NOT shell-by-shell", !p.DebugShellReload());
             T.Check("masterkey has no +1 chamber", !p.DebugHasChamber());
             T.Check("masterkey feeds from loose shells", p.DebugUsesShells());
-            T.Check("masterkey fires 8 pellets (20ga shell)", p.DebugPellets() == 8);
+            T.Check($"masterkey fires 18 pellets (20ga shell) [{p.DebugPellets()}]", p.DebugPellets() == 18);
             bag.tryAddItem(new Item(381, 20));
             bag.tryAddItem(new Item(381, 20));   // 20 + 20 -> merges to 32, overflows 8
             T.Check("20 gauge shells stack (40 carried)", p.DebugCountShells() == 40);
@@ -61,7 +61,7 @@ namespace UnturnedGodot.Testing
             T.Check("bluntforce (pump) feeds from loose shells", p.DebugUsesShells());
             T.Check("bluntforce is shell-by-shell (pump)", p.DebugShellReload());
             T.Check("bluntforce sees the 12 gauge shells (32)", p.DebugCountShells() == 32);
-            T.Check("bluntforce fires 6 pellets (12ga shell)", p.DebugPellets() == 6);
+            T.Check($"bluntforce fires 9 pellets (12ga shell) [{p.DebugPellets()}]", p.DebugPellets() == 9);
 
             // ammo-TYPE picker (R-hold radial / attachment-menu mag slot, master): choose slug vs buckshot for the 12ga
             // gun. The choice drives ShellAsset -> the fire loop's pellet count -- slug = 1 solid projectile, buckshot
@@ -69,12 +69,19 @@ namespace UnturnedGodot.Testing
             bag.tryAddItem(new Item(5000, 10));   // 12 Gauge Slug (caliber 8, 1 pellet)
             T.Check("bluntforce (loose shells) can choose an ammo type", p.CanChooseShellType);
             T.Check("two 12ga shell types offered (buckshot + slug)", p.ShellTypeChoices().Count == 2);
-            T.Check("default loads buckshot -> 6 pellets", p.DebugPellets() == 6);
+            T.Check($"default loads buckshot -> 9 pellets [{p.DebugPellets()}]", p.DebugPellets() == 9);
             p.ChooseShellType(5000);   // pick slug (as the radial / mag-slot click does)
             T.Check("slug selected -> fires 1 solid projectile", p.DebugPellets() == 1);
+            // A shell carries its own DAMAGE now, not just a pellet count (strawberry 2026-08-15: 12ga slug 40,
+            // beanbag 20, buckshot 12 per pellet). Without this the slug would inherit the gun's per-pellet
+            // buckshot number and a single solid projectile would deal 12 -- a ninth of the shot it replaces.
+            T.Check($"...and the slug's OWN damage, not the gun's per-pellet number ({p.DebugShotDamage})",
+                Mathf.IsEqualApprox(p.DebugShotDamage, 40f));
             T.Check("HUD reflects the loaded shell type (slug)", p.LoadedShellName == "12 Gauge Slug");
             p.ChooseShellType(113);    // back to buckshot
-            T.Check("buckshot re-selected -> 6 pellets again", p.DebugPellets() == 6);
+            T.Check($"buckshot re-selected -> 9 pellets again [{p.DebugPellets()}]", p.DebugPellets() == 9);
+            T.Check($"...and buckshot falls back to the gun's per-pellet damage ({p.DebugShotDamage})",
+                Mathf.IsEqualApprox(p.DebugShotDamage, 12f));   // 9 x 12 = 108 per shot
             // beanbag: a THIRD 12ga type (separate id, functionally like the slug -- 1 pellet -- but tunable apart later)
             bag.tryAddItem(new Item(5002, 5));   // 12 Gauge Beanbag
             T.Check("three 12ga shell types offered (buckshot + slug + beanbag)", p.ShellTypeChoices().Count == 3);

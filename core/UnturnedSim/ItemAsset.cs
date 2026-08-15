@@ -100,6 +100,10 @@ namespace SDG.Unturned
         // A reload consumes shells from the stack rather than swapping a whole magazine. (12/20 Gauge Shells, stack 32.)
         public bool isAmmo;
         public int stackSize = 1;   // max per-slot stack (Unturned items = 1; ammo like shotgun shells stack, e.g. 32)
+        /// <summary>Per-shell damage override (0 = use the gun's Damage). A shotgun fires buckshot, slugs and
+        /// beanbags from ONE gun, so the shell has to carry its own number -- the gun's single Damage field is
+        /// per-pellet buckshot, and a 1-pellet slug reading it would deal a ninth of a shot.</summary>
+        public float damageOverride = 0f;
         public int pellets = 1;     // ItemMagazineAsset.Pellets: rays fired per shot from THIS ammo (12ga shells = 6, 20ga = 8; slugs = 1)
 
         // (ItemTool.getRarityColorUI lives game-side as ItemTool.RarityColorUI -- it returns a Godot.Color,

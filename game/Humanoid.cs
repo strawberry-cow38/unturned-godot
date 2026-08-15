@@ -11,6 +11,15 @@ namespace UnturnedGodot
         // vertical zone bands (feet=0), shared with the server hit-reg:
         public const float HeadMinY = 1.45f;   // above -> HEAD (headshot)
         public const float TorsoMinY = 0.78f;   // 0.78..1.45 -> TORSO ; below -> LEGS
+
+        // Zone damage multipliers. MIRRORED in ServerCombat.ServerGunProfile (core/ cannot reference game/), and
+        // gun.zone_table_mirror asserts the two agree -- a silent drift here would mean the SP playground reports
+        // one number and PvP deals another, which is precisely what the dummy exists to rule out.
+        // Head 2.0 is strawberry's call (2026-08-15, was 3.0): at 2x the one-shot-headshot line sits at 50 base
+        // damage, so only .50 BMG reaches it. At 3x the line was 33.34 and four cartridges crossed it.
+        public const float HeadMult = 2.0f;
+        public const float TorsoMult = 1.0f;
+        public const float LegMult = 0.6f;
         public const float TopY = 1.8f;
         public const float Radius = 0.42f;      // hit cylinder radius
 

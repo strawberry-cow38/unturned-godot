@@ -1756,6 +1756,68 @@ namespace UnturnedGodot
         }
 
         // --peiplay: drop the player onto REAL PEI terrain (colliders on), spawned on land via SampleHeight, scripted to walk.
+        // --playground: the GUN PLAYGROUND (strawberry 2026-08-15). A flat arena with player-shaped dummies at
+        // marked ranges, so a cartridge's damage can actually be felt. Deliberately mapless: it loads instantly,
+        // needs no retail install, and a flat floor means a miss is a miss rather than terrain eating the shot.
+        //
+        // The dummy ranges are the ones the numbers argue about -- 10 m is pistol work, 200 m is where a rifle's
+        // drop starts to matter, and 300 m is the .50/railgun tier's whole reason to exist.
+        public static readonly float[] PlaygroundRanges = { 10f, 25f, 50f, 100f, 200f, 300f };
+
+        public static WorldBuildResult BuildPlaygroundWorld(Node root)
+        {
+            var result = new WorldBuildResult();
+            var sim = new SimDriver();
+            root.AddChild(sim);
+            result.Sim = sim;
+
+            var env = new Godot.Environment { AmbientLightSource = Godot.Environment.AmbientSource.Color, AmbientLightColor = new Color(0.55f, 0.58f, 0.62f), AmbientLightEnergy = 1.0f };
+            env.BackgroundMode = Godot.Environment.BGMode.Sky;
+            env.Sky = new Sky { SkyMaterial = new ProceduralSkyMaterial() };
+            root.AddChild(new WorldEnvironment { Environment = env });
+            var sun = new DirectionalLight3D { LightEnergy = 1.15f, ShadowEnabled = true, DirectionalShadowMaxDistance = 120f };
+            sun.RotationDegrees = new Vector3(-52f, 38f, 0f);
+            root.AddChild(sun);
+
+            // Floor: long enough to hold the 300 m lane with room behind the firing line.
+            var floor = new StaticBody3D { Name = "PlaygroundFloor" };
+            floor.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = new Vector3(120f, 2f, 760f) }, Position = new Vector3(0f, -1f, -340f) });
+            floor.AddChild(new MeshInstance3D
+            {
+                Mesh = new BoxMesh { Size = new Vector3(120f, 2f, 760f) },
+                MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.34f, 0.38f, 0.31f), Roughness = 1f },
+                Position = new Vector3(0f, -1f, -340f),
+            });
+            root.AddChild(floor);
+
+            CharacterModel.LoadBundled();
+            var player = new PlayerController();
+            player.LoadGun("res://content/eaglefire.dat");
+            root.AddChild(player);
+            player.GlobalPosition = new Vector3(0f, 1.2f, 0f);
+            player.LinkWorldLighting(sun, env);
+            result.Player = player;
+
+            // One dummy per range, plus a range post so you know what you are shooting at without a HUD.
+            foreach (float r in PlaygroundRanges)
+            {
+                var d = new TargetDummy { Name = $"Dummy{r:0}m", Label = $"{r:0}m" };
+                root.AddChild(d);
+                d.GlobalPosition = new Vector3(0f, 0f, -r);
+                var post = new MeshInstance3D
+                {
+                    Mesh = new BoxMesh { Size = new Vector3(0.12f, 2.4f, 0.12f) },
+                    MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.85f, 0.75f, 0.2f) },
+                };
+                root.AddChild(post);
+                post.GlobalPosition = new Vector3(1.4f, 1.2f, -r);
+            }
+
+            AttachPlayerShell(root, player, withCropManager: false);   // console/HUD/pause/attachments -- you need the console to swap guns
+            { var dnL = new CanvasLayer { Layer = 97 }; dnL.AddChild(new DamageNumbers()); root.AddChild(dnL); }   // floating hit numbers
+            return result;
+        }
+
         public static WorldBuildResult BuildPeiPlayWorld(Node root, string mapRoot, bool horde)
         {
             var result = new WorldBuildResult();

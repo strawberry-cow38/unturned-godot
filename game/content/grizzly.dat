@@ -34,14 +34,13 @@ Bullet_Gravity_Multiplier 1
 Firerate 20
 Action Trigger
 
-Player_Damage 99
+Damage 75
 Player_Leg_Multiplier 0.6
 Player_Arm_Multiplier 0.6
 Player_Spine_Multiplier 0.8
 Player_Skull_Multiplier 1.1
 Instakill_Headshots True
 
-Zombie_Damage 150
 Zombie_Leg_Multiplier 0.3
 Zombie_Arm_Multiplier 0.3
 Zombie_Spine_Multiplier 0.6

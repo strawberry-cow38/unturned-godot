@@ -21,6 +21,7 @@ namespace UnturnedGodot
         public System.Action OnMultiplayer;       // legacy top-level hard-connect to the MP test server (kept as a fallback)
         public System.Action<string, ushort> OnJoinServer;   // server browser JOIN / direct-connect: real client join to host:port
         public System.Action OnEditor;            // Workshop -> the singleplayer map editor (PEI)
+        public System.Action OnPlayground;        // Playground -> the gun range: dummies at marked distances, floating damage numbers
         // Workshop -> a custom map by NAME. The same entry point does new-and-load: the sub-editors read
         // `editor_<name>_*` when they start, so "create" and "open" differ only in whether those files exist.
         // Two entry points would be two ways to start a map, and they drift.
@@ -200,6 +201,7 @@ namespace UnturnedGodot
             // Configuration menu is where graphics live, so this replaces the stub rather than adding a sixth button.
             MenuButton(layer, "configuration", "Configuration", 350f, false, 3, () => ToggleGraphicsPanel());
             MenuButton(layer, "workshop",      "Workshop",      410f, false, 4, () => ToggleWorkshopPanel());
+            MenuButton(layer, "playground",    "Playground",    470f, false, 1, () => OnPlayground?.Invoke());   // gun range; no icon file yet -> MenuButton just skips the icon
             MenuButton(layer, "exit",          "Exit",          -70f, true,  0, () => GetTree().Quit());
 
             BuildMapSelector(layer);   // Play -> retail singleplayer map selector + gameplay options (MainMenuPlay.cs)

@@ -26,13 +26,12 @@ Range 45
 Firerate 4
 Action Trigger
 
-Player_Damage 17
+Damage 12
 Player_Leg_Multiplier 0.725
 Player_Arm_Multiplier 0.725
 Player_Spine_Multiplier 1
 Player_Skull_Multiplier 1
 
-Zombie_Damage 25
 Zombie_Leg_Multiplier 0.725
 Zombie_Arm_Multiplier 0.725
 Zombie_Spine_Multiplier 1
