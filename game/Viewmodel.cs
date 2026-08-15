@@ -216,19 +216,11 @@ namespace UnturnedGodot
                     if (c.Length >= 4) { var rgb = V3(c[3]); gv.SightColor = new Color(rgb.X, rgb.Y, rgb.Z); }   // real per-gun sight _Color
                     d[c[0]] = gv;
                 }
-            // per-gun Sight-hook MOUNT for guns WITHOUT a default sight (pistols / shotguns / etc.): mount optics at the
-            // gun's OWN Sight hook instead of falling back to the eaglefire's (content/guns_sighthook.tsv, emitted by
-            // tools/extract_sightview_hooks.py). Gap-fill only -- a real sights.tsv mount above already won.
-            string shp = ProjectSettings.GlobalizePath("res://content/guns_sighthook.tsv");
-            if (System.IO.File.Exists(shp))
-                foreach (var line in System.IO.File.ReadAllLines(shp))
-                {
-                    var c = line.Split('\t');
-                    // gate on the DEFAULT-SIGHT MESH, not SightPos==Zero: eaglefire/maplestrike carry a real 0,0,0 sights.tsv
-                    // mount (== Vector3.Zero) that must NOT be clobbered -- a Zero SightPos there is a valid mount, not "missing".
-                    if (c.Length < 2 || !d.TryGetValue(c[0], out var gv) || !string.IsNullOrEmpty(gv.Sight) || c[1].Trim().Length == 0) continue;
-                    gv.SightPos = V3(c[1]); d[c[0]] = gv;   // a gun with NO default sight -> mount optics at its own Sight hook
-                }
+            // NOTE: no per-gun Sight-hook gap-fill for sightless guns. The raw Sight-child hook (guns_sighthook.tsv) is
+            // the mount BEFORE the iron Model_0 is composed in -- measured (tinyclaw): paintballgun's hook == the eaglefire's
+            // visibly-too-far-back spot, nailgun (0,-0.671,-0.159), fury (0,0.103,-0.342). Sightless guns have no iron
+            // Model_0 to compose, so they mount optics at the eaglefire fallback (_defaultSightPos), which reads correctly.
+            // guns_sighthook.tsv stays as extracted reference data; the eaglefire/maplestrike 0,0,0 sentinel -> fallback path is untouched.
             return d;
         }
         static Color Col(string s) { var v = V3(s); return new Color(v.X, v.Y, v.Z); }
