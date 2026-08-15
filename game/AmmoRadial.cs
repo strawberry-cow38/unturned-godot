@@ -72,7 +72,7 @@ namespace UnturnedGodot
             if (IsOpen) return;
             _sectors.Clear();
             foreach (var (icon, name, rounds, mag, type) in mags)
-                _sectors.Add(new AmmoPie.Sector { Name = name, CountText = $"{rounds} rds · {(string.IsNullOrEmpty(type) ? "FMJ" : type)}", Selectable = rounds > 0, Icon = icon, MagItem = mag });   // rounds + bullet TYPE; an EMPTY mag still SHOWS but greys out -- not loadable (master)
+                _sectors.Add(new AmmoPie.Sector { Name = name, CountText = rounds > 0 ? $"{rounds} rds · {(string.IsNullOrEmpty(type) ? "FMJ" : type)}" : "0 rds", Selectable = rounds > 0, Icon = icon, MagItem = mag });   // rounds + bullet TYPE; an EMPTY mag SHOWS but greys out + drops the type (no rounds = no type) (master)
             _sectors.Add(new AmmoPie.Sector { Name = "remove mag", CountText = canRemove ? "eject" : "empty", Selectable = canRemove, IsRemoveMag = true });
             _sectors.Add(new AmmoPie.Sector { Name = "rack", CountText = canRack ? $"eject {(string.IsNullOrEmpty(chamberType) ? "FMJ" : chamberType)}" : "empty", Selectable = canRack, IsRack = true });   // the CHAMBER's own type -- tracked independently of the seated mag (master)
             int n = _sectors.Count;
