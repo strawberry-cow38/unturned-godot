@@ -116,9 +116,9 @@ Bullet_Gravity_Multiplier 1.4
 Damage_Falloff_Start 125
 Damage_Falloff_End 233
 Damage_Falloff_Min 0.5
-Recoil_Pattern_Climb 17.6
-Recoil_Pattern_Drift -3.2
+Recoil_Pattern_Climb 35.2
+Recoil_Pattern_Drift -2.4
 Recoil_Pattern_Drift_Exp 1.35
-Recoil_Pattern_Wiggle -1.12
+Recoil_Pattern_Wiggle -0.84
 Recoil_Scatter_H 0.7
 Recoil_Scatter_V 0.7
