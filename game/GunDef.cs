@@ -84,6 +84,10 @@ namespace UnturnedGodot
         public int PatternSwayStart;      // node the sway begins
         public float PatternPlateau;      // extra climb added asymptotically PAST PatternNodes, so a 100-round
                                           // belt does not walk the crosshair off the screen by round 60
+        /// <summary>Per-gun scope-sway scale (1 = the shared default). A gun with a bipod, a heavy barrel or
+        /// simply a steadier platform should hold its scope better; the sway oscillator is otherwise identical
+        /// for every optic, which makes a police DMR wobble exactly like a hunting rifle.</summary>
+        public float ScopeSwayScale = 1f;
         public float ScatterH = 1f, ScatterV = 1f;   // per-axis randomness scalars (the AUG's grip kills H, not V)
         public bool ScatterTightEarly;    // M249: near-zero for the first rounds, opening hard once the sway starts
 
@@ -304,6 +308,7 @@ namespace UnturnedGodot
                 PatternSway = d.ParseFloat("Recoil_Pattern_Sway", 0f),
                 PatternSwayStart = d.ParseInt32("Recoil_Pattern_Sway_Start", 0),
                 PatternPlateau = d.ParseFloat("Recoil_Pattern_Plateau", 0f),
+                ScopeSwayScale = d.ParseFloat("Scope_Sway_Scale", 1f),
                 ScatterH = d.ParseFloat("Recoil_Scatter_H", 1f),
                 ScatterV = d.ParseFloat("Recoil_Scatter_V", 1f),
                 ScatterTightEarly = d.ContainsKey("Recoil_Scatter_Tight_Early"),

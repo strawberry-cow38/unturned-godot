@@ -673,6 +673,8 @@ namespace UnturnedGodot
         /// <summary>The gun's own rotational recoil, degrees. Recoil now lands on the AIM, so this must stay at
         /// rest through a burst -- a non-zero reading means a second impulse path grew back on the viewmodel.</summary>
         public Vector3 DebugRecoilRot => _recoilRotSpring.CurrentPosition;
+        /// <summary>Set from the equipped gun's Scope_Sway_Scale. 1 = the shared default.</summary>
+        public float ScopeSwayScale = 1f;
         public Vector2 ScopeSwayDegrees => new Vector2(_scopeSway.X, _scopeSway.Y);
         /// <summary>Steadiness 0..1 (breath-hold). Source advances swayTime at (1 - steadyAccuracy/4), so steadying
         /// SLOWS the drift rather than shrinking it -- the sight still wanders, just lazily.</summary>
@@ -1284,7 +1286,7 @@ namespace UnturnedGodot
             float scopeZoom = ScopeZoom;
             if (_aiming && scopeZoom > 1f)
             {
-                float sway = (1f - 1f / scopeZoom) * 1.25f;
+                float sway = (1f - 1f / scopeZoom) * 1.25f * ScopeSwayScale;   // per-gun: a steadier platform holds its optic better
                 sway *= _stance switch { EPlayerStance.CROUCH => 0.85f, EPlayerStance.PRONE => 0.7f, _ => 1f };
                 _swayTime += (float)delta * (1f - Mathf.Clamp(SteadyAccuracy, 0f, 1f) / 4f);
                 var target = new Vector3(Mathf.Sin(0.75f * _swayTime) * sway, Mathf.Sin(1.0f * _swayTime) * sway, 0f);

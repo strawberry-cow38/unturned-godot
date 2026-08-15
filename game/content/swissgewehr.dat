@@ -122,3 +122,4 @@ Recoil_Pattern_Drift_Exp 1.35
 Recoil_Pattern_Wiggle -0.84
 Recoil_Scatter_H 0.7
 Recoil_Scatter_V 0.7
+Scope_Sway_Scale 0.3

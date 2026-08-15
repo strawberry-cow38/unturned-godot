@@ -122,7 +122,7 @@ Ballistic_Steps 25
 Damage_Falloff_Start 110
 Damage_Falloff_End 207
 Damage_Falloff_Min 0.5
-Recoil_Pattern_Climb 13.6
+Recoil_Pattern_Climb 27.2
 Recoil_Pattern_Drift -9.06
 Recoil_Pattern_Drift_Exp 1.6
 Recoil_Pattern_Wiggle -0.0
@@ -132,5 +132,5 @@ Recoil_Pattern_Nodes 20
 Recoil_Pattern_Drift_Start 5
 Recoil_Pattern_Sway -3.3
 Recoil_Pattern_Sway_Start 10
-Recoil_Pattern_Plateau 18.4
+Recoil_Pattern_Plateau 27.6
 Recoil_Scatter_Tight_Early

@@ -3865,6 +3865,7 @@ namespace UnturnedGodot
             else text = System.IO.File.Exists(datPath) ? System.IO.File.ReadAllText(datPath) : null;
             if (string.IsNullOrEmpty(text)) { GD.PushError($"[gun] .dat not found: {datPath}"); return; }
             Gun = GunDef.FromDatText(text);
+            if (_viewmodel != null) _viewmodel.ScopeSwayScale = Gun?.ScopeSwayScale ?? 1f;   // per-gun optic steadiness
             _gunName = System.IO.Path.GetFileNameWithoutExtension(datPath);
             Ammo = Gun.AmmoMax;
             _chambered = HasChamber;   // a freshly-loaded gun starts with a round chambered
