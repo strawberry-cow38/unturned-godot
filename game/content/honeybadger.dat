@@ -1,4 +1,4 @@
-﻿GUID 953f584b63bb487eabafa2770be0a798
+GUID 953f584b63bb487eabafa2770be0a798
 Type Gun
 Rarity Legendary
 Useable Gun
@@ -28,6 +28,7 @@ Auto
 Caliber 1
 Caliber_Name ".300 AAC Blackout"
 Real_Weapon "AAC Honey Badger PDW"
+Integrally_Suppressed
 
 Range 125
 Firerate 5

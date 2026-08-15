@@ -4419,7 +4419,7 @@ namespace UnturnedGodot
             }
             // AlertTool point-noise: an unsuppressed gunshot pulls zombies within earshot over to investigate. A silenced
             // barrel skips the alert ENTIRELY (source UseableGun ~936: only alert if barrel==null || !isSilenced) -> stealth.
-            if (!(_viewmodel?.IsSuppressed ?? false)) SoundBus.Emit(GetTree(), GlobalPosition, SoundBus.Gunshot);   // Phase 3 sound bus: unsuppressed gunshot loudness (suppressed = silent)
+            if (!Suppressed) SoundBus.Emit(GetTree(), GlobalPosition, SoundBus.Gunshot);   // Phase 3 sound bus: unsuppressed gunshot loudness (suppressed = silent)
             // bolt/pump: this shot needs the action cycled before the next one (source RechamberAfterShotCount -> needsRechamber)
             if (Gun != null && Gun.RechamberAfterShotCount > 0 && ++_shotCountForRechamber >= Gun.RechamberAfterShotCount)
             { _needsRechamber = true; _rechamberDelayTimer = Gun.RechamberAfterShotDelay; }
@@ -4441,7 +4441,7 @@ namespace UnturnedGodot
 
         void SpawnBullet(Vector3 pos, Vector3 vel, int steps, float gravity, float damage, float vehicleDamage, float objectDamage)
         {
-            var b = new Bullet { Pos = pos, Origin = pos, Vel = vel, StepsLeft = Mathf.Max(1, steps), Gravity = gravity, Damage = damage, VehicleDamage = vehicleDamage, ObjectDamage = objectDamage, Cosmetic = NetFire != null, Tracer = MakeTracer(),
+            var b = new Bullet { Pos = pos, Origin = pos, Vel = vel, StepsLeft = Mathf.Max(1, steps), Gravity = gravity, Damage = damage, VehicleDamage = vehicleDamage, ObjectDamage = objectDamage, Cosmetic = NetFire != null, Tracer = Suppressed ? null : MakeTracer(),   // a suppressed shot draws no streak; every tracer use site is already null-guarded
                                  TracerW = TracerBaseW * GunDef.TracerScale(Gun?.CaliberName) };   // .22 thin, .50 BMG fat; buckshot deliberately tiny (each pellet is its own bullet, so a shot draws 8 of these)
             // LOCAL first-person only: anchor the tracer's near end at the VIEWMODEL MUZZLE (screen-bridged to the world
             // via the viewmodel cam -> world cam), so it looks like it leaves the barrel; it then BENDS onto the real
@@ -5057,6 +5057,19 @@ namespace UnturnedGodot
         public bool IsDriving => _driving != null;
         public Vehicle Driving => _driving;   // the vehicle being driven (for zombies to swipe at, source targetPassengerVehicle)
         public void SetSuppressor(bool on) => _viewmodel?.SetSlotAttached("Barrel", on);   // test hook: toggle the silenced barrel
+
+        /// <summary>Is the shot I am about to fire suppressed -- by a fitted can OR by the gun being one? Single
+        /// source of truth, because the two consumers must not disagree: a gun that is silent to zombies while
+        /// still drawing a bright streak back to my position is worse than either behaviour alone.
+        /// (strawberry: "hide tracers when using a suppressed weapon. pdw and matamorez are integrally
+        /// suppressed, other guns can have the suppressed flag set via attachments".)</summary>
+        /// <summary>How many live bullets currently carry a tracer. The tracer is the thing being suppressed, so
+        /// this is what a test has to count -- "no streak on screen" and "no bullet at all" are the same picture
+        /// otherwise.</summary>
+        public int DebugTracerCount { get { int n = 0; foreach (var b in _bullets) if (b.Tracer != null) n++; return n; } }
+        public int DebugBulletCount => _bullets.Count;
+
+        public bool Suppressed => (_viewmodel?.IsSuppressed ?? false) || (Gun?.IntegrallySuppressed ?? false);
         public void ForceAim(bool on) => _viewmodel?.SetAiming(on);   // test hook (UG_ADS firetest): drive ADS headlessly to render the real in-game aim view
 
         Vehicle NearestVehicle()

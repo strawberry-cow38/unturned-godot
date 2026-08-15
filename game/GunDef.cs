@@ -105,6 +105,11 @@ namespace UnturnedGodot
         // gets kick*Recover then recovers; the gun viewmodel gets the full kick (UseableGun.cs:1049/1188/1191).
         public float RecoilMinX, RecoilMaxX, RecoilMinY, RecoilMaxY;
         public float RecoverX, RecoverY;
+        // A suppressor built into the gun rather than screwed onto it. The Barrel attachment slot answers "is a
+        // can fitted", which is the right question for every gun that takes one and the wrong question for the two
+        // that ARE one -- the Honey Badger and the VSS Vintorez are both integrally suppressed in real life and
+        // have no removable barrel. Bare valueless key, same shape as the melee `Light` flag.
+        public bool IntegrallySuppressed;
         // Per-shot viewmodel-camera SHAKE (metres): each shot adds a random offset in [min,max] per axis to
         // the recoil viewmodel-camera spring, which springs back to rest (UseableGun.cs:921 reads these into
         // PlayerAnimator.AddRecoilViewmodelCameraOffset -> recoilViewmodelCameraOffset). Eaglefire's is Z-heavy
@@ -205,6 +210,7 @@ namespace UnturnedGodot
                 RecoilMaxX = d.ParseFloat("Recoil_Max_X"),
                 RecoilMinY = d.ParseFloat("Recoil_Min_Y"),
                 RecoilMaxY = d.ParseFloat("Recoil_Max_Y"),
+                IntegrallySuppressed = d.ContainsKey("Integrally_Suppressed"),
                 RecoverX = d.ParseFloat("Recover_X", 0.4f),
                 RecoverY = d.ParseFloat("Recover_Y", 0.4f),
                 ShakeMinX = d.ParseFloat("Shake_Min_X"),
