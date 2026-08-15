@@ -1,4 +1,4 @@
-﻿GUID cde96a85b86b4ea99389a83eaa603a32
+GUID cde96a85b86b4ea99389a83eaa603a32
 Type Gun
 Rarity Epic
 Useable Gun
@@ -65,10 +65,10 @@ Aim_In_Duration 0.25
 Spread_Aim 0.1
 Spread_Angle_Degrees 8.53
 
-Recoil_Min_X -4
-Recoil_Min_Y 4
-Recoil_Max_X 2
-Recoil_Max_Y 6
+Recoil_Min_X -1.58
+Recoil_Min_Y 3.47
+Recoil_Max_X 1.58
+Recoil_Max_Y 6.31
 
 Recover_X 0.6
 Recover_Y 0.6

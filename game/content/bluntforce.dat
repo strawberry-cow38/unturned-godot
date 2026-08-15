@@ -1,4 +1,4 @@
-﻿GUID 2047f537c56442b5aabe535caf819bda
+GUID 2047f537c56442b5aabe535caf819bda
 Type Gun
 Rarity Rare
 Useable Gun
@@ -61,10 +61,10 @@ Spread_Angle_Degrees 5.71
 
 Ballistic_Steps 1
 
-Recoil_Min_X -10
-Recoil_Min_Y 35
-Recoil_Max_X 10
-Recoil_Max_Y 40
+Recoil_Min_X -2.91
+Recoil_Min_Y 6.41
+Recoil_Max_X 2.91
+Recoil_Max_Y 11.65
 
 Recover_X 0.6
 Recover_Y 0.6

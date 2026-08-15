@@ -1,4 +1,4 @@
-﻿GUID 667ba2f0aba7484888bcfbec2a43798b
+GUID 667ba2f0aba7484888bcfbec2a43798b
 Type Gun
 Useable Gun
 Slot Primary
@@ -51,10 +51,10 @@ Spread_Angle_Degrees 11.31
 Ballistic_Steps 29
 Ballistic_Travel 5
 
-Recoil_Min_X -5
-Recoil_Min_Y 5
-Recoil_Max_X 5
-Recoil_Max_Y 10
+Recoil_Min_X -0.2
+Recoil_Min_Y 0.43
+Recoil_Max_X 0.2
+Recoil_Max_Y 0.78
 
 Recover_X 0.5
 Recover_Y 0.5

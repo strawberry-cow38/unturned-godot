@@ -61,10 +61,10 @@ Durability 0.25
 Spread_Aim 0.1
 Spread_Angle_Degrees 11.31
 
-Recoil_Min_X -1.5
-Recoil_Min_Y 2
-Recoil_Max_X -3
-Recoil_Max_Y 3
+Recoil_Min_X -0.68
+Recoil_Min_Y 1.5
+Recoil_Max_X -0.68
+Recoil_Max_Y 2.72
 
 Recover_X 0.725
 Recover_Y 0.725

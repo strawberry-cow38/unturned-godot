@@ -1,4 +1,4 @@
-﻿GUID bb30529b25ff4a09b362d70fd0e5a3e9
+GUID bb30529b25ff4a09b362d70fd0e5a3e9
 Type Gun
 Rarity Uncommon
 Useable Gun
@@ -59,10 +59,10 @@ Spread_Angle_Degrees 11.31
 Ballistic_Steps 40
 Ballistic_Travel 5
 
-Recoil_Min_X -5
-Recoil_Min_Y 5
-Recoil_Max_X 5
-Recoil_Max_Y 10
+Recoil_Min_X -0.12
+Recoil_Min_Y 0.27
+Recoil_Max_X 0.12
+Recoil_Max_Y 0.49
 
 Recover_X 0.5
 Recover_Y 0.5

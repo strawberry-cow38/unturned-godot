@@ -25,7 +25,7 @@ Semi
 
 Caliber 20
 Caliber_Name "Rocket"
-Real_Weapon "Rocket Launcher"
+Real_Weapon "RPG-7"
 
 Firerate 50
 Replace 0.5
@@ -56,10 +56,10 @@ Spread_Angle_Degrees 5.71
 
 Ballistic_Force 2000
 
-Recoil_Min_X -15
-Recoil_Min_Y 25
-Recoil_Max_X 15
-Recoil_Max_Y 30
+Recoil_Min_X -3.88
+Recoil_Min_Y 8.54
+Recoil_Max_X 3.88
+Recoil_Max_Y 15.53
 
 Recover_X 0.7
 Recover_Y 0.7

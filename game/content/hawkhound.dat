@@ -1,4 +1,4 @@
-﻿GUID 851bdc8130ea44bd80605d896937a5ec
+GUID 851bdc8130ea44bd80605d896937a5ec
 Type Gun
 Rarity Uncommon
 Useable Gun
@@ -60,10 +60,10 @@ Durability 0.25
 Spread_Aim 0.01
 Spread_Angle_Degrees 14.04
 
-Recoil_Min_X 3
-Recoil_Min_Y 15
-Recoil_Max_X 4
-Recoil_Max_Y 20
+Recoil_Min_X 2.31
+Recoil_Min_Y 5.07
+Recoil_Max_X 2.31
+Recoil_Max_Y 9.22
 
 Recover_X 0.6
 Recover_Y 0.6

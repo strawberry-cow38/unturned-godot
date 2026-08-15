@@ -61,9 +61,9 @@ namespace UnturnedGodot.Testing
             p.DebugSetPitch(0f);
             yield return Ticks(2);
             T.Check("the control rifle fired", p.Fire());
-            yield return Ticks(1);
             T.Check($"an unsuppressed rifle draws a tracer ({p.DebugTracerCount} of {p.DebugBulletCount} bullets)",
                 p.DebugTracerCount > 0);
+            yield return Ticks(1);
 
             // Same gun, can fitted -> the attachment path.
             yield return Ticks(30);
@@ -73,9 +73,10 @@ namespace UnturnedGodot.Testing
             p.Ammo = 30;
             int before = p.DebugTracerCount;
             T.Check("the suppressed rifle fired", p.Fire());
+            int tSupp = p.DebugTracerCount, bSupp = p.DebugBulletCount;
+            T.Check($"...and drew no new tracer ({tSupp} vs {before}, bullets {bSupp})", tSupp <= before);
+            T.Check($"...while still spawning a real bullet ({bSupp})", bSupp > 0);
             yield return Ticks(1);
-            T.Check($"...and drew no new tracer ({p.DebugTracerCount} vs {before}, bullets {p.DebugBulletCount})",
-                p.DebugTracerCount <= before);
             p.SetSuppressor(false);
 
             // The integral path -- no attachment involved.
@@ -87,11 +88,19 @@ namespace UnturnedGodot.Testing
             yield return Ticks(2);
             T.Check("the matamorez reports suppressed with no attachment", p.Suppressed);
             int before2 = p.DebugTracerCount;
+            // Read the counters IMMEDIATELY, with no tick in between. SpawnBullet runs synchronously inside
+            // Fire(), so both are set the moment it returns -- and yielding first lets a bullet that hits
+            // something be removed before it is counted, which reads as "no bullet was ever spawned". That is
+            // what the first run of this after the recoil pass reported: bullets 0, because the shot connected
+            // inside one tick rather than because suppression broke.
+            p.DebugSetPitch(0f);   // don't inherit whatever the earlier shots' recoil left on the aim
+            yield return Ticks(2);
             T.Check("the matamorez fired", p.Fire());
+            int tracersNow = p.DebugTracerCount, bulletsNow = p.DebugBulletCount;
+            T.Check($"...and drew no tracer ({tracersNow} vs {before2}, bullets {bulletsNow})",
+                tracersNow <= before2);
+            T.Check($"...while still spawning a real bullet ({bulletsNow})", bulletsNow > 0);
             yield return Ticks(1);
-            T.Check($"...and drew no tracer ({p.DebugTracerCount} vs {before2}, bullets {p.DebugBulletCount})",
-                p.DebugTracerCount <= before2);
-            T.Check($"...while still spawning a real bullet ({p.DebugBulletCount})", p.DebugBulletCount > 0);
 
             p.QueueFree();
             yield break;

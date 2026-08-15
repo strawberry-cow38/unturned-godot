@@ -61,10 +61,10 @@ Spread_Angle_Degrees 7.13
 
 Ballistic_Steps 1
 
-Recoil_Min_X -5
-Recoil_Min_Y 25
-Recoil_Max_X 5
-Recoil_Max_Y 35
+Recoil_Min_X -2.43
+Recoil_Min_Y 5.34
+Recoil_Max_X 2.43
+Recoil_Max_Y 9.71
 
 Recover_X 0.25
 Recover_Y 0.25

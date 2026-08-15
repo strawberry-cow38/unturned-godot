@@ -59,8 +59,8 @@ Aim_In_Duration 0.6
 Spread_Aim 0.175
 Spread_Angle_Degrees 14.04
 
-Recoil_Min_Y 0.3
-Recoil_Max_Y 0.8
+Recoil_Min_Y 0.53
+Recoil_Max_Y 0.97
 
 Shake_Min_X -0.01
 Shake_Min_Y 0.01

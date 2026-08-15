@@ -1,4 +1,4 @@
-﻿GUID 31788694007e49cbabb3319cce5424de
+GUID 31788694007e49cbabb3319cce5424de
 Type Gun
 Rarity Uncommon
 Useable Gun
@@ -60,10 +60,10 @@ Durability 0.1
 Spread_Aim 0.1
 Spread_Angle_Degrees 5.71
 
-Recoil_Min_X -0.5
-Recoil_Min_Y 2
-Recoil_Max_X 1
-Recoil_Max_Y 3
+Recoil_Min_X -0.44
+Recoil_Min_Y 0.96
+Recoil_Max_X 0.44
+Recoil_Max_Y 1.75
 
 Recover_X 0.4
 Recover_Y 0.4

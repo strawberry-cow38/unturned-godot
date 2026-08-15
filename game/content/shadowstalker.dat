@@ -1,4 +1,4 @@
-﻿GUID 5c9b2fb5a600438daa34453a95576803
+GUID 5c9b2fb5a600438daa34453a95576803
 Type Gun
 Rarity Legendary
 Useable Gun
@@ -67,10 +67,10 @@ Ballistic_Steps 24
 Ballistic_Travel 12.5
 Bullet_Gravity_Multiplier 0
 
-Recoil_Min_X -25
-Recoil_Min_Y 20
-Recoil_Max_X -20
-Recoil_Max_Y 25
+Recoil_Min_X -3.4
+Recoil_Min_Y 7.47
+Recoil_Max_X -3.4
+Recoil_Max_Y 13.59
 
 Recover_X 0.5
 Recover_Y 0.5

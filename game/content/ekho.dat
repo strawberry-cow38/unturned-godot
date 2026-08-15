@@ -69,10 +69,10 @@ Spread_Aim 0.001
 Spread_Angle_Degrees 21.8
 
 
-Recoil_Min_X -10
-Recoil_Min_Y 30
-Recoil_Max_X 10
-Recoil_Max_Y 35
+Recoil_Min_X -4.37
+Recoil_Min_Y 9.61
+Recoil_Max_X 4.37
+Recoil_Max_Y 17.48
 
 Recover_X 0.33
 Recover_Y 0.33

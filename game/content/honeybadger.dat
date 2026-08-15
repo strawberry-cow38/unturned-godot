@@ -63,10 +63,10 @@ Aim_In_Duration 0.25
 Spread_Aim 0.1
 Spread_Angle_Degrees 9.93
 
-Recoil_Min_X -2
-Recoil_Min_Y 2
-Recoil_Max_X 2
-Recoil_Max_Y 4
+Recoil_Min_X -0.73
+Recoil_Min_Y 1.6
+Recoil_Max_X 0.73
+Recoil_Max_Y 2.91
 
 Recover_X 0.65
 Recover_Y 0.65
