@@ -3194,13 +3194,17 @@ namespace UnturnedGodot
         float _reloadSpeed = 1f;    // DEXTERITY reload speed, kept so the Hammer clip plays at the same rate
         bool _hammerActive;         // true while the rack (Hammer, reload 2nd half) is playing -> the completion tick just finishes
         int _loadedMagId;           // the magazine item loaded in the gun (its ammo = Ammo); set to Gun.MagazineId on equip
+        bool _chambered;            // a round sits in the chamber: an EXPLICIT persistent state (master) replacing the old HasChamber&&Ammo>0 inference -- the rack fills it, remove-mag keeps it, the pie's rack ejects it
+        string _chamberedAmmoType;  // the bullet TYPE of the loaded rounds / chamber (FMJ/AP/HP), from the loaded mag; persisted (master) -- opens the door for AP/HP/FMJ loads
         SDG.Unturned.Item _heldItem;   // the inventory/world Item backing the held gun -> where its ammo/firemode/mag PERSIST (master)
         // Mirror the held gun's live state onto its backing item so it survives hands<->inventory<->drop (source: equipment.state).
-        void SaveGunState() { if (_heldItem != null && Gun != null) { _heldItem.gunAmmo = Ammo; _heldItem.gunFiremode = (int)_firemode; _heldItem.gunMagId = _loadedMagId; if (_viewmodel != null && _viewmodel.IsGunViewmodel) _heldItem.gunAttach = _viewmodel.GetAttachMask(); } }   // only save the attach mask from the GUN's own viewmodel -- a consumable/fists viewmodel returns 0 and would wipe the gun's attachments (strawberry)
+        void SaveGunState() { if (_heldItem != null && Gun != null) { _heldItem.gunAmmo = Ammo; _heldItem.gunChambered = _chambered; _heldItem.gunChamberedType = _chamberedAmmoType; _heldItem.gunFiremode = (int)_firemode; _heldItem.gunMagId = _loadedMagId; if (_viewmodel != null && _viewmodel.IsGunViewmodel) _heldItem.gunAttach = _viewmodel.GetAttachMask(); } }   // only save the attach mask from the GUN's own viewmodel -- a consumable/fists viewmodel returns 0 and would wipe the gun's attachments (strawberry)
         void RestoreGunState(SDG.Unturned.Item item)
         {
             if (item == null || item.gunAmmo < 0) return;   // a fresh gun with no saved state keeps its LoadGun defaults
             Ammo = item.gunAmmo;
+            _chambered = item.gunChambered;
+            _chamberedAmmoType = item.gunChamberedType;
             if (item.gunFiremode >= 0 && System.Enum.IsDefined(typeof(FireMode), item.gunFiremode)) _firemode = (FireMode)item.gunFiremode;
             if (item.gunMagId >= 0) _loadedMagId = item.gunMagId;
         }
@@ -3227,6 +3231,7 @@ namespace UnturnedGodot
             if (_reloading || _sinceShot < InfAmmoIdle) return;   // never fights a reload already in flight
             if (Ammo >= ChamberedCap) return;
             Ammo = ChamberedCap;
+            _chambered = HasChamber;
         }
 
         public bool DebugInfAmmoWouldFill => InfiniteAmmo && Gun != null && HasGunOut && !_reloading && Ammo < ChamberedCap;   // test seam
@@ -3259,6 +3264,9 @@ namespace UnturnedGodot
             Ammo = loaded + (chambered ? 1 : 0);                                         // +1: the already-chambered round stays on top of the fresh mag
             Inventory?.tryAddItem(new Item((ushort)_loadedMagId, (byte)System.Math.Max(0, oldAmmo - (chambered ? 1 : 0))));   // old mag back MINUS the chambered round (it stayed in the gun)
             _loadedMagId = fresh.id;
+            // chamber type is independent of the mag (master): a tactical swap keeps the chambered round's type; a
+            // reload from EMPTY chambers a fresh round from the new mag -> takes its type. (_chambered is set by the caller.)
+            if (!chambered) _chamberedAmmoType = (HasChamber && Ammo > 0) ? SDG.Unturned.Assets.find(fresh.id)?.ammoType : null;
         }
 
         // Loose ammo (shotgun shells, master: real ammo types). A gun uses shells when a stackable isAmmo item matches its
@@ -3328,6 +3336,75 @@ namespace UnturnedGodot
         public bool CanChooseShellType => UsesShells;   // only loose-shell shotguns have an ammo type to pick
         public string LoadedShellName => UsesShells ? ShellAsset?.itemName : null;   // HUD: the shell type currently loaded (e.g. "12 Gauge Slug"), null for non-shotguns
         public static string PluralAmmo(string name, int count) => count > 1 && !string.IsNullOrEmpty(name) ? name + "s" : name;   // display only: "12 Gauge Slug" -> "12 Gauge Slugs" when >1 (master)
+
+        // --- magazine-fed gun mag pie (master: R-hold on a STANAG/mag rifle) -------------------------------------------
+        public bool CanChooseMag => UsesMagItem;   // mag-fed guns get the mag pie: spare mags + remove + rack
+        public bool HasChamberedRound => HasChamber && Ammo > 0;   // mag pie: is there a round to rack out
+        public bool HasMagLoaded => UsesMagItem && _loadedMagId > 0;   // mag pie: is there a mag to remove
+        public bool CanOpenAmmoPie => CanChooseShellType || CanChooseMag;   // R-hold opens the pie for loose-shell shotguns OR mag guns
+        public string LoadedAmmoType => string.IsNullOrEmpty(_chamberedAmmoType) ? "FMJ" : _chamberedAmmoType;   // the loaded/chambered bullet type (default FMJ) -- for HUD/pie display
+        string MagAmmoType => _loadedMagId > 0 ? SDG.Unturned.Assets.find((ushort)_loadedMagId)?.ammoType : null;   // the currently-loaded mag's bullet type -- what a freshly-cycled round (fire / rack / reload-from-empty) becomes
+        // Each spare magazine in the bag that fits the gun, per-INSTANCE (a 30/30 and a 12/30 are separate wedges).
+        public System.Collections.Generic.List<(SDG.Unturned.ItemAsset asset, SDG.Unturned.Item item, byte page, byte idx)> SpareMags()
+        {
+            if (!UsesMagItem) return new();
+            var all = AttachmentFit.InBagInstances(Inventory, "Magazine", Gun.Caliber);
+            // exclude mags that FIT the gun (same caliber GROUP) but hold the WRONG round -- a .300 BLK mag for a 5.56
+            // gun, or vice versa (master). magRound distinguishes them within a shared STANAG group.
+            string round = Gun.CaliberName;
+            if (!string.IsNullOrEmpty(round))
+                all.RemoveAll(m => !string.IsNullOrEmpty(m.Asset.magRound) && m.Asset.magRound != round);
+            return all;
+        }
+        // Swap in a SPECIFIC spare mag instance (a mag pie wedge), returning the current mag to the bag with its rounds;
+        // the chambered round stays. Like DoMagSwap but for the chosen instance, not the fullest.
+        public void LoadMagInstance(SDG.Unturned.Item mag)
+        {
+            if (mag == null || _reloading || _unloading || _dead || !UsesMagItem || Inventory == null) return;
+            bool removed = false;
+            for (byte b = 0; b < (byte)(PlayerInventory.PAGES - 2) && !removed; b++)
+            { var pg = Inventory.items[b]; for (byte i = 0; i < pg.getItemCount(); i++) if (ReferenceEquals(pg.getItem(i)?.item, mag)) { pg.removeItem(i); removed = true; break; } }
+            if (!removed) return;   // the exact mag vanished from under us -> do nothing
+            bool chambered = HasChamber && Ammo > 0;
+            int oldMag = Ammo - (chambered ? 1 : 0);
+            if (_loadedMagId > 0) Inventory.tryAddItem(new SDG.Unturned.Item((ushort)_loadedMagId, (byte)System.Math.Max(0, oldMag)));
+            Ammo = System.Math.Min(mag.amount, Gun.AmmoMax) + (chambered ? 1 : 0);
+            _loadedMagId = mag.id;
+            _chambered = HasChamber && Ammo > 0;
+            // the chamber tracks its OWN round's type, independent of the mag (master): a tactical swap (a round was
+            // already chambered) KEEPS that round + its type; only a reload from EMPTY chambers a fresh round from the
+            // new mag, so the chamber takes the new mag's type then.
+            if (!chambered) _chamberedAmmoType = _chambered ? SDG.Unturned.Assets.find(mag.id)?.ammoType : null;
+            _viewmodel?.SetReloading(true, Skills.DexterityReloadSpeed());   // reload anim (the clip returns to ready on its own)
+            SaveGunState();
+        }
+        // Remove the loaded magazine to the bag WITH its rounds, LEAVING the chambered round (master); mag-out anim.
+        public void RemoveMagazine()
+        {
+            if (_reloading || _unloading || _dead || !UsesMagItem || _loadedMagId <= 0) return;
+            bool chambered = HasChamber && Ammo > 0;
+            int inMag = Ammo - (chambered ? 1 : 0);
+            var mag = new SDG.Unturned.Item((ushort)_loadedMagId, (byte)System.Math.Max(0, inMag));
+            if (!(Inventory?.tryAddItem(mag) ?? false)) DropWorldItem(mag, GlobalPosition + Vector3.Up);
+            Ammo = chambered ? 1 : 0;   // only the chambered round remains
+            _chambered = chambered;
+            _loadedMagId = 0;
+            _viewmodel?.SetReloading(true, Skills.DexterityReloadSpeed());
+            SaveGunState();
+        }
+        // Rack the gun: eject the chambered round as a 5.56 FMJ (5004) to the bag/ground, re-chamber from the mag; rack anim.
+        public void RackGun()
+        {
+            if (_reloading || _unloading || _dead || !UsesMagItem) return;
+            if (!(HasChamber && Ammo > 0)) return;   // nothing chambered
+            var round = new SDG.Unturned.Item(5004, 1);   // eject the CHAMBERED round. Only FMJ (5004) has a loose-round item today; AP/HP round items map from _chamberedAmmoType here once they exist (the chamber's TYPE is tracked, so that item mapping is the only gap)
+            if (!(Inventory?.tryAddItem(round) ?? false)) DropWorldItem(round, GlobalPosition + Vector3.Up);
+            Ammo--;   // eject the chambered round; the next mag round auto-chambers
+            _chambered = HasChamber && Ammo > 0;
+            _chamberedAmmoType = _chambered ? MagAmmoType : null;   // the re-chambered round comes from the mag -> takes the mag's type (master)
+            _viewmodel?.PlayHammer();   // the rack animation
+            SaveGunState();
+        }
         int CountOfShell(ushort id)   // how many of ONE specific shell id the player carries across pages
         {
             if (Inventory == null || id == 0) return 0;
@@ -3362,6 +3439,21 @@ namespace UnturnedGodot
             if (!UsesShells) return;
             var a = SDG.Unturned.Assets.find(id);
             if (a == null || !a.isAmmo || a.magCaliber != Gun.Caliber || CountOfShell(id) <= 0) return;
+            // already loaded with THIS type and the tube is full -> there's nothing to load; don't replay the reload anim
+            // for nothing (master, shotguns). picking a DIFFERENT type still falls through to the switch below.
+            if (ShellAsset != null && (ushort)ShellAsset.id == id && Ammo >= (Gun?.AmmoMax ?? 0)) return;
+            // switching to a DIFFERENT shell type while rounds are still loaded: eject the loaded (old-type) rounds back to
+            // the bag FIRST. the loaded type is a single global (ShellAsset), so without this the tube's existing rounds get
+            // silently reinterpreted as the new type -- a full buckshot tube would read as a full SLUG tube on switch, then
+            // top up: the "1 slug -> full mag of slugs" dupe (master). ejecting first means the reload only loads shells you
+            // truly carry, and the old rounds return to the bag as themselves rather than being converted.
+            var loaded = ShellAsset;
+            if (loaded != null && (ushort)loaded.id != id && Ammo > 0)
+            {
+                var back = new SDG.Unturned.Item((ushort)loaded.id, (byte)Ammo);
+                if (!(Inventory?.tryAddItem(back) ?? false)) DropWorldItem(back, GlobalPosition + Vector3.Up);
+                Ammo = 0;
+            }
             SelectedShellId = id;
             StartReload();   // source: picking ammo IS a reload
         }
@@ -3740,7 +3832,9 @@ namespace UnturnedGodot
             Gun = GunDef.FromDatText(text);
             _gunName = System.IO.Path.GetFileNameWithoutExtension(datPath);
             Ammo = Gun.AmmoMax;
+            _chambered = HasChamber;   // a freshly-loaded gun starts with a round chambered
             _loadedMagId = Gun.MagazineId;   // the gun comes equipped with its default magazine loaded (its ammo = Ammo)
+            _chamberedAmmoType = SDG.Unturned.Assets.find((ushort)Gun.MagazineId)?.ammoType;   // fresh gun -> its default mag's bullet type (master)
             _needsRechamber = false; _rechambering = false; _shotCountForRechamber = 0;   // fresh gun -> not mid-cycle
             _reloading = false; _reloadTimer = 0; _hammerActive = false; _hammerPending = false;   // switching weapons mid-reload aborts the reload (anim + logic) -- master
             _viewmodel?.SetReloading(false);
@@ -3984,7 +4078,7 @@ namespace UnturnedGodot
             else if (@event is InputEventKey { Keycode: Key.R, Echo: false } rKey)
             {
                 if (HoldingDeployable && _placer != null) { if (rKey.Pressed) _placer.YawOffset += 90f; }   // R rotates the deployable ghost 90 deg (strawberry)
-                else if (HasGunOut && CanChooseShellType)   // shotgun: quick TAP = reload, HOLD = ammo-type radial (master)
+                else if (HasGunOut && CanOpenAmmoPie)   // shotgun / mag gun: quick TAP = reload, HOLD = ammo radial (master)
                 {
                     if (rKey.Pressed) { if (!_rHolding) { _rHolding = true; _rHeldSince = Time.GetTicksMsec(); } }
                     else   // release
@@ -4339,6 +4433,8 @@ namespace UnturnedGodot
             float objDamage = Gun?.ObjectDamage ?? 25f;    // bullets vs destructible props (source Object_Damage)
             _fireCd = Gun != null ? (Gun.Firerate + 1) / 50f : 0.1f;   // interval = firerate+1 ticks: source fires when clock-lastFire > firerate (STRICT >, UseableGun.tockShoot), so the real gap is firerate+1. Off-by-one made fast guns (zube firerate 4: 750rpm vs correct 600) fire ~25% too hot -- master's "very high ROF"
             Ammo--;
+            _chambered = HasChamber && Ammo > 0;   // the action auto-cycles the next round into the chamber; the last shot leaves it empty
+            _chamberedAmmoType = _chambered ? MagAmmoType : null;   // the freshly-cycled round takes the MAG's type (master: the chamber follows the mag as rounds feed)
             _sinceShot = 0f;   // infAmmo waits out a lull, so every shot restarts the clock
             // fire feedback + the gun's real per-shot viewmodel shake (Shake_Min/Max_*); zero if no gun loaded
             float stanceMul = StanceRecoilMul();   // crouch/prone recoil steadier once settled -- scales the kick + the aim-climb below (master)
@@ -4878,9 +4974,9 @@ namespace UnturnedGodot
             // R-HOLD ammo radial (shotguns): open the picker once R is held past the threshold (frees the mouse so its
             // cursor angle selects a wedge). PlayerController owns the close + mouse recapture, so a gun swap while it's
             // up can't strand the freed cursor.
-            if (AmmoRadial != null && AmmoRadial.IsOpen && (!CanChooseShellType || !HasGunOut))
+            if (AmmoRadial != null && AmmoRadial.IsOpen && (!CanOpenAmmoPie || !HasGunOut))
             { AmmoRadial.Close(); Input.MouseMode = Input.MouseModeEnum.Captured; _rHolding = false; }
-            else if (_rHolding && CanChooseShellType && HasGunOut && !_reloading && !_unloading
+            else if (_rHolding && CanOpenAmmoPie && HasGunOut && !_reloading && !_unloading
                      && (AmmoRadial == null || !AmmoRadial.IsOpen)
                      && Time.GetTicksMsec() - _rHeldSince >= AmmoRadialHoldMs)
             {
@@ -5289,6 +5385,7 @@ namespace UnturnedGodot
                         if (_hammerPending) { _hammerPending = false; _hammerActive = true; _viewmodel?.PlayHammer(_reloadSpeed); _reloadTimer = _hammerDur; }   // empty reload: now RACK the round (source Hammer clip = the reload's 2nd half)
                         else { _reloading = false; _viewmodel?.SetReloading(false); }
                     }
+                    _chambered = HasChamber && Ammo > 0;   // reload done -> the chamber state reflects the loaded gun
                     SaveGunState();   // reload finished -> mirror the new ammo/mag onto the backing item (master persistence)
                 }
             }

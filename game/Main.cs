@@ -2756,6 +2756,19 @@ namespace UnturnedGodot
             AddChild(new Camera3D { Current = true });   // a 3D cam so the viewport clears to the bg colour; the radial is a CanvasLayer on top
             var radial = new AmmoRadial();
             AddChild(radial);
+            if (System.Environment.GetEnvironmentVariable("UG_MAGPIE") == "1")   // MAG pie demo: spare mags + remove + rack wedges
+            {
+                var mt = AttachmentMenu.LoadItemIcon(6, standUp: true);   // Military Magazine, stood up portrait
+                var mags = new System.Collections.Generic.List<(Texture2D icon, string name, int rounds, SDG.Unturned.Item mag, string type)>
+                {
+                    (mt, "Military Magazine", 30, null, "FMJ"),
+                    (mt, "Military Magazine", 12, null, "AP"),    // demo the ammo-TYPE field: FMJ / AP / HP loads (master)
+                    (mt, "Military Magazine", 24, null, "HP"),
+                };
+                radial.OpenMags(mags, true, true, "HP");   // demo chamber type DISTINCT from the top mag (FMJ) -> proves the chamber tracks independently (master)
+                GD.Print($"[AMMORADIAL] mag demo: {mags.Count} mags + remove + rack");
+                return;
+            }
             var choices = new System.Collections.Generic.List<(SDG.Unturned.ItemAsset asset, int count, bool selected)>();
             var buck = SDG.Unturned.Assets.find(113);    // 12 Gauge Shells (buckshot)
             var slug = SDG.Unturned.Assets.find(5000);   // 12 Gauge Slug

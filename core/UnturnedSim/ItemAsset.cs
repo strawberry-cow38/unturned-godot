@@ -74,6 +74,10 @@ namespace SDG.Unturned
         // 5.56 gun. master: "give stanag mags a flag for 300blk vs 5.56, we'll handle that when we get to
         // reloading" -- so this is carried and asserted, and no reload code reads it yet.
         public string magRound;
+        // The bullet TYPE (FMJ / AP / HP / ...), separate from magRound (the CARTRIDGE above). A round is (cartridge,
+        // type) -- 5.56 FMJ vs 5.56 AP. Carried on ammo/mag items + tracked on the gun's chamber, opening the door for
+        // AP/HP/FMJ loads instead of just "5.56" (master). null/"" = FMJ (the default/standard load).
+        public string ammoType;
         public bool IsMagazine => magCapacity > 0;
         public float fuelCapacity;              // Fuel-type container (gas can): max fuel it holds (retail .dat "Fuel", e.g. Portable 500). 0 = not a fuel can.
         public bool IsFuelContainer => fuelCapacity > 0f;
@@ -117,6 +121,8 @@ namespace SDG.Unturned
         // Gun state carried by the item so a gun REMEMBERS it through hands<->inventory<->drop (source: player.equipment.state).
         // -1 = unset (a fresh gun uses its defaults). Attachments are persisted separately by the attachment system (TODO).
         public int gunAmmo = -1;       // loaded rounds incl. the chambered one
+        public bool gunChambered;      // a round sits in the chamber -- a real persistent state (survives holster/drop like gunAmmo), replacing the old HasChamber&&Ammo>0 inference (master)
+        public string gunChamberedType;   // the bullet TYPE of the loaded rounds / chambered round (FMJ/AP/HP), persisted with the gun (master)
         public int gunFiremode = -1;   // fire-mode index (Safety/Semi/Burst/Auto)
         public int gunMagId = -1;      // the magazine item id currently loaded
         public int gunAttach = -1;     // attachment bitmask (which slots are attached; -1 = unset -> gun's defaults)

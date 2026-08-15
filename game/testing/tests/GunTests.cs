@@ -86,6 +86,25 @@ namespace UnturnedGodot.Testing
             T.Check("ammo name pluralises for >1 (master)", PlayerController.PluralAmmo("12 Gauge Slug", 6) == "12 Gauge Slugs");
             T.Check("ammo name stays singular for 1", PlayerController.PluralAmmo("12 Gauge Slug", 1) == "12 Gauge Slug");
 
+            // dupe guard (master): switching shell TYPES must not conjure rounds -- a loaded buckshot tube + slugs carried
+            // must NOT turn the whole tube into slugs. the loaded type is one global (ShellAsset), so the fix ejects the
+            // old-type rounds to the bag FIRST, then loads only slugs we truly carry.
+            p.LoadGun("res://content/bluntforce.dat");     // fresh: a full buckshot tube (Ammo = AmmoMax)
+            int tubeBuck = p.Ammo;
+            int buckBag0 = p.Inventory.getItemCount(113);
+            int slugBag0 = p.Inventory.getItemCount(5000);
+            p.ChooseShellType(5000);        // switch to slug
+            p.DebugCompleteReload();        // finish the fill
+            T.Check("shell switch ejects the old buckshot to the bag (not converted to slugs)", p.Inventory.getItemCount(113) == buckBag0 + tubeBuck);
+            T.Check("shell switch never loads more slugs than carried (no phantom mag)", p.Ammo <= slugBag0);
+            T.Check("no slug dupe: loaded + still-carried == the slugs we had", p.Ammo + p.Inventory.getItemCount(5000) == slugBag0);
+            p.ChooseShellType(113);         // reset to buckshot for anything downstream
+            // same-type reload on a FULL shotgun is a no-op (master): don't replay the reload if the tube's already full of it
+            p.LoadGun("res://content/bluntforce.dat");   // fresh: a full buckshot tube (Ammo = AmmoMax)
+            int fullTube = p.Ammo;
+            p.ChooseShellType(113);         // same type, tube already full -> should NOT reload
+            T.Check("same-type reload on a full shotgun is a no-op (Ammo unchanged)", p.Ammo == fullTube && fullTube > 0);
+
             // bolt/pump per-shot rechamber (source RechamberAfterShotCount)
             p.LoadGun("res://content/timberwolf.dat");
             T.Check("timberwolf (bolt) rechambers after each shot", p.DebugRechamberCount() == 1);
@@ -130,6 +149,34 @@ namespace UnturnedGodot.Testing
             T.Check("re-equip restores fire mode (Auto)", p.DebugFiremodeIdx() == 2);
             p.Ammo = 25; p.DebugRestoreGunState(new Item(4));   // a fresh item has no saved state
             T.Check("fresh gun item keeps live defaults (no clobber)", p.Ammo == 25);
+            // mag pie mechanics (master): remove-magazine / rack on the eaglefire (STANAG, chambered)
+            p.LoadGun("res://content/eaglefire.dat");
+            p.DebugSetHeldItem(new Item(4));
+            p.Ammo = 31;   // a full 30-round mag + 1 chambered
+            int mags6 = p.Inventory.getItemCount(6);
+            p.RemoveMagazine();
+            T.Check("remove-mag: the chambered round stays (Ammo=1)", p.Ammo == 1);
+            T.Check("remove-mag: the 30-round mag returns to the bag", p.Inventory.getItemCount(6) == mags6 + 30);
+            p.RackGun();
+            T.Check("rack: the chamber empties (Ammo=0)", p.Ammo == 0);
+            T.Check("rack: a 5.56 FMJ round is ejected to the bag", p.Inventory.getItemCount(5004) == 1);
+            // chamber tracks its OWN bullet TYPE, independent of the seated mag (master): an FMJ round in the pipe stays
+            // FMJ even with an AP mag seated; only a fresh cycle (rack/fire) takes the mag's type.
+            T.Check("Military Magazine is tagged FMJ", Assets.find(6)?.ammoType == "FMJ");
+            T.Check("5.56 FMJ round is tagged FMJ", Assets.find(5004)?.ammoType == "FMJ");
+            p.LoadGun("res://content/eaglefire.dat");
+            p.DebugSetHeldItem(new Item(4));
+            T.Check("fresh gun: chamber type follows its mag (FMJ)", p.LoadedAmmoType == "FMJ");
+            if (Assets.find(9998) == null)   // throwaway AP mag for the separation test (STANAG group 1, 5.56 cartridge)
+                Assets.add(new ItemAsset { id = 9998, itemName = "Test AP Magazine", type = EItemType.MAGAZINE, size_x = 2, size_y = 1, magCapacity = 30, magCaliber = 1, magRound = "5.56x45mm NATO", ammoType = "AP" });
+            p.Inventory.tryAddItem(new Item(9998, 30));
+            var apMag = p.SpareMags().Find(m => m.item.id == 9998).item;
+            T.Check("AP mag shows up as a caliber-matched spare", apMag != null);
+            p.Ammo = 31;   // 30 FMJ in the mag + 1 FMJ chambered
+            p.LoadMagInstance(apMag);   // TACTICAL swap: a round is already chambered
+            T.Check("tactical swap KEEPS the chambered round's type (FMJ, though the seated mag is AP)", p.LoadedAmmoType == "FMJ");
+            p.RackGun();   // eject the FMJ chambered round, cycle an AP round from the mag
+            T.Check("rack cycles the seated mag's type into the chamber (now AP)", p.LoadedAmmoType == "AP");
             p.QueueFree();
             yield break;
         }

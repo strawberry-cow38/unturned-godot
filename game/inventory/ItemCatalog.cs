@@ -165,6 +165,8 @@ namespace SDG.Unturned
             // WIRED SEPARATE (own item ids 5002/5003) so their damage can be tuned independently later.
             Shell(5002, 8, 1);    // 12 Gauge Beanbag -> caliber 8  (12ga shotguns), 1 pellet
             Shell(5003, 16, 1);   // 20 Gauge Beanbag -> caliber 16 (20ga shotguns), 1 pellet
+            // 5.56 FMJ loose round (strawberry: the chamber's rack output, stacks 120). Not loadable ammo yet -- just a stackable item.
+            { var fmj = SDG.Unturned.Assets.find(5004); if (fmj != null) { fmj.stackSize = 120; fmj.ammoType = "FMJ"; fmj.magCaliber = 1; } }   // 5.56 FMJ: bullet type FMJ, caliber 1 (STANAG group) so the rack knows what it ejects (master)
         }
 
         // Load real ItemConsumeableAsset effects (content/consumable_stats.tsv: id health food water virus disinfectant
@@ -401,12 +403,14 @@ namespace SDG.Unturned
 
         static void Add(ushort id, string name, byte sx, byte sy, EItemType type, EItemRarity rar, byte w, byte h, string desc,
                         int uh = 0, int uf = 0, int uw = 0, bool ub = false, bool hb = false, string gun = null, int magCap = 0, int magCal = 0,
-                        string magRound = null)
+                        string magRound = null, string ammoType = null)
         {
             Assets.add(new ItemAsset { id = id, itemName = name, size_x = sx, size_y = sy, type = type, rarity = rar,
                                        width = w, height = h, description = desc,
                                        useHealth = uh, useFood = uf, useWater = uw, useStopsBleeding = ub, useHealBroken = hb, gunName = gun,
-                                       magCapacity = magCap, magCaliber = magCal, magRound = magRound });
+                                       magCapacity = magCap, magCaliber = magCal, magRound = magRound,
+                                       // bullet TYPE (FMJ/AP/HP): default every magazine to FMJ (the standard load); AP/HP mags pass ammoType: explicitly (master)
+                                       ammoType = ammoType ?? (type == EItemType.MAGAZINE ? "FMJ" : null) });
         }
     }
 }

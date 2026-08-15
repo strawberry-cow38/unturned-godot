@@ -1939,3 +1939,4 @@
 5001	20 Gauge Slug	Magazine	Uncommon	1	1	A single solid slug in place of buckshot. Chambered in 20 Gauge.	8d06796e3c064f32973733fccb112d9d
 5002	12 Gauge Beanbag	Magazine	Rare	1	1	A less-lethal beanbag round chambered in 12 Gauge.	e7fbf7676018439aa0723f9a30be0401
 5003	20 Gauge Beanbag	Magazine	Uncommon	1	1	A less-lethal beanbag round chambered in 20 Gauge.	7913739685f4407a87ecbd3d8fc9568a
+5004	5.56mm FMJ	Supply	Common	1	1	A loose 5.56x45mm full-metal-jacket round. Ejected when you rack the chamber.	959d361bcb4840328ffae0d47e2da9b7

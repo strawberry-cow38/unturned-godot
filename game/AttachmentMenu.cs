@@ -321,7 +321,7 @@ namespace UnturnedGodot
 
         // the real ground-truth item icon (content/items/icons/<id>.png), same source the inventory grid uses
         static readonly System.Collections.Generic.Dictionary<(ushort, bool), Texture2D> _itemIcons = new();
-        static Texture2D LoadItemIcon(ushort id, bool standUp = false)
+        internal static Texture2D LoadItemIcon(ushort id, bool standUp = false)
         {
             if (_itemIcons.TryGetValue((id, standUp), out var hit)) return hit;
             string p = ProjectSettings.GlobalizePath($"res://content/items/icons/{id}.png");
@@ -331,7 +331,7 @@ namespace UnturnedGodot
                 var img = Image.LoadFromFile(p);
                 if (img != null)
                 {
-                    if (standUp && DrawnWiderThanTall(img)) img.Rotate90(ClockDirection.Clockwise);
+                    if (standUp && DrawnWiderThanTall(img)) { img.Rotate90(ClockDirection.Counterclockwise); img.FlipX(); }   // stand mags UP + un-mirror horizontally (master)
                     tex = ImageTexture.CreateFromImage(img);
                 }
             }

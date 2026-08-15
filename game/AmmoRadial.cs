@@ -25,6 +25,14 @@ namespace UnturnedGodot
         public void Open(PlayerController p)
         {
             Player = p;
+            if (p != null && p.CanChooseMag)   // mag-fed gun -> the mag pie (spare mags + remove + rack)
+            {
+                var mags = new System.Collections.Generic.List<(Texture2D icon, string name, int rounds, Item mag, string type)>();
+                foreach (var (asset, item, _, _) in p.SpareMags())
+                    mags.Add((AttachmentMenu.LoadItemIcon((ushort)asset.id, standUp: true), asset.itemName, item.amount, item, asset.ammoType));
+                OpenMags(mags, p.HasMagLoaded, p.HasChamberedRound, p.LoadedAmmoType);
+                return;
+            }
             var choices = p?.ShellTypeChoices() ?? new System.Collections.Generic.List<(ItemAsset asset, int count, bool selected)>();
             bool canUnload = p != null && p.HasLoadedShells;
             // open if there's a carried type to load OR loaded rounds to eject -- so unload stays reachable even with no
@@ -50,6 +58,28 @@ namespace UnturnedGodot
             AddChild(_pie);
             _highlight = _sectors.FindIndex(s => s.Selected && s.Selectable);
             if (_highlight < 0) _highlight = _sectors.FindIndex(s => s.Selectable);
+            _pie.Highlight = _highlight;
+            Visible = true;
+            IsOpen = true;
+            _pie.QueueRedraw();
+        }
+
+        // Build + show the MAG pie for a mag-fed gun: a wedge per spare mag (icon + round count) + a remove-magazine
+        // wedge + a rack wedge (master). A render harness feeds mock data; gameplay feeds the real InBagInstances.
+        internal void OpenMags(System.Collections.Generic.List<(Texture2D icon, string name, int rounds, Item mag, string type)> mags, bool canRemove, bool canRack, string chamberType)
+        {
+            if (IsOpen) return;
+            _sectors.Clear();
+            foreach (var (icon, name, rounds, mag, type) in mags)
+                _sectors.Add(new AmmoPie.Sector { Name = name, CountText = $"{rounds} rds · {(string.IsNullOrEmpty(type) ? "FMJ" : type)}", Selectable = true, Icon = icon, MagItem = mag });   // rounds + bullet TYPE (master)
+            _sectors.Add(new AmmoPie.Sector { Name = "remove mag", CountText = canRemove ? "eject" : "empty", Selectable = canRemove, IsRemoveMag = true });
+            _sectors.Add(new AmmoPie.Sector { Name = "rack", CountText = canRack ? $"eject {(string.IsNullOrEmpty(chamberType) ? "FMJ" : chamberType)}" : "empty", Selectable = canRack, IsRack = true });   // the CHAMBER's own type -- tracked independently of the seated mag (master)
+            int n = _sectors.Count;
+            for (int i = 0; i < n; i++) { var s = _sectors[i]; s.MidAngle = -Mathf.Pi / 2f + i * Mathf.Tau / n; _sectors[i] = s; }
+            _pie = new AmmoPie { Sectors = _sectors, HubText = "magazine", MouseFilter = Control.MouseFilterEnum.Ignore };
+            _pie.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+            AddChild(_pie);
+            _highlight = _sectors.FindIndex(s => s.Selectable);
             _pie.Highlight = _highlight;
             Visible = true;
             IsOpen = true;
@@ -83,6 +113,9 @@ namespace UnturnedGodot
             {
                 var s = _sectors[_highlight];
                 if (s.IsUnload) Player?.UnloadShells();
+                else if (s.IsRemoveMag) Player?.RemoveMagazine();
+                else if (s.IsRack) Player?.RackGun();
+                else if (s.MagItem != null) Player?.LoadMagInstance(s.MagItem);
                 else Player?.ChooseShellType(s.Id);
             }
             Close();
@@ -112,8 +145,9 @@ namespace UnturnedGodot
     // _Draw has a Control to run on. Highlight is set by AmmoRadial; QueueRedraw re-runs _Draw.
     public partial class AmmoPie : Control
     {
-        public struct Sector { public ushort Id; public string Name; public string CountText; public bool Selectable; public bool Selected; public bool IsUnload; public float MidAngle; public Texture2D Icon; }
+        public struct Sector { public ushort Id; public string Name; public string CountText; public bool Selectable; public bool Selected; public bool IsUnload; public bool IsRemoveMag; public bool IsRack; public Item MagItem; public float MidAngle; public Texture2D Icon; }
         public System.Collections.Generic.List<Sector> Sectors;
+        public string HubText = "load ammo";
         public int Highlight = -1;
         const float RIn = 60f, ROut = 172f, Gap = 0f;   // no gap -> each of N types is a clean full 360/N sector (2 types = two touching 180° halves) (master)
 
@@ -134,7 +168,8 @@ namespace UnturnedGodot
                 float rOut = on ? ROut + 10f : ROut;
                 Color fill = !s.Selectable ? new Color(0.14f, 0.14f, 0.16f, 0.82f)   // nothing to do -> flat grey
                            : on            ? new Color(0.24f, 0.42f, 0.62f, 0.96f)   // pointed-at -> blue
-                           : s.IsUnload    ? new Color(0.30f, 0.15f, 0.14f, 0.92f)   // unload -> dark red
+                           : s.IsUnload || s.IsRemoveMag ? new Color(0.30f, 0.15f, 0.14f, 0.92f)   // unload / remove-mag -> dark red
+                           : s.IsRack      ? new Color(0.13f, 0.22f, 0.26f, 0.92f)   // rack -> dark teal
                            : s.Selected    ? new Color(0.20f, 0.36f, 0.25f, 0.92f)   // currently loaded -> green
                            :                 new Color(0.11f, 0.12f, 0.15f, 0.92f);
                 DrawAnnularSector(c, RIn, rOut, a0, a1, fill);
@@ -142,14 +177,29 @@ namespace UnturnedGodot
 
                 Vector2 p = c + new Vector2(Mathf.Cos(s.MidAngle), Mathf.Sin(s.MidAngle)) * ((RIn + rOut) * 0.5f);
                 Color tint = s.Selectable ? Colors.White : new Color(1, 1, 1, 0.45f);
-                if (s.IsUnload)   // an eject (down-chevron) glyph in place of an item icon
+                if (s.IsUnload || s.IsRemoveMag)   // eject glyph (down chevron): unload shells / drop the magazine
                 {
                     Vector2 g = p - new Vector2(0, 14);
                     Color gc = s.Selectable ? new Color(1f, 0.6f, 0.55f) : new Color(0.6f, 0.55f, 0.55f, 0.6f);
                     DrawLine(g + new Vector2(-16, -8), g + new Vector2(0, 9), gc, 3.5f);
                     DrawLine(g + new Vector2(16, -8), g + new Vector2(0, 9), gc, 3.5f);
                 }
-                else if (s.Icon != null) { var isz = new Vector2(56, 56); DrawTextureRect(s.Icon, new Rect2(p - isz * 0.5f - new Vector2(0, 16), isz), false, tint); }
+                else if (s.IsRack)   // rack glyph: a double chevron pulling the bolt LEFT/back
+                {
+                    Vector2 g = p - new Vector2(2, 6);
+                    Color gc = s.Selectable ? new Color(0.72f, 0.86f, 1f) : new Color(0.6f, 0.6f, 0.62f, 0.6f);
+                    DrawLine(g + new Vector2(8, -11), g + new Vector2(-6, 0), gc, 3.5f);
+                    DrawLine(g + new Vector2(8, 11), g + new Vector2(-6, 0), gc, 3.5f);
+                    DrawLine(g + new Vector2(20, -11), g + new Vector2(6, 0), gc, 3.5f);
+                    DrawLine(g + new Vector2(20, 11), g + new Vector2(6, 0), gc, 3.5f);
+                }
+                else if (s.Icon != null)
+                {
+                    Vector2 tsz = s.Icon.GetSize();   // keep the icon's aspect (mags portrait, shells ~square) instead of smushing it into a box
+                    float sc = tsz.X > 0 && tsz.Y > 0 ? Mathf.Min(56f / tsz.X, 66f / tsz.Y) : 1f;
+                    Vector2 dsz = tsz * sc;
+                    DrawTextureRect(s.Icon, new Rect2(p - dsz * 0.5f - new Vector2(0, 14), dsz), false, tint);
+                }
                 if (font != null)
                 {
                     DrawString(font, p + new Vector2(-60, 30), s.Name, HorizontalAlignment.Center, 120, 13, s.Selectable ? new Color(0.92f, 0.94f, 0.98f) : new Color(0.6f, 0.6f, 0.63f));
@@ -157,7 +207,7 @@ namespace UnturnedGodot
                 }
             }
             DrawCircle(c, RIn, new Color(0.06f, 0.07f, 0.09f, 0.92f));   // hub hole
-            if (font != null) DrawString(font, c + new Vector2(-48, 4), "load ammo", HorizontalAlignment.Center, 96, 13, new Color(0.8f, 0.84f, 0.9f));
+            if (font != null) DrawString(font, c + new Vector2(-48, 4), HubText, HorizontalAlignment.Center, 96, 13, new Color(0.8f, 0.84f, 0.9f));
         }
 
         void DrawAnnularSector(Vector2 c, float rIn, float rOut, float a0, float a1, Color col)
