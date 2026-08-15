@@ -13,7 +13,7 @@ namespace UnturnedGodot
     {
         public float TimezoneHours;      // +/- hours offset from base game-time (0 = local/in-game time)
 
-        MeshInstance3D _minute, _hour;
+        MeshInstance3D _minute, _hour, _body;   // _body = the clock's dial mesh (bodyMi): the hands track its visibility/validity so they vanish when the clock is broken/destroyed (master)
 
         static bool Front(Vector3 a, Vector3 b, Vector3 c) => Mathf.Min(a.Y, Mathf.Min(b.Y, c.Y)) >= 0.0875f;
         static float MaxReach(Vector3 a, Vector3 b, Vector3 c)
@@ -49,7 +49,7 @@ namespace UnturnedGodot
             });
             bodyMi.Mesh = bodyMesh;   // the static clock keeps the dial + markers
 
-            var dev = new ClockDevice { TimezoneHours = tzHours, Transform = bodyMi.Transform };
+            var dev = new ClockDevice { TimezoneHours = tzHours, Transform = bodyMi.Transform, _body = bodyMi };
             if (hourMesh != null)   { dev._hour   = new MeshInstance3D { Mesh = PointAt12(hourMesh),   MaterialOverride = mat }; dev.AddChild(dev._hour); }
             if (minuteMesh != null) { dev._minute = new MeshInstance3D { Mesh = PointAt12(minuteMesh), MaterialOverride = mat }; dev.AddChild(dev._minute); }
             return dev;
@@ -58,6 +58,10 @@ namespace UnturnedGodot
         public override void _Process(double delta)
         {
             using var _prof = Prof.Scope("ClockDevice");
+            if (!GodotObject.IsInstanceValid(_body)) { QueueFree(); return; }   // the clock mesh was destroyed -> destroy the hands with it (master)
+            bool clockShown = _body.IsVisibleInTree();
+            if (Visible != clockShown) Visible = clockShown;                     // hands appear/vanish WITH the dial -- the destructible break HIDES the mesh (doesn't free it), a reset re-shows it
+            if (!clockShown) return;                                             // a broken/hidden clock: hands gone + don't spend the tick
             var dn = GetTree().GetFirstNodeInGroup("daynight") as DayNightCycle;
             float t = dn?.Time ?? 0.5f;                                  // 0..1, 0 = midnight, 0.5 = noon
             float local = Mathf.PosMod(t + TimezoneHours / 24f, 1f);
