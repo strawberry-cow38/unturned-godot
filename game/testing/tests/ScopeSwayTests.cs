@@ -63,6 +63,46 @@ namespace UnturnedGodot.Testing
             T.Check($"...and the aim comes back within its own amplitude ({Mathf.Abs(p.LookPitchDegrees - restPitch):0.###} deg of rest)",
                 Mathf.Abs(p.LookPitchDegrees - restPitch) < 0.5f);
 
+            // ---- 4. PER-GUN STEADINESS actually reaches the live viewmodel (Scope_Sway_Scale).
+            //
+            // strawberry shipped-and-playtested 2026-08-15: "idk what u did for the scope sway reduction but i
+            // dont think it worked. looks identical." It did not. The AUG/SG550 0.3 was parsed into GunDef, stored
+            // on Viewmodel, read by the oscillator and folded into the camera -- and still did nothing, because
+            // LoadGun pushed it onto the viewmodel that EquipHeldGun then freed and replaced. Every value was
+            // correct at every point I inspected; the object holding them was thrown away.
+            //
+            // So this measures the AMPLITUDE THE CAMERA ACTUALLY SWEPT, per gun, in ONE run -- not that the field
+            // parses (it always did) and not that some viewmodel holds 0.3 (one did). Both guns are swept back to
+            // back so a slow frame or a different rest pose cannot masquerade as the effect.
+            float[] arcs = new float[2];
+            string[] guns = { "timberwolf", "augewehr" };
+            for (int g = 0; g < 2; g++)
+            {
+                p.DebugForceScopeSway = false;
+                p.EquipHeldGun(guns[g]);
+                yield return Until(() => p.HeldItemReady, 6);
+                p.DebugSetPitch(0f);
+                yield return Ticks(5);
+                p.DebugForceScopeSway = true;
+                float lo = 999f, hi = -999f;
+                for (int i = 0; i < 200; i++)
+                {
+                    yield return Ticks(1);
+                    float ap = p.LookPitchDegrees;
+                    lo = Mathf.Min(lo, ap); hi = Mathf.Max(hi, ap);
+                }
+                arcs[g] = hi - lo;
+                p.DebugForceScopeSway = false;
+                yield return Ticks(30);
+            }
+            // Both must actually sway, or the ratio below is 0/0 and passes for the wrong reason.
+            T.Check($"the 1.0-scale gun sweeps a full arc ({arcs[0]:0.###} deg)", arcs[0] > 0.15f);
+            T.Check($"the 0.3-scale gun still sways -- reduced, not disabled ({arcs[1]:0.###} deg)", arcs[1] > 0.02f);
+            float ratio = arcs[1] / arcs[0];
+            // THE CHECK. Under the bug this was 1.00 -- identical, which is exactly what strawberry saw.
+            T.Check($"the AUG's declared 0.3 reaches the live viewmodel (ratio {ratio:0.###} of the 1.0 gun)",
+                ratio > 0.2f && ratio < 0.45f);
+
             p.QueueFree();
             yield break;
         }

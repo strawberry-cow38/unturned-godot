@@ -3854,6 +3854,24 @@ namespace UnturnedGodot
         public Camera3D Camera => _cam;
 
         // Load a real gun .dat (e.g. Eaglefire) through the ported UnturnedDat layer and equip it.
+        // PUSH the equipped gun's per-viewmodel tuning onto the LIVE viewmodel. Must be called after any
+        // `new Viewmodel`, not only after LoadGun.
+        //
+        // strawberry 2026-08-15: "idk what u did for the scope sway reduction but i dont think it worked. looks
+        // identical." It didn't. LoadGun set ScopeSwayScale on the viewmodel that existed AT THAT MOMENT, and
+        // EquipHeldGun then QueueFree'd it and built a replacement nine lines later -- so every gun ran on the
+        // 1.0 default and the AUG/SG550 0.3 never reached anything. The field was parsed, stored, read by the
+        // oscillator and applied to the camera; the one broken link was the object it landed on. Nothing logged,
+        // nothing failed, and the value was present in every place I thought to look.
+        //
+        // A method rather than an extra line at each `new Viewmodel` because the next per-gun viewmodel field
+        // rots the same way otherwise: the call sites are already two and the ordering hazard is invisible.
+        void ApplyGunToViewmodel()
+        {
+            if (_viewmodel == null) return;
+            _viewmodel.ScopeSwayScale = Gun?.ScopeSwayScale ?? 1f;   // per-gun optic steadiness
+        }
+
         public void LoadGun(string datPath)
         {
             string text;
@@ -3865,7 +3883,7 @@ namespace UnturnedGodot
             else text = System.IO.File.Exists(datPath) ? System.IO.File.ReadAllText(datPath) : null;
             if (string.IsNullOrEmpty(text)) { GD.PushError($"[gun] .dat not found: {datPath}"); return; }
             Gun = GunDef.FromDatText(text);
-            if (_viewmodel != null) _viewmodel.ScopeSwayScale = Gun?.ScopeSwayScale ?? 1f;   // per-gun optic steadiness
+            ApplyGunToViewmodel();   // per-gun viewmodel tuning; see the note there for why it is not inline
             _gunName = System.IO.Path.GetFileNameWithoutExtension(datPath);
             Ammo = Gun.AmmoMax;
             _chambered = HasChamber;   // a freshly-loaded gun starts with a round chambered
@@ -3920,6 +3938,7 @@ namespace UnturnedGodot
             _viewmodel?.QueueFree();
             _viewmodel = new Viewmodel { GunName = _gunName };
             AddChild(_viewmodel);
+            ApplyGunToViewmodel();   // the replacement viewmodel starts on defaults -- re-push the gun's tuning
             RelinkViewmodelLighting();   // a re-equipped viewmodel must re-take the world lighting, else it renders fullbright (master: Drive PEI)
             if (backingItem != null && backingItem.gunAttach >= 0) _viewmodel.ApplyAttachMask(backingItem.gunAttach);   // restore the gun's saved attachments (e.g. a detached suppressor stays off) -- master
             GD.Print($"[gun] holding {_gunName}");
@@ -4000,6 +4019,7 @@ namespace UnturnedGodot
             }
             _viewmodel = new Viewmodel { GunName = _gunName };   // per-gun visuals
             AddChild(_viewmodel);
+            ApplyGunToViewmodel();
             _rng.Randomize();
 
             // the ported inventory + its dashboard. Demo-populate it (real items) so there's something to show.
@@ -5173,8 +5193,14 @@ namespace UnturnedGodot
                 Vector2 sway = _viewmodel?.ScopeSwayDegrees ?? Vector2.Zero;
                 if (DebugForceScopeSway)   // headless: no SubViewport optic, so synthesise the same shape
                 {
+                    // Scaled by the SAME per-gun ScopeSwayScale the real oscillator uses (Viewmodel line ~1289).
+                    // Without this the synthetic amplitude is a constant, so a test driving this path measures an
+                    // identical swing for every gun -- its PASS would look exactly like its FAILURE, which is how
+                    // the 0.3 on the AUG/SG550 shipped broken in the first place. It still does NOT cover the real
+                    // oscillator's zoom/stance/breath terms; only that the gun's number arrives and scales.
                     _scopeSwayT += (float)delta;
-                    sway = new Vector2(Mathf.Sin(_scopeSwayT * 3.33f) * 0.30f, Mathf.Sin(_scopeSwayT * 1.95f + 1.3f) * 0.42f);
+                    float ss = _viewmodel?.ScopeSwayScale ?? 1f;
+                    sway = new Vector2(Mathf.Sin(_scopeSwayT * 3.33f) * 0.30f * ss, Mathf.Sin(_scopeSwayT * 1.95f + 1.3f) * 0.42f * ss);
                 }
                 float tgtP = sway.X, tgtY = sway.Y;
                 if (tgtP != _swayAppliedP || tgtY != _swayAppliedY)

@@ -86,6 +86,15 @@ namespace UnturnedGodot
         public int PatternSwayStart;      // node the sway begins
         public float PatternPlateau;      // extra climb added asymptotically PAST PatternNodes, so a 100-round
                                           // belt does not walk the crosshair off the screen by round 60
+        // How LONG that plateau takes to arrive, in multiples of PatternNodes (the exponential's time constant).
+        // Separate from PatternPlateau because the two answer different questions -- the amount decides where the
+        // climb ends up, the span decides how fast it stops mattering. With one knob they fight: raising the
+        // amount to keep late rounds climbing also spikes the first shot past the pattern, since the per-shot
+        // kick is amount/span. strawberry 2026-08-15: "dragonfang need more vertical during its proc still, no
+        // more in the designated pattern, just the proc" -- the M249's proc was not weak at the handover
+        // (1.48 deg on round 21, against 2.08 on round 20), it DIED: 0.30 by round 50 and nothing by 80, so a
+        // belt that should be unholdable went slack exactly where it was supposed to get worse.
+        public float PatternPlateauSpan = 0.93f;
         /// <summary>Per-gun scope-sway scale (1 = the shared default). A gun with a bipod, a heavy barrel or
         /// simply a steadier platform should hold its scope better; the sway oscillator is otherwise identical
         /// for every optic, which makes a police DMR wobble exactly like a hunting rifle.</summary>
@@ -103,7 +112,7 @@ namespace UnturnedGodot
             float t = (shot < n ? shot : n) / (float)n;
             float v = PatternClimb * Pow(t, PatternClimbExp);
             if (shot > n && PatternPlateau > 0f)
-                v += PatternPlateau * (1f - Exp(-(shot - n) / (n * 0.93f)));
+                v += PatternPlateau * (1f - Exp(-(shot - n) / (n * (PatternPlateauSpan > 0f ? PatternPlateauSpan : 0.93f))));
             float h = 0f;
             if (PatternDrift != 0f)
             {
@@ -311,6 +320,7 @@ namespace UnturnedGodot
                 PatternSway = d.ParseFloat("Recoil_Pattern_Sway", 0f),
                 PatternSwayStart = d.ParseInt32("Recoil_Pattern_Sway_Start", 0),
                 PatternPlateau = d.ParseFloat("Recoil_Pattern_Plateau", 0f),
+                PatternPlateauSpan = d.ParseFloat("Recoil_Pattern_Plateau_Span", 0.93f),
                 ScopeSwayScale = d.ParseFloat("Scope_Sway_Scale", 1f),
                 ScatterH = d.ParseFloat("Recoil_Scatter_H", 1f),
                 ScatterV = d.ParseFloat("Recoil_Scatter_V", 1f),
