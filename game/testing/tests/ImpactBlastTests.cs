@@ -58,10 +58,10 @@ namespace UnturnedGodot.Testing
 
             // Two zombies on the floor, neither on the flight path (which runs down the x=0 plane): one inside the
             // blast radius, one well outside it.
-            ZombieController near = new ZombieController { Target = p, Speciality = ZombieController.ESpeciality.NORMAL };
+            ZombieController near = new ZombieController { Target = null, Speciality = ZombieController.ESpeciality.NORMAL };
             World.AddChild(near);
             near.GlobalPosition = new Vector3(3f, 0.2f, -5f);
-            var far = new ZombieController { Target = p, Speciality = ZombieController.ESpeciality.NORMAL };
+            var far = new ZombieController { Target = null, Speciality = ZombieController.ESpeciality.NORMAL };
             World.AddChild(far);
             far.GlobalPosition = new Vector3(24f, 0.2f, -5f);
             yield return Ticks(20);
@@ -90,7 +90,7 @@ namespace UnturnedGodot.Testing
             T.Check($"...and not the one at {far.GlobalPosition.DistanceTo(impact):0.#} m ({(far.Dead ? 0f : far.Health)})",
                 !far.Dead && Mathf.IsEqualApprox(far.Health, farHp0));
 
-            if (near.Dead) { near.QueueFree(); near = new ZombieController { Target = p, Speciality = ZombieController.ESpeciality.NORMAL }; World.AddChild(near); }
+            if (near.Dead) { near.QueueFree(); near = new ZombieController { Target = null, Speciality = ZombieController.ESpeciality.NORMAL }; World.AddChild(near); }
             near.GlobalPosition = new Vector3(3f, 0.2f, -5f);
             yield return Ticks(5);
             nearHp0 = near.Health;
@@ -116,6 +116,17 @@ namespace UnturnedGodot.Testing
             float eye = p.EyesWorld.Y;
             T.Check($"the shooter is standing where the geometry below needs it ({eye:0.##} m eye height)",
                 eye > 1.5f && eye < 3.5f);
+
+            // RE-PIN both. These are live AI bodies, and with a Target they walk at the player -- so the distance
+            // this test measures against drifts with however many ticks happened to elapse. That is what made it
+            // fail during an unrelated recoil change: nothing about the blast moved, the zombie did. Target is
+            // null now and the positions are re-asserted immediately before the shot.
+            near.GlobalPosition = new Vector3(3f, 0.2f, -5f);
+            far.GlobalPosition = new Vector3(24f, 0.2f, -5f);
+            yield return Ticks(2);
+            nearHp0 = near.Health;
+            T.Check($"the near zombie is where the geometry needs it ({near.GlobalPosition.DistanceTo(impact):0.#} m from impact, radius 9)",
+                near.GlobalPosition.DistanceTo(impact) < 9f);
 
             p.DebugSetPitch(-10f);   // into the floor ~9.9 m ahead: past the shooter's own blast, inside the zombie's
             yield return Ticks(10);
