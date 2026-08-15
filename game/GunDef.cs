@@ -65,6 +65,77 @@ namespace UnturnedGodot
         // that deletes past it. the killer is the damage dropoff over distance"). Full Damage out to Start,
         // decaying linearly to Damage*Min at End, floored at Min beyond. Start<=0 disables it entirely, so a
         // gun that declares nothing behaves exactly as before.
+        // ---- LEARNABLE RECOIL PATTERN (strawberry 2026-08-15) ----------------------------------------
+        // A fixed per-gun path the crosshair walks while you hold the trigger, with a small per-node
+        // randomness on top. Deterministic where it matters: the first rounds land essentially ON the
+        // pattern, so tapping and short bursts are exact and learning the path pays every time.
+        //
+        // Design rules, all from strawberry: vertical NEVER decreases (recoil accumulates while held);
+        // drift is one smooth direction with no snaps; node SPACING grows down the burst so early rounds
+        // cluster and late ones jump; everything leans RIGHT because the support arm resists a leftward
+        // push. Shape differs by WHEN the drift arrives (PatternDriftExp), not by exotic curves.
+        public float PatternClimb;        // total vertical travel over the pattern (deg)
+        public int PatternNodes = 30;     // pattern length; a belt-fed gun outlives it, see PatternPlateau
+        public float PatternDrift;        // lateral travel by the last node (deg, + = right)
+        public float PatternDriftExp = 1.9f;   // >1 holds straight then eases out; ~1 drifts from shot one
+        public int PatternDriftStart;     // node the drift begins (M249 stays dead straight for 5)
+        public float PatternWiggle;       // overcorrection amplitude -- you fighting the drift and overshooting
+        public float PatternSway;         // late oscillation amplitude (M249 only; 0 = none)
+        public int PatternSwayStart;      // node the sway begins
+        public float PatternPlateau;      // extra climb added asymptotically PAST PatternNodes, so a 100-round
+                                          // belt does not walk the crosshair off the screen by round 60
+        public float ScatterH = 1f, ScatterV = 1f;   // per-axis randomness scalars (the AUG's grip kills H, not V)
+        public bool ScatterTightEarly;    // M249: near-zero for the first rounds, opening hard once the sway starts
+
+        /// <summary>Cumulative (horizontal, vertical) pattern offset in degrees after <paramref name="shot"/>
+        /// rounds of a held burst. Shot 1 is the first round. The per-shot impulse is the DELTA between
+        /// consecutive calls, which is what the fire path actually applies.</summary>
+        public (float H, float V) PatternAt(int shot)
+        {
+            if (PatternNodes <= 0 || PatternClimb <= 0f) return (0f, 0f);
+            int n = PatternNodes;
+            float t = (shot < n ? shot : n) / (float)n;
+            float v = PatternClimb * Pow(t, 1.55f);
+            if (shot > n && PatternPlateau > 0f)
+                v += PatternPlateau * (1f - Exp(-(shot - n) / (n * 0.93f)));
+            float h = 0f;
+            if (PatternDrift != 0f)
+            {
+                int ds = PatternDriftStart;
+                if (shot > ds)
+                {
+                    float dt = (float)((shot < n ? shot : n) - ds) / (n - ds);
+                    h = PatternDrift * Pow(dt, PatternDriftExp);
+                }
+                if (shot > n && PatternPlateau > 0f)
+                    h += PatternDrift * 0.45f * (1f - Exp(-(shot - n) / (n * 1.33f)));
+            }
+            if (PatternWiggle != 0f) h += PatternWiggle * Sin(shot / 2.15f) * Pow(t, 1.15f);
+            if (PatternSway != 0f && shot > PatternSwayStart)
+            {
+                float g = (float)(shot - PatternSwayStart) / System.Math.Max(1, n - PatternSwayStart);
+                h += PatternSway * Sin((shot - PatternSwayStart) / 2.6f) * (g < 1f ? g : 1f);
+            }
+            return (h, v);
+        }
+
+        /// <summary>Randomness half-angle (deg) for a given round of the burst, per axis.</summary>
+        public float ScatterAt(int shot, bool horizontal)
+        {
+            float s = horizontal ? ScatterH : ScatterV;
+            float t = (shot < PatternNodes ? shot : PatternNodes) / (float)(PatternNodes > 0 ? PatternNodes : 30);
+            if (ScatterTightEarly)
+            {
+                float e = shot - 4 > 0 ? (shot - 4) : 0;
+                float en = e / (PatternNodes > 0 ? PatternNodes : 30);
+                return s * (0.005f + 0.30f * en * en);
+            }
+            return s * (0.04f + 0.55f * Pow(t, 1.6f));
+        }
+        static float Pow(float a, float b) => (float)System.Math.Pow(a, b);
+        static float Exp(float a) => (float)System.Math.Exp(a);
+        static float Sin(float a) => (float)System.Math.Sin(a);
+
         public float FalloffStart;      // Damage_Falloff_Start (m)
         public float FalloffEnd;        // Damage_Falloff_End (m)
         public float FalloffMin = 1f;   // Damage_Falloff_Min (fraction of Damage at End and beyond)
@@ -224,6 +295,18 @@ namespace UnturnedGodot
                 AmmoMax = d.ParseInt32("Ammo_Max", 30),
                 MagazineId = d.ParseInt32("Magazine", 0),   // default magazine item id (eaglefire/maplestrike = 6, the Military STANAG)
                 Damage = d.ParseFloat("Damage", d.ParseFloat("Player_Damage", 0f)),   // canonical; legacy dats fall back
+                PatternClimb = d.ParseFloat("Recoil_Pattern_Climb", 0f),
+                PatternNodes = d.ParseInt32("Recoil_Pattern_Nodes", 30),
+                PatternDrift = d.ParseFloat("Recoil_Pattern_Drift", 0f),
+                PatternDriftExp = d.ParseFloat("Recoil_Pattern_Drift_Exp", 1.9f),
+                PatternDriftStart = d.ParseInt32("Recoil_Pattern_Drift_Start", 0),
+                PatternWiggle = d.ParseFloat("Recoil_Pattern_Wiggle", 0f),
+                PatternSway = d.ParseFloat("Recoil_Pattern_Sway", 0f),
+                PatternSwayStart = d.ParseInt32("Recoil_Pattern_Sway_Start", 0),
+                PatternPlateau = d.ParseFloat("Recoil_Pattern_Plateau", 0f),
+                ScatterH = d.ParseFloat("Recoil_Scatter_H", 1f),
+                ScatterV = d.ParseFloat("Recoil_Scatter_V", 1f),
+                ScatterTightEarly = d.ContainsKey("Recoil_Scatter_Tight_Early"),
                 FalloffStart = d.ParseFloat("Damage_Falloff_Start", 0f),
                 FalloffEnd = d.ParseFloat("Damage_Falloff_End", 0f),
                 FalloffMin = d.ParseFloat("Damage_Falloff_Min", 1f),

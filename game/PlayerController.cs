@@ -70,6 +70,11 @@ namespace UnturnedGodot
         /// <summary>The single recoil impulse rolled for the last shot, degrees (pitch, yaw). One roll, one
         /// destination -- if this is non-zero the AIM must have moved by it, and a viewmodel-only kick cannot.</summary>
         public Vector2 DebugLastRecoilKick;
+        // LEARNABLE PATTERN: where we are in the current held burst. Resets after a gap, so tapping always
+        // restarts at node 1 and a sustained hold walks the pattern. This is what makes tap-fire exact.
+        int _patternShot; float _patternIdle;
+        const float PatternResetSeconds = 0.35f;   // trigger gap that counts as a new burst
+        public int DebugPatternShot => _patternShot;
         /// <summary>The viewmodel's rotational recoil, surfaced so a test can prove the gun stopped taking one.</summary>
         public Vector3 DebugViewmodelRecoilRot => _viewmodel?.DebugRecoilRot ?? Vector3.Zero;
         Vehicle _driving; bool _fp = true;   // vehicle being driven + camera mode: true = 1st person (spawn default, strawberry), false = 3rd; H toggles (on foot + driving)
@@ -4493,9 +4498,23 @@ namespace UnturnedGodot
             // react to its own discharge at all.
             if (Gun != null)
             {
-                float kickP = _rng.RandfRange(Gun.RecoilMinY, Gun.RecoilMaxY) * sharp * stanceMul;
-                float kickY = _rng.RandfRange(Gun.RecoilMinX, Gun.RecoilMaxX) * sharp * stanceMul
-                            * (_rng.Randf() < 0.5f ? -1f : 1f);
+                float kickP, kickY;
+                if (Gun.PatternClimb > 0f)
+                {
+                    // WALK THE PATTERN. The stored curve is cumulative, so this shot's impulse is the step
+                    // between the previous node and this one -- which is why node spacing IS the felt recoil.
+                    _patternShot++; _patternIdle = 0f;
+                    var prev = Gun.PatternAt(_patternShot - 1);
+                    var cur = Gun.PatternAt(_patternShot);
+                    kickP = (cur.V - prev.V) * sharp * stanceMul;
+                    kickY = (cur.H - prev.H) * sharp * stanceMul;
+                }
+                else
+                {   // legacy random roll for the guns that declare no pattern (everything outside the 5.56 pass)
+                    kickP = _rng.RandfRange(Gun.RecoilMinY, Gun.RecoilMaxY) * sharp * stanceMul;
+                    kickY = _rng.RandfRange(Gun.RecoilMinX, Gun.RecoilMaxX) * sharp * stanceMul
+                          * (_rng.Randf() < 0.5f ? -1f : 1f);
+                }
                 _recoilPending += kickP;
                 _recoilYawPending += kickY;
                 _viewmodel?.Kick(new Vector3(Gun.ShakeMinX, Gun.ShakeMinY, Gun.ShakeMinZ) * stanceMul,
@@ -4554,7 +4573,17 @@ namespace UnturnedGodot
             // dir * MuzzleVelocity; it steps every physics tick (0.02s) in StepBullets, dropping under gravity, its
             // tracer flying with it, hits/damage landing when it arrives. (source: BulletInfo + UseableGun.cs:1539.)
             float spread = Gun != null && Gun.SpreadAngleDegrees > 0f
-                ? Mathf.DegToRad(Gun.SpreadAngleDegrees) * Mathf.Lerp(1f, Gun.SpreadAim, aimA) * sharp : 0f;   // SHARPSHOOTER tightens spread too (source UseableGun:5055)
+                ? Mathf.DegToRad(Gun.SpreadAngleDegrees) * Mathf.Lerp(1f, Gun.SpreadAim, aimA) * sharp : 0f;
+            // A patterned gun uses PER-AXIS scatter instead of one symmetric cone: a vertical grip kills
+            // sideways movement without touching climb, which a single cone cannot express.
+            float scatH = 0f, scatV = 0f;
+            if (Gun != null && Gun.PatternClimb > 0f)
+            {
+                float aimScale = Mathf.Lerp(1f, Gun.SpreadAim, aimA) * sharp;
+                scatH = Mathf.DegToRad(Gun.ScatterAt(_patternShot, true)) * aimScale;
+                scatV = Mathf.DegToRad(Gun.ScatterAt(_patternShot, false)) * aimScale;
+                spread = 0f;   // superseded
+            }   // SHARPSHOOTER tightens spread too (source UseableGun:5055)
             int pellets = UsesShells && ShellAsset != null ? Mathf.Max(1, ShellAsset.pellets) : Mathf.Max(1, Gun?.Pellets ?? 1);   // shotgun buckshot: pellets come from the LOADED shell (source ItemMagazineAsset.pellets) -- 12ga=6, 20ga=8
             float muzzleVel = Gun?.MuzzleVelocity ?? 500f;
             int steps = Gun?.BallisticSteps ?? 20;
@@ -4562,6 +4591,12 @@ namespace UnturnedGodot
             for (int i = 0; i < pellets; i++)
             {
                 Vector3 dir = spread > 0.0001f ? DeviateInCone(aim, spread) : aim;
+                if (scatH > 0.0001f || scatV > 0.0001f)
+                {   // independent H/V jitter about the aim axis
+                    Basis sb = Basis.LookingAt(aim, Vector3.Up);
+                    dir = (aim + sb.X * Mathf.Tan(_rng.RandfRange(-scatH, scatH))
+                               + sb.Y * Mathf.Tan(_rng.RandfRange(-scatV, scatV))).Normalized();
+                }
                 SpawnBullet(bulletOrigin, dir * muzzleVel, steps, gravity, damage, vehDamage, objDamage, damage);   // player + zombie both key off the same number
             }
             // AlertTool point-noise: an unsuppressed gunshot pulls zombies within earshot over to investigate. A silenced
@@ -5100,6 +5135,11 @@ namespace UnturnedGodot
             UpdateFluidContainerHud((float)delta);   // held fluid container: show its contents + [LMB] sip / [RMB] fill hint (strawberry)
             // Additive recoil (master): drain the pending kick INTO the real aim over a couple frames (a smooth climb),
             // then leave it there -- the view stays kicked up and the player pulls the mouse back down. Never recovers on its own.
+            if (_patternShot > 0)
+            {
+                _patternIdle += (float)delta;
+                if (_patternIdle >= PatternResetSeconds) { _patternShot = 0; _patternIdle = 0f; }
+            }
             if (_recoilPending != 0f || _recoilYawPending != 0f)
             {
                 float step = Mathf.Min(1f, 18f * (float)delta);
