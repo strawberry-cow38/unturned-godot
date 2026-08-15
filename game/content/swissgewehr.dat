@@ -58,7 +58,7 @@ Object_Damage 35
 Durability 0.22
 
 Spread_Aim 0.05
-Spread_Angle_Degrees 5.71
+Spread_Angle_Degrees 1.427
 
 Ballistic_Steps 14
 Ballistic_Travel 15

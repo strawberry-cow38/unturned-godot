@@ -58,7 +58,7 @@ Object_Damage 35
 Durability 0.35
 
 Spread_Aim 0.005
-Spread_Angle_Degrees 21.8
+Spread_Angle_Degrees 5.45
 
 Recoil_Min_X 2.06
 Recoil_Min_Y 4.54
