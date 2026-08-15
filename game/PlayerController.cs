@@ -5776,9 +5776,10 @@ namespace UnturnedGodot
         {
             if (_leanPivot == null) return;
             float target = _lean * LeanDegrees;
-            // Obstructed SNAPS upright instead of lerping (PlayerLook.cs:738-741). Lerping out of a wall means spending
-            // a quarter second with your head inside it, which is exactly the peek the obstruction check exists to deny.
-            _leanAngle = _leanObstructed ? 0f : Mathf.Lerp(_leanAngle, target, Mathf.Min(1f, LeanLerp * delta));
+            // Obstructed now LERPS back upright (target 0), not the source's instant SNAP (PlayerLook.cs:738-741) --
+            // master wants a SMOOTH blocked snap-back. (The source snapped to avoid ~0.25s of head-in-wall on the way
+            // out; the lerp eases toward centre i.e. OUT of the obstruction, so the clip is brief -- master's override.)
+            _leanAngle = Mathf.Lerp(_leanAngle, _leanObstructed ? 0f : target, Mathf.Min(1f, LeanLerp * delta));
             var r = _leanPivot.Rotation; r.Z = Mathf.DegToRad(_leanAngle); _leanPivot.Rotation = r;
         }
 
