@@ -2762,10 +2762,11 @@ namespace UnturnedGodot
                 var mags = new System.Collections.Generic.List<(Texture2D icon, string name, int rounds, SDG.Unturned.Item mag, string type)>
                 {
                     (mt, "Military Magazine", 30, null, "FMJ"),
-                    (mt, "Military Magazine", 12, null, "AP"),    // demo the ammo-TYPE field: FMJ / AP / HP loads (master)
-                    (mt, "Military Magazine", 24, null, "HP"),
+                    (mt, "Military Magazine", 24, null, "AP"),    // demo the ammo-TYPE field: FMJ / AP / HP loads (master)
+                    (mt, "Military Magazine", 0, null, "HP"),     // an EMPTY mag -> greys out but still shows (master)
                 };
-                radial.OpenMags(mags, true, true, "HP");   // demo chamber type DISTINCT from the top mag (FMJ) -> proves the chamber tracks independently (master)
+                mags.Sort((a, b) => b.rounds.CompareTo(a.rounds));   // fuller mags higher, matching gameplay (master)
+                radial.OpenMags(mags, true, true, "HP");   // chamber type "HP" -> proves the chamber tracks independently of the seated mags (master)
                 GD.Print($"[AMMORADIAL] mag demo: {mags.Count} mags + remove + rack");
                 return;
             }

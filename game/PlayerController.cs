@@ -3182,6 +3182,8 @@ namespace UnturnedGodot
         bool _reloading;            // reloading -> can't fire; magazine refills when the timer elapses
         double _reloadTimer;
         bool _unloading;            // shotgun UNLOAD state (master): plays the reload anim + ejects shells to the bag -- pump one-by-one, break-action all at once
+        double _magSwapAnimTimer;   // mag-pie swap (LoadMagInstance / RemoveMagazine) plays the reload anim, but the ammo swap is INSTANT. Ticks the anim's length then calls SetReloading(false); without it, SetReloading(true) had no matching (false) so the gun stayed "reloading" forever -> ADS permanently blocked (master's "lose the ability to ADS after the pie" bug)
+        bool _magSwapAutoRack;      // set when a mag is seated into an EMPTY chamber -> when the swap anim ends, play the rack (Hammer) anim to auto-chamber the first round (master: "auto rack")
         double _unloadTimer;
         // Per-shot rechamber (bolt/pump). After a shot the action must cycle (bolt-cycle / pump) before firing/reloading again.
         bool _needsRechamber;        // fired -> awaiting the cycle (source needsRechamber: blocks fire/aim/reload/inspect)
@@ -3343,6 +3345,8 @@ namespace UnturnedGodot
         public bool HasMagLoaded => UsesMagItem && _loadedMagId > 0;   // mag pie: is there a mag to remove
         public bool CanOpenAmmoPie => CanChooseShellType || CanChooseMag;   // R-hold opens the pie for loose-shell shotguns OR mag guns
         public string LoadedAmmoType => string.IsNullOrEmpty(_chamberedAmmoType) ? "FMJ" : _chamberedAmmoType;   // the loaded/chambered bullet type (default FMJ) -- for HUD/pie display
+        public bool GunHasChamber => HasChamber;   // does this gun have a chamber (mag guns / pumps) -> the HUD shows the mag + chamber split
+        public int ChamberedRounds => (HasChamber && _chambered && Ammo > 0) ? 1 : 0;   // 0 or 1: for the HUD "mag +N / max" readout (master: ALWAYS show +1 when chambered, +0 when not)
         string MagAmmoType => _loadedMagId > 0 ? SDG.Unturned.Assets.find((ushort)_loadedMagId)?.ammoType : null;   // the currently-loaded mag's bullet type -- what a freshly-cycled round (fire / rack / reload-from-empty) becomes
         // Each spare magazine in the bag that fits the gun, per-INSTANCE (a 30/30 and a 12/30 are separate wedges).
         public System.Collections.Generic.List<(SDG.Unturned.ItemAsset asset, SDG.Unturned.Item item, byte page, byte idx)> SpareMags()
@@ -3375,7 +3379,10 @@ namespace UnturnedGodot
             // already chambered) KEEPS that round + its type; only a reload from EMPTY chambers a fresh round from the
             // new mag, so the chamber takes the new mag's type then.
             if (!chambered) _chamberedAmmoType = _chambered ? SDG.Unturned.Assets.find(mag.id)?.ammoType : null;
-            _viewmodel?.SetReloading(true, Skills.DexterityReloadSpeed());   // reload anim (the clip returns to ready on its own)
+            float sp = Skills.DexterityReloadSpeed();
+            _viewmodel?.SetReloading(true, sp);   // play the swap anim (the instant swap already happened)...
+            _magSwapAnimTimer = (_viewmodel?.ReloadLength ?? ReloadTime) / System.Math.Max(0.01f, sp);   // ...clear it when the anim ends so ADS/fire un-block (master's ADS bug)
+            _magSwapAutoRack = !chambered && HasChamber && Ammo > 0;   // seated into an EMPTY chamber -> auto-rack the first round when the anim ends (master)
             SaveGunState();
         }
         // Remove the loaded magazine to the bag WITH its rounds, LEAVING the chambered round (master); mag-out anim.
@@ -3389,7 +3396,9 @@ namespace UnturnedGodot
             Ammo = chambered ? 1 : 0;   // only the chambered round remains
             _chambered = chambered;
             _loadedMagId = 0;
-            _viewmodel?.SetReloading(true, Skills.DexterityReloadSpeed());
+            float sp = Skills.DexterityReloadSpeed();
+            _viewmodel?.SetReloading(true, sp);
+            _magSwapAnimTimer = (_viewmodel?.ReloadLength ?? ReloadTime) / System.Math.Max(0.01f, sp);   // clear the mag-out anim state when it ends so ADS/fire un-block (master)
             SaveGunState();
         }
         // Rack the gun: eject the chambered round as a 5.56 FMJ (5004) to the bag/ground, re-chamber from the mag; rack anim.
@@ -3836,7 +3845,7 @@ namespace UnturnedGodot
             _loadedMagId = Gun.MagazineId;   // the gun comes equipped with its default magazine loaded (its ammo = Ammo)
             _chamberedAmmoType = SDG.Unturned.Assets.find((ushort)Gun.MagazineId)?.ammoType;   // fresh gun -> its default mag's bullet type (master)
             _needsRechamber = false; _rechambering = false; _shotCountForRechamber = 0;   // fresh gun -> not mid-cycle
-            _reloading = false; _reloadTimer = 0; _hammerActive = false; _hammerPending = false;   // switching weapons mid-reload aborts the reload (anim + logic) -- master
+            _reloading = false; _reloadTimer = 0; _hammerActive = false; _hammerPending = false; _magSwapAnimTimer = 0; _magSwapAutoRack = false;   // switching weapons mid-reload aborts the reload (anim + logic) -- master
             _viewmodel?.SetReloading(false);
             // reset to a valid firemode for THIS gun — don't inherit the previous one (e.g. Auto carried onto the
             // semi-only shotgun would let it hold-fire full-auto). Prefer Semi, then Auto/Burst, else Safety.
@@ -4423,7 +4432,7 @@ namespace UnturnedGodot
         // come from the equipped gun's real ItemGunAsset .dat when loaded.
         public bool Fire()
         {
-            if (_fireCd > 0f || Ammo <= 0 || _reloading || _unloading || _needsRechamber || _rechambering || _cam == null || _dead || _driving != null
+            if (_fireCd > 0f || Ammo <= 0 || _reloading || _unloading || _magSwapAnimTimer > 0 || _needsRechamber || _rechambering || _cam == null || _dead || _driving != null
                 || !HasGunOut || IsSwimming || (_invUI?.IsOpen ?? false)) return false;   // IsSwimming: guns are canUseUnderwater=false -> no shot while swimming, incl. the polled AUTO/burst tick (source PlayerEquipment). !HasGunOut: no gun in hand (melee/held item disarm it) -> no shot, even from the polled auto/burst tick after switching away mid-fire (master)
             // -- also while the bolt/pump still needs cycling -- kills a queued burst the frame we die (the tick calls Fire()) + ignores death-screen clicks (master). _driving guard fixes the "stray tracer flies straight south" bug: the auto/burst tick (_PhysicsProcess) calls Fire() on held-LMB WITHOUT a driving check, and while driving _cam is TopLevel (detached chase cam) -> aim = the chase cam's fixed heading, not the player's look. LMB honks while driving anyway.
             if (AmmoRadial?.IsOpen ?? false) return false;   // no firing while the ammo radial is up -- you're picking ammo, not shooting
@@ -4974,9 +4983,25 @@ namespace UnturnedGodot
             // R-HOLD ammo radial (shotguns): open the picker once R is held past the threshold (frees the mouse so its
             // cursor angle selects a wedge). PlayerController owns the close + mouse recapture, so a gun swap while it's
             // up can't strand the freed cursor.
+            if (_magSwapAnimTimer > 0)   // mag-pie swap anim playing: clear the viewmodel's reload state when it ends so ADS/fire work again (master's ADS bug)
+            {
+                _magSwapAnimTimer -= delta;
+                if (_magSwapAnimTimer <= 0)
+                {
+                    _magSwapAnimTimer = 0;
+                    _viewmodel?.SetReloading(false);
+                    if (_magSwapAutoRack)   // seated into an empty chamber -> rack the first round automatically (master); PlayHammer self-times + blocks ADS through the rack
+                    {
+                        _magSwapAutoRack = false;
+                        _viewmodel?.PlayHammer(Skills.DexterityReloadSpeed());
+                    }
+                    else if (Input.MouseMode == Input.MouseModeEnum.Captured && Input.IsMouseButtonPressed(MouseButton.Right) && HasGunOut && _melee == null)
+                        _viewmodel?.SetAiming(true);   // resume ADS if RMB is still held when the anim finishes
+                }
+            }
             if (AmmoRadial != null && AmmoRadial.IsOpen && (!CanOpenAmmoPie || !HasGunOut))
             { AmmoRadial.Close(); Input.MouseMode = Input.MouseModeEnum.Captured; _rHolding = false; }
-            else if (_rHolding && CanOpenAmmoPie && HasGunOut && !_reloading && !_unloading
+            else if (_rHolding && CanOpenAmmoPie && HasGunOut && !_reloading && !_unloading && _magSwapAnimTimer <= 0
                      && (AmmoRadial == null || !AmmoRadial.IsOpen)
                      && Time.GetTicksMsec() - _rHeldSince >= AmmoRadialHoldMs)
             {

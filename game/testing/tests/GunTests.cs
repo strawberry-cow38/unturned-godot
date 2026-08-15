@@ -177,6 +177,13 @@ namespace UnturnedGodot.Testing
             T.Check("tactical swap KEEPS the chambered round's type (FMJ, though the seated mag is AP)", p.LoadedAmmoType == "FMJ");
             p.RackGun();   // eject the FMJ chambered round, cycle an AP round from the mag
             T.Check("rack cycles the seated mag's type into the chamber (now AP)", p.LoadedAmmoType == "AP");
+            // HUD chamber readout (master: ALWAYS +1 when a round's chambered, +0 when not)
+            p.LoadGun("res://content/eaglefire.dat");
+            p.DebugSetHeldItem(new Item(4));
+            p.Ammo = 31;
+            T.Check("HUD: a chambered round reads as +1", p.GunHasChamber && p.ChamberedRounds == 1);
+            p.Ammo = 0;
+            T.Check("HUD: an empty chamber reads as +0", p.ChamberedRounds == 0);
             p.QueueFree();
             yield break;
         }

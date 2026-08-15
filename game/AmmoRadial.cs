@@ -30,6 +30,7 @@ namespace UnturnedGodot
                 var mags = new System.Collections.Generic.List<(Texture2D icon, string name, int rounds, Item mag, string type)>();
                 foreach (var (asset, item, _, _) in p.SpareMags())
                     mags.Add((AttachmentMenu.LoadItemIcon((ushort)asset.id, standUp: true), asset.itemName, item.amount, item, asset.ammoType));
+                mags.Sort((a, b) => b.rounds.CompareTo(a.rounds));   // fuller mags sit higher/earlier in the ring (master); the unload + rack wedges are appended AFTER, so they keep their spots
                 OpenMags(mags, p.HasMagLoaded, p.HasChamberedRound, p.LoadedAmmoType);
                 return;
             }
@@ -71,7 +72,7 @@ namespace UnturnedGodot
             if (IsOpen) return;
             _sectors.Clear();
             foreach (var (icon, name, rounds, mag, type) in mags)
-                _sectors.Add(new AmmoPie.Sector { Name = name, CountText = $"{rounds} rds · {(string.IsNullOrEmpty(type) ? "FMJ" : type)}", Selectable = true, Icon = icon, MagItem = mag });   // rounds + bullet TYPE (master)
+                _sectors.Add(new AmmoPie.Sector { Name = name, CountText = $"{rounds} rds · {(string.IsNullOrEmpty(type) ? "FMJ" : type)}", Selectable = rounds > 0, Icon = icon, MagItem = mag });   // rounds + bullet TYPE; an EMPTY mag still SHOWS but greys out -- not loadable (master)
             _sectors.Add(new AmmoPie.Sector { Name = "remove mag", CountText = canRemove ? "eject" : "empty", Selectable = canRemove, IsRemoveMag = true });
             _sectors.Add(new AmmoPie.Sector { Name = "rack", CountText = canRack ? $"eject {(string.IsNullOrEmpty(chamberType) ? "FMJ" : chamberType)}" : "empty", Selectable = canRack, IsRack = true });   // the CHAMBER's own type -- tracked independently of the seated mag (master)
             int n = _sectors.Count;
@@ -90,8 +91,9 @@ namespace UnturnedGodot
         {
             if (!IsOpen || Player == null || _pie == null) return;   // PlayerController owns closing + mouse recapture
             Vector2 v = GetViewport().GetMousePosition() - GetViewport().GetVisibleRect().Size * 0.5f;
+            bool cancel = v.Length() < AmmoPie.RIn;   // cursor in the centre hub -> "cancel": light nothing, confirm just closes with NO action (master)
             int hl = _highlight;
-            if (v.Length() >= Deadzone)   // near the centre keeps the current pick, so a tiny wobble can't flip it
+            if (!cancel)
             {
                 Vector2 vn = v.Normalized();
                 float best = -2f; int bi = -1;
@@ -103,7 +105,8 @@ namespace UnturnedGodot
                 }
                 hl = bi;
             }
-            if (hl != _highlight) { _highlight = hl; _pie.Highlight = hl; _pie.QueueRedraw(); }
+            else hl = -1;   // in the hub -> no wedge selected (ConfirmAndClose sees _highlight < 0 -> just closes)
+            if (hl != _highlight || cancel != _pie.CancelHover) { _highlight = hl; _pie.Highlight = hl; _pie.CancelHover = cancel; _pie.QueueRedraw(); }
         }
 
         // Load the pointed-at type (if carried) + close. Called from PlayerController on R release.
@@ -149,7 +152,9 @@ namespace UnturnedGodot
         public System.Collections.Generic.List<Sector> Sectors;
         public string HubText = "load ammo";
         public int Highlight = -1;
-        const float RIn = 60f, ROut = 172f, Gap = 0f;   // no gap -> each of N types is a clean full 360/N sector (2 types = two touching 180° halves) (master)
+        public bool CancelHover;   // cursor sits in the hub -> the "cancel" target (close, no action) is lit (master)
+        const float S = 1.9f;      // master: "double the size of the pie" -- one scale applied to every dimension below
+        internal const float RIn = 60f * S, ROut = 172f * S, Gap = 0f;   // no gap -> each of N types is a clean full 360/N sector (master)
 
         public override void _Draw()
         {
@@ -163,51 +168,52 @@ namespace UnturnedGodot
             for (int i = 0; i < n; i++)
             {
                 var s = Sectors[i];
-                bool on = i == Highlight && s.Selectable;
+                bool on = i == Highlight && s.Selectable && !CancelHover;   // a wedge only lights when the cursor is OUT of the cancel hub
                 float a0 = s.MidAngle - seg * 0.5f + Gap, a1 = s.MidAngle + seg * 0.5f - Gap;
-                float rOut = on ? ROut + 10f : ROut;
-                Color fill = !s.Selectable ? new Color(0.14f, 0.14f, 0.16f, 0.82f)   // nothing to do -> flat grey
+                float rOut = on ? ROut + 18f : ROut;
+                Color fill = !s.Selectable ? new Color(0.14f, 0.14f, 0.16f, 0.82f)   // nothing to do (empty mag / no chamber) -> flat grey
                            : on            ? new Color(0.24f, 0.42f, 0.62f, 0.96f)   // pointed-at -> blue
                            : s.IsUnload || s.IsRemoveMag ? new Color(0.30f, 0.15f, 0.14f, 0.92f)   // unload / remove-mag -> dark red
                            : s.IsRack      ? new Color(0.13f, 0.22f, 0.26f, 0.92f)   // rack -> dark teal
                            : s.Selected    ? new Color(0.20f, 0.36f, 0.25f, 0.92f)   // currently loaded -> green
                            :                 new Color(0.11f, 0.12f, 0.15f, 0.92f);
                 DrawAnnularSector(c, RIn, rOut, a0, a1, fill);
-                DrawAnnularSectorOutline(c, RIn, rOut, a0, a1, on ? new Color(0.66f, 0.86f, 1f) : new Color(0.30f, 0.32f, 0.38f, 0.75f), on ? 3f : 1.5f);
+                DrawAnnularSectorOutline(c, RIn, rOut, a0, a1, on ? new Color(0.66f, 0.86f, 1f) : new Color(0.30f, 0.32f, 0.38f, 0.75f), on ? 3.5f : 2f);
 
                 Vector2 p = c + new Vector2(Mathf.Cos(s.MidAngle), Mathf.Sin(s.MidAngle)) * ((RIn + rOut) * 0.5f);
                 Color tint = s.Selectable ? Colors.White : new Color(1, 1, 1, 0.45f);
                 if (s.IsUnload || s.IsRemoveMag)   // eject glyph (down chevron): unload shells / drop the magazine
                 {
-                    Vector2 g = p - new Vector2(0, 14);
+                    Vector2 g = p - new Vector2(0, 14) * S;
                     Color gc = s.Selectable ? new Color(1f, 0.6f, 0.55f) : new Color(0.6f, 0.55f, 0.55f, 0.6f);
-                    DrawLine(g + new Vector2(-16, -8), g + new Vector2(0, 9), gc, 3.5f);
-                    DrawLine(g + new Vector2(16, -8), g + new Vector2(0, 9), gc, 3.5f);
+                    DrawLine(g + new Vector2(-16, -8) * S, g + new Vector2(0, 9) * S, gc, 3.5f * S);
+                    DrawLine(g + new Vector2(16, -8) * S, g + new Vector2(0, 9) * S, gc, 3.5f * S);
                 }
                 else if (s.IsRack)   // rack glyph: a double chevron pulling the bolt LEFT/back
                 {
-                    Vector2 g = p - new Vector2(2, 6);
+                    Vector2 g = p - new Vector2(2, 6) * S;
                     Color gc = s.Selectable ? new Color(0.72f, 0.86f, 1f) : new Color(0.6f, 0.6f, 0.62f, 0.6f);
-                    DrawLine(g + new Vector2(8, -11), g + new Vector2(-6, 0), gc, 3.5f);
-                    DrawLine(g + new Vector2(8, 11), g + new Vector2(-6, 0), gc, 3.5f);
-                    DrawLine(g + new Vector2(20, -11), g + new Vector2(6, 0), gc, 3.5f);
-                    DrawLine(g + new Vector2(20, 11), g + new Vector2(6, 0), gc, 3.5f);
+                    DrawLine(g + new Vector2(8, -11) * S, g + new Vector2(-6, 0) * S, gc, 3.5f * S);
+                    DrawLine(g + new Vector2(8, 11) * S, g + new Vector2(-6, 0) * S, gc, 3.5f * S);
+                    DrawLine(g + new Vector2(20, -11) * S, g + new Vector2(6, 0) * S, gc, 3.5f * S);
+                    DrawLine(g + new Vector2(20, 11) * S, g + new Vector2(6, 0) * S, gc, 3.5f * S);
                 }
                 else if (s.Icon != null)
                 {
                     Vector2 tsz = s.Icon.GetSize();   // keep the icon's aspect (mags portrait, shells ~square) instead of smushing it into a box
-                    float sc = tsz.X > 0 && tsz.Y > 0 ? Mathf.Min(56f / tsz.X, 66f / tsz.Y) : 1f;
+                    float sc = tsz.X > 0 && tsz.Y > 0 ? Mathf.Min(56f * S / tsz.X, 66f * S / tsz.Y) : 1f;
                     Vector2 dsz = tsz * sc;
-                    DrawTextureRect(s.Icon, new Rect2(p - dsz * 0.5f - new Vector2(0, 14), dsz), false, tint);
+                    DrawTextureRect(s.Icon, new Rect2(p - dsz * 0.5f - new Vector2(0, 14) * S, dsz), false, tint);
                 }
                 if (font != null)
                 {
-                    DrawString(font, p + new Vector2(-60, 30), s.Name, HorizontalAlignment.Center, 120, 13, s.Selectable ? new Color(0.92f, 0.94f, 0.98f) : new Color(0.6f, 0.6f, 0.63f));
-                    DrawString(font, p + new Vector2(-60, 48), s.CountText, HorizontalAlignment.Center, 120, 12, s.Selectable ? new Color(0.72f, 0.92f, 0.74f) : new Color(0.85f, 0.5f, 0.5f));
+                    DrawString(font, p + new Vector2(-60, 30) * S, s.Name, HorizontalAlignment.Center, (int)(120 * S), (int)(13 * S), s.Selectable ? new Color(0.92f, 0.94f, 0.98f) : new Color(0.6f, 0.6f, 0.63f));
+                    DrawString(font, p + new Vector2(-60, 48) * S, s.CountText, HorizontalAlignment.Center, (int)(120 * S), (int)(12 * S), s.Selectable ? new Color(0.72f, 0.92f, 0.74f) : new Color(0.85f, 0.5f, 0.5f));
                 }
             }
-            DrawCircle(c, RIn, new Color(0.06f, 0.07f, 0.09f, 0.92f));   // hub hole
-            if (font != null) DrawString(font, c + new Vector2(-48, 4), HubText, HorizontalAlignment.Center, 96, 13, new Color(0.8f, 0.84f, 0.9f));
+            DrawCircle(c, RIn, CancelHover ? new Color(0.22f, 0.40f, 0.60f, 0.95f) : new Color(0.06f, 0.07f, 0.09f, 0.92f));   // hub; lights blue when it's the cancel target (master)
+            if (CancelHover) DrawArc(c, RIn - 3f, 0f, Mathf.Tau, 56, new Color(0.66f, 0.86f, 1f), 3.5f);
+            if (font != null) DrawString(font, c + new Vector2(-60, 4) * S, CancelHover ? "cancel" : HubText, HorizontalAlignment.Center, (int)(120 * S), (int)(13 * S), CancelHover ? new Color(0.92f, 0.96f, 1f) : new Color(0.8f, 0.84f, 0.9f));
         }
 
         void DrawAnnularSector(Vector2 c, float rIn, float rOut, float a0, float a1, Color col)

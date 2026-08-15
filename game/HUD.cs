@@ -287,9 +287,13 @@ namespace UnturnedGodot
                     // Ammo can legitimately exceed AmmoMax, and rendering it as a flat "31 / 30" reads as a bug in
                     // the counter rather than as the extra round it actually is.
                     int max = Player.Gun?.AmmoMax ?? Player.Ammo;
-                    int inMag = System.Math.Min(Player.Ammo, max);
-                    int chambered = System.Math.Max(0, Player.Ammo - max);
-                    _ammo.Text = chambered > 0 ? $"{inMag} + {chambered} / {max}" : $"{inMag} / {max}";
+                    if (Player.GunHasChamber)   // always show the mag + chamber split (master): +1 when a round's chambered, +0 when not
+                    {
+                        int chambered = Player.ChamberedRounds;   // 0 or 1
+                        _ammo.Text = $"{Player.Ammo - chambered} + {chambered} / {max}";
+                    }
+                    else
+                        _ammo.Text = $"{System.Math.Min(Player.Ammo, max)} / {max}";
                     // shotguns: show the LOADED SHELL TYPE right above the ammo count so the readout reflects buckshot
                     // vs slug (master); other guns keep the fire mode. Slug tints green to match its round, buckshot amber.
                     var shell = Player.LoadedShellName;
