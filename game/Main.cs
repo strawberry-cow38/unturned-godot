@@ -4616,6 +4616,8 @@ namespace UnturnedGodot
                 float t0 = EnvOr("UG_FLY_T0", 0f), t1 = EnvOr("UG_FLY_T1", 1f);
                 int frames = (int)EnvOr("UG_FLY_FRAMES", 400f);
                 var prev = new System.Collections.Generic.List<int>();
+                var objs = new System.Collections.Generic.List<int>();
+                var prims = new System.Collections.Generic.List<long>();
                 for (int f = 0; f < frames; f++)
                 {
                     float u = Mathf.Lerp(t0, t1, frames <= 1 ? 0f : f / (float)(frames - 1));
@@ -4638,6 +4640,15 @@ namespace UnturnedGodot
                                 if (Mathf.Abs(c.R - sky.R) + Mathf.Abs(c.G - sky.G) + Mathf.Abs(c.B - sky.B) > 0.06f) n++;
                             }
                     prev.Add(n);
+                    // WHAT THE RENDERER ACTUALLY DREW, alongside the pixel count. The dip frames are the last
+                    // surviving flicker evidence and the open question is WHY they dip: a cell blinking out of the
+                    // draw list, or the same cells drawing while the view changes. Pixels cannot tell those apart.
+                    //
+                    // These are engine counters, not my reconstruction of Godot's culling. I nearly diffed a
+                    // MODELLED visible-cell set instead -- recomputing each MultiMeshInstance's VisibilityRange
+                    // test myself -- which would have told me about my model of the cull rather than the cull.
+                    objs.Add((int)Performance.GetMonitor(Performance.Monitor.RenderTotalObjectsInFrame));
+                    prims.Add((long)Performance.GetMonitor(Performance.Monitor.RenderTotalPrimitivesInFrame));
                 }
                 // A flicker is a SPIKE, not a trend: one frame far below both its neighbours. Comparing to the
                 // neighbours rather than to a global mean is what separates "a tree blinked" from "the view is
@@ -4658,7 +4669,36 @@ namespace UnturnedGodot
                     // and 0.90 across 400 frames. A ~0.2-wide empty band either side of two points is a bimodal
                     // population, not an artefact of where I drew the line, so those two are genuine outliers and
                     // the only surviving candidates for the flicker strawberry reported. Do not dismiss them.
-                    if (ratio < EnvOr("UG_FLY_DIP", 0.75f)) { dips++; GD.Print($"[fly] DIP frame {i}: {prev[i]} px vs neighbours {nb:0} ({ratio:0.00}x)"); }
+                    // A SPIKE IS BELOW *BOTH* NEIGHBOURS. Comparing against their MEAN was the bug, and it is the
+                    // reason this mode's last two findings were wrong: a STEP -- the level halving and staying
+                    // halved -- puts the edge frame at ~0.7x of the mean while it sits at 1.00x of the frame after
+                    // it. Frames 177 and 325 are exactly that (53920 -> 29960 -> 29887, and 55565 -> 28023 ->
+                    // 27739): the view opened onto fewer trees and stayed there. The renderer agrees -- objects
+                    // 135/136/136 and 50/49/49 across the two triples, so nothing was culled, the same draws just
+                    // covered fewer pixels.
+                    //
+                    // This rule is strictly STRICTER than the old one, so it cannot invent a finding; the only risk
+                    // it carries is a missed real spike, which is why the mean ratio is still printed beside it.
+                    bool belowBoth = prev[i] < prev[i - 1] * EnvOr("UG_FLY_DIP", 0.75f)
+                                  && prev[i] < prev[i + 1] * EnvOr("UG_FLY_DIP", 0.75f);
+                    if (!belowBoth && ratio < EnvOr("UG_FLY_DIP", 0.75f))
+                        GD.Print($"[fly] step-edge (NOT a dip) at frame {i}: {prev[i - 1]} -> {prev[i]} -> {prev[i + 1]} "
+                               + $"({ratio:0.00}x of the mean, but {prev[i] / (float)prev[i + 1]:0.00}x of the frame after)");
+                    if (belowBoth)
+                    {
+                        dips++;
+                        // Print the TRIPLE, not the dip alone. "Frame 177 drew fewer objects" means nothing without
+                        // 176 and 178 to compare against, and the whole claim is a spike relative to neighbours.
+                        GD.Print($"[fly] DIP frame {i}: {prev[i]} px vs neighbours {nb:0} ({ratio:0.00}x)");
+                        for (int k = i - 1; k <= i + 1 && k < prev.Count; k++)
+                            if (k >= 0)
+                                GD.Print($"[fly]   f{k,-4} px={prev[k],-8} objects={objs[k],-6} prims={prims[k]}");
+                        float objNb = 0.5f * (objs[i - 1] + objs[i + 1]);
+                        float primNb = 0.5f * (prims[i - 1] + prims[i + 1]);
+                        GD.Print($"[fly]   -> objects {objs[i] / Mathf.Max(objNb, 1f):0.000}x of neighbours, "
+                               + $"prims {prims[i] / Mathf.Max(primNb, 1f):0.000}x  "
+                               + $"({(objs[i] < objNb * 0.97f ? "A DRAW DISAPPEARED" : "same draws, the VIEW changed")})");
+                    }
                 }
                 GD.Print($"[fly] overlap={ResourceField.ImpostorOverlap:0.###} frames={prev.Count} dips={dips} worstRatio={worst:0.000}");
                 GD.Print("[fly] NOTE: dips here are NOT known to be the tree->imposter handover -- they survive with the "
