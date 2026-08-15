@@ -61,6 +61,24 @@ namespace UnturnedGodot
         // this times a per-target multiplier -- humanoid zones (Humanoid.HeadMult/Torso/Leg) or zombie limbs
         // (ZombieCombat.MultFor). Falls back to Player_Damage so a .dat that predates the merge still loads.
         public float Damage;
+        // DISTANCE FALLOFF (strawberry 2026-08-15: "i also dont want the range to be just a bullet nope wall
+        // that deletes past it. the killer is the damage dropoff over distance"). Full Damage out to Start,
+        // decaying linearly to Damage*Min at End, floored at Min beyond. Start<=0 disables it entirely, so a
+        // gun that declares nothing behaves exactly as before.
+        public float FalloffStart;      // Damage_Falloff_Start (m)
+        public float FalloffEnd;        // Damage_Falloff_End (m)
+        public float FalloffMin = 1f;   // Damage_Falloff_Min (fraction of Damage at End and beyond)
+
+        /// <summary>Damage multiplier at a given travel distance. One implementation, shared by the SP fire
+        /// path and the server, so a shot cannot fall off differently depending on who resolved it.</summary>
+        public float FalloffAt(float metres)
+        {
+            if (FalloffStart <= 0f || FalloffEnd <= FalloffStart) return 1f;
+            if (metres <= FalloffStart) return 1f;
+            if (metres >= FalloffEnd) return FalloffMin;
+            float t = (metres - FalloffStart) / (FalloffEnd - FalloffStart);
+            return 1f + (FalloffMin - 1f) * t;
+        }
         public float PlayerDamage;
         public float ZombieDamage;
         public float VehicleDamage;   // Vehicle_Damage: bullets hurt vehicles LESS than zombies (eaglefire 35 vs 99) -- was wrongly using ZombieDamage
@@ -206,6 +224,9 @@ namespace UnturnedGodot
                 AmmoMax = d.ParseInt32("Ammo_Max", 30),
                 MagazineId = d.ParseInt32("Magazine", 0),   // default magazine item id (eaglefire/maplestrike = 6, the Military STANAG)
                 Damage = d.ParseFloat("Damage", d.ParseFloat("Player_Damage", 0f)),   // canonical; legacy dats fall back
+                FalloffStart = d.ParseFloat("Damage_Falloff_Start", 0f),
+                FalloffEnd = d.ParseFloat("Damage_Falloff_End", 0f),
+                FalloffMin = d.ParseFloat("Damage_Falloff_Min", 1f),
                 Caliber = d.ParseInt32("Caliber", 0),       // which magazines fit: a mag's caliber must match (eaglefire caliber 1)
                 CaliberName = d.GetString("Caliber_Name"),  // real cartridge; null for anything not yet tagged
                 RealWeapon = d.GetString("Real_Weapon"),

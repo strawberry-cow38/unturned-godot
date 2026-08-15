@@ -59,8 +59,8 @@ Durability 0.22
 Spread_Aim 0.05
 Spread_Angle_Degrees 1.427
 
-Ballistic_Steps 14
-Ballistic_Travel 15
+Ballistic_Steps 22
+Ballistic_Travel 20.68
 
 Recoil_Min_X -1.09
 Recoil_Min_Y 2.4
@@ -112,3 +112,7 @@ Blueprints
 		Effect "84347b13028340b8976033c08675d458" // Wrench
 	}
 ]
+Bullet_Gravity_Multiplier 1.4
+Damage_Falloff_Start 125
+Damage_Falloff_End 233
+Damage_Falloff_Min 0.5

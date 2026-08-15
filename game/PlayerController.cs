@@ -4583,7 +4583,17 @@ namespace UnturnedGodot
         // event (single fx authority -- otherwise the shooter would render both its local impact AND the echo)
         // and the hitmarker moves to HitConfirmed so it only ever tells the truth. Never set in SP.
         const float TracerBaseW = 0.065f;   // 5.56's tracer half-width; every other cartridge is this times GunDef.TracerScale
-        sealed class Bullet { public Vector3 Pos, Vel, Origin; public int StepsLeft; public float Gravity, Damage, VehicleDamage, ObjectDamage, PlayerDamage; public bool Cosmetic; public MeshInstance3D Tracer; public Node3D RocketVis; public Vector3 MuzzleAnchor; public bool HasAnchor; public float TracerW = TracerBaseW; }
+        sealed class Bullet { public Vector3 Pos, Vel, Origin; public int StepsLeft; public float Gravity, Damage, VehicleDamage, ObjectDamage, PlayerDamage;
+            public float FalloffStart, FalloffEnd, FalloffMin = 1f;
+            /// <summary>Damage multiplier for THIS bullet at an impact point, from distance actually flown.</summary>
+            public float FalloffAt(Vector3 impact)
+            {
+                if (FalloffStart <= 0f || FalloffEnd <= FalloffStart) return 1f;
+                float m = impact.DistanceTo(Origin);
+                if (m <= FalloffStart) return 1f;
+                if (m >= FalloffEnd) return FalloffMin;
+                return 1f + (FalloffMin - 1f) * ((m - FalloffStart) / (FalloffEnd - FalloffStart));
+            } public bool Cosmetic; public MeshInstance3D Tracer; public Node3D RocketVis; public Vector3 MuzzleAnchor; public bool HasAnchor; public float TracerW = TracerBaseW; }
         readonly System.Collections.Generic.List<Bullet> _bullets = new();
 
         // playerDamage is carried SEPARATELY from `damage` (which is the zombie number the SP path has always
@@ -4591,7 +4601,8 @@ namespace UnturnedGodot
         // model -- one field could not serve both without silently reporting the wrong model on one of them.
         void SpawnBullet(Vector3 pos, Vector3 vel, int steps, float gravity, float damage, float vehicleDamage, float objectDamage, float playerDamage = 0f)
         {
-            var b = new Bullet { Pos = pos, Origin = pos, Vel = vel, StepsLeft = Mathf.Max(1, steps), Gravity = gravity, Damage = damage, VehicleDamage = vehicleDamage, ObjectDamage = objectDamage, PlayerDamage = playerDamage, Cosmetic = NetFire != null, Tracer = Suppressed ? null : MakeTracer(),   // a suppressed shot draws no streak; every tracer use site is already null-guarded
+            var b = new Bullet { Pos = pos, Origin = pos, Vel = vel, StepsLeft = Mathf.Max(1, steps), Gravity = gravity, Damage = damage, VehicleDamage = vehicleDamage, ObjectDamage = objectDamage, PlayerDamage = playerDamage,
+                                 FalloffStart = Gun?.FalloffStart ?? 0f, FalloffEnd = Gun?.FalloffEnd ?? 0f, FalloffMin = Gun?.FalloffMin ?? 1f, Cosmetic = NetFire != null, Tracer = Suppressed ? null : MakeTracer(),   // a suppressed shot draws no streak; every tracer use site is already null-guarded
                                  TracerW = TracerBaseW * GunDef.TracerScale(Gun?.CaliberName) };   // .22 thin, .50 BMG fat; buckshot deliberately tiny (each pellet is its own bullet, so a shot draws 8 of these)
             // LOCAL first-person only: anchor the tracer's near end at the VIEWMODEL MUZZLE (screen-bridged to the world
             // via the viewmodel cam -> world cam), so it looks like it leaves the barrel; it then BENDS onto the real
@@ -4691,10 +4702,10 @@ namespace UnturnedGodot
                     Vector3 point = hit["position"].AsVector3();
                     Vector3 hdir = b.Vel.Normalized();
                     var collider = hit["collider"].As<GodotObject>();
-                    if (collider is ZombieController z) { bool head = z.IsHeadshot(point); SpawnFleshImpact(point, hdir); bool wd = z.Dead; z.DamageHitLimb(b.Damage, point, hdir); if (!wd && z.Dead) Kills++; HitmarkerHUD.Instance?.Show(head); }   // hitmarker: white body / red headshot (source EPlayerHit)
+                    if (collider is ZombieController z) { bool head = z.IsHeadshot(point); SpawnFleshImpact(point, hdir); bool wd = z.Dead; z.DamageHitLimb(b.Damage * b.FalloffAt(point), point, hdir); if (!wd && z.Dead) Kills++; HitmarkerHUD.Instance?.Show(head); }   // hitmarker: white body / red headshot (source EPlayerHit)
                     else if (collider is TargetDummy dummy)
                     {   // playground target: PLAYER damage through the humanoid zones, floating number, hitmarker
-                        float dealt = dummy.TakeHit(b.PlayerDamage, point);
+                        float dealt = dummy.TakeHit(b.PlayerDamage * b.FalloffAt(point), point);
                         SpawnFleshImpact(point, hdir);
                         HitmarkerHUD.Instance?.Show(dummy.LastZone == TargetDummy.HitZone.Head);
                     }
