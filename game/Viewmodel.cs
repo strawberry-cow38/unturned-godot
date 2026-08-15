@@ -216,6 +216,17 @@ namespace UnturnedGodot
                     if (c.Length >= 4) { var rgb = V3(c[3]); gv.SightColor = new Color(rgb.X, rgb.Y, rgb.Z); }   // real per-gun sight _Color
                     d[c[0]] = gv;
                 }
+            // per-gun Sight-hook MOUNT for guns WITHOUT a default sight (pistols / shotguns / etc.): mount optics at the
+            // gun's OWN Sight hook instead of falling back to the eaglefire's (content/guns_sighthook.tsv, emitted by
+            // tools/extract_sightview_hooks.py). Gap-fill only -- a real sights.tsv mount above already won.
+            string shp = ProjectSettings.GlobalizePath("res://content/guns_sighthook.tsv");
+            if (System.IO.File.Exists(shp))
+                foreach (var line in System.IO.File.ReadAllLines(shp))
+                {
+                    var c = line.Split('\t');
+                    if (c.Length < 2 || !d.TryGetValue(c[0], out var gv) || gv.SightPos != Vector3.Zero || c[1].Trim().Length == 0) continue;
+                    gv.SightPos = V3(c[1]); d[c[0]] = gv;   // no default-sight mount -> the gun's own Sight hook
+                }
             return d;
         }
         static Color Col(string s) { var v = V3(s); return new Color(v.X, v.Y, v.Z); }
