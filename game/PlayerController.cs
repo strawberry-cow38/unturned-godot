@@ -2166,6 +2166,7 @@ namespace UnturnedGodot
         public bool DebugShellReload() => Gun?.ShellReload ?? false;   // test: shell-by-shell (pump tube) reload
         public bool DebugHasChamber() => HasChamber;         // test: does the gun get a +1 chambered round
         public void DebugCompleteReload() { int max = Gun?.AmmoMax ?? 30; if (UsesShells) Ammo += ConsumeShells(max - Ammo); else if (UsesMagItem) DoMagSwap(); else Ammo = (HasChamber && Ammo > 0) ? max + 1 : max; }   // test: run the reload fill (same branch as the reload tick)
+        public void DebugFinishMagAnim() { _magSwapAnimTimer = 0; _magSwapAutoRack = false; _viewmodel?.SetReloading(false); }   // test: simulate the mag-swap / rack anim finishing so the cooldown clears (a follow-up mag action isn't blocked)
         public bool DebugUsesShells() => UsesShells;         // test: does the gun feed from loose shells
         public int DebugCountShells() => CountShells();      // test: shells of the gun's caliber carried
         public int DebugPellets() => UsesShells && ShellAsset != null ? System.Math.Max(1, ShellAsset.pellets) : System.Math.Max(1, Gun?.Pellets ?? 1);   // test: rays per shot (shotgun = shell pellets)
@@ -3364,7 +3365,7 @@ namespace UnturnedGodot
         // the chambered round stays. Like DoMagSwap but for the chosen instance, not the fullest.
         public void LoadMagInstance(SDG.Unturned.Item mag)
         {
-            if (mag == null || _reloading || _unloading || _dead || !UsesMagItem || Inventory == null) return;
+            if (mag == null || _reloading || _unloading || _dead || !UsesMagItem || Inventory == null || _magSwapAnimTimer > 0) return;   // cooldown: wait for any in-flight mag/rack/reload anim (master)
             bool removed = false;
             for (byte b = 0; b < (byte)(PlayerInventory.PAGES - 2) && !removed; b++)
             { var pg = Inventory.items[b]; for (byte i = 0; i < pg.getItemCount(); i++) if (ReferenceEquals(pg.getItem(i)?.item, mag)) { pg.removeItem(i); removed = true; break; } }
@@ -3388,7 +3389,7 @@ namespace UnturnedGodot
         // Remove the loaded magazine to the bag WITH its rounds, LEAVING the chambered round (master); mag-out anim.
         public void RemoveMagazine()
         {
-            if (_reloading || _unloading || _dead || !UsesMagItem || _loadedMagId <= 0) return;
+            if (_reloading || _unloading || _dead || !UsesMagItem || _loadedMagId <= 0 || _magSwapAnimTimer > 0) return;   // cooldown (master)
             bool chambered = HasChamber && Ammo > 0;
             int inMag = Ammo - (chambered ? 1 : 0);
             var mag = new SDG.Unturned.Item((ushort)_loadedMagId, (byte)System.Math.Max(0, inMag));
@@ -3404,14 +3405,16 @@ namespace UnturnedGodot
         // Rack the gun: eject the chambered round as a 5.56 FMJ (5004) to the bag/ground, re-chamber from the mag; rack anim.
         public void RackGun()
         {
-            if (_reloading || _unloading || _dead || !UsesMagItem) return;
+            if (_reloading || _unloading || _dead || !UsesMagItem || _magSwapAnimTimer > 0) return;   // cooldown (master)
             if (!(HasChamber && Ammo > 0)) return;   // nothing chambered
             var round = new SDG.Unturned.Item(5004, 1);   // eject the CHAMBERED round. Only FMJ (5004) has a loose-round item today; AP/HP round items map from _chamberedAmmoType here once they exist (the chamber's TYPE is tracked, so that item mapping is the only gap)
             if (!(Inventory?.tryAddItem(round) ?? false)) DropWorldItem(round, GlobalPosition + Vector3.Up);
             Ammo--;   // eject the chambered round; the next mag round auto-chambers
             _chambered = HasChamber && Ammo > 0;
             _chamberedAmmoType = _chambered ? MagAmmoType : null;   // the re-chambered round comes from the mag -> takes the mag's type (master)
-            _viewmodel?.PlayHammer();   // the rack animation
+            float sp = Skills.DexterityReloadSpeed();
+            _viewmodel?.PlayHammer(sp);   // the rack animation
+            _magSwapAnimTimer = (_viewmodel?.HammerLength ?? 0.4) / System.Math.Max(0.01f, sp);   // cooldown: block other mag actions until the rack anim finishes (master)
             SaveGunState();
         }
         int CountOfShell(ushort id)   // how many of ONE specific shell id the player carries across pages
@@ -3473,7 +3476,7 @@ namespace UnturnedGodot
         // loaded type, so unloading never loses or converts ammo. Shotguns only.
         public void UnloadShells()
         {
-            if (_reloading || _unloading || _dead || _needsRechamber || _rechambering) return;
+            if (_reloading || _unloading || _dead || _needsRechamber || _rechambering || _magSwapAnimTimer > 0) return;   // cooldown (master)
             if (!UsesShells || Ammo <= 0) return;
             _unloading = true;
             float rspeed = Skills.DexterityReloadSpeed();
@@ -4346,11 +4349,11 @@ namespace UnturnedGodot
         // Gun_Reload clip's length (the Eaglefire .dat has no separate reload-time key), so ReloadTime = that.
         void StartReload()
         {
-            if (_reloading || _dead) return;
+            if (_reloading || _unloading || _dead || _magSwapAnimTimer > 0) return;   // busy: mid-reload/unload/mag-swap-anim -> wait (master: cooldown)
             if (_needsRechamber || _rechambering) return;   // must finish cycling the bolt/pump first (source: reload gated by needsRechamber)
             int max = Gun?.AmmoMax ?? 30;
             if (Ammo >= ChamberedCap) return;   // already topped off (full mag + the round in the chamber)
-            if (UsesMagItem && FindBestMag() == null) { _viewmodel?.PlayDryFire(); return; }   // working magazines: no spare mag in the bag -> can't reload
+            if (UsesMagItem && (FindBestMag()?.item.amount ?? 0) <= 0) { _viewmodel?.PlayDryFire(); return; }   // no spare mag WITH ROUNDS -> can't reload; dry-fire instead of refilling from an empty/absent mag (master)
             if (UsesShells && CountShells() <= 0) { _viewmodel?.PlayDryFire(); return; }        // shotgun with no shells in the bag -> can't reload
             _burstLeft = 0;   // reloading cancels any in-progress burst -> it won't resume after the reload (master)
             _reloading = true;

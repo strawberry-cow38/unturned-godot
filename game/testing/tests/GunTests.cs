@@ -157,6 +157,7 @@ namespace UnturnedGodot.Testing
             p.RemoveMagazine();
             T.Check("remove-mag: the chambered round stays (Ammo=1)", p.Ammo == 1);
             T.Check("remove-mag: the 30-round mag returns to the bag", p.Inventory.getItemCount(6) == mags6 + 30);
+            p.DebugFinishMagAnim();   // the mag-out anim finished -> cooldown clears, so the rack is allowed
             p.RackGun();
             T.Check("rack: the chamber empties (Ammo=0)", p.Ammo == 0);
             T.Check("rack: a 5.56 FMJ round is ejected to the bag", p.Inventory.getItemCount(5004) == 1);
@@ -175,6 +176,7 @@ namespace UnturnedGodot.Testing
             p.Ammo = 31;   // 30 FMJ in the mag + 1 FMJ chambered
             p.LoadMagInstance(apMag);   // TACTICAL swap: a round is already chambered
             T.Check("tactical swap KEEPS the chambered round's type (FMJ, though the seated mag is AP)", p.LoadedAmmoType == "FMJ");
+            p.DebugFinishMagAnim();   // the swap anim finished -> cooldown clears
             p.RackGun();   // eject the FMJ chambered round, cycle an AP round from the mag
             T.Check("rack cycles the seated mag's type into the chamber (now AP)", p.LoadedAmmoType == "AP");
             // HUD chamber readout (master: ALWAYS +1 when a round's chambered, +0 when not)
@@ -184,6 +186,17 @@ namespace UnturnedGodot.Testing
             T.Check("HUD: a chambered round reads as +1", p.GunHasChamber && p.ChamberedRounds == 1);
             p.Ammo = 0;
             T.Check("HUD: an empty chamber reads as +0", p.ChamberedRounds == 0);
+            // action cooldown (master): a 2nd mag action is blocked until the anim finishes
+            p.LoadGun("res://content/eaglefire.dat");
+            p.DebugSetHeldItem(new Item(4));
+            p.Ammo = 31;
+            p.RemoveMagazine();   // starts the mag-out anim -> cooldown
+            int afterRemove = p.Ammo;
+            p.RackGun();          // blocked by the cooldown -> no-op
+            T.Check("cooldown: rack is blocked mid mag-out anim", p.Ammo == afterRemove);
+            p.DebugFinishMagAnim();
+            p.RackGun();          // anim done -> allowed
+            T.Check("cooldown: rack works once the anim finishes", p.Ammo == afterRemove - 1);
             p.QueueFree();
             yield break;
         }

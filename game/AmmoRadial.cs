@@ -154,7 +154,7 @@ namespace UnturnedGodot
         public int Highlight = -1;
         public bool CancelHover;   // cursor sits in the hub -> the "cancel" target (close, no action) is lit (master)
         const float S = 1.9f;      // master: "double the size of the pie" -- one scale applied to every dimension below
-        internal const float RIn = 60f * S, ROut = 172f * S, Gap = 0f;   // no gap -> each of N types is a clean full 360/N sector (master)
+        internal const float RIn = 45f * S, ROut = 172f * S, Gap = 0f;   // hub 25% smaller (master, 60->45); no gap -> each of N types is a clean full 360/N sector
 
         public override void _Draw()
         {
