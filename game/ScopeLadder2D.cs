@@ -10,6 +10,10 @@ namespace UnturnedGodot
     {
         public bool Active;
         public Vector2 Center;   // the scope lens's screen position (set by the Viewmodel each frame) so the ladder SWAYS with the glass, not pinned to screen-centre
+        /// <summary>The scope's ROLL about the view axis, radians (strawberry: "the range ladder doesnt follow the
+        /// scope's rotation"). Tracking only Center made the ladder slide with the glass while staying stubbornly
+        /// upright, so a tilted optic showed a vertical drop line against a rolled reticle.</summary>
+        public float Roll;
         static readonly int[] Ranges = { 100, 200, 300 };   // the retail 8x/7x ladder marks
 
         public override void _Ready()
@@ -26,7 +30,12 @@ namespace UnturnedGodot
         public override void _Draw()
         {
             if (!Active) return;
-            Vector2 c = Center != Vector2.Zero ? Center : GetViewport().GetVisibleRect().Size * 0.5f;   // follow the lens; fall back to screen-centre before the first update
+            // Draw around the ORIGIN and let the node's own transform place and rotate it. Rotating each point by
+            // hand around `c` would work for the lines and then silently not for DrawString, which takes a
+            // position and always renders upright -- the labels would stay level while the ticks tilted.
+            Position = Center != Vector2.Zero ? Center : GetViewport().GetVisibleRect().Size * 0.5f;
+            Rotation = Roll;
+            Vector2 c = Vector2.Zero;
             var font = ThemeDB.FallbackFont;
             int fs = 15;
             var black = new Color(0f, 0f, 0f, 0.92f);

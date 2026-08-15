@@ -1219,6 +1219,16 @@ namespace UnturnedGodot
                     _ladder.Active = _scopeHasLadder && _aimAlpha > 0.6f;   // range ladder only while actually ADS'd through a numbered-ladder scope
                     if (_ladder.Active && _cam != null && Godot.GodotObject.IsInstanceValid(_scopeLens))
                         _ladder.Center = _cam.UnprojectPosition(_scopeLens.GlobalPosition);   // follow the lens's screen position so the ladder sways WITH the glass + crosshair
+                        // ...and its ROLL, or the ladder slides with the glass while staying upright. Measured as
+                        // the scope's up-vector projected into the view plane, against the camera's own up -- not
+                        // the raw node rotation, which includes pitch/yaw the 2D overlay must ignore.
+                        {
+                            Basis cb = _cam.GlobalBasis, sb = _scopeLens.GlobalBasis;
+                            Vector3 fwd = -cb.Z;
+                            Vector3 up = sb.Y - fwd * sb.Y.Dot(fwd);
+                            _ladder.Roll = up.LengthSquared() > 1e-6f
+                                ? Mathf.Atan2(up.Dot(cb.X), up.Dot(cb.Y)) : 0f;
+                        }
                 }
             }
             _arms.Tick(delta);   // manual-advance the base anim, then layer the additive Aim_Start pose on top

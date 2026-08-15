@@ -61,6 +61,12 @@ namespace UnturnedGodot
         BuildTool _build;                   // B = build mode (grid-snapped structures)
         string _gunName = "eaglefire";   // gun folder name (eaglefire | maplestrike), derived from the .dat path
         float _pitchDeg;
+        float _scopeSwayT, _swayAppliedP, _swayAppliedY;   // scope sway: phase clock + what it has already folded into the aim
+        /// <summary>Scope sway's current contribution to the aim, degrees (pitch, yaw). Test seam: the claim is
+        /// that sway moves the AIM, and a viewmodel-only sway would leave these at zero forever.</summary>
+        public Vector2 DebugScopeSway => new Vector2(_swayAppliedP, _swayAppliedY);
+        /// <summary>Test hook: sway as if a magnifying optic were mounted and aimed. See the note at the gate.</summary>
+        public bool DebugForceScopeSway;
         Vehicle _driving; bool _fp = true;   // vehicle being driven + camera mode: true = 1st person (spawn default, strawberry), false = 3rd; H toggles (on foot + driving)
         float _driveCamYaw, _driveCamPitch = 15f;   // 3rd-person driving orbit: mouse yaws/pitches the chase cam around the car (master)
         // FP RIDE free-look (#37, MP only): mouse yaw/pitch of the view in VEHICLE-LOCAL space while seated on a
@@ -5050,6 +5056,39 @@ namespace UnturnedGodot
                 float dy = _recoilYawPending * step;
                 RotateY(Mathf.DegToRad(dy));                          // yaw folds into the body -- stays put
                 _recoilYawPending -= dy;
+            }
+            // SCOPE SWAY, and it moves the CAMERA -- which is to say the aim -- not the viewmodel (strawberry:
+            // "with scope sway, have it move the WHOLE camera (and thus aim point) instead of just the scope
+            // viewmodel"). It rides `_pitchDeg` and the body yaw for the same reason recoil does: those two are
+            // the single source both the camera (`_cam.RotationDegrees`) and the firing basis read, so aim and
+            // view cannot drift apart. Sway the viewmodel instead and the crosshair wanders while the bullet
+            // doesn't, which is the bug being fixed.
+            //
+            // Applied as a DELTA against what it applied last frame, so it oscillates and unwinds instead of
+            // accumulating. Recoil accumulates on purpose and never returns; sway must return, and sharing
+            // `_pitchDeg` with something that doesn't is only safe because of this bookkeeping.
+            //
+            // Two incommensurate frequencies rather than one: a single sine is a straight line the player learns
+            // in a second. 0.53/0.31 Hz never repeats on a human timescale and reads as breathing.
+            {
+                float zoom = _viewmodel?.ScopeZoom ?? 0f;
+                // DebugForceScopeSway BYPASSES the scope gate on purpose. Mounting a real optic headless needs a
+                // SubViewport camera, so the test that proves "sway moves the AIM" drives this, and a SEPARATE
+                // check with the hook off proves the gate itself still refuses to sway an unscoped gun. One hook
+                // testing both halves would prove neither.
+                bool scoped = DebugForceScopeSway || ((_viewmodel?.IsAiming ?? false) && zoom > 1f);
+                // Angular, NOT scaled by magnification: the same wobble in degrees already looks bigger through a
+                // bigger optic, so scaling it again would double-count the zoom.
+                float amp = scoped ? 0.30f * StanceRecoilMul() : 0f;
+                _scopeSwayT += (float)delta;
+                float tgtP = Mathf.Sin(_scopeSwayT * 3.33f) * amp;
+                float tgtY = Mathf.Sin(_scopeSwayT * 1.95f + 1.3f) * amp * 1.4f;
+                if (tgtP != _swayAppliedP || tgtY != _swayAppliedY)
+                {
+                    _pitchDeg = Mathf.Clamp(_pitchDeg + (tgtP - _swayAppliedP), -89f, 89f);
+                    RotateY(Mathf.DegToRad(tgtY - _swayAppliedY));
+                    _swayAppliedP = tgtP; _swayAppliedY = tgtY;
+                }
             }
             PainAlpha = Mathf.Max(0f, PainAlpha - (float)delta);                 // hurt flash fades at 1/s (PlayerUI line 1835)
             // flinch recovers to level at 4/s (PlayerLook line 1330). GUARD: a degenerate hit can leave _flinch NaN or
