@@ -75,6 +75,8 @@ namespace UnturnedGodot
         // cluster and late ones jump; everything leans RIGHT because the support arm resists a leftward
         // push. Shape differs by WHEN the drift arrives (PatternDriftExp), not by exotic curves.
         public float PatternClimb;        // total vertical travel over the pattern (deg)
+        public float PatternClimbExp = 1.55f;  // <1.55 front-loads the climb (more vertical in the opening
+                                               // rounds for the same total); >1.55 back-loads it
         public int PatternNodes = 30;     // pattern length; a belt-fed gun outlives it, see PatternPlateau
         public float PatternDrift;        // lateral travel by the last node (deg, + = right)
         public float PatternDriftExp = 1.9f;   // >1 holds straight then eases out; ~1 drifts from shot one
@@ -99,7 +101,7 @@ namespace UnturnedGodot
             if (PatternNodes <= 0 || PatternClimb <= 0f) return (0f, 0f);
             int n = PatternNodes;
             float t = (shot < n ? shot : n) / (float)n;
-            float v = PatternClimb * Pow(t, 1.55f);
+            float v = PatternClimb * Pow(t, PatternClimbExp);
             if (shot > n && PatternPlateau > 0f)
                 v += PatternPlateau * (1f - Exp(-(shot - n) / (n * 0.93f)));
             float h = 0f;
@@ -300,6 +302,7 @@ namespace UnturnedGodot
                 MagazineId = d.ParseInt32("Magazine", 0),   // default magazine item id (eaglefire/maplestrike = 6, the Military STANAG)
                 Damage = d.ParseFloat("Damage", d.ParseFloat("Player_Damage", 0f)),   // canonical; legacy dats fall back
                 PatternClimb = d.ParseFloat("Recoil_Pattern_Climb", 0f),
+                PatternClimbExp = d.ParseFloat("Recoil_Pattern_Climb_Exp", 1.55f),
                 PatternNodes = d.ParseInt32("Recoil_Pattern_Nodes", 30),
                 PatternDrift = d.ParseFloat("Recoil_Pattern_Drift", 0f),
                 PatternDriftExp = d.ParseFloat("Recoil_Pattern_Drift_Exp", 1.9f),

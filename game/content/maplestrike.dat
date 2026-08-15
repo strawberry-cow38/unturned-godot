@@ -123,3 +123,4 @@ Recoil_Pattern_Drift_Exp 2.1
 Recoil_Pattern_Wiggle -0.9
 Recoil_Scatter_H 0.87
 Recoil_Scatter_V 0.87
+Recoil_Pattern_Climb_Exp 1.1
