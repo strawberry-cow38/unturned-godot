@@ -661,6 +661,10 @@ namespace UnturnedGodot
         // both axes onto one frequency gives a clean diagonal oscillation that looks mechanical immediately.
         float _swayTime;
         Vector3 _scopeSway;
+        /// <summary>The scope's current sway, DEGREES (x=pitch, y=yaw). Read by PlayerController and folded into
+        /// the aim so the camera moves and the optic stays put. Source-derived amplitude (1 - 1/zoom), stance
+        /// scaling and the SteadyAccuracy breath term all live in the one place that computes it.</summary>
+        public Vector2 ScopeSwayDegrees => new Vector2(_scopeSway.X, _scopeSway.Y);
         /// <summary>Steadiness 0..1 (breath-hold). Source advances swayTime at (1 - steadyAccuracy/4), so steadying
         /// SLOWS the drift rather than shrinking it -- the sight still wanders, just lazily.</summary>
         public float SteadyAccuracy;
@@ -1306,7 +1310,12 @@ namespace UnturnedGodot
             // muzzle-climb of the weapon, not of the view) so the two do not fight.
             //
             // Scope sway lands on pitch/yaw only; its Z is always 0 in the source, so there is nothing to roll.
-            var armRot = _inputRoll.CurrentPosition + _scopeSway;
+            // Scope sway is NOT added here any more. It rotates the CAMERA now (PlayerController folds
+            // ScopeSwayDegrees into the aim), because rotating the arms moves the optic around the frame --
+            // strawberry: "the scope stays centered in the frame, always ... the thing that moves when the scope
+            // sways is the CAMERA". Adding it in both places would double the amplitude and put the reticle back
+            // in motion, which is the behaviour being removed.
+            var armRot = _inputRoll.CurrentPosition;
             // MOVEMENT SWAY TILT (PlayerAnimator.cs:1449-1458, tinyclaw). While moving, the gun tilts by the move
             // direction x a per-stance TILT, plus a slow "roll" oscillation -- the walk wiggle -- eased through a spring.
             // swayMul = the same viewmodelSwayMultiplier the bob uses (1 hip -> 0.1 aim), so ADS keeps a small residual

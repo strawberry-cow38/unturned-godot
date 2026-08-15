@@ -5068,21 +5068,21 @@ namespace UnturnedGodot
             // accumulating. Recoil accumulates on purpose and never returns; sway must return, and sharing
             // `_pitchDeg` with something that doesn't is only safe because of this bookkeeping.
             //
-            // Two incommensurate frequencies rather than one: a single sine is a straight line the player learns
-            // in a second. 0.53/0.31 Hz never repeats on a human timescale and reads as breathing.
+            // The oscillator itself is the Viewmodel's -- see below. This block only decides where its output
+            // LANDS, which is the whole of strawberry's correction: on the camera, not on the arms.
             {
-                float zoom = _viewmodel?.ScopeZoom ?? 0f;
-                // DebugForceScopeSway BYPASSES the scope gate on purpose. Mounting a real optic headless needs a
-                // SubViewport camera, so the test that proves "sway moves the AIM" drives this, and a SEPARATE
-                // check with the hook off proves the gate itself still refuses to sway an unscoped gun. One hook
-                // testing both halves would prove neither.
-                bool scoped = DebugForceScopeSway || ((_viewmodel?.IsAiming ?? false) && zoom > 1f);
-                // Angular, NOT scaled by magnification: the same wobble in degrees already looks bigger through a
-                // bigger optic, so scaling it again would double-count the zoom.
-                float amp = scoped ? 0.30f * StanceRecoilMul() : 0f;
-                _scopeSwayT += (float)delta;
-                float tgtP = Mathf.Sin(_scopeSwayT * 3.33f) * amp;
-                float tgtY = Mathf.Sin(_scopeSwayT * 1.95f + 1.3f) * amp * 1.4f;
+                // ONE oscillator, and it is the Viewmodel's. It already carries the source's amplitude
+                // (1 - 1/zoom, exactly 0 at 1x so irons and red dots get none of it from the formula rather than
+                // a special case), the stance scaling and the SteadyAccuracy breath term. Duplicating that here
+                // with my own sines -- which is what the first cut of this did -- gives two swings of different
+                // shape and silently doubles the amplitude.
+                Vector2 sway = _viewmodel?.ScopeSwayDegrees ?? Vector2.Zero;
+                if (DebugForceScopeSway)   // headless: no SubViewport optic, so synthesise the same shape
+                {
+                    _scopeSwayT += (float)delta;
+                    sway = new Vector2(Mathf.Sin(_scopeSwayT * 3.33f) * 0.30f, Mathf.Sin(_scopeSwayT * 1.95f + 1.3f) * 0.42f);
+                }
+                float tgtP = sway.X, tgtY = sway.Y;
                 if (tgtP != _swayAppliedP || tgtY != _swayAppliedY)
                 {
                     _pitchDeg = Mathf.Clamp(_pitchDeg + (tgtP - _swayAppliedP), -89f, 89f);
