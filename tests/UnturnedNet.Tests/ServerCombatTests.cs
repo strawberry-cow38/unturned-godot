@@ -273,7 +273,7 @@ namespace UnturnedNet.Tests
         }
 
         [Test]
-        public void Fire_HeadshotZone_TripleMultiplier_OneShotsAt120()
+        public void Fire_HeadshotZone_DoubleMultiplier_NoLongerOneShots()
         {
             var h = new Harness(50105).Connected("shooter", "victim");
             var a = h.Clients[0];
@@ -284,17 +284,28 @@ namespace UnturnedNet.Tests
             h.Server.Players.TryGetByOwner(a.PlayerId, out var ape);
             h.Server.Players.TryGetByOwner(b.PlayerId, out var bpe);
             var origin = Eye(ape.Pos);
-            var head = bpe.Pos + new Vector3(0f, 1.6f, 0f);   // 1.45..1.8 band -> 3.0x
+            var head = bpe.Pos + new Vector3(0f, 1.6f, 0f);   // 1.45..1.8 band -> the head zone
 
             a.SendFire(origin, AimAt(origin, head));
             h.Step(15);
 
+            // strawberry dropped the head multiplier 3.0 -> 2.0 (2026-08-15). That moved the one-shot-headshot
+            // threshold from 33.34 base damage to 50, which is the whole point of the change: at 3.0 four
+            // cartridges one-shot a head (.50, .338, 7.62x54R, 7.62x51), at 2.0 only the .50 does. The eaglefire's
+            // 40 sits under the line, so this shot must now LEAVE THE VICTIM ALIVE -- asserting the survival is
+            // what makes this a test of the threshold rather than of arithmetic.
             Assert.That(confirms.Count, Is.EqualTo(1));
             Assert.That(confirms[0].Headshot, Is.True, "the 1.6 m band resolves as the head zone");
-            Assert.That(confirms[0].Damage, Is.EqualTo(120f).Within(0.1f), "40 x 3.0 head multiplier");
-            Assert.That(confirms[0].Killed, Is.True, "120 > 100 = a one-shot kill");
+            Assert.That(confirms[0].Damage, Is.EqualTo(80f).Within(0.1f), "40 x 2.0 head multiplier");
+            Assert.That(confirms[0].Killed, Is.False, "80 < 100 -- a 40-damage cartridge no longer one-shots a head");
             Assert.That(h.Server.CombatState.TryGet(b.PlayerId, out var bState), Is.True);
-            Assert.That(bState.Alive, Is.False);
+            Assert.That(bState.Alive, Is.True, "still standing on one headshot");
+            Assert.That(bState.Health, Is.EqualTo(20), "100 - 80");
+
+            a.SendFire(origin, AimAt(origin, head));   // the second one does finish it
+            h.Step(15);
+            Assert.That(confirms.Count, Is.EqualTo(2));
+            Assert.That(confirms[1].Killed, Is.True, "two headshots kill at 2.0x");
         }
 
         // ---------------------------------------------------------------- zombies through the wire

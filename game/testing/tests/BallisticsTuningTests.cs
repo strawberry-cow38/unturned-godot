@@ -87,12 +87,18 @@ namespace UnturnedGodot.Testing
             // THE CONTROL. An untouched gun, measured the same way in the same run. If someone gets the numbers
             // above by moving GunDef's global Bullet_Gravity_Multiplier default from 4 instead of setting it per
             // gun, every check above still passes and this one fails -- which is the only reason it is here.
-            var ef = Def(dir, "eaglefire");
-            T.Check($"control: the eaglefire was NOT retuned ({ef.MuzzleVelocity:0} m/s, gravity {ef.GravityMultiplier:0.##})",
-                Godot.Mathf.IsEqualApprox(ef.MuzzleVelocity, 500f) && Godot.Mathf.IsEqualApprox(ef.GravityMultiplier, 4f));
-            float? efDrop = DropAt(ef, 200f);
-            T.Check($"...and still drops ~3 m over 200 m ({efDrop * 100f:0.#} cm), so gravity did not go global",
-                efDrop is > 2.5f and < 3.5f);
+            //
+            // The subject WAS the eaglefire until the 5.56 pass (2026-08-15) deliberately retuned it to 940 m/s
+            // and gravity 1.4. A control has to be something nobody has touched, so it moved to the zubeknakov:
+            // 7.62x39, outside both the sniper pass this test guards and the 5.56 pass. When this fires, check
+            // whether the AK was retuned on purpose before "fixing" it -- a stale control is a real signal that
+            // the scope of a change grew, which is exactly what it caught here.
+            var ctl = Def(dir, "zubeknakov");
+            T.Check($"control: the zubeknakov was NOT retuned ({ctl.MuzzleVelocity:0} m/s, gravity {ctl.GravityMultiplier:0.##})",
+                Godot.Mathf.IsEqualApprox(ctl.MuzzleVelocity, 500f) && Godot.Mathf.IsEqualApprox(ctl.GravityMultiplier, 4f));
+            float? ctlDrop = DropAt(ctl, 200f);
+            T.Check($"...and still drops ~3 m over 200 m ({ctlDrop * 100f:0.#} cm), so gravity did not go global",
+                ctlDrop is > 2.5f and < 3.5f);
 
             yield break;
         }
