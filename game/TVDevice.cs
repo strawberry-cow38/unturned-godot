@@ -271,6 +271,7 @@ namespace UnturnedGodot
         // the set animates exactly as it always did. Failing the other way would leave frozen pictures around
         // the map with nothing in the log to explain them.
         bool _onScreen = true;
+        const float ScreenRenderDist = 64f;   // max render distance for the SCREEN (master): past this it stops DRAWING (VisibilityRangeEnd on _screen) AND ANIMATING (the _nearEnough gate). A cap ON TOP of the _onScreen check, not instead of it. Tunable.
 
         MeshInstance3D _screen;   // the emissive SMPTE screen sub-mesh (hidden when dark)
         ShaderMaterial _screenMat;   // one shader, one program per set -- see ScreenProgram
@@ -674,7 +675,7 @@ namespace UnturnedGodot
                 _tint = MonitorColours[_colourIdx = Mathf.Abs((int)GD.Randi()) % MonitorColours.Length];
             _screenOffset = _screenNormalLocal * PictureOffset;
             SetMono(false);   // establishes the uniform; a mono SET is handled by its texture + channels, not by this
-            _screen = new MeshInstance3D { Mesh = projected, MaterialOverride = _screenMat, Visible = false, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off, Position = _screenOffset };
+            _screen = new MeshInstance3D { Mesh = projected, MaterialOverride = _screenMat, Visible = false, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off, Position = _screenOffset, VisibilityRangeEnd = ScreenRenderDist };   // VisibilityRangeEnd: the screen mesh stops drawing past ScreenRenderDist (master's max render distance)
             AddChild(_screen);
 
             // ONLY ANIMATE A PICTURE SOMEONE CAN SEE (strawberry). The channel is picked once in Make and never
@@ -682,10 +683,12 @@ namespace UnturnedGodot
             // tube levels -- and those are shader parameter writes into the RenderingServer, ~34 sets' worth,
             // for screens that are frequently behind a wall or behind you.
             //
-            // VISIBILITY, not distance: a television in the next room is 5 m away and completely hidden, while
-            // one across a field at 200 m is in plain sight. A distance gate gets both of those backwards.
-            // Sized off the screen's own bounds, padded so the notifier trips slightly before the picture is
-            // actually on camera rather than a frame late.
+            // PRIMARY gate = VISIBILITY: a television in the next room is 5 m away and completely hidden, while one
+            // across a field at 200 m is in plain sight -- a distance-ONLY gate gets both backwards, so the notifier
+            // stays. Sized off the screen's own bounds, padded so it trips slightly before the picture is on camera.
+            // PLUS a max-render-distance CAP (master): past ScreenRenderDist the screen stops DRAWING (VisibilityRangeEnd
+            // on _screen) AND stops ANIMATING (the _nearEnough gate below) -- so a far in-plain-sight screen no longer
+            // costs a draw + ~34 shader writes. The cap is ON TOP of visibility, not instead of it.
             var sab = projected.GetAabb();
             _seen = new VisibleOnScreenNotifier3D { Aabb = sab.Grow(0.5f), Position = _screenOffset };
             _seen.ScreenEntered += () => _onScreen = true;
@@ -1609,7 +1612,9 @@ namespace UnturnedGodot
             // The state machines below (collapse already returned; brownout, banner, warmup) deliberately keep
             // running off-screen: they TRANSITION state, and a set frozen mid-warmup would sit wrong until
             // something poked it. Only the picture animation is gated.
-            if (_lit && _onScreen)
+            var _tvCam = GetViewport()?.GetCamera3D();   // the max-render-distance CAP also stops the ANIMATION (not just the draw), so a far but in-plain-sight screen costs nothing per frame
+            bool _nearEnough = _tvCam == null || GlobalPosition.DistanceSquaredTo(_tvCam.GlobalPosition) < ScreenRenderDist * ScreenRenderDist;
+            if (_lit && _onScreen && _nearEnough)
             {
                 // The programs animate off this rather than off a global clock, so every set is offset by its own seed
                 // and a room of televisions does not blink in unison. Only advanced while LIT: a set switched back on

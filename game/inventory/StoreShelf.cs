@@ -425,6 +425,7 @@ namespace UnturnedGodot
 
             Color rar = asset != null ? ItemTool.RarityColorUI(asset.rarity) : Colors.White;
             var vis = WorldItem.BuildReplicaVisual(id, rar);
+            ApplyRenderDistance(vis);   // shelf loot models cull past RenderDist too, so a distant gondola's items don't float on un-rendered (master: containers never de-render)
 
             // ORIENT from the game's own inventory-icon POSE (item_poses.json, ripped from each prefab's "Icon" child).
             // The icon shows each item the "right" way -- upright, label out -- so reproducing it (local UP -> world +Y,

@@ -13,6 +13,7 @@ namespace UnturnedGodot
         public byte Width = 5, Height = 4;
         public uint NetId = 0;   // A1 (MP): the server ContainerReplication entity this materialized crate mirrors (0 = SP-local); the F-open request addresses the server by this (B9)
         public virtual bool Preserves => false;   // a fridge overrides this -> its contents are skipped by the daily food-spoilage sweep (PlayerController.FoodSpoilTick)
+        protected virtual float RenderDist => 80f;   // max render distance for the container's meshes (master: storage containers never de-rendered before). Tunable / overridable per subclass.
 
         public static StorageCrate Spawn(Node parent, Vector3 pos, byte w = 5, byte h = 4)
         {
@@ -28,6 +29,17 @@ namespace UnturnedGodot
             Storage = new Items(PlayerInventory.STORAGE);
             Storage.loadSize(Width, Height);
             BuildVisual();
+            ApplyRenderDistance();   // cull the container's meshes past RenderDist -- storage containers never de-rendered before (master). StoreShelf re-applies to each item model as it spawns.
+        }
+
+        // Cap the max render distance on every GeometryInstance3D under the container (mesh bodies + billboard labels),
+        // so a container stops drawing past RenderDist instead of always rendering (master). Recursive, so a multi-mesh
+        // prop or a spawned item model (StoreShelf.PlaceItem passes the model root) is fully covered.
+        protected void ApplyRenderDistance(Node root = null)
+        {
+            root ??= this;
+            if (root is GeometryInstance3D gi) gi.VisibilityRangeEnd = RenderDist;
+            foreach (var child in root.GetChildren()) ApplyRenderDistance(child);
         }
 
         // the container's world appearance. Base = a plain wooden crate; subclasses (StoreShelf) draw their own prop
