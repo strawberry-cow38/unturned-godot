@@ -1236,7 +1236,7 @@ namespace UnturnedGodot
                 }
                 if (_ladder != null)
                 {
-                    _ladder.Active = _scopeHasLadder && _aimAlpha > 0.6f;   // range ladder only while actually ADS'd through a numbered-ladder scope
+                    _ladder.Active = false;   // range ladder REMOVED from all scopes (master). was: _scopeHasLadder && _aimAlpha > 0.6f
                     if (_ladder.Active && _cam != null && Godot.GodotObject.IsInstanceValid(_scopeLens))
                         _ladder.Center = _cam.UnprojectPosition(_scopeLens.GlobalPosition);   // follow the lens's screen position so the ladder sways WITH the glass + crosshair
                         // ...and its ROLL, or the ladder slides with the glass while staying upright. Measured as
