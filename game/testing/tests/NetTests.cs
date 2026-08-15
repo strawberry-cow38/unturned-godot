@@ -2081,6 +2081,7 @@ namespace UnturnedGodot.Testing
                 var eye = sess.Shell.TruePhysicsPosition + Vector3.Up * 1.6f;
                 var dir = z.GlobalPosition + Vector3.Up * 1.2f - eye;
                 sess.Shell.RotationDegrees = new Vector3(0f, Mathf.RadToDeg(Mathf.Atan2(-dir.X, -dir.Z)), 0f);
+                sess.Shell.DebugSetPitch(Mathf.RadToDeg(Mathf.Atan2(dir.Y, new Vector2(dir.X, dir.Z).Length())));   // same fix: aim, do not inherit the climb
                 if (sess.Shell.Fire()) shots++;
                 yield return Ticks(1);
             }
@@ -2120,6 +2121,14 @@ namespace UnturnedGodot.Testing
                 var eye = sess.Shell.TruePhysicsPosition + Vector3.Up * 1.6f;
                 var dir = new Vector3(bype.Pos.x, bype.Pos.y + 1.0f, bype.Pos.z) - eye;   // torso zone (1.0x), like the L0 kill-credit rig
                 sess.Shell.RotationDegrees = new Vector3(0f, Mathf.RadToDeg(Mathf.Atan2(-dir.X, -dir.Z)), 0f);
+                // PITCH TOO. This aimed by yaw alone and inherited whatever _recoilPending had left in the aim,
+                // which made a PvP-resolution test into an accidental recoil-magnitude sensor: recoil accumulates
+                // and never auto-returns (by design -- the player pulls back down), so the burst above left the
+                // muzzle climbing and this one fired over the bystander's head. Measured: 2.39 deg of residual
+                // climb under the old scaling (passed), 6.18 deg once recoil moved to the camera (0 hits). The
+                // subject here is whether the SERVER resolves bullets on a player, so the aim is now stated
+                // outright rather than borrowed from an unrelated system.
+                sess.Shell.DebugSetPitch(Mathf.RadToDeg(Mathf.Atan2(dir.Y, new Vector2(dir.X, dir.Z).Length())));
                 if (sess.Shell.Fire()) pvpShots++;
                 yield return Ticks(1);
             }

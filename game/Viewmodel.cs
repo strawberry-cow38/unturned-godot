@@ -675,6 +675,9 @@ namespace UnturnedGodot
         /// <summary>The scope's current sway, DEGREES (x=pitch, y=yaw). Read by PlayerController and folded into
         /// the aim so the camera moves and the optic stays put. Source-derived amplitude (1 - 1/zoom), stance
         /// scaling and the SteadyAccuracy breath term all live in the one place that computes it.</summary>
+        /// <summary>The gun's own rotational recoil, degrees. Recoil now lands on the AIM, so this must stay at
+        /// rest through a burst -- a non-zero reading means a second impulse path grew back on the viewmodel.</summary>
+        public Vector3 DebugRecoilRot => _recoilRotSpring.CurrentPosition;
         public Vector2 ScopeSwayDegrees => new Vector2(_scopeSway.X, _scopeSway.Y);
         /// <summary>Steadiness 0..1 (breath-hold). Source advances swayTime at (1 - steadyAccuracy/4), so steadying
         /// SLOWS the drift rather than shrinking it -- the sight still wanders, just lazily.</summary>

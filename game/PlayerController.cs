@@ -67,6 +67,11 @@ namespace UnturnedGodot
         public Vector2 DebugScopeSway => new Vector2(_swayAppliedP, _swayAppliedY);
         /// <summary>Test hook: sway as if a magnifying optic were mounted and aimed. See the note at the gate.</summary>
         public bool DebugForceScopeSway;
+        /// <summary>The single recoil impulse rolled for the last shot, degrees (pitch, yaw). One roll, one
+        /// destination -- if this is non-zero the AIM must have moved by it, and a viewmodel-only kick cannot.</summary>
+        public Vector2 DebugLastRecoilKick;
+        /// <summary>The viewmodel's rotational recoil, surfaced so a test can prove the gun stopped taking one.</summary>
+        public Vector3 DebugViewmodelRecoilRot => _viewmodel?.DebugRecoilRot ?? Vector3.Zero;
         Vehicle _driving; bool _fp = true;   // vehicle being driven + camera mode: true = 1st person (spawn default, strawberry), false = 3rd; H toggles (on foot + driving)
         float _driveCamYaw, _driveCamPitch = 15f;   // 3rd-person driving orbit: mouse yaws/pitches the chase cam around the car (master)
         // FP RIDE free-look (#37, MP only): mouse yaw/pitch of the view in VEHICLE-LOCAL space while seated on a
@@ -4456,20 +4461,39 @@ namespace UnturnedGodot
             _sinceShot = 0f;   // infAmmo waits out a lull, so every shot restarts the clock
             // fire feedback + the gun's real per-shot viewmodel shake (Shake_Min/Max_*); zero if no gun loaded
             float stanceMul = StanceRecoilMul();   // crouch/prone recoil steadier once settled -- scales the kick + the aim-climb below (master)
+            float sharp = Skills.SharpshooterRecoilMultiplier();   // SHARPSHOOTER: up to -40% recoil + spread at max level (source UseableGun)
+            // RECOIL MOVES THE CAMERA, NOT THE GUN (strawberry: "making recoil move the whole camera instead of
+            // just the gun. same thing as the scope sway fix u just did, but for recoil impulse").
+            //
+            // This was the sway bug again, and worse. TWO paths existed: `rvPitch/rvYaw` rotated the viewmodel via
+            // Kick, and `_recoilPending` folded a separately-scaled kick into the aim. Each called RandfRange on
+            // its OWN roll, so the gun and the camera kicked by different random amounts on the same shot -- the
+            // weapon climbing one way while your aim went another. Not a magnitude mismatch, two different shots.
+            //
+            // Now: ONE roll, and it lands on the aim. The gun's rotational kick is gone (Kick takes 0/0), so the
+            // muzzle climb you fight is the same motion the bullet answers to.
+            //
+            // MAGNITUDE CHANGED, deliberately: the aim used to receive the roll scaled by Recover_Y/X (0.3-0.75),
+            // with the unscaled remainder going to the gun. With the gun no longer taking any, the aim takes the
+            // whole impulse -- so felt recoil is roughly 1.4-3.3x the old CAMERA figure depending on the gun,
+            // and the numbers in tonight's balance pass now mean what they say rather than being pre-multiplied
+            // by a recovery rate. Dial Recoil_Max_Y if any gun reads hot.
+            //
+            // Positional Shake_* is left on the viewmodel. That is the weapon physically jolting in the hands, a
+            // different channel from where it is pointed, and removing it too would leave a gun that does not
+            // react to its own discharge at all.
             if (Gun != null)
             {
-                float rvPitch = _rng.RandfRange(Gun.RecoilMinY, Gun.RecoilMaxY) * stanceMul;   // vertical recoil -> muzzle climb
-                float rvYaw = _rng.RandfRange(Gun.RecoilMinX, Gun.RecoilMaxX) * stanceMul;     // horizontal recoil -> gun yaw
+                float kickP = _rng.RandfRange(Gun.RecoilMinY, Gun.RecoilMaxY) * sharp * stanceMul;
+                float kickY = _rng.RandfRange(Gun.RecoilMinX, Gun.RecoilMaxX) * sharp * stanceMul
+                            * (_rng.Randf() < 0.5f ? -1f : 1f);
+                _recoilPending += kickP;
+                _recoilYawPending += kickY;
                 _viewmodel?.Kick(new Vector3(Gun.ShakeMinX, Gun.ShakeMinY, Gun.ShakeMinZ) * stanceMul,
-                                 new Vector3(Gun.ShakeMaxX, Gun.ShakeMaxY, Gun.ShakeMaxZ) * stanceMul, rvPitch, rvYaw);
+                                 new Vector3(Gun.ShakeMaxX, Gun.ShakeMaxY, Gun.ShakeMaxZ) * stanceMul, 0f, 0f);
+                DebugLastRecoilKick = new Vector2(kickP, kickY);
             }
             else _viewmodel?.Kick(Vector3.Zero, Vector3.Zero, 0f, 0f);
-            float sharp = Skills.SharpshooterRecoilMultiplier();   // SHARPSHOOTER: up to -40% recoil + spread at max level (source UseableGun)
-            if (Gun != null)   // additive recoil: each shot kicks the AIM up + random-sign yaw (scaled by Recover); it accumulates and STAYS -- player pulls back down (master)
-            {
-                _recoilPending += _rng.RandfRange(Gun.RecoilMinY, Gun.RecoilMaxY) * Gun.RecoverY * sharp * stanceMul;
-                _recoilYawPending += _rng.RandfRange(Gun.RecoilMinX, Gun.RecoilMaxX) * Gun.RecoverX * (_rng.Randf() < 0.5f ? -1f : 1f) * sharp * stanceMul;
-            }
 
             // FROM THE EYES, not the camera (strawberry: "make our bullet raycasts come from the PM's eyes, not the
             // camera middle"). Source: `bullet.origin = player.look.aim.position` (UseableGun.cs:1001). In first person
