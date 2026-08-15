@@ -224,8 +224,10 @@ namespace UnturnedGodot
                 foreach (var line in System.IO.File.ReadAllLines(shp))
                 {
                     var c = line.Split('\t');
-                    if (c.Length < 2 || !d.TryGetValue(c[0], out var gv) || gv.SightPos != Vector3.Zero || c[1].Trim().Length == 0) continue;
-                    gv.SightPos = V3(c[1]); d[c[0]] = gv;   // no default-sight mount -> the gun's own Sight hook
+                    // gate on the DEFAULT-SIGHT MESH, not SightPos==Zero: eaglefire/maplestrike carry a real 0,0,0 sights.tsv
+                    // mount (== Vector3.Zero) that must NOT be clobbered -- a Zero SightPos there is a valid mount, not "missing".
+                    if (c.Length < 2 || !d.TryGetValue(c[0], out var gv) || !string.IsNullOrEmpty(gv.Sight) || c[1].Trim().Length == 0) continue;
+                    gv.SightPos = V3(c[1]); d[c[0]] = gv;   // a gun with NO default sight -> mount optics at its own Sight hook
                 }
             return d;
         }
