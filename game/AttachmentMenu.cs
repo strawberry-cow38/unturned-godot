@@ -68,6 +68,7 @@ namespace UnturnedGodot
             int caliber = Player?.Gun?.Caliber ?? 0;
             foreach (var slot in Slots)
             {
+                if (slot == "Sight" && VM.IntegralSight) continue;   // aug: integral scope, no detachable/replaceable Sight slot (master)
                 bool isMag = slot == "Magazine";
                 // Loose-shell shotgun: the Magazine slot picks an AMMO TYPE (buckshot / slug), not a magazine item. A
                 // pump/break shotgun has no magazine MESH, so this runs BEFORE the SlotHasModel guard that would skip it
@@ -138,6 +139,7 @@ namespace UnturnedGodot
         public bool DetachSlot(string slot)
         {
             if (VM == null) return false;
+            if (slot == "Sight" && VM.IntegralSight) return false;   // aug: integral scope can't be detached (master)
             int installed = AttachmentFit.InstalledId(Player?.HeldItemForTest, slot);
             if (installed < 0 && !(VM.SlotHasModel(slot) && VM.SlotAttached(slot))) return false;
             if (installed >= 0)
@@ -397,6 +399,7 @@ namespace UnturnedGodot
             foreach (var slot in Slots)   // follow the gun: reposition each icon on its projected hook every frame
             {
                 var btn = _icons[slot];
+                if (slot == "Sight" && VM.IntegralSight) { btn.Visible = false; continue; }   // aug: integral scope -> no Sight slot icon at all (master)
                 if (VM.TryGetSlotScreen(slot, out var screen))
                 {
                     btn.Visible = true;

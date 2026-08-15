@@ -79,6 +79,7 @@ namespace UnturnedGodot
         Color _sightColor = new(0.3f, 0.3f, 0.3f);
         string _defaultSightTxt;
         string _gunTxt;   // current gun's mesh name (gv.Gun) -- gates gun-specific attachment tuning (the red-dot ADS aim is eaglefire-tuned for now)
+        public bool IntegralSight => _gunTxt != null && _gunTxt.Contains("augewehr");   // aug: built-in 4x scope is part of the gun -- no detachable/replaceable Sight slot (master)
         Vector3 _defaultSightPos = new(0f, 0.1312f, -0.118f);   // the gun's sight mount (SightPos = hook + iron Model_0); iron/scope/red-dot all mount here
         Vector3 _defaultAimHook = new(0f, -0.4688f, -0.2098f);   // the gun's ADS aim (gv.AimHook) -- the eye point iron/scope/red-dot all aim down
         readonly System.Collections.Generic.List<Casing> _casings = new();
