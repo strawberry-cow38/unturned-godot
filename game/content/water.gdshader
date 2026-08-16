@@ -17,6 +17,8 @@ uniform float swell_speed = 3.0;
 uniform float crest_foam = 0.25;      // swell-height fraction above which crest foam kicks in (lower = more whitecaps)
 uniform float shore_depth = 2.2;      // vertical water depth (m) under which shore foam shows (wider = fuller shore band)
 uniform float detail_strength = 0.30; // fbm fine-ripple perturbation of the normal
+uniform vec4 sky_tint : source_color = vec4(0.52, 0.67, 0.86, 1.0);  // colour reflected at grazing angles (the sky)
+uniform float reflectivity = 0.55;    // how strongly the sky shows at grazing angles (Fresnel)
 uniform sampler2D depth_tex : hint_depth_texture, repeat_disable, filter_linear;
 
 varying vec3 v_wn;       // world-space base swell normal
@@ -70,7 +72,7 @@ void fragment() {
     vp.xyz /= vp.w;
     float bed_y = (INV_VIEW_MATRIX * vec4(vp.xyz, 1.0)).y;
     float depth_v = max(v_wpos.y - bed_y, 0.0);
-    float shore = 1.0 - smoothstep(0.0, 0.7, depth_v);        // NARROW foam band right at the waterline (not the whole gentle shallow shelf)
+    float shore = 1.0 - smoothstep(0.0, 1.1, depth_v);        // foam band at the waterline (a touch longer up the beach; still not the whole shelf)
     shore *= 0.85 + 0.15 * fbm5(v_wpos.xz * 0.4 + TIME * 0.15);
 
     // CREST FOAM: gated by its own noise so caps scatter (belt-and-suspenders; noise swell already won't lattice)
@@ -85,7 +87,13 @@ void fragment() {
     vec3 base = mix(water_shallow.rgb, water_deep.rgb, dt);
     float a = mix(water_shallow.a, water_deep.a, dt);
 
-    ALBEDO = mix(base, foam_color.rgb, foam);
+    // FRESNEL SKY REFLECTION: grazing angles reflect the sky, so the horizon brightens + the water reads as reflective
+    // (real water isn't flat-dark edge-on). Uses the ripple-perturbed normal, so the reflection shimmers with the chop.
+    float fres = pow(1.0 - clamp(dot(NORMAL, VIEW), 0.0, 1.0), 4.0);
+    vec3 water_col = mix(base, sky_tint.rgb, fres * reflectivity);
+    a = mix(a, 1.0, fres * reflectivity * 0.6);   // a sky-reflecting surface reads more opaque at grazing angles
+
+    ALBEDO = mix(water_col, foam_color.rgb, foam);
     ALPHA = mix(a, 1.0, foam);
     ROUGHNESS = mix(0.08, 0.9, foam);
     SPECULAR = 0.5;
