@@ -76,6 +76,18 @@ namespace UnturnedGodot
         float _mainRotorHp, _mainRotorHpMax = 1f, _tailRotorHp, _tailRotorHpMax = 1f;
         float _mainStrikeCd, _tailStrikeCd;
         Area3D _mainDiscArea, _tailDiscArea;
+        CpuParticles3D _mainRotorSmoke, _mainRotorFire, _tailRotorSmoke, _tailRotorFire;
+        /// <summary>Health fraction at which a rotor starts smoking. Above it the rotor is scuffed, not
+        /// failing, and a machine that smokes from the first bullet tells the pilot nothing.</summary>
+        const float RotorSmokeAt = 0.7f;
+        /// <summary>Test seams for the rotor damage FX. Asserted on the EMITTER state rather than on health,
+        /// because "hurt rotors smoke" is a claim about what the player can see -- reading the health back
+        /// would just re-assert the number the test itself set.</summary>
+        public bool DebugMainRotorSmoking => _mainRotorSmoke != null && _mainRotorSmoke.Emitting;
+        public bool DebugMainRotorBurning => _mainRotorFire != null && _mainRotorFire.Emitting;
+        public bool DebugTailRotorSmoking => _tailRotorSmoke != null && _tailRotorSmoke.Emitting;
+        public bool DebugTailRotorBurning => _tailRotorFire != null && _tailRotorFire.Emitting;
+        public int DebugMainRotorSmokeAmount => _mainRotorSmoke?.Amount ?? 0;
         Vector3 _mainHubCentre, _mainHubHalf, _tailHubCentre, _tailHubHalf;
         const float BladeStrikeInterval = 0.45f;   // "hurts the main rotor every x seconds" while something is in the disc
         const float BladeStrikeDamage = 34f, TailStrikeDamage = 30f;
@@ -114,6 +126,36 @@ namespace UnturnedGodot
         /// forever -- which ground both rotors to zero within seconds of every spawn. The symptom was total:
         /// no lift, no yaw, no rotation, every helicopter in the suite free-falling identically, healthy and
         /// damaged alike. A self-overlap reads exactly like a physics failure.</summary>
+        /// <summary>Rotor damage FX: smoke that thickens as a rotor is worn down, fire once it is dead
+        /// (strawberry 2026-08-16: "the rotors should smoke more when hurt and set fire when broken").
+        ///
+        /// "More" is done with emission RATE rather than by switching between a light and a heavy emitter the
+        /// way the hull does, because a rotor degrades continuously under blade strikes -- a two-step plume
+        /// would read as a state change at an arbitrary threshold instead of as something progressively
+        /// failing. A dead rotor keeps smoking underneath the fire; fire alone looks like a decoration sitting
+        /// on an otherwise healthy machine.</summary>
+        void UpdateRotorFx()
+        {
+            Fx(_mainRotorSmoke, _mainRotorFire, MainRotorNorm, MainRotorDead, 16);
+            Fx(_tailRotorSmoke, _tailRotorFire, TailRotorNorm, TailRotorDead, 12);
+
+            static void Fx(CpuParticles3D smoke, CpuParticles3D fire, float norm, bool dead, int maxAmount)
+            {
+                if (smoke != null)
+                {
+                    bool hurt = norm < RotorSmokeAt;
+                    if (smoke.Emitting != hurt) smoke.Emitting = hurt;
+                    if (hurt)
+                    {
+                        // 0 at the smoke threshold -> 1 at destroyed, so the plume grows as it is worn down.
+                        float t = Mathf.Clamp(1f - norm / RotorSmokeAt, 0f, 1f);
+                        smoke.Amount = Mathf.Max(2, Mathf.RoundToInt(Mathf.Lerp(maxAmount * 0.25f, maxAmount, t)));
+                    }
+                }
+                if (fire != null && fire.Emitting != dead) fire.Emitting = dead;
+            }
+        }
+
         bool DiscStruck(Area3D disc)
         {
             foreach (var body in disc.GetOverlappingBodies())
@@ -1705,6 +1747,20 @@ namespace UnturnedGodot
                 v.AddChild(v._mainDiscArea);
                 v._tailDiscArea = MakeDiscArea("TailDisc", s.TailRotorRadius, 0.10f, s.TailRotorHub, new Vector3(0f, 0f, 90f));
                 v.AddChild(v._tailDiscArea);
+
+                // PER-ROTOR SMOKE + FIRE (strawberry 2026-08-16: "the rotors should smoke more when hurt and
+                // set fire when broken"). Separate emitters from the hull's damage smoke, at each hub, so a
+                // dying rotor is legible as a ROTOR failure -- the whole point of splitting their health is
+                // that you can tell which one is going, and one shared plume out of the engine bay would erase
+                // exactly that. Sized well below the hull plumes: these mark a component, not a wreck.
+                v._mainRotorSmoke = MakeSmoke("veh_smoke_1.png", new Color(0.42f, 0.42f, 0.42f), 1.5f, 2.0f, 16, false, 0.5f, 1.1f);
+                v._mainRotorFire = MakeSmoke("veh_fire.png", new Color(1f, 0.72f, 0.32f), 0.6f, 2.6f, 22, true, 0.4f, 0.9f);
+                v._tailRotorSmoke = MakeSmoke("veh_smoke_1.png", new Color(0.42f, 0.42f, 0.42f), 1.2f, 1.6f, 12, false, 0.3f, 0.7f);
+                v._tailRotorFire = MakeSmoke("veh_fire.png", new Color(1f, 0.72f, 0.32f), 0.5f, 2.1f, 16, true, 0.25f, 0.6f);
+                v._mainRotorSmoke.Position = v._mainRotorFire.Position = s.RotorHub;
+                v._tailRotorSmoke.Position = v._tailRotorFire.Position = s.TailRotorHub;
+                foreach (var fx in new[] { v._mainRotorSmoke, v._mainRotorFire, v._tailRotorSmoke, v._tailRotorFire })
+                { fx.Emitting = false; v.AddChild(fx); }
             }
             v._water = s.Water;   // BOAT/AMPHIBIOUS: voxelize the hull box for the source Buoyancy.cs voxel-Archimedes model
             if (s.Water != WaterMode.Car)
@@ -2165,6 +2221,8 @@ namespace UnturnedGodot
             { _mainStrikeCd = BladeStrikeInterval; DamageMainRotor(BladeStrikeDamage); }
             if (_tailDiscArea != null && _tailStrikeCd <= 0f && DiscStruck(_tailDiscArea))
             { _tailStrikeCd = BladeStrikeInterval; DamageTailRotor(TailStrikeDamage); }
+
+            UpdateRotorFx();
 
             // A DAMAGED MAIN ROTOR MAKES LESS LIFT, and a dead one makes none. "main rotor hp low -> reduced
             // thrust ... main rotor dead -> no more gaining vertical thrust, quickly lose height" -- with zero

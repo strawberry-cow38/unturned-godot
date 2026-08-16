@@ -368,6 +368,30 @@ namespace UnturnedGodot.Testing
             T.Check($"...and it is a SPIN, not a tumble (yaw {yawPart:0.##} of total {av.Length():0.##})",
                 yawPart > av.Length() * 0.7f);
 
+            // ROTOR FX: smoke that grows with damage, fire when dead, and NOTHING on a healthy rotor. The last
+            // of those is the one that matters -- a machine that smokes from full health tells the pilot
+            // nothing, and every other check here would pass on it.
+            var fx = Spawn(World, "minicopter", new Vector3(-940f, 3f, 0f));
+            fx.EngineOn = true; fx.DebugNoTurbulence = true;
+            yield return Ticks(5);
+            T.Check($"a healthy rotor does not smoke (main {fx.MainRotorNorm:0.##})", !fx.DebugMainRotorSmoking && !fx.DebugMainRotorBurning);
+            fx.DamageMainRotor(fx.MainRotorHealth * 0.5f);
+            yield return Ticks(5);
+            T.Check($"a hurt rotor smokes ({fx.MainRotorNorm:0.##} health)", fx.DebugMainRotorSmoking && !fx.DebugMainRotorBurning);
+            int lightAmount = fx.DebugMainRotorSmokeAmount;
+            fx.DamageMainRotor(fx.MainRotorHealth * 0.7f);
+            yield return Ticks(5);
+            T.Check($"...and smokes MORE the worse it gets ({lightAmount} -> {fx.DebugMainRotorSmokeAmount} particles at {fx.MainRotorNorm:0.##} health)",
+                fx.DebugMainRotorSmokeAmount > lightAmount);
+            fx.KillMainRotor();
+            yield return Ticks(5);
+            T.Check("a broken rotor catches fire", fx.DebugMainRotorBurning);
+            T.Check("...and keeps smoking under the fire", fx.DebugMainRotorSmoking);
+            // The tail is its own emitter -- killing the main must not set the TAIL on fire, or the FX erase
+            // the very distinction the split health exists to make.
+            T.Check($"...while the untouched tail rotor stays clean (tail {fx.TailRotorNorm:0.##})",
+                !fx.DebugTailRotorBurning && !fx.DebugTailRotorSmoking);
+
             // THE HUB IS THE BULLET TARGET, the disc is not. Shooting the tip of a 5 m blade should not kill a
             // rotor; hitting the machinery at the mast should.
             var hb = Spawn(World, "minicopter", new Vector3(-880f, 4f, 0f));
