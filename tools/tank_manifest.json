@@ -1,0 +1,173 @@
+{
+  "parts": {
+    "tank_hull": {
+      "txt": "tank_hull.txt",
+      "color": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "uv": true
+    },
+    "tank_treads": {
+      "txt": "tank_treads.txt",
+      "color": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "uv": true
+    },
+    "tank_turret": {
+      "txt": "tank_turret.txt",
+      "color": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "uv": true
+    },
+    "tank_turret_1": {
+      "txt": "tank_turret_1.txt",
+      "color": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "uv": true
+    },
+    "tank_gun": {
+      "txt": "tank_gun.txt",
+      "color": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "uv": true
+    },
+    "tank_wheel": {
+      "txt": "tank_wheel.txt",
+      "color": [
+        0.38,
+        0.376,
+        0.376
+      ],
+      "uv": false
+    },
+    "tank_seat_driver": {
+      "txt": "tank_seat_driver.txt",
+      "color": [
+        0.206,
+        0.206,
+        0.206
+      ],
+      "uv": false
+    },
+    "tank_steer": {
+      "txt": "tank_steer.txt",
+      "color": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "uv": false
+    },
+    "tank_seat_gunner": {
+      "txt": "tank_seat_gunner.txt",
+      "color": [
+        0.206,
+        0.206,
+        0.206
+      ],
+      "uv": false
+    }
+  },
+  "rig": {
+    "turret_yaw_pivot": [
+      0.0,
+      0.0,
+      0.85
+    ],
+    "gun_pitch_pivot": [
+      0.0,
+      2.8,
+      -1.15
+    ],
+    "muzzle": [
+      0.0,
+      2.8,
+      -6.306
+    ],
+    "driver_seat": [
+      0.0,
+      0.192,
+      -2.711
+    ],
+    "wheels": [
+      {
+        "name": "Wheel_0",
+        "pos": [
+          -2.0,
+          0.556,
+          -3.0
+        ]
+      },
+      {
+        "name": "Wheel_1",
+        "pos": [
+          2.0,
+          0.556,
+          -3.0
+        ]
+      },
+      {
+        "name": "Wheel_2",
+        "pos": [
+          -2.0,
+          0.556,
+          3.0
+        ]
+      },
+      {
+        "name": "Wheel_3",
+        "pos": [
+          2.0,
+          0.556,
+          3.0
+        ]
+      },
+      {
+        "name": "Wheel_4",
+        "pos": [
+          -2.0,
+          0.556,
+          -1.0
+        ]
+      },
+      {
+        "name": "Wheel_5",
+        "pos": [
+          2.0,
+          0.556,
+          -1.0
+        ]
+      },
+      {
+        "name": "Wheel_6",
+        "pos": [
+          -2.0,
+          0.556,
+          1.0
+        ]
+      },
+      {
+        "name": "Wheel_7",
+        "pos": [
+          2.0,
+          0.556,
+          1.0
+        ]
+      }
+    ]
+  }
+}
