@@ -40,9 +40,18 @@ DEFAULT_BUNDLE = os.path.expanduser("~/unturned-bundles/Bundles/core.masterbundl
 #                the body comes out 11.2 m tall and 4.8 m long, which is a helicopter standing on its tail.
 #   rotors    -> False. A spinning disc has to sit around its own origin, and the pivot orientation is
 #                re-created in code (BuildHeliModel stands the tail rotor on edge itself).
+# EACH ROTOR HAS TWO MESHES AND THEY ARE NOT LODs -- they are the two STATES the game draws:
+#   Model_0 = the physical blades   (main: 11.14 x 0.86 x 0.10 -- a bar)
+#   Model_1 = the spin-blur disc    (main: 11.14 x 11.14 x 0.00 -- a flat plate)
+# Merging them, which the first version of this did, renders a solid opaque disc with blade stripes baked
+# into it that swallows the whole airframe. Every structural test still passed -- the mesh loaded, the pivot
+# spun, the machine flew -- and it took actually LOOKING at a render to see it. Emit them separately so the
+# runtime can swap by rotor speed the way the game does.
 WANTED = {
-    "Rotors/Rotor_1": ("huey_rotor_main", False),
-    "Rotors/Rotor_0": ("huey_rotor_tail", False),
+    "Rotors/Rotor_1/Model_0": ("huey_rotor_main_blades", True),
+    "Rotors/Rotor_1/Model_1": ("huey_rotor_main_disc", True),
+    "Rotors/Rotor_0/Model_0": ("huey_rotor_tail_blades", True),
+    "Rotors/Rotor_0/Model_1": ("huey_rotor_tail_disc", True),
     "Model_0": ("huey_body", True),
     "Model_1": ("huey_body_1", True),
 }

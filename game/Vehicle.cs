@@ -26,6 +26,8 @@ namespace UnturnedGodot
         float _inCollective, _inYaw, _inPitch, _inRoll;   // the pilot's held axes (W/S, A/D, mouse Y, mouse X)
         float _rotorSpin, _rotorRpm;                       // visual blade phase + spool state (0..1)
         Node3D _rotorNode, _tailRotorNode;
+        MeshInstance3D _bladesMesh, _discMesh, _tailBladesMesh, _tailDiscMesh;   // the two drawn states per rotor
+        const float DiscSwapSpool = 0.35f;   // above this the blades are a smear, so the game draws the plate instead
         public bool IsHeli => _heli;
         float _groundClearance;
         /// <summary>Distance from the body origin down to its lowest collision point (skids, hull floor).</summary>
@@ -1343,7 +1345,13 @@ namespace UnturnedGodot
         static void BuildHeliRotors(Vehicle v, Spec s, Material bladeMat, Material frameMat)
         {
             const float HueyRotorSpan = 11.14f, HueyTailSpan = 2.56f;   // measured off the extracted meshes
-            Mesh mainBlades = LoadOptionalObj("huey_rotor_main.txt"), tailBlades = LoadOptionalObj("huey_rotor_tail.txt");
+            var discMat = new StandardMaterial3D   // the blur plate reads as a translucent smear, not a lid
+            {
+                AlbedoColor = new Color(0.12f, 0.12f, 0.13f, 0.30f),
+                Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
+                CullMode = BaseMaterial3D.CullModeEnum.Disabled,
+                ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
+            };
 
             v._rotorNode = new Node3D { Name = "Rotor", Position = s.RotorHub };
             v.AddChild(v._rotorNode);
@@ -1353,33 +1361,55 @@ namespace UnturnedGodot
                 Mesh = new CylinderMesh { TopRadius = 0.11f, BottomRadius = 0.13f, Height = 0.16f, RadialSegments = 10, Rings = 1 },
                 MaterialOverride = frameMat,
             });
-            if (mainBlades != null)
-            {
-                float k = s.RotorRadius * 2f / HueyRotorSpan;
-                v._rotorNode.AddChild(new MeshInstance3D { Name = "Blades", Mesh = mainBlades, MaterialOverride = bladeMat, Scale = new Vector3(k, 1f, k) });
-            }
-            else for (int b = 0; b < 2; b++)
-                v._rotorNode.AddChild(new MeshInstance3D
-                {
-                    Name = $"Blade{b}", Mesh = new BoxMesh { Size = new Vector3(s.RotorRadius * 2f, 0.035f, 0.20f) },
-                    MaterialOverride = bladeMat, RotationDegrees = new Vector3(0f, b * 180f, 0f),
-                });
+            MountRotor(v._rotorNode, "huey_rotor_main_blades.txt", "huey_rotor_main_disc.txt",
+                       s.RotorRadius * 2f / HueyRotorSpan, s.RotorRadius * 2f, 0.035f, 0.20f, bladeMat, discMat,
+                       out v._bladesMesh, out v._discMesh);
 
-            // Tail rotor. Its mesh spins about its own Y like the main one, so the PIVOT is rolled 90 deg to
-            // stand the disc on edge -- that way _tailRotorNode still just turns about local Y in the tick.
+            // Tail rotor. Its meshes lie flat about their own Y like the main rotor's, so the PIVOT is rolled
+            // 90 deg to stand the disc on edge -- that way _tailRotorNode still just turns about local Y.
             v._tailRotorNode = new Node3D { Name = "TailRotor", Position = s.TailRotorHub, RotationDegrees = new Vector3(0f, 0f, 90f) };
             v.AddChild(v._tailRotorNode);
-            if (tailBlades != null)
+            MountRotor(v._tailRotorNode, "huey_rotor_tail_blades.txt", "huey_rotor_tail_disc.txt",
+                       s.TailRotorRadius * 2f / HueyTailSpan, s.TailRotorRadius * 2f, 0.03f, 0.10f, bladeMat, discMat,
+                       out v._tailBladesMesh, out v._tailDiscMesh);
+        }
+
+        /// <summary>Hang one rotor's two states on a pivot: the physical BLADES and the spin-blur DISC.
+        ///
+        /// Both come from the retail Huey, where they are separate meshes precisely because the game swaps
+        /// between them by rotor speed -- stationary blades when it is idle, a smeared plate when it is up.
+        /// Drawing both at once (which the first cut did, by merging them in the extractor) puts an opaque
+        /// 5 m plate over the airframe: structurally perfect, visually a table. Falls back to box blades and
+        /// no disc when the extraction has not been run.</summary>
+        static void MountRotor(Node3D pivot, string bladeFile, string discFile, float scale, float span,
+                               float boxThick, float boxChord, Material bladeMat, Material discMat,
+                               out MeshInstance3D blades, out MeshInstance3D disc)
+        {
+            Mesh bm = LoadOptionalObj(bladeFile), dm = LoadOptionalObj(discFile);
+            disc = null;
+            if (bm != null)
             {
-                float k = s.TailRotorRadius * 2f / HueyTailSpan;
-                v._tailRotorNode.AddChild(new MeshInstance3D { Name = "TailBlades", Mesh = tailBlades, MaterialOverride = bladeMat, Scale = new Vector3(k, 1f, k) });
-            }
-            else for (int b = 0; b < 2; b++)
-                v._tailRotorNode.AddChild(new MeshInstance3D
+                blades = new MeshInstance3D { Name = "Blades", Mesh = bm, MaterialOverride = bladeMat, Scale = new Vector3(scale, 1f, scale) };
+                pivot.AddChild(blades);
+                if (dm != null)
                 {
-                    Name = $"TailBlade{b}", Mesh = new BoxMesh { Size = new Vector3(s.TailRotorRadius * 2f, 0.03f, 0.10f) },
-                    MaterialOverride = bladeMat, RotationDegrees = new Vector3(0f, b * 180f, 0f),
-                });
+                    disc = new MeshInstance3D
+                    {
+                        Name = "Disc", Mesh = dm, MaterialOverride = discMat,
+                        Scale = new Vector3(scale, 1f, scale), Visible = false,
+                        // A blur plate must NOT cast a shadow. It is a rendering trick standing in for two
+                        // thin blades, and a solid 5 m disc of shade under a hovering minicopter is the most
+                        // conspicuous thing in the frame -- the translucent plate itself is nearly invisible
+                        // from above while its shadow stays fully opaque, so the artefact reads as a bug in
+                        // the lighting rather than in the rotor.
+                        CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
+                    };
+                    pivot.AddChild(disc);
+                }
+                return;
+            }
+            blades = new MeshInstance3D { Name = "Blades", Mesh = new BoxMesh { Size = new Vector3(span, boxThick, boxChord) }, MaterialOverride = bladeMat };
+            pivot.AddChild(blades);
         }
 
         static Vehicle Build(Spec s, int variant, string specKey)
@@ -1767,6 +1797,19 @@ namespace UnturnedGodot
             }
             if (_tailRotorNode != null)
                 _tailRotorNode.Rotation = new Vector3(0f, _rotorSpin * 2.6f, 0f);   // pivot is rolled 90 deg, so local Y is still the spin axis
+            // Swap blades <-> blur disc by rotor speed, which is why the retail prefab ships both meshes. Below
+            // the threshold you see two blades sitting still; above it, the smear plate.
+            bool spun = _rotorRpm > DiscSwapSpool;
+            if (_discMesh != null)
+            {
+                if (_bladesMesh != null) _bladesMesh.Visible = !spun;
+                _discMesh.Visible = spun;
+            }
+            if (_tailDiscMesh != null)
+            {
+                if (_tailBladesMesh != null) _tailBladesMesh.Visible = !spun;
+                _tailDiscMesh.Visible = spun;
+            }
 
             if (_exploded) return;   // a wreck is just a falling body
 
