@@ -4547,6 +4547,12 @@ namespace UnturnedGodot
         // come from the equipped gun's real ItemGunAsset .dat when loaded.
         public bool Fire()
         {
+            // A GUNNER fires the MOUNT, not what they are carrying. Checked before every held-weapon gate below,
+            // because those gates are about a rifle in your hands -- reload state, chambering, swimming, the
+            // viewmodel's equip animation -- and none of them describe a belt-fed gun bolted to an airframe.
+            if (_driving != null && _seatIndex != 0 && _driving.HasTurret(_seatIndex))
+                return FireTurret();
+
             if (_fireCd > 0f || Ammo <= 0 || _reloading || _unloading || _magSwapAnimTimer > 0 || _needsRechamber || _rechambering || _cam == null || _dead || (_driving != null && (_seatIndex == 0 || !_fp))
                 || !HasGunOut || IsSwimming || (_invUI?.IsOpen ?? false)) return false;   // IsSwimming: guns are canUseUnderwater=false -> no shot while swimming, incl. the polled AUTO/burst tick (source PlayerEquipment). !HasGunOut: no gun in hand (melee/held item disarm it) -> no shot, even from the polled auto/burst tick after switching away mid-fire (master)
             // -- also while the bolt/pump still needs cycling -- kills a queued burst the frame we die (the tick calls Fire()) + ignores death-screen clicks (master). _driving guard fixes the "stray tracer flies straight south" bug: the auto/burst tick (_PhysicsProcess) calls Fire() on held-LMB WITHOUT a driving check, and while driving _cam is TopLevel (detached chase cam) -> aim = the chase cam's fixed heading, not the player's look. LMB honks while driving anyway.
@@ -4723,6 +4729,38 @@ namespace UnturnedGodot
         // playerDamage is carried SEPARATELY from `damage` (which is the zombie number the SP path has always
         // used). A player-shaped target resolves through the humanoid zone table, a zombie through its own limb
         // model -- one field could not serve both without silently reporting the wrong model on one of them.
+        /// <summary>Fire the turret this seat operates. The shot leaves the MUZZLE along the BARREL, not from the
+        /// camera along the look ray -- the mount clamps its traverse and the view does not, so a camera-sourced
+        /// shot would fire straight through the limits that make it a chin turret.</summary>
+        bool FireTurret()
+        {
+            if (_dead || (_invUI?.IsOpen ?? false)) return false;
+            if (!_driving.TryTurretFire(_seatIndex, out var origin, out var dir, out var gunId)) return false;
+
+            var def = TurretGunDef(gunId);
+            float dmg = def?.PlayerDamage ?? 40f;
+            float veh = def?.VehicleDamage ?? 10f;
+            float obj = def?.ObjectDamage ?? 25f;
+            float muzzleVel = def?.MuzzleVelocity ?? 120f;
+            int steps = def != null ? Mathf.Max(1, (int)(def.Range / 2f)) : 75;
+            SpawnBullet(origin, dir * muzzleVel, steps, 0f, dmg, veh, obj, dmg);
+            return true;
+        }
+
+        static readonly System.Collections.Generic.Dictionary<string, GunDef> _turretGuns = new();
+        /// <summary>The mount's gun, loaded once per id and cached. A turret firing every frame must not re-parse
+        /// a .dat every shot.</summary>
+        static GunDef TurretGunDef(string id)
+        {
+            if (string.IsNullOrEmpty(id)) return null;
+            if (_turretGuns.TryGetValue(id, out var g)) return g;
+            using var f = Godot.FileAccess.Open($"res://content/{id}.dat", Godot.FileAccess.ModeFlags.Read);
+            var txt = f?.GetAsText();
+            g = !string.IsNullOrEmpty(txt) ? GunDef.FromDatText(txt) : null;
+            _turretGuns[id] = g;
+            return g;
+        }
+
         void SpawnBullet(Vector3 pos, Vector3 vel, int steps, float gravity, float damage, float vehicleDamage, float objectDamage, float playerDamage = 0f)
         {
             var b = new Bullet { Pos = pos, Origin = pos, Vel = vel, StepsLeft = Mathf.Max(1, steps), Gravity = gravity, Damage = damage, VehicleDamage = vehicleDamage, ObjectDamage = objectDamage, PlayerDamage = playerDamage,

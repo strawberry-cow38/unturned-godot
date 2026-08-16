@@ -156,6 +156,35 @@ namespace UnturnedGodot.Testing
                         $"({pinned.DistanceTo(atLimit):0.###} m from the clamped pose)",
                     pinned.DistanceTo(atLimit) < 0.01f);
             }
+            // ---- AND IT FIRES ITS OWN GUN, ALONG THE BARREL.
+            //
+            // The mount carries its own belt (retail's model: a gun item bolted to a seat), so it must not eat
+            // the gunner's rifle rounds -- and the shot has to leave along the BARREL rather than the look ray.
+            // Those two coincide whenever the turret is pointed where you are looking, which is most of the
+            // time, so the check deliberately aims the gun somewhere the camera is not.
+            hind2.AimTurret(1, 0f, 0f);
+            int belt0 = hind2.TurretAmmo(1);
+            T.Check($"hind: the turret starts with its own belt ({belt0} rounds)", belt0 > 0);
+            T.Check("...and a seat with no turret cannot fire one",
+                !hind2.TryTurretFire(0, out _, out _, out _));
+
+            bool fired = hind2.TryTurretFire(1, out var o1, out var d1, out var gun1);
+            T.Check($"...the gunner's seat can ({gun1})", fired && gun1 != null);
+            T.Check($"...it costs a round ({belt0} -> {hind2.TurretAmmo(1)})", hind2.TurretAmmo(1) == belt0 - 1);
+            // Cycling: a second shot in the same instant is refused, or a held trigger empties 200 rounds in a
+            // frame and the belt means nothing.
+            T.Check("...and it will not fire again the same instant", !hind2.TryTurretFire(1, out _, out _, out _));
+
+            // The shot must follow the gun. Yaw the mount hard over and the direction has to swing with it.
+            yield return Ticks(20);
+            hind2.AimTurret(1, 90f, 0f);
+            yield return Ticks(1);
+            hind2.TryTurretFire(1, out var o2, out var d2, out _);
+            T.Check($"...and the shot leaves along the BARREL, not the look ray " +
+                    $"(dir {d1.Normalized().Dot(d2.Normalized()):0.##} after a 90 deg traverse)",
+                d1.Normalized().Dot(d2.Normalized()) < 0.5f);
+            T.Check($"...from a muzzle that moved with it ({o1.DistanceTo(o2):0.##} m)", o1.DistanceTo(o2) > 0.5f);
+
             hind2.QueueFree();
             yield return Ticks(1);
 

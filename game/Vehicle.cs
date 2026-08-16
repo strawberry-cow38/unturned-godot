@@ -333,10 +333,51 @@ namespace UnturnedGodot
             public Vector3 Muzzle;                 // where a shot leaves, relative to the PITCH frame
             public float YawMin = -180f, YawMax = 180f;
             public float PitchMin = -20f, PitchMax = 60f;
+            // The mount carries its OWN gun and its OWN belt, which is retail's model (TurretInfo.itemID): a
+            // turret is a gun item bolted to a seat, so it does not eat the gunner's rifle rounds.
+            public string GunId = "nykorev";
+            public int Belt = 200;
             public Color Colour = new Color(0.16f, 0.17f, 0.14f);
         }
         public TurretDef[] Turrets = System.Array.Empty<TurretDef>();
         Node3D[] _turretYaw, _turretPitch;
+        int[] _turretAmmo; float[] _turretCd;
+
+        public int TurretAmmo(int seat)
+        {
+            for (int i = 0; i < Turrets.Length; i++) if (Turrets[i].Seat == seat) return _turretAmmo?[i] ?? 0;
+            return 0;
+        }
+        public bool HasTurret(int seat)
+        {
+            for (int i = 0; i < Turrets.Length; i++) if (Turrets[i].Seat == seat) return true;
+            return false;
+        }
+
+        /// <summary>Try to fire the turret on `seat`. Returns false -- without consuming anything -- if that seat
+        /// has no turret, the belt is empty, or it is still cycling. On success yields the world muzzle and the
+        /// direction the BARREL points, which is not the direction the gunner is looking: the mount clamps, the
+        /// view does not, and a shot that came out of the camera instead of the gun would quietly ignore the
+        /// traverse limits that are the whole point of a chin turret.</summary>
+        public bool TryTurretFire(int seat, out Vector3 origin, out Vector3 dir, out string gunId)
+        {
+            origin = Vector3.Zero; dir = Vector3.Forward; gunId = null;
+            for (int i = 0; i < Turrets.Length; i++)
+            {
+                if (Turrets[i].Seat != seat) continue;
+                if (_turretPitch?[i] == null || _turretAmmo == null) return false;
+                if (_turretCd[i] > 0f || _turretAmmo[i] <= 0) return false;
+                var t = Turrets[i];
+                origin = _turretPitch[i].ToGlobal(t.Muzzle);
+                dir = -_turretPitch[i].GlobalTransform.Basis.Z;   // barrel axis, not the look ray
+                gunId = t.GunId;
+                _turretAmmo[i]--;
+                _turretCd[i] = TurretCycle;
+                return true;
+            }
+            return false;
+        }
+        const float TurretCycle = 0.12f;   // belt-fed cadence; the gun's own Firerate governs the held-weapon path
 
         /// <summary>Aim the turret operated by `seat`, in degrees, clamped to its traverse limits. Returns false
         /// if that seat has no turret -- callers must not assume every seat is a gun position.</summary>
@@ -2255,6 +2296,9 @@ namespace UnturnedGodot
                 v.AddChild(yaw);
                 v._turretYaw[i] = yaw; v._turretPitch[i] = pitch;
             }
+            v._turretAmmo = new int[v.Turrets.Length];
+            v._turretCd = new float[v.Turrets.Length];
+            for (int i = 0; i < v.Turrets.Length; i++) v._turretAmmo[i] = v.Turrets[i].Belt;
             if (s.DriverEye != Vector3.Zero) v.DriverEyeLocal = s.DriverEye;   // tall-cab override (semi); else keep the shared default
             v._outlineColor = ItemTool.RarityColorUI(s.Rarity);   // real vehicle rarity -> look-at outline/label colour (master)
             v._info = new InfoBillboard { TopLevel = true };   // look-at info billboard: name + HP/fuel/battery BARS, world-space at the cabin
@@ -3581,6 +3625,11 @@ namespace UnturnedGodot
         public override void _PhysicsProcess(double delta)
         {
             using var _prof = Prof.Scope("Vehicle.phys");
+            // Turret cycle timers. Ticked BEFORE the perf early-returns below, so a turret does not jam because
+            // its vehicle happened to be far enough away to skip a frame of simulation.
+            if (_turretCd != null)
+                for (int i = 0; i < _turretCd.Length; i++)
+                    if (_turretCd[i] > 0f) _turretCd[i] = Mathf.Max(0f, _turretCd[i] - (float)delta);
             if (_lookFocused && _info != null)   // keep the info billboard at the cabin + live (before any perf early-return)
             {
                 _info.GlobalPosition = GlobalPosition + Vector3.Up * InfoH;
