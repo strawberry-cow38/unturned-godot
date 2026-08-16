@@ -512,7 +512,12 @@ namespace UnturnedGodot
         {
             if (_selection.Count == 0) return;
             var cap = new List<(string guid, Transform3D x)>();   // for undo: re-place the deleted props
-            foreach (var sel in _selection) { string g = sel.HasMeta("guid") ? (string)sel.GetMeta("guid") : ""; if (g.Length > 0) cap.Add((g, sel.GlobalTransform)); }
+            int uncapturable = 0;
+            foreach (var sel in _selection)
+            {
+                string g = sel.HasMeta("guid") ? (string)sel.GetMeta("guid") : "";
+                if (g.Length > 0) cap.Add((g, sel.GlobalTransform)); else uncapturable++;
+            }
             foreach (var sel in new List<Node3D>(_selection))
             {
                 _placed.Remove(sel);
@@ -521,10 +526,22 @@ namespace UnturnedGodot
                 sel.QueueFree();
             }
             Select(null);
-            if (cap.Count > 0) _editor.PushUndo("delete", () =>
+            // PUSH A STEP FOR EVERY DELETE, even one that restores nothing. Only nodes carrying a "guid" meta can
+            // be re-placed, and loot crates, store shelves, grid-power boxes, gas pumps and baked buildings carry
+            // none -- so deleting one used to push NO undo step at all while the delete still happened. The next
+            // Ctrl+Z then popped an older, unrelated action: the history silently stopped matching what the user
+            // did, which is worse than an undo that cannot restore everything. Review 2026-08-16.
+            //
+            // Restoring the others needs their own re-placement plumbing (each has its own Place* factory and its
+            // own save file), so this stops the desync and SAYS what it could not bring back rather than implying
+            // a clean undo.
+            if (cap.Count > 0 || uncapturable > 0) _editor.PushUndo("delete", () =>
             {
                 _selection.Clear();
                 foreach (var (g, x) in cap) { var nn = RePlace(g, x); if (nn != null) _selection.Add(nn); }
+                if (uncapturable > 0)
+                    GD.PrintErr($"[editor] undo: {uncapturable} placement(s) could not be restored " +
+                                "(loot crate / store shelf / grid power / gas pump / baked building -- no guid to re-place from)");
                 _gizmo.Attach(Primary); RefreshMarkers();
             });
         }

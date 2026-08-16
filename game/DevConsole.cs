@@ -24,6 +24,9 @@ namespace UnturnedGodot
         // BEFORE its AllowCheats gate. The early toggleGlobalPower branch below does the routing; membership here
         // documents that the local process-global flip only happens on the pure-direct SP path (RemoteClient == null).
         static readonly string[] ServerGatedVerbs = { "give", "xp", "skill", "teleport", "tp", "toggleglobalpower", "globalpower", "grid" };
+        // Verbs below the arg guard that are legal with NO argument. Keep this in step when adding one, or the
+        // guard silently swallows it and the verb becomes unreachable from the console.
+        static readonly string[] NoArgVerbs = { "unarmed", "fridge", "fluid", "survival" };
         bool _resultHooked;
 
         LineEdit _input;
@@ -70,7 +73,16 @@ namespace UnturnedGodot
             _input.Visible = open;
             _log.Visible = open;
             if (open) { _input.GrabFocus(); Input.MouseMode = Input.MouseModeEnum.Visible; }
-            else { _input.ReleaseFocus(); _input.Clear(); Input.MouseMode = Input.MouseModeEnum.Captured; }
+            else
+            {
+                _input.ReleaseFocus(); _input.Clear();
+                // Only recapture if nothing ELSE still wants the cursor. This used to recapture unconditionally,
+                // so opening the inventory (Tab) then toggling the console twice left the mouse Captured with the
+                // dashboard still drawn: the cursor vanished so the grid could not be clicked, while
+                // PlayerController's polled input -- which gates on `MouseMode != Captured` -- came back to life
+                // and walked the player around, auto-firing through the open UI on a held LMB. Review 2026-08-16.
+                if (!(Player?.AnyBlockingUiOpen ?? false)) Input.MouseMode = Input.MouseModeEnum.Captured;
+            }
         }
 
         void OnSubmit(string text)
@@ -152,8 +164,13 @@ namespace UnturnedGodot
                                               : vl == "off" || vl == "0" || vl == "false" ? false
                                               : !GraphicsOptions.VertexShading;
                 int changed = GraphicsOptions.ApplyShading(GetTree()?.Root);
+                // Report what could NOT be converted alongside what was. A ShaderMaterial has no ShadingMode to
+                // flip, and the terrain and grass are both ShaderMaterial -- so a big `changed` number on its own
+                // still reads as "vertex lighting measured" when a large share of the frame never moved.
+                int shaderOnly = GraphicsOptions.CountShaderMaterialRenderers(GetTree()?.Root);
                 Log($"vertex lighting {(GraphicsOptions.VertexShading ? "ON" : "OFF")} -- {changed} material(s) changed"
-                    + (changed == 0 ? " (nothing matched -- the switch did nothing, do not read the fps as a result)" : ""));
+                    + (changed == 0 ? " (nothing matched -- the switch did nothing, do not read the fps as a result)" : "")
+                    + (shaderOnly > 0 ? $"; {shaderOnly} shader-material renderer(s) UNCHANGED (terrain/grass -- their lighting is in the shader, so this is a partial A/B)" : ""));
                 return;
             }
 
@@ -361,7 +378,16 @@ namespace UnturnedGodot
                 return;
             }
 
-            if (arg.Length == 0) { Log("usage: give <item> | vehicle <name>"); return; }
+            // NO-ARG VERBS LIVE BELOW THIS LINE, so the guard only fires for verbs that genuinely need an argument.
+            // It used to sit above `unarmed`, `fridge`, `fluid` and `survival`, which take none -- typing `unarmed`
+            // printed "usage: give <item> | vehicle <name>" and EquipUnarmed was unreachable from the console
+            // entirely. The verbs handled above the guard already carry a comment about this exact hazard; these
+            // four were added underneath it. Review 2026-08-16.
+            if (arg.Length == 0 && System.Array.IndexOf(NoArgVerbs, verb) < 0)
+            {
+                Log("usage: give <item> | vehicle <name>");
+                return;
+            }
 
             if (RemoteClient != null && System.Array.IndexOf(ServerGatedVerbs, verb) >= 0)
             {

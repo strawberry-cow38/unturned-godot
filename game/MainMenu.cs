@@ -284,10 +284,12 @@ namespace UnturnedGodot
         void TogglePlayPanel()
         {
             bool show = !_playPanel.Visible;
+            // HideAllPanels rather than hand-hiding a list -- every hand-written list here omitted the GRAPHICS
+            // panel, and all four panels sit at the same screen position, so Configuration -> Play left both
+            // visible and overlapping with whichever is later in child order eating the clicks. That is the
+            // failure HideAllPanels' own doc comment names as its reason for existing. Review 2026-08-16.
+            HideAllPanels();
             _playPanel.Visible = show;
-            if (_stubPanel != null) _stubPanel.Visible = false;
-            if (_workshopPanel != null) _workshopPanel.Visible = false;
-            if (_serversPanel != null) _serversPanel.Visible = false;
             if (_advancedPanel != null) _advancedPanel.Visible = false;   // advanced starts collapsed each open
             _targetTab = 1;   // hold the Play framing while the panel is open
         }
@@ -296,6 +298,7 @@ namespace UnturnedGodot
         void ToggleServersPanel()
         {
             bool show = !_serversPanel.Visible;
+            HideAllPanels();   // see TogglePlayPanel -- the hand-written list omitted the graphics panel
             _serversPanel.Visible = show;
             if (_playPanel != null) _playPanel.Visible = false;
             if (_stubPanel != null) _stubPanel.Visible = false;
@@ -397,6 +400,7 @@ namespace UnturnedGodot
         {
             bool show = !_workshopPanel.Visible;
             if (show) RefreshMapList();   // a map saved since the menu was built has to appear without a restart
+            HideAllPanels();   // see TogglePlayPanel
             _workshopPanel.Visible = show;
             if (_playPanel != null) _playPanel.Visible = false;
             if (_stubPanel != null) _stubPanel.Visible = false;
@@ -422,9 +426,7 @@ namespace UnturnedGodot
 
         void ShowStub(string name)
         {
-            _playPanel.Visible = false;
-            if (_serversPanel != null) _serversPanel.Visible = false;
-            if (_advancedPanel != null) _advancedPanel.Visible = false;
+            HideAllPanels();   // see TogglePlayPanel -- this list omitted BOTH the graphics and workshop panels
             _stubPanel.Visible = true;
             ((Label)_stubPanel.GetNode("VBoxContainer/head")).Text = name.ToUpper();
         }

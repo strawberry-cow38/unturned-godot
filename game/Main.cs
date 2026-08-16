@@ -153,7 +153,12 @@ namespace UnturnedGodot
                 else if (arg == "--horde") _peiHorde = true;       // with --peiplay: a zombie ring converges on the jeep -> vehicle<->zombie combat on real PEI
                 else if (arg.StartsWith("--pick=")) picks = arg["--pick=".Length..];
                 else if (arg.StartsWith("--gun=")) gun = arg["--gun=".Length..];
-                else if (arg == "--demo") demo = true;
+                // NOTE: `--demo` is claimed higher up this same else-if chain (it sets _demo, the scripted
+                // honk/explode script), so the second branch that used to live here could never run. `demo` stayed
+                // false forever, which made the DemoDirector + overview camera + fixed 1920x1080 capture size
+                // unreachable: `--play --demo --write-movie` recorded interactive play from the player camera at
+                // the window size instead of the scripted demo. Both meanings now ride the ONE flag, so the two
+                // cannot drift apart again. Review 2026-08-16.
                 else if (arg == "--play") play = true;
                 else if (arg == "--nozombies") _noZombies = true;   // no-zombie test environment
                 else if (arg == "--newzombies") ZombieDirector.Enabled = true;   // the rewrite (docs/ZOMBIE_REWRITE_PLAN.md): sim rows + borrowed rigs, no per-zombie body. Off = the old ZombieField/ZombieController path, untouched
@@ -558,6 +563,9 @@ namespace UnturnedGodot
                 return;
             }
 
+            // `demo` is the SAME flag as _demo now (see the arg loop) -- the second --demo branch that used to set
+            // this local was dead, so the scripted-demo build path had been unreachable since it was written.
+            demo = _demo;
             if (play || demo)
             {
                 // Interactive play fills the screen (maximized). Setting a fixed Size while the project opens

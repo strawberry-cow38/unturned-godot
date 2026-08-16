@@ -13,7 +13,13 @@ namespace UnturnedGodot
     {
         public PlayerController Player;
         HBoxContainer _hotbar;
-        string _hotbarSig = "\u0000";   // cheap signature so the row is rebuilt only when its CONTENTS change
+        // Cheap signature so the row is rebuilt only when its CONTENTS change. A NUMBER, and the entry list is a
+        // reused member, because this runs every frame: the first cut built a List, a second list via ConvertAll,
+        // an interpolated string per entry and a string.Join -- roughly six allocations a frame, ~360 objects a
+        // second, on the main gameplay path, all of it thrown away by the very gate meant to prevent the work.
+        // A gate that allocates to decide whether to skip the work is not saving anything. Review 2026-08-16.
+        ulong _hotbarSig = ulong.MaxValue;   // MaxValue = "not built yet", distinct from the empty row's hash
+        readonly System.Collections.Generic.List<(int Key, ushort Id)> _hbEntries = new();
 
         // Palette.cs: COLOR_R (health), COLOR_O (food), COLOR_B (water), COLOR_Y (stamina), COLOR_G (virus), cyan (oxygen).
         static readonly Color CR = new Color(0.7490196f, 0.12156863f, 0.12156863f);
@@ -285,14 +291,24 @@ namespace UnturnedGodot
         /// binds, which is the input -- this is what the player sees.</summary>
         public int DebugHotbarCells => _hotbar?.GetChildCount() ?? 0;
 
+        /// <summary>Drop the row's cells. RemoveChild BEFORE QueueFree, which is deferred to end-of-frame: while
+        /// the dying cells are still children the HBoxContainer lays out old AND new together for a frame (the row
+        /// visibly widens and shifts on every content change), and DebugHotbarCells reports old+new to anything
+        /// reading before the next frame. The suite only passes because every assertion sits behind a tick wait.</summary>
+        void ClearHotbarCells()
+        {
+            foreach (var c in _hotbar.GetChildren()) { _hotbar.RemoveChild(c); c.QueueFree(); }
+        }
+
         void RefreshHotbar()
         {
             if (_hotbar == null) return;
             var inv = Player?.Inventory;
-            if (inv == null) { if (_hotbarSig != "") { _hotbarSig = ""; foreach (var c in _hotbar.GetChildren()) c.QueueFree(); } return; }
+            if (inv == null) { if (_hotbarSig != 0) { _hotbarSig = 0; ClearHotbarCells(); } return; }
 
             // (key, item id) for every slot that HAS something. Nothing held = nothing drawn.
-            var entries = new System.Collections.Generic.List<(int Key, ushort Id)>();
+            var entries = _hbEntries;
+            entries.Clear();
             for (byte slot = 0; slot < SDG.Unturned.PlayerInventory.SLOTS; slot++)
             {
                 var pg = inv.items[slot];
@@ -311,10 +327,17 @@ namespace UnturnedGodot
                 if (it != null) entries.Add((k, it.id));
             }
 
-            var sig = string.Join(",", entries.ConvertAll(e => $"{e.Key}:{e.Id}"));
+            // FNV-1a over the (key, id) pairs -- order-sensitive, allocation-free, and 64 bits is far more than
+            // this row's state can collide in.
+            ulong sig = 1469598103934665603UL;
+            foreach (var (key, id) in entries)
+            {
+                sig = (sig ^ (uint)key) * 1099511628211UL;
+                sig = (sig ^ id) * 1099511628211UL;
+            }
             if (sig == _hotbarSig) return;
             _hotbarSig = sig;
-            foreach (var c in _hotbar.GetChildren()) c.QueueFree();
+            ClearHotbarCells();
 
             foreach (var (key, id) in entries)
             {

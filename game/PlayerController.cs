@@ -2710,6 +2710,13 @@ namespace UnturnedGodot
         // Latched on the StorageOpened fact -- never on the request -- so the dashboard mirrors arbitration.
         uint _openCrateNetId;
         public bool DashboardOpen => _invUI?.IsOpen ?? false;   // L1 net tests: did the storage fact open the dashboard
+
+        /// <summary>Is any UI up that wants the cursor? Asked before ANYTHING recaptures the mouse, because
+        /// recapturing under an open panel is worse than leaving it free: every polled input in here gates on
+        /// `MouseMode == Captured`, so the player starts walking and auto-firing while staring at a dashboard
+        /// they can no longer click. Review 2026-08-16.</summary>
+        public bool AnyBlockingUiOpen
+            => (_invUI?.IsOpen ?? false) || (_skillsUI?.IsOpen ?? false) || (AmmoRadial?.IsOpen ?? false);
         public void DebugCloseCrate() => CloseCrate();          // L1 net tests: the ESC/Tab crate-close path without an InputEvent
 
         /// <summary>StorageOpened landed (server-validated): latch the crate + open the dashboard. The
