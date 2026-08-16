@@ -14,8 +14,8 @@ uniform float swell_dir_deg = 30.0;   // swell travel direction
 uniform float swell_fu = 0.09;        // noise freq ALONG travel (higher = tighter crest spacing)
 uniform float swell_fw = 0.030;       // noise freq ALONG the crest (lower = longer crests); fu/fw = 3:1 anisotropy (master's pick)
 uniform float swell_speed = 3.0;
-uniform float crest_foam = 0.45;      // swell-height fraction above which crest foam kicks in
-uniform float shore_depth = 1.6;      // vertical water depth (m) under which shore foam shows
+uniform float crest_foam = 0.25;      // swell-height fraction above which crest foam kicks in (lower = more whitecaps)
+uniform float shore_depth = 2.2;      // vertical water depth (m) under which shore foam shows (wider = fuller shore band)
 uniform float detail_strength = 0.30; // fbm fine-ripple perturbation of the normal
 uniform sampler2D depth_tex : hint_depth_texture, repeat_disable, filter_linear;
 
@@ -70,14 +70,13 @@ void fragment() {
     vp.xyz /= vp.w;
     float bed_y = (INV_VIEW_MATRIX * vec4(vp.xyz, 1.0)).y;
     float depth_v = max(v_wpos.y - bed_y, 0.0);
-    float shore = 1.0 - smoothstep(0.0, shore_depth, depth_v);
-    shore = pow(shore, 1.2);
-    shore *= 0.75 + 0.25 * fbm5(v_wpos.xz * 0.4 + TIME * 0.15);
+    float shore = 1.0 - smoothstep(0.0, 0.7, depth_v);        // NARROW foam band right at the waterline (not the whole gentle shallow shelf)
+    shore *= 0.85 + 0.15 * fbm5(v_wpos.xz * 0.4 + TIME * 0.15);
 
     // CREST FOAM: gated by its own noise so caps scatter (belt-and-suspenders; noise swell already won't lattice)
     float capMask = fbm5(v_wpos.xz * 0.09 + vec2(TIME * 0.04, TIME * -0.03));
-    float gate = smoothstep(0.0, 0.30, capMask + 0.15);
-    float crest = smoothstep(crest_foam, crest_foam + 0.18, v_crest) * gate;
+    float gate = smoothstep(-0.45, 0.05, capMask);   // looser -> whitecaps on more peaks (noise swell has no lattice to hide)
+    float crest = smoothstep(crest_foam, crest_foam + 0.20, v_crest) * gate;
 
     float foam = clamp(max(crest, shore), 0.0, 1.0);
 

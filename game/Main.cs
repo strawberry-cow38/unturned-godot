@@ -1073,7 +1073,11 @@ namespace UnturnedGodot
                 if (_veh != null) { _veh.QueueFree(); _veh = null; }
                 _vehTest = false;
                 GetWindow().Size = new Vector2I(1280, 720);
-                _vehCam.LookAtFromPosition(new Vector3(0f, 3.2f, 34f), new Vector3(0f, 0.6f, -50f), Vector3.Up);
+                if (System.Environment.GetEnvironmentVariable("UG_BEACH") == "1")
+                    // look DOWN at the shoreline (the ramp's waterline sits ~Z=14) so the shore-foam band + lapping read clearly
+                    _vehCam.LookAtFromPosition(new Vector3(0f, 12f, 40f), new Vector3(0f, -1f, 6f), Vector3.Up);
+                else
+                    _vehCam.LookAtFromPosition(new Vector3(0f, 3.2f, 34f), new Vector3(0f, 0.6f, -50f), Vector3.Up);
             }
         }
 
