@@ -286,7 +286,7 @@ namespace UnturnedGodot
                     // "x + 1 / max" when a round rides the chamber (master). The +1 is REAL state, not decoration:
                     // Ammo can legitimately exceed AmmoMax, and rendering it as a flat "31 / 30" reads as a bug in
                     // the counter rather than as the extra round it actually is.
-                    int max = Player.Gun?.AmmoMax ?? Player.Ammo;
+                    int max = Player.MagCapacity;   // the loaded mag's capacity (a 100-round drum reads /100, not the gun's Ammo_Max)
                     if (Player.GunHasChamber)   // always show the mag + chamber split (master): +1 when a round's chambered, +0 when not
                     {
                         int chambered = Player.ChamberedRounds;   // 0 or 1

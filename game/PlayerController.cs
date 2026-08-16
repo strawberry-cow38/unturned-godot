@@ -3244,7 +3244,14 @@ namespace UnturnedGodot
         // PUMP now gets it (ghost loading) where the old `!IsShotgun` test refused it, and a REVOLVER does not,
         // where the old test allowed it and gave the Ace 6+1. See GunDef.HasChamberRound.
         bool HasChamber => Gun?.HasChamberRound ?? false;
-        int ChamberedCap => (Gun?.AmmoMax ?? 30) + (HasChamber ? 1 : 0);   // absolute max Ammo = a full mag plus the one in the chamber
+        // A gun's magazine capacity for a GIVEN mag. Normally the gun's Ammo_Max caps it -- a reload draws Min(mag, AmmoMax),
+        // so a 12-round .45 mag in a 7-round 1911 still loads 7 (master's .45/.50 niche). A "reservoir" mag (the 100-round
+        // Military Drum, magOverridesCapacity) OVERRIDES that: its own magCapacity becomes the gun's capacity, so the drum
+        // actually holds 100 in the gun (master: "the 100 rounds should apply to the actual gun").
+        int CapForMag(SDG.Unturned.ItemAsset a) => (a != null && a.magOverridesCapacity && a.magCapacity > 0) ? a.magCapacity : (Gun?.AmmoMax ?? 30);
+        int LoadedMagCap => CapForMag(_loadedMagId > 0 ? SDG.Unturned.Assets.find((ushort)_loadedMagId) : null);   // capacity of the mag currently loaded
+        public int MagCapacity => Gun != null ? LoadedMagCap : Ammo;   // HUD denominator: the loaded mag's capacity (drum = 100), gun-null falls back like the old Gun?.AmmoMax ?? Ammo
+        int ChamberedCap => LoadedMagCap + (HasChamber ? 1 : 0);   // absolute max Ammo = a full (currently-loaded) mag plus the one in the chamber
 
         // infAmmo: refill the held gun once firing has been idle for InfAmmoIdle. Fills to ChamberedCap rather than
         // mirroring the reload's from-empty rule ((HasChamber && Ammo > 0) ? max+1 : max) on purpose -- that rule
@@ -3286,7 +3293,7 @@ namespace UnturnedGodot
             int oldAmmo = Ammo;
             bool chambered = HasChamber && oldAmmo > 0;                                   // a round rides in the chamber through a TACTICAL swap
             Inventory.items[fb].removeItem(fi);                                          // take the fresh mag out of the bag
-            int loaded = System.Math.Min(fresh.amount, Gun?.AmmoMax ?? fresh.amount);    // rounds from the fresh mag
+            int loaded = System.Math.Min(fresh.amount, CapForMag(SDG.Unturned.Assets.find(fresh.id)));    // rounds off the fresh mag (the drum overrides Ammo_Max; a normal mag is capped by it)
             Ammo = loaded + (chambered ? 1 : 0);                                         // +1: the already-chambered round stays on top of the fresh mag
             Inventory?.tryAddItem(new Item((ushort)_loadedMagId, (byte)System.Math.Max(0, oldAmmo - (chambered ? 1 : 0))));   // old mag back MINUS the chambered round (it stayed in the gun)
             _loadedMagId = fresh.id;
@@ -3396,7 +3403,7 @@ namespace UnturnedGodot
             bool chambered = HasChamber && Ammo > 0;
             int oldMag = Ammo - (chambered ? 1 : 0);
             if (_loadedMagId > 0) Inventory.tryAddItem(new SDG.Unturned.Item((ushort)_loadedMagId, (byte)System.Math.Max(0, oldMag)));
-            Ammo = System.Math.Min(mag.amount, Gun.AmmoMax) + (chambered ? 1 : 0);
+            Ammo = System.Math.Min(mag.amount, CapForMag(SDG.Unturned.Assets.find(mag.id))) + (chambered ? 1 : 0);
             _loadedMagId = mag.id;
             _chambered = HasChamber && Ammo > 0;
             // the chamber tracks its OWN round's type, independent of the mag (master): a tactical swap (a round was

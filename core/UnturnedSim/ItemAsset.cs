@@ -68,6 +68,10 @@ namespace SDG.Unturned
         // magCaliber == GunDef.Caliber. magCapacity = max rounds (0 = not a magazine). (Military STANAG = cap 30, caliber 1.)
         public int magCapacity;
         public int magCaliber;
+        // A "reservoir" magazine (the 100-round Military Drum): its magCapacity OVERRIDES the gun's Ammo_Max, so the gun
+        // actually holds all of it. Default false -> a normal mag is still capped by the gun's Ammo_Max on a reload draw
+        // (master: keeps the .45/.50 "gun caps the mag" niche, where a 12-round mag in a 7-round pistol still loads 7).
+        public bool magOverridesCapacity;
         // WHICH ROUND this magazine is loaded with, distinct from magCaliber above (which is the mechanical
         // "does this mag fit that gun" group). The two differ precisely where a magazine body feeds more than one
         // cartridge: a STANAG mag physically fits every group-1 rifle, but a .300 BLK one must not chamber in a
