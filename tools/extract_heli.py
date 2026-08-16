@@ -18,7 +18,55 @@ Usage: python3 tools/extract_heli.py [--bundle PATH] [--outdir DIR] [--only NAME
 import argparse, os, sys
 import UnityPy
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from extract_huey import tt, build_index, find_path, local_rot, collect_meshes, mesh_to_obj
+from extract_huey import tt, build_index, find_path, local_rot, collect_meshes, quat_apply
+
+
+def mesh_to_obj_uv(mesh_objs, group):
+    """Like extract_huey.mesh_to_obj but KEEPS UVs (+ normals): parses vt/vn from Mesh.export() and emits
+    v/vt/vn faces, so the body can sample the vehicle's paintable palette by UV (it renders flat grey
+    otherwise). Same Z-negate + winding-reverse convention as the position-only writer."""
+    Vs, Ts, Ns, Fs = [], [], [], []
+    for mo, (ox, oy, oz), rot in mesh_objs:
+        text = mo.read().export()
+        vb, tb, nb = len(Vs), len(Ts), len(Ns)
+        for line in text.splitlines():
+            p = line.split()
+            if not p:
+                continue
+            if p[0] == "v":
+                vx, vy, vz = quat_apply(rot, (float(p[1]), float(p[2]), float(p[3])))
+                Vs.append((vx + ox, vy + oy, -(vz + oz)))
+            elif p[0] == "vt":
+                Ts.append((p[1], p[2]))
+            elif p[0] == "vn":
+                nx, ny, nz = quat_apply(rot, (float(p[1]), float(p[2]), float(p[3])))
+                Ns.append((nx, ny, -nz))
+            elif p[0] == "f":
+                idx = []
+                for tok in p[1:]:
+                    q = tok.split("/")
+                    vi = int(q[0]) + vb
+                    ti = (int(q[1]) + tb) if len(q) > 1 and q[1] else None
+                    ni = (int(q[2]) + nb) if len(q) > 2 and q[2] else None
+                    idx.append((vi, ti, ni))
+                Fs.append(list(reversed(idx)))   # reverse winding to compensate the Z flip
+    L = [f"g {group}"]
+    L += ["v %.6f %.6f %.6f" % v for v in Vs]
+    L += ["vt %s %s" % t for t in Ts]
+    L += ["vn %.6f %.6f %.6f" % n for n in Ns]
+    for f in Fs:
+        s = "f"
+        for (vi, ti, ni) in f:
+            if ti and ni:
+                s += " %d/%d/%d" % (vi, ti, ni)
+            elif ni:
+                s += " %d//%d" % (vi, ni)
+            elif ti:
+                s += " %d/%d" % (vi, ti)
+            else:
+                s += " %d" % vi
+        L.append(s)
+    return "\n".join(L) + "\n"
 
 HELIS = {                                  # vehicle prefab dir -> output content prefix
     "hind": "hind",
@@ -70,7 +118,7 @@ def main():
                 print(f"  !! {path}: no MeshFilter in subtree", file=sys.stderr)
                 continue
             name = f"{prefix}_{suffix}"
-            obj = mesh_to_obj(acc, name)
+            obj = mesh_to_obj_uv(acc, name)
             out = os.path.abspath(os.path.join(args.outdir, f"{name}.txt"))
             with open(out, "w") as f:
                 f.write(obj)
