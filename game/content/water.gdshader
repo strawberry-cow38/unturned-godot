@@ -72,8 +72,8 @@ void fragment() {
     vp.xyz /= vp.w;
     float bed_y = (INV_VIEW_MATRIX * vec4(vp.xyz, 1.0)).y;
     float depth_v = max(v_wpos.y - bed_y, 0.0);
-    float shore = 1.0 - smoothstep(0.0, 1.1, depth_v);        // foam band at the waterline (a touch longer up the beach; still not the whole shelf)
-    shore *= 0.85 + 0.15 * fbm5(v_wpos.xz * 0.4 + TIME * 0.15);
+    float shore = 1.0 - smoothstep(0.0, 0.7, depth_v);        // foam band at the waterline (a touch longer up the beach; still not the whole shelf)
+    shore *= 0.45 + 0.15 * fbm5(v_wpos.xz * 0.4 + TIME * 0.15);
 
     // CREST FOAM: gated by its own noise so caps scatter (belt-and-suspenders; noise swell already won't lattice)
     float capMask = fbm5(v_wpos.xz * 0.09 + vec2(TIME * 0.04, TIME * -0.03));
