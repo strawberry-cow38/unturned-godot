@@ -1588,13 +1588,30 @@ namespace UnturnedGodot
         public void Dequip() => EquipUnarmed();
 
         // Unarmed = bare fists: arms in the melee ready hold, LMB weak / RMB strong punch, no weapon mesh.
+        /// <summary>Is anything actually in hand? Fists are the unarmed state, not an item -- so this is false
+        /// when unarmed, which is what makes "press an empty slot to put it away" a no-op rather than a
+        /// pointless viewmodel rebuild every keypress.</summary>
+        // Which holster page the held item came out of, or -1. Needed because "the held item left its slot" and
+        // "a bag-bound consumable is no longer in the bag" are different events with different right answers --
+        // without this, eating the last of a stack would also yank an unrelated weapon out of your hands.
+        int _heldSlotPage = -1;
+
+        public bool HasSomethingHeld => _heldItem != null || Gun != null || _heldConsumable != null
+                                     || _heldFuelItem != null || _heldFluidItem != null || _deployable != null
+                                     || (_heldMeleeName != null && _heldMeleeName != "fists");
+
+        /// <summary>Record that what is now in hand came out of holster page `page` (-1 = not a holster). The
+        /// inventory UI's equip path holsters an item and equips it in one gesture, so it has to say where it
+        /// put it, or "take it out of the slot and it leaves your hands" would not fire for that route.</summary>
+        public void NoteHeldFromSlot(int page) => _heldSlotPage = page;
+
         public void EquipUnarmed()
         {
             SaveGunState(); ClearDeployable();
             _heldItem = null; Gun = null; _heldConsumable = null; _heldFuelItem = null; _heldFluidItem = null; _heldConsumableMesh = null;
             _reloading = false; _reloadTimer = 0; _hammerActive = false; _hammerPending = false;
             _needsRechamber = false; _rechambering = false; _shotCountForRechamber = 0;
-            _torchAnimOn = false; _pendingMeleeHit = -1f;
+            _torchAnimOn = false; _pendingMeleeHit = -1f; _heldSlotPage = -1;
             _melee = MeleeDef.Fists; _heldMeleeName = "fists";   // fists ARE a melee -> the existing LMB/RMB swing path punches
             _viewmodel?.QueueFree();
             _viewmodel = new Viewmodel { Fists = true };
@@ -1617,7 +1634,10 @@ namespace UnturnedGodot
             if (Inventory == null || page >= Inventory.items.Length) return;
             var pg = Inventory.items[page];
             byte idx = pg.getIndex(x, y);
-            if (idx == byte.MaxValue) return;                          // empty slot -> nothing to equip
+            // PRESSING AN EMPTY SLOT PUTS WHAT YOU ARE HOLDING AWAY (strawberry 2026-08-16: "if you are holding
+            // an item, and you press a number key for an empty slot, de-equip that way too"). It used to return
+            // silently, so an empty key was a no-op you could press forever.
+            if (idx == byte.MaxValue) { if (HasSomethingHeld) EquipUnarmed(); return; }
             var j = pg.getItem(idx);
             // Pressing the key for what is ALREADY in hand PUTS IT AWAY (strawberry: "switching to the same slot you
             // currently have equipped will put away that item, leaving u unarmed"). Same toggle the inventory's
@@ -1625,7 +1645,19 @@ namespace UnturnedGodot
             // rather than inside EquipItemAsset so a genuine re-equip from elsewhere (revert-after-consumable) is
             // unaffected -- this is specifically the key-press-the-same-slot gesture.
             if (IsHeld(j.GetAsset(), j.item)) { EquipUnarmed(); return; }
-            EquipItemAsset(j.GetAsset(), j.item);
+            // A HOLSTER ITEM ONLY REACHES YOUR HANDS FROM ITS SLOT (strawberry: "guns can only be sent to the
+            // hands if they are in the 1/2 slots"). The .dat's Slot key decides: a rifle is PRIMARY, a sidearm
+            // SECONDARY, and neither can be equipped straight out of a bag page -- so a 3-9 bind on a backpack
+            // cell stops acting as a third weapon slot. Everything else is NONE and unaffected, which is what
+            // "binding items 3-9 still works for the equip path of all non-guns" means.
+            var asset = j.GetAsset();
+            if (page >= PlayerInventory.SLOTS && asset != null && !asset.slot.CanEquipFromBag())
+            {
+                HUD.Alert("Holster it first");
+                return;
+            }
+            _heldSlotPage = page < PlayerInventory.SLOTS ? page : -1;
+            EquipItemAsset(asset, j.item);
         }
 
         // Dispatch-equip an item into the hand by its asset type (gun / melee / consumable). True if it equipped.
@@ -4116,6 +4148,15 @@ namespace UnturnedGodot
             // the ported inventory + its dashboard. Demo-populate it (real items) so there's something to show.
             ItemCatalog.RegisterAll();
             Inventory = new PlayerInventory();
+            // TAKE IT OUT OF THE SLOT, IT LEAVES YOUR HANDS (strawberry 2026-08-16: "if the item in your hands
+            // was in a pri/sec slot, and you remove it from the pri/sec slot, de-equip the item from your
+            // hands"). Driven off the inventory's own change event rather than every drag/move call site, so a
+            // future path that empties a holster cannot forget to do it.
+            Inventory.onPageChanged += page =>
+            {
+                if (_heldSlotPage < 0 || page != (byte)_heldSlotPage) return;
+                if (Inventory.items[page].getItemCount() == 0) EquipUnarmed();
+            };
             PopulateDemoInventory();
             // P4: dress the 3P body off the worn slots. The demo kit already wears Cargo Pants (209) + Alicepack (253);
             // add a starter shirt + hat, then Refresh() paints/attaches every worn slot so the player isn't bare skin.

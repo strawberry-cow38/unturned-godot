@@ -810,14 +810,29 @@ namespace UnturnedGodot
             // holster a grid gun into the first empty hand slot; an already-slotted gun just stays put.
             // MP: the slot pick is computed on the mirrored grid and the server runs the same TryDrag
             // (the echo re-seats the jar); the in-hand equip above stays local either way.
-            if (_selPage >= PlayerInventory.SLOTS)
-                for (byte slot = 0; slot < PlayerInventory.SLOTS; slot++)
-                    if (Inv.items[slot].getItemCount() == 0)
-                    {
-                        if (Player == null || !Player.RequestEquipItem(_selPage, _selX, _selY, slot))
-                            Inv.TryDrag(_selPage, _selX, _selY, slot, 0, 0, 0);
-                        break;
-                    }
+            // TO ITS PREFERRED SLOT, SWAPPING WHAT IS THERE (strawberry 2026-08-16: "equipping a gun via the
+            // rmb context menu will send it to its preferred slot, swapping whatever is in that slot"). The
+            // preference comes from the .dat's Slot key: a sidearm goes to the hip, a rifle to the primary, and
+            // a rifle is never put in the secondary at all.
+            //
+            // An EMPTY compatible slot still wins over evicting someone. A sidearm with a full secondary and an
+            // empty primary should holster into the primary rather than throwing the other sidearm out -- the
+            // instruction is about where it PREFERS to go, not about always displacing.
+            if (_selPage >= PlayerInventory.SLOTS && asset != null)
+            {
+                int want = asset.slot.PreferredSlot();
+                if (want >= 0)
+                {
+                    byte slot = (byte)want;
+                    if (Inv.items[slot].getItemCount() > 0)
+                        for (byte alt = 0; alt < PlayerInventory.SLOTS; alt++)
+                            if (asset.slot.CanEquipInPage(alt) && Inv.items[alt].getItemCount() == 0) { slot = alt; break; }
+                    if (Player == null || !Player.RequestEquipItem(_selPage, _selX, _selY, slot))
+                        Inv.TryDrag(_selPage, _selX, _selY, slot, 0, 0, 0);   // TryDrag SWAPS when the destination is occupied
+                    Player?.NoteHeldFromSlot(slot);   // so emptying that slot later pulls it out of the hands
+                }
+            }
+            else if (_selPage < PlayerInventory.SLOTS) Player?.NoteHeldFromSlot(_selPage);
             CloseSelection();
             Refresh();
             // #8: source closes the dashboard on EVERY successful weapon equip -- checkSlot (both branches, :928/:955)
@@ -1394,6 +1409,11 @@ namespace UnturnedGodot
         // real ground-truth item icons (the game's Extras/Icons, matched by id + downscaled) -> content/items/icons/<id>.png.
         // SleekItem draws the rendered item ICON on the rarity tile, not a name -> load once, cache, fall back to the name label.
         static readonly Dictionary<int, Texture2D> _iconCache = new();
+        /// <summary>Item icon by id, cached. Public so the HUD's hotbar draws the SAME texture the bag does --
+        /// a second loader would be a second cache and a second chance to disagree about what an item looks
+        /// like.</summary>
+        public static Texture2D IconFor(int id) => Icon(id);
+
         static Texture2D Icon(int id)
         {
             if (_iconCache.TryGetValue(id, out var t)) return t;

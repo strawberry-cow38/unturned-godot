@@ -21,6 +21,9 @@ namespace SDG.Unturned
         public string guid = "";   // the item's own GUID (from items_catalog.tsv) -> lets blueprints resolve ingredient GUIDs to numeric ids
         public string itemName = "";
         public string description = "";   // the real localized Description from the item's English.dat
+        /// <summary>Holster rule from the .dat's `Slot` key. NONE by default, which is right for everything that
+        /// is not a weapon: it stays equippable from the bag.</summary>
+        public ESlotType slot = ESlotType.NONE;
         public byte size_x = 1;
         public byte size_y = 1;
         public EItemType type = EItemType.GENERIC;
