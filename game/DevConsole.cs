@@ -28,7 +28,7 @@ namespace UnturnedGodot
 
         LineEdit _input;
         Label _log;
-        static readonly string[] Verbs = { "give", "vehicle", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "toggleGlobalPower", "toggleGlobalWater", "toggleBbat", "infFuel", "infAmmo", "wear", "unwear", "fluid", "date", "dateset", "whenBlackout", "triggerGlobalBrownout", "hurtmain", "killmain", "hurttail", "killtail", "profiler", "renderscale", "zshadows", "freezerigs" };
+        static readonly string[] Verbs = { "give", "vehicle", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "toggleGlobalPower", "toggleGlobalWater", "toggleBbat", "infFuel", "infAmmo", "wear", "unwear", "fluid", "date", "dateset", "whenBlackout", "triggerGlobalBrownout", "hurtmain", "killmain", "hurttail", "killtail", "profiler", "renderscale", "zshadows", "freezerigs", "vertexlight" };
         static readonly EItemType[] ClothingTypes = { EItemType.SHIRT, EItemType.PANTS, EItemType.HAT, EItemType.VEST, EItemType.MASK, EItemType.GLASSES, EItemType.BACKPACK };
         readonly System.Collections.Generic.List<string> _history = new();
         int _histIdx;
@@ -133,6 +133,22 @@ namespace UnturnedGodot
                 else heli.DamageMainRotor(heli.MainRotorHealth * 0.5f + 1f);
                 Log($"{verb}: main {heli.MainRotorHealth:0} ({heli.MainRotorNorm * 100f:0}%), tail {heli.TailRotorHealth:0} ({heli.TailRotorNorm * 100f:0}%)"
                     + (heli.MainRotorDead ? " -- MAIN DEAD, no lift" : "") + (heli.TailRotorDead ? " -- TAIL DEAD, spinning" : ""));
+                return;
+            }
+
+            // vertexlight [on|off] -- flip every material between per-pixel and per-vertex shading, to A/B
+            // lighting cost on REAL hardware (this dev box is software-rasterised, so the measurement is
+            // meaningless here). Reports how many materials changed, because a switch that silently matched
+            // nothing looks exactly like one that worked.
+            if (verb is "vertexlight" or "vertexlighting")
+            {
+                string vl = arg.ToLowerInvariant();
+                GraphicsOptions.VertexShading = vl == "on" || vl == "1" || vl == "true" ? true
+                                              : vl == "off" || vl == "0" || vl == "false" ? false
+                                              : !GraphicsOptions.VertexShading;
+                int changed = GraphicsOptions.ApplyShading(GetTree()?.Root);
+                Log($"vertex lighting {(GraphicsOptions.VertexShading ? "ON" : "OFF")} -- {changed} material(s) changed"
+                    + (changed == 0 ? " (nothing matched -- the switch did nothing, do not read the fps as a result)" : ""));
                 return;
             }
 

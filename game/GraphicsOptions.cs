@@ -52,6 +52,48 @@ namespace UnturnedGodot
         public static float DrawDistance = 1.0f;
         public static Vector2I Resolution = Vector2I.Zero;   // (0,0) = leave the window alone / native
 
+        // VERTEX LIGHTING A/B (strawberry 2026-08-16). Flips every StandardMaterial3D in the tree between
+        // per-pixel and per-vertex shading at runtime, so the question can be ANSWERED on real hardware instead
+        // of argued about. It is a diagnostic switch, not a setting: this box renders on lavapipe (software
+        // rasterisation), where GPU lighting cost measured against a CPU rasteriser tells you nothing about a
+        // real GPU, so the measurement has to happen on the player's machine.
+        //
+        // Worth knowing before reading the result: per-vertex shading only makes each lit PIXEL cheaper. It does
+        // not touch shadow map rendering, and an omni light defaults to a cube shadow -- six faces re-rendered
+        // when anything in range moves. A big win here means we were fill-bound; no change means the cost is
+        // shadows, which is the more useful finding of the two.
+        public static bool VertexShading;
+
+        /// <summary>Apply the current VertexShading mode to every material under `root`. Returns how many
+        /// materials it actually changed -- a count, not a bool, because "0 changed" and "applied fine" are the
+        /// same green tick otherwise, and this exists to be trusted from a profiler reading.</summary>
+        public static int ApplyShading(Node root)
+        {
+            var mode = VertexShading ? BaseMaterial3D.ShadingModeEnum.PerVertex : BaseMaterial3D.ShadingModeEnum.PerPixel;
+            int n = 0;
+            void Walk(Node node)
+            {
+                if (node is MeshInstance3D mi)
+                {
+                    // Unshaded materials are left alone. They are unshaded on purpose (build ghosts, port
+                    // arrows, wire overlays) and dragging them into a lit mode would be a visual change
+                    // masquerading as a perf experiment.
+                    if (mi.MaterialOverride is StandardMaterial3D so && so.ShadingMode != BaseMaterial3D.ShadingModeEnum.Unshaded
+                        && so.ShadingMode != mode) { so.ShadingMode = mode; n++; }
+                    for (int i = 0; i < mi.GetSurfaceOverrideMaterialCount(); i++)
+                        if (mi.GetSurfaceOverrideMaterial(i) is StandardMaterial3D ss && ss.ShadingMode != BaseMaterial3D.ShadingModeEnum.Unshaded
+                            && ss.ShadingMode != mode) { ss.ShadingMode = mode; n++; }
+                    if (mi.Mesh != null)
+                        for (int i = 0; i < mi.Mesh.GetSurfaceCount(); i++)
+                            if (mi.Mesh.SurfaceGetMaterial(i) is StandardMaterial3D ms && ms.ShadingMode != BaseMaterial3D.ShadingModeEnum.Unshaded
+                                && ms.ShadingMode != mode) { ms.ShadingMode = mode; n++; }
+                }
+                foreach (var c in node.GetChildren()) Walk(c);
+            }
+            if (root != null) Walk(root);
+            return n;
+        }
+
         /// <summary>Window sizes offered. Zero is "Native", which is first so the default is never a forced resize --
         /// a settings menu that resizes your window the moment you open it is its own kind of bug.</summary>
         public static readonly Vector2I[] ResOrder =
