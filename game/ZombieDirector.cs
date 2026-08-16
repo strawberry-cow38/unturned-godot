@@ -190,7 +190,15 @@ namespace UnturnedGodot
                 // dedicated server resolves its own players through the net layer instead.
                 if (attacks[i].PlayerIndex != 0) continue;
                 if (Player == null || !IsInstanceValid(Player)) continue;
-                Player.TakeDamage(attacks[i].Damage, G(_sim.PositionOf(0)));
+                // THE ATTACKER'S position, resolved from the event's own Id. This passed PositionOf(0) -- row 0,
+                // an arbitrary zombie, because the sim swap-removes -- while the event has carried Id all along.
+                // That argument drives the camera flinch axis, so a zombie behind you flinched the view from
+                // wherever row 0 happened to be standing, possibly hundreds of metres away. Invisible in any
+                // single-zombie test, because there row 0 IS the attacker. The legacy controller always passed its
+                // own position; this is a regression the rewrite introduced. Falls back to the player's own
+                // position (a null flinch direction) if the attacker died in the same step. Review 2026-08-16.
+                Vector3 from = _sim.TryGetRow(attacks[i].Id, out int arow) ? G(_sim.PositionOf(arow)) : Player.GlobalPosition;
+                Player.TakeDamage(attacks[i].Damage, from);
             }
         }
 
@@ -357,7 +365,15 @@ namespace UnturnedGodot
             if (hit.Distance >= wallDistance) return false;      // the wall was in front of it
             point = G(hit.Point);
             head = hit.Limb == ZombieLimb.Skull;
-            killed = _sim.Damage(hit.Id, damage, hit.Limb);
+            // LIMB MULTIPLIER, applied here because this is the sim's BULLET entry point and a bullet is the only
+            // thing that hits a specific part. ZombieSim.Damage takes a limb but uses it only for the death event
+            // -- its comment says "the caller owns limb multipliers" and no caller did, so under --newzombies (and
+            // in MP) a headshot dealt exactly as much as a shin hit: 20 damage against 100 health, five skull hits
+            // to kill, against a design of "almost all guns should 1 shot headshot zombies". The legacy collider
+            // path has always applied it in ZombieController.DamageHitLimb, which is why the two systems disagreed
+            // by 5x on the same shot. That path does NOT come through here, so this cannot double-apply; the flat
+            // callers (explosions, melee, the wire) still pass a resolved amount, unchanged. Review 2026-08-16.
+            killed = _sim.Damage(hit.Id, damage * SDG.Unturned.ZombieCombat.MultFor(hit.Limb), hit.Limb);
             return true;
         }
 

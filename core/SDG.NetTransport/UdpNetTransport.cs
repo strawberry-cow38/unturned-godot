@@ -16,8 +16,15 @@ namespace SDG.NetTransport.Udp
 
         public UdpTransportConnection(Socket socket, IPEndPoint remote) { _socket = socket; Remote = remote; }
 
+        // Guarded for the same reason as UdpClientTransport.Send: this is the SERVER's traffic path, so an
+        // EAGAIN/ENOBUFS on a fragment burst used to throw all the way out through TickReplication into
+        // SimRoot.Frame and abandon that tick's replication for every remaining peer -- one slow peer's full
+        // socket buffer stalling everyone. Losing a datagram is what the reliability layer above is for.
         public void Send(byte[] buffer, long size, ENetReliability reliability)
-            => _socket.SendTo(buffer, 0, (int)size, SocketFlags.None, Remote);
+        {
+            try { _socket.SendTo(buffer, 0, (int)size, SocketFlags.None, Remote); }
+            catch (SocketException) { }
+        }
 
         public bool TryGetIPv4Address(out uint address)
         {
@@ -143,20 +150,43 @@ namespace SDG.NetTransport.Udp
         }
         public void TearDown() { _socket?.Close(); _socket = null; }
 
+        // Swallow a send failure rather than throwing into the sim. The socket is NON-BLOCKING and NetSession.Admit
+        // blasts every fragment of a message back to back with no pacing, so a near-budget join snapshot is 100+
+        // datagrams in one loop and can hit EAGAIN/ENOBUFS; an iptables REJECT gives EPERM the same way. The throw
+        // used to unwind Transmit -> Admit -> TickReplication -> SimRoot.Frame, abandoning that whole tick's
+        // replication for every remaining peer. ReplyStatus already caught this on the status socket -- the hazard
+        // was handled at the one call site that carries no game traffic and missed at the ones that do. A dropped
+        // datagram is exactly what the reliability layer above already exists to handle. Review 2026-08-16.
         public void Send(byte[] buffer, long size, ENetReliability reliability)
-            => _socket.SendTo(buffer, 0, (int)size, SocketFlags.None, _server);
+        {
+            try { _socket.SendTo(buffer, 0, (int)size, SocketFlags.None, _server); }
+            catch (SocketException) { }
+        }
 
         public bool Receive(byte[] buffer, out long size)
         {
             size = 0;
             if (_socket == null) return false;
-            try
+            // ONLY THE SERVER WE DIALLED. `from` was filled and then thrown away, so any datagram that reached this
+            // ephemeral port was handed to HandleDatagram as if the server had sent it: one spoofed 12-byte
+            // Control/Disconnect drops the player, and a spoofed UnreliableSequenced datagram is worse -- it
+            // advances _lastUnreliableSeq, so the REAL server's next snapshots are discarded as stale. The server
+            // side has never had this hole because peers are keyed on the connection itself. Review 2026-08-16.
+            //
+            // Foreign datagrams are SKIPPED rather than returned as "nothing to read": the caller drains with
+            // `while (Receive(...))`, so bailing on the first stray would leave real packets queued behind it and
+            // hand an attacker a cheap way to starve the loop by spraying.
+            while (true)
             {
-                EndPoint from = new IPEndPoint(IPAddress.Any, 0);
-                int n = _socket.ReceiveFrom(buffer, 0, buffer.Length, SocketFlags.None, ref from);
-                size = n; return true;
+                try
+                {
+                    EndPoint from = new IPEndPoint(IPAddress.Any, 0);
+                    int n = _socket.ReceiveFrom(buffer, 0, buffer.Length, SocketFlags.None, ref from);
+                    if (from is IPEndPoint ip && (ip.Port != _server.Port || !ip.Address.Equals(_server.Address))) continue;
+                    size = n; return true;
+                }
+                catch (SocketException) { return false; }   // WouldBlock -> nothing left this frame
             }
-            catch (SocketException) { return false; }
         }
 
         public bool TryGetIPv4Address(out IPv4Address address) { address = IPv4Address.Zero; return false; }

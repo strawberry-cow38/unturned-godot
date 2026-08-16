@@ -372,6 +372,15 @@ namespace UnturnedGodot
             else if (hasSteps) travel = g.Range / steps;
             else if (hasTravel) steps = Godot.Mathf.CeilToInt(g.Range / travel);
             else { travel = 10f; steps = Godot.Mathf.CeilToInt(g.Range / 10f); }
+            // A WARHEAD ROUND GETS A FLIGHT TIME, not a Range-derived one. launcher_rocket.dat is Range 12 with no
+            // ballistic keys, which yields 2 steps -- the rocket died 20 m out, and a bullet that runs out of steps
+            // is dropped WITHOUT detonating: no impact, no blast, and the one round of a one-round magazine gone.
+            // Retail never routes an Action Rocket through the bullet path at all (it spawns a projectile driven by
+            // ballisticForce, where Range means something else entirely), so this port inherits a lifetime retail
+            // never applied. Keyed on the round carrying an explosion rather than floored for everything, because
+            // every ordinary gun's Range IS its intended travel and lengthening those would change their reach and
+            // cost more steps for nothing. 60 steps at 0.02 s = 1.2 s of flight. Review 2026-08-16.
+            if (d.ParseFloat("Explosion_Radius", 0f) > 0f) steps = System.Math.Max(steps, 60);
             g.BallisticSteps = System.Math.Max(1, steps);
             g.MuzzleVelocity = travel * 50f;   // TOCK_PER_SECOND = 50
             if (d.ContainsKey("Ballistic_Drop"))

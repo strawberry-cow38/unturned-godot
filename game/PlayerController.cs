@@ -3867,6 +3867,28 @@ namespace UnturnedGodot
         // (wedged). We restore the body state EnterVehicle disabled -- collision, Visible, HUD, and Park the car --
         // because Respawn() does NOT re-enable those, so the post-respawn shell would otherwise be invisible +
         // non-colliding. Cam + viewmodel are left to Die() (death-cam). Idempotent: no-op when on foot.
+        /// <summary>Lift a vehicle-exit spot out of the ground it may have landed in.
+        ///
+        /// The raw spot is "2.4 m off the driver's side, 1 m up", which lands INSIDE the hill whenever the vehicle
+        /// is parked across a slope with the rise on that side -- and the same block re-enables the player's
+        /// collision shapes, so the body comes back interpenetrating. Both MP exit paths already clamp
+        /// (ClientWorldSession samples the terrain, and the server has AdjustExitSpot); the two SP paths used the
+        /// raw spot. Review 2026-08-16.
+        ///
+        /// Swept with a ray rather than a terrain height sample -- PlayerController has no Terrain reference, and
+        /// a ray also catches the floor you are standing on inside a building, which a heightmap lookup cannot.</summary>
+        Vector3 ClampExitSpot(Vector3 spot)
+        {
+            var space = GetWorld3D()?.DirectSpaceState;
+            if (space == null) return spot;
+            var q = PhysicsRayQueryParameters3D.Create(spot + Vector3.Up * 2f, spot - Vector3.Up * 3f, (1u << 0) | (1u << 4) | (1u << 5));
+            q.Exclude = new Godot.Collections.Array<Rid> { GetRid() };
+            var hit = space.IntersectRay(q);
+            if (hit.Count == 0) return spot;
+            float groundY = hit["position"].AsVector3().Y;
+            return spot.Y < groundY + 0.1f ? new Vector3(spot.X, groundY + 0.5f, spot.Z) : spot;
+        }
+
         void EjectFromVehicleOnDeath()
         {
             if (_driving == null && _riding == null) return;
@@ -3879,7 +3901,7 @@ namespace UnturnedGodot
             // TrySwitchSeat(0) was refused: a jeep nobody can steer. The vehicle-explosion path never showed it
             // because DriveVehicle calls ExitVehicle() (which frees the seat) BEFORE applying the damage.
             // Review 2026-08-16.
-            if (v != null) { v.OccupiedSeats.Remove(_seatIndex); v.EngineOn = false; v.Park(); GlobalPosition = v.GlobalPosition + v.GlobalTransform.Basis.X * 2.4f + Vector3.Up * 1.0f; }
+            if (v != null) { v.OccupiedSeats.Remove(_seatIndex); v.EngineOn = false; v.Park(); GlobalPosition = ClampExitSpot(v.GlobalPosition + v.GlobalTransform.Basis.X * 2.4f + Vector3.Up * 1.0f); }
             _seatIndex = 0;
             if (Hud != null) Hud.Vehicle = null;
             foreach (var c in FindChildren("*", "CollisionShape3D", true, false))
@@ -4296,7 +4318,13 @@ namespace UnturnedGodot
                 }
                 else if (_riding != null || DrivingPredicted || IsPassenger)   // FP free-look: the mouse turns the VIEW while the driver steers (real Unturned). MP ride, Part A predicted driving, or ANY passenger seat -- a passenger who cannot look around cannot use the weapon they are allowed to hold. The SP DRIVER keeps the fixed gaze over the hood.
                 {
-                    _rideLookYaw -= mm.Relative.X * MouseSensitivity;
+                    // WRAPPED to (-180, 180]. The camera consumes this through a Basis, which is periodic and so
+                    // never cared -- but AimTurret CLAMPS it against the mount's traverse limits, and an unwrapped
+                    // accumulator makes those limits meaningless: one full spin right leaves the value near -360,
+                    // the camera facing forward again and the turret pinned at -120 deg, firing 120 deg away from
+                    // the crosshair (TryTurretFire deliberately shoots along the barrel, not the look ray).
+                    // Recovering needed ~240 deg of mouse travel before the gun moved at all. Review 2026-08-16.
+                    _rideLookYaw = Mathf.Wrap(_rideLookYaw - mm.Relative.X * MouseSensitivity, -180f, 180f);
                     _rideLookPitch = Mathf.Clamp(_rideLookPitch - mm.Relative.Y * MouseSensitivity, -89f, 89f);   // same Y convention as on-foot look: mouse up -> look up
                 }
                 else if (_driving == null && _riding == null)
@@ -4370,7 +4398,11 @@ namespace UnturnedGodot
                 }
                 else if (rKey.Pressed && HasGunOut) StartReload();   // any other gun: instant reload on press (unchanged)
             }
-            else if (@event is InputEventKey { Pressed: true } hk && hk.Keycode >= Key.Key1 && hk.Keycode <= Key.Key9)
+            // Echo: false, like R and F above. The hotbar keys were the only equip input without it, so HOLDING a
+            // number key ran the equip/de-equip toggle at the OS key-repeat rate -- each pass frees the viewmodel
+            // and builds a new one, so the weapon strobed and ~30 Viewmodel nodes a second were constructed and
+            // thrown away while the key was down. Review 2026-08-16.
+            else if (@event is InputEventKey { Pressed: true, Echo: false } hk && hk.Keycode >= Key.Key1 && hk.Keycode <= Key.Key9)
                 EquipHotbar((int)hk.Keycode - (int)Key.Key0);   // hotbar keys (bag CLOSED): 1/2 = primary/secondary slot, 3-9 = bound item. Binding (RMB item + 3-9) is handled in InventoryUI while the bag's open.
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.V })
             {
@@ -4885,7 +4917,14 @@ namespace UnturnedGodot
                 if (m <= FalloffStart) return 1f;
                 if (m >= FalloffEnd) return FalloffMin;
                 return 1f + (FalloffMin - 1f) * ((m - FalloffStart) / (FalloffEnd - FalloffStart));
-            } public bool Cosmetic; public MeshInstance3D Tracer; public Node3D RocketVis; public Vector3 MuzzleAnchor; public bool HasAnchor; public float TracerW = TracerBaseW; }
+            } public bool Cosmetic; public MeshInstance3D Tracer; public Node3D RocketVis; public Vector3 MuzzleAnchor; public bool HasAnchor; public float TracerW = TracerBaseW;
+            // The warhead travels WITH the round, like every other per-shot property here. It used to be read off
+            // the live `Gun` at impact instead, so the blast belonged to whatever was in the player's hands when
+            // the round landed rather than to the gun that fired it: take a turret seat holding the rocket
+            // launcher and Fire() short-circuits to FireTurret BEFORE the held-weapon gates, leaving Gun as the
+            // launcher -- so every nykorev round detonated a 9 m warhead, including into the airframe the gunner
+            // is sitting in. Review 2026-08-16.
+            public float BlastRadius, BlastZombieDamage, BlastPlayerDamage, BlastVehicleDamage; }
         readonly System.Collections.Generic.List<Bullet> _bullets = new();
 
         // playerDamage is carried SEPARATELY from `damage` (which is the zombie number the SP path has always
@@ -4927,7 +4966,9 @@ namespace UnturnedGodot
         {
             var b = new Bullet { Pos = pos, Origin = pos, Vel = vel, StepsLeft = Mathf.Max(1, steps), Gravity = gravity, Damage = damage, VehicleDamage = vehicleDamage, ObjectDamage = objectDamage, PlayerDamage = playerDamage,
                                  FalloffStart = Gun?.FalloffStart ?? 0f, FalloffEnd = Gun?.FalloffEnd ?? 0f, FalloffMin = Gun?.FalloffMin ?? 1f, Cosmetic = NetFire != null, Tracer = Suppressed ? null : MakeTracer(),   // a suppressed shot draws no streak; every tracer use site is already null-guarded
-                                 TracerW = TracerBaseW * GunDef.TracerScale(Gun?.CaliberName) };   // .22 thin, .50 BMG fat; buckshot deliberately tiny (each pellet is its own bullet, so a shot draws 8 of these)
+                                 TracerW = TracerBaseW * GunDef.TracerScale(Gun?.CaliberName),   // .22 thin, .50 BMG fat; buckshot deliberately tiny (each pellet is its own bullet, so a shot draws 8 of these)
+                                 BlastRadius = Gun?.BlastRadius ?? 0f, BlastZombieDamage = Gun?.BlastZombieDamage ?? 0f,
+                                 BlastPlayerDamage = Gun?.BlastPlayerDamage ?? 0f, BlastVehicleDamage = Gun?.BlastVehicleDamage ?? 0f };
             // LOCAL first-person only: anchor the tracer's near end at the VIEWMODEL MUZZLE (screen-bridged to the world
             // via the viewmodel cam -> world cam), so it looks like it leaves the barrel; it then BENDS onto the real
             // trajectory (which fires from the EYE). Remote/3p bullets have no on-screen viewmodel muzzle, so they keep
@@ -5010,12 +5051,25 @@ namespace UnturnedGodot
                     Vector3 seg = next - b.Pos;
                     float segLen = seg.Length();
                     float wallDist = hit.Count > 0 ? b.Pos.DistanceTo(hit["position"].AsVector3()) : float.MaxValue;
-                    if (segLen > 1e-5f && zdb.ShootSegment(b.Pos, seg / segLen, segLen, wallDist, b.Damage,
+                    // DISTANCE FALLOFF, which the collider branch below has always applied and this one did not --
+                    // the same shot at 200 m dealt 11.2 or 20 depending purely on which zombie system was running.
+                    // Evaluated at the segment MIDPOINT because the real impact point only comes back out of
+                    // ShootSegment: one physics step is ~10 m of flight at rifle velocity, so the estimate is
+                    // within ~5 m of the hit on a 113-212 m ramp. That is a rounding error against the 1.78x
+                    // discrepancy it replaces. Review 2026-08-16.
+                    float segDmg = b.Damage * b.FalloffAt(b.Pos + seg * 0.5f);
+                    if (segLen > 1e-5f && zdb.ShootSegment(b.Pos, seg / segLen, segLen, wallDist, segDmg,
                                                            out Vector3 zPoint, out bool zHead, out bool zKilled))
                     {
                         SpawnFleshImpact(zPoint, b.Vel.Normalized());
                         if (zKilled) Kills++;
                         HitmarkerHUD.Instance?.Show(zHead);
+                        // A WARHEAD STILL DETONATES HERE. This branch exits before the collider block below, where
+                        // the blast used to live exclusively -- so under --newzombies a direct rocket hit on a
+                        // zombie dealt its direct damage and did not explode at all, while the same rocket hitting
+                        // the ground beside it did. Review 2026-08-16.
+                        if (b.BlastRadius > 0f)
+                            Explode(zPoint, b.BlastRadius, b.BlastZombieDamage, b.BlastPlayerDamage, b.BlastVehicleDamage);
                         RemoveBullet(i);
                         continue;
                     }
@@ -5128,10 +5182,11 @@ namespace UnturnedGodot
                     // hardcoded `Action == "Rocket"` branch with the radius and all three damages as literals. Same
                     // numbers for the launcher (they moved into launcher_rocket.dat unchanged), and any other round
                     // that wants to detonate now says so in data instead of adding a second copy of this branch.
-                    if (Gun is { BlastRadius: > 0f } bg)
+                    // ...carried on the BULLET, not read off the live Gun -- see the Bullet fields.
+                    if (b.BlastRadius > 0f)
                     {
-                        Explode(point, bg.BlastRadius, bg.BlastZombieDamage, bg.BlastPlayerDamage, bg.BlastVehicleDamage);
-                        GD.Print($"[blast] {bg.Id} warhead detonated (r={bg.BlastRadius})");
+                        Explode(point, b.BlastRadius, b.BlastZombieDamage, b.BlastPlayerDamage, b.BlastVehicleDamage);
+                        GD.Print($"[blast] warhead detonated (r={b.BlastRadius})");
                     }
                     RemoveBullet(i);
                     continue;
@@ -5759,7 +5814,7 @@ namespace UnturnedGodot
             if (v != null && _seatIndex == 0) { v.EngineOn = false; v.Park(); }   // stop burning fuel + brake so it doesn't roll away
             _seatIndex = 0;
             if (Hud != null) Hud.Vehicle = null;               // hide the vehicle status box
-            if (v != null) GlobalPosition = v.GlobalPosition + v.GlobalTransform.Basis.X * 2.4f + Vector3.Up * 1.0f;
+            if (v != null) GlobalPosition = ClampExitSpot(v.GlobalPosition + v.GlobalTransform.Basis.X * 2.4f + Vector3.Up * 1.0f);
             foreach (var c in FindChildren("*", "CollisionShape3D", true, false))
                 if (c is CollisionShape3D cs) cs.Disabled = false;
             Visible = true;

@@ -359,8 +359,17 @@ namespace UnturnedGodot.Net
             {
                 // explicit byteLen prefix: NetPakReader.RemainingSegmentLength is imprecise (the
                 // reader pre-buffers 32-bit words), so like every other frame on this stack the
-                // payload carries its own length
-                w.WriteUInt16((ushort)snapshot.Length);
+                // payload carries its own length.
+                //
+                // UInt32, not UInt16. The composer above is budgeted at MaxReliableMessageBytes/2 (~150 kB) while
+                // a UInt16 length tops out at 65,535 -- a 2.3x disagreement between what the producer may emit and
+                // what the frame can describe. A snapshot past 64 KiB was framed with a TRUNCATED length, the
+                // applier walked a block off the end of the short buffer and bailed, LastAppliedServerTick stayed
+                // 0, the ack was never sent, and TickReplication skipped that peer forever -- on the reliable
+                // channel, so nothing retransmitted. The player sat on "connecting" with the data already
+                // delivered. Lengths that are exact multiples of 65536 truncated to 0 and died on the len == 0
+                // guard instead, same wedge. Review 2026-08-16.
+                w.WriteUInt32((uint)snapshot.Length);
                 w.WriteBytes(snapshot, 0, snapshot.Length);
             }, bufferSize: snapshot.Length + 8));
         }
@@ -526,7 +535,11 @@ namespace UnturnedGodot.Net
             Applier.DesyncDetected += report => DesyncDetected?.Invoke(report);   // (already NetLog'd in the applier)
             Events.Register(ReplicationIds.EventJoinSnapshot, reader =>
             {
-                if (!reader.ReadUInt16(out ushort len) || len == 0) return;
+                // UInt32 length, symmetric with SendReliableFullSnapshot -- see the note there. Capped at what the
+                // sender is actually allowed to produce so a corrupt or hostile length cannot turn into a
+                // multi-gigabyte allocation on the strength of four bytes.
+                if (!reader.ReadUInt32(out uint len32) || len32 == 0 || len32 > NetProtocol.MaxReliableMessageBytes) return;
+                int len = (int)len32;
                 var snapshot = new byte[len];
                 if (!reader.ReadBytes(snapshot, len)) return;
                 // Cross-channel staleness guard: unreliable snapshots may beat a (retransmitted) reliable
