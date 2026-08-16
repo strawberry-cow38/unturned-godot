@@ -97,15 +97,35 @@ namespace UnturnedGodot.Testing
             T.Check($"...losing real altitude ({h.GlobalPosition.Y - top:0.##} m over 2 s, from {top:0.#} m to {h.GlobalPosition.Y:0.#} m)",
                 h.GlobalPosition.Y < top - 5f);
 
-            // ---- 6. THE STICKY THROTTLE. Rust's collective HOLDS where you left it; it is not a held button.
-            // Release everything and it must keep flying on the power already set, not fall out of the sky.
-            var fresh = Spawn(World, "minicopter", new Vector3(40f, 30f, 0f));
+            // ---- 6. THE THROTTLE IS SPRING-LOADED TO JUST UNDER HOVER.
+            //
+            // This REPLACES the sticky-throttle behaviour the first cut shipped with, on VoX's instruction
+            // 2026-08-16: hands off, the collective returns to "a bit below the amount of thrust required to
+            // counteract gravity"; S drives it to zero only while held; W drives it to maximum only while held.
+            // So the resting state is a gentle sink -- not a held hover, and not a fall.
+            var fresh = Spawn(World, "minicopter", new Vector3(40f, 60f, 0f));
             fresh.EngineOn = true;
-            for (int i = 0; i < 260; i++) { fresh.DriveHeli(1f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
-            float held = fresh.DebugHeliInput.X;
-            for (int i = 0; i < 60; i++) { fresh.DriveHeli(0f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
-            T.Check($"collective holds its setting with no input ({held:0.##} -> {fresh.DebugHeliInput.X:0.##})",
-                Mathf.IsEqualApprox(fresh.DebugHeliInput.X, held, 0.01f));
+            for (int i = 0; i < 300; i++) { fresh.DriveHeli(1f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
+            T.Check($"W drives the collective to maximum ({fresh.DebugHeliInput.X:0.##})", fresh.DebugHeliInput.X > 0.95f);
+
+            for (int i = 0; i < 150; i++) { fresh.DriveHeli(0f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
+            float idle = fresh.DebugHeliInput.X;
+            // The idle point is DERIVED from the spec's thrust (hover = g / thrust), so assert it against that
+            // rather than against a number copied out of the spec -- retuning thrust must move both together.
+            float hover = 9.8f / 11.8f;
+            T.Check($"hands off, it settles just BELOW hover, not at zero and not at hover ({idle:0.###} vs hover {hover:0.###})",
+                idle > hover * 0.80f && idle < hover * 0.99f);
+            // and the consequence that actually matters in the air: hands off means sinking, gently.
+            float sink = fresh.LinearVelocity.Y;
+            T.Check($"...so hands-off is a gentle sink, not a hover and not a plummet ({sink:0.##} m/s)",
+                sink < -0.05f && sink > -12f);
+
+            for (int i = 0; i < 150; i++) { fresh.DriveHeli(-1f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
+            T.Check($"S drives it to zero while held ({fresh.DebugHeliInput.X:0.###})", fresh.DebugHeliInput.X < 0.02f);
+            // ...and releasing S must come back UP to idle, not stay at zero -- the spring pulls both ways.
+            for (int i = 0; i < 150; i++) { fresh.DriveHeli(0f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
+            T.Check($"...and springs back up to idle on release ({fresh.DebugHeliInput.X:0.###})",
+                fresh.DebugHeliInput.X > hover * 0.80f);
 
             // ---- 7. LIFT FOLLOWS THE AIRFRAME, NOT THE WORLD. Bank it hard and hold: it must accelerate
             // SIDEWAYS, toward the side it is leaning. This is what makes it a helicopter rather than a

@@ -1363,14 +1363,14 @@ namespace UnturnedGodot
             Part("TailWheel", new CylinderMesh { TopRadius = 0.13f, BottomRadius = 0.13f, Height = 0.09f, RadialSegments = 10, Rings = 1 },
                  new Vector3(0f, -0.50f, 2.35f), frameMat, new Vector3(0f, 0f, 90f), null);
 
-            // ---- SEATS. Two of them, open to the air, which is the whole joke of the machine.
+            // ---- SEAT. ONE, on the centreline (VoX: "only 1 seat on the minicopter, you put 2 side by side").
+            // It is also the only place to sit: the vehicle carries a single occupant anyway, so a second seat
+            // was furniture that promised a passenger the netcode cannot deliver.
+            Part("SeatPan", new BoxMesh { Size = new Vector3(0.46f, 0.06f, 0.44f) }, new Vector3(0f, 0.02f, 0.18f), seatMat, Vector3.Zero, null);
+            Part("SeatBack", new BoxMesh { Size = new Vector3(0.46f, 0.50f, 0.06f) }, new Vector3(0f, 0.25f, 0.43f), seatMat, new Vector3(-9f, 0f, 0f), null);
             foreach (float sx in new[] { -1f, 1f })
-            {
-                Part($"SeatPan{(sx < 0 ? "L" : "R")}", new BoxMesh { Size = new Vector3(0.44f, 0.06f, 0.42f) }, new Vector3(sx * 0.30f, 0.02f, 0.18f), seatMat, Vector3.Zero, null);
-                Part($"SeatBack{(sx < 0 ? "L" : "R")}", new BoxMesh { Size = new Vector3(0.44f, 0.48f, 0.06f) }, new Vector3(sx * 0.30f, 0.24f, 0.42f), seatMat, new Vector3(-9f, 0f, 0f), null);
-                Tube($"SeatLeg{(sx < 0 ? "L" : "R")}", 0.03f, 0.40f, new Vector3(sx * 0.30f, -0.18f, 0.20f), frameMat, Vector3.Zero, null);
-            }
-            Tube("Handlebar", 0.035f, 0.90f, new Vector3(0f, 0.16f, -0.30f), frameMat, new Vector3(0f, 0f, 90f), null);
+                Tube($"SeatLeg{(sx < 0 ? "L" : "R")}", 0.03f, 0.40f, new Vector3(sx * 0.16f, -0.18f, 0.20f), frameMat, Vector3.Zero, null);
+            Tube("Handlebar", 0.035f, 0.70f, new Vector3(0f, 0.16f, -0.30f), frameMat, new Vector3(0f, 0f, 90f), null);
 
             // ---- POWERPLANT: an engine block, a fuel can and a bare mast. No cowling over any of it.
             Part("Engine", new BoxMesh { Size = new Vector3(0.52f, 0.40f, 0.46f) }, new Vector3(0f, 0.22f, 0.86f), frameMat, Vector3.Zero, null);
@@ -1875,14 +1875,33 @@ namespace UnturnedGodot
         // steering (Steer_Max at rest -> Steer_Min at full speed), so the observable handling matches the game.
         // ---- ROTARY WING ------------------------------------------------------------------------------
         const float SpoolUpSeconds = 3.2f, SpoolDownSeconds = 5.5f;   // cold start has to wind up before it will fly
-        const float CollectiveRate = 0.55f;   // how fast W/S move the throttle, per second of held key
+        const float CollectiveRate = 0.55f;         // how fast W/S drive the throttle, per second of held key
+        const float CollectiveReturnRate = 0.40f;   // how fast it springs back to idle once you let go
+        /// <summary>Hands-off collective, as a fraction of the power that exactly cancels gravity. Below 1 on
+        /// purpose: "a bit below the amount of thrust required to counteract gravity" (VoX), so letting go sinks
+        /// you slowly rather than parking you in a perfect hover.</summary>
+        const float IdleHoverFraction = 0.92f;
+        /// <summary>Collective that would exactly hold a hover at full rotor spool, from THIS spec's thrust:
+        /// thrust * c = g. Derived, not hardcoded, so retuning HeliThrust moves the idle point with it.</summary>
+        float HoverCollective => _heliThrust > 0.01f ? Mathf.Clamp(9.8f / _heliThrust, 0f, 1f) : 0f;
+        float IdleCollective => HoverCollective * IdleHoverFraction;
         const float HeliPitchRate = 1.15f, HeliRollRate = 1.45f, HeliYawRate = 1.30f;   // rad/s at full deflection
         const float HeliControlSharpness = 6.5f;   // how fast angular velocity converges on the commanded rate
 
-        /// <summary>The pilot's held flight controls. Rust mapping: <paramref name="collective"/> is a RATE
-        /// (+1 while W is held, -1 while S is held) because a Rust helicopter's throttle is STICKY -- you set a
-        /// power level and it stays there, you do not hold a button to hover. The other three are direct
-        /// deflections. Yaw/pitch/roll are -1..1.
+        /// <summary>The pilot's held flight controls. <paramref name="collective"/> is +1 while W is held, -1
+        /// while S is held, 0 with neither.
+        ///
+        /// THE THROTTLE IS SPRING-LOADED, NOT STICKY, and it does not return to zero -- it returns to just under
+        /// the power needed to hold a hover. VoX 2026-08-16: "if the player doesnt have either pressed then the
+        /// copter idles at a bit below the amount of thrust required to counteract gravity ... s should reduce
+        /// the thrust to 0 but only when actively pressed, and w should increase the trust to maximum but again
+        /// only when pressed."
+        ///
+        /// That is a deliberate replacement for the sticky Rust throttle this shipped with, and it is a nicer
+        /// resting state than either extreme: hands off, the machine sinks gently instead of either climbing
+        /// away on a throttle you forgot about or dropping out of the sky. The idle point is derived from the
+        /// spec's own thrust rather than hardcoded, so retuning HeliThrust cannot silently make hands-off mean
+        /// "climb" on one airframe and "plummet" on another.
         ///
         /// This is the single flight-input seam, the same way <see cref="Drive"/> is for cars: SP calls it from
         /// the input path, and the MP fallback maps its 3-axis DriveInput onto it (throttle -> collective,
@@ -1893,7 +1912,9 @@ namespace UnturnedGodot
             if (_exploded) { _inCollective = 0f; _inYaw = _inPitch = _inRoll = 0f; return; }
             _parked = false;
             if (Freeze) { Freeze = false; }   // any control input wakes a settled machine
-            _inCollective = Mathf.Clamp(_inCollective + collective * CollectiveRate * (float)delta, 0f, 1f);
+            float target = collective > 0.05f ? 1f : collective < -0.05f ? 0f : IdleCollective;
+            float rate = Mathf.Abs(collective) > 0.05f ? CollectiveRate : CollectiveReturnRate;
+            _inCollective = Mathf.MoveToward(_inCollective, target, rate * (float)delta);
             _inYaw = Mathf.Clamp(yaw, -1f, 1f);
             _inPitch = Mathf.Clamp(pitch, -1f, 1f);
             _inRoll = Mathf.Clamp(roll, -1f, 1f);

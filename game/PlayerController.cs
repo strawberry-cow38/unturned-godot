@@ -5560,7 +5560,30 @@ namespace UnturnedGodot
                     _cam.GlobalTransform = new Transform3D(look, eye);
                 }
                 else   // SP driving: the classic fixed forward gaze over the hood
-                    _cam.GlobalTransform = new Transform3D(Basis.Identity, eye).LookingAt(vt * (eyeL + new Vector3(0f, -0.6f, -3.9f)), Vector3.Up);
+                    // FP: same rule as the chase cam -- in a helicopter the view IS the airframe's orientation,
+                    // so take its basis outright rather than looking at a point with an up hint.
+                    _cam.GlobalTransform = _driving != null && _driving.IsHeli
+                        ? new Transform3D(vt.Basis.Orthonormalized(), eye)
+                        : new Transform3D(Basis.Identity, eye).LookingAt(vt * (eyeL + new Vector3(0f, -0.6f, -3.9f)), Vector3.Up);
+            }
+            else if (_driving != null && _driving.IsHeli)
+            {
+                // FLYING: the camera BECOMES the airframe. VoX 2026-08-16, first "I want the players view to
+                // tilt with the copter's role and pitch", then exactly: "the player's view should exacly match
+                // the direction the minicopter is facing".
+                //
+                // So the camera's basis IS the vehicle's basis -- not a LookingAt with the vehicle's up passed
+                // as a hint, which only approximates it and drifts as soon as the machine is near vertical.
+                // Every other vehicle keeps a world-level chase cam because a car's roll is noise; on a
+                // helicopter the roll IS the control input, and a level camera hides the thing being steered.
+                // No mouse orbit either: while flying, the mouse is the cyclic, not a camera.
+                float dist = Mathf.Clamp(size * 1.1f, 6.5f, 34f);
+                Basis vb = vt.Basis.Orthonormalized();
+                // Offset in the VEHICLE's frame, so the camera keeps station on the airframe through a roll.
+                // The up-offset is deliberately small: the view direction is exactly the machine's heading, so
+                // anything more parks the helicopter near the bottom of the screen instead of in front of you.
+                var eye = vt.Origin + vb.Z * (dist * 0.86f) + vb.Y * (dist * 0.16f + size * 0.06f);
+                _cam.GlobalTransform = new Transform3D(vb, eye);
             }
             else            // third-person chase: ORBIT behind the car (mouse yaw/pitch), AUTO-ZOOMED for the vehicle's size (master)
             {
