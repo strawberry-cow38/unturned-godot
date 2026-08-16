@@ -123,6 +123,12 @@ namespace UnturnedGodot
         // can hear happening and fly out of, and sitting in it still finishes you.
         const float BladeStrikeInterval = 0.22f;
         const float BladeStrikeDamage = 7f, TailStrikeDamage = 6f;
+        /// <summary>What the blades do TO what they hit, per strike tick. Higher than what the rotor takes:
+        /// a spinning rotor beats a fence convincingly and comes off worse than the fence only over time.</summary>
+        const float MainBladePropDamage = 34f, TailBladePropDamage = 22f;
+        /// <summary>Spool below which the blades are not moving fast enough to hurt anything, including
+        /// themselves. Well under the disc-swap point, so a rotor that still LOOKS like blades can still cut.</summary>
+        const float BladeStrikeMinSpool = 0.12f;
         /// <summary>Unopposed main-rotor torque on the fuselage once the tail rotor is dead (rad/s^2 at full
         /// power). Sized to be clearly unrecoverable by pedal input -- the pedals are gone anyway -- but slow
         /// enough that a pilot who cuts collective immediately can still put it down.</summary>
@@ -145,6 +151,13 @@ namespace UnturnedGodot
             if (!_heli || amount <= 0f) return;
             _tailRotorHp = Mathf.Max(0f, _tailRotorHp - amount);
         }
+        /// <summary>Rotor bar colour: healthy green through amber to the hull's red as it fails, so a glance
+        /// at the billboard says WHICH rotor is going without reading the bar length.</summary>
+        static Color RotorBarColor(float norm)
+            => norm > 0.6f ? new Color(0.35f, 0.80f, 0.35f)
+             : norm > 0.25f ? new Color(0.90f, 0.72f, 0.20f)
+             : new Color(0.85f, 0.22f, 0.18f);
+
         public void KillMainRotor() { if (_heli) _mainRotorHp = 0f; }
         public void KillTailRotor() { if (_heli) _tailRotorHp = 0f; }
 
@@ -221,11 +234,30 @@ namespace UnturnedGodot
             return space.IntersectRay(q).Count > 0;
         }
 
-        bool DiscStruck(Area3D disc)
+        /// <summary>Seam to the authoritative destructibles, mirroring PlayerController.NetDamageObject.
+        /// STATIC because Vehicles are built by a factory with no per-instance wiring point; MpLoopback sets it
+        /// alongside the player's. Null in pure --direct SP, where props are inert anyway.</summary>
+        public static System.Action<int, float> NetDamageObject;
+
+        bool DiscStruck(Area3D disc, float propDamage)
         {
+            bool hit = false;
             foreach (var body in disc.GetOverlappingBodies())
-                if (body != this && GodotObject.IsInstanceValid(body)) return true;
-            return false;
+            {
+                if (body == this || !GodotObject.IsInstanceValid(body)) continue;
+                hit = true;
+                // THE BLADES CUT BACK (strawberry 2026-08-16: "make the rotors apply damage to props that
+                // collide with them each tick where the rotor would take damage"). Same cadence as the rotor's
+                // own damage by construction -- this only runs on a strike tick.
+                //
+                // "once the props are destroyed make sure they stop applying damage" needs no guard here:
+                // DestructibleField.SetAlive drops a broken prop's CollisionLayer to 0, so it leaves the disc
+                // and stops being found. That holds in both directions -- a dead prop neither takes further
+                // blade damage nor keeps grinding the rotor. Asserted in the tests rather than assumed.
+                if (propDamage > 0f && body.HasMeta(DestructibleField.MetaKey))
+                    NetDamageObject?.Invoke((int)body.GetMeta(DestructibleField.MetaKey), propDamage);
+            }
+            return hit;
         }
 
         public HeliPart ResolveHitPart(Vector3 worldPoint)
@@ -2311,10 +2343,16 @@ namespace UnturnedGodot
             // BLADE STRIKES. While anything is inside a disc, that rotor grinds down on a fixed interval --
             // an interval rather than per-frame damage so the cost of clipping a tree does not depend on the
             // framerate, and so brushing something is survivable while sitting in it is not.
+            // A STOPPED ROTOR NEITHER CUTS NOR IS CUT (strawberry 2026-08-16: "stop rotor damage
+            // recieve/give from happening with the rotor off"). Blades have to be TURNING to do this -- a
+            // parked machine resting in a bush was grinding its own rotor away, and shredding the bush, purely
+            // by being parked there. Gated on spool rather than on EngineOn so a rotor still coasting down
+            // after a shutdown stays dangerous, which is true of the real thing.
             _mainStrikeCd -= dt; _tailStrikeCd -= dt;
-            if (_mainDiscArea != null && _mainStrikeCd <= 0f && DiscStruck(_mainDiscArea))
+            bool bladesLive = _rotorRpm > BladeStrikeMinSpool;
+            if (bladesLive && _mainDiscArea != null && _mainStrikeCd <= 0f && DiscStruck(_mainDiscArea, MainBladePropDamage))
             { _mainStrikeCd = BladeStrikeInterval; DamageMainRotor(BladeStrikeDamage); BladeStrikeFx(_mainStrikeFx); }
-            if (_tailDiscArea != null && _tailStrikeCd <= 0f && DiscStruck(_tailDiscArea))
+            if (bladesLive && _tailDiscArea != null && _tailStrikeCd <= 0f && DiscStruck(_tailDiscArea, TailBladePropDamage))
             { _tailStrikeCd = BladeStrikeInterval; DamageTailRotor(TailStrikeDamage); BladeStrikeFx(_tailStrikeFx); }
 
             // ---- CRASH (strawberry 2026-08-16: "make the vehicle EXPLODE if it hits anything at a
@@ -2344,6 +2382,14 @@ namespace UnturnedGodot
                 else { TakeDamage(decel * 18f); BonkFx(); }
             }
             _prevSpeed = curSpeed;
+
+            // A DEAD ROTOR CUTS THE ENGINE ONCE YOU ARE DOWN (strawberry 2026-08-16: "kill the engine if main
+            // rotor dead once you touch the ground. same with tail"). Deliberately gated on being GROUNDED
+            // rather than firing the moment the rotor dies: cutting the engine mid-air would take away the
+            // autorotation you need to survive the landing, turning a recoverable failure into a guaranteed
+            // kill. Once you are down it stays down -- you are not flying that machine again without repairs.
+            if (EngineOn && (MainRotorDead || TailRotorDead) && GroundedByRay() && LinearVelocity.LengthSquared() < 4f)
+                EngineOn = false;
 
             UpdateRotorFx();
 
@@ -3151,7 +3197,21 @@ namespace UnturnedGodot
             if (_lookFocused) WorldItem.FocusColor = color;   // recolour the screen-space outline (red = can't, white = salvageable)
         }
         public bool Hurt => !_exploded && Health < HealthMax;   // alive-but-damaged -> a blowtorch can repair it (source isRepair, master)
-        public void Repair(float amount) { if (!_exploded) Health = Mathf.Min(HealthMax, Health + amount); }   // blowtorch repair: heal HP up to max (source: isRepair heals instead of damaging)
+        // Blowtorch repair: heal HP up to max (source: isRepair heals instead of damaging). On a HELICOPTER it
+        // also brings the rotors back (strawberry 2026-08-16: "blowtorching the hull will repair the rotors") --
+        // otherwise a machine could be welded to full health and still be unflyable with no way to fix it, which
+        // is a dead end rather than a difficulty. Rotors heal at the same rate as the hull, scaled to their own
+        // smaller maxima so a full hull repair is also a full rotor repair.
+        public void Repair(float amount)
+        {
+            if (_exploded) return;
+            Health = Mathf.Min(HealthMax, Health + amount);
+            if (!_heli || HealthMax <= 0f) return;
+            float frac = amount / HealthMax;
+            _mainRotorHp = Mathf.Min(_mainRotorHpMax, _mainRotorHp + _mainRotorHpMax * frac);
+            _tailRotorHp = Mathf.Min(_tailRotorHpMax, _tailRotorHp + _tailRotorHpMax * frac);
+            if (_mainRotorHp > 0f || _tailRotorHp > 0f) _rotorFxExtinguished = false;   // repaired: let the FX speak again
+        }
         public void Salvage()   // blowtorch teardown: the cold wreck breaks apart into scrap metal on the ground, then despawns
         {
             var parent = GetParent();
@@ -3187,6 +3247,12 @@ namespace UnturnedGodot
                     {
                         _info.SetBar(1, FuelNorm, InfoBillboard.FuelColor);                 // fuel bar (yellow)
                         _info.SetBar(2, Battery / BatteryMax, InfoBillboard.FuelColor);     // battery bar (yellow)
+                        // ROTOR BARS, helicopters only (strawberry 2026-08-16: "the rotors each get a health
+                        // bar too"). Hidden outright on anything else rather than drawn empty -- the split
+                        // health only means something on a machine that HAS rotors, and two dead rows on every
+                        // car would read as a car with broken parts it does not own.
+                        _info.SetBar(3, MainRotorNorm, RotorBarColor(MainRotorNorm), _heli);
+                        _info.SetBar(4, TailRotorNorm, RotorBarColor(TailRotorNorm), _heli);
                         _info.SetPrompt("", _outlineColor);
                     }
                 }

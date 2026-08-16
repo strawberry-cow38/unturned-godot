@@ -106,7 +106,7 @@ namespace UnturnedGodot.Testing
             // 2026-08-16: hands off, the collective returns to "a bit below the amount of thrust required to
             // counteract gravity"; S drives it to zero only while held; W drives it to maximum only while held.
             // So the resting state is a gentle sink -- not a held hover, and not a fall.
-            var fresh = Spawn(World, "minicopter", new Vector3(40f, 60f, 0f));
+            var fresh = Spawn(World, "minicopter", new Vector3(40f, 420f, 0f));   // high: this subject spends ~6 s descending, and once crash damage existed it used to reach the ground and explode mid-test (an exploded heli zeroes its collective, so the spring-back check read 0)
             fresh.EngineOn = true;
             for (int i = 0; i < 300; i++) { fresh.DriveHeli(1f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
             T.Check($"W drives the collective to maximum ({fresh.DebugHeliInput.X:0.##})", fresh.DebugHeliInput.X > 0.95f);
@@ -477,6 +477,55 @@ namespace UnturnedGodot.Testing
             for (int i = 0; i < 250 && !smash.Exploded; i++) yield return Ticks(1);
             T.Check($"a fast impact explodes it ({(smash.Exploded ? "EXPLODED" : "intact, " + smash.Health.ToString("0") + " hp")}; impact {smash.DebugLastImpactSpeed:0.#} m/s vs threshold 19, y={smash.GlobalPosition.Y:0.##})",
                 smash.Exploded);
+
+            // ---- 8f. THE ENGINE CUTS ONCE A CRIPPLED MACHINE IS DOWN, but NOT in the air -- cutting mid-air
+            // would take away the autorotation you need to survive the landing, turning a recoverable failure
+            // into a guaranteed kill. Both halves asserted, because "the engine stops" alone passes on the
+            // version that kills it instantly.
+            var cut = Spawn(World, "minicopter", new Vector3(-1380f, 120f, 0f));
+            cut.EngineOn = true; cut.DebugNoTurbulence = true;
+            for (int i = 0; i < 260; i++) { cut.DriveHeli(1f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
+            cut.KillMainRotor();
+            for (int i = 0; i < 60; i++) { cut.DriveHeli(1f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
+            T.Check($"a dead rotor does NOT cut the engine in mid-air (y {cut.GlobalPosition.Y:0.#}, engine {cut.EngineOn})",
+                cut.EngineOn && cut.GlobalPosition.Y > 5f);
+            for (int i = 0; i < 700 && cut.EngineOn; i++) { cut.DriveHeli(1f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
+            T.Check($"...but does once it is back on the ground (y {cut.GlobalPosition.Y:0.##}, engine {cut.EngineOn})", !cut.EngineOn);
+
+            // BLOWTORCHING THE HULL BRINGS THE ROTORS BACK. Without this a machine could be welded to full
+            // health and still be unflyable with no way to fix it -- a dead end rather than a difficulty.
+            var fix = Spawn(World, "minicopter", new Vector3(-1440f, 1.2f, 0f));
+            fix.KillMainRotor(); fix.KillTailRotor();
+            fix.TakeDamage(fix.Health * 0.5f);
+            yield return Ticks(5);
+            T.Check("a wrecked machine starts with both rotors dead", fix.MainRotorDead && fix.TailRotorDead);
+            fix.Repair(fix.HealthMax);
+            T.Check($"a full hull repair restores the rotors too (main {fix.MainRotorNorm:0.##}, tail {fix.TailRotorNorm:0.##})",
+                fix.MainRotorNorm > 0.99f && fix.TailRotorNorm > 0.99f);
+
+            // ---- 8g. A STOPPED ROTOR NEITHER CUTS NOR IS CUT. A parked machine sitting against something
+            // was grinding its own rotor away just by being parked there. The pair of checks is the point:
+            // unpowered it must take NOTHING however long it sits, and powered in the same place it must take
+            // damage -- otherwise "no damage" would also pass on a blade-strike system that had simply stopped
+            // working.
+            var park = Spawn(World, "minicopter", new Vector3(-1500f, 1.2f, 0f));
+            park.DebugNoTurbulence = true;
+            // A wall standing up through the disc, so the blades are unambiguously inside something.
+            var wall = new StaticBody3D { Position = new Vector3(-1500f, 2.0f, 0f) };
+            wall.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = new Vector3(4f, 4f, 0.4f) } });
+            World.AddChild(wall);
+            yield return Ticks(200);
+            float parkMain = park.MainRotorHealth;
+            T.Check($"a parked machine with its rotor off takes no blade damage ({parkMain:0} intact, spool {park.RotorSpool:0.##})",
+                Mathf.IsEqualApprox(parkMain, park.MainRotorHealth) && park.RotorSpool < 0.05f);
+            yield return Ticks(200);
+            T.Check($"...however long it sits there ({park.MainRotorHealth:0} of {parkMain:0})",
+                park.MainRotorHealth >= parkMain - 0.01f);
+            // Now spin it up in the SAME spot: the blades must start biting, or the check above proves nothing.
+            park.EngineOn = true;
+            for (int i = 0; i < 400; i++) { park.DriveHeli(0f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
+            T.Check($"...but a SPINNING rotor in the same wall does take damage ({park.MainRotorHealth:0} of {parkMain:0}, spool {park.RotorSpool:0.##})",
+                park.MainRotorHealth < parkMain);
 
             // THE HUB IS THE BULLET TARGET, the disc is not. Shooting the tip of a 5 m blade should not kill a
             // rotor; hitting the machinery at the mast should.

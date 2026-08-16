@@ -2881,6 +2881,9 @@ namespace UnturnedGodot
         /// reduced by this fraction of the OTHER one's magnitude, so a mostly-horizontal movement is pure roll
         /// and a mostly-vertical one is pure pitch, while a genuine diagonal still gets through.</summary>
         const float HeliStickCrossDeadzone = 0.4f;
+        /// <summary>How fast a held arrow key deflects the cyclic. Slower than a mouse flick on purpose -- a
+        /// digital key has no magnitude, so the RAMP is the only thing standing in for how hard you pushed.</summary>
+        const float ArrowStickRate = 2.2f;
         /// <summary>Test seam: the current virtual stick (pitch, roll) the pilot is holding.</summary>
         public UnityEngine.Vector2 DebugHeliStick => new UnityEngine.Vector2(_heliStickP, _heliStickR);
         public bool LastHandbrakeInput;
@@ -5525,6 +5528,21 @@ namespace UnturnedGodot
                 // Cross-axis deadzone, applied to what the FLIGHT MODEL sees rather than to the stored stick, so
                 // the stick keeps decaying smoothly and a diagonal that grows past the threshold blends in
                 // instead of popping.
+                // ARROW KEYS MIRROR THE CYCLIC (strawberry 2026-08-16: "mirror the mouse heli controls onto
+                // the arrow keys too, making sure they respect the inverted toggle"). Fed into the SAME virtual
+                // stick rather than a parallel path, so the cross-axis deadzone, the decay and the invert
+                // setting all apply once and cannot drift apart from the mouse.
+                //
+                // Up = the same as pushing the mouse forward, which under Regular is nose-DOWN, so the sign
+                // matches the mouse branch in _Input and flips with the identical toggle.
+                if (!UiInputBlocked)
+                {
+                    float arrowP = (Input.IsPhysicalKeyPressed(Key.Down) ? 1f : 0f) - (Input.IsPhysicalKeyPressed(Key.Up) ? 1f : 0f);
+                    float arrowR = (Input.IsPhysicalKeyPressed(Key.Right) ? 1f : 0f) - (Input.IsPhysicalKeyPressed(Key.Left) ? 1f : 0f);
+                    if (ControlsOptions.InvertHeliPitch) arrowP = -arrowP;
+                    if (arrowP != 0f) _heliStickP = Mathf.MoveToward(_heliStickP, arrowP, ArrowStickRate * delta);
+                    if (arrowR != 0f) _heliStickR = Mathf.MoveToward(_heliStickR, arrowR, ArrowStickRate * delta);
+                }
                 float sp = _heliStickP, sr = _heliStickR;
                 float fp = Mathf.Max(0f, Mathf.Abs(sp) - HeliStickCrossDeadzone * Mathf.Abs(sr)) * Mathf.Sign(sp);
                 float fr = Mathf.Max(0f, Mathf.Abs(sr) - HeliStickCrossDeadzone * Mathf.Abs(sp)) * Mathf.Sign(sr);
