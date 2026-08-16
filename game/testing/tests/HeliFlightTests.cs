@@ -392,6 +392,41 @@ namespace UnturnedGodot.Testing
             T.Check($"...while the untouched tail rotor stays clean (tail {fx.TailRotorNorm:0.##})",
                 !fx.DebugTailRotorBurning && !fx.DebugTailRotorSmoking);
 
+            // A DEAD TAIL ALSO GROUNDS YOU, distinctly from a dead main: no climbing, but not the total loss of
+            // lift a dead main gives. Both halves are asserted -- "cannot climb" alone would pass on a machine
+            // that had simply been zeroed like the main, which is the thing this is meant NOT to be.
+            var tdead = Spawn(World, "minicopter", new Vector3(-1000f, 120f, 0f));
+            tdead.EngineOn = true; tdead.DebugNoTurbulence = true;
+            for (int i = 0; i < 260; i++) { tdead.DriveHeli(1f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
+            tdead.KillTailRotor();
+            tdead.LinearVelocity = Vector3.Zero;
+            float ty0 = tdead.GlobalPosition.Y;
+            for (int i = 0; i < 150; i++) { tdead.DriveHeli(1f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
+            float tdrop = tdead.GlobalPosition.Y - ty0;
+            T.Check($"a dead tail rotor cannot climb either ({tdrop:+0.#;-0.#;0} m on full collective)", tdrop < 0f);
+            T.Check($"...but sinks gentler than a dead MAIN does ({tdrop:0.#} m vs {dead:0.#} m)", tdrop > dead);
+
+            // BOTH ROTORS GONE -> the airframe itself dies, through the ordinary damage path.
+            var both = Spawn(World, "minicopter", new Vector3(-1060f, 30f, 0f));
+            both.EngineOn = true; both.DebugNoTurbulence = true;
+            yield return Ticks(5);
+            float hullBefore = both.Health;
+            both.KillMainRotor();
+            yield return Ticks(5);
+            T.Check($"one dead rotor does NOT kill the airframe ({both.Health:0} of {hullBefore:0})", both.Health >= hullBefore - 0.01f);
+            both.KillTailRotor();
+            yield return Ticks(10);
+            T.Check($"...but losing both does ({both.Health:0} hp, onFire {both.OnFire})", both.Health <= 0f || both.OnFire);
+
+            // THE ROTOR STOPS. Idle, and dead -- the old spin had a constant term, so a parked machine with a
+            // cold engine sat there slowly turning its blades forever.
+            var still = Spawn(World, "minicopter", new Vector3(-1120f, 1.2f, 0f));
+            yield return Ticks(30);
+            float phase0 = still.DebugRotorPhase;
+            yield return Ticks(60);
+            T.Check($"a parked, unpowered rotor does not turn at all (phase {phase0:0.###} -> {still.DebugRotorPhase:0.###})",
+                Mathf.IsEqualApprox(still.DebugRotorPhase, phase0));
+
             // THE HUB IS THE BULLET TARGET, the disc is not. Shooting the tip of a 5 m blade should not kill a
             // rotor; hitting the machinery at the mast should.
             var hb = Spawn(World, "minicopter", new Vector3(-880f, 4f, 0f));

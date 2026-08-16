@@ -24,7 +24,7 @@ namespace UnturnedGodot
         // is just a RigidBody3D, so the base class does not fight flight.
         bool _heli; float _heliThrust, _heliPitchTq, _heliRollTq, _heliYawTq, _heliLevel;
         float _inCollective, _inYaw, _inPitch, _inRoll;   // the pilot's held axes (W/S, A/D, mouse Y, mouse X)
-        float _rotorSpin, _rotorRpm;                       // visual blade phase + spool state (0..1)
+        float _rotorSpin, _tailSpin, _rotorRpm;            // visual blade phases (main/tail) + spool state (0..1)
         Node3D _rotorNode, _tailRotorNode;
         MeshInstance3D _bladesMesh, _discMesh, _tailBladesMesh, _tailDiscMesh;   // the two drawn states per rotor
         const float DiscSwapSpool = 0.35f;   // above this the blades are a smear, so the game draws the plate instead
@@ -77,6 +77,9 @@ namespace UnturnedGodot
         float _mainStrikeCd, _tailStrikeCd;
         Area3D _mainDiscArea, _tailDiscArea;
         CpuParticles3D _mainRotorSmoke, _mainRotorFire, _tailRotorSmoke, _tailRotorFire;
+        CpuParticles3D _mainStrikeFx, _tailStrikeFx;   // one-shot sparks per blade strike
+        AudioStreamPlayer3D _strikeAudio;
+        bool _rotorFxExtinguished;   // the cold wreck has had its rotor fires put out; do not relight them
         /// <summary>Health fraction at which a rotor starts smoking. Above it the rotor is scuffed, not
         /// failing, and a machine that smokes from the first bullet tells the pilot nothing.</summary>
         const float RotorSmokeAt = 0.7f;
@@ -88,9 +91,18 @@ namespace UnturnedGodot
         public bool DebugTailRotorSmoking => _tailRotorSmoke != null && _tailRotorSmoke.Emitting;
         public bool DebugTailRotorBurning => _tailRotorFire != null && _tailRotorFire.Emitting;
         public int DebugMainRotorSmokeAmount => _mainRotorSmoke?.Amount ?? 0;
+        /// <summary>Test seam: the main rotor's visual blade phase, so a test can prove the disc has actually
+        /// STOPPED rather than merely that the spool number is zero -- the old constant spin term made those
+        /// two different facts.</summary>
+        public float DebugRotorPhase => _rotorSpin;
         Vector3 _mainHubCentre, _mainHubHalf, _tailHubCentre, _tailHubHalf;
-        const float BladeStrikeInterval = 0.45f;   // "hurts the main rotor every x seconds" while something is in the disc
-        const float BladeStrikeDamage = 34f, TailStrikeDamage = 30f;
+        // A blade strike GRINDS the rotor down over time rather than killing it outright (strawberry
+        // 2026-08-16: "rotors' blade damage to be ticked over time instead of instantly killing the rotor").
+        // Was 34 a tick against ~112 max, i.e. four ticks -- under two seconds of contact, which reads as
+        // instant death rather than as damage. At 7 it takes ~16 ticks, so clipping something is a mistake you
+        // can hear happening and fly out of, and sitting in it still finishes you.
+        const float BladeStrikeInterval = 0.22f;
+        const float BladeStrikeDamage = 7f, TailStrikeDamage = 6f;
         /// <summary>Unopposed main-rotor torque on the fuselage once the tail rotor is dead (rad/s^2 at full
         /// power). Sized to be clearly unrecoverable by pedal input -- the pedals are gone anyway -- but slow
         /// enough that a pilot who cuts collective immediately can still put it down.</summary>
@@ -134,8 +146,18 @@ namespace UnturnedGodot
         /// would read as a state change at an arbitrary threshold instead of as something progressively
         /// failing. A dead rotor keeps smoking underneath the fire; fire alone looks like a decoration sitting
         /// on an otherwise healthy machine.</summary>
+        /// <summary>One burst of sparks + a metal clang for a single blade strike. Restarts the emitter each
+        /// time (OneShot + Explosiveness 1) so repeated strikes read as repeated hits rather than merging into
+        /// one continuous shower.</summary>
+        void BladeStrikeFx(CpuParticles3D sparks)
+        {
+            if (sparks != null) { sparks.Emitting = false; sparks.Restart(); sparks.Emitting = true; }
+            if (_strikeAudio != null) _strikeAudio.Play();
+        }
+
         void UpdateRotorFx()
         {
+            if (_rotorFxExtinguished) return;   // the wreck has cooled; leave it cold
             Fx(_mainRotorSmoke, _mainRotorFire, MainRotorNorm, MainRotorDead, 16);
             Fx(_tailRotorSmoke, _tailRotorFire, TailRotorNorm, TailRotorDead, 12);
 
@@ -1761,6 +1783,22 @@ namespace UnturnedGodot
                 v._tailRotorSmoke.Position = v._tailRotorFire.Position = s.TailRotorHub;
                 foreach (var fx in new[] { v._mainRotorSmoke, v._mainRotorFire, v._tailRotorSmoke, v._tailRotorFire })
                 { fx.Emitting = false; v.AddChild(fx); }
+
+                // BLADE-STRIKE SPARKS + a metal hit, one burst per damage tick (strawberry: "add a particle
+                // effect and sound (metal)"). One-shot rather than continuous, so the feedback is per-strike --
+                // grinding a rotor down is a rhythm of hits you can hear counting off, not a steady hiss.
+                v._mainStrikeFx = MakeSmoke("veh_fire.png", new Color(1f, 0.85f, 0.45f), 0.30f, 5.5f, 14, true, 0.10f, 0.28f);
+                v._tailStrikeFx = MakeSmoke("veh_fire.png", new Color(1f, 0.85f, 0.45f), 0.26f, 4.5f, 10, true, 0.08f, 0.22f);
+                v._mainStrikeFx.Position = s.RotorHub; v._tailStrikeFx.Position = s.TailRotorHub;
+                foreach (var fx in new[] { v._mainStrikeFx, v._tailStrikeFx })
+                { fx.Emitting = false; fx.OneShot = true; fx.Explosiveness = 1f; v.AddChild(fx); }
+                var hitWav = LoadWav("res://content/impact_metal.wav");
+                if (hitWav != null)
+                {
+                    hitWav.LoopMode = AudioStreamWav.LoopModeEnum.Disabled;   // a strike is a hit, not a loop
+                    v._strikeAudio = new AudioStreamPlayer3D { Stream = hitWav, UnitSize = 12f, MaxDistance = 90f, VolumeDb = 2f };
+                    v.AddChild(v._strikeAudio);
+                }
             }
             v._water = s.Water;   // BOAT/AMPHIBIOUS: voxelize the hull box for the source Buoyancy.cs voxel-Archimedes model
             if (s.Water != WaterMode.Car)
@@ -2157,7 +2195,12 @@ namespace UnturnedGodot
             _rotorRpm = Mathf.MoveToward(_rotorRpm, want, dt / (want > _rotorRpm ? SpoolUpSeconds : SpoolDownSeconds));
             if (_rotorNode != null)   // visual only -- the flight model never reads blade phase
             {
-                _rotorSpin += dt * (2.5f + _rotorRpm * 46f);
+                // STOPS when idle, on death, and slows as the rotor is damaged (strawberry: "rotor should stop
+                // when idle ... stop rotor on death ... lower each rotor's rpm when they are hurt"). The old
+                // constant +2.5 term meant the disc never actually stopped -- a parked, dead-engine machine
+                // sat there slowly turning its blades forever.
+                float spinScale = _exploded ? 0f : _rotorRpm * (0.30f + 0.70f * MainRotorNorm);
+                _rotorSpin += dt * spinScale * 46f;
                 _rotorNode.Rotation = new Vector3(0f, _rotorSpin, 0f);
             }
             if (_tailRotorNode != null)
@@ -2167,8 +2210,13 @@ namespace UnturnedGodot
                 // "pivot is rolled 90 deg, so local Y is still the spin axis" while the assignment beside it
                 // destroyed exactly that; strawberry spotted it in the first minute of flying
                 // ("the tail rotor needs to be rotated + 90 deg roll").
+            {
+                // The tail turns on its OWN health, so a shredded tail rotor visibly lags a healthy main --
+                // which is the tell that says which one you lost.
+                _tailSpin += dt * (_exploded ? 0f : _rotorRpm * (0.30f + 0.70f * TailRotorNorm)) * 120f;
                 _tailRotorNode.Basis = new Basis(Vector3.Back, Mathf.DegToRad(TailRotorRollDegrees))
-                                     * new Basis(Vector3.Up, _rotorSpin * 2.6f);
+                                     * new Basis(Vector3.Up, _tailSpin);
+            }
             // Swap blades <-> blur disc by rotor speed, which is why the retail prefab ships both meshes. Below
             // the threshold you see two blades sitting still; above it, the smear plate.
             bool spun = _rotorRpm > DiscSwapSpool;
@@ -2218,9 +2266,9 @@ namespace UnturnedGodot
             // framerate, and so brushing something is survivable while sitting in it is not.
             _mainStrikeCd -= dt; _tailStrikeCd -= dt;
             if (_mainDiscArea != null && _mainStrikeCd <= 0f && DiscStruck(_mainDiscArea))
-            { _mainStrikeCd = BladeStrikeInterval; DamageMainRotor(BladeStrikeDamage); }
+            { _mainStrikeCd = BladeStrikeInterval; DamageMainRotor(BladeStrikeDamage); BladeStrikeFx(_mainStrikeFx); }
             if (_tailDiscArea != null && _tailStrikeCd <= 0f && DiscStruck(_tailDiscArea))
-            { _tailStrikeCd = BladeStrikeInterval; DamageTailRotor(TailStrikeDamage); }
+            { _tailStrikeCd = BladeStrikeInterval; DamageTailRotor(TailStrikeDamage); BladeStrikeFx(_tailStrikeFx); }
 
             UpdateRotorFx();
 
@@ -2230,6 +2278,15 @@ namespace UnturnedGodot
             // to shove it downward.
             float mainEff = MainRotorNorm;
             float lift = _heliThrust * spool * _inCollective * (0.20f + 0.80f * mainEff);
+            // A DEAD TAIL ALSO GROUNDS YOU (strawberry: "dead tail should also have the same effect as
+            // killmain of preventing gaining height"). Capped just under g rather than zeroed like a dead main:
+            // the tail is not what lifts you, so losing it should leave you able to sink under some control
+            // while spinning, not drop like a machine with no rotor at all. Either way you cannot climb out.
+            if (TailRotorDead && !MainRotorDead) lift = Mathf.Min(lift, 9.8f * 0.95f);
+            // BOTH ROTORS GONE -> the airframe is finished ("if both rotors are destroyed, kill the main body
+            // too"). Routed through TakeDamage so it uses the ordinary death path -- burn timer, explosion,
+            // driver ejection -- instead of inventing a second way for a vehicle to die.
+            if (MainRotorDead && TailRotorDead && !_exploded && Health > 0f) TakeDamage(Health);
             // TILT COSTS LIFT, twice over. Thrusting along the body axis already gives the free cosine (a
             // 30 deg nose-down keeps only 87 % of its thrust pointing up); this takes a further bite on top,
             // so committing to a fast nose-down run actually costs you height instead of being free speed.
@@ -2276,9 +2333,15 @@ namespace UnturnedGodot
             // A DAMAGED TAIL ROTOR TURNS WORSE ("tail rotor hp low -> reduced turning"). Pitch and roll are the
             // MAIN rotor's job and are untouched by tail damage -- losing the tail costs you the pedals, not
             // the cyclic, which is what makes it a distinct failure rather than a general "controls worse".
-            float tailEff = 0.10f + 0.90f * TailRotorNorm;
+            // strawberry: "make the tail nerf all horizontal yaw/roll movement, including mouse, turn up the
+            // amount of nerf too." SQUARED, so half-health is a quarter of the authority rather than half --
+            // a damaged tail should be alarming well before it is dead. Applies to ROLL as well as yaw (both
+            // are horizontal control, and roll is where the mouse lives); PITCH is left alone because it is
+            // the main rotor's axis and the vertical one.
+            float tn = TailRotorNorm;
+            float tailEff = 0.04f + 0.96f * tn * tn;
             Vector3 cmd = b.X * (_inPitch * HeliPitchRate * _heliPitchTq / 2.6f)
-                        + b.Z * (-_inRoll * HeliRollRate * _heliRollTq / 3.0f)
+                        + b.Z * (-_inRoll * HeliRollRate * _heliRollTq / 3.0f * tailEff)
                         + b.Y * (-_inYaw * HeliYawRate * _heliYawTq / 2.2f * tailEff);
 
             // TORQUE REACTION. A tail rotor's whole job is cancelling the main rotor's torque on the fuselage;
@@ -3062,6 +3125,13 @@ namespace UnturnedGodot
                 else if (_burnTime < 360f)   // EXTINGUISHED at 60s: flames+smoke off, fire light killed; stays a cold wreck for 5 min
                 {
                     if (_fire != null && _fire.Emitting) _fire.Emitting = false;
+                    // Rotor fires die with the hull's ("extinguish rotor fires along with the body flames
+                    // after corpse cools down") -- otherwise a cold wreck sits there with two burning hubs.
+                    if (_mainRotorFire != null) _mainRotorFire.Emitting = false;
+                    if (_tailRotorFire != null) _tailRotorFire.Emitting = false;
+                    if (_mainRotorSmoke != null) _mainRotorSmoke.Emitting = false;
+                    if (_tailRotorSmoke != null) _tailRotorSmoke.Emitting = false;
+                    _rotorFxExtinguished = true;
                     if (_smoke != null && _smoke.Emitting) _smoke.Emitting = false;
                     if (_smoke0 != null && _smoke0.Emitting) _smoke0.Emitting = false;
                     if (_fireLight != null && _fireLight.Visible) { _fireLight.Visible = false; _fireLight.LightEnergy = 0f; }
