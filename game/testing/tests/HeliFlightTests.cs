@@ -558,6 +558,38 @@ namespace UnturnedGodot.Testing
                 T.Check($"{fleet[fi]}: carries its own .dat health ({a.HealthMax:0})", a.HealthMax > 0f);
             }
 
+            // ---- 8i. THE FLEET IS BALANCED AGAINST THE REAL AIRCRAFT. The absolute numbers are taste; the
+            // ORDERING is the specification strawberry gave, so that is what gets pinned. Each of these would
+            // survive any amount of retuning and fails the moment someone makes the gunship handle like a
+            // scout or the crane out-run everything.
+            //
+            // Speed: Mi-24 330 > Ka-60 300 > MD500 282 > UH-1 222 > S-64 213 km/h.
+            var byName = new System.Collections.Generic.Dictionary<string, Vehicle>();
+            foreach (var n in new[] { "hind", "orca", "hummingbird", "huey", "skycrane", "minicopter" })
+                byName[n] = Vehicle.BuildByName(n);
+            T.Check($"the Hind is the fastest of the fleet ({byName["hind"].SpeedMaxMps:0} m/s)",
+                byName["hind"].SpeedMaxMps > byName["orca"].SpeedMaxMps
+                && byName["orca"].SpeedMaxMps > byName["hummingbird"].SpeedMaxMps
+                && byName["hummingbird"].SpeedMaxMps > byName["huey"].SpeedMaxMps
+                && byName["huey"].SpeedMaxMps > byName["skycrane"].SpeedMaxMps);
+            // ...and the scrap ultralight is slower than every real aircraft.
+            T.Check($"the minicopter is the slowest thing with a rotor ({byName["minicopter"].SpeedMaxMps:0} m/s)",
+                byName["minicopter"].SpeedMaxMps < byName["skycrane"].SpeedMaxMps);
+            // Agility runs the OTHER way, by weight: MD500 1.6 t ... S-64 21 t. The Hind being both the
+            // fastest AND near the bottom for handling is the check that a "faster = better" retune breaks.
+            T.Check("agility is inverse to weight: Hummingbird > Huey > Orca > Hind > Skycrane",
+                byName["hummingbird"].DebugRollAuthority > byName["huey"].DebugRollAuthority
+                && byName["huey"].DebugRollAuthority > byName["orca"].DebugRollAuthority
+                && byName["orca"].DebugRollAuthority > byName["hind"].DebugRollAuthority
+                && byName["hind"].DebugRollAuthority > byName["skycrane"].DebugRollAuthority);
+            T.Check($"...so the fastest machine is NOT the most agile (hind roll {byName["hind"].DebugRollAuthority:0.##} vs hummingbird {byName["hummingbird"].DebugRollAuthority:0.##})",
+                byName["hind"].DebugRollAuthority < byName["hummingbird"].DebugRollAuthority);
+            // The Skycrane climbs WORST despite being the lift machine -- at 21 t it mostly lifts itself.
+            T.Check($"the Skycrane is the worst climber, not the best ({byName["skycrane"].DebugThrust:0.#})",
+                byName["skycrane"].DebugThrust < byName["huey"].DebugThrust
+                && byName["skycrane"].DebugThrust < byName["hind"].DebugThrust);
+            foreach (var v in byName.Values) v.QueueFree();
+
             // ---- 9. THE HUEY flies the same model off its own spec + the real retail mesh.
             var huey = Spawn(World, "huey", new Vector3(120f, 3f, 0f));
             T.Check("the huey spec builds as a rotary wing", huey.IsHeli);

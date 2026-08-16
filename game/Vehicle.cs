@@ -115,6 +115,10 @@ namespace UnturnedGodot
         /// STOPPED rather than merely that the spool number is zero -- the old constant spin term made those
         /// two different facts.</summary>
         public float DebugRotorPhase => _rotorSpin;
+        /// <summary>Balance seams: the tuned handling numbers, so a test can pin the fleet's ORDERING without
+        /// flying every airframe. The absolute values are taste; the order is the specification.</summary>
+        public float DebugRollAuthority => _heliRollTq;
+        public float DebugThrust => _heliThrust;
         Vector3 _mainHubCentre, _mainHubHalf, _tailHubCentre, _tailHubHalf;
         // A blade strike GRINDS the rotor down over time rather than killing it outright (strawberry
         // 2026-08-16: "rotors' blade damage to be ticked over time instead of instantly killing the rotor").
@@ -1352,7 +1356,11 @@ namespace UnturnedGodot
             RotorHub = new Vector3(0f, 1.22f, 0.55f), TailRotorHub = new Vector3(0.09f, 0.02f, 2.46f),
             Body = null, Palette = null, DefaultPaints = new[] { "#8a7f5c" },   // bare weathered tube frame
             Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", WheelRadius = 0.3f,   // unused (no wheels), non-null for safety like the runabout
-            Engine = 0f, SteerMax = 0f, SteerMin = 0f, SpeedMax = 26f, SpeedMin = 0f, Brake = 0f,   // rotor thrust replaces wheel drive entirely
+            // 20, not 26: once the fleet was balanced against real aircraft, a scrap ultralight out-running a Huey
+            // and a Skycrane read wrong. This is the one figure NOT derived from a real machine -- its analogue
+            // (a Mosquito-class ultralight, ~100 km/h) would scale to 10 m/s and be miserable to fly. Gamified
+            // instead, and placed below the whole fleet, which is the relationship that matters.
+            Engine = 0f, SteerMax = 0f, SteerMin = 0f, SpeedMax = 20f, SpeedMin = 0f, Brake = 0f,
             BoxSize = new Vector3(1.05f, 0.80f, 1.60f), BoxCenter = new Vector3(0f, 0.05f, 0.20f),   // seats + engine bay
             ExtraBoxes = new (Vector3, Vector3)[]
             {
@@ -1412,7 +1420,7 @@ namespace UnturnedGodot
             // 20 % off 13.5 leaves thrust-to-weight at 1.10 -- hover at 91 % collective, with almost nothing left
             // to climb on once the new tilt penalty takes its bite. 12.0 keeps it heavy (T/W 1.22, hover ~82 %)
             // without making a loaded transport unable to get out of its own way.
-            HeliThrust = 12.0f, HeliPitchTorque = 1.5f, HeliRollTorque = 1.6f, HeliYawTorque = 1.4f, HeliLevel = 0f,
+            HeliThrust = 12.9f, HeliPitchTorque = 1.40f, HeliRollTorque = 1.65f, HeliYawTorque = 1.29f, HeliLevel = 0f,
             HeliClimbMax = 18f, HeliFallMax = 40f,
             RotorRadius = 5.57f, TailRotorRadius = 1.28f,        // the mesh's own spans -- no scaling for this one
             RotorHub = new Vector3(0f, 3.01f, -0.25f), TailRotorHub = new Vector3(-0.45f, 3.57f, 6.68f),   // prefab local positions, Z negated
@@ -1420,7 +1428,7 @@ namespace UnturnedGodot
             Body = null, Palette = null,
             DefaultPaints = new[] { "#475e83", "#a69884", "#437c44", "#495631" },   // .dat DefaultPaintColors
             Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", WheelRadius = 0.3f,   // unused (no wheels)
-            Engine = 0f, SteerMax = 0f, SteerMin = 0f, SpeedMax = 16f, SpeedMin = 0f, Brake = 0f,   // .dat Speed_Max 16
+            Engine = 0f, SteerMax = 0f, SteerMin = 0f, SpeedMax = 23f, SpeedMin = 0f, Brake = 0f,   // .dat says 16, but the fleet is balanced on the real UH-1's 222 km/h -- see the table above
             BoxSize = new Vector3(2.40f, 2.10f, 5.20f), BoxCenter = new Vector3(0f, 0.75f, 0.30f),   // cabin; boom/skids are ExtraBoxes
             ExtraBoxes = new (Vector3, Vector3)[]
             {
@@ -1440,10 +1448,30 @@ namespace UnturnedGodot
         // number below is PORTED from the vehicle's own .dat rather than invented, because unlike the
         // minicopter these all have a source entry: Speed_Max, Speed_Min, Fuel, Health, Rarity, Explosion.
         //
-        // The source gives them nearly identical top speeds -- 16 for the heavies, 18 for the Hummingbirds --
-        // so speed is NOT where a Hind differs from a Little Bird. The difference has to live in the flight
-        // model instead: thrust-to-weight, control authority and inertia. A 1250 hp gunship that rolls like a
-        // scout would be wrong even with the .dat numbers all correct.
+        // BALANCED AGAINST THE REAL AIRCRAFT (strawberry 2026-08-16: "hind is an mi24. orca is a ka-60.
+        // skycrane is an S-64 skycrane. hummingbird is a littlebird. huey is a huey. balance all around
+        // these"). The .dat speeds are useless for this -- everything is 16, or 18 for a Hummingbird -- so the
+        // fleet's character comes from the machines they actually are:
+        //
+        //   aircraft              top speed   MTOW      climb     -> game speed / thrust / roll
+        //   Mi-24 Hind            330 km/h    11,500kg  12.5 m/s      34   14.2   1.01
+        //   Ka-60 Kasatka (Orca)  300         6,500     10.4          31   13.4   1.34
+        //   MD500 (Hummingbird)   282         1,610     10.5          29   13.5   2.70
+        //   UH-1 Huey             222         4,300      8.9          23   12.9   1.65
+        //   S-64 Skycrane         213         21,000     6.8          22   12.2   0.74
+        //
+        // Two of these inverted what I had guessed, which is the point of looking them up. THE HIND IS THE
+        // FASTEST of the five, not the slowest -- it is heavy AND fast, which is the whole idea of a gunship;
+        // I had tuned it as the lumbering one. And the SKYCRANE CLIMBS WORST despite being the lift machine,
+        // because what it is lifting is mostly itself.
+        //
+        // Speeds keep the real RATIOS, scaled into a 22-34 m/s band that is flyable on this map -- the numbers
+        // are gamified, the GAPS are real. Measured: every entry lands within 0.6 % of its real-world ratio to
+        // the Hind (0.909 -> 0.912, 0.855 -> 0.853, 0.673 -> 0.676, 0.645 -> 0.647). Thrust is
+        // derived, not chosen: terminal climb in this model is (thrust - g) / LinearDamp, so thrust = 9.8 +
+        // 0.35 x the real climb rate. Roll authority goes as 1/sqrt(MTOW), normalised to the Little Bird.
+        // MTOW throughout -- mixing empty and max weights would have flipped Skycrane and Hind against each
+        // other, since the Skycrane is lighter than the Hind empty and twice it loaded.
         //
         // HeliBase carries everything the fleet shares, so each entry below is only what makes it itself.
         static Spec HeliBase(string mesh, float thrust, float pitchTq, float rollTq, float yawTq,
@@ -1471,34 +1499,35 @@ namespace UnturnedGodot
             Wheels = new (float, float, float, bool)[0],
         };
 
-        // HIND -- the gunship. Heaviest and least agile: 1250 hp of armour has to feel like it.
-        static readonly Spec _hind = HeliBase("hind", 11.6f, 1.05f, 1.10f, 1.05f, 5.90f, 1.25f,
+        // HIND -- the gunship, and the FASTEST thing in the fleet as well as the second heaviest. Fast and
+        // unwieldy: it will outrun anything and hates changing its mind.
+        static readonly Spec _hind = HeliBase("hind", 14.2f, 0.86f, 1.01f, 0.79f, 5.90f, 1.25f,
             new Vector3(0f, 4.18f, 0.58f), new Vector3(-0.30f, 4.47f, 9.60f),
             new Vector3(2.90f, 2.60f, 7.20f), new Vector3(0f, 1.40f, 0.20f),
-            16f, 1750f, 1250f, "Hind", EItemRarity.LEGENDARY);
+            34f, 1750f, 1250f, "Hind", EItemRarity.LEGENDARY);
         public static Vehicle BuildHind(int variant = 0) => Build(_hind, variant, "hind");
 
-        // ORCA -- the troop transport. Heavy but not armoured; a little livelier than the Hind.
-        static readonly Spec _orca = HeliBase("orca", 12.2f, 1.30f, 1.35f, 1.25f, 5.90f, 1.25f,
+        // ORCA (Ka-60) -- the modern transport. Nearly Hind-fast and noticeably more agile; the all-rounder.
+        static readonly Spec _orca = HeliBase("orca", 13.4f, 1.14f, 1.34f, 1.05f, 5.90f, 1.25f,
             new Vector3(0f, 3.28f, -0.25f), new Vector3(-0.30f, 1.48f, 7.55f),
             new Vector3(2.60f, 2.50f, 6.40f), new Vector3(0f, 1.20f, 0.10f),
-            16f, 2000f, 1000f, "Orca", EItemRarity.EPIC);
+            31f, 2000f, 1000f, "Orca", EItemRarity.EPIC);
         public static Vehicle BuildOrca(int variant = 0) => Build(_orca, variant, "orca");
 
-        // SKYCRANE -- a flying frame built around lift. Best thrust-to-weight of the heavies, worst roll rate:
-        // it will haul itself upward all day and hates being asked to turn quickly.
-        static readonly Spec _skycrane = HeliBase("skycrane", 13.2f, 1.00f, 0.95f, 1.15f, 5.90f, 1.25f,
+        // SKYCRANE (S-64) -- the heavy lifter, and counter-intuitively the WORST climber and slowest of the
+        // five, because at 21 t what it mostly lifts is itself. Least agile by a wide margin.
+        static readonly Spec _skycrane = HeliBase("skycrane", 12.2f, 0.63f, 0.74f, 0.58f, 5.90f, 1.25f,
             new Vector3(0f, 3.01f, -1.21f), new Vector3(-0.45f, 3.55f, 7.71f),
             new Vector3(3.20f, 2.80f, 6.80f), new Vector3(0f, 1.30f, 0.30f),
-            16f, 2000f, 900f, "Skycrane", EItemRarity.EPIC);
+            22f, 2000f, 900f, "Skycrane", EItemRarity.EPIC);
         public static Vehicle BuildSkycrane(int variant = 0) => Build(_skycrane, variant, "skycrane");
 
-        // HUMMINGBIRD -- the light scout, and the only one the .dat makes faster (18). Sharpest controls in the
-        // fleet, thinnest hull. The three retail variants share one geometry, so they share one spec.
-        static readonly Spec _hummingbird = HeliBase("hummingbird", 14.5f, 2.10f, 2.45f, 1.95f, 5.57f, 1.25f,
+        // HUMMINGBIRD (MD500 Little Bird) -- the scout. A tenth of the Hind's weight, so far and away the
+        // sharpest controls in the fleet, and the thinnest hull. The three retail variants share one geometry.
+        static readonly Spec _hummingbird = HeliBase("hummingbird", 13.5f, 2.30f, 2.70f, 2.10f, 5.57f, 1.25f,
             new Vector3(0f, 3.01f, -0.25f), new Vector3(-0.45f, 3.45f, 6.95f),
             new Vector3(2.00f, 2.10f, 4.60f), new Vector3(0f, 1.00f, 0.10f),
-            18f, 1750f, 750f, "Hummingbird", EItemRarity.EPIC);
+            29f, 1750f, 750f, "Hummingbird", EItemRarity.EPIC);
         public static Vehicle BuildHummingbird(int variant = 0) => Build(_hummingbird, variant, "hummingbird");
         public static Vehicle BuildByName(string name, int variant = 0) => name switch { "quad" => BuildQuad(variant), "bus" => BuildBus(variant), "sedan" => BuildSedan(variant), "hatchback" => BuildHatchback(variant), "humvee" => BuildHumvee(variant), "roadster" => BuildRoadster(variant), "ambulance" => BuildAmbulance(variant), "firetruck" => BuildFiretruck(variant), "tractor" => BuildTractor(variant), "ural" => BuildUral(variant), "police" => BuildPolice(variant), "semi" => BuildSemi(variant), "trailer" => BuildTrailer(variant), "offroader" => BuildOffRoader(variant), "off_roader" => BuildOffRoader(variant), "truck" => BuildTruck(variant), "van" => BuildVan(variant), "golf" => BuildGolf(variant), "vw_golf" => BuildGolf(variant), "runabout" => BuildRunabout(variant), "apc" => BuildAPC(variant), "minicopter" => BuildMinicopter(variant), "mini" => BuildMinicopter(variant), "heli" => BuildMinicopter(variant), "huey" => BuildHuey(variant), "scoutcopter" => BuildScoutcopter(variant), "scout" => BuildScoutcopter(variant), "hind" => BuildHind(variant), "orca" => BuildOrca(variant), "skycrane" => BuildSkycrane(variant), "hummingbird" => BuildHummingbird(variant), "bird" => BuildHummingbird(variant), _ => BuildJeep(variant) };
         public static readonly string[] SpecNames = { "jeep", "quad", "bus", "sedan", "hatchback", "humvee", "roadster", "ambulance", "firetruck", "tractor", "ural", "police", "semi", "trailer", "offroader", "truck", "van", "golf", "runabout", "apc", "minicopter", "huey", "scoutcopter", "hind", "orca", "skycrane", "hummingbird" };   // F1 dev-console autocomplete + validation ("golf" = VW_Golf, command-only, no natural spawn; runabout = boat + apc = amphibious, both command-spawnable -- drop over water to float)
