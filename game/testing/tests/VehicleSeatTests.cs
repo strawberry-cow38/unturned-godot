@@ -189,6 +189,26 @@ namespace UnturnedGodot.Testing
             bus2.QueueFree();
             yield return Ticks(1);
 
+            // ---- 4. PASSENGERS CAN ACTUALLY USE THE WEAPON THEY ARE HOLDING (strawberry: "passengers can hold
+            // weapons"). The first cut of the seat work only kept the viewmodel SHOWN for a passenger, which
+            // looks identical to the feature working and is not it: Fire() refused on `_driving != null`
+            // regardless of seat, so a passenger held a gun they could never shoot. Asserted on Fire()'s return
+            // rather than on the viewmodel being visible, because visible was already true when it was broken.
+            p.DriveFP = true;
+            T.Check("the DRIVER cannot fire -- hands on the wheel", p.IsDriver && !p.Fire());
+            T.Check("move to a passenger seat", p.TrySwitchSeat(1) && p.IsPassenger);
+            yield return Ticks(2);
+            T.Check("...and a passenger CAN fire", p.Fire());
+            // In third person the aim source is the orbiting chase cam rather than the player's look, which is
+            // the "stray tracer flies straight south" bug the old blanket guard was covering up. Refused on
+            // purpose, so that hole does not reopen under a different name.
+            p.DriveFP = false;
+            yield return Ticks(2);
+            T.Check("...but not from the orbiting third-person cam", !p.Fire());
+            p.DriveFP = true;
+            T.Check("back to the wheel for the rest", p.TrySwitchSeat(0));
+            yield return Ticks(2);
+
             // Refusals. A seat index past the end, and the seat you are already in.
             T.Check("a seat that does not exist is refused", !p.TrySwitchSeat(99));
             T.Check("...as is the seat you are already in", !p.TrySwitchSeat(0));

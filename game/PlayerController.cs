@@ -4138,7 +4138,7 @@ namespace UnturnedGodot
                     _driveCamYaw -= mm.Relative.X * MouseSensitivity;
                     _driveCamPitch = Mathf.Clamp(_driveCamPitch + mm.Relative.Y * MouseSensitivity, -25f, 70f);   // inverted Y: mouse up -> cam tilts down (strawberry)
                 }
-                else if (_riding != null || DrivingPredicted)   // FP RIDE free-look (#37): the mouse turns the VIEW while A/D steers the car (real Unturned). MP only (ride mode OR Part A predicted driving) -- SP FP driving keeps its fixed gaze.
+                else if (_riding != null || DrivingPredicted || IsPassenger)   // FP free-look: the mouse turns the VIEW while the driver steers (real Unturned). MP ride, Part A predicted driving, or ANY passenger seat -- a passenger who cannot look around cannot use the weapon they are allowed to hold. The SP DRIVER keeps the fixed gaze over the hood.
                 {
                     _rideLookYaw -= mm.Relative.X * MouseSensitivity;
                     _rideLookPitch = Mathf.Clamp(_rideLookPitch - mm.Relative.Y * MouseSensitivity, -89f, 89f);   // same Y convention as on-foot look: mouse up -> look up
@@ -4541,7 +4541,7 @@ namespace UnturnedGodot
         // come from the equipped gun's real ItemGunAsset .dat when loaded.
         public bool Fire()
         {
-            if (_fireCd > 0f || Ammo <= 0 || _reloading || _unloading || _magSwapAnimTimer > 0 || _needsRechamber || _rechambering || _cam == null || _dead || _driving != null
+            if (_fireCd > 0f || Ammo <= 0 || _reloading || _unloading || _magSwapAnimTimer > 0 || _needsRechamber || _rechambering || _cam == null || _dead || (_driving != null && (_seatIndex == 0 || !_fp))
                 || !HasGunOut || IsSwimming || (_invUI?.IsOpen ?? false)) return false;   // IsSwimming: guns are canUseUnderwater=false -> no shot while swimming, incl. the polled AUTO/burst tick (source PlayerEquipment). !HasGunOut: no gun in hand (melee/held item disarm it) -> no shot, even from the polled auto/burst tick after switching away mid-fire (master)
             // -- also while the bolt/pump still needs cycling -- kills a queued burst the frame we die (the tick calls Fire()) + ignores death-screen clicks (master). _driving guard fixes the "stray tracer flies straight south" bug: the auto/burst tick (_PhysicsProcess) calls Fire() on held-LMB WITHOUT a driving check, and while driving _cam is TopLevel (detached chase cam) -> aim = the chase cam's fixed heading, not the player's look. LMB honks while driving anyway.
             if (AmmoRadial?.IsOpen ?? false) return false;   // no firing while the ammo radial is up -- you're picking ammo, not shooting
@@ -5422,6 +5422,8 @@ namespace UnturnedGodot
         /// <summary>Are we actually in control? Seat 0 only -- every other seat is a passenger, and a passenger
         /// pressing W must not drive the vehicle from the back seat.</summary>
         public bool IsDriver => _driving != null && _seatIndex == 0;
+        /// <summary>Riding someone else's vehicle in a non-driver seat -- free to look around and use a weapon.</summary>
+        public bool IsPassenger => _driving != null && _seatIndex != 0;
         public bool IsDriving => _driving != null;
         public Vehicle Driving => _driving;   // the vehicle being driven (for zombies to swipe at, source targetPassengerVehicle)
         public void SetSuppressor(bool on) => _viewmodel?.SetSlotAttached("Barrel", on);   // test hook: toggle the silenced barrel
@@ -5682,7 +5684,7 @@ namespace UnturnedGodot
             if (_fp)   // first-person from the driver's head, looking forward over the hood (eyeL per-vehicle: tall cabs sit higher so the view clears a long hood)
             {
                 var eye = vt * eyeL;
-                if (_riding != null || DrivingPredicted)   // MP ride OR Part A predicted driving (#37): FREE-LOOK -- yaw/pitch in vehicle-local space; (0, FpRideGazePitchDeg) == the fixed gaze below
+                if (_riding != null || DrivingPredicted || IsPassenger)   // MP ride, Part A predicted driving, or a PASSENGER seat: FREE-LOOK -- yaw/pitch in vehicle-local space; (0, FpRideGazePitchDeg) == the fixed gaze below
                 {
                     var look = vt.Basis.Orthonormalized() * new Basis(Vector3.Up, Mathf.DegToRad(_rideLookYaw)) * new Basis(Vector3.Right, Mathf.DegToRad(_rideLookPitch));
                     _cam.GlobalTransform = new Transform3D(look, eye);
