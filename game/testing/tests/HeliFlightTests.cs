@@ -20,7 +20,9 @@ namespace UnturnedGodot.Testing
     public sealed class HeliFlightTests : GameTest
     {
         public override string Name => "vehicle.heli_flight";
-        public override double TimeoutSimSeconds => 120;
+        // Generous because this suite genuinely simulates a lot of flying: an 18 s climb, several 5 s
+        // manoeuvres, and a 14 s turbulence window that has to span multiple gust intervals to observe one.
+        public override double TimeoutSimSeconds => 260;
 
         static Vehicle Spawn(Node world, string name, Vector3 at)
         {
@@ -182,6 +184,57 @@ namespace UnturnedGodot.Testing
             // and the rate really did bleed off -- holding attitude must come from damping, not from still turning
             T.Check($"...with the roll RATE damped to nothing ({hold.AngularVelocity.Length():0.###} rad/s)",
                 hold.AngularVelocity.Length() < 0.25f);
+
+            // ---- 7c. INERTIA. strawberry 2026-08-16: "joystick changes should feel slower, heavier and more
+            // sluggish. like the heli actually has weight."
+            //
+            // Weight is a claim about LAG, so it is measured as lag: after one tick of full stick the machine
+            // must have barely begun to turn, and it must still be turning after the stick is released. A model
+            // with no inertia snaps to the commanded rate immediately and stops dead on release, which passes
+            // "does yaw input turn it" perfectly well.
+            //
+            // Turbulence is OFF for this one -- a gust is a rate the pilot did not ask for, and leaving the
+            // weather on would let it fake the very lag being measured, or mask its absence.
+            var inert = Spawn(World, "minicopter", new Vector3(-500f, 90f, 0f));
+            inert.EngineOn = true; inert.DebugNoTurbulence = true;
+            for (int i = 0; i < 300; i++) { inert.DriveHeli(1f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
+            inert.AngularVelocity = Vector3.Zero;
+            yield return Ticks(1);
+            inert.DriveHeli(0f, 1f, 0f, 0f, 0.02);
+            yield return Ticks(1);
+            float afterOneTick = inert.AngularVelocity.Length();
+            // Full yaw commands ~1.3 rad/s. Through two lags, one tick (20 ms) should deliver a small fraction.
+            T.Check($"a full stick input does not take effect instantly ({afterOneTick:0.####} rad/s after 1 tick)",
+                afterOneTick < 0.25f);
+            for (int i = 0; i < 60; i++) { inert.DriveHeli(0f, 1f, 0f, 0f, 0.02); yield return Ticks(1); }
+            float sustained = inert.AngularVelocity.Length();
+            T.Check($"...but builds up while held ({sustained:0.###} rad/s after 1.2 s)", sustained > afterOneTick * 3f);
+            // COASTING: release everything, and the rotation must bleed away rather than stop dead.
+            inert.DriveHeli(0f, 0f, 0f, 0f, 0.02);
+            yield return Ticks(2);
+            float justAfter = inert.AngularVelocity.Length();
+            T.Check($"...and carries on turning after release instead of stopping dead ({justAfter:0.###} rad/s)",
+                justAfter > sustained * 0.35f);
+            for (int i = 0; i < 120; i++) { inert.DriveHeli(0f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
+            T.Check($"...settling to still, eventually ({inert.AngularVelocity.Length():0.###} rad/s)",
+                inert.AngularVelocity.Length() < 0.2f);
+
+            // ---- 7d. TURBULENCE, and that it knows when NOT to blow.
+            var gust = Spawn(World, "minicopter", new Vector3(-560f, 90f, 0f));
+            gust.EngineOn = true;
+            float peak = 0f;
+            for (int i = 0; i < 700; i++)   // 14 s: several gust intervals (1.6-5.5 s apart)
+            {
+                gust.DriveHeli(1f, 0f, 0f, 0f, 0.02);
+                yield return Ticks(1);
+                peak = Mathf.Max(peak, gust.DebugTurbulence.Length());
+            }
+            T.Check($"turbulence actually blows in the air ({peak:0.###} rad/s peak gust)", peak > 0.05f);
+            T.Check($"...but stays MINOR, not a wrestling match ({peak:0.###} rad/s)", peak < 0.6f);
+            // A machine sitting on the ground does not get shoved around -- the check that stops "turbulence"
+            // from becoming "the parked helicopter shakes itself apart".
+            T.Check($"...and none of it reaches a grounded machine ({h.DebugTurbulence.Length():0.###})",
+                h.DebugTurbulence.Length() < 0.001f);
 
             // ---- 8b. AXIS CONVENTIONS, pinned. An inverted axis flies perfectly well -- it climbs, banks,
             // turns and translates -- it is just backwards, so every check above passes on a machine with

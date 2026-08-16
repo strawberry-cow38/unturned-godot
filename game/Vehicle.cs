@@ -38,6 +38,29 @@ namespace UnturnedGodot
         /// when tilting forward/back"). Fore/aft gets more than lateral, because that is the axis she was
         /// describing and a helicopter that slides sideways as eagerly as it accelerates feels like a drone.</summary>
         const float ForeAftBoost = 1.65f, LateralBoost = 1.15f;
+
+        // ---- INERTIA + TURBULENCE (strawberry 2026-08-16: "adding inertia. joystick changes should feel
+        // slower, heavier and more sluggish. like the heli actually has weight. as well as minor turbulence at
+        // random intervals") ------------------------------------------------------------------------------
+        //
+        // Weight is TWO lags, not one. The stick first drives a smoothed COMMAND (this is the pilot's control
+        // linkage and the rotor taking time to change its disc), and the airframe's angular velocity then
+        // chases that command (this is the mass actually resisting). One lag alone still feels like a mouse
+        // cursor with a delay -- it starts late but stops instantly. Two gives the overshoot-and-settle of
+        // something with momentum, and crucially it is heavy coming OUT of an input as well as going in.
+        Vector3 _cmdRate;      // the smoothed command the airframe is chasing
+        Vector3 _turbKick;     // the current gust, decaying
+        float _turbTimer;
+        const float CommandSlew = 2.4f;        // stick -> commanded rate (the linkage)
+        const float TurbMinGap = 1.6f, TurbMaxGap = 5.5f;   // seconds between gusts
+        const float TurbStrength = 0.42f;      // rad/s of angular kick at full strength
+        const float TurbDecay = 1.5f;          // how fast a gust bleeds away
+        static readonly RandomNumberGenerator HeliRng = MakeHeliRng();
+        static RandomNumberGenerator MakeHeliRng() { var r = new RandomNumberGenerator(); r.Randomize(); return r; }
+        /// <summary>Test seam: the live gust, so a test can prove turbulence is real without waiting on a die roll.</summary>
+        public Vector3 DebugTurbulence => _turbKick;
+        /// <summary>Test seam: turbulence OFF, so a control-response test measures the pilot and not the weather.</summary>
+        public bool DebugNoTurbulence;
         public bool IsHeli => _heli;
         float _groundClearance;
         /// <summary>Distance from the body origin down to its lowest collision point (skids, hull floor).</summary>
@@ -1886,7 +1909,7 @@ namespace UnturnedGodot
         float HoverCollective => _heliThrust > 0.01f ? Mathf.Clamp(9.8f / _heliThrust, 0f, 1f) : 0f;
         float IdleCollective => HoverCollective * IdleHoverFraction;
         const float HeliPitchRate = 1.15f, HeliRollRate = 1.45f, HeliYawRate = 1.30f;   // rad/s at full deflection
-        const float HeliControlSharpness = 6.5f;   // how fast angular velocity converges on the commanded rate
+        const float HeliControlSharpness = 3.1f;   // how fast angular velocity converges on the commanded rate (the MASS stage)
 
         /// <summary>The pilot's held flight controls. <paramref name="collective"/> is +1 while W is held, -1
         /// while S is held, 0 with neither.
@@ -2048,7 +2071,30 @@ namespace UnturnedGodot
                 if (axis.LengthSquared() > 1e-6f)
                     cmd += axis.Normalized() * up.AngleTo(Vector3.Up) * _heliLevel * spool * (1f - manual);
             }
-            AngularVelocity = AngularVelocity.Lerp(cmd, 1f - Mathf.Exp(-HeliControlSharpness * dt));
+            // TURBULENCE. Gusts on a random timer, only in the air and only under a live rotor -- a machine
+            // sitting on its wheels does not get shoved around, and neither does one whose disc has stopped.
+            // Added to the COMMAND rather than applied as a torque, so it rides the same inertia the pilot's
+            // input does: a gust builds and washes out with the airframe's own weight instead of teleporting
+            // the attitude.
+            if (!DebugNoTurbulence && GetContactCount() == 0 && _rotorRpm > 0.4f)
+            {
+                _turbTimer -= dt;
+                if (_turbTimer <= 0f)
+                {
+                    _turbTimer = HeliRng.RandfRange(TurbMinGap, TurbMaxGap);
+                    var dir = new Vector3(HeliRng.RandfRange(-1f, 1f), HeliRng.RandfRange(-0.5f, 0.5f), HeliRng.RandfRange(-1f, 1f));
+                    if (dir.LengthSquared() > 1e-4f)
+                        _turbKick = dir.Normalized() * HeliRng.RandfRange(0.35f, 1f) * TurbStrength;
+                }
+                _turbKick = _turbKick.Lerp(Vector3.Zero, 1f - Mathf.Exp(-TurbDecay * dt));
+                cmd += _turbKick * spool;
+            }
+            else { _turbKick = Vector3.Zero; _turbTimer = 0f; }
+
+            // The two lags. CommandSlew is the linkage catching up to the stick; HeliControlSharpness is the
+            // mass catching up to the linkage.
+            _cmdRate = _cmdRate.Lerp(cmd, 1f - Mathf.Exp(-CommandSlew * dt));
+            AngularVelocity = AngularVelocity.Lerp(_cmdRate, 1f - Mathf.Exp(-HeliControlSharpness * dt));
 
             // SETTLE. No wheels means the shared wheel-contact settle test can never fire, so a parked heli
             // would idle its physics forever.

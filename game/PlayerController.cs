@@ -2869,7 +2869,11 @@ namespace UnturnedGodot
         // and it is also the only mapping that works against a flight model driving angular VELOCITY -- a stick
         // that stayed deflected would just spin forever.
         float _heliStickP, _heliStickR;
-        const float HeliStickGain = 0.034f;    // mouse pixels -> stick deflection (strawberry: "lower the sensitivity of the joystick")
+        // Base mouse-pixels -> stick deflection, cut twice on playtest feedback (0.055 -> 0.034 -> 0.020,
+        // strawberry: "lower the sensitivity of the joystick", then "lower the default sens for piloting too").
+        // The player's own multiplier rides on top, so this stays the DESIGNER's number and 1.00x means it.
+        const float HeliStickGainBase = 0.020f;
+        static float HeliStickGain => HeliStickGainBase * ControlsOptions.HeliSensitivity;
         const float HeliStickDecay = 8.5f;     // self-centring, per second
         /// <summary>Cross-axis deadzone (strawberry 2026-08-16: "add a little deadzone between forward/back
         /// tilting and left/right tilting"). A mouse never moves on a perfectly straight axis, so a movement

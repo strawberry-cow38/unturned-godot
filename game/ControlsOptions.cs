@@ -18,5 +18,16 @@ namespace UnturnedGodot
         public static bool InvertHeliPitch;
 
         public static string InvertHeliPitchLabel => InvertHeliPitch ? "Inverted" : "Regular";
+
+        /// <summary>Helicopter cyclic sensitivity, as a MULTIPLIER on the base gain rather than a raw
+        /// pixels-per-degree number (strawberry 2026-08-16: "lower the default sens for piloting too, and add a
+        /// slider to the options menu"). A multiplier means retuning the flight model's base feel does not
+        /// invalidate everyone's saved setting, and 1.0 always means "what the designer chose".
+        ///
+        /// Deliberately separate from the on-foot MouseSensitivity: flying wants a much finer stick than
+        /// aiming does, and sharing one number forces a compromise that is wrong for both.</summary>
+        public static float HeliSensitivity = 1.0f;
+        public const float HeliSensMin = 0.25f, HeliSensMax = 2.5f;
+        public static string HeliSensitivityLabel => $"{HeliSensitivity:0.00}x";
     }
 }
