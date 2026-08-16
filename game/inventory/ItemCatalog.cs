@@ -180,12 +180,19 @@ namespace SDG.Unturned
         // magazine. Wire the ones a gun actually points at here.
         static void WireMagazines()
         {
-            void Mag(ushort id, int cap, int cal, string round)
+            void Mag(ushort id, int cap, int cal, string round, bool overridesCap = false)
             {
                 var a = Assets.find(id);
                 if (a == null) return;
-                a.magCapacity = cap; a.magCaliber = cal; a.magRound = round;
+                a.magCapacity = cap; a.magCaliber = cal; a.magRound = round; a.magOverridesCapacity = overridesCap;
             }
+            // Military Drum (item 17): a 100-round drum in the SAME STANAG group (caliber 1) as the Military Magazine
+            // (item 6), so it feeds the same 5.56 rifles (eaglefire/maplestrike/swissgewehr) -- technically a STANAG mag,
+            // just 100 rounds instead of 30 (master). Inert from the TSV until wired here; a Mag() mutate (not Add())
+            // keeps its GUID. overridesCap=true: the full 100 rounds load INTO the gun (master wants the drum's capacity to
+            // actually apply), unlike the .45/.50 groups below where the gun's Ammo_Max still caps a smaller mag.
+            Mag(17, 100, 1, "5.56x45mm NATO", overridesCap: true);   // Military Drum -- STANAG caliber (1); the full 100 applies to the gun, not capped at the rifle's 30 (master)
+
             // M39 EMR's 20-round box. The SCAR-H's (9143) is a deliberate clone in its own group -- same capacity,
             // same round, same mesh, will not seat in the other rifle.
             Mag(1020, 20, 22, "7.62x51mm NATO");
@@ -218,8 +225,9 @@ namespace SDG.Unturned
             //
             // SAME GROUP (caliber 3) is what "reuses ammo" means: either magazine seats in either pistol. The niche
             // survives that because a gun's Ammo_Max caps what a reload draws (PlayerController.DoMagSwap takes
-            // Min(mag.amount, Gun.AmmoMax)) -- so the 12-rounder in a 1911 still loads 7, and only the Avenger actually
-            // holds twelve. Same shape as the STANAG group, where a 100-round drum does not turn every rifle into an LMG.
+            // Min(mag.amount, CapForMag(mag)), = Ammo_Max for an ordinary mag) -- so the 12-rounder in a 1911 still loads 7,
+            // and only the Avenger actually holds twelve. (The 100-round drum is the deliberate exception: magOverridesCapacity
+            // lets its full count through -- master wanted that -- while these .45/.50 mags stay gun-capped.)
             Mag(98,   7, 3, ".45 ACP");    // 1911 -- retail's own 7, single-stack
             Mag(1022, 12, 3, ".45 ACP");   // Avenger (USP .45) -- the real pistol's 12-round double-stack, and the niche
 

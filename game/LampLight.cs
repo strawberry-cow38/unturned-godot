@@ -111,6 +111,13 @@ namespace UnturnedGodot
                 {
                     _fixture.Mesh = body;
                     _emissive = new MeshInstance3D { Name = "Emissive", Mesh = emit, MaterialOverride = _fixtureOffMat };
+                    // Cull the glow WITH its housing. VisibilityRange is per-instance and is NOT inherited from the
+                    // parent fixture's range, so a freshly-built emissive node keeps rendering at ANY distance even
+                    // after the fixture has distance-culled -- the lit bulb then glows across the whole map (master:
+                    // "lamps render from any distance"). Copy the housing's exact cutoff so the two vanish together.
+                    _emissive.VisibilityRangeEnd = _fixture.VisibilityRangeEnd;
+                    _emissive.VisibilityRangeEndMargin = _fixture.VisibilityRangeEndMargin;
+                    _emissive.VisibilityRangeFadeMode = _fixture.VisibilityRangeFadeMode;
                     _fixture.AddChild(_emissive);   // overlays the fixture in its own local space
                 }
 

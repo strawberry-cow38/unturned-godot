@@ -359,7 +359,11 @@ namespace UnturnedGodot
                         if (y > y1) y1 = y;
                     }
             if (x1 < x0 || y1 < y0) return false;   // fully transparent: nothing to orient
-            return (x1 - x0) > (y1 - y0);
+            // > 1 alone misfires on the Military Drum (id 17): drawn UPRIGHT but its twin lobes span wide, so its content is
+            // 1.36x wider than tall and it got wrongly stood-up (rotated 90). Measured all functional mag icons -- every one
+            // is <=0.93 (tall) except the drum (1.36) and the genuinely lying-down STANAG (1.95). 1.65x sits dead-center of
+            // that gap: only a clearly-elongated (lying-down) mag is stood up; an upright-but-wide drum is left alone (master).
+            return (x1 - x0) > (y1 - y0) * 1.65f;
         }
 
         /// <summary>A slot icon's colour (master: "the slot icons change color depending on if they can accept an

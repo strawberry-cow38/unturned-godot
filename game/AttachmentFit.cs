@@ -225,7 +225,7 @@ namespace UnturnedGodot
             { 6,   "military_30_mag.txt" },         // Military Magazine
             { 7,   "suppressor.txt" },              // Military Suppressor
             { 8,   null },                          // Vertical Grip -- no rip yet
-            { 17,  "military_30_mag.txt" },         // Military Drum (stand-in: same family, no drum rip)
+            { 17,  "military_100_mag.txt" },        // Military Drum -- real ripped drum model (96v; was the STANAG military_30 stand-in)
             { 21,  "scope_8x_sight.txt" },          // 8x Scope (was a red_kobra stand-in)
             { 22,  "cross_scope_sight.txt" },       // Cross Scope (was a red_halo stand-in)
             { 146, "red_dot_sight.txt" },           // Dot Sight (electronic aiming point)
