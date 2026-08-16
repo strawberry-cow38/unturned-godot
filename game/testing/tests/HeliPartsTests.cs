@@ -31,7 +31,7 @@ namespace UnturnedGodot.Testing
         static readonly (string heli, string[] parts)[] Fleet =
         {
             ("huey",        new[] { "huey_seats", "huey_steer", "huey_taillights" }),
-            ("hind",        new[] { "hind_seats", "hind_steer", "hind_taillights", "hind_turret", "hind_wheels" }),
+            ("hind",        new[] { "hind_seats", "hind_steer", "hind_taillights", "hind_wheels" }),
             ("orca",        new[] { "orca_seats", "orca_steer", "orca_taillights", "orca_wheels" }),
             ("skycrane",    new[] { "skycrane_seats", "skycrane_steer", "skycrane_taillights" }),
             ("hummingbird", new[] { "hummingbird_seats", "hummingbird_steer", "hummingbird_taillights" }),
@@ -88,17 +88,29 @@ namespace UnturnedGodot.Testing
                 // above and fails this one.
                 if (heli == "hind")
                 {
-                    var turret = FindPart(v, "hind_turret");
+                    // The turret is no longer a Part: it is an articulated yaw/pitch pair built from
+                    // Spec.Turrets, because a single merged mesh cannot traverse. The claim is unchanged --
+                    // chin turret, forward of the crew and below them -- so it is still asserted, just against
+                    // the mount that can actually aim.
+                    var turret = FindPart(v, "hind_turret_pitch");
                     var seats = FindPart(v, "hind_seats");
+                    T.Check($"hind: the turret is built as an articulated mount ({v.TurretCountBuilt})",
+                        v.TurretCountBuilt == 1);
+                    T.Check("hind: ...operated from the nose gunner's seat, not the pilot's",
+                        v.Turrets.Length == 1 && v.Turrets[0].Seat == 1);
                     if (turret?.Mesh != null && seats?.Mesh != null)
                     {
-                        var tb = turret.Mesh.GetAabb();
-                        var sb = seats.Mesh.GetAabb();
+                        // The pitch mesh is baked at ITS OWN pivot, so its raw AABB is relative to the mount,
+                        // not the hull -- adding the mount position back is what makes this comparable to the
+                        // seats. Comparing the two frames directly would be the same units answering a
+                        // different question.
+                        var tb = turret.Mesh.GetAabb().GetCenter() + v.Turrets[0].Pivot;
+                        var sb = seats.Mesh.GetAabb().GetCenter();
                         // -Z is forward (the tail rotor hub sits at +Z on every spec in the fleet).
-                        T.Check($"hind: the turret is FORWARD of the crew (turret z {tb.GetCenter().Z:0.##} vs seats {sb.GetCenter().Z:0.##})",
-                            tb.GetCenter().Z < sb.GetCenter().Z);
-                        T.Check($"hind: ...and hangs BELOW them, as a chin turret does (turret y {tb.GetCenter().Y:0.##} vs seats {sb.GetCenter().Y:0.##})",
-                            tb.GetCenter().Y < sb.GetCenter().Y);
+                        T.Check($"hind: the turret is FORWARD of the crew (turret z {tb.Z:0.##} vs seats {sb.Z:0.##})",
+                            tb.Z < sb.Z);
+                        T.Check($"hind: ...and hangs BELOW them, as a chin turret does (turret y {tb.Y:0.##} vs seats {sb.Y:0.##})",
+                            tb.Y < sb.Y);
                     }
                 }
 

@@ -205,8 +205,23 @@ namespace UnturnedGodot.Testing
             p.DriveFP = false;
             yield return Ticks(2);
             T.Check("...but not from the orbiting third-person cam", !p.Fire());
-            p.DriveFP = true;
+            // ...and everyone ELSE can see it. The player-side flags said "armed passenger" while the 3rd-person
+            // body had the gun stripped and was miming a steering wheel in the back seat -- so it worked
+            // entirely in first person and looked broken from every other angle. Both are asserted because
+            // HasGunOut is about the player and the body is about what the world sees.
+            p.DriveFP = false;
+            yield return Ticks(6);
+            T.Check($"a passenger's 3rd-person body still carries the gun (body gun {p.DebugBodyHasGun})",
+                p.DebugBodyHasGun);
+            T.Check($"...and sits rather than miming the wheel (clip {p.DebugBodyLoopClip})",
+                p.DebugBodyLoopClip != "Idle_Drive");
             T.Check("back to the wheel for the rest", p.TrySwitchSeat(0));
+            yield return Ticks(6);
+            T.Check($"the DRIVER does mime the wheel (clip {p.DebugBodyLoopClip})",
+                p.DebugBodyLoopClip == "Idle_Drive" || p.DebugBodyLoopClip == "Idle_Sit");
+            T.Check($"...and has no gun on the body while driving (body gun {p.DebugBodyHasGun})",
+                !p.DebugBodyHasGun);
+            p.DriveFP = true;
             yield return Ticks(2);
 
             // Refusals. A seat index past the end, and the seat you are already in.

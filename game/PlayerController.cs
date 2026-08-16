@@ -91,6 +91,12 @@ namespace UnturnedGodot
         /// Null when there is no body or we are not driving. Asserting on the seat table instead would pass on a
         /// build that computes every seat correctly and still draws all of them on the driver's lap -- the
         /// function being right is not the same claim as the body using it.</summary>
+        /// <summary>Test seam: is the 3rd-person body actually carrying a gun right now? Distinct from HasGunOut,
+        /// which is about the PLAYER -- this is what everyone else sees, and the two disagreed for passengers.</summary>
+        public bool DebugBodyHasGun => _bodyGunName != null && (_body?.GunLayerOn ?? false);
+        /// <summary>Test seam: the looping seated clip the body is playing (driving mime vs plain sit).</summary>
+        public string DebugBodyLoopClip => _body?.CurrentLoopClip ?? "";
+
         public Vector3? DebugSeatedBodyLocal =>
             _body != null && _driving != null ? _driving.ToLocal(_body.GlobalPosition) : (Vector3?)null;
         PlayerClothingController _clothing;   // P4 equip->visual wiring (drives shirt/pants paint + gear bone-attach off the worn slots)
@@ -5327,7 +5333,11 @@ namespace UnturnedGodot
                 // player's seated position") -- previously every occupant was drawn in the driver's seat, so
                 // switching seats moved the camera and left the body behind the wheel.
                 _body.GlobalTransform = _driving.GlobalTransform * new Transform3D(Basis.Identity, _driving.SeatBodyLocal(_seatIndex));
-                _body.PlayLoop(_body.ClipLength("Idle_Drive") > 0f ? "Idle_Drive" : "Idle_Sit");   // seated DRIVING pose (hands on the wheel) instead of a standing idle (master)
+                // The DRIVER mimes a wheel; a passenger must not, or the back seats all sit there steering an
+                // invisible car -- and it reads worse now they are holding a rifle while doing it.
+                _body.PlayLoop(_seatIndex == 0
+                    ? (_body.ClipLength("Idle_Drive") > 0f ? "Idle_Drive" : "Idle_Sit")
+                    : (_body.ClipLength("Idle_Sit") > 0f ? "Idle_Sit" : "Idle_Drive"));
             }
             else if (_riding != null && IsInstanceValid(_riding))   // C6: same seated pose on the replicated puppet's seat
             {
@@ -5359,7 +5369,10 @@ namespace UnturnedGodot
         bool _bodyReloading3p, _bodyHammer3p;                  // edge-detect the reload + the rack so each plays once
         void UpdateBodyGun()
         {
-            bool wantGun = HasGunOut && _driving == null && _riding == null && !_dead;
+            // A PASSENGER keeps their gun on the 3rd-person body (strawberry: "passengers can hold weapons").
+            // The old test was `_driving == null`, which stripped the gun from everyone aboard -- so a passenger
+            // who could draw, aim and fire showed empty hands to everybody else.
+            bool wantGun = HasGunOut && !IsDriver && _riding == null && !_dead;
             if (!wantGun)
             {
                 if (_bodyGunName != null) { _body.DetachGun(); _body.DisableGunLayer(); _bodyGunName = null; _bodyReloading3p = false; }

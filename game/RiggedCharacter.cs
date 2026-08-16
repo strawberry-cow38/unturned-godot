@@ -616,6 +616,8 @@ namespace UnturnedGodot
         }
 
         public string GunOverlayClip => _gunAp?.CurrentAnimation ?? "";
+        /// <summary>The looping locomotion/seated clip currently held (test seam).</summary>
+        public string CurrentLoopClip => _loco ?? "";
         public bool GunLayerOn => _gunLayer;
 
         // Tear the gun layer down (weapon holstered): stop + free the overlay player, drop the aim delta, and hand

@@ -321,6 +321,54 @@ namespace UnturnedGodot
         public float FuelBurn;   // fuel drained per second while driving (PZ-scale, per vehicle CLASS -- master); set from FuelClassOf at build
         public static bool InfiniteFuel = true;   // master 2026-07-20: cars DON'T burn fuel by DEFAULT (playtesting); the infFuel console command toggles it. SP-local static.
         public bool EngineOn; public string DisplayName; public Vector3 SeatOffset;   // per-vehicle driver-seat spot for the 3rd-person body
+        /// <summary>A traversing weapon mount. Retail's own model (VehicleAsset.TurretInfo): a SEAT with a gun
+        /// bolted to it, plus traverse limits -- not a separate system. Yaw and pitch are separate meshes baked
+        /// at their own pivots (tools/extract_turret.py), because a single merged turret mesh cannot articulate:
+        /// rotating it swings geometry about the vehicle's origin instead of the mount's.</summary>
+        public sealed class TurretDef
+        {
+            public int Seat;                       // which seat operates it; Turret_1 -> seat 1 (the Hind's nose gunner)
+            public string YawMesh, PitchMesh;      // ring + gun, each at its own pivot origin
+            public Vector3 Pivot;                  // mount position, vehicle-local
+            public Vector3 Muzzle;                 // where a shot leaves, relative to the PITCH frame
+            public float YawMin = -180f, YawMax = 180f;
+            public float PitchMin = -20f, PitchMax = 60f;
+            public Color Colour = new Color(0.16f, 0.17f, 0.14f);
+        }
+        public TurretDef[] Turrets = System.Array.Empty<TurretDef>();
+        Node3D[] _turretYaw, _turretPitch;
+
+        /// <summary>Aim the turret operated by `seat`, in degrees, clamped to its traverse limits. Returns false
+        /// if that seat has no turret -- callers must not assume every seat is a gun position.</summary>
+        public bool AimTurret(int seat, float yawDeg, float pitchDeg)
+        {
+            if (_turretYaw == null) return false;
+            for (int i = 0; i < Turrets.Length; i++)
+            {
+                if (Turrets[i].Seat != seat) continue;
+                var t = Turrets[i];
+                float y = Mathf.Clamp(yawDeg, t.YawMin, t.YawMax);
+                float p = Mathf.Clamp(pitchDeg, t.PitchMin, t.PitchMax);
+                if (_turretYaw[i] != null) _turretYaw[i].Rotation = new Vector3(0f, Mathf.DegToRad(y), 0f);
+                if (_turretPitch[i] != null) _turretPitch[i].Rotation = new Vector3(Mathf.DegToRad(p), 0f, 0f);
+                return true;
+            }
+            return false;
+        }
+
+        /// <summary>World-space muzzle of the turret on `seat`, for spawning a shot where the barrel actually
+        /// points rather than where the operator's head is.</summary>
+        public Vector3? TurretMuzzle(int seat)
+        {
+            if (_turretPitch == null) return null;
+            for (int i = 0; i < Turrets.Length; i++)
+                if (Turrets[i].Seat == seat && _turretPitch[i] != null)
+                    return _turretPitch[i].ToGlobal(Turrets[i].Muzzle);
+            return null;
+        }
+
+        public int TurretCountBuilt => _turretYaw?.Length ?? 0;
+
         /// <summary>Every seat, local, index 0 = DRIVER. Never null and never empty: a vehicle with no extracted
         /// seat data still has one, at SeatOffset, so callers can index seat 0 unconditionally.</summary>
         public Vector3[] SeatLocals = { Vector3.Zero };
@@ -534,6 +582,7 @@ namespace UnturnedGodot
             public Vector3 SteerPivot, SteerAxis;   // steering wheel model pivot (centroid) + rotation axis (disc normal); Zero = don't rotate
             public Vector3 DriverEye;   // FP driving eye offset (local); Zero = the shared default (-0.4,1.85,0.4). Tall cabs (semi) sit HIGHER so you see over the hood
             public Vector3[] Seats;     // every seat, local, index 0 = DRIVER. Null = single-seat (SeatOf's driver spot only).
+            public TurretDef[] Turrets; // traversing weapon mounts, by seat. Null = none.
             public string SeatModelFile, SteerModel;   // REAL ripped interior models re-centred into the cab (props whose body mesh has no interior sub-objects, e.g. semi). SteerModel turns via SteerPivot/SteerAxis
             public Vector3 SeatModel;   // world-target for the seat model's AABB centre (the mesh is baked at its source vehicle -> translated here)
             public (float x, float y, float z, bool steer)[] Wheels;
@@ -1624,9 +1673,26 @@ namespace UnturnedGodot
             Wheels = new (float, float, float, bool)[0],
         };
 
+        // Declared BEFORE _hind on purpose. Static field initialisers run in DECLARATION order, so with this
+        // below the spec it was still null when _hind's initialiser read it -- the turret silently became "no
+        // turrets" and the Hind built without a mount, with nothing anywhere reporting a problem.
+        static readonly TurretDef[] HindTurret =
+        {
+            // tools/extract_turret.py --vehicle hind. Turret_1 -> seat 1, which is the nose gunner seat the seat
+            // extraction found independently; muzzle is Aim+Barrel composed, in the pitch frame.
+            new TurretDef
+            {
+                Seat = 1,
+                YawMesh = "hind_turret_yaw.txt", PitchMesh = "hind_turret_pitch.txt",
+                Pivot = new Vector3(0f, 0.064f, -4.378f),
+                Muzzle = new Vector3(0.229f, -0.2f, -2.6f),   // Aim(-0.275,-0.2,-0.4) + Barrel(0.504,0,-2.2)
+                YawMin = -120f, YawMax = 120f,   // a chin turret cannot shoot through its own airframe
+                PitchMin = -60f, PitchMax = 15f, // mostly DOWNWARD: it is a ground-attack gun slung under the nose
+            },
+        };
         // HIND -- the gunship, and the FASTEST thing in the fleet as well as the second heaviest. Fast and
         // unwieldy: it will outrun anything and hates changing its mind.
-        static readonly Spec _hind = HeliBase("hind", 14.2f, 0.69f, 0.81f, 0.63f, 5.90f, 1.25f,
+        static readonly Spec _hind = WithTurrets(HeliBase("hind", 14.2f, 0.69f, 0.81f, 0.63f, 5.90f, 1.25f,
             new Vector3(0f, 4.18f, 0.58f), new Vector3(-0.30f, 4.47f, 9.60f),
             new Vector3(2.90f, 2.60f, 7.20f), new Vector3(0f, 1.40f, 0.20f),
             new (Vector3, Vector3)[]   // REAL gear, measured off hind_wheels.txt: twin nose wheels forward, mains aft
@@ -1637,8 +1703,14 @@ namespace UnturnedGodot
                 (new Vector3(0.24f, 0.20f, 0.62f), new Vector3( 1.50f, -0.52f,  1.82f)),
             },
             34f, 1750f, 1250f, "Hind", EItemRarity.LEGENDARY,
-            ("hind_turret.txt", new Color(0.16f, 0.17f, 0.14f)),     // the only airframe with one: chin turret + gun barrel, olive drab
-            ("hind_wheels.txt", new Color(0.09f, 0.09f, 0.10f)));    // 4 landing wheels -- tyre black
+            // NOT hind_turret.txt any more -- that merged lump is replaced by the articulated yaw/pitch pair
+            // built from Spec.Turrets below. Leaving it here would draw a second, permanently-forward turret
+            // clipping through the one that aims.
+            ("hind_wheels.txt", new Color(0.09f, 0.09f, 0.10f))), HindTurret);   // 4 landing wheels -- tyre black
+
+        /// <summary>Attach turret mounts to a spec built by HeliBase, which has no parameter for them.</summary>
+        static Spec WithTurrets(Spec s, TurretDef[] t) { s.Turrets = t; return s; }
+
         public static Vehicle BuildHind(int variant = 0) => Build(_hind, variant, "hind");
 
         // ORCA (Ka-60) -- the modern transport. Nearly Hind-fast and noticeably more agile; the all-rounder.
@@ -2162,6 +2234,27 @@ namespace UnturnedGodot
             // hand-tuned driver spot. The fallback matters -- semi and trailer have no bundle prefab to extract
             // from, and a null here would crash every seat lookup rather than degrading to one seat.
             v.SeatLocals = s.Seats ?? (SeatTable.TryGetValue(specKey, out var st) ? st : new[] { v.SeatOffset });
+
+            // TURRETS. Two nested pivots per mount -- yaw about the vehicle's up, pitch inside it -- with each
+            // mesh baked at its own origin, so rotating a node swings only its own geometry. Built even when no
+            // gun is wired yet: the mount is the thing seats and weapons both hang off.
+            v.Turrets = s.Turrets ?? System.Array.Empty<TurretDef>();
+            v._turretYaw = new Node3D[v.Turrets.Length];
+            v._turretPitch = new Node3D[v.Turrets.Length];
+            for (int i = 0; i < v.Turrets.Length; i++)
+            {
+                var t = v.Turrets[i];
+                var yaw = new Node3D { Name = $"TurretYaw{t.Seat}", Position = t.Pivot };
+                var pitch = new Node3D { Name = $"TurretPitch{t.Seat}" };
+                var mat = SolidMat(t.Colour);
+                if (t.YawMesh != null)
+                    yaw.AddChild(new MeshInstance3D { Name = t.YawMesh.Replace(".txt", ""), Mesh = ContentProvider.ParseObj($"res://content/{t.YawMesh}"), MaterialOverride = mat });
+                if (t.PitchMesh != null)
+                    pitch.AddChild(new MeshInstance3D { Name = t.PitchMesh.Replace(".txt", ""), Mesh = ContentProvider.ParseObj($"res://content/{t.PitchMesh}"), MaterialOverride = mat });
+                yaw.AddChild(pitch);
+                v.AddChild(yaw);
+                v._turretYaw[i] = yaw; v._turretPitch[i] = pitch;
+            }
             if (s.DriverEye != Vector3.Zero) v.DriverEyeLocal = s.DriverEye;   // tall-cab override (semi); else keep the shared default
             v._outlineColor = ItemTool.RarityColorUI(s.Rarity);   // real vehicle rarity -> look-at outline/label colour (master)
             v._info = new InfoBillboard { TopLevel = true };   // look-at info billboard: name + HP/fuel/battery BARS, world-space at the cabin
