@@ -1566,10 +1566,12 @@ namespace UnturnedGodot
         // which is how the Hind's chin turret came to be invisible -- it was on the aircraft the whole time,
         // correctly placed, and entirely below the ground line.
         //
-        // The footprints below are MEASURED off each body mesh (the vertices within 0.25 m of its lowest
-        // point, split left/right of centreline) rather than eyeballed, so each box's floor is that airframe's
-        // real belly: skids on the Hummingbird, wheels on the Orca, splayed legs on the Skycrane, belly
-        // fairings on the Hind. The Huey already had skid boxes and is left alone.
+        // The footprints below are MEASURED rather than eyeballed. For the skid aircraft that means the body
+        // mesh's own lowest vertices; for the Hind and Orca it means their WHEEL meshes, which is a correction:
+        // the first pass measured their bodies and got the belly, because the wheels were not in the game at
+        // all (never extracted -- see tools/extract_heli_wheels.py). Those two sat 0.3 m too high the moment the
+        // wheels appeared under them. A number measured off the geometry you have is still the wrong number
+        // when the geometry is incomplete. The Huey already had skid boxes and is left alone.
         static (Vector3, Vector3)[] Skids(float halfX, float width, float bottom, float zFrom, float zTo, float h = 0.30f)
         {
             float zc = (zFrom + zTo) * 0.5f, len = zTo - zFrom;
@@ -1619,22 +1621,31 @@ namespace UnturnedGodot
         static readonly Spec _hind = HeliBase("hind", 14.2f, 0.69f, 0.81f, 0.63f, 5.90f, 1.25f,
             new Vector3(0f, 4.18f, 0.58f), new Vector3(-0.30f, 4.47f, 9.60f),
             new Vector3(2.90f, 2.60f, 7.20f), new Vector3(0f, 1.40f, 0.20f),
-            Skids(0.77f, 1.12f, -0.48f, -3.33f, 1.84f, 0.20f),   // belly fairings + wheels, measured
+            new (Vector3, Vector3)[]   // REAL gear, measured off hind_wheels.txt: twin nose wheels forward, mains aft
+            {
+                (new Vector3(0.24f, 0.20f, 0.62f), new Vector3(-0.21f, -0.68f, -3.15f)),
+                (new Vector3(0.24f, 0.20f, 0.62f), new Vector3( 0.21f, -0.68f, -3.15f)),
+                (new Vector3(0.24f, 0.20f, 0.62f), new Vector3(-1.50f, -0.52f,  1.82f)),
+                (new Vector3(0.24f, 0.20f, 0.62f), new Vector3( 1.50f, -0.52f,  1.82f)),
+            },
             34f, 1750f, 1250f, "Hind", EItemRarity.LEGENDARY,
-            ("hind_turret.txt", new Color(0.16f, 0.17f, 0.14f)));   // the only airframe with one: chin turret + gun barrel, olive drab
+            ("hind_turret.txt", new Color(0.16f, 0.17f, 0.14f)),     // the only airframe with one: chin turret + gun barrel, olive drab
+            ("hind_wheels.txt", new Color(0.09f, 0.09f, 0.10f)));    // 4 landing wheels -- tyre black
         public static Vehicle BuildHind(int variant = 0) => Build(_hind, variant, "hind");
 
         // ORCA (Ka-60) -- the modern transport. Nearly Hind-fast and noticeably more agile; the all-rounder.
         static readonly Spec _orca = HeliBase("orca", 13.4f, 0.91f, 1.07f, 0.84f, 5.90f, 1.25f,
             new Vector3(0f, 3.28f, -0.25f), new Vector3(-0.30f, 1.48f, 7.55f),
             new Vector3(2.60f, 2.50f, 6.40f), new Vector3(0f, 1.20f, 0.10f),
-            new (Vector3, Vector3)[]   // TRICYCLE gear, not skids: two mains forward + one tail wheel, all measured
+            new (Vector3, Vector3)[]   // REAL gear, measured off orca_wheels.txt: mains forward, twin tail wheels aft
             {
-                (new Vector3(0.34f, 0.25f, 0.40f), new Vector3(-1.465f, -0.525f, -2.045f)),
-                (new Vector3(0.34f, 0.25f, 0.40f), new Vector3( 1.465f, -0.525f, -2.045f)),
-                (new Vector3(0.32f, 0.25f, 0.32f), new Vector3(  0.00f, -0.355f,  3.100f)),
+                (new Vector3(0.24f, 0.20f, 0.76f), new Vector3(-1.71f, -0.75f, -1.89f)),
+                (new Vector3(0.24f, 0.20f, 0.76f), new Vector3( 1.71f, -0.75f, -1.89f)),
+                (new Vector3(0.24f, 0.20f, 0.76f), new Vector3(-0.21f, -0.86f,  3.11f)),
+                (new Vector3(0.24f, 0.20f, 0.76f), new Vector3( 0.21f, -0.86f,  3.11f)),
             },
-            31f, 2000f, 1000f, "Orca", EItemRarity.EPIC);
+            31f, 2000f, 1000f, "Orca", EItemRarity.EPIC,
+            ("orca_wheels.txt", new Color(0.09f, 0.09f, 0.10f)));    // 4 landing wheels -- tyre black
         public static Vehicle BuildOrca(int variant = 0) => Build(_orca, variant, "orca");
 
         // SKYCRANE (S-64) -- the heavy lifter, and counter-intuitively the WORST climber and slowest of the

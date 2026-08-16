@@ -20,14 +20,19 @@ namespace UnturnedGodot.Testing
         // Five 3 s settle drops plus the build pass; the default watchdog cuts in at 15 s.
         public override double TimeoutSimSeconds => 90;
 
-        // Every airframe carries seats/steer/taillights; the Hind alone adds a turret. Counted explicitly
-        // rather than derived from the spec, so a spec that quietly loses its Parts array fails here instead
-        // of agreeing with itself.
+        // Every airframe carries seats/steer/taillights; the Hind adds a turret, and the Hind and Orca each
+        // carry four landing WHEELS. Counted explicitly rather than derived from the spec, so a spec that
+        // quietly loses its Parts array fails here instead of agreeing with itself.
+        //
+        // The wheels are listed because they were MISSING and nothing caught it: the parts extractor refuses to
+        // descend into the "Wheels" node (rotors are handled separately, wheels were handled nowhere), so both
+        // aircraft shipped resting on their bellies with no wheels at all. strawberry spotted it by looking at
+        // them. Every automated check here passed the whole time, because none of them knew a wheel was owed.
         static readonly (string heli, string[] parts)[] Fleet =
         {
             ("huey",        new[] { "huey_seats", "huey_steer", "huey_taillights" }),
-            ("hind",        new[] { "hind_seats", "hind_steer", "hind_taillights", "hind_turret" }),
-            ("orca",        new[] { "orca_seats", "orca_steer", "orca_taillights" }),
+            ("hind",        new[] { "hind_seats", "hind_steer", "hind_taillights", "hind_turret", "hind_wheels" }),
+            ("orca",        new[] { "orca_seats", "orca_steer", "orca_taillights", "orca_wheels" }),
             ("skycrane",    new[] { "skycrane_seats", "skycrane_steer", "skycrane_taillights" }),
             ("hummingbird", new[] { "hummingbird_seats", "hummingbird_steer", "hummingbird_taillights" }),
         };
