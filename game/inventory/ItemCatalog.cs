@@ -186,6 +186,13 @@ namespace SDG.Unturned
                 if (a == null) return;
                 a.magCapacity = cap; a.magCaliber = cal; a.magRound = round;
             }
+            // Military Drum (item 17): a 100-round drum in the SAME STANAG group (caliber 1) as the Military Magazine
+            // (item 6), so it feeds the same 5.56 rifles (eaglefire/maplestrike/swissgewehr) -- technically a STANAG mag,
+            // just 100 rounds instead of 30 (master). Inert from the TSV until wired here; a Mag() mutate (not Add())
+            // keeps its GUID. The gun's Ammo_Max caps each reload draw, so a rifle pulls 30 at a time off the drum
+            // (~3 refills before empty) -- a bigger reservoir, not an LMG conversion (same shape as the .45/.50 groups below).
+            Mag(17, 100, 1, "5.56x45mm NATO");   // Military Drum -- STANAG caliber (1), drum's 100-round capacity
+
             // M39 EMR's 20-round box. The SCAR-H's (9143) is a deliberate clone in its own group -- same capacity,
             // same round, same mesh, will not seat in the other rifle.
             Mag(1020, 20, 22, "7.62x51mm NATO");
