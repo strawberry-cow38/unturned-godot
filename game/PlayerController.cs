@@ -2863,6 +2863,16 @@ namespace UnturnedGodot
         public bool IsRiding => _riding != null;
         public VehiclePuppet RidingPuppet => _riding;
         public UnityEngine.Vector2 LastDriveInput;   // captured while riding: x=steer, y=throttle (the DriveVehicle axes)
+        // HELICOPTER STICK (VoX 2026-08-15: "mouse movements to control the pitch and roll"). Mouse motion is a
+        // RATE, not a position: the stick deflects while the mouse moves and self-centres when it stops, so the
+        // airframe changes attitude as you move and HOLDS that attitude when you let go. That is the Rust feel,
+        // and it is also the only mapping that works against a flight model driving angular VELOCITY -- a stick
+        // that stayed deflected would just spin forever.
+        float _heliStickP, _heliStickR;
+        const float HeliStickGain = 0.055f;    // mouse pixels -> stick deflection
+        const float HeliStickDecay = 8.5f;     // self-centring, per second
+        /// <summary>Test seam: the current virtual stick (pitch, roll) the pilot is holding.</summary>
+        public UnityEngine.Vector2 DebugHeliStick => new UnityEngine.Vector2(_heliStickP, _heliStickR);
         public bool LastHandbrakeInput;
         public System.Action<uint> NetEnterVehicle;  // wired by ClientWorldSession: F near a puppet asks the server for the seat
         public System.Action NetExitVehicle;         // F while riding asks the server to free it (exit teleport follows)
@@ -4071,7 +4081,15 @@ namespace UnturnedGodot
             if (@event is InputEventMouseButton && Input.MouseMode != Input.MouseModeEnum.Captured) return;
             if (@event is InputEventMouseMotion mm && Input.MouseMode == Input.MouseModeEnum.Captured)
             {
-                if ((_driving != null || _riding != null) && !_fp)   // driving in 3rd person: the mouse ORBITS the chase cam around the car instead of turning the driver (master)
+                if (_driving != null && _driving.IsHeli)
+                {
+                    // FLYING: the mouse is the cyclic, not a camera orbit. Mouse forward (negative Relative.Y)
+                    // pushes the nose DOWN, the standard stick convention, so the sign is negated against the
+                    // nose-UP-positive axis the flight model takes.
+                    _heliStickR = Mathf.Clamp(_heliStickR + mm.Relative.X * HeliStickGain, -1f, 1f);
+                    _heliStickP = Mathf.Clamp(_heliStickP - mm.Relative.Y * HeliStickGain, -1f, 1f);
+                }
+                else if ((_driving != null || _riding != null) && !_fp)   // driving in 3rd person: the mouse ORBITS the chase cam around the car instead of turning the driver (master)
                 {
                     _driveCamYaw -= mm.Relative.X * MouseSensitivity;
                     _driveCamPitch = Mathf.Clamp(_driveCamPitch + mm.Relative.Y * MouseSensitivity, -25f, 70f);   // inverted Y: mouse up -> cam tilts down (strawberry)
@@ -5471,6 +5489,23 @@ namespace UnturnedGodot
                 steer = (Input.IsPhysicalKeyPressed(Key.D) ? 1f : 0f) - (Input.IsPhysicalKeyPressed(Key.A) ? 1f : 0f);
             }
             bool handbrake = !UiInputBlocked && Input.IsPhysicalKeyPressed(Key.Space);
+            // ROTARY WING: the same W/S/A/D keys mean different things in the air. W/S is the collective (a
+            // sticky throttle -- see Vehicle.DriveHeli), A/D is the pedals, and pitch/roll come off the mouse
+            // stick captured in _Input. Handbrake has no meaning on a helicopter and is dropped.
+            if (_driving.IsHeli)
+            {
+                _driving.DriveHeli(throttle, steer, _heliStickP, _heliStickR, delta);
+                LastDriveInput = new UnityEngine.Vector2(steer, throttle);   // MP fallback axes (collective/yaw); attitude rides the reported transform
+                LastHandbrakeInput = false;
+                // Self-centre the stick. Done HERE rather than in _Input because input events only arrive when
+                // the mouse actually moves -- decaying there would leave the stick stuck at full deflection the
+                // instant the player stopped moving it, which is the difference between "holds its attitude"
+                // and "keeps rolling until it hits the ground".
+                float k = Mathf.Exp(-HeliStickDecay * delta);
+                _heliStickP *= k; _heliStickR *= k;
+                GlobalPosition = _driving.GlobalPosition;
+                return;
+            }
             _driving.Drive(throttle, steer, handbrake);
             LastDriveInput = new UnityEngine.Vector2(steer, throttle);   // Part A: the session's VehicleState carries the axes as wheel/light dressing (inert in SP -- nothing reads these outside MP)
             LastHandbrakeInput = handbrake;

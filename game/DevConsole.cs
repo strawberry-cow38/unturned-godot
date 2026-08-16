@@ -339,8 +339,12 @@ namespace UnturnedGodot
                 if (name == null) { Log($"no vehicle '{arg}' (try: {string.Join(", ", Vehicle.SpecNames)})"); return; }
                 var v = Vehicle.BuildByName(name, (int)(GD.Randi() % 8));
                 (Player?.GetParent() ?? GetTree().Root).AddChild(v);
-                v.GlobalPosition = at + Vector3.Up * 1.5f;
-                Log($"spawned {name}");
+                // A wheeled vehicle is DROPPED and lets its suspension sort out the landing. A helicopter has no
+                // suspension: seat it exactly on its skids instead, or it either bangs down from 1.5 m or spawns
+                // with them already through the terrain (which the solver answers by launching it).
+                if (v.IsHeli) v.PlaceOnGround(at);
+                else v.GlobalPosition = at + Vector3.Up * 1.5f;
+                Log($"spawned {name}" + (v.IsHeli ? $" (seated on skids, {v.GroundClearance:0.##} m clearance -- F to board, W/S collective, A/D yaw, mouse to fly)" : ""));
             }
             else if (verb == "teleport" || verb == "tp")
             {

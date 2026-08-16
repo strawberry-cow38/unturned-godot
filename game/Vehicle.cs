@@ -16,6 +16,36 @@ namespace UnturnedGodot
         float _voxelHalfHeight, _waterTime, _gravityMag = 9.8f;   // source Buoyancy.cs port: voxel half-height (submersion test), wave-ripple clock, gravity magnitude (Archimedes balance)
         bool _afloat;   // currently floating (any buoy submerged) -- HUD/anim can read it
         public bool Afloat => _afloat;
+        // ---- ROTARY WING (VoX 2026-08-15: "a rust style minicopeter"). A helicopter is a Vehicle rather than a
+        // new node type because every downstream system -- NetId minting, the hold/adopt authority split,
+        // enter/exit occupancy, damage, fuel, despawn -- is written against Vehicle, and VehicleReplication
+        // already carries pitch AND roll (not just yaw) for both the entity and the client-auth state command.
+        // A sibling RigidBody3D would have to rebuild all of it. VehicleBody3D with no VehicleWheel3D children
+        // is just a RigidBody3D, so the base class does not fight flight.
+        bool _heli; float _heliThrust, _heliPitchTq, _heliRollTq, _heliYawTq, _heliLevel;
+        float _inCollective, _inYaw, _inPitch, _inRoll;   // the pilot's held axes (W/S, A/D, mouse Y, mouse X)
+        float _rotorSpin, _rotorRpm;                       // visual blade phase + spool state (0..1)
+        Node3D _rotorNode, _tailRotorNode;
+        public bool IsHeli => _heli;
+        float _groundClearance;
+        /// <summary>Distance from the body origin down to its lowest collision point (skids, hull floor).</summary>
+        public float GroundClearance => _groundClearance;
+        /// <summary>Seat this vehicle ON a ground point rather than dropping it from a guessed height -- the
+        /// lowest collision point lands on <paramref name="ground"/>, plus a hair so it is not born intersecting.
+        /// A 2 mm interpenetration at spawn is a solver impulse, and on a skidded airframe with no suspension
+        /// that reads as the helicopter flinging itself sideways the moment it appears.</summary>
+        public void PlaceOnGround(Vector3 ground) => GlobalPosition = ground + Vector3.Up * (_groundClearance + 0.02f);
+        /// <summary>Rotor spool 0..1. Thrust scales with its SQUARE (a rotor at half speed makes a quarter of
+        /// the lift), so a cold start has to spin up before it will leave the ground.</summary>
+        public float RotorSpool => _rotorRpm;
+        /// <summary>Test seam: the collective/yaw/pitch/roll the flight model is currently flying on.</summary>
+        public Vector4 DebugHeliInput => new Vector4(_inCollective, _inYaw, _inPitch, _inRoll);
+        float _heliClimbMax, _heliFallMax;
+        /// <summary>This spec's VERTICAL envelope caps (m/s); 0 = inherit the retail car defaults. Published at
+        /// spawn alongside Speed_Max so the MP plausibility check bounds a helicopter by what a helicopter does
+        /// instead of by what a car falling off a hill does.</summary>
+        public float ClimbMaxMps => _heliClimbMax;
+        public float FallMaxMps => _heliFallMax;
         bool _parked, _handbraking; float _spawnGrace = 2.5f; Vector3 _velAvg, _angAvg;   // -> STATIC freeze once majority-grounded + the LOW-PASSED velocity/spin are low (jitter-immune, d9588d3); _spawnGrace lets a fresh car DROP to terrain first
         float _prevSpeed;   // last frame's speed, to detect a sudden drop = a crash (collision/ram damage)
         float _deadTimer = -1f; bool _exploded, _husk; CpuParticles3D _smoke, _smoke0, _fire; OmniLight3D _fireLight;
@@ -241,6 +271,16 @@ namespace UnturnedGodot
             public Vector3 TaillightZoneMin, TaillightZoneMax;    // LEFT AABB (right = X-mirror) enclosing the baked-in RED taillight triangles -> split into an emissive _taillightMat mesh so the REAL baked lights glow (trailer). Min==Max = no split
             public float LandingLegScaleY, LandingLegPivotY;      // trailer: vertically STRETCH the split-out leg mesh (scale about PivotY) so the feet reach the ground at the nose-up parked height. ScaleY 0/1 = no stretch
             public (Vector3 size, Vector3 center)[] ExtraBoxes;   // extra fixed collision boxes beyond the main box + RoofBox (e.g. the trailer's kingpin/gooseneck, the cab's low rear fifth-wheel deck) -> match the model geometry
+            // ---- rotary wing. Heli=true swaps the wheel/engine drive for rotor thrust along the body UP axis,
+            // which is what makes tilting the airframe the way you translate -- the Rust minicopter feel.
+            public bool Heli;
+            public float HeliThrust;                             // peak rotor acceleration, m/s^2 (must exceed g to climb)
+            public float HeliPitchTorque, HeliRollTorque, HeliYawTorque;   // control authority, rad/s^2
+            public float HeliLevel;                              // self-levelling strength (0 = none, fully manual)
+            public float HeliClimbMax, HeliFallMax;              // MP envelope caps, m/s (0 = inherit the car defaults)
+            public float RotorRadius, TailRotorRadius;           // blade half-spans (the rotor mesh is scaled to these)
+            public Vector3 RotorHub, TailRotorHub;               // local mount points for the two rotors
+            public string[] HeliBodyMeshes;                      // airframe .obj(s); null = build the procedural minicopter frame
         }
 
         static AudioStreamWav LoadWav(string resPath)   // load a PCM wav at runtime (no ffmpeg on the box) as a looping stream for the siren
@@ -1033,8 +1073,78 @@ namespace UnturnedGodot
             },
         };
         public static Vehicle BuildAPC(int variant = 0) => Build(_apc, variant, "apc");
-        public static Vehicle BuildByName(string name, int variant = 0) => name switch { "quad" => BuildQuad(variant), "bus" => BuildBus(variant), "sedan" => BuildSedan(variant), "hatchback" => BuildHatchback(variant), "humvee" => BuildHumvee(variant), "roadster" => BuildRoadster(variant), "ambulance" => BuildAmbulance(variant), "firetruck" => BuildFiretruck(variant), "tractor" => BuildTractor(variant), "ural" => BuildUral(variant), "police" => BuildPolice(variant), "semi" => BuildSemi(variant), "trailer" => BuildTrailer(variant), "offroader" => BuildOffRoader(variant), "off_roader" => BuildOffRoader(variant), "truck" => BuildTruck(variant), "van" => BuildVan(variant), "golf" => BuildGolf(variant), "vw_golf" => BuildGolf(variant), "runabout" => BuildRunabout(variant), "apc" => BuildAPC(variant), _ => BuildJeep(variant) };
-        public static readonly string[] SpecNames = { "jeep", "quad", "bus", "sedan", "hatchback", "humvee", "roadster", "ambulance", "firetruck", "tractor", "ural", "police", "semi", "trailer", "offroader", "truck", "van", "golf", "runabout", "apc" };   // F1 dev-console autocomplete + validation ("golf" = VW_Golf, command-only, no natural spawn; runabout = boat + apc = amphibious, both command-spawnable -- drop over water to float)
+
+        // MINICOPTER -- Rust-style two-seat rotary wing (VoX 2026-08-15). No ripped mesh exists, so the
+        // airframe is procedural (BuildHeliModel) and the numbers are chosen for feel rather than ported from
+        // a .dat, since there is no source .dat to port.
+        //
+        // HeliThrust 17 against g=9.8 is a thrust-to-weight of ~1.7, so hover sits near 58 % collective and
+        // there is real climb left above it -- enough to feel powered, short of the "hold W and leave the
+        // map" that a 3:1 ratio gives. SpeedMax 26 m/s is what the MP envelope's HORIZONTAL cap is derived
+        // from (VehicleReplication: SpeedMax x dt x 1.25), so it has to be an honest top speed or a legitimate
+        // fast pass gets rolled back as a cheat. Climb/fall caps are declared for the same reason -- the
+        // shared car defaults (12.5 up / 25 down) would recov a pilot out of any real dive.
+        static readonly Spec _minicopter = new()
+        {
+            Heli = true,
+            HeliThrust = 17f, HeliPitchTorque = 2.6f, HeliRollTorque = 3.0f, HeliYawTorque = 2.2f, HeliLevel = 1.5f,
+            HeliClimbMax = 22f, HeliFallMax = 45f,
+            RotorRadius = 2.65f, TailRotorRadius = 0.42f,
+            RotorHub = new Vector3(0f, 1.12f, 0.20f), TailRotorHub = new Vector3(0.10f, 0.62f, 3.02f),
+            Body = null, Palette = null, DefaultPaints = new[] { "#d9d24b" },   // Rust's yellow-ish airframe
+            Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", WheelRadius = 0.3f,   // unused (no wheels), non-null for safety like the runabout
+            Engine = 0f, SteerMax = 0f, SteerMin = 0f, SpeedMax = 26f, SpeedMin = 0f, Brake = 0f,   // rotor thrust replaces wheel drive entirely
+            BoxSize = new Vector3(1.15f, 1.05f, 2.05f), BoxCenter = new Vector3(0f, 0.12f, 0.15f),   // the pod; the skids/boom are ExtraBoxes
+            ExtraBoxes = new (Vector3, Vector3)[]
+            {
+                (new Vector3(0.16f, 0.16f, 2.30f), new Vector3(-0.52f, -0.72f, 0.10f)),   // left skid  -- what it lands on
+                (new Vector3(0.16f, 0.16f, 2.30f), new Vector3( 0.52f, -0.72f, 0.10f)),   // right skid
+                (new Vector3(0.22f, 0.22f, 2.70f), new Vector3(0f, 0.34f, 1.85f)),        // tail boom
+            },
+            ForwardGears = new[] { 1f }, ReverseGear = 1f, ShiftUpRpm = 5000f,
+            Sound = "engine_medium.ogg", IdlePitch = 1.1f, MaxPitch = 2.2f, IdleVolume = 0.7f, MaxVolume = 1.0f,
+            Fuel = 200f, Health = 250f, Name = "Minicopter", Rarity = EItemRarity.RARE,
+            Wheels = new (float, float, float, bool)[0],   // NO wheels -- it flies
+        };
+        public static Vehicle BuildMinicopter(int variant = 0) => Build(_minicopter, variant, "minicopter");
+
+        // HUEY -- the RETAIL helicopter (VoX 2026-08-15: "do both, make a huey varient and model a new
+        // minicopter varient"). Unlike the minicopter this one has a real source .dat, so its numbers are
+        // ported rather than invented: Bundles/Vehicles/Huey/Huey.dat gives Speed_Max 16, Speed_Min -2,
+        // Fuel 2000, Health 1000, Rarity Epic, Engine Helicopter, and the four Coalition/Desert/Forest/Russia
+        // DefaultPaintColors. Its Steer_Min/Max (16/8) describe wheel steering it does not have, so they stay 0.
+        //
+        // The airframe is the extracted retail mesh (11.20 m long, 3.50 wide, 4.78 tall -- measured, not
+        // guessed) and is therefore SPEC'd, not procedural: only the rotor mounts differ from a normal vehicle.
+        // It flies the same model as the minicopter but heavier: less thrust-to-weight, slower roll rate, and
+        // a stronger levelling term, so it handles like a loaded transport instead of a lawn chair.
+        static readonly Spec _huey = new()
+        {
+            Heli = true,
+            HeliThrust = 13.5f, HeliPitchTorque = 1.5f, HeliRollTorque = 1.6f, HeliYawTorque = 1.4f, HeliLevel = 2.1f,
+            HeliClimbMax = 18f, HeliFallMax = 40f,
+            RotorRadius = 5.57f, TailRotorRadius = 1.28f,        // the mesh's own spans -- no scaling for this one
+            RotorHub = new Vector3(0f, 3.01f, -0.25f), TailRotorHub = new Vector3(-0.45f, 3.57f, 6.68f),   // prefab local positions, Z negated
+            HeliBodyMeshes = new[] { "huey_body.txt", "huey_body_1.txt" },
+            Body = null, Palette = null,
+            DefaultPaints = new[] { "#475e83", "#a69884", "#437c44", "#495631" },   // .dat DefaultPaintColors
+            Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", WheelRadius = 0.3f,   // unused (no wheels)
+            Engine = 0f, SteerMax = 0f, SteerMin = 0f, SpeedMax = 16f, SpeedMin = 0f, Brake = 0f,   // .dat Speed_Max 16
+            BoxSize = new Vector3(2.40f, 2.10f, 5.20f), BoxCenter = new Vector3(0f, 0.75f, 0.30f),   // cabin; boom/skids are ExtraBoxes
+            ExtraBoxes = new (Vector3, Vector3)[]
+            {
+                (new Vector3(0.30f, 0.30f, 3.60f), new Vector3(-1.15f, -0.42f, 0.30f)),   // left skid
+                (new Vector3(0.30f, 0.30f, 3.60f), new Vector3( 1.15f, -0.42f, 0.30f)),   // right skid
+                (new Vector3(0.45f, 0.60f, 4.60f), new Vector3(0f, 1.30f, 4.10f)),        // tail boom
+            },
+            ForwardGears = new[] { 1f }, ReverseGear = 1f, ShiftUpRpm = 5000f,
+            Sound = "engine_medium.ogg", IdlePitch = 0.85f, MaxPitch = 1.7f, IdleVolume = 0.8f, MaxVolume = 1.0f,
+            Fuel = 2000f, Health = 1000f, Name = "Huey", Rarity = EItemRarity.EPIC,   // .dat Fuel/Health/Rarity
+            Wheels = new (float, float, float, bool)[0],
+        };
+        public static Vehicle BuildHuey(int variant = 0) => Build(_huey, variant, "huey");
+        public static Vehicle BuildByName(string name, int variant = 0) => name switch { "quad" => BuildQuad(variant), "bus" => BuildBus(variant), "sedan" => BuildSedan(variant), "hatchback" => BuildHatchback(variant), "humvee" => BuildHumvee(variant), "roadster" => BuildRoadster(variant), "ambulance" => BuildAmbulance(variant), "firetruck" => BuildFiretruck(variant), "tractor" => BuildTractor(variant), "ural" => BuildUral(variant), "police" => BuildPolice(variant), "semi" => BuildSemi(variant), "trailer" => BuildTrailer(variant), "offroader" => BuildOffRoader(variant), "off_roader" => BuildOffRoader(variant), "truck" => BuildTruck(variant), "van" => BuildVan(variant), "golf" => BuildGolf(variant), "vw_golf" => BuildGolf(variant), "runabout" => BuildRunabout(variant), "apc" => BuildAPC(variant), "minicopter" => BuildMinicopter(variant), "mini" => BuildMinicopter(variant), "heli" => BuildMinicopter(variant), "huey" => BuildHuey(variant), _ => BuildJeep(variant) };
+        public static readonly string[] SpecNames = { "jeep", "quad", "bus", "sedan", "hatchback", "humvee", "roadster", "ambulance", "firetruck", "tractor", "ural", "police", "semi", "trailer", "offroader", "truck", "van", "golf", "runabout", "apc", "minicopter", "huey" };   // F1 dev-console autocomplete + validation ("golf" = VW_Golf, command-only, no natural spawn; runabout = boat + apc = amphibious, both command-spawnable -- drop over water to float)
 
         // spec lookup by key (same table as BuildByName) -- the MP puppet builder resolves replicated
         // TypeIds through this so client replicas rebuild the exact meshes/palette the server spawned
@@ -1133,6 +1243,145 @@ namespace UnturnedGodot
             return p;
         }
 
+        /// <summary>The minicopter airframe, built from primitives. Sets <c>v._bodyMesh</c> to the fuselage pod
+        /// (so the shared damage/hide paths still have a body to work on) and hangs the rest off the vehicle.
+        ///
+        /// The two rotors go on their OWN Node3D pivots -- `_rotorNode` spins about local Y, `_tailRotorNode`
+        /// about local X -- because the blades have to turn without the airframe turning. Blade phase is
+        /// visual only; the flight model never reads it.</summary>
+        /// <summary>Parse a content .obj if it is present, else null. Generated content (the extracted Huey
+        /// rotors) must not be a hard build dependency -- a checkout that has not run the extractor should
+        /// still get a flyable machine, not a crash or an invisible rotor.</summary>
+        static Mesh LoadOptionalObj(string file)
+        {
+            string abs = ProjectSettings.GlobalizePath($"res://content/{file}");
+            if (!System.IO.File.Exists(abs)) { GD.Print($"[heli] {file} missing -- falling back to primitive blades (run tools/extract_huey.py)"); return null; }
+            return ContentProvider.ParseObj($"res://content/{file}");
+        }
+
+        static void BuildHeliModel(Vehicle v, Spec s, Material bodyMat)
+        {
+            var frameMat = SolidMat(new Color(0.16f, 0.16f, 0.18f));   // black tube frame, skids, boom
+            var bladeMat = SolidMat(new Color(0.10f, 0.10f, 0.11f));
+            var glassMat = new StandardMaterial3D { AlbedoColor = new Color(0.55f, 0.70f, 0.78f, 0.35f), Metallic = 0.3f, Roughness = 0.1f,
+                                                    Transparency = BaseMaterial3D.TransparencyEnum.Alpha, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+
+            void Part(string name, Mesh m, Vector3 pos, Material mat, Vector3 rotDeg = default, Node3D parent = null)
+            {
+                var mi = new MeshInstance3D { Name = name, Mesh = m, MaterialOverride = mat, Position = pos };
+                if (rotDeg != Vector3.Zero) mi.RotationDegrees = rotDeg;
+                (parent ?? (Node3D)v).AddChild(mi);
+            }
+            // a tube along Z (the boom/skid primitive): CylinderMesh is Y-up, so it is laid down 90 deg about X
+            void Tube(string name, float radius, float len, Vector3 pos, Material mat, Vector3 rotDeg, Node3D parent = null)
+                => Part(name, new CylinderMesh { TopRadius = radius, BottomRadius = radius, Height = len, RadialSegments = 10, Rings = 1 }, pos, mat, rotDeg, parent);
+
+            // ---- AIRFRAME. A spec that names real meshes (the Huey) uses them; one that does not (the
+            // minicopter, which has no retail counterpart) gets the primitive frame built below.
+            if (s.HeliBodyMeshes != null)
+            {
+                for (int i = 0; i < s.HeliBodyMeshes.Length; i++)
+                {
+                    var m = LoadOptionalObj(s.HeliBodyMeshes[i]);
+                    if (m == null) continue;
+                    var mi = new MeshInstance3D { Name = i == 0 ? "Body" : $"Body{i}", Mesh = m, MaterialOverride = bodyMat };
+                    v.AddChild(mi);
+                    if (v._bodyMesh == null) v._bodyMesh = mi;
+                }
+                BuildHeliRotors(v, s, bladeMat, frameMat);
+                return;
+            }
+
+            // ---- fuselage pod. This one is _bodyMesh: the paintable panel, and what the shared code hides/dresses.
+            var pod = new MeshInstance3D
+            {
+                Name = "Body",
+                Mesh = new BoxMesh { Size = new Vector3(1.05f, 0.80f, 1.35f) },
+                MaterialOverride = bodyMat,
+                Position = new Vector3(0f, 0.10f, 0.05f),
+            };
+            v.AddChild(pod);
+            v._bodyMesh = pod;
+
+            Part("Nose", new SphereMesh { Radius = 0.52f, Height = 1.04f, RadialSegments = 14, Rings = 8 }, new Vector3(0f, 0.10f, -0.60f), bodyMat);
+            Part("Canopy", new SphereMesh { Radius = 0.46f, Height = 0.92f, RadialSegments = 14, Rings = 8 }, new Vector3(0f, 0.30f, -0.42f), glassMat);
+            Part("Engine", new BoxMesh { Size = new Vector3(0.72f, 0.52f, 0.62f) }, new Vector3(0f, 0.34f, 0.62f), frameMat);
+            Part("FuelTank", new SphereMesh { Radius = 0.30f, Height = 0.60f, RadialSegments = 12, Rings = 7 }, new Vector3(0f, 0.30f, 1.02f), frameMat);
+            // two exposed bench seats, the minicopter's whole cabin
+            Part("SeatL", new BoxMesh { Size = new Vector3(0.42f, 0.10f, 0.44f) }, new Vector3(-0.26f, 0.18f, 0.02f), frameMat);
+            Part("SeatR", new BoxMesh { Size = new Vector3(0.42f, 0.10f, 0.44f) }, new Vector3(0.26f, 0.18f, 0.02f), frameMat);
+            Part("SeatBack", new BoxMesh { Size = new Vector3(1.00f, 0.46f, 0.09f) }, new Vector3(0f, 0.42f, 0.27f), frameMat);
+
+            // ---- skids. Two tubes plus four struts; these are what it rests on, and ExtraBoxes gives them collision.
+            foreach (float sx in new[] { -1f, 1f })
+            {
+                Tube($"Skid{(sx < 0 ? "L" : "R")}", 0.055f, 2.30f, new Vector3(sx * 0.52f, -0.72f, 0.10f), frameMat, new Vector3(90f, 0f, 0f));
+                Part($"SkidTip{(sx < 0 ? "L" : "R")}", new BoxMesh { Size = new Vector3(0.09f, 0.09f, 0.22f) }, new Vector3(sx * 0.52f, -0.66f, -1.10f), frameMat, new Vector3(-22f, 0f, 0f));
+                foreach (float sz in new[] { -0.45f, 0.62f })
+                    Tube($"Strut", 0.045f, 0.66f, new Vector3(sx * 0.38f, -0.40f, sz), frameMat, new Vector3(0f, 0f, sx * 22f));
+            }
+
+            // ---- tail boom + fin
+            Tube("TailBoom", 0.075f, 2.70f, new Vector3(0f, 0.34f, 1.85f), frameMat, new Vector3(90f, 0f, 0f));
+            Part("TailFin", new BoxMesh { Size = new Vector3(0.05f, 0.62f, 0.42f) }, new Vector3(0f, 0.62f, 2.98f), frameMat);
+            Part("Stabiliser", new BoxMesh { Size = new Vector3(0.86f, 0.04f, 0.26f) }, new Vector3(0f, 0.34f, 2.82f), frameMat);
+
+            Tube("Mast", 0.06f, 0.60f, new Vector3(0f, 0.80f, 0.20f), frameMat, Vector3.Zero);
+            BuildHeliRotors(v, s, bladeMat, frameMat);
+        }
+
+        /// <summary>Mount both rotors, shared by every rotary-wing spec.
+        ///
+        /// The blades are the RETAIL Huey's (strawberry 2026-08-15: "theres an existing huey helicopter model
+        /// etc in the game already"), pulled out of core.masterbundle by tools/extract_huey.py. Both meshes are
+        /// authored as a flat disc in XZ -- main 11.14 m across and 0.10 thick, tail 2.56 m, measured off the
+        /// extracted files -- i.e. already spinning about local Y, so each just needs scaling to the spec's span.
+        /// The Huey uses them at 1:1; the minicopter shrinks the same geometry to a 5.3 m disc.
+        ///
+        /// Falls back to box blades when the extraction has not been run, so a fresh checkout without the
+        /// generated content still builds a flyable machine instead of an invisible rotor.</summary>
+        static void BuildHeliRotors(Vehicle v, Spec s, Material bladeMat, Material frameMat)
+        {
+            const float HueyRotorSpan = 11.14f, HueyTailSpan = 2.56f;   // measured off the extracted meshes
+            Mesh mainBlades = LoadOptionalObj("huey_rotor_main.txt"), tailBlades = LoadOptionalObj("huey_rotor_tail.txt");
+
+            v._rotorNode = new Node3D { Name = "Rotor", Position = s.RotorHub };
+            v.AddChild(v._rotorNode);
+            v._rotorNode.AddChild(new MeshInstance3D
+            {
+                Name = "RotorHub",
+                Mesh = new CylinderMesh { TopRadius = 0.11f, BottomRadius = 0.13f, Height = 0.16f, RadialSegments = 10, Rings = 1 },
+                MaterialOverride = frameMat,
+            });
+            if (mainBlades != null)
+            {
+                float k = s.RotorRadius * 2f / HueyRotorSpan;
+                v._rotorNode.AddChild(new MeshInstance3D { Name = "Blades", Mesh = mainBlades, MaterialOverride = bladeMat, Scale = new Vector3(k, 1f, k) });
+            }
+            else for (int b = 0; b < 2; b++)
+                v._rotorNode.AddChild(new MeshInstance3D
+                {
+                    Name = $"Blade{b}", Mesh = new BoxMesh { Size = new Vector3(s.RotorRadius * 2f, 0.035f, 0.20f) },
+                    MaterialOverride = bladeMat, RotationDegrees = new Vector3(0f, b * 180f, 0f),
+                });
+
+            // Tail rotor. Its mesh spins about its own Y like the main one, so the PIVOT is rolled 90 deg to
+            // stand the disc on edge -- that way _tailRotorNode still just turns about local Y in the tick.
+            v._tailRotorNode = new Node3D { Name = "TailRotor", Position = s.TailRotorHub, RotationDegrees = new Vector3(0f, 0f, 90f) };
+            v.AddChild(v._tailRotorNode);
+            if (tailBlades != null)
+            {
+                float k = s.TailRotorRadius * 2f / HueyTailSpan;
+                v._tailRotorNode.AddChild(new MeshInstance3D { Name = "TailBlades", Mesh = tailBlades, MaterialOverride = bladeMat, Scale = new Vector3(k, 1f, k) });
+            }
+            else for (int b = 0; b < 2; b++)
+                v._tailRotorNode.AddChild(new MeshInstance3D
+                {
+                    Name = $"TailBlade{b}", Mesh = new BoxMesh { Size = new Vector3(s.TailRotorRadius * 2f, 0.03f, 0.10f) },
+                    MaterialOverride = bladeMat, RotationDegrees = new Vector3(0f, b * 180f, 0f),
+                });
+        }
+
         static Vehicle Build(Spec s, int variant, string specKey)
         {
             var v = new Vehicle { Mass = GlobalMass };   // source uses one constant mass (2.0) for ALL vehicles -> one global Godot mass
@@ -1144,6 +1393,17 @@ namespace UnturnedGodot
             v.ContactMonitor = true; v.MaxContactsReported = 6; v.BodyEntered += v.OnVehicleContact;   // wake a frozen parked car when another vehicle rams it (master)
             v._engineForce = s.Engine; v._steerMax = s.SteerMax; v._steerMin = s.SteerMin;
             v._speedMax = s.SpeedMax; v._speedMin = s.SpeedMin; v._brakeForce = s.Brake;
+            v._heli = s.Heli;
+            v._heliThrust = s.HeliThrust; v._heliPitchTq = s.HeliPitchTorque; v._heliRollTq = s.HeliRollTorque;
+            v._heliYawTq = s.HeliYawTorque; v._heliLevel = s.HeliLevel;
+            v._heliClimbMax = s.HeliClimbMax; v._heliFallMax = s.HeliFallMax;
+            if (s.Heli)
+            {
+                // A helicopter is flown, not suspended: Godot's default 0 damping would let it accumulate spin
+                // forever off a single control input, and the real damping here is aerodynamic, not friction.
+                v.LinearDamp = 0.35f; v.AngularDamp = 2.6f;
+                v.ContinuousCd = true;   // a fast dive must not tunnel through terrain between ticks
+            }
             v._water = s.Water;   // BOAT/AMPHIBIOUS: voxelize the hull box for the source Buoyancy.cs voxel-Archimedes model
             if (s.Water != WaterMode.Car)
             {
@@ -1174,13 +1434,18 @@ namespace UnturnedGodot
             Material bodyMat = s.Palette != null
                 ? PaintMat(s.Palette, paint)
                 : new StandardMaterial3D { AlbedoColor = paint, Metallic = 0f, Roughness = 0.9f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
-            ArrayMesh bodyMesh; ArrayMesh legMesh = null, hlMesh = null, tlMesh = null;
+            ArrayMesh bodyMesh = null; ArrayMesh legMesh = null, hlMesh = null, tlMesh = null;
             // baked taillight zone pair (LEFT + its X-mirror), when the body has REAL red taillights to split out (trailer)
             (Vector3, Vector3)[] tlZones = s.TaillightZoneMin != s.TaillightZoneMax
                 ? new[] { (s.TaillightZoneMin, s.TaillightZoneMax),
                           (new Vector3(-s.TaillightZoneMax.X, s.TaillightZoneMin.Y, s.TaillightZoneMin.Z), new Vector3(-s.TaillightZoneMin.X, s.TaillightZoneMax.Y, s.TaillightZoneMax.Z)) }
                 : null;
-            if (s.LandingLegZoneMin != s.LandingLegZoneMax && tlZones != null)   // trailer: peel BOTH the landing legs AND the baked taillights in one pass
+            // A HELICOPTER HAS NO RIPPED MESH. Unturned ships no minicopter, and nothing under content/ or the
+            // U3-SDK is close enough to re-skin, so the airframe is built here out of primitives instead of
+            // parsed from an .obj. Everything below the model -- collision, seats, fuel, damage -- is the
+            // ordinary Vehicle path; only the geometry source differs.
+            if (s.Heli) BuildHeliModel(v, s, bodyMat);
+            else if (s.LandingLegZoneMin != s.LandingLegZoneMax && tlZones != null)   // trailer: peel BOTH the landing legs AND the baked taillights in one pass
                 (bodyMesh, legMesh, tlMesh) = ContentProvider.ParseObjSplit2($"res://content/{s.Body}", new[] { (s.LandingLegZoneMin, s.LandingLegZoneMax) }, tlZones);
             else if (s.LandingLegZoneMin != s.LandingLegZoneMax)   // split the baked-in landing legs into their own mesh so they can vanish on couple
                 (bodyMesh, legMesh) = ContentProvider.ParseObjSplitByZone($"res://content/{s.Body}", s.LandingLegZoneMin, s.LandingLegZoneMax);
@@ -1192,8 +1457,11 @@ namespace UnturnedGodot
             }
             else
                 bodyMesh = ContentProvider.ParseObj($"res://content/{s.Body}");
-            v._bodyMesh = new MeshInstance3D { Name = "Body", Mesh = bodyMesh, MaterialOverride = bodyMat };
-            v.AddChild(v._bodyMesh);
+            if (bodyMesh != null)   // null only for the procedural heli, whose BuildHeliModel already set _bodyMesh
+            {
+                v._bodyMesh = new MeshInstance3D { Name = "Body", Mesh = bodyMesh, MaterialOverride = bodyMat };
+                v.AddChild(v._bodyMesh);
+            }
             if (legMesh != null)   // the landing legs as a sibling MeshInstance sharing the body material -> toggled with the coupling (visible when parked, hidden when towed)
             {
                 v._landingLegMesh = new MeshInstance3D { Name = "LandingLegs", Mesh = legMesh, MaterialOverride = bodyMat };
@@ -1242,6 +1510,16 @@ namespace UnturnedGodot
                 v.AddChild(v._landingGear);
             }
             v.BodyExtents = s.BoxSize * 0.5f; v.BodyCenter = s.BoxCenter;   // for the zombie swipe-reach
+            // GROUND CLEARANCE: how far the lowest collision point sits BELOW the origin, measured off the
+            // shapes actually attached rather than assumed from the spec. A wheeled vehicle can be dropped from
+            // any sensible height and its suspension sorts it out; a helicopter has no suspension, so spawning
+            // it "1.5 m up" either drops it onto its skids with a bang or, on a spec whose skids hang lower than
+            // that, buries them in the terrain. PlaceOnGround uses this to seat it exactly.
+            float lowest = 0f;
+            foreach (var child in v.GetChildren())
+                if (child is CollisionShape3D cs3 && cs3.Shape is BoxShape3D bs3)
+                    lowest = Mathf.Min(lowest, cs3.Position.Y - bs3.Size.Y * 0.5f);
+            v._groundClearance = -lowest;
 
             // rope-tow attach nodes (generic -- every vehicle gets them): bumper-height centre of the front / rear faces,
             // nudged just outside the hull so the rope clears the body. front = -Z (forward), rear = +Z. (strawberry rope tow)
@@ -1435,8 +1713,135 @@ namespace UnturnedGodot
 
         // throttle/brake/steer in [-1,1]; applies the source .dat handling: hard Speed_Max/Min caps + speed-dependent
         // steering (Steer_Max at rest -> Steer_Min at full speed), so the observable handling matches the game.
+        // ---- ROTARY WING ------------------------------------------------------------------------------
+        const float SpoolUpSeconds = 3.2f, SpoolDownSeconds = 5.5f;   // cold start has to wind up before it will fly
+        const float CollectiveRate = 0.55f;   // how fast W/S move the throttle, per second of held key
+        const float HeliPitchRate = 1.15f, HeliRollRate = 1.45f, HeliYawRate = 1.30f;   // rad/s at full deflection
+        const float HeliControlSharpness = 6.5f;   // how fast angular velocity converges on the commanded rate
+
+        /// <summary>The pilot's held flight controls. Rust mapping: <paramref name="collective"/> is a RATE
+        /// (+1 while W is held, -1 while S is held) because a Rust helicopter's throttle is STICKY -- you set a
+        /// power level and it stays there, you do not hold a button to hover. The other three are direct
+        /// deflections. Yaw/pitch/roll are -1..1.
+        ///
+        /// This is the single flight-input seam, the same way <see cref="Drive"/> is for cars: SP calls it from
+        /// the input path, and the MP fallback maps its 3-axis DriveInput onto it (throttle -> collective,
+        /// steer -> yaw). Pitch/roll never need to ride the input wire, because once a client is predicting it
+        /// reports the resulting TRANSFORM and the server adopts that whole basis.</summary>
+        public void DriveHeli(float collective, float yaw, float pitch, float roll, double delta)
+        {
+            if (_exploded) { _inCollective = 0f; _inYaw = _inPitch = _inRoll = 0f; return; }
+            _parked = false;
+            if (Freeze) { Freeze = false; }   // any control input wakes a settled machine
+            _inCollective = Mathf.Clamp(_inCollective + collective * CollectiveRate * (float)delta, 0f, 1f);
+            _inYaw = Mathf.Clamp(yaw, -1f, 1f);
+            _inPitch = Mathf.Clamp(pitch, -1f, 1f);
+            _inRoll = Mathf.Clamp(roll, -1f, 1f);
+        }
+
+        /// <summary>Cut to idle and let it settle -- the heli equivalent of <see cref="Park"/>. The collective
+        /// does NOT snap to zero: an unmanned helicopter in the air keeps whatever power it had and descends as
+        /// the rotor winds down, rather than being deleted out of the sky the instant the pilot steps out.</summary>
+        public void ParkHeli()
+        {
+            _parked = true;
+            _inYaw = _inPitch = _inRoll = 0f;
+        }
+
+        void StepHeli(float dt)
+        {
+            // fuel + explosion lifecycle, same rules the wheeled path runs
+            if (EngineOn && Fuel > 0f && !InfiniteFuel) Fuel = Mathf.Max(0f, Fuel - FuelBurn * dt);
+            if (EngineOn && FuelMax > 0f && Fuel <= 0f) EngineOn = false;
+            if (_deadTimer > 0f) { _deadTimer -= dt; if (_deadTimer <= 0f) Explode(); }
+
+            // ROTOR SPOOL. Thrust scales with the SQUARE of it, so a cold start genuinely cannot lift until the
+            // disc is up -- and cutting the engine in the air leaves you autorotating down, not dropping like a
+            // brick. Spool-down is slower than spool-up for the same reason.
+            float want = (EngineOn && !_exploded && (Fuel > 0f || InfiniteFuel)) ? 1f : 0f;
+            _rotorRpm = Mathf.MoveToward(_rotorRpm, want, dt / (want > _rotorRpm ? SpoolUpSeconds : SpoolDownSeconds));
+            if (_rotorNode != null)   // visual only -- the flight model never reads blade phase
+            {
+                _rotorSpin += dt * (2.5f + _rotorRpm * 46f);
+                _rotorNode.Rotation = new Vector3(0f, _rotorSpin, 0f);
+            }
+            if (_tailRotorNode != null)
+                _tailRotorNode.Rotation = new Vector3(0f, _rotorSpin * 2.6f, 0f);   // pivot is rolled 90 deg, so local Y is still the spin axis
+
+            if (_exploded) return;   // a wreck is just a falling body
+
+            Basis b = GlobalTransform.Basis;
+            float spool = _rotorRpm * _rotorRpm;
+
+            // LIFT along the BODY up axis. This one line is the whole Rust feel: you do not steer a helicopter,
+            // you tilt it and the lift vector takes you with it.
+            float lift = _heliThrust * spool * _inCollective;
+            if (lift > 0f) ApplyCentralForce(b.Y * lift * Mass);
+
+            // Horizontal top speed. The MP envelope derives its cap from Speed_Max, so exceeding it here would
+            // have the server roll a legitimate pilot back -- the limit has to bind on the CLIENT that is flying.
+            Vector3 vel = LinearVelocity;
+            var flat = new Vector3(vel.X, 0f, vel.Z);
+            if (_speedMax > 0f && flat.Length() > _speedMax)
+            {
+                Vector3 excess = flat.Normalized() * (flat.Length() - _speedMax);
+                ApplyCentralForce(-excess * Mass * 3.0f);
+            }
+
+            // CONTROL. Angular VELOCITY is driven toward the commanded rate rather than integrating torques,
+            // because torque->spin runs through an inertia tensor nobody has tuned; converging on a rate is
+            // stable, framerate-independent and gives the same response on every machine.
+            // SIGN CONVENTION, asserted in vehicle.heli_flight so it cannot drift: with Godot's forward = -Z,
+            //   pitch +1 = nose UP     -> omega along +X  (about +X, -Z rotates toward +Y)
+            //   roll  +1 = bank RIGHT  -> omega along -Z  (about +Z, up would tilt to -X = left)
+            //   yaw   +1 = nose RIGHT  -> omega along -Y  (about +Y, -Z rotates toward -X = left)
+            // Two of the three need a negation and one does not, which is exactly the situation where
+            // reasoning it out once and never checking gets you an inverted axis nobody notices until a
+            // playtest. The tests pin all three against the body basis.
+            Vector3 cmd = b.X * (_inPitch * HeliPitchRate * _heliPitchTq / 2.6f)
+                        + b.Z * (-_inRoll * HeliRollRate * _heliRollTq / 3.0f)
+                        + b.Y * (-_inYaw * HeliYawRate * _heliYawTq / 2.2f);
+
+            // SELF-LEVELLING, and only where the pilot is not asking for attitude. A helicopter that snaps
+            // upright under you is not flyable, but one with no restoring term at all needs constant babysitting
+            // just to hold a hover. It also scales with rotor spool -- a dead rotor cannot right the airframe.
+            float manual = Mathf.Max(Mathf.Abs(_inPitch), Mathf.Abs(_inRoll));
+            if (_heliLevel > 0f && manual < 0.95f)
+            {
+                Vector3 up = b.Y;
+                Vector3 axis = up.Cross(Vector3.Up);
+                if (axis.LengthSquared() > 1e-6f)
+                    cmd += axis.Normalized() * up.AngleTo(Vector3.Up) * _heliLevel * spool * (1f - manual);
+            }
+            AngularVelocity = AngularVelocity.Lerp(cmd, 1f - Mathf.Exp(-HeliControlSharpness * dt));
+
+            // SETTLE. No wheels means the shared wheel-contact settle test can never fire, so a parked heli
+            // would idle its physics forever.
+            //
+            // TOUCHING THE GROUND IS PART OF THE TEST, and leaving it out is not a small omission: a helicopter
+            // that cuts its collective at altitude coasts upward, decelerates, and passes through zero vertical
+            // velocity at the apex. A settle rule that only asks "is it slow and unpowered" fires exactly
+            // there and FREEZES IT IN THE SKY -- which is what the first cut of this did, and the flight test
+            // caught it as a descent of exactly 0.00 m at exactly 0 m/s. Being stationary in the air is the
+            // normal top of every climb, not a machine at rest.
+            bool grounded = GetContactCount() > 0;
+            bool idle = grounded && _inCollective < 0.02f && vel.LengthSquared() < 0.05f && AngularVelocity.LengthSquared() < 0.05f;
+            if (idle && _spawnGrace <= 0f && !Freeze)
+            {
+                LinearVelocity = Vector3.Zero; AngularVelocity = Vector3.Zero;
+                FreezeMode = RigidBody3D.FreezeModeEnum.Static; Freeze = true;
+            }
+            else if (!idle && Freeze) Freeze = false;
+            if (_spawnGrace > 0f) _spawnGrace -= dt;
+        }
+
         public void Drive(float throttle, float steer, bool handbrake)
         {
+            // A helicopter has no wheels to turn or brake. The MP fallback and any generic caller still reach it
+            // through this one seam, mapped onto the flight axes it does have -- throttle is the collective,
+            // steer is the pedals. Pitch/roll are absent here on purpose: they arrive as the reported TRANSFORM
+            // from a predicting client, not as input (see DriveHeli).
+            if (_heli) { DriveHeli(throttle, steer, 0f, 0f, GetPhysicsProcessDeltaTime()); return; }
             _inThrottle = throttle; _inSteer = steer;   // remembered for boat/amphibious water propulsion (applied as forces in _PhysicsProcess)
             if (_exploded) { EngineForce = 0f; Steering = 0f; Brake = 0f; return; }   // a wrecked vehicle can't be driven
             _parked = false;
@@ -1465,6 +1870,7 @@ namespace UnturnedGodot
 
         public void Park()   // driver left: smoothly damp to a stop + straighten (no hard-brake judder), then hold
         {
+            if (_heli) { ParkHeli(); return; }   // nothing to brake or straighten; an airborne heli must keep flying, not stop dead
             _parked = true;
             EngineForce = 0f;
             _steerTarget = 0f;
@@ -2135,6 +2541,7 @@ namespace UnturnedGodot
                 if (_deadTimer > 0f) { _deadTimer -= (float)delta; if (_deadTimer <= 0f) Explode(); }   // Explode unfreezes + flings; VehicleNetSync then aborts the hold + force-exits the driver
                 return;
             }
+            if (_heli) { StepHeli((float)delta); return; }   // rotary wing: rotor thrust replaces the wheel/tow/settle sim entirely
             if (CanTow && CoupledTrailer != null) UpdateCoupled(CoupledTrailer, (float)delta);   // coupled: rollover/clip disconnect + jackknife clamp
             else if (CanTow) UpdateTrailerApproach();     // ghost this cab vs a trailer it's backing under (exception + layer swap) so it phases the low deck+legs; solid vs the player throughout
             if (Towing != null) UpdateTow((float)delta);   // rope tower: spring-tension pull on both bodies + redraw the rope (SP)
