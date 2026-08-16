@@ -84,10 +84,22 @@ namespace UnturnedGodot
             // in PeerConnected -- after core's Inventories.ServerAdd (subscribed first, in the NetWorldServer
             // ctor) and BEFORE the join snapshot composes in TickReplication, so the kit rides the join
             // snapshot. In a catalog-less fallback boot the grants degrade to 1x1/no-bag -- harmless.
+            //
+            // A JOINING PLAYER GETS NOTHING BUT CLOTHES (strawberry 2026-08-16: "completely remove the starter
+            // kit we spawn with. start with an empty inventory and empty primary and secondary slots"). This
+            // used to hand out PopulateDemoKit -- two rifles, four magazines, medkits, shells, a sledgehammer --
+            // which is what a real player actually spawned with on the test server, whatever the singleplayer
+            // path did. The clothes stay because they ARE the grid: PlayerInventory sizes the shirt and pants
+            // pages off the worn item, so a player wearing neither has nowhere to put anything they pick up.
+            //
+            // PopulateDemoKit still exists, as a test FIXTURE. Suites that need a stocked player now grant it
+            // themselves rather than depending on what a real spawn happens to include (strawberry: "same
+            // result can be reached by spawning these items via commands. just rewrite ur tests to do that") --
+            // which is where a fixture belongs, and stops production seeding being load-bearing for tests.
             Server.Session.PeerConnected += peer =>
             {
                 if (Server.Inventories.TryGet(peer.PlayerId, out var inv))
-                    PlayerController.PopulateDemoKit(inv.Inventory);
+                    PlayerController.PopulateSpawnKit(inv.Inventory);   // clothes ONLY -- see below
             };
             // Phase 6: the transactional slice's def tables -- the same DeployableDef/blueprint data every
             // client build carries (content-hash-matched), feeding placement validation + the server solve.

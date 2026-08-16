@@ -162,15 +162,17 @@ namespace UnturnedGodot
                 //     local player's server inventory must be STOCKED and OWNER-REPLICATED, exactly as the MP
                 //     client's is. Without this a real placement is server-rejected -- the gap P1 surfaced.
                 //
-                //     SEED: grant the SP demo kit into the SERVER grid when the local peer joins -- verbatim
-                //     from DedicatedServer:67-71. Fires AFTER core's Inventories.ServerAdd (subscribed first,
+                //     SEED: grant the SPAWN kit (clothes, which are the grid) into the SERVER grid when the
+                //     local peer joins -- verbatim from DedicatedServer. This was the full demo kit until
+                //     strawberry asked for an empty spawn 2026-08-16; tests that need a stocked bag now stock
+                //     it themselves. Fires AFTER core's Inventories.ServerAdd (subscribed first,
                 //     in the NetWorldServer ctor) and BEFORE the join snapshot composes in TickReplication, so
                 //     the kit rides the join snapshot. PopulateDemoKit is the exact loadout PopulateDemoInventory
                 //     grants the SP shell, so server and local shell start from the identical bag.
                 Server.Session.PeerConnected += peer =>
                 {
                     if (Server.Inventories.TryGet(peer.PlayerId, out var inv))
-                        PlayerController.PopulateDemoKit(inv.Inventory);
+                        PlayerController.PopulateSpawnKit(inv.Inventory);   // clothes only: no starter kit (strawberry 2026-08-16)
                 };
                 // SEAMS (verbatim from ClientWorldSession.SpawnShell:441-445): the local player's grid/consume/
                 //     craft actions route as INTENT over the wire. Each is null in default SP/loopback, so the

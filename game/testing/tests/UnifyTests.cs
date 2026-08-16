@@ -511,14 +511,26 @@ namespace UnturnedGodot.Testing
             var pump = new DelegateSimStep((t, dt) => { net.Tick(); client.Tick(); }, "l1.clientpump");
             world.Sim.Sim.Add(pump);
             var ded = new DedicatedServer { Driver = world.Sim, TransportOverride = new MemServerTransport(net) };
-            World.AddChild(ded);   // seeds the demo kit into the SERVER grid on join (DedicatedServer:67-71 = the P1b seed)
+            World.AddChild(ded);   // a real join now grants CLOTHES ONLY -- the starter kit is gone (strawberry 2026-08-16)
 
             client.Connect();
             yield return Until(() => client.State == NetSessionState.Connected, 5);
             T.Check("local client joined the loopback server", client.State == NetSessionState.Connected);
 
-            // the P1b invariant: the server OWNS a stocked inventory for the local player (demo kit seeded on
-            // join), and it is owner-replicated back to the client -- the grid the shell adopts.
+            // STOCK THE BAG OURSELVES. This used to lean on the server handing every joiner the demo kit, which
+            // meant a test fixture was riding on what a real player spawns with -- so removing the starter kit
+            // broke a netcode test that has nothing to do with loadouts. The fixture belongs here, at the point
+            // that needs it (strawberry: "same result can be reached by spawning these items via commands. just
+            // rewrite ur tests to do that").
+            yield return Until(() => ded.Server.Inventories.TryGet(client.PlayerId, out _), 5);
+            {
+                T.Check("server made an inventory for the joiner", ded.Server.Inventories.TryGet(client.PlayerId, out var seed));
+                if (ded.Server.Inventories.TryGet(client.PlayerId, out var seed2))
+                    PlayerController.PopulateDemoKit(seed2.Inventory);
+            }
+
+            // the P1b invariant: the server OWNS a stocked inventory for the local player, and it is
+            // owner-replicated back to the client -- the grid the shell adopts.
             yield return Until(() => ded.Server.Inventories.TryGet(client.PlayerId, out var s0)
                                   && s0.Inventory.getItemCount(4) == 1, 5);
             T.Check("server owns a STOCKED inventory for the local player (demo-kit Eaglefire present)",

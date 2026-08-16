@@ -1792,7 +1792,8 @@ namespace UnturnedGodot
 
             CharacterModel.LoadBundled();
             var player = new PlayerController();
-            player.LoadGun("res://content/eaglefire.dat");
+            // No gun at spawn: empty hands, empty primary/secondary (strawberry 2026-08-16). Guns are
+            // spawnable from the console (`give`), which is how everything else in this world arrives.
             root.AddChild(player);
             player.GlobalPosition = new Vector3(0f, 1.2f, 0f);
             player.LinkWorldLighting(sun, env);
@@ -1852,7 +1853,8 @@ namespace UnturnedGodot
 
             CharacterModel.LoadBundled();
             var player = new PlayerController();
-            player.LoadGun("res://content/eaglefire.dat");
+            // No gun at spawn: empty hands, empty primary/secondary (strawberry 2026-08-16). Guns are
+            // spawnable from the console (`give`), which is how everything else in this world arrives.
             root.AddChild(player);
             player.LinkWorldLighting(sun, env);   // FP gun takes the world day/night sun + ambient (same missing hookup as Drive PEI)
             if (System.Environment.GetEnvironmentVariable("UG_HOLD") is string _hc && _hc.Length > 0)
