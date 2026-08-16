@@ -1350,7 +1350,7 @@ namespace UnturnedGodot
             // Thrust cut TWICE on playtest feedback: 17 -> 13.6 (strawberry, "reduce the upward thrust by like
             // 20%") -> 11.8 (VoX, "less thrust from W"). 11.8 against g leaves thrust-to-weight at 1.20 and
             // hover at ~83 % collective, so there is still real climb available but you have to commit to it.
-            HeliThrust = 11.8f, HeliPitchTorque = 2.6f, HeliRollTorque = 3.0f, HeliYawTorque = 2.2f, HeliLevel = 0f,
+            HeliThrust = 11.8f, HeliPitchTorque = 2.08f, HeliRollTorque = 2.40f, HeliYawTorque = 1.76f, HeliLevel = 0f,
             HeliClimbMax = 22f, HeliFallMax = 45f,
             RotorRadius = 2.85f, TailRotorRadius = 0.34f,
             RotorHub = new Vector3(0f, 1.22f, 0.55f), TailRotorHub = new Vector3(0.09f, 0.02f, 2.46f),
@@ -1382,7 +1382,7 @@ namespace UnturnedGodot
         static readonly Spec _scoutcopter = new()
         {
             Heli = true, Frame = HeliFrame.Pod,
-            HeliThrust = 11.8f, HeliPitchTorque = 2.6f, HeliRollTorque = 3.0f, HeliYawTorque = 2.2f, HeliLevel = 0f,
+            HeliThrust = 11.8f, HeliPitchTorque = 2.08f, HeliRollTorque = 2.40f, HeliYawTorque = 1.76f, HeliLevel = 0f,
             HeliClimbMax = 22f, HeliFallMax = 45f,
             RotorRadius = 2.65f, TailRotorRadius = 0.42f,
             RotorHub = new Vector3(0f, 1.12f, 0.20f), TailRotorHub = new Vector3(0.10f, 0.62f, 3.02f),
@@ -1420,7 +1420,7 @@ namespace UnturnedGodot
             // 20 % off 13.5 leaves thrust-to-weight at 1.10 -- hover at 91 % collective, with almost nothing left
             // to climb on once the new tilt penalty takes its bite. 12.0 keeps it heavy (T/W 1.22, hover ~82 %)
             // without making a loaded transport unable to get out of its own way.
-            HeliThrust = 12.9f, HeliPitchTorque = 1.40f, HeliRollTorque = 1.65f, HeliYawTorque = 1.29f, HeliLevel = 0f,
+            HeliThrust = 12.9f, HeliPitchTorque = 1.12f, HeliRollTorque = 1.32f, HeliYawTorque = 1.03f, HeliLevel = 0f,
             HeliClimbMax = 18f, HeliFallMax = 40f,
             RotorRadius = 5.57f, TailRotorRadius = 1.28f,        // the mesh's own spans -- no scaling for this one
             RotorHub = new Vector3(0f, 3.01f, -0.25f), TailRotorHub = new Vector3(-0.45f, 3.57f, 6.68f),   // prefab local positions, Z negated
@@ -1447,6 +1447,11 @@ namespace UnturnedGodot
         // Meshes extracted by cow tools (tools/extract_heli.py, a generalisation of extract_huey.py); every
         // number below is PORTED from the vehicle's own .dat rather than invented, because unlike the
         // minicopter these all have a source entry: Speed_Max, Speed_Min, Fuel, Health, Rarity, Explosion.
+        //
+        // MANOEUVRABILITY CUT 20 % ACROSS THE WHOLE FLEET (strawberry 2026-08-16: "nerf the maneuverabilty of
+        // all helis by like 20%"). Applied uniformly, so the ORDERING below is untouched -- the balance tests
+        // pin relative agility, not absolute numbers, and a flat scalar is exactly the change they should
+        // survive. The minicopter and scoutcopter took the same cut for consistency.
         //
         // BALANCED AGAINST THE REAL AIRCRAFT (strawberry 2026-08-16: "hind is an mi24. orca is a ka-60.
         // skycrane is an S-64 skycrane. hummingbird is a littlebird. huey is a huey. balance all around
@@ -1501,14 +1506,14 @@ namespace UnturnedGodot
 
         // HIND -- the gunship, and the FASTEST thing in the fleet as well as the second heaviest. Fast and
         // unwieldy: it will outrun anything and hates changing its mind.
-        static readonly Spec _hind = HeliBase("hind", 14.2f, 0.86f, 1.01f, 0.79f, 5.90f, 1.25f,
+        static readonly Spec _hind = HeliBase("hind", 14.2f, 0.69f, 0.81f, 0.63f, 5.90f, 1.25f,
             new Vector3(0f, 4.18f, 0.58f), new Vector3(-0.30f, 4.47f, 9.60f),
             new Vector3(2.90f, 2.60f, 7.20f), new Vector3(0f, 1.40f, 0.20f),
             34f, 1750f, 1250f, "Hind", EItemRarity.LEGENDARY);
         public static Vehicle BuildHind(int variant = 0) => Build(_hind, variant, "hind");
 
         // ORCA (Ka-60) -- the modern transport. Nearly Hind-fast and noticeably more agile; the all-rounder.
-        static readonly Spec _orca = HeliBase("orca", 13.4f, 1.14f, 1.34f, 1.05f, 5.90f, 1.25f,
+        static readonly Spec _orca = HeliBase("orca", 13.4f, 0.91f, 1.07f, 0.84f, 5.90f, 1.25f,
             new Vector3(0f, 3.28f, -0.25f), new Vector3(-0.30f, 1.48f, 7.55f),
             new Vector3(2.60f, 2.50f, 6.40f), new Vector3(0f, 1.20f, 0.10f),
             31f, 2000f, 1000f, "Orca", EItemRarity.EPIC);
@@ -1516,7 +1521,7 @@ namespace UnturnedGodot
 
         // SKYCRANE (S-64) -- the heavy lifter, and counter-intuitively the WORST climber and slowest of the
         // five, because at 21 t what it mostly lifts is itself. Least agile by a wide margin.
-        static readonly Spec _skycrane = HeliBase("skycrane", 12.2f, 0.63f, 0.74f, 0.58f, 5.90f, 1.25f,
+        static readonly Spec _skycrane = HeliBase("skycrane", 12.2f, 0.50f, 0.59f, 0.46f, 5.90f, 1.25f,
             new Vector3(0f, 3.01f, -1.21f), new Vector3(-0.45f, 3.55f, 7.71f),
             new Vector3(3.20f, 2.80f, 6.80f), new Vector3(0f, 1.30f, 0.30f),
             22f, 2000f, 900f, "Skycrane", EItemRarity.EPIC);
@@ -1524,7 +1529,7 @@ namespace UnturnedGodot
 
         // HUMMINGBIRD (MD500 Little Bird) -- the scout. A tenth of the Hind's weight, so far and away the
         // sharpest controls in the fleet, and the thinnest hull. The three retail variants share one geometry.
-        static readonly Spec _hummingbird = HeliBase("hummingbird", 13.5f, 2.30f, 2.70f, 2.10f, 5.57f, 1.25f,
+        static readonly Spec _hummingbird = HeliBase("hummingbird", 13.5f, 1.84f, 2.16f, 1.68f, 5.57f, 1.25f,
             new Vector3(0f, 3.01f, -0.25f), new Vector3(-0.45f, 3.45f, 6.95f),
             new Vector3(2.00f, 2.10f, 4.60f), new Vector3(0f, 1.00f, 0.10f),
             29f, 1750f, 750f, "Hummingbird", EItemRarity.EPIC);

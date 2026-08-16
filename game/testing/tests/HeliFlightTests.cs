@@ -184,9 +184,14 @@ namespace UnturnedGodot.Testing
             T.Check($"a roll input actually banks it (up.X {banked:0.###})", Mathf.Abs(banked) > 0.1f);
             // hands off for 3 s -- no stick, no collective change
             for (int i = 0; i < 150; i++) { hold.DriveHeli(0f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
-            float after = hold.GlobalTransform.Basis.Y.X;
-            T.Check($"...and it HOLDS that bank hands-off, instead of righting itself ({banked:0.###} -> {after:0.###})",
-                Mathf.Abs(after) > Mathf.Abs(banked) * 0.75f);
+            // Asserted as "it did NOT return to level", using the up vector's Y -- 1.0 is upright, 0 is
+            // knife-edge, -1 inverted. The first version compared up.X before and after, which is not monotonic
+            // through 90 deg: with real momentum and no self-levelling the airframe keeps rolling, and once it
+            // passes vertical up.X shrinks again. It read +0.778 -> -0.274 and "failed" on a machine that had
+            // rolled FURTHER, which is the opposite of the thing being tested.
+            float upright = hold.GlobalTransform.Basis.Y.Y;
+            T.Check($"...and nothing rights it hands-off (up.Y {upright:0.###}, 1.0 would be level again)",
+                upright < 0.9f);
             // NOT "the rate has damped to nothing" -- that was written against the old assigned-velocity model
             // and is the opposite of what real momentum does. Drag is deliberately very slight, so 3 s after
             // release the airframe is still turning; the bank persists because nothing stopped it, which is
