@@ -165,6 +165,25 @@ namespace UnturnedGodot
         /// matching DetachSlot's rule: a full bag refuses the swap, it does not eat the difference.</summary>
         public bool FitAttachment(string slot, ushort newId, Item clicked)
         {
+            // SERVER-OWNED BAG (MP, and singleplayer too -- SP runs through the loopback server): the spend has
+            // to be an INTENT, or the server never removes it, still thinks the player owns it, and the next
+            // owner echo hands it straight back. The player keeps the attachment AND the item. That is the dupe
+            // strawberry reported twice, and it is why the local-only path below cannot be the whole story.
+            if (Player != null && Player.InventoryIsServerOwned)
+            {
+                // The displaced attachment cannot be returned server-side: there is no intent that ADDS an item
+                // to a player's grid (consume/move/drop/equip/pickup are the whole set). Rather than dupe it or
+                // silently destroy it, refuse the swap and say so -- detaching first goes through DetachSlot,
+                // which has the same gap and is the next thing to wire.
+                if (AttachmentFit.InstalledId(Player.HeldItemForTest, slot) >= 0)
+                {
+                    HUD.Alert("Take the old one off first");
+                    return false;
+                }
+                if (!Player.RequestFitAttachment(clicked)) return false;   // server spends it; the echo removes it locally
+                AttachmentFit.SetInstalledId(Player.HeldItemForTest, slot, newId);
+                return true;
+            }
             bool ok = FitAttachmentTo(Player?.HeldItemForTest, Player?.Inventory, slot, newId, clicked, out var refusal);
             if (!ok && refusal != null) HUD.Alert(refusal);
             return ok;

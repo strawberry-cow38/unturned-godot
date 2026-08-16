@@ -78,6 +78,13 @@ namespace UnturnedGodot.Net
         public const byte CommandSetDoorLocked = 33;
         public const byte CommandClaimBed = 34;
 
+        // SP/MP unify: FITTING AN ATTACHMENT SPENDS THE ITEM, and the spend has to happen server-side. The bag
+        // is server-owned on every path that matters (singleplayer runs through the loopback), so an attachment
+        // fitted only on the client is handed straight back by the next owner echo -- the player keeps the
+        // attachment AND the item. Consume cannot carry this: it REJECTS anything that is not edible, and would
+        // apply food/health effects if it did not.
+        public const byte CommandFitAttachment = 35;
+
         // EventRegistry id space (server -> client, ReliableOrdered)
         public const byte EventJoinSnapshot = 1;   // the join-time FULL snapshot rides the reliable channel (§2.2: fragmentation is safe there)
         public const byte EventHitConfirm = 2;     // Phase 5 combat facts (CombatReplication.cs)

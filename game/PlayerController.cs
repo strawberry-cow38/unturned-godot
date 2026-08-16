@@ -2922,6 +2922,7 @@ namespace UnturnedGodot
         public System.Action<byte, byte, byte, byte, byte, byte, byte> NetMoveItem;   // (page0,x0,y0, page1,x1,y1, rot1) -> Client.SendMoveItem
         public System.Action<byte, byte, byte, byte> NetEquipItem;   // (fromPage,x,y, slot) -> Client.SendEquipItem (the holster-to-hand-slot TryDrag; the viewmodel equip stays local)
         public System.Action<byte, byte, byte> NetDropItem;          // (page,x,y) -> Client.SendDropItem (server removes + tosses the world item)
+        public System.Action<byte, byte, byte, ushort> NetFitAttachment;   // (page,x,y,id) -> Client.SendFitAttachment (server spends the fitted item)
         public System.Action<byte, byte, byte> NetConsume;           // (page,x,y) -> Client.SendConsume (server deletes the item; vitals stay client-led until the vitals split)
         public System.Action<ushort> NetCraft;                       // blueprintIndex (BlueprintRegistry.All order, content-hash-matched) -> Client.SendCraft
         public System.Action<ushort, Vector3, float> NetPlaceDeployable;   // (defId,pos,yaw) -> Client.SendPlaceDeployable (server spends the item + broadcasts; the replica view renders it)
@@ -3029,6 +3030,54 @@ namespace UnturnedGodot
 
         /// <summary>MP grid move (InventoryUI drag-drop): the server's TryDrag is the validator+applier;
         /// the owner-block echo repaints the bag.</summary>
+        /// <summary>Ask the SERVER to spend the exact item object `want`, by locating its grid cell and routing a
+        /// consume. Returns false if we are not on the wire (pure SP with no server) or the item is not in the bag.
+        ///
+        /// Exists because the bag is SERVER-OWNED on every path that matters -- singleplayer runs through the
+        /// loopback server -- so a local removal the server never hears about is undone by the next owner echo,
+        /// handing the item back. That is the attachment/magazine dupe.</summary>
+        /// <summary>Ask the SERVER to spend `want` because it was just fitted to a gun. Distinct from a consume:
+        /// the server's consume handler refuses anything inedible and applies food/health effects.</summary>
+        public bool RequestFitAttachment(SDG.Unturned.Item want)
+        {
+            if (NetFitAttachment == null || want == null || Inventory == null) return false;
+            for (byte b = 0; b < (byte)(PlayerInventory.PAGES - 2); b++)
+            {
+                var pg = Inventory.items[b];
+                if (pg == null) continue;
+                for (byte i = 0; i < pg.getItemCount(); i++)
+                {
+                    var jar = pg.getItem(i);
+                    if (!ReferenceEquals(jar?.item, want)) continue;
+                    NetFitAttachment(b, jar.x, jar.y, jar.item.id);
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        public bool RequestConsumeInstance(SDG.Unturned.Item want)
+        {
+            if (NetConsume == null || want == null || Inventory == null) return false;
+            for (byte b = 0; b < (byte)(PlayerInventory.PAGES - 2); b++)
+            {
+                var pg = Inventory.items[b];
+                if (pg == null) continue;
+                for (byte i = 0; i < pg.getItemCount(); i++)
+                {
+                    var jar = pg.getItem(i);
+                    if (!ReferenceEquals(jar?.item, want)) continue;
+                    NetConsume(b, jar.x, jar.y);
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        /// <summary>Is this player's inventory server-owned (MP or the SP loopback)? Then local mutations must be
+        /// routed as intents, because the owner echo overwrites anything the server did not do itself.</summary>
+        public bool InventoryIsServerOwned => NetConsume != null;   // the wire seams are wired together; consume is the sentinel
+
         public bool RequestMoveItem(byte page0, byte x0, byte y0, byte page1, byte x1, byte y1, byte rot1)
         {
             if (NetMoveItem == null) return false;

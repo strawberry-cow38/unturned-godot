@@ -101,6 +101,23 @@ namespace UnturnedGodot.Net
         }
     }
 
+    /// <summary>"I fitted the item in this cell onto my gun -- spend it." Carries the expected item ID as well
+    /// as the cell so the server can refuse a stale address rather than deleting whatever happens to be there
+    /// now: the client's grid can shift between the click and the packet.</summary>
+    public struct FitAttachmentCommand
+    {
+        public byte Page, X, Y;
+        public ushort Id;
+        public void Write(NetPakWriter w) { w.WriteUInt8(Page); w.WriteUInt8(X); w.WriteUInt8(Y); w.WriteUInt16(Id); }
+        public static bool TryRead(NetPakReader r, out FitAttachmentCommand cmd)
+        {
+            cmd = default;
+            if (!r.ReadUInt8(out byte p) || !r.ReadUInt8(out byte x) || !r.ReadUInt8(out byte y) || !r.ReadUInt16(out ushort id)) return false;
+            cmd = new FitAttachmentCommand { Page = p, X = x, Y = y, Id = id };
+            return true;
+        }
+    }
+
     public struct OpenStorageCommand
     {
         public uint NetId;

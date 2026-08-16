@@ -17,6 +17,8 @@ namespace UnturnedGodot.Net
         public long CraftsRejected;         // missing supplies / skill gate / station gate / non-Craft op
         public long ConsumesApplied;
         public long ConsumesRejected;
+        public long AttachFitsApplied;
+        public long AttachFitsRejected;     // empty cell / wrong item at that address (a stale client grid)
         public long PickupsDenied;          // legal pickup, full grid -> ItemPickupDenied went back
         public long ConsoleApplied;
         public long ConsoleRejected;        // unknown verb / cheats disabled / bad args
@@ -281,6 +283,10 @@ namespace UnturnedGodot.Net
 
             commands.Register<ConsumeCommand>(ReplicationIds.CommandConsume, ConsumeCommand.TryRead,
                 OnConsume,
+                validate: (sender, cmd) => _inventories.TryGet(sender, out _) && cmd.Page < PlayerInventory.PAGES);
+
+            commands.Register<FitAttachmentCommand>(ReplicationIds.CommandFitAttachment, FitAttachmentCommand.TryRead,
+                OnFitAttachment,
                 validate: (sender, cmd) => _inventories.TryGet(sender, out _) && cmd.Page < PlayerInventory.PAGES);
 
             commands.Register<OpenStorageCommand>(ReplicationIds.CommandOpenStorage, OpenStorageCommand.TryRead,
@@ -569,6 +575,26 @@ namespace UnturnedGodot.Net
             if (!Crafting.MeetsSkill(bp, skillsEntry?.Skills)) { Diag.CraftsRejected++; return; }
             var adapter = new Crafting.PlayerInvAdapter(SenderInventory(sender));
             if (Crafting.DoCraft(bp, adapter)) Diag.CraftsApplied++; else Diag.CraftsRejected++;
+        }
+
+        /// <summary>Spend the item that was just fitted onto a gun.
+        ///
+        /// Deliberately NOT routed through OnConsume: that rejects anything whose asset is not IsConsumable -- a
+        /// magazine or a scope is not edible -- and it applies useHealth/useFood effects, so fitting a sight
+        /// would have healed the player. This only removes the item.
+        ///
+        /// The ID is checked against the cell before removing anything. The client's grid can shift between the
+        /// click and the packet arriving, and deleting whatever now occupies that address would turn a stale
+        /// click into "the server ate my medkit".</summary>
+        void OnFitAttachment(ushort sender, FitAttachmentCommand cmd)
+        {
+            var inv = SenderInventory(sender);
+            var page = inv.items[cmd.Page];
+            byte index = page.getIndex(cmd.X, cmd.Y);
+            var jar = index == byte.MaxValue ? null : page.getItem(index);
+            if (jar?.item == null || jar.item.id != cmd.Id) { Diag.AttachFitsRejected++; return; }
+            page.removeItem(index);
+            Diag.AttachFitsApplied++;
         }
 
         void OnConsume(ushort sender, ConsumeCommand cmd)

@@ -824,6 +824,9 @@ namespace UnturnedGodot.Net
         public bool SendCraft(ushort blueprintIndex)
             => SendCommand(ReplicationIds.CommandCraft, new CraftCommand { BlueprintIndex = blueprintIndex }.Write);
 
+        public bool SendFitAttachment(byte page, byte x, byte y, ushort id)
+            => SendCommand(ReplicationIds.CommandFitAttachment, new FitAttachmentCommand { Page = page, X = x, Y = y, Id = id }.Write);
+
         public bool SendConsume(byte page, byte x, byte y)
             => SendCommand(ReplicationIds.CommandConsume, new ConsumeCommand { Page = page, X = x, Y = y }.Write);
 
