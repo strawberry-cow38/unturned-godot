@@ -5672,8 +5672,24 @@ namespace UnturnedGodot
 
 
 
+        // UG_VERTEXLIGHT=1: apply vertex shading at boot, so the look can be captured in a render rather than
+        // only toggled at runtime through the console. The perf question needs real hardware (this box is
+        // software-rasterised) but the LOOK does not -- lavapipe draws the right image, just slowly.
+        int _vertexLightQuiet = -1;   // -1 = not started; counts consecutive passes that changed nothing
+
         public override void _Process(double delta)
         {
+            // Re-applied until two consecutive passes change nothing, rather than once on the first frame:
+            // materials are still being created while the world builds, so a single early pass converts
+            // whatever happened to exist yet and silently leaves the rest per-pixel -- which would make a
+            // side-by-side look like "vertex lighting barely changes anything".
+            if (_vertexLightQuiet < 2 && System.Environment.GetEnvironmentVariable("UG_VERTEXLIGHT") == "1")
+            {
+                GraphicsOptions.VertexShading = true;
+                int n = GraphicsOptions.ApplyShading(GetTree()?.Root);
+                _vertexLightQuiet = n == 0 ? Mathf.Max(0, _vertexLightQuiet) + 1 : 0;
+                if (n > 0) GD.Print($"[vertexlight] {n} material(s) -> per-vertex");
+            }
             // FIRST, because several capture modes below own the frame and return before the main
             // capture gate -- a watchdog placed at that gate never runs for --vehicle/--rig/--menushot.
             if (_shotRequested != null && ShotWatchdogTripped()) return;
