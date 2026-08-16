@@ -23,6 +23,9 @@ namespace UnturnedGodot
         // A sibling RigidBody3D would have to rebuild all of it. VehicleBody3D with no VehicleWheel3D children
         // is just a RigidBody3D, so the base class does not fight flight.
         bool _heli; float _heliThrust, _heliPitchTq, _heliRollTq, _heliYawTq, _heliLevel;
+        bool _tracked;   // TANK: tracked/differential drive -- Drive() branches on this to set per-TRACK torque instead of a steered-wheel angle
+        float _tankYawInput;   // TANK: desired yaw-rate scale [-1,1] from the track difference (set in Drive, applied in _PhysicsProcess -- the grippy road wheels won't pivot on the differential couple alone, it stalls at ~2 deg/s)
+        const float TankMaxYawRate = 0.9f, TankYawAccel = 3.0f;   // skid-steer yaw: peak ~52 deg/s, reached in ~0.3s. Tunable feel.
         float _inCollective, _inYaw, _inPitch, _inRoll;   // the pilot's held axes (W/S, A/D, mouse Y, mouse X)
         float _rotorSpin, _tailSpin, _rotorRpm;            // visual blade phases (main/tail) + spool state (0..1)
         Node3D _rotorNode, _tailRotorNode;
@@ -2248,7 +2251,7 @@ namespace UnturnedGodot
             v.ContactMonitor = true; v.MaxContactsReported = 6; v.BodyEntered += v.OnVehicleContact;   // wake a frozen parked car when another vehicle rams it (master)
             v._engineForce = s.Engine; v._steerMax = s.SteerMax; v._steerMin = s.SteerMin;
             v._speedMax = s.SpeedMax; v._speedMin = s.SpeedMin; v._brakeForce = s.Brake;
-            v._heli = s.Heli;
+            v._heli = s.Heli; v._tracked = s.Tracked;
             v._heliThrust = s.HeliThrust; v._heliPitchTq = s.HeliPitchTorque; v._heliRollTq = s.HeliRollTorque;
             v._heliYawTq = s.HeliYawTorque; v._heliLevel = s.HeliLevel;
             v._heliClimbMax = s.HeliClimbMax; v._heliFallMax = s.HeliFallMax;
@@ -3056,6 +3059,30 @@ namespace UnturnedGodot
             // S while rolling FORWARD (or W while rolling backward) = a foot BRAKE, not an instant reverse -- real pedal feel
             bool footBrake = (throttle < 0f && fwd > 0.6f) || (throttle > 0f && fwd < -0.6f);
             bool neutral = handbrake && speed < 0.5f;   // near-stop + handbrake -> NEUTRAL: cut engine force so a slow reverse doesn't fight the brake + jitter (master)
+            if (_tracked)
+            {
+                // DIFFERENTIAL / SKID STEER (master "actual tank controls"): each track's torque is independent.
+                // W/S drive both tracks; A/D bias them apart -- leftT = throttle+steer, rightT = throttle-steer
+                // (steer<0 = left, the same D=+ / A=- convention the cars use). So W+A slows/stops the LEFT track
+                // while the RIGHT drives -> the hull pivots around the slow track (arc left), and A on its own
+                // counter-rotates the two tracks -> a spin in place. Set per-WHEEL EngineForce by side; the tank has
+                // no steered wheels so there is no wheel-angle steer to apply.
+                float leftT = Mathf.Clamp(throttle + steer, -1f, 1f);
+                float rightT = Mathf.Clamp(throttle - steer, -1f, 1f);
+                if (footBrake || neutral) { leftT = 0f; rightT = 0f; }                                   // pedal brake / handbrake-at-rest cuts drive, same as the car
+                if (fwd >= _speedMax) { leftT = Mathf.Min(leftT, 0f); rightT = Mathf.Min(rightT, 0f); }  // at the forward speed cap: no more forward torque (a turn/reverse is still allowed)
+                if (fwd <= _speedMin) { leftT = Mathf.Max(leftT, 0f); rightT = Mathf.Max(rightT, 0f); }  // at the reverse cap: no more reverse torque
+                EngineForce = 0f; Steering = 0f; _steerTarget = 0f;                                      // clear the GLOBAL traction (its setter overwrites every traction wheel) + the wheel-angle steer, THEN set per-wheel below
+                for (int i = 0; i < _wNodes.Length; i++)                                                 // negate like the car path: this rig drives +Z for +force
+                    _wNodes[i].EngineForce = -(_wNodes[i].Position.X < 0f ? leftT : rightT) * _engineForce;
+                _tankYawInput = (rightT - leftT) * 0.5f;   // [-1,1] turn request: W+A (0,1)->0.5 arc, A-alone (-1,1)->1.0 pivot, straight (1,1)->0. _PhysicsProcess steers the hull's yaw rate toward it.
+                _handbraking = handbrake;
+                bool tCoast = Mathf.Abs(throttle) < 0.05f && Mathf.Abs(steer) < 0.05f && !footBrake;     // no throttle AND no steer input -> engine-brake it down (a steer-only pivot must NOT coast-brake, or it can't spin)
+                Brake = handbrake ? _brakeForce * HandbrakeScale : (footBrake ? _brakeForce * FootBrakeScale : (tCoast ? _brakeForce * FootBrakeScale * 0.35f : 0f));
+                _braking = handbrake || footBrake;
+                if (_taillightMat != null && _taillightsOn) _taillightMat.EmissionEnergyMultiplier = _braking ? 6f : 2f;
+                return;
+            }
             float eng = (footBrake || neutral) ? 0f : throttle * _engineForce;
             if (CoupledTrailer != null) eng *= 0.5f;   // towing a loaded trailer halves the pull -> even slower accel while hooked up (strawberry 2026-07-15)
             if (Towing != null) eng *= 0.9f;   // towing a car on a rope: only a touch sluggish now -> the tower keeps most of its power to actually haul the load (0.7->0.9, master "WAYYY too weak" 2026-07-20)
@@ -3779,6 +3806,16 @@ namespace UnturnedGodot
                 return;
             }
             if (_heli) { StepHeli((float)delta); return; }   // rotary wing: rotor thrust replaces the wheel/tow/settle sim entirely
+            // TANK skid-steer yaw: the grippy road wheels won't pivot on the differential couple alone (it stalls at
+            // ~2 deg/s -- the wheels grip laterally and a pivot needs them to SKID), so while under power steer the
+            // hull's yaw rate directly toward the target the track-difference set in Drive(). The per-track
+            // EngineForces still carry the forward/back drive + the "which track drives" feel; this supplies the turn.
+            if (_tracked && !_exploded && !_parked && EngineOn && !Freeze)
+            {
+                var av = AngularVelocity;
+                av.Y = Mathf.MoveToward(av.Y, _tankYawInput * TankMaxYawRate, TankYawAccel * (float)delta);
+                AngularVelocity = av;
+            }
             if (CanTow && CoupledTrailer != null) UpdateCoupled(CoupledTrailer, (float)delta);   // coupled: rollover/clip disconnect + jackknife clamp
             else if (CanTow) UpdateTrailerApproach();     // ghost this cab vs a trailer it's backing under (exception + layer swap) so it phases the low deck+legs; solid vs the player throughout
             if (Towing != null) UpdateTow((float)delta);   // rope tower: spring-tension pull on both bodies + redraw the rope (SP)
