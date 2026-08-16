@@ -96,7 +96,7 @@ namespace UnturnedGodot
         Mesh _wheelMeshRef; Material _wheelMatRef; float _wheelR;   // kept so the wheels can fly off as debris on explode
         public static float GlobalMass = 900f;   // all vehicles share one mass (the source does: Rigidbody mass = 2.0 for every vehicle)
         float[] _gears; float _reverseGear, _shiftUpRpm; float _engineRpm = 1000f; int _gear = 1;   // engine RPM + gear sim
-        AudioStreamPlayer3D _engineAudio; float _idlePitch = 1f, _maxPitch = 2f, _idleVol = 0.75f, _maxVol = 1f;   // EngineRPMSimple sound
+        AudioStreamPlayer3D _engineAudio, _ignitionAudio; bool _ignitionFired; float _idlePitch = 1f, _maxPitch = 2f, _idleVol = 0.75f, _maxVol = 1f;   // EngineRPMSimple sound
         const float EngineVolumeBoost = 1.5f;   // every engine loop +50% louder (strawberry 2026-07-15) -- amplitude x1.5 = +3.5 dB
         const float IdleRpm = 1000f, MaxRpm = 6000f;   // source EngineIdleRPM / EngineMaxRPM
         public float EngineRpm => _engineRpm;
@@ -291,6 +291,7 @@ namespace UnturnedGodot
             public float[] ForwardGears;   // .dat ForwardGearRatios (engine RPM = wheelRPM * ratio)
             public float ReverseGear, ShiftUpRpm;   // .dat ReverseGearRatio + GearShift_UpThresholdRPM
             public string Sound;   // engine loop ogg basename (source: the prefab's AudioSource m_audioClip)
+            public string IgnitionSound;   // one-shot start-up clip (helicopters: the rotor spin-up)
             public float IdlePitch, MaxPitch, IdleVolume, MaxVolume;   // .dat EngineSound (EngineRPMSimple)
             public float Fuel, Health;   // .dat Fuel / Health capacities (HUD gauges)
             public EItemRarity Rarity;   // .dat Rarity (default COMMON) -> look-at outline colour (master)
@@ -1148,7 +1149,7 @@ namespace UnturnedGodot
                 (new Vector3(0.20f, 0.30f, 0.20f), new Vector3(0f, -0.50f, 2.35f)),    // tail wheel
             },
             ForwardGears = new[] { 1f }, ReverseGear = 1f, ShiftUpRpm = 5000f,
-            Sound = "engine_medium.ogg", IdlePitch = 1.1f, MaxPitch = 2.2f, IdleVolume = 0.7f, MaxVolume = 1.0f,
+            Sound = "heli_engine.ogg", IgnitionSound = "heli_ignition.ogg", IdlePitch = 0.85f, MaxPitch = 1.35f, IdleVolume = 0.7f, MaxVolume = 1.0f,
             Fuel = 200f, Health = 250f, Name = "Minicopter", Rarity = EItemRarity.RARE,
             Wheels = new (float, float, float, bool)[0],   // the wheels are scenery -- it flies, it does not drive
         };
@@ -1176,7 +1177,7 @@ namespace UnturnedGodot
                 (new Vector3(0.22f, 0.22f, 2.70f), new Vector3(0f, 0.34f, 1.85f)),        // tail boom
             },
             ForwardGears = new[] { 1f }, ReverseGear = 1f, ShiftUpRpm = 5000f,
-            Sound = "engine_medium.ogg", IdlePitch = 1.1f, MaxPitch = 2.2f, IdleVolume = 0.7f, MaxVolume = 1.0f,
+            Sound = "heli_engine.ogg", IgnitionSound = "heli_ignition.ogg", IdlePitch = 0.9f, MaxPitch = 1.45f, IdleVolume = 0.7f, MaxVolume = 1.0f,
             Fuel = 200f, Health = 250f, Name = "Scoutcopter", Rarity = EItemRarity.RARE,
             Wheels = new (float, float, float, bool)[0],
         };
@@ -1216,7 +1217,7 @@ namespace UnturnedGodot
                 (new Vector3(0.45f, 0.60f, 4.60f), new Vector3(0f, 1.30f, 4.10f)),        // tail boom
             },
             ForwardGears = new[] { 1f }, ReverseGear = 1f, ShiftUpRpm = 5000f,
-            Sound = "engine_medium.ogg", IdlePitch = 0.85f, MaxPitch = 1.7f, IdleVolume = 0.8f, MaxVolume = 1.0f,
+            Sound = "heli_engine.ogg", IgnitionSound = "heli_ignition.ogg", IdlePitch = 0.7f, MaxPitch = 1.15f, IdleVolume = 0.8f, MaxVolume = 1.0f,
             Fuel = 2000f, Health = 1000f, Name = "Huey", Rarity = EItemRarity.EPIC,   // .dat Fuel/Health/Rarity
             Wheels = new (float, float, float, bool)[0],
         };
@@ -1582,10 +1583,22 @@ namespace UnturnedGodot
             v._heliClimbMax = s.HeliClimbMax; v._heliFallMax = s.HeliFallMax;
             if (s.Heli)
             {
-                // A helicopter is flown, not suspended: Godot's default 0 damping would let it accumulate spin
-                // forever off a single control input, and the real damping here is aerodynamic, not friction.
-                v.LinearDamp = 0.35f; v.AngularDamp = 2.6f;
+                // A helicopter is flown, not suspended. Damping here is AERODYNAMIC, not friction, and the
+                // angular figure is deliberately TINY: the airframe is supposed to keep rotating after you let
+                // go (VoX: "the vehical itself has rotational inertia which will keep it rotating for a bit
+                // unless you counteract it with opposite stick input", then "a tiny amount of drag that does
+                // eventually bring rotations and such to a stop but it should be very very slight"). 0.25 is a
+                // ~4 s decay -- present, so nothing spins forever, but far too slow to fly for you. Stopping a
+                // rotation is the pilot's job; this only cleans up afterwards.
+                v.LinearDamp = 0.35f; v.AngularDamp = 0.25f;
                 v.ContinuousCd = true;   // a fast dive must not tunnel through terrain between ticks
+                // ISOTROPIC inertia, set explicitly rather than left to Godot's derivation from the collision
+                // boxes. Two reasons: those boxes are a crude stand-in for an open tube frame and would hand us
+                // an essentially arbitrary tensor, and an isotropic tensor is rotation-invariant -- so
+                // torque = alpha * I holds exactly in world space at any attitude, with no basis juggling.
+                // The per-axis feel differences live in the spec's pitch/roll/yaw numbers instead, where they
+                // are readable.
+                v.Inertia = Vector3.One * (GlobalMass * HeliInertiaPerKg);
             }
             v._water = s.Water;   // BOAT/AMPHIBIOUS: voxelize the hull box for the source Buoyancy.cs voxel-Archimedes model
             if (s.Water != WaterMode.Car)
@@ -1860,6 +1873,16 @@ namespace UnturnedGodot
                 v._engineAudio = new AudioStreamPlayer3D { Stream = ogg, UnitSize = 10f, MaxDistance = 80f, PitchScale = s.IdlePitch, VolumeDb = Mathf.LinearToDb(s.IdleVolume * EngineVolumeBoost), Autoplay = true };
                 v.AddChild(v._engineAudio);   // Autoplay starts the loop when the vehicle enters the scene tree
             }
+            if (s.IgnitionSound != null)   // one-shot spin-up; NOT autoplayed -- StepHeli fires it on a start
+            {
+                var ig = AudioStreamOggVorbis.LoadFromFile(ProjectSettings.GlobalizePath($"res://content/{s.IgnitionSound}"));
+                if (ig != null)
+                {
+                    ig.Loop = false;
+                    v._ignitionAudio = new AudioStreamPlayer3D { Stream = ig, UnitSize = 10f, MaxDistance = 80f, VolumeDb = Mathf.LinearToDb(EngineVolumeBoost) };
+                    v.AddChild(v._ignitionAudio);
+                }
+            }
 
             // damage smoke + explosion fire from the engine bay (source: smoke_0/1 at health thresholds, fire + Fire light on explode)
             var firePos = new Vector3(0f, 1.24f, -1.70f);   // source Fire node (0,1.238,1.703), Z negated
@@ -1908,8 +1931,14 @@ namespace UnturnedGodot
         /// thrust * c = g. Derived, not hardcoded, so retuning HeliThrust moves the idle point with it.</summary>
         float HoverCollective => _heliThrust > 0.01f ? Mathf.Clamp(9.8f / _heliThrust, 0f, 1f) : 0f;
         float IdleCollective => HoverCollective * IdleHoverFraction;
-        const float HeliPitchRate = 1.15f, HeliRollRate = 1.45f, HeliYawRate = 1.30f;   // rad/s at full deflection
-        const float HeliControlSharpness = 3.1f;   // how fast angular velocity converges on the commanded rate (the MASS stage)
+        // Angular ACCELERATION at full deflection (rad/s^2), not a target rate -- these become torque against
+        // the body's inertia, so the airframe builds up to a rotation and keeps it. Higher than the old rate
+        // numbers because reaching a given spin now takes time instead of being assigned.
+        const float HeliPitchRate = 2.30f, HeliRollRate = 2.90f, HeliYawRate = 2.10f;
+        /// <summary>Inertia per kg of vehicle mass (m^2). Sets how hard the airframe is to spin up and, once
+        /// spinning, how long it carries. Tuned by feel rather than derived, because the collision boxes that
+        /// would otherwise define it are a crude stand-in for an open tube frame.</summary>
+        const float HeliInertiaPerKg = 0.9f;
 
         /// <summary>The pilot's held flight controls. <paramref name="collective"/> is +1 while W is held, -1
         /// while S is held, 0 with neither.
@@ -1990,6 +2019,29 @@ namespace UnturnedGodot
             {
                 if (_tailBladesMesh != null) _tailBladesMesh.Visible = !spun;
                 _tailDiscMesh.Visible = spun;
+            }
+
+            // ENGINE AUDIO rides the ROTOR, not an RPM the machine does not have. The shared car path drives
+            // pitch from gear/wheel RPM, which on a helicopter reads as an engine revving while the disc is
+            // still winding up. Sounds are the retail Unturned clips (HelicopterIgnition + Engine_Heli),
+            // extracted by cow tools.
+            if (_engineAudio != null)
+            {
+                if (_rotorRpm > 0.01f)
+                {
+                    _engineAudio.PitchScale = Mathf.Lerp(_idlePitch, _maxPitch, _rotorRpm);
+                    _engineAudio.VolumeDb = Mathf.LinearToDb(Mathf.Lerp(_idleVol * 0.35f, _maxVol, _rotorRpm) * EngineVolumeBoost);
+                    if (!_engineAudio.Playing) _engineAudio.Play();
+                }
+                else if (_engineAudio.Playing) { _engineAudio.VolumeDb = -80f; _engineAudio.Stop(); }
+            }
+            // IGNITION is a one-shot on the START of a spin-up, latched so it fires once per start rather than
+            // every tick the rotor happens to be below speed.
+            if (_ignitionAudio != null)
+            {
+                bool starting = want > 0f && _rotorRpm < 0.05f;
+                if (starting && !_ignitionFired) { _ignitionFired = true; _ignitionAudio.Play(); }
+                else if (want <= 0f && _rotorRpm < 0.01f) _ignitionFired = false;   // fully stopped -> armed again
             }
 
             if (_exploded) return;   // a wreck is just a falling body
@@ -2091,10 +2143,22 @@ namespace UnturnedGodot
             }
             else { _turbKick = Vector3.Zero; _turbTimer = 0f; }
 
-            // The two lags. CommandSlew is the linkage catching up to the stick; HeliControlSharpness is the
-            // mass catching up to the linkage.
-            _cmdRate = _cmdRate.Lerp(cmd, 1f - Mathf.Exp(-CommandSlew * dt));
-            AngularVelocity = AngularVelocity.Lerp(_cmdRate, 1f - Mathf.Exp(-HeliControlSharpness * dt));
+            // REAL TORQUE, not an assigned angular velocity. VoX 2026-08-16: "its not inertia of the control
+            // its inertia of the vehical which needs to be modeled ... not fake input inertia, real physics
+            // simulated inertia."
+            //
+            // He is right, and the previous version was the wrong thing dressed as the right one. Assigning
+            // AngularVelocity each tick means the airframe has NO angular momentum: it rotates exactly as fast
+            // as I say and stops the instant I stop saying it. The lag I added on top only made the number I
+            // was assigning change more slowly -- releasing the stick still stopped the machine because I
+            // stopped it, not because anything was ever spinning.
+            //
+            // Now `cmd` is an angular ACCELERATION (rad/s^2) and becomes a torque against the body's inertia.
+            // Godot integrates it, so momentum is real: let go and it keeps turning, arrested only by
+            // aerodynamic damping or by opposite stick. That also makes counter-input a genuine skill -- you
+            // stop a rotation by flying against it, which is the thing a helicopter actually asks of a pilot.
+            _cmdRate = cmd;   // kept purely as a debug read of what is being commanded this tick
+            if (cmd.LengthSquared() > 1e-8f) ApplyTorque(cmd * Inertia.X);
 
             // SETTLE. No wheels means the shared wheel-contact settle test can never fire, so a parked heli
             // would idle its physics forever.

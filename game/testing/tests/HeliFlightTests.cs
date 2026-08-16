@@ -38,6 +38,7 @@ namespace UnturnedGodot.Testing
 
             // ---- 1. IT IS A HELICOPTER AND IT IS BUILT
             var h = Spawn(World, "minicopter", new Vector3(0f, 1.6f, 0f));
+            h.DebugNoTurbulence = true;   // this one is the measuring rig: no unattended gusts tipping it mid-climb
             T.Check("the minicopter spec builds as a rotary wing", h.IsHeli);
             T.Check($"...with a spun-down rotor at rest (spool {h.RotorSpool:0.###})", Mathf.IsZeroApprox(h.RotorSpool));
             T.Check("...and both rotor pivots exist", h.FindChild("Rotor", false, false) != null && h.FindChild("TailRotor", false, false) != null);
@@ -138,7 +139,12 @@ namespace UnturnedGodot.Testing
             for (int i = 0; i < 260; i++) { lean.DriveHeli(1f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
             lean.LinearVelocity = Vector3.Zero;
             float x0 = lean.GlobalPosition.X;
-            for (int i = 0; i < 200; i++) { lean.DriveHeli(0f, 0f, 0f, 0.45f, 0.02); yield return Ticks(1); }
+            lean.DebugNoTurbulence = true;
+            // A SHORT bank, then hold it. Under real torque a held input keeps accelerating the roll, so the
+            // old 4 s of stick rolled past inverted (up.X -0.86) and the "moves toward the bank" check was then
+            // measuring an upside-down machine. Bank it ~25 deg, release, and let momentum carry the slide.
+            for (int i = 0; i < 35; i++) { lean.DriveHeli(0f, 0f, 0f, 0.5f, 0.02); yield return Ticks(1); }
+            for (int i = 0; i < 165; i++) { lean.DriveHeli(0f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
             // Measured off the BODY UP AXIS, not off an Euler angle. Euler Z is a mirror waiting to happen --
             // it depends on extraction order and on Godot's roll sign convention, and the first cut of this
             // check asserted the wrong one and failed against a model that was behaving correctly. up.X is the
@@ -181,9 +187,12 @@ namespace UnturnedGodot.Testing
             float after = hold.GlobalTransform.Basis.Y.X;
             T.Check($"...and it HOLDS that bank hands-off, instead of righting itself ({banked:0.###} -> {after:0.###})",
                 Mathf.Abs(after) > Mathf.Abs(banked) * 0.75f);
-            // and the rate really did bleed off -- holding attitude must come from damping, not from still turning
-            T.Check($"...with the roll RATE damped to nothing ({hold.AngularVelocity.Length():0.###} rad/s)",
-                hold.AngularVelocity.Length() < 0.25f);
+            // NOT "the rate has damped to nothing" -- that was written against the old assigned-velocity model
+            // and is the opposite of what real momentum does. Drag is deliberately very slight, so 3 s after
+            // release the airframe is still turning; the bank persists because nothing stopped it, which is
+            // exactly the behaviour asked for. Section 7c measures the coast itself.
+            T.Check($"...because nothing quietly zeroed the rotation for the pilot ({hold.AngularVelocity.Length():0.###} rad/s still on)",
+                hold.AngularVelocity.Length() > 0.02f);
 
             // ---- 7c. INERTIA. strawberry 2026-08-16: "joystick changes should feel slower, heavier and more
             // sluggish. like the heli actually has weight."
@@ -209,15 +218,34 @@ namespace UnturnedGodot.Testing
             for (int i = 0; i < 60; i++) { inert.DriveHeli(0f, 1f, 0f, 0f, 0.02); yield return Ticks(1); }
             float sustained = inert.AngularVelocity.Length();
             T.Check($"...but builds up while held ({sustained:0.###} rad/s after 1.2 s)", sustained > afterOneTick * 3f);
-            // COASTING: release everything, and the rotation must bleed away rather than stop dead.
-            inert.DriveHeli(0f, 0f, 0f, 0f, 0.02);
-            yield return Ticks(2);
-            float justAfter = inert.AngularVelocity.Length();
-            T.Check($"...and carries on turning after release instead of stopping dead ({justAfter:0.###} rad/s)",
-                justAfter > sustained * 0.35f);
-            for (int i = 0; i < 120; i++) { inert.DriveHeli(0f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
-            T.Check($"...settling to still, eventually ({inert.AngularVelocity.Length():0.###} rad/s)",
-                inert.AngularVelocity.Length() < 0.2f);
+            // THE MOMENTUM CLAIM, and it is measured a full SECOND after release, not two ticks.
+            //
+            // VoX: "the vehical itself has rotational inertia which will keep it rotating for a bit unless you
+            // counteract it with opposite stick input ... not fake input inertia, real physics simulated
+            // inertia." The version this replaced assigned AngularVelocity through a lag, which decays with a
+            // ~0.32 s time constant -- so at 1 s it retained about 4 % and would fail this outright. Real
+            // angular momentum against 0.8 aerodynamic damping retains far more. Two ticks could not tell the
+            // two apart; a second can.
+            for (int i = 0; i < 50; i++) { inert.DriveHeli(0f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
+            float coasting = inert.AngularVelocity.Length();
+            T.Check($"...and is STILL turning a full second after release ({coasting:0.###} rad/s, was {sustained:0.###})",
+                coasting > sustained * 0.40f);
+
+            // COUNTER-STICK ARRESTS IT. The other half of real momentum: if letting go does not stop the
+            // rotation, flying against it has to. This is what makes the coast a skill rather than a nuisance.
+            // Measured over a SHORT burst: counter-stick held too long does not stop the rotation, it REVERSES
+            // it, and |omega| is large again for the opposite reason. The first cut of this held it 1.2 s and
+            // read 1.337 rad/s -- the machine was spinning the other way, which is correct physics and a
+            // useless assertion.
+            for (int i = 0; i < 25; i++) { inert.DriveHeli(0f, -1f, 0f, 0f, 0.02); yield return Ticks(1); }
+            T.Check($"...and opposite stick arrests it far faster than waiting does ({inert.AngularVelocity.Length():0.###} rad/s, was {coasting:0.###})",
+                inert.AngularVelocity.Length() < coasting * 0.7f);
+
+            // The drag is deliberately "very very slight" (VoX), so settling is SLOW -- that it happens at all
+            // is the claim, not that it happens promptly. 10 s against a ~4 s decay constant.
+            for (int i = 0; i < 500; i++) { inert.DriveHeli(0f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
+            T.Check($"...and slight drag does eventually bring it to rest ({inert.AngularVelocity.Length():0.###} rad/s)",
+                inert.AngularVelocity.Length() < 0.25f);
 
             // ---- 7d. TURBULENCE, and that it knows when NOT to blow.
             var gust = Spawn(World, "minicopter", new Vector3(-560f, 90f, 0f));
@@ -233,8 +261,13 @@ namespace UnturnedGodot.Testing
             T.Check($"...but stays MINOR, not a wrestling match ({peak:0.###} rad/s)", peak < 0.6f);
             // A machine sitting on the ground does not get shoved around -- the check that stops "turbulence"
             // from becoming "the parked helicopter shakes itself apart".
-            T.Check($"...and none of it reaches a grounded machine ({h.DebugTurbulence.Length():0.###})",
-                h.DebugTurbulence.Length() < 0.001f);
+            // A dedicated grounded subject, with turbulence ENABLED. Asserting this on the measuring rig above
+            // would pass because that machine has the weather switched off -- a check whose pass means nothing.
+            var parked = Spawn(World, "minicopter", new Vector3(-620f, 1.2f, 0f));
+            parked.EngineOn = true;
+            for (int i = 0; i < 400; i++) { parked.DriveHeli(0f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
+            T.Check($"...and none of it reaches a machine sitting on the ground ({parked.DebugTurbulence.Length():0.###}, contacts {parked.GetContactCount()})",
+                parked.DebugTurbulence.Length() < 0.001f);
 
             // ---- 8b. AXIS CONVENTIONS, pinned. An inverted axis flies perfectly well -- it climbs, banks,
             // turns and translates -- it is just backwards, so every check above passes on a machine with
@@ -243,23 +276,23 @@ namespace UnturnedGodot.Testing
             //   roll  +1 = bank RIGHT (up vector tilts toward +X)
             //   yaw   +1 = nose RIGHT
             var conv = Spawn(World, "minicopter", new Vector3(-200f, 80f, 0f));
-            conv.EngineOn = true;
+            conv.EngineOn = true; conv.DebugNoTurbulence = true;
             for (int i = 0; i < 260; i++) { conv.DriveHeli(1f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
-            for (int i = 0; i < 90; i++) { conv.DriveHeli(0f, 0f, 1f, 0f, 0.02); yield return Ticks(1); }
+            for (int i = 0; i < 30; i++) { conv.DriveHeli(0f, 0f, 1f, 0f, 0.02); yield return Ticks(1); }   // SHORT: a held stick keeps accelerating the rotation and would roll past 90 deg, flipping the sign being asserted
             float noseY = -conv.GlobalTransform.Basis.Z.Y;   // forward is -Z; its Y component is how far the nose points up
             T.Check($"pitch +1 raises the nose ({noseY:+0.##;-0.##;0} of forward.Y)", noseY > 0.1f);
 
             var conv2 = Spawn(World, "minicopter", new Vector3(-260f, 80f, 0f));
-            conv2.EngineOn = true;
+            conv2.EngineOn = true; conv2.DebugNoTurbulence = true;
             for (int i = 0; i < 260; i++) { conv2.DriveHeli(1f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
-            for (int i = 0; i < 90; i++) { conv2.DriveHeli(0f, 0f, 0f, 1f, 0.02); yield return Ticks(1); }
+            for (int i = 0; i < 30; i++) { conv2.DriveHeli(0f, 0f, 0f, 1f, 0.02); yield return Ticks(1); }
             T.Check($"roll +1 banks right ({conv2.GlobalTransform.Basis.Y.X:+0.##;-0.##;0} of up.X)", conv2.GlobalTransform.Basis.Y.X > 0.1f);
 
             var conv3 = Spawn(World, "minicopter", new Vector3(-320f, 80f, 0f));
-            conv3.EngineOn = true;
+            conv3.EngineOn = true; conv3.DebugNoTurbulence = true;
             for (int i = 0; i < 260; i++) { conv3.DriveHeli(1f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
             Vector3 fwd0 = -conv3.GlobalTransform.Basis.Z;
-            for (int i = 0; i < 90; i++) { conv3.DriveHeli(0f, 1f, 0f, 0f, 0.02); yield return Ticks(1); }
+            for (int i = 0; i < 45; i++) { conv3.DriveHeli(0f, 1f, 0f, 0f, 0.02); yield return Ticks(1); }
             Vector3 fwd1 = -conv3.GlobalTransform.Basis.Z;
             // turning RIGHT = the forward vector swings clockwise seen from above = fwd0 x fwd1 points DOWN
             float turnSign = fwd0.Cross(fwd1).Y;
