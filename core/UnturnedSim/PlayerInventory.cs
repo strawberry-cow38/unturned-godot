@@ -120,10 +120,24 @@ namespace SDG.Unturned
             return true;
         }
 
+        /// <summary>May this jar SIT in this page? An item whose asset has not resolved is allowed through --
+        /// the same leniency the rest of the grid math uses, and refusing an unresolved asset would strand items
+        /// during the join window before the catalog lands.</summary>
+        static bool MayOccupy(ItemJar j, byte page)
+        {
+            var a = j?.GetAsset();
+            return a == null || a.slot.CanOccupyPage(page);
+        }
+
         // Drag an item from (page0, x0,y0) to (page1, x1,y1) at rotation rot1. Faithful port of ReceiveDragItem
         // (move onto empty space -> checkSpaceDrag, remove+add) and ReceiveSwapItem (drop onto another item -> swap,
         // checkSpaceSwap both ways, remove both, re-add crossed). Hand-slot pages force rot 0. Returns true if it moved.
-        // (The source's equipment/canEquipInPage guards are omitted -- this port has no equipment system yet.)
+        //
+        // The holster rule IS enforced here (see CanOccupyPage). This comment used to say the source's
+        // equipment/canEquipInPage guards were "omitted -- this port has no equipment system yet", which stopped
+        // being true the moment ESlotType landed and nothing updated it: a primary-only rifle could be dragged
+        // into the SECONDARY slot and equipped from there, and any item at all could be parked in a holster.
+        // A stale comment naming a deliberate omission is a TODO addressed to whoever removes the reason.
         public bool TryDrag(byte page0, byte x0, byte y0, byte page1, byte x1, byte y1, byte rot1)
         {
             if (page0 >= (byte)(PAGES - 1) || page1 >= (byte)(PAGES - 1) || items[page0] == null || items[page1] == null) return false;
@@ -134,6 +148,12 @@ namespace SDG.Unturned
 
             byte destIndex = items[page1].getIndex(x1, y1);
             ItemJar dest = destIndex == byte.MaxValue ? null : items[page1].getItem(destIndex);
+
+            // Holster rule, checked BEFORE any mutation and in BOTH directions -- a swap moves two items, and the
+            // one being displaced INTO a slot has to satisfy it too, or a swap becomes the hole the direct drag
+            // no longer is.
+            if (!MayOccupy(item, page1)) return false;
+            if (dest != null && dest != item && !MayOccupy(dest, page0)) return false;
 
             if (dest == null || dest == item)
             {

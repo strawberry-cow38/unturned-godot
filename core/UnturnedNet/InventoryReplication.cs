@@ -261,6 +261,18 @@ namespace UnturnedGodot.Net
             _byOwner.Remove(ownerPlayerId);
         }
 
+        /// <summary>Mark an owner's inventory changed when the change was a BARE FIELD WRITE on an Item rather
+        /// than a grid operation -- a decremented stack, a gas can's fuelLevel, a bottle's contents.
+        ///
+        /// Dirty is otherwise raised only by Items.onStateUpdated (add / remove / resize) and the storage
+        /// open/close pair, so writing a field on an Item fired nothing and WriteDelta emitted an empty block:
+        /// the change never reached the owner until some UNRELATED grid edit happened to dirty the entry. That is
+        /// why a pump-filled gas can read empty on the client while the server's copy was full. Review 2026-08-16.</summary>
+        public void ServerMarkDirty(ushort ownerPlayerId)
+        {
+            if (_byOwner.TryGetValue(ownerPlayerId, out var e)) e.Dirty = true;
+        }
+
         /// <summary>Stamp this tick onto every entry the last dispatch round dirtied. Call once per server
         /// tick, after command dispatch, so the delta baseline math sees a real tick number.</summary>
         public void ServerCommitDirty(long tick)

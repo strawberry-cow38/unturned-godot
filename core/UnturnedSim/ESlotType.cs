@@ -38,6 +38,17 @@ namespace SDG.Unturned
         public static bool CanEquipInPage(this ESlotType t, byte page)
             => page == 0 ? t.CanEquipAsPrimary() : page == 1 ? t.CanEquipAsSecondary() : t.CanEquipFromBag();
 
+        /// <summary>Can the item SIT in this page at all -- a placement rule, not an equip rule, and the two are
+        /// deliberately different. A rifle may live in your backpack (it just cannot be equipped straight out of
+        /// one), so every bag page accepts everything; only the two holster slots are selective.
+        ///
+        /// Split out because CanEquipInPage answers "can this go from here into my hands", and using it to gate a
+        /// DRAG forbids putting a rifle in your bag at all. Review 2026-08-16: without this, TryDrag had no slot
+        /// rule whatsoever -- a primary-only rifle dragged onto the SECONDARY slot landed there and equipped from
+        /// it, and a bandage could be parked in a holster. The rule was enforced on the two equip paths only.</summary>
+        public static bool CanOccupyPage(this ESlotType t, byte page)
+            => page >= PlayerInventory.SLOTS || (page == 0 ? t.CanEquipAsPrimary() : t.CanEquipAsSecondary());
+
         public static ESlotType Parse(string s) => (s ?? "").Trim().ToLowerInvariant() switch
         {
             "primary" => ESlotType.PRIMARY,

@@ -2691,6 +2691,13 @@ namespace UnturnedGodot
                 var j = from.getItem(i);
                 to.addItem(j.x, j.y, j.rot, j.item);
             }
+            // ANNOUNCE THE REBUILD, once, at the end -- when the page has its FINAL contents. clear() is silent by
+            // design (a mid-rebuild "this page is empty" would de-equip the player's gun on every echo) and addItem
+            // only fires when there is something to add, so a page the SERVER emptied raised no event whatsoever.
+            // That is what made the de-equip-on-slot-emptied rule dead in the shipped game while its direct-path
+            // test passed: the game empties slots through here, and the test called removeItem in-process.
+            // Raising it unconditionally also covers the re-add case, where it is a harmless idempotent repaint.
+            to.raiseStateUpdated();
         }
 
         /// <summary>MP (wired only by ClientWorldSession): copy the replicated owner-block grid INTO the
@@ -3820,7 +3827,16 @@ namespace UnturnedGodot
         {
             if (_driving == null && _riding == null) return;
             var v = _driving; _driving = null; _riding = null;
-            if (v != null) { v.EngineOn = false; v.Park(); GlobalPosition = v.GlobalPosition + v.GlobalTransform.Basis.X * 2.4f + Vector3.Up * 1.0f; }
+            // FREE THE SEAT. OccupiedSeats was only ever released by TrySwitchSeat and ExitVehicle, so dying in a
+            // seat leaked it FOREVER: a single-seat vehicle (tractor, minicopter, skycrane, semi, tank) became
+            // silently un-enterable for the rest of its life -- EnterVehicle's scan walks off the end, hits
+            // _seatIndex >= SeatCount and returns with _driving null, no message, no prompt change. Dying in seat
+            // 0 of a multi-seat vehicle lost the DRIVER's seat, so everyone after boarded as a passenger and
+            // TrySwitchSeat(0) was refused: a jeep nobody can steer. The vehicle-explosion path never showed it
+            // because DriveVehicle calls ExitVehicle() (which frees the seat) BEFORE applying the damage.
+            // Review 2026-08-16.
+            if (v != null) { v.OccupiedSeats.Remove(_seatIndex); v.EngineOn = false; v.Park(); GlobalPosition = v.GlobalPosition + v.GlobalTransform.Basis.X * 2.4f + Vector3.Up * 1.0f; }
+            _seatIndex = 0;
             if (Hud != null) Hud.Vehicle = null;
             foreach (var c in FindChildren("*", "CollisionShape3D", true, false))
                 if (c is CollisionShape3D cs) cs.Disabled = false;
@@ -4260,7 +4276,13 @@ namespace UnturnedGodot
             }
             else if (@event is InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.Left })
             {
-                if (_driving != null) _driving.Honk();                 // LMB while driving: horn
+                // A GUNNER fires the mount; only the DRIVER honks. This used to be an unconditional
+                // `if (_driving != null) _driving.Honk();` with no seat check, which made FireTurret unreachable
+                // through input entirely: Fire() is called from StartFire (the on-foot else-branch below) and from
+                // the auto poll, so a Hind nose-gunner could aim the chin gun perfectly, click, and honk the
+                // helicopter. HeliPartsTests calls TryTurretFire on the Vehicle directly, so the routing was never
+                // covered. Fire() already short-circuits to FireTurret for a turret seat. Review 2026-08-16.
+                if (_driving != null) { if (_seatIndex != 0 && _driving.HasTurret(_seatIndex)) Fire(); else _driving.Honk(); }
                 else if (_riding != null) { }                          // riding a replicated vehicle: no net horn in v1
                 else if (HoldingWireTool) WireLmb();                    // wire tool: pick output / place node / complete on a consumer
                 else if (HoldingHoseTool) HoseLmb();                    // hose tool: pick a fluid port / complete on the opposite-role port
@@ -4767,7 +4789,13 @@ namespace UnturnedGodot
                 float aimScale = Mathf.Lerp(1f, Gun.SpreadAim, aimA) * sharp;
                 scatH = Mathf.DegToRad(Gun.ScatterAt(_patternShot, true)) * aimScale;
                 scatV = Mathf.DegToRad(Gun.ScatterAt(_patternShot, false)) * aimScale;
-                spread = 0f;   // superseded
+                // The per-axis scatter sits ON TOP of the cone; it does not replace it. This line used to read
+                // `spread = 0f;   // superseded`, which threw away the base cone computed just above for every
+                // patterned gun -- so pattern scatter alone (0.04-0.59 deg) was the ONLY inaccuracy in the game.
+                // Eaglefire hipfire measured 3.1 cm at 25 m against retail's 124.6 cm, a 40x error on the first
+                // round; dragonfang 1.13 cm against 247 cm. Retail applies both (UseableGun.cs:5049 computes the
+                // cone unconditionally, and the pattern is added by ApplyRecoil), and 2573cde5 removed BLOOM --
+                // not the accuracy floor -- when it added learnable patterns. Review 2026-08-16.
             }   // SHARPSHOOTER tightens spread too (source UseableGun:5055)
             int pellets = UsesShells && ShellAsset != null ? Mathf.Max(1, ShellAsset.pellets) : Mathf.Max(1, Gun?.Pellets ?? 1);   // shotgun buckshot: pellets come from the LOADED shell (source ItemMagazineAsset.pellets) -- 12ga=6, 20ga=8
             float muzzleVel = Gun?.MuzzleVelocity ?? 500f;
@@ -5703,7 +5731,8 @@ namespace UnturnedGodot
         public void ExitVehicleAt(Vector3 exitPos)
         {
             var v = _driving; _driving = null;
-            if (v != null) v.EngineOn = false;
+            if (v != null) { v.OccupiedSeats.Remove(_seatIndex); v.EngineOn = false; }   // free the seat -- see EjectFromVehicleOnDeath
+            _seatIndex = 0;
             if (Hud != null) Hud.Vehicle = null;               // hide the vehicle status box
             GlobalPosition = exitPos;
             foreach (var c in FindChildren("*", "CollisionShape3D", true, false))
@@ -5956,6 +5985,13 @@ namespace UnturnedGodot
             }
             TickRechamber(delta);   // bolt/pump: run the post-shot bolt-cycle timer -> the Hammer clip, then re-enable firing
             // burst rounds + full-auto hold fire on cooldown (Fire() still enforces ammo/reload/cd)
+            // A GUNNER holding LMB keeps firing: a belt-fed mount is automatic by nature, and the mount's own
+            // TurretCycle governs the rate inside TryTurretFire. Deliberately OUTSIDE the _fireCd/_reloading gate
+            // below -- those describe the rifle in the gunner's hands, which has nothing to do with the gun bolted
+            // to the airframe, and _firemode (Semi by default, and unreachable while seated) must not gate it
+            // either. Without this, a gunner got one shot per click at best. Review 2026-08-16.
+            if (_driving != null && _seatIndex != 0 && _driving.HasTurret(_seatIndex)
+                && !NetAvatar && !UiInputBlocked && Input.IsMouseButtonPressed(MouseButton.Left)) Fire();
             if (_fireCd <= 0f && !_reloading)
             {
                 if (_burstLeft > 0) { if (Fire()) { _burstLeft--; if (_burstLeft == 0) _burstCd = 0.2f; } else _burstLeft = 0; }

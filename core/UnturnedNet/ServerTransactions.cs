@@ -425,6 +425,7 @@ namespace UnturnedGodot.Net
             // (4) drain the ABSOLUTE tank + fill the can (owner echo carries the fuller can back to the client)
             FuelStations.Drain(stationId, pulled);
             can.fuelLevel = Mathf.Max(0f, can.fuelLevel) + pulled;
+            _inventories.ServerMarkDirty(sender);   // a bare field write raises no grid event -- without this the fill never echoes (see ServerMarkDirty)
 
             // (5) recompute the 0..100 percent + fan it out onto EVERY same-station pump in ONE tick (same
             // LastChangedTick) so no two pumps ever replicate divergent fill. entity.Fuel IS the percent (the
@@ -605,7 +606,15 @@ namespace UnturnedGodot.Net
             var jar = index == byte.MaxValue ? null : page.getItem(index);
             var asset = jar?.item != null ? Assets.find(jar.item.id) : null;
             if (asset == null || !asset.IsConsumable) { Diag.ConsumesRejected++; return; }
-            inv.removeItemAmount(asset.id, 1);   // the SP consume path removes by id (PlayerController.TickConsume)
+            // SPEND THE JAR WE JUST VALIDATED, not "some item with this id somewhere in the bag". This used to be
+            // `inv.removeItemAmount(asset.id, 1)`, which scans pages 0..PAGES-2 only -- so eating out of an OPEN
+            // CRATE (page 7, which ServerOpenStorage really does populate with the crate grid) validated fine,
+            // applied every health/food/water/energy effect, and removed NOTHING. Carry no beans of your own and
+            // a crate full of them feeds you forever. Removing at the validated address also fixes the quieter
+            // half: even in the bag it was deleting an arbitrary same-id instance rather than the clicked one,
+            // which is wrong once instances carry state (quality, fluid contents). Review 2026-08-16.
+            if (jar.item.amount > 1) { jar.item.amount--; _inventories.ServerMarkDirty(sender); }
+            else page.removeItem(index);   // removeItem raises onStateUpdated, which dirties the entry itself
             Diag.ConsumesApplied++;
 
             // HP stays the coarse-combat authority; the useHealth bump raises it directly (as before).

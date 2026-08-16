@@ -111,7 +111,25 @@ namespace SDG.Unturned
             }
         }
 
+        /// <summary>Empty the page. DELIBERATELY SILENT -- see raiseStateUpdated for who announces the change.
+        ///
+        /// Every caller of clear() is the first step of a REBUILD (clear -> loadSize -> re-add), so firing here
+        /// would announce a page that is empty only for the next few microseconds. That matters because consumers
+        /// read the CURRENT page in the handler: the de-equip-on-slot-emptied rule checks
+        /// `items[page].getItemCount() == 0`, and an owner echo rebuilds all nine pages every time it lands, so a
+        /// chatty clear() would rip the gun out of the player's hands on every echo. The rebuild announces itself
+        /// ONCE at the end instead.</summary>
         public void clear() => items.Clear();
+
+        /// <summary>Announce that this page changed, for a caller that mutated it in a way the grid operations
+        /// cannot see: a whole-page rebuild (clear + re-add), or a bare field write on an Item.
+        ///
+        /// The rebuild case is why the de-equip-on-slot-emptied rule shipped broken in 23394b26. The owner echo
+        /// empties pages through CopyPage, whose clear() is silent and whose re-add only fires when there IS
+        /// something to add -- so a page that the server emptied raised no event at all on the path every real
+        /// singleplayer game runs, while a direct-path test (which calls removeItem in-process) passed happily.
+        /// Review 2026-08-16.</summary>
+        public void raiseStateUpdated() => onStateUpdated?.Invoke();
 
         // rebuild the occupancy grid at a new size and re-seat existing items, discarding any that no longer fit a
         // real grid page (source: page >= SLOTS && x+w > width || y+h > height) -- e.g. shrinking a bag page

@@ -1881,7 +1881,20 @@ namespace UnturnedGodot
             "roadster" => _roadster, "ambulance" => _ambulance, "firetruck" => _firetruck, "tractor" => _tractor,
             "ural" => _ural, "police" => _police, "semi" => _semi, "trailer" => _trailer,
             "offroader" => _offroader, "off_roader" => _offroader, "truck" => _truck, "van" => _van,
-            "golf" => _golf, "vw_golf" => _golf, "tank" => _tank, _ => _jeep,
+            "golf" => _golf, "vw_golf" => _golf, "tank" => _tank,
+            // The heli fleet, the APC and the runabout were missing here while being present in SpecNames and in
+            // BuildByName, so the MP puppet path resolved all nine to _jeep and built a jeep-shaped replica --
+            // silently, because _jeep builds perfectly. WorldBuilder spawns three real runabouts on the PEI coast
+            // every map load, so this was live without anyone touching a console: jeeps floating on the sea for
+            // every client not driving one, with jeep dimensions and a jeep-sized look-focus hull. The tank was
+            // added when it merged; the helicopters never were. Keep this switch in step with BuildByName --
+            // SpecNames is the list both must cover. Review 2026-08-16.
+            "runabout" => _runabout, "apc" => _apc,
+            "minicopter" => _minicopter, "mini" => _minicopter, "heli" => _minicopter,
+            "huey" => _huey, "scoutcopter" => _scoutcopter, "scout" => _scoutcopter,
+            "hind" => _hind, "orca" => _orca, "skycrane" => _skycrane,
+            "hummingbird" => _hummingbird, "bird" => _hummingbird,
+            _ => _jeep,
         };
 
         // MP §3.6 client replica: a mesh-only PUPPET -- the same ripped body/palette/parts/wheels as
