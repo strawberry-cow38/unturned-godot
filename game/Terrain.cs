@@ -378,6 +378,10 @@ void fragment() {
         public static bool HasWater;
         /// <summary>Is this world point below the ocean surface? (the port's WaterUtility.isPointUnderwater).</summary>
         public static bool IsPointUnderwater(float worldY) => HasWater && worldY < SeaLevelY;
+        /// <summary>Visual water-surface world-Y at a world point = flat sea level + the WaveField swell (the CPU twin of
+        /// water.gdshader). Buoyancy / bobbing samples THIS so floaters ride the same waves the shader draws. Gameplay
+        /// submersion still keys off the flat SeaLevelY above (a wave slopping over your head shouldn't drown you).</summary>
+        public static float WaterSurfaceY(Vector3 p) => SeaLevelY + (HasWater ? WaveField.Height(p.X, p.Z) : 0f);
         // The bullet-impact surface material at a world point, from the dominant splat layer (so shooting sand kicks up sand,
         // road/rock = concrete chips, dirt = dirt, grass/forest = foliage -- instead of one flat guess for the whole island).
         public PlayerController.Surf SurfAt(float worldX, float worldZ) => SampleDominantLayer(worldX, worldZ) switch

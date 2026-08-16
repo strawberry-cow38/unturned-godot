@@ -1,72 +1,105 @@
 shader_type spatial;
 render_mode cull_disabled, diffuse_burley, specular_schlick_ggx;
 
-// Stylised sea for the port: summed sine WAVES (vertex-displaced), white FOAM on the wave crests, and
-// depth-based SHORE FOAM where the seabed comes up under the surface (master 2026-08-16). Depth-tinted
-// water underneath. Needs a subdivided plane for the vertex waves to have anything to move.
+// Stylised sea for the port: LAYERED (non-grid) summed-sine WAVES vertex-displaced + fbm normal detail,
+// white CREST FOAM on the peaks, depth-based SHORE FOAM at the waterline, and see-through depth-tinted
+// water. Waves are world-anchored so they don't slide with the plane. (master 2026-08-16)
 
-uniform vec4 water_deep : source_color = vec4(0.07, 0.19, 0.33, 0.90);
-uniform vec4 water_shallow : source_color = vec4(0.16, 0.42, 0.54, 0.60);
+uniform vec4 water_deep : source_color = vec4(0.07, 0.19, 0.33, 0.72);     // alpha < 1 = see-through
+uniform vec4 water_shallow : source_color = vec4(0.16, 0.42, 0.54, 0.26);  // shallows very transparent -> seabed shows
 uniform vec4 foam_color : source_color = vec4(0.92, 0.97, 1.0, 1.0);
 uniform float wave_amp = 0.45;      // metres of vertical wave
-uniform float wave_len = 10.0;      // metres between crests (largest wave)
+uniform float wave_len = 14.0;      // metres for the LONGEST swell (shorter octaves derive from it)
 uniform float wave_speed = 0.7;
-uniform float crest_foam = 0.68;    // wave-height fraction [-1..1] above which crest foam kicks in (higher = only the tallest crests)
-uniform float shore_depth = 2.2;    // vertical water depth (m) under which shore foam shows
+uniform float crest_foam = 0.55;    // wave-height fraction [-1..1] above which crest foam kicks in (lower = denser whitecaps)
+uniform float shore_depth = 1.2;    // vertical water depth (m) under which shore foam shows (tight = foam AT the waterline)
+uniform float detail_strength = 0.25;   // fbm ripple perturbation of the surface normal
 uniform sampler2D depth_tex : hint_depth_texture, repeat_disable, filter_linear;
 
+varying vec3 v_wn;       // world-space base wave normal (big swell)
 varying float v_crest;   // this vertex's normalised wave height, for crest foam
+varying vec3 v_wpos;     // world position of the (displaced) surface
 
+// --- value-noise fbm (cheap, textureless) : breaks up the surface + foam so nothing reads as a lattice ---
+float hash12(vec2 p) {
+    vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+    p3 += dot(p3, p3.yzx + 33.33);
+    return fract((p3.x + p3.y) * p3.z);
+}
+float vnoise(vec2 p) {
+    vec2 i = floor(p); vec2 f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+    float a = hash12(i), b = hash12(i + vec2(1.0, 0.0));
+    float c = hash12(i + vec2(0.0, 1.0)), d = hash12(i + vec2(1.0, 1.0));
+    return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+}
+float fbm(vec2 p) {
+    float s = 0.0, a = 0.5;
+    for (int i = 0; i < 4; i++) { s += a * vnoise(p); p *= 2.03; a *= 0.5; }
+    return s;
+}
+
+// LAYERED swell: several octaves with scattered (non-axis) directions + irrational freq ratios so the
+// peaks never line up into a grid. Kept large-wavelength so it doesn't alias on the coarse ocean plane.
 float wave_at(vec2 p, float t) {
     float k = 6.2831853 / wave_len;
-    float h  = sin(dot(p, vec2(0.98,  0.20)) * k        + t)        * 0.55;
-    h       += sin(dot(p, vec2(-0.38, 0.92)) * k * 1.3  + t * 1.3)  * 0.30;
-    h       += sin(dot(p, vec2(0.71, -0.71)) * k * 2.1  + t * 0.8)  * 0.15;
-    return h;   // ~[-1, 1]
+    float h = 0.0;
+    h += sin(dot(p, vec2( 0.86,  0.51)) * k * 0.70 + t * 0.90) * 0.50;
+    h += sin(dot(p, vec2(-0.31,  0.95)) * k * 1.07 + t * 1.15) * 0.30;
+    h += sin(dot(p, vec2( 0.67, -0.74)) * k * 1.53 + t * 0.80) * 0.20;
+    h += sin(dot(p, vec2(-0.99,  0.16)) * k * 1.97 + t * 1.33) * 0.12;
+    return h / 1.12;   // back to ~[-1, 1]
 }
 
 void vertex() {
-    vec2 wp = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xz;   // world XZ (waves are world-anchored so they don't slide with the plane)
+    vec2 wp = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xz;   // world XZ of the FLAT grid point (waves are world-anchored)
     float t = TIME * wave_speed;
     float h = wave_at(wp, t);
     VERTEX.y += h * wave_amp;
     v_crest = h;
-    // normal from the wave gradient (finite difference) so lighting + specular ripple with the swell
-    float e = 0.8;
+    // world-space normal from the wave gradient (finite difference)
+    float e = 1.0;
     float hx = wave_at(wp + vec2(e, 0.0), t);
     float hz = wave_at(wp + vec2(0.0, e), t);
-    NORMAL = normalize(vec3((h - hx) * wave_amp, e, (h - hz) * wave_amp));
+    v_wn = normalize(vec3((h - hx) * wave_amp, e, (h - hz) * wave_amp));
+    v_wpos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;   // AFTER displacement -> true surface world pos
 }
 
 void fragment() {
+    // FINE RIPPLE DETAIL: fbm-gradient perturbs the big-wave normal. Resolution-independent (fragment space),
+    // so it adds a random broken chop that the coarse vertex grid can't -- this is what kills the "grid" look.
+    vec2 np = v_wpos.xz * 0.15 + vec2(TIME * 0.03, TIME * -0.02);
+    float n0 = fbm(np);
+    float nx = fbm(np + vec2(0.06, 0.0));
+    float nz = fbm(np + vec2(0.0, 0.06));
+    vec3 detail = vec3((n0 - nx), 0.0, (n0 - nz)) * detail_strength * 6.0;
+    vec3 wn = normalize(v_wn + detail);
+    NORMAL = normalize((VIEW_MATRIX * vec4(wn, 0.0)).xyz);
+
     // SHORE FOAM: reconstruct the opaque scene behind the water, foam where the water is shallow over it.
     float raw = texture(depth_tex, SCREEN_UV).r;
     vec4 vp = INV_PROJECTION_MATRIX * vec4(SCREEN_UV * 2.0 - 1.0, raw, 1.0);
     vp.xyz /= vp.w;
-    // VERTICAL water depth (world-Y gap between the surface fragment and the seabed behind it). Angle-independent,
-    // so the foam band tracks the whole waterline -- a view-space-z gap only foams the near-camera corner at grazing angles.
-    float bed_y = (INV_VIEW_MATRIX * vec4(vp.xyz, 1.0)).y;
-    vec3 wpos = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;   // this water fragment in world space
-    float depth_v = max(wpos.y - bed_y, 0.0);
+    float bed_y = (INV_VIEW_MATRIX * vec4(vp.xyz, 1.0)).y;   // world Y of the seabed behind this fragment
+    float depth_v = max(v_wpos.y - bed_y, 0.0);              // vertical water depth (angle-independent)
     float shore = 1.0 - smoothstep(0.0, shore_depth, depth_v);
-    shore = pow(shore, 0.6);   // brighten the band so it reads as foam over bright sand, not just a thin lip
-    // living foam: break the shore line with a slow world-anchored shimmer instead of a dead-flat gradient
-    float shimmer = 0.72 + 0.28 * sin(dot(wpos.xz, vec2(0.6, 0.35)) * 2.0 + TIME * 1.6);
-    shore *= shimmer;
+    shore = pow(shore, 1.7);                                 // concentrate the foam AT the waterline
+    shore *= 0.7 + 0.3 * fbm(v_wpos.xz * 0.4 + TIME * 0.15); // broken foamy edge, not a clean band
 
-    // CREST FOAM: near the tops of the waves.
-    float crest = smoothstep(crest_foam, crest_foam + 0.22, v_crest);
+    // CREST FOAM: on the peaks; the threshold is jittered by fbm so the whitecaps scatter irregularly.
+    float cj = (fbm(v_wpos.xz * 0.2 + TIME * 0.05) - 0.5) * 0.35;
+    float crest = smoothstep(crest_foam, crest_foam + 0.25, v_crest + cj);
 
     float foam = clamp(max(crest, shore), 0.0, 1.0);
 
-    // depth-tinted water: shallow reads lighter, deep darker.
-    float dt = smoothstep(0.0, shore_depth * 3.0, depth_v);
+    // SEE-THROUGH depth-tinted water: shallow reads lighter + very transparent, deep darker + murkier.
+    float dt = smoothstep(0.0, shore_depth * 4.0, depth_v);
     vec3 base = mix(water_shallow.rgb, water_deep.rgb, dt);
-    float a  = mix(water_shallow.a, water_deep.a, dt);
+    float a = mix(water_shallow.a, water_deep.a, dt);
 
     ALBEDO = mix(base, foam_color.rgb, foam);
     ALPHA = mix(a, 1.0, foam);
-    ROUGHNESS = mix(0.05, 0.85, foam);   // glassy water, matte foam
-    SPECULAR = 0.6;
+    ROUGHNESS = mix(0.08, 0.9, foam);   // glassy water, matte foam
+    SPECULAR = 0.5;
     METALLIC = 0.0;
 }
