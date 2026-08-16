@@ -5481,7 +5481,7 @@ namespace UnturnedGodot
             if (_seatIndex >= v.SeatCount) { _driving = null; return; }   // every seat taken
             v.OccupiedSeats.Add(_seatIndex);
             _burstLeft = 0;                                    // entering a vehicle cancels an in-progress burst (no resume on exit)
-            if (_seatIndex == 0) { v.EngineOn = !v.OnFire; v.Wake(); }   // only the driver starts it (source) -- a burnt/on-fire car stays dead (master); Wake so a long-parked, frozen car drives off
+            if (_seatIndex == 0) v.EngineOn = !v.OnFire;       // only the driver starts it (source) -- a burnt/on-fire car stays dead (master)
             if (Hud != null) Hud.Vehicle = v;                  // show the vehicle status box (fuel/health/battery)
             // Passengers KEEP their weapon (strawberry 2026-08-16: "passengers can hold weapons") -- only the
             // driver has their hands full.
@@ -5511,11 +5511,14 @@ namespace UnturnedGodot
             // holding the wheel, and a car that keeps its throttle while the driver climbs into the back is a
             // runaway rather than a feature. Taking the seat starts it again.
             if (wasDriver && want != 0) { v.EngineOn = false; v.Park(); }
-            // Taking the wheel WAKES it as well as starting it. Park() settles the car and, once it is stationary
-            // and grounded, the shared settle rule freezes the body outright; Drive() clears the parked flag but
-            // not the freeze, so a driver who had stepped into the back and come forward again sat in a car that
-            // started, revved and would not move. Wake() is the seam for exactly this ("rammed or re-driven").
-            else if (!wasDriver && want == 0) { v.EngineOn = !v.OnFire; v.Wake(); }
+            // Deliberately does NOT Wake() the vehicle. I added that here and on entry, reasoning that a settled
+            // car would be frozen solid -- it is not: Drive/DriveHeli clear the parked flag on any input and the
+            // settle rule releases the freeze the next physics frame, so waking here bought nothing. It cost
+            // something, though. `_parked` also gates the residual-jitter DAMPING and the easier settle
+            // threshold, so clearing it the instant someone sits down leaves an occupied, stationary vehicle
+            // permanently live -- floaty and bouncing, worst on something heavy. strawberry reported exactly
+            // that on the tank within the hour.
+            else if (!wasDriver && want == 0) v.EngineOn = !v.OnFire;
 
             // Hands full in the driver's seat; a passenger gets their weapon back (strawberry: "passengers can
             // hold weapons").
