@@ -96,16 +96,21 @@ namespace UnturnedGodot.Testing
         }
     }
 
-    // The F4/F5 fps discriminators (Profiler.cs, docs/ZOMBIE_FPS_NOTES.md). F4 halves the 3D render scale --
-    // fragment cost scales with pixels and nothing else does, so it separates fill from a stall; F5 drops zombie
-    // shadow casting, which is 178 of 303 zombie draws. Neither question is answerable on this box (lavapipe's
-    // frame timing sits on a fixed ~95-160ms floor), so they get pressed on hardware I will never touch -- which
-    // means the WIRING is the part that has to be proven here, or I am shipping a diagnostic that silently
-    // does nothing and reads as "flat, therefore not fill".
+    // The fps discriminators (Profiler.cs, docs/ZOMBIE_FPS_NOTES.md). `renderscale` halves the 3D render scale --
+    // fragment cost scales with pixels and nothing else does, so it separates fill from a stall; `zshadows` drops
+    // zombie shadow casting, which is 178 of 303 zombie draws. Neither question is answerable on this box
+    // (lavapipe's frame timing sits on a fixed ~95-160ms floor), so they get used on hardware I will never touch
+    // -- which means the WIRING is the part that has to be proven here, or I am shipping a diagnostic that
+    // silently does nothing and reads as "flat, therefore not fill".
     //
-    // Driven through Input.ParseInputEvent rather than by calling _Input directly: the thing most likely to be
-    // broken is whether a CanvasLayer that has SetProcess(false) receives input at all, and a direct call would
-    // skip exactly that.
+    // These were F4/F5 until the function keys became vehicle seat selection (strawberry 2026-08-16). The keys
+    // moved to console verbs and this suite went red on main for hours, because after that change I ran the
+    // suites I ASSUMED were affected -- vehicle and player -- rather than the whole set. The dev tools were not
+    // on that list and nothing else was watching them.
+    //
+    // Still driven end-to-end -- typed at the console, not by calling Profiler's methods -- for the same reason
+    // it used to go through Input.ParseInputEvent: the fragile part is the path between what a user does and the
+    // tool it drives, and calling the method directly skips exactly that.
     public class DebugFpsDiscriminators : GameTest
     {
         public override string Name => "debug.fps_discriminators";
@@ -113,6 +118,8 @@ namespace UnturnedGodot.Testing
         {
             var prof = new Profiler();
             World.AddChild(prof);
+            var console = new DevConsole();
+            World.AddChild(console);
             var z = new ZombieController();
             World.AddChild(z);
             z.GlobalPosition = new Vector3(0f, 0f, -5f);
@@ -127,26 +134,26 @@ namespace UnturnedGodot.Testing
             T.Check("zombie starts casting a shadow",
                 rig.Body.CastShadow == GeometryInstance3D.ShadowCastingSetting.On);
 
-            Input.ParseInputEvent(new InputEventKey { Pressed = true, Keycode = Key.F4 });
+            console.DebugRun("renderscale");
             yield return Ticks(2);
-            T.Check($"F4 halves the render scale to 0.50 (got {vp.Scaling3DScale:0.00})", Mathf.Abs(vp.Scaling3DScale - 0.5f) < 0.001f);
+            T.Check($"`renderscale` halves the render scale to 0.50 (got {vp.Scaling3DScale:0.00})", Mathf.Abs(vp.Scaling3DScale - 0.5f) < 0.001f);
 
-            Input.ParseInputEvent(new InputEventKey { Pressed = true, Keycode = Key.F4 });
+            console.DebugRun("renderscale");
             yield return Ticks(2);
-            T.Check($"F4 again -> 0.25 (got {vp.Scaling3DScale:0.00})", Mathf.Abs(vp.Scaling3DScale - 0.25f) < 0.001f);
+            T.Check($"...again -> 0.25 (got {vp.Scaling3DScale:0.00})", Mathf.Abs(vp.Scaling3DScale - 0.25f) < 0.001f);
 
-            Input.ParseInputEvent(new InputEventKey { Pressed = true, Keycode = Key.F4 });
+            console.DebugRun("renderscale");
             yield return Ticks(2);
-            T.Check($"F4 wraps back to 1.00 (got {vp.Scaling3DScale:0.00})", Mathf.Abs(vp.Scaling3DScale - 1f) < 0.001f);
+            T.Check($"...and wraps back to 1.00 (got {vp.Scaling3DScale:0.00})", Mathf.Abs(vp.Scaling3DScale - 1f) < 0.001f);
 
-            Input.ParseInputEvent(new InputEventKey { Pressed = true, Keycode = Key.F5 });
+            console.DebugRun("zshadows");
             yield return Ticks(2);
-            T.Check("F5 stops the zombie casting a shadow",
+            T.Check("`zshadows` stops the zombie casting a shadow",
                 rig.Body.CastShadow == GeometryInstance3D.ShadowCastingSetting.Off);
 
-            Input.ParseInputEvent(new InputEventKey { Pressed = true, Keycode = Key.F5 });
+            console.DebugRun("zshadows");
             yield return Ticks(2);
-            T.Check("F5 again restores it",
+            T.Check("...and again restores it",
                 rig.Body.CastShadow == GeometryInstance3D.ShadowCastingSetting.On);
 
             vp.Scaling3DScale = 1f;   // shared viewport: never leave a later test rendering at quarter res

@@ -83,6 +83,11 @@ namespace UnturnedGodot
             _input.GrabFocus();   // stay open for the next command
         }
 
+        /// <summary>Test seam: run a command exactly as typing it would. Deliberately routed through Run rather
+        /// than letting tests call the dev tools directly -- the thing most likely to break is the WIRING between
+        /// a typed verb and the tool it drives, and a direct call skips precisely that.</summary>
+        public void DebugRun(string cmd) => Run(cmd);
+
         void Run(string cmd)
         {
             if (string.IsNullOrWhiteSpace(cmd)) return;
