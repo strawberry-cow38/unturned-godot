@@ -1369,7 +1369,7 @@ namespace UnturnedGodot
             GunMesh = "tank_gun.txt", GunPitchPivot = new Vector3(0f, 2.8f, -1.15f), Muzzle = new Vector3(0f, 2.8f, -6.306f),
             Wheel = "tank_wheel.txt", WheelRadius = 0.74f,   // REAL road-wheel radius (tank_wheel.txt bbox Y+-0.74); a too-small 0.5 sat the hull LOW so the collision box scraped the ground (master). no WheelTex -> solid dark, hidden inside the treads
             Engine = 950f, SteerMax = 0f, SteerMin = 0f, SpeedMax = 9f, SpeedMin = -4f, Brake = 48f,   // heavy + slow; SteerMax 0 -> tracked differential steer (Drive branches on Tracked), not a wheel angle
-            BoxSize = new Vector3(5.8f, 2.2f, 9.0f), BoxCenter = new Vector3(0f, 1.25f, 0f),   // hull collision box from tank_hull.txt bbox (X+-2.9, Y 0.15..2.35, Z+-4.5): the BOTTOM sits ABOVE the wheels' ground contact so the HULL never scrapes (master: "hitbox scraping the ground") -- the 8 wheels carry the ride
+            BoxSize = new Vector3(5.4f, 1.8f, 8.5f), BoxCenter = new Vector3(0f, 1.45f, 0f),   // hull collision box, tightened to the model + BELLY CUT: bottom sits at local 0.55 (above the wheel AXLES 0.556, well clear of the ground on bumps/slopes) so the box can't drag (master: "cut the belly... otherwise we backtrack on the hitbox dragging"). The 8 wheels carry the ride; this box is the UPPER hull only
             ForwardGears = new[] { 16f, 9f }, ReverseGear = 8f, ShiftUpRpm = 3500f,
             Sound = "engine_large.ogg", IdlePitch = 0.65f, MaxPitch = 1.25f, IdleVolume = 0.9f, MaxVolume = 1.0f,   // heavy diesel rumble
             Fuel = 2000f, Health = 1600f, Name = "Tank",
