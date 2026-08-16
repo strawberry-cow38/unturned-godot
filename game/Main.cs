@@ -78,7 +78,7 @@ namespace UnturnedGodot
             if (System.Environment.GetEnvironmentVariable("UG_COLLVIS") == "1") GetTree().DebugCollisionsHint = true;   // diagnostic: overlay physics collision shapes (must be set before bodies enter the tree)
             // VSYNC OFF GLOBALLY (strawberry 2026-08-10). With a pacer on, frame time is pinned to the display's
             // refresh interval, so the number you profile against is one the monitor chose and headroom reads as
-            // zero -- the F3 frame time cannot tell 6 ms of work from 16 ms of work behind a 60 Hz wall.
+            // zero -- the profiler frame time cannot tell 6 ms of work from 16 ms of work behind a 60 Hz wall.
             // Also set in project.godot; repeated here so it holds however that setting is read, and the ACTUAL
             // mode is logged rather than assumed. Skipped headless, which has no window to set it on.
             if (DisplayServer.GetName() != "headless")
@@ -1383,7 +1383,7 @@ namespace UnturnedGodot
                 var pause = new PauseMenu();   // ESC -> pause menu (freezes the sim)
                 AddChild(pause);
                 player.PauseMenu = pause;
-                AddChild(new Profiler());   // F3 -> perf overlay (fps/frame/worst-frame/timings/draw-calls/mem) for stutter diagnosis (master)
+                AddChild(new Profiler());   // console `profiler` -> perf overlay (fps/frame/worst-frame/timings/draw-calls/mem) for stutter diagnosis (master)
                 AddChild(new ZombieAnimCut());   // F6 -> freeze ALL rig anim (skeletons leg of the engine-side POI-fps cut: read F3 physics ms with it on vs off)
                 var attach = new AttachmentMenu();   // T -> weapon-attachment menu (iron sights removable, etc.)
                 AddChild(attach);

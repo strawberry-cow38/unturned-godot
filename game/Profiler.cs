@@ -21,6 +21,7 @@ namespace UnturnedGodot
 
         public override void _Ready()
         {
+            Instance = this;
             Layer = 90;
             ProcessMode = Node.ProcessModeEnum.Always;
             _label = new Label { Position = new Vector2(10, 10), Visible = false };
@@ -47,31 +48,40 @@ namespace UnturnedGodot
         float _scale3D = 1f;
         bool _zShadows = true;
 
-        public override void _Input(InputEvent e)
+        // Driven by console verbs (`profiler`, `renderscale`, `zshadows`) rather than F3/F4/F5. The function
+        // keys moved to vehicle seat selection (strawberry 2026-08-16: "move the dev tools to be console
+        // commands instead"), and a debug overlay is exactly the sort of thing that should not outrank a
+        // control the player uses while driving.
+        public static Profiler Instance;
+
+        /// <summary>Show/hide the overlay. Sampling only runs while it is visible.</summary>
+        public bool ToggleOverlay()
         {
-            if (e is not InputEventKey { Pressed: true, Echo: false } k) return;
-            if (k.Keycode == Key.F3)
-            {
-                _on = !_on;
-                _label.Visible = _on;
-                SetProcess(_on);   // only run the per-frame sampling while the overlay is actually shown
-                if (_on) { _accum = 0; _frames = 0; _worstFrame = 0; _procAccum = 0; _physAccum = 0; _physFrames0 = (long)Engine.GetPhysicsFrames(); }   // fresh sampling window on show
-            }
-            else if (k.Keycode == Key.F4)
-            {
-                _scale3D = _scale3D > 0.75f ? 0.5f : (_scale3D > 0.35f ? 0.25f : 1f);
-                GetViewport().Scaling3DScale = _scale3D;
-            }
-            else if (k.Keycode == Key.F5)
-            {
-                _zShadows = !_zShadows;
-                foreach (var z in GetTree().GetNodesInGroup("zombies")) SetShadows(z, _zShadows);
-                // ...and the REWRITE's rigs, which are not in that group and so were never toggled. F5
-                // silently did nothing under --newzombies while the overlay claimed a state: pressing it
-                // produced no change, which reads as "shadows are not the cost" rather than "the control
-                // is not wired". A debug toggle that no-ops is a false negative generator.
-                ZombieDirector.Instance?.SetRigShadows(_zShadows);
-            }
+            _on = !_on;
+            _label.Visible = _on;
+            SetProcess(_on);   // only run the per-frame sampling while the overlay is actually shown
+            if (_on) { _accum = 0; _frames = 0; _worstFrame = 0; _procAccum = 0; _physAccum = 0; _physFrames0 = (long)Engine.GetPhysicsFrames(); }   // fresh sampling window on show
+            return _on;
+        }
+
+        /// <summary>Cycle the 3D render scale 1 -> 0.5 -> 0.25 -> 1.</summary>
+        public float CycleRenderScale()
+        {
+            _scale3D = _scale3D > 0.75f ? 0.5f : (_scale3D > 0.35f ? 0.25f : 1f);
+            GetViewport().Scaling3DScale = _scale3D;
+            return _scale3D;
+        }
+
+        /// <summary>Toggle zombie rig shadows. Also drives the REWRITE's rigs, which are not in the "zombies"
+        /// group and so were never toggled by the old key -- it silently did nothing under --newzombies while
+        /// the overlay claimed a state, which reads as "shadows are not the cost" rather than "the control is
+        /// not wired". A debug toggle that no-ops is a false negative generator.</summary>
+        public bool ToggleZombieShadows()
+        {
+            _zShadows = !_zShadows;
+            foreach (var z in GetTree().GetNodesInGroup("zombies")) SetShadows(z, _zShadows);
+            ZombieDirector.Instance?.SetRigShadows(_zShadows);
+            return _zShadows;
         }
 
         /// What the zombies are ACTUALLY doing, preferring the live director over this class's own flag.

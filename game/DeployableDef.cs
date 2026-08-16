@@ -181,7 +181,7 @@ namespace UnturnedGodot
         // an SP-local IPowerDevice into a server-placed DEPLOYABLE-GRAPH fixture so it rides the existing
         // SystemDeployables replication (the mesh + collider are still drawn by WorldBuilder). A single 10kW
         // Output port, no HP/pickup/fuel, NOT player-placeable (no item id 9200 is ever grantable). The mains
-        // toggle rides entity.ToggledOn (produce-while-on); the F1 toggleGlobalPower routes over the wire.
+        // toggle rides entity.ToggledOn (produce-while-on); the console toggleGlobalPower routes over the wire.
         public static readonly DeployableDef GridSource = new()
         {
             Id = 9200, Name = "Grid Power", Fixture = FixtureKind.GridSource,

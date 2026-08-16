@@ -4,10 +4,10 @@ using SDG.Unturned;
 
 namespace UnturnedGodot
 {
-    // F1 dev console (master). Press F1 to open a command bar at the top of the screen:
+    // Dev console (master). Press ` (backquote) to open a command bar at the top of the screen:
     //   give <item id|name>      -> spawns a WorldItem at the player's look-orb
     //   vehicle <id|name>        -> spawns that vehicle at the look-orb
-    // TAB autocompletes (verb first, then the item/vehicle name); ENTER runs; ESC / F1 closes.
+    // TAB autocompletes (verb first, then the item/vehicle name); ENTER runs; ESC / ` closes.
     // While it's open the mouse is freed, which gates player look/movement the same way the inventory UI does.
     public partial class DevConsole : CanvasLayer
     {
@@ -28,7 +28,7 @@ namespace UnturnedGodot
 
         LineEdit _input;
         Label _log;
-        static readonly string[] Verbs = { "give", "vehicle", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "toggleGlobalPower", "toggleGlobalWater", "toggleBbat", "infFuel", "infAmmo", "wear", "unwear", "fluid", "date", "dateset", "whenBlackout", "triggerGlobalBrownout", "hurtmain", "killmain", "hurttail", "killtail" };
+        static readonly string[] Verbs = { "give", "vehicle", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "toggleGlobalPower", "toggleGlobalWater", "toggleBbat", "infFuel", "infAmmo", "wear", "unwear", "fluid", "date", "dateset", "whenBlackout", "triggerGlobalBrownout", "hurtmain", "killmain", "hurttail", "killtail", "profiler", "renderscale", "zshadows", "freezerigs" };
         static readonly EItemType[] ClothingTypes = { EItemType.SHIRT, EItemType.PANTS, EItemType.HAT, EItemType.VEST, EItemType.MASK, EItemType.GLASSES, EItemType.BACKPACK };
         readonly System.Collections.Generic.List<string> _history = new();
         int _histIdx;
@@ -53,7 +53,11 @@ namespace UnturnedGodot
         public override void _Input(InputEvent e)
         {
             if (e is not InputEventKey { Pressed: true } k) return;
-            if (k.Keycode == Key.F1) { Toggle(); GetViewport().SetInputAsHandled(); }
+            // Backquote, not F1: the function keys are vehicle seat selection (strawberry 2026-08-16,
+            // "move the dev tools to be console commands instead"). The console cannot be a console
+            // command that opens itself, so it is the one dev tool that still needs a key -- and ` is
+            // where every other game puts it.
+            if (k.Keycode == Key.Quoteleft) { Toggle(); GetViewport().SetInputAsHandled(); }
             else if (_input.Visible && k.Keycode == Key.Tab) { Autocomplete(); GetViewport().SetInputAsHandled(); }
             else if (_input.Visible && k.Keycode == Key.Escape) { Toggle(); GetViewport().SetInputAsHandled(); }
             else if (_input.Visible && k.Keycode == Key.Up) { HistoryNav(-1); GetViewport().SetInputAsHandled(); }     // up = older command
@@ -129,6 +133,38 @@ namespace UnturnedGodot
                 else heli.DamageMainRotor(heli.MainRotorHealth * 0.5f + 1f);
                 Log($"{verb}: main {heli.MainRotorHealth:0} ({heli.MainRotorNorm * 100f:0}%), tail {heli.TailRotorHealth:0} ({heli.TailRotorNorm * 100f:0}%)"
                     + (heli.MainRotorDead ? " -- MAIN DEAD, no lift" : "") + (heli.TailRotorDead ? " -- TAIL DEAD, spinning" : ""));
+                return;
+            }
+
+            // profiler / renderscale / zshadows / freezerigs -- the old F3/F4/F5/F6 dev tools, moved to the
+            // console so the function keys are free for vehicle seats (strawberry 2026-08-16). Above the arg
+            // guard because every one of them is a bare no-arg toggle.
+            if (verb is "profiler" or "fps")
+            {
+                var pr = Profiler.Instance;
+                if (pr == null) { Log("profiler: no profiler in this scene"); return; }
+                Log($"profiler overlay {(pr.ToggleOverlay() ? "ON" : "OFF")}");
+                return;
+            }
+            if (verb is "renderscale" or "res3d")
+            {
+                var pr = Profiler.Instance;
+                if (pr == null) { Log("renderscale: no profiler in this scene"); return; }
+                Log($"3D render scale -> {pr.CycleRenderScale():0.##}x");
+                return;
+            }
+            if (verb == "zshadows")
+            {
+                var pr = Profiler.Instance;
+                if (pr == null) { Log("zshadows: no profiler in this scene"); return; }
+                Log($"zombie rig shadows {(pr.ToggleZombieShadows() ? "ON" : "OFF")}");
+                return;
+            }
+            if (verb is "freezerigs" or "animcut")
+            {
+                var ac = ZombieAnimCut.Instance;
+                if (ac == null) { Log("freezerigs: no anim-cut overlay in this scene"); return; }
+                Log($"rig animation {(ac.ToggleFrozen() ? "FROZEN" : "running")}");
                 return;
             }
 
@@ -732,7 +768,7 @@ namespace UnturnedGodot
     }
 
     // PEI's real named LOCATION nodes (towns/POIs), ripped byte-exact from Maps/PEI/Environment/Nodes.dat -> content/nodes.tsv
-    // (tools/parse_nodes.py). Used by the F1 `teleport` command and the map.
+    // (tools/parse_nodes.py). Used by the console `teleport` command and the map.
     public static class MapNodes
     {
         // Which baked location file to read: nodes.tsv for PEI (Nodes.dat -> parse_nodes.py), nodes_<key>.tsv for a

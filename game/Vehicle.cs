@@ -321,6 +321,16 @@ namespace UnturnedGodot
         public float FuelBurn;   // fuel drained per second while driving (PZ-scale, per vehicle CLASS -- master); set from FuelClassOf at build
         public static bool InfiniteFuel = true;   // master 2026-07-20: cars DON'T burn fuel by DEFAULT (playtesting); the infFuel console command toggles it. SP-local static.
         public bool EngineOn; public string DisplayName; public Vector3 SeatOffset;   // per-vehicle driver-seat spot for the 3rd-person body
+        /// <summary>Every seat, local, index 0 = DRIVER. Never null and never empty: a vehicle with no extracted
+        /// seat data still has one, at SeatOffset, so callers can index seat 0 unconditionally.</summary>
+        public Vector3[] SeatLocals = { Vector3.Zero };
+        public int SeatCount => SeatLocals.Length;
+        /// <summary>Which seats are taken. Index-aligned with SeatLocals; entry 0 is the driver.</summary>
+        public readonly System.Collections.Generic.HashSet<int> OccupiedSeats = new();
+        public bool SeatFree(int i) => i >= 0 && i < SeatCount && !OccupiedSeats.Contains(i);
+        /// <summary>Local seat position, clamped -- an out-of-range index returns the driver's rather than throwing
+        /// mid-frame on a vehicle whose seat count shrank under a stale index.</summary>
+        public Vector3 SeatLocal(int i) => SeatLocals[Mathf.Clamp(i, 0, SeatCount - 1)];
         public string SpecKey = "jeep"; public int SpawnVariant;   // MP §3.6: which Spec built this + its paint variant -- VehicleNetSync replicates them so client puppets rebuild the same look
         public ushort NetDriverId;   // MP §3.6: remote player holding the driver seat (set by VehicleNetSync); 0 = none. Gates the local direct-path enter; never set in pure SP.
         public Vector3 DriverEyeLocal = new Vector3(-0.4f, 1.85f, 0.4f);   // FP driving eye (local); tall cabs override higher so the view clears the hood
@@ -515,6 +525,7 @@ namespace UnturnedGodot
             public string Horn;   // .dat HornAudioClip ogg (one-shot on LMB)
             public Vector3 SteerPivot, SteerAxis;   // steering wheel model pivot (centroid) + rotation axis (disc normal); Zero = don't rotate
             public Vector3 DriverEye;   // FP driving eye offset (local); Zero = the shared default (-0.4,1.85,0.4). Tall cabs (semi) sit HIGHER so you see over the hood
+            public Vector3[] Seats;     // every seat, local, index 0 = DRIVER. Null = single-seat (SeatOf's driver spot only).
             public string SeatModelFile, SteerModel;   // REAL ripped interior models re-centred into the cab (props whose body mesh has no interior sub-objects, e.g. semi). SteerModel turns via SteerPivot/SteerAxis
             public Vector3 SeatModel;   // world-target for the seat model's AABB centre (the mesh is baked at its source vehicle -> translated here)
             public (float x, float y, float z, bool steer)[] Wheels;
@@ -775,6 +786,52 @@ namespace UnturnedGodot
             if (n.Contains("Roadster") || n.Contains("Golf") || n.Contains("Hatchback")) return 1.0f;                   // small cars
             return 1.4f;                                                                                                 // Sedan / Police / Jeep / Humvee / Tractor / Off-Roader / default
         }
+
+        // EVERY SEAT, per vehicle, index 0 = driver (strawberry 2026-08-16: "first we need vehicle seats.
+        // switch between them with the function keys. only F1 is the drivers seat").
+        //
+        // Extracted from each prefab's Seats/Seat_* empties by tools/dump_vehicle_seats.py rather than placed by
+        // eye: a seat guessed from the outside of a body mesh puts the passenger's head through the roof on
+        // exactly the vehicles with the least headroom. Validated against the hand-tuned driver spots already in
+        // SeatOf -- X agrees to the millimetre on all five checked, with Y/Z differing only by the deliberate
+        // body-rise noted there, which is what a correct coordinate convention looks like.
+        //
+        // SORTED BY SEAT INDEX at extraction. The prefab returns them in tree order, which is NOT index order
+        // (the sedan hands back Seat_3 before Seat_2), and unsorted they would silently seat the driver in the
+        // back of half the fleet.
+        static readonly System.Collections.Generic.Dictionary<string, Vector3[]> SeatTable = new()
+        {
+            ["jeep"] = new[] { new Vector3(-0.50f, 0.05f, -0.12f), new Vector3(0.50f, 0.05f, -0.12f), new Vector3(-0.50f, 0.05f, 1.40f), new Vector3(0.50f, 0.05f, 1.40f) },
+            ["quad"] = new[] { new Vector3(0f, 0.16f, 0.56f), new Vector3(0f, 0.44f, 1.65f) },
+            ["bus"] = new[] { new Vector3(-0.80f, -0.08f, -2.65f), new Vector3(-0.80f, -0.08f, -1.06f), new Vector3(0.80f, -0.08f, -1.06f), new Vector3(-0.80f, -0.08f, 0.45f), new Vector3(0.80f, -0.08f, 0.45f), new Vector3(-0.80f, -0.08f, 1.87f), new Vector3(0.80f, -0.08f, 1.87f), new Vector3(-0.80f, -0.08f, 3.37f), new Vector3(0.80f, -0.08f, 3.37f), new Vector3(0f, -0.08f, 3.37f) },
+            ["sedan"] = new[] { new Vector3(-0.50f, -0.08f, -0.62f), new Vector3(0.50f, -0.08f, -0.62f), new Vector3(-0.50f, -0.08f, 0.77f), new Vector3(0.50f, -0.08f, 0.77f) },
+            ["hatchback"] = new[] { new Vector3(-0.50f, -0.08f, -0.30f), new Vector3(0.50f, -0.08f, -0.30f), new Vector3(-0.50f, -0.08f, 1.24f), new Vector3(0.50f, -0.08f, 1.24f) },
+            ["humvee"] = new[] { new Vector3(-0.50f, -0.03f, -0.48f), new Vector3(0.50f, -0.03f, -0.48f), new Vector3(-0.50f, -0.03f, 0.86f), new Vector3(0.50f, -0.03f, 0.86f) },
+            ["roadster"] = new[] { new Vector3(-0.50f, -0.08f, 0.33f), new Vector3(0.50f, -0.08f, 0.33f) },
+            ["ambulance"] = new[] { new Vector3(-0.50f, 0.02f, -1.40f), new Vector3(0.50f, 0.02f, -1.40f), new Vector3(-0.60f, 0.05f, 0.14f), new Vector3(0.60f, 0.05f, 0.14f), new Vector3(0f, 0.05f, 1.71f) },
+            ["firetruck"] = new[] { new Vector3(-0.50f, 0.19f, -2.40f), new Vector3(0.50f, 0.19f, -2.40f) },
+            ["tractor"] = new[] { new Vector3(0f, 0.59f, 1.10f) },
+            ["ural"] = new[] { new Vector3(-0.50f, 0.06f, -1.30f), new Vector3(0.50f, 0.06f, -1.30f), new Vector3(-0.62f, 0.06f, 0.44f), new Vector3(0.62f, 0.06f, 0.44f), new Vector3(-0.62f, 0.06f, 1.44f), new Vector3(0.62f, 0.06f, 1.44f), new Vector3(-0.62f, 0.06f, 2.44f), new Vector3(0.62f, 0.06f, 2.44f) },
+            ["police"] = new[] { new Vector3(-0.50f, -0.08f, -0.62f), new Vector3(0.50f, -0.08f, -0.62f), new Vector3(-0.50f, -0.08f, 0.77f), new Vector3(0.50f, -0.08f, 0.77f) },
+            ["offroader"] = new[] { new Vector3(-0.50f, 0.05f, -0.12f), new Vector3(0.50f, 0.05f, -0.12f), new Vector3(-0.50f, 0.05f, 1.40f), new Vector3(0.50f, 0.05f, 1.40f) },
+            ["truck"] = new[] { new Vector3(-0.50f, 0.05f, -0.59f), new Vector3(0.50f, 0.05f, -0.59f), new Vector3(-0.60f, 0.05f, 1.19f), new Vector3(0.60f, 0.05f, 1.19f), new Vector3(0f, 0.05f, 1.71f) },
+            ["van"] = new[] { new Vector3(-0.50f, 0.05f, -0.73f), new Vector3(0.50f, 0.05f, -0.73f), new Vector3(-0.60f, 0.05f, 1.19f), new Vector3(0.60f, 0.05f, 1.19f), new Vector3(0f, 0.05f, 1.71f) },
+            ["golf"] = new[] { new Vector3(-0.50f, -0.08f, -0.35f), new Vector3(0.50f, -0.08f, -0.35f), new Vector3(-0.50f, -0.08f, 0.77f), new Vector3(0.50f, -0.08f, 0.77f) },
+            ["runabout"] = new[] { new Vector3(-0.50f, 0.06f, -0.76f), new Vector3(0.50f, 0.06f, -0.76f), new Vector3(-0.50f, 0.06f, 0.90f), new Vector3(0.50f, 0.06f, 0.90f) },
+            ["apc"] = new[] { new Vector3(-0.80f, -0.01f, -1.84f), new Vector3(0.80f, -0.01f, -1.84f), new Vector3(-1.00f, -0.01f, -0.03f), new Vector3(1.00f, -0.01f, -0.03f), new Vector3(-1.00f, -0.01f, 0.97f), new Vector3(1.00f, -0.01f, 0.97f), new Vector3(-1.00f, -0.01f, 1.97f), new Vector3(1.00f, -0.01f, 1.97f) },
+            // Helicopters. The Hind's driver seat is the one BEHIND and ABOVE -- a Mi-24 flies from the rear
+            // cockpit with the gunner in the nose, and the extracted indices say exactly that (Seat_0 y0.79
+            // z-1.96, Seat_1 y0.10 z-3.68). Worth stating because it looks like an off-by-one until you know.
+            ["huey"] = new[] { new Vector3(-0.62f, 0.10f, -1.96f), new Vector3(0.62f, 0.10f, -1.96f), new Vector3(-1.26f, -0.12f, -0.42f), new Vector3(1.26f, -0.12f, -0.42f) },
+            ["hind"] = new[] { new Vector3(0f, 0.79f, -1.96f), new Vector3(0f, 0.10f, -3.68f), new Vector3(0.50f, 0.08f, 0.26f), new Vector3(-0.50f, 0.08f, 0.26f), new Vector3(-0.50f, 0.08f, 1.48f), new Vector3(0.50f, 0.08f, 1.48f) },
+            ["orca"] = new[] { new Vector3(-0.61f, -0.08f, -0.30f), new Vector3(0.60f, -0.08f, -0.30f), new Vector3(-0.61f, -0.08f, 0.88f), new Vector3(0.60f, -0.08f, 0.88f), new Vector3(1.50f, -0.24f, 2.66f), new Vector3(-1.50f, -0.24f, 2.66f) },
+            ["skycrane"] = new[] { new Vector3(0f, 0.10f, -2.84f) },
+            ["hummingbird"] = new[] { new Vector3(-0.62f, 0.10f, -1.96f), new Vector3(0.62f, 0.10f, -1.96f), new Vector3(-1.26f, -0.12f, -0.42f), new Vector3(1.26f, -0.12f, -0.42f) },
+            // No retail prefab: the minicopter is procedural and VoX asked for exactly one seat on it
+            // (2026-08-16, "only 1 seat on the minicopter"); the scoutcopter keeps its pair.
+            ["minicopter"] = new[] { new Vector3(0f, 0.32f, 0.10f) },
+            ["scoutcopter"] = new[] { new Vector3(-0.34f, 0.32f, 0.10f), new Vector3(0.34f, 0.32f, 0.10f) },
+        };
 
         static Vector3 SeatOf(string name) => name switch
         {
@@ -2082,6 +2139,10 @@ namespace UnturnedGodot
             v._idlePitch = s.IdlePitch; v._maxPitch = s.MaxPitch; v._idleVol = s.IdleVolume; v._maxVol = s.MaxVolume;
             v.FuelMax = v.Fuel = s.Fuel; v.FuelBurn = FuelBurnClassOf(s.Name);   // TANK = per-vehicle metric Spec.Fuel (1u=1mL) so cans<->vehicles share units; burn = per-class (PZ-scale, infFuel-masked)
             v.HealthMax = v.Health = s.Health; v.Battery = BatteryMax; v.DisplayName = s.Name; v.SeatOffset = SeatOf(s.Name);
+            // Seats: the spec's own array if it has one, else the extracted table by spec key, else the single
+            // hand-tuned driver spot. The fallback matters -- semi and trailer have no bundle prefab to extract
+            // from, and a null here would crash every seat lookup rather than degrading to one seat.
+            v.SeatLocals = s.Seats ?? (SeatTable.TryGetValue(specKey, out var st) ? st : new[] { v.SeatOffset });
             if (s.DriverEye != Vector3.Zero) v.DriverEyeLocal = s.DriverEye;   // tall-cab override (semi); else keep the shared default
             v._outlineColor = ItemTool.RarityColorUI(s.Rarity);   // real vehicle rarity -> look-at outline/label colour (master)
             v._info = new InfoBillboard { TopLevel = true };   // look-at info billboard: name + HP/fuel/battery BARS, world-space at the cabin

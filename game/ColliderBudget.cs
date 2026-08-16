@@ -7,7 +7,7 @@ namespace UnturnedGodot
     //
     // WHY. A node census of the real map counts 42,143 nodes, and 13,900 of them are collision: 5,886
     // StaticBody3D + 8,014 CollisionShape3D, a third of the whole tree. Every one is built at load and never
-    // leaves the broadphase. The F3 overlay reads `physics 4.4 ms/step` against **13 active bodies** -- a
+    // leaves the broadphase. The `profiler` overlay reads `physics 4.4 ms/step` against **13 active bodies** -- a
     // solver with thirteen active bodies is doing nothing, so that time is broadphase and static bookkeeping
     // over the other 13,887. At the 50 Hz sim that is ~220 ms of CPU per second. Retail streams collision;
     // this is the port catching up.

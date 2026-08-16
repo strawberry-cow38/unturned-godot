@@ -27,7 +27,7 @@ namespace UnturnedGodot
         // Global MAINS-WATER flag (SP), the fluid mirror of PowerNet.GlobalPower. While ON the municipal sources --
         // fire hydrants, water towers and sinks -- are infinite supplies; while OFF the mains are dead and you are
         // back to rain, rivers and whatever you stored (strawberry). Default ON: the town has running water until it
-        // doesn't. The F1 console `toggleGlobalWater` flips it.
+        // doesn't. The console `toggleGlobalWater` flips it.
         //
         // No MarkDirty() equivalent is needed: unlike the wire graph, FluidNet re-solves from scratch every frame, so
         // a flag flip is picked up on the next tick with nothing to invalidate.

@@ -513,7 +513,7 @@ namespace UnturnedGodot
             // Kept rather than deleted because one counter did improve -- scene objects 1703 -> 1499, i.e. less
             // per-object culling work, which is CPU, which is the actual bottleneck (strawberry). That cannot
             // be measured on this box: lavapipe frame times are a software rasteriser's and say nothing about
-            // real hardware. So the code stays behind a flag for an A/B on a real GPU with the F3 overlay,
+            // real hardware. So the code stays behind a flag for an A/B on a real GPU with the `profiler` overlay,
             // and the DEFAULT is the behaviour that is known not to be slower.
             bool batchOpen = System.Environment.GetEnvironmentVariable("UG_BATCH") == "1";   // also closed after the scan: deferred holiday props (Client) arrive post-Flush and take the node path
             // DERIVED from the smart-prop table rather than restated here. Every entry this list used to hold by
@@ -1713,14 +1713,14 @@ namespace UnturnedGodot
         // growth (crops arrive as replicas), so the session passes false.
         public static void AttachPlayerShell(Node root, PlayerController player, bool withCropManager)
         {
-            root.AddChild(new DevConsole { Player = player });   // F1 dev console: give <item> / vehicle <name> / plant <crop> spawns at the look-orb (master)
+            root.AddChild(new DevConsole { Player = player });   // dev console (`): give <item> / vehicle <name> / plant <crop> spawns at the look-orb (master)
             if (withCropManager) root.AddChild(new CropManager());   // farm crop growth ticking + plant/harvest (console `plant`, F to harvest)
             root.AddChild(new MapUI { Player = player });         // M: full-screen PEI map (town nodes + player pos/facing)
             { var hud = new HUD { Player = player }; root.AddChild(hud); player.Hud = hud; }
             root.AddChild(new FpsCounter());   // top-right yellow FPS counter (master 2026-07-11)
             { var hmL = new CanvasLayer { Layer = 98 }; hmL.AddChild(new HitmarkerHUD()); root.AddChild(hmL); }   // hit / headshot markers (master)
             { var pause = new PauseMenu(); root.AddChild(pause); player.PauseMenu = pause; }               // ESC menu (parity with BuildPlayable)
-            root.AddChild(new Profiler());   // F3 perf overlay (parity)
+            root.AddChild(new Profiler());   // perf overlay, console `profiler` (parity)
             root.AddChild(new ZombieAnimCut());   // F6 -> freeze rig anim (skeletons-cut, parity)
             { var attach = new AttachmentMenu(); root.AddChild(attach); player.AttachMenu = attach; }       // T weapon-attachment menu -- was never wired in PEI drive, so T did nothing (broken since PEI map)
             { var ammo = new AmmoRadial(); root.AddChild(ammo); player.AmmoRadial = ammo; }                 // R-hold -> shotgun ammo-type picker (buckshot / slug)
@@ -1892,7 +1892,7 @@ namespace UnturnedGodot
             player.Spawn = player.GlobalPosition;   // respawn above ground, NOT the default (0,1,0) which is underground on PEI
             { var hud = new HUD { Player = player }; root.AddChild(hud); player.Hud = hud; }
             result.Player = player;
-            root.AddChild(new DevConsole { Player = player });   // F1 dev console: give <item> / vehicle <name> spawns at the look-orb (master)
+            root.AddChild(new DevConsole { Player = player });   // dev console (`): give <item> / vehicle <name> spawns at the look-orb (master)
             root.AddChild(new MapUI { Player = player });         // M: full-screen PEI map (town nodes + player pos/facing)
 
             // a jeep right beside the player, dropped onto the terrain -> hop in + drive PEI

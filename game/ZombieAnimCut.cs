@@ -14,6 +14,7 @@ namespace UnturnedGodot
 
         public override void _Ready()
         {
+            Instance = this;
             Layer = 90;
             ProcessMode = Node.ProcessModeEnum.Always;   // keep toggling even while the sim is paused
             _label = new Label { Position = new Vector2(10, 210), Visible = false };
@@ -24,14 +25,17 @@ namespace UnturnedGodot
             AddChild(_label);
         }
 
-        public override void _Input(InputEvent e)
+        // Console verb `freezerigs` rather than F6 -- the function keys are vehicle seat selection now
+        // (strawberry 2026-08-16).
+        public static ZombieAnimCut Instance;
+
+        /// <summary>Freeze/unfreeze every rig's animation, to price skinning out of the frame.</summary>
+        public bool ToggleFrozen()
         {
-            if (e is InputEventKey { Pressed: true, Keycode: Key.F6, Echo: false })
-            {
-                RiggedCharacter.SetAnimFrozen(!RiggedCharacter.AnimFrozen);
-                _label.Visible = RiggedCharacter.AnimFrozen;
-                _label.Text = $"RIG ANIM FROZEN — {RiggedCharacter.LiveRigCount} rigs (F6) — skeletons-cut: read F3 physics ms";
-            }
+            RiggedCharacter.SetAnimFrozen(!RiggedCharacter.AnimFrozen);
+            _label.Visible = RiggedCharacter.AnimFrozen;
+            _label.Text = $"RIG ANIM FROZEN — {RiggedCharacter.LiveRigCount} rigs (`freezerigs`) — skeletons-cut: read `profiler` physics ms";
+            return RiggedCharacter.AnimFrozen;
         }
     }
 }

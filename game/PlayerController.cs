@@ -4092,6 +4092,17 @@ namespace UnturnedGodot
             // (riding a replicated puppet gates identically -- the vehicle-side keys just no-op below in v1)
             if (_driving != null || _riding != null)
             {
+                // SEAT SELECTION, handled ABOVE the allow-list below rather than added to it. That list exists to
+                // stop the driving player firing/reloading through the windscreen, and threading twelve function
+                // keys into it would mean the seat keys only work in the states someone remembered to allow.
+                // F1 is the driver, F2.. the passengers, matching the seat indices as extracted.
+                if (_driving != null && @event is InputEventKey { Pressed: true, Echo: false } sk
+                    && sk.Keycode >= Key.F1 && sk.Keycode <= Key.F12)
+                {
+                    TrySwitchSeat((int)(sk.Keycode - Key.F1));
+                    GetViewport().SetInputAsHandled();
+                    return;
+                }
                 bool allowedKey = @event is InputEventKey { Pressed: true } dk && (dk.Keycode == Key.F || dk.Keycode == Key.H || dk.Keycode == Key.L || dk.Keycode == Key.Ctrl || dk.Keycode == Key.Escape);   // F = exit (interact key moved off E); H cam, L lights, Ctrl siren, Esc pause
                 bool allowedMouse = @event is InputEventMouseButton { ButtonIndex: MouseButton.Left or MouseButton.Right };
                 bool camOrbit = @event is InputEventMouseMotion;   // mouse MOTION must pass through -> it orbits the 3rd-person chase cam (this guard was silently eating it, so the cam sat fixed) (strawberry 2026-07-15)
@@ -5393,6 +5404,15 @@ namespace UnturnedGodot
         }
 
         // --- Vehicle enter/exit (source: InteractableVehicle). F enters the nearest vehicle's driver seat / exits. ---
+        // Seat point to eye. The prefab seat empties sit at seat-PAN height (they are where the body goes), so a
+        // camera placed at one looks out of the upholstery; DriverEyeLocal already bakes an equivalent rise in.
+        const float PassengerEyeRise = 1.05f;
+        int _seatIndex;   // which seat of _driving we occupy; 0 = driver. Passengers ride, they do not steer.
+        /// <summary>Seat we occupy in the current vehicle, 0 = driver.</summary>
+        public int SeatIndex => _seatIndex;
+        /// <summary>Are we actually in control? Seat 0 only -- every other seat is a passenger, and a passenger
+        /// pressing W must not drive the vehicle from the back seat.</summary>
+        public bool IsDriver => _driving != null && _seatIndex == 0;
         public bool IsDriving => _driving != null;
         public Vehicle Driving => _driving;   // the vehicle being driven (for zombies to swipe at, source targetPassengerVehicle)
         public void SetSuppressor(bool on) => _viewmodel?.SetSlotAttached("Barrel", on);   // test hook: toggle the silenced barrel
@@ -5453,10 +5473,19 @@ namespace UnturnedGodot
             if (v.NetDriverId != 0) return;   // MP §3.6: a remote player holds the seat (single driver) -- never set in pure SP, so the direct path is unchanged
             if (v.NetClientPredicted) { _rideLookYaw = 0f; _rideLookPitch = FpRideGazePitchDeg; }   // Part A free-look starts at the classic forward gaze, like EnterPuppet (#37)
             _driving = v;
+            // Take the driver's seat when it is free, otherwise the first seat that is. Entering a full vehicle
+            // is refused above; this only picks WHICH seat, so walking up to a car someone is already driving
+            // puts you beside them rather than bouncing you off it.
+            _seatIndex = 0;
+            while (_seatIndex < v.SeatCount && !v.SeatFree(_seatIndex)) _seatIndex++;
+            if (_seatIndex >= v.SeatCount) { _driving = null; return; }   // every seat taken
+            v.OccupiedSeats.Add(_seatIndex);
             _burstLeft = 0;                                    // entering a vehicle cancels an in-progress burst (no resume on exit)
-            v.EngineOn = !v.OnFire;                            // start the engine (source) -- but a burnt/on-fire car stays dead (master)
+            if (_seatIndex == 0) { v.EngineOn = !v.OnFire; v.Wake(); }   // only the driver starts it (source) -- a burnt/on-fire car stays dead (master); Wake so a long-parked, frozen car drives off
             if (Hud != null) Hud.Vehicle = v;                  // show the vehicle status box (fuel/health/battery)
-            _viewmodel?.SetShown(false);                       // no gun while driving
+            // Passengers KEEP their weapon (strawberry 2026-08-16: "passengers can hold weapons") -- only the
+            // driver has their hands full.
+            if (_seatIndex == 0) _viewmodel?.SetShown(false);
             if (_cam != null) _cam.TopLevel = true;            // free the camera into world space
             foreach (var c in FindChildren("*", "CollisionShape3D", true, false))
                 if (c is CollisionShape3D cs) cs.Disabled = true;   // stop the player body fighting the vehicle
@@ -5464,10 +5493,44 @@ namespace UnturnedGodot
             Velocity = Vector3.Zero;
         }
 
+        /// <summary>Move to another seat of the vehicle we are already in. Refuses a seat that does not exist or
+        /// is taken, and returns whether it moved -- silently doing nothing and reporting success would make a
+        /// full vehicle indistinguishable from a working switch.</summary>
+        public bool TrySwitchSeat(int want)
+        {
+            var v = _driving;
+            if (v == null || want < 0 || want >= v.SeatCount || want == _seatIndex) return false;
+            if (!v.SeatFree(want)) return false;
+
+            v.OccupiedSeats.Remove(_seatIndex);
+            v.OccupiedSeats.Add(want);
+            bool wasDriver = _seatIndex == 0;
+            _seatIndex = want;
+
+            // Vacating the driver's seat shuts it down and brakes, exactly as stepping out does: nobody is
+            // holding the wheel, and a car that keeps its throttle while the driver climbs into the back is a
+            // runaway rather than a feature. Taking the seat starts it again.
+            if (wasDriver && want != 0) { v.EngineOn = false; v.Park(); }
+            // Taking the wheel WAKES it as well as starting it. Park() settles the car and, once it is stationary
+            // and grounded, the shared settle rule freezes the body outright; Drive() clears the parked flag but
+            // not the freeze, so a driver who had stepped into the back and come forward again sat in a car that
+            // started, revved and would not move. Wake() is the seam for exactly this ("rammed or re-driven").
+            else if (!wasDriver && want == 0) { v.EngineOn = !v.OnFire; v.Wake(); }
+
+            // Hands full in the driver's seat; a passenger gets their weapon back (strawberry: "passengers can
+            // hold weapons").
+            _viewmodel?.SetShown(want != 0);
+            return true;
+        }
+
         void ExitVehicle()
         {
             var v = _driving; _driving = null;
-            if (v != null) { v.EngineOn = false; v.Park(); }   // stop burning fuel + brake so it doesn't roll away
+            if (v != null) v.OccupiedSeats.Remove(_seatIndex);
+            // Only the driver leaving shuts it down. A passenger hopping out of a moving car must not kill the
+            // engine and park it underneath the person still driving.
+            if (v != null && _seatIndex == 0) { v.EngineOn = false; v.Park(); }   // stop burning fuel + brake so it doesn't roll away
+            _seatIndex = 0;
             if (Hud != null) Hud.Vehicle = null;               // hide the vehicle status box
             if (v != null) GlobalPosition = v.GlobalPosition + v.GlobalTransform.Basis.X * 2.4f + Vector3.Up * 1.0f;
             foreach (var c in FindChildren("*", "CollisionShape3D", true, false))
@@ -5518,6 +5581,15 @@ namespace UnturnedGodot
         void DriveVehicle(float delta)
         {
             if (_driving.Exploded) { ExitVehicle(); TakeDamage(150f); return; }   // caught in the blast -> ejected + killed (source explode kills passengers)
+            // PASSENGERS RIDE, THEY DO NOT STEER (strawberry 2026-08-16: "only F1 is the drivers seat"). Bail
+            // before any input is read, so a passenger holding W is not merely ignored by the vehicle but never
+            // reaches it -- LastDriveInput is the MP fallback axes, and a back-seat passenger filling those in
+            // would have every rider fighting the driver for the same channel.
+            if (_seatIndex != 0)
+            {
+                GlobalPosition = _driving.GlobalPosition;   // still ride along, so the exit spot and cam track the vehicle
+                return;
+            }
             float throttle, steer;
             if (ScriptedDrive.HasValue) { steer = ScriptedDrive.Value.X; throttle = ScriptedDrive.Value.Y; }
             else if (UiInputBlocked) { throttle = 0f; steer = 0f; }   // menu open -> don't steer/accelerate through it
@@ -5580,7 +5652,11 @@ namespace UnturnedGodot
                 if (_driving.CoupledTrailer != null && IsInstanceValid(_driving.CoupledTrailer))
                     size += _driving.CoupledTrailer.WorldMeshAabb().Size.Length() * 0.7f;   // towing -> pull the cam out further so the whole rig stays in frame (strawberry)
             }
-            PositionVehicleCam(vt, _driving.DriverEyeLocal, size);
+            // Driver keeps the tuned DriverEyeLocal (tall cabs sit higher to clear the hood); a passenger's eye
+            // is their OWN seat plus the same rise, or everyone in the bus looks out of the driver's window.
+            var eye = _seatIndex == 0 ? _driving.DriverEyeLocal
+                                      : _driving.SeatLocal(_seatIndex) + new Vector3(0f, PassengerEyeRise, 0f);
+            PositionVehicleCam(vt, eye, size);
         }
 
         // C6 ride mode: the same cam anchored on the replicated puppet (no trailer towing over the wire in v1)
