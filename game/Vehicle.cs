@@ -1426,7 +1426,7 @@ namespace UnturnedGodot
             RotorHub = new Vector3(0f, 3.01f, -0.25f), TailRotorHub = new Vector3(-0.45f, 3.57f, 6.68f),   // prefab local positions, Z negated
             HeliBodyMeshes = new[] { "huey_body.txt", "huey_body_1.txt" },
             Parts = HeliParts("huey"),   // same three as the rest of the fleet, despite this spec predating HeliBase
-            Body = null, Palette = null,
+            Body = null, Palette = "huey_palette.png",   // MilitaryPaintable; see the note in HeliBase
             DefaultPaints = new[] { "#475e83", "#a69884", "#437c44", "#495631" },   // .dat DefaultPaintColors
             Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", WheelRadius = 0.3f,   // unused (no wheels)
             Engine = 0f, SteerMax = 0f, SteerMin = 0f, SpeedMax = 23f, SpeedMin = 0f, Brake = 0f,   // .dat says 16, but the fleet is balanced on the real UH-1's 222 km/h -- see the table above
@@ -1541,7 +1541,11 @@ namespace UnturnedGodot
             RotorHub = mainHub, TailRotorHub = tailHub,
             HeliBodyMeshes = new[] { $"{mesh}_body.txt", $"{mesh}_body_1.txt" },
             HeliRotorMeshPrefix = mesh,
-            Body = null, Palette = null,
+            // Body stays null on purpose: the airframe geometry comes from HeliBodyMeshes, and the shared
+            // `Body` field would build a SECOND fuselage on top of it. Only the palette is shared with the
+            // car path -- BuildHeliModel already paints through the same bodyMat, so naming the palette is
+            // the whole of what "colour the bodies" needs (meshes re-ripped with UVs by cow tools 5cd4e772).
+            Body = null, Palette = $"{mesh}_palette.png",
             DefaultPaints = new[] { "#475e83", "#a69884", "#437c44", "#495631" },   // the shared faction paints
             Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", WheelRadius = 0.3f,
             Engine = 0f, SteerMax = 0f, SteerMin = 0f, SpeedMax = speedMax, SpeedMin = 0f, Brake = 0f,
