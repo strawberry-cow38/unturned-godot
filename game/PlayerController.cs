@@ -5614,6 +5614,11 @@ namespace UnturnedGodot
             // would have every rider fighting the driver for the same channel.
             if (_seatIndex != 0)
             {
+                // A gunner's LOOK aims the turret. Fed the same vehicle-local free-look angles the camera uses,
+                // so the barrel and the view cannot drift apart; the mount clamps them to its own traverse, which
+                // is why the camera is NOT clamped to match -- you can look past where the gun can point, and
+                // seeing the gun stop is the feedback that tells you so.
+                _driving.AimTurret(_seatIndex, _rideLookYaw, _rideLookPitch);
                 GlobalPosition = _driving.GlobalPosition;   // still ride along, so the exit spot and cam track the vehicle
                 return;
             }

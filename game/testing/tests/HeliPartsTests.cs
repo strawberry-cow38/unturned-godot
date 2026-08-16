@@ -118,6 +118,47 @@ namespace UnturnedGodot.Testing
                 yield return Ticks(1);
             }
 
+            // ---- THE HIND'S TURRET ACTUALLY TRAVERSES.
+            //
+            // Asserted on where the MUZZLE ends up in the world, not on the node's rotation numbers. A rotation
+            // of 30 degrees is true of a mount that swings the wrong way, swings about the wrong axis, or swings
+            // geometry that is not attached to it -- all three of which read as "the turret aimed".
+            var hind2 = Vehicle.BuildByName("hind");
+            World.AddChild(hind2);
+            hind2.GlobalPosition = new Vector3(0f, 300f, 0f);
+            yield return Ticks(2);
+            var centre = hind2.TurretMuzzle(1);
+            T.Check("hind: the turret reports a muzzle", centre.HasValue);
+            if (centre.HasValue)
+            {
+                T.Check("aiming a seat with no turret is refused", !hind2.AimTurret(0, 30f, 0f));
+                hind2.AimTurret(1, 60f, 0f);
+                var left = hind2.TurretMuzzle(1).Value;
+                hind2.AimTurret(1, -60f, 0f);
+                var right = hind2.TurretMuzzle(1).Value;
+                T.Check($"...and yawing it moves the muzzle sideways ({left.DistanceTo(right):0.##} m apart)",
+                    left.DistanceTo(right) > 1f);
+                T.Check($"...to OPPOSITE sides of centre (x {left.X:0.##} vs {right.X:0.##})",
+                    Mathf.Sign(left.X - centre.Value.X) != Mathf.Sign(right.X - centre.Value.X));
+
+                hind2.AimTurret(1, 0f, -45f);
+                float down = hind2.TurretMuzzle(1).Value.Y;
+                hind2.AimTurret(1, 0f, 15f);
+                float up = hind2.TurretMuzzle(1).Value.Y;
+                T.Check($"...and pitching it raises and lowers the muzzle (down {down:0.##} vs up {up:0.##})", up > down);
+
+                // The traverse limits are the point of a CHIN turret: it cannot shoot through its own airframe.
+                hind2.AimTurret(1, 900f, 900f);
+                var pinned = hind2.TurretMuzzle(1).Value;
+                hind2.AimTurret(1, 120f, 15f);
+                var atLimit = hind2.TurretMuzzle(1).Value;
+                T.Check($"...and a wild input clamps to the limit rather than spinning through the hull " +
+                        $"({pinned.DistanceTo(atLimit):0.###} m from the clamped pose)",
+                    pinned.DistanceTo(atLimit) < 0.01f);
+            }
+            hind2.QueueFree();
+            yield return Ticks(1);
+
             // ---- AND THEY MUST NOT REST BURIED IN THE GROUND.
             //
             // This is the check the missing turret actually turned out to be. The turret was on the aircraft
