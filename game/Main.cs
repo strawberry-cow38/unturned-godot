@@ -98,7 +98,7 @@ namespace UnturnedGodot
             bool containerTest = false; string containerTestName = null;
             bool wallDemo = false;
             bool clockTest = false;
-            bool play = false, demo = false, netdemo = false, server = false, dedicated = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, lightTest = false, trafficTest = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, playground = false, objects = false, peidrive = false, craftui = false, bakenav = false, navPathTest = false, zombieTest = false, zdirTest = false, editorMode = false, impactTest = false, doorGallery = false, lampTest = false, beamTest = false, impTest = false, treeSweep = false, bakeLods = false, bakeLodsDry = false;
+            bool play = false, demo = false, netdemo = false, server = false, dedicated = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, lightTest = false, trafficTest = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, playground = false, objects = false, peidrive = false, craftui = false, bakenav = false, navPathTest = false, zombieTest = false, zdirTest = false, editorMode = false, impactTest = false, doorGallery = false, lampTest = false, beamTest = false, impTest = false, treeSweep = false, bakeLods = false, bakeLodsDry = false, netobserve = false;
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
                 if (arg.StartsWith("--catalog=")) catalog = arg["--catalog=".Length..];
@@ -173,6 +173,7 @@ namespace UnturnedGodot
                 else if (arg == "--direct") _direct = true;            // SP/MP-unify P6a: opt OUT of the consuming-loopback DEFAULT on the SP GAME entries -> pure direct SP path (reversible fallback + A/B; equivalent env UG_DIRECT=1)
                 else if (arg == "--client") client = true;   // bare demo/test client: real world + the C1 overhead cam + ClientNode capsules (no player shell)
                 else if (arg.StartsWith("--connect=")) { client = true; _playableClient = true; _connectHost = arg["--connect=".Length..]; }   // join a dedicated server by IP -- C3: the PLAYABLE client (ClientWorldSession: predicted first-person shell)
+                else if (arg == "--netobserve") netobserve = true;   // headless net-observer: full netcode + replica state, NO render world (combine with --connect= for the target; see BuildNetObserver)
                 else if (arg == "--smoke") smoke = true;
                 else if (arg == "--hurtdemo") hurtdemo = true;
                 else if (arg == "--firetest") firetest = true;   // player fires near a distant zombie: verify the gunshot alert (+ --supp = suppressed -> no alert)
@@ -573,6 +574,7 @@ namespace UnturnedGodot
 
             if (dedicated) { BuildDedicated(); return; }        // headless dedicated server: real world + NetServerSession (MP_PLAN §4 Phase 3)
             if (server) { BuildServer(); return; }              // headless demo server (bare arena + a scripted bot)
+            if (netobserve) { BuildNetObserver(); return; }     // headless net-observer -- MUST precede the client dispatch: --connect= also sets `client`, and that path world-builds WorldMode.Client (headless-unsafe)
             if (client) { if (DisplayServer.GetName() != "headless") GetWindow().Mode = Window.ModeEnum.Maximized; BuildClient(); return; }   // fill the screen (same "tiny viewport" fix as --play below). Guard the window op for --headless (dummy DisplayServer, no window) -> a headless CLIENT runs the full netcode + world STATE with no rasterization (diagnostics / future scripted-client harness).
 
             if (netdemo)
@@ -5621,6 +5623,34 @@ namespace UnturnedGodot
             catch (System.Exception e)
             {
                 GD.PrintErr($"[DEDICATED] world build FAILED: {e}");
+                GetTree().Quit(1);
+            }
+        }
+
+        // Headless NET-OBSERVER (--netobserve): a diagnostics client that stands up ONLY netcode +
+        // replica state and logs the client-side vehicle picture (NetObserver.cs). World scaffold =
+        // the SAME WorldMode.Dedicated + syncLoad:true build the dedicated server uses, because the
+        // Client world-build is headless-UNSAFE: syncLoad:false awaits RenderingServer.FramePostDraw
+        // between load phases (WorldBuilder.Phase) and the --headless dummy renderer never presents a
+        // frame -> the await never resumes and BuildClient hangs forever. The Dedicated path never
+        // frame-yields (the live server proves it boots headless). noZombies always: the observer is
+        // authority for NOTHING -- a local zombie/loot sim would be pure CPU waste on the shared box.
+        // Cheapest run: leave UG_UNTURNED_DIR unset -> the flat-fallback scaffold (no map, no local
+        // vehicle/loot spawns); replica observation reads the wire, it never needs local terrain.
+        async void BuildNetObserver()
+        {
+            // async void swallows exceptions silently (the BuildDedicated trap) -- surface + hard-exit.
+            try
+            {
+                var res = await WorldBuilder.BuildFullWorld(this, WorldMode.Dedicated, _mapRoot, _mapPlace,
+                    noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: ActiveHoliday());
+                _worldReady = res.Ready;
+                AddChild(new NetObserver { Host = _connectHost, Port = PortEnv(), Driver = res.Sim });
+                GD.Print($"[NETOBS] scaffold up (terrain={(res.Terr != null ? "real map" : "fallback plane")}); observing {_connectHost}:{PortEnv()}");
+            }
+            catch (System.Exception e)
+            {
+                GD.PrintErr($"[NETOBS] build FAILED: {e}");
                 GetTree().Quit(1);
             }
         }
