@@ -1,0 +1,344 @@
+{
+  "hind": {
+    "parts": {
+      "seats": {
+        "txt": "hind_seats.txt",
+        "color": [
+          0.12,
+          0.12,
+          0.13
+        ],
+        "color_src": "default"
+      },
+      "steer": {
+        "txt": "hind_steer.txt",
+        "color": [
+          0.08,
+          0.08,
+          0.09
+        ],
+        "color_src": "default"
+      },
+      "taillights": {
+        "txt": "hind_taillights.txt",
+        "color": [
+          0.8,
+          0.1,
+          0.1
+        ],
+        "color_src": "default"
+      },
+      "turret": {
+        "txt": "hind_turret.txt",
+        "color": [
+          0.16,
+          0.17,
+          0.14
+        ],
+        "color_src": "default"
+      }
+    },
+    "seat_points": [
+      [
+        "Seat_0",
+        [
+          -0.0,
+          0.79,
+          -1.96
+        ]
+      ],
+      [
+        "Seat_1",
+        [
+          0.0,
+          0.095,
+          -3.677
+        ]
+      ],
+      [
+        "Seat_2",
+        [
+          0.5,
+          0.08,
+          0.26
+        ]
+      ],
+      [
+        "Seat_3",
+        [
+          -0.5,
+          0.08,
+          0.26
+        ]
+      ],
+      [
+        "Seat_4",
+        [
+          -0.5,
+          0.08,
+          1.48
+        ]
+      ],
+      [
+        "Seat_5",
+        [
+          0.5,
+          0.08,
+          1.48
+        ]
+      ]
+    ]
+  },
+  "orca": {
+    "parts": {
+      "seats": {
+        "txt": "orca_seats.txt",
+        "color": [
+          0.12,
+          0.12,
+          0.13
+        ],
+        "color_src": "default"
+      },
+      "steer": {
+        "txt": "orca_steer.txt",
+        "color": [
+          0.08,
+          0.08,
+          0.09
+        ],
+        "color_src": "default"
+      },
+      "taillights": {
+        "txt": "orca_taillights.txt",
+        "color": [
+          0.8,
+          0.1,
+          0.1
+        ],
+        "color_src": "default"
+      }
+    },
+    "seat_points": [
+      [
+        "Seat_0",
+        [
+          -0.61,
+          -0.079,
+          -0.299
+        ]
+      ],
+      [
+        "Seat_1",
+        [
+          0.6,
+          -0.079,
+          -0.299
+        ]
+      ],
+      [
+        "Seat_2",
+        [
+          -0.609,
+          -0.08,
+          0.876
+        ]
+      ],
+      [
+        "Seat_3",
+        [
+          0.601,
+          -0.08,
+          0.876
+        ]
+      ],
+      [
+        "Seat_4",
+        [
+          1.5,
+          -0.24,
+          2.656
+        ]
+      ],
+      [
+        "Seat_5",
+        [
+          -1.5,
+          -0.24,
+          2.66
+        ]
+      ]
+    ]
+  },
+  "skycrane": {
+    "parts": {
+      "seats": {
+        "txt": "skycrane_seats.txt",
+        "color": [
+          0.12,
+          0.12,
+          0.13
+        ],
+        "color_src": "default"
+      },
+      "steer": {
+        "txt": "skycrane_steer.txt",
+        "color": [
+          0.08,
+          0.08,
+          0.09
+        ],
+        "color_src": "default"
+      },
+      "taillights": {
+        "txt": "skycrane_taillights.txt",
+        "color": [
+          0.8,
+          0.1,
+          0.1
+        ],
+        "color_src": "default"
+      }
+    },
+    "seat_points": [
+      [
+        "Seat_0",
+        [
+          0.0,
+          0.096,
+          -2.844
+        ]
+      ]
+    ]
+  },
+  "hummingbird": {
+    "parts": {
+      "seats": {
+        "txt": "hummingbird_seats.txt",
+        "color": [
+          0.12,
+          0.12,
+          0.13
+        ],
+        "color_src": "default"
+      },
+      "steer": {
+        "txt": "hummingbird_steer.txt",
+        "color": [
+          0.08,
+          0.08,
+          0.09
+        ],
+        "color_src": "default"
+      },
+      "taillights": {
+        "txt": "hummingbird_taillights.txt",
+        "color": [
+          0.8,
+          0.1,
+          0.1
+        ],
+        "color_src": "default"
+      }
+    },
+    "seat_points": [
+      [
+        "Seat_0",
+        [
+          -0.625,
+          0.096,
+          -1.958
+        ]
+      ],
+      [
+        "Seat_1",
+        [
+          0.625,
+          0.096,
+          -1.958
+        ]
+      ],
+      [
+        "Seat_2",
+        [
+          -1.261,
+          -0.12,
+          -0.423
+        ]
+      ],
+      [
+        "Seat_3",
+        [
+          1.261,
+          -0.12,
+          -0.423
+        ]
+      ]
+    ]
+  },
+  "huey": {
+    "parts": {
+      "seats": {
+        "txt": "huey_seats.txt",
+        "color": [
+          0.12,
+          0.12,
+          0.13
+        ],
+        "color_src": "default"
+      },
+      "steer": {
+        "txt": "huey_steer.txt",
+        "color": [
+          0.08,
+          0.08,
+          0.09
+        ],
+        "color_src": "default"
+      },
+      "taillights": {
+        "txt": "huey_taillights.txt",
+        "color": [
+          0.8,
+          0.1,
+          0.1
+        ],
+        "color_src": "default"
+      }
+    },
+    "seat_points": [
+      [
+        "Seat_0",
+        [
+          -0.625,
+          0.096,
+          -1.958
+        ]
+      ],
+      [
+        "Seat_1",
+        [
+          0.625,
+          0.096,
+          -1.958
+        ]
+      ],
+      [
+        "Seat_2",
+        [
+          -1.261,
+          -0.12,
+          -0.423
+        ]
+      ],
+      [
+        "Seat_3",
+        [
+          1.261,
+          -0.12,
+          -0.423
+        ]
+      ]
+    ]
+  }
+}
