@@ -427,6 +427,57 @@ namespace UnturnedGodot.Testing
             T.Check($"a parked, unpowered rotor does not turn at all (phase {phase0:0.###} -> {still.DebugRotorPhase:0.###})",
                 Mathf.IsEqualApprox(still.DebugRotorPhase, phase0));
 
+            // ---- 8e. CRASHING. Three bands, and the boring one is load-bearing: a gentle set-down must
+            // cost NOTHING. A model that damages the airframe on every touchdown passes both of the
+            // interesting checks below and is unplayable.
+            //
+            // EVERY subject here settles on the ground first and waits out _spawnGrace before being thrown.
+            // That guard suppresses crash damage for 2.5 s after a vehicle is placed -- correctly, so an
+            // admin-spawned machine cannot blow itself up on its own settling drop -- but 2.5 s is also long
+            // enough to fall 30 m. The first cut of this dropped each subject straight from spawn and every
+            // impact landed inside the window: no damage, no bonk, no explosion, and a diagnostic showing
+            // grace at -0.02 after 5 s of test, i.e. the machine had been invulnerable the whole way down.
+            // The guard was right and the test was fighting it.
+            // Height only, no initial velocity: assigning LinearVelocity in the same tick that clears Freeze
+            // does not take -- the body is still frozen when it lands, so the head start is silently dropped.
+            // A "25 m/s" smash actually arrived at ~17, under the write-off line, and read as a bonk. Gravity
+            // is reliable and the drop height is the honest dial.
+            Vehicle Drop(Vehicle v, float height)
+            {
+                v.Freeze = false;
+                v.GlobalPosition = new Vector3(v.GlobalPosition.X, height, v.GlobalPosition.Z);
+                return v;
+            }
+
+            var land = Spawn(World, "minicopter", new Vector3(-1200f, 1.2f, 0f));
+            land.DebugNoTurbulence = true;
+            yield return Ticks(220);   // settle AND outlast the 2.5 s spawn grace
+            float landHp = land.Health;
+            Drop(land, 1.9f);          // a gentle set-down: ~4 m/s at touchdown, under the 5.5 floor
+            for (int i = 0; i < 160; i++) yield return Ticks(1);
+            T.Check($"a gentle set-down costs no health ({land.Health:0} of {landHp:0}, bonks {land.DebugBonkCount})",
+                land.Health >= landHp - 0.01f && land.DebugBonkCount == 0);
+
+            // A MID-SPEED impact hurts and bonks, but is survivable.
+            var bonk = Spawn(World, "minicopter", new Vector3(-1260f, 1.2f, 0f));
+            bonk.DebugNoTurbulence = true;
+            yield return Ticks(220);
+            float bonkHp = bonk.Health;
+            Drop(bonk, 8f);            // ~12 m/s at impact: over the 5.5 floor, under the 19 write-off
+            for (int i = 0; i < 200 && !bonk.Exploded; i++) yield return Ticks(1);
+            T.Check($"a mid-speed impact damages it ({bonk.Health:0} of {bonkHp:0})", bonk.Health < bonkHp);
+            T.Check($"...and bonks, with FX ({bonk.DebugBonkCount} bonks)", bonk.DebugBonkCount > 0);
+            T.Check($"...but does not write it off ({(bonk.Exploded ? "EXPLODED" : "intact")})", !bonk.Exploded);
+
+            // A FAST impact is fatal outright -- no 4 s fuse, it goes up on contact.
+            var smash = Spawn(World, "minicopter", new Vector3(-1320f, 1.2f, 0f));
+            smash.DebugNoTurbulence = true;
+            yield return Ticks(220);
+            Drop(smash, 45f);          // ~24 m/s at impact, well past the write-off threshold
+            for (int i = 0; i < 250 && !smash.Exploded; i++) yield return Ticks(1);
+            T.Check($"a fast impact explodes it ({(smash.Exploded ? "EXPLODED" : "intact, " + smash.Health.ToString("0") + " hp")}; impact {smash.DebugLastImpactSpeed:0.#} m/s vs threshold 19, y={smash.GlobalPosition.Y:0.##})",
+                smash.Exploded);
+
             // THE HUB IS THE BULLET TARGET, the disc is not. Shooting the tip of a 5 m blade should not kill a
             // rotor; hitting the machinery at the mast should.
             var hb = Spawn(World, "minicopter", new Vector3(-880f, 4f, 0f));

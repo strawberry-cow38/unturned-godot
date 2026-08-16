@@ -80,6 +80,26 @@ namespace UnturnedGodot
         CpuParticles3D _mainStrikeFx, _tailStrikeFx;   // one-shot sparks per blade strike
         AudioStreamPlayer3D _strikeAudio;
         bool _rotorFxExtinguished;   // the cold wreck has had its rotor fires put out; do not relight them
+        CpuParticles3D _bonkFx; float _crashCd, _recentTopSpeed;
+        /// <summary>Impact speed that writes the machine off outright, ~54 km/h.
+        ///
+        /// Set against what the airframe can actually REACH, not picked as a round number. Horizontal top speed
+        /// is 26 m/s, so flying into a cliff at cruise is always fatal. Vertically, drag caps terminal at
+        /// ~28 m/s but a 45 m drop only arrives at ~17.5 -- so a threshold of 19, which is what this was, meant
+        /// falling out of the sky from any survivable height could NOT write the machine off, while a horizontal
+        /// crash could. 15 puts a genuine plummet and a fast collision on the same side of the line, and leaves
+        /// the 10-12 m/s arrivals of a botched landing survivable.</summary>
+        const float HeliCrashExplodeSpeed = 15f;
+        /// <summary>Below this an impact is not a crash at all -- setting down firmly, brushing a wall while
+        /// hovering. Without a floor, every landing would chip the airframe.</summary>
+        const float HeliBonkSpeed = 5.5f;
+        /// <summary>Test seam: how many survivable impacts this machine has taken.</summary>
+        public int DebugBonkCount { get; private set; }
+        public float DebugPrevSpeed => _recentTopSpeed;
+        /// <summary>Speed at the moment of the last detected impact. Captured AT the crash: reading the live
+        /// peak afterwards reports 0, because it decays away while the wreck sits there.</summary>
+        public float DebugLastImpactSpeed { get; private set; }
+        public float DebugSpawnGrace => _spawnGrace;
         /// <summary>Health fraction at which a rotor starts smoking. Above it the rotor is scuffed, not
         /// failing, and a machine that smokes from the first bullet tells the pilot nothing.</summary>
         const float RotorSmokeAt = 0.7f;
@@ -149,6 +169,16 @@ namespace UnturnedGodot
         /// <summary>One burst of sparks + a metal clang for a single blade strike. Restarts the emitter each
         /// time (OneShot + Explosiveness 1) so repeated strikes read as repeated hits rather than merging into
         /// one continuous shower.</summary>
+        /// <summary>A survivable impact: debris, and the same metal hit the blades use. Counted so a test can
+        /// assert a bonk happened at all -- "it lost health" would also pass on a machine that was quietly
+        /// bleeding out for some entirely different reason.</summary>
+        void BonkFx()
+        {
+            DebugBonkCount++;
+            if (_bonkFx != null) { _bonkFx.Emitting = false; _bonkFx.Restart(); _bonkFx.Emitting = true; }
+            if (_strikeAudio != null) _strikeAudio.Play();
+        }
+
         void BladeStrikeFx(CpuParticles3D sparks)
         {
             if (sparks != null) { sparks.Emitting = false; sparks.Restart(); sparks.Emitting = true; }
@@ -176,6 +206,19 @@ namespace UnturnedGodot
                 }
                 if (fire != null && fire.Emitting != dead) fire.Emitting = dead;
             }
+        }
+
+        /// <summary>Is there ground within a short reach below the airframe? Asked with a raycast because it
+        /// has to stay truthful while the body is FROZEN, which rules out contact counts.</summary>
+        bool GroundedByRay()
+        {
+            var space = GetWorld3D()?.DirectSpaceState;
+            if (space == null) return false;
+            Vector3 from = GlobalPosition;
+            var q = PhysicsRayQueryParameters3D.Create(from, from + Vector3.Down * (_groundClearance + 0.45f));
+            q.Exclude = new Godot.Collections.Array<Rid> { GetRid() };
+            q.CollisionMask = (1u << 0) | (1u << 5);
+            return space.IntersectRay(q).Count > 0;
         }
 
         bool DiscStruck(Area3D disc)
@@ -1792,6 +1835,10 @@ namespace UnturnedGodot
                 v._mainStrikeFx.Position = s.RotorHub; v._tailStrikeFx.Position = s.TailRotorHub;
                 foreach (var fx in new[] { v._mainStrikeFx, v._tailStrikeFx })
                 { fx.Emitting = false; fx.OneShot = true; fx.Explosiveness = 1f; v.AddChild(fx); }
+                v._bonkFx = MakeSmoke("veh_smoke_1.png", new Color(0.62f, 0.60f, 0.55f), 0.55f, 3.2f, 18, false, 0.20f, 0.60f);
+                v._bonkFx.Position = s.BoxCenter;
+                v._bonkFx.Emitting = false; v._bonkFx.OneShot = true; v._bonkFx.Explosiveness = 1f;
+                v.AddChild(v._bonkFx);
                 var hitWav = LoadWav("res://content/impact_metal.wav");
                 if (hitWav != null)
                 {
@@ -2270,6 +2317,34 @@ namespace UnturnedGodot
             if (_tailDiscArea != null && _tailStrikeCd <= 0f && DiscStruck(_tailDiscArea))
             { _tailStrikeCd = BladeStrikeInterval; DamageTailRotor(TailStrikeDamage); BladeStrikeFx(_tailStrikeFx); }
 
+            // ---- CRASH (strawberry 2026-08-16: "make the vehicle EXPLODE if it hits anything at a
+            // considerable speed. bonking with particles and taking damage if its below the explosion
+            // threshold").
+            //
+            // FULL 3-D SPEED, unlike the wheeled detector, which measures horizontal only and says so: "so the
+            // spawn drop doesn't count". That is right for a car, whose crashes are all lateral, and exactly
+            // wrong for a helicopter, whose defining crash is straight down. Taking the vertical component back
+            // means the spawn drop DOES count, so the guard is _spawnGrace instead -- a real condition (the
+            // machine has only just been placed) rather than an axis that happened to exclude it.
+            float curSpeed = LinearVelocity.Length();
+            float decel = _prevSpeed - curSpeed;
+            // HOW FAST WERE YOU GOING WHEN YOU HIT -- a short decaying peak, not last tick's speed. With
+            // ContinuousCd the solver bleeds a fast impact off across several ticks, so by the tick the
+            // deceleration is large enough to notice, _prevSpeed has ALREADY dropped well below the real
+            // approach speed. A 25 m/s dive was being detected at ~11 and written off as a survivable bonk
+            // (111 damage instead of a fireball). The peak decays at 12 m/s per second, so it reflects the
+            // last moment of flight rather than the whole trip.
+            _recentTopSpeed = Mathf.Max(curSpeed, _recentTopSpeed - dt * 6f);   // 6, not 12: a faster decay shaved real speed off impacts the solver resolved over several ticks
+            if (_crashCd > 0f) _crashCd -= dt;
+            if (!_exploded && _spawnGrace <= 0f && _crashCd <= 0f && _recentTopSpeed > HeliBonkSpeed && decel > 200f * dt)
+            {
+                _crashCd = 0.25f;   // one impact per contact, not one per tick of a scrape
+                DebugLastImpactSpeed = _recentTopSpeed;
+                if (_recentTopSpeed >= HeliCrashExplodeSpeed) Explode();   // hard hit: straight to the fireball, no 4 s fuse
+                else { TakeDamage(decel * 18f); BonkFx(); }
+            }
+            _prevSpeed = curSpeed;
+
             UpdateRotorFx();
 
             // A DAMAGED MAIN ROTOR MAKES LESS LIFT, and a dead one makes none. "main rotor hp low -> reduced
@@ -2422,7 +2497,13 @@ namespace UnturnedGodot
             // there and FREEZES IT IN THE SKY -- which is what the first cut of this did, and the flight test
             // caught it as a descent of exactly 0.00 m at exactly 0 m/s. Being stationary in the air is the
             // normal top of every climb, not a machine at rest.
-            bool grounded = GetContactCount() > 0;
+            // GROUNDED BY RAYCAST, not by contact count. A body frozen with FreezeMode.Static keeps reporting
+            // the contacts it had when it froze, so "am I still on the ground" answers YES forever once it has
+            // settled -- and the settle rule then re-freezes it every tick, from which it can never wake. The
+            // only thing that broke the deadlock was DriveHeli explicitly clearing Freeze on pilot input, so
+            // flying hid it completely: a settled machine teleported into the air simply HOVERED there, frozen,
+            // and a 45 m drop test never fell a single metre.
+            bool grounded = GroundedByRay();
             bool idle = grounded && _inCollective < 0.02f && vel.LengthSquared() < 0.05f && AngularVelocity.LengthSquared() < 0.05f;
             if (idle && _spawnGrace <= 0f && !Freeze)
             {
