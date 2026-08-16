@@ -61,6 +61,76 @@ namespace UnturnedGodot
         public Vector3 DebugTurbulence => _turbKick;
         /// <summary>Test seam: turbulence OFF, so a control-response test measures the pilot and not the weather.</summary>
         public bool DebugNoTurbulence;
+
+        // ---- ROTOR DAMAGE (VoX 2026-08-16) --------------------------------------------------------------
+        // "give the main rotor and tail rotor independent HP values. main rotor hp low -> reduced thrust. tail
+        // rotor hp low -> reduced turning. main rotor dead -> no more gaining vertical thrust, quickly lose
+        // height. tail rotor dead, go into a spin."
+        //
+        // Two separate hitboxes per rotor, because the two ways a rotor dies are not the same event:
+        //   the DISC (a thin cylinder swept by the blades) catches anything the blades strike -- trees,
+        //     buildings, the ground -- and grinds the rotor down on a cooldown while contact persists;
+        //   the HUB (a small box at the mast) is what a BULLET has to find. Shooting a rotor down should mean
+        //     hitting the machinery, not clipping the tip of a 5 m disc.
+        public enum HeliPart { Body, MainRotor, TailRotor }
+        float _mainRotorHp, _mainRotorHpMax = 1f, _tailRotorHp, _tailRotorHpMax = 1f;
+        float _mainStrikeCd, _tailStrikeCd;
+        Area3D _mainDiscArea, _tailDiscArea;
+        Vector3 _mainHubCentre, _mainHubHalf, _tailHubCentre, _tailHubHalf;
+        const float BladeStrikeInterval = 0.45f;   // "hurts the main rotor every x seconds" while something is in the disc
+        const float BladeStrikeDamage = 34f, TailStrikeDamage = 30f;
+        /// <summary>Unopposed main-rotor torque on the fuselage once the tail rotor is dead (rad/s^2 at full
+        /// power). Sized to be clearly unrecoverable by pedal input -- the pedals are gone anyway -- but slow
+        /// enough that a pilot who cuts collective immediately can still put it down.</summary>
+        const float TailLossTorque = 1.35f;
+
+        public float MainRotorHealth => _mainRotorHp;
+        public float TailRotorHealth => _tailRotorHp;
+        public float MainRotorNorm => _mainRotorHpMax > 0f ? Mathf.Clamp(_mainRotorHp / _mainRotorHpMax, 0f, 1f) : 0f;
+        public float TailRotorNorm => _tailRotorHpMax > 0f ? Mathf.Clamp(_tailRotorHp / _tailRotorHpMax, 0f, 1f) : 0f;
+        public bool MainRotorDead => _heli && _mainRotorHp <= 0f;
+        public bool TailRotorDead => _heli && _tailRotorHp <= 0f;
+
+        public void DamageMainRotor(float amount)
+        {
+            if (!_heli || amount <= 0f) return;
+            _mainRotorHp = Mathf.Max(0f, _mainRotorHp - amount);
+        }
+        public void DamageTailRotor(float amount)
+        {
+            if (!_heli || amount <= 0f) return;
+            _tailRotorHp = Mathf.Max(0f, _tailRotorHp - amount);
+        }
+        public void KillMainRotor() { if (_heli) _mainRotorHp = 0f; }
+        public void KillTailRotor() { if (_heli) _tailRotorHp = 0f; }
+
+        /// <summary>Which part a world-space impact landed on. The HUB boxes are tested in the vehicle's own
+        /// local space, so they follow the airframe through any attitude -- a world-axis test would drift off
+        /// the mast the moment the machine banked, which is most of the time it is being shot at.</summary>
+        /// <summary>Is anything OTHER THAN THIS VEHICLE inside the disc?
+        ///
+        /// The exclusion is the whole method. The disc has to watch the vehicle layer (bit 5) so it notices
+        /// other vehicles, but this vehicle is ON bit 5, so a bare HasOverlappingBodies() sees its own hull
+        /// forever -- which ground both rotors to zero within seconds of every spawn. The symptom was total:
+        /// no lift, no yaw, no rotation, every helicopter in the suite free-falling identically, healthy and
+        /// damaged alike. A self-overlap reads exactly like a physics failure.</summary>
+        bool DiscStruck(Area3D disc)
+        {
+            foreach (var body in disc.GetOverlappingBodies())
+                if (body != this && GodotObject.IsInstanceValid(body)) return true;
+            return false;
+        }
+
+        public HeliPart ResolveHitPart(Vector3 worldPoint)
+        {
+            if (!_heli) return HeliPart.Body;
+            Vector3 local = ToLocal(worldPoint);
+            if (InBox(local, _mainHubCentre, _mainHubHalf)) return HeliPart.MainRotor;
+            if (InBox(local, _tailHubCentre, _tailHubHalf)) return HeliPart.TailRotor;
+            return HeliPart.Body;
+            static bool InBox(Vector3 p, Vector3 c, Vector3 h)
+                => h.X > 0f && Mathf.Abs(p.X - c.X) <= h.X && Mathf.Abs(p.Y - c.Y) <= h.Y && Mathf.Abs(p.Z - c.Z) <= h.Z;
+        }
         public bool IsHeli => _heli;
         float _groundClearance;
         /// <summary>Distance from the body origin down to its lowest collision point (skids, hull floor).</summary>
@@ -323,6 +393,8 @@ namespace UnturnedGodot
             public float HeliClimbMax, HeliFallMax;              // MP envelope caps, m/s (0 = inherit the car defaults)
             public float RotorRadius, TailRotorRadius;           // blade half-spans (the rotor mesh is scaled to these)
             public Vector3 RotorHub, TailRotorHub;               // local mount points for the two rotors
+            public float MainRotorHp, TailRotorHp;                // independent rotor health (0 = derive from Health)
+            public Vector3 MainHubBox, TailHubBox;                // the BULLET hitbox at each mast (full size); Zero = a default off the rotor radius
             public string[] HeliBodyMeshes;                      // airframe .obj(s); null = build one of the procedural frames below
             public HeliFrame Frame;                              // which procedural airframe (ignored when HeliBodyMeshes is set)
         }
@@ -1137,7 +1209,7 @@ namespace UnturnedGodot
             HeliThrust = 11.8f, HeliPitchTorque = 2.6f, HeliRollTorque = 3.0f, HeliYawTorque = 2.2f, HeliLevel = 0f,
             HeliClimbMax = 22f, HeliFallMax = 45f,
             RotorRadius = 2.85f, TailRotorRadius = 0.34f,
-            RotorHub = new Vector3(0f, 1.22f, 0.10f), TailRotorHub = new Vector3(0.09f, 0.02f, 2.46f),
+            RotorHub = new Vector3(0f, 1.22f, 0.55f), TailRotorHub = new Vector3(0.09f, 0.02f, 2.46f),
             Body = null, Palette = null, DefaultPaints = new[] { "#8a7f5c" },   // bare weathered tube frame
             Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", WheelRadius = 0.3f,   // unused (no wheels), non-null for safety like the runabout
             Engine = 0f, SteerMax = 0f, SteerMin = 0f, SpeedMax = 26f, SpeedMin = 0f, Brake = 0f,   // rotor thrust replaces wheel drive entirely
@@ -1399,9 +1471,9 @@ namespace UnturnedGodot
             // ---- POWERPLANT: an engine block, a fuel can and a bare mast. No cowling over any of it.
             Part("Engine", new BoxMesh { Size = new Vector3(0.52f, 0.40f, 0.46f) }, new Vector3(0f, 0.22f, 0.86f), frameMat, Vector3.Zero, null);
             Part("FuelCan", new BoxMesh { Size = new Vector3(0.34f, 0.34f, 0.26f) }, new Vector3(0f, 0.62f, 0.72f), tankMat, Vector3.Zero, null);
-            Tube("Mast", 0.055f, 1.15f, new Vector3(0f, 0.62f, 0.10f), frameMat, Vector3.Zero, null);
+            Tube("Mast", 0.055f, 1.15f, new Vector3(0f, 0.62f, 0.55f), frameMat, Vector3.Zero, null);   // behind the seat back (0.43), ahead of the fuel can (0.72)
             foreach (float sx in new[] { -1f, 1f })   // mast bracing down to the keel
-                Tube($"MastStay{(sx < 0 ? "L" : "R")}", 0.028f, 0.95f, new Vector3(sx * 0.20f, 0.38f, 0.45f), frameMat, new Vector3(26f, 0f, sx * 22f), null);
+                Tube($"MastStay{(sx < 0 ? "L" : "R")}", 0.028f, 0.95f, new Vector3(sx * 0.20f, 0.38f, 0.72f), frameMat, new Vector3(26f, 0f, sx * 22f), null);
 
             // ---- TAIL: a bare boom with a small fin. The keel already carries it, so this is just the fin.
             Part("TailFin", new BoxMesh { Size = new Vector3(0.04f, 0.46f, 0.34f) }, new Vector3(0f, 0.02f, 2.42f), frameMat, Vector3.Zero, null);
@@ -1566,6 +1638,17 @@ namespace UnturnedGodot
             pivot.AddChild(blades);
         }
 
+        /// <summary>A rotor disc as a monitoring Area3D: the thin cylinder the blades sweep. Masks the world +
+        /// vehicle layers (bit0 | bit5) so it notices terrain, buildings and other vehicles, and sits on no
+        /// layer of its own so nothing can collide WITH it -- it reports, it does not push.</summary>
+        static Area3D MakeDiscArea(string name, float radius, float height, Vector3 pos, Vector3 rotDeg)
+        {
+            var area = new Area3D { Name = name, Position = pos, CollisionLayer = 0, CollisionMask = (1u << 0) | (1u << 5), Monitoring = true };
+            if (rotDeg != Vector3.Zero) area.RotationDegrees = rotDeg;
+            area.AddChild(new CollisionShape3D { Shape = new CylinderShape3D { Radius = radius, Height = height } });
+            return area;
+        }
+
         static Vehicle Build(Spec s, int variant, string specKey)
         {
             var v = new Vehicle { Mass = GlobalMass };   // source uses one constant mass (2.0) for ALL vehicles -> one global Godot mass
@@ -1599,6 +1682,29 @@ namespace UnturnedGodot
                 // The per-axis feel differences live in the spec's pitch/roll/yaw numbers instead, where they
                 // are readable.
                 v.Inertia = Vector3.One * (GlobalMass * HeliInertiaPerKg);
+
+                // ---- ROTOR HEALTH + HITBOXES
+                v._mainRotorHpMax = v._mainRotorHp = s.MainRotorHp > 0f ? s.MainRotorHp : s.Health * 0.45f;
+                v._tailRotorHpMax = v._tailRotorHp = s.TailRotorHp > 0f ? s.TailRotorHp : s.Health * 0.28f;
+
+                // The HUB boxes: small, at the mast, and the only thing a bullet can hit to kill a rotor.
+                // Defaults scale off the rotor radius so a spec that declares nothing still gets a sane target.
+                Vector3 mainBox = s.MainHubBox != Vector3.Zero ? s.MainHubBox : Vector3.One * Mathf.Max(0.22f, s.RotorRadius * 0.14f);
+                Vector3 tailBox = s.TailHubBox != Vector3.Zero ? s.TailHubBox : Vector3.One * Mathf.Max(0.16f, s.TailRotorRadius * 0.42f);
+                v._mainHubCentre = s.RotorHub; v._mainHubHalf = mainBox * 0.5f;
+                v._tailHubCentre = s.TailRotorHub; v._tailHubHalf = tailBox * 0.5f;
+                // Real collision shapes so a bullet raycast can actually reach them -- without these the hub
+                // sits in empty space above the hull and no shot would ever resolve to it.
+                v.AddChild(new CollisionShape3D { Name = "MainHubHit", Shape = new BoxShape3D { Size = mainBox }, Position = s.RotorHub });
+                v.AddChild(new CollisionShape3D { Name = "TailHubHit", Shape = new BoxShape3D { Size = tailBox }, Position = s.TailRotorHub });
+
+                // The DISCS: thin cylinders swept by the blades, as monitoring Areas rather than solid bodies.
+                // Solid would make the rotor a battering ram that shoves the world; an Area only reports that
+                // the blades are in something, which is what grinds them down.
+                v._mainDiscArea = MakeDiscArea("MainDisc", s.RotorRadius, 0.14f, s.RotorHub, Vector3.Zero);
+                v.AddChild(v._mainDiscArea);
+                v._tailDiscArea = MakeDiscArea("TailDisc", s.TailRotorRadius, 0.10f, s.TailRotorHub, new Vector3(0f, 0f, 90f));
+                v.AddChild(v._tailDiscArea);
             }
             v._water = s.Water;   // BOAT/AMPHIBIOUS: voxelize the hull box for the source Buoyancy.cs voxel-Archimedes model
             if (s.Water != WaterMode.Car)
@@ -2051,7 +2157,21 @@ namespace UnturnedGodot
 
             // LIFT along the BODY up axis. This one line is the whole Rust feel: you do not steer a helicopter,
             // you tilt it and the lift vector takes you with it.
-            float lift = _heliThrust * spool * _inCollective;
+            // BLADE STRIKES. While anything is inside a disc, that rotor grinds down on a fixed interval --
+            // an interval rather than per-frame damage so the cost of clipping a tree does not depend on the
+            // framerate, and so brushing something is survivable while sitting in it is not.
+            _mainStrikeCd -= dt; _tailStrikeCd -= dt;
+            if (_mainDiscArea != null && _mainStrikeCd <= 0f && DiscStruck(_mainDiscArea))
+            { _mainStrikeCd = BladeStrikeInterval; DamageMainRotor(BladeStrikeDamage); }
+            if (_tailDiscArea != null && _tailStrikeCd <= 0f && DiscStruck(_tailDiscArea))
+            { _tailStrikeCd = BladeStrikeInterval; DamageTailRotor(TailStrikeDamage); }
+
+            // A DAMAGED MAIN ROTOR MAKES LESS LIFT, and a dead one makes none. "main rotor hp low -> reduced
+            // thrust ... main rotor dead -> no more gaining vertical thrust, quickly lose height" -- with zero
+            // lift the machine simply falls, which is the quick loss of height without needing a special case
+            // to shove it downward.
+            float mainEff = MainRotorNorm;
+            float lift = _heliThrust * spool * _inCollective * (0.20f + 0.80f * mainEff);
             // TILT COSTS LIFT, twice over. Thrusting along the body axis already gives the free cosine (a
             // 30 deg nose-down keeps only 87 % of its thrust pointing up); this takes a further bite on top,
             // so committing to a fast nose-down run actually costs you height instead of being free speed.
@@ -2095,9 +2215,21 @@ namespace UnturnedGodot
             // Two of the three need a negation and one does not, which is exactly the situation where
             // reasoning it out once and never checking gets you an inverted axis nobody notices until a
             // playtest. The tests pin all three against the body basis.
+            // A DAMAGED TAIL ROTOR TURNS WORSE ("tail rotor hp low -> reduced turning"). Pitch and roll are the
+            // MAIN rotor's job and are untouched by tail damage -- losing the tail costs you the pedals, not
+            // the cyclic, which is what makes it a distinct failure rather than a general "controls worse".
+            float tailEff = 0.10f + 0.90f * TailRotorNorm;
             Vector3 cmd = b.X * (_inPitch * HeliPitchRate * _heliPitchTq / 2.6f)
                         + b.Z * (-_inRoll * HeliRollRate * _heliRollTq / 3.0f)
-                        + b.Y * (-_inYaw * HeliYawRate * _heliYawTq / 2.2f);
+                        + b.Y * (-_inYaw * HeliYawRate * _heliYawTq / 2.2f * tailEff);
+
+            // TORQUE REACTION. A tail rotor's whole job is cancelling the main rotor's torque on the fuselage;
+            // with it dead, that torque is unopposed and the airframe spins ("tail rotor dead, go into a
+            // spin"). Scaled by the power actually going through the main rotor, so a dead tail on a spun-down
+            // machine sitting on the ground does nothing -- it is the LIFT you are pulling that spins you, and
+            // that is also the cruel part: the collective you need to stay up is what makes the spin worse.
+            if (TailRotorDead)
+                cmd += b.Y * (TailLossTorque * spool * Mathf.Max(_inCollective, 0.15f));
 
             // SELF-LEVELLING IS OFF BY DEFAULT, and that is the correction VoX made after flying it
             // (2026-08-16): "the vehicals pitch and yaw are tracked as a current value and ... thrust applies in

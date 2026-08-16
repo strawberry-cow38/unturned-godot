@@ -28,7 +28,7 @@ namespace UnturnedGodot
 
         LineEdit _input;
         Label _log;
-        static readonly string[] Verbs = { "give", "vehicle", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "toggleGlobalPower", "toggleGlobalWater", "toggleBbat", "infFuel", "infAmmo", "wear", "unwear", "fluid", "date", "dateset", "whenBlackout", "triggerGlobalBrownout" };
+        static readonly string[] Verbs = { "give", "vehicle", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "toggleGlobalPower", "toggleGlobalWater", "toggleBbat", "infFuel", "infAmmo", "wear", "unwear", "fluid", "date", "dateset", "whenBlackout", "triggerGlobalBrownout", "hurtmain", "killmain", "hurttail", "killtail" };
         static readonly EItemType[] ClothingTypes = { EItemType.SHIRT, EItemType.PANTS, EItemType.HAT, EItemType.VEST, EItemType.MASK, EItemType.GLASSES, EItemType.BACKPACK };
         readonly System.Collections.Generic.List<string> _history = new();
         int _histIdx;
@@ -111,6 +111,24 @@ namespace UnturnedGodot
                         : !PowerNet.GlobalPower;
                 PowerNet.SetGlobalPower(on);   // flips the flag + MarkDirty()s so the graph recomputes (Circuit_0 sources turn on/off)
                 Log($"grid power {(PowerNet.GlobalPower ? "ON" : "OFF")}");
+                return;
+            }
+
+            // hurtmain / killmain / hurttail / killtail  -- rotor damage on the heli you are CURRENTLY FLYING
+            // (VoX 2026-08-16). Above the arg guard because all four take no argument. Deliberately requires
+            // you to be in the seat: the point is to feel a rotor fail mid-flight, and a version that damaged
+            // whatever you happened to be looking at would mostly be used from the ground, where a dead tail
+            // rotor does nothing worth seeing.
+            if (verb is "hurtmain" or "killmain" or "hurttail" or "killtail")
+            {
+                var heli = Player?.Driving;
+                if (heli == null || !heli.IsHeli) { Log($"{verb}: you're not flying a helicopter"); return; }
+                bool tail = verb.EndsWith("tail");
+                if (verb.StartsWith("kill")) { if (tail) heli.KillTailRotor(); else heli.KillMainRotor(); }
+                else if (tail) heli.DamageTailRotor(heli.TailRotorHealth * 0.5f + 1f);
+                else heli.DamageMainRotor(heli.MainRotorHealth * 0.5f + 1f);
+                Log($"{verb}: main {heli.MainRotorHealth:0} ({heli.MainRotorNorm * 100f:0}%), tail {heli.TailRotorHealth:0} ({heli.TailRotorNorm * 100f:0}%)"
+                    + (heli.MainRotorDead ? " -- MAIN DEAD, no lift" : "") + (heli.TailRotorDead ? " -- TAIL DEAD, spinning" : ""));
                 return;
             }
 

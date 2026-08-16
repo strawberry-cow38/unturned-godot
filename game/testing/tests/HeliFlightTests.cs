@@ -22,7 +22,7 @@ namespace UnturnedGodot.Testing
         public override string Name => "vehicle.heli_flight";
         // Generous because this suite genuinely simulates a lot of flying: an 18 s climb, several 5 s
         // manoeuvres, and a 14 s turbulence window that has to span multiple gust intervals to observe one.
-        public override double TimeoutSimSeconds => 260;
+        public override double TimeoutSimSeconds => 340;
 
         static Vehicle Spawn(Node world, string name, Vector3 at)
         {
@@ -177,7 +177,7 @@ namespace UnturnedGodot.Testing
             // controls not working -- and note that every other check in this file passed the whole time it was
             // wrong, because a self-levelling helicopter still climbs, descends, yaws and translates.
             var hold = Spawn(World, "minicopter", new Vector3(-440f, 90f, 0f));
-            hold.EngineOn = true;
+            hold.EngineOn = true; hold.DebugNoTurbulence = true;   // measuring the pilot, not the weather -- gusts made this flaky
             for (int i = 0; i < 260; i++) { hold.DriveHeli(1f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
             for (int i = 0; i < 60; i++) { hold.DriveHeli(0f, 0f, 0f, 0.6f, 0.02); yield return Ticks(1); }
             float banked = hold.GlobalTransform.Basis.Y.X;
@@ -324,6 +324,62 @@ namespace UnturnedGodot.Testing
             yield return Ticks(3);
             T.Check($"...while still spinning (phase moved {Mathf.Abs(tailPivot.GlobalTransform.Basis.Z.Y - phaseA):0.###})",
                 Mathf.Abs(tailPivot.GlobalTransform.Basis.Z.Y - phaseA) > 0.001f);
+
+            // ---- 8d. ROTOR DAMAGE. Two independent rotors, each with its own failure MODE -- the point is not
+            // that damage exists but that losing the main and losing the tail break different things.
+            var dmg = Spawn(World, "minicopter", new Vector3(-700f, 120f, 0f));
+            dmg.EngineOn = true; dmg.DebugNoTurbulence = true;
+            T.Check($"the rotors carry independent health (main {dmg.MainRotorHealth:0}, tail {dmg.TailRotorHealth:0})",
+                dmg.MainRotorHealth > 0f && dmg.TailRotorHealth > 0f && !dmg.MainRotorDead && !dmg.TailRotorDead);
+            // Damaging one must not touch the other, or "independent" is decoration.
+            float tailBefore = dmg.TailRotorHealth;
+            dmg.DamageMainRotor(dmg.MainRotorHealth * 0.5f);
+            T.Check($"...damaging the main leaves the tail alone ({dmg.TailRotorHealth:0} vs {tailBefore:0})",
+                Mathf.IsEqualApprox(dmg.TailRotorHealth, tailBefore));
+
+            // MAIN DEAD -> NO LIFT, so it falls even at full collective. Measured against a HEALTHY control in
+            // the same run and the same conditions -- "it descended" alone would pass on any machine that had
+            // simply run out of altitude.
+            var ctrl = Spawn(World, "minicopter", new Vector3(-760f, 120f, 0f));
+            ctrl.EngineOn = true; ctrl.DebugNoTurbulence = true;
+            for (int i = 0; i < 260; i++)
+            { dmg.DriveHeli(1f, 0f, 0f, 0f, 0.02); ctrl.DriveHeli(1f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
+            dmg.KillMainRotor();
+            T.Check("KillMainRotor kills the main rotor", dmg.MainRotorDead);
+            float dy0 = dmg.GlobalPosition.Y, cy0 = ctrl.GlobalPosition.Y;
+            for (int i = 0; i < 150; i++)
+            { dmg.DriveHeli(1f, 0f, 0f, 0f, 0.02); ctrl.DriveHeli(1f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
+            float dead = dmg.GlobalPosition.Y - dy0, alive = ctrl.GlobalPosition.Y - cy0;
+            T.Check($"a dead main rotor cannot gain height on full collective ({dead:+0.#;-0.#;0} m vs a healthy {alive:+0.#;-0.#;0} m)",
+                dead < 0f && alive > dead + 5f);
+
+            // TAIL DEAD -> IT SPINS, and specifically about YAW. A machine that merely tumbles would pass a
+            // check on total angular velocity, so this asserts the yaw component dominates.
+            var spun = Spawn(World, "minicopter", new Vector3(-820f, 120f, 0f));
+            spun.EngineOn = true; spun.DebugNoTurbulence = true;
+            for (int i = 0; i < 260; i++) { spun.DriveHeli(1f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
+            spun.AngularVelocity = Vector3.Zero;
+            spun.KillTailRotor();
+            T.Check("KillTailRotor kills the tail rotor", spun.TailRotorDead);
+            for (int i = 0; i < 150; i++) { spun.DriveHeli(0f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
+            Vector3 av = spun.AngularVelocity;
+            float yawPart = Mathf.Abs(av.Dot(spun.GlobalTransform.Basis.Y));
+            T.Check($"a dead tail rotor spins the airframe ({yawPart:0.##} rad/s of yaw)", yawPart > 0.4f);
+            T.Check($"...and it is a SPIN, not a tumble (yaw {yawPart:0.##} of total {av.Length():0.##})",
+                yawPart > av.Length() * 0.7f);
+
+            // THE HUB IS THE BULLET TARGET, the disc is not. Shooting the tip of a 5 m blade should not kill a
+            // rotor; hitting the machinery at the mast should.
+            var hb = Spawn(World, "minicopter", new Vector3(-880f, 4f, 0f));
+            Vector3 hubWorld = hb.ToGlobal(new Vector3(0f, 1.22f, 0.55f));
+            T.Check($"a hit at the main mast resolves to the main rotor ({hb.ResolveHitPart(hubWorld)})",
+                hb.ResolveHitPart(hubWorld) == Vehicle.HeliPart.MainRotor);
+            T.Check($"a hit at the tail rotor resolves to the tail ({hb.ResolveHitPart(hb.ToGlobal(new Vector3(0.09f, 0.02f, 2.46f)))})",
+                hb.ResolveHitPart(hb.ToGlobal(new Vector3(0.09f, 0.02f, 2.46f))) == Vehicle.HeliPart.TailRotor);
+            T.Check($"a hit out on the blade tip is NOT a rotor hit ({hb.ResolveHitPart(hb.ToGlobal(new Vector3(2.4f, 1.22f, 0.55f)))})",
+                hb.ResolveHitPart(hb.ToGlobal(new Vector3(2.4f, 1.22f, 0.55f))) == Vehicle.HeliPart.Body);
+            T.Check($"a hit on the seat is airframe, not a rotor ({hb.ResolveHitPart(hb.ToGlobal(new Vector3(0f, 0.02f, 0.18f)))})",
+                hb.ResolveHitPart(hb.ToGlobal(new Vector3(0f, 0.02f, 0.18f))) == Vehicle.HeliPart.Body);
 
             // ---- 9. THE HUEY flies the same model off its own spec + the real retail mesh.
             var huey = Spawn(World, "huey", new Vector3(120f, 3f, 0f));

@@ -4801,7 +4801,18 @@ namespace UnturnedGodot
                         HitmarkerHUD.Instance?.Show(dummy.LastZone == TargetDummy.HitZone.Head);
                     }
                     else if (collider is PhysicalBone3D pb) { SpawnFleshImpact(point, hdir); pb.ApplyImpulse(hdir * 7f, point - pb.GlobalPosition); }
-                    else if (collider is Vehicle veh) { veh.TakeDamage(b.VehicleDamage); SpawnSurfaceImpact(point, hit["normal"].AsVector3(), Surf.Metal, veh); HitmarkerHUD.Instance?.ShowCircle(); }   // source Vehicle_Damage (35) + metal sparks, hole follows the car; circle hitmarker (master)
+                    else if (collider is Vehicle veh)
+                    {
+                        // A helicopter routes the hit by WHERE it landed: the hub boxes at each mast are the
+                        // rotors' bullet colliders, everything else is airframe. Rotor damage does NOT also
+                        // damage the hull -- shooting a tail rotor off should ground the machine by breaking
+                        // the thing that keeps it straight, not by chipping away at its HP.
+                        var part = veh.ResolveHitPart(point);
+                        if (part == Vehicle.HeliPart.MainRotor) veh.DamageMainRotor(b.VehicleDamage);
+                        else if (part == Vehicle.HeliPart.TailRotor) veh.DamageTailRotor(b.VehicleDamage);
+                        else veh.TakeDamage(b.VehicleDamage);
+                        SpawnSurfaceImpact(point, hit["normal"].AsVector3(), Surf.Metal, veh); HitmarkerHUD.Instance?.ShowCircle();   // source Vehicle_Damage (35) + metal sparks, hole follows the car; circle hitmarker (master)
+                    }
                     else if (collider is Deployable dep && !dep.IsWreck) { dep.TakeDamage(b.VehicleDamage); SpawnSurfaceImpact(point, hit["normal"].AsVector3(), Surf.Metal); HitmarkerHUD.Instance?.ShowCircle(); }   // gunfire damages a placed generator (metal sparks) -- Vehicle_Damage; circle hitmarker
                     else if (collider is Door bdoor) { bdoor.TakeDamage(b.VehicleDamage); SpawnSurfaceImpact(point, hit["normal"].AsVector3(), Surf.Wood); HitmarkerHUD.Instance?.ShowCircle(); }   // you can shoot a door open the hard way; circle hitmarker
                     else if (collider is Bed bbed) { bbed.TakeDamage(b.VehicleDamage); SpawnSurfaceImpact(point, hit["normal"].AsVector3(), Surf.Wood); HitmarkerHUD.Instance?.ShowCircle(); }   // circle hitmarker
