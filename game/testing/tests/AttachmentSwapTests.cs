@@ -73,19 +73,39 @@ namespace UnturnedGodot.Testing
             T.Check($"...where the by-id view sees only one kind ({collapsed.Count} entry, count {(collapsed.Count > 0 ? collapsed[0].Count : 0)})",
                 collapsed.Count == 1 && collapsed[0].Count == 2);
 
-            // ---- THE SWAP. Fit one magazine, then fit the other, and count what the player is left holding.
-            // A gun has one magazine slot: after two installs the bag must hold exactly one magazine, not zero.
+            // ---- THE SWAP, DRIVEN THROUGH THE REAL CODE.
+            //
+            // This used to re-implement the menu's sequence inline, under a comment saying "the swap as the menu
+            // performs it". That is a mirror, not a test: it agrees with the production path by construction and
+            // cannot disagree with it, which is why it sat green over a DUPLICATION bug for as long as that bug
+            // existed. AttachmentMenu.FitAttachmentTo is now callable, so these checks drive the thing that ships.
             var gun = new Item(1);
             AttachmentFit.SetInstalledId(gun, "Magazine", magId);       // one already fitted
             int before = CountOf(inv, magId);
-            // The swap as the menu performs it: give the outgoing one back FIRST, then consume the incoming one.
-            int prev = AttachmentFit.InstalledId(gun, "Magazine");
-            if (prev >= 0) inv.tryAddItem(new Item((ushort)prev));
+            var clicked = AttachmentFit.InBagInstances(inv, "Magazine", cal)[0].Item;
+            bool fitted = AttachmentMenu.FitAttachmentTo(gun, inv, "Magazine", magId, clicked, out _);
             int after = CountOf(inv, magId);
-            T.Check($"a same-id swap RETURNS the outgoing magazine ({before} -> {after})", after == before + 1);
-            // The bug it replaces, stated as the arithmetic that produced it: guarding on `prev != a.id` skips that
-            // give-back, so the bag goes down by one on every swap instead of staying level.
-            T.Check("...which the old `prev != id` guard would have skipped, losing one per swap", after != before);
+            T.Check($"a same-id swap succeeds and keeps the count level ({before} -> {after})",
+                fitted && after == before);
+            T.Check("...with the clicked magazine now on the gun",
+                AttachmentFit.InstalledId(gun, "Magazine") == magId);
+
+            // ---- THE DUPE. The consume can fail legitimately: the clicked instance is gone because the bag
+            // changed under the ring (moving ANY item is enough). The old order gave the outgoing attachment back
+            // BEFORE that consume, then returned early -- leaving it on the gun AND in the bag. One item, two
+            // places, and the next inventory refresh drew the extra copy. Reported by strawberry as "things
+            // reappear when I move another item around".
+            var inv3 = BagWith((magId, 30));
+            var gun3 = new Item(1);
+            AttachmentFit.SetInstalledId(gun3, "Magazine", magId);
+            var stale = new Item(magId) { amount = 30 };   // NOT in the bag: exactly what a stale ring hands over
+            int b3 = CountOf(inv3, magId);
+            bool ok3 = AttachmentMenu.FitAttachmentTo(gun3, inv3, "Magazine", magId, stale, out _);
+            int a3 = CountOf(inv3, magId);
+            T.Check($"a swap whose clicked item vanished is REFUSED (returned {ok3})", !ok3);
+            T.Check($"...and gives nothing back, so nothing is duplicated ({b3} -> {a3})", a3 == b3);
+            T.Check("...leaving the gun exactly as it was",
+                AttachmentFit.InstalledId(gun3, "Magazine") == magId);
 
             // ---- ROUNDS ARE PRESERVED PER OBJECT. tryAddItem must not flatten amount to 1, or every magazine
             // returned from a gun comes back empty and the player is quietly robbed of ammo instead of a magazine.
