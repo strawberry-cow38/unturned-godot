@@ -141,6 +141,54 @@ namespace UnturnedGodot.Testing
             T.Check($"the same throttle drives from the front seat ({asDriver:0.##} m/s vs {passThrottle:0.##} m/s as a passenger)",
                 asDriver > passThrottle * 3f + 1f);
 
+            // ---- 3. THE SEATED BODY MOVES WITH THE SEAT (strawberry: "make the different seats actually move
+            // the player's seated position"). Asserted on SeatBodyLocal rather than on the rendered body,
+            // because the 3rd-person rig is not built in a headless run -- so a check that read the body's
+            // transform would pass on a machine that draws every passenger on the driver's lap.
+            T.Check($"seat 0's body sits at the hand-tuned driver offset ({car.SeatBodyLocal(0)})",
+                car.SeatBodyLocal(0) == car.SeatOffset);
+            bool bodiesDiffer = true;
+            for (int i = 0; i < car.SeatCount && bodiesDiffer; i++)
+                for (int j = i + 1; j < car.SeatCount && bodiesDiffer; j++)
+                    if (car.SeatBodyLocal(i).DistanceTo(car.SeatBodyLocal(j)) < 0.05f) bodiesDiffer = false;
+            T.Check($"every seat draws the body somewhere different ({car.SeatCount} seats)", bodiesDiffer);
+            // The passenger offsets must be the extracted seats SHIFTED by the driver's tuning, not raw: a
+            // passenger placed at the bare prefab point sits lower than the driver in the same car.
+            var lift = car.SeatOffset - car.SeatLocal(0);
+            T.Check($"...and passengers inherit the driver's tuning rather than the raw prefab point (lift {lift})",
+                car.SeatBodyLocal(1).IsEqualApprox(car.SeatLocal(1) + lift));
+            // ...and the BODY actually lands there. Read back from the rendered rig in the vehicle's local frame,
+            // so this fails if PlayerController stops calling SeatBodyLocal even though the table stays perfect.
+            // A null here is a FAILURE, not a skip: "no body in a headless run" and "body drawn in the wrong
+            // seat" must not report the same way.
+            // Third person, or there is no seated body to place -- the placement branch early-returns in FP,
+            // which had this check reading a body still parked at the world origin.
+            p.DriveFP = false;
+            T.Check("F2 again for the body check", p.TrySwitchSeat(1) && p.SeatIndex == 1);
+            yield return Ticks(6);
+            var seated1 = p.DebugSeatedBodyLocal;
+            T.Check($"the 3rd-person body exists and reports a seat position ({seated1})", seated1.HasValue);
+            if (seated1.HasValue)
+                T.Check($"...and it is drawn in the seat we moved to, not the driver's " +
+                        $"(body {seated1.Value} vs driver seat {car.SeatBodyLocal(0)})",
+                    seated1.Value.DistanceTo(car.SeatBodyLocal(1)) < 0.35f &&
+                    seated1.Value.DistanceTo(car.SeatBodyLocal(0)) > 0.3f);
+            T.Check("back to the wheel", p.TrySwitchSeat(0));
+            yield return Ticks(6);
+            var seated0 = p.DebugSeatedBodyLocal;
+            if (seated0.HasValue)
+                T.Check($"...and back at the wheel it is drawn in the driver's seat again ({seated0.Value})",
+                    seated0.Value.DistanceTo(car.SeatBodyLocal(0)) < 0.35f);
+            p.DriveFP = true;
+
+            // The bus is the one where getting this wrong is most visible.
+            var bus2 = Vehicle.BuildByName("bus"); World.AddChild(bus2); bus2.GlobalPosition = new Vector3(-400f, 2f, 0f);
+            T.Check($"the bus seats its back row metres behind its driver " +
+                    $"(driver z {bus2.SeatBodyLocal(0).Z:0.##}, back row z {bus2.SeatBodyLocal(bus2.SeatCount - 1).Z:0.##})",
+                bus2.SeatBodyLocal(bus2.SeatCount - 1).Z - bus2.SeatBodyLocal(0).Z > 3f);
+            bus2.QueueFree();
+            yield return Ticks(1);
+
             // Refusals. A seat index past the end, and the seat you are already in.
             T.Check("a seat that does not exist is refused", !p.TrySwitchSeat(99));
             T.Check("...as is the seat you are already in", !p.TrySwitchSeat(0));

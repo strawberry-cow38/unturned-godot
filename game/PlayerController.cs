@@ -87,6 +87,12 @@ namespace UnturnedGodot
         const float FpRideGazePitchDeg = -8.75f;
         readonly bool _ugFp = System.Environment.GetEnvironmentVariable("UG_FP") == "1";   // render harness: force 1st-person to screenshot the FP viewmodel
         RiggedCharacter _body;        // live 3rd-person player model (RiggedCharacter), visible when !_fp
+        /// <summary>Test seam: where the 3rd-person body actually ended up, in the driven vehicle's LOCAL frame.
+        /// Null when there is no body or we are not driving. Asserting on the seat table instead would pass on a
+        /// build that computes every seat correctly and still draws all of them on the driver's lap -- the
+        /// function being right is not the same claim as the body using it.</summary>
+        public Vector3? DebugSeatedBodyLocal =>
+            _body != null && _driving != null ? _driving.ToLocal(_body.GlobalPosition) : (Vector3?)null;
         PlayerClothingController _clothing;   // P4 equip->visual wiring (drives shirt/pants paint + gear bone-attach off the worn slots)
         // Damage feedback, both source-exact and fired from TakeDamage: the red hurt flash (PlayerUI.painAlpha) and the
         // camera flinch (PlayerLook.flinchLocalRotation, an angular kick perpendicular to the hit that decays to level).
@@ -5317,7 +5323,10 @@ namespace UnturnedGodot
             if (_fp || _dead) { return; }
             if (_driving != null)   // in the driver seat (best-effort idle pose)
             {
-                _body.GlobalTransform = _driving.GlobalTransform * new Transform3D(Basis.Identity, _driving.SeatOffset);   // per-vehicle driver seat (prefab Seat_0)
+                // The seat you are ACTUALLY in (strawberry 2026-08-16: "make the different seats actually move the
+                // player's seated position") -- previously every occupant was drawn in the driver's seat, so
+                // switching seats moved the camera and left the body behind the wheel.
+                _body.GlobalTransform = _driving.GlobalTransform * new Transform3D(Basis.Identity, _driving.SeatBodyLocal(_seatIndex));
                 _body.PlayLoop(_body.ClipLength("Idle_Drive") > 0f ? "Idle_Drive" : "Idle_Sit");   // seated DRIVING pose (hands on the wheel) instead of a standing idle (master)
             }
             else if (_riding != null && IsInstanceValid(_riding))   // C6: same seated pose on the replicated puppet's seat

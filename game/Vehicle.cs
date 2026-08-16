@@ -331,6 +331,14 @@ namespace UnturnedGodot
         /// <summary>Local seat position, clamped -- an out-of-range index returns the driver's rather than throwing
         /// mid-frame on a vehicle whose seat count shrank under a stale index.</summary>
         public Vector3 SeatLocal(int i) => SeatLocals[Mathf.Clamp(i, 0, SeatCount - 1)];
+
+        /// <summary>Where the 3rd-person BODY sits for a given seat.
+        ///
+        /// Seat 0 keeps SeatOffset, which is the prefab's Seat_0 plus a hand-tuned rise that puts the driver in
+        /// the seat rather than through the floor. Passengers get their own extracted seat plus that SAME delta,
+        /// so the tuning carries across instead of being re-guessed per seat -- and so a vehicle whose driver
+        /// pose is already right cannot have its passengers sitting at a different height to him.</summary>
+        public Vector3 SeatBodyLocal(int i) => i == 0 ? SeatOffset : SeatLocal(i) + (SeatOffset - SeatLocal(0));
         public string SpecKey = "jeep"; public int SpawnVariant;   // MP §3.6: which Spec built this + its paint variant -- VehicleNetSync replicates them so client puppets rebuild the same look
         public ushort NetDriverId;   // MP §3.6: remote player holding the driver seat (set by VehicleNetSync); 0 = none. Gates the local direct-path enter; never set in pure SP.
         public Vector3 DriverEyeLocal = new Vector3(-0.4f, 1.85f, 0.4f);   // FP driving eye (local); tall cabs override higher so the view clears the hood
