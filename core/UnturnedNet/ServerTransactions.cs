@@ -20,6 +20,10 @@ namespace UnturnedGodot.Net
         public long AttachFitsApplied;
         public long AttachFitsRejected;     // empty cell / wrong item at that address (a stale client grid)
         public long PickupsDenied;          // legal pickup, full grid -> ItemPickupDenied went back
+        public long ReloadsApplied;
+        public long ReloadsRejected;        // no magazine at that address / not a magazine
+        public long ClothingApplied;
+        public long ClothingRejected;       // empty cell / wrong item type for that slot / no room for the displaced garment
         public long ConsoleApplied;
         public long ConsoleRejected;        // unknown verb / cheats disabled / bad args
     }
@@ -288,6 +292,18 @@ namespace UnturnedGodot.Net
             commands.Register<FitAttachmentCommand>(ReplicationIds.CommandFitAttachment, FitAttachmentCommand.TryRead,
                 OnFitAttachment,
                 validate: (sender, cmd) => _inventories.TryGet(sender, out _) && cmd.Page < PlayerInventory.PAGES);
+
+            commands.Register<ReloadSwapCommand>(ReplicationIds.CommandReloadSwap, ReloadSwapCommand.TryRead,
+                OnReloadSwap,
+                validate: (sender, cmd) => _inventories.TryGet(sender, out _) && cmd.Page < PlayerInventory.PAGES);
+
+            commands.Register<WearClothingCommand>(ReplicationIds.CommandWearClothing, WearClothingCommand.TryRead,
+                OnWearClothing,
+                validate: (sender, cmd) => _inventories.TryGet(sender, out _) && cmd.Page < PlayerInventory.PAGES);
+
+            commands.Register<UnwearClothingCommand>(ReplicationIds.CommandUnwearClothing, UnwearClothingCommand.TryRead,
+                OnUnwearClothing,
+                validate: (sender, cmd) => _inventories.TryGet(sender, out _));
 
             commands.Register<OpenStorageCommand>(ReplicationIds.CommandOpenStorage, OpenStorageCommand.TryRead,
                 (sender, cmd) =>
@@ -596,6 +612,111 @@ namespace UnturnedGodot.Net
             if (jar?.item == null || jar.item.id != cmd.Id) { Diag.AttachFitsRejected++; return; }
             page.removeItem(index);
             Diag.AttachFitsApplied++;
+        }
+
+        /// <summary>RELOAD, server side: spend the chosen magazine and hand back the spent one.
+        ///
+        /// This existed only on the client before, as a bare removeItem + tryAddItem inside DoMagSwap -- so the
+        /// server's grid never changed and the next owner echo put the spare magazine BACK, at full, while the
+        /// partially-spent one it had returned vanished. One spare magazine reloaded forever. ConsumeShells and
+        /// the shotgun unload had the same shape. Review 2026-08-16.</summary>
+        void OnReloadSwap(ushort sender, ReloadSwapCommand cmd)
+        {
+            var inv = SenderInventory(sender);
+            var page = inv.items[cmd.Page];
+            byte index = page.getIndex(cmd.X, cmd.Y);
+            var jar = index == byte.MaxValue ? null : page.getItem(index);
+            var asset = jar?.item != null ? Assets.find(jar.item.id) : null;
+            // Must actually be a magazine sitting where the client says it is. A stale address is the ordinary
+            // case (the bag moved under the reload), not an attack, so it is a quiet reject.
+            if (asset == null || asset.magCapacity <= 0) { Diag.ReloadsRejected++; return; }
+            page.removeItem(index);
+            // Give the spent magazine back, CLAMPED to what that magazine can physically hold. SpentAmount is the
+            // one number only the client knows (no gun state is replicated), so this is the cheat surface: the
+            // clamp bounds it at "a full magazine back" rather than an arbitrary stack.
+            if (cmd.SpentId != 0)
+            {
+                var spent = Assets.find(cmd.SpentId);
+                if (spent != null && spent.magCapacity > 0)
+                {
+                    byte amt = (byte)System.Math.Min(cmd.SpentAmount, (int)spent.magCapacity);
+                    if (amt > 0) inv.tryAddItem(new Item(cmd.SpentId, amt, 100));
+                }
+            }
+            Diag.ReloadsApplied++;
+        }
+
+        /// <summary>WEAR, server side: grid -> worn slot, with the displaced garment going back to the grid.
+        ///
+        /// Doing this locally only (InventoryUI.WearFromGrid) meant the server never learned the player was
+        /// wearing anything: the echo put the backpack back in the bag and re-sized its page to 0x0, so a dragged
+        /// on backpack un-equipped itself a moment later. Review 2026-08-16.</summary>
+        void OnWearClothing(ushort sender, WearClothingCommand cmd)
+        {
+            var inv = SenderInventory(sender);
+            if (cmd.Page >= inv.items.Length) { Diag.ClothingRejected++; return; }
+            var page = inv.items[cmd.Page];
+            byte index = page.getIndex(cmd.X, cmd.Y);
+            var jar = index == byte.MaxValue ? null : page.getItem(index);
+            var asset = jar?.item != null ? Assets.find(jar.item.id) : null;
+            var want = (EItemType)cmd.Slot;
+            if (asset == null || asset.type != want || !IsClothingType(want)) { Diag.ClothingRejected++; return; }
+            var item = jar.item;
+            var old = WornIn(inv, want);
+            if (ReferenceEquals(old, item)) { Diag.ClothingRejected++; return; }
+            page.removeItem(index);
+            Wear(inv, want, item);
+            // The displaced garment goes back into the grid. Deliberately AFTER the wear, because wearing a bag
+            // resizes its page and the old one may only fit in the new geometry.
+            if (old != null && !inv.tryAddItem(old))
+            {
+                // Nowhere to put it: undo rather than delete a garment. Same rule as MoveTo's restore.
+                Wear(inv, want, old);
+                page.tryAddItem(item);
+                Diag.ClothingRejected++;
+                return;
+            }
+            Diag.ClothingApplied++;
+        }
+
+        /// <summary>UNWEAR, server side: worn slot -> grid.</summary>
+        void OnUnwearClothing(ushort sender, UnwearClothingCommand cmd)
+        {
+            var inv = SenderInventory(sender);
+            var want = (EItemType)cmd.Slot;
+            if (!IsClothingType(want)) { Diag.ClothingRejected++; return; }
+            var old = WornIn(inv, want);
+            if (old == null) { Diag.ClothingRejected++; return; }
+            // Clear the slot FIRST: taking a bag off resizes its page to 0x0 and discards whatever was in it, so
+            // asking for room before that would measure a grid that is about to shrink.
+            Wear(inv, want, null);
+            if (!inv.tryAddItem(old)) { Wear(inv, want, old); Diag.ClothingRejected++; return; }   // no room -> put it back on
+            Diag.ClothingApplied++;
+        }
+
+        static bool IsClothingType(EItemType t)
+            => t is EItemType.HAT or EItemType.GLASSES or EItemType.MASK or EItemType.SHIRT
+                 or EItemType.VEST or EItemType.BACKPACK or EItemType.PANTS;
+
+        static Item WornIn(PlayerInventory inv, EItemType t) => t switch
+        {
+            EItemType.HAT => inv.wornHat, EItemType.GLASSES => inv.wornGlasses, EItemType.MASK => inv.wornMask,
+            EItemType.SHIRT => inv.wornShirt, EItemType.VEST => inv.wornVest,
+            EItemType.BACKPACK => inv.wornBackpack, EItemType.PANTS => inv.wornPants, _ => null,
+        };
+
+        static void Wear(PlayerInventory inv, EItemType t, Item item)
+        {
+            switch (t)
+            {
+                case EItemType.HAT: inv.wearHat(item); break;
+                case EItemType.GLASSES: inv.wearGlasses(item); break;
+                case EItemType.MASK: inv.wearMask(item); break;
+                case EItemType.SHIRT: inv.wearShirt(item); break;
+                case EItemType.VEST: inv.wearVest(item); break;
+                case EItemType.BACKPACK: inv.wearBackpack(item); break;
+                case EItemType.PANTS: inv.wearPants(item); break;
+            }
         }
 
         void OnConsume(ushort sender, ConsumeCommand cmd)

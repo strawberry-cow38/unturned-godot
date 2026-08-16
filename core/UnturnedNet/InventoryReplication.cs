@@ -118,6 +118,59 @@ namespace UnturnedGodot.Net
         }
     }
 
+    /// <summary>Reloading, as an intent. The client picked a magazine and knows how many rounds came out of the
+    /// gun; the server owns whether that magazine is really there.
+    ///
+    /// SpentId/SpentAmount are the outgoing magazine, and they are the one client-supplied quantity here -- the
+    /// server has no gun state to derive them from (nothing on the wire carries gunAmmo). OnReload clamps the
+    /// amount to the magazine asset's real capacity, so the worst a lying client gets is a full magazine back
+    /// instead of a partial one, not an arbitrary stack. SpentId 0 = nothing to return (reloading from empty).</summary>
+    public struct ReloadSwapCommand
+    {
+        public byte Page, X, Y;      // the fresh magazine being loaded
+        public ushort SpentId;       // the magazine coming out (0 = none)
+        public byte SpentAmount;     // rounds left in it
+        public void Write(NetPakWriter w) { w.WriteUInt8(Page); w.WriteUInt8(X); w.WriteUInt8(Y); w.WriteUInt16(SpentId); w.WriteUInt8(SpentAmount); }
+        public static bool TryRead(NetPakReader r, out ReloadSwapCommand cmd)
+        {
+            cmd = default;
+            if (!r.ReadUInt8(out byte p) || !r.ReadUInt8(out byte x) || !r.ReadUInt8(out byte y)
+                || !r.ReadUInt16(out ushort sid) || !r.ReadUInt8(out byte samt)) return false;
+            cmd = new ReloadSwapCommand { Page = p, X = x, Y = y, SpentId = sid, SpentAmount = samt };
+            return true;
+        }
+    }
+
+    /// <summary>Wear the garment at (Page,X,Y) into clothing slot Slot (an EItemType). The displaced garment, if
+    /// any, goes back to the grid -- the server does the whole swap, because doing half of it locally is what made
+    /// a dragged-on backpack un-equip itself on the next echo.</summary>
+    public struct WearClothingCommand
+    {
+        public byte Page, X, Y, Slot;
+        public void Write(NetPakWriter w) { w.WriteUInt8(Page); w.WriteUInt8(X); w.WriteUInt8(Y); w.WriteUInt8(Slot); }
+        public static bool TryRead(NetPakReader r, out WearClothingCommand cmd)
+        {
+            cmd = default;
+            if (!r.ReadUInt8(out byte p) || !r.ReadUInt8(out byte x) || !r.ReadUInt8(out byte y) || !r.ReadUInt8(out byte s)) return false;
+            cmd = new WearClothingCommand { Page = p, X = x, Y = y, Slot = s };
+            return true;
+        }
+    }
+
+    /// <summary>Take clothing slot Slot off, back into the grid.</summary>
+    public struct UnwearClothingCommand
+    {
+        public byte Slot;
+        public void Write(NetPakWriter w) => w.WriteUInt8(Slot);
+        public static bool TryRead(NetPakReader r, out UnwearClothingCommand cmd)
+        {
+            cmd = default;
+            if (!r.ReadUInt8(out byte s)) return false;
+            cmd = new UnwearClothingCommand { Slot = s };
+            return true;
+        }
+    }
+
     public struct OpenStorageCommand
     {
         public uint NetId;

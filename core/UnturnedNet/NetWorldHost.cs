@@ -843,6 +843,15 @@ namespace UnturnedGodot.Net
         public bool SendConsume(byte page, byte x, byte y)
             => SendCommand(ReplicationIds.CommandConsume, new ConsumeCommand { Page = page, X = x, Y = y }.Write);
 
+        public bool SendReloadSwap(byte page, byte x, byte y, ushort spentId, byte spentAmount)
+            => SendCommand(ReplicationIds.CommandReloadSwap, new ReloadSwapCommand { Page = page, X = x, Y = y, SpentId = spentId, SpentAmount = spentAmount }.Write);
+
+        public bool SendWearClothing(byte page, byte x, byte y, byte slot)
+            => SendCommand(ReplicationIds.CommandWearClothing, new WearClothingCommand { Page = page, X = x, Y = y, Slot = slot }.Write);
+
+        public bool SendUnwearClothing(byte slot)
+            => SendCommand(ReplicationIds.CommandUnwearClothing, new UnwearClothingCommand { Slot = slot }.Write);
+
         public bool SendOpenStorage(uint netId)
             => SendCommand(ReplicationIds.CommandOpenStorage, new OpenStorageCommand { NetId = netId }.Write);
 

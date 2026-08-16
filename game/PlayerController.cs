@@ -3007,6 +3007,9 @@ namespace UnturnedGodot
         public System.Action<byte, byte, byte> NetDropItem;          // (page,x,y) -> Client.SendDropItem (server removes + tosses the world item)
         public System.Action<byte, byte, byte, ushort> NetFitAttachment;   // (page,x,y,id) -> Client.SendFitAttachment (server spends the fitted item)
         public System.Action<byte, byte, byte> NetConsume;           // (page,x,y) -> Client.SendConsume (server deletes the item; vitals stay client-led until the vitals split)
+        public System.Action<byte, byte, byte, ushort, byte> NetReloadSwap;   // (page,x,y, spentId,spentAmount) -> Client.SendReload (server spends the fresh mag + returns the spent one)
+        public System.Action<byte, byte, byte, byte> NetWearClothing;     // (page,x,y, EItemType slot) -> Client.SendWearClothing (server does the whole swap)
+        public System.Action<byte> NetUnwearClothing;                     // (EItemType slot) -> Client.SendUnwearClothing
         public System.Action<ushort> NetCraft;                       // blueprintIndex (BlueprintRegistry.All order, content-hash-matched) -> Client.SendCraft
         public System.Action<ushort, Vector3, float> NetPlaceDeployable;   // (defId,pos,yaw) -> Client.SendPlaceDeployable (server spends the item + broadcasts; the replica view renders it)
         public System.Action<uint> NetSalvageDeployable;             // -> Client.SendSalvageDeployable (removal echoes back through the replica view)
@@ -3459,10 +3462,22 @@ namespace UnturnedGodot
             var (fb, fi, fresh) = found.Value;
             int oldAmmo = Ammo;
             bool chambered = HasChamber && oldAmmo > 0;                                   // a round rides in the chamber through a TACTICAL swap
-            Inventory.items[fb].removeItem(fi);                                          // take the fresh mag out of the bag
             int loaded = System.Math.Min(fresh.amount, CapForMag(SDG.Unturned.Assets.find(fresh.id)));    // rounds off the fresh mag (the drum overrides Ammo_Max; a normal mag is capped by it)
+            byte returned = (byte)System.Math.Max(0, oldAmmo - (chambered ? 1 : 0));      // the outgoing mag MINUS the chambered round (it stayed in the gun)
+            // SERVER-OWNED BAG: the swap is an INTENT. This whole block used to be a local removeItem +
+            // tryAddItem, which the server never heard about -- so the next owner echo put the spare magazine
+            // back at FULL and destroyed the partially-spent one that had been returned. One spare reloaded
+            // forever. The client still moves its own Ammo (that is gun state, which no snapshot carries); only
+            // the GRID edit goes to the server, and the echo brings the real bag back. Review 2026-08-16.
+            var freshJar = Inventory.items[fb].getItem(fi);
+            if (InventoryIsServerOwned && NetReloadSwap != null)
+                NetReloadSwap(fb, freshJar.x, freshJar.y, (ushort)System.Math.Max(0, _loadedMagId), returned);
+            else
+            {
+                Inventory.items[fb].removeItem(fi);                                      // take the fresh mag out of the bag
+                Inventory?.tryAddItem(new Item((ushort)_loadedMagId, returned));         // old mag back
+            }
             Ammo = loaded + (chambered ? 1 : 0);                                         // +1: the already-chambered round stays on top of the fresh mag
-            Inventory?.tryAddItem(new Item((ushort)_loadedMagId, (byte)System.Math.Max(0, oldAmmo - (chambered ? 1 : 0))));   // old mag back MINUS the chambered round (it stayed in the gun)
             _loadedMagId = fresh.id;
             // chamber type is independent of the mag (master): a tactical swap keeps the chambered round's type; a
             // reload from EMPTY chambers a fresh round from the new mag -> takes its type. (_chambered is set by the caller.)

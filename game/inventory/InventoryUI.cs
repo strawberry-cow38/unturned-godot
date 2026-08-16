@@ -631,6 +631,16 @@ namespace UnturnedGodot
             var item = jar.item;
             var old = WornFor(slotType);
             if (ReferenceEquals(old, item)) return false;                // already worn here -> nothing to do
+            // SERVER-OWNED BAG: the whole swap is an INTENT, and the echo brings back the result. Done locally
+            // it was reverted a moment later -- the backpack went back into the bag and its page re-sized to
+            // 0x0 -- so a dragged-on bag un-equipped itself. The on-body VISUAL still updates locally off the
+            // adopted worn refs (PlayerClothingController reads them), so the paperdoll does not wait on the
+            // round trip. Review 2026-08-16.
+            if (Player != null && Player.InventoryIsServerOwned && Player.NetWearClothing != null)
+            {
+                Player.NetWearClothing(page, x, y, (byte)slotType);
+                return true;
+            }
             pg.removeItem(idx);                                          // out of the grid (source: inventory.removeItem)
             WearVisual(item);                                            // state + on-body visual (+ resize this slot's bag page)
             if (old != null && !ReferenceEquals(old, item)) ReturnToGrid(old);   // the displaced garment goes back to the grid
@@ -643,6 +653,13 @@ namespace UnturnedGodot
         {
             var old = WornFor(slotType);
             if (old == null) return false;
+            // Server-owned: an intent, same as WearFromGrid. Locally this resized the bag page to 0x0 and
+            // DISCARDED every jar in it (Items.loadSize drops what no longer fits) until the echo restored them.
+            if (Player != null && Player.InventoryIsServerOwned && Player.NetUnwearClothing != null)
+            {
+                Player.NetUnwearClothing((byte)slotType);
+                return true;
+            }
             UnwearVisual(slotType);   // clears the worn slot + the on-body visual (+ resizes a bag page to 0x0)
             ReturnToGrid(old);
             return true;

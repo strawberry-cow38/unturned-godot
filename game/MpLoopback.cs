@@ -186,6 +186,9 @@ namespace UnturnedGodot
                 Player.NetDropItem = (page, x, y) => Client.SendDropItem(page, x, y);
                 Player.NetFitAttachment = (page, x, y, id) => Client.SendFitAttachment(page, x, y, id);
                 Player.NetConsume = (page, x, y) => Client.SendConsume(page, x, y);
+                Player.NetReloadSwap = (page, x, y, sid, samt) => Client.SendReloadSwap(page, x, y, sid, samt);
+                Player.NetWearClothing = (page, x, y, slot) => Client.SendWearClothing(page, x, y, slot);
+                Player.NetUnwearClothing = slot => Client.SendUnwearClothing(slot);
                 Player.NetCraft = index => Client.SendCraft(index);
                 // ADOPT (mirror ClientWorldSession:190-194): every owner-block echo re-adopts the SERVER grid
                 //     into the local Player's EXISTING Inventory instance (copy-in-place -- the InventoryUI /

@@ -84,6 +84,14 @@ namespace UnturnedGodot.Net
         // attachment AND the item. Consume cannot carry this: it REJECTS anything that is not edible, and would
         // apply food/health effects if it did not.
         public const byte CommandFitAttachment = 35;
+        // Review 2026-08-16: three grid mutations the client used to make on its own. The server owns the bag even
+        // in singleplayer (the loopback), so a local-only edit is reverted by the next owner echo -- and when the
+        // edit REMOVED something, the echo hands it back, which is free items rather than a cosmetic glitch.
+        public const byte CommandReloadSwap = 36;         // spend a magazine, take back the spent one (the GRID half of a
+                                                          // reload -- CommandReload=5 is the combat rate gate and carries
+                                                          // only a Seq, so the two are deliberately separate intents)
+        public const byte CommandWearClothing = 37;       // grid -> a worn slot (and the displaced garment back)
+        public const byte CommandUnwearClothing = 38;     // a worn slot -> the grid
 
         // EventRegistry id space (server -> client, ReliableOrdered)
         public const byte EventJoinSnapshot = 1;   // the join-time FULL snapshot rides the reliable channel (§2.2: fragmentation is safe there)
