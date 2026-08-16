@@ -1425,6 +1425,7 @@ namespace UnturnedGodot
             RotorRadius = 5.57f, TailRotorRadius = 1.28f,        // the mesh's own spans -- no scaling for this one
             RotorHub = new Vector3(0f, 3.01f, -0.25f), TailRotorHub = new Vector3(-0.45f, 3.57f, 6.68f),   // prefab local positions, Z negated
             HeliBodyMeshes = new[] { "huey_body.txt", "huey_body_1.txt" },
+            Parts = HeliParts("huey"),   // same three as the rest of the fleet, despite this spec predating HeliBase
             Body = null, Palette = null,
             DefaultPaints = new[] { "#475e83", "#a69884", "#437c44", "#495631" },   // .dat DefaultPaintColors
             Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", WheelRadius = 0.3f,   // unused (no wheels)
@@ -1478,13 +1479,61 @@ namespace UnturnedGodot
         // MTOW throughout -- mixing empty and max weights would have flipped Skycrane and Hind against each
         // other, since the Skycrane is lighter than the Hind empty and twice it loaded.
         //
+        // DETAIL PARTS (meshes by cow tools, 0f8719c1). Every airframe in the fleet carries the same three,
+        // extracted under the same `<heli>_<part>.txt` convention, so they are DERIVED from the mesh name
+        // rather than typed out five times -- five hand-written arrays is five chances to paste `orca_seats`
+        // into the Skycrane and never notice, since a wrong-but-present seat mesh renders perfectly happily.
+        //
+        // The colours are the extractor's per-type DEFAULTS, not ported values, and that distinction matters:
+        // the retail parts read a white `_Color` because they are palette-driven, so there is nothing to port
+        // until the palette pass samples the real texels. Identical across the fleet on purpose -- a Hind's
+        // seats being greyer than a Huey's would be invention, not fidelity.
+        static (string, Color)[] HeliParts(string mesh, params (string, Color)[] extra)
+        {
+            var std = new (string, Color)[]
+            {
+                ($"{mesh}_seats.txt", new Color(0.12f, 0.12f, 0.13f)),        // dark cabin seats
+                ($"{mesh}_steer.txt", new Color(0.08f, 0.08f, 0.09f)),        // collective/cyclic sticks, near-black
+                ($"{mesh}_taillights.txt", new Color(0.80f, 0.10f, 0.10f)),   // red lenses
+            };
+            if (extra == null || extra.Length == 0) return std;
+            var all = new (string, Color)[std.Length + extra.Length];
+            std.CopyTo(all, 0);
+            extra.CopyTo(all, std.Length);
+            return all;
+        }
+
+        // LANDING GEAR (2026-08-16). Every airframe except the Huey shipped with its cabin box as its ONLY
+        // collider, and a cabin box whose floor sits above the aircraft's own belly: the Hind's was 0.58 m up,
+        // the Hummingbird's 0.83 m. So a parked helicopter sank until its underside was inside the terrain,
+        // which is how the Hind's chin turret came to be invisible -- it was on the aircraft the whole time,
+        // correctly placed, and entirely below the ground line.
+        //
+        // The footprints below are MEASURED off each body mesh (the vertices within 0.25 m of its lowest
+        // point, split left/right of centreline) rather than eyeballed, so each box's floor is that airframe's
+        // real belly: skids on the Hummingbird, wheels on the Orca, splayed legs on the Skycrane, belly
+        // fairings on the Hind. The Huey already had skid boxes and is left alone.
+        static (Vector3, Vector3)[] Skids(float halfX, float width, float bottom, float zFrom, float zTo, float h = 0.30f)
+        {
+            float zc = (zFrom + zTo) * 0.5f, len = zTo - zFrom;
+            var size = new Vector3(width, h, len);
+            return new (Vector3, Vector3)[]
+            {
+                (size, new Vector3(-halfX, bottom + h * 0.5f, zc)),
+                (size, new Vector3( halfX, bottom + h * 0.5f, zc)),
+            };
+        }
+
         // HeliBase carries everything the fleet shares, so each entry below is only what makes it itself.
         static Spec HeliBase(string mesh, float thrust, float pitchTq, float rollTq, float yawTq,
                              float rotorR, float tailR, Vector3 mainHub, Vector3 tailHub,
-                             Vector3 box, Vector3 boxCentre, float speedMax, float fuel, float health,
-                             string name, EItemRarity rarity) => new()
+                             Vector3 box, Vector3 boxCentre, (Vector3, Vector3)[] gear,
+                             float speedMax, float fuel, float health,
+                             string name, EItemRarity rarity, params (string, Color)[] extraParts) => new()
         {
             Heli = true,
+            Parts = HeliParts(mesh, extraParts),
+            ExtraBoxes = gear,
             HeliThrust = thrust, HeliPitchTorque = pitchTq, HeliRollTorque = rollTq, HeliYawTorque = yawTq,
             HeliLevel = 0f,   // attitude is state on every airframe; nothing self-levels (VoX)
             HeliClimbMax = 20f, HeliFallMax = 42f,
@@ -1509,13 +1558,21 @@ namespace UnturnedGodot
         static readonly Spec _hind = HeliBase("hind", 14.2f, 0.69f, 0.81f, 0.63f, 5.90f, 1.25f,
             new Vector3(0f, 4.18f, 0.58f), new Vector3(-0.30f, 4.47f, 9.60f),
             new Vector3(2.90f, 2.60f, 7.20f), new Vector3(0f, 1.40f, 0.20f),
-            34f, 1750f, 1250f, "Hind", EItemRarity.LEGENDARY);
+            Skids(0.77f, 1.12f, -0.48f, -3.33f, 1.84f, 0.20f),   // belly fairings + wheels, measured
+            34f, 1750f, 1250f, "Hind", EItemRarity.LEGENDARY,
+            ("hind_turret.txt", new Color(0.16f, 0.17f, 0.14f)));   // the only airframe with one: chin turret + gun barrel, olive drab
         public static Vehicle BuildHind(int variant = 0) => Build(_hind, variant, "hind");
 
         // ORCA (Ka-60) -- the modern transport. Nearly Hind-fast and noticeably more agile; the all-rounder.
         static readonly Spec _orca = HeliBase("orca", 13.4f, 0.91f, 1.07f, 0.84f, 5.90f, 1.25f,
             new Vector3(0f, 3.28f, -0.25f), new Vector3(-0.30f, 1.48f, 7.55f),
             new Vector3(2.60f, 2.50f, 6.40f), new Vector3(0f, 1.20f, 0.10f),
+            new (Vector3, Vector3)[]   // TRICYCLE gear, not skids: two mains forward + one tail wheel, all measured
+            {
+                (new Vector3(0.34f, 0.25f, 0.40f), new Vector3(-1.465f, -0.525f, -2.045f)),
+                (new Vector3(0.34f, 0.25f, 0.40f), new Vector3( 1.465f, -0.525f, -2.045f)),
+                (new Vector3(0.32f, 0.25f, 0.32f), new Vector3(  0.00f, -0.355f,  3.100f)),
+            },
             31f, 2000f, 1000f, "Orca", EItemRarity.EPIC);
         public static Vehicle BuildOrca(int variant = 0) => Build(_orca, variant, "orca");
 
@@ -1524,6 +1581,7 @@ namespace UnturnedGodot
         static readonly Spec _skycrane = HeliBase("skycrane", 12.2f, 0.50f, 0.59f, 0.46f, 5.90f, 1.25f,
             new Vector3(0f, 3.01f, -1.21f), new Vector3(-0.45f, 3.55f, 7.71f),
             new Vector3(3.20f, 2.80f, 6.80f), new Vector3(0f, 1.30f, 0.30f),
+            Skids(2.065f, 0.60f, -0.63f, -4.15f, 2.73f, 0.20f),   // the S-64's tall splayed legs, measured
             22f, 2000f, 900f, "Skycrane", EItemRarity.EPIC);
         public static Vehicle BuildSkycrane(int variant = 0) => Build(_skycrane, variant, "skycrane");
 
@@ -1532,6 +1590,7 @@ namespace UnturnedGodot
         static readonly Spec _hummingbird = HeliBase("hummingbird", 13.5f, 1.84f, 2.16f, 1.68f, 5.57f, 1.25f,
             new Vector3(0f, 3.01f, -0.25f), new Vector3(-0.45f, 3.45f, 6.95f),
             new Vector3(2.00f, 2.10f, 4.60f), new Vector3(0f, 1.00f, 0.10f),
+            Skids(1.125f, 0.30f, -0.88f, -3.25f, 1.75f),   // classic skids, same shape as the Huey's, measured
             29f, 1750f, 750f, "Hummingbird", EItemRarity.EPIC);
         public static Vehicle BuildHummingbird(int variant = 0) => Build(_hummingbird, variant, "hummingbird");
         public static Vehicle BuildByName(string name, int variant = 0) => name switch { "quad" => BuildQuad(variant), "bus" => BuildBus(variant), "sedan" => BuildSedan(variant), "hatchback" => BuildHatchback(variant), "humvee" => BuildHumvee(variant), "roadster" => BuildRoadster(variant), "ambulance" => BuildAmbulance(variant), "firetruck" => BuildFiretruck(variant), "tractor" => BuildTractor(variant), "ural" => BuildUral(variant), "police" => BuildPolice(variant), "semi" => BuildSemi(variant), "trailer" => BuildTrailer(variant), "offroader" => BuildOffRoader(variant), "off_roader" => BuildOffRoader(variant), "truck" => BuildTruck(variant), "van" => BuildVan(variant), "golf" => BuildGolf(variant), "vw_golf" => BuildGolf(variant), "runabout" => BuildRunabout(variant), "apc" => BuildAPC(variant), "minicopter" => BuildMinicopter(variant), "mini" => BuildMinicopter(variant), "heli" => BuildMinicopter(variant), "huey" => BuildHuey(variant), "scoutcopter" => BuildScoutcopter(variant), "scout" => BuildScoutcopter(variant), "hind" => BuildHind(variant), "orca" => BuildOrca(variant), "skycrane" => BuildSkycrane(variant), "hummingbird" => BuildHummingbird(variant), "bird" => BuildHummingbird(variant), _ => BuildJeep(variant) };
@@ -2179,7 +2238,9 @@ namespace UnturnedGodot
                 foreach (var (txt, color) in s.Parts)
                 {
                     var pm = SolidMat(color);
-                    var mi = new MeshInstance3D { Mesh = ContentProvider.ParseObj($"res://content/{txt}"), MaterialOverride = pm };
+                    // Named after its source file so the scene tree is readable and, more usefully, so a test can
+                    // ASK for a specific part instead of guessing which unnamed MeshInstance3D is the turret.
+                    var mi = new MeshInstance3D { Name = txt.Replace(".txt", ""), Mesh = ContentProvider.ParseObj($"res://content/{txt}"), MaterialOverride = pm };
                     if (txt.Contains("seat") || txt.Contains("steer")) mi.SetMeta("no_outline", true);   // interior parts -> keep OUT of the look-at outline so it's ONE silhouette, not the seats/wheel showing through the windows (master)
                     if (txt.Contains("steer") && s.SteerAxis != Vector3.Zero)   // wrap the steering wheel in a pivot at its centre so it can turn
                     {
