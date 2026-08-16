@@ -1066,6 +1066,15 @@ namespace UnturnedGodot
             _vehCam.CullMask &= ~OutlineOverlay.OutlineLayer;
             AddChild(_vehCam);
             _vehTest = true;   // reuse the vehTest auto-drive + chase-cam loop (Drive() -> the boat's water propulsion)
+
+            if (System.Environment.GetEnvironmentVariable("UG_WATERSHOW") == "1")
+            {   // clean open-water scroll showcase for a --write-movie clip: ditch the boat + auto-drive, hold a
+                // static low camera skimming the sea so the swell + foam visibly SCROLL past (no boat/cam motion to mask it).
+                if (_veh != null) { _veh.QueueFree(); _veh = null; }
+                _vehTest = false;
+                GetWindow().Size = new Vector2I(1280, 720);
+                _vehCam.LookAtFromPosition(new Vector3(0f, 3.2f, 34f), new Vector3(0f, 0.6f, -50f), Vector3.Up);
+            }
         }
 
         void BuildVehicleTest(string type)

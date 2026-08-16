@@ -1,51 +1,71 @@
+using System;
 using Godot;
 
 namespace UnturnedGodot
 {
     /// <summary>
-    /// CPU twin of <c>content/water.gdshader</c>'s wave function. The VISUAL waves live in the shader (GPU,
-    /// purely cosmetic, vertex-displaced); this is the separate "physical" math layer that DUPLICATES the
-    /// exact same summed-sine formula so buoyancy / swim surface can sample a matching wave height on the CPU
-    /// without ever reading vertices back off the GPU. Keep the constants + octaves BYTE-FOR-BYTE in sync with
-    /// the shader's wave_at()/uniforms. (master 2026-08-16: "waves as a shader, purely visual; the physical
-    /// waves become a separate duplicate math layer".)
+    /// CPU twin of <c>content/water.gdshader</c>'s swell_at(). The VISUAL waves live in the shader (GPU, cosmetic,
+    /// vertex-displaced); this DUPLICATES the exact same ANISOTROPIC noise swell so buoyancy / swim can sample a
+    /// matching wave height on the CPU without GPU readback. The field is procedural noise sampled at a world point
+    /// scrolled by time -- NOT a tiled loop, so it scrolls forever with nothing to repeat (matches the shader).
+    /// Keep the noise + constants BYTE-FOR-BYTE in sync with the shader. (master 2026-08-16 "drawing board" redesign.)
     /// </summary>
     public static class WaveField
     {
-        // --- these MUST mirror the matching uniforms/const in content/water.gdshader ---
-        public const float WaveLen   = 14.0f;   // longest swell wavelength (m)
-        public const float WaveSpeed = 0.7f;
-        public const float WaveAmp   = 0.45f;    // metres of vertical displacement
+        // --- must mirror the matching uniforms in content/water.gdshader ---
+        public const float SwellAmp    = 0.5f;    // metres of vertical swell
+        public const float SwellDirDeg = 30.0f;
+        public const float SwellFu     = 0.09f;   // freq along travel
+        public const float SwellFw     = 0.030f;  // freq along crest (fu/fw = 3:1)
+        public const float SwellSpeed  = 3.0f;
 
-        /// <summary>Normalised wave height ~[-1,1] at world XZ and phase-time t (t = seconds * WaveSpeed). Mirrors the shader's wave_at().</summary>
-        public static float Raw(float wx, float wz, float t)
+        // sin-hash value-noise fbm -- identical formula to the shader's hashv/vnoise/fbm3
+        static float Hashv(float ix, float iz)
         {
-            float k = Mathf.Tau / WaveLen;   // 2*pi / len, == the shader's 6.2831853 / wave_len
-            float h = 0f;
-            h += Mathf.Sin((wx *  0.86f + wz *  0.51f) * k * 0.70f + t * 0.90f) * 0.50f;
-            h += Mathf.Sin((wx * -0.31f + wz *  0.95f) * k * 1.07f + t * 1.15f) * 0.30f;
-            h += Mathf.Sin((wx *  0.67f + wz * -0.74f) * k * 1.53f + t * 0.80f) * 0.20f;
-            h += Mathf.Sin((wx * -0.99f + wz *  0.16f) * k * 1.97f + t * 1.33f) * 0.12f;
-            return h / 1.12f;   // back to ~[-1, 1]
+            double s = Math.Sin(ix * 127.1 + iz * 311.7) * 43758.5453;
+            return (float)(s - Math.Floor(s));
+        }
+        static float Vnoise(float x, float z)
+        {
+            float ix = MathF.Floor(x), iz = MathF.Floor(z), fx = x - ix, fz = z - iz;
+            float u = fx * fx * (3f - 2f * fx), v = fz * fz * (3f - 2f * fz);
+            float a = Hashv(ix, iz), b = Hashv(ix + 1f, iz), c = Hashv(ix, iz + 1f), d = Hashv(ix + 1f, iz + 1f);
+            return a * (1 - u) * (1 - v) + b * u * (1 - v) + c * (1 - u) * v + d * u * v;
+        }
+        static float Fbm3(float x, float z)
+        {
+            float s = 0f, a = 0.5f;
+            for (int i = 0; i < 3; i++) { s += a * (Vnoise(x, z) - 0.5f); x *= 2.03f; z *= 2.03f; a *= 0.5f; }
+            return s / 0.4375f;   // -> ~[-1, 1]
         }
 
-        /// <summary>Engine time in seconds — matches the shader's TIME (both = ticks since engine start), so the CPU waves stay ~in phase with the drawn ones.</summary>
+        /// <summary>Normalised swell height ~[-1,1] at world XZ + phase-time (mirrors swell_at()).</summary>
+        public static float SwellAt(float wx, float wz, float tphase)
+        {
+            float a = Mathf.DegToRad(SwellDirDeg); float c = MathF.Cos(a), s = MathF.Sin(a);
+            float u = wx * c + wz * s;    // along travel
+            float w = -wx * s + wz * c;   // along the crest line
+            return Fbm3(u * SwellFu + tphase, w * SwellFw);
+        }
+
+        /// <summary>Engine time in seconds -- matches the shader's TIME.</summary>
         public static float Now() => (float)(Time.GetTicksMsec() / 1000.0);
 
-        /// <summary>Vertical wave offset (m, ~[-WaveAmp, WaveAmp]) at a world point, at the current engine time.</summary>
-        public static float Height(float wx, float wz) => Raw(wx, wz, Now() * WaveSpeed) * WaveAmp;
+        /// <summary>Vertical wave offset (m) at a world point, at the current engine time.</summary>
+        public static float Height(float wx, float wz) => Height(wx, wz, Now());
 
-        /// <summary>Vertical wave offset (m) at a world point, at an explicit time (deterministic — for tests / server tick).</summary>
-        public static float Height(float wx, float wz, float timeSec) => Raw(wx, wz, timeSec * WaveSpeed) * WaveAmp;
+        /// <summary>Vertical wave offset (m) at a world point, at an explicit time (deterministic).</summary>
+        public static float Height(float wx, float wz, float timeSec)
+            => SwellAt(wx, wz, timeSec * SwellSpeed * SwellFu) * SwellAmp;
 
-        /// <summary>Wave-surface normal at a world point (finite-difference, matches the shader) — for buoyancy tilt / floater alignment.</summary>
+        /// <summary>Wave-surface normal at a world point (finite-difference, matches the shader) -- for buoyancy tilt.</summary>
         public static Vector3 Normal(float wx, float wz, float timeSec)
         {
-            float t = timeSec * WaveSpeed;
-            float h  = Raw(wx, wz, t);
-            float hx = Raw(wx + 1f, wz, t);
-            float hz = Raw(wx, wz + 1f, t);
-            return new Vector3((h - hx) * WaveAmp, 1f, (h - hz) * WaveAmp).Normalized();
+            float tp = timeSec * SwellSpeed * SwellFu;
+            float h  = SwellAt(wx, wz, tp);
+            float hx = SwellAt(wx + 1f, wz, tp);
+            float hz = SwellAt(wx, wz + 1f, tp);
+            return new Vector3((h - hx) * SwellAmp, 1f, (h - hz) * SwellAmp).Normalized();
         }
     }
 }
