@@ -11,8 +11,8 @@ uniform vec4 foam_color : source_color = vec4(0.92, 0.97, 1.0, 1.0);
 uniform float wave_amp = 0.45;      // metres of vertical wave
 uniform float wave_len = 14.0;      // metres for the LONGEST swell (shorter octaves derive from it)
 uniform float wave_speed = 0.7;
-uniform float crest_foam = 0.55;    // wave-height fraction [-1..1] above which crest foam kicks in (lower = denser whitecaps)
-uniform float shore_depth = 1.2;    // vertical water depth (m) under which shore foam shows (tight = foam AT the waterline)
+uniform float crest_foam = 0.63;    // wave-height fraction [-1..1] above which crest foam kicks in (crest-hugging caps, not chunky blobs)
+uniform float shore_depth = 1.6;    // vertical water depth (m) under which shore foam shows (a visible band at the waterline)
 uniform float detail_strength = 0.25;   // fbm ripple perturbation of the surface normal
 uniform sampler2D depth_tex : hint_depth_texture, repeat_disable, filter_linear;
 
@@ -83,12 +83,15 @@ void fragment() {
     float bed_y = (INV_VIEW_MATRIX * vec4(vp.xyz, 1.0)).y;   // world Y of the seabed behind this fragment
     float depth_v = max(v_wpos.y - bed_y, 0.0);              // vertical water depth (angle-independent)
     float shore = 1.0 - smoothstep(0.0, shore_depth, depth_v);
-    shore = pow(shore, 1.7);                                 // concentrate the foam AT the waterline
-    shore *= 0.7 + 0.3 * fbm(v_wpos.xz * 0.4 + TIME * 0.15); // broken foamy edge, not a clean band
+    shore = pow(shore, 1.2);                                 // a visible band that gathers toward the waterline (not a wide pale shelf, not a drowned thin line)
+    shore *= 0.75 + 0.25 * fbm(v_wpos.xz * 0.4 + TIME * 0.15); // broken foamy edge, not a clean band
 
-    // CREST FOAM: on the peaks; the threshold is jittered by fbm so the whitecaps scatter irregularly.
-    float cj = (fbm(v_wpos.xz * 0.2 + TIME * 0.05) - 0.5) * 0.35;
-    float crest = smoothstep(crest_foam, crest_foam + 0.25, v_crest + cj);
+    // CREST FOAM: caps are GATED by their own independent low-freq noise so they DON'T land on every peak.
+    // Caps that hit every crest trace the residual sine periodicity + make the "grid" legible (tinyclaw's fft
+    // catch); scattering them onto ~half the peaks in wandering blotches stops the pattern advertising itself.
+    float capMask = fbm(v_wpos.xz * 0.09 + vec2(TIME * 0.04, TIME * -0.03));
+    float gate = smoothstep(0.42, 0.72, capMask);
+    float crest = smoothstep(crest_foam, crest_foam + 0.14, v_crest) * gate;
 
     float foam = clamp(max(crest, shore), 0.0, 1.0);
 
