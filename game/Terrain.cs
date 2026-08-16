@@ -614,14 +614,13 @@ void fragment() {
                 float waterY = seaLevel01 * 256f;   // Unturned water surface = seaLevel * Level.TERRAIN(256), Use_Legacy_Water path
                 SeaLevelY = waterY;                 // swim submersion (PlayerController water state) + explosion splashes
                 GD.Print($"[terrain] sea level {seaLevel01:F3} -> world-Y {waterY:F1}");
-                var water = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2((maxX - minX + 1) * TILE_SIZE + 400f, (maxY - minY + 1) * TILE_SIZE + 400f) } };
+                float wsx = (maxX - minX + 1) * TILE_SIZE + 400f, wsdz = (maxY - minY + 1) * TILE_SIZE + 400f;
+                // subdivide so the vertex-displaced waves have geometry to move (~5 m quads); capped for perf on huge maps
+                int subX = Mathf.Clamp((int)(wsx / 5f), 64, 480), subZ = Mathf.Clamp((int)(wsdz / 5f), 64, 480);
+                var water = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(wsx, wsdz), SubdivideWidth = subX, SubdivideDepth = subZ } };
                 water.Position = new Vector3(baseX + GW * UNIT * 0.5f, waterY, -(baseZ + GH * UNIT * 0.5f));
-                water.MaterialOverride = new StandardMaterial3D
-                {
-                    AlbedoColor = new Color(0.13f, 0.29f, 0.44f, 0.74f),
-                    Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
-                    Roughness = 0.12f, Metallic = 0.15f, CullMode = BaseMaterial3D.CullModeEnum.Disabled,
-                };
+                // waves + crest foam (on the peaks) + depth-based shore foam at every coastline (master 2026-08-16)
+                water.MaterialOverride = new ShaderMaterial { Shader = GD.Load<Shader>("res://content/water.gdshader") };
                 terr.AddChild(water);
                 // Bullets-only splash collider on a dedicated layer (bit9): the bullet raycast checks it, but player/
                 // vehicles don't mask bit9 so it never blocks movement/swimming. Shooting the ocean -> Water_Static splash.

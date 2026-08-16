@@ -1041,8 +1041,8 @@ namespace UnturnedGodot
             AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-52f, -42f, 0f), LightEnergy = 1.1f, ShadowEnabled = true });
 
             Terrain.HasWater = true; Terrain.SeaLevelY = 0f;   // flat test sea at Y=0 -- the boat physics reads these
-            var water = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(800f, 800f) }, Position = Vector3.Zero,
-                MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.10f, 0.34f, 0.52f, 0.78f), Transparency = BaseMaterial3D.TransparencyEnum.Alpha, Metallic = 0.25f, Roughness = 0.12f } };
+            var water = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(800f, 800f), SubdivideWidth = 300, SubdivideDepth = 300 }, Position = Vector3.Zero,
+                MaterialOverride = new ShaderMaterial { Shader = GD.Load<Shader>("res://content/water.gdshader") } };   // wave/foam shader (master)
             AddChild(water);
             var seabed = new StaticBody3D { Position = new Vector3(0f, -14f, 0f) };   // deep floor so a swamped boat lands, not falls forever
             seabed.AddChild(new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(800f, 800f) }, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.22f, 0.26f, 0.20f) } });
