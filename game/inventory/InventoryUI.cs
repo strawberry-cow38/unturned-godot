@@ -479,10 +479,53 @@ namespace UnturnedGodot
             return MoveTo(page, idx, jar, dest);
         }
 
+        /// <summary>Turn the quick-move's "somewhere with room" into the explicit (page, x, y, rot) the wire
+        /// needs. dest 255 = the first of my OWN pages with space, walked in the same order tryAddItem uses
+        /// (SLOTS..PAGES-2), so the routed result lands where the local path would have put it.
+        ///
+        /// Holster pages are skipped for a 255 search on purpose: tryAddItem does not auto-fill them either, and
+        /// quick-moving a rifle should not silently holster it.</summary>
+        bool ResolveMoveDest(ItemJar jar, byte dest, out byte page, out byte x, out byte y, out byte rot)
+        {
+            page = x = y = rot = 0;
+            if (jar?.item == null) return false;
+            if (dest != 255)
+            {
+                var pg = Inv.items[dest];
+                if (pg == null || !pg.tryFindSpace(jar.size_x, jar.size_y, out x, out y, out rot)) return false;
+                page = dest;
+                return true;
+            }
+            for (byte p = PlayerInventory.SLOTS; p < (byte)(PlayerInventory.PAGES - 2); p++)
+            {
+                var pg = Inv.items[p];
+                if (pg != null && pg.tryFindSpace(jar.size_x, jar.size_y, out x, out y, out rot)) { page = p; return true; }
+            }
+            return false;
+        }
+
         // Move a jar out of `page` into `dest` (255 = first of my own pages with room). Puts it back if the
         // destination has no room, so a failed quick-move can never eat an item.
         bool MoveTo(byte page, byte idx, ItemJar jar, byte dest)
         {
+            // SERVER-OWNED BAG: the transfer has to be a REQUEST, exactly like the drag path above. This used to
+            // be the bare local remove+add below on every path, so "Store" visually moved a medkit into a crate,
+            // the server never heard about it, and CloseStorage wrote the crate's UNCHANGED page back -- the item
+            // had never left your bag. Ctrl+RMB and the ground-take branch of CtrlGrab route through here too, so
+            // all three were inert. The drag immediately above it always routed, which is what marks this as an
+            // oversight rather than a decision. Review 2026-08-16.
+            //
+            // The wire needs an EXPLICIT destination cell where the quick-move only has "somewhere with room", so
+            // resolve one against the local grid first. If the server disagrees (someone else took the cell) the
+            // move simply fails and the echo repaints -- the same losing race the drag path already accepts.
+            if (Player != null && Player.InventoryIsServerOwned)
+            {
+                if (!ResolveMoveDest(jar, dest, out byte dp, out byte dx, out byte dy, out byte drot)) return false;
+                if (!Player.RequestMoveItem(page, jar.x, jar.y, dp, dx, dy, drot)) return false;
+                if (page != PlayerInventory.AREA) PlayInventoryAudio(jar);
+                CloseSelection(); Refresh();
+                return true;
+            }
             Inv.items[page].removeItem(idx);
             bool ok = dest == 255 ? Inv.tryAddItem(jar.item) : Inv.items[dest].tryAddItem(jar.item);
             if (!ok) Inv.items[page].tryAddItem(jar.item);   // no room -> restore, no-op rather than a loss
@@ -829,10 +872,12 @@ namespace UnturnedGodot
                             if (asset.slot.CanEquipInPage(alt) && Inv.items[alt].getItemCount() == 0) { slot = alt; break; }
                     if (Player == null || !Player.RequestEquipItem(_selPage, _selX, _selY, slot))
                         Inv.TryDrag(_selPage, _selX, _selY, slot, 0, 0, 0);   // TryDrag SWAPS when the destination is occupied
-                    Player?.NoteHeldFromSlot(slot);   // so emptying that slot later pulls it out of the hands
+                    // Address, not just the page: a holster is single-item so the item lands at (0,0). The cell is
+                    // what lets the held reference survive an owner echo (PlayerController.RebindHeldRefs).
+                    Player?.NoteHeldFrom(slot, 0, 0);   // so emptying that slot later pulls it out of the hands
                 }
             }
-            else if (_selPage < PlayerInventory.SLOTS) Player?.NoteHeldFromSlot(_selPage);
+            else if (_selPage < PlayerInventory.SLOTS) Player?.NoteHeldFrom(_selPage, _selX, _selY);
             CloseSelection();
             Refresh();
             // #8: source closes the dashboard on EVERY successful weapon equip -- checkSlot (both branches, :928/:955)

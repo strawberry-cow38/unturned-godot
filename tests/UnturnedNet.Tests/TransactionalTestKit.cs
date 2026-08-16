@@ -131,7 +131,11 @@ namespace UnturnedNet.Tests
             Assets.add(new ItemAsset { id = SpotlightId, itemName = "Spotlight", size_x = 2, size_y = 2 });
             Assets.add(new ItemAsset { id = ScrapId, itemName = "Metal Scrap", size_x = 1, size_y = 1 });
             Assets.add(new ItemAsset { id = BeansId, itemName = "Canned Beans", size_x = 1, size_y = 1, type = EItemType.FOOD, useHealth = 10, useFood = 55 });
-            Assets.add(new ItemAsset { id = RifleId, itemName = "Eaglefire", size_x = 4, size_y = 2, type = EItemType.GUN });
+            // `slot` matters now: TryDrag enforces the holster rule, so a fixture gun with the default NONE cannot
+            // be equipped into a hand slot and equip_to_hand_slot fails on a rule it is not testing. The real
+            // eaglefire.dat is `Slot Primary`, and ALL 88 shipped .dats declare a Slot (54 Gun + 34 Melee) -- a
+            // holsterable item with no slot type does not exist outside this fixture. Review 2026-08-16.
+            Assets.add(new ItemAsset { id = RifleId, itemName = "Eaglefire", size_x = 4, size_y = 2, type = EItemType.GUN, slot = ESlotType.PRIMARY });
             Assets.add(new ItemAsset { id = LogId, itemName = "Log", size_x = 1, size_y = 1, guid = "fixture-log" });
             Assets.add(new ItemAsset { id = PlankId, itemName = "Plank", size_x = 1, size_y = 1, guid = "fixture-plank" });
             Assets.add(new ItemAsset { id = GasCanId, itemName = "Portable Gas Can", size_x = 2, size_y = 2, fuelCapacity = 100f });   // A2: a fuel container the pump fills

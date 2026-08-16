@@ -1605,13 +1605,56 @@ namespace UnturnedGodot
         /// put it, or "take it out of the slot and it leaves your hands" would not fire for that route.</summary>
         public void NoteHeldFromSlot(int page) => _heldSlotPage = page;
 
+        // WHERE the held item lives in the grid. Recorded so the held reference can be re-bound after an owner
+        // echo -- see RebindHeldRefs, which is the fix for the held item going dangling. -1 page = not from the
+        // grid (a world pickup held before it lands, fists, a tool).
+        int _heldPage = -1; byte _heldX, _heldY;
+        public void NoteHeldFrom(int page, byte x, byte y)
+        {
+            _heldPage = page; _heldX = x; _heldY = y;
+            _heldSlotPage = page >= 0 && page < PlayerInventory.SLOTS ? page : -1;
+        }
+
+        /// <summary>Re-point the held-item references at the objects that are actually in the grid now.
+        ///
+        /// InventoryReplication.ReadSnapshot allocates a FRESH Item per jar on every snapshot and
+        /// AdoptReplicatedInventory re-seats those into the shell's pages, but _heldItem was only ever assigned at
+        /// equip time -- so one echo left it pointing at an object no longer in any page. Everything that writes
+        /// gun state (SaveGunState is the sole writer of ammo/chamber/firemode/mag/attachments) then wrote into a
+        /// dead object, and everything that compares identity silently disagreed:
+        ///   - fire 25 of 30, holster, re-equip -> RestoreGunState reads gunAmmo -1 off the grid's object and
+        ///     returns early, so LoadGun's defaults stand and the magazine is FULL again;
+        ///   - IsHeld is a ReferenceEquals, so the gun in your hands offered "Equip" instead of "Dequip" and
+        ///     DropSelected's wasHeld never fired -- dropping it left the viewmodel up.
+        /// Re-binding by ADDRESS rather than by scanning for the id: two identical rifles are two different items,
+        /// and picking the wrong one would be a quieter bug than the one being fixed. If the address no longer
+        /// holds the same id the item genuinely moved or went away, and we leave the reference alone rather than
+        /// guessing. Review 2026-08-16.</summary>
+        void RebindHeldRefs()
+        {
+            if (_heldItem == null || _heldPage < 0 || Inventory == null) return;
+            if (_heldPage >= Inventory.items.Length) return;
+            var pg = Inventory.items[_heldPage];
+            byte idx = pg?.getIndex(_heldX, _heldY) ?? byte.MaxValue;
+            var live = idx == byte.MaxValue ? null : pg.getItem(idx)?.item;
+            if (live == null || live.id != _heldItem.id || ReferenceEquals(live, _heldItem)) return;
+            bool wasFuel = ReferenceEquals(_heldFuelItem, _heldItem), wasFluid = ReferenceEquals(_heldFluidItem, _heldItem);
+            _heldItem = live;
+            if (wasFuel) _heldFuelItem = live;
+            if (wasFluid) _heldFluidItem = live;
+            // Stamp the state the CLIENT owns onto the newly adopted object straight away. The server never learns
+            // gunAmmo (no command carries it), so the fresh object arrives with the -1 default; without this the
+            // rebind would swap a stale-but-populated object for a live-but-blank one and lose the magazine.
+            SaveGunState();
+        }
+
         public void EquipUnarmed()
         {
             SaveGunState(); ClearDeployable();
             _heldItem = null; Gun = null; _heldConsumable = null; _heldFuelItem = null; _heldFluidItem = null; _heldConsumableMesh = null;
             _reloading = false; _reloadTimer = 0; _hammerActive = false; _hammerPending = false;
             _needsRechamber = false; _rechambering = false; _shotCountForRechamber = 0;
-            _torchAnimOn = false; _pendingMeleeHit = -1f; _heldSlotPage = -1;
+            _torchAnimOn = false; _pendingMeleeHit = -1f; _heldSlotPage = -1; _heldPage = -1;   // holding nothing -> no grid address to rebind to
             _melee = MeleeDef.Fists; _heldMeleeName = "fists";   // fists ARE a melee -> the existing LMB/RMB swing path punches
             _viewmodel?.QueueFree();
             _viewmodel = new Viewmodel { Fists = true };
@@ -1656,7 +1699,7 @@ namespace UnturnedGodot
                 HUD.Alert("Holster it first");
                 return;
             }
-            _heldSlotPage = page < PlayerInventory.SLOTS ? page : -1;
+            NoteHeldFrom(page, x, y);   // records the slot page AND the cell, so the held ref survives an echo
             EquipItemAsset(asset, j.item);
         }
 
@@ -2719,6 +2762,7 @@ namespace UnturnedGodot
                 var from = replica.items[p];
                 CopyPage(from, Inventory.items[p], from.width, from.height);
             }
+            RebindHeldRefs();   // the jars are all new objects now -- re-point what the player is holding at them
         }
         /// <summary>MP (called only by ClientWorldSession, each tick): mirror the replicated owner skills
         /// block into the shell's local PlayerSkills -- the AdoptReplicatedInventory analogue. The skill
