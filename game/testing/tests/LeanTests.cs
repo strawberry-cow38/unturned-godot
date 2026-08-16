@@ -243,14 +243,34 @@ namespace UnturnedGodot.Testing
             T.Check($"...and leaning AWAY from it is NOT ({EyeLocal(w).X:0.###} m of peek, obstructed {w.DebugLeanObstructed})",
                 !w.DebugLeanObstructed && EyeLocal(w).X > 0.3f);
 
-            // Blocked mid-lean SNAPS upright rather than lerping (PlayerLook.cs:738-741) -- lerping out of a wall means
-            // spending a quarter second with your head inside it, which is the peek the check exists to deny.
+            // Blocked mid-lean EASES back upright rather than snapping. This is master's deliberate override of the
+            // source's instant snap (PlayerLook.cs:738-741), made in 12ae0365; the ease travels OUT of the
+            // obstruction, so the head-in-wall clip the snap existed to avoid is brief.
+            //
+            // This check asserted the old snap for a day after the behaviour changed under it, and failed every
+            // full sweep in between while reporting the code as broken. It was not: the code was doing exactly what
+            // it had been asked to do, and the test was the stale half. Left here as the reason the assertion is
+            // written against the CURRENT rule rather than the one the port started from.
+            //
+            // What each half actually covers, MEASURED rather than asserted from reading the code:
+            //   - "still tilted 3 ticks in" is the one with teeth for this rule. Restoring the instant snap makes
+            //     it fail at 0.00 deg. It is the whole difference between the old behaviour and the new one.
+            //   - "upright by 3 s" pins that the ease COMPLETES, not that obstruction drives it. It does not
+            //     isolate the obstructed path at all: LeanFrom returns lean 0 on exactly the branches where it
+            //     raises `obstructed`, so `target` is already 0 whenever `_leanObstructed` is set, and the
+            //     `_leanObstructed ? 0f : target` in ApplyLean is belt-and-braces. Deleting that branch entirely
+            //     leaves this suite green -- checked, not assumed. Worth knowing before anyone reads a pass here
+            //     as evidence that the obstruction wiring works; the check above it is what proves that.
             w.ScriptedLean = 1;
             yield return Ticks(3);
             T.Check($"...and turning back INTO it is obstructed again (lean {w.DebugLean}, obstructed {w.DebugLeanObstructed}, drift {w.GlobalPosition.DistanceTo(stood):0.###} m)",
                 w.DebugLeanObstructed && w.DebugLean == 0);
-            T.Check($"a blocked lean snaps to upright rather than easing ({w.DebugLeanAngle:0.##} deg)",
-                Mathf.Abs(w.DebugLeanAngle) < 0.001f);
+            float easing = w.DebugLeanAngle;
+            T.Check($"a blocked lean EASES out instead of snapping -- still tilted 3 ticks in ({easing:0.##} deg)",
+                Mathf.Abs(easing) > 1f);
+            yield return Ticks(150);   // LeanLerp is 4/s, so ~20 deg decays to far under a tenth of one over 3 s
+            T.Check($"...and is upright again by 3 s ({easing:0.##} -> {w.DebugLeanAngle:0.###} deg)",
+                Mathf.Abs(w.DebugLeanAngle) < 0.5f);
 
             yield break;
         }
