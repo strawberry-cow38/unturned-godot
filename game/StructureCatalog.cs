@@ -16,7 +16,7 @@ namespace UnturnedGodot
     // stand-in used `GRID = 3f` with the comment "Unturned's structure tile size" -- that is HALF_EDGE_LENGTH,
     // the half-step used for pivot maths, not the tile. Everything built on a 3 m lattice sits on a grid retail
     // has no concept of, so nothing a player builds could ever align with a real foundation.
-    public enum EConstruct { Floor, Wall, Rampart, Roof, Pillar, Post }
+    public enum EConstruct { Floor, Wall, Rampart, Roof, Pillar, Post, Doorway }
 
     public static class StructureCatalog
     {
@@ -33,7 +33,9 @@ namespace UnturnedGodot
         public const float MaxPlacementDistance = 16.0f;       // how far you can place from the eye
         public const float MaxSlotSearchDistance = 8.0f;       // how far the snap search looks for a free slot
         public const float MinSlotSearchCosine = 0.9f;         // the slot must be roughly in front of you
-        public const float OverlapPadding = 0.02f;             // 2 cm of slack before two pieces count as clashing
+        public const float OverlapPadding = 0.02f;             // 2 cm of slack before two pieces count as clashing. NOT YET USED: placement validates slot occupancy + support only, so this is the retail value waiting for a geometric overlap test rather than a live constant.
+        public const float RoofThickness = 0.5f;               // ROOF_THICKNESS (HousingConnections.cs:295); the HALF is 0.25
+        public const float HalfRoofThickness = 0.25f;          // HALF_ROOF_THICKNESS (HousingConnections.cs:296)
 
         /// <summary>Vertical offset from a piece's anchor point to its visual/collision centre. Retail keeps
         /// these apart per construct (a wall pivots at its middle, a rampart near its foot, a foundation hangs
@@ -41,6 +43,7 @@ namespace UnturnedGodot
         public static float PivotOffset(EConstruct c) => c switch
         {
             EConstruct.Wall => WallPivotOffset,
+            EConstruct.Doorway => WallPivotOffset,   // a doorway IS a wall with a hole: same slot, same pivot
             EConstruct.Rampart => RampartPivotOffset,
             EConstruct.Pillar => HalfWallHeight,
             EConstruct.Post => HalfWallHeight,
@@ -62,9 +65,10 @@ namespace UnturnedGodot
         /// <summary>Vertical extent, used for the overlap check and for the render/collision box.</summary>
         public static Vector3 Extents(EConstruct c) => c switch
         {
-            EConstruct.Floor => new Vector3(EdgeLength, 0.25f, EdgeLength),
-            EConstruct.Roof => new Vector3(EdgeLength, 0.25f, EdgeLength),
+            EConstruct.Floor => new Vector3(EdgeLength, RoofThickness, EdgeLength),
+            EConstruct.Roof => new Vector3(EdgeLength, RoofThickness, EdgeLength),
             EConstruct.Wall => new Vector3(EdgeLength, WallHeight, 0.25f),
+            EConstruct.Doorway => new Vector3(EdgeLength, WallHeight, 0.25f),
             EConstruct.Rampart => new Vector3(EdgeLength, RampartPivotOffset * 2f, 0.25f),
             EConstruct.Pillar => new Vector3(0.4f, WallHeight, 0.4f),
             _ => new Vector3(0.4f, WallHeight, 0.4f),
@@ -99,17 +103,26 @@ namespace UnturnedGodot
 
         public static readonly EConstruct[] Buildable =
         {
-            EConstruct.Floor, EConstruct.Wall, EConstruct.Pillar, EConstruct.Rampart, EConstruct.Roof,
+            EConstruct.Floor, EConstruct.Wall, EConstruct.Doorway, EConstruct.Pillar, EConstruct.Rampart, EConstruct.Roof,
         };
 
         /// <summary>Snap a world point to the structure lattice for this construct. FACES land on tile centres;
         /// EDGES land on the midpoint of the nearest tile side, and carry the facing that side implies -- which
         /// is why this returns a rotation as well as a position.</summary>
-        public static (Vector3 Pos, float YawDeg) Snap(Vector3 world, EConstruct c)
+        /// <param name="anchorY">The Y the storey lattice is measured FROM -- normally the Y of the base you are
+        /// building onto. This used to be hardcoded to world zero (`Round(world.Y / WallHeight) * WallHeight`),
+        /// which anchors every storey in the world to sea level: a floor on terrain at y=12 snapped to 12.75,
+        /// missed its own ground check, and refused to place. You could not found a wood or brick base anywhere
+        /// more than ~2.1 m above sea level, and any piece that did place floated or buried itself by up to
+        /// half a storey. Pass float.NaN for "no base here yet" -- the piece then takes the terrain height it
+        /// was aimed at, which is how a foundation gets to sit on the ground it was placed on.</param>
+        public static (Vector3 Pos, float YawDeg) Snap(Vector3 world, EConstruct c, float anchorY = 0f)
         {
             float cx = Mathf.Round(world.X / EdgeLength) * EdgeLength;
             float cz = Mathf.Round(world.Z / EdgeLength) * EdgeLength;
-            float y = Mathf.Round(world.Y / WallHeight) * WallHeight;
+            float y = float.IsNaN(anchorY)
+                ? world.Y                                                              // first piece: free, sits where you put it
+                : anchorY + Mathf.Round((world.Y - anchorY) / WallHeight) * WallHeight; // storeys measured off the base
 
             if (IsFace(c)) return (new Vector3(cx, y, cz), 0f);
 
@@ -124,19 +137,40 @@ namespace UnturnedGodot
             }
 
             // EDGE: pick whichever of the four tile sides the point is nearest, and face along it.
+            // Mathf.Sign(0) is 0, not 1 -- so a point exactly ON a tile centre (Snap(floor.Pos, Wall), which is
+            // a natural thing for a caller to write) produced cx + 0*HalfEdge: a wall bisecting its own tile,
+            // off-lattice, and invisible to every probe that only ever issues keys at cx +- HalfEdge. Ties go to
+            // the positive side deterministically instead.
             float dx = world.X - cx, dz = world.Z - cz;
             if (Mathf.Abs(dx) >= Mathf.Abs(dz))
-                return (new Vector3(cx + Mathf.Sign(dx) * HalfEdge, y, cz), 90f);
-            return (new Vector3(cx, y, cz + Mathf.Sign(dz) * HalfEdge), 0f);
+                return (new Vector3(cx + (dx < 0f ? -HalfEdge : HalfEdge), y, cz), 90f);
+            return (new Vector3(cx, y, cz + (dz < 0f ? -HalfEdge : HalfEdge)), 0f);
         }
 
         /// <summary>The lattice key a piece occupies. Two pieces sharing a key are the same slot -- the cheap
         /// form of retail's LINK_TOLERANCE edge match, quantised so floating-point drift cannot make two pieces
         /// 2 cm apart read as different slots.</summary>
+        // ---- doorway opening (OURS, not retail) ------------------------------------------------------------
+        // Retail keeps a doorway's hole in the asset mesh, which we do not have locally. Rather than guess a
+        // number and present it as ported, these are declared here and pinned by a test -- the same treatment
+        // the tier health values get. Sized so a player capsule fits with clearance.
+        public const float DoorOpeningWidth = 2.0f;
+        public const float DoorOpeningHeight = 3.0f;
+
+        /// <summary>Is this construct a wall-class piece -- something that fills a tile EDGE? Doorways share the
+        /// wall's slot deliberately: an edge holds a wall OR a doorway, never both, and because SlotKey maps
+        /// every non-face non-corner construct to the same "E" namespace, that mutual exclusion is automatic
+        /// rather than a rule someone has to remember to write.</summary>
+        public static bool IsWallClass(EConstruct c) => c == EConstruct.Wall || c == EConstruct.Doorway;
+
         public static string SlotKey(Vector3 snapped, EConstruct c)
         {
             int q(float v) => Mathf.RoundToInt(v / LinkTolerance);
-            string kind = IsFace(c) ? "F" : IsCorner(c) ? "C" : "E";
+            // Roof gets its OWN namespace. It snaps like a face (tile centres) but it is not the same SLOT as a
+            // floor: sharing "F" meant a roof capping level 0 and the floor of level 1 were the same key, so
+            // roofing a tile permanently blocked building a storey above it -- a dead end you could walk into
+            // and not undo without salvaging the roof.
+            string kind = c == EConstruct.Roof ? "R" : IsFace(c) ? "F" : IsCorner(c) ? "C" : "E";
             return $"{kind}:{q(snapped.X)}:{q(snapped.Y)}:{q(snapped.Z)}";
         }
     }

@@ -318,6 +318,16 @@ namespace UnturnedGodot
                         if (dist <= r) dp.TakeDamage(Def.TrapStructureDamage * (1f - dist / r));   // linear falloff (same shape as DamageTool.explode)
                     }
             }
+            // + the BASE itself. Without this a charge damages generators and crates and leaves every wall
+            // untouched, which is the whole point of a charge. StructureManager.Explode owns the retail rules
+            // (closest-point range, linear falloff, and line-of-sight shielding so an inner wall is protected
+            // by the outer one) -- reproducing a second falloff here would drift from them.
+            if (StructureManager.Instance != null)
+            {
+                int killed = StructureManager.Instance.Explode(
+                    GlobalPosition, Def.TrapBlast, Mathf.RoundToInt(Def.TrapStructureDamage), out int hurt);
+                if (hurt > 0) GD.Print($"[trap] blast hit {hurt} structure piece(s), destroyed {killed}");
+            }
             Explode();   // the mine's own blast consumes it -> ShatterOnDeath debris, no salvage husk
         }
         // A CONTACT trap (spike): shred each victim that just ENTERED the footprint (src OnTriggerEnter), then WEAR the trap
