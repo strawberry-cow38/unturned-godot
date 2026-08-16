@@ -26,6 +26,10 @@ namespace UnturnedGodot
         float _inCollective, _inYaw, _inPitch, _inRoll;   // the pilot's held axes (W/S, A/D, mouse Y, mouse X)
         float _rotorSpin, _tailSpin, _rotorRpm;            // visual blade phases (main/tail) + spool state (0..1)
         Node3D _rotorNode, _tailRotorNode;
+        // ---- TRACKED ARMOUR (tank). The turret + gun ride their OWN pivots so the vehicle-weapon system
+        // (tinyclaw) aims them independently of the hull: TurretPivot yaws about local Y, GunPivot (its child)
+        // pitches about local X, and MuzzleLocal is the cannon tip for shell spawns. Null/Zero on non-tanks.
+        public Node3D TurretPivot, GunPivot; public Vector3 MuzzleLocal;
         MeshInstance3D _bladesMesh, _discMesh, _tailBladesMesh, _tailDiscMesh;   // the two drawn states per rotor
         const float DiscSwapSpool = 0.35f;   // above this the blades are a smear, so the game draws the plate instead
         public const float TailRotorRollDegrees = 90f;   // stands the tail disc on edge; composed with the spin each tick
@@ -541,6 +545,17 @@ namespace UnturnedGodot
             public string[] HeliBodyMeshes;                      // airframe .obj(s); null = build one of the procedural frames below
             public HeliFrame Frame;                              // which procedural airframe (ignored when HeliBodyMeshes is set)
             public string HeliRotorMeshPrefix;                   // content prefix for <p>_rotor_{main,tail}_{blades,disc}.txt; null = the Huey's
+            // ---- TRACKED ARMOUR (tank). Tracks + a rotating turret/elevating gun instead of steered wheels. The
+            // road wheels still do the physics; the treads are a visual overlay and the turret is a vehicle weapon
+            // aimed by tinyclaw's system via the exposed pivots. Differential steering (Drive branches on Tracked):
+            // the steer input drives the two tracks at different speeds instead of a wheel angle.
+            public bool Tracked;
+            public string Treads;                    // palette-painted tread band, root-relative overlay on the hull
+            public string[] TurretMeshes;            // palette-painted turret meshes, baked centred on the yaw pivot
+            public Vector3 TurretYawPivot;           // turret rotates about local Y here (root space)
+            public string GunMesh;                   // palette-painted cannon, baked centred on the pitch pivot
+            public Vector3 GunPitchPivot;            // gun elevates about local X here (root space)
+            public Vector3 Muzzle;                   // cannon muzzle (root space) -> shell spawn for the weapon system
         }
 
         static AudioStreamWav LoadWav(string resPath)   // load a PCM wav at runtime (no ffmpeg on the box) as a looping stream for the siren
@@ -1334,6 +1349,69 @@ namespace UnturnedGodot
         };
         public static Vehicle BuildAPC(int variant = 0) => Build(_apc, variant, "apc");
 
+        // TANK -- tracked armour (source vehicles/tank), extracted FULLY by tools/extract_tank.py: hull + crawler
+        // treads + rotating turret + elevating cannon + 8 road wheels + driver/gunner seats + steering. Olive
+        // MilitaryPaintable like the APC. The 8 road wheels do the physics (VehicleWheel3D); the treads are a
+        // palette-painted overlay; the turret is a VEHICLE WEAPON -- BuildTankExtras hangs it + the gun on aim
+        // pivots (TurretPivot/GunPivot) that tinyclaw's weapon system rotates. Differential steering (Drive) is the
+        // tracked-drive pass. Rig values are tools/tank_manifest.json (already Z-negated to Godot).
+        static readonly Spec _tank = new()
+        {
+            Body = "tank_hull.txt", Palette = "tank_palette.png", DefaultPaints = new[] { "#5a6650" },   // Texture_MilitaryPaintable olive (same texel as the APC)
+            Tracked = true,
+            Treads = "tank_treads.txt",
+            TurretMeshes = new[] { "tank_turret.txt", "tank_turret_1.txt" }, TurretYawPivot = new Vector3(0f, 0f, 0.85f),
+            GunMesh = "tank_gun.txt", GunPitchPivot = new Vector3(0f, 2.8f, -1.15f), Muzzle = new Vector3(0f, 2.8f, -6.306f),
+            Wheel = "tank_wheel.txt", WheelRadius = 0.5f,   // road wheel; no WheelTex -> solid dark, mostly hidden inside the treads
+            Engine = 950f, SteerMax = 0f, SteerMin = 0f, SpeedMax = 9f, SpeedMin = -4f, Brake = 48f,   // heavy + slow; SteerMax 0 -> tracked differential steer (Drive branches on Tracked), not a wheel angle
+            BoxSize = new Vector3(3.7f, 1.5f, 7.0f), BoxCenter = new Vector3(0f, 0.7f, 0f),   // hull box (rough off the rig; tune vs render)
+            ForwardGears = new[] { 16f, 9f }, ReverseGear = 8f, ShiftUpRpm = 3500f,
+            Sound = "engine_large.ogg", IdlePitch = 0.65f, MaxPitch = 1.25f, IdleVolume = 0.9f, MaxVolume = 1.0f,   // heavy diesel rumble
+            Fuel = 2000f, Health = 1600f, Name = "Tank",
+            Wheels = new (float, float, float, bool)[]   // 8 road wheels (rig, Z-negated); none STEERED (tracked)
+            {
+                (-2.0f, 0.556f, -3.0f, false), (2.0f, 0.556f, -3.0f, false),
+                (-2.0f, 0.556f, -1.0f, false), (2.0f, 0.556f, -1.0f, false),
+                (-2.0f, 0.556f,  1.0f, false), (2.0f, 0.556f,  1.0f, false),
+                (-2.0f, 0.556f,  3.0f, false), (2.0f, 0.556f,  3.0f, false),
+            },
+            // No exterior Parts: the driver/gunner seats + steering are INTERIOR on a buttoned-up tank and clip
+            // through the closed hull if drawn from outside. The meshes are extracted (content/tank_seat_driver,
+            // tank_seat_gunner, tank_steer) and the seat POSITIONS live in the rig -> wire them into the FP/interior
+            // view (and tinyclaw's seat system) later; the exterior stays a clean closed hull.
+            Parts = new (string, Color)[] { },
+        };
+        public static Vehicle BuildTank(int variant = 0) => Build(_tank, variant, "tank");
+
+        /// <summary>Tank-only meshes on top of the shared Build (hull/wheels/seats/collision): the palette-painted
+        /// crawler treads (a static overlay on the hull), the rotating turret on its yaw pivot, and the elevating
+        /// cannon on its pitch pivot (a CHILD of the turret so it yaws with it). All three share the hull's
+        /// MilitaryPaintable material. The pivots are exposed as TurretPivot/GunPivot for the vehicle-weapon system
+        /// to aim; at rest they sit at the extracted rig positions and the gun points forward.</summary>
+        static void BuildTankExtras(Vehicle v, Spec s, Material bodyMat)
+        {
+            if (s.Treads != null)   // treads: DARK track steel. The tread mesh shares the hull's MilitaryPaintable, but its
+                // UVs land on the palette's fixed texels (which come out red/white in the hull palette), not the paintable
+                // one -- and real tank tracks are dark steel regardless. Solid dark reads right; the real track texture +
+                // a UV-scroll by track speed are a later pass. Baked at the hull origin -> a plain root-relative overlay.
+                v.AddChild(new MeshInstance3D { Name = "Treads", Mesh = ContentProvider.ParseObj($"res://content/{s.Treads}"), MaterialOverride = SolidMat(new Color(0.14f, 0.14f, 0.15f)) });
+            if (s.TurretMeshes != null)
+            {
+                v.TurretPivot = new Node3D { Name = "TurretYaw", Position = s.TurretYawPivot };   // yaws about local Y (weapon system)
+                foreach (var t in s.TurretMeshes)   // baked centred on the yaw pivot -> local 0
+                    v.TurretPivot.AddChild(new MeshInstance3D { Name = t.Replace(".txt", ""), Mesh = ContentProvider.ParseObj($"res://content/{t}"), MaterialOverride = bodyMat });
+                v.AddChild(v.TurretPivot);
+                if (s.GunMesh != null)
+                {
+                    // gun pivot is a CHILD of the turret so it yaws with it; offset by the pivot delta, then the gun
+                    // mesh (baked centred on the pitch pivot) sits at local 0 and elevates about local X.
+                    v.GunPivot = new Node3D { Name = "GunPitch", Position = s.GunPitchPivot - s.TurretYawPivot };
+                    v.GunPivot.AddChild(new MeshInstance3D { Name = "tank_gun", Mesh = ContentProvider.ParseObj($"res://content/{s.GunMesh}"), MaterialOverride = bodyMat });
+                    v.TurretPivot.AddChild(v.GunPivot);
+                }
+            }
+        }
+
         // MINICOPTER -- Rust-style two-seat rotary wing (VoX 2026-08-15). No ripped mesh exists, so the
         // airframe is procedural (BuildHeliModel) and the numbers are chosen for feel rather than ported from
         // a .dat, since there is no source .dat to port.
@@ -1597,8 +1675,8 @@ namespace UnturnedGodot
             Skids(1.125f, 0.30f, -0.88f, -3.25f, 1.75f),   // classic skids, same shape as the Huey's, measured
             29f, 1750f, 750f, "Hummingbird", EItemRarity.EPIC);
         public static Vehicle BuildHummingbird(int variant = 0) => Build(_hummingbird, variant, "hummingbird");
-        public static Vehicle BuildByName(string name, int variant = 0) => name switch { "quad" => BuildQuad(variant), "bus" => BuildBus(variant), "sedan" => BuildSedan(variant), "hatchback" => BuildHatchback(variant), "humvee" => BuildHumvee(variant), "roadster" => BuildRoadster(variant), "ambulance" => BuildAmbulance(variant), "firetruck" => BuildFiretruck(variant), "tractor" => BuildTractor(variant), "ural" => BuildUral(variant), "police" => BuildPolice(variant), "semi" => BuildSemi(variant), "trailer" => BuildTrailer(variant), "offroader" => BuildOffRoader(variant), "off_roader" => BuildOffRoader(variant), "truck" => BuildTruck(variant), "van" => BuildVan(variant), "golf" => BuildGolf(variant), "vw_golf" => BuildGolf(variant), "runabout" => BuildRunabout(variant), "apc" => BuildAPC(variant), "minicopter" => BuildMinicopter(variant), "mini" => BuildMinicopter(variant), "heli" => BuildMinicopter(variant), "huey" => BuildHuey(variant), "scoutcopter" => BuildScoutcopter(variant), "scout" => BuildScoutcopter(variant), "hind" => BuildHind(variant), "orca" => BuildOrca(variant), "skycrane" => BuildSkycrane(variant), "hummingbird" => BuildHummingbird(variant), "bird" => BuildHummingbird(variant), _ => BuildJeep(variant) };
-        public static readonly string[] SpecNames = { "jeep", "quad", "bus", "sedan", "hatchback", "humvee", "roadster", "ambulance", "firetruck", "tractor", "ural", "police", "semi", "trailer", "offroader", "truck", "van", "golf", "runabout", "apc", "minicopter", "huey", "scoutcopter", "hind", "orca", "skycrane", "hummingbird" };   // F1 dev-console autocomplete + validation ("golf" = VW_Golf, command-only, no natural spawn; runabout = boat + apc = amphibious, both command-spawnable -- drop over water to float)
+        public static Vehicle BuildByName(string name, int variant = 0) => name switch { "quad" => BuildQuad(variant), "bus" => BuildBus(variant), "sedan" => BuildSedan(variant), "hatchback" => BuildHatchback(variant), "humvee" => BuildHumvee(variant), "roadster" => BuildRoadster(variant), "ambulance" => BuildAmbulance(variant), "firetruck" => BuildFiretruck(variant), "tractor" => BuildTractor(variant), "ural" => BuildUral(variant), "police" => BuildPolice(variant), "semi" => BuildSemi(variant), "trailer" => BuildTrailer(variant), "offroader" => BuildOffRoader(variant), "off_roader" => BuildOffRoader(variant), "truck" => BuildTruck(variant), "van" => BuildVan(variant), "golf" => BuildGolf(variant), "vw_golf" => BuildGolf(variant), "runabout" => BuildRunabout(variant), "apc" => BuildAPC(variant), "minicopter" => BuildMinicopter(variant), "mini" => BuildMinicopter(variant), "heli" => BuildMinicopter(variant), "huey" => BuildHuey(variant), "scoutcopter" => BuildScoutcopter(variant), "scout" => BuildScoutcopter(variant), "hind" => BuildHind(variant), "orca" => BuildOrca(variant), "skycrane" => BuildSkycrane(variant), "hummingbird" => BuildHummingbird(variant), "bird" => BuildHummingbird(variant), "tank" => BuildTank(variant), _ => BuildJeep(variant) };
+        public static readonly string[] SpecNames = { "jeep", "quad", "bus", "sedan", "hatchback", "humvee", "roadster", "ambulance", "firetruck", "tractor", "ural", "police", "semi", "trailer", "offroader", "truck", "van", "golf", "runabout", "apc", "minicopter", "huey", "scoutcopter", "hind", "orca", "skycrane", "hummingbird", "tank" };   // F1 dev-console autocomplete + validation ("golf" = VW_Golf, command-only, no natural spawn; runabout = boat + apc = amphibious, both command-spawnable -- drop over water to float)
 
         // spec lookup by key (same table as BuildByName) -- the MP puppet builder resolves replicated
         // TypeIds through this so client replicas rebuild the exact meshes/palette the server spawned
@@ -1608,7 +1686,7 @@ namespace UnturnedGodot
             "roadster" => _roadster, "ambulance" => _ambulance, "firetruck" => _firetruck, "tractor" => _tractor,
             "ural" => _ural, "police" => _police, "semi" => _semi, "trailer" => _trailer,
             "offroader" => _offroader, "off_roader" => _offroader, "truck" => _truck, "van" => _van,
-            "golf" => _golf, "vw_golf" => _golf, _ => _jeep,
+            "golf" => _golf, "vw_golf" => _golf, "tank" => _tank, _ => _jeep,
         };
 
         // MP §3.6 client replica: a mesh-only PUPPET -- the same ripped body/palette/parts/wheels as
@@ -2119,6 +2197,7 @@ namespace UnturnedGodot
                 v._bodyMesh = new MeshInstance3D { Name = "Body", Mesh = bodyMesh, MaterialOverride = bodyMat };
                 v.AddChild(v._bodyMesh);
             }
+            if (s.Tracked) { v.MuzzleLocal = s.Muzzle; BuildTankExtras(v, s, bodyMat); }   // tank: treads + turret/gun aim pivots on top of the shared hull/wheel/collision path
             if (legMesh != null)   // the landing legs as a sibling MeshInstance sharing the body material -> toggled with the coupling (visible when parked, hidden when towed)
             {
                 v._landingLegMesh = new MeshInstance3D { Name = "LandingLegs", Mesh = legMesh, MaterialOverride = bodyMat };
