@@ -25,6 +25,8 @@ namespace UnturnedGodot.Testing
             tank.Position = new Vector3(0f, 1.0f, 0f);
             tank.EngineOn = true;
             yield return Step.Ticks(45);   // drop + settle onto the plane -> a true standstill
+            // it must settle UPRIGHT on its wheels, not tipped over or riding on a scraping collision box.
+            T.Check($"settles upright on its wheels ({tank.GlobalTransform.Basis.Y.Dot(Vector3.Up):0.00})", tank.GlobalTransform.Basis.Y.Dot(Vector3.Up) > 0.95f);
 
             // PIVOT FROM REST: A on its own (throttle 0, steer -1) -> left track reverses + right track drives, a
             // couple that spins the hull with ~no net translation. Tested from a STANDSTILL on purpose: a tank
@@ -50,6 +52,9 @@ namespace UnturnedGodot.Testing
             float yawDrift = Mathf.RadToDeg(Mathf.Abs(Mathf.AngleDifference(Mathf.DegToRad(yawF0), Mathf.DegToRad(tank.RotationDegrees.Y))));
             T.Check($"forward drive moves the tank ({movedFwd:0.0} m)", movedFwd > 2f);
             T.Check($"forward drive holds heading (drift {yawDrift:0.0} deg)", yawDrift < 25f);
+
+            // never flipped through the pivot + drive (master: "easily flipped")
+            T.Check($"stays upright through the whole drive ({tank.GlobalTransform.Basis.Y.Dot(Vector3.Up):0.00})", tank.GlobalTransform.Basis.Y.Dot(Vector3.Up) > 0.9f);
 
             tank.QueueFree();
         }

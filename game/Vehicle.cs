@@ -24,8 +24,10 @@ namespace UnturnedGodot
         // is just a RigidBody3D, so the base class does not fight flight.
         bool _heli; float _heliThrust, _heliPitchTq, _heliRollTq, _heliYawTq, _heliLevel;
         bool _tracked;   // TANK: tracked/differential drive -- Drive() branches on this to set per-TRACK torque instead of a steered-wheel angle
-        float _tankYawInput;   // TANK: desired yaw-rate scale [-1,1] from the track difference (set in Drive, applied in _PhysicsProcess -- the grippy road wheels won't pivot on the differential couple alone, it stalls at ~2 deg/s)
-        const float TankMaxYawRate = 0.9f, TankYawAccel = 3.0f;   // skid-steer yaw: peak ~52 deg/s, reached in ~0.3s. Tunable feel.
+        const float TankWheelSlip = 1.0f;   // TANK: LOW lateral wheel friction so the tracks SKID and the differential couple PHYSICALLY pivots the hull (real torque on real inertia, per VoX -- not a directly-set yaw rate that fights slopes/walls + gets erased in MP). Tunable: lower = brisker pivot, looser drive.
+        const float TankComY = 0.1f;   // TANK: low centre of mass (anti-flip -- master "easily flipped"). Tunable.
+        const float TankMaxYawRate = 0.6f, TankYawGain = 60000f;   // TANK skid-steer: a REAL torque (ApplyTorque -- integrated into owned momentum, MP-safe + survives slopes/walls, per VoX) GOVERNED toward TankMaxYawRate*input. A plain constant torque is bang-bang here (the wheels' yaw resistance is ~constant -> it either stalls slow or runs away), so this feedback torque holds a stable rate + self-corrects. ~20 deg/s pivot; tunable.
+        float _tankYawInput;   // TANK: yaw request [-1,1] from the track difference (set in Drive, applied as a real torque in _PhysicsProcess)
         float _inCollective, _inYaw, _inPitch, _inRoll;   // the pilot's held axes (W/S, A/D, mouse Y, mouse X)
         float _rotorSpin, _tailSpin, _rotorRpm;            // visual blade phases (main/tail) + spool state (0..1)
         Node3D _rotorNode, _tailRotorNode;
@@ -1520,9 +1522,9 @@ namespace UnturnedGodot
             Treads = "tank_treads.txt",
             TurretMeshes = new[] { "tank_turret.txt", "tank_turret_1.txt" }, TurretYawPivot = new Vector3(0f, 0f, 0.85f),
             GunMesh = "tank_gun.txt", GunPitchPivot = new Vector3(0f, 2.8f, -1.15f), Muzzle = new Vector3(0f, 2.8f, -6.306f),
-            Wheel = "tank_wheel.txt", WheelRadius = 0.5f,   // road wheel; no WheelTex -> solid dark, mostly hidden inside the treads
+            Wheel = "tank_wheel.txt", WheelRadius = 0.74f,   // REAL road-wheel radius (tank_wheel.txt bbox Y+-0.74); a too-small 0.5 sat the hull LOW so the collision box scraped the ground (master). no WheelTex -> solid dark, hidden inside the treads
             Engine = 950f, SteerMax = 0f, SteerMin = 0f, SpeedMax = 9f, SpeedMin = -4f, Brake = 48f,   // heavy + slow; SteerMax 0 -> tracked differential steer (Drive branches on Tracked), not a wheel angle
-            BoxSize = new Vector3(3.7f, 1.5f, 7.0f), BoxCenter = new Vector3(0f, 0.7f, 0f),   // hull box (rough off the rig; tune vs render)
+            BoxSize = new Vector3(5.8f, 2.2f, 9.0f), BoxCenter = new Vector3(0f, 1.25f, 0f),   // hull collision box from tank_hull.txt bbox (X+-2.9, Y 0.15..2.35, Z+-4.5): the BOTTOM sits ABOVE the wheels' ground contact so the HULL never scrapes (master: "hitbox scraping the ground") -- the 8 wheels carry the ride
             ForwardGears = new[] { 16f, 9f }, ReverseGear = 8f, ShiftUpRpm = 3500f,
             Sound = "engine_large.ogg", IdlePitch = 0.65f, MaxPitch = 1.25f, IdleVolume = 0.9f, MaxVolume = 1.0f,   // heavy diesel rumble
             Fuel = 2000f, Health = 1600f, Name = "Tank",
@@ -2516,11 +2518,11 @@ namespace UnturnedGodot
                 var w = new VehicleWheel3D
                 {
                     Position = new Vector3(x, y, z), UseAsSteering = steer, UseAsTraction = s.Kingpin == Vector3.Zero,   // a TRAILER's wheels are passive rollers, NOT traction -- traction wheels on a towed body resist the pull
-                    WheelRadius = wr, WheelRestLength = 0.25f, SuspensionTravel = 0.25f,
+                    WheelRadius = wr, WheelRestLength = s.Tracked ? 0.15f : 0.25f, SuspensionTravel = s.Tracked ? 0.20f : 0.25f,   // tank: shorter suspension so the tracks sit ON the ground + a stiffer, less-bouncy ride
                     // stiffer + higher max force so 900kg doesn't compress the suspension into a permanent SQUAT; more
                     // damping to settle without bounce; higher friction slip = more TRACTION (was sliding/understeering).
                     // Trailer = low friction so the wheels free-roll behind the cab instead of gripping/dragging.
-                    SuspensionStiffness = 55f, SuspensionMaxForce = 12000f, DampingCompression = 3.5f, DampingRelaxation = 4.2f, WheelFrictionSlip = s.Kingpin != Vector3.Zero ? 1.5f : 6.0f,
+                    SuspensionStiffness = 55f, SuspensionMaxForce = 12000f, DampingCompression = 3.5f, DampingRelaxation = 4.2f, WheelFrictionSlip = s.Tracked ? TankWheelSlip : (s.Kingpin != Vector3.Zero ? 1.5f : 6.0f),
                 };
                 // left wheels: flip the mesh so the tread faces outward
                 var mi = new MeshInstance3D { Mesh = wheelMesh, MaterialOverride = wheelMat, Scale = new Vector3((x < 0 ? -1f : 1f) * wscale, wscale, wscale) };
@@ -2533,6 +2535,7 @@ namespace UnturnedGodot
             // nose under braking (master). Godot's auto COM sat at the body-box centre (~0.6m up) -> top-heavy + tippy.
             float comY;
             if (s.Wheels.Length > 0) { comY = 0f; foreach (var wl in s.Wheels) comY += wl.y; comY = comY / s.Wheels.Length - 0.2f; }
+            if (s.Tracked) comY = TankComY;   // tank: force the COM LOW -- a tall hull on high (0.556) wheels is tippy otherwise (master "easily flipped")
             else comY = s.BoxCenter.Y - s.BoxSize.Y * 0.25f;   // BOAT (no wheels): low COM below the hull centre so buoyancy keeps it upright (was a div-by-zero)
             v.CenterOfMassMode = RigidBody3D.CenterOfMassModeEnum.Custom;
             v.CenterOfMass = new Vector3(0f, comY, 0f);
@@ -3075,7 +3078,7 @@ namespace UnturnedGodot
                 EngineForce = 0f; Steering = 0f; _steerTarget = 0f;                                      // clear the GLOBAL traction (its setter overwrites every traction wheel) + the wheel-angle steer, THEN set per-wheel below
                 for (int i = 0; i < _wNodes.Length; i++)                                                 // negate like the car path: this rig drives +Z for +force
                     _wNodes[i].EngineForce = -(_wNodes[i].Position.X < 0f ? leftT : rightT) * _engineForce;
-                _tankYawInput = (rightT - leftT) * 0.5f;   // [-1,1] turn request: W+A (0,1)->0.5 arc, A-alone (-1,1)->1.0 pivot, straight (1,1)->0. _PhysicsProcess steers the hull's yaw rate toward it.
+                _tankYawInput = (rightT - leftT) * 0.5f;   // [-1,1] turn request -> a REAL yaw torque in _PhysicsProcess (the couple alone barely pivots Godot's grippy point-wheels)
                 _handbraking = handbrake;
                 bool tCoast = Mathf.Abs(throttle) < 0.05f && Mathf.Abs(steer) < 0.05f && !footBrake;     // no throttle AND no steer input -> engine-brake it down (a steer-only pivot must NOT coast-brake, or it can't spin)
                 Brake = handbrake ? _brakeForce * HandbrakeScale : (footBrake ? _brakeForce * FootBrakeScale : (tCoast ? _brakeForce * FootBrakeScale * 0.35f : 0f));
@@ -3806,16 +3809,8 @@ namespace UnturnedGodot
                 return;
             }
             if (_heli) { StepHeli((float)delta); return; }   // rotary wing: rotor thrust replaces the wheel/tow/settle sim entirely
-            // TANK skid-steer yaw: the grippy road wheels won't pivot on the differential couple alone (it stalls at
-            // ~2 deg/s -- the wheels grip laterally and a pivot needs them to SKID), so while under power steer the
-            // hull's yaw rate directly toward the target the track-difference set in Drive(). The per-track
-            // EngineForces still carry the forward/back drive + the "which track drives" feel; this supplies the turn.
-            if (_tracked && !_exploded && !_parked && EngineOn && !Freeze)
-            {
-                var av = AngularVelocity;
-                av.Y = Mathf.MoveToward(av.Y, _tankYawInput * TankMaxYawRate, TankYawAccel * (float)delta);
-                AngularVelocity = av;
-            }
+            if (_tracked && !_exploded && !_parked && EngineOn && !Freeze)   // TANK skid-steer turn authority: a REAL yaw torque (integrated -> owned momentum, survives slopes/walls + the MP transform-adopt path). The per-track EngineForces carry the fwd/back drive + which-track feel; Godot's grippy point-wheels won't skid-pivot on that couple alone.
+                ApplyTorque(new Vector3(0f, (_tankYawInput * TankMaxYawRate - AngularVelocity.Y) * TankYawGain, 0f));
             if (CanTow && CoupledTrailer != null) UpdateCoupled(CoupledTrailer, (float)delta);   // coupled: rollover/clip disconnect + jackknife clamp
             else if (CanTow) UpdateTrailerApproach();     // ghost this cab vs a trailer it's backing under (exception + layer swap) so it phases the low deck+legs; solid vs the player throughout
             if (Towing != null) UpdateTow((float)delta);   // rope tower: spring-tension pull on both bodies + redraw the rope (SP)
