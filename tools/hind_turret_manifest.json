@@ -1,0 +1,29 @@
+{
+ "Turret_1": {
+  "seat": 1,
+  "pivot": [
+   0.0,
+   0.064,
+   -4.378
+  ],
+  "aim": [
+   -0.275,
+   -0.2,
+   -0.4
+  ],
+  "muzzle": [
+   0.504,
+   -0.0,
+   -2.2
+  ],
+  "eject": [
+   0.605,
+   -0.007,
+   -0.168
+  ],
+  "parts": {
+   "yaw": "hind_turret_yaw.txt",
+   "pitch": "hind_turret_pitch.txt"
+  }
+ }
+}
