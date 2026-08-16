@@ -135,6 +135,10 @@ run_suite() {  # $1 = suite dir under tests/
 
 run_l1() {  # batched in-engine tests: build the game once, boot headless godot, run every GameTest, parse its report
   echo "== L1: in-engine tests (headless godot, one boot) =="
+  # 9>&- closes the LOCK fd for this child. Without it the Roslyn compiler server (VBCSCompiler) inherits fd 9,
+  # outlives the script, and keeps holding the run lock -- so the NEXT run is refused by a daemon belonging to a
+  # suite that finished minutes ago. MSBUILDDISABLENODEREUSE/DOTNET_CLI_USE_MSBUILD_SERVER above cover the MSBuild
+  # daemons but not this one; observed 2026-08-07, lock held by a VBCSCompiler whose test.sh had long since died.
   if ! dotnet build game/UnturnedGodot.csproj -c Debug -v q -nologo >"$RESULTS/l1_build.log" 2>&1 9>&-; then
     echo "[SUITE] L1 | ERROR | game build failed (see $RESULTS/l1_build.log)"
     grep -E 'error|Build FAILED' "$RESULTS/l1_build.log" | head -3 | sed 's/^/         /'
@@ -149,7 +153,7 @@ run_l1() {  # batched in-engine tests: build the game once, boot headless godot,
   # sat UNDER the suite -- it killed the run two tests from the end and the core dump read as a hang in whatever was
   # next in line. An outer cap that the suite has grown past reports as a crash in an innocent test, so keep real
   # headroom here and re-measure when it gets close rather than trimming to fit.
-  timeout 1200 "$GODOT" --path game --headless -- "--tests$glob" >"$log" 2>&1
+  timeout 1200 "$GODOT" --path game --headless -- "--tests$glob" >"$log" 2>&1 9>&-   # same: never let the engine inherit the lock fd
   grep -E '^\[TEST\]|^[[:space:]]+✗|^[[:space:]]+repro' "$log"   # per-test detail (human + agent)
   local summary; summary="$(grep -E '^\[L1\] passed=' "$log" | tail -1)"
   if [ -z "$summary" ]; then

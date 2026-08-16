@@ -58,7 +58,81 @@ namespace UnturnedGodot
         InventoryUI _invUI;                 // the dashboard (Tab to open)
         CraftingUI _craftUI;                // the crafting menu (K to open)
         SkillsUI _skillsUI;                 // the skills menu (J to open) -- spend XP to level skills
-        BuildTool _build;                   // B = build mode (grid-snapped structures)
+        BuildTool _build;                   // B = build mode. C = construct, V = tier, LMB place, R salvage.
+
+        /// <summary>Upgrade the aimed piece a tier in place. StructureManager.Upgrade had tests and no caller
+        /// anywhere in the game -- the tier ladder existed only as an API, so nothing a player did could climb
+        /// it. Same shape as the doors and beds that carried a TakeDamage nothing ever invoked: green tests
+        /// proving a method works say nothing about whether it is reachable.</summary>
+        void UpgradeAimedStructure()
+        {
+            var piece = AimedStructure();
+            if (piece == null) return;
+            var sm = StructureManager.Instance;
+            int was = piece.Tier;
+            if (sm.Upgrade(piece))
+                GD.Print($"[build] upgraded {piece.Construct}: {StructureCatalog.TierAt(was).Name} -> {StructureCatalog.TierAt(piece.Tier).Name} ({piece.Health} hp)");
+            else
+                GD.Print($"[build] {piece.Construct} is already {StructureCatalog.TierAt(piece.Tier).Name} (top tier)");
+        }
+
+        /// <summary>The structure piece under the crosshair, or null. Shared by salvage/upgrade/melee so all
+        /// three agree on WHICH piece you mean -- three separate raycasts drifting apart is how "salvage took
+        /// the wrong wall" bugs start.</summary>
+        StructureManager.Piece AimedStructure(float reach = -1f)
+        {
+            var sm = StructureManager.Instance;
+            if (sm == null || _cam == null) return null;
+            var space = GetWorld3D()?.DirectSpaceState;
+            if (space == null) return null;
+            if (reach <= 0f) reach = StructureCatalog.MaxPlacementDistance;   // melee reaches less far than placement
+            Vector3 from = _cam.GlobalPosition, dir = -_cam.GlobalTransform.Basis.Z;
+            var q = PhysicsRayQueryParameters3D.Create(from, from + dir * reach);
+            q.CollisionMask = 1u << 0;
+            var hit = space.IntersectRay(q);
+            if (hit.Count == 0) return null;
+            var found = sm.QueryAt((Vector3)hit["position"], StructureCatalog.HalfEdge);
+            if (found == null) return null;
+            foreach (var piece in sm.All) if (piece.Node == found.Value.Node) return piece;
+            return null;
+        }
+
+        /// <summary>Swing at the structure piece under the crosshair. Returns true if one was hit, so the melee
+        /// chain stops there rather than also swinging at whatever is behind it. A blowtorch repairs instead of
+        /// hitting, matching how vehicles and deployables already behave.</summary>
+        bool MeleeStructure(float amount, float range)
+        {
+            var piece = AimedStructure(range + 1.5f);
+            if (piece == null) return false;
+            var sm = StructureManager.Instance;
+            bool metal = StructureCatalog.TierAt(piece.Tier).Name == "metal";
+            if (HasBlowtorch)
+            {
+                int healed = sm.Repair(piece, Mathf.RoundToInt(amount));
+                if (healed > 0) GD.Print($"[build] repaired {piece.Construct} +{healed}");
+                return true;
+            }
+            var c = piece.Construct;
+            int tier = piece.Tier;
+            bool broke = sm.Damage(piece, Mathf.RoundToInt(amount));
+            MeleeImpactFx(piece.Pos, false, metal ? Surf.Metal : Surf.Wood);
+            GD.Print(broke
+                ? $"[build] destroyed {StructureCatalog.TierAt(tier).Name} {c}"
+                : $"[build] hit {c} for {amount:0} ({piece.Health}/{piece.MaxHealth})");
+            return true;
+        }
+
+        /// <summary>Salvage the structure piece under the crosshair. Uses the eye ray rather than the build
+        /// ghost: the ghost sits at the slot you would BUILD into, which is next to the piece you are looking
+        /// at, so salvaging off the ghost takes down the wrong thing (or nothing).</summary>
+        void SalvageAimedStructure()
+        {
+            var piece = AimedStructure();
+            if (piece == null) return;
+            var c = piece.Construct;
+            int tier = StructureManager.Instance.Salvage(piece);
+            if (tier >= 0) GD.Print($"[build] salvaged {StructureCatalog.TierAt(tier).Name} {c}");
+        }
         string _gunName = "eaglefire";   // gun folder name (eaglefire | maplestrike), derived from the .dat path
         float _pitchDeg;
         float _scopeSwayT, _swayAppliedP, _swayAppliedY;   // scope sway: phase clock + what it has already folded into the aim
@@ -2473,6 +2547,13 @@ namespace UnturnedGodot
                 return;
             }
 
+            // Structures take melee too, or a placed base carries Health that nothing in the game can ever
+            // reduce -- the same gap doors and beds had before their block above was added, where the tests
+            // exercised TakeDamage directly and proved only that the method worked. Vulnerability is the
+            // catalog's (retail's isVulnerable): metal shrugs off a hatchet, which is why the tier ladder is
+            // worth climbing.
+            if (MeleeStructure((_melee?.VehicleDamage ?? 10f) * mult, range)) return;
+
             float dmg = (_melee?.ZombieDamage ?? 45f) * mult * Skills.OverkillMeleeMultiplier();   // weapon .dat Zombie_Damage x OVERKILL skill
             Vector3 origin = GlobalPosition + Vector3.Up * 1.2f, fwd = -_cam.GlobalTransform.Basis.Z;
             // The rewrite's zombies are sim ROWS, not nodes, so the group sweep below cannot see them --
@@ -4428,7 +4509,10 @@ namespace UnturnedGodot
                 EquipHotbar((int)hk.Keycode - (int)Key.Key0);   // hotbar keys (bag CLOSED): 1/2 = primary/secondary slot, 3-9 = bound item. Binding (RMB item + 3-9) is handled in InventoryUI while the bag's open.
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.V })
             {
-                if (_driving == null && HasGunOut) CycleFiremode();   // V on foot: cycle firemode (only with a gun out)
+                // Gated on build mode the same way C already splits crouch-vs-cycle-structure: while the build
+                // ghost is up, firemode is meaningless and the tier selector is what you want.
+                if (_build != null && _build.Active) _build.CycleTier();
+                else if (_driving == null && HasGunOut) CycleFiremode();   // V on foot: cycle firemode (only with a gun out)
             }
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.H })
                 _fp = !_fp;   // H: toggle 3rd / 1st person camera (on foot + driving)
@@ -4504,7 +4588,11 @@ namespace UnturnedGodot
             // plainly rather than leaving a dead C-cycles-structure branch reading like a live feature.
             // Restoring it is one line here, on whichever key it should have.
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.C })
-                _build?.CycleType();  // cycle the structure type (floor/wall)
+                _build?.CycleType();  // cycle the structure type (floor/wall/pillar/rampart/roof)
+            else if (@event is InputEventKey { Pressed: true, Keycode: Key.R } && (_build?.Active ?? false))
+                SalvageAimedStructure();   // R while building: take the aimed piece back down (reload is meaningless here)
+            else if (@event is InputEventKey { Pressed: true, Keycode: Key.Y } && (_build?.Active ?? false))
+                UpgradeAimedStructure();   // Y while building: wood -> brick -> metal in place
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.G })
                 MeleeAttack();        // melee swing at a zombie in reach
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.H })

@@ -208,6 +208,25 @@ namespace UnturnedGodot
 
             // infFuel [on|off]  -- dev/playtesting: ALL cars stop burning fuel. ON by DEFAULT (master 2026-07-20);
             // bare form FLIPS it. Handled above the arg guard so the no-arg toggle works. SP-local static, not networked.
+            // structures [count|save|load|clear]  -- inspect and drive the structure system without having to
+            // build a base by hand every time you want to check persistence. Bare form reports the count, which
+            // is the fastest way to tell "load did nothing" apart from "load worked and the base is elsewhere".
+            if (verb == "structures" || verb == "struct")
+            {
+                var sm = StructureManager.Instance;
+                if (sm == null) { Log("structures: no StructureManager in this world (build mode provisions one -- press B)"); return; }
+                string a = arg.Trim().ToLowerInvariant();
+                if (a == "save") { Log(sm.SaveToDisk() ? $"structures: saved {sm.Count} piece(s)" : "structures: SAVE FAILED"); return; }
+                if (a == "load") { int n = sm.LoadFromDisk(); Log($"structures: loaded {n} piece(s)"); return; }
+                if (a == "clear") { int had = sm.Count; sm.Clear(); Log($"structures: cleared {had} piece(s)"); return; }
+                var byTier = new int[StructureCatalog.TierCount];
+                foreach (var pc in sm.All) byTier[Mathf.Clamp(pc.Tier, 0, byTier.Length - 1)]++;
+                var tierBits = new System.Collections.Generic.List<string>();
+                for (int i = 0; i < byTier.Length; i++) if (byTier[i] > 0) tierBits.Add($"{byTier[i]} {StructureCatalog.TierAt(i).Name}");
+                Log($"structures: {sm.Count} piece(s){(tierBits.Count > 0 ? " -- " + string.Join(", ", tierBits) : "")}");
+                return;
+            }
+
             if (verb == "inffuel")
             {
                 string f = arg.ToLowerInvariant();
