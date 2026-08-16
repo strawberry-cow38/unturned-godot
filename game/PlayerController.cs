@@ -2869,8 +2869,14 @@ namespace UnturnedGodot
         // and it is also the only mapping that works against a flight model driving angular VELOCITY -- a stick
         // that stayed deflected would just spin forever.
         float _heliStickP, _heliStickR;
-        const float HeliStickGain = 0.055f;    // mouse pixels -> stick deflection
+        const float HeliStickGain = 0.034f;    // mouse pixels -> stick deflection (strawberry: "lower the sensitivity of the joystick")
         const float HeliStickDecay = 8.5f;     // self-centring, per second
+        /// <summary>Cross-axis deadzone (strawberry 2026-08-16: "add a little deadzone between forward/back
+        /// tilting and left/right tilting"). A mouse never moves on a perfectly straight axis, so a movement
+        /// meant as pure pitch always carried a little roll with it and the airframe crabbed. Each axis is
+        /// reduced by this fraction of the OTHER one's magnitude, so a mostly-horizontal movement is pure roll
+        /// and a mostly-vertical one is pure pitch, while a genuine diagonal still gets through.</summary>
+        const float HeliStickCrossDeadzone = 0.4f;
         /// <summary>Test seam: the current virtual stick (pitch, roll) the pilot is holding.</summary>
         public UnityEngine.Vector2 DebugHeliStick => new UnityEngine.Vector2(_heliStickP, _heliStickR);
         public bool LastHandbrakeInput;
@@ -4083,11 +4089,18 @@ namespace UnturnedGodot
             {
                 if (_driving != null && _driving.IsHeli)
                 {
-                    // FLYING: the mouse is the cyclic, not a camera orbit. Mouse forward (negative Relative.Y)
-                    // pushes the nose DOWN, the standard stick convention, so the sign is negated against the
-                    // nose-UP-positive axis the flight model takes.
+                    // FLYING: the mouse is the cyclic, not a camera orbit.
+                    //
+                    // PITCH SIGN IS A SETTING, not a decision (ControlsOptions.InvertHeliPitch). Godot's
+                    // Relative.Y is negative when the mouse moves forward, and the flight model takes pitch
+                    // POSITIVE = nose up. Regular (default) wants forward -> nose down -> fly forward, so the
+                    // raw delta passes through; Inverted wants forward -> nose up, like a real cyclic, so it
+                    // is negated. This shipped as nose-up-on-forward, which VoX reported as flying backwards
+                    // and strawberry liked -- they were both describing the same behaviour and disagreeing
+                    // about it, which is what a toggle is for.
                     _heliStickR = Mathf.Clamp(_heliStickR + mm.Relative.X * HeliStickGain, -1f, 1f);
-                    _heliStickP = Mathf.Clamp(_heliStickP - mm.Relative.Y * HeliStickGain, -1f, 1f);
+                    float pitchDelta = ControlsOptions.InvertHeliPitch ? -mm.Relative.Y : mm.Relative.Y;
+                    _heliStickP = Mathf.Clamp(_heliStickP + pitchDelta * HeliStickGain, -1f, 1f);
                 }
                 else if ((_driving != null || _riding != null) && !_fp)   // driving in 3rd person: the mouse ORBITS the chase cam around the car instead of turning the driver (master)
                 {
@@ -5494,7 +5507,13 @@ namespace UnturnedGodot
             // stick captured in _Input. Handbrake has no meaning on a helicopter and is dropped.
             if (_driving.IsHeli)
             {
-                _driving.DriveHeli(throttle, steer, _heliStickP, _heliStickR, delta);
+                // Cross-axis deadzone, applied to what the FLIGHT MODEL sees rather than to the stored stick, so
+                // the stick keeps decaying smoothly and a diagonal that grows past the threshold blends in
+                // instead of popping.
+                float sp = _heliStickP, sr = _heliStickR;
+                float fp = Mathf.Max(0f, Mathf.Abs(sp) - HeliStickCrossDeadzone * Mathf.Abs(sr)) * Mathf.Sign(sp);
+                float fr = Mathf.Max(0f, Mathf.Abs(sr) - HeliStickCrossDeadzone * Mathf.Abs(sp)) * Mathf.Sign(sr);
+                _driving.DriveHeli(throttle, steer, fp, fr, delta);
                 LastDriveInput = new UnityEngine.Vector2(steer, throttle);   // MP fallback axes (collective/yaw); attitude rides the reported transform
                 LastHandbrakeInput = false;
                 // Self-centre the stick. Done HERE rather than in _Input because input events only arrive when

@@ -47,6 +47,14 @@ namespace UnturnedGodot
                 () => { GraphicsOptions.DrawDistance = GraphicsOptions.Next(GraphicsOptions.DrawOrder, GraphicsOptions.DrawDistance);
                         GraphicsOptions.ApplyRenderDistance(ctx?.GetTree()?.Root); });
 
+            var ctrlTitle = new Label { Text = "CONTROLS", HorizontalAlignment = HorizontalAlignment.Center };
+            ctrlTitle.AddThemeFontSizeOverride("font_size", 22);
+            vbox.AddChild(ctrlTitle);
+
+            Row(vbox, "Helicopter pitch",
+                () => ControlsOptions.InvertHeliPitchLabel,
+                () => ControlsOptions.InvertHeliPitch = !ControlsOptions.InvertHeliPitch);
+
             // Said in the UI, not just in a commit message: the anisotropy row is wired to a real setting that
             // currently changes nothing, because no material in the port asks for an anisotropic filter mode. A
             // control that silently does nothing is worse than one that says so.

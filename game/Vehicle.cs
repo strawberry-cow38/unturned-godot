@@ -28,6 +28,16 @@ namespace UnturnedGodot
         Node3D _rotorNode, _tailRotorNode;
         MeshInstance3D _bladesMesh, _discMesh, _tailBladesMesh, _tailDiscMesh;   // the two drawn states per rotor
         const float DiscSwapSpool = 0.35f;   // above this the blades are a smear, so the game draws the plate instead
+        public const float TailRotorRollDegrees = 90f;   // stands the tail disc on edge; composed with the spin each tick
+        // ---- playtest tuning, strawberry 2026-08-16 ----------------------------------------------------
+        /// <summary>Fraction of lift lost to tilting off vertical, ON TOP of the cosine you get for free from
+        /// thrusting along the body axis. strawberry: "reduce the upward thrust more when tilting forward" --
+        /// so a nose-down dash costs you altitude rather than being a free way to go fast level.</summary>
+        const float TiltThrustLoss = 0.55f;
+        /// <summary>Extra push on the HORIZONTAL component of rotor thrust ("increase the forward/back momentum
+        /// when tilting forward/back"). Fore/aft gets more than lateral, because that is the axis she was
+        /// describing and a helicopter that slides sideways as eagerly as it accelerates feels like a drone.</summary>
+        const float ForeAftBoost = 1.65f, LateralBoost = 1.15f;
         public bool IsHeli => _heli;
         float _groundClearance;
         /// <summary>Distance from the body origin down to its lowest collision point (skids, hull floor).</summary>
@@ -238,6 +248,13 @@ namespace UnturnedGodot
 
         public enum WaterMode { Car, Boat, Amphibious }   // source VehicleAsset.engine: CAR = land; BOAT = floats + water-drive; amphibious (e.g. APC) = CAR wheels + buoyancy so it swims too
 
+        /// <summary>Which procedural helicopter airframe to build. Two exist because VoX wanted the Rust-accurate
+        /// machine and strawberry liked the first one ("its like the gta vice city RC heli"), and keeping both
+        /// costs one Spec -- the flight model, controls and net path are identical either way.
+        ///   Ultralight = the real Rust minicopter: an open tube frame, exposed seats, wheels, a bare mast.
+        ///   Pod        = the enclosed little scout with skids and a canopy.</summary>
+        public enum HeliFrame { Ultralight, Pod }
+
         struct Spec
         {
             public string Body, Wheel, WheelTex, Palette;   // Palette = paintable palette; WheelTex = wheel albedo
@@ -282,7 +299,8 @@ namespace UnturnedGodot
             public float HeliClimbMax, HeliFallMax;              // MP envelope caps, m/s (0 = inherit the car defaults)
             public float RotorRadius, TailRotorRadius;           // blade half-spans (the rotor mesh is scaled to these)
             public Vector3 RotorHub, TailRotorHub;               // local mount points for the two rotors
-            public string[] HeliBodyMeshes;                      // airframe .obj(s); null = build the procedural minicopter frame
+            public string[] HeliBodyMeshes;                      // airframe .obj(s); null = build one of the procedural frames below
+            public HeliFrame Frame;                              // which procedural airframe (ignored when HeliBodyMeshes is set)
         }
 
         static AudioStreamWav LoadWav(string resPath)   // load a PCM wav at runtime (no ffmpeg on the box) as a looping stream for the siren
@@ -1088,27 +1106,58 @@ namespace UnturnedGodot
         // shared car defaults (12.5 up / 25 down) would recov a pilot out of any real dive.
         static readonly Spec _minicopter = new()
         {
-            Heli = true,
-            HeliThrust = 17f, HeliPitchTorque = 2.6f, HeliRollTorque = 3.0f, HeliYawTorque = 2.2f, HeliLevel = 1.5f,
+            Heli = true, Frame = HeliFrame.Ultralight,
+            // Thrust cut TWICE on playtest feedback: 17 -> 13.6 (strawberry, "reduce the upward thrust by like
+            // 20%") -> 11.8 (VoX, "less thrust from W"). 11.8 against g leaves thrust-to-weight at 1.20 and
+            // hover at ~83 % collective, so there is still real climb available but you have to commit to it.
+            HeliThrust = 11.8f, HeliPitchTorque = 2.6f, HeliRollTorque = 3.0f, HeliYawTorque = 2.2f, HeliLevel = 0f,
+            HeliClimbMax = 22f, HeliFallMax = 45f,
+            RotorRadius = 2.85f, TailRotorRadius = 0.34f,
+            RotorHub = new Vector3(0f, 1.22f, 0.10f), TailRotorHub = new Vector3(0.09f, 0.02f, 2.46f),
+            Body = null, Palette = null, DefaultPaints = new[] { "#8a7f5c" },   // bare weathered tube frame
+            Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", WheelRadius = 0.3f,   // unused (no wheels), non-null for safety like the runabout
+            Engine = 0f, SteerMax = 0f, SteerMin = 0f, SpeedMax = 26f, SpeedMin = 0f, Brake = 0f,   // rotor thrust replaces wheel drive entirely
+            BoxSize = new Vector3(1.05f, 0.80f, 1.60f), BoxCenter = new Vector3(0f, 0.05f, 0.20f),   // seats + engine bay
+            ExtraBoxes = new (Vector3, Vector3)[]
+            {
+                (new Vector3(1.85f, 0.22f, 0.30f), new Vector3(0f, -0.46f, -1.05f)),   // front axle -- what it sits on
+                (new Vector3(0.24f, 0.24f, 2.60f), new Vector3(0f, -0.30f, 1.30f)),    // keel aft section + tail
+                (new Vector3(0.20f, 0.30f, 0.20f), new Vector3(0f, -0.50f, 2.35f)),    // tail wheel
+            },
+            ForwardGears = new[] { 1f }, ReverseGear = 1f, ShiftUpRpm = 5000f,
+            Sound = "engine_medium.ogg", IdlePitch = 1.1f, MaxPitch = 2.2f, IdleVolume = 0.7f, MaxVolume = 1.0f,
+            Fuel = 200f, Health = 250f, Name = "Minicopter", Rarity = EItemRarity.RARE,
+            Wheels = new (float, float, float, bool)[0],   // the wheels are scenery -- it flies, it does not drive
+        };
+        public static Vehicle BuildMinicopter(int variant = 0) => Build(_minicopter, variant, "minicopter");
+
+        // SCOUTCOPTER -- the enclosed pod-and-skids machine that was the first cut of the minicopter. Kept as its
+        // own spec rather than edited away: VoX asked for the Rust-accurate ultralight ("basically a frame with a
+        // steat") and strawberry liked this one ("noo i love the model. its like the gta vice city RC heli"), and
+        // both fit -- the flight model, controls and net path are shared, so a second airframe costs one Spec.
+        static readonly Spec _scoutcopter = new()
+        {
+            Heli = true, Frame = HeliFrame.Pod,
+            HeliThrust = 11.8f, HeliPitchTorque = 2.6f, HeliRollTorque = 3.0f, HeliYawTorque = 2.2f, HeliLevel = 0f,
             HeliClimbMax = 22f, HeliFallMax = 45f,
             RotorRadius = 2.65f, TailRotorRadius = 0.42f,
             RotorHub = new Vector3(0f, 1.12f, 0.20f), TailRotorHub = new Vector3(0.10f, 0.62f, 3.02f),
-            Body = null, Palette = null, DefaultPaints = new[] { "#d9d24b" },   // Rust's yellow-ish airframe
-            Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", WheelRadius = 0.3f,   // unused (no wheels), non-null for safety like the runabout
-            Engine = 0f, SteerMax = 0f, SteerMin = 0f, SpeedMax = 26f, SpeedMin = 0f, Brake = 0f,   // rotor thrust replaces wheel drive entirely
-            BoxSize = new Vector3(1.15f, 1.05f, 2.05f), BoxCenter = new Vector3(0f, 0.12f, 0.15f),   // the pod; the skids/boom are ExtraBoxes
+            Body = null, Palette = null, DefaultPaints = new[] { "#d9d24b" },
+            Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", WheelRadius = 0.3f,
+            Engine = 0f, SteerMax = 0f, SteerMin = 0f, SpeedMax = 26f, SpeedMin = 0f, Brake = 0f,
+            BoxSize = new Vector3(1.15f, 1.05f, 2.05f), BoxCenter = new Vector3(0f, 0.12f, 0.15f),
             ExtraBoxes = new (Vector3, Vector3)[]
             {
-                (new Vector3(0.16f, 0.16f, 2.30f), new Vector3(-0.52f, -0.72f, 0.10f)),   // left skid  -- what it lands on
+                (new Vector3(0.16f, 0.16f, 2.30f), new Vector3(-0.52f, -0.72f, 0.10f)),   // left skid
                 (new Vector3(0.16f, 0.16f, 2.30f), new Vector3( 0.52f, -0.72f, 0.10f)),   // right skid
                 (new Vector3(0.22f, 0.22f, 2.70f), new Vector3(0f, 0.34f, 1.85f)),        // tail boom
             },
             ForwardGears = new[] { 1f }, ReverseGear = 1f, ShiftUpRpm = 5000f,
             Sound = "engine_medium.ogg", IdlePitch = 1.1f, MaxPitch = 2.2f, IdleVolume = 0.7f, MaxVolume = 1.0f,
-            Fuel = 200f, Health = 250f, Name = "Minicopter", Rarity = EItemRarity.RARE,
-            Wheels = new (float, float, float, bool)[0],   // NO wheels -- it flies
+            Fuel = 200f, Health = 250f, Name = "Scoutcopter", Rarity = EItemRarity.RARE,
+            Wheels = new (float, float, float, bool)[0],
         };
-        public static Vehicle BuildMinicopter(int variant = 0) => Build(_minicopter, variant, "minicopter");
+        public static Vehicle BuildScoutcopter(int variant = 0) => Build(_scoutcopter, variant, "scoutcopter");
 
         // HUEY -- the RETAIL helicopter (VoX 2026-08-15: "do both, make a huey varient and model a new
         // minicopter varient"). Unlike the minicopter this one has a real source .dat, so its numbers are
@@ -1123,7 +1172,11 @@ namespace UnturnedGodot
         static readonly Spec _huey = new()
         {
             Heli = true,
-            HeliThrust = 13.5f, HeliPitchTorque = 1.5f, HeliRollTorque = 1.6f, HeliYawTorque = 1.4f, HeliLevel = 2.1f,
+            // The Huey takes a SMALLER cut than the minicopter's 20 %. strawberry was flying the minicopter, and
+            // 20 % off 13.5 leaves thrust-to-weight at 1.10 -- hover at 91 % collective, with almost nothing left
+            // to climb on once the new tilt penalty takes its bite. 12.0 keeps it heavy (T/W 1.22, hover ~82 %)
+            // without making a loaded transport unable to get out of its own way.
+            HeliThrust = 12.0f, HeliPitchTorque = 1.5f, HeliRollTorque = 1.6f, HeliYawTorque = 1.4f, HeliLevel = 0f,
             HeliClimbMax = 18f, HeliFallMax = 40f,
             RotorRadius = 5.57f, TailRotorRadius = 1.28f,        // the mesh's own spans -- no scaling for this one
             RotorHub = new Vector3(0f, 3.01f, -0.25f), TailRotorHub = new Vector3(-0.45f, 3.57f, 6.68f),   // prefab local positions, Z negated
@@ -1145,8 +1198,8 @@ namespace UnturnedGodot
             Wheels = new (float, float, float, bool)[0],
         };
         public static Vehicle BuildHuey(int variant = 0) => Build(_huey, variant, "huey");
-        public static Vehicle BuildByName(string name, int variant = 0) => name switch { "quad" => BuildQuad(variant), "bus" => BuildBus(variant), "sedan" => BuildSedan(variant), "hatchback" => BuildHatchback(variant), "humvee" => BuildHumvee(variant), "roadster" => BuildRoadster(variant), "ambulance" => BuildAmbulance(variant), "firetruck" => BuildFiretruck(variant), "tractor" => BuildTractor(variant), "ural" => BuildUral(variant), "police" => BuildPolice(variant), "semi" => BuildSemi(variant), "trailer" => BuildTrailer(variant), "offroader" => BuildOffRoader(variant), "off_roader" => BuildOffRoader(variant), "truck" => BuildTruck(variant), "van" => BuildVan(variant), "golf" => BuildGolf(variant), "vw_golf" => BuildGolf(variant), "runabout" => BuildRunabout(variant), "apc" => BuildAPC(variant), "minicopter" => BuildMinicopter(variant), "mini" => BuildMinicopter(variant), "heli" => BuildMinicopter(variant), "huey" => BuildHuey(variant), _ => BuildJeep(variant) };
-        public static readonly string[] SpecNames = { "jeep", "quad", "bus", "sedan", "hatchback", "humvee", "roadster", "ambulance", "firetruck", "tractor", "ural", "police", "semi", "trailer", "offroader", "truck", "van", "golf", "runabout", "apc", "minicopter", "huey" };   // F1 dev-console autocomplete + validation ("golf" = VW_Golf, command-only, no natural spawn; runabout = boat + apc = amphibious, both command-spawnable -- drop over water to float)
+        public static Vehicle BuildByName(string name, int variant = 0) => name switch { "quad" => BuildQuad(variant), "bus" => BuildBus(variant), "sedan" => BuildSedan(variant), "hatchback" => BuildHatchback(variant), "humvee" => BuildHumvee(variant), "roadster" => BuildRoadster(variant), "ambulance" => BuildAmbulance(variant), "firetruck" => BuildFiretruck(variant), "tractor" => BuildTractor(variant), "ural" => BuildUral(variant), "police" => BuildPolice(variant), "semi" => BuildSemi(variant), "trailer" => BuildTrailer(variant), "offroader" => BuildOffRoader(variant), "off_roader" => BuildOffRoader(variant), "truck" => BuildTruck(variant), "van" => BuildVan(variant), "golf" => BuildGolf(variant), "vw_golf" => BuildGolf(variant), "runabout" => BuildRunabout(variant), "apc" => BuildAPC(variant), "minicopter" => BuildMinicopter(variant), "mini" => BuildMinicopter(variant), "heli" => BuildMinicopter(variant), "huey" => BuildHuey(variant), "scoutcopter" => BuildScoutcopter(variant), "scout" => BuildScoutcopter(variant), _ => BuildJeep(variant) };
+        public static readonly string[] SpecNames = { "jeep", "quad", "bus", "sedan", "hatchback", "humvee", "roadster", "ambulance", "firetruck", "tractor", "ural", "police", "semi", "trailer", "offroader", "truck", "van", "golf", "runabout", "apc", "minicopter", "huey", "scoutcopter" };   // F1 dev-console autocomplete + validation ("golf" = VW_Golf, command-only, no natural spawn; runabout = boat + apc = amphibious, both command-spawnable -- drop over water to float)
 
         // spec lookup by key (same table as BuildByName) -- the MP puppet builder resolves replicated
         // TypeIds through this so client replicas rebuild the exact meshes/palette the server spawned
@@ -1261,6 +1314,76 @@ namespace UnturnedGodot
             return ContentProvider.ParseObj($"res://content/{file}");
         }
 
+        /// <summary>The Rust minicopter: an ULTRALIGHT, which is to say almost nothing. VoX 2026-08-16, with a
+        /// reference shot: "It should be a rust style ultralight minicopter, basically a frame with a steat".
+        ///
+        /// The design point is that it is mostly holes. A long tapered keel with two side rails, an open pair
+        /// of seats bolted straight to it, a bare mast, a fuel can, and three wheels -- no panels, no canopy,
+        /// nothing enclosing the pilot. Anything that reads as bodywork is wrong for this machine, which is why
+        /// the enclosed version lives on as its own spec rather than being edited into this shape.</summary>
+        static void BuildUltralightFrame(Vehicle v, Spec s, Material bodyMat, Material frameMat)
+        {
+            void Part(string name, Mesh m, Vector3 pos, Material mat, Vector3 rotDeg = default, Node3D parent = null)
+            {
+                var mi = new MeshInstance3D { Name = name, Mesh = m, MaterialOverride = mat, Position = pos };
+                if (rotDeg != Vector3.Zero) mi.RotationDegrees = rotDeg;
+                (parent ?? (Node3D)v).AddChild(mi);
+            }
+            void Tube(string name, float radius, float len, Vector3 pos, Material mat, Vector3 rotDeg, Node3D parent = null)
+                => Part(name, new CylinderMesh { TopRadius = radius, BottomRadius = radius, Height = len, RadialSegments = 10, Rings = 1 }, pos, mat, rotDeg, parent);
+
+            var seatMat = SolidMat(new Color(0.42f, 0.28f, 0.16f));   // the worn wooden seat pans
+            var tankMat = SolidMat(new Color(0.62f, 0.16f, 0.12f));   // the red FUEL can
+
+            // ---- KEEL. The spine of the machine, running nose to tail and carrying everything. It is also
+            // _bodyMesh (the paintable member), because on this airframe the frame IS the body.
+            var keel = new MeshInstance3D
+            {
+                Name = "Body",
+                Mesh = new BoxMesh { Size = new Vector3(0.13f, 0.13f, 4.30f) },
+                MaterialOverride = bodyMat,
+                Position = new Vector3(0f, -0.28f, 0.55f),
+                RotationDegrees = new Vector3(-3.5f, 0f, 0f),   // tail rides slightly high, as in the reference
+            };
+            v.AddChild(keel);
+            v._bodyMesh = keel;
+
+            // Side rails: front-wide, converging back onto the keel -- the A-frame that gives it its silhouette.
+            foreach (float sx in new[] { -1f, 1f })
+            {
+                Tube($"Rail{(sx < 0 ? "L" : "R")}", 0.045f, 2.30f, new Vector3(sx * 0.45f, -0.30f, -0.35f), frameMat, new Vector3(84f, sx * 11f, 0f), null);
+                Tube($"RailCross{(sx < 0 ? "L" : "R")}", 0.04f, 0.55f, new Vector3(sx * 0.30f, -0.05f, -0.25f), frameMat, new Vector3(0f, 0f, sx * 62f), null);
+            }
+            Tube("Axle", 0.05f, 1.70f, new Vector3(0f, -0.46f, -1.05f), frameMat, new Vector3(0f, 0f, 90f), null);
+
+            // ---- WHEELS, not skids. Two up front on the axle, one small one under the tail.
+            foreach (float sx in new[] { -1f, 1f })
+                Part($"Wheel{(sx < 0 ? "L" : "R")}", new CylinderMesh { TopRadius = 0.30f, BottomRadius = 0.30f, Height = 0.16f, RadialSegments = 14, Rings = 1 },
+                     new Vector3(sx * 0.86f, -0.46f, -1.05f), frameMat, new Vector3(0f, 0f, 90f), null);
+            Part("TailWheel", new CylinderMesh { TopRadius = 0.13f, BottomRadius = 0.13f, Height = 0.09f, RadialSegments = 10, Rings = 1 },
+                 new Vector3(0f, -0.50f, 2.35f), frameMat, new Vector3(0f, 0f, 90f), null);
+
+            // ---- SEATS. Two of them, open to the air, which is the whole joke of the machine.
+            foreach (float sx in new[] { -1f, 1f })
+            {
+                Part($"SeatPan{(sx < 0 ? "L" : "R")}", new BoxMesh { Size = new Vector3(0.44f, 0.06f, 0.42f) }, new Vector3(sx * 0.30f, 0.02f, 0.18f), seatMat, Vector3.Zero, null);
+                Part($"SeatBack{(sx < 0 ? "L" : "R")}", new BoxMesh { Size = new Vector3(0.44f, 0.48f, 0.06f) }, new Vector3(sx * 0.30f, 0.24f, 0.42f), seatMat, new Vector3(-9f, 0f, 0f), null);
+                Tube($"SeatLeg{(sx < 0 ? "L" : "R")}", 0.03f, 0.40f, new Vector3(sx * 0.30f, -0.18f, 0.20f), frameMat, Vector3.Zero, null);
+            }
+            Tube("Handlebar", 0.035f, 0.90f, new Vector3(0f, 0.16f, -0.30f), frameMat, new Vector3(0f, 0f, 90f), null);
+
+            // ---- POWERPLANT: an engine block, a fuel can and a bare mast. No cowling over any of it.
+            Part("Engine", new BoxMesh { Size = new Vector3(0.52f, 0.40f, 0.46f) }, new Vector3(0f, 0.22f, 0.86f), frameMat, Vector3.Zero, null);
+            Part("FuelCan", new BoxMesh { Size = new Vector3(0.34f, 0.34f, 0.26f) }, new Vector3(0f, 0.62f, 0.72f), tankMat, Vector3.Zero, null);
+            Tube("Mast", 0.055f, 1.15f, new Vector3(0f, 0.62f, 0.10f), frameMat, Vector3.Zero, null);
+            foreach (float sx in new[] { -1f, 1f })   // mast bracing down to the keel
+                Tube($"MastStay{(sx < 0 ? "L" : "R")}", 0.028f, 0.95f, new Vector3(sx * 0.20f, 0.38f, 0.45f), frameMat, new Vector3(26f, 0f, sx * 22f), null);
+
+            // ---- TAIL: a bare boom with a small fin. The keel already carries it, so this is just the fin.
+            Part("TailFin", new BoxMesh { Size = new Vector3(0.04f, 0.46f, 0.34f) }, new Vector3(0f, 0.02f, 2.42f), frameMat, Vector3.Zero, null);
+            Part("Stabiliser", new BoxMesh { Size = new Vector3(0.70f, 0.035f, 0.20f) }, new Vector3(0f, -0.16f, 2.30f), frameMat, Vector3.Zero, null);
+        }
+
         static void BuildHeliModel(Vehicle v, Spec s, Material bodyMat)
         {
             var frameMat = SolidMat(new Color(0.16f, 0.16f, 0.18f));   // black tube frame, skids, boom
@@ -1290,6 +1413,13 @@ namespace UnturnedGodot
                     v.AddChild(mi);
                     if (v._bodyMesh == null) v._bodyMesh = mi;
                 }
+                BuildHeliRotors(v, s, bladeMat, frameMat);
+                return;
+            }
+
+            if (s.Frame == HeliFrame.Ultralight)
+            {
+                BuildUltralightFrame(v, s, bodyMat, frameMat);
                 BuildHeliRotors(v, s, bladeMat, frameMat);
                 return;
             }
@@ -1796,7 +1926,14 @@ namespace UnturnedGodot
                 _rotorNode.Rotation = new Vector3(0f, _rotorSpin, 0f);
             }
             if (_tailRotorNode != null)
-                _tailRotorNode.Rotation = new Vector3(0f, _rotorSpin * 2.6f, 0f);   // pivot is rolled 90 deg, so local Y is still the spin axis
+                // COMPOSE the roll with the spin. Assigning `Rotation = (0, spin, 0)` here -- which is what this
+                // line used to do -- overwrote the whole basis every tick and wiped the 90 deg roll set at build
+                // time, so the tail rotor lay flat like a second main rotor. The comment on that line asserted
+                // "pivot is rolled 90 deg, so local Y is still the spin axis" while the assignment beside it
+                // destroyed exactly that; strawberry spotted it in the first minute of flying
+                // ("the tail rotor needs to be rotated + 90 deg roll").
+                _tailRotorNode.Basis = new Basis(Vector3.Back, Mathf.DegToRad(TailRotorRollDegrees))
+                                     * new Basis(Vector3.Up, _rotorSpin * 2.6f);
             // Swap blades <-> blur disc by rotor speed, which is why the retail prefab ships both meshes. Below
             // the threshold you see two blades sitting still; above it, the smear plate.
             bool spun = _rotorRpm > DiscSwapSpool;
@@ -1819,7 +1956,28 @@ namespace UnturnedGodot
             // LIFT along the BODY up axis. This one line is the whole Rust feel: you do not steer a helicopter,
             // you tilt it and the lift vector takes you with it.
             float lift = _heliThrust * spool * _inCollective;
-            if (lift > 0f) ApplyCentralForce(b.Y * lift * Mass);
+            // TILT COSTS LIFT, twice over. Thrusting along the body axis already gives the free cosine (a
+            // 30 deg nose-down keeps only 87 % of its thrust pointing up); this takes a further bite on top,
+            // so committing to a fast nose-down run actually costs you height instead of being free speed.
+            lift *= 1f - TiltThrustLoss * (1f - Mathf.Clamp(b.Y.Y, 0f, 1f));
+            if (lift > 0f)
+            {
+                // Split the thrust vector and push the HORIZONTAL part harder -- fore/aft more than lateral --
+                // so leaning into a run builds real momentum. The vertical component is left exactly as the
+                // physics gives it, because that is what the hover point and the climb rate are tuned against.
+                Vector3 t = b.Y * lift;
+                var flatThrust = new Vector3(t.X, 0f, t.Z);
+                var fwd = new Vector3(-b.Z.X, 0f, -b.Z.Z);
+                Vector3 boosted;
+                if (fwd.LengthSquared() > 1e-6f)
+                {
+                    fwd = fwd.Normalized();
+                    Vector3 alongFwd = fwd * flatThrust.Dot(fwd);
+                    boosted = alongFwd * ForeAftBoost + (flatThrust - alongFwd) * LateralBoost;
+                }
+                else boosted = flatThrust * LateralBoost;   // pointing straight up/down: no meaningful fore/aft axis
+                ApplyCentralForce(new Vector3(boosted.X, t.Y, boosted.Z) * Mass);
+            }
 
             // Horizontal top speed. The MP envelope derives its cap from Speed_Max, so exceeding it here would
             // have the server roll a legitimate pilot back -- the limit has to bind on the CLIENT that is flying.
@@ -1845,9 +2003,22 @@ namespace UnturnedGodot
                         + b.Z * (-_inRoll * HeliRollRate * _heliRollTq / 3.0f)
                         + b.Y * (-_inYaw * HeliYawRate * _heliYawTq / 2.2f);
 
-            // SELF-LEVELLING, and only where the pilot is not asking for attitude. A helicopter that snaps
-            // upright under you is not flyable, but one with no restoring term at all needs constant babysitting
-            // just to hold a hover. It also scales with rotor spool -- a dead rotor cannot right the airframe.
+            // SELF-LEVELLING IS OFF BY DEFAULT, and that is the correction VoX made after flying it
+            // (2026-08-16): "the vehicals pitch and yaw are tracked as a current value and ... thrust applies in
+            // relation to that value. The mouse movements should impart changes on that value. Right now your
+            // model keeps reverting the copter to upright even if no mouse is applied which is wrong."
+            //
+            // He is right, and it was a real design error rather than a tuning one. ATTITUDE IS STATE. The
+            // airframe holds whatever bank and pitch you put it in, the mouse edits that state, and thrust
+            // follows wherever it currently points -- so holding a 20 deg nose-down cruise is something you set
+            // once, not something you fight a spring to maintain. A restoring term makes the machine
+            // un-commandable in exactly the way that reads as "the controls don't do anything": you lean it,
+            // let go, and it undoes your input.
+            //
+            // The term is KEPT, at 0 on every current spec, because a heavy stabilised airframe is a plausible
+            // future variant and the knob costs nothing. Angular damping alone is what stops a held input from
+            // spinning forever -- damping bleeds the RATE to zero and leaves the attitude where you left it,
+            // which is the behaviour being asked for.
             float manual = Mathf.Max(Mathf.Abs(_inPitch), Mathf.Abs(_inRoll));
             if (_heliLevel > 0f && manual < 0.95f)
             {

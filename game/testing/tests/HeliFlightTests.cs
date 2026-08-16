@@ -62,12 +62,17 @@ namespace UnturnedGodot.Testing
             h.EngineOn = true;   // fuel is NOT cheated on: the specs carry 200/2000 units against a ~1.4/s burn,
                                  // which outlasts this whole suite. Vehicle.InfiniteFuel is STATIC, and setting a
                                  // static cheat flag here would leak into every later test in the same boot.
-            for (int i = 0; i < 400; i++) { h.DriveHeli(1f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
+            // 18 s of climb. The descent phase below needs real altitude UNDERNEATH it, and the thrust cuts of
+            // 2026-08-16 (17 -> 13.6 -> 11.8) lowered the ceiling twice; both times the descent window reached
+            // the ground and the check failed against a machine that was behaving correctly and had simply
+            // landed. A test that measures falling has to keep the floor out of the measurement.
+            for (int i = 0; i < 900; i++) { h.DriveHeli(1f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
             float climbed = h.GlobalPosition.Y - rest;
             T.Check($"the rotor spools up under power (spool {h.RotorSpool:0.###})", h.RotorSpool > 0.9f);
-            T.Check($"and it climbs on collective ({climbed:0.##} m in 8 s)", climbed > 6f);
-            // Bounded: a thrust-to-weight bug (or gravity not applying) reads as "it climbs" too, just far
-            // too fast. 8 s of net ~7 m/s^2 is ~220 m; anything past that is not a helicopter.
+            T.Check($"and it climbs on collective ({climbed:0.##} m in 18 s)", climbed > 6f);
+            // Bounded: a thrust-to-weight bug (or gravity not applying) reads as "it climbs" too, just far too
+            // fast. At T/W 1.20 and this drag the terminal climb is ~5.7 m/s, so 18 s is ~100 m; 260 m would
+            // mean gravity or the damping had stopped applying.
             T.Check($"...at a plausible rate, not rocketing ({climbed:0.##} m)", climbed < 260f);
 
             // ---- 5. CUTTING COLLECTIVE DESCENDS. Sticky throttle: S has to wind it back down.
@@ -77,12 +82,20 @@ namespace UnturnedGodot.Testing
             // doing ~20 m/s upward, and cutting power does not teleport that momentum away -- it coasts up for
             // another second and a half before it starts down. "Is it descending" is the actual claim; "has it
             // ended up lower than it started" is a claim about how long I happened to wait.
-            for (int i = 0; i < 240; i++) { h.DriveHeli(-1f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
+            // 120 ticks is 2.4 s, just past the 1.8 s the collective needs to wind from full to idle. Longer
+            // windows kept flying the machine into the ground before the assertions ran -- twice, at successively
+            // lower thrust settings -- and a landed helicopter reports 0 m/s, which looks identical to a broken
+            // descent. Measure the fall while there is still air under it.
+            for (int i = 0; i < 120; i++) { h.DriveHeli(-1f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
             T.Check($"the collective winds back down to idle ({h.DebugHeliInput.X:0.##})", h.DebugHeliInput.X < 0.05f);
             T.Check($"...and it is descending under gravity ({h.LinearVelocity.Y:0.##} m/s)", h.LinearVelocity.Y < -1f);
             float top = h.GlobalPosition.Y;
-            yield return Ticks(150);
-            T.Check($"...losing real altitude ({h.GlobalPosition.Y - top:0.##} m over 3 s)", h.GlobalPosition.Y < top - 5f);
+            T.Check($"...with room left to fall through ({top:0.#} m up)", top > 20f);
+            yield return Ticks(100);
+            // Altitude reported ABSOLUTELY as well as as a delta, so a future failure says whether it stopped
+            // falling or simply ran out of sky to fall through.
+            T.Check($"...losing real altitude ({h.GlobalPosition.Y - top:0.##} m over 2 s, from {top:0.#} m to {h.GlobalPosition.Y:0.#} m)",
+                h.GlobalPosition.Y < top - 5f);
 
             // ---- 6. THE STICKY THROTTLE. Rust's collective HOLDS where you left it; it is not a held button.
             // Release everything and it must keep flying on the power already set, not fall out of the sky.
@@ -127,6 +140,29 @@ namespace UnturnedGodot.Testing
             float yawed = Mathf.RadToDeg(Mathf.Wrap(spin.GlobalTransform.Basis.GetEuler().Y - yaw0, -Mathf.Pi, Mathf.Pi));
             T.Check($"yaw input turns the nose ({yawed:0.#} deg in 2.4 s)", Mathf.Abs(yawed) > 15f);
 
+            // ---- 7b. ATTITUDE IS STATE, and it PERSISTS. VoX after flying it 2026-08-16: "pitch and yaw are
+            // tracked as a current value and ... thrust applies in relation to that value ... Right now your
+            // model keeps reverting the copter to upright even if no mouse is applied which is wrong."
+            //
+            // Bank it, then let go of everything and wait. The bank must still be there. The old self-levelling
+            // term undid the pilot's input the moment they stopped holding it, which reads in the air as the
+            // controls not working -- and note that every other check in this file passed the whole time it was
+            // wrong, because a self-levelling helicopter still climbs, descends, yaws and translates.
+            var hold = Spawn(World, "minicopter", new Vector3(-440f, 90f, 0f));
+            hold.EngineOn = true;
+            for (int i = 0; i < 260; i++) { hold.DriveHeli(1f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
+            for (int i = 0; i < 60; i++) { hold.DriveHeli(0f, 0f, 0f, 0.6f, 0.02); yield return Ticks(1); }
+            float banked = hold.GlobalTransform.Basis.Y.X;
+            T.Check($"a roll input actually banks it (up.X {banked:0.###})", Mathf.Abs(banked) > 0.1f);
+            // hands off for 3 s -- no stick, no collective change
+            for (int i = 0; i < 150; i++) { hold.DriveHeli(0f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
+            float after = hold.GlobalTransform.Basis.Y.X;
+            T.Check($"...and it HOLDS that bank hands-off, instead of righting itself ({banked:0.###} -> {after:0.###})",
+                Mathf.Abs(after) > Mathf.Abs(banked) * 0.75f);
+            // and the rate really did bleed off -- holding attitude must come from damping, not from still turning
+            T.Check($"...with the roll RATE damped to nothing ({hold.AngularVelocity.Length():0.###} rad/s)",
+                hold.AngularVelocity.Length() < 0.25f);
+
             // ---- 8b. AXIS CONVENTIONS, pinned. An inverted axis flies perfectly well -- it climbs, banks,
             // turns and translates -- it is just backwards, so every check above passes on a machine with
             // pitch upside down. These name the intended direction in terms of the body basis:
@@ -155,6 +191,33 @@ namespace UnturnedGodot.Testing
             // turning RIGHT = the forward vector swings clockwise seen from above = fwd0 x fwd1 points DOWN
             float turnSign = fwd0.Cross(fwd1).Y;
             T.Check($"yaw +1 turns the nose right ({turnSign:+0.###;-0.###;0})", turnSign < -0.02f);
+
+            // ---- 8c. THE TAIL ROTOR STAYS ON EDGE WHILE IT SPINS.
+            //
+            // strawberry, first minute of flying it: "the tail rotor needs to be rotated + 90 deg roll". It was
+            // rolled 90 deg at build time and then the per-tick spin assigned the WHOLE rotation
+            // (`Rotation = (0, spin, 0)`), wiping the roll every frame, so it lay flat like a second main rotor.
+            // The comment on that line asserted the roll was still there while the assignment beside it
+            // destroyed it -- a comment is not evidence.
+            //
+            // Asserted on the pivot's own basis, and specifically AFTER it has been spinning for a while: the
+            // build-time value was always correct, so a check that ran before the first tick would have passed
+            // throughout the bug.
+            var tr = Spawn(World, "minicopter", new Vector3(-380f, 80f, 0f));
+            tr.EngineOn = true;
+            for (int i = 0; i < 200; i++) { tr.DriveHeli(1f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
+            var tailPivot = tr.FindChild("TailRotor", false, false) as Node3D;
+            T.Check("the tail rotor pivot exists", tailPivot != null);
+            // Its spin axis is local Y. Standing the disc on edge means that axis points SIDEWAYS (world X),
+            // not up -- so |Y.Y| must be ~0 and |Y.X| ~1. Flat-like-a-main-rotor is exactly the inverse.
+            Vector3 spinAxis = tailPivot.GlobalTransform.Basis.Y;
+            T.Check($"...and its spin axis points sideways, not up (axis.X {spinAxis.X:0.##}, axis.Y {spinAxis.Y:0.##})",
+                Mathf.Abs(spinAxis.X) > 0.9f && Mathf.Abs(spinAxis.Y) < 0.2f);
+            // and it is genuinely still turning -- the roll must not have been restored by freezing the spin
+            float phaseA = tailPivot.GlobalTransform.Basis.Z.Y;
+            yield return Ticks(3);
+            T.Check($"...while still spinning (phase moved {Mathf.Abs(tailPivot.GlobalTransform.Basis.Z.Y - phaseA):0.###})",
+                Mathf.Abs(tailPivot.GlobalTransform.Basis.Z.Y - phaseA) > 0.001f);
 
             // ---- 9. THE HUEY flies the same model off its own spec + the real retail mesh.
             var huey = Spawn(World, "huey", new Vector3(120f, 3f, 0f));
