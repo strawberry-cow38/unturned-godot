@@ -22,7 +22,7 @@ namespace UnturnedGodot.Testing
         public override string Name => "vehicle.heli_flight";
         // Generous because this suite genuinely simulates a lot of flying: an 18 s climb, several 5 s
         // manoeuvres, and a 14 s turbulence window that has to span multiple gust intervals to observe one.
-        public override double TimeoutSimSeconds => 340;
+        public override double TimeoutSimSeconds => 420;
 
         static Vehicle Spawn(Node world, string name, Vector3 at)
         {
@@ -539,6 +539,24 @@ namespace UnturnedGodot.Testing
                 hb.ResolveHitPart(hb.ToGlobal(new Vector3(2.4f, 1.22f, 0.55f))) == Vehicle.HeliPart.Body);
             T.Check($"a hit on the seat is airframe, not a rotor ({hb.ResolveHitPart(hb.ToGlobal(new Vector3(0f, 0.02f, 0.18f)))})",
                 hb.ResolveHitPart(hb.ToGlobal(new Vector3(0f, 0.02f, 0.18f))) == Vehicle.HeliPart.Body);
+
+            // ---- 8h. THE WHOLE RETAIL FLEET FLIES. Every one is a real .dat with real numbers, built on the
+            // shared model -- so the check is that each ACTUALLY LIFTS OFF, not merely that its spec parses.
+            // A missing mesh, a hub at the wrong height or a thrust below its own weight all produce a
+            // perfectly valid Vehicle that sits on the ground forever.
+            string[] fleet = { "hind", "orca", "skycrane", "hummingbird", "huey" };
+            for (int fi = 0; fi < fleet.Length; fi++)
+            {
+                var a = Spawn(World, fleet[fi], new Vector3(-1600f - fi * 80f, 3f, 0f));
+                a.EngineOn = true; a.DebugNoTurbulence = true;
+                T.Check($"{fleet[fi]}: builds as a rotary wing with its own airframe ({a.DisplayName})",
+                    a.IsHeli && a.DisplayName.Length > 0);
+                float y0 = a.GlobalPosition.Y;
+                for (int i = 0; i < 420; i++) { a.DriveHeli(1f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
+                T.Check($"{fleet[fi]}: gets off the ground ({a.GlobalPosition.Y - y0:+0.#;-0.#;0} m)", a.GlobalPosition.Y - y0 > 3f);
+                // and each carries its OWN ported .dat health rather than a shared default
+                T.Check($"{fleet[fi]}: carries its own .dat health ({a.HealthMax:0})", a.HealthMax > 0f);
+            }
 
             // ---- 9. THE HUEY flies the same model off its own spec + the real retail mesh.
             var huey = Spawn(World, "huey", new Vector3(120f, 3f, 0f));

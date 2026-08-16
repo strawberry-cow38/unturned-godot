@@ -536,6 +536,7 @@ namespace UnturnedGodot
             public Vector3 MainHubBox, TailHubBox;                // the BULLET hitbox at each mast (full size); Zero = a default off the rotor radius
             public string[] HeliBodyMeshes;                      // airframe .obj(s); null = build one of the procedural frames below
             public HeliFrame Frame;                              // which procedural airframe (ignored when HeliBodyMeshes is set)
+            public string HeliRotorMeshPrefix;                   // content prefix for <p>_rotor_{main,tail}_{blades,disc}.txt; null = the Huey's
         }
 
         static AudioStreamWav LoadWav(string resPath)   // load a PCM wav at runtime (no ffmpeg on the box) as a looping stream for the siren
@@ -1433,8 +1434,74 @@ namespace UnturnedGodot
             Wheels = new (float, float, float, bool)[0],
         };
         public static Vehicle BuildHuey(int variant = 0) => Build(_huey, variant, "huey");
-        public static Vehicle BuildByName(string name, int variant = 0) => name switch { "quad" => BuildQuad(variant), "bus" => BuildBus(variant), "sedan" => BuildSedan(variant), "hatchback" => BuildHatchback(variant), "humvee" => BuildHumvee(variant), "roadster" => BuildRoadster(variant), "ambulance" => BuildAmbulance(variant), "firetruck" => BuildFiretruck(variant), "tractor" => BuildTractor(variant), "ural" => BuildUral(variant), "police" => BuildPolice(variant), "semi" => BuildSemi(variant), "trailer" => BuildTrailer(variant), "offroader" => BuildOffRoader(variant), "off_roader" => BuildOffRoader(variant), "truck" => BuildTruck(variant), "van" => BuildVan(variant), "golf" => BuildGolf(variant), "vw_golf" => BuildGolf(variant), "runabout" => BuildRunabout(variant), "apc" => BuildAPC(variant), "minicopter" => BuildMinicopter(variant), "mini" => BuildMinicopter(variant), "heli" => BuildMinicopter(variant), "huey" => BuildHuey(variant), "scoutcopter" => BuildScoutcopter(variant), "scout" => BuildScoutcopter(variant), _ => BuildJeep(variant) };
-        public static readonly string[] SpecNames = { "jeep", "quad", "bus", "sedan", "hatchback", "humvee", "roadster", "ambulance", "firetruck", "tractor", "ural", "police", "semi", "trailer", "offroader", "truck", "van", "golf", "runabout", "apc", "minicopter", "huey", "scoutcopter" };   // F1 dev-console autocomplete + validation ("golf" = VW_Golf, command-only, no natural spawn; runabout = boat + apc = amphibious, both command-spawnable -- drop over water to float)
+
+        // ---- THE REST OF THE RETAIL HELICOPTER FLEET -------------------------------------------------
+        // Meshes extracted by cow tools (tools/extract_heli.py, a generalisation of extract_huey.py); every
+        // number below is PORTED from the vehicle's own .dat rather than invented, because unlike the
+        // minicopter these all have a source entry: Speed_Max, Speed_Min, Fuel, Health, Rarity, Explosion.
+        //
+        // The source gives them nearly identical top speeds -- 16 for the heavies, 18 for the Hummingbirds --
+        // so speed is NOT where a Hind differs from a Little Bird. The difference has to live in the flight
+        // model instead: thrust-to-weight, control authority and inertia. A 1250 hp gunship that rolls like a
+        // scout would be wrong even with the .dat numbers all correct.
+        //
+        // HeliBase carries everything the fleet shares, so each entry below is only what makes it itself.
+        static Spec HeliBase(string mesh, float thrust, float pitchTq, float rollTq, float yawTq,
+                             float rotorR, float tailR, Vector3 mainHub, Vector3 tailHub,
+                             Vector3 box, Vector3 boxCentre, float speedMax, float fuel, float health,
+                             string name, EItemRarity rarity) => new()
+        {
+            Heli = true,
+            HeliThrust = thrust, HeliPitchTorque = pitchTq, HeliRollTorque = rollTq, HeliYawTorque = yawTq,
+            HeliLevel = 0f,   // attitude is state on every airframe; nothing self-levels (VoX)
+            HeliClimbMax = 20f, HeliFallMax = 42f,
+            RotorRadius = rotorR, TailRotorRadius = tailR,
+            RotorHub = mainHub, TailRotorHub = tailHub,
+            HeliBodyMeshes = new[] { $"{mesh}_body.txt", $"{mesh}_body_1.txt" },
+            HeliRotorMeshPrefix = mesh,
+            Body = null, Palette = null,
+            DefaultPaints = new[] { "#475e83", "#a69884", "#437c44", "#495631" },   // the shared faction paints
+            Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", WheelRadius = 0.3f,
+            Engine = 0f, SteerMax = 0f, SteerMin = 0f, SpeedMax = speedMax, SpeedMin = 0f, Brake = 0f,
+            BoxSize = box, BoxCenter = boxCentre,
+            ForwardGears = new[] { 1f }, ReverseGear = 1f, ShiftUpRpm = 5000f,
+            Sound = "heli_engine.ogg", IgnitionSound = "heli_ignition.ogg",
+            IdlePitch = 0.7f, MaxPitch = 1.15f, IdleVolume = 0.8f, MaxVolume = 1.0f,
+            Fuel = fuel, Health = health, Name = name, Rarity = rarity,
+            Wheels = new (float, float, float, bool)[0],
+        };
+
+        // HIND -- the gunship. Heaviest and least agile: 1250 hp of armour has to feel like it.
+        static readonly Spec _hind = HeliBase("hind", 11.6f, 1.05f, 1.10f, 1.05f, 5.90f, 1.25f,
+            new Vector3(0f, 4.18f, 0.58f), new Vector3(-0.30f, 4.47f, 9.60f),
+            new Vector3(2.90f, 2.60f, 7.20f), new Vector3(0f, 1.40f, 0.20f),
+            16f, 1750f, 1250f, "Hind", EItemRarity.LEGENDARY);
+        public static Vehicle BuildHind(int variant = 0) => Build(_hind, variant, "hind");
+
+        // ORCA -- the troop transport. Heavy but not armoured; a little livelier than the Hind.
+        static readonly Spec _orca = HeliBase("orca", 12.2f, 1.30f, 1.35f, 1.25f, 5.90f, 1.25f,
+            new Vector3(0f, 3.28f, -0.25f), new Vector3(-0.30f, 1.48f, 7.55f),
+            new Vector3(2.60f, 2.50f, 6.40f), new Vector3(0f, 1.20f, 0.10f),
+            16f, 2000f, 1000f, "Orca", EItemRarity.EPIC);
+        public static Vehicle BuildOrca(int variant = 0) => Build(_orca, variant, "orca");
+
+        // SKYCRANE -- a flying frame built around lift. Best thrust-to-weight of the heavies, worst roll rate:
+        // it will haul itself upward all day and hates being asked to turn quickly.
+        static readonly Spec _skycrane = HeliBase("skycrane", 13.2f, 1.00f, 0.95f, 1.15f, 5.90f, 1.25f,
+            new Vector3(0f, 3.01f, -1.21f), new Vector3(-0.45f, 3.55f, 7.71f),
+            new Vector3(3.20f, 2.80f, 6.80f), new Vector3(0f, 1.30f, 0.30f),
+            16f, 2000f, 900f, "Skycrane", EItemRarity.EPIC);
+        public static Vehicle BuildSkycrane(int variant = 0) => Build(_skycrane, variant, "skycrane");
+
+        // HUMMINGBIRD -- the light scout, and the only one the .dat makes faster (18). Sharpest controls in the
+        // fleet, thinnest hull. The three retail variants share one geometry, so they share one spec.
+        static readonly Spec _hummingbird = HeliBase("hummingbird", 14.5f, 2.10f, 2.45f, 1.95f, 5.57f, 1.25f,
+            new Vector3(0f, 3.01f, -0.25f), new Vector3(-0.45f, 3.45f, 6.95f),
+            new Vector3(2.00f, 2.10f, 4.60f), new Vector3(0f, 1.00f, 0.10f),
+            18f, 1750f, 750f, "Hummingbird", EItemRarity.EPIC);
+        public static Vehicle BuildHummingbird(int variant = 0) => Build(_hummingbird, variant, "hummingbird");
+        public static Vehicle BuildByName(string name, int variant = 0) => name switch { "quad" => BuildQuad(variant), "bus" => BuildBus(variant), "sedan" => BuildSedan(variant), "hatchback" => BuildHatchback(variant), "humvee" => BuildHumvee(variant), "roadster" => BuildRoadster(variant), "ambulance" => BuildAmbulance(variant), "firetruck" => BuildFiretruck(variant), "tractor" => BuildTractor(variant), "ural" => BuildUral(variant), "police" => BuildPolice(variant), "semi" => BuildSemi(variant), "trailer" => BuildTrailer(variant), "offroader" => BuildOffRoader(variant), "off_roader" => BuildOffRoader(variant), "truck" => BuildTruck(variant), "van" => BuildVan(variant), "golf" => BuildGolf(variant), "vw_golf" => BuildGolf(variant), "runabout" => BuildRunabout(variant), "apc" => BuildAPC(variant), "minicopter" => BuildMinicopter(variant), "mini" => BuildMinicopter(variant), "heli" => BuildMinicopter(variant), "huey" => BuildHuey(variant), "scoutcopter" => BuildScoutcopter(variant), "scout" => BuildScoutcopter(variant), "hind" => BuildHind(variant), "orca" => BuildOrca(variant), "skycrane" => BuildSkycrane(variant), "hummingbird" => BuildHummingbird(variant), "bird" => BuildHummingbird(variant), _ => BuildJeep(variant) };
+        public static readonly string[] SpecNames = { "jeep", "quad", "bus", "sedan", "hatchback", "humvee", "roadster", "ambulance", "firetruck", "tractor", "ural", "police", "semi", "trailer", "offroader", "truck", "van", "golf", "runabout", "apc", "minicopter", "huey", "scoutcopter", "hind", "orca", "skycrane", "hummingbird" };   // F1 dev-console autocomplete + validation ("golf" = VW_Golf, command-only, no natural spawn; runabout = boat + apc = amphibious, both command-spawnable -- drop over water to float)
 
         // spec lookup by key (same table as BuildByName) -- the MP puppet builder resolves replicated
         // TypeIds through this so client replicas rebuild the exact meshes/palette the server spawned
@@ -1709,7 +1776,15 @@ namespace UnturnedGodot
         /// generated content still builds a flyable machine instead of an invisible rotor.</summary>
         static void BuildHeliRotors(Vehicle v, Spec s, Material bladeMat, Material frameMat)
         {
-            const float HueyRotorSpan = 11.14f, HueyTailSpan = 2.56f;   // measured off the extracted meshes
+            // Per-spec rotor meshes. The fleet ships exactly TWO distinct rotors -- a 2-blade bar (Huey,
+            // Hummingbird: 11.14 m span) and a 4-blade cross (Hind, Orca, Skycrane: 11.80 m) -- so the span used
+            // for scaling is MEASURED off the mesh rather than being one constant. Scaling a cross by the bar's
+            // number would size every heavy's rotor ~6 % wrong, which is exactly the sort of error that looks
+            // fine in a screenshot.
+            string rp = s.HeliRotorMeshPrefix ?? "huey";
+            float mainSpan = MeshSpanX(LoadOptionalObj($"{rp}_rotor_main_blades.txt"), 11.14f);
+            float tailSpan = MeshSpanX(LoadOptionalObj($"{rp}_rotor_tail_blades.txt"), 2.56f);
+
             var discMat = new StandardMaterial3D   // the blur plate reads as a translucent smear, not a lid
             {
                 AlbedoColor = new Color(0.12f, 0.12f, 0.13f, 0.30f),
@@ -1726,16 +1801,16 @@ namespace UnturnedGodot
                 Mesh = new CylinderMesh { TopRadius = 0.11f, BottomRadius = 0.13f, Height = 0.16f, RadialSegments = 10, Rings = 1 },
                 MaterialOverride = frameMat,
             });
-            MountRotor(v._rotorNode, "huey_rotor_main_blades.txt", "huey_rotor_main_disc.txt",
-                       s.RotorRadius * 2f / HueyRotorSpan, s.RotorRadius * 2f, 0.035f, 0.20f, bladeMat, discMat,
+            MountRotor(v._rotorNode, $"{rp}_rotor_main_blades.txt", $"{rp}_rotor_main_disc.txt",
+                       s.RotorRadius * 2f / mainSpan, s.RotorRadius * 2f, 0.035f, 0.20f, bladeMat, discMat,
                        out v._bladesMesh, out v._discMesh);
 
             // Tail rotor. Its meshes lie flat about their own Y like the main rotor's, so the PIVOT is rolled
             // 90 deg to stand the disc on edge -- that way _tailRotorNode still just turns about local Y.
             v._tailRotorNode = new Node3D { Name = "TailRotor", Position = s.TailRotorHub, RotationDegrees = new Vector3(0f, 0f, 90f) };
             v.AddChild(v._tailRotorNode);
-            MountRotor(v._tailRotorNode, "huey_rotor_tail_blades.txt", "huey_rotor_tail_disc.txt",
-                       s.TailRotorRadius * 2f / HueyTailSpan, s.TailRotorRadius * 2f, 0.03f, 0.10f, bladeMat, discMat,
+            MountRotor(v._tailRotorNode, $"{rp}_rotor_tail_blades.txt", $"{rp}_rotor_tail_disc.txt",
+                       s.TailRotorRadius * 2f / tailSpan, s.TailRotorRadius * 2f, 0.03f, 0.10f, bladeMat, discMat,
                        out v._tailBladesMesh, out v._tailDiscMesh);
         }
 
@@ -1746,6 +1821,16 @@ namespace UnturnedGodot
         /// Drawing both at once (which the first cut did, by merging them in the extractor) puts an opaque
         /// 5 m plate over the airframe: structurally perfect, visually a table. Falls back to box blades and
         /// no disc when the extraction has not been run.</summary>
+        /// <summary>Widest X extent of a rotor mesh, used to scale it to a spec's declared span. Measured
+        /// rather than assumed: the fleet has both a 2-blade bar (11.14 m) and a 4-blade cross (11.80 m), and
+        /// scaling one by the other's constant would size every heavy's rotor ~6 % wrong.</summary>
+        static float MeshSpanX(Mesh m, float fallback)
+        {
+            if (m == null) return fallback;
+            var aabb = m.GetAabb();
+            return aabb.Size.X > 0.01f ? aabb.Size.X : fallback;
+        }
+
         static void MountRotor(Node3D pivot, string bladeFile, string discFile, float scale, float span,
                                float boxThick, float boxChord, Material bladeMat, Material discMat,
                                out MeshInstance3D blades, out MeshInstance3D disc)
