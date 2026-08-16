@@ -2863,6 +2863,29 @@ namespace UnturnedGodot
         public bool IsRiding => _riding != null;
         public VehiclePuppet RidingPuppet => _riding;
         public UnityEngine.Vector2 LastDriveInput;   // captured while riding: x=steer, y=throttle (the DriveVehicle axes)
+        // HELICOPTER STICK (VoX 2026-08-15: "mouse movements to control the pitch and roll"). Mouse motion is a
+        // RATE, not a position: the stick deflects while the mouse moves and self-centres when it stops, so the
+        // airframe changes attitude as you move and HOLDS that attitude when you let go. That is the Rust feel,
+        // and it is also the only mapping that works against a flight model driving angular VELOCITY -- a stick
+        // that stayed deflected would just spin forever.
+        float _heliStickP, _heliStickR;
+        // Base mouse-pixels -> stick deflection, cut twice on playtest feedback (0.055 -> 0.034 -> 0.020,
+        // strawberry: "lower the sensitivity of the joystick", then "lower the default sens for piloting too").
+        // The player's own multiplier rides on top, so this stays the DESIGNER's number and 1.00x means it.
+        const float HeliStickGainBase = 0.020f;
+        static float HeliStickGain => HeliStickGainBase * ControlsOptions.HeliSensitivity;
+        const float HeliStickDecay = 8.5f;     // self-centring, per second
+        /// <summary>Cross-axis deadzone (strawberry 2026-08-16: "add a little deadzone between forward/back
+        /// tilting and left/right tilting"). A mouse never moves on a perfectly straight axis, so a movement
+        /// meant as pure pitch always carried a little roll with it and the airframe crabbed. Each axis is
+        /// reduced by this fraction of the OTHER one's magnitude, so a mostly-horizontal movement is pure roll
+        /// and a mostly-vertical one is pure pitch, while a genuine diagonal still gets through.</summary>
+        const float HeliStickCrossDeadzone = 0.4f;
+        /// <summary>How fast a held arrow key deflects the cyclic. Slower than a mouse flick on purpose -- a
+        /// digital key has no magnitude, so the RAMP is the only thing standing in for how hard you pushed.</summary>
+        const float ArrowStickRate = 2.2f;
+        /// <summary>Test seam: the current virtual stick (pitch, roll) the pilot is holding.</summary>
+        public UnityEngine.Vector2 DebugHeliStick => new UnityEngine.Vector2(_heliStickP, _heliStickR);
         public bool LastHandbrakeInput;
         public System.Action<uint> NetEnterVehicle;  // wired by ClientWorldSession: F near a puppet asks the server for the seat
         public System.Action NetExitVehicle;         // F while riding asks the server to free it (exit teleport follows)
@@ -4078,7 +4101,22 @@ namespace UnturnedGodot
             if (@event is InputEventMouseButton && Input.MouseMode != Input.MouseModeEnum.Captured) return;
             if (@event is InputEventMouseMotion mm && Input.MouseMode == Input.MouseModeEnum.Captured)
             {
-                if ((_driving != null || _riding != null) && !_fp)   // driving in 3rd person: the mouse ORBITS the chase cam around the car instead of turning the driver (master)
+                if (_driving != null && _driving.IsHeli)
+                {
+                    // FLYING: the mouse is the cyclic, not a camera orbit.
+                    //
+                    // PITCH SIGN IS A SETTING, not a decision (ControlsOptions.InvertHeliPitch). Godot's
+                    // Relative.Y is negative when the mouse moves forward, and the flight model takes pitch
+                    // POSITIVE = nose up. Regular (default) wants forward -> nose down -> fly forward, so the
+                    // raw delta passes through; Inverted wants forward -> nose up, like a real cyclic, so it
+                    // is negated. This shipped as nose-up-on-forward, which VoX reported as flying backwards
+                    // and strawberry liked -- they were both describing the same behaviour and disagreeing
+                    // about it, which is what a toggle is for.
+                    _heliStickR = Mathf.Clamp(_heliStickR + mm.Relative.X * HeliStickGain, -1f, 1f);
+                    float pitchDelta = ControlsOptions.InvertHeliPitch ? -mm.Relative.Y : mm.Relative.Y;
+                    _heliStickP = Mathf.Clamp(_heliStickP + pitchDelta * HeliStickGain, -1f, 1f);
+                }
+                else if ((_driving != null || _riding != null) && !_fp)   // driving in 3rd person: the mouse ORBITS the chase cam around the car instead of turning the driver (master)
                 {
                     _driveCamYaw -= mm.Relative.X * MouseSensitivity;
                     _driveCamPitch = Mathf.Clamp(_driveCamPitch + mm.Relative.Y * MouseSensitivity, -25f, 70f);   // inverted Y: mouse up -> cam tilts down (strawberry)
@@ -4773,7 +4811,18 @@ namespace UnturnedGodot
                         HitmarkerHUD.Instance?.Show(dummy.LastZone == TargetDummy.HitZone.Head);
                     }
                     else if (collider is PhysicalBone3D pb) { SpawnFleshImpact(point, hdir); pb.ApplyImpulse(hdir * 7f, point - pb.GlobalPosition); }
-                    else if (collider is Vehicle veh) { veh.TakeDamage(b.VehicleDamage); SpawnSurfaceImpact(point, hit["normal"].AsVector3(), Surf.Metal, veh); HitmarkerHUD.Instance?.ShowCircle(); }   // source Vehicle_Damage (35) + metal sparks, hole follows the car; circle hitmarker (master)
+                    else if (collider is Vehicle veh)
+                    {
+                        // A helicopter routes the hit by WHERE it landed: the hub boxes at each mast are the
+                        // rotors' bullet colliders, everything else is airframe. Rotor damage does NOT also
+                        // damage the hull -- shooting a tail rotor off should ground the machine by breaking
+                        // the thing that keeps it straight, not by chipping away at its HP.
+                        var part = veh.ResolveHitPart(point);
+                        if (part == Vehicle.HeliPart.MainRotor) veh.DamageMainRotor(b.VehicleDamage);
+                        else if (part == Vehicle.HeliPart.TailRotor) veh.DamageTailRotor(b.VehicleDamage);
+                        else veh.TakeDamage(b.VehicleDamage);
+                        SpawnSurfaceImpact(point, hit["normal"].AsVector3(), Surf.Metal, veh); HitmarkerHUD.Instance?.ShowCircle();   // source Vehicle_Damage (35) + metal sparks, hole follows the car; circle hitmarker (master)
+                    }
                     else if (collider is Deployable dep && !dep.IsWreck) { dep.TakeDamage(b.VehicleDamage); SpawnSurfaceImpact(point, hit["normal"].AsVector3(), Surf.Metal); HitmarkerHUD.Instance?.ShowCircle(); }   // gunfire damages a placed generator (metal sparks) -- Vehicle_Damage; circle hitmarker
                     else if (collider is Door bdoor) { bdoor.TakeDamage(b.VehicleDamage); SpawnSurfaceImpact(point, hit["normal"].AsVector3(), Surf.Wood); HitmarkerHUD.Instance?.ShowCircle(); }   // you can shoot a door open the hard way; circle hitmarker
                     else if (collider is Bed bbed) { bbed.TakeDamage(b.VehicleDamage); SpawnSurfaceImpact(point, hit["normal"].AsVector3(), Surf.Wood); HitmarkerHUD.Instance?.ShowCircle(); }   // circle hitmarker
@@ -5478,6 +5527,44 @@ namespace UnturnedGodot
                 steer = (Input.IsPhysicalKeyPressed(Key.D) ? 1f : 0f) - (Input.IsPhysicalKeyPressed(Key.A) ? 1f : 0f);
             }
             bool handbrake = !UiInputBlocked && Input.IsPhysicalKeyPressed(Key.Space);
+            // ROTARY WING: the same W/S/A/D keys mean different things in the air. W/S is the collective (a
+            // sticky throttle -- see Vehicle.DriveHeli), A/D is the pedals, and pitch/roll come off the mouse
+            // stick captured in _Input. Handbrake has no meaning on a helicopter and is dropped.
+            if (_driving.IsHeli)
+            {
+                // Cross-axis deadzone, applied to what the FLIGHT MODEL sees rather than to the stored stick, so
+                // the stick keeps decaying smoothly and a diagonal that grows past the threshold blends in
+                // instead of popping.
+                // ARROW KEYS MIRROR THE CYCLIC (strawberry 2026-08-16: "mirror the mouse heli controls onto
+                // the arrow keys too, making sure they respect the inverted toggle"). Fed into the SAME virtual
+                // stick rather than a parallel path, so the cross-axis deadzone, the decay and the invert
+                // setting all apply once and cannot drift apart from the mouse.
+                //
+                // Up = the same as pushing the mouse forward, which under Regular is nose-DOWN, so the sign
+                // matches the mouse branch in _Input and flips with the identical toggle.
+                if (!UiInputBlocked)
+                {
+                    float arrowP = (Input.IsPhysicalKeyPressed(Key.Down) ? 1f : 0f) - (Input.IsPhysicalKeyPressed(Key.Up) ? 1f : 0f);
+                    float arrowR = (Input.IsPhysicalKeyPressed(Key.Right) ? 1f : 0f) - (Input.IsPhysicalKeyPressed(Key.Left) ? 1f : 0f);
+                    if (ControlsOptions.InvertHeliPitch) arrowP = -arrowP;
+                    if (arrowP != 0f) _heliStickP = Mathf.MoveToward(_heliStickP, arrowP, ArrowStickRate * delta);
+                    if (arrowR != 0f) _heliStickR = Mathf.MoveToward(_heliStickR, arrowR, ArrowStickRate * delta);
+                }
+                float sp = _heliStickP, sr = _heliStickR;
+                float fp = Mathf.Max(0f, Mathf.Abs(sp) - HeliStickCrossDeadzone * Mathf.Abs(sr)) * Mathf.Sign(sp);
+                float fr = Mathf.Max(0f, Mathf.Abs(sr) - HeliStickCrossDeadzone * Mathf.Abs(sp)) * Mathf.Sign(sr);
+                _driving.DriveHeli(throttle, steer, fp, fr, delta);
+                LastDriveInput = new UnityEngine.Vector2(steer, throttle);   // MP fallback axes (collective/yaw); attitude rides the reported transform
+                LastHandbrakeInput = false;
+                // Self-centre the stick. Done HERE rather than in _Input because input events only arrive when
+                // the mouse actually moves -- decaying there would leave the stick stuck at full deflection the
+                // instant the player stopped moving it, which is the difference between "holds its attitude"
+                // and "keeps rolling until it hits the ground".
+                float k = Mathf.Exp(-HeliStickDecay * delta);
+                _heliStickP *= k; _heliStickR *= k;
+                GlobalPosition = _driving.GlobalPosition;
+                return;
+            }
             _driving.Drive(throttle, steer, handbrake);
             LastDriveInput = new UnityEngine.Vector2(steer, throttle);   // Part A: the session's VehicleState carries the axes as wheel/light dressing (inert in SP -- nothing reads these outside MP)
             LastHandbrakeInput = handbrake;
@@ -5513,7 +5600,30 @@ namespace UnturnedGodot
                     _cam.GlobalTransform = new Transform3D(look, eye);
                 }
                 else   // SP driving: the classic fixed forward gaze over the hood
-                    _cam.GlobalTransform = new Transform3D(Basis.Identity, eye).LookingAt(vt * (eyeL + new Vector3(0f, -0.6f, -3.9f)), Vector3.Up);
+                    // FP: same rule as the chase cam -- in a helicopter the view IS the airframe's orientation,
+                    // so take its basis outright rather than looking at a point with an up hint.
+                    _cam.GlobalTransform = _driving != null && _driving.IsHeli
+                        ? new Transform3D(vt.Basis.Orthonormalized(), eye)
+                        : new Transform3D(Basis.Identity, eye).LookingAt(vt * (eyeL + new Vector3(0f, -0.6f, -3.9f)), Vector3.Up);
+            }
+            else if (_driving != null && _driving.IsHeli)
+            {
+                // FLYING: the camera BECOMES the airframe. VoX 2026-08-16, first "I want the players view to
+                // tilt with the copter's role and pitch", then exactly: "the player's view should exacly match
+                // the direction the minicopter is facing".
+                //
+                // So the camera's basis IS the vehicle's basis -- not a LookingAt with the vehicle's up passed
+                // as a hint, which only approximates it and drifts as soon as the machine is near vertical.
+                // Every other vehicle keeps a world-level chase cam because a car's roll is noise; on a
+                // helicopter the roll IS the control input, and a level camera hides the thing being steered.
+                // No mouse orbit either: while flying, the mouse is the cyclic, not a camera.
+                float dist = Mathf.Clamp(size * 1.1f, 6.5f, 34f);
+                Basis vb = vt.Basis.Orthonormalized();
+                // Offset in the VEHICLE's frame, so the camera keeps station on the airframe through a roll.
+                // The up-offset is deliberately small: the view direction is exactly the machine's heading, so
+                // anything more parks the helicopter near the bottom of the screen instead of in front of you.
+                var eye = vt.Origin + vb.Z * (dist * 0.86f) + vb.Y * (dist * 0.16f + size * 0.06f);
+                _cam.GlobalTransform = new Transform3D(vb, eye);
             }
             else            // third-person chase: ORBIT behind the car (mouse yaw/pitch), AUTO-ZOOMED for the vehicle's size (master)
             {

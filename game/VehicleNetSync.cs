@@ -158,8 +158,11 @@ namespace UnturnedGodot
                 {
                     var id = _server.Ids.Mint();
                     int typeIdx = System.Array.IndexOf(Vehicle.SpecNames, v.SpecKey);
+                    // Part A: the spec Speed_Max feeds the envelope's horizontal cap, and (rotary wing only) the
+                    // spec's own climb/fall caps feed the vertical one -- 0 keeps the retail car defaults, so
+                    // every existing vehicle is bit-identical to before.
                     _server.Vehicles.ServerSpawn(id, (byte)(typeIdx < 0 ? 0 : typeIdx), (byte)v.SpawnVariant,
-                                                 ToU(v.GlobalPosition), tick, v.SpeedMaxMps);   // Part A: the spec Speed_Max feeds the envelope's horizontal cap
+                                                 ToU(v.GlobalPosition), tick, v.SpeedMaxMps, v.ClimbMaxMps, v.FallMaxMps);
                     t = new Tracked { NetId = id.Value, Node = v };
                     _tracked[v] = t;
                     _byId[t.NetId] = t;

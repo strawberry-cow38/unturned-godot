@@ -16,6 +16,284 @@ namespace UnturnedGodot
         float _voxelHalfHeight, _waterTime, _gravityMag = 9.8f;   // source Buoyancy.cs port: voxel half-height (submersion test), wave-ripple clock, gravity magnitude (Archimedes balance)
         bool _afloat;   // currently floating (any buoy submerged) -- HUD/anim can read it
         public bool Afloat => _afloat;
+        // ---- ROTARY WING (VoX 2026-08-15: "a rust style minicopeter"). A helicopter is a Vehicle rather than a
+        // new node type because every downstream system -- NetId minting, the hold/adopt authority split,
+        // enter/exit occupancy, damage, fuel, despawn -- is written against Vehicle, and VehicleReplication
+        // already carries pitch AND roll (not just yaw) for both the entity and the client-auth state command.
+        // A sibling RigidBody3D would have to rebuild all of it. VehicleBody3D with no VehicleWheel3D children
+        // is just a RigidBody3D, so the base class does not fight flight.
+        bool _heli; float _heliThrust, _heliPitchTq, _heliRollTq, _heliYawTq, _heliLevel;
+        float _inCollective, _inYaw, _inPitch, _inRoll;   // the pilot's held axes (W/S, A/D, mouse Y, mouse X)
+        float _rotorSpin, _tailSpin, _rotorRpm;            // visual blade phases (main/tail) + spool state (0..1)
+        Node3D _rotorNode, _tailRotorNode;
+        MeshInstance3D _bladesMesh, _discMesh, _tailBladesMesh, _tailDiscMesh;   // the two drawn states per rotor
+        const float DiscSwapSpool = 0.35f;   // above this the blades are a smear, so the game draws the plate instead
+        public const float TailRotorRollDegrees = 90f;   // stands the tail disc on edge; composed with the spin each tick
+        // ---- playtest tuning, strawberry 2026-08-16 ----------------------------------------------------
+        /// <summary>Fraction of lift lost to tilting off vertical, ON TOP of the cosine you get for free from
+        /// thrusting along the body axis. strawberry: "reduce the upward thrust more when tilting forward" --
+        /// so a nose-down dash costs you altitude rather than being a free way to go fast level.</summary>
+        const float TiltThrustLoss = 0.55f;
+        /// <summary>Extra push on the HORIZONTAL component of rotor thrust ("increase the forward/back momentum
+        /// when tilting forward/back"). Fore/aft gets more than lateral, because that is the axis she was
+        /// describing and a helicopter that slides sideways as eagerly as it accelerates feels like a drone.</summary>
+        const float ForeAftBoost = 1.65f, LateralBoost = 1.15f;
+
+        // ---- INERTIA + TURBULENCE (strawberry 2026-08-16: "adding inertia. joystick changes should feel
+        // slower, heavier and more sluggish. like the heli actually has weight. as well as minor turbulence at
+        // random intervals") ------------------------------------------------------------------------------
+        //
+        // Weight is TWO lags, not one. The stick first drives a smoothed COMMAND (this is the pilot's control
+        // linkage and the rotor taking time to change its disc), and the airframe's angular velocity then
+        // chases that command (this is the mass actually resisting). One lag alone still feels like a mouse
+        // cursor with a delay -- it starts late but stops instantly. Two gives the overshoot-and-settle of
+        // something with momentum, and crucially it is heavy coming OUT of an input as well as going in.
+        Vector3 _cmdRate;      // the smoothed command the airframe is chasing
+        Vector3 _turbKick;     // the current gust, decaying
+        float _turbTimer;
+        const float CommandSlew = 2.4f;        // stick -> commanded rate (the linkage)
+        const float TurbMinGap = 1.6f, TurbMaxGap = 5.5f;   // seconds between gusts
+        const float TurbStrength = 0.42f;      // rad/s of angular kick at full strength
+        const float TurbDecay = 1.5f;          // how fast a gust bleeds away
+        static readonly RandomNumberGenerator HeliRng = MakeHeliRng();
+        static RandomNumberGenerator MakeHeliRng() { var r = new RandomNumberGenerator(); r.Randomize(); return r; }
+        /// <summary>Test seam: the live gust, so a test can prove turbulence is real without waiting on a die roll.</summary>
+        public Vector3 DebugTurbulence => _turbKick;
+        /// <summary>Test seam: turbulence OFF, so a control-response test measures the pilot and not the weather.</summary>
+        public bool DebugNoTurbulence;
+
+        // ---- ROTOR DAMAGE (VoX 2026-08-16) --------------------------------------------------------------
+        // "give the main rotor and tail rotor independent HP values. main rotor hp low -> reduced thrust. tail
+        // rotor hp low -> reduced turning. main rotor dead -> no more gaining vertical thrust, quickly lose
+        // height. tail rotor dead, go into a spin."
+        //
+        // Two separate hitboxes per rotor, because the two ways a rotor dies are not the same event:
+        //   the DISC (a thin cylinder swept by the blades) catches anything the blades strike -- trees,
+        //     buildings, the ground -- and grinds the rotor down on a cooldown while contact persists;
+        //   the HUB (a small box at the mast) is what a BULLET has to find. Shooting a rotor down should mean
+        //     hitting the machinery, not clipping the tip of a 5 m disc.
+        public enum HeliPart { Body, MainRotor, TailRotor }
+        float _mainRotorHp, _mainRotorHpMax = 1f, _tailRotorHp, _tailRotorHpMax = 1f;
+        float _mainStrikeCd, _tailStrikeCd;
+        Area3D _mainDiscArea, _tailDiscArea;
+        CpuParticles3D _mainRotorSmoke, _mainRotorFire, _tailRotorSmoke, _tailRotorFire;
+        CpuParticles3D _mainStrikeFx, _tailStrikeFx;   // one-shot sparks per blade strike
+        AudioStreamPlayer3D _strikeAudio;
+        bool _rotorFxExtinguished;   // the cold wreck has had its rotor fires put out; do not relight them
+        CpuParticles3D _bonkFx; float _crashCd, _recentTopSpeed;
+        /// <summary>Impact speed that writes the machine off outright, ~54 km/h.
+        ///
+        /// Set against what the airframe can actually REACH, not picked as a round number. Horizontal top speed
+        /// is 26 m/s, so flying into a cliff at cruise is always fatal. Vertically, drag caps terminal at
+        /// ~28 m/s but a 45 m drop only arrives at ~17.5 -- so a threshold of 19, which is what this was, meant
+        /// falling out of the sky from any survivable height could NOT write the machine off, while a horizontal
+        /// crash could. 15 puts a genuine plummet and a fast collision on the same side of the line, and leaves
+        /// the 10-12 m/s arrivals of a botched landing survivable.</summary>
+        const float HeliCrashExplodeSpeed = 15f;
+        /// <summary>Below this an impact is not a crash at all -- setting down firmly, brushing a wall while
+        /// hovering. Without a floor, every landing would chip the airframe.</summary>
+        const float HeliBonkSpeed = 5.5f;
+        /// <summary>Test seam: how many survivable impacts this machine has taken.</summary>
+        public int DebugBonkCount { get; private set; }
+        public float DebugPrevSpeed => _recentTopSpeed;
+        /// <summary>Speed at the moment of the last detected impact. Captured AT the crash: reading the live
+        /// peak afterwards reports 0, because it decays away while the wreck sits there.</summary>
+        public float DebugLastImpactSpeed { get; private set; }
+        public float DebugSpawnGrace => _spawnGrace;
+        /// <summary>Health fraction at which a rotor starts smoking. Above it the rotor is scuffed, not
+        /// failing, and a machine that smokes from the first bullet tells the pilot nothing.</summary>
+        const float RotorSmokeAt = 0.7f;
+        /// <summary>Test seams for the rotor damage FX. Asserted on the EMITTER state rather than on health,
+        /// because "hurt rotors smoke" is a claim about what the player can see -- reading the health back
+        /// would just re-assert the number the test itself set.</summary>
+        public bool DebugMainRotorSmoking => _mainRotorSmoke != null && _mainRotorSmoke.Emitting;
+        public bool DebugMainRotorBurning => _mainRotorFire != null && _mainRotorFire.Emitting;
+        public bool DebugTailRotorSmoking => _tailRotorSmoke != null && _tailRotorSmoke.Emitting;
+        public bool DebugTailRotorBurning => _tailRotorFire != null && _tailRotorFire.Emitting;
+        public int DebugMainRotorSmokeAmount => _mainRotorSmoke?.Amount ?? 0;
+        /// <summary>Test seam: the main rotor's visual blade phase, so a test can prove the disc has actually
+        /// STOPPED rather than merely that the spool number is zero -- the old constant spin term made those
+        /// two different facts.</summary>
+        public float DebugRotorPhase => _rotorSpin;
+        /// <summary>Balance seams: the tuned handling numbers, so a test can pin the fleet's ORDERING without
+        /// flying every airframe. The absolute values are taste; the order is the specification.</summary>
+        public float DebugRollAuthority => _heliRollTq;
+        public float DebugThrust => _heliThrust;
+        Vector3 _mainHubCentre, _mainHubHalf, _tailHubCentre, _tailHubHalf;
+        // A blade strike GRINDS the rotor down over time rather than killing it outright (strawberry
+        // 2026-08-16: "rotors' blade damage to be ticked over time instead of instantly killing the rotor").
+        // Was 34 a tick against ~112 max, i.e. four ticks -- under two seconds of contact, which reads as
+        // instant death rather than as damage. At 7 it takes ~16 ticks, so clipping something is a mistake you
+        // can hear happening and fly out of, and sitting in it still finishes you.
+        const float BladeStrikeInterval = 0.22f;
+        const float BladeStrikeDamage = 7f, TailStrikeDamage = 6f;
+        /// <summary>What the blades do TO what they hit, per strike tick. Higher than what the rotor takes:
+        /// a spinning rotor beats a fence convincingly and comes off worse than the fence only over time.</summary>
+        const float MainBladePropDamage = 34f, TailBladePropDamage = 22f;
+        /// <summary>Spool below which the blades are not moving fast enough to hurt anything, including
+        /// themselves. Well under the disc-swap point, so a rotor that still LOOKS like blades can still cut.</summary>
+        const float BladeStrikeMinSpool = 0.12f;
+        /// <summary>Unopposed main-rotor torque on the fuselage once the tail rotor is dead (rad/s^2 at full
+        /// power). Sized to be clearly unrecoverable by pedal input -- the pedals are gone anyway -- but slow
+        /// enough that a pilot who cuts collective immediately can still put it down.</summary>
+        const float TailLossTorque = 1.35f;
+
+        public float MainRotorHealth => _mainRotorHp;
+        public float TailRotorHealth => _tailRotorHp;
+        public float MainRotorNorm => _mainRotorHpMax > 0f ? Mathf.Clamp(_mainRotorHp / _mainRotorHpMax, 0f, 1f) : 0f;
+        public float TailRotorNorm => _tailRotorHpMax > 0f ? Mathf.Clamp(_tailRotorHp / _tailRotorHpMax, 0f, 1f) : 0f;
+        public bool MainRotorDead => _heli && _mainRotorHp <= 0f;
+        public bool TailRotorDead => _heli && _tailRotorHp <= 0f;
+
+        public void DamageMainRotor(float amount)
+        {
+            if (!_heli || amount <= 0f) return;
+            _mainRotorHp = Mathf.Max(0f, _mainRotorHp - amount);
+        }
+        public void DamageTailRotor(float amount)
+        {
+            if (!_heli || amount <= 0f) return;
+            _tailRotorHp = Mathf.Max(0f, _tailRotorHp - amount);
+        }
+        /// <summary>Rotor bar colour: healthy green through amber to the hull's red as it fails, so a glance
+        /// at the billboard says WHICH rotor is going without reading the bar length.</summary>
+        static Color RotorBarColor(float norm)
+            => norm > 0.6f ? new Color(0.35f, 0.80f, 0.35f)
+             : norm > 0.25f ? new Color(0.90f, 0.72f, 0.20f)
+             : new Color(0.85f, 0.22f, 0.18f);
+
+        public void KillMainRotor() { if (_heli) _mainRotorHp = 0f; }
+        public void KillTailRotor() { if (_heli) _tailRotorHp = 0f; }
+
+        /// <summary>Which part a world-space impact landed on. The HUB boxes are tested in the vehicle's own
+        /// local space, so they follow the airframe through any attitude -- a world-axis test would drift off
+        /// the mast the moment the machine banked, which is most of the time it is being shot at.</summary>
+        /// <summary>Is anything OTHER THAN THIS VEHICLE inside the disc?
+        ///
+        /// The exclusion is the whole method. The disc has to watch the vehicle layer (bit 5) so it notices
+        /// other vehicles, but this vehicle is ON bit 5, so a bare HasOverlappingBodies() sees its own hull
+        /// forever -- which ground both rotors to zero within seconds of every spawn. The symptom was total:
+        /// no lift, no yaw, no rotation, every helicopter in the suite free-falling identically, healthy and
+        /// damaged alike. A self-overlap reads exactly like a physics failure.</summary>
+        /// <summary>Rotor damage FX: smoke that thickens as a rotor is worn down, fire once it is dead
+        /// (strawberry 2026-08-16: "the rotors should smoke more when hurt and set fire when broken").
+        ///
+        /// "More" is done with emission RATE rather than by switching between a light and a heavy emitter the
+        /// way the hull does, because a rotor degrades continuously under blade strikes -- a two-step plume
+        /// would read as a state change at an arbitrary threshold instead of as something progressively
+        /// failing. A dead rotor keeps smoking underneath the fire; fire alone looks like a decoration sitting
+        /// on an otherwise healthy machine.</summary>
+        /// <summary>One burst of sparks + a metal clang for a single blade strike. Restarts the emitter each
+        /// time (OneShot + Explosiveness 1) so repeated strikes read as repeated hits rather than merging into
+        /// one continuous shower.</summary>
+        /// <summary>A survivable impact: debris, and the same metal hit the blades use. Counted so a test can
+        /// assert a bonk happened at all -- "it lost health" would also pass on a machine that was quietly
+        /// bleeding out for some entirely different reason.</summary>
+        void BonkFx()
+        {
+            DebugBonkCount++;
+            if (_bonkFx != null) { _bonkFx.Emitting = false; _bonkFx.Restart(); _bonkFx.Emitting = true; }
+            if (_strikeAudio != null) _strikeAudio.Play();
+        }
+
+        void BladeStrikeFx(CpuParticles3D sparks)
+        {
+            if (sparks != null) { sparks.Emitting = false; sparks.Restart(); sparks.Emitting = true; }
+            if (_strikeAudio != null) _strikeAudio.Play();
+        }
+
+        void UpdateRotorFx()
+        {
+            if (_rotorFxExtinguished) return;   // the wreck has cooled; leave it cold
+            Fx(_mainRotorSmoke, _mainRotorFire, MainRotorNorm, MainRotorDead, 16);
+            Fx(_tailRotorSmoke, _tailRotorFire, TailRotorNorm, TailRotorDead, 12);
+
+            static void Fx(CpuParticles3D smoke, CpuParticles3D fire, float norm, bool dead, int maxAmount)
+            {
+                if (smoke != null)
+                {
+                    bool hurt = norm < RotorSmokeAt;
+                    if (smoke.Emitting != hurt) smoke.Emitting = hurt;
+                    if (hurt)
+                    {
+                        // 0 at the smoke threshold -> 1 at destroyed, so the plume grows as it is worn down.
+                        float t = Mathf.Clamp(1f - norm / RotorSmokeAt, 0f, 1f);
+                        smoke.Amount = Mathf.Max(2, Mathf.RoundToInt(Mathf.Lerp(maxAmount * 0.25f, maxAmount, t)));
+                    }
+                }
+                if (fire != null && fire.Emitting != dead) fire.Emitting = dead;
+            }
+        }
+
+        /// <summary>Is there ground within a short reach below the airframe? Asked with a raycast because it
+        /// has to stay truthful while the body is FROZEN, which rules out contact counts.</summary>
+        bool GroundedByRay()
+        {
+            var space = GetWorld3D()?.DirectSpaceState;
+            if (space == null) return false;
+            Vector3 from = GlobalPosition;
+            var q = PhysicsRayQueryParameters3D.Create(from, from + Vector3.Down * (_groundClearance + 0.45f));
+            q.Exclude = new Godot.Collections.Array<Rid> { GetRid() };
+            q.CollisionMask = (1u << 0) | (1u << 5);
+            return space.IntersectRay(q).Count > 0;
+        }
+
+        /// <summary>Seam to the authoritative destructibles, mirroring PlayerController.NetDamageObject.
+        /// STATIC because Vehicles are built by a factory with no per-instance wiring point; MpLoopback sets it
+        /// alongside the player's. Null in pure --direct SP, where props are inert anyway.</summary>
+        public static System.Action<int, float> NetDamageObject;
+
+        bool DiscStruck(Area3D disc, float propDamage)
+        {
+            bool hit = false;
+            foreach (var body in disc.GetOverlappingBodies())
+            {
+                if (body == this || !GodotObject.IsInstanceValid(body)) continue;
+                hit = true;
+                // THE BLADES CUT BACK (strawberry 2026-08-16: "make the rotors apply damage to props that
+                // collide with them each tick where the rotor would take damage"). Same cadence as the rotor's
+                // own damage by construction -- this only runs on a strike tick.
+                //
+                // "once the props are destroyed make sure they stop applying damage" needs no guard here:
+                // DestructibleField.SetAlive drops a broken prop's CollisionLayer to 0, so it leaves the disc
+                // and stops being found. That holds in both directions -- a dead prop neither takes further
+                // blade damage nor keeps grinding the rotor. Asserted in the tests rather than assumed.
+                if (propDamage > 0f && body.HasMeta(DestructibleField.MetaKey))
+                    NetDamageObject?.Invoke((int)body.GetMeta(DestructibleField.MetaKey), propDamage);
+            }
+            return hit;
+        }
+
+        public HeliPart ResolveHitPart(Vector3 worldPoint)
+        {
+            if (!_heli) return HeliPart.Body;
+            Vector3 local = ToLocal(worldPoint);
+            if (InBox(local, _mainHubCentre, _mainHubHalf)) return HeliPart.MainRotor;
+            if (InBox(local, _tailHubCentre, _tailHubHalf)) return HeliPart.TailRotor;
+            return HeliPart.Body;
+            static bool InBox(Vector3 p, Vector3 c, Vector3 h)
+                => h.X > 0f && Mathf.Abs(p.X - c.X) <= h.X && Mathf.Abs(p.Y - c.Y) <= h.Y && Mathf.Abs(p.Z - c.Z) <= h.Z;
+        }
+        public bool IsHeli => _heli;
+        float _groundClearance;
+        /// <summary>Distance from the body origin down to its lowest collision point (skids, hull floor).</summary>
+        public float GroundClearance => _groundClearance;
+        /// <summary>Seat this vehicle ON a ground point rather than dropping it from a guessed height -- the
+        /// lowest collision point lands on <paramref name="ground"/>, plus a hair so it is not born intersecting.
+        /// A 2 mm interpenetration at spawn is a solver impulse, and on a skidded airframe with no suspension
+        /// that reads as the helicopter flinging itself sideways the moment it appears.</summary>
+        public void PlaceOnGround(Vector3 ground) => GlobalPosition = ground + Vector3.Up * (_groundClearance + 0.02f);
+        /// <summary>Rotor spool 0..1. Thrust scales with its SQUARE (a rotor at half speed makes a quarter of
+        /// the lift), so a cold start has to spin up before it will leave the ground.</summary>
+        public float RotorSpool => _rotorRpm;
+        /// <summary>Test seam: the collective/yaw/pitch/roll the flight model is currently flying on.</summary>
+        public Vector4 DebugHeliInput => new Vector4(_inCollective, _inYaw, _inPitch, _inRoll);
+        float _heliClimbMax, _heliFallMax;
+        /// <summary>This spec's VERTICAL envelope caps (m/s); 0 = inherit the retail car defaults. Published at
+        /// spawn alongside Speed_Max so the MP plausibility check bounds a helicopter by what a helicopter does
+        /// instead of by what a car falling off a hill does.</summary>
+        public float ClimbMaxMps => _heliClimbMax;
+        public float FallMaxMps => _heliFallMax;
         bool _parked, _handbraking; float _spawnGrace = 2.5f; Vector3 _velAvg, _angAvg;   // -> STATIC freeze once majority-grounded + the LOW-PASSED velocity/spin are low (jitter-immune, d9588d3); _spawnGrace lets a fresh car DROP to terrain first
         float _prevSpeed;   // last frame's speed, to detect a sudden drop = a crash (collision/ram damage)
         float _deadTimer = -1f; bool _exploded, _husk; CpuParticles3D _smoke, _smoke0, _fire; OmniLight3D _fireLight;
@@ -31,7 +309,7 @@ namespace UnturnedGodot
         Mesh _wheelMeshRef; Material _wheelMatRef; float _wheelR;   // kept so the wheels can fly off as debris on explode
         public static float GlobalMass = 900f;   // all vehicles share one mass (the source does: Rigidbody mass = 2.0 for every vehicle)
         float[] _gears; float _reverseGear, _shiftUpRpm; float _engineRpm = 1000f; int _gear = 1;   // engine RPM + gear sim
-        AudioStreamPlayer3D _engineAudio; float _idlePitch = 1f, _maxPitch = 2f, _idleVol = 0.75f, _maxVol = 1f;   // EngineRPMSimple sound
+        AudioStreamPlayer3D _engineAudio, _ignitionAudio; bool _ignitionFired; float _idlePitch = 1f, _maxPitch = 2f, _idleVol = 0.75f, _maxVol = 1f;   // EngineRPMSimple sound
         const float EngineVolumeBoost = 1.5f;   // every engine loop +50% louder (strawberry 2026-07-15) -- amplitude x1.5 = +3.5 dB
         const float IdleRpm = 1000f, MaxRpm = 6000f;   // source EngineIdleRPM / EngineMaxRPM
         public float EngineRpm => _engineRpm;
@@ -206,6 +484,13 @@ namespace UnturnedGodot
 
         public enum WaterMode { Car, Boat, Amphibious }   // source VehicleAsset.engine: CAR = land; BOAT = floats + water-drive; amphibious (e.g. APC) = CAR wheels + buoyancy so it swims too
 
+        /// <summary>Which procedural helicopter airframe to build. Two exist because VoX wanted the Rust-accurate
+        /// machine and strawberry liked the first one ("its like the gta vice city RC heli"), and keeping both
+        /// costs one Spec -- the flight model, controls and net path are identical either way.
+        ///   Ultralight = the real Rust minicopter: an open tube frame, exposed seats, wheels, a bare mast.
+        ///   Pod        = the enclosed little scout with skids and a canopy.</summary>
+        public enum HeliFrame { Ultralight, Pod }
+
         struct Spec
         {
             public string Body, Wheel, WheelTex, Palette;   // Palette = paintable palette; WheelTex = wheel albedo
@@ -219,6 +504,7 @@ namespace UnturnedGodot
             public float[] ForwardGears;   // .dat ForwardGearRatios (engine RPM = wheelRPM * ratio)
             public float ReverseGear, ShiftUpRpm;   // .dat ReverseGearRatio + GearShift_UpThresholdRPM
             public string Sound;   // engine loop ogg basename (source: the prefab's AudioSource m_audioClip)
+            public string IgnitionSound;   // one-shot start-up clip (helicopters: the rotor spin-up)
             public float IdlePitch, MaxPitch, IdleVolume, MaxVolume;   // .dat EngineSound (EngineRPMSimple)
             public float Fuel, Health;   // .dat Fuel / Health capacities (HUD gauges)
             public EItemRarity Rarity;   // .dat Rarity (default COMMON) -> look-at outline colour (master)
@@ -241,6 +527,20 @@ namespace UnturnedGodot
             public Vector3 TaillightZoneMin, TaillightZoneMax;    // LEFT AABB (right = X-mirror) enclosing the baked-in RED taillight triangles -> split into an emissive _taillightMat mesh so the REAL baked lights glow (trailer). Min==Max = no split
             public float LandingLegScaleY, LandingLegPivotY;      // trailer: vertically STRETCH the split-out leg mesh (scale about PivotY) so the feet reach the ground at the nose-up parked height. ScaleY 0/1 = no stretch
             public (Vector3 size, Vector3 center)[] ExtraBoxes;   // extra fixed collision boxes beyond the main box + RoofBox (e.g. the trailer's kingpin/gooseneck, the cab's low rear fifth-wheel deck) -> match the model geometry
+            // ---- rotary wing. Heli=true swaps the wheel/engine drive for rotor thrust along the body UP axis,
+            // which is what makes tilting the airframe the way you translate -- the Rust minicopter feel.
+            public bool Heli;
+            public float HeliThrust;                             // peak rotor acceleration, m/s^2 (must exceed g to climb)
+            public float HeliPitchTorque, HeliRollTorque, HeliYawTorque;   // control authority, rad/s^2
+            public float HeliLevel;                              // self-levelling strength (0 = none, fully manual)
+            public float HeliClimbMax, HeliFallMax;              // MP envelope caps, m/s (0 = inherit the car defaults)
+            public float RotorRadius, TailRotorRadius;           // blade half-spans (the rotor mesh is scaled to these)
+            public Vector3 RotorHub, TailRotorHub;               // local mount points for the two rotors
+            public float MainRotorHp, TailRotorHp;                // independent rotor health (0 = derive from Health)
+            public Vector3 MainHubBox, TailHubBox;                // the BULLET hitbox at each mast (full size); Zero = a default off the rotor radius
+            public string[] HeliBodyMeshes;                      // airframe .obj(s); null = build one of the procedural frames below
+            public HeliFrame Frame;                              // which procedural airframe (ignored when HeliBodyMeshes is set)
+            public string HeliRotorMeshPrefix;                   // content prefix for <p>_rotor_{main,tail}_{blades,disc}.txt; null = the Huey's
         }
 
         static AudioStreamWav LoadWav(string resPath)   // load a PCM wav at runtime (no ffmpeg on the box) as a looping stream for the siren
@@ -1033,8 +1333,272 @@ namespace UnturnedGodot
             },
         };
         public static Vehicle BuildAPC(int variant = 0) => Build(_apc, variant, "apc");
-        public static Vehicle BuildByName(string name, int variant = 0) => name switch { "quad" => BuildQuad(variant), "bus" => BuildBus(variant), "sedan" => BuildSedan(variant), "hatchback" => BuildHatchback(variant), "humvee" => BuildHumvee(variant), "roadster" => BuildRoadster(variant), "ambulance" => BuildAmbulance(variant), "firetruck" => BuildFiretruck(variant), "tractor" => BuildTractor(variant), "ural" => BuildUral(variant), "police" => BuildPolice(variant), "semi" => BuildSemi(variant), "trailer" => BuildTrailer(variant), "offroader" => BuildOffRoader(variant), "off_roader" => BuildOffRoader(variant), "truck" => BuildTruck(variant), "van" => BuildVan(variant), "golf" => BuildGolf(variant), "vw_golf" => BuildGolf(variant), "runabout" => BuildRunabout(variant), "apc" => BuildAPC(variant), _ => BuildJeep(variant) };
-        public static readonly string[] SpecNames = { "jeep", "quad", "bus", "sedan", "hatchback", "humvee", "roadster", "ambulance", "firetruck", "tractor", "ural", "police", "semi", "trailer", "offroader", "truck", "van", "golf", "runabout", "apc" };   // F1 dev-console autocomplete + validation ("golf" = VW_Golf, command-only, no natural spawn; runabout = boat + apc = amphibious, both command-spawnable -- drop over water to float)
+
+        // MINICOPTER -- Rust-style two-seat rotary wing (VoX 2026-08-15). No ripped mesh exists, so the
+        // airframe is procedural (BuildHeliModel) and the numbers are chosen for feel rather than ported from
+        // a .dat, since there is no source .dat to port.
+        //
+        // HeliThrust 17 against g=9.8 is a thrust-to-weight of ~1.7, so hover sits near 58 % collective and
+        // there is real climb left above it -- enough to feel powered, short of the "hold W and leave the
+        // map" that a 3:1 ratio gives. SpeedMax 26 m/s is what the MP envelope's HORIZONTAL cap is derived
+        // from (VehicleReplication: SpeedMax x dt x 1.25), so it has to be an honest top speed or a legitimate
+        // fast pass gets rolled back as a cheat. Climb/fall caps are declared for the same reason -- the
+        // shared car defaults (12.5 up / 25 down) would recov a pilot out of any real dive.
+        static readonly Spec _minicopter = new()
+        {
+            Heli = true, Frame = HeliFrame.Ultralight,
+            // Thrust cut TWICE on playtest feedback: 17 -> 13.6 (strawberry, "reduce the upward thrust by like
+            // 20%") -> 11.8 (VoX, "less thrust from W"). 11.8 against g leaves thrust-to-weight at 1.20 and
+            // hover at ~83 % collective, so there is still real climb available but you have to commit to it.
+            HeliThrust = 11.8f, HeliPitchTorque = 2.08f, HeliRollTorque = 2.40f, HeliYawTorque = 1.76f, HeliLevel = 0f,
+            HeliClimbMax = 22f, HeliFallMax = 45f,
+            RotorRadius = 2.85f, TailRotorRadius = 0.34f,
+            RotorHub = new Vector3(0f, 1.22f, 0.55f), TailRotorHub = new Vector3(0.09f, 0.02f, 2.46f),
+            Body = null, Palette = null, DefaultPaints = new[] { "#8a7f5c" },   // bare weathered tube frame
+            Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", WheelRadius = 0.3f,   // unused (no wheels), non-null for safety like the runabout
+            // 20, not 26: once the fleet was balanced against real aircraft, a scrap ultralight out-running a Huey
+            // and a Skycrane read wrong. This is the one figure NOT derived from a real machine -- its analogue
+            // (a Mosquito-class ultralight, ~100 km/h) would scale to 10 m/s and be miserable to fly. Gamified
+            // instead, and placed below the whole fleet, which is the relationship that matters.
+            Engine = 0f, SteerMax = 0f, SteerMin = 0f, SpeedMax = 20f, SpeedMin = 0f, Brake = 0f,
+            BoxSize = new Vector3(1.05f, 0.80f, 1.60f), BoxCenter = new Vector3(0f, 0.05f, 0.20f),   // seats + engine bay
+            ExtraBoxes = new (Vector3, Vector3)[]
+            {
+                (new Vector3(1.85f, 0.22f, 0.30f), new Vector3(0f, -0.46f, -1.05f)),   // front axle -- what it sits on
+                (new Vector3(0.24f, 0.24f, 2.60f), new Vector3(0f, -0.30f, 1.30f)),    // keel aft section + tail
+                (new Vector3(0.20f, 0.30f, 0.20f), new Vector3(0f, -0.50f, 2.35f)),    // tail wheel
+            },
+            ForwardGears = new[] { 1f }, ReverseGear = 1f, ShiftUpRpm = 5000f,
+            Sound = "heli_engine.ogg", IgnitionSound = "heli_ignition.ogg", IdlePitch = 0.85f, MaxPitch = 1.35f, IdleVolume = 0.7f, MaxVolume = 1.0f,
+            Fuel = 200f, Health = 250f, Name = "Minicopter", Rarity = EItemRarity.RARE,
+            Wheels = new (float, float, float, bool)[0],   // the wheels are scenery -- it flies, it does not drive
+        };
+        public static Vehicle BuildMinicopter(int variant = 0) => Build(_minicopter, variant, "minicopter");
+
+        // SCOUTCOPTER -- the enclosed pod-and-skids machine that was the first cut of the minicopter. Kept as its
+        // own spec rather than edited away: VoX asked for the Rust-accurate ultralight ("basically a frame with a
+        // steat") and strawberry liked this one ("noo i love the model. its like the gta vice city RC heli"), and
+        // both fit -- the flight model, controls and net path are shared, so a second airframe costs one Spec.
+        static readonly Spec _scoutcopter = new()
+        {
+            Heli = true, Frame = HeliFrame.Pod,
+            HeliThrust = 11.8f, HeliPitchTorque = 2.08f, HeliRollTorque = 2.40f, HeliYawTorque = 1.76f, HeliLevel = 0f,
+            HeliClimbMax = 22f, HeliFallMax = 45f,
+            RotorRadius = 2.65f, TailRotorRadius = 0.42f,
+            RotorHub = new Vector3(0f, 1.12f, 0.20f), TailRotorHub = new Vector3(0.10f, 0.62f, 3.02f),
+            Body = null, Palette = null, DefaultPaints = new[] { "#d9d24b" },
+            Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", WheelRadius = 0.3f,
+            Engine = 0f, SteerMax = 0f, SteerMin = 0f, SpeedMax = 26f, SpeedMin = 0f, Brake = 0f,
+            BoxSize = new Vector3(1.15f, 1.05f, 2.05f), BoxCenter = new Vector3(0f, 0.12f, 0.15f),
+            ExtraBoxes = new (Vector3, Vector3)[]
+            {
+                (new Vector3(0.16f, 0.16f, 2.30f), new Vector3(-0.52f, -0.72f, 0.10f)),   // left skid
+                (new Vector3(0.16f, 0.16f, 2.30f), new Vector3( 0.52f, -0.72f, 0.10f)),   // right skid
+                (new Vector3(0.22f, 0.22f, 2.70f), new Vector3(0f, 0.34f, 1.85f)),        // tail boom
+            },
+            ForwardGears = new[] { 1f }, ReverseGear = 1f, ShiftUpRpm = 5000f,
+            Sound = "heli_engine.ogg", IgnitionSound = "heli_ignition.ogg", IdlePitch = 0.9f, MaxPitch = 1.45f, IdleVolume = 0.7f, MaxVolume = 1.0f,
+            Fuel = 200f, Health = 250f, Name = "Scoutcopter", Rarity = EItemRarity.RARE,
+            Wheels = new (float, float, float, bool)[0],
+        };
+        public static Vehicle BuildScoutcopter(int variant = 0) => Build(_scoutcopter, variant, "scoutcopter");
+
+        // HUEY -- the RETAIL helicopter (VoX 2026-08-15: "do both, make a huey varient and model a new
+        // minicopter varient"). Unlike the minicopter this one has a real source .dat, so its numbers are
+        // ported rather than invented: Bundles/Vehicles/Huey/Huey.dat gives Speed_Max 16, Speed_Min -2,
+        // Fuel 2000, Health 1000, Rarity Epic, Engine Helicopter, and the four Coalition/Desert/Forest/Russia
+        // DefaultPaintColors. Its Steer_Min/Max (16/8) describe wheel steering it does not have, so they stay 0.
+        //
+        // The airframe is the extracted retail mesh (11.20 m long, 3.50 wide, 4.78 tall -- measured, not
+        // guessed) and is therefore SPEC'd, not procedural: only the rotor mounts differ from a normal vehicle.
+        // It flies the same model as the minicopter but heavier: less thrust-to-weight, slower roll rate, and
+        // a stronger levelling term, so it handles like a loaded transport instead of a lawn chair.
+        static readonly Spec _huey = new()
+        {
+            Heli = true,
+            // The Huey takes a SMALLER cut than the minicopter's 20 %. strawberry was flying the minicopter, and
+            // 20 % off 13.5 leaves thrust-to-weight at 1.10 -- hover at 91 % collective, with almost nothing left
+            // to climb on once the new tilt penalty takes its bite. 12.0 keeps it heavy (T/W 1.22, hover ~82 %)
+            // without making a loaded transport unable to get out of its own way.
+            HeliThrust = 12.9f, HeliPitchTorque = 1.12f, HeliRollTorque = 1.32f, HeliYawTorque = 1.03f, HeliLevel = 0f,
+            HeliClimbMax = 18f, HeliFallMax = 40f,
+            RotorRadius = 5.57f, TailRotorRadius = 1.28f,        // the mesh's own spans -- no scaling for this one
+            RotorHub = new Vector3(0f, 3.01f, -0.25f), TailRotorHub = new Vector3(-0.45f, 3.57f, 6.68f),   // prefab local positions, Z negated
+            HeliBodyMeshes = new[] { "huey_body.txt", "huey_body_1.txt" },
+            Parts = HeliParts("huey"),   // same three as the rest of the fleet, despite this spec predating HeliBase
+            Body = null, Palette = "huey_palette.png",   // MilitaryPaintable; see the note in HeliBase
+            DefaultPaints = new[] { "#475e83", "#a69884", "#437c44", "#495631" },   // .dat DefaultPaintColors
+            Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", WheelRadius = 0.3f,   // unused (no wheels)
+            Engine = 0f, SteerMax = 0f, SteerMin = 0f, SpeedMax = 23f, SpeedMin = 0f, Brake = 0f,   // .dat says 16, but the fleet is balanced on the real UH-1's 222 km/h -- see the table above
+            BoxSize = new Vector3(2.40f, 2.10f, 5.20f), BoxCenter = new Vector3(0f, 0.75f, 0.30f),   // cabin; boom/skids are ExtraBoxes
+            ExtraBoxes = new (Vector3, Vector3)[]
+            {
+                (new Vector3(0.30f, 0.30f, 3.60f), new Vector3(-1.15f, -0.42f, 0.30f)),   // left skid
+                (new Vector3(0.30f, 0.30f, 3.60f), new Vector3( 1.15f, -0.42f, 0.30f)),   // right skid
+                (new Vector3(0.45f, 0.60f, 4.60f), new Vector3(0f, 1.30f, 4.10f)),        // tail boom
+            },
+            ForwardGears = new[] { 1f }, ReverseGear = 1f, ShiftUpRpm = 5000f,
+            Sound = "heli_engine.ogg", IgnitionSound = "heli_ignition.ogg", IdlePitch = 0.7f, MaxPitch = 1.15f, IdleVolume = 0.8f, MaxVolume = 1.0f,
+            Fuel = 2000f, Health = 1000f, Name = "Huey", Rarity = EItemRarity.EPIC,   // .dat Fuel/Health/Rarity
+            Wheels = new (float, float, float, bool)[0],
+        };
+        public static Vehicle BuildHuey(int variant = 0) => Build(_huey, variant, "huey");
+
+        // ---- THE REST OF THE RETAIL HELICOPTER FLEET -------------------------------------------------
+        // Meshes extracted by cow tools (tools/extract_heli.py, a generalisation of extract_huey.py); every
+        // number below is PORTED from the vehicle's own .dat rather than invented, because unlike the
+        // minicopter these all have a source entry: Speed_Max, Speed_Min, Fuel, Health, Rarity, Explosion.
+        //
+        // MANOEUVRABILITY CUT 20 % ACROSS THE WHOLE FLEET (strawberry 2026-08-16: "nerf the maneuverabilty of
+        // all helis by like 20%"). Applied uniformly, so the ORDERING below is untouched -- the balance tests
+        // pin relative agility, not absolute numbers, and a flat scalar is exactly the change they should
+        // survive. The minicopter and scoutcopter took the same cut for consistency.
+        //
+        // BALANCED AGAINST THE REAL AIRCRAFT (strawberry 2026-08-16: "hind is an mi24. orca is a ka-60.
+        // skycrane is an S-64 skycrane. hummingbird is a littlebird. huey is a huey. balance all around
+        // these"). The .dat speeds are useless for this -- everything is 16, or 18 for a Hummingbird -- so the
+        // fleet's character comes from the machines they actually are:
+        //
+        //   aircraft              top speed   MTOW      climb     -> game speed / thrust / roll
+        //   Mi-24 Hind            330 km/h    11,500kg  12.5 m/s      34   14.2   1.01
+        //   Ka-60 Kasatka (Orca)  300         6,500     10.4          31   13.4   1.34
+        //   MD500 (Hummingbird)   282         1,610     10.5          29   13.5   2.70
+        //   UH-1 Huey             222         4,300      8.9          23   12.9   1.65
+        //   S-64 Skycrane         213         21,000     6.8          22   12.2   0.74
+        //
+        // Two of these inverted what I had guessed, which is the point of looking them up. THE HIND IS THE
+        // FASTEST of the five, not the slowest -- it is heavy AND fast, which is the whole idea of a gunship;
+        // I had tuned it as the lumbering one. And the SKYCRANE CLIMBS WORST despite being the lift machine,
+        // because what it is lifting is mostly itself.
+        //
+        // Speeds keep the real RATIOS, scaled into a 22-34 m/s band that is flyable on this map -- the numbers
+        // are gamified, the GAPS are real. Measured: every entry lands within 0.6 % of its real-world ratio to
+        // the Hind (0.909 -> 0.912, 0.855 -> 0.853, 0.673 -> 0.676, 0.645 -> 0.647). Thrust is
+        // derived, not chosen: terminal climb in this model is (thrust - g) / LinearDamp, so thrust = 9.8 +
+        // 0.35 x the real climb rate. Roll authority goes as 1/sqrt(MTOW), normalised to the Little Bird.
+        // MTOW throughout -- mixing empty and max weights would have flipped Skycrane and Hind against each
+        // other, since the Skycrane is lighter than the Hind empty and twice it loaded.
+        //
+        // DETAIL PARTS (meshes by cow tools, 0f8719c1). Every airframe in the fleet carries the same three,
+        // extracted under the same `<heli>_<part>.txt` convention, so they are DERIVED from the mesh name
+        // rather than typed out five times -- five hand-written arrays is five chances to paste `orca_seats`
+        // into the Skycrane and never notice, since a wrong-but-present seat mesh renders perfectly happily.
+        //
+        // The colours are the extractor's per-type DEFAULTS, not ported values, and that distinction matters:
+        // the retail parts read a white `_Color` because they are palette-driven, so there is nothing to port
+        // until the palette pass samples the real texels. Identical across the fleet on purpose -- a Hind's
+        // seats being greyer than a Huey's would be invention, not fidelity.
+        static (string, Color)[] HeliParts(string mesh, params (string, Color)[] extra)
+        {
+            var std = new (string, Color)[]
+            {
+                ($"{mesh}_seats.txt", new Color(0.12f, 0.12f, 0.13f)),        // dark cabin seats
+                ($"{mesh}_steer.txt", new Color(0.08f, 0.08f, 0.09f)),        // collective/cyclic sticks, near-black
+                ($"{mesh}_taillights.txt", new Color(0.80f, 0.10f, 0.10f)),   // red lenses
+            };
+            if (extra == null || extra.Length == 0) return std;
+            var all = new (string, Color)[std.Length + extra.Length];
+            std.CopyTo(all, 0);
+            extra.CopyTo(all, std.Length);
+            return all;
+        }
+
+        // LANDING GEAR (2026-08-16). Every airframe except the Huey shipped with its cabin box as its ONLY
+        // collider, and a cabin box whose floor sits above the aircraft's own belly: the Hind's was 0.58 m up,
+        // the Hummingbird's 0.83 m. So a parked helicopter sank until its underside was inside the terrain,
+        // which is how the Hind's chin turret came to be invisible -- it was on the aircraft the whole time,
+        // correctly placed, and entirely below the ground line.
+        //
+        // The footprints below are MEASURED off each body mesh (the vertices within 0.25 m of its lowest
+        // point, split left/right of centreline) rather than eyeballed, so each box's floor is that airframe's
+        // real belly: skids on the Hummingbird, wheels on the Orca, splayed legs on the Skycrane, belly
+        // fairings on the Hind. The Huey already had skid boxes and is left alone.
+        static (Vector3, Vector3)[] Skids(float halfX, float width, float bottom, float zFrom, float zTo, float h = 0.30f)
+        {
+            float zc = (zFrom + zTo) * 0.5f, len = zTo - zFrom;
+            var size = new Vector3(width, h, len);
+            return new (Vector3, Vector3)[]
+            {
+                (size, new Vector3(-halfX, bottom + h * 0.5f, zc)),
+                (size, new Vector3( halfX, bottom + h * 0.5f, zc)),
+            };
+        }
+
+        // HeliBase carries everything the fleet shares, so each entry below is only what makes it itself.
+        static Spec HeliBase(string mesh, float thrust, float pitchTq, float rollTq, float yawTq,
+                             float rotorR, float tailR, Vector3 mainHub, Vector3 tailHub,
+                             Vector3 box, Vector3 boxCentre, (Vector3, Vector3)[] gear,
+                             float speedMax, float fuel, float health,
+                             string name, EItemRarity rarity, params (string, Color)[] extraParts) => new()
+        {
+            Heli = true,
+            Parts = HeliParts(mesh, extraParts),
+            ExtraBoxes = gear,
+            HeliThrust = thrust, HeliPitchTorque = pitchTq, HeliRollTorque = rollTq, HeliYawTorque = yawTq,
+            HeliLevel = 0f,   // attitude is state on every airframe; nothing self-levels (VoX)
+            HeliClimbMax = 20f, HeliFallMax = 42f,
+            RotorRadius = rotorR, TailRotorRadius = tailR,
+            RotorHub = mainHub, TailRotorHub = tailHub,
+            HeliBodyMeshes = new[] { $"{mesh}_body.txt", $"{mesh}_body_1.txt" },
+            HeliRotorMeshPrefix = mesh,
+            // Body stays null on purpose: the airframe geometry comes from HeliBodyMeshes, and the shared
+            // `Body` field would build a SECOND fuselage on top of it. Only the palette is shared with the
+            // car path -- BuildHeliModel already paints through the same bodyMat, so naming the palette is
+            // the whole of what "colour the bodies" needs (meshes re-ripped with UVs by cow tools 5cd4e772).
+            Body = null, Palette = $"{mesh}_palette.png",
+            DefaultPaints = new[] { "#475e83", "#a69884", "#437c44", "#495631" },   // the shared faction paints
+            Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", WheelRadius = 0.3f,
+            Engine = 0f, SteerMax = 0f, SteerMin = 0f, SpeedMax = speedMax, SpeedMin = 0f, Brake = 0f,
+            BoxSize = box, BoxCenter = boxCentre,
+            ForwardGears = new[] { 1f }, ReverseGear = 1f, ShiftUpRpm = 5000f,
+            Sound = "heli_engine.ogg", IgnitionSound = "heli_ignition.ogg",
+            IdlePitch = 0.7f, MaxPitch = 1.15f, IdleVolume = 0.8f, MaxVolume = 1.0f,
+            Fuel = fuel, Health = health, Name = name, Rarity = rarity,
+            Wheels = new (float, float, float, bool)[0],
+        };
+
+        // HIND -- the gunship, and the FASTEST thing in the fleet as well as the second heaviest. Fast and
+        // unwieldy: it will outrun anything and hates changing its mind.
+        static readonly Spec _hind = HeliBase("hind", 14.2f, 0.69f, 0.81f, 0.63f, 5.90f, 1.25f,
+            new Vector3(0f, 4.18f, 0.58f), new Vector3(-0.30f, 4.47f, 9.60f),
+            new Vector3(2.90f, 2.60f, 7.20f), new Vector3(0f, 1.40f, 0.20f),
+            Skids(0.77f, 1.12f, -0.48f, -3.33f, 1.84f, 0.20f),   // belly fairings + wheels, measured
+            34f, 1750f, 1250f, "Hind", EItemRarity.LEGENDARY,
+            ("hind_turret.txt", new Color(0.16f, 0.17f, 0.14f)));   // the only airframe with one: chin turret + gun barrel, olive drab
+        public static Vehicle BuildHind(int variant = 0) => Build(_hind, variant, "hind");
+
+        // ORCA (Ka-60) -- the modern transport. Nearly Hind-fast and noticeably more agile; the all-rounder.
+        static readonly Spec _orca = HeliBase("orca", 13.4f, 0.91f, 1.07f, 0.84f, 5.90f, 1.25f,
+            new Vector3(0f, 3.28f, -0.25f), new Vector3(-0.30f, 1.48f, 7.55f),
+            new Vector3(2.60f, 2.50f, 6.40f), new Vector3(0f, 1.20f, 0.10f),
+            new (Vector3, Vector3)[]   // TRICYCLE gear, not skids: two mains forward + one tail wheel, all measured
+            {
+                (new Vector3(0.34f, 0.25f, 0.40f), new Vector3(-1.465f, -0.525f, -2.045f)),
+                (new Vector3(0.34f, 0.25f, 0.40f), new Vector3( 1.465f, -0.525f, -2.045f)),
+                (new Vector3(0.32f, 0.25f, 0.32f), new Vector3(  0.00f, -0.355f,  3.100f)),
+            },
+            31f, 2000f, 1000f, "Orca", EItemRarity.EPIC);
+        public static Vehicle BuildOrca(int variant = 0) => Build(_orca, variant, "orca");
+
+        // SKYCRANE (S-64) -- the heavy lifter, and counter-intuitively the WORST climber and slowest of the
+        // five, because at 21 t what it mostly lifts is itself. Least agile by a wide margin.
+        static readonly Spec _skycrane = HeliBase("skycrane", 12.2f, 0.50f, 0.59f, 0.46f, 5.90f, 1.25f,
+            new Vector3(0f, 3.01f, -1.21f), new Vector3(-0.45f, 3.55f, 7.71f),
+            new Vector3(3.20f, 2.80f, 6.80f), new Vector3(0f, 1.30f, 0.30f),
+            Skids(2.065f, 0.60f, -0.63f, -4.15f, 2.73f, 0.20f),   // the S-64's tall splayed legs, measured
+            22f, 2000f, 900f, "Skycrane", EItemRarity.EPIC);
+        public static Vehicle BuildSkycrane(int variant = 0) => Build(_skycrane, variant, "skycrane");
+
+        // HUMMINGBIRD (MD500 Little Bird) -- the scout. A tenth of the Hind's weight, so far and away the
+        // sharpest controls in the fleet, and the thinnest hull. The three retail variants share one geometry.
+        static readonly Spec _hummingbird = HeliBase("hummingbird", 13.5f, 1.84f, 2.16f, 1.68f, 5.57f, 1.25f,
+            new Vector3(0f, 3.01f, -0.25f), new Vector3(-0.45f, 3.45f, 6.95f),
+            new Vector3(2.00f, 2.10f, 4.60f), new Vector3(0f, 1.00f, 0.10f),
+            Skids(1.125f, 0.30f, -0.88f, -3.25f, 1.75f),   // classic skids, same shape as the Huey's, measured
+            29f, 1750f, 750f, "Hummingbird", EItemRarity.EPIC);
+        public static Vehicle BuildHummingbird(int variant = 0) => Build(_hummingbird, variant, "hummingbird");
+        public static Vehicle BuildByName(string name, int variant = 0) => name switch { "quad" => BuildQuad(variant), "bus" => BuildBus(variant), "sedan" => BuildSedan(variant), "hatchback" => BuildHatchback(variant), "humvee" => BuildHumvee(variant), "roadster" => BuildRoadster(variant), "ambulance" => BuildAmbulance(variant), "firetruck" => BuildFiretruck(variant), "tractor" => BuildTractor(variant), "ural" => BuildUral(variant), "police" => BuildPolice(variant), "semi" => BuildSemi(variant), "trailer" => BuildTrailer(variant), "offroader" => BuildOffRoader(variant), "off_roader" => BuildOffRoader(variant), "truck" => BuildTruck(variant), "van" => BuildVan(variant), "golf" => BuildGolf(variant), "vw_golf" => BuildGolf(variant), "runabout" => BuildRunabout(variant), "apc" => BuildAPC(variant), "minicopter" => BuildMinicopter(variant), "mini" => BuildMinicopter(variant), "heli" => BuildMinicopter(variant), "huey" => BuildHuey(variant), "scoutcopter" => BuildScoutcopter(variant), "scout" => BuildScoutcopter(variant), "hind" => BuildHind(variant), "orca" => BuildOrca(variant), "skycrane" => BuildSkycrane(variant), "hummingbird" => BuildHummingbird(variant), "bird" => BuildHummingbird(variant), _ => BuildJeep(variant) };
+        public static readonly string[] SpecNames = { "jeep", "quad", "bus", "sedan", "hatchback", "humvee", "roadster", "ambulance", "firetruck", "tractor", "ural", "police", "semi", "trailer", "offroader", "truck", "van", "golf", "runabout", "apc", "minicopter", "huey", "scoutcopter", "hind", "orca", "skycrane", "hummingbird" };   // F1 dev-console autocomplete + validation ("golf" = VW_Golf, command-only, no natural spawn; runabout = boat + apc = amphibious, both command-spawnable -- drop over water to float)
 
         // spec lookup by key (same table as BuildByName) -- the MP puppet builder resolves replicated
         // TypeIds through this so client replicas rebuild the exact meshes/palette the server spawned
@@ -1133,6 +1697,279 @@ namespace UnturnedGodot
             return p;
         }
 
+        /// <summary>The minicopter airframe, built from primitives. Sets <c>v._bodyMesh</c> to the fuselage pod
+        /// (so the shared damage/hide paths still have a body to work on) and hangs the rest off the vehicle.
+        ///
+        /// The two rotors go on their OWN Node3D pivots -- `_rotorNode` spins about local Y, `_tailRotorNode`
+        /// about local X -- because the blades have to turn without the airframe turning. Blade phase is
+        /// visual only; the flight model never reads it.</summary>
+        /// <summary>Parse a content .obj if it is present, else null. Generated content (the extracted Huey
+        /// rotors) must not be a hard build dependency -- a checkout that has not run the extractor should
+        /// still get a flyable machine, not a crash or an invisible rotor.</summary>
+        static Mesh LoadOptionalObj(string file)
+        {
+            string abs = ProjectSettings.GlobalizePath($"res://content/{file}");
+            if (!System.IO.File.Exists(abs)) { GD.Print($"[heli] {file} missing -- falling back to primitive blades (run tools/extract_huey.py)"); return null; }
+            return ContentProvider.ParseObj($"res://content/{file}");
+        }
+
+        /// <summary>The Rust minicopter: an ULTRALIGHT, which is to say almost nothing. VoX 2026-08-16, with a
+        /// reference shot: "It should be a rust style ultralight minicopter, basically a frame with a steat".
+        ///
+        /// The design point is that it is mostly holes. A long tapered keel with two side rails, an open pair
+        /// of seats bolted straight to it, a bare mast, a fuel can, and three wheels -- no panels, no canopy,
+        /// nothing enclosing the pilot. Anything that reads as bodywork is wrong for this machine, which is why
+        /// the enclosed version lives on as its own spec rather than being edited into this shape.</summary>
+        static void BuildUltralightFrame(Vehicle v, Spec s, Material bodyMat, Material frameMat)
+        {
+            void Part(string name, Mesh m, Vector3 pos, Material mat, Vector3 rotDeg = default, Node3D parent = null)
+            {
+                var mi = new MeshInstance3D { Name = name, Mesh = m, MaterialOverride = mat, Position = pos };
+                if (rotDeg != Vector3.Zero) mi.RotationDegrees = rotDeg;
+                (parent ?? (Node3D)v).AddChild(mi);
+            }
+            void Tube(string name, float radius, float len, Vector3 pos, Material mat, Vector3 rotDeg, Node3D parent = null)
+                => Part(name, new CylinderMesh { TopRadius = radius, BottomRadius = radius, Height = len, RadialSegments = 10, Rings = 1 }, pos, mat, rotDeg, parent);
+
+            var seatMat = SolidMat(new Color(0.42f, 0.28f, 0.16f));   // the worn wooden seat pans
+            var tankMat = SolidMat(new Color(0.62f, 0.16f, 0.12f));   // the red FUEL can
+
+            // ---- KEEL. The spine of the machine, running nose to tail and carrying everything. It is also
+            // _bodyMesh (the paintable member), because on this airframe the frame IS the body.
+            var keel = new MeshInstance3D
+            {
+                Name = "Body",
+                Mesh = new BoxMesh { Size = new Vector3(0.13f, 0.13f, 4.30f) },
+                MaterialOverride = bodyMat,
+                Position = new Vector3(0f, -0.28f, 0.55f),
+                RotationDegrees = new Vector3(-3.5f, 0f, 0f),   // tail rides slightly high, as in the reference
+            };
+            v.AddChild(keel);
+            v._bodyMesh = keel;
+
+            // Side rails: front-wide, converging back onto the keel -- the A-frame that gives it its silhouette.
+            foreach (float sx in new[] { -1f, 1f })
+            {
+                Tube($"Rail{(sx < 0 ? "L" : "R")}", 0.045f, 2.30f, new Vector3(sx * 0.45f, -0.30f, -0.35f), frameMat, new Vector3(84f, sx * 11f, 0f), null);
+                Tube($"RailCross{(sx < 0 ? "L" : "R")}", 0.04f, 0.55f, new Vector3(sx * 0.30f, -0.05f, -0.25f), frameMat, new Vector3(0f, 0f, sx * 62f), null);
+            }
+            Tube("Axle", 0.05f, 1.70f, new Vector3(0f, -0.46f, -1.05f), frameMat, new Vector3(0f, 0f, 90f), null);
+
+            // ---- WHEELS, not skids. Two up front on the axle, one small one under the tail.
+            foreach (float sx in new[] { -1f, 1f })
+                Part($"Wheel{(sx < 0 ? "L" : "R")}", new CylinderMesh { TopRadius = 0.30f, BottomRadius = 0.30f, Height = 0.16f, RadialSegments = 14, Rings = 1 },
+                     new Vector3(sx * 0.86f, -0.46f, -1.05f), frameMat, new Vector3(0f, 0f, 90f), null);
+            Part("TailWheel", new CylinderMesh { TopRadius = 0.13f, BottomRadius = 0.13f, Height = 0.09f, RadialSegments = 10, Rings = 1 },
+                 new Vector3(0f, -0.50f, 2.35f), frameMat, new Vector3(0f, 0f, 90f), null);
+
+            // ---- SEAT. ONE, on the centreline (VoX: "only 1 seat on the minicopter, you put 2 side by side").
+            // It is also the only place to sit: the vehicle carries a single occupant anyway, so a second seat
+            // was furniture that promised a passenger the netcode cannot deliver.
+            Part("SeatPan", new BoxMesh { Size = new Vector3(0.46f, 0.06f, 0.44f) }, new Vector3(0f, 0.02f, 0.18f), seatMat, Vector3.Zero, null);
+            Part("SeatBack", new BoxMesh { Size = new Vector3(0.46f, 0.50f, 0.06f) }, new Vector3(0f, 0.25f, 0.43f), seatMat, new Vector3(-9f, 0f, 0f), null);
+            foreach (float sx in new[] { -1f, 1f })
+                Tube($"SeatLeg{(sx < 0 ? "L" : "R")}", 0.03f, 0.40f, new Vector3(sx * 0.16f, -0.18f, 0.20f), frameMat, Vector3.Zero, null);
+            Tube("Handlebar", 0.035f, 0.70f, new Vector3(0f, 0.16f, -0.30f), frameMat, new Vector3(0f, 0f, 90f), null);
+
+            // ---- POWERPLANT: an engine block, a fuel can and a bare mast. No cowling over any of it.
+            Part("Engine", new BoxMesh { Size = new Vector3(0.52f, 0.40f, 0.46f) }, new Vector3(0f, 0.22f, 0.86f), frameMat, Vector3.Zero, null);
+            Part("FuelCan", new BoxMesh { Size = new Vector3(0.34f, 0.34f, 0.26f) }, new Vector3(0f, 0.62f, 0.72f), tankMat, Vector3.Zero, null);
+            Tube("Mast", 0.055f, 1.15f, new Vector3(0f, 0.62f, 0.55f), frameMat, Vector3.Zero, null);   // behind the seat back (0.43), ahead of the fuel can (0.72)
+            foreach (float sx in new[] { -1f, 1f })   // mast bracing down to the keel
+                Tube($"MastStay{(sx < 0 ? "L" : "R")}", 0.028f, 0.95f, new Vector3(sx * 0.20f, 0.38f, 0.72f), frameMat, new Vector3(26f, 0f, sx * 22f), null);
+
+            // ---- TAIL: a bare boom with a small fin. The keel already carries it, so this is just the fin.
+            Part("TailFin", new BoxMesh { Size = new Vector3(0.04f, 0.46f, 0.34f) }, new Vector3(0f, 0.02f, 2.42f), frameMat, Vector3.Zero, null);
+            Part("Stabiliser", new BoxMesh { Size = new Vector3(0.70f, 0.035f, 0.20f) }, new Vector3(0f, -0.16f, 2.30f), frameMat, Vector3.Zero, null);
+        }
+
+        static void BuildHeliModel(Vehicle v, Spec s, Material bodyMat)
+        {
+            var frameMat = SolidMat(new Color(0.16f, 0.16f, 0.18f));   // black tube frame, skids, boom
+            var bladeMat = SolidMat(new Color(0.10f, 0.10f, 0.11f));
+            var glassMat = new StandardMaterial3D { AlbedoColor = new Color(0.55f, 0.70f, 0.78f, 0.35f), Metallic = 0.3f, Roughness = 0.1f,
+                                                    Transparency = BaseMaterial3D.TransparencyEnum.Alpha, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+
+            void Part(string name, Mesh m, Vector3 pos, Material mat, Vector3 rotDeg = default, Node3D parent = null)
+            {
+                var mi = new MeshInstance3D { Name = name, Mesh = m, MaterialOverride = mat, Position = pos };
+                if (rotDeg != Vector3.Zero) mi.RotationDegrees = rotDeg;
+                (parent ?? (Node3D)v).AddChild(mi);
+            }
+            // a tube along Z (the boom/skid primitive): CylinderMesh is Y-up, so it is laid down 90 deg about X
+            void Tube(string name, float radius, float len, Vector3 pos, Material mat, Vector3 rotDeg, Node3D parent = null)
+                => Part(name, new CylinderMesh { TopRadius = radius, BottomRadius = radius, Height = len, RadialSegments = 10, Rings = 1 }, pos, mat, rotDeg, parent);
+
+            // ---- AIRFRAME. A spec that names real meshes (the Huey) uses them; one that does not (the
+            // minicopter, which has no retail counterpart) gets the primitive frame built below.
+            if (s.HeliBodyMeshes != null)
+            {
+                for (int i = 0; i < s.HeliBodyMeshes.Length; i++)
+                {
+                    var m = LoadOptionalObj(s.HeliBodyMeshes[i]);
+                    if (m == null) continue;
+                    var mi = new MeshInstance3D { Name = i == 0 ? "Body" : $"Body{i}", Mesh = m, MaterialOverride = bodyMat };
+                    v.AddChild(mi);
+                    if (v._bodyMesh == null) v._bodyMesh = mi;
+                }
+                BuildHeliRotors(v, s, bladeMat, frameMat);
+                return;
+            }
+
+            if (s.Frame == HeliFrame.Ultralight)
+            {
+                BuildUltralightFrame(v, s, bodyMat, frameMat);
+                BuildHeliRotors(v, s, bladeMat, frameMat);
+                return;
+            }
+
+            // ---- fuselage pod. This one is _bodyMesh: the paintable panel, and what the shared code hides/dresses.
+            var pod = new MeshInstance3D
+            {
+                Name = "Body",
+                Mesh = new BoxMesh { Size = new Vector3(1.05f, 0.80f, 1.35f) },
+                MaterialOverride = bodyMat,
+                Position = new Vector3(0f, 0.10f, 0.05f),
+            };
+            v.AddChild(pod);
+            v._bodyMesh = pod;
+
+            Part("Nose", new SphereMesh { Radius = 0.52f, Height = 1.04f, RadialSegments = 14, Rings = 8 }, new Vector3(0f, 0.10f, -0.60f), bodyMat);
+            Part("Canopy", new SphereMesh { Radius = 0.46f, Height = 0.92f, RadialSegments = 14, Rings = 8 }, new Vector3(0f, 0.30f, -0.42f), glassMat);
+            Part("Engine", new BoxMesh { Size = new Vector3(0.72f, 0.52f, 0.62f) }, new Vector3(0f, 0.34f, 0.62f), frameMat);
+            Part("FuelTank", new SphereMesh { Radius = 0.30f, Height = 0.60f, RadialSegments = 12, Rings = 7 }, new Vector3(0f, 0.30f, 1.02f), frameMat);
+            // two exposed bench seats, the minicopter's whole cabin
+            Part("SeatL", new BoxMesh { Size = new Vector3(0.42f, 0.10f, 0.44f) }, new Vector3(-0.26f, 0.18f, 0.02f), frameMat);
+            Part("SeatR", new BoxMesh { Size = new Vector3(0.42f, 0.10f, 0.44f) }, new Vector3(0.26f, 0.18f, 0.02f), frameMat);
+            Part("SeatBack", new BoxMesh { Size = new Vector3(1.00f, 0.46f, 0.09f) }, new Vector3(0f, 0.42f, 0.27f), frameMat);
+
+            // ---- skids. Two tubes plus four struts; these are what it rests on, and ExtraBoxes gives them collision.
+            foreach (float sx in new[] { -1f, 1f })
+            {
+                Tube($"Skid{(sx < 0 ? "L" : "R")}", 0.055f, 2.30f, new Vector3(sx * 0.52f, -0.72f, 0.10f), frameMat, new Vector3(90f, 0f, 0f));
+                Part($"SkidTip{(sx < 0 ? "L" : "R")}", new BoxMesh { Size = new Vector3(0.09f, 0.09f, 0.22f) }, new Vector3(sx * 0.52f, -0.66f, -1.10f), frameMat, new Vector3(-22f, 0f, 0f));
+                foreach (float sz in new[] { -0.45f, 0.62f })
+                    Tube($"Strut", 0.045f, 0.66f, new Vector3(sx * 0.38f, -0.40f, sz), frameMat, new Vector3(0f, 0f, sx * 22f));
+            }
+
+            // ---- tail boom + fin
+            Tube("TailBoom", 0.075f, 2.70f, new Vector3(0f, 0.34f, 1.85f), frameMat, new Vector3(90f, 0f, 0f));
+            Part("TailFin", new BoxMesh { Size = new Vector3(0.05f, 0.62f, 0.42f) }, new Vector3(0f, 0.62f, 2.98f), frameMat);
+            Part("Stabiliser", new BoxMesh { Size = new Vector3(0.86f, 0.04f, 0.26f) }, new Vector3(0f, 0.34f, 2.82f), frameMat);
+
+            Tube("Mast", 0.06f, 0.60f, new Vector3(0f, 0.80f, 0.20f), frameMat, Vector3.Zero);
+            BuildHeliRotors(v, s, bladeMat, frameMat);
+        }
+
+        /// <summary>Mount both rotors, shared by every rotary-wing spec.
+        ///
+        /// The blades are the RETAIL Huey's (strawberry 2026-08-15: "theres an existing huey helicopter model
+        /// etc in the game already"), pulled out of core.masterbundle by tools/extract_huey.py. Both meshes are
+        /// authored as a flat disc in XZ -- main 11.14 m across and 0.10 thick, tail 2.56 m, measured off the
+        /// extracted files -- i.e. already spinning about local Y, so each just needs scaling to the spec's span.
+        /// The Huey uses them at 1:1; the minicopter shrinks the same geometry to a 5.3 m disc.
+        ///
+        /// Falls back to box blades when the extraction has not been run, so a fresh checkout without the
+        /// generated content still builds a flyable machine instead of an invisible rotor.</summary>
+        static void BuildHeliRotors(Vehicle v, Spec s, Material bladeMat, Material frameMat)
+        {
+            // Per-spec rotor meshes. The fleet ships exactly TWO distinct rotors -- a 2-blade bar (Huey,
+            // Hummingbird: 11.14 m span) and a 4-blade cross (Hind, Orca, Skycrane: 11.80 m) -- so the span used
+            // for scaling is MEASURED off the mesh rather than being one constant. Scaling a cross by the bar's
+            // number would size every heavy's rotor ~6 % wrong, which is exactly the sort of error that looks
+            // fine in a screenshot.
+            string rp = s.HeliRotorMeshPrefix ?? "huey";
+            float mainSpan = MeshSpanX(LoadOptionalObj($"{rp}_rotor_main_blades.txt"), 11.14f);
+            float tailSpan = MeshSpanX(LoadOptionalObj($"{rp}_rotor_tail_blades.txt"), 2.56f);
+
+            var discMat = new StandardMaterial3D   // the blur plate reads as a translucent smear, not a lid
+            {
+                AlbedoColor = new Color(0.12f, 0.12f, 0.13f, 0.30f),
+                Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
+                CullMode = BaseMaterial3D.CullModeEnum.Disabled,
+                ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
+            };
+
+            v._rotorNode = new Node3D { Name = "Rotor", Position = s.RotorHub };
+            v.AddChild(v._rotorNode);
+            v._rotorNode.AddChild(new MeshInstance3D
+            {
+                Name = "RotorHub",
+                Mesh = new CylinderMesh { TopRadius = 0.11f, BottomRadius = 0.13f, Height = 0.16f, RadialSegments = 10, Rings = 1 },
+                MaterialOverride = frameMat,
+            });
+            MountRotor(v._rotorNode, $"{rp}_rotor_main_blades.txt", $"{rp}_rotor_main_disc.txt",
+                       s.RotorRadius * 2f / mainSpan, s.RotorRadius * 2f, 0.035f, 0.20f, bladeMat, discMat,
+                       out v._bladesMesh, out v._discMesh);
+
+            // Tail rotor. Its meshes lie flat about their own Y like the main rotor's, so the PIVOT is rolled
+            // 90 deg to stand the disc on edge -- that way _tailRotorNode still just turns about local Y.
+            v._tailRotorNode = new Node3D { Name = "TailRotor", Position = s.TailRotorHub, RotationDegrees = new Vector3(0f, 0f, 90f) };
+            v.AddChild(v._tailRotorNode);
+            MountRotor(v._tailRotorNode, $"{rp}_rotor_tail_blades.txt", $"{rp}_rotor_tail_disc.txt",
+                       s.TailRotorRadius * 2f / tailSpan, s.TailRotorRadius * 2f, 0.03f, 0.10f, bladeMat, discMat,
+                       out v._tailBladesMesh, out v._tailDiscMesh);
+        }
+
+        /// <summary>Hang one rotor's two states on a pivot: the physical BLADES and the spin-blur DISC.
+        ///
+        /// Both come from the retail Huey, where they are separate meshes precisely because the game swaps
+        /// between them by rotor speed -- stationary blades when it is idle, a smeared plate when it is up.
+        /// Drawing both at once (which the first cut did, by merging them in the extractor) puts an opaque
+        /// 5 m plate over the airframe: structurally perfect, visually a table. Falls back to box blades and
+        /// no disc when the extraction has not been run.</summary>
+        /// <summary>Widest X extent of a rotor mesh, used to scale it to a spec's declared span. Measured
+        /// rather than assumed: the fleet has both a 2-blade bar (11.14 m) and a 4-blade cross (11.80 m), and
+        /// scaling one by the other's constant would size every heavy's rotor ~6 % wrong.</summary>
+        static float MeshSpanX(Mesh m, float fallback)
+        {
+            if (m == null) return fallback;
+            var aabb = m.GetAabb();
+            return aabb.Size.X > 0.01f ? aabb.Size.X : fallback;
+        }
+
+        static void MountRotor(Node3D pivot, string bladeFile, string discFile, float scale, float span,
+                               float boxThick, float boxChord, Material bladeMat, Material discMat,
+                               out MeshInstance3D blades, out MeshInstance3D disc)
+        {
+            Mesh bm = LoadOptionalObj(bladeFile), dm = LoadOptionalObj(discFile);
+            disc = null;
+            if (bm != null)
+            {
+                blades = new MeshInstance3D { Name = "Blades", Mesh = bm, MaterialOverride = bladeMat, Scale = new Vector3(scale, 1f, scale) };
+                pivot.AddChild(blades);
+                if (dm != null)
+                {
+                    disc = new MeshInstance3D
+                    {
+                        Name = "Disc", Mesh = dm, MaterialOverride = discMat,
+                        Scale = new Vector3(scale, 1f, scale), Visible = false,
+                        // A blur plate must NOT cast a shadow. It is a rendering trick standing in for two
+                        // thin blades, and a solid 5 m disc of shade under a hovering minicopter is the most
+                        // conspicuous thing in the frame -- the translucent plate itself is nearly invisible
+                        // from above while its shadow stays fully opaque, so the artefact reads as a bug in
+                        // the lighting rather than in the rotor.
+                        CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
+                    };
+                    pivot.AddChild(disc);
+                }
+                return;
+            }
+            blades = new MeshInstance3D { Name = "Blades", Mesh = new BoxMesh { Size = new Vector3(span, boxThick, boxChord) }, MaterialOverride = bladeMat };
+            pivot.AddChild(blades);
+        }
+
+        /// <summary>A rotor disc as a monitoring Area3D: the thin cylinder the blades sweep. Masks the world +
+        /// vehicle layers (bit0 | bit5) so it notices terrain, buildings and other vehicles, and sits on no
+        /// layer of its own so nothing can collide WITH it -- it reports, it does not push.</summary>
+        static Area3D MakeDiscArea(string name, float radius, float height, Vector3 pos, Vector3 rotDeg)
+        {
+            var area = new Area3D { Name = name, Position = pos, CollisionLayer = 0, CollisionMask = (1u << 0) | (1u << 5), Monitoring = true };
+            if (rotDeg != Vector3.Zero) area.RotationDegrees = rotDeg;
+            area.AddChild(new CollisionShape3D { Shape = new CylinderShape3D { Radius = radius, Height = height } });
+            return area;
+        }
+
         static Vehicle Build(Spec s, int variant, string specKey)
         {
             var v = new Vehicle { Mass = GlobalMass };   // source uses one constant mass (2.0) for ALL vehicles -> one global Godot mass
@@ -1144,6 +1981,86 @@ namespace UnturnedGodot
             v.ContactMonitor = true; v.MaxContactsReported = 6; v.BodyEntered += v.OnVehicleContact;   // wake a frozen parked car when another vehicle rams it (master)
             v._engineForce = s.Engine; v._steerMax = s.SteerMax; v._steerMin = s.SteerMin;
             v._speedMax = s.SpeedMax; v._speedMin = s.SpeedMin; v._brakeForce = s.Brake;
+            v._heli = s.Heli;
+            v._heliThrust = s.HeliThrust; v._heliPitchTq = s.HeliPitchTorque; v._heliRollTq = s.HeliRollTorque;
+            v._heliYawTq = s.HeliYawTorque; v._heliLevel = s.HeliLevel;
+            v._heliClimbMax = s.HeliClimbMax; v._heliFallMax = s.HeliFallMax;
+            if (s.Heli)
+            {
+                // A helicopter is flown, not suspended. Damping here is AERODYNAMIC, not friction, and the
+                // angular figure is deliberately TINY: the airframe is supposed to keep rotating after you let
+                // go (VoX: "the vehical itself has rotational inertia which will keep it rotating for a bit
+                // unless you counteract it with opposite stick input", then "a tiny amount of drag that does
+                // eventually bring rotations and such to a stop but it should be very very slight"). 0.25 is a
+                // ~4 s decay -- present, so nothing spins forever, but far too slow to fly for you. Stopping a
+                // rotation is the pilot's job; this only cleans up afterwards.
+                v.LinearDamp = 0.35f; v.AngularDamp = 0.25f;
+                v.ContinuousCd = true;   // a fast dive must not tunnel through terrain between ticks
+                // ISOTROPIC inertia, set explicitly rather than left to Godot's derivation from the collision
+                // boxes. Two reasons: those boxes are a crude stand-in for an open tube frame and would hand us
+                // an essentially arbitrary tensor, and an isotropic tensor is rotation-invariant -- so
+                // torque = alpha * I holds exactly in world space at any attitude, with no basis juggling.
+                // The per-axis feel differences live in the spec's pitch/roll/yaw numbers instead, where they
+                // are readable.
+                v.Inertia = Vector3.One * (GlobalMass * HeliInertiaPerKg);
+
+                // ---- ROTOR HEALTH + HITBOXES
+                v._mainRotorHpMax = v._mainRotorHp = s.MainRotorHp > 0f ? s.MainRotorHp : s.Health * 0.45f;
+                v._tailRotorHpMax = v._tailRotorHp = s.TailRotorHp > 0f ? s.TailRotorHp : s.Health * 0.28f;
+
+                // The HUB boxes: small, at the mast, and the only thing a bullet can hit to kill a rotor.
+                // Defaults scale off the rotor radius so a spec that declares nothing still gets a sane target.
+                Vector3 mainBox = s.MainHubBox != Vector3.Zero ? s.MainHubBox : Vector3.One * Mathf.Max(0.22f, s.RotorRadius * 0.14f);
+                Vector3 tailBox = s.TailHubBox != Vector3.Zero ? s.TailHubBox : Vector3.One * Mathf.Max(0.16f, s.TailRotorRadius * 0.42f);
+                v._mainHubCentre = s.RotorHub; v._mainHubHalf = mainBox * 0.5f;
+                v._tailHubCentre = s.TailRotorHub; v._tailHubHalf = tailBox * 0.5f;
+                // Real collision shapes so a bullet raycast can actually reach them -- without these the hub
+                // sits in empty space above the hull and no shot would ever resolve to it.
+                v.AddChild(new CollisionShape3D { Name = "MainHubHit", Shape = new BoxShape3D { Size = mainBox }, Position = s.RotorHub });
+                v.AddChild(new CollisionShape3D { Name = "TailHubHit", Shape = new BoxShape3D { Size = tailBox }, Position = s.TailRotorHub });
+
+                // The DISCS: thin cylinders swept by the blades, as monitoring Areas rather than solid bodies.
+                // Solid would make the rotor a battering ram that shoves the world; an Area only reports that
+                // the blades are in something, which is what grinds them down.
+                v._mainDiscArea = MakeDiscArea("MainDisc", s.RotorRadius, 0.14f, s.RotorHub, Vector3.Zero);
+                v.AddChild(v._mainDiscArea);
+                v._tailDiscArea = MakeDiscArea("TailDisc", s.TailRotorRadius, 0.10f, s.TailRotorHub, new Vector3(0f, 0f, 90f));
+                v.AddChild(v._tailDiscArea);
+
+                // PER-ROTOR SMOKE + FIRE (strawberry 2026-08-16: "the rotors should smoke more when hurt and
+                // set fire when broken"). Separate emitters from the hull's damage smoke, at each hub, so a
+                // dying rotor is legible as a ROTOR failure -- the whole point of splitting their health is
+                // that you can tell which one is going, and one shared plume out of the engine bay would erase
+                // exactly that. Sized well below the hull plumes: these mark a component, not a wreck.
+                v._mainRotorSmoke = MakeSmoke("veh_smoke_1.png", new Color(0.42f, 0.42f, 0.42f), 1.5f, 2.0f, 16, false, 0.5f, 1.1f);
+                v._mainRotorFire = MakeSmoke("veh_fire.png", new Color(1f, 0.72f, 0.32f), 0.6f, 2.6f, 22, true, 0.4f, 0.9f);
+                v._tailRotorSmoke = MakeSmoke("veh_smoke_1.png", new Color(0.42f, 0.42f, 0.42f), 1.2f, 1.6f, 12, false, 0.3f, 0.7f);
+                v._tailRotorFire = MakeSmoke("veh_fire.png", new Color(1f, 0.72f, 0.32f), 0.5f, 2.1f, 16, true, 0.25f, 0.6f);
+                v._mainRotorSmoke.Position = v._mainRotorFire.Position = s.RotorHub;
+                v._tailRotorSmoke.Position = v._tailRotorFire.Position = s.TailRotorHub;
+                foreach (var fx in new[] { v._mainRotorSmoke, v._mainRotorFire, v._tailRotorSmoke, v._tailRotorFire })
+                { fx.Emitting = false; v.AddChild(fx); }
+
+                // BLADE-STRIKE SPARKS + a metal hit, one burst per damage tick (strawberry: "add a particle
+                // effect and sound (metal)"). One-shot rather than continuous, so the feedback is per-strike --
+                // grinding a rotor down is a rhythm of hits you can hear counting off, not a steady hiss.
+                v._mainStrikeFx = MakeSmoke("veh_fire.png", new Color(1f, 0.85f, 0.45f), 0.30f, 5.5f, 14, true, 0.10f, 0.28f);
+                v._tailStrikeFx = MakeSmoke("veh_fire.png", new Color(1f, 0.85f, 0.45f), 0.26f, 4.5f, 10, true, 0.08f, 0.22f);
+                v._mainStrikeFx.Position = s.RotorHub; v._tailStrikeFx.Position = s.TailRotorHub;
+                foreach (var fx in new[] { v._mainStrikeFx, v._tailStrikeFx })
+                { fx.Emitting = false; fx.OneShot = true; fx.Explosiveness = 1f; v.AddChild(fx); }
+                v._bonkFx = MakeSmoke("veh_smoke_1.png", new Color(0.62f, 0.60f, 0.55f), 0.55f, 3.2f, 18, false, 0.20f, 0.60f);
+                v._bonkFx.Position = s.BoxCenter;
+                v._bonkFx.Emitting = false; v._bonkFx.OneShot = true; v._bonkFx.Explosiveness = 1f;
+                v.AddChild(v._bonkFx);
+                var hitWav = LoadWav("res://content/impact_metal.wav");
+                if (hitWav != null)
+                {
+                    hitWav.LoopMode = AudioStreamWav.LoopModeEnum.Disabled;   // a strike is a hit, not a loop
+                    v._strikeAudio = new AudioStreamPlayer3D { Stream = hitWav, UnitSize = 12f, MaxDistance = 90f, VolumeDb = 2f };
+                    v.AddChild(v._strikeAudio);
+                }
+            }
             v._water = s.Water;   // BOAT/AMPHIBIOUS: voxelize the hull box for the source Buoyancy.cs voxel-Archimedes model
             if (s.Water != WaterMode.Car)
             {
@@ -1174,13 +2091,18 @@ namespace UnturnedGodot
             Material bodyMat = s.Palette != null
                 ? PaintMat(s.Palette, paint)
                 : new StandardMaterial3D { AlbedoColor = paint, Metallic = 0f, Roughness = 0.9f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
-            ArrayMesh bodyMesh; ArrayMesh legMesh = null, hlMesh = null, tlMesh = null;
+            ArrayMesh bodyMesh = null; ArrayMesh legMesh = null, hlMesh = null, tlMesh = null;
             // baked taillight zone pair (LEFT + its X-mirror), when the body has REAL red taillights to split out (trailer)
             (Vector3, Vector3)[] tlZones = s.TaillightZoneMin != s.TaillightZoneMax
                 ? new[] { (s.TaillightZoneMin, s.TaillightZoneMax),
                           (new Vector3(-s.TaillightZoneMax.X, s.TaillightZoneMin.Y, s.TaillightZoneMin.Z), new Vector3(-s.TaillightZoneMin.X, s.TaillightZoneMax.Y, s.TaillightZoneMax.Z)) }
                 : null;
-            if (s.LandingLegZoneMin != s.LandingLegZoneMax && tlZones != null)   // trailer: peel BOTH the landing legs AND the baked taillights in one pass
+            // A HELICOPTER HAS NO RIPPED MESH. Unturned ships no minicopter, and nothing under content/ or the
+            // U3-SDK is close enough to re-skin, so the airframe is built here out of primitives instead of
+            // parsed from an .obj. Everything below the model -- collision, seats, fuel, damage -- is the
+            // ordinary Vehicle path; only the geometry source differs.
+            if (s.Heli) BuildHeliModel(v, s, bodyMat);
+            else if (s.LandingLegZoneMin != s.LandingLegZoneMax && tlZones != null)   // trailer: peel BOTH the landing legs AND the baked taillights in one pass
                 (bodyMesh, legMesh, tlMesh) = ContentProvider.ParseObjSplit2($"res://content/{s.Body}", new[] { (s.LandingLegZoneMin, s.LandingLegZoneMax) }, tlZones);
             else if (s.LandingLegZoneMin != s.LandingLegZoneMax)   // split the baked-in landing legs into their own mesh so they can vanish on couple
                 (bodyMesh, legMesh) = ContentProvider.ParseObjSplitByZone($"res://content/{s.Body}", s.LandingLegZoneMin, s.LandingLegZoneMax);
@@ -1192,8 +2114,11 @@ namespace UnturnedGodot
             }
             else
                 bodyMesh = ContentProvider.ParseObj($"res://content/{s.Body}");
-            v._bodyMesh = new MeshInstance3D { Name = "Body", Mesh = bodyMesh, MaterialOverride = bodyMat };
-            v.AddChild(v._bodyMesh);
+            if (bodyMesh != null)   // null only for the procedural heli, whose BuildHeliModel already set _bodyMesh
+            {
+                v._bodyMesh = new MeshInstance3D { Name = "Body", Mesh = bodyMesh, MaterialOverride = bodyMat };
+                v.AddChild(v._bodyMesh);
+            }
             if (legMesh != null)   // the landing legs as a sibling MeshInstance sharing the body material -> toggled with the coupling (visible when parked, hidden when towed)
             {
                 v._landingLegMesh = new MeshInstance3D { Name = "LandingLegs", Mesh = legMesh, MaterialOverride = bodyMat };
@@ -1242,6 +2167,16 @@ namespace UnturnedGodot
                 v.AddChild(v._landingGear);
             }
             v.BodyExtents = s.BoxSize * 0.5f; v.BodyCenter = s.BoxCenter;   // for the zombie swipe-reach
+            // GROUND CLEARANCE: how far the lowest collision point sits BELOW the origin, measured off the
+            // shapes actually attached rather than assumed from the spec. A wheeled vehicle can be dropped from
+            // any sensible height and its suspension sorts it out; a helicopter has no suspension, so spawning
+            // it "1.5 m up" either drops it onto its skids with a bang or, on a spec whose skids hang lower than
+            // that, buries them in the terrain. PlaceOnGround uses this to seat it exactly.
+            float lowest = 0f;
+            foreach (var child in v.GetChildren())
+                if (child is CollisionShape3D cs3 && cs3.Shape is BoxShape3D bs3)
+                    lowest = Mathf.Min(lowest, cs3.Position.Y - bs3.Size.Y * 0.5f);
+            v._groundClearance = -lowest;
 
             // rope-tow attach nodes (generic -- every vehicle gets them): bumper-height centre of the front / rear faces,
             // nudged just outside the hull so the rope clears the body. front = -Z (forward), rear = +Z. (strawberry rope tow)
@@ -1307,7 +2242,9 @@ namespace UnturnedGodot
                 foreach (var (txt, color) in s.Parts)
                 {
                     var pm = SolidMat(color);
-                    var mi = new MeshInstance3D { Mesh = ContentProvider.ParseObj($"res://content/{txt}"), MaterialOverride = pm };
+                    // Named after its source file so the scene tree is readable and, more usefully, so a test can
+                    // ASK for a specific part instead of guessing which unnamed MeshInstance3D is the turret.
+                    var mi = new MeshInstance3D { Name = txt.Replace(".txt", ""), Mesh = ContentProvider.ParseObj($"res://content/{txt}"), MaterialOverride = pm };
                     if (txt.Contains("seat") || txt.Contains("steer")) mi.SetMeta("no_outline", true);   // interior parts -> keep OUT of the look-at outline so it's ONE silhouette, not the seats/wheel showing through the windows (master)
                     if (txt.Contains("steer") && s.SteerAxis != Vector3.Zero)   // wrap the steering wheel in a pivot at its centre so it can turn
                     {
@@ -1399,6 +2336,16 @@ namespace UnturnedGodot
                 v._engineAudio = new AudioStreamPlayer3D { Stream = ogg, UnitSize = 10f, MaxDistance = 80f, PitchScale = s.IdlePitch, VolumeDb = Mathf.LinearToDb(s.IdleVolume * EngineVolumeBoost), Autoplay = true };
                 v.AddChild(v._engineAudio);   // Autoplay starts the loop when the vehicle enters the scene tree
             }
+            if (s.IgnitionSound != null)   // one-shot spin-up; NOT autoplayed -- StepHeli fires it on a start
+            {
+                var ig = AudioStreamOggVorbis.LoadFromFile(ProjectSettings.GlobalizePath($"res://content/{s.IgnitionSound}"));
+                if (ig != null)
+                {
+                    ig.Loop = false;
+                    v._ignitionAudio = new AudioStreamPlayer3D { Stream = ig, UnitSize = 10f, MaxDistance = 80f, VolumeDb = Mathf.LinearToDb(EngineVolumeBoost) };
+                    v.AddChild(v._ignitionAudio);
+                }
+            }
 
             // damage smoke + explosion fire from the engine bay (source: smoke_0/1 at health thresholds, fire + Fire light on explode)
             var firePos = new Vector3(0f, 1.24f, -1.70f);   // source Fire node (0,1.238,1.703), Z negated
@@ -1435,8 +2382,375 @@ namespace UnturnedGodot
 
         // throttle/brake/steer in [-1,1]; applies the source .dat handling: hard Speed_Max/Min caps + speed-dependent
         // steering (Steer_Max at rest -> Steer_Min at full speed), so the observable handling matches the game.
+        // ---- ROTARY WING ------------------------------------------------------------------------------
+        const float SpoolUpSeconds = 3.2f, SpoolDownSeconds = 5.5f;   // cold start has to wind up before it will fly
+        const float CollectiveRate = 0.55f;         // how fast W/S drive the throttle, per second of held key
+        const float CollectiveReturnRate = 0.40f;   // how fast it springs back to idle once you let go
+        /// <summary>Hands-off collective, as a fraction of the power that exactly cancels gravity. Below 1 on
+        /// purpose: "a bit below the amount of thrust required to counteract gravity" (VoX), so letting go sinks
+        /// you slowly rather than parking you in a perfect hover.</summary>
+        const float IdleHoverFraction = 0.92f;
+        /// <summary>Collective that would exactly hold a hover at full rotor spool, from THIS spec's thrust:
+        /// thrust * c = g. Derived, not hardcoded, so retuning HeliThrust moves the idle point with it.</summary>
+        float HoverCollective => _heliThrust > 0.01f ? Mathf.Clamp(9.8f / _heliThrust, 0f, 1f) : 0f;
+        float IdleCollective => HoverCollective * IdleHoverFraction;
+        // Angular ACCELERATION at full deflection (rad/s^2), not a target rate -- these become torque against
+        // the body's inertia, so the airframe builds up to a rotation and keeps it. Higher than the old rate
+        // numbers because reaching a given spin now takes time instead of being assigned.
+        const float HeliPitchRate = 2.30f, HeliRollRate = 2.90f, HeliYawRate = 2.10f;
+        /// <summary>Inertia per kg of vehicle mass (m^2). Sets how hard the airframe is to spin up and, once
+        /// spinning, how long it carries. Tuned by feel rather than derived, because the collision boxes that
+        /// would otherwise define it are a crude stand-in for an open tube frame.</summary>
+        const float HeliInertiaPerKg = 0.9f;
+
+        /// <summary>The pilot's held flight controls. <paramref name="collective"/> is +1 while W is held, -1
+        /// while S is held, 0 with neither.
+        ///
+        /// THE THROTTLE IS SPRING-LOADED, NOT STICKY, and it does not return to zero -- it returns to just under
+        /// the power needed to hold a hover. VoX 2026-08-16: "if the player doesnt have either pressed then the
+        /// copter idles at a bit below the amount of thrust required to counteract gravity ... s should reduce
+        /// the thrust to 0 but only when actively pressed, and w should increase the trust to maximum but again
+        /// only when pressed."
+        ///
+        /// That is a deliberate replacement for the sticky Rust throttle this shipped with, and it is a nicer
+        /// resting state than either extreme: hands off, the machine sinks gently instead of either climbing
+        /// away on a throttle you forgot about or dropping out of the sky. The idle point is derived from the
+        /// spec's own thrust rather than hardcoded, so retuning HeliThrust cannot silently make hands-off mean
+        /// "climb" on one airframe and "plummet" on another.
+        ///
+        /// This is the single flight-input seam, the same way <see cref="Drive"/> is for cars: SP calls it from
+        /// the input path, and the MP fallback maps its 3-axis DriveInput onto it (throttle -> collective,
+        /// steer -> yaw). Pitch/roll never need to ride the input wire, because once a client is predicting it
+        /// reports the resulting TRANSFORM and the server adopts that whole basis.</summary>
+        public void DriveHeli(float collective, float yaw, float pitch, float roll, double delta)
+        {
+            if (_exploded) { _inCollective = 0f; _inYaw = _inPitch = _inRoll = 0f; return; }
+            _parked = false;
+            if (Freeze) { Freeze = false; }   // any control input wakes a settled machine
+            float target = collective > 0.05f ? 1f : collective < -0.05f ? 0f : IdleCollective;
+            float rate = Mathf.Abs(collective) > 0.05f ? CollectiveRate : CollectiveReturnRate;
+            _inCollective = Mathf.MoveToward(_inCollective, target, rate * (float)delta);
+            _inYaw = Mathf.Clamp(yaw, -1f, 1f);
+            _inPitch = Mathf.Clamp(pitch, -1f, 1f);
+            _inRoll = Mathf.Clamp(roll, -1f, 1f);
+        }
+
+        /// <summary>Cut to idle and let it settle -- the heli equivalent of <see cref="Park"/>. The collective
+        /// does NOT snap to zero: an unmanned helicopter in the air keeps whatever power it had and descends as
+        /// the rotor winds down, rather than being deleted out of the sky the instant the pilot steps out.</summary>
+        public void ParkHeli()
+        {
+            _parked = true;
+            _inYaw = _inPitch = _inRoll = 0f;
+        }
+
+        void StepHeli(float dt)
+        {
+            // fuel + explosion lifecycle, same rules the wheeled path runs
+            if (EngineOn && Fuel > 0f && !InfiniteFuel) Fuel = Mathf.Max(0f, Fuel - FuelBurn * dt);
+            if (EngineOn && FuelMax > 0f && Fuel <= 0f) EngineOn = false;
+            if (_deadTimer > 0f) { _deadTimer -= dt; if (_deadTimer <= 0f) Explode(); }
+
+            // ROTOR SPOOL. Thrust scales with the SQUARE of it, so a cold start genuinely cannot lift until the
+            // disc is up -- and cutting the engine in the air leaves you autorotating down, not dropping like a
+            // brick. Spool-down is slower than spool-up for the same reason.
+            float want = (EngineOn && !_exploded && (Fuel > 0f || InfiniteFuel)) ? 1f : 0f;
+            _rotorRpm = Mathf.MoveToward(_rotorRpm, want, dt / (want > _rotorRpm ? SpoolUpSeconds : SpoolDownSeconds));
+            if (_rotorNode != null)   // visual only -- the flight model never reads blade phase
+            {
+                // STOPS when idle, on death, and slows as the rotor is damaged (strawberry: "rotor should stop
+                // when idle ... stop rotor on death ... lower each rotor's rpm when they are hurt"). The old
+                // constant +2.5 term meant the disc never actually stopped -- a parked, dead-engine machine
+                // sat there slowly turning its blades forever.
+                float spinScale = _exploded ? 0f : _rotorRpm * (0.30f + 0.70f * MainRotorNorm);
+                _rotorSpin += dt * spinScale * 46f;
+                _rotorNode.Rotation = new Vector3(0f, _rotorSpin, 0f);
+            }
+            if (_tailRotorNode != null)
+                // COMPOSE the roll with the spin. Assigning `Rotation = (0, spin, 0)` here -- which is what this
+                // line used to do -- overwrote the whole basis every tick and wiped the 90 deg roll set at build
+                // time, so the tail rotor lay flat like a second main rotor. The comment on that line asserted
+                // "pivot is rolled 90 deg, so local Y is still the spin axis" while the assignment beside it
+                // destroyed exactly that; strawberry spotted it in the first minute of flying
+                // ("the tail rotor needs to be rotated + 90 deg roll").
+            {
+                // The tail turns on its OWN health, so a shredded tail rotor visibly lags a healthy main --
+                // which is the tell that says which one you lost.
+                _tailSpin += dt * (_exploded ? 0f : _rotorRpm * (0.30f + 0.70f * TailRotorNorm)) * 120f;
+                _tailRotorNode.Basis = new Basis(Vector3.Back, Mathf.DegToRad(TailRotorRollDegrees))
+                                     * new Basis(Vector3.Up, _tailSpin);
+            }
+            // Swap blades <-> blur disc by rotor speed, which is why the retail prefab ships both meshes. Below
+            // the threshold you see two blades sitting still; above it, the smear plate.
+            bool spun = _rotorRpm > DiscSwapSpool;
+            if (_discMesh != null)
+            {
+                if (_bladesMesh != null) _bladesMesh.Visible = !spun;
+                _discMesh.Visible = spun;
+            }
+            if (_tailDiscMesh != null)
+            {
+                if (_tailBladesMesh != null) _tailBladesMesh.Visible = !spun;
+                _tailDiscMesh.Visible = spun;
+            }
+
+            // ENGINE AUDIO rides the ROTOR, not an RPM the machine does not have. The shared car path drives
+            // pitch from gear/wheel RPM, which on a helicopter reads as an engine revving while the disc is
+            // still winding up. Sounds are the retail Unturned clips (HelicopterIgnition + Engine_Heli),
+            // extracted by cow tools.
+            if (_engineAudio != null)
+            {
+                if (_rotorRpm > 0.01f)
+                {
+                    _engineAudio.PitchScale = Mathf.Lerp(_idlePitch, _maxPitch, _rotorRpm);
+                    _engineAudio.VolumeDb = Mathf.LinearToDb(Mathf.Lerp(_idleVol * 0.35f, _maxVol, _rotorRpm) * EngineVolumeBoost);
+                    if (!_engineAudio.Playing) _engineAudio.Play();
+                }
+                else if (_engineAudio.Playing) { _engineAudio.VolumeDb = -80f; _engineAudio.Stop(); }
+            }
+            // IGNITION is a one-shot on the START of a spin-up, latched so it fires once per start rather than
+            // every tick the rotor happens to be below speed.
+            if (_ignitionAudio != null)
+            {
+                bool starting = want > 0f && _rotorRpm < 0.05f;
+                if (starting && !_ignitionFired) { _ignitionFired = true; _ignitionAudio.Play(); }
+                else if (want <= 0f && _rotorRpm < 0.01f) _ignitionFired = false;   // fully stopped -> armed again
+            }
+
+            if (_exploded) return;   // a wreck is just a falling body
+
+            Basis b = GlobalTransform.Basis;
+            float spool = _rotorRpm * _rotorRpm;
+
+            // LIFT along the BODY up axis. This one line is the whole Rust feel: you do not steer a helicopter,
+            // you tilt it and the lift vector takes you with it.
+            // BLADE STRIKES. While anything is inside a disc, that rotor grinds down on a fixed interval --
+            // an interval rather than per-frame damage so the cost of clipping a tree does not depend on the
+            // framerate, and so brushing something is survivable while sitting in it is not.
+            // A STOPPED ROTOR NEITHER CUTS NOR IS CUT (strawberry 2026-08-16: "stop rotor damage
+            // recieve/give from happening with the rotor off"). Blades have to be TURNING to do this -- a
+            // parked machine resting in a bush was grinding its own rotor away, and shredding the bush, purely
+            // by being parked there. Gated on spool rather than on EngineOn so a rotor still coasting down
+            // after a shutdown stays dangerous, which is true of the real thing.
+            _mainStrikeCd -= dt; _tailStrikeCd -= dt;
+            bool bladesLive = _rotorRpm > BladeStrikeMinSpool;
+            if (bladesLive && _mainDiscArea != null && _mainStrikeCd <= 0f && DiscStruck(_mainDiscArea, MainBladePropDamage))
+            { _mainStrikeCd = BladeStrikeInterval; DamageMainRotor(BladeStrikeDamage); BladeStrikeFx(_mainStrikeFx); }
+            if (bladesLive && _tailDiscArea != null && _tailStrikeCd <= 0f && DiscStruck(_tailDiscArea, TailBladePropDamage))
+            { _tailStrikeCd = BladeStrikeInterval; DamageTailRotor(TailStrikeDamage); BladeStrikeFx(_tailStrikeFx); }
+
+            // ---- CRASH (strawberry 2026-08-16: "make the vehicle EXPLODE if it hits anything at a
+            // considerable speed. bonking with particles and taking damage if its below the explosion
+            // threshold").
+            //
+            // FULL 3-D SPEED, unlike the wheeled detector, which measures horizontal only and says so: "so the
+            // spawn drop doesn't count". That is right for a car, whose crashes are all lateral, and exactly
+            // wrong for a helicopter, whose defining crash is straight down. Taking the vertical component back
+            // means the spawn drop DOES count, so the guard is _spawnGrace instead -- a real condition (the
+            // machine has only just been placed) rather than an axis that happened to exclude it.
+            float curSpeed = LinearVelocity.Length();
+            float decel = _prevSpeed - curSpeed;
+            // HOW FAST WERE YOU GOING WHEN YOU HIT -- a short decaying peak, not last tick's speed. With
+            // ContinuousCd the solver bleeds a fast impact off across several ticks, so by the tick the
+            // deceleration is large enough to notice, _prevSpeed has ALREADY dropped well below the real
+            // approach speed. A 25 m/s dive was being detected at ~11 and written off as a survivable bonk
+            // (111 damage instead of a fireball). The peak decays at 12 m/s per second, so it reflects the
+            // last moment of flight rather than the whole trip.
+            _recentTopSpeed = Mathf.Max(curSpeed, _recentTopSpeed - dt * 6f);   // 6, not 12: a faster decay shaved real speed off impacts the solver resolved over several ticks
+            if (_crashCd > 0f) _crashCd -= dt;
+            if (!_exploded && _spawnGrace <= 0f && _crashCd <= 0f && _recentTopSpeed > HeliBonkSpeed && decel > 200f * dt)
+            {
+                _crashCd = 0.25f;   // one impact per contact, not one per tick of a scrape
+                DebugLastImpactSpeed = _recentTopSpeed;
+                if (_recentTopSpeed >= HeliCrashExplodeSpeed) Explode();   // hard hit: straight to the fireball, no 4 s fuse
+                else { TakeDamage(decel * 18f); BonkFx(); }
+            }
+            _prevSpeed = curSpeed;
+
+            // A DEAD ROTOR CUTS THE ENGINE ONCE YOU ARE DOWN (strawberry 2026-08-16: "kill the engine if main
+            // rotor dead once you touch the ground. same with tail"). Deliberately gated on being GROUNDED
+            // rather than firing the moment the rotor dies: cutting the engine mid-air would take away the
+            // autorotation you need to survive the landing, turning a recoverable failure into a guaranteed
+            // kill. Once you are down it stays down -- you are not flying that machine again without repairs.
+            if (EngineOn && (MainRotorDead || TailRotorDead) && GroundedByRay() && LinearVelocity.LengthSquared() < 4f)
+                EngineOn = false;
+
+            UpdateRotorFx();
+
+            // A DAMAGED MAIN ROTOR MAKES LESS LIFT, and a dead one makes none. "main rotor hp low -> reduced
+            // thrust ... main rotor dead -> no more gaining vertical thrust, quickly lose height" -- with zero
+            // lift the machine simply falls, which is the quick loss of height without needing a special case
+            // to shove it downward.
+            float mainEff = MainRotorNorm;
+            float lift = _heliThrust * spool * _inCollective * (0.20f + 0.80f * mainEff);
+            // A DEAD TAIL ALSO GROUNDS YOU (strawberry: "dead tail should also have the same effect as
+            // killmain of preventing gaining height"). Capped just under g rather than zeroed like a dead main:
+            // the tail is not what lifts you, so losing it should leave you able to sink under some control
+            // while spinning, not drop like a machine with no rotor at all. Either way you cannot climb out.
+            if (TailRotorDead && !MainRotorDead) lift = Mathf.Min(lift, 9.8f * 0.95f);
+            // BOTH ROTORS GONE -> the airframe is finished ("if both rotors are destroyed, kill the main body
+            // too"). Routed through TakeDamage so it uses the ordinary death path -- burn timer, explosion,
+            // driver ejection -- instead of inventing a second way for a vehicle to die.
+            if (MainRotorDead && TailRotorDead && !_exploded && Health > 0f) TakeDamage(Health);
+            // TILT COSTS LIFT, twice over. Thrusting along the body axis already gives the free cosine (a
+            // 30 deg nose-down keeps only 87 % of its thrust pointing up); this takes a further bite on top,
+            // so committing to a fast nose-down run actually costs you height instead of being free speed.
+            lift *= 1f - TiltThrustLoss * (1f - Mathf.Clamp(b.Y.Y, 0f, 1f));
+            if (lift > 0f)
+            {
+                // Split the thrust vector and push the HORIZONTAL part harder -- fore/aft more than lateral --
+                // so leaning into a run builds real momentum. The vertical component is left exactly as the
+                // physics gives it, because that is what the hover point and the climb rate are tuned against.
+                Vector3 t = b.Y * lift;
+                var flatThrust = new Vector3(t.X, 0f, t.Z);
+                var fwd = new Vector3(-b.Z.X, 0f, -b.Z.Z);
+                Vector3 boosted;
+                if (fwd.LengthSquared() > 1e-6f)
+                {
+                    fwd = fwd.Normalized();
+                    Vector3 alongFwd = fwd * flatThrust.Dot(fwd);
+                    boosted = alongFwd * ForeAftBoost + (flatThrust - alongFwd) * LateralBoost;
+                }
+                else boosted = flatThrust * LateralBoost;   // pointing straight up/down: no meaningful fore/aft axis
+                ApplyCentralForce(new Vector3(boosted.X, t.Y, boosted.Z) * Mass);
+            }
+
+            // Horizontal top speed. The MP envelope derives its cap from Speed_Max, so exceeding it here would
+            // have the server roll a legitimate pilot back -- the limit has to bind on the CLIENT that is flying.
+            Vector3 vel = LinearVelocity;
+            var flat = new Vector3(vel.X, 0f, vel.Z);
+            if (_speedMax > 0f && flat.Length() > _speedMax)
+            {
+                Vector3 excess = flat.Normalized() * (flat.Length() - _speedMax);
+                ApplyCentralForce(-excess * Mass * 3.0f);
+            }
+
+            // CONTROL. Angular VELOCITY is driven toward the commanded rate rather than integrating torques,
+            // because torque->spin runs through an inertia tensor nobody has tuned; converging on a rate is
+            // stable, framerate-independent and gives the same response on every machine.
+            // SIGN CONVENTION, asserted in vehicle.heli_flight so it cannot drift: with Godot's forward = -Z,
+            //   pitch +1 = nose UP     -> omega along +X  (about +X, -Z rotates toward +Y)
+            //   roll  +1 = bank RIGHT  -> omega along -Z  (about +Z, up would tilt to -X = left)
+            //   yaw   +1 = nose RIGHT  -> omega along -Y  (about +Y, -Z rotates toward -X = left)
+            // Two of the three need a negation and one does not, which is exactly the situation where
+            // reasoning it out once and never checking gets you an inverted axis nobody notices until a
+            // playtest. The tests pin all three against the body basis.
+            // A DAMAGED TAIL ROTOR TURNS WORSE ("tail rotor hp low -> reduced turning"). Pitch and roll are the
+            // MAIN rotor's job and are untouched by tail damage -- losing the tail costs you the pedals, not
+            // the cyclic, which is what makes it a distinct failure rather than a general "controls worse".
+            // strawberry: "make the tail nerf all horizontal yaw/roll movement, including mouse, turn up the
+            // amount of nerf too." SQUARED, so half-health is a quarter of the authority rather than half --
+            // a damaged tail should be alarming well before it is dead. Applies to ROLL as well as yaw (both
+            // are horizontal control, and roll is where the mouse lives); PITCH is left alone because it is
+            // the main rotor's axis and the vertical one.
+            float tn = TailRotorNorm;
+            float tailEff = 0.04f + 0.96f * tn * tn;
+            Vector3 cmd = b.X * (_inPitch * HeliPitchRate * _heliPitchTq / 2.6f)
+                        + b.Z * (-_inRoll * HeliRollRate * _heliRollTq / 3.0f * tailEff)
+                        + b.Y * (-_inYaw * HeliYawRate * _heliYawTq / 2.2f * tailEff);
+
+            // TORQUE REACTION. A tail rotor's whole job is cancelling the main rotor's torque on the fuselage;
+            // with it dead, that torque is unopposed and the airframe spins ("tail rotor dead, go into a
+            // spin"). Scaled by the power actually going through the main rotor, so a dead tail on a spun-down
+            // machine sitting on the ground does nothing -- it is the LIFT you are pulling that spins you, and
+            // that is also the cruel part: the collective you need to stay up is what makes the spin worse.
+            if (TailRotorDead)
+                cmd += b.Y * (TailLossTorque * spool * Mathf.Max(_inCollective, 0.15f));
+
+            // SELF-LEVELLING IS OFF BY DEFAULT, and that is the correction VoX made after flying it
+            // (2026-08-16): "the vehicals pitch and yaw are tracked as a current value and ... thrust applies in
+            // relation to that value. The mouse movements should impart changes on that value. Right now your
+            // model keeps reverting the copter to upright even if no mouse is applied which is wrong."
+            //
+            // He is right, and it was a real design error rather than a tuning one. ATTITUDE IS STATE. The
+            // airframe holds whatever bank and pitch you put it in, the mouse edits that state, and thrust
+            // follows wherever it currently points -- so holding a 20 deg nose-down cruise is something you set
+            // once, not something you fight a spring to maintain. A restoring term makes the machine
+            // un-commandable in exactly the way that reads as "the controls don't do anything": you lean it,
+            // let go, and it undoes your input.
+            //
+            // The term is KEPT, at 0 on every current spec, because a heavy stabilised airframe is a plausible
+            // future variant and the knob costs nothing. Angular damping alone is what stops a held input from
+            // spinning forever -- damping bleeds the RATE to zero and leaves the attitude where you left it,
+            // which is the behaviour being asked for.
+            float manual = Mathf.Max(Mathf.Abs(_inPitch), Mathf.Abs(_inRoll));
+            if (_heliLevel > 0f && manual < 0.95f)
+            {
+                Vector3 up = b.Y;
+                Vector3 axis = up.Cross(Vector3.Up);
+                if (axis.LengthSquared() > 1e-6f)
+                    cmd += axis.Normalized() * up.AngleTo(Vector3.Up) * _heliLevel * spool * (1f - manual);
+            }
+            // TURBULENCE. Gusts on a random timer, only in the air and only under a live rotor -- a machine
+            // sitting on its wheels does not get shoved around, and neither does one whose disc has stopped.
+            // Added to the COMMAND rather than applied as a torque, so it rides the same inertia the pilot's
+            // input does: a gust builds and washes out with the airframe's own weight instead of teleporting
+            // the attitude.
+            if (!DebugNoTurbulence && GetContactCount() == 0 && _rotorRpm > 0.4f)
+            {
+                _turbTimer -= dt;
+                if (_turbTimer <= 0f)
+                {
+                    _turbTimer = HeliRng.RandfRange(TurbMinGap, TurbMaxGap);
+                    var dir = new Vector3(HeliRng.RandfRange(-1f, 1f), HeliRng.RandfRange(-0.5f, 0.5f), HeliRng.RandfRange(-1f, 1f));
+                    if (dir.LengthSquared() > 1e-4f)
+                        _turbKick = dir.Normalized() * HeliRng.RandfRange(0.35f, 1f) * TurbStrength;
+                }
+                _turbKick = _turbKick.Lerp(Vector3.Zero, 1f - Mathf.Exp(-TurbDecay * dt));
+                cmd += _turbKick * spool;
+            }
+            else { _turbKick = Vector3.Zero; _turbTimer = 0f; }
+
+            // REAL TORQUE, not an assigned angular velocity. VoX 2026-08-16: "its not inertia of the control
+            // its inertia of the vehical which needs to be modeled ... not fake input inertia, real physics
+            // simulated inertia."
+            //
+            // He is right, and the previous version was the wrong thing dressed as the right one. Assigning
+            // AngularVelocity each tick means the airframe has NO angular momentum: it rotates exactly as fast
+            // as I say and stops the instant I stop saying it. The lag I added on top only made the number I
+            // was assigning change more slowly -- releasing the stick still stopped the machine because I
+            // stopped it, not because anything was ever spinning.
+            //
+            // Now `cmd` is an angular ACCELERATION (rad/s^2) and becomes a torque against the body's inertia.
+            // Godot integrates it, so momentum is real: let go and it keeps turning, arrested only by
+            // aerodynamic damping or by opposite stick. That also makes counter-input a genuine skill -- you
+            // stop a rotation by flying against it, which is the thing a helicopter actually asks of a pilot.
+            _cmdRate = cmd;   // kept purely as a debug read of what is being commanded this tick
+            if (cmd.LengthSquared() > 1e-8f) ApplyTorque(cmd * Inertia.X);
+
+            // SETTLE. No wheels means the shared wheel-contact settle test can never fire, so a parked heli
+            // would idle its physics forever.
+            //
+            // TOUCHING THE GROUND IS PART OF THE TEST, and leaving it out is not a small omission: a helicopter
+            // that cuts its collective at altitude coasts upward, decelerates, and passes through zero vertical
+            // velocity at the apex. A settle rule that only asks "is it slow and unpowered" fires exactly
+            // there and FREEZES IT IN THE SKY -- which is what the first cut of this did, and the flight test
+            // caught it as a descent of exactly 0.00 m at exactly 0 m/s. Being stationary in the air is the
+            // normal top of every climb, not a machine at rest.
+            // GROUNDED BY RAYCAST, not by contact count. A body frozen with FreezeMode.Static keeps reporting
+            // the contacts it had when it froze, so "am I still on the ground" answers YES forever once it has
+            // settled -- and the settle rule then re-freezes it every tick, from which it can never wake. The
+            // only thing that broke the deadlock was DriveHeli explicitly clearing Freeze on pilot input, so
+            // flying hid it completely: a settled machine teleported into the air simply HOVERED there, frozen,
+            // and a 45 m drop test never fell a single metre.
+            bool grounded = GroundedByRay();
+            bool idle = grounded && _inCollective < 0.02f && vel.LengthSquared() < 0.05f && AngularVelocity.LengthSquared() < 0.05f;
+            if (idle && _spawnGrace <= 0f && !Freeze)
+            {
+                LinearVelocity = Vector3.Zero; AngularVelocity = Vector3.Zero;
+                FreezeMode = RigidBody3D.FreezeModeEnum.Static; Freeze = true;
+            }
+            else if (!idle && Freeze) Freeze = false;
+            if (_spawnGrace > 0f) _spawnGrace -= dt;
+        }
+
         public void Drive(float throttle, float steer, bool handbrake)
         {
+            // A helicopter has no wheels to turn or brake. The MP fallback and any generic caller still reach it
+            // through this one seam, mapped onto the flight axes it does have -- throttle is the collective,
+            // steer is the pedals. Pitch/roll are absent here on purpose: they arrive as the reported TRANSFORM
+            // from a predicting client, not as input (see DriveHeli).
+            if (_heli) { DriveHeli(throttle, steer, 0f, 0f, GetPhysicsProcessDeltaTime()); return; }
             _inThrottle = throttle; _inSteer = steer;   // remembered for boat/amphibious water propulsion (applied as forces in _PhysicsProcess)
             if (_exploded) { EngineForce = 0f; Steering = 0f; Brake = 0f; return; }   // a wrecked vehicle can't be driven
             _parked = false;
@@ -1465,6 +2779,7 @@ namespace UnturnedGodot
 
         public void Park()   // driver left: smoothly damp to a stop + straighten (no hard-brake judder), then hold
         {
+            if (_heli) { ParkHeli(); return; }   // nothing to brake or straighten; an airborne heli must keep flying, not stop dead
             _parked = true;
             EngineForce = 0f;
             _steerTarget = 0f;
@@ -2066,7 +3381,21 @@ namespace UnturnedGodot
             if (_lookFocused) WorldItem.FocusColor = color;   // recolour the screen-space outline (red = can't, white = salvageable)
         }
         public bool Hurt => !_exploded && Health < HealthMax;   // alive-but-damaged -> a blowtorch can repair it (source isRepair, master)
-        public void Repair(float amount) { if (!_exploded) Health = Mathf.Min(HealthMax, Health + amount); }   // blowtorch repair: heal HP up to max (source: isRepair heals instead of damaging)
+        // Blowtorch repair: heal HP up to max (source: isRepair heals instead of damaging). On a HELICOPTER it
+        // also brings the rotors back (strawberry 2026-08-16: "blowtorching the hull will repair the rotors") --
+        // otherwise a machine could be welded to full health and still be unflyable with no way to fix it, which
+        // is a dead end rather than a difficulty. Rotors heal at the same rate as the hull, scaled to their own
+        // smaller maxima so a full hull repair is also a full rotor repair.
+        public void Repair(float amount)
+        {
+            if (_exploded) return;
+            Health = Mathf.Min(HealthMax, Health + amount);
+            if (!_heli || HealthMax <= 0f) return;
+            float frac = amount / HealthMax;
+            _mainRotorHp = Mathf.Min(_mainRotorHpMax, _mainRotorHp + _mainRotorHpMax * frac);
+            _tailRotorHp = Mathf.Min(_tailRotorHpMax, _tailRotorHp + _tailRotorHpMax * frac);
+            if (_mainRotorHp > 0f || _tailRotorHp > 0f) _rotorFxExtinguished = false;   // repaired: let the FX speak again
+        }
         public void Salvage()   // blowtorch teardown: the cold wreck breaks apart into scrap metal on the ground, then despawns
         {
             var parent = GetParent();
@@ -2102,6 +3431,12 @@ namespace UnturnedGodot
                     {
                         _info.SetBar(1, FuelNorm, InfoBillboard.FuelColor);                 // fuel bar (yellow)
                         _info.SetBar(2, Battery / BatteryMax, InfoBillboard.FuelColor);     // battery bar (yellow)
+                        // ROTOR BARS, helicopters only (strawberry 2026-08-16: "the rotors each get a health
+                        // bar too"). Hidden outright on anything else rather than drawn empty -- the split
+                        // health only means something on a machine that HAS rotors, and two dead rows on every
+                        // car would read as a car with broken parts it does not own.
+                        _info.SetBar(3, MainRotorNorm, RotorBarColor(MainRotorNorm), _heli);
+                        _info.SetBar(4, TailRotorNorm, RotorBarColor(TailRotorNorm), _heli);
                         _info.SetPrompt("", _outlineColor);
                     }
                 }
@@ -2121,6 +3456,13 @@ namespace UnturnedGodot
                 else if (_burnTime < 360f)   // EXTINGUISHED at 60s: flames+smoke off, fire light killed; stays a cold wreck for 5 min
                 {
                     if (_fire != null && _fire.Emitting) _fire.Emitting = false;
+                    // Rotor fires die with the hull's ("extinguish rotor fires along with the body flames
+                    // after corpse cools down") -- otherwise a cold wreck sits there with two burning hubs.
+                    if (_mainRotorFire != null) _mainRotorFire.Emitting = false;
+                    if (_tailRotorFire != null) _tailRotorFire.Emitting = false;
+                    if (_mainRotorSmoke != null) _mainRotorSmoke.Emitting = false;
+                    if (_tailRotorSmoke != null) _tailRotorSmoke.Emitting = false;
+                    _rotorFxExtinguished = true;
                     if (_smoke != null && _smoke.Emitting) _smoke.Emitting = false;
                     if (_smoke0 != null && _smoke0.Emitting) _smoke0.Emitting = false;
                     if (_fireLight != null && _fireLight.Visible) { _fireLight.Visible = false; _fireLight.LightEnergy = 0f; }
@@ -2135,6 +3477,7 @@ namespace UnturnedGodot
                 if (_deadTimer > 0f) { _deadTimer -= (float)delta; if (_deadTimer <= 0f) Explode(); }   // Explode unfreezes + flings; VehicleNetSync then aborts the hold + force-exits the driver
                 return;
             }
+            if (_heli) { StepHeli((float)delta); return; }   // rotary wing: rotor thrust replaces the wheel/tow/settle sim entirely
             if (CanTow && CoupledTrailer != null) UpdateCoupled(CoupledTrailer, (float)delta);   // coupled: rollover/clip disconnect + jackknife clamp
             else if (CanTow) UpdateTrailerApproach();     // ghost this cab vs a trailer it's backing under (exception + layer swap) so it phases the low deck+legs; solid vs the player throughout
             if (Towing != null) UpdateTow((float)delta);   // rope tower: spring-tension pull on both bodies + redraw the rope (SP)

@@ -14,13 +14,17 @@ namespace UnturnedGodot
         public static readonly Color LoadColor = new Color(0x35 / 255f, 0xc0 / 255f, 0xe0 / 255f);     // electric cyan: generator power draw
         static readonly Color BgColor = new Color(0f, 0f, 0f, 0.55f);   // SleekProgress background box
 
-        const int VW = 320, VH = 232, BarW = 210, BarH = 22, Pad = 14, IconSz = 26;
+        const int VW = 320, VH = 296, BarW = 210, BarH = 22, Pad = 14, IconSz = 26;
 
         SubViewport _vp;
         Sprite3D _sprite;
         Label _name, _prompt;
         struct Row { public Control Root; public TextureRect Icon; public ColorRect Bg, Fill; }
-        Row[] _rows = new Row[3];
+        // 5 rows: 0 health, 1 fuel, 2 battery, 3 main rotor, 4 tail rotor. The last two are hidden on
+        // everything that is not a helicopter -- SetBar's visible flag collapses the row, so a car's billboard
+        // is unchanged rather than carrying two empty gaps.
+        const int RowCount = 5;
+        Row[] _rows = new Row[RowCount];
 
         static Texture2D LoadIcon(string file)
         {
@@ -48,8 +52,8 @@ namespace UnturnedGodot
             _name.AddThemeConstantOverride("outline_size", 6);
             root.AddChild(_name);
 
-            var icons = new[] { LoadIcon("ui_health.png"), LoadIcon("ui_fuel.png"), LoadIcon("ui_stamina.png") };
-            for (int i = 0; i < 3; i++)
+            var icons = new[] { LoadIcon("ui_health.png"), LoadIcon("ui_fuel.png"), LoadIcon("ui_stamina.png"), LoadIcon("ui_health.png"), LoadIcon("ui_health.png") };
+            for (int i = 0; i < RowCount; i++)
             {
                 var rc = new Control { Position = new Vector2(Pad, 44 + i * (BarH + 10)), Size = new Vector2(VW - Pad * 2, BarH), Visible = false };
                 var icon = new TextureRect { Texture = icons[i], Position = new Vector2(0, (BarH - IconSz) / 2f), Size = new Vector2(IconSz, IconSz), StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered };
@@ -85,10 +89,10 @@ namespace UnturnedGodot
         public void SetName(string text, Color color) { if (_name != null) { _name.Text = text; _name.Modulate = color; } }
         public void SetPrompt(string text, Color color) { if (_prompt != null) { _prompt.Text = text ?? ""; _prompt.Modulate = color; } }
 
-        // index 0=health, 1=fuel, 2=battery. value 0..1. visible=false hides the row.
+        // index 0=health, 1=fuel, 2=battery, 3=main rotor, 4=tail rotor. value 0..1. visible=false hides the row.
         public void SetBar(int i, float value, Color color, bool visible = true)
         {
-            if (i < 0 || i > 2 || _rows[i].Root == null) return;
+            if (i < 0 || i >= RowCount || _rows[i].Root == null) return;
             _rows[i].Root.Visible = visible;
             if (!visible) return;
             _rows[i].Fill.Color = color;

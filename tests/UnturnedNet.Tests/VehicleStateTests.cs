@@ -74,10 +74,11 @@ namespace UnturnedNet.Tests
             /// <summary>Seed a vehicle entity the way VehicleNetSync would from a node: spec SpeedMax for
             /// the envelope, vitals published (fuel > 0) so the fuel-empty tight cap stays out of the way
             /// unless a test asks for it.</summary>
-            public uint SpawnVehicle(Vector3 pos, float speedMaxMps, float fuel = 2000f)
+            public uint SpawnVehicle(Vector3 pos, float speedMaxMps, float fuel = 2000f,
+                                     float climbMaxMps = 0f, float fallMaxMps = 0f)
             {
                 var e = Server.Vehicles.ServerSpawn(Server.Ids.Mint(), typeId: 0, variant: 0, pos,
-                                                    Server.Session.CurrentTick, speedMaxMps);
+                                                    Server.Session.CurrentTick, speedMaxMps, climbMaxMps, fallMaxMps);
                 Server.Vehicles.ServerPublishVitals(new NetId(e.NetIdValue), fuel, 600f, 10000f, false,
                                                     Server.Session.CurrentTick);
                 return e.NetIdValue;
@@ -338,6 +339,93 @@ namespace UnturnedNet.Tests
             Assert.That(read.PitchDegrees, Is.InRange(4.5f, 5.5f));
             Assert.That((read.LinVel - evt.LinVel).magnitude, Is.LessThan(0.05f));
             Assert.That(read.RecovCounter, Is.EqualTo(7));
+        }
+
+        // ---- ROTARY-WING VERTICAL ENVELOPE (VoX 2026-08-15, the minicopter) ------------------------------
+        //
+        // The envelope's vertical caps were retail CAR numbers applied to every vehicle: 12.5 m/s of climb and
+        // 25 m/s of descent. A helicopter breaks both in normal flight, and every break ships a recov rollback,
+        // so an honest pilot would rubber-band out of every climb and every dive while the server logged it as
+        // a speedhack. Specs may now declare their own caps.
+        //
+        // The check that matters is NOT "a helicopter can now climb" -- that passes if the vertical test were
+        // deleted outright, which is precisely the tempting wrong fix. It is that the machine is still BOUNDED,
+        // by its own number, and that nothing else on the server moved.
+
+        /// <summary>Fly a vertical track at a given m/s, one packet every 2nd tick (25 Hz, the real cadence,
+        /// which is also the envelope's dt floor). Returns the recov events seen.</summary>
+        static List<VehicleRecovEvent> FlyVertical(Harness h, NetWorldClient c, uint veh, Vector3 start, float verticalMps, int packets)
+        {
+            var recovs = new List<VehicleRecovEvent>();
+            c.VehicleRecov += e => recovs.Add(e);
+            var pos = start;
+            int parity = 0;
+            h.Step(packets * 2, () =>
+            {
+                if (parity++ % 2 != 0) return;
+                pos = new Vector3(pos.x, pos.y + verticalMps * 0.04f, pos.z);   // 0.04 s = the 25 Hz packet interval
+                SendState(c, veh, pos);
+            });
+            return recovs;
+        }
+
+        [Test]
+        public void HeliEnvelope_CarKeepsRetailVerticalCaps()
+        {
+            // CONTROL, and it runs on the same code path as the heli cases below: a spec that declares nothing
+            // (climb/fall 0) must behave exactly as it did before this change existed.
+            var h = new Harness(4401).Connected("driver");
+            var a = h.Clients[0];
+            uint car = h.SpawnVehicle(new Vector3(1f, 0f, 0f), speedMaxMps: 12.5f);
+            h.Seat(a, car);
+            var recovs = FlyVertical(h, a, car, new Vector3(1f, 0f, 0f), verticalMps: 20f, packets: 12);
+            Assert.That(recovs, Is.Not.Empty, "a car climbing at 20 m/s is still out of envelope (cap 12.5)");
+        }
+
+        [Test]
+        public void HeliEnvelope_DeclaredCapsAdmitRealFlight()
+        {
+            var h = new Harness(4402).Connected("driver");
+            var a = h.Clients[0];
+            // the minicopter's declared caps
+            uint heli = h.SpawnVehicle(new Vector3(1f, 0f, 0f), speedMaxMps: 26f, climbMaxMps: 22f, fallMaxMps: 45f);
+            h.Seat(a, heli);
+            var climb = FlyVertical(h, a, heli, new Vector3(1f, 0f, 0f), verticalMps: 20f, packets: 12);
+            Assert.That(climb, Is.Empty, "20 m/s climb is inside a 22 m/s cap -- no rollback");
+            Assert.That(h.Entity(heli).Pos.y, Is.GreaterThan(5f), "and the climb was actually ADOPTED, not just un-rolled-back");
+
+            var dive = FlyVertical(h, a, heli, new Vector3(1f, h.Entity(heli).Pos.y, 0f), verticalMps: -40f, packets: 12);
+            Assert.That(dive, Is.Empty, "40 m/s dive is inside a 45 m/s cap -- the car default (25) would have rejected it");
+        }
+
+        [Test]
+        public void HeliEnvelope_StillBounded()
+        {
+            // THE LOAD-BEARING ONE. Every other check here passes if the vertical test were simply removed;
+            // this is the only one that fails. A declared cap is a different bound, not the absence of one.
+            var h = new Harness(4403).Connected("driver");
+            var a = h.Clients[0];
+            uint heli = h.SpawnVehicle(new Vector3(1f, 0f, 0f), speedMaxMps: 26f, climbMaxMps: 22f, fallMaxMps: 45f);
+            h.Seat(a, heli);
+            var cheat = FlyVertical(h, a, heli, new Vector3(1f, 0f, 0f), verticalMps: 90f, packets: 12);
+            Assert.That(cheat, Is.Not.Empty, "90 m/s climb is out of envelope even for a helicopter");
+        }
+
+        [Test]
+        public void HeliEnvelope_HorizontalCapUnchangedByVerticalCaps()
+        {
+            // The two axes are separate gates; declaring vertical caps must not widen the horizontal one, or a
+            // helicopter becomes a free pass for ground-plane teleporting.
+            var h = new Harness(4404).Connected("driver");
+            var a = h.Clients[0];
+            uint heli = h.SpawnVehicle(new Vector3(1f, 0f, 0f), speedMaxMps: 26f, climbMaxMps: 22f, fallMaxMps: 45f);
+            h.Seat(a, heli);
+            var recovs = new List<VehicleRecovEvent>();
+            a.VehicleRecov += e => recovs.Add(e);
+            // 26 m/s x 0.04 s x 1.25 slack = 1.3 m of legal horizontal travel per packet; ask for 40 m.
+            SendState(a, heli, new Vector3(41f, 0f, 0f));
+            h.Step(8);
+            Assert.That(recovs, Is.Not.Empty, "a 40 m horizontal jump is still out of envelope");
         }
 
         static string ToHex(byte[] buffer)

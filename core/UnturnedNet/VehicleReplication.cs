@@ -77,6 +77,19 @@ namespace UnturnedGodot.Net
             /// (TargetForwardVelocity * 0.1)^2, U3 VehicleAsset.cs:2319-2333). 0 = unknown spec: the
             /// envelope fails CLOSED to the fuel-empty tight cap, never open.</summary>
             public float SpeedMaxMps { get; internal set; }
+
+            /// <summary>Server-only, never replicated/hashed: this spec's VERTICAL envelope caps (m/s).
+            /// 0 = inherit the retail car defaults (ValidSpeedUpCar / ValidSpeedDownCar).
+            ///
+            /// Cars needed no such field because retail has one vertical rule for every ground vehicle. A
+            /// ROTARY WING does not fit it: 12.5 m/s of climb and 25 m/s of descent describe a car falling off
+            /// something, not a helicopter being flown, and a pilot in a normal dive would trip the envelope
+            /// and eat a recov rollback on every packet -- i.e. the anti-cheat would make flying impossible
+            /// while looking, from the server's side, exactly like it was catching a speedhack. Per-spec caps
+            /// keep the check meaningful for both: a MINICOPTER is still bounded, just bounded by what a
+            /// minicopter can actually do. Derived from the replicated type index, so no wire change.</summary>
+            public float ClimbMaxMps { get; internal set; }
+            public float FallMaxMps { get; internal set; }
         }
 
         public byte SystemId => ReplicationIds.SystemVehicles;
@@ -103,7 +116,8 @@ namespace UnturnedGodot.Net
 
         // ---- server side ----
 
-        public VehicleEntity ServerSpawn(NetId id, byte typeId, byte variant, Vector3 pos, long tick, float speedMaxMps = 0f)
+        public VehicleEntity ServerSpawn(NetId id, byte typeId, byte variant, Vector3 pos, long tick, float speedMaxMps = 0f,
+                                         float climbMaxMps = 0f, float fallMaxMps = 0f)
         {
             var e = new VehicleEntity
             {
@@ -113,6 +127,8 @@ namespace UnturnedGodot.Net
                 Pos = PlayerReplication.Quantize(pos),
                 LastChangedTick = tick,
                 SpeedMaxMps = speedMaxMps,
+                ClimbMaxMps = climbMaxMps,
+                FallMaxMps = fallMaxMps,
             };
             _vehicles.Add(id, e);
             _removedAtTick.Remove(id.Value);
@@ -842,11 +858,14 @@ namespace UnturnedGodot.Net
             else { float cap = e.SpeedMaxMps * dt * EnvelopeSlack; capSq = cap * cap; }
             bool violation = dx * dx + dz * dz > capSq;
 
-            // vertical speed caps (U3 :3138-3152): climb validSpeedUp, fall validSpeedDown
+            // vertical speed caps (U3 :3138-3152): climb validSpeedUp, fall validSpeedDown. Per-spec where the
+            // spec declares them (a helicopter), else the retail car defaults -- so nothing that flew before
+            // this change sees a different envelope.
             if (!violation)
             {
                 float dy = cmd.Pos.y - e.Pos.y;
-                float validSpeed = dy > 0f ? ValidSpeedUpCar : ValidSpeedDownCar;
+                float validSpeed = dy > 0f ? (e.ClimbMaxMps > 0f ? e.ClimbMaxMps : ValidSpeedUpCar)
+                                           : (e.FallMaxMps > 0f ? e.FallMaxMps : ValidSpeedDownCar);
                 violation = Math.Abs(dy) / dt > validSpeed;
             }
 
