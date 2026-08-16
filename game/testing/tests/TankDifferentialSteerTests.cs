@@ -53,6 +53,14 @@ namespace UnturnedGodot.Testing
             T.Check($"forward drive moves the tank ({movedFwd:0.0} m)", movedFwd > 2f);
             T.Check($"forward drive holds heading (drift {yawDrift:0.0} deg)", yawDrift < 25f);
 
+            // brake, then W+A: must DRIVE at speed AND turn -- NOT crawl (master: stopping the inside track halved the power)
+            for (int i = 0; i < 40; i++) { tank.Drive(0f, 0f, true); yield return Step.Ticks(1); }
+            var arcStart = tank.GlobalPosition; float arcYaw0 = tank.RotationDegrees.Y;
+            for (int i = 0; i < 90; i++) { tank.Drive(1f, -1f, false); yield return Step.Ticks(1); }
+            float arcMoved = new Vector2(tank.GlobalPosition.X - arcStart.X, tank.GlobalPosition.Z - arcStart.Z).Length();
+            float arcYaw = Mathf.RadToDeg(Mathf.Abs(Mathf.AngleDifference(Mathf.DegToRad(arcYaw0), Mathf.DegToRad(tank.RotationDegrees.Y))));
+            T.Check($"W+A keeps speed vs straight, no crawl (arc {arcMoved:0.1} m vs fwd {movedFwd:0.1} m = {(movedFwd > 0.1f ? arcMoved / movedFwd : 0f):0.00}x, turned {arcYaw:0.0} deg)", arcMoved > movedFwd * 0.55f && arcYaw > 15f);
+
             // never flipped through the pivot + drive (master: "easily flipped")
             T.Check($"stays upright through the whole drive ({tank.GlobalTransform.Basis.Y.Dot(Vector3.Up):0.00})", tank.GlobalTransform.Basis.Y.Dot(Vector3.Up) > 0.9f);
 
