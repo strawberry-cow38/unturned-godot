@@ -115,7 +115,11 @@ traced with file:line, not yet re-verified by me.
 
 ### Combat — the whole subsystem has diverged
 
-1. ✅ **Every gun in MP is a stale Eaglefire.** `ServerCombat.SetGunProfile` has zero production
+1. ✅ **Every gun in MP is a stale Eaglefire.** *(verified independently: `SetGunProfile` has no
+   caller anywhere, and I counted the rate-gate victims myself — the server's `FirerateTicks = 4`
+   requires a gap > 4 ticks, and **exactly 10 of 55 guns** declare `Firerate < 4`: card, cobra, fury,
+   fusilaut, luger, nailgun, paintballgun, peacemaker, scalar, teklowvka. Exactly the ten the agent
+   named.)* `ServerCombat.SetGunProfile` has zero production
    callers, so `GunFor(sender)` always returns `DefaultGun`: 40/player, 99/zombie, 1 pellet, 30-round
    mag, and a 5-tick minimum gap. Consequences measured against the 55 shipped `.dat`s — masterkey and
    sawed-off fire 1 pellet instead of 8; dragonfang/fury/nykorev go silent after 30 of their 200–250
@@ -151,7 +155,12 @@ traced with file:line, not yet re-verified by me.
    `grep -ri turret core/` returns **nothing**. The second player to press F gets silent nothing.
    *(Correction to my brief: I said two players could believe they hold the same seat. It is stricter —
    they cannot share the vehicle at all.)*
-9. ⬜ **A vehicle being driven in MP is indestructible.** Two independent gates: the driver's node is
+9. ✅ **A vehicle being driven in MP is indestructible.** *(verified: `Vehicle.cs:776` returns on
+   `NetClientPredicted` because "health/explosion are SERVER truth"; `Vehicle.cs:3844` returns on
+   `NetHeld` and its own comment says "settle/**damage**/gear sim all skip". Each comment is correct in
+   isolation — the client defers to the server, the server defers to the client's physics — and
+   together they leave nobody applying the damage. Two reasonable local decisions composing into a
+   hole.)* Two independent gates: the driver's node is
    `NetClientPredicted` so `TakeDamage` returns early, and the server's node is `NetHeld` so its
    `_PhysicsProcess` returns before the crash detector. Core has no vehicle-damage path at all.
 10. ⬜ **Remote players are always rendered standing.** `PlayerAppearanceNetSync` reads stance from the
