@@ -93,6 +93,7 @@ namespace UnturnedGodot
             bool wearcloth = false;
             bool skillsui = false;
             bool fluidTest = false;
+            bool tailCheck = false; string tailShot = null;
             bool doorTest = false;
             string doorTestName = null;
             bool containerTest = false; string containerTestName = null;
@@ -117,7 +118,9 @@ namespace UnturnedGodot
                 else if (arg == "--zdirtest") zdirTest = true;       // OFFLINE verify: boot the REWRITE on PEI -> do rows tier, query paths and actually MOVE? (implies --newzombies)
                 else if (arg.StartsWith("--proptest=")) { proptest = arg["--proptest=".Length..]; _shotRequested = proptest; }
                 else if (arg.StartsWith("--slingtest=")) { slingtest = arg["--slingtest=".Length..]; _shotRequested = slingtest; }
-                else if (arg.StartsWith("--magnettest=")) { magnettest = arg["--magnettest=".Length..]; _shotRequested = magnettest; }   // sky-crane winch + electromagnet: dangle, energise, bite a load, lift it   // skycrane + shipping container: in-the-bay vs slung-beneath, side by side   // spawn ONE named prop at identity + RGB axes -> diagnose mirror/orientation/material
+                else if (arg.StartsWith("--magnettest=")) { magnettest = arg["--magnettest=".Length..]; _shotRequested = magnettest; }
+                else if (arg == "--tailcheck") tailCheck = true;
+                else if (arg.StartsWith("--tailshot=")) { tailShot = arg["--tailshot=".Length..]; _shotRequested = tailShot; }   // NAME:OUT -- close-up of one heli's tail from behind   // audit every heli: which side is the tail-rotor POST on, vs where the spec puts the hub   // sky-crane winch + electromagnet: dangle, energise, bite a load, lift it   // skycrane + shipping container: in-the-bay vs slung-beneath, side by side   // spawn ONE named prop at identity + RGB axes -> diagnose mirror/orientation/material
                 else if (arg.StartsWith("--croptest=")) croptest = arg["--croptest=".Length..];   // spawn a farm crop (young + grown) on a ground plane -> validate mesh/tex/orientation (UG_CROPROT tunes rot)
                 else if (arg == "--zperf") zperf = true;   // GPU perf probe: N zombies, render counters ON vs OFF (MUST run with a rendering driver, not --headless)
                 else if (arg == "--zbody") zbody = true;   // MECHANISM probe: N bare kinematic capsules, moving vs parked -> is the physics cost the BODIES?
@@ -367,6 +370,19 @@ namespace UnturnedGodot
                 return;
             }
 
+            if (tailShot != null)   // eyeball ONE tail: the scan says which side has reach, this says what it IS
+            {
+                GetWindow().Size = new Vector2I(1100, 800);
+                var bits = tailShot.Split(':');
+                _shotPath = bits.Length > 1 ? bits[1] : tailShot;
+                BuildTailShot(bits[0]);
+                return;
+            }
+            if (tailCheck)   // audit the whole fleet's tail-rotor mounting side against the mesh
+            {
+                BuildTailCheck();
+                return;
+            }
             if (magnettest != null)   // sky-crane electromagnet: does the cable dangle, bite a load and actually lift it?
             {
                 GetWindow().Size = new Vector2I(1600, 900);
@@ -1921,6 +1937,106 @@ namespace UnturnedGodot
                     GD.Print($"[MAGNET] VERDICT: {((mag?.Held != null && lifted > 0.5f) ? "LIFTS" : "DOES NOT LIFT")}");
                 }
             }
+        }
+
+        // --tailcheck: for every helicopter, find where the tail-rotor MOUNTING POST actually is in the mesh and
+        // compare it with where the spec puts the hub (strawberry: "check all helis for posts sticking out of their
+        // tails, some still have the tail rotor on the wrong side").
+        //
+        // The post is the geometry that sticks out SIDEWAYS from the tail boom at the hub. The boom and the fin are
+        // both roughly centred on X=0, so the giveaway is asymmetry: sample vertices in a box around the hub and ask
+        // which side carries the outlying geometry. Reading it off the mesh rather than off a render, because a
+        // render answers "does this look wrong" and this needs "which side, by how much, on which airframes".
+        // --tailshot=NAME:OUT -- frame one helicopter's tail from BEHIND AND ABOVE, close in. The scan reports which
+        // side carries the outlying geometry, but "reach at the hub" cannot tell a tail-rotor post from a horizontal
+        // stabiliser, and the orca reads symmetric precisely because something spans both ways. So look.
+        void BuildTailShot(string name)
+        {
+            var env = new Godot.Environment
+            {
+                BackgroundMode = Godot.Environment.BGMode.Color, BackgroundColor = new Color(0.46f, 0.58f, 0.72f),
+                AmbientLightSource = Godot.Environment.AmbientSource.Color,
+                AmbientLightColor = new Color(0.78f, 0.79f, 0.82f), AmbientLightEnergy = 1.0f,
+            };
+            AddChild(new WorldEnvironment { Environment = env });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-42f, -30f, 0f), LightEnergy = 1.2f });
+            var v = Vehicle.BuildByName(name);
+            AddChild(v);
+            v.GlobalPosition = Vector3.Zero;
+            v.Freeze = true; v.FreezeMode = RigidBody3D.FreezeModeEnum.Static;
+            v.ProcessMode = Node.ProcessModeEnum.Disabled;   // or it unfreezes itself and falls (see the sling harness)
+            Vector3 hub = v.DebugTailHub;
+            // A red pip exactly AT the spec's hub, so the render answers "is the hub where the post is" directly
+            // instead of me measuring pixels off it afterwards.
+            AddChild(new MeshInstance3D
+            {
+                Mesh = new SphereMesh { Radius = 0.13f, Height = 0.26f },
+                MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(1f, 0.1f, 0.1f), EmissionEnabled = true, Emission = new Color(1f, 0.1f, 0.1f), EmissionEnergyMultiplier = 0.8f },
+                Position = hub,
+            });
+            GD.Print($"[TAILSHOT] {name}: hub {hub} (red pip)");
+            var cam = new Camera3D { Current = true, Fov = 40f, Far = 400f };
+            AddChild(cam);
+            // UG_TAIL_CAM="x,y,z" overrides the offset: a hub buried INSIDE the fuselage puts the default camera
+            // inside the mesh and renders a flat wall of hull, which is its own diagnosis but shows nothing else.
+            Vector3 off = new Vector3(0.35f, 0.85f, 2.3f);
+            string co = System.Environment.GetEnvironmentVariable("UG_TAIL_CAM");
+            if (!string.IsNullOrEmpty(co))
+            {
+                var cp = co.Split(',');
+                if (cp.Length == 3) off = new Vector3(float.Parse(cp[0]), float.Parse(cp[1]), float.Parse(cp[2]));
+            }
+            cam.Position = hub + off;
+            cam.LookAt(hub, Vector3.Up);
+        }
+
+        void BuildTailCheck()
+        {
+            string[] fleet = { "minicopter", "huey", "scoutcopter", "hind", "orca", "skycrane", "hummingbird" };
+            GD.Print("[TAIL] airframe      specX  side   reach-X  reach+X   verts     nearest  verdict");
+            foreach (var name in fleet)
+            {
+                var v = Vehicle.BuildByName(name);
+                AddChild(v);
+                v.GlobalPosition = Vector3.Zero;
+                Vector3 hub = v.DebugTailHub;
+                int negN = 0, posN = 0; float negX = 0f, posX = 0f, nearest = 9999f;
+                void Scan(Node k)
+                {
+                    // EVERY visible mesh, not just nodes named Body*. The first cut filtered on that prefix and
+                    // reported the scoutcopter's hub as 2.34 m off the mesh -- which is what "I only looked at some
+                    // of the geometry" produces, and is indistinguishable from a genuinely misplaced hub.
+                    if (k is MeshInstance3D mi && mi.Mesh != null && mi.Visible)
+                        for (int si = 0; si < mi.Mesh.GetSurfaceCount(); si++)
+                        {
+                            var arr = mi.Mesh.SurfaceGetArrays(si);
+                            if (arr.Count == 0 || arr[(int)Mesh.ArrayType.Vertex].VariantType == Variant.Type.Nil) continue;
+                            foreach (var lv in arr[(int)Mesh.ArrayType.Vertex].AsVector3Array())
+                            {
+                                var w = v.ToLocal(mi.GlobalTransform * lv);
+                                nearest = Mathf.Min(nearest, w.DistanceTo(hub));
+                                if (Mathf.Abs(w.Z - hub.Z) > 0.9f || Mathf.Abs(w.Y - hub.Y) > 0.9f) continue;
+                                if (w.X < -0.06f) { negN++; negX = Mathf.Min(negX, w.X); }
+                                else if (w.X > 0.06f) { posN++; posX = Mathf.Max(posX, w.X); }
+                            }
+                        }
+                    foreach (var c in k.GetChildren()) Scan(c);
+                }
+                Scan(v);
+                // Which side actually carries the protrusion: more vertices AND reaching further out.
+                // Decide on REACH -- how far the outlying geometry sticks out each way -- with the vertex counts kept
+                // only as supporting evidence. Counting alone called a 2:1 split "symmetric" on two airframes.
+                float reach = Mathf.Max(posX, -negX);
+                string meshSide = reach < 0.12f ? "none" : (posX > -negX + 0.06f) ? "+X" : (-negX > posX + 0.06f) ? "-X" : "sym";
+                string specSide = hub.X > 0.06f ? "+X" : hub.X < -0.06f ? "-X" : "0";
+                string verdict = nearest > 1.2f ? $"HUB IS OFF THE MESH ({nearest:0.00} m to the nearest vertex)"
+                               : meshSide == "none" || meshSide == "sym" ? "no protruding post -- faired or centred"
+                               : meshSide == specSide ? "ok"
+                               : $"MISMATCH: hub is {specSide} but the post is {meshSide}";
+                GD.Print($"[TAIL] {name,-12} {hub.X,6:0.00}  {meshSide,-5} -X{negX,6:0.00} +X{posX,6:0.00}  n{negN,3}/{posN,-3} near{nearest,5:0.00}  {verdict}");
+                v.QueueFree();
+            }
+            GetTree().Quit();
         }
 
         void BuildMagnetTest()

@@ -29,6 +29,7 @@ namespace UnturnedGodot
         public SlingMagnet Sling => _magnet;
         public bool SlingDeployed => _magnet != null && IsInstanceValid(_magnet);
         public bool DebugNoSling;   // suppress winch deployment, so a rig can fly the SAME airframe with and without its magnet
+        public Vector3 DebugTailHub => _tailHubCentre;
         public float DebugCollective => _inCollective;
         public float DebugSlingLen => _slingLen;
         public Vector3 DebugSlingAnchorLocal => _slingAnchor;           // FORCE point (CoM axis)
@@ -2000,7 +2001,7 @@ namespace UnturnedGodot
             HeliThrust = 12.9f, HeliPitchTorque = 1.12f, HeliRollTorque = 1.32f, HeliYawTorque = 1.03f, HeliLevel = 0f,
             HeliClimbMax = 18f, HeliFallMax = 40f,
             RotorRadius = 5.57f, TailRotorRadius = 1.28f,        // the mesh's own spans -- no scaling for this one
-            RotorHub = new Vector3(0f, 3.01f, -0.25f), TailRotorHub = new Vector3(-0.45f, 3.57f, 6.68f),   // prefab local positions, Z negated
+            RotorHub = new Vector3(0f, 3.01f, -0.25f), TailRotorHub = new Vector3(0.55f, 3.57f, 6.68f),   // prefab local positions, Z negated. Tail hub X was -0.45: the post is on the STARBOARD side (measured +0.55), so the hub sat in empty air off the port boom -- see the note on _hind
             HeliBodyMeshes = new[] { "huey_body.txt", "huey_body_1.txt" },
             Parts = HeliParts("huey"),   // same three as the rest of the fleet, despite this spec predating HeliBase
             Body = null, Palette = "huey_palette.png",   // MilitaryPaintable; see the note in HeliBase
@@ -2205,7 +2206,7 @@ namespace UnturnedGodot
         // something; Speed_Max 22 -> 28 keeps it the slowest, which is right for a crane, without being painful.
         // Terminal climb becomes (16.5-9.8)/0.45 = 14.9 m/s, still under the 20 m/s HeliClimbMax cap.
         static readonly Spec _skycrane = HeliBase("skycrane", 16.5f, 0.50f, 0.59f, 0.46f, 5.90f, 1.25f,
-            new Vector3(0f, 3.01f, -1.21f), new Vector3(-0.45f, 3.55f, 7.71f),
+            new Vector3(0f, 3.01f, -1.21f), new Vector3(0.55f, 3.55f, 7.71f),   // tail hub X -0.45 -> +0.55: the post is starboard
             new Vector3(3.20f, 2.80f, 6.80f), new Vector3(0f, 1.30f, 0.30f),
             Skids(2.065f, 0.60f, -0.63f, -4.15f, 2.73f, 0.20f),   // the S-64's tall splayed legs, measured
             28f, 2000f, 900f, "Skycrane", EItemRarity.EPIC);
@@ -2243,7 +2244,7 @@ namespace UnturnedGodot
         // HUMMINGBIRD (MD500 Little Bird) -- the scout. A tenth of the Hind's weight, so far and away the
         // sharpest controls in the fleet, and the thinnest hull. The three retail variants share one geometry.
         static readonly Spec _hummingbird = HeliBase("hummingbird", 13.5f, 1.84f, 2.16f, 1.68f, 5.57f, 1.25f,
-            new Vector3(0f, 3.01f, -0.25f), new Vector3(-0.45f, 3.45f, 6.95f),
+            new Vector3(0f, 3.01f, -0.25f), new Vector3(0.55f, 3.45f, 6.95f),   // tail hub X -0.45 -> +0.55: the post is starboard
             new Vector3(2.00f, 2.10f, 4.60f), new Vector3(0f, 1.00f, 0.10f),
             Skids(1.125f, 0.30f, -0.88f, -3.25f, 1.75f),   // classic skids, same shape as the Huey's, measured
             29f, 1750f, 750f, "Hummingbird", EItemRarity.EPIC);
