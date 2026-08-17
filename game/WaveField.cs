@@ -15,8 +15,8 @@ namespace UnturnedGodot
         // --- must mirror the matching uniforms in content/water.gdshader ---
         public const float SwellAmp    = 0.5f;    // metres of vertical swell
         public const float SwellDirDeg = 30.0f;
-        public const float SwellFu     = 0.09f;   // freq along travel
-        public const float SwellFw     = 0.030f;  // freq along crest (fu/fw = 3:1)
+        public const float SwellFu     = 0.081f;  // freq along travel (matches the shader; waves ~10% bigger)
+        public const float SwellFw     = 0.027f;  // freq along crest (fu/fw = 3:1)
         public const float SwellSpeed  = 3.0f;
 
         // GRADIENT (Perlin) noise -- identical formula to the shader's hashv/grad2/gnoise (no axis-aligned cell

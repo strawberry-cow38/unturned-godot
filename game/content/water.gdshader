@@ -11,8 +11,8 @@ uniform vec4 water_shallow : source_color = vec4(0.16, 0.42, 0.54, 0.26);  // sh
 uniform vec4 foam_color : source_color = vec4(0.92, 0.97, 1.0, 1.0);
 uniform float swell_amp = 0.5;        // metres of vertical swell
 uniform float swell_dir_deg = 30.0;   // swell travel direction
-uniform float swell_fu = 0.09;        // noise freq ALONG travel (higher = tighter crest spacing)
-uniform float swell_fw = 0.030;       // noise freq ALONG the crest (lower = longer crests); fu/fw = 3:1 anisotropy (master's pick)
+uniform float swell_fu = 0.081;       // noise freq ALONG travel (lowered 10% -> waves ~10% bigger, master "zoom in")
+uniform float swell_fw = 0.027;       // noise freq ALONG the crest (lower = longer crests); fu/fw = 3:1 anisotropy (master's pick)
 uniform float swell_speed = 3.0;
 uniform float crest_foam = 0.25;      // swell-height fraction above which crest foam kicks in (lower = more whitecaps)
 uniform float shore_depth = 2.2;      // vertical water depth (m) under which shore foam shows (wider = fuller shore band)
@@ -70,7 +70,7 @@ void fragment() {
     float shz = swell_at(v_wpos.xz + vec2(0.0, se), tp);
     vec3 swell_n = vec3((sh - shx) * swell_amp / se, 1.0, (sh - shz) * swell_amp / se);
     // FINE RIPPLE DETAIL: fbm-gradient perturbs the normal (fragment space)
-    vec2 np = v_wpos.xz * 0.15 + vec2(TIME * 0.03, TIME * -0.02);
+    vec2 np = v_wpos.xz * 0.135 + vec2(TIME * 0.03, TIME * -0.02);   // fine ripple ~10% bigger to match the zoomed swell
     float n0 = fbm5(np);
     float nx = fbm5(np + vec2(0.06, 0.0));
     float nz = fbm5(np + vec2(0.0, 0.06));
@@ -84,15 +84,15 @@ void fragment() {
     vp.xyz /= vp.w;
     float bed_y = (INV_VIEW_MATRIX * vec4(vp.xyz, 1.0)).y;
     float depth_v = max(v_wpos.y - bed_y, 0.0);
-    float shore = 1.0 - smoothstep(0.0, 0.7, depth_v);        // foam band at the waterline (a touch longer up the beach; still not the whole shelf)
-    shore *= 0.45 + 0.15 * fbm5(v_wpos.xz * 0.4 + TIME * 0.15);
+    float shore = 1.0 - smoothstep(0.0, 0.85, depth_v);       // foam band at the waterline -- a bit more of it (master)
+    shore *= 0.6 + 0.15 * fbm5(v_wpos.xz * 0.4 + TIME * 0.15);
 
     // CREST FOAM: gated by its own noise so caps scatter (belt-and-suspenders; noise swell already won't lattice)
     float capMask = fbm5(v_wpos.xz * 0.09 + vec2(TIME * 0.04, TIME * -0.03));
     float gate = smoothstep(-0.45, 0.05, capMask);   // looser -> whitecaps on more peaks (noise swell has no lattice to hide)
     float crest = smoothstep(crest_foam, crest_foam + 0.20, v_crest) * gate;
 
-    float foam = clamp(max(crest, shore), 0.0, 1.0);
+    float foam = clamp(max(crest, shore) * 1.2, 0.0, 1.0);   // all foam +20% opacity (master)
 
     // SEE-THROUGH depth-tinted water
     float dt = smoothstep(0.0, shore_depth * 4.0, depth_v);
