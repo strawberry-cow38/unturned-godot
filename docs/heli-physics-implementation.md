@@ -196,6 +196,27 @@ the behaviour dies well before that: at 0.08 the settled sink is 1.4 m over ten 
 rounding error rather than the "gentle sink" that was asked for. At 0.05 it is 0.74 m/s. The window is now
 10 s (4.5 time constants) and the check asserts a *meaningful* sink.
 
+### Review findings NOT acted on, and why
+
+Recorded rather than dropped. All three are from the integration reviewer, all are real, none are live.
+
+- **No test flies a helicopter in MP.** The whole heli-vs-envelope interaction is unmeasured — every heli
+  suite is single-body, and `NetVehicleHoldTests` uses a jeep. The reviewer measured peak level speed at
+  1.155–1.192 × `Speed_Max` for a low fast run *in ground effect*, against the server's 1.25 × rejection.
+  Fixing the hub-referenced probe and the ETL-aware derivation pulls the worst row back to roughly 1.09,
+  but the margin is still thinner than it was, and **the row that matters is one no suite enters** —
+  `heli_speed` flies at 1400 m where ground effect is 1.0. This is the biggest remaining gap.
+- **`HeliClimbMax = 0` is documented as legal and now silently disables both lift multipliers.** The cap
+  computes to `max(1, 9.8/thrust)` = 1, which pins the multiplier at 1 with no warning. Same shape one
+  level down: `HeliThrust ≤ 9.8` makes `LevelFlightAccel` return its floor, so a new airframe could get
+  almost no drag. Fleet minimums are 20 and 11.8, so neither is reachable — but both are traps a new spec
+  walks into quietly.
+- **No distance or frozen cull on the heli path.** `StepHeli` returns before the camera cull the wheeled
+  path uses, so a parked, engine-off helicopter 500 m away still raycasts every physics tick — now twice,
+  since ground effect added one. Immaterial today for a reason worth knowing: **PEI never spawns a
+  helicopter** (`WorldBuilder.cs:1358` skips the air tables), so they reach the world only via the dev
+  console. If the air table is ever enabled, this is the line to revisit.
+
 ## What is not done
 
 **Phase 4, torque coupling**, is deliberately not implemented. It would make collective input yaw the
