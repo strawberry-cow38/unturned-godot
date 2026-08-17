@@ -614,6 +614,7 @@ namespace UnturnedGodot
             public string Body, Wheel, WheelTex, Palette;   // Palette = paintable palette; WheelTex = wheel albedo
             public WaterMode Water;   // Car (default) = land only; Boat = floats+water-drives (no useful wheels); Amphibious = land wheels + float/water-drive when its hull is in the sea
             public Vector3[] Buoys;   // hull buoyancy points (local space, Godot); null = auto 4 bottom corners of BoxSize. Boats/amphibious float via a spring at each toward SeaLevelY
+            public float BuoyLift;    // added to the auto buoyancy-voxel Y. NEGATIVE = float HIGHER (voxels sit lower -> the hull rides up -> more of the coloured bottom shows above the waterline). 0 = default
             public string[] DefaultPaints;   // source .dat DefaultPaintColors (random on spawn); null + !RandomHueGray = unpainted white
             public bool RandomHueGray;       // source RandomHueOrGrayscale mode (quad/sedan/hatchback)
             public float WheelRadius, Engine, SteerMax, SteerMin, SpeedMax, SpeedMin, Brake;
@@ -1510,6 +1511,7 @@ namespace UnturnedGodot
             Palette = "ship_palette.png", RandomHueGray = true,   // orange hull-BOTTOM texel (3,1) flagged paintable (alpha 0) -> random colour per spawn (master); the other texels keep the ship's own albedo
             Engine = 600f, SteerMax = 0f, SteerMin = 0f, SpeedMax = 12f, SpeedMin = 6f, Brake = 0f,   // boat: BoatThrust propels + rudder-yaws; a touch slower than the runabout (it's a SHIP)
             BoxSize = new Vector3(20f, 11f, 66f), BoxCenter = new Vector3(0f, 5.5f, 0f),   // hull collision box (mesh x±11, z±33.75, keel y0); covers the lower hull -> 4 corner buoys at the keel, COM low
+            BuoyLift = -3f,   // float ~3m higher so a band of the coloured hull bottom sits above the waterline like a boot-stripe (master)
             ForwardGears = new[] { 1f }, ReverseGear = 1f, ShiftUpRpm = 5000f,
             Sound = "engine_medium.ogg", IdlePitch = 0.5f, MaxPitch = 0.95f, IdleVolume = 0.9f, MaxVolume = 1.0f,   // low ship-engine rumble
             Fuel = 5000f, Health = 4000f, Name = "Container Ship",
@@ -2402,10 +2404,11 @@ namespace UnturnedGodot
                 v._voxelHalfHeight = Mathf.Min(vsz.X, Mathf.Min(vsz.Y, vsz.Z)) * 0.5f;   // a voxel is "submerged enough" when its centre is within this of the surface
                 var vox = new Vector3[slices * slices * slices];
                 int vi = 0;
+                float buoyDy = s.BuoyLift + (float.TryParse(System.Environment.GetEnvironmentVariable("UG_BUOYDY"), out var _bdy) ? _bdy : 0f);   // BuoyLift shifts float height (neg=higher); UG_BUOYDY tunes it live
                 for (int sx = 0; sx < slices; sx++)
                     for (int sy = 0; sy < slices; sy++)
                         for (int sz = 0; sz < slices; sz++)
-                            vox[vi++] = new Vector3(minExt.X + vsz.X * (0.5f + sx), minExt.Y + vsz.Y * (0.5f + sy), minExt.Z + vsz.Z * (0.5f + sz));
+                            vox[vi++] = new Vector3(minExt.X + vsz.X * (0.5f + sx), minExt.Y + vsz.Y * (0.5f + sy) + buoyDy, minExt.Z + vsz.Z * (0.5f + sz));
                 v._buoys = vox;
                 v._gravityMag = Mathf.Abs(ProjectSettings.GetSetting("physics/3d/default_gravity", 9.8f).AsSingle());   // the g the body actually falls under -> Archimedes must balance it
             }
