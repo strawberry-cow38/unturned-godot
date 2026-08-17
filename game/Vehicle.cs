@@ -23,6 +23,12 @@ namespace UnturnedGodot
         // A sibling RigidBody3D would have to rebuild all of it. VehicleBody3D with no VehicleWheel3D children
         // is just a RigidBody3D, so the base class does not fight flight.
         bool _heli; float _heliThrust, _heliPitchTq, _heliRollTq, _heliYawTq, _heliLevel;
+        bool _plane; float _planeThrust, _planeLift, _planeTargetSpeed, _planePitchTq, _planeRollTq, _planeYawTq, _planeSteerFade = 1f;   // PLANE (EEngine.PLANE): forward thrust + airspeed lift, bank-to-turn
+        Node3D _propNode; MeshInstance3D _propBlades, _propDisc;   // propeller pivot + its 2 draw states (blades / spin-blur), spun about body forward
+        float _propSpin;   // prop visual phase (about local Z)
+        int _planeDbgFrame;   // UG_PLANEDBG print throttle
+        bool _planeGroundMode;   // master: hold Ctrl -> drop onto the ground/water + taxi (no lift), for floatplanes now + wheeled aircraft later
+        public bool PlaneGroundMode { get => _planeGroundMode; set => _planeGroundMode = value; }
         bool _tracked;   // TANK: tracked/differential drive -- Drive() branches on this to set per-TRACK torque instead of a steered-wheel angle
         const float TankWheelSlip = 1.0f;   // TANK: lateral wheel friction. Too LOW (0.5) and the yaw torque spins it in place instead of arcing forward (low grip = no forward bite either); too HIGH and turning drags to a crawl. Paired with the speed-faded yaw below. Tunable.
         const float TankComY = 0.1f;   // TANK: low centre of mass (anti-flip -- master "easily flipped"). Tunable.
@@ -285,6 +291,7 @@ namespace UnturnedGodot
                 => h.X > 0f && Mathf.Abs(p.X - c.X) <= h.X && Mathf.Abs(p.Y - c.Y) <= h.Y && Mathf.Abs(p.Z - c.Z) <= h.Z;
         }
         public bool IsHeli => _heli;
+        public bool IsPlane => _plane;
         float _groundClearance;
         /// <summary>Distance from the body origin down to its lowest collision point (skids, hull floor).</summary>
         public float GroundClearance => _groundClearance;
@@ -663,6 +670,18 @@ namespace UnturnedGodot
             public string[] HeliBodyMeshes;                      // airframe .obj(s); null = build one of the procedural frames below
             public HeliFrame Frame;                              // which procedural airframe (ignored when HeliBodyMeshes is set)
             public string HeliRotorMeshPrefix;                   // content prefix for <p>_rotor_{main,tail}_{blades,disc}.txt; null = the Huey's
+            // ---- FIXED WING (plane, EEngine.PLANE). Thrust along body FORWARD; lift RAMPS with forward airspeed and
+            // pushes along body UP, so banking spills lift and CARVES the turn -- bank-to-turn / realistic (master).
+            // Control authority only when AIRBORNE (speed-gate takeoff). Floats on its pontoons via the boat buoyancy
+            // for a WATER takeoff. Reuses the heli rotor spool/spin/blur for the propeller (spun about body forward).
+            public bool Plane;
+            public float PlaneThrust;              // forward acceleration at full throttle, m/s^2
+            public float PlaneLift;                // up-accel along body-UP at PlaneTargetSpeed (>= g to climb), m/s^2
+            public float PlaneTargetSpeed;         // forward speed at which lift is full (~ Speed_Max)
+            public float PlanePitchTorque, PlaneRollTorque, PlaneYawTorque;   // control rates, rad/s
+            public float PlaneSteerFade;           // fraction of control authority KEPT at top speed (source: steer fades with speed); 1 = no fade
+            public Vector3 PropHub;                // propeller pivot (local, Godot space)
+            public string PropMeshPrefix;          // <prefix>_prop.txt (blades) + <prefix>_prop_disc.txt (spin-blur)
             // ---- TRACKED ARMOUR (tank). Tracks + a rotating turret/elevating gun instead of steered wheels. The
             // road wheels still do the physics; the treads are a visual overlay and the turret is a vehicle weapon
             // aimed by tinyclaw's system via the exposed pivots. Differential steering (Drive branches on Tracked):
@@ -1911,8 +1930,60 @@ namespace UnturnedGodot
             Skids(1.125f, 0.30f, -0.88f, -3.25f, 1.75f),   // classic skids, same shape as the Huey's, measured
             29f, 1750f, 750f, "Hummingbird", EItemRarity.EPIC);
         public static Vehicle BuildHummingbird(int variant = 0) => Build(_hummingbird, variant, "hummingbird");
-        public static Vehicle BuildByName(string name, int variant = 0) => name switch { "quad" => BuildQuad(variant), "bus" => BuildBus(variant), "sedan" => BuildSedan(variant), "hatchback" => BuildHatchback(variant), "humvee" => BuildHumvee(variant), "roadster" => BuildRoadster(variant), "ambulance" => BuildAmbulance(variant), "firetruck" => BuildFiretruck(variant), "tractor" => BuildTractor(variant), "ural" => BuildUral(variant), "police" => BuildPolice(variant), "semi" => BuildSemi(variant), "trailer" => BuildTrailer(variant), "offroader" => BuildOffRoader(variant), "off_roader" => BuildOffRoader(variant), "truck" => BuildTruck(variant), "van" => BuildVan(variant), "golf" => BuildGolf(variant), "vw_golf" => BuildGolf(variant), "runabout" => BuildRunabout(variant), "apc" => BuildAPC(variant), "minicopter" => BuildMinicopter(variant), "mini" => BuildMinicopter(variant), "heli" => BuildMinicopter(variant), "huey" => BuildHuey(variant), "scoutcopter" => BuildScoutcopter(variant), "scout" => BuildScoutcopter(variant), "hind" => BuildHind(variant), "orca" => BuildOrca(variant), "skycrane" => BuildSkycrane(variant), "hummingbird" => BuildHummingbird(variant), "bird" => BuildHummingbird(variant), "tank" => BuildTank(variant), "ship" => BuildContainerShip(variant), "containership" => BuildContainerShip(variant), _ => BuildJeep(variant) };
-        public static readonly string[] SpecNames = { "jeep", "quad", "bus", "sedan", "hatchback", "humvee", "roadster", "ambulance", "firetruck", "tractor", "ural", "police", "semi", "trailer", "offroader", "truck", "van", "golf", "runabout", "apc", "minicopter", "huey", "scoutcopter", "hind", "orca", "skycrane", "hummingbird", "tank", "ship" };   // F1 dev-console autocomplete + validation ("golf" = VW_Golf, command-only, no natural spawn; runabout = boat + apc = amphibious, both command-spawnable -- drop over water to float)
+
+        // OTTER -- retail's light FLOATPLANE (Bundles/Vehicles/Otter: Engine Plane, Lift 5, Speed 24). Fixed-wing,
+        // bank-to-turn (master): forward prop thrust + airspeed lift along body-UP. Floats on its pontoons via the
+        // boat buoyancy for a WATER takeoff (throttle up on the water, lift builds, she lifts off). Body meshes +
+        // propeller extracted from the vehicle prefab (otter_body{,_1}.txt, otter_prop{,_disc}.txt).
+        static readonly Spec _otter = new()
+        {
+            Plane = true, HeliBodyMeshes = new[] { "otter_body.txt", "otter_body_1.txt" },
+            PropHub = new Vector3(0f, 1.29f, -3.95f), PropMeshPrefix = "otter",   // prop pivot at the nose (-Z); spins about body forward
+            PlaneThrust = 9f, PlaneLift = 10f, PlaneTargetSpeed = 16f,            // T/W ~0.9 (a peppy bush plane; snappy takeoff run but NOT a rocket). Lift scales with ANGLE OF ATTACK (see StepPlane): PlaneLift is the lift authority -- tuned so it trims to level at a few deg nose-up around cruise, and rotates off the water ~14 m/s with a bit of back-stick. Floats plane easily thanks to the reduced plane water-drag
+            PlanePitchTorque = 2.4f, PlaneRollTorque = 2.6f, PlaneYawTorque = 0.9f, PlaneSteerFade = 0.45f,   // roll snappiest (bank-to-turn), rudder gentlest; pitch firm enough to ROTATE the nose up against the pontoons' righting on takeoff
+            Palette = "otter_body_tex.png", DefaultPaints = new[] { "#e0c42c" },  // the real 2x2 atlas is a PALETTE: texel (0,0) is alpha-0 PAINTABLE (the fuselage -> spawn paint), the other 3 greys are fixed (floats/struts/frames). Source .dat DefaultPaintColors = #e0c42c (the classic bush-plane yellow-gold); PaintableSections -> repaintable in-game
+            Water = WaterMode.Boat, BuoyLift = -0.5f, BuoyDamp = 3f,              // float on the pontoons + settle; water takeoff
+            BoxSize = new Vector3(2.6f, 1.2f, 7.6f), BoxCenter = new Vector3(0f, 0.1f, 0f),   // pontoon/hull footprint -> buoyancy voxels
+            SpeedMax = 28f, Engine = 600f, SteerMax = 0f, SteerMin = 0f, Brake = 0f,   // cap ABOVE target so there's cruise room; pilot pitch-trims altitude
+            Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", WheelRadius = 0.3f, Wheels = new (float, float, float, bool)[0],
+            ForwardGears = new[] { 1f }, ReverseGear = 1f, ShiftUpRpm = 5000f,
+            Sound = "engine_medium.ogg", IdlePitch = 0.9f, MaxPitch = 1.9f, IdleVolume = 0.8f, MaxVolume = 1.0f,
+            Fuel = 1750f, Health = 800f, Name = "Otter",
+            Seats = new[] { new Vector3(0f, 0.62f, 1.23f), new Vector3(0f, 0.62f, 0.41f) },   // pilot + passenger (from the prefab)
+            DriverEye = new Vector3(0f, 1.5f, 1.0f),
+        };
+        public static Vehicle BuildOtter(int variant = 0) => Build(_otter, variant, "otter");
+
+        // FIGHTER JET -- retail's fast military jet (ID 140, Engine Plane, Speed_Max 36, Air_Steer 32-64). A WHEELED
+        // LAND plane: it takes off from a runway on its tricycle gear. The VehicleWheel3D wheels (built from Wheels
+        // below) give passive ground support + rolling while flying, and are car-driven in Ctrl ground mode. NO
+        // propeller -> thrust is the (jet) engine; PropMeshPrefix null skips the prop. Fast + agile vs the Otter.
+        static readonly Spec _fighterjet = new()
+        {
+            Plane = true, HeliBodyMeshes = new[] { "fighterjet_body.txt", "fighterjet_body_1.txt" },
+            PropMeshPrefix = null,                                                // JET: no propeller
+            PlaneThrust = 16f, PlaneLift = 11f, PlaneTargetSpeed = 28f,           // strong thrust; rotates ~24 m/s, cruises fast
+            PlanePitchTorque = 2.8f, PlaneRollTorque = 3.8f, PlaneYawTorque = 1.1f, PlaneSteerFade = 0.55f,   // agile (Air_Steer 64) -- snappier roll/pitch than the otter
+            Water = WaterMode.Car,                                               // LAND plane: no buoyancy; rests + rolls on its wheels
+            BoxSize = new Vector3(2.6f, 1.3f, 11.0f), BoxCenter = new Vector3(0f, 0.6f, 0f),   // fuselage-ish collision box (wings excluded); the wheels carry the ground ride
+            SpeedMax = 36f, Engine = 800f, SteerMax = 32f, SteerMin = 8f, Brake = 30f,         // Steer_Max/Min for GROUND-mode taxi; Speed_Max 36
+            Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", WheelRadius = 0.34f,
+            Wheels = new (float, float, float, bool)[]   // tricycle gear (Godot Z = -Unity Z): nose steers, 2 wide mains
+            {
+                (0f, -0.27f, -2.83f, true),      // nose wheel (forward) -- steers on the ground
+                (-2.75f, -0.27f, 2.51f, false),  // main gear L (wide, aft)
+                (2.75f, -0.27f, 2.51f, false),   // main gear R
+            },
+            ForwardGears = new[] { 24f }, ReverseGear = 8f, ShiftUpRpm = 5000f,
+            Sound = "engine_medium.ogg", IdlePitch = 1.1f, MaxPitch = 2.3f, IdleVolume = 0.85f, MaxVolume = 1.0f,   // higher-pitched jet whine
+            Palette = "fighter_jet_body_tex.png", DefaultPaints = new[] { "#bcbcbc" },   // real .dat DefaultPaintColors = military grey; paintable panels + fixed tan/grey details
+            Fuel = 1000f, Health = 800f, Name = "Fighter Jet",
+            Seats = new[] { new Vector3(0f, 0.05f, -4.05f) },   // single cockpit, forward (Godot Z = -Unity 4.05)
+            DriverEye = new Vector3(0f, 1.2f, -3.2f),
+        };
+        public static Vehicle BuildFighterJet(int variant = 0) => Build(_fighterjet, variant, "fighterjet");
+        public static Vehicle BuildByName(string name, int variant = 0) => name switch { "quad" => BuildQuad(variant), "bus" => BuildBus(variant), "sedan" => BuildSedan(variant), "hatchback" => BuildHatchback(variant), "humvee" => BuildHumvee(variant), "roadster" => BuildRoadster(variant), "ambulance" => BuildAmbulance(variant), "firetruck" => BuildFiretruck(variant), "tractor" => BuildTractor(variant), "ural" => BuildUral(variant), "police" => BuildPolice(variant), "semi" => BuildSemi(variant), "trailer" => BuildTrailer(variant), "offroader" => BuildOffRoader(variant), "off_roader" => BuildOffRoader(variant), "truck" => BuildTruck(variant), "van" => BuildVan(variant), "golf" => BuildGolf(variant), "vw_golf" => BuildGolf(variant), "runabout" => BuildRunabout(variant), "apc" => BuildAPC(variant), "minicopter" => BuildMinicopter(variant), "mini" => BuildMinicopter(variant), "heli" => BuildMinicopter(variant), "huey" => BuildHuey(variant), "scoutcopter" => BuildScoutcopter(variant), "scout" => BuildScoutcopter(variant), "hind" => BuildHind(variant), "orca" => BuildOrca(variant), "skycrane" => BuildSkycrane(variant), "hummingbird" => BuildHummingbird(variant), "bird" => BuildHummingbird(variant), "tank" => BuildTank(variant), "ship" => BuildContainerShip(variant), "containership" => BuildContainerShip(variant), "otter" => BuildOtter(variant), "plane" => BuildOtter(variant), "fighterjet" => BuildFighterJet(variant), "jet" => BuildFighterJet(variant), _ => BuildJeep(variant) };
+        public static readonly string[] SpecNames = { "jeep", "quad", "bus", "sedan", "hatchback", "humvee", "roadster", "ambulance", "firetruck", "tractor", "ural", "police", "semi", "trailer", "offroader", "truck", "van", "golf", "runabout", "apc", "minicopter", "huey", "scoutcopter", "hind", "orca", "skycrane", "hummingbird", "tank", "ship", "otter", "fighterjet" };   // F1 dev-console autocomplete + validation ("golf" = VW_Golf, command-only, no natural spawn; runabout = boat + apc = amphibious, both command-spawnable -- drop over water to float)
 
         /// <summary>The spec's main body BoxCollider (the hull Build() adds as the primary CollisionShape3D)
         /// for a spec key -- the hitbox debug overlay reconstructs the server's vehicle collider from a
@@ -2295,6 +2366,72 @@ namespace UnturnedGodot
             pivot.AddChild(blades);
         }
 
+        /// <summary>Assemble a fixed-wing PLANE: the paintable airframe meshes + a spinning propeller.
+        ///
+        /// The airframe reuses the heli's named-mesh convention -- <see cref="Spec.HeliBodyMeshes"/> lists the
+        /// extracted fuselage pieces (otter_body{,_1}.txt), the first is the paintable <c>_bodyMesh</c>. The
+        /// PROPELLER hangs on its own pivot (<c>_propNode</c>) that spins about the body FORWARD axis (local Z),
+        /// not a rotor's vertical Y, and carries the extracted prop mesh + a spin-blur disc swapped in at speed --
+        /// exactly the two-state trick MountRotor uses for a rotor. The pivot sits at the prop's own geometric
+        /// centre (its hub) so it spins true no matter whether the mesh was authored in vehicle space or centred;
+        /// <see cref="Spec.PropHub"/> is only the fallback when the extraction has not been run.</summary>
+        static void BuildPlaneModel(Vehicle v, Spec s, Material bodyMat)
+        {
+            var bladeMat = SolidMat(new Color(0.10f, 0.10f, 0.11f));
+
+            // ---- AIRFRAME (same path as the heli's named-mesh branch)
+            if (s.HeliBodyMeshes != null)
+                for (int i = 0; i < s.HeliBodyMeshes.Length; i++)
+                {
+                    var m = LoadOptionalObj(s.HeliBodyMeshes[i]);
+                    if (m == null) continue;
+                    var mi = new MeshInstance3D { Name = i == 0 ? "Body" : $"Body{i}", Mesh = m, MaterialOverride = bodyMat };
+                    v.AddChild(mi);
+                    if (v._bodyMesh == null) v._bodyMesh = mi;
+                }
+
+            // ---- PROPELLER (piston planes only). A JET has no prop -> a null PropMeshPrefix skips this whole block
+            // (StepPlane already guards _propNode == null). Pivot at the mesh's own centre (the hub); blades +
+            // blur-disc hang off it offset back to that centre so their verts land where authored.
+            if (s.PropMeshPrefix != null)
+            {
+            string pp = s.PropMeshPrefix;
+            Mesh propMesh = LoadOptionalObj($"{pp}_prop.txt");
+            Mesh discMesh = LoadOptionalObj($"{pp}_prop_disc.txt");
+            Vector3 hub = propMesh != null ? propMesh.GetAabb().GetCenter() : s.PropHub;
+            v._propNode = new Node3D { Name = "Prop", Position = hub };
+            v.AddChild(v._propNode);
+
+            if (propMesh != null)
+            {
+                v._propBlades = new MeshInstance3D { Name = "PropBlades", Mesh = propMesh, MaterialOverride = bladeMat, Position = -hub };
+                v._propNode.AddChild(v._propBlades);
+                if (discMesh != null)
+                {
+                    var discMat = new StandardMaterial3D
+                    {
+                        AlbedoColor = new Color(0.12f, 0.12f, 0.13f, 0.28f),
+                        Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
+                        CullMode = BaseMaterial3D.CullModeEnum.Disabled,
+                        ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
+                    };
+                    v._propDisc = new MeshInstance3D
+                    {
+                        Name = "PropDisc", Mesh = discMesh, MaterialOverride = discMat, Position = -hub,
+                        Visible = false, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
+                    };
+                    v._propNode.AddChild(v._propDisc);
+                }
+            }
+            else
+            {
+                // fallback so a fresh checkout without the extraction still shows something turning
+                v._propBlades = new MeshInstance3D { Name = "PropBlades", Mesh = new BoxMesh { Size = new Vector3(2.0f, 0.14f, 0.05f) }, MaterialOverride = bladeMat };
+                v._propNode.AddChild(v._propBlades);
+            }
+            }   // end: has a propeller
+        }
+
         /// <summary>A rotor disc as a monitoring Area3D: the thin cylinder the blades sweep. Masks the world +
         /// vehicle layers (bit0 | bit5) so it notices terrain, buildings and other vehicles, and sits on no
         /// layer of its own so nothing can collide WITH it -- it reports, it does not push.</summary>
@@ -2319,6 +2456,9 @@ namespace UnturnedGodot
             v._engineForce = s.Engine; v._steerMax = s.SteerMax; v._steerMin = s.SteerMin;
             v._speedMax = s.SpeedMax; v._speedMin = s.SpeedMin; v._brakeForce = s.Brake;
             v._heli = s.Heli; v._tracked = s.Tracked;
+            v._plane = s.Plane; v._planeThrust = s.PlaneThrust; v._planeLift = s.PlaneLift; v._planeTargetSpeed = s.PlaneTargetSpeed;
+            v._planePitchTq = s.PlanePitchTorque; v._planeRollTq = s.PlaneRollTorque; v._planeYawTq = s.PlaneYawTorque;
+            if (s.PlaneSteerFade > 0f) v._planeSteerFade = s.PlaneSteerFade;
             v._heliThrust = s.HeliThrust; v._heliPitchTq = s.HeliPitchTorque; v._heliRollTq = s.HeliRollTorque;
             v._heliYawTq = s.HeliYawTorque; v._heliLevel = s.HeliLevel;
             v._heliClimbMax = s.HeliClimbMax; v._heliFallMax = s.HeliFallMax;
@@ -2398,6 +2538,17 @@ namespace UnturnedGodot
                     v.AddChild(v._strikeAudio);
                 }
             }
+            if (s.Plane)
+            {
+                // A plane is FLOWN like the heli: aerodynamic damping (angular a bit FIRMER so it self-settles
+                // its rotation rate and doesn't tumble), continuous collision so a fast dive can't tunnel, and
+                // an explicit isotropic inertia so torque = alpha*I holds at any attitude (the per-axis feel
+                // lives in the spec's pitch/roll/yaw numbers). Linear damp stays low -- PlaneDrag does the real
+                // airflow drag in StepPlane, and a plane should carry its speed.
+                v.LinearDamp = 0.05f; v.AngularDamp = 1.1f;   // firmer angular damp than the heli: it damps the pitch short-period so a step of elevator SETTLES to the trimmed climb angle instead of over-rotating past it (the tail's pitch-rate damping). Roll needs held aileron in a turn as a result -- which is how a real plane flies
+                v.ContinuousCd = true;
+                v.Inertia = Vector3.One * (GlobalMass * HeliInertiaPerKg);
+            }
             v._water = s.Water;   // BOAT/AMPHIBIOUS: voxelize the hull box for the source Buoyancy.cs voxel-Archimedes model
             if (s.Water != WaterMode.Car)
             {
@@ -2469,6 +2620,7 @@ namespace UnturnedGodot
             // parsed from an .obj. Everything below the model -- collision, seats, fuel, damage -- is the
             // ordinary Vehicle path; only the geometry source differs.
             if (s.Heli) BuildHeliModel(v, s, bodyMat);
+            if (s.Plane) BuildPlaneModel(v, s, bodyMat);
             else if (s.LandingLegZoneMin != s.LandingLegZoneMax && tlZones != null)   // trailer: peel BOTH the landing legs AND the baked taillights in one pass
                 (bodyMesh, legMesh, tlMesh) = ContentProvider.ParseObjSplit2($"res://content/{s.Body}", new[] { (s.LandingLegZoneMin, s.LandingLegZoneMax) }, tlZones);
             else if (s.LandingLegZoneMin != s.LandingLegZoneMax)   // split the baked-in landing legs into their own mesh so they can vanish on couple
@@ -2544,6 +2696,9 @@ namespace UnturnedGodot
             foreach (var child in v.GetChildren())
                 if (child is CollisionShape3D cs3 && cs3.Shape is BoxShape3D bs3)
                     lowest = Mathf.Min(lowest, cs3.Position.Y - bs3.Size.Y * 0.5f);
+            if (s.Plane)   // a WHEELED plane rests on its GEAR (below the fuselage collision box) -> the wheels are the real lowest point, so GroundedByRay reaches the runway (else it reads airborne + the takeoff rotation never fires)
+                foreach (var (wx, wy, wz, _) in s.Wheels)
+                    lowest = Mathf.Min(lowest, wy - s.WheelRadius);
             v._groundClearance = -lowest;
 
             // rope-tow attach nodes (generic -- every vehicle gets them): bumper-height centre of the front / rear faces,
@@ -2600,9 +2755,10 @@ namespace UnturnedGodot
 
             // Drop the centre of mass to just below the axle line so the car stops rolling on turns and pitching onto its
             // nose under braking (master). Godot's auto COM sat at the body-box centre (~0.6m up) -> top-heavy + tippy.
-            float comY;
+            float comY = 0f;   // (always overwritten below; init keeps the compiler happy now the plane branch is conditional)
             if (s.Wheels.Length > 0) { comY = 0f; foreach (var wl in s.Wheels) comY += wl.y; comY = comY / s.Wheels.Length - 0.2f; }
             if (s.Tracked) comY = TankComY;   // tank: force the COM LOW -- a tall hull on high (0.556) wheels is tippy otherwise (master "easily flipped")
+            else if (s.Plane) { if (s.Wheels.Length == 0) comY = s.BoxCenter.Y - s.BoxSize.Y * 0.60f; }   // FLOATPLANE (no wheels): CoM DOWN at the pontoons so buoyancy holds it upright like a pendulum (a high-wing plane is CoM-below-wing anyway). A WHEELED land plane KEEPS its wheel-based CoM set above -- low + between the gear.
             else comY = s.BoxCenter.Y - s.BoxSize.Y * 0.25f;   // BOAT (no wheels): low COM below the hull centre so buoyancy keeps it upright (was a div-by-zero)
             v.CenterOfMassMode = RigidBody3D.CenterOfMassModeEnum.Custom;
             v.CenterOfMass = new Vector3(0f, comY, 0f);
@@ -2772,6 +2928,21 @@ namespace UnturnedGodot
         /// would otherwise define it are a crude stand-in for an open tube frame.</summary>
         const float HeliInertiaPerKg = 0.9f;
 
+        // ---- FIXED WING (EEngine.PLANE) ---------------------------------------------------------------
+        const float PlaneThrottleUp = 0.6f, PlaneThrottleDown = 0.35f;   // W ramps the throttle SETTING up fast, S bleeds it down slower; hands-off holds (sticky throttle)
+        const float PlaneDrag = 0.03f;             // parasitic airflow drag -> throttle sets a real top speed, and a dead-engine plane glides down instead of bricking
+        const float PlaneCtrlSpeedFrac = 0.35f;    // fraction of target airspeed at which elevator/aileron reach FULL authority (below it they're mushy -> a real rotate-at-speed on takeoff)
+        const float PlaneWaterRollDamp = 3.2f;     // extra ROLL-rate damping while afloat: settles a wave-induced lean fast (the low float drag that lets it accelerate for takeoff left roll underdamped -> it lingered leaning ~5deg, "wants to tip over")
+        const float PlaneGroundRotate = 2.6f;      // WHEELED plane takeoff: the gear holds the airframe rigidly level + the Inertia-based elevator is too weak to lift the nose against the weight on the wheels. At takeoff speed, back-stick adds a DIRECT nose-up torque (a real elevator makes a big tail-download at speed) so it ROTATES off the runway. Fades in with airspeed, on the ground only.
+        const float PlaneStability = 1.6f;         // aerodynamic (weathervane) stability: how hard the tail pulls the NOSE back onto the airflow. This is what makes a plane statically stable + stops a held elevator over-rotating; it aligns pitch+yaw only, never roll, so bank-to-turn survives
+        // AEROFOIL: lift comes from ANGLE OF ATTACK (nose above the airflow), not raw speed -- so the plane trims
+        // to level at the AoA where lift == weight, climbs when you pull, and STALLS (lift collapses -> mush/drop)
+        // if you pull past the stall angle. cl = Cl0 + slope*AoAdeg up to the stall, then falls away.
+        const float PlaneStallDeg = 15f;           // stall angle of attack (deg)
+        const float PlaneCl0 = 0.34f;              // lift coefficient at zero AoA (wing camber) -> needs a few deg nose-up to hold level, like a real trim
+        const float PlaneClSlope = 0.09f;          // lift-curve slope per degree of AoA (up to the stall)
+        const float PlaneClMax = 1.7f;             // clamp (== Cl0 + stall*slope): the peak just before the stall
+
         /// <summary>The pilot's held flight controls. <paramref name="collective"/> is +1 while W is held, -1
         /// while S is held, 0 with neither.
         ///
@@ -2798,6 +2969,25 @@ namespace UnturnedGodot
             if (Freeze) { Freeze = false; }   // any control input wakes a settled machine
             float target = collective > 0.05f ? 1f : collective < -0.05f ? 0f : IdleCollective;
             float rate = Mathf.Abs(collective) > 0.05f ? CollectiveRate : CollectiveReturnRate;
+            _inCollective = Mathf.MoveToward(_inCollective, target, rate * (float)delta);
+            _inYaw = Mathf.Clamp(yaw, -1f, 1f);
+            _inPitch = Mathf.Clamp(pitch, -1f, 1f);
+            _inRoll = Mathf.Clamp(roll, -1f, 1f);
+        }
+
+        /// <summary>The plane's held controls (master: W/S throttle, A/D tail rudder, mouse L/R roll, mouse
+        /// up/down pitch). <paramref name="throttle"/> is a STICKY setting -- W ramps it up, S bleeds it down,
+        /// hands-off holds it (a plane does not spring its throttle back to idle like a helicopter's collective).
+        /// Yaw is the rudder (A/D), pitch/roll come off the mouse; invert-Y is applied by the caller before this,
+        /// so a scripted flight harness can inject the axes raw.</summary>
+        public void DrivePlane(float throttle, float yaw, float pitch, float roll, double delta)
+        {
+            if (_exploded) { _inCollective = 0f; _inYaw = _inPitch = _inRoll = 0f; return; }
+            _parked = false;
+            if (Freeze) Freeze = false;   // any input wakes a settled plane
+            // sticky throttle: hold the current setting when hands-off, ramp toward 1 on W, toward 0 on S
+            float target = throttle > 0.05f ? 1f : throttle < -0.05f ? 0f : _inCollective;
+            float rate = throttle > 0.05f ? PlaneThrottleUp : throttle < -0.05f ? PlaneThrottleDown : 0f;
             _inCollective = Mathf.MoveToward(_inCollective, target, rate * (float)delta);
             _inYaw = Mathf.Clamp(yaw, -1f, 1f);
             _inPitch = Mathf.Clamp(pitch, -1f, 1f);
@@ -3104,6 +3294,175 @@ namespace UnturnedGodot
             // and a 45 m drop test never fell a single metre.
             bool grounded = GroundedByRay();
             bool idle = grounded && _inCollective < 0.02f && vel.LengthSquared() < 0.05f && AngularVelocity.LengthSquared() < 0.05f;
+            if (idle && _spawnGrace <= 0f && !Freeze)
+            {
+                LinearVelocity = Vector3.Zero; AngularVelocity = Vector3.Zero;
+                FreezeMode = RigidBody3D.FreezeModeEnum.Static; Freeze = true;
+            }
+            else if (!idle && Freeze) Freeze = false;
+            if (_spawnGrace > 0f) _spawnGrace -= dt;
+        }
+
+        /// <summary>The fixed-wing flight model (EEngine.PLANE). The heli's rotor thrust is replaced by two
+        /// separate forces: a FORWARD prop thrust, and LIFT along the body-up axis that scales with AIRSPEED --
+        /// so the plane must build speed before the wings carry it, and turns by BANKING (the lift vector tilts
+        /// with the roll), which is the "realistic" model master chose. Control surfaces need airflow, so their
+        /// authority fades in with speed; the rudder keeps a taxi floor. Buoyancy still runs, so a floatplane
+        /// takes off from the water. Prop spin, audio, crash and settle mirror the heli path.</summary>
+        void StepPlane(float dt)
+        {
+            // fuel + explosion lifecycle, same rules every other engine runs
+            if (EngineOn && Fuel > 0f && !InfiniteFuel) Fuel = Mathf.Max(0f, Fuel - FuelBurn * dt);
+            if (EngineOn && FuelMax > 0f && Fuel <= 0f) EngineOn = false;
+            if (_deadTimer > 0f) { _deadTimer -= dt; if (_deadTimer <= 0f) Explode(); }
+
+            // PROP SPOOL 0..1 (shared engine-spool field). Thrust + lift fade in with it, so a cold start can't
+            // yank the plane off the ground and cutting the engine leaves the prop windmilling down.
+            float want = (EngineOn && !_exploded && (Fuel > 0f || InfiniteFuel)) ? 1f : 0f;
+            _rotorRpm = Mathf.MoveToward(_rotorRpm, want, dt / (want > _rotorRpm ? SpoolUpSeconds : SpoolDownSeconds));
+
+            // PROP ANIMATION: spin about the body FORWARD axis (local Z); swap physical blades <-> blur disc by speed.
+            if (_propNode != null)
+            {
+                _propSpin += dt * (_exploded ? 0f : _rotorRpm) * 150f;
+                _propNode.Rotation = new Vector3(0f, 0f, _propSpin);
+            }
+            bool spun = _rotorRpm > DiscSwapSpool;
+            if (_propDisc != null) { if (_propBlades != null) _propBlades.Visible = !spun; _propDisc.Visible = spun; }
+
+            // ENGINE + IGNITION AUDIO ride the prop spool (same wiring as the heli)
+            if (_engineAudio != null)
+            {
+                if (_rotorRpm > 0.01f)
+                {
+                    _engineAudio.PitchScale = Mathf.Lerp(_idlePitch, _maxPitch, _rotorRpm);
+                    _engineAudio.VolumeDb = Mathf.LinearToDb(Mathf.Lerp(_idleVol * 0.35f, _maxVol, _rotorRpm) * EngineVolumeBoost);
+                    if (!_engineAudio.Playing) _engineAudio.Play();
+                }
+                else if (_engineAudio.Playing) { _engineAudio.VolumeDb = -80f; _engineAudio.Stop(); }
+            }
+            if (_ignitionAudio != null)
+            {
+                bool starting = want > 0f && _rotorRpm < 0.05f;
+                if (starting && !_ignitionFired) { _ignitionFired = true; _ignitionAudio.Play(); }
+                else if (want <= 0f && _rotorRpm < 0.01f) _ignitionFired = false;
+            }
+
+            // BUOYANCY: a floatplane sits on its pontoons and takes off from the water. The boat's OWN
+            // propulsion is gated off for a plane inside ApplyWaterPhysics -- the prop is what moves it. Self-
+            // guards on _buoys/HasWater, so a land plane (no buoys) simply does nothing here.
+            ApplyWaterPhysics(dt);
+
+            if (_exploded) return;   // a wreck is just a falling body
+
+            Basis b = GlobalTransform.Basis;
+            float spool = _rotorRpm;
+
+            // live tuning without a rebuild (the flight model is fiddly) -- env overrides for the three big numbers
+            float pThrust = float.TryParse(System.Environment.GetEnvironmentVariable("UG_PLANETHRUST"), out var _pt) ? _pt : _planeThrust;
+            float pLift = float.TryParse(System.Environment.GetEnvironmentVariable("UG_PLANELIFT"), out var _pl) ? _pl : _planeLift;
+            float pTarget = float.TryParse(System.Environment.GetEnvironmentVariable("UG_PLANETARGET"), out var _pta) ? _pta : _planeTargetSpeed;
+            if (pTarget < 1f) pTarget = 1f;
+
+            bool grounded = GroundedByRay();
+            bool onSurface = grounded || _afloat;
+
+            // FORWARD THRUST from the prop -- pulls along body forward (-Z), scaled by the throttle setting + spool.
+            float throttle = _inCollective;
+            ApplyCentralForce(-b.Z * (pThrust * throttle * spool) * Mass);
+
+            // AIRSPEED = forward component of velocity.
+            float airspeed = LinearVelocity.Dot(-b.Z);
+
+            // ANGLE OF ATTACK: how far the nose sits ABOVE the oncoming airflow, in the pitch plane. A wing makes
+            // lift from THIS, not from raw speed -- so level flight is the AoA where lift == weight (the plane is
+            // TRIMMABLE: hold a few degrees nose-up to stay level), pulling adds lift (climb), and past the stall
+            // angle the lift COLLAPSES and it mushes / drops. This is what stops a wings-level plane at cruise
+            // speed climbing forever (the airspeed-only model did -- lift was always > weight).
+            float upV = LinearVelocity.Dot(b.Y);
+            float aoaDeg = airspeed > 0.5f ? Mathf.RadToDeg(Mathf.Atan2(-upV, airspeed)) : 0f;
+            float cl = aoaDeg <= PlaneStallDeg
+                     ? PlaneCl0 + aoaDeg * PlaneClSlope
+                     : Mathf.Max(0f, (PlaneCl0 + PlaneStallDeg * PlaneClSlope) - (aoaDeg - PlaneStallDeg) * PlaneClSlope * 2.2f);   // stall: lift falls away past the critical angle
+            cl = Mathf.Clamp(cl, 0f, PlaneClMax);
+            // Dynamic pressure ~ v^2 (a wing at twice the speed makes ~4x the lift); normalised so airspeed ==
+            // target gives factor 1. No airspeed -> no lift -> sink, which forces the takeoff run.
+            float liftFrac = Mathf.Min(airspeed / pTarget, 1.3f); liftFrac *= liftFrac;
+
+            // LIFT along BODY-UP: rolling tilts this vector so a banked wing carves the turn (bank-to-turn).
+            // GROUND MODE (Ctrl) kills lift so the plane stays down to taxi.
+            if (!_planeGroundMode)
+                ApplyCentralForce(b.Y * (liftFrac * cl * pLift) * Mass);
+
+            // DRAG: parasitic airflow drag (throttle -> a real top speed; dead engine -> glide) + the horizontal
+            // speed cap the MP envelope binds on (mirrors heli/boat).
+            Vector3 vel = LinearVelocity;
+            ApplyCentralForce(-vel * (PlaneDrag * Mass));
+            var flat = new Vector3(vel.X, 0f, vel.Z);
+            if (_speedMax > 0f && flat.Length() > _speedMax)
+            {
+                Vector3 excess = flat.Normalized() * (flat.Length() - _speedMax);
+                ApplyCentralForce(-excess * Mass * 2.0f);
+            }
+
+            // CONTROL. Elevator (pitch) + ailerons (roll) need AIRFLOW -- their authority fades in with airspeed,
+            // so a parked plane can't somersault and takeoff has a real "rotate at speed" moment. The rudder
+            // (yaw, A/D) keeps a floor of authority on the ground/water so you can steer while taxiing.
+            // SIGN CONVENTION matches DriveHeli (asserted there): pitch +1 = nose up -> +X; roll +1 = bank right
+            // -> -Z; yaw +1 = nose right -> -Y.
+            float ctrlAuth = Mathf.Clamp(airspeed / (pTarget * PlaneCtrlSpeedFrac), 0f, 1f);
+            float yawAuth = _planeGroundMode || onSurface ? Mathf.Max(ctrlAuth, 0.5f) : ctrlAuth;   // taxi rudder
+            Vector3 cmd = b.X * (_inPitch * _planePitchTq * ctrlAuth)
+                        + b.Z * (-_inRoll * _planeRollTq * ctrlAuth)
+                        + b.Y * (-_inYaw * _planeYawTq * yawAuth * _planeSteerFade);
+
+            // AERODYNAMIC STABILITY (weathervaning). A plane is statically stable -- the tail keeps the nose
+            // pointed along the airflow, so it holds a trimmed attitude and recovers from a disturbance instead
+            // of floating free like a helicopter. Model it as a restoring torque that rotates the nose (-Z)
+            // toward the velocity direction, firmer with airspeed. Because the correction axis is nose x velDir
+            // it has NO component about the nose (roll) axis, so it aligns pitch + yaw but leaves the BANK alone
+            // -- which is exactly what lets a banked wing carve a turn while the nose still tracks the curving
+            // flight path. It is also what stops a held elevator over-rotating: elevator raises the nose,
+            // stability pulls it back toward the path, and the balance point IS the trimmed climb angle.
+            if (!_planeGroundMode && !onSurface && LinearVelocity.LengthSquared() > 4f)
+            {
+                float stab = float.TryParse(System.Environment.GetEnvironmentVariable("UG_PLANESTAB"), out var _ps) ? _ps : PlaneStability;
+                Vector3 velDir = LinearVelocity.Normalized();
+                Vector3 restore = (-b.Z).Cross(velDir);   // axis*sin(angle) that rotates the nose onto the airflow
+                cmd += restore * (Mathf.Clamp(airspeed / pTarget, 0f, 1.5f) * stab);
+            }
+            if (cmd.LengthSquared() > 1e-8f) ApplyTorque(cmd * Inertia.X);
+
+            // GROUND ROTATION assist (wheeled land plane): the gear holds the airframe rigidly level + the
+            // Inertia-based elevator can't lift the nose against the weight on the wheels, so a runway takeoff
+            // needs a hand. At takeoff speed, back-stick adds a DIRECT nose-up torque (a real elevator makes a big
+            // tail-download at speed) -> the plane ROTATES off the runway; once airborne (grounded false) it stops
+            // and the normal elevator flies it. On the ground only, fades in with airspeed. +X = nose up.
+            if (grounded && !_afloat && _inPitch > 0.02f && airspeed > pTarget * 0.45f)
+                ApplyTorque(b.X * (_inPitch * PlaneGroundRotate * airspeed * Mass));
+
+            // FLIGHT DEBUG (UG_PLANEDBG=1): airspeed / altitude / lift / pitch so I can read the takeoff envelope
+            if (System.Environment.GetEnvironmentVariable("UG_PLANEDBG") == "1" && ++_planeDbgFrame % 20 == 0)
+                GD.Print($"[plane] t={_planeDbgFrame} spd={LinearVelocity.Length():F1} air={airspeed:F1} alt={GlobalPosition.Y:F1} aoa={aoaDeg:F0} cl={cl:F2} spool={spool:F2} thr={throttle:F2} noseDeg={Mathf.RadToDeg(Mathf.Asin(Mathf.Clamp(-b.Z.Y, -1f, 1f))):F0} roll={Mathf.RadToDeg(Mathf.Asin(Mathf.Clamp(b.X.Y, -1f, 1f))):F0} afloat={_afloat}");
+
+            // CRASH: full-3D speed like the heli (a plane's defining crash is a nose-in dive, not a lateral
+            // bonk). Guarded by the spawn grace so the placement drop doesn't count.
+            float curSpeed = LinearVelocity.Length();
+            float decel = _prevSpeed - curSpeed;
+            _recentTopSpeed = Mathf.Max(curSpeed, _recentTopSpeed - dt * 6f);
+            if (_crashCd > 0f) _crashCd -= dt;
+            if (!_exploded && _spawnGrace <= 0f && _crashCd <= 0f && _recentTopSpeed > HeliBonkSpeed && decel > 200f * dt)
+            {
+                _crashCd = 0.25f;
+                DebugLastImpactSpeed = _recentTopSpeed;
+                if (_recentTopSpeed >= HeliCrashExplodeSpeed) Explode();
+                else { TakeDamage(decel * 18f); BonkFx(); }
+            }
+            _prevSpeed = curSpeed;
+
+            // SETTLE when parked on the ground/water with no throttle -- no wheels means the wheeled settle test
+            // never fires (same reasoning as the heli's).
+            bool idle = onSurface && throttle < 0.02f && vel.LengthSquared() < 0.05f && AngularVelocity.LengthSquared() < 0.05f;
             if (idle && _spawnGrace <= 0f && !Freeze)
             {
                 LinearVelocity = Vector3.Zero; AngularVelocity = Vector3.Zero;
@@ -3875,6 +4234,7 @@ namespace UnturnedGodot
                 if (_deadTimer > 0f) { _deadTimer -= (float)delta; if (_deadTimer <= 0f) Explode(); }   // Explode unfreezes + flings; VehicleNetSync then aborts the hold + force-exits the driver
                 return;
             }
+            if (_plane) { StepPlane((float)delta); return; }   // fixed wing: prop thrust + airspeed lift replace the wheel/tow/settle sim (buoyancy still runs for a floatplane)
             if (_heli) { StepHeli((float)delta); return; }   // rotary wing: rotor thrust replaces the wheel/tow/settle sim entirely
             if (_tracked && !_exploded && !_parked && EngineOn && !Freeze)   // TANK skid-steer turn authority: a REAL yaw torque (integrated -> owned momentum, survives slopes/walls + the MP transform-adopt path). FADED by forward speed -- a tight pivot at rest but a WIDE arc at speed, so a full-rate yaw while driving doesn't fight the wheels' grip and crawl (master). The per-track EngineForces carry the fwd/back drive.
             {
@@ -4087,6 +4447,13 @@ namespace UnturnedGodot
             var comGlobal = ToGlobal(CenterOfMass);
             float volume = Mass / HullDensity;                                            // source: volume = mass / density
             var archPerVoxel = new Vector3(0f, WaterDensity * _gravityMag * volume, 0f) / _buoys.Length;   // rho_water * |g| * V, split per voxel
+            // FLOATPLANE "on the step": as the floats plane forward, hydrodynamic planing keeps them UP but the
+            // pontoons stop resisting PITCH (they skim the surface instead of displacing along their length). Model
+            // that below by fading the fore-aft moment ARM of each buoy with speed -- full vertical float force (so
+            // it never sinks), but a collapsing pitch-stiffness so the elevator can rotate the nose up to take off.
+            float _planePitchFree = _plane
+                ? Mathf.Lerp(1f, 0.04f, Mathf.Clamp((new Vector3(LinearVelocity.X, 0f, LinearVelocity.Z).Length() - 4f) / 9f, 0f, 1f))
+                : 1f;
             int submerged = 0;
             foreach (var localPoint in _buoys)
             {
@@ -4097,21 +4464,45 @@ namespace UnturnedGodot
                 submerged++;
                 var pv = LinearVelocity + AngularVelocity.Cross(worldPoint - comGlobal);  // source: rootRigidbody.GetPointVelocity(worldPoint)
                 float _bdMul = float.TryParse(System.Environment.GetEnvironmentVariable("UG_BUOYDAMP"), out var _bd) ? _bd : _buoyDamp;   // damping mult: env override else the per-vehicle spec value
-                var damping = -pv * 0.1f * Mass;                                          // source: -velocity * 0.1 * mass (all-axis)
-                damping.Y += -pv.Y * 0.1f * Mass * (_bdMul - 1f);                         // EXTRA vertical-only damping -> a big hull settles FAST without adding horizontal drag (won't slow driving)
+                // A FLOATPLANE's pontoons plane across the surface with far less drag than a displacement hull, so
+                // its water damping is a third of a boat's -- otherwise the takeoff run needs rocket thrust to
+                // beat it (the bug that made the Otter climb like a fighter). The vertical settle is topped back
+                // up by the BuoyDamp term below, so it still sits calmly at rest.
+                float _dampCoef = _plane ? 0.035f : 0.1f;
+                var damping = -pv * _dampCoef * Mass;                                     // source: -velocity * 0.1 * mass (all-axis); plane floats = lighter
+                damping.Y += -pv.Y * 0.1f * Mass * (_bdMul - 1f);                         // EXTRA vertical-only damping -> settles FAST (+ keeps a floatplane calm at rest) without adding horizontal drag (won't slow the takeoff run)
                 float subFactor = Mathf.Sqrt(Mathf.Clamp((surface - worldPoint.Y) / (2f * _voxelHalfHeight) + 0.5f, 0f, 1f));   // source sqrt depth curve
-                ApplyForce(damping + subFactor * archPerVoxel, worldPoint - GlobalPosition);   // source: AddForceAtPosition(force, worldPoint)
+                Vector3 arm = worldPoint - GlobalPosition;
+                if (_planePitchFree < 1f)   // floatplane on the step: shrink the fore-aft moment arm so buoyancy holds it up but stops pinning the pitch
+                {
+                    Vector3 fwdAxis = xf.Basis.Z;
+                    arm -= fwdAxis * (arm.Dot(fwdAxis) * (1f - _planePitchFree));
+                }
+                ApplyForce(damping + subFactor * archPerVoxel, arm);   // source: AddForceAtPosition(force, worldPoint)
             }
             _afloat = submerged > 0;
             if (!_afloat) return;
-            var fwd = -xf.Basis.Z;                                                        // boat forward = -Z
-            float thr = EngineOn ? _inThrottle : 0f;
-            ApplyCentralForce(fwd * thr * BoatThrust * Mass);                             // propulsion
-            float spd = LinearVelocity.Dot(fwd);
-            float rudder = Mathf.Clamp(Mathf.Abs(spd) * 0.25f + 0.25f, 0.25f, 1f);        // speed-dependent rudder + a little idle authority
-            ApplyTorque(Vector3.Up * -_inSteer * BoatTurn * Mass * rudder);               // rudder yaw
-            ApplyCentralForce(new Vector3(-LinearVelocity.X, 0f, -LinearVelocity.Z) * BoatDrag * Mass);   // extra horizontal water drag -> controllable top speed
-            if (_water == WaterMode.Boat) { EngineForce = 0f; Brake = 0f; }               // a pure boat has no useful wheels
+            if (_plane)
+            {
+                // ROLL DAMPING on the water: damp the roll RATE about the body forward axis so a wave-induced
+                // lean settles fast + level (the reduced float drag that lets it accelerate for takeoff left roll
+                // underdamped, so a lean lingered ~4s and read as "wants to tip over"). Roll axis only -> adds no
+                // fore/aft drag, so it doesn't slow the takeoff run.
+                Vector3 fwdAx = xf.Basis.Z;
+                float rollRate = AngularVelocity.Dot(fwdAx);
+                ApplyTorque(-fwdAx * (rollRate * PlaneWaterRollDamp * Mass));
+            }
+            if (!_plane)   // a FLOATPLANE keeps only the buoyancy above -- its PROP (StepPlane) does the driving,
+            {              // and the boat rudder/thrust would fight the flight model + cap its takeoff run
+                var fwd = -xf.Basis.Z;                                                        // boat forward = -Z
+                float thr = EngineOn ? _inThrottle : 0f;
+                ApplyCentralForce(fwd * thr * BoatThrust * Mass);                             // propulsion
+                float spd = LinearVelocity.Dot(fwd);
+                float rudder = Mathf.Clamp(Mathf.Abs(spd) * 0.25f + 0.25f, 0.25f, 1f);        // speed-dependent rudder + a little idle authority
+                ApplyTorque(Vector3.Up * -_inSteer * BoatTurn * Mass * rudder);               // rudder yaw
+                ApplyCentralForce(new Vector3(-LinearVelocity.X, 0f, -LinearVelocity.Z) * BoatDrag * Mass);   // extra horizontal water drag -> controllable top speed
+                if (_water == WaterMode.Boat) { EngineForce = 0f; Brake = 0f; }               // a pure boat has no useful wheels
+            }
             if (++_waterFrame % 30 == 0 && System.Environment.GetEnvironmentVariable("UG_BOATDBG") == "1") GD.Print($"[boat] afloat={_afloat} sub={submerged}/{_buoys.Length} y={GlobalPosition.Y:F2} spd={LinearVelocity.Length():F1} thr={_inThrottle:F1} str={_inSteer:F1}");   // gated behind UG_BOATDBG -- was spamming the console every 30 frames afloat (master); counter still ticks
         }
     }

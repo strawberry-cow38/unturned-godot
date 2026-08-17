@@ -55,6 +55,10 @@ namespace UnturnedGodot
                 () => ControlsOptions.InvertHeliPitchLabel,
                 () => ControlsOptions.InvertHeliPitch = !ControlsOptions.InvertHeliPitch);
 
+            Row(vbox, "Plane pitch",   // SEPARATE from the heli toggle (strawberry: "add inverted y option for planes too separately")
+                () => ControlsOptions.InvertPlanePitchLabel,
+                () => ControlsOptions.InvertPlanePitch = !ControlsOptions.InvertPlanePitch);
+
             SliderRow(vbox, "Helicopter sensitivity",
                 ControlsOptions.HeliSensMin, ControlsOptions.HeliSensMax, 0.05f,
                 () => ControlsOptions.HeliSensitivity,

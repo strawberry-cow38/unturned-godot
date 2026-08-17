@@ -4638,9 +4638,9 @@ namespace UnturnedGodot
             if (@event is InputEventMouseButton && Input.MouseMode != Input.MouseModeEnum.Captured) return;
             if (@event is InputEventMouseMotion mm && Input.MouseMode == Input.MouseModeEnum.Captured)
             {
-                if (_driving != null && _driving.IsHeli)
+                if (_driving != null && (_driving.IsHeli || _driving.IsPlane))
                 {
-                    // FLYING: the mouse is the cyclic, not a camera orbit.
+                    // FLYING (heli OR plane): the mouse is the stick (roll on X, pitch on Y), not a camera orbit.
                     //
                     // PITCH SIGN IS A SETTING, not a decision (ControlsOptions.InvertHeliPitch). Godot's
                     // Relative.Y is negative when the mouse moves forward, and the flight model takes pitch
@@ -4650,7 +4650,8 @@ namespace UnturnedGodot
                     // and strawberry liked -- they were both describing the same behaviour and disagreeing
                     // about it, which is what a toggle is for.
                     _heliStickR = Mathf.Clamp(_heliStickR + mm.Relative.X * HeliStickGain, -1f, 1f);
-                    float pitchDelta = ControlsOptions.InvertHeliPitch ? -mm.Relative.Y : mm.Relative.Y;
+                    bool invertFly = _driving.IsPlane ? ControlsOptions.InvertPlanePitch : ControlsOptions.InvertHeliPitch;   // the plane has its OWN invert-Y toggle, separate from the heli's (master)
+                    float pitchDelta = invertFly ? -mm.Relative.Y : mm.Relative.Y;
                     _heliStickP = Mathf.Clamp(_heliStickP + pitchDelta * HeliStickGain, -1f, 1f);
                 }
                 else if ((_driving != null || _riding != null) && !_fp)   // driving in 3rd person: the mouse ORBITS the chase cam around the car instead of turning the driver (master)
@@ -6243,6 +6244,32 @@ namespace UnturnedGodot
                 steer = (Input.IsPhysicalKeyPressed(Key.D) ? 1f : 0f) - (Input.IsPhysicalKeyPressed(Key.A) ? 1f : 0f);
             }
             bool handbrake = !UiInputBlocked && Input.IsPhysicalKeyPressed(Key.Space);
+            // FIXED WING (master 2026-08-17): W/S throttle, A/D tail rudder, mouse L/R = roll, mouse up/down =
+            // pitch (the SAME virtual stick the heli uses, captured in _Input with the plane's own invert-Y
+            // toggle). Hold Ctrl -> ground/taxi mode: lift is cut so it drops onto its floats/wheels and drives
+            // like a car (also for wheeled helis later). Arrow keys mirror the mouse stick.
+            if (_driving.IsPlane)
+            {
+                if (!UiInputBlocked)
+                {
+                    float arrowP = (Input.IsPhysicalKeyPressed(Key.Down) ? 1f : 0f) - (Input.IsPhysicalKeyPressed(Key.Up) ? 1f : 0f);
+                    float arrowR = (Input.IsPhysicalKeyPressed(Key.Right) ? 1f : 0f) - (Input.IsPhysicalKeyPressed(Key.Left) ? 1f : 0f);
+                    if (ControlsOptions.InvertPlanePitch) arrowP = -arrowP;
+                    if (arrowP != 0f) _heliStickP = Mathf.MoveToward(_heliStickP, arrowP, ArrowStickRate * delta);
+                    if (arrowR != 0f) _heliStickR = Mathf.MoveToward(_heliStickR, arrowR, ArrowStickRate * delta);
+                }
+                float psp = _heliStickP, psr = _heliStickR;
+                float pfp = Mathf.Max(0f, Mathf.Abs(psp) - HeliStickCrossDeadzone * Mathf.Abs(psr)) * Mathf.Sign(psp);
+                float pfr = Mathf.Max(0f, Mathf.Abs(psr) - HeliStickCrossDeadzone * Mathf.Abs(psp)) * Mathf.Sign(psr);
+                _driving.PlaneGroundMode = !UiInputBlocked && Input.IsPhysicalKeyPressed(Key.Ctrl);   // hold Ctrl -> drop + taxi like a car (master)
+                _driving.DrivePlane(throttle, steer, pfp, pfr, delta);
+                LastDriveInput = new UnityEngine.Vector2(steer, throttle);   // MP fallback axes (throttle/rudder); attitude rides the reported transform
+                LastHandbrakeInput = false;
+                float pk = Mathf.Exp(-HeliStickDecay * delta);   // self-centre the stick (same reasoning as the heli)
+                _heliStickP *= pk; _heliStickR *= pk;
+                GlobalPosition = _driving.GlobalPosition;
+                return;
+            }
             // ROTARY WING: the same W/S/A/D keys mean different things in the air. W/S is the collective (a
             // sticky throttle -- see Vehicle.DriveHeli), A/D is the pedals, and pitch/roll come off the mouse
             // stick captured in _Input. Handbrake has no meaning on a helicopter and is dropped.
@@ -6322,11 +6349,11 @@ namespace UnturnedGodot
                 else   // SP driving: the classic fixed forward gaze over the hood
                     // FP: same rule as the chase cam -- in a helicopter the view IS the airframe's orientation,
                     // so take its basis outright rather than looking at a point with an up hint.
-                    _cam.GlobalTransform = _driving != null && _driving.IsHeli
-                        ? new Transform3D(vt.Basis.Orthonormalized(), eye)
+                    _cam.GlobalTransform = _driving != null && (_driving.IsHeli || _driving.IsPlane)
+                        ? new Transform3D(vt.Basis.Orthonormalized(), eye)   // flying: the cockpit view IS the airframe's orientation -> it rolls/pitches with the plane
                         : new Transform3D(Basis.Identity, eye).LookingAt(vt * (eyeL + new Vector3(0f, -0.6f, -3.9f)), Vector3.Up);
             }
-            else if (_driving != null && _driving.IsHeli)
+            else if (_driving != null && (_driving.IsHeli || _driving.IsPlane))
             {
                 // FLYING: the camera BECOMES the airframe. VoX 2026-08-16, first "I want the players view to
                 // tilt with the copter's role and pitch", then exactly: "the player's view should exacly match

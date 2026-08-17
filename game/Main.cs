@@ -55,6 +55,7 @@ namespace UnturnedGodot
         bool _vmAimed; int _vmAimStart; int _vmSettle;
         bool _vmAttach; AttachmentMenu _am; bool _vmSightSet;   // --attach : hold the T attachment menu open for the render; UG_SIGHT=<mesh.txt> mounts a specific sight/scope for a demo
         bool _vehTest; Vehicle _veh; Camera3D _vehCam; int _vehVariant; bool _night, _demo, _crash, _roadkill, _chain, _hitch, _backunder, _pivots; Vehicle _buTrailer; int _buCoupledFrame = 999999;   // --vehicle=DIR [--variant=N] [--night] [--demo] [--crash] [--roadkill] [--chain] [--hitch] [--backunder] [--pivots]
+        bool _planeTest;   // UG_PLANETEST (with --boattest --gun=otter): scripted fixed-wing flight (throttle/pitch/roll injected) to verify the flight model in a render
         readonly System.Collections.Generic.List<(Node3D mark, Vehicle veh, Vector3 local)> _pivotMarks = new();   // --pivots: arrow markers pinned to each coupling point
         bool _driveTest, _swarm, _drivethru, _nade; PlayerController _dtPlayer;      // --drivetest=DIR [--swarm|--drivethru|--nade] : enter/drive a jeep; swarm = mob it; drivethru = loud drive wakes zombies; nade = grenade the parked car
         bool _fireTest; PlayerController _ftPlayer; int _ftFrame;   // --firetest [--supp] : player fires near a distant zombie -> gunshot alert (suppressed = none)
@@ -1070,18 +1071,22 @@ namespace UnturnedGodot
             AddChild(new WorldEnvironment { Environment = env });
             AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-52f, -42f, 0f), LightEnergy = night ? 0.04f : 1.1f, ShadowEnabled = true });
 
-            Terrain.HasWater = true; Terrain.SeaLevelY = 0f;   // flat test sea at Y=0 -- the boat physics reads these
+            bool planeGround = System.Environment.GetEnvironmentVariable("UG_PLANEGROUND") == "1";   // LAND-plane test: a solid runway at Y=0 instead of water (jet/wheeled planes)
+            Terrain.HasWater = !planeGround; Terrain.SeaLevelY = 0f;   // flat test sea at Y=0 -- the boat physics reads these
             // UG_WATERFAR=1: shove the plane ~2.6k units out to fake the REAL map's large world coords (where the
             // sin-hash noise degraded into a grid) -- so the test reproduces the real-map condition, not a near-origin one.
             Vector3 farOff = System.Environment.GetEnvironmentVariable("UG_WATERFAR") == "1" ? new Vector3(2600f, 0f, 2600f) : Vector3.Zero;
             var water = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(800f, 800f), SubdivideWidth = 160, SubdivideDepth = 160 }, Position = farOff,   // 160 = ~5 m quads = the REAL map's density, so the boattest is an honest test (not a flattering fine mesh)
                 MaterialOverride = new ShaderMaterial { Shader = GD.Load<Shader>("res://content/water.gdshader") } };   // wave/foam shader (master)
             AddChild(water);
+            if (planeGround) water.Visible = false;   // runway test: no sea
             // caustics projected onto the underwater surfaces, seeded from the same wave noise (master 2026-08-16)
             var caustShader = GD.Load<Shader>("res://content/caustics_ground.gdshader");
             ShaderMaterial Caust(Color c) { var m = new ShaderMaterial { Shader = caustShader }; m.SetShaderParameter("base_color", c); m.SetShaderParameter("sea_level", Terrain.SeaLevelY); return m; }
-            var seabed = new StaticBody3D { Position = new Vector3(0f, -14f, 0f) };   // deep floor so a swamped boat lands, not falls forever
-            seabed.AddChild(new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(800f, 800f) }, MaterialOverride = Caust(new Color(0.22f, 0.26f, 0.20f)) });
+            // seabed doubles as the RUNWAY for the land-plane test (raised to Y=0, grey tarmac); else the deep boat floor
+            var seabed = new StaticBody3D { Position = new Vector3(0f, planeGround ? 0f : -14f, 0f) };
+            seabed.AddChild(new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(800f, 800f) },
+                MaterialOverride = planeGround ? new StandardMaterial3D { AlbedoColor = new Color(0.30f, 0.30f, 0.33f) } : (Material)Caust(new Color(0.22f, 0.26f, 0.20f)) });
             seabed.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
             AddChild(seabed);
 
@@ -1122,6 +1127,15 @@ namespace UnturnedGodot
                     shipCam = new Vector3(17f, 22f, 62f); lookAt = new Vector3(17f, 4f, 0f);   // frame BOTH: floating @X0, static ref @X34
                 }
                 _vehCam.LookAtFromPosition(shipCam, lookAt, Vector3.Up);
+            }
+            if (System.Environment.GetEnvironmentVariable("UG_PLANETEST") == "1")
+            {   // FLYABLE-PLANE showcase: script the fixed-wing controls (full throttle, rotate, then bank) + a
+                // world-up chase cam, so a --write-movie clip shows the water takeoff + the bank-to-turn flight model.
+                _vehTest = false; _planeTest = true;
+                GetWindow().Size = new Vector2I(1280, 720);
+                _veh.Position = new Vector3(0f, planeGround ? 1.0f : 0.6f, 60f);   // runway: a touch above so it drops onto its wheels; water: on the sea. Long -Z runway ahead
+                _veh.ResetPhysicsInterpolation();   // don't smear from the origin on frame 1 (the WorldItem lesson)
+                _rigCaptureFrames = new[] { 60, 260, 460, 660, 860, 1000 };   // stretch the harness's auto-quit out; render this at --fixed-fps 50 (== the 50Hz physics) so every movie frame is exactly ONE physics tick -> perfectly even motion, no 30/50 sampling judder
             }
             if (System.Environment.GetEnvironmentVariable("UG_WATERSHOW") == "1")
             {   // clean open-water scroll showcase for a --write-movie clip: ditch the boat + auto-drive, hold a
@@ -6147,6 +6161,58 @@ namespace UnturnedGodot
                     }
                     foreach (var (mark, veh, local) in _pivotMarks)
                         if (IsInstanceValid(mark) && IsInstanceValid(veh)) mark.GlobalPosition = veh.ToGlobal(local);
+                }
+                else if (_planeTest && _veh != null)
+                {
+                    // SCRIPTED FIXED-WING FLIGHT, driven off the plane's STATE (frame-rate-map independent):
+                    // full throttle; hold level while it accelerates across the water; rotate/climb the moment it
+                    // lifts off the pontoons; then bank once it has climbed out, to show the lift vector carry it
+                    // into the turn (master's "realistic" bank-to-turn model).
+                    float alt = _veh.GlobalPosition.Y;
+                    float spd = _veh.LinearVelocity.Length();
+                    float throttle, pitch, roll;
+                    if (_veh.Afloat)
+                    {   // full-power takeoff run; once up to speed, ease back to ROTATE (raise AoA) and lift off the water
+                        throttle = 1f; roll = 0f;
+                        pitch = spd > 11f ? 0.55f : 0f;   // firm back-stick to rotate off the water once up to speed
+                    }
+                    else
+                    {
+                        // Showcase attitude-hold autopilot (test harness, NOT the flight model): ease to cruise
+                        // power once up, and a proportional elevator holds a target nose angle so the clip shows a
+                        // steady climb-out -> a near-level banked cruise; a gentle bank once climbed shows bank-to-turn.
+                        var pb = _veh.GlobalTransform.Basis;
+                        float noseDeg = Mathf.RadToDeg(Mathf.Asin(Mathf.Clamp(-pb.Z.Y, -1f, 1f)));
+                        float rollDeg = Mathf.RadToDeg(Mathf.Asin(Mathf.Clamp(pb.X.Y, -1f, 1f)));
+                        if (_frame > 620)
+                        {   // GLIDE TEST (master "throttle down -> nosedive or glide?"): CUT the engine, level the
+                            // wings, and let GO of the elevator -> does the airframe settle into a glide on its own?
+                            throttle = -1f;                                              // S = bleed the sticky throttle to 0 (engine off), not hands-off
+                            pitch = 0f;                                                  // hands off the elevator
+                            roll = Mathf.Clamp(rollDeg * 0.05f, -0.3f, 0.3f);            // just level the wings
+                        }
+                        else
+                        {
+                            throttle = alt > 45f ? 0.6f : 1f;   // climb higher before cruise so the glide test has room
+                            bool turning = _frame > 460;
+                            float targetDeg = turning ? 4f : 9f;
+                            pitch = Mathf.Clamp((targetDeg - noseDeg) * 0.06f, -0.25f, 0.25f);
+                            // roll-ANGLE hold: bank to a steady target + HOLD it (instead of rolling forever)
+                            float targetRoll = turning ? 20f : 0f;
+                            roll = Mathf.Clamp((rollDeg - targetRoll) * 0.05f, -0.35f, 0.35f);
+                        }
+                    }
+                    _veh.DrivePlane(throttle, 0f, pitch, roll, delta);
+                    if (_vehCam != null)   // world-up chase cam behind the flattened heading -> the bank reads against a level horizon
+                    {
+                        var vt = _veh.GetGlobalTransformInterpolated();   // follow the INTERPOLATED visual transform, not the raw 50Hz physics one -> the clip is smooth instead of stepping at 50Hz (same as the in-game drive cam)
+                        var fwd = -vt.Basis.Z; fwd.Y = 0f;
+                        fwd = fwd.LengthSquared() > 0.001f ? fwd.Normalized() : Vector3.Forward;
+                        float cd = 13f; var cde = System.Environment.GetEnvironmentVariable("UG_CAMDIST");
+                        if (!string.IsNullOrEmpty(cde) && float.TryParse(cde, out var cdv)) cd = cdv;
+                        _vehCam.GlobalPosition = vt.Origin - fwd * cd + Vector3.Up * 5f;
+                        _vehCam.LookAt(vt.Origin + Vector3.Up * 0.5f, Vector3.Up);
+                    }
                 }
                 else if (_vehTest && _veh != null)
                 {
