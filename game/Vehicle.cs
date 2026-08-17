@@ -2460,6 +2460,7 @@ namespace UnturnedGodot
             v._plane = s.Plane; v._planeThrust = s.PlaneThrust; v._planeLift = s.PlaneLift; v._planeTargetSpeed = s.PlaneTargetSpeed;
             v._planePitchTq = s.PlanePitchTorque; v._planeRollTq = s.PlaneRollTorque; v._planeYawTq = s.PlaneYawTorque;
             if (s.PlaneSteerFade > 0f) v._planeSteerFade = s.PlaneSteerFade;
+            if (s.Plane && s.Wheels.Length > 0) v._spawnGrace = 0.4f;   // a WHEELED plane is SEATED on spawn (no drop) -> park-freeze it quickly, don't let it slide/spin through a long settle grace
             v._heliThrust = s.HeliThrust; v._heliPitchTq = s.HeliPitchTorque; v._heliRollTq = s.HeliRollTorque;
             v._heliYawTq = s.HeliYawTorque; v._heliLevel = s.HeliLevel;
             v._heliClimbMax = s.HeliClimbMax; v._heliFallMax = s.HeliFallMax;
@@ -3422,7 +3423,10 @@ namespace UnturnedGodot
             if (onGround)
             {
                 Steering = _steerMax > 0f ? Mathf.DegToRad(-_inYaw * _steerMax) : 0f;   // rudder -> nose-wheel steer, so it actually turns while taxiing
-                Brake = 0f;
+                // BRAKE the gear when not driving forward, so a parked plane HOLDS instead of free-rolling down any
+                // slope forever ("slides along the floor" -- the wheels never brake + StepPlane's settle needs
+                // vel~0 to freeze, which a rolling plane never reaches). Release the brake once you throttle up.
+                Brake = _inCollective < 0.08f ? Mathf.Max(_brakeForce, 30f) : 0f;
                 // NO flight ApplyTorque while grounded -- torque against the gear is the freak-out
             }
             else
@@ -3472,9 +3476,13 @@ namespace UnturnedGodot
             }
             _prevSpeed = curSpeed;
 
-            // SETTLE when parked on the ground/water with no throttle -- no wheels means the wheeled settle test
-            // never fires (same reasoning as the heli's).
-            bool idle = onSurface && throttle < 0.02f && vel.LengthSquared() < 0.05f && AngularVelocity.LengthSquared() < 0.05f;
+            // PARK-FREEZE. A passive-wheeled plane is NOT the full car sim, so on a real-terrain SLOPE it
+            // slides + slowly spins (master's "freaks out + slides") -- the gear brake can't fully hold it and the
+            // strict settle never fires while it's rotating. So the moment it's on the ground/water with the
+            // throttle low and moving slowly, FREEZE it solid: the freeze zeroes the slide AND the spin. It wakes
+            // instantly on throttle. The velocity gate (< 2 m/s) means a fast landing ROLLOUT isn't frozen mid-roll
+            // -- only once it's slowed to park. No angular gate on purpose: killing the spin is the whole point.
+            bool idle = onSurface && throttle < 0.1f && vel.LengthSquared() < 4.0f;
             if (idle && _spawnGrace <= 0f && !Freeze)
             {
                 LinearVelocity = Vector3.Zero; AngularVelocity = Vector3.Zero;

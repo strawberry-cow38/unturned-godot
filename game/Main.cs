@@ -1083,8 +1083,10 @@ namespace UnturnedGodot
             // caustics projected onto the underwater surfaces, seeded from the same wave noise (master 2026-08-16)
             var caustShader = GD.Load<Shader>("res://content/caustics_ground.gdshader");
             ShaderMaterial Caust(Color c) { var m = new ShaderMaterial { Shader = caustShader }; m.SetShaderParameter("base_color", c); m.SetShaderParameter("sea_level", Terrain.SeaLevelY); return m; }
-            // seabed doubles as the RUNWAY for the land-plane test (raised to Y=0, grey tarmac); else the deep boat floor
-            var seabed = new StaticBody3D { Position = new Vector3(0f, planeGround ? 0f : -14f, 0f) };
+            // seabed doubles as the RUNWAY for the land-plane test (raised to Y=0, grey tarmac); else the deep boat floor.
+            // UG_PLANESLOPE tilts it into a SLOPE -> reproduce the real terrain (where the plane slides/freaks), not flat.
+            var seabed = new StaticBody3D { Position = new Vector3(0f, planeGround ? 0f : -14f, 0f),
+                RotationDegrees = System.Environment.GetEnvironmentVariable("UG_PLANESLOPE") == "1" ? new Vector3(0f, 0f, 11f) : Vector3.Zero };
             seabed.AddChild(new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(800f, 800f) },
                 MaterialOverride = planeGround ? new StandardMaterial3D { AlbedoColor = new Color(0.30f, 0.30f, 0.33f) } : (Material)Caust(new Color(0.22f, 0.26f, 0.20f)) });
             seabed.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
