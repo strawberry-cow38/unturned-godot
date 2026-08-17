@@ -86,7 +86,7 @@ namespace UnturnedGodot
                 DisplayServer.WindowSetVsyncMode(DisplayServer.VSyncMode.Disabled);
                 GD.Print($"[display] vsync -> {DisplayServer.WindowGetVsyncMode()}");
             }
-            string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null, drivetest = null, proptest = null, animrig = null, rottest = null, itemtest = null, navShot = null, croptest = null, menuShot = null, clothtest = null, boattest = null, slingtest = null, ammoRadial = null;
+            string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null, drivetest = null, proptest = null, magnettest = null, animrig = null, rottest = null, itemtest = null, navShot = null, croptest = null, menuShot = null, clothtest = null, boattest = null, slingtest = null, ammoRadial = null;
             bool zperf = false;
             bool zbody = false;
             bool deployTest = false, barricadeTest = false, barricadePlay = false;
@@ -116,7 +116,8 @@ namespace UnturnedGodot
                 else if (arg == "--zombietest") zombieTest = true;   // OFFLINE verify: sync world -> bucket Animals.dat into pockets -> check planned spawns land ON the baked navmesh
                 else if (arg == "--zdirtest") zdirTest = true;       // OFFLINE verify: boot the REWRITE on PEI -> do rows tier, query paths and actually MOVE? (implies --newzombies)
                 else if (arg.StartsWith("--proptest=")) { proptest = arg["--proptest=".Length..]; _shotRequested = proptest; }
-                else if (arg.StartsWith("--slingtest=")) { slingtest = arg["--slingtest=".Length..]; _shotRequested = slingtest; }   // skycrane + shipping container: in-the-bay vs slung-beneath, side by side   // spawn ONE named prop at identity + RGB axes -> diagnose mirror/orientation/material
+                else if (arg.StartsWith("--slingtest=")) { slingtest = arg["--slingtest=".Length..]; _shotRequested = slingtest; }
+                else if (arg.StartsWith("--magnettest=")) { magnettest = arg["--magnettest=".Length..]; _shotRequested = magnettest; }   // sky-crane winch + electromagnet: dangle, energise, bite a load, lift it   // skycrane + shipping container: in-the-bay vs slung-beneath, side by side   // spawn ONE named prop at identity + RGB axes -> diagnose mirror/orientation/material
                 else if (arg.StartsWith("--croptest=")) croptest = arg["--croptest=".Length..];   // spawn a farm crop (young + grown) on a ground plane -> validate mesh/tex/orientation (UG_CROPROT tunes rot)
                 else if (arg == "--zperf") zperf = true;   // GPU perf probe: N zombies, render counters ON vs OFF (MUST run with a rendering driver, not --headless)
                 else if (arg == "--zbody") zbody = true;   // MECHANISM probe: N bare kinematic capsules, moving vs parked -> is the physics cost the BODIES?
@@ -366,6 +367,13 @@ namespace UnturnedGodot
                 return;
             }
 
+            if (magnettest != null)   // sky-crane electromagnet: does the cable dangle, bite a load and actually lift it?
+            {
+                GetWindow().Size = new Vector2I(1600, 900);
+                _shotPath = shot ?? magnettest;
+                BuildMagnetTest();
+                return;
+            }
             if (slingtest != null)   // diagnostic: can a shipping container ride in the skycrane, or does it have to hang?
             {
                 GetWindow().Size = new Vector2I(1600, 900);
@@ -1845,6 +1853,121 @@ namespace UnturnedGodot
             // the aircraft is silhouetted rather than foreshortened into the fuselage behind it.
             cam.Position = mode == "side" ? new Vector3(23f, fly - 0.8f, 2.5f) : new Vector3(16f, 7.5f + fly, -15f);
             cam.LookAt(new Vector3(0f, fly + 0.9f, 2.5f), Vector3.Up);
+        }
+
+        // --magnettest=OUT: the sky-crane's winch + electromagnet on a TEST STAND. The aircraft is held on a gantry
+        // (velocity zeroed each tick, gravity off) rather than flown, so this measures the CABLE and the MAGNET without
+        // the flight model in the loop -- deliberately NOT a flight test, and it should not be quoted as one. What it
+        // does prove is the part that can silently not work: deploy -> dangle taut at cable length -> energise -> bite a
+        // load -> and RAISE it, which is the only step whose failure looks exactly like success in a screenshot.
+        //
+        // Phased on elapsed time: settle, energise, then hoist the gantry and check the load's height went UP.
+        partial class MagnetGantry : Node3D
+        {
+            public Vehicle Heli; public float HoldY; public RigidBody3D Load; public Camera3D Cam;
+            public float T; public int Phase; public float LoadY0 = float.NaN; public bool Reported;
+            public override void _PhysicsProcess(double delta)
+            {
+                if (Heli == null || !IsInstanceValid(Heli)) return;
+                // Keep BOTH ends in frame: the aircraft climbs away from a load that starts on the ground, so a fixed
+                // camera loses one or the other. Frame the midpoint and pull back with the separation.
+                if (Cam != null && IsInstanceValid(Cam))
+                {
+                    float lowY = Heli.Sling != null && IsInstanceValid(Heli.Sling) ? Heli.Sling.GlobalPosition.Y - 2.5f : 0f;
+                    float midY = (Heli.GlobalPosition.Y + 3f + lowY) * 0.5f;
+                    float span = Mathf.Max(12f, (Heli.GlobalPosition.Y + 3f) - lowY);
+                    Cam.Position = new Vector3(span * 1.55f, midY + span * 0.10f, span * 0.62f);
+                    Cam.LookAt(new Vector3(0f, midY, 1.0f), Vector3.Up);
+                }
+                T += (float)delta;
+                // The stand: pin the airframe where it is put. Runs every tick so the winch reaction cannot walk it.
+                // Pin ATTITUDE as well as position. The cable pulls at an anchor offset from the CoM, so it torques
+                // the airframe; zeroing angular velocity alone still lets the tilt accumulate a little each tick and
+                // the stand ends up hanging visibly banked. A gantry holds a machine level -- that the cable wants to
+                // tip it is a real result, but it belongs to a FLIGHT test, not to this one.
+                Heli.GlobalTransform = new Transform3D(Basis.Identity, new Vector3(0f, HoldY, 0f));
+                Heli.LinearVelocity = Vector3.Zero; Heli.AngularVelocity = Vector3.Zero;
+                var mag = Heli.Sling;
+                if (mag != null && (int)(T * 2) != (int)((T - (float)delta) * 2))
+                {
+                    int n = 0; void Cnt(Node k) { if (k is SlingMagnet) n++; foreach (var c in k.GetChildren()) Cnt(c); }
+                    Cnt(GetTree().Root);
+                    GD.Print($"[MAGNET/CNT] t={T:0.00} SlingMagnet nodes in tree = {n}; sling id={mag.GetInstanceId()}");
+                }
+                if (mag != null && (int)(T * 2) != (int)((T - (float)delta) * 2))
+                    {
+                        // CABLE LENGTH IS A 3-D DISTANCE. Reporting the vertical drop instead reads short by the
+                        // swing and invites "why is it 8.08 when the cable is 9.00" -- the answer being that those
+                        // are two different quantities. Print both, and the offset that reconciles them.
+                        Vector3 anc = Heli.ToGlobal(Heli.DebugSlingAnchorLocal), mp = mag.GlobalPosition;
+                        float dist = anc.DistanceTo(mp), drop = anc.Y - mp.Y;
+                        float swing = Mathf.Sqrt(Mathf.Max(0f, dist * dist - drop * drop));
+                        GD.Print($"[MAGNET/DBG] t={T:0.00} cable={dist:0.00}/{Heli.DebugSlingLen:0.00} drop={drop:0.00} swing={swing:0.00} magY={mp.Y:0.00} vel={mag.LinearVelocity.Y:0.00} sleep={mag.Sleeping} held={(mag.Held != null ? "YES" : "no")}");
+                    }
+                if (Phase == 0 && T > 1.2f)   // settled -> energise the coil
+                {
+                    // CONTROL (UG_MAG_NOENERGISE=1): skip the toggle. The rig must then report DOES NOT LIFT --
+                    // otherwise the verdict is measuring something other than the magnet (the load shoved by the
+                    // falling coil, say) and a PASS would look identical to a real one.
+                    if (System.Environment.GetEnvironmentVariable("UG_MAG_NOENERGISE") != "1") Heli.ToggleSlingMagnet();
+                    Phase = 1;
+                    GD.Print($"[MAGNET] energised at t={T:0.00}; deployed={Heli.SlingDeployed}");
+                }
+                else if (Phase == 1 && T > 2.6f)   // give it a moment to bite, then record the load height and hoist
+                {
+                    if (mag?.Held != null) LoadY0 = mag.Held.GlobalPosition.Y;
+                    Phase = 2;
+                    GD.Print($"[MAGNET] grab: held={(mag?.Held != null ? mag.Held.Name.ToString() : "NOTHING")}; loadY0={LoadY0:0.00}");
+                }
+                else if (Phase == 2 && T > 2.7f) { HoldY += 2.2f * (float)delta; }   // hoist the whole stand
+                if (Phase == 2 && T > 5.0f && !Reported)
+                {
+                    Reported = true;
+                    float lifted = (mag?.Held != null && !float.IsNaN(LoadY0)) ? mag.Held.GlobalPosition.Y - LoadY0 : float.NaN;
+                    GD.Print($"[MAGNET] t={T:0.00} heli {HoldY:0.00}; magnet Y {(mag != null ? mag.GlobalPosition.Y : float.NaN):0.00}; held={(mag?.Held != null ? "YES" : "no")}; load RAISED {lifted:0.00} m");
+                    GD.Print($"[MAGNET] VERDICT: {((mag?.Held != null && lifted > 0.5f) ? "LIFTS" : "DOES NOT LIFT")}");
+                }
+            }
+        }
+
+        void BuildMagnetTest()
+        {
+            var env = new Godot.Environment
+            {
+                BackgroundMode = Godot.Environment.BGMode.Color, BackgroundColor = new Color(0.46f, 0.58f, 0.72f),
+                AmbientLightSource = Godot.Environment.AmbientSource.Color,
+                AmbientLightColor = new Color(0.72f, 0.74f, 0.78f), AmbientLightEnergy = 1.0f,
+            };
+            AddChild(new WorldEnvironment { Environment = env });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-48f, -38f, 0f), LightEnergy = 1.25f, ShadowEnabled = true });
+            var ground = new StaticBody3D { CollisionLayer = 1 << 0 };
+            ground.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
+            AddChild(ground);
+            AddChild(new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(400f, 400f) }, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.36f, 0.42f, 0.30f), Roughness = 1f } });
+
+            var heli = Vehicle.BuildByName("skycrane");
+            AddChild(heli);
+            float holdY = float.TryParse(System.Environment.GetEnvironmentVariable("UG_MAG_HOLD"), out var h0) ? h0 : 10.6f;
+            heli.GlobalPosition = new Vector3(0f, holdY, 0f);
+            heli.GravityScale = 0f;
+            GD.Print($"[MAGNET/SPEC] slingHook={heli.DebugSlingHook} cableLen={heli.DebugSlingLen:0.00} anchorLocal={heli.DebugSlingAnchorLocal}");
+
+            // The load: a plain box on the PROP layer, sized like the shipping container that started all this.
+            var load = new RigidBody3D { Name = "Load", Mass = 800f, CollisionLayer = 1u << 6, CollisionMask = (1u << 0) | (1u << 5) };
+            var lsize = new Vector3(2.88f, 3.24f, 3.00f);
+            load.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = lsize } });
+            load.AddChild(new MeshInstance3D { Mesh = new BoxMesh { Size = lsize }, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.55f, 0.35f, 0.20f), Roughness = 0.9f } });
+            AddChild(load);
+            load.GlobalPosition = new Vector3(0f, lsize.Y * 0.5f, 1.0f);   // under the winch anchor's Z
+
+            var gantry = new MagnetGantry { Heli = heli, HoldY = holdY, Load = load };
+            AddChild(gantry);
+
+            var cam = new Camera3D { Current = true, Fov = 46f, Far = 4000f };
+            AddChild(cam);
+            cam.Position = new Vector3(26f, 7.5f, 10f);
+            cam.LookAt(new Vector3(0f, 5.5f, 1.0f), Vector3.Up);
+            gantry.Cam = cam;
         }
 
         void BuildPropTest(string name)

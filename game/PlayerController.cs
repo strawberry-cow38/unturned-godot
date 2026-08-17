@@ -6266,6 +6266,12 @@ namespace UnturnedGodot
                     if (arrowP != 0f) _heliStickP = Mathf.MoveToward(_heliStickP, arrowP, ArrowStickRate * delta);
                     if (arrowR != 0f) _heliStickR = Mathf.MoveToward(_heliStickR, arrowR, ArrowStickRate * delta);
                 }
+                // SHIFT = the sky-crane's electromagnet (strawberry 2026-08-17). Free in the cockpit -- Shift is
+                // sprint on foot, which has no meaning while flying. Edge-triggered: it TOGGLES, so a held key does
+                // not chatter the coil on and off every frame, and de-energising is how you set the load down.
+                bool magNow = !UiInputBlocked && Input.IsPhysicalKeyPressed(Key.Shift);
+                if (magNow && !_slingShiftPrev) _driving.ToggleSlingMagnet();
+                _slingShiftPrev = magNow;
                 float sp = _heliStickP, sr = _heliStickR;
                 float fp = Mathf.Max(0f, Mathf.Abs(sp) - HeliStickCrossDeadzone * Mathf.Abs(sr)) * Mathf.Sign(sp);
                 float fr = Mathf.Max(0f, Mathf.Abs(sr) - HeliStickCrossDeadzone * Mathf.Abs(sp)) * Mathf.Sign(sr);
@@ -6286,6 +6292,8 @@ namespace UnturnedGodot
             LastHandbrakeInput = handbrake;
             GlobalPosition = _driving.GlobalPosition;   // ride along so exit + FP cam land at the vehicle (the cam is positioned in _Process from the vehicle's INTERPOLATED transform)
         }
+
+        bool _slingShiftPrev;   // Shift edge for the sky-crane magnet toggle (see the heli branch above)
 
         void PositionDriveCam(Transform3D vt)   // SP driving: the cam math below, fed by the driven Vehicle's eye + size
         {

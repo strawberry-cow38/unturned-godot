@@ -23,6 +23,13 @@ namespace UnturnedGodot
         // A sibling RigidBody3D would have to rebuild all of it. VehicleBody3D with no VehicleWheel3D children
         // is just a RigidBody3D, so the base class does not fight flight.
         bool _heli; float _heliThrust, _heliPitchTq, _heliRollTq, _heliYawTq, _heliLevel, _heliDragFwd;
+        bool _slingHook; float _slingLen; Vector3 _slingAnchor;   // winch + electromagnet (sky-crane): see UpdateSling
+        SlingMagnet _magnet; TowRope _slingCable; bool _magnetWanted;
+        public SlingMagnet Sling => _magnet;
+        public bool SlingDeployed => _magnet != null && IsInstanceValid(_magnet);
+        public float DebugSlingLen => _slingLen;
+        public Vector3 DebugSlingAnchorLocal => _slingAnchor;
+        public bool DebugSlingHook => _slingHook;
         float _rotorRadius, _heliLiftCap = 1f, _groundEffect = 1f, _geApplied = 1f;   // cached once per StepHeli; _geApplied is the share the CAP let through
         MeshInstance3D _beaconMesh; OmniLight3D _beaconLight; StandardMaterial3D _beaconMat; float _beaconTimer;   // belly anti-collision flasher
         float _ignitionLeft, _ignitionLen;   // start-up gate: the rotor winds up THROUGH the clip, thrust waits for it
@@ -399,9 +406,25 @@ namespace UnturnedGodot
             if (space == null) return false;
             Vector3 from = GlobalPosition;
             var q = PhysicsRayQueryParameters3D.Create(from, from + Vector3.Down * (_groundClearance + 0.45f));
-            q.Exclude = new Godot.Collections.Array<Rid> { GetRid() };
+            // Exclude our OWN slung equipment. The magnet is aircraft kit on the vehicle layer hanging directly
+            // under the hull, so an un-excluded ray reads it as ground: the crane "landed" every tick, stowed the
+            // winch, un-landed the next tick with the magnet gone, and redeployed -- a 1-tick deploy/stow oscillation
+            // that presented as a magnet that would not pay out past ~1.2 m. Nothing in the cable maths was wrong.
+            q.Exclude = SlingExclude();
             q.CollisionMask = (1u << 0) | (1u << 5);
             return space.IntersectRay(q).Count > 0;
+        }
+
+        // Self + anything we are carrying: a downward probe must never mistake our own load for the ground.
+        Godot.Collections.Array<Rid> SlingExclude()
+        {
+            var ex = new Godot.Collections.Array<Rid> { GetRid() };
+            if (_magnet != null && IsInstanceValid(_magnet))
+            {
+                ex.Add(_magnet.GetRid());
+                if (_magnet.Held != null && IsInstanceValid(_magnet.Held)) ex.Add(_magnet.Held.GetRid());
+            }
+            return ex;
         }
 
         /// <summary>Rotor thrust multiplier from GROUND EFFECT, 1.0 with nothing underneath.
@@ -854,6 +877,9 @@ namespace UnturnedGodot
             public float HeliLevel;                              // self-levelling strength (0 = none, fully manual)
             public float HeliClimbMax, HeliFallMax;              // MP envelope caps, m/s (0 = inherit the car defaults)
             public float RotorRadius, TailRotorRadius;           // blade half-spans (the rotor mesh is scaled to these)
+            public bool SlingHook;                               // carries a winch + electromagnet under the belly (sky-crane duty)
+            public float SlingCable;                             // deployed cable length, metres (0 = use the default)
+            public Vector3 SlingAnchor;                          // LOCAL point the winch hangs from (mesh frame, so it must be offset by nothing at use)
             public Vector3 RotorHub, TailRotorHub;               // local mount points for the two rotors
             public float MainRotorHp, TailRotorHp;                // independent rotor health (0 = derive from Health)
             public Vector3 MainHubBox, TailHubBox;                // the BULLET hitbox at each mast (full size); Zero = a default off the rotor radius
@@ -2173,7 +2199,13 @@ namespace UnturnedGodot
             new Vector3(3.20f, 2.80f, 6.80f), new Vector3(0f, 1.30f, 0.30f),
             Skids(2.065f, 0.60f, -0.63f, -4.15f, 2.73f, 0.20f),   // the S-64's tall splayed legs, measured
             22f, 2000f, 900f, "Skycrane", EItemRarity.EPIC);
-        public static Vehicle BuildSkycrane(int variant = 0) => Build(_skycrane, variant, "skycrane");
+        // The sky-crane is the ONLY airframe with the winch: the whole point of the real S-64 is that it has no cargo
+        // hold, just a spine and a hook. 9 m of cable clears the 0.63 m gear with room for a tall load to swing.
+        static readonly Spec _skycraneRigged = WithSling(_skycrane, 9.0f, new Vector3(0f, 1.88f, 1.00f));
+        public static Vehicle BuildSkycrane(int variant = 0) => Build(_skycraneRigged, variant, "skycrane");
+        // Anchor is the MEASURED belly over the load footprint (local Y 1.88 -- the sky-crane's whole shape is a high
+        // spine on tall legs, so the winch head sits 2.5 m above the skid bottoms and the cable drops between them).
+        static Spec WithSling(Spec b, float cable, Vector3 anchor) { b.SlingHook = true; b.SlingCable = cable; b.SlingAnchor = anchor; return b; }
 
         // HUMMINGBIRD (MD500 Little Bird) -- the scout. A tenth of the Hind's weight, so far and away the
         // sharpest controls in the fleet, and the thinnest hull. The three retail variants share one geometry.
@@ -2608,6 +2640,7 @@ namespace UnturnedGodot
             v._heliDragFwd = s.Heli && s.SpeedMax > 0.01f
                 ? LevelFlightAccel(s.HeliThrust * (1f + EtlGain)) / (s.SpeedMax * s.SpeedMax) : 0f;
             v._rotorRadius = s.RotorRadius;
+            v._slingHook = s.SlingHook; v._slingLen = s.SlingCable > 0.01f ? s.SlingCable : 9f; v._slingAnchor = s.SlingAnchor;
             // CEILING ON THE COMBINED LIFT MULTIPLIERS, derived from this airframe's OWN climb envelope rather
             // than picked. Terminal climb is (thrust * multipliers - g) / HeliHeaveDamp, and the server checks
             // vertical motion against HeliClimbMax with ZERO slack -- so a multiplier large enough to out-climb
@@ -3803,9 +3836,80 @@ namespace UnturnedGodot
             }
         }
 
+        // --- Sky-crane winch + electromagnet -------------------------------------------------------------
+        // The cable is the tow rope's model turned on its side: a PULL-ONLY damped spring, so slack does nothing and
+        // tension drags both ends together. That is what makes the load a real pendulum -- yaw hard and it lags behind,
+        // stop and it keeps swinging -- instead of an animation glued under the hull.
+        const float SlingStiffness = 26000f;   // N per metre of stretch past the cable length (steel winch cable, stiffer than hemp)
+        const float SlingDamping = 4200f;      // along-cable damper; without it a heavy load pumps the aircraft vertically
+        const float SlingMaxForce = 60000f;    // clamp: a snatch at the physics rate must not fling a 900 kg airframe
+        const float SlingStowSpeed = 1.5f;     // m/s ground speed under which a landed crane reels the magnet back in
+
+        // Shift, from the cockpit. De-energising is also how the load is PUT DOWN, so this is the whole control.
+        public void ToggleSlingMagnet()
+        {
+            _magnetWanted = !_magnetWanted;
+            if (_magnet != null && IsInstanceValid(_magnet)) _magnet.SetMagnetized(_magnetWanted);
+        }
+
+        void DeploySling()
+        {
+            if (_magnet != null && IsInstanceValid(_magnet)) return;
+            var m = new SlingMagnet { Name = "SlingMagnet" };
+            GetParent().AddChild(m);   // a sibling in the world, like the tow rope's joint -- NOT a child, or it would ride the hull rigidly
+            // Born just under the belly and allowed to FALL to cable length, so deploying reads as paying out a winch
+            // rather than teleporting a magnet to the end of a taut wire.
+            m.GlobalPosition = ToGlobal(_slingAnchor) + Vector3.Down * 1.2f;
+            m.LinearVelocity = LinearVelocity;   // match the aircraft or it gets left behind the instant it spawns
+            m.AddCollisionExceptionWith(this); AddCollisionExceptionWith(m);
+            m.SetMagnetized(_magnetWanted);
+            _magnet = m;
+            _slingCable = new TowRope();
+            GetParent().AddChild(_slingCable);
+        }
+
+        void StowSling()
+        {
+            if (_magnet != null && IsInstanceValid(_magnet)) { _magnet.Release(); RemoveCollisionExceptionWith(_magnet); _magnet.QueueFree(); }
+            if (_slingCable != null && IsInstanceValid(_slingCable)) _slingCable.QueueFree();
+            _magnet = null; _slingCable = null;
+        }
+
+        void UpdateSling(float delta)
+        {
+            // "Dangles below the heli when in flight" -- so it deploys on leaving the ground and reels in on landing,
+            // but NEVER while it is holding something: reeling in with a car on the magnet would delete the car.
+            bool airborne = !GroundedByRay() && !_exploded;
+            if (airborne) { if (_magnet == null) DeploySling(); }
+            else if (_magnet != null && _magnet.Held == null && LinearVelocity.Length() < SlingStowSpeed) { StowSling(); return; }
+            if (_magnet == null || !IsInstanceValid(_magnet)) return;
+
+            Vector3 a = ToGlobal(_slingAnchor), b = _magnet.GlobalPosition, d = b - a;
+            float dist = d.Length();
+            if (_slingCable != null && IsInstanceValid(_slingCable)) _slingCable.SetEndpoints(a, b, _slingLen);
+
+            if (dist > 1e-3f && dist > _slingLen)   // in tension: a cable pulls, it never pushes
+            {
+                Vector3 dir = d / dist;
+                float sepVel = (_magnet.LinearVelocity - LinearVelocity).Dot(dir);   // >0 = separating -> damping ADDS tension
+                float f = Mathf.Clamp(SlingStiffness * (dist - _slingLen) + SlingDamping * sepVel, 0f, SlingMaxForce);
+                _magnet.Sleeping = false; Wake(); Sleeping = false;
+                _magnet.ApplyForce(-dir * f, Vector3.Zero);                       // load hauled up toward the aircraft
+                ApplyForce(dir * f, a - ToGlobal(CenterOfMass));                  // and the aircraft feels it AT THE ANCHOR, so a swinging load tilts it
+            }
+
+            if (_magnetWanted && _magnet.Held == null)   // energised + empty -> bite the first thing the coil touches
+            {
+                var skip = new Godot.Collections.Array<Rid> { GetRid(), _magnet.GetRid() };
+                var t = _magnet.FindGrabTarget(skip);
+                if (t != null) _magnet.Grab(t);
+            }
+        }
+
         public override void _ExitTree()   // a despawned/unloaded car drops its rope (either end) so no dangling TowedBy/Towing ref survives
         {
             if (Towing != null || TowedBy != null) DetachTow();
+            if (_magnet != null) StowSling();   // a despawned/wrecked crane must not leave an orphan magnet hanging in the sky
         }
 
         // Swap this trailer's body layer bit0->bit6 while a cab is coupled/backing under. This is ONLY for the cab's
@@ -4321,7 +4425,7 @@ namespace UnturnedGodot
                 if (_deadTimer > 0f) { _deadTimer -= (float)delta; if (_deadTimer <= 0f) Explode(); }   // Explode unfreezes + flings; VehicleNetSync then aborts the hold + force-exits the driver
                 return;
             }
-            if (_heli) { StepHeli((float)delta); return; }   // rotary wing: rotor thrust replaces the wheel/tow/settle sim entirely
+            if (_heli) { if (_slingHook) UpdateSling((float)delta); StepHeli((float)delta); return; }   // rotary wing: rotor thrust replaces the wheel/tow/settle sim entirely
             if (_tracked && !_exploded && !_parked && EngineOn && !Freeze)   // TANK skid-steer turn authority: a REAL yaw torque (integrated -> owned momentum, survives slopes/walls + the MP transform-adopt path). FADED by forward speed -- a tight pivot at rest but a WIDE arc at speed, so a full-rate yaw while driving doesn't fight the wheels' grip and crawl (master). The per-track EngineForces carry the fwd/back drive.
             {
                 float tfwd = LinearVelocity.Dot(-GlobalTransform.Basis.Z);
