@@ -6,15 +6,15 @@ render_mode cull_disabled, diffuse_burley, specular_schlick_ggx;
 // Big swell displaces the vertices (coarse-plane safe); fine chop + foam live in the fragment. Transparent,
 // depth-tinted, crest foam on the peaks, depth-based shore foam. WaveField.cs is the CPU twin of swell_at().
 
-uniform vec4 water_deep : source_color = vec4(0.07, 0.19, 0.33, 0.72);     // alpha < 1 = see-through
-uniform vec4 water_shallow : source_color = vec4(0.16, 0.42, 0.54, 0.26);  // shallows very transparent -> seabed shows
+uniform vec4 water_deep : source_color = vec4(0.04, 0.11, 0.22, 0.72);     // darker navy blue (master); alpha < 1 = see-through
+uniform vec4 water_shallow : source_color = vec4(0.10, 0.28, 0.40, 0.26);  // darker blue (master); shallows very transparent -> seabed shows
 uniform vec4 foam_color : source_color = vec4(0.92, 0.97, 1.0, 1.0);
 uniform float swell_amp = 0.5;        // metres of vertical swell
 uniform float swell_dir_deg = 30.0;   // swell travel direction
 uniform float swell_fu = 0.081;       // noise freq ALONG travel (lowered 10% -> waves ~10% bigger, master "zoom in")
 uniform float swell_fw = 0.027;       // noise freq ALONG the crest (lower = longer crests); fu/fw = 3:1 anisotropy (master's pick)
 uniform float swell_speed = 3.0;
-uniform float crest_foam = 0.25;      // swell-height fraction above which crest foam kicks in (lower = more whitecaps)
+uniform float crest_foam = 0.36;      // swell-height fraction above which crest foam kicks in; raised -> fewer peak whitecaps (master)
 uniform float shore_depth = 2.2;      // vertical water depth (m) under which shore foam shows (wider = fuller shore band)
 uniform float detail_strength = 0.30; // fbm fine-ripple perturbation of the normal
 uniform vec4 sky_tint : source_color = vec4(0.52, 0.67, 0.86, 1.0);  // colour reflected at grazing angles (the sky)
@@ -95,7 +95,7 @@ void fragment() {
 
     // CREST FOAM: gated by its own noise so caps scatter (belt-and-suspenders; noise swell already won't lattice)
     float capMask = fbm5(v_wpos.xz * 0.09 + vec2(TIME * 0.04, TIME * -0.03));
-    float gate = smoothstep(-0.45, 0.05, capMask);   // looser -> whitecaps on more peaks (noise swell has no lattice to hide)
+    float gate = smoothstep(-0.2, 0.05, capMask);   // stricter -> fewer peaks foam (master: tone down peak foam amount)
     float crest = smoothstep(crest_foam, crest_foam + 0.20, v_crest) * gate;
 
     float foam = clamp(max(crest, shore) * 0.8, 0.0, 1.0);   // all foam -20% opacity (master; whitecaps + shore softer)
