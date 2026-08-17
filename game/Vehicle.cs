@@ -1965,7 +1965,7 @@ namespace UnturnedGodot
             PlaneThrust = 16f, PlaneLift = 11f, PlaneTargetSpeed = 28f,           // strong thrust; rotates ~24 m/s, cruises fast
             PlanePitchTorque = 2.8f, PlaneRollTorque = 3.8f, PlaneYawTorque = 1.1f, PlaneSteerFade = 0.55f,   // agile (Air_Steer 64) -- snappier roll/pitch than the otter
             Water = WaterMode.Car,                                               // LAND plane: no buoyancy; rests + rolls on its wheels
-            BoxSize = new Vector3(2.6f, 1.3f, 11.0f), BoxCenter = new Vector3(0f, 0.6f, 0f),   // fuselage-ish collision box (wings excluded); the wheels carry the ground ride
+            BoxSize = new Vector3(2.4f, 1.0f, 8.0f), BoxCenter = new Vector3(0f, 1.25f, -0.3f),   // UPPER-fuselage collision box, RAISED well clear of the wheels/ground (bottom ~0.75 above the origin) + shortened so it never pokes the nose -- the low/long box was clipping the terrain + freaking out (master). The GEAR (VehicleWheel3D) carries the ground ride.
             SpeedMax = 36f, Engine = 800f, SteerMax = 32f, SteerMin = 8f, Brake = 30f,         // Steer_Max/Min for GROUND-mode taxi; Speed_Max 36
             Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", WheelRadius = 0.34f,
             Wheels = new (float, float, float, bool)[]   // tricycle gear (Godot Z = -Unity Z): nose steers, 2 wide mains

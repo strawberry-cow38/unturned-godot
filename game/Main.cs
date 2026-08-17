@@ -6179,7 +6179,7 @@ namespace UnturnedGodot
                     if (System.Environment.GetEnvironmentVariable("UG_PLANEIDLE") == "1")   // just SIT (no input) -> reproduce the "freak out on ground contact" report
                     {
                         _veh.DrivePlane(0f, 0f, 0f, 0f, delta);
-                        if (_vehCam != null) { var vi = _veh.GetGlobalTransformInterpolated(); var fi = -vi.Basis.Z; fi.Y = 0f; fi = fi.LengthSquared() > 0.001f ? fi.Normalized() : Vector3.Forward; _vehCam.GlobalPosition = vi.Origin - fi * 12f + Vector3.Up * 5f; _vehCam.LookAt(vi.Origin + Vector3.Up * 0.5f, Vector3.Up); }
+                        if (_vehCam != null) { var vi = _veh.GetGlobalTransformInterpolated(); var fi = -vi.Basis.Z; fi.Y = 0f; fi = fi.LengthSquared() > 0.001f ? fi.Normalized() : Vector3.Forward; var ri = new Vector3(fi.Z, 0f, -fi.X); _vehCam.GlobalPosition = vi.Origin + ri * 8.5f + Vector3.Up * 0.8f; _vehCam.LookAt(vi.Origin + Vector3.Down * 0.4f, Vector3.Up); }   // LOW SIDE profile -> see the hull + gear vs the ground line
                         return;
                     }
                     float throttle, pitch, roll;
