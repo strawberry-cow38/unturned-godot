@@ -24,7 +24,7 @@ namespace UnturnedGodot
         // is just a RigidBody3D, so the base class does not fight flight.
         bool _heli; float _heliThrust, _heliPitchTq, _heliRollTq, _heliYawTq, _heliLevel, _heliDragFwd;
         bool _slingHook; float _slingLen; Vector3 _slingAnchor;   // winch + electromagnet (sky-crane): see UpdateSling
-        SlingMagnet _magnet; TowRope _slingCable, _slingBridle; bool _magnetWanted; float _slingOut;   // _slingOut = cable CURRENTLY paid out, ramping to _slingLen
+        SlingMagnet _magnet; TowRope _slingCable; TowRope[] _slingLegs; MeshInstance3D _slingLink; bool _magnetWanted; float _slingOut;   // _slingOut = cable CURRENTLY paid out, ramping to _slingLen
         public SlingMagnet Sling => _magnet;
         public bool SlingDeployed => _magnet != null && IsInstanceValid(_magnet);
         public bool DebugNoSling;   // suppress winch deployment, so a rig can fly the SAME airframe with and without its magnet
@@ -3887,6 +3887,8 @@ namespace UnturnedGodot
         // constraints on one rigid body is over-constrained and buzzes in the solver, whereas a torque toward the
         // cable axis is exactly the couple a real bridle applies and is unconditionally stable.
         const float BridleStiff = 9f, BridleDamp = 3.2f;
+        const float BridleForkGap = 1.6f;      // how far above the coil the cable ends at the master link
+        const int BridleLegs = 4;              // legs from the link down to the coil, spaced around its rim
         // HANDLING SCALES WITH WHAT IS ON THE HOOK (strawberry: "the current handling of the skycrane should be
         // when we are hauling a heavy object, with nothing we should handle a lot better"). The SPEC figures stay
         // the LOADED case, and an empty hook multiplies them up.
@@ -3934,16 +3936,25 @@ namespace UnturnedGodot
             _magnet = m;
             _slingCable = new TowRope();
             GetParent().AddChild(_slingCable);
-            _slingBridle = new TowRope();   // the second leg of the bridle, drawn to the coil's rim
-            GetParent().AddChild(_slingBridle);
+            // ONE cable down to a MASTER LINK, then four legs fanning onto the coil (strawberry: "one rope to a
+            // link, then 3-4 from link onto the magnet"). That is how a real lifting magnet is slung.
+            _slingLegs = new TowRope[BridleLegs];
+            for (int i = 0; i < BridleLegs; i++) { _slingLegs[i] = new TowRope(); GetParent().AddChild(_slingLegs[i]); }
+            _slingLink = new MeshInstance3D
+            {
+                Mesh = new TorusMesh { InnerRadius = 0.13f, OuterRadius = 0.24f },
+                MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.22f, 0.23f, 0.26f), Metallic = 0.9f, Roughness = 0.35f },
+            };
+            GetParent().AddChild(_slingLink);
         }
 
         void StowSling()
         {
             if (_magnet != null && IsInstanceValid(_magnet)) { _magnet.Release(); RemoveCollisionExceptionWith(_magnet); _magnet.QueueFree(); }
             if (_slingCable != null && IsInstanceValid(_slingCable)) _slingCable.QueueFree();
-            if (_slingBridle != null && IsInstanceValid(_slingBridle)) _slingBridle.QueueFree();
-            _magnet = null; _slingCable = null; _slingBridle = null;
+            if (_slingLegs != null) foreach (var l in _slingLegs) if (l != null && IsInstanceValid(l)) l.QueueFree();
+            if (_slingLink != null && IsInstanceValid(_slingLink)) _slingLink.QueueFree();
+            _magnet = null; _slingCable = null; _slingLegs = null; _slingLink = null;
         }
 
         void UpdateSling(float delta)
@@ -3958,7 +3969,9 @@ namespace UnturnedGodot
             _slingOut = Mathf.MoveToward(_slingOut, _slingLen, SlingPayoutRate * delta);
             Vector3 a = ToGlobal(_slingAnchor), b = _magnet.GlobalPosition, d = b - a;
             float dist = d.Length();
-            if (_slingCable != null && IsInstanceValid(_slingCable)) _slingCable.SetEndpoints(a, b, _slingOut);
+            // The single cable runs to a JUNCTION just above the coil; the bridle legs carry on from there.
+            Vector3 fork = dist > 1e-3f ? b + (a - b) / dist * BridleForkGap : b + Vector3.Up * BridleForkGap;
+            if (_slingCable != null && IsInstanceValid(_slingCable)) _slingCable.SetEndpoints(a, fork, Mathf.Max(0.1f, _slingOut - BridleForkGap));
 
             if (dist > 1e-3f && dist > _slingOut)   // in tension: a cable pulls, it never pushes
             {
@@ -3993,7 +4006,14 @@ namespace UnturnedGodot
                 Vector3 up = _magnet.GlobalBasis.Y, want = -dir2;
                 Vector3 bridle = up.Cross(want) * (BridleStiff * _magnet.Mass) - _magnet.AngularVelocity * (BridleDamp * _magnet.Mass);
                 if (bridle.IsFinite()) _magnet.ApplyTorque(bridle);
-                if (_slingBridle != null && IsInstanceValid(_slingBridle)) _slingBridle.SetEndpoints(a, _magnet.RimWorld, a.DistanceTo(_magnet.RimWorld));
+                if (_slingLink != null && IsInstanceValid(_slingLink)) _slingLink.GlobalPosition = fork;
+                if (_slingLegs != null)
+                    for (int li = 0; li < _slingLegs.Length; li++)
+                    {
+                        if (_slingLegs[li] == null || !IsInstanceValid(_slingLegs[li])) continue;
+                        Vector3 foot = _magnet.RimWorldAt(Mathf.Tau * li / _slingLegs.Length);
+                        _slingLegs[li].SetEndpoints(fork, foot, fork.DistanceTo(foot));   // taut: rest == actual, so no droop on a short leg
+                    }
             }
 
             if (_magnetWanted && _magnet.Held == null)   // energised + empty -> bite the first thing the coil touches
