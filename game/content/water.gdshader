@@ -3,7 +3,8 @@ render_mode cull_disabled, diffuse_burley, specular_schlick_ggx;
 
 // NOISE-BASED ocean (master 2026-08-16, "drawing board"): the wave HEIGHT is ANISOTROPIC fbm noise -- organic
 // directional swell with NO periodic term, so it physically cannot lattice the way summed sines always do.
-// Big swell displaces the vertices (coarse-plane safe); fine chop + foam live in the fragment. Transparent,
+// Big swell displaces the vertices (coarse-plane safe); the swell NORMAL, fine chop and ALL foam are
+// evaluated per-pixel in the fragment, so nothing keyed to wave height follows the mesh triangles. Transparent,
 // depth-tinted, crest foam on the peaks, depth-based shore foam. WaveField.cs is the CPU twin of swell_at().
 
 uniform vec4 water_deep : source_color = vec4(0.04, 0.11, 0.22, 0.72);     // darker navy blue (master); alpha < 1 = see-through
@@ -21,7 +22,6 @@ uniform vec4 sky_tint : source_color = vec4(0.52, 0.67, 0.86, 1.0);  // colour r
 uniform float reflectivity = 0.45;    // how strongly the sky shows at grazing angles (Fresnel); lowered -> less white-out at grazing (master)
 uniform sampler2D depth_tex : hint_depth_texture, repeat_disable, filter_linear;
 
-varying float v_crest;   // normalised swell height ~[-1,1], for crest foam
 varying vec3 v_wpos;     // world position of the displaced surface
 
 // GRADIENT (Perlin) noise -- unlike value noise it has NO axis-aligned cell artifacts (value is 0 at every lattice
@@ -56,7 +56,6 @@ void vertex() {
     float tphase = TIME * swell_speed * swell_fu;   // scroll the field along the travel axis
     float h = swell_at(wp, tphase);
     VERTEX.y += h * swell_amp;
-    v_crest = h;
     v_wpos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;   // normal is computed PER-PIXEL in the fragment (below)
 }
 
@@ -93,10 +92,19 @@ void fragment() {
     float shore = 1.0 - smoothstep(0.0, 0.85, depth_v);       // WIDER band = more shore-foam AREA (master "up the amount")
     shore *= 0.45 + 0.15 * fbm5(v_wpos.xz * 0.4 + TIME * 0.15);  // ...but lower intensity -> 20% less opaque (master)
 
-    // CREST FOAM: gated by its own noise so caps scatter (belt-and-suspenders; noise swell already won't lattice)
+    // CREST FOAM, PER-PIXEL. It used to threshold a `v_crest` varying -- the swell height sampled at the mesh
+    // CORNERS and linearly smeared between them. On the real map's coarse (~5 m) water grid that puts a hard
+    // smoothstep edge across an interpolated ramp, so the whitecap boundary follows the triangle edges instead
+    // of the wave: straight diagonal foam seams and caps that pop as the crest crosses a vertex. Exactly the
+    // disease the swell NORMAL was moved to the fragment to cure, left behind on the foam.
+    //
+    // `sh` above is the same quantity evaluated HERE, per pixel, and it is already computed for the normal --
+    // so this costs nothing. It is genuinely identical at a vertex: the vertex samples swell_at() at the
+    // undisplaced world XZ, displacement is Y-only so v_wpos.xz is that same XZ, and the interpolation of a
+    // planar XZ across a triangle is exact. Same input, same function, finer sampling.
     float capMask = fbm5(v_wpos.xz * 0.09 + vec2(TIME * 0.04, TIME * -0.03));
     float gate = smoothstep(-0.2, 0.05, capMask);   // stricter -> fewer peaks foam (master: tone down peak foam amount)
-    float crest = smoothstep(crest_foam, crest_foam + 0.20, v_crest) * gate;
+    float crest = smoothstep(crest_foam, crest_foam + 0.20, sh) * gate;
 
     float foam = clamp(max(crest, shore) * 0.8, 0.0, 1.0);   // all foam -20% opacity (master; whitecaps + shore softer)
 
