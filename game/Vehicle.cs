@@ -279,6 +279,8 @@ namespace UnturnedGodot
         public float DebugThrust => _heliThrust;
         public float DebugHeliDragK => _heliDragFwd;   // 1/m, derived at build time -- see LevelFlightAccel
         public float DebugHeliLiftCap => _heliLiftCap;
+        public float DebugEnginePitch => _engineAudio?.PitchScale ?? 0f;
+        public float DebugIgnitionPitch => _ignitionAudio?.PitchScale ?? 0f;
         /// <summary>The value the flight model ACTUALLY used this tick, not a fresh recompute: a test that
         /// re-probes could agree with the code while the code disagreed with itself, which is the failure a
         /// debug accessor exists to catch. Reads 1.0 until StepHeli has run once on this machine.</summary>
@@ -877,6 +879,29 @@ namespace UnturnedGodot
             return new AudioStreamWav { Data = pcm, Format = AudioStreamWav.FormatEnum.Format16Bits, MixRate = rate, Stereo = channels == 2,
                                         LoopMode = AudioStreamWav.LoopModeEnum.Forward, LoopEnd = dataSize / (channels * bits / 8) };
         }
+        /// <summary>Per-airframe pitch multiplier: a big helicopter sounds LOW, a small one sounds high.
+        /// Applied to the engine loop AND the start-up clip, since a Skycrane whose idle is a low thud but
+        /// whose ignition is Huey-pitched just sounds like two different aircraft.
+        ///
+        /// Sized off the AIRFRAME's box volume, not the rotor. Rotor radius was the obvious choice and it is
+        /// nearly useless here: the hind, orca and skycrane are all 5.90 m, so the three heaviest machines came
+        /// out within 3 % of each other. The collision box actually separates them -- 60.9 m^3 for the
+        /// Skycrane, 19.3 for the Hummingbird, 1.3 for the minicopter -- and its cube root is a real
+        /// characteristic LENGTH, which is the quantity a resonating structure's frequency scales inversely
+        /// with. Square-rooted to tame the extremes (the minicopter is 45x smaller than the Skycrane by volume,
+        /// which raw would put it two octaves up) and referenced to the Huey, the aircraft the clips came from.
+        ///
+        /// Result across the fleet: minicopter/scoutcopter 1.50, hummingbird 1.05, huey 1.00, orca 0.93,
+        /// hind 0.89, skycrane 0.87. (strawberry: "big hind low pitch, mini higher pitched")</summary>
+        static float HeliSizePitch(Spec s)
+        {
+            if (!s.Heli) return 1f;
+            float vol = s.BoxSize.X * s.BoxSize.Y * s.BoxSize.Z;
+            if (vol < 0.01f) return 1f;
+            const float HueyLength = 2.970f;   // cbrt(2.40 * 2.10 * 5.20)
+            return Mathf.Clamp(Mathf.Sqrt(HueyLength / Mathf.Pow(vol, 1f / 3f)), 0.78f, 1.50f);
+        }
+
         static StandardMaterial3D SolidMat(Color c) =>
             new() { AlbedoColor = c, Metallic = 0f, Roughness = 0.9f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
 
@@ -2991,8 +3016,7 @@ namespace UnturnedGodot
                 // up. Referenced to the Huey, which is the aircraft the clip was recorded from. Without this the
                 // four HeliBase airframes shared one IdlePitch, so the tiny Hummingbird sounded exactly like the
                 // 21-tonne Skycrane. (strawberry: "heavier helis should alter the sound too")
-                float sizePitch = s.Heli && s.RotorRadius > 0.01f
-                    ? Mathf.Clamp(Mathf.Sqrt(5.57f / s.RotorRadius), 0.85f, 1.35f) : 1f;
+                float sizePitch = HeliSizePitch(s);
                 v._engineAudio = new AudioStreamPlayer3D { Stream = ogg, UnitSize = s.Heli ? 34f : 10f, MaxDistance = s.Heli ? 520f : 80f, PitchScale = s.IdlePitch * sizePitch, VolumeDb = Mathf.LinearToDb(s.IdleVolume * EngineVolumeBoost * (s.Heli ? 2.0f : 1f)), Autoplay = true };
                 if (s.Heli) { v._idlePitch = s.IdlePitch * sizePitch; v._maxPitch = s.MaxPitch * sizePitch; }
                 v.AddChild(v._engineAudio);   // Autoplay starts the loop when the vehicle enters the scene tree
@@ -3006,8 +3030,11 @@ namespace UnturnedGodot
                     // The clip's own length becomes the spin-up gate, so "the rotor is ready" and "the start-up
                     // sound has finished" are the same instant by construction rather than two numbers someone
                     // has to keep in step.
-                    v._ignitionLen = (float)ig.GetLength();
-                    v._ignitionAudio = new AudioStreamPlayer3D { Stream = ig, UnitSize = s.Heli ? 34f : 10f, MaxDistance = s.Heli ? 520f : 80f, VolumeDb = Mathf.LinearToDb(EngineVolumeBoost * (s.Heli ? 2.0f : 1f)) };
+                    v._ignitionAudio = new AudioStreamPlayer3D { Stream = ig, UnitSize = s.Heli ? 34f : 10f, MaxDistance = s.Heli ? 520f : 80f, PitchScale = HeliSizePitch(s), VolumeDb = Mathf.LinearToDb(EngineVolumeBoost * (s.Heli ? 2.0f : 1f)) };
+                    // The GATE follows the pitch. PitchScale resamples the clip, so a Skycrane's start-up at
+                    // 0.87 actually runs 8.10 / 0.87 = 9.3 s of wall time -- gating on the unpitched length
+                    // would cut a heavy machine's thrust in before its own start-up had finished.
+                    v._ignitionLen = (float)ig.GetLength() / Mathf.Max(HeliSizePitch(s), 0.01f);
                     v.AddChild(v._ignitionAudio);
                 }
             }

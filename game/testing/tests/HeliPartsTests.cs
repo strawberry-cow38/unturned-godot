@@ -329,6 +329,35 @@ namespace UnturnedGodot.Testing
                 gate.GlobalPosition.Y > gy + 3f);
             gate.QueueFree();
             yield return Ticks(1);
+
+            // ---- A BIG HELICOPTER SOUNDS LOW AND A SMALL ONE SOUNDS HIGH (strawberry: "big hind low pitch,
+            // mini higher pitched"). Asserted as an ORDERING across the fleet rather than as magnitudes: the
+            // absolute values are taste and will get retuned, but "the Skycrane is never higher-pitched than
+            // the minicopter" is the actual claim and it survives any retune that keeps the rule.
+            //
+            // The START-UP is checked alongside the loop because it was the half that was missing -- the engine
+            // already scaled with size while every airframe's ignition played at the same pitch, so a Skycrane
+            // thudded at idle and then started up sounding like a Huey.
+            var pitches = new System.Collections.Generic.Dictionary<string, (float eng, float ign)>();
+            foreach (var n in new[] { "minicopter", "scoutcopter", "hummingbird", "huey", "orca", "hind", "skycrane" })
+            {
+                var pv = Vehicle.BuildByName(n);
+                World.AddChild(pv);
+                yield return Ticks(1);
+                pitches[n] = (pv.DebugEnginePitch, pv.DebugIgnitionPitch);
+                T.Check($"{n}: its start-up clip is pitched at all ({pv.DebugIgnitionPitch:0.###})", pv.DebugIgnitionPitch > 0.01f);
+                pv.QueueFree();
+                yield return Ticks(1);
+            }
+            T.Check($"the minicopter is higher-pitched than the Huey ({pitches["minicopter"].eng:0.##} vs {pitches["huey"].eng:0.##})",
+                pitches["minicopter"].eng > pitches["huey"].eng);
+            T.Check($"...and the Hind is LOWER than the Huey ({pitches["hind"].eng:0.##})",
+                pitches["hind"].eng < pitches["huey"].eng);
+            T.Check($"...and the Skycrane, the heaviest airframe, is the lowest of the fleet ({pitches["skycrane"].eng:0.##})",
+                pitches["skycrane"].eng <= pitches["hind"].eng && pitches["skycrane"].eng < pitches["orca"].eng);
+            // The two clips must agree with each other, or one aircraft has two voices.
+            T.Check($"the START-UP scales the same way the engine does (mini {pitches["minicopter"].ign:0.##} > hind {pitches["hind"].ign:0.##} > skycrane {pitches["skycrane"].ign:0.##})",
+                pitches["minicopter"].ign > pitches["hind"].ign && pitches["hind"].ign > pitches["skycrane"].ign);
         }
     }
 }
