@@ -3494,7 +3494,8 @@ namespace UnturnedGodot
             if (_contrails != null)
             {
                 float cspd = _exploded ? 0f : LinearVelocity.Length();
-                float trail = Mathf.Clamp((cspd - 12f) / 14f, 0f, 1f);   // fade in 12 -> 26 m/s
+                float t01 = Mathf.Clamp((cspd - 24f) / 12f, 0f, 1f);   // gated HIGHER: nothing below 24 m/s, full by ~36 (near top speed)
+                float trail = t01 * t01 * (3f - 2f * t01);             // smoothstep -> fades GRADUALLY up from nothing as you reach speed (master)
                 var camN = GetViewport()?.GetCamera3D();
                 Vector3 camPos = camN != null ? camN.GlobalPosition : GlobalPosition + Vector3.Up * 12f;
                 var xf = GlobalTransform;
