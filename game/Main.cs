@@ -1111,7 +1111,17 @@ namespace UnturnedGodot
                 Vector3 shipCam = new Vector3(44f, 20f, 42f);   // UG_SHIPCAM="x,y,z" overrides -> iterate framing without a rebuild
                 string _sc = System.Environment.GetEnvironmentVariable("UG_SHIPCAM");
                 if (!string.IsNullOrEmpty(_sc)) { var a = _sc.Split(','); shipCam = new Vector3(float.Parse(a[0]), float.Parse(a[1]), float.Parse(a[2])); }
-                _vehCam.LookAtFromPosition(shipCam, new Vector3(0f, 6f, 0f), Vector3.Up);
+                Vector3 lookAt = new Vector3(0f, 6f, 0f);
+                if (System.Environment.GetEnvironmentVariable("UG_SHIPREF") == "1")
+                {   // STATIC reference hull at the retail PEI Alberton draft (keel 4.8m below sea) BESIDE the floating one -> "ours vs pei's" waterline compare
+                    var refMi = new MeshInstance3D { Mesh = ContentProvider.ParseObj("res://content/ship_body.txt"), Position = new Vector3(34f, Terrain.SeaLevelY - 4.8f, 0f) };
+                    var refMat = new StandardMaterial3D { CullMode = BaseMaterial3D.CullModeEnum.Disabled, TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest };
+                    var refImg = new Image();
+                    if (refImg.Load(ProjectSettings.GlobalizePath("res://content/ship_body_tex.png")) == Error.Ok) refMat.AlbedoTexture = ImageTexture.CreateFromImage(refImg);
+                    refMi.MaterialOverride = refMat; AddChild(refMi);
+                    shipCam = new Vector3(17f, 22f, 62f); lookAt = new Vector3(17f, 4f, 0f);   // frame BOTH: floating @X0, static ref @X34
+                }
+                _vehCam.LookAtFromPosition(shipCam, lookAt, Vector3.Up);
             }
             if (System.Environment.GetEnvironmentVariable("UG_WATERSHOW") == "1")
             {   // clean open-water scroll showcase for a --write-movie clip: ditch the boat + auto-drive, hold a

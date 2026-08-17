@@ -1511,7 +1511,7 @@ namespace UnturnedGodot
             Palette = "ship_palette.png", RandomHueGray = true,   // orange hull-BOTTOM texel (3,1) flagged paintable (alpha 0) -> random colour per spawn (master); the other texels keep the ship's own albedo
             Engine = 600f, SteerMax = 0f, SteerMin = 0f, SpeedMax = 12f, SpeedMin = 6f, Brake = 0f,   // boat: BoatThrust propels + rudder-yaws; a touch slower than the runabout (it's a SHIP)
             BoxSize = new Vector3(20f, 11f, 66f), BoxCenter = new Vector3(0f, 5.5f, 0f),   // hull collision box (mesh x±11, z±33.75, keel y0); covers the lower hull -> 4 corner buoys at the keel, COM low
-            BuoyLift = -0.7f,   // waterline ~4.8m up from the keel (local 0) = matches the retail static Alberton ship (Ship_0 @ PEI Y=30.795, sea 25.6 -> 4.8m draft) (master)
+            BuoyLift = -3.0f,   // matches the retail static Alberton ship's 4.8m draft -- VERIFIED against a static reference hull placed at that exact draft (UG_SHIPREF). (my first-pass analytic draft model was wrong on magnitude; -3.0 is the empirical match) (master)
             ForwardGears = new[] { 1f }, ReverseGear = 1f, ShiftUpRpm = 5000f,
             Sound = "engine_medium.ogg", IdlePitch = 0.5f, MaxPitch = 0.95f, IdleVolume = 0.9f, MaxVolume = 1.0f,   // low ship-engine rumble
             Fuel = 5000f, Health = 4000f, Name = "Container Ship",
