@@ -10,5 +10,5 @@ void fragment() {
 	float edge = 1.0 - abs(UV.x * 2.0 - 1.0);   // 0 at the two side edges, 1 down the centre
 	edge = smoothstep(0.0, 0.5, edge);
 	ALBEDO = u_color;
-	ALPHA = COLOR.a * edge * 0.65;
+	ALPHA = COLOR.a * edge * 0.22;   // wispy / faint vapour (master: way more transparent)
 }

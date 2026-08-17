@@ -2559,8 +2559,8 @@ namespace UnturnedGodot
                     Vector3 a = _p[i], b = _p[i + 1];
                     Vector3 dir = b - a; if (dir.LengthSquared() < 1e-6f) continue; dir = dir.Normalized();
                     float ha = (float)i / (_n - 1), hb = (float)(i + 1) / (_n - 1);   // 0 = tail (old), 1 = head (fresh)
-                    Vector3 sa = dir.Cross(cam - a); sa = sa.LengthSquared() > 1e-6f ? sa.Normalized() * Mathf.Lerp(0.55f, 0.08f, ha) : Vector3.Zero;
-                    Vector3 sb = dir.Cross(cam - b); sb = sb.LengthSquared() > 1e-6f ? sb.Normalized() * Mathf.Lerp(0.55f, 0.08f, hb) : Vector3.Zero;
+                    Vector3 sa = dir.Cross(cam - a); sa = sa.LengthSquared() > 1e-6f ? sa.Normalized() * Mathf.Lerp(0.40f, 0.06f, ha) : Vector3.Zero;
+                    Vector3 sb = dir.Cross(cam - b); sb = sb.LengthSquared() > 1e-6f ? sb.Normalized() * Mathf.Lerp(0.40f, 0.06f, hb) : Vector3.Zero;
                     float aa = _a[i] * Mathf.Clamp(1f - _t[i] / MaxAge, 0f, 1f);
                     float ab = _a[i + 1] * Mathf.Clamp(1f - _t[i + 1] / MaxAge, 0f, 1f);
                     Q(a - sa, 0f, aa); Q(a + sa, 1f, aa); Q(b + sb, 1f, ab);
