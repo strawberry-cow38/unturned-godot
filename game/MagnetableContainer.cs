@@ -28,7 +28,13 @@ namespace UnturnedGodot
         //             what strawberry flew and called "way too heavy".
         // 220 kg keeps a useful climb rate on the hook. Everything in this game masses 900 kg regardless of what it
         // is, so a "realistic" container mass means nothing here; what matters is the share of the crane's margin.
-        public const float ContainerMass = 220f;
+        // 220 kg still read as "it just pulls the heli down as soon as you try to lift it" (strawberry). Measured, the
+        // pickup transient is not the cause -- the worst downward excursion during a lift is 0.00 m/s. The real
+        // mechanism is simpler and is not a bug: at HOVER collective the rotor exactly balances the airframe and has
+        // ZERO spare lift, so ANY load on the hook sinks you until you pull more collective. Mass only decides how
+        // much more. 80 kg costs ~13% of the crane's 6030 N margin, so a normal cruise collective already covers it
+        // and picking something up stops being an event you have to fly around.
+        public const float ContainerMass = 80f;
 
         Node3D _prop;
         readonly List<(Node3D pivot, Vector3 axis, float angleDeg)> _leaves = new();

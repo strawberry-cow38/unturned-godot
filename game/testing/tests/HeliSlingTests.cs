@@ -205,12 +205,20 @@ namespace UnturnedGodot.Testing
             // long enough to reach terminal climb.
             if (got)
             {
+                // THE SNATCH, which is the thing actually being complained about. strawberry: "it just pulls the heli
+                // down as soon as you try to lift it." Steady-state climb cannot see this -- the aircraft ends up
+                // climbing fine, so a terminal-velocity check passes while the moment of pickup still shoves you at
+                // the ground. Track the WORST downward excursion across the whole lift instead of the final number.
+                float worstDip = 0f;
                 for (int i = 0; i < 420; i++)
                 {
                     PinLevel(crane);
                     crane.DriveHeli(1f, 0f, 0f, 0f, 0.02);
                     yield return Ticks(1);
+                    worstDip = Mathf.Min(worstDip, crane.LinearVelocity.Y);
                 }
+                T.Check($"taking up the load does not shove the aircraft at the ground (worst dip {worstDip:0.00} m/s, {MagnetableContainer.ContainerMass:0} kg)",
+                    worstDip > -2.5f);
                 float ladenVy = crane.LinearVelocity.Y;
                 // Carry the STATE in the message. "-0.00 m/s" alone cannot distinguish a crane that is too weak from
                 // one sitting on the ground, frozen, or anchored by a snagged load -- and those want opposite fixes.
