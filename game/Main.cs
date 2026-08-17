@@ -1103,6 +1103,16 @@ namespace UnturnedGodot
             AddChild(_vehCam);
             _vehTest = true;   // reuse the vehTest auto-drive + chase-cam loop (Drive() -> the boat's water propulsion)
 
+            if (System.Environment.GetEnvironmentVariable("UG_SHIPSHOW") == "1")
+            {   // BIG SHIP showcase: keep the ship, kill auto-drive, hold a wide 3/4 aerial cam far enough back to
+                // frame the whole 67.5m hull afloat (the boattest chase cam buries itself inside a hull this big).
+                _vehTest = System.Environment.GetEnvironmentVariable("UG_SHIPDRIVE") == "1";   // UG_SHIPDRIVE=1 -> let it auto-drive (moving clip); else static float
+                GetWindow().Size = new Vector2I(1280, 720);
+                Vector3 shipCam = new Vector3(44f, 20f, 42f);   // UG_SHIPCAM="x,y,z" overrides -> iterate framing without a rebuild
+                string _sc = System.Environment.GetEnvironmentVariable("UG_SHIPCAM");
+                if (!string.IsNullOrEmpty(_sc)) { var a = _sc.Split(','); shipCam = new Vector3(float.Parse(a[0]), float.Parse(a[1]), float.Parse(a[2])); }
+                _vehCam.LookAtFromPosition(shipCam, new Vector3(0f, 6f, 0f), Vector3.Up);
+            }
             if (System.Environment.GetEnvironmentVariable("UG_WATERSHOW") == "1")
             {   // clean open-water scroll showcase for a --write-movie clip: ditch the boat + auto-drive, hold a
                 // static low camera skimming the sea so the swell + foam visibly SCROLL past (no boat/cam motion to mask it).
