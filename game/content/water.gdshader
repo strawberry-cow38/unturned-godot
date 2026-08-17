@@ -18,7 +18,7 @@ uniform float crest_foam = 0.25;      // swell-height fraction above which crest
 uniform float shore_depth = 2.2;      // vertical water depth (m) under which shore foam shows (wider = fuller shore band)
 uniform float detail_strength = 0.30; // fbm fine-ripple perturbation of the normal
 uniform vec4 sky_tint : source_color = vec4(0.52, 0.67, 0.86, 1.0);  // colour reflected at grazing angles (the sky)
-uniform float reflectivity = 0.55;    // how strongly the sky shows at grazing angles (Fresnel)
+uniform float reflectivity = 0.45;    // how strongly the sky shows at grazing angles (Fresnel); lowered -> less white-out at grazing (master)
 uniform sampler2D depth_tex : hint_depth_texture, repeat_disable, filter_linear;
 
 varying float v_crest;   // normalised swell height ~[-1,1], for crest foam
@@ -69,12 +69,18 @@ void fragment() {
     float shx = swell_at(v_wpos.xz + vec2(se, 0.0), tp);
     float shz = swell_at(v_wpos.xz + vec2(0.0, se), tp);
     vec3 swell_n = vec3((sh - shx) * swell_amp / se, 1.0, (sh - shz) * swell_amp / se);
-    // FINE RIPPLE DETAIL: fbm-gradient perturbs the normal (fragment space)
+    // DISTANCE LOD: fade the high-freq ripple detail out with distance. At a LOW/grazing angle (standing on the
+    // shore) far water crushes many wavelengths into each pixel -> the normals alias into a BUSY shimmer, and the
+    // Fresnel (below) turns that into a wall of glitter. Fading detail with distance keeps far/grazing water calm;
+    // top-down (heli) is near-field everywhere so it's basically unaffected. (master: busy+opaque at low angle)
+    float vdist = length(VERTEX);   // fragment distance from camera (view space)
+    float lod = clamp(1.0 - (vdist - 25.0) / 140.0, 0.0, 1.0);   // 1 near (<25m) -> 0 far (>165m)
+    // FINE RIPPLE DETAIL: fbm-gradient perturbs the normal (fragment space), LOD-faded with distance
     vec2 np = v_wpos.xz * 0.10 + vec2(TIME * 0.03, TIME * -0.02);   // fine reflection ripples SCALED UP bigger (master)
     float n0 = fbm5(np);
     float nx = fbm5(np + vec2(0.06, 0.0));
     float nz = fbm5(np + vec2(0.0, 0.06));
-    vec3 detail = vec3((n0 - nx), 0.0, (n0 - nz)) * detail_strength * 6.0;
+    vec3 detail = vec3((n0 - nx), 0.0, (n0 - nz)) * detail_strength * 6.0 * lod;
     vec3 wn = normalize(swell_n + detail);
     NORMAL = normalize((VIEW_MATRIX * vec4(wn, 0.0)).xyz);
 
@@ -103,11 +109,12 @@ void fragment() {
     // (real water isn't flat-dark edge-on). Uses the ripple-perturbed normal, so the reflection shimmers with the chop.
     float fres = pow(1.0 - clamp(dot(NORMAL, VIEW), 0.0, 1.0), 4.0);
     vec3 water_col = mix(base, sky_tint.rgb, fres * reflectivity);
-    a = mix(a, 1.0, fres * reflectivity * 0.6);   // a sky-reflecting surface reads more opaque at grazing angles
+    a = mix(a, 1.0, fres * reflectivity * 0.25);   // gentler opacity bump at grazing -> stays see-through low-angle (master)
 
     ALBEDO = mix(water_col, foam_color.rgb, foam);
     ALPHA = mix(a, 1.0, foam);
-    ROUGHNESS = mix(0.08, 0.9, foam);
+    float rough_base = mix(0.35, 0.08, lod);   // rougher (softer, less mirror-bright reflection) far -> calmer grazing; glassy near
+    ROUGHNESS = mix(rough_base, 0.9, foam);
     SPECULAR = 0.5;
     METALLIC = 0.0;
 }

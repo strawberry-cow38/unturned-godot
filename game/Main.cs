@@ -1080,7 +1080,10 @@ namespace UnturnedGodot
                 if (_veh != null) { _veh.QueueFree(); _veh = null; }
                 _vehTest = false;
                 GetWindow().Size = new Vector2I(1280, 720);
-                if (System.Environment.GetEnvironmentVariable("UG_BEACH") == "1")
+                if (System.Environment.GetEnvironmentVariable("UG_SHOREEYE") == "1")
+                    // EYE-HEIGHT looking across the sea to the horizon = the exact "standing at the shore" grazing view master flagged (busy+opaque low-angle)
+                    _vehCam.LookAtFromPosition(new Vector3(0f, 1.8f, 0f) + farOff, new Vector3(0f, 1.4f, -100f) + farOff, Vector3.Up);
+                else if (System.Environment.GetEnvironmentVariable("UG_BEACH") == "1")
                     // look DOWN at the shoreline (the ramp's waterline sits ~Z=14) so the shore-foam band + lapping read clearly
                     _vehCam.LookAtFromPosition(new Vector3(0f, 12f, 40f), new Vector3(0f, -1f, 6f), Vector3.Up);
                 else
