@@ -1974,7 +1974,7 @@ namespace UnturnedGodot
             Water = WaterMode.Car,                                               // LAND plane: no buoyancy; rests + rolls on its wheels
             BoxSize = new Vector3(2.4f, 1.0f, 8.0f), BoxCenter = new Vector3(0f, 1.25f, -0.3f),   // UPPER-fuselage collision box, RAISED well clear of the wheels/ground (bottom ~0.75 above the origin) + shortened so it never pokes the nose -- the low/long box was clipping the terrain + freaking out (master). The GEAR (VehicleWheel3D) carries the ground ride.
             SpeedMax = 36f, Engine = 800f, SteerMax = 32f, SteerMin = 8f, Brake = 30f,         // Steer_Max/Min for GROUND-mode taxi; Speed_Max 36
-            Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", WheelRadius = 0.34f,
+            Wheel = "fighterjet_wheel.txt", WheelTex = "fighterjet_wheel_albedo.png", WheelRadius = 0.34f,   // the jet's OWN wheel mesh (prefab Wheel_*/Model_0, 168v) not the jeep car wheel
             Wheels = new (float, float, float, bool)[]   // tricycle gear (Godot Z = -Unity Z): nose steers, 2 wide mains
             {
                 (0f, -0.27f, -2.83f, true),      // nose wheel (forward) -- steers on the ground
