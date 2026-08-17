@@ -58,6 +58,7 @@ namespace UnturnedGodot.Testing
             // a fluid CONTAINER (bottle/canteen) offers a hand action even when it's a GENERIC-type EMPTY canteen (not
             // IsConsumable) -- pre-fix an empty canteen had the equip code but NO Hold button (the exact rope-style gap).
             T.Check("a fluid container (GENERIC canteen) offers a hand action", InventoryUI.HasHandAction(new ItemAsset { id = 63334, type = EItemType.GENERIC, fluidCapacity = 500f }));
+            T.Check("a fishing rod (FISHER) offers a hand action", InventoryUI.HasHandAction(new ItemAsset { id = 503, type = EItemType.FISHER }));
             T.Check("a plain SUPPLY item (no ToolDef entry) offers NO hand action", !InventoryUI.HasHandAction(new ItemAsset { id = 63333, type = EItemType.SUPPLY }));
             T.Check("null asset -> no hand action", !InventoryUI.HasHandAction(null));
             yield break;
