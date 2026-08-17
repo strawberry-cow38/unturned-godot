@@ -2898,10 +2898,11 @@ namespace UnturnedGodot
                 if (s.RetractGear)   // RETRACTABLE GEAR: hide the suspension-driven wheel; put the visual (strut + wheel) on a hinge PIVOT at the belly that folds up when airborne. VehicleWheel3D stays for physics.
                 {
                     mi.Visible = false;
-                    var pivot = new Node3D { Name = $"Gear{i}", Position = new Vector3(x, 0f, z) };   // hinge at the belly, directly above the wheel
-                    var strut = new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(0.07f, Mathf.Abs(y) + 0.06f, 0.07f) }, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.20f, 0.20f, 0.22f), Metallic = 0.4f, Roughness = 0.5f }, Position = new Vector3(0f, y * 0.5f, 0f), CastShadow = GeometryInstance3D.ShadowCastingSetting.Off };
-                    var gwheel = new MeshInstance3D { Mesh = wheelMesh, MaterialOverride = wheelMat, Position = new Vector3(0f, y, 0f), Scale = new Vector3((x < 0 ? -1f : 1f) * wscale, wscale, wscale) };
-                    pivot.AddChild(strut); pivot.AddChild(gwheel);
+                    var pivot = new Node3D { Name = $"Gear{i}", Position = new Vector3(x, 0.55f, z) };   // hinge at the TOP of the leg (matches the carve's re-centre) so the whole leg tucks up cleanly
+                    var gm = LoadOptionalObj(Mathf.Abs(x) < 1f ? "fighterjet_gear_nose.txt" : (x < 0 ? "fighterjet_gear_mainL.txt" : "fighterjet_gear_mainR.txt"));   // the ACTUAL strut geometry, carved out of the body + re-centred to this pivot so it folds WITH the wheel
+                    if (gm != null) pivot.AddChild(new MeshInstance3D { Name = "Strut", Mesh = gm, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.72f, 0.72f, 0.74f), Metallic = 0.1f, Roughness = 0.6f }, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off });
+                    var gwheel = new MeshInstance3D { Mesh = wheelMesh, MaterialOverride = wheelMat, Position = new Vector3(0f, y - 0.55f, 0f), Scale = new Vector3((x < 0 ? -1f : 1f) * wscale, wscale, wscale) };   // wheel hangs below the top hinge (world y stays at the spec axle)
+                    pivot.AddChild(gwheel);
                     v.AddChild(pivot);
                     v._gearPivots[i] = pivot;
                     if (Mathf.Abs(x) < 1f) { v._gearAxis[i] = Vector3.Right; v._gearAng[i] = -85f; }          // nose gear: folds AFT about X
