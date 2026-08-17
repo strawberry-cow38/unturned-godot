@@ -274,11 +274,11 @@ namespace UnturnedGodot.Testing
             // failure mode of a light with no timer.
             var beac = Vehicle.BuildByName("huey");
             World.AddChild(beac);
-            beac.GlobalPosition = new Vector3(0f, 60f, 0f);
+            beac.GlobalPosition = new Vector3(0f, 2.5f, 0f);   // ON THE GROUND: the beacon is about the ROTOR, and a rig parked at 60 m just falls while thrust is gated during start-up
             beac.EngineOn = true;
             var lamp = beac.FindChild("BeaconBelly", false, false) as MeshInstance3D;
             T.Check("the huey has a belly anti-collision beacon", lamp != null);
-            for (int i = 0; i < 260; i++) { beac.DriveHeli(1f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
+            for (int i = 0; i < 460; i++) { beac.DriveHeli(1f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
             bool sawLit = false, sawDark = false; float peakE = 0f;
             for (int i = 0; i < 120 && !(sawLit && sawDark); i++)
             {
@@ -304,6 +304,30 @@ namespace UnturnedGodot.Testing
             }
             T.Check("...and stays DARK on a machine whose rotor never spun", !everLit);
             beac.QueueFree(); idleHeli.QueueFree();
+            yield return Ticks(1);
+
+            // ---- THE START-UP GATE: no thrust until the ignition clip has stopped being a start-up.
+            //
+            // This is the ONLY rig that flies the gate. Every other heli suite sets DebugInstantStart, because a
+            // check about roll authority that also has to sit through six seconds of ignition is a check that
+            // silently breaks whenever the start-up constant moves -- which is exactly what happened when the
+            // gate first went in and 18 unrelated checks went red.
+            //
+            // Asserted as a BEFORE and an AFTER on one machine. "It eventually climbs" passes on a heli with no
+            // gate at all, so the load-bearing half is that it is still on the ground PART WAY THROUGH.
+            var gate = Vehicle.BuildByName("huey");
+            World.AddChild(gate);
+            gate.GlobalPosition = new Vector3(120f, 2.5f, 0f);
+            gate.DebugNoTurbulence = true;
+            gate.EngineOn = true;
+            float gy = gate.GlobalPosition.Y;
+            for (int i = 0; i < 200; i++) { gate.DriveHeli(1f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
+            T.Check($"4 s in, full collective, the rotor is turning but the machine has NOT lifted ({gate.GlobalPosition.Y - gy:+0.##;-0.##;0} m, spool {gate.RotorSpool:0.##})",
+                gate.GlobalPosition.Y < gy + 0.30f && gate.RotorSpool > 0.4f);
+            for (int i = 0; i < 500; i++) { gate.DriveHeli(1f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
+            T.Check($"...and once the start-up has faded it flies normally ({gate.GlobalPosition.Y - gy:+0.##;-0.##;0} m at 14 s)",
+                gate.GlobalPosition.Y > gy + 3f);
+            gate.QueueFree();
             yield return Ticks(1);
         }
     }

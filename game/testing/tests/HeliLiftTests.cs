@@ -31,6 +31,7 @@ namespace UnturnedGodot.Testing
             world.AddChild(v);
             v.GlobalPosition = at;
             v.DebugNoTurbulence = true;
+            v.DebugInstantStart = true;   // these rigs measure FLIGHT; the start-up gate has its own check
             v.EngineOn = true;
             return v;
         }
@@ -50,7 +51,7 @@ namespace UnturnedGodot.Testing
             // meaningless -- it is the DIFFERENCE that is the claim.
             var low = Spawn(World, "huey", new Vector3(0f, 2.2f, 0f));
             var high = Spawn(World, "huey", new Vector3(200f, 400f, 0f));
-            for (int i = 0; i < 460; i++)
+            for (int i = 0; i < 220; i++)
             {
                 low.DriveHeli(0f, 0f, 0f, 0f, 0.02); high.DriveHeli(0f, 0f, 0f, 0f, 0.02);
                 yield return Ticks(1);
@@ -92,7 +93,7 @@ namespace UnturnedGodot.Testing
             // on the ROTOR's contribution with gravity and damping removed, at altitude so ground effect is
             // out of the picture and the two readings differ in speed alone.
             var etl = Spawn(World, "huey", new Vector3(1000f, 600f, 0f));
-            for (int i = 0; i < 460; i++) { etl.DriveHeli(1f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
+            for (int i = 0; i < 260; i++) { etl.DriveHeli(1f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
             etl.LinearVelocity = new Vector3(0f, etl.LinearVelocity.Y, 0f);
             yield return Ticks(2);
             float pv = etl.LinearVelocity.Y;
@@ -127,7 +128,7 @@ namespace UnturnedGodot.Testing
             // asserts a MEANINGFUL sink rather than merely a negative one, so it cannot be passed by a
             // machine that is technically descending at a millimetre per second.
             var sink = Spawn(World, "huey", new Vector3(1400f, 600f, 0f));
-            for (int i = 0; i < 460; i++) { sink.DriveHeli(1f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
+            for (int i = 0; i < 260; i++) { sink.DriveHeli(1f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
             var sfwd = new Vector3(-sink.GlobalTransform.Basis.Z.X, 0f, -sink.GlobalTransform.Basis.Z.Z).Normalized();
             sink.LinearVelocity = new Vector3(sfwd.X * 20f, 0f, sfwd.Z * 20f);
             for (int i = 0; i < 500; i++) { sink.DriveHeli(0f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
@@ -161,7 +162,7 @@ namespace UnturnedGodot.Testing
             // 9.87 m while behaving exactly as specified. heli_flight's descent test carries the same warning
             // in its own comments; measuring displacement across a momentum change measures the momentum.
             var dead = Spawn(World, "huey", new Vector3(1800f, 2.2f, 0f));
-            for (int i = 0; i < 460; i++) { dead.DriveHeli(0f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
+            for (int i = 0; i < 260; i++) { dead.DriveHeli(0f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
             dead.DamageTailRotor(1e9f);
             dead.LinearVelocity = Vector3.Zero;
             yield return Ticks(2);

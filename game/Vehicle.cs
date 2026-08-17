@@ -101,9 +101,16 @@ namespace UnturnedGodot
         /// lift whatsoever. That is realistic (a real turbine is slower still) but it is a large gameplay
         /// change rather than a detail: anything already airborne when it starts simply falls, and a helicopter
         /// spawned at 60 m reaches the ground before its rotor is legal. It is one number precisely because
-        /// which value is RIGHT is a feel call, not an engineering one -- 0.37 gives ~3 s, thrust arriving
-        /// while the tail of the sound still plays.</summary>
-        const float IgnitionThrustFraction = 1.0f;
+        /// which value is RIGHT is a feel call, not an engineering one.
+        ///
+        /// 0.74 = 6.0 s of the 8.10 s clip, and it is MEASURED rather than picked. strawberry: "i think the
+        /// heli ignition has a big fadeout tail. should overlap engine starting as it fades" -- and the
+        /// clip's RMS envelope says exactly that: it holds 60-75 % of peak from 2.7 s to 5.7 s, then falls
+        /// away monotonically (48 % at 6.0, 32 % at 6.9, 21 % at 7.2, 7 % at 7.8). So the START-UP ends and
+        /// the fade begins at ~6.0 s, and thrust arriving there leaves the last 2.1 s of tail playing over
+        /// a running engine. Gating on the full 8.10 s instead meant eight seconds of no lift, which drops
+        /// anything already airborne.</summary>
+        const float IgnitionThrustFraction = 0.74f;
         /// <summary>EFFECTIVE TRANSLATIONAL LIFT. In a hover a rotor is flying in its own downwash; as the
         /// machine translates it moves into undisturbed air, induced drag falls, and the same collective makes
         /// more thrust. Pilots feel it as a distinct surge and a lightening of the airframe as they come out
@@ -197,6 +204,14 @@ namespace UnturnedGodot
         public Vector3 DebugTurbulence => _turbKick;
         /// <summary>Test seam: turbulence OFF, so a control-response test measures the pilot and not the weather.</summary>
         public bool DebugNoTurbulence;
+        /// <summary>Skip the start-up gate: full rotor immediately, thrust from the first tick.
+        ///
+        /// For rigs whose subject is something ELSE. A check about roll authority should not have to fly
+        /// six seconds of ignition first -- padding every window to clear the gate makes each test slower,
+        /// makes them all depend on a gameplay constant they do not care about, and (the reason this exists)
+        /// silently turns them into tests of the START-UP whenever that number moves. The gate has its own
+        /// dedicated check instead, which is where it belongs.</summary>
+        public bool DebugInstantStart;
 
         // ---- ROTOR DAMAGE (VoX 2026-08-16) --------------------------------------------------------------
         // "give the main rotor and tail rotor independent HP values. main rotor hp low -> reduced thrust. tail
@@ -2061,7 +2076,7 @@ namespace UnturnedGodot
         // HIND -- the gunship, and the FASTEST thing in the fleet as well as the second heaviest. Fast and
         // unwieldy: it will outrun anything and hates changing its mind.
         static readonly Spec _hind = WithTurrets(HeliBase("hind", 14.2f, 0.69f, 0.81f, 0.63f, 5.90f, 1.25f,
-            new Vector3(0f, 4.18f, 0.58f), new Vector3(-0.30f, 4.47f, 9.60f),
+            new Vector3(0f, 4.18f, 0.58f), new Vector3(0.57f, 4.46f, 9.60f),   // tail hub on the RIGHT: the boom carries a horizontal mounting post whose end face is 16 verts at X +0.57, Y 4.46, Z 9.60 -- the old -0.30 had the right height and station but the mirrored side, so the rotor hung in clear air with the post sticking out opposite it (strawberry)
             new Vector3(2.90f, 2.60f, 7.20f), new Vector3(0f, 1.40f, 0.20f),
             new (Vector3, Vector3)[]   // REAL gear, measured off hind_wheels.txt: twin nose wheels forward, mains aft
             {
@@ -3128,7 +3143,7 @@ namespace UnturnedGodot
             // with the starter still audible, or ready long before it. Driving the ramp off the clip's own
             // length makes the two the same event. (strawberry: "rotors should ramp up during the ignition
             // sound, and we should only start generating thrust after the sound finishes")
-            float spoolUp = _ignitionLen > 0.1f ? _ignitionLen * IgnitionThrustFraction : SpoolUpSeconds;
+            float spoolUp = !DebugInstantStart && _ignitionLen > 0.1f ? _ignitionLen * IgnitionThrustFraction : SpoolUpSeconds;
             _rotorRpm = Mathf.MoveToward(_rotorRpm, want, dt / (want > _rotorRpm ? spoolUp : SpoolDownSeconds));
             if (_ignitionLeft > 0f) _ignitionLeft = Mathf.Max(0f, _ignitionLeft - dt);
 
@@ -3200,7 +3215,7 @@ namespace UnturnedGodot
             if (_ignitionAudio != null)
             {
                 bool starting = want > 0f && _rotorRpm < 0.05f;
-                if (starting && !_ignitionFired) { _ignitionFired = true; _ignitionAudio.Play(); _ignitionLeft = _ignitionLen * IgnitionThrustFraction; }
+                if (starting && !_ignitionFired) { _ignitionFired = true; _ignitionAudio.Play(); _ignitionLeft = DebugInstantStart ? 0f : _ignitionLen * IgnitionThrustFraction; }
                 else if (want <= 0f && _rotorRpm < 0.01f) _ignitionFired = false;   // fully stopped -> armed again
             }
 
