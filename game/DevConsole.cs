@@ -464,7 +464,8 @@ namespace UnturnedGodot
                 // with them already through the terrain (which the solver answers by launching it).
                 if (v.IsHeli) v.PlaceOnGround(at);
                 else v.GlobalPosition = at + Vector3.Up * 1.5f;
-                Log($"spawned {name}" + (v.IsHeli ? $" (seated on skids, {v.GroundClearance:0.##} m clearance -- F to board, W/S collective, A/D yaw, mouse to fly)" : ""));
+                Log($"spawned {name}" + (v.IsHeli ? $" (seated on skids, {v.GroundClearance:0.##} m clearance -- F to board, W/S collective, A/D yaw, mouse to fly)"
+                                                 : v.IsPlane ? " (F to board -- W/S throttle, A/D rudder, mouse pitch/roll, hold Ctrl to taxi; floatplane needs water, wheeled needs runway)" : ""));
             }
             else if (verb == "teleport" || verb == "tp")
             {
