@@ -26,6 +26,7 @@ namespace UnturnedGodot
         bool _plane; float _planeThrust, _planeLift, _planeTargetSpeed, _planePitchTq, _planeRollTq, _planeYawTq, _planeSteerFade = 1f;   // PLANE (EEngine.PLANE): forward thrust + airspeed lift, bank-to-turn
         Node3D _propNode; MeshInstance3D _propBlades, _propDisc;   // propeller pivot + its 2 draw states (blades / spin-blur), spun about body forward
         float _propSpin;   // prop visual phase (about local Z)
+        Node3D[] _jetFlames; OmniLight3D[] _jetFlameLights; float _jetFlameT;   // afterburner flame-cone pivots (scale Y = length) + glow (jet), pulsed + throttle-scaled
         int _planeDbgFrame;   // UG_PLANEDBG print throttle
         bool _planeGroundMode;   // master: hold Ctrl -> drop onto the ground/water + taxi (no lift), for floatplanes now + wheeled aircraft later
         public bool PlaneGroundMode { get => _planeGroundMode; set => _planeGroundMode = value; }
@@ -683,6 +684,7 @@ namespace UnturnedGodot
             public float PlaneSteerFade;           // fraction of control authority KEPT at top speed (source: steer fades with speed); 1 = no fade
             public Vector3 PropHub;                // propeller pivot (local, Godot space)
             public string PropMeshPrefix;          // <prefix>_prop.txt (blades) + <prefix>_prop_disc.txt (spin-blur)
+            public Vector3[] BurnerPos;            // JET afterburner exhaust points (rear engines) -> flame FX shooting aft, scaled by throttle
             // ---- TRACKED ARMOUR (tank). Tracks + a rotating turret/elevating gun instead of steered wheels. The
             // road wheels still do the physics; the treads are a visual overlay and the turret is a vehicle weapon
             // aimed by tinyclaw's system via the exposed pivots. Differential steering (Drive branches on Tracked):
@@ -1963,6 +1965,7 @@ namespace UnturnedGodot
         {
             Plane = true, HeliBodyMeshes = new[] { "fighterjet_body.txt", "fighterjet_body_1.txt" },
             PropMeshPrefix = null,                                                // JET: no propeller
+            BurnerPos = new[] { new Vector3(-0.39f, 0.99f, 5.32f), new Vector3(0.39f, 0.99f, 5.32f) },   // the 2 rear engine exhausts (prefab Burner_0/1, Godot Z-neg) -> afterburner flames shoot aft (+Z)
             PlaneThrust = 16f, PlaneLift = 11f, PlaneTargetSpeed = 28f,           // strong thrust; rotates ~24 m/s, cruises fast
             PlanePitchTorque = 2.8f, PlaneRollTorque = 3.8f, PlaneYawTorque = 1.1f, PlaneSteerFade = 0.55f,   // agile (Air_Steer 64) -- snappier roll/pitch than the otter
             Water = WaterMode.Car,                                               // LAND plane: no buoyancy; rests + rolls on its wheels
@@ -2431,6 +2434,44 @@ namespace UnturnedGodot
                 v._propNode.AddChild(v._propBlades);
             }
             }   // end: has a propeller
+
+            // ---- AFTERBURNER FLAMES (jet). A FIRST-PASS look (master wants a proper shader after this): a
+            // stretched additive-glow cone out each rear engine + an orange point light. StepPlane scales the
+            // length + flickers it by throttle. Each flame is a pivot NODE at the nozzle -> scaling its Y grows
+            // the flame AFT from the nozzle; a cone child, wide at the nozzle tapering to a point aft.
+            if (s.BurnerPos != null && s.BurnerPos.Length > 0)
+            {
+                var flameMat = new StandardMaterial3D
+                {
+                    AlbedoColor = new Color(1f, 0.55f, 0.14f, 0.85f),
+                    EmissionEnabled = true, Emission = new Color(1f, 0.5f, 0.14f), EmissionEnergyMultiplier = 5f,
+                    Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
+                    BlendMode = BaseMaterial3D.BlendModeEnum.Add,        // additive -> reads as glowing fire, not a solid cone
+                    ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
+                    CullMode = BaseMaterial3D.CullModeEnum.Disabled,
+                };
+                v._jetFlames = new Node3D[s.BurnerPos.Length];
+                v._jetFlameLights = new OmniLight3D[s.BurnerPos.Length];
+                for (int i = 0; i < s.BurnerPos.Length; i++)
+                {
+                    var bp = s.BurnerPos[i];
+                    var pivot = new Node3D { Name = $"Afterburner{i}", Position = bp, RotationDegrees = new Vector3(90f, 0f, 0f) };   // +Y -> +Z (aft)
+                    var cone = new MeshInstance3D
+                    {
+                        Mesh = new CylinderMesh { TopRadius = 0.04f, BottomRadius = 0.26f, Height = 2.4f, RadialSegments = 12, Rings = 1, CapTop = false, CapBottom = false },
+                        MaterialOverride = flameMat,
+                        Position = new Vector3(0f, 1.2f, 0f),   // wide bottom (-Y) sits at the nozzle; cone runs out +Y (=> aft)
+                        CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
+                    };
+                    pivot.AddChild(cone);
+                    v.AddChild(pivot);
+                    v._jetFlames[i] = pivot;
+                    var light = new OmniLight3D { Position = bp + new Vector3(0f, 0f, 0.7f), LightColor = new Color(1f, 0.5f, 0.18f), LightEnergy = 0f, OmniRange = 4.5f };
+                    light.AddToGroup("dynlight");
+                    v.AddChild(light);
+                    v._jetFlameLights[i] = light;
+                }
+            }
         }
 
         /// <summary>A rotor disc as a monitoring Area3D: the thin cylinder the blades sweep. Masks the world +
@@ -3332,6 +3373,21 @@ namespace UnturnedGodot
             }
             bool spun = _rotorRpm > DiscSwapSpool;
             if (_propDisc != null) { if (_propBlades != null) _propBlades.Visible = !spun; _propDisc.Visible = spun; }
+
+            // AFTERBURNER flames (jet): length + glow scale with throttle x spool, with a fast flicker; off at idle.
+            if (_jetFlames != null)
+            {
+                _jetFlameT += dt * 32f;
+                float burn = _exploded ? 0f : _inCollective * _rotorRpm;
+                float flick = 0.82f + 0.18f * Mathf.Sin(_jetFlameT) * Mathf.Sin(_jetFlameT * 0.37f);
+                bool burning = burn > 0.04f;
+                for (int i = 0; i < _jetFlames.Length; i++)
+                {
+                    _jetFlames[i].Visible = burning;
+                    if (burning) _jetFlames[i].Scale = new Vector3(0.7f + 0.4f * burn, (0.35f + 1.3f * burn) * flick, 0.7f + 0.4f * burn);   // Y = length (aft), X/Z = width
+                    if (_jetFlameLights[i] != null) _jetFlameLights[i].LightEnergy = burning ? (1.5f + 3.5f * burn) * flick : 0f;
+                }
+            }
 
             // ENGINE + IGNITION AUDIO ride the prop spool (same wiring as the heli)
             if (_engineAudio != null)
