@@ -2211,7 +2211,12 @@ namespace UnturnedGodot
         // The sky-crane is the ONLY airframe with the winch: the whole point of the real S-64 is that it has no cargo
         // hold, just a spine and a hook. 9 m of cable clears the 0.63 m gear with room for a tall load to swing.
         static readonly Spec _skycraneRigged = WithSling(_skycrane, 9.0f, new Vector3(0f, 1.88f, 0.00f));
-        static readonly Vector3 _skycraneSlingVisualLocal = new Vector3(0f, 1.88f, -0.71f);
+        // MEASURED off the mesh, not inferred from the collision Skids(). The visible gear runs Z -3.05..2.73 and is
+        // dominated by the MAIN posts at Z 0.5..2.5 (438 verts, centroid +1.70), with a small forward cluster at -3.0.
+        // My first attempt used the collision skid span's centre (-0.71), which is on the OPPOSITE side of the origin
+        // from where the posts actually are -- strawberry, immediately: "thats the opposite direction." The collision
+        // boxes and the visible legs are simply not the same geometry, and only one of them is what a player sees.
+        static readonly Vector3 _skycraneSlingVisualLocal = new Vector3(0f, 1.88f, 1.70f);
         public static Vehicle BuildSkycrane(int variant = 0) => Build(_skycraneRigged, variant, "skycrane");
         // Anchor is the MEASURED belly over the load footprint (local Y 1.88 -- the sky-crane's whole shape is a high
         // spine on tall legs, so the winch head sits 2.5 m above the skid bottoms and the cable drops between them).

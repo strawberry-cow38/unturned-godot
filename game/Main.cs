@@ -1944,6 +1944,35 @@ namespace UnturnedGodot
             heli.GlobalPosition = new Vector3(0f, holdY, 0f);
             heli.GravityScale = 0f;
             heli.DebugNoSling = System.Environment.GetEnvironmentVariable("UG_MAG_NOSLING") == "1";
+            // One-off: where are the VISIBLE leg posts? The spec's Skids(...) numbers are COLLISION boxes, and I
+            // used their centre as "in line with the leg posts" -- which strawberry says came out the wrong way.
+            // Scan the actual mesh for gear-region geometry and report where it really sits in Z.
+            {
+                var bins = new System.Collections.Generic.SortedDictionary<int, int>();
+                float lo = 1e9f, hi = -1e9f;
+                void Scan(Node k)
+                {
+                    if (k is MeshInstance3D mi && mi.Mesh != null && mi.Visible)
+                        for (int si = 0; si < mi.Mesh.GetSurfaceCount(); si++)
+                        {
+                            var arr = mi.Mesh.SurfaceGetArrays(si);
+                            if (arr.Count == 0 || arr[(int)Mesh.ArrayType.Vertex].VariantType == Variant.Type.Nil) continue;
+                            foreach (var lv in arr[(int)Mesh.ArrayType.Vertex].AsVector3Array())
+                            {
+                                var w = heli.ToLocal(mi.GlobalTransform * lv);
+                                if (w.Y > 0.75f || Mathf.Abs(w.X) < 1.4f) continue;   // gear region only: low + outboard
+                                int b = Mathf.RoundToInt(w.Z * 2f);
+                                bins[b] = bins.TryGetValue(b, out var c) ? c + 1 : 1;
+                                lo = Mathf.Min(lo, w.Z); hi = Mathf.Max(hi, w.Z);
+                            }
+                        }
+                    foreach (var c in k.GetChildren()) Scan(c);
+                }
+                Scan(heli);
+                var top = new System.Collections.Generic.List<string>();
+                foreach (var kv in bins) if (kv.Value >= 4) top.Add($"Z{kv.Key / 2f:0.0}x{kv.Value}");
+                GD.Print($"[GEAR] visible gear geometry Z {lo:0.00}..{hi:0.00}; clusters: {string.Join(" ", top)}");
+            }
             GD.Print($"[MAGNET/SPEC] slingHook={heli.DebugSlingHook} cableLen={heli.DebugSlingLen:0.00} forceAnchor={heli.DebugSlingAnchorLocal} drawAnchor={heli.DebugSlingVisualAnchorLocal}");
 
             // The load: a plain box on the PROP layer, sized like the shipping container that started all this.
