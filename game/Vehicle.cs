@@ -24,7 +24,8 @@ namespace UnturnedGodot
         // is just a RigidBody3D, so the base class does not fight flight.
         bool _heli; float _heliThrust, _heliPitchTq, _heliRollTq, _heliYawTq, _heliLevel, _heliDragFwd;
         bool _slingHook; float _slingLen; Vector3 _slingAnchor, _slingVisualAnchor;   // winch + electromagnet (sky-crane): see UpdateSling. Anchor = FORCE point (must stay on the CoM axis). VisualAnchor = where the cable is DRAWN from; may differ.
-        SlingMagnet _magnet; TowRope _slingCable; TowRope[] _slingLegs; MeshInstance3D _slingLink; bool _magnetWanted; float _slingOut;   // _slingOut = cable CURRENTLY paid out, ramping to _slingLen
+        SlingMagnet _magnet; TowRope _slingCable; TowRope[] _slingLegs; MeshInstance3D _slingLink; bool _magnetWanted; float _slingOut;
+        RigidBody3D _slingHeldPrev;   // what the coil held last tick, so the carrier's collision exception tracks it   // _slingOut = cable CURRENTLY paid out, ramping to _slingLen
         public SlingMagnet Sling => _magnet;
         public bool SlingDeployed => _magnet != null && IsInstanceValid(_magnet);
         public bool DebugNoSling;   // suppress winch deployment, so a rig can fly the SAME airframe with and without its magnet
@@ -3888,7 +3889,12 @@ namespace UnturnedGodot
         // c <= m/dt and k <= m/dt^2 hold by a wide margin at any mass, so it cannot explode at the physics rate.
         const float SlingOmega = 7.0f;         // rad/s: cable response. Soft enough to be stable, stiff enough not to read as elastic
         const float SlingZeta = 0.9f;          // near-critical: a winch snatch arrests, it does not bounce
-        const float SlingMaxAccel = 60f;       // clamp in g-ish terms, scaled by the load, so the guard means the same thing empty or full
+        // Clamp in g-ish terms, scaled by the load, so the guard means the same thing empty or full. 60 was a pure
+        // anti-explosion backstop and far too permissive as a WINCH limit: hauling full collective off the ground with
+        // a container on the hook snapped the cable taut and dealt the load 6g, which threw it up PAST the aircraft
+        // and left the cable slack with the freight above the rotor. 25 still gives 2.5x the 9.8 needed to lift
+        // anything, while making the cable behave like a winch rather than a catapult.
+        const float SlingMaxAccel = 25f;
         // A WINCH PAYS OUT; IT DOES NOT DROP. Deploying to full length instantly let the magnet free-fall the whole
         // 9 m and hit 13 m/s before the cable caught it, and arresting that snatch costs far more than the sky-crane's
         // entire 2160 N spare thrust -- so every deployment yanked the aircraft down, it rebounded, and the machine
@@ -3969,6 +3975,8 @@ namespace UnturnedGodot
 
         void StowSling()
         {
+            if (_slingHeldPrev != null && IsInstanceValid(_slingHeldPrev)) RemoveCollisionExceptionWith(_slingHeldPrev);
+            _slingHeldPrev = null;
             if (_magnet != null && IsInstanceValid(_magnet)) { _magnet.Release(); RemoveCollisionExceptionWith(_magnet); _magnet.QueueFree(); }
             if (_slingCable != null && IsInstanceValid(_slingCable)) _slingCable.QueueFree();
             if (_slingLegs != null) foreach (var l in _slingLegs) if (l != null && IsInstanceValid(l)) l.QueueFree();
@@ -4036,6 +4044,17 @@ namespace UnturnedGodot
                         Vector3 foot = _magnet.RimWorldAt(Mathf.Tau * li / _slingLegs.Length);
                         _slingLegs[li].SetEndpoints(fork, foot, fork.DistanceTo(foot));   // taut: rest == actual, so no droop on a short leg
                     }
+            }
+
+            // THE AIRCRAFT MUST NOT COLLIDE WITH WHAT IT IS CARRYING. The magnet already has an exception with the
+            // hull, but the LOAD did not -- so a crane that descended onto its own container simply sat on it, at
+            // full collective, going nowhere, with the load pinned to the ground underneath. Nothing about the lift
+            // maths was wrong; the machine was standing on its own cargo.
+            if (_magnet.Held != _slingHeldPrev)
+            {
+                if (_slingHeldPrev != null && IsInstanceValid(_slingHeldPrev)) RemoveCollisionExceptionWith(_slingHeldPrev);
+                if (_magnet.Held != null && IsInstanceValid(_magnet.Held)) AddCollisionExceptionWith(_magnet.Held);
+                _slingHeldPrev = _magnet.Held;
             }
 
             if (_magnetWanted && _magnet.Held == null)   // energised + empty -> bite the first thing the coil touches

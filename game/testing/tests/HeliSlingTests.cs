@@ -24,6 +24,21 @@ namespace UnturnedGodot.Testing
         public override string Name => "vehicle.heli_sling";
         public override double TimeoutSimSeconds => 240;
 
+        // WINGS-LEVEL PIN, standing in for the pilot. Nothing on this airframe self-levels (HeliLevel = 0, VoX's
+        // call), so a hands-off run with a swinging 220 kg load on the hook tumbles: an open-loop version of the
+        // laden-climb check ended INVERTED (upY -0.96) at full collective, and a hand-rolled PD stick did no better
+        // because I was guessing at the roll sign convention rather than reading it.
+        //
+        // So: pin the ATTITUDE only. Position and velocity stay fully free, which is the whole point -- vertical
+        // motion is the quantity being measured and nothing here touches it. This asserts "a pilot is holding it
+        // level", which is what a player does, and refuses to assert anything about stability. Whether the aircraft
+        // stays upright hands-off with freight slung is a real question, and NOT one this check answers.
+        static void PinLevel(Vehicle v)
+        {
+            v.GlobalTransform = new Transform3D(Basis.Identity, v.GlobalPosition);
+            v.AngularVelocity = Vector3.Zero;
+        }
+
         static Vehicle Spawn(Node world, Vector3 at, bool sling)
         {
             var v = Vehicle.BuildByName("skycrane");
@@ -167,7 +182,12 @@ namespace UnturnedGodot.Testing
             T.Check("...and the doors open when told to", box.DoorsOpen);
 
             crane.ToggleSlingMagnet();
-            for (int i = 0; i < 520; i++) { crane.DriveHeli(0.6f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
+            for (int i = 0; i < 520; i++)
+            {
+                PinLevel(crane);
+                crane.DriveHeli(0.6f, 0f, 0f, 0f, 0.02);
+                yield return Ticks(1);
+            }
             bool got = crane.SlingDeployed && crane.Sling.Held == box;
             T.Check($"the crane's magnet grabs the container (held={(crane.SlingDeployed ? crane.Sling.Held?.Name.ToString() ?? "nothing" : "no magnet")})", got);
             if (got)
@@ -179,7 +199,28 @@ namespace UnturnedGodot.Testing
                     off < 0.25f);
             }
 
-            // ---- 6. NOT DANGLING ON THE GROUND. "Dangles below the heli when in flight" is the spec, and a
+            // ---- 6. AND IT CAN ACTUALLY FLY WITH ONE. strawberry, carrying the first 450 kg version: "the container
+            // is way too heavy". Lifting it at all is not the bar -- the crane has to still CLIMB with it on the hook,
+            // or hauling freight is a thing you technically can do and never want to. Full collective, from the grab,
+            // long enough to reach terminal climb.
+            if (got)
+            {
+                for (int i = 0; i < 420; i++)
+                {
+                    PinLevel(crane);
+                    crane.DriveHeli(1f, 0f, 0f, 0f, 0.02);
+                    yield return Ticks(1);
+                }
+                float ladenVy = crane.LinearVelocity.Y;
+                // Carry the STATE in the message. "-0.00 m/s" alone cannot distinguish a crane that is too weak from
+                // one sitting on the ground, frozen, or anchored by a snagged load -- and those want opposite fixes.
+                T.Check($"the crane still climbs usefully with a container slung ({ladenVy:0.00} m/s at full collective, {MagnetableContainer.ContainerMass:0} kg; heli Y {crane.GlobalPosition.Y:0.0}, box Y {box.GlobalPosition.Y:0.0}, upY {crane.GlobalBasis.Y.Y:0.00}, cable {crane.ToGlobal(crane.DebugSlingVisualAnchorLocal).DistanceTo(crane.Sling.GlobalPosition):0.0}/{crane.DebugSlingLen:0.0}, spool {crane.RotorSpool:0.00})",
+                    ladenVy > 4f);
+                T.Check($"...and it is still carrying it at the end (held={(crane.SlingDeployed && crane.Sling.Held == box)})",
+                    crane.SlingDeployed && crane.Sling.Held == box);
+            }
+
+            // ---- 7. NOT DANGLING ON THE GROUND. "Dangles below the heli when in flight" is the spec, and a
             // magnet left out while parked would drag through the terrain under a landed aircraft.
             var parked = Spawn(World, new Vector3(600f, 0.2f, 0f), sling: true);
             for (int i = 0; i < 200; i++) { parked.DriveHeli(0f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }

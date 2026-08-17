@@ -20,11 +20,15 @@ namespace UnturnedGodot
     public partial class MagnetableContainer : RigidBody3D, SlingMagnet.IMagnetAttachPoint
     {
         public const string PropName = "Container_0";
-        // SIZED AGAINST THE CRANE THAT LIFTS IT. The buffed sky-crane's spare thrust is (16.5-9.8)*900 = 6030 N,
-        // about 615 kg, minus the 12 kg magnet. An 800 kg container (my first number, picked for "heavy freight")
-        // is simply unliftable by the only aircraft with a magnet, which would have made the whole object a prop
-        // that mocks you. 450 kg leaves real climb margin while still feeling like freight.
-        public const float ContainerMass = 450f;
+        // SIZED AGAINST THE CRANE THAT LIFTS IT -- and against how it FLIES with it, not just whether it leaves the
+        // ground. Lift force is HeliThrust * Mass = 16.5 * 900 = 14,850 N and the airframe alone weighs 8,820 N, so
+        // the spare is 6,030 N (~615 kg). Two numbers wrong before this one:
+        //   800 kg -- over the margin entirely; unliftable by the only aircraft with a magnet.
+        //   450 kg -- liftable, but terminal climb with it slung falls to ~2.4 m/s against 12.7 m/s bare, which is
+        //             what strawberry flew and called "way too heavy".
+        // 220 kg keeps a useful climb rate on the hook. Everything in this game masses 900 kg regardless of what it
+        // is, so a "realistic" container mass means nothing here; what matters is the share of the crane's margin.
+        public const float ContainerMass = 220f;
 
         Node3D _prop;
         readonly List<(Node3D pivot, Vector3 axis, float angleDeg)> _leaves = new();
