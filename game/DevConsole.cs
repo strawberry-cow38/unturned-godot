@@ -26,7 +26,7 @@ namespace UnturnedGodot
         static readonly string[] ServerGatedVerbs = { "give", "xp", "skill", "teleport", "tp", "toggleglobalpower", "globalpower", "grid" };
         // Verbs below the arg guard that are legal with NO argument. Keep this in step when adding one, or the
         // guard silently swallows it and the verb becomes unreachable from the console.
-        static readonly string[] NoArgVerbs = { "unarmed", "fridge", "fluid", "survival" };
+        static readonly string[] NoArgVerbs = { "unarmed", "fridge", "fluid", "survival", "spawnmagnetablecontainer", "magcontainer" };
         bool _resultHooked;
 
         LineEdit _input;
@@ -99,6 +99,11 @@ namespace UnturnedGodot
         /// than letting tests call the dev tools directly -- the thing most likely to break is the WIRING between
         /// a typed verb and the tool it drives, and a direct call skips precisely that.</summary>
         public void DebugRun(string cmd) => Run(cmd);
+
+        /// <summary>Run a console line as if typed. Exists so tests can exercise the REAL dispatch -- including the
+        /// no-arg guard, which silently swallowed spawnMagnetableContainer and made it look like an unknown command.
+        /// "It compiles" and "the console runs it" are different claims and only this one checks the second.</summary>
+        public void RunForTest(string cmd) => Run(cmd);
 
         void Run(string cmd)
         {
@@ -404,7 +409,14 @@ namespace UnturnedGodot
             // four were added underneath it. Review 2026-08-16.
             if (arg.Length == 0 && System.Array.IndexOf(NoArgVerbs, verb) < 0)
             {
-                Log("usage: give <item> | vehicle <name>");
+                // NAME THE VERB. The old text was a fixed "usage: give | vehicle" line, so a no-arg verb missing from
+                // NoArgVerbs looked to the user like the console simply did not know the command -- which is exactly
+                // how strawberry reported it ("i dont think the console is recognizing the command") when
+                // spawnMagnetableContainer landed here. Echoing the verb back makes the failure self-diagnosing:
+                // "it wants an argument" and "it does not exist" stop looking identical.
+                Log(System.Array.IndexOf(Verbs, verb) >= 0 || Verbs.Any(v => v.ToLowerInvariant() == verb)
+                    ? $"{verb}: needs an argument (or add it to NoArgVerbs if it should run bare)"
+                    : $"unknown command '{verb}' -- try: give <item> | vehicle <name>");
                 return;
             }
 
