@@ -6184,6 +6184,25 @@ namespace UnturnedGodot
                         if (_vehCam != null) { var vi = _veh.GetGlobalTransformInterpolated(); var fi = -vi.Basis.Z; fi.Y = 0f; fi = fi.LengthSquared() > 0.001f ? fi.Normalized() : Vector3.Forward; var ri = new Vector3(fi.Z, 0f, -fi.X); _vehCam.GlobalPosition = vi.Origin + ri * 8.5f + Vector3.Up * 0.8f; _vehCam.LookAt(vi.Origin + Vector3.Down * 0.4f, Vector3.Up); }   // LOW SIDE profile -> see the hull + gear vs the ground line
                         return;
                     }
+                    if (System.Environment.GetEnvironmentVariable("UG_PLANETURN") == "1")
+                    {   // hard continuous BANK -> the jet circles -> the WORLD-SPACE contrails curve into arcs; a
+                        // high bird's-eye cam (fixed world orientation, follows position) shows the curved trails.
+                        var pbt = _veh.GlobalTransform.Basis;
+                        float noseDegT = Mathf.RadToDeg(Mathf.Asin(Mathf.Clamp(-pbt.Z.Y, -1f, 1f)));
+                        float rollDegT = Mathf.RadToDeg(Mathf.Asin(Mathf.Clamp(pbt.X.Y, -1f, 1f)));
+                        float pitchT = Mathf.Clamp((8f - noseDegT) * 0.05f, -0.2f, 0.25f);
+                        float targetRollT = _frame < 170 ? 0f : 40f;   // roll into a hard sustained bank once airborne
+                        float rollT = Mathf.Clamp((rollDegT - targetRollT) * 0.04f, -0.4f, 0.4f);
+                        _veh.DrivePlane(1f, 0f, _veh.Afloat ? (spd > 11f ? 0.55f : 0f) : pitchT, rollT, delta);
+                        if (_vehCam != null)
+                        {
+                            var vtT = _veh.GetGlobalTransformInterpolated();
+                            var fwdT = -vtT.Basis.Z; fwdT.Y = 0f; fwdT = fwdT.LengthSquared() > 0.001f ? fwdT.Normalized() : Vector3.Forward;
+                            _vehCam.GlobalPosition = vtT.Origin - fwdT * 15f + Vector3.Up * 7f;   // chase behind the flattened heading + elevated -> the curving trails sweep in from the side
+                            _vehCam.LookAt(vtT.Origin + Vector3.Up * 0.5f, Vector3.Up);
+                        }
+                        return;
+                    }
                     if (System.Environment.GetEnvironmentVariable("UG_PLANETOP") == "1")
                     {   // TOP-DOWN inspection: straight down over the cockpit, nose = up in frame
                         _veh.DrivePlane(0f, 0f, 0f, 0f, delta);

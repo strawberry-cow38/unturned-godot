@@ -27,7 +27,7 @@ namespace UnturnedGodot
         Node3D _propNode; MeshInstance3D _propBlades, _propDisc;   // propeller pivot + its 2 draw states (blades / spin-blur), spun about body forward
         float _propSpin;   // prop visual phase (about local Z)
         Node3D[] _jetFlames; OmniLight3D[] _jetFlameLights; ShaderMaterial[] _jetFlameMats; float _jetFlameT;   // afterburner flame cones (content/afterburner.gdshader, per-burner mat) + glow (jet); throttle-scaled
-        Node3D[] _contrails; ShaderMaterial[] _contrailMats;   // wingtip vapour contrails (content/contrail.gdshader), faded in by airspeed (jet)
+        Contrail[] _contrails;   // world-space wingtip/winglet vapour trails (Contrail class below), faded in by airspeed (jet)
         int _planeDbgFrame;   // UG_PLANEDBG print throttle
         bool _planeGroundMode;   // master: hold Ctrl -> drop onto the ground/water + taxi (no lift), for floatplanes now + wheeled aircraft later
         public bool PlaneGroundMode { get => _planeGroundMode; set => _planeGroundMode = value; }
@@ -1968,7 +1968,7 @@ namespace UnturnedGodot
             Plane = true, HeliBodyMeshes = new[] { "fighterjet_body.txt" },   // Model_0 (LOD0) ONLY -- Model_1 is the coincident LOD1 (a closed low-poly shell that CAPS the open cockpit); co-rendering both hid the cockpit interior
             PropMeshPrefix = null,                                                // JET: no propeller
             BurnerPos = new[] { new Vector3(-0.39f, 0.99f, 5.32f), new Vector3(0.39f, 0.99f, 5.32f) },   // the 2 rear engine exhausts (prefab Burner_0/1, Godot Z-neg) -> afterburner flames shoot aft (+Z)
-            ContrailPos = new[] { new Vector3(-4.5f, 0.85f, 3.75f), new Vector3(4.5f, 0.85f, 3.75f) },   // wingtip trailing edges (mesh x=+/-4.5, aft z=3.75) -> vapour contrails stream aft
+            ContrailPos = new[] { new Vector3(-4.5f, 0.85f, 3.75f), new Vector3(4.5f, 0.85f, 3.75f), new Vector3(-1.25f, 3.05f, 4.5f), new Vector3(1.25f, 3.05f, 4.5f) },   // 4 emitters: 2 wingtip trailing edges + 2 vertical-winglet (tail-fin) tips
             PlaneThrust = 16f, PlaneLift = 11f, PlaneTargetSpeed = 28f,           // strong thrust; rotates ~24 m/s, cruises fast
             PlanePitchTorque = 2.8f, PlaneRollTorque = 3.8f, PlaneYawTorque = 1.1f, PlaneSteerFade = 0.55f,   // agile (Air_Steer 64) -- snappier roll/pitch than the otter
             Water = WaterMode.Car,                                               // LAND plane: no buoyancy; rests + rolls on its wheels
@@ -2493,34 +2493,16 @@ namespace UnturnedGodot
                 }
             }
 
-            // ---- WINGTIP CONTRAILS (jet): a thin, long vapour ribbon streaming aft off each wingtip trailing edge
-            // (content/contrail.gdshader -- soft white vapour that billows + dissipates aft, ALPHA-blended = cloud,
-            // not glow). StepPlane fades them IN with airspeed (only show when fast) + lengthens them.
+            // ---- CONTRAILS (jet): a WORLD-SPACE vapour trail off each wingtip + winglet tip. Each Contrail keeps a
+            // ring buffer of recent emitter world-positions + rebuilds a camera-facing ribbon every frame, so the
+            // trail CURVES with the flight path + hangs in the air (not a stiff attached line). StepPlane feeds the
+            // airspeed fade + the emitter world positions.
             if (s.ContrailPos != null && s.ContrailPos.Length > 0)
             {
-                var contrailShader = GetContrailShader();
-                v._contrails = new Node3D[s.ContrailPos.Length];
-                v._contrailMats = new ShaderMaterial[s.ContrailPos.Length];
+                var trailMat = new ShaderMaterial { Shader = GetContrailShader() };
+                v._contrails = new Contrail[s.ContrailPos.Length];
                 for (int i = 0; i < s.ContrailPos.Length; i++)
-                {
-                    var cp = s.ContrailPos[i];
-                    var mat = new ShaderMaterial { Shader = contrailShader };
-                    mat.SetShaderParameter("u_seed", i * 5.1f);
-                    mat.SetShaderParameter("u_length", 14f);
-                    mat.SetShaderParameter("u_speed", 0f);
-                    var pivot = new Node3D { Name = $"Contrail{i}", Position = cp, RotationDegrees = new Vector3(90f, 0f, 0f) };   // +Y -> +Z (aft)
-                    var ribbon = new MeshInstance3D
-                    {
-                        Mesh = new CylinderMesh { TopRadius = 0.32f, BottomRadius = 0.05f, Height = 14f, RadialSegments = 12, Rings = 1, CapTop = false, CapBottom = false },   // thin at the wingtip (-Y), diffusing wider aft (+Y)
-                        MaterialOverride = mat,
-                        Position = new Vector3(0f, 7f, 0f),   // starts at the wingtip, runs 14m aft
-                        CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
-                    };
-                    pivot.AddChild(ribbon);
-                    v.AddChild(pivot);
-                    v._contrails[i] = pivot;
-                    v._contrailMats[i] = mat;
-                }
+                    v._contrails[i] = new Contrail(v, s.ContrailPos[i], trailMat);
             }
         }
 
@@ -2532,7 +2514,62 @@ namespace UnturnedGodot
 
         static Shader _contrailShader;
         static Shader GetContrailShader()
-            => _contrailShader ??= new Shader { Code = System.IO.File.ReadAllText(ProjectSettings.GlobalizePath("res://content/contrail.gdshader")) };
+            => _contrailShader ??= new Shader { Code = System.IO.File.ReadAllText(ProjectSettings.GlobalizePath("res://content/contrail_trail.gdshader")) };
+
+        // A world-space vapour contrail: a ring buffer of recent emitter world-positions, rebuilt each frame as a
+        // camera-facing ribbon (ImmediateMesh, TopLevel = its verts ARE world coords). Points fade by age + by the
+        // airspeed at emission, so the trail curves with the flight path + hangs in the air, thinning as it dissipates.
+        sealed class Contrail
+        {
+            public readonly Vector3 Local;
+            const int Max = 80;
+            const float MaxAge = 4.0f, MinSeg = 0.7f;
+            readonly Vector3[] _p = new Vector3[Max];
+            readonly float[] _a = new float[Max], _t = new float[Max];
+            int _n;
+            readonly ImmediateMesh _im = new();
+            readonly MeshInstance3D _mi;
+            public Contrail(Node parent, Vector3 local, Material mat)
+            {
+                Local = local;
+                _mi = new MeshInstance3D { Mesh = _im, MaterialOverride = mat, TopLevel = true, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off, Visible = false };
+                parent.AddChild(_mi);
+            }
+            public void Update(Vector3 world, float speedFac, Vector3 cam, float dt)
+            {
+                for (int i = 0; i < _n; i++) _t[i] += dt;
+                int drop = 0; while (drop < _n && _t[drop] > MaxAge) drop++;
+                if (drop > 0) { for (int i = drop; i < _n; i++) { _p[i - drop] = _p[i]; _a[i - drop] = _a[i]; _t[i - drop] = _t[i]; } _n -= drop; }
+                if (_n == 0 || world.DistanceTo(_p[_n - 1]) >= MinSeg)
+                {
+                    if (_n >= Max) { for (int i = 1; i < Max; i++) { _p[i - 1] = _p[i]; _a[i - 1] = _a[i]; _t[i - 1] = _t[i]; } _n = Max - 1; }
+                    _p[_n] = world; _a[_n] = speedFac; _t[_n] = 0f; _n++;
+                }
+                else { _p[_n - 1] = world; if (speedFac > _a[_n - 1]) _a[_n - 1] = speedFac; }
+                Rebuild(cam);
+            }
+            void Rebuild(Vector3 cam)
+            {
+                _im.ClearSurfaces();
+                if (_n < 2) { _mi.Visible = false; return; }
+                _mi.Visible = true;
+                _im.SurfaceBegin(Mesh.PrimitiveType.Triangles);
+                for (int i = 0; i < _n - 1; i++)
+                {
+                    Vector3 a = _p[i], b = _p[i + 1];
+                    Vector3 dir = b - a; if (dir.LengthSquared() < 1e-6f) continue; dir = dir.Normalized();
+                    float ha = (float)i / (_n - 1), hb = (float)(i + 1) / (_n - 1);   // 0 = tail (old), 1 = head (fresh)
+                    Vector3 sa = dir.Cross(cam - a); sa = sa.LengthSquared() > 1e-6f ? sa.Normalized() * Mathf.Lerp(0.55f, 0.08f, ha) : Vector3.Zero;
+                    Vector3 sb = dir.Cross(cam - b); sb = sb.LengthSquared() > 1e-6f ? sb.Normalized() * Mathf.Lerp(0.55f, 0.08f, hb) : Vector3.Zero;
+                    float aa = _a[i] * Mathf.Clamp(1f - _t[i] / MaxAge, 0f, 1f);
+                    float ab = _a[i + 1] * Mathf.Clamp(1f - _t[i + 1] / MaxAge, 0f, 1f);
+                    Q(a - sa, 0f, aa); Q(a + sa, 1f, aa); Q(b + sb, 1f, ab);
+                    Q(a - sa, 0f, aa); Q(b + sb, 1f, ab); Q(b - sb, 0f, ab);
+                }
+                _im.SurfaceEnd();
+            }
+            void Q(Vector3 p, float u, float alpha) { _im.SurfaceSetColor(new Color(1f, 1f, 1f, alpha)); _im.SurfaceSetUV(new Vector2(u, 0f)); _im.SurfaceAddVertex(p); }
+        }
 
         /// <summary>A rotor disc as a monitoring Area3D: the thin cylinder the blades sweep. Masks the world +
         /// vehicle layers (bit0 | bit5) so it notices terrain, buildings and other vehicles, and sits on no
@@ -3453,21 +3490,15 @@ namespace UnturnedGodot
                 }
             }
 
-            // WINGTIP CONTRAILS (jet): thin vapour ribbons off each wingtip that FADE IN with airspeed + lengthen.
+            // CONTRAILS (jet): push each wingtip/winglet's WORLD position into its trail, faded in by airspeed.
             if (_contrails != null)
             {
                 float cspd = _exploded ? 0f : LinearVelocity.Length();
                 float trail = Mathf.Clamp((cspd - 12f) / 14f, 0f, 1f);   // fade in 12 -> 26 m/s
-                bool show = trail > 0.02f;
-                for (int i = 0; i < _contrails.Length; i++)
-                {
-                    _contrails[i].Visible = show;
-                    if (show)
-                    {
-                        _contrails[i].Scale = new Vector3(1f, 0.55f + 0.85f * trail, 1f);   // Y = length aft; longer with speed
-                        _contrailMats[i]?.SetShaderParameter("u_speed", trail);
-                    }
-                }
+                var camN = GetViewport()?.GetCamera3D();
+                Vector3 camPos = camN != null ? camN.GlobalPosition : GlobalPosition + Vector3.Up * 12f;
+                var xf = GlobalTransform;
+                foreach (var c in _contrails) c.Update(xf * c.Local, trail, camPos, dt);
             }
 
             // ENGINE + IGNITION AUDIO ride the prop spool (same wiring as the heli)
