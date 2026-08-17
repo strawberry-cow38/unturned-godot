@@ -6184,6 +6184,22 @@ namespace UnturnedGodot
                         if (_vehCam != null) { var vi = _veh.GetGlobalTransformInterpolated(); var fi = -vi.Basis.Z; fi.Y = 0f; fi = fi.LengthSquared() > 0.001f ? fi.Normalized() : Vector3.Forward; var ri = new Vector3(fi.Z, 0f, -fi.X); _vehCam.GlobalPosition = vi.Origin + ri * 8.5f + Vector3.Up * 0.8f; _vehCam.LookAt(vi.Origin + Vector3.Down * 0.4f, Vector3.Up); }   // LOW SIDE profile -> see the hull + gear vs the ground line
                         return;
                     }
+                    if (System.Environment.GetEnvironmentVariable("UG_PLANEGEAR") == "1")
+                    {   // GEAR RETRACTION demo: full-throttle takeoff + a SIDE, near-level cam so the wheels folding up read
+                        var pbg = _veh.GlobalTransform.Basis;
+                        float noseDegG = Mathf.RadToDeg(Mathf.Asin(Mathf.Clamp(-pbg.Z.Y, -1f, 1f)));
+                        float pitchG = Mathf.Clamp((9f - noseDegG) * 0.06f, -0.25f, 0.25f);
+                        _veh.DrivePlane(1f, 0f, _veh.Afloat ? (spd > 11f ? 0.55f : 0f) : pitchG, 0f, delta);
+                        if (_vehCam != null)
+                        {
+                            var vtG = _veh.GetGlobalTransformInterpolated();
+                            var fwdG = -vtG.Basis.Z; fwdG.Y = 0f; fwdG = fwdG.LengthSquared() > 0.001f ? fwdG.Normalized() : Vector3.Forward;
+                            var rightG = new Vector3(fwdG.Z, 0f, -fwdG.X);
+                            _vehCam.GlobalPosition = vtG.Origin + rightG * 6.5f + fwdG * 0.5f + Vector3.Up * 0.2f;   // off to the side, near level -> the belly gear is visible
+                            _vehCam.LookAt(vtG.Origin + Vector3.Down * 0.2f, Vector3.Up);
+                        }
+                        return;
+                    }
                     if (System.Environment.GetEnvironmentVariable("UG_PLANETURN") == "1")
                     {   // hard continuous BANK -> the jet circles -> the WORLD-SPACE contrails curve into arcs; a
                         // high bird's-eye cam (fixed world orientation, follows position) shows the curved trails.

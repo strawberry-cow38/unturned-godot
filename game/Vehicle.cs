@@ -3612,8 +3612,7 @@ namespace UnturnedGodot
             if (_gearPivots != null)
             {
                 float gspd = _exploded ? 0f : LinearVelocity.Length();
-                float gTarget = 1f;   // SEPARATION step (master): gear stays DEPLOYED for now. For retraction, flip to: (onGround || gspd < 15f) ? 1f : 0f
-                _ = gspd;
+                float gTarget = (onGround || gspd < 15f) ? 1f : 0f;   // deploy (down) on ground/slow; retract (fold up) once airborne + fast
                 _gearDeploy = Mathf.MoveToward(_gearDeploy, gTarget, dt / 1.5f);
                 for (int i = 0; i < _gearPivots.Length; i++)
                     if (_gearPivots[i] != null) _gearPivots[i].Basis = new Basis(_gearAxis[i], Mathf.DegToRad(_gearAng[i] * (1f - _gearDeploy)));
