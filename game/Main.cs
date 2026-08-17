@@ -6170,6 +6170,18 @@ namespace UnturnedGodot
                     // into the turn (master's "realistic" bank-to-turn model).
                     float alt = _veh.GlobalPosition.Y;
                     float spd = _veh.LinearVelocity.Length();
+                    if (System.Environment.GetEnvironmentVariable("UG_PLANETAXI") == "1")   // TAXI test: low throttle + full right rudder on the ground -> does it TURN + stay stable?
+                    {
+                        _veh.DrivePlane(0.35f, 1f, 0f, 0f, delta);
+                        if (_vehCam != null) { var vt3 = _veh.GetGlobalTransformInterpolated(); _vehCam.GlobalPosition = vt3.Origin + new Vector3(0f, 14f, 14f); _vehCam.LookAt(vt3.Origin, Vector3.Up); }
+                        return;
+                    }
+                    if (System.Environment.GetEnvironmentVariable("UG_PLANEIDLE") == "1")   // just SIT (no input) -> reproduce the "freak out on ground contact" report
+                    {
+                        _veh.DrivePlane(0f, 0f, 0f, 0f, delta);
+                        if (_vehCam != null) { var vi = _veh.GetGlobalTransformInterpolated(); var fi = -vi.Basis.Z; fi.Y = 0f; fi = fi.LengthSquared() > 0.001f ? fi.Normalized() : Vector3.Forward; _vehCam.GlobalPosition = vi.Origin - fi * 12f + Vector3.Up * 5f; _vehCam.LookAt(vi.Origin + Vector3.Up * 0.5f, Vector3.Up); }
+                        return;
+                    }
                     float throttle, pitch, roll;
                     if (_veh.Afloat)
                     {   // full-power takeoff run; once up to speed, ease back to ROTATE (raise AoA) and lift off the water

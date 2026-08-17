@@ -2933,6 +2933,7 @@ namespace UnturnedGodot
         const float PlaneDrag = 0.03f;             // parasitic airflow drag -> throttle sets a real top speed, and a dead-engine plane glides down instead of bricking
         const float PlaneCtrlSpeedFrac = 0.35f;    // fraction of target airspeed at which elevator/aileron reach FULL authority (below it they're mushy -> a real rotate-at-speed on takeoff)
         const float PlaneWaterRollDamp = 3.2f;     // extra ROLL-rate damping while afloat: settles a wave-induced lean fast (the low float drag that lets it accelerate for takeoff left roll underdamped -> it lingered leaning ~5deg, "wants to tip over")
+        const float PlaneBankComp = 0.75f;         // bank-lift compensation (master "if i bank sharply i lose height sooo fast"): a real coordinated turn needs back-pressure to keep the vertical lift up; auto-apply this FRACTION of it (1/cos(bank)) so a hard bank doesn't drop like a stone. 0 = fully realistic (drops), 1 = altitude-holding arcade turn.
         const float PlaneGroundRotate = 2.6f;      // WHEELED plane takeoff: the gear holds the airframe rigidly level + the Inertia-based elevator is too weak to lift the nose against the weight on the wheels. At takeoff speed, back-stick adds a DIRECT nose-up torque (a real elevator makes a big tail-download at speed) so it ROTATES off the runway. Fades in with airspeed, on the ground only.
         const float PlaneStability = 1.6f;         // aerodynamic (weathervane) stability: how hard the tail pulls the NOSE back onto the airflow. This is what makes a plane statically stable + stops a held elevator over-rotating; it aligns pitch+yaw only, never roll, so bank-to-turn survives
         // AEROFOIL: lift comes from ANGLE OF ATTACK (nose above the airflow), not raw speed -- so the plane trims
@@ -3391,8 +3392,14 @@ namespace UnturnedGodot
 
             // LIFT along BODY-UP: rolling tilts this vector so a banked wing carves the turn (bank-to-turn).
             // GROUND MODE (Ctrl) kills lift so the plane stays down to taxi.
+            // BANK COMPENSATION: boost lift toward 1/cos(bank) so a hard bank keeps its VERTICAL component up
+            // (master "if i bank sharply i lose height sooo fast") -- the automated back-pressure of a coordinated turn.
             if (!_planeGroundMode)
-                ApplyCentralForce(b.Y * (liftFrac * cl * pLift) * Mass);
+            {
+                float upDot = Mathf.Clamp(b.Y.Y, 0.2f, 1f);   // cos of the tilt from vertical (floored so an inverted attitude doesn't blow up)
+                float bankComp = Mathf.Lerp(1f, 1f / upDot, PlaneBankComp);
+                ApplyCentralForce(b.Y * (liftFrac * cl * pLift * bankComp) * Mass);
+            }
 
             // DRAG: parasitic airflow drag (throttle -> a real top speed; dead engine -> glide) + the horizontal
             // speed cap the MP envelope binds on (mirrors heli/boat).
@@ -3405,45 +3412,49 @@ namespace UnturnedGodot
                 ApplyCentralForce(-excess * Mass * 2.0f);
             }
 
-            // CONTROL. Elevator (pitch) + ailerons (roll) need AIRFLOW -- their authority fades in with airspeed,
-            // so a parked plane can't somersault and takeoff has a real "rotate at speed" moment. The rudder
-            // (yaw, A/D) keeps a floor of authority on the ground/water so you can steer while taxiing.
-            // SIGN CONVENTION matches DriveHeli (asserted there): pitch +1 = nose up -> +X; roll +1 = bank right
-            // -> -Z; yaw +1 = nose right -> -Y.
-            float ctrlAuth = Mathf.Clamp(airspeed / (pTarget * PlaneCtrlSpeedFrac), 0f, 1f);
-            float yawAuth = _planeGroundMode || onSurface ? Mathf.Max(ctrlAuth, 0.5f) : ctrlAuth;   // taxi rudder
-            Vector3 cmd = b.X * (_inPitch * _planePitchTq * ctrlAuth)
-                        + b.Z * (-_inRoll * _planeRollTq * ctrlAuth)
-                        + b.Y * (-_inYaw * _planeYawTq * yawAuth * _planeSteerFade);
-
-            // AERODYNAMIC STABILITY (weathervaning). A plane is statically stable -- the tail keeps the nose
-            // pointed along the airflow, so it holds a trimmed attitude and recovers from a disturbance instead
-            // of floating free like a helicopter. Model it as a restoring torque that rotates the nose (-Z)
-            // toward the velocity direction, firmer with airspeed. Because the correction axis is nose x velDir
-            // it has NO component about the nose (roll) axis, so it aligns pitch + yaw but leaves the BANK alone
-            // -- which is exactly what lets a banked wing carve a turn while the nose still tracks the curving
-            // flight path. It is also what stops a held elevator over-rotating: elevator raises the nose,
-            // stability pulls it back toward the path, and the balance point IS the trimmed climb angle.
-            if (!_planeGroundMode && !onSurface && LinearVelocity.LengthSquared() > 4f)
+            // CONTROL. On HARD GROUND a wheeled plane behaves like a CAR: the nose wheel steers off the rudder,
+            // and the flight-control torques are SUPPRESSED -- applying pitch/roll/yaw torque against the gear is
+            // exactly what makes it FREAK OUT on contact (master). In the AIR it's full 3-axis control +
+            // weathervane; the ground-rotation assist below still lifts the nose for takeoff.
+            // SIGN CONVENTION matches DriveHeli: pitch +1 = nose up -> +X; roll +1 = bank right -> -Z; yaw +1 = nose right -> -Y.
+            bool onGround = (grounded || _planeGroundMode) && !_afloat;   // wheeled land plane sitting/rolling on hard ground (or forced ground/taxi mode)
+            if (onGround)
             {
-                float stab = float.TryParse(System.Environment.GetEnvironmentVariable("UG_PLANESTAB"), out var _ps) ? _ps : PlaneStability;
-                Vector3 velDir = LinearVelocity.Normalized();
-                Vector3 restore = (-b.Z).Cross(velDir);   // axis*sin(angle) that rotates the nose onto the airflow
-                cmd += restore * (Mathf.Clamp(airspeed / pTarget, 0f, 1.5f) * stab);
+                Steering = _steerMax > 0f ? Mathf.DegToRad(-_inYaw * _steerMax) : 0f;   // rudder -> nose-wheel steer, so it actually turns while taxiing
+                Brake = 0f;
+                // NO flight ApplyTorque while grounded -- torque against the gear is the freak-out
             }
-            if (cmd.LengthSquared() > 1e-8f) ApplyTorque(cmd * Inertia.X);
+            else
+            {
+                float ctrlAuth = Mathf.Clamp(airspeed / (pTarget * PlaneCtrlSpeedFrac), 0f, 1f);
+                Vector3 cmd = b.X * (_inPitch * _planePitchTq * ctrlAuth)
+                            + b.Z * (-_inRoll * _planeRollTq * ctrlAuth)
+                            + b.Y * (-_inYaw * _planeYawTq * ctrlAuth * _planeSteerFade);
+                // AERODYNAMIC STABILITY (weathervaning): a restoring torque rotating the nose (-Z) onto the
+                // airflow, firmer with airspeed. Axis = nose x velDir -> pitch+yaw only, never roll, so the BANK
+                // survives (a banked wing still carves the turn) while the nose tracks the curving flight path.
+                // Also stops a held elevator over-rotating (elevator raises the nose, stability pulls it back).
+                if (LinearVelocity.LengthSquared() > 4f)
+                {
+                    float stab = float.TryParse(System.Environment.GetEnvironmentVariable("UG_PLANESTAB"), out var _ps) ? _ps : PlaneStability;
+                    Vector3 velDir = LinearVelocity.Normalized();
+                    Vector3 restore = (-b.Z).Cross(velDir);
+                    cmd += restore * (Mathf.Clamp(airspeed / pTarget, 0f, 1.5f) * stab);
+                }
+                if (cmd.LengthSquared() > 1e-8f) ApplyTorque(cmd * Inertia.X);
+            }
 
             // GROUND ROTATION assist (wheeled land plane): the gear holds the airframe rigidly level + the
             // Inertia-based elevator can't lift the nose against the weight on the wheels, so a runway takeoff
             // needs a hand. At takeoff speed, back-stick adds a DIRECT nose-up torque (a real elevator makes a big
             // tail-download at speed) -> the plane ROTATES off the runway; once airborne (grounded false) it stops
             // and the normal elevator flies it. On the ground only, fades in with airspeed. +X = nose up.
-            if (grounded && !_afloat && _inPitch > 0.02f && airspeed > pTarget * 0.45f)
+            if (grounded && !_afloat && _inPitch > 0.02f && airspeed > pTarget * 0.45f && _inCollective > 0.4f)   // throttle UP -> only on a takeoff run, not while landing (a flare wouldn't want the slam)
                 ApplyTorque(b.X * (_inPitch * PlaneGroundRotate * airspeed * Mass));
 
             // FLIGHT DEBUG (UG_PLANEDBG=1): airspeed / altitude / lift / pitch so I can read the takeoff envelope
             if (System.Environment.GetEnvironmentVariable("UG_PLANEDBG") == "1" && ++_planeDbgFrame % 20 == 0)
-                GD.Print($"[plane] t={_planeDbgFrame} spd={LinearVelocity.Length():F1} air={airspeed:F1} alt={GlobalPosition.Y:F1} aoa={aoaDeg:F0} cl={cl:F2} spool={spool:F2} thr={throttle:F2} noseDeg={Mathf.RadToDeg(Mathf.Asin(Mathf.Clamp(-b.Z.Y, -1f, 1f))):F0} roll={Mathf.RadToDeg(Mathf.Asin(Mathf.Clamp(b.X.Y, -1f, 1f))):F0} afloat={_afloat}");
+                GD.Print($"[plane] t={_planeDbgFrame} spd={LinearVelocity.Length():F1} air={airspeed:F1} alt={GlobalPosition.Y:F1} aoa={aoaDeg:F0} cl={cl:F2} spool={spool:F2} thr={throttle:F2} noseDeg={Mathf.RadToDeg(Mathf.Asin(Mathf.Clamp(-b.Z.Y, -1f, 1f))):F0} roll={Mathf.RadToDeg(Mathf.Asin(Mathf.Clamp(b.X.Y, -1f, 1f))):F0} angv={AngularVelocity.Length():F1} hdg={Mathf.RadToDeg(Mathf.Atan2(-b.Z.X, -b.Z.Z)):F0} grnd={grounded} afloat={_afloat}");
 
             // CRASH: full-3D speed like the heli (a plane's defining crash is a nose-in dive, not a lateral
             // bonk). Guarded by the spawn grace so the placement drop doesn't count.
