@@ -27,6 +27,7 @@ namespace UnturnedGodot
         Node3D _propNode; MeshInstance3D _propBlades, _propDisc;   // propeller pivot + its 2 draw states (blades / spin-blur), spun about body forward
         float _propSpin;   // prop visual phase (about local Z)
         Node3D[] _jetFlames; OmniLight3D[] _jetFlameLights; ShaderMaterial[] _jetFlameMats; float _jetFlameT;   // afterburner flame cones (content/afterburner.gdshader, per-burner mat) + glow (jet); throttle-scaled
+        Node3D[] _contrails; ShaderMaterial[] _contrailMats;   // wingtip vapour contrails (content/contrail.gdshader), faded in by airspeed (jet)
         int _planeDbgFrame;   // UG_PLANEDBG print throttle
         bool _planeGroundMode;   // master: hold Ctrl -> drop onto the ground/water + taxi (no lift), for floatplanes now + wheeled aircraft later
         public bool PlaneGroundMode { get => _planeGroundMode; set => _planeGroundMode = value; }
@@ -685,6 +686,7 @@ namespace UnturnedGodot
             public Vector3 PropHub;                // propeller pivot (local, Godot space)
             public string PropMeshPrefix;          // <prefix>_prop.txt (blades) + <prefix>_prop_disc.txt (spin-blur)
             public Vector3[] BurnerPos;            // JET afterburner exhaust points (rear engines) -> flame FX shooting aft, scaled by throttle
+            public Vector3[] ContrailPos;          // JET wingtip trailing edges -> vapour contrails streaming aft, faded in by airspeed
             // ---- TRACKED ARMOUR (tank). Tracks + a rotating turret/elevating gun instead of steered wheels. The
             // road wheels still do the physics; the treads are a visual overlay and the turret is a vehicle weapon
             // aimed by tinyclaw's system via the exposed pivots. Differential steering (Drive branches on Tracked):
@@ -1966,6 +1968,7 @@ namespace UnturnedGodot
             Plane = true, HeliBodyMeshes = new[] { "fighterjet_body.txt", "fighterjet_body_1.txt" },
             PropMeshPrefix = null,                                                // JET: no propeller
             BurnerPos = new[] { new Vector3(-0.39f, 0.99f, 5.32f), new Vector3(0.39f, 0.99f, 5.32f) },   // the 2 rear engine exhausts (prefab Burner_0/1, Godot Z-neg) -> afterburner flames shoot aft (+Z)
+            ContrailPos = new[] { new Vector3(-4.5f, 0.85f, 3.75f), new Vector3(4.5f, 0.85f, 3.75f) },   // wingtip trailing edges (mesh x=+/-4.5, aft z=3.75) -> vapour contrails stream aft
             PlaneThrust = 16f, PlaneLift = 11f, PlaneTargetSpeed = 28f,           // strong thrust; rotates ~24 m/s, cruises fast
             PlanePitchTorque = 2.8f, PlaneRollTorque = 3.8f, PlaneYawTorque = 1.1f, PlaneSteerFade = 0.55f,   // agile (Air_Steer 64) -- snappier roll/pitch than the otter
             Water = WaterMode.Car,                                               // LAND plane: no buoyancy; rests + rolls on its wheels
@@ -2471,6 +2474,36 @@ namespace UnturnedGodot
                     v._jetFlameLights[i] = light;
                 }
             }
+
+            // ---- WINGTIP CONTRAILS (jet): a thin, long vapour ribbon streaming aft off each wingtip trailing edge
+            // (content/contrail.gdshader -- soft white vapour that billows + dissipates aft, ALPHA-blended = cloud,
+            // not glow). StepPlane fades them IN with airspeed (only show when fast) + lengthens them.
+            if (s.ContrailPos != null && s.ContrailPos.Length > 0)
+            {
+                var contrailShader = GetContrailShader();
+                v._contrails = new Node3D[s.ContrailPos.Length];
+                v._contrailMats = new ShaderMaterial[s.ContrailPos.Length];
+                for (int i = 0; i < s.ContrailPos.Length; i++)
+                {
+                    var cp = s.ContrailPos[i];
+                    var mat = new ShaderMaterial { Shader = contrailShader };
+                    mat.SetShaderParameter("u_seed", i * 5.1f);
+                    mat.SetShaderParameter("u_length", 14f);
+                    mat.SetShaderParameter("u_speed", 0f);
+                    var pivot = new Node3D { Name = $"Contrail{i}", Position = cp, RotationDegrees = new Vector3(90f, 0f, 0f) };   // +Y -> +Z (aft)
+                    var ribbon = new MeshInstance3D
+                    {
+                        Mesh = new CylinderMesh { TopRadius = 0.32f, BottomRadius = 0.05f, Height = 14f, RadialSegments = 12, Rings = 1, CapTop = false, CapBottom = false },   // thin at the wingtip (-Y), diffusing wider aft (+Y)
+                        MaterialOverride = mat,
+                        Position = new Vector3(0f, 7f, 0f),   // starts at the wingtip, runs 14m aft
+                        CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
+                    };
+                    pivot.AddChild(ribbon);
+                    v.AddChild(pivot);
+                    v._contrails[i] = pivot;
+                    v._contrailMats[i] = mat;
+                }
+            }
         }
 
         static Shader _afterburnerShader;
@@ -2478,6 +2511,10 @@ namespace UnturnedGodot
         // -- same idiom as the vehicle_paint.gdshader load above.
         static Shader GetAfterburnerShader()
             => _afterburnerShader ??= new Shader { Code = System.IO.File.ReadAllText(ProjectSettings.GlobalizePath("res://content/afterburner.gdshader")) };
+
+        static Shader _contrailShader;
+        static Shader GetContrailShader()
+            => _contrailShader ??= new Shader { Code = System.IO.File.ReadAllText(ProjectSettings.GlobalizePath("res://content/contrail.gdshader")) };
 
         /// <summary>A rotor disc as a monitoring Area3D: the thin cylinder the blades sweep. Masks the world +
         /// vehicle layers (bit0 | bit5) so it notices terrain, buildings and other vehicles, and sits on no
@@ -3395,6 +3432,23 @@ namespace UnturnedGodot
                         _jetFlameMats[i]?.SetShaderParameter("u_throttle", burn);
                     }
                     if (_jetFlameLights[i] != null) _jetFlameLights[i].LightEnergy = burning ? (1.5f + 3.5f * burn) * flick : 0f;
+                }
+            }
+
+            // WINGTIP CONTRAILS (jet): thin vapour ribbons off each wingtip that FADE IN with airspeed + lengthen.
+            if (_contrails != null)
+            {
+                float cspd = _exploded ? 0f : LinearVelocity.Length();
+                float trail = Mathf.Clamp((cspd - 12f) / 14f, 0f, 1f);   // fade in 12 -> 26 m/s
+                bool show = trail > 0.02f;
+                for (int i = 0; i < _contrails.Length; i++)
+                {
+                    _contrails[i].Visible = show;
+                    if (show)
+                    {
+                        _contrails[i].Scale = new Vector3(1f, 0.55f + 0.85f * trail, 1f);   // Y = length aft; longer with speed
+                        _contrailMats[i]?.SetShaderParameter("u_speed", trail);
+                    }
                 }
             }
 

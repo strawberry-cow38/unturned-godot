@@ -6203,6 +6203,31 @@ namespace UnturnedGodot
                         }
                         return;
                     }
+                    if (System.Environment.GetEnvironmentVariable("UG_PLANEDEMO") == "1")
+                    {   // FX DEMO: throttle RAMPS full->0->full so the afterburners visibly SCALE with thrust, while the
+                        // jet accelerates (wingtip CONTRAILS fade IN with speed). A pulled-back 3/4-rear cam frames the
+                        // whole plane so both the trails + the burners read.
+                        float th;
+                        if (_frame < 130) th = 1f;                                   // takeoff + get fast (contrails fade in)
+                        else if (_frame < 250) th = 1f - (_frame - 130) / 120f;      // ramp DOWN -> burners shrink to nothing
+                        else th = (_frame - 250) / 120f;                             // ramp back UP -> burners grow again
+                        th = Mathf.Clamp(th, 0f, 1f);
+                        var pbd = _veh.GlobalTransform.Basis;
+                        float noseDegD = Mathf.RadToDeg(Mathf.Asin(Mathf.Clamp(-pbd.Z.Y, -1f, 1f)));
+                        float pitchD = Mathf.Clamp((6f - noseDegD) * 0.05f, -0.2f, 0.2f);
+                        _veh.DrivePlane(th, 0f, _veh.Afloat ? (spd > 11f ? 0.55f : 0f) : pitchD, 0f, delta);
+                        if (_vehCam != null)
+                        {
+                            var vtD = _veh.GetGlobalTransformInterpolated();
+                            var fwdD = -vtD.Basis.Z; fwdD.Y = 0f; fwdD = fwdD.LengthSquared() > 0.001f ? fwdD.Normalized() : Vector3.Forward;
+                            var rightD = new Vector3(fwdD.Z, 0f, -fwdD.X);
+                            float swayD = Mathf.Sin(_frame * 0.008f) * 0.5f;
+                            var dirD = (-fwdD * Mathf.Cos(swayD) + rightD * Mathf.Sin(swayD)).Normalized();
+                            _vehCam.GlobalPosition = vtD.Origin + dirD * 16f + Vector3.Up * 4.5f;   // pulled back -> whole plane + both wingtip trails
+                            _vehCam.LookAt(vtD.Origin + Vector3.Up * 0.5f, Vector3.Up);
+                        }
+                        return;
+                    }
                     float throttle, pitch, roll;
                     if (_veh.Afloat)
                     {   // full-power takeoff run; once up to speed, ease back to ROTATE (raise AoA) and lift off the water
