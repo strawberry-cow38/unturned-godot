@@ -49,7 +49,14 @@ namespace UnturnedGodot.Testing
             // have documented the numbers without guarding them.
             T.Check($"YAW +1 yaws one way consistently: AngularVelocity.Y {yv.AngularVelocity.Y:0.000} (negative), heading {headNow:0.000} rad",
                 yv.AngularVelocity.Y < -0.1f && headNow < -0.05f);
-            T.Check($"ROLL +1 puts the RIGHT wing down: Basis.X.Y {bank:0.000} (negative)", bank < -0.1f);
+            // The RATE sign matters as much as the attitude sign: a damping term built on a guessed rate sign
+            // turns a damper into an amplifier, which is a divergence that looks exactly like "gains too high".
+            Vector3 rfwd = -rv.GlobalTransform.Basis.Z;
+            float rollRateAboutFwd = rv.AngularVelocity.Dot(rfwd);
+            T.Check($"ROLL +1 puts the RIGHT wing down: Basis.X.Y {bank:0.000} (negative), rate about forward {rollRateAboutFwd:0.000}",
+                bank < -0.1f);
+            T.Check($"ROLL +1 rate about FORWARD is {(rollRateAboutFwd > 0f ? "POSITIVE" : "NEGATIVE")} ({rollRateAboutFwd:0.000}) -- damping must oppose THIS",
+                Mathf.Abs(rollRateAboutFwd) > 0.05f);
             T.Check($"PITCH +1 raises the NOSE: forward.Y {(-pv.GlobalTransform.Basis.Z).Y:0.000} (positive)",
                 (-pv.GlobalTransform.Basis.Z).Y > 0.1f);
         }

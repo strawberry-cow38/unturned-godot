@@ -28,8 +28,32 @@ namespace UnturnedGodot
         public const float CanopyClearance = 34f;
         public const float OrbitRadius = 90f;      // how wide it circles the monument
         const float ArriveDist = 140f;             // switch from transit to orbit inside this
+        // Climb-rate authority the AI will ask for, and the deadband it stops correcting inside. The deadband
+        // has to be wide enough that the neutral state's gentle sink does not retrigger every tick.
+        const float MaxClimbMps = 6f, ClimbDeadband = 0.6f;
 
-        float _hoverColl = 0.6f;
+        // FLIGHT PHASES (strawberry 2026-08-17: "the nose tilt should be different states, like when it wants to
+        // go fast, circling, etc"). The attitude is a PROPERTY OF THE PHASE rather than a by-product of one speed
+        // gain -- with a single gain the nose angle is just however far behind the speed target it happens to be,
+        // so a transiting aircraft and a loitering one sit at the same attitude and only differ in throttle.
+        public enum FlightPhase { Transit, Arrive, Orbit }
+        public FlightPhase Phase { get; private set; } = FlightPhase.Transit;
+
+        readonly struct Envelope
+        {
+            public readonly float SpeedFrac;        // of SpeedMaxMps -- what this phase is TRYING to do
+            public readonly float TiltGain;         // deg of attitude per m/s of speed error
+            public readonly float MaxNoseDownDeg;   // how hard it is allowed to commit the nose
+            public readonly float MaxNoseUpDeg;     // how hard it is allowed to flare to brake
+            public Envelope(float f, float g, float d, float u) { SpeedFrac = f; TiltGain = g; MaxNoseDownDeg = d; MaxNoseUpDeg = u; }
+        }
+        // TRANSIT leans on it. ARRIVE flares nose-UP to kill the speed it built rather than sailing through the
+        // monument. ORBIT sits near level, because a helicopter loitering over a target is not a diving one.
+        static readonly Envelope TransitEnv = new Envelope(0.80f, 4.0f, 38f, 6f);
+        static readonly Envelope ArriveEnv  = new Envelope(0.30f, 5.0f,  8f, 22f);
+        static readonly Envelope OrbitEnv   = new Envelope(0.45f, 2.5f, 14f, 8f);
+
+        float _wantClimb;   // m/s of climb the AI is asking for; telemetry only
 
         public override void _PhysicsProcess(double delta)
         {
@@ -41,11 +65,22 @@ namespace UnturnedGodot
             float ground = Terr != null ? Terr.SampleHeight(pos.X, pos.Z) : 0f;
             float wantY = ground + CanopyClearance;
             float vy = Heli.LinearVelocity.Y;
-            // Hover collective is thrust-dependent, so ask the airframe rather than assuming: a machine with more
-            // thrust needs less stick to hold height, which is half of "consider the heli's stats".
-            float hover = Heli.DebugThrust > 0.01f ? Mathf.Clamp(9.8f / Heli.DebugThrust, 0f, 1f) : 0.6f;
-            _hoverColl = hover;
-            float collective = Mathf.Clamp(hover + 0.055f * (wantY - pos.Y) - 0.16f * vy, 0f, 1f);
+            // DriveHeli's collective is a THREE-STATE COMMAND, NOT A THROTTLE POSITION. Read it: anything above
+            // +0.05 means "full up", anything below -0.05 means "full down", and everything in between means
+            // "hands off" -- settle to IdleCollective, which is 0.92 of hover and therefore a gentle sink. It is
+            // the same law a player's keyboard drives, and it is correct for a key.
+            //
+            // So the PID output this used to compute was meaningless: every positive number said the identical
+            // thing. It also explains a 13 m steady-state height error the loose height check waved through --
+            // the aircraft climbed until the proportional term happened to land inside the +-0.05 deadband, then
+            // rode IdleCollective there. It was holding a steady height, just not the commanded one.
+            //
+            // Commanding the three states directly, on a CLIMB-RATE error with a deadband so it cannot chatter:
+            // ask for a climb rate proportional to the height error, then pull up, push down, or let go.
+            float wantClimb = Mathf.Clamp(0.35f * (wantY - pos.Y), -MaxClimbMps, MaxClimbMps);
+            float climbErr = wantClimb - vy;
+            float collective = climbErr > ClimbDeadband ? 1f : climbErr < -ClimbDeadband ? -1f : 0f;
+            _wantClimb = wantClimb;
 
             // ---- WHERE TO GO: run the target down, then circle it.
             Vector2 here = new Vector2(pos.X, pos.Z), goal = new Vector2(Target.X, Target.Z);
@@ -66,9 +101,9 @@ namespace UnturnedGodot
                 aim = goal + (radial * OrbitRadius) + tangent * (OrbitRadius * 0.9f);
             }
 
-            // ---- HEADING: yaw the nose onto the bearing. Turning on the PEDALS rather than banking keeps this to
-            // axes whose sign convention is established (pitch positive = nose up, per HeliSpeedTests' HoldDive);
-            // a rolled turn would fly better but I am not guessing at a sign on an aircraft with no self-levelling.
+            // ---- HEADING. This used to turn on the PEDALS alone, because the roll sign was unverified and I would
+            // not guess at it on an aircraft with no self-levelling. The signs are measured now (heli_axis_probe),
+            // so the BANK does the steering and the pedals only coordinate -- see the roll block below.
             Vector3 fwd = -Heli.GlobalTransform.Basis.Z;
             float headNow = Mathf.Atan2(-fwd.X, -fwd.Z);
             Vector2 toAim = aim - here;
@@ -78,37 +113,74 @@ namespace UnturnedGodot
             // derived pitch off the torque expression correctly and then guessed these two; both were inverted and
             // put the aircraft in the ground on the first flight.
             float err = Mathf.Wrap(headWant - headNow, -Mathf.Pi, Mathf.Pi);
-            float yaw = Mathf.Clamp(-1.2f * err + 0.45f * Heli.AngularVelocity.Y, -1f, 1f);
+            // Pedals do the COORDINATION, not the turning. A hard pedal turn at speed sideslips and rolls the
+            // machine, and a roll loop then fights that roll -- which is what produced strawberry's "rolling back
+            // and forth 45 degrees each way". Low gain here; the bank below does the steering.
+            float yaw = Mathf.Clamp(-0.80f * err + 0.55f * Heli.AngularVelocity.Y, -1f, 1f);
 
             // ---- SPEED, VIA A TARGET ATTITUDE. The cyclic is a RATE command, so feeding it a constant derived from
             // the speed error just rotates the machine forever: from a standing start it held -0.50 and pitched
             // straight over the top -- upY 1.00 -> 0.87 -> 0.52 -> 0.04 -> -0.70, inverted in four seconds, thrust
             // pointing at the ground. Speed error now sets a BOUNDED nose-down ANGLE, and a PD loop flies the
             // aircraft onto that angle. The bound is what makes it impossible to command past the vertical.
-            float cruise = Heli.SpeedMaxMps * 0.62f;
             Vector3 flat = new Vector3(Heli.LinearVelocity.X, 0f, Heli.LinearVelocity.Z);
             float speed = flat.Length();
-            float wantSpeed = range > ArriveDist ? cruise : cruise * 0.55f;   // ease off to hold the circle
-            float wantNoseUpDeg = -Mathf.Clamp(0.9f * (wantSpeed - speed), -8f, 20f);   // nose-down to accelerate, capped
+
+            // PHASE TRANSITIONS, with hysteresis so a machine sitting near a boundary does not chatter between
+            // two attitudes every tick -- which would read as exactly the nose-bobbing this is meant to remove.
+            switch (Phase)
+            {
+                case FlightPhase.Transit:
+                    if (range < ArriveDist) Phase = FlightPhase.Arrive;
+                    break;
+                case FlightPhase.Arrive:
+                    // Done braking once the speed is near the orbit figure, or once it is genuinely on the circle.
+                    if (speed < Heli.SpeedMaxMps * OrbitEnv.SpeedFrac * 1.15f || range < OrbitRadius * 1.3f)
+                        Phase = FlightPhase.Orbit;
+                    break;
+                case FlightPhase.Orbit:
+                    if (range > ArriveDist * 1.6f) Phase = FlightPhase.Transit;   // blown off station, or retargeted
+                    break;
+            }
+            Envelope env = Phase == FlightPhase.Transit ? TransitEnv : Phase == FlightPhase.Arrive ? ArriveEnv : OrbitEnv;
+            float wantSpeed = Heli.SpeedMaxMps * env.SpeedFrac;
+            // COMMIT THE NOSE. 20 deg was too polite to build speed (strawberry: "it should definitely tilt forward
+            // more"); 38 still leaves the thrust vector doing most of its work vertically.
+            // THE GAIN IS THE LIMIT, NOT THE CLAMP. Raising the clamp 20 -> 38 deg changed nothing on its own:
+            // at 1.5 deg per m/s a 4.8 m/s deficit only asked for 7 deg, so it trimmed at ~9.5 m/s well short of
+            // cruise and never came near the bound. The per-phase TiltGain is what actually commits the nose.
+            // Signs: a speed DEFICIT commands nose DOWN (negative), an EXCESS commands a nose-up flare.
+            float wantNoseUpDeg = Mathf.Clamp(-env.TiltGain * (wantSpeed - speed), -env.MaxNoseDownDeg, env.MaxNoseUpDeg);
             float noseUpDeg = Mathf.RadToDeg(Mathf.Asin(Mathf.Clamp(fwd.Y, -1f, 1f)));
             float pitchRateDeg = Mathf.RadToDeg(Heli.AngularVelocity.Dot(Heli.GlobalTransform.Basis.X));
             float pitch = Mathf.Clamp(0.05f * (wantNoseUpDeg - noseUpDeg) - 0.015f * pitchRateDeg, -1f, 1f);
 
-            // ---- ROLL: hold the wings level. Roll +1 puts the right wing DOWN, i.e. drives Basis.X.Y negative, so
-            // levelling a right bank (bank < 0) needs a negative stick -- the proportional term is +k*bank, not -k.
-            // bank_rate is -(w . forward), hence the damping term's sign.
+            // ---- ROLL: BANK INTO THE TURN, then hold that bank. Roll +1 puts the right wing down (Basis.X.Y
+            // negative), and turning right means a negative heading error, so the target bank is +k*err directly.
+            //
+            // Gains matter more than the shape here. 2.2 on bank saturates the stick past ~19 deg -- bang-bang, and
+            // bang-bang oscillates, which is what strawberry saw. But a big bank TARGET is no better: at 0.45
+            // (27 deg) with P=1.5 the orbit's standing heading error pinned the command and it rolled to 81 deg and
+            // over. So: a small lean into the turn, low P, and damping as the dominant term.
             float bank = Heli.GlobalTransform.Basis.X.Y;
-            float roll = Mathf.Clamp(2.2f * bank + 0.40f * Heli.AngularVelocity.Dot(fwd), -1f, 1f);
+            float bankTarget = Mathf.Clamp(0.30f * err, -0.22f, 0.22f);   // sin-space: a gentle ~13 deg lean into the turn
+            // MEASURED (heli_axis_probe): roll +1 produces a POSITIVE rate about forward, i.e. the rate is in the
+            // same sense as the stick. So damping must SUBTRACT it. It was +, which is an ANTI-damper -- it fed the
+            // roll rate back in and drove the oscillation strawberry reported ("rolling back and forth 45 degrees
+            // each way"). It also explains why raising the "damping" gain made the divergence worse, not better.
+            float roll = Mathf.Clamp(0.85f * (bank - bankTarget) - 1.10f * Heli.AngularVelocity.Dot(fwd), -1f, 1f);
 
-            LastColl = collective; LastYaw = yaw; LastPitch = pitch; LastRoll = roll; LastErr = err;
+            LastColl = collective; LastYaw = yaw; LastPitch = pitch; LastRoll = roll; LastErr = err; LastBank = bank;
+            LastWantNoseUpDeg = wantNoseUpDeg; LastNoseUpDeg = noseUpDeg;
             Heli.DriveHeli(collective, yaw, pitch, roll, delta);
         }
 
         public float DebugWantY => Terr != null && Heli != null
             ? Terr.SampleHeight(Heli.GlobalPosition.X, Heli.GlobalPosition.Z) + CanopyClearance : 0f;
         public float DebugRange => Heli != null ? new Vector2(Heli.GlobalPosition.X - Target.X, Heli.GlobalPosition.Z - Target.Z).Length() : -1f;
-        public float DebugHoverCollective => _hoverColl;
-        public float LastColl, LastYaw, LastPitch, LastRoll, LastErr;   // telemetry: which axis is diverging
+        public float DebugWantClimbMps => _wantClimb;
+        public float LastColl, LastYaw, LastPitch, LastRoll, LastErr, LastBank;   // telemetry: which axis is diverging
+        public float LastWantNoseUpDeg, LastNoseUpDeg;   // the commanded vs actual attitude, per phase
 
         /// <summary>Spawn `name` at the nearest MAP EDGE and send it to the closest named node. Returns null if the
         /// map has no nodes to fly to, which is the one case where there is nothing sensible to do.</summary>
