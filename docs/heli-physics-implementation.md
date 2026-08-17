@@ -140,6 +140,62 @@ mask is bit 0 and it *does* see vehicles. That is left deliberately — a surfac
 surface, and a helicopter hovering low over a truck really is in ground effect. Only a *landing* test needs
 that distinction. Props (bit 6) are excluded, since a bush is not something downwash builds a cushion on.
 
+## What the three-agent implementation review changed
+
+Three reviewers (physics correctness, integration risk, adversarial test quality) read the two commits
+independently. Their convergence was the useful signal: **three findings were reported by all three**, and
+those three were all real.
+
+| Finding | Reported by | Outcome |
+|---|---|---|
+| Ground effect measured from the fuselage origin, not the rotor disc | all 3 | fixed — casts from `_mainHubCentre` |
+| Drag derived from unboosted thrust while ETL is saturated at every cruise speed | all 3 | fixed — derives against `thrust × (1 + EtlGain)` |
+| Stale numbers in comments (1.44, 0.08, "~28 m/s") | all 3 | fixed |
+| `HoverCollective` divides by *raw* ground effect while lift uses the *capped* product | 2 of 3 | fixed — new `_geApplied` |
+| No level-flight test; the central derivation was unmeasured | 2 of 3 | fixed — new check, teeth-confirmed |
+| Convexity check tolerates a residual linear term up to ~0.25 s⁻¹ | 1 | fixed — now solves for it directly |
+| `HeliLateralDragRatio` had zero coverage | 1 | fixed — new ratio check |
+
+Three of these deserve recording in more detail, because of *why* they were invisible.
+
+**The ground-effect probe measured from the wrong point.** Cheeseman-Bennett's `z` is the height of the
+disc; the hub sits 1.12–4.18 m above the body origin depending on airframe. Measuring from the origin
+overstated the cushion by 11–22 % on the deck and shifted the whole decay curve upward, so a Hind kept a
+meaningful boost until its fuselage was at two rotor radii — disc nearly three. It also made every airframe
+pin to the `R/2` clamp while parked, so the clamp was silently standing in for the geometry. No test could
+see it because every comparison was *within* one airframe, where a constant offset cancels.
+
+**The trim cancelled the wrong quantity.** `HoverCollective` divided by the raw ground-effect factor while
+the lift path multiplied by the *capped* product. When the cap binds those are different numbers, and the
+error runs the wrong way: on a Hind parked in ground effect the hands-off sink came out **63 % harder**
+near the deck than at altitude — ground effect inverted, in the flare. The parked-machine test could not
+catch it because it uses a minicopter, whose cap is 1.586 and can never bind. A check whose failure state
+is unreachable for the mechanism it guards is not a check.
+
+**The drag calibration was never measured.** Every window in the speed suite was a 45° dive, which settles
+against the 1.15 backstop rather than against drag — so halving the drag coefficient left the entire suite
+green. The fix is a level-flight check flown with an integral trim controller, since "level flight" is a
+constraint rather than an attitude: driving vertical speed to zero at full collective converges on exactly
+the attitude the coefficient is derived against. Teeth confirmed — with the coefficient halved both new
+checks go red (1.179x, 1.176x) while every dive check still passes.
+
+### A correction against myself
+
+The commit message for phase 2 and the `EtlGain` docstring both claimed a measurement: that at gain 0.08 a
+Huey hands-off at 20 m/s **climbed** at +0.14 m/s, blamed on the collective settling above its spring
+target. The adversarial reviewer showed that reading was a rig artefact — the test zeroed vertical velocity
+while the collective was still at full, so the window opened with ~1.4 m/s of climb decaying on a 2.2 s
+time constant, and 4 s was not long enough to settle. The offered mechanism was wrong too: `DriveHeli`
+converges with `MoveToward`, which cannot overshoot.
+
+The number was real and it answered a different question — "what is this machine doing one time constant
+in", not "where does it settle". Steady state at 0.08 is a *sink* of 0.139 m/s.
+
+**0.05 is still the right value, for a different reason.** The 0.087 bound is where the sink inverts, and
+the behaviour dies well before that: at 0.08 the settled sink is 1.4 m over ten seconds, a hover with a
+rounding error rather than the "gentle sink" that was asked for. At 0.05 it is 0.74 m/s. The window is now
+10 s (4.5 time constants) and the check asserts a *meaningful* sink.
+
 ## What is not done
 
 **Phase 4, torque coupling**, is deliberately not implemented. It would make collective input yaw the

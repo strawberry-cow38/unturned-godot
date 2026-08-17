@@ -23,7 +23,7 @@ namespace UnturnedGodot
         // A sibling RigidBody3D would have to rebuild all of it. VehicleBody3D with no VehicleWheel3D children
         // is just a RigidBody3D, so the base class does not fight flight.
         bool _heli; float _heliThrust, _heliPitchTq, _heliRollTq, _heliYawTq, _heliLevel, _heliDragFwd;
-        float _rotorRadius, _heliLiftCap = 1f, _groundEffect = 1f;   // _groundEffect: cached once per StepHeli; one raycast, two readers
+        float _rotorRadius, _heliLiftCap = 1f, _groundEffect = 1f, _geApplied = 1f;   // cached once per StepHeli; _geApplied is the share the CAP let through
         bool _tracked;   // TANK: tracked/differential drive -- Drive() branches on this to set per-TRACK torque instead of a steered-wheel angle
         const float TankWheelSlip = 1.0f;   // TANK: lateral wheel friction. Too LOW (0.5) and the yaw torque spins it in place instead of arcing forward (low grip = no forward bite either); too HIGH and turning drags to a crawl. Paired with the speed-faded yaw below. Tunable.
         const float TankComY = 0.1f;   // TANK: low centre of mass (anti-flip -- master "easily flipped"). Tunable.
@@ -53,8 +53,8 @@ namespace UnturnedGodot
         /// drag, which is quadratic. Two axes, two mechanisms, two laws; modelling both with one law is what
         /// would actually be inconsistent.
         ///
-        /// THE VALUE IS LOAD-BEARING AND MUST NOT BE RETUNED CASUALLY: it is what the fleet's terminal fall,
-        /// HeliCrashExplodeSpeed and the "an 18.5 m fall is fatal" calibration were all settled against. It
+        /// THE VALUE IS LOAD-BEARING AND MUST NOT BE RETUNED CASUALLY: it is what the fleet's terminal fall
+        /// (g / 0.45 = 21.8 m/s) and HeliCrashExplodeSpeed were settled against. It
         /// was Godot's RigidBody3D.LinearDamp until the drag rework; it is applied by hand now because that
         /// property is a SCALAR and damps the whole velocity vector, so leaving it set would have applied this
         /// linear law to the horizontal too -- where, once the old thrust boosts were gone, it became the
@@ -96,13 +96,20 @@ namespace UnturnedGodot
         /// which is what VoX asked for. ETL multiplies that, so any gain at or above 9.8/9.016 - 1 = 0.087
         /// turns the hands-off sink into a hands-off CLIMB and silently deletes the behaviour.
         ///
-        /// 0.05, NOT THE 0.087 THE ALGEBRA ALLOWS, and the difference was measured rather than reasoned. At
-        /// 0.08 -- comfortably "under the bound" -- a Huey hands-off at 20 m/s CLIMBED at +0.14 m/s. The bound
-        /// assumes the collective sits exactly at its spring target, and it does not: it settles a percent or
-        /// so above, which is more than the 0.06 m/s^2 of margin a gain of 0.08 leaves. A limit derived from
-        /// an idealised state needs headroom for the state actually being reached, so the gain is sized to
-        /// leave about 0.33 m/s^2 instead. vehicle.heli_lift asserts the sink at speed for this reason, and it
-        /// is the check that goes red first if anyone nudges this back up.</summary>
+        /// 0.05, NOT THE 0.087 THE ALGEBRA ALLOWS, because the bound is where the sink INVERTS and the
+        /// behaviour dies well before that. At 0.08 the steady-state hands-off sink is 0.139 m/s -- 1.4 m of
+        /// descent over ten seconds, which is a hover with a rounding error, not the "gentle sink" that was
+        /// asked for. At 0.05 it is 0.74 m/s: still gentle, still unmistakably down. Sizing a gain to the
+        /// point where a behaviour reverses leaves nothing of the behaviour.
+        ///
+        /// CORRECTION, recorded because the wrong version shipped in this file and in a commit message: the
+        /// original justification here claimed a measurement of a +0.14 m/s CLIMB at 0.08, blamed on the
+        /// collective settling above its spring target. That reading was a rig artefact -- the test zeroed
+        /// vertical velocity while the collective was still at full, so the window opened with ~1.4 m/s of
+        /// climb which decays on a 2.2 s time constant, and 4 s was not long enough for it to settle. The
+        /// stated mechanism was wrong too: DriveHeli converges with MoveToward, which cannot overshoot its
+        /// target. The number was real and the question it answered was "what is this machine doing one time
+        /// constant in", not "where does it settle". Found by review, not by me.</summary>
         const float EtlGain = 0.05f;
         const float EtlOnset = 4f, EtlFull = 11f;   // m/s: starting to outrun the downwash, and fully clear of it
         /// <summary>Closest approach used in the ground-effect term, as a fraction of rotor radius.
@@ -134,9 +141,20 @@ namespace UnturnedGodot
                 float th = Mathf.DegToRad(i * 0.1f);
                 float lift = thrust * (1f - TiltThrustLoss * (1f - Mathf.Cos(th)));
                 if (lift * Mathf.Cos(th) < 9.8f) break;   // any steeper and it descends -- not level flight any more
-                best = lift * Mathf.Sin(th);
+                // MAX, not last. The break is provably safe -- with c = cos(theta), vertical thrust is
+                // T(0.45c + 0.55c^2), whose derivative T(0.45 + 1.1c) is positive for every c >= 0, so it
+                // decreases monotonically in theta and no feasible attitude hides past an infeasible one.
+                // The OBJECTIVE is not monotone though: lift*sin(theta) peaks at 57.9 deg. The altitude
+                // constraint currently binds at 27.6-38.4 deg, well short of that, so taking the last feasible
+                // angle happens to be the maximum today -- and stops being so above thrust 24.8, where it
+                // would under-derive the coefficient and put top speed over spec. Cheap to just be correct.
+                best = Mathf.Max(best, lift * Mathf.Sin(th));
             }
-            return best;
+            // A rotor that cannot lift its own weight breaks on the first step and leaves best at 0, which
+            // downstream becomes a drag coefficient of 0 -- an airframe with NO horizontal drag whatsoever,
+            // limited only by the backstop. Nothing in the fleet is close (minimum thrust 11.8), but the
+            // failure is silent and the guard is one line.
+            return best > 0.01f ? best : 0.01f;
         }
 
         // ---- INERTIA + TURBULENCE (strawberry 2026-08-16: "adding inertia. joystick changes should feel
@@ -184,11 +202,18 @@ namespace UnturnedGodot
         /// <summary>Impact speed that writes the machine off outright, ~54 km/h.
         ///
         /// Set against what the airframe can actually REACH, not picked as a round number. Horizontal top speed
-        /// is 26 m/s, so flying into a cliff at cruise is always fatal. Vertically, drag caps terminal at
-        /// ~28 m/s but a 45 m drop only arrives at ~17.5 -- so a threshold of 19, which is what this was, meant
-        /// falling out of the sky from any survivable height could NOT write the machine off, while a horizontal
-        /// crash could. 15 puts a genuine plummet and a fast collision on the same side of the line, and leaves
-        /// the 10-12 m/s arrivals of a botched landing survivable.</summary>
+        /// is 26 m/s, so flying into a cliff at cruise is always fatal. Vertically, damping caps terminal fall
+        /// at 21.8 m/s (g / HeliHeaveDamp) but a 45 m drop only arrives at ~18 -- so a threshold of 19, which
+        /// is what this was, meant falling out of the sky from any survivable height could NOT write the
+        /// machine off, while a horizontal crash could. 15 puts a genuine plummet and a fast collision on the
+        /// same side of the line, and leaves the 10-12 m/s arrivals of a botched landing survivable.
+        ///
+        /// The terminal figure here read "~28 m/s" until 2026-08-17, which is g / 0.35 -- the damping the file
+        /// SAID it had. The value actually in force was 0.45 (see HeliHeaveDamp), giving 21.8. The companion
+        /// 45 m number beside it was measured and is right, which is the tell: one figure was observed and the
+        /// one next to it was reasoned from a constant that was never true. The threshold of 15 was chosen
+        /// against the measured arrival speeds, so it does not move -- but the "18.5 m fall is fatal" figure
+        /// quoted elsewhere IS a 0.35 number: at 0.45 you need about 23 m to reach 15 m/s.</summary>
         const float HeliCrashExplodeSpeed = 15f;
         /// <summary>Below this an impact is not a crash at all -- setting down firmly, brushing a wall while
         /// hovering. Without a floor, every landing would chip the airframe.</summary>
@@ -368,7 +393,13 @@ namespace UnturnedGodot
             if (!_heli || _rotorRadius < 0.01f) return 1f;
             var space = GetWorld3D()?.DirectSpaceState;
             if (space == null) return 1f;
-            Vector3 from = GlobalPosition;
+            // FROM THE ROTOR HUB, not the fuselage origin. Cheeseman-Bennett's z is the height of the DISC, and
+            // the hub sits 1.12 m (scoutcopter) to 4.18 m (Hind) above the origin. Measuring from the origin
+            // overstated the cushion by 11-22 % on the deck and, worse, shifted the whole decay curve upward by
+            // that offset -- a Hind kept a meaningful boost until its fuselage was at 2R, with the disc nearly
+            // three rotor radii up. It also made every airframe pin to the R/2 clamp while parked, so the clamp
+            // was silently standing in for the geometry instead of guarding the pole.
+            Vector3 from = ToGlobal(_mainHubCentre);
             var q = PhysicsRayQueryParameters3D.Create(from, from + Vector3.Down * (_rotorRadius * 2f));
             q.Exclude = new Godot.Collections.Array<Rid> { GetRid() };
             q.CollisionMask = 1u << 0;   // WORLD geometry only -- not vehicles (1<<5), not props (1<<6)
@@ -2434,14 +2465,19 @@ namespace UnturnedGodot
             // (VehicleReplication caps horizontal motion at SpeedMaxMps * EnvelopeSlack), so calibrating the
             // sim's own top speed to anything else would guarantee either an unreachable spec or a pilot the
             // server rolls back. A dive still exceeds it -- that is what the backstop in StepHeli is for.
+            // DERIVED AGAINST ETL-BOOSTED THRUST, because cruise is always inside ETL. EtlFull is 11 m/s and
+            // the slowest airframe's Speed_Max is 20, so translational lift is pinned at its maximum at every
+            // speed this calibration is about, and no lift cap binds it (every cap is >= 1.26 against 1.05).
+            // Deriving from bare thrust made the stated invariant false by 4.2 % (Hind) to 7.0 % (minicopter)
+            // -- not an envelope break, but it quietly spent a third of the backstop's margin.
             v._heliDragFwd = s.Heli && s.SpeedMax > 0.01f
-                ? LevelFlightAccel(s.HeliThrust) / (s.SpeedMax * s.SpeedMax) : 0f;
+                ? LevelFlightAccel(s.HeliThrust * (1f + EtlGain)) / (s.SpeedMax * s.SpeedMax) : 0f;
             v._rotorRadius = s.RotorRadius;
             // CEILING ON THE COMBINED LIFT MULTIPLIERS, derived from this airframe's OWN climb envelope rather
             // than picked. Terminal climb is (thrust * multipliers - g) / HeliHeaveDamp, and the server checks
             // vertical motion against HeliClimbMax with ZERO slack -- so a multiplier large enough to out-climb
             // that envelope does not read as a fast helicopter, it reads as a rollback of a legitimate pilot
-            // doing the single most fun thing in the game. ETL 1.08 x ground effect 1.333 = 1.44 busts the
+            // doing the single most fun thing in the game. ETL 1.05 x ground effect 1.333 = 1.40 busts the
             // Hind (cap 1.26) and clears the minicopter (1.59), which is why this is per-airframe. The 0.9
             // keeps a margin so the cap binds before the envelope does.
             v._heliLiftCap = s.Heli && s.HeliThrust > 0.01f
@@ -2915,7 +2951,7 @@ namespace UnturnedGodot
         /// The value can be one physics frame stale, since DriveHeli and StepHeli are not ordered relative to
         /// each other. Ground effect changes over metres of altitude, so a frame of lag is not observable.</summary>
         float HoverCollective => _heliThrust > 0.01f
-            ? Mathf.Clamp(9.8f / (_heliThrust * Mathf.Max(_groundEffect, 0.01f)), 0f, 1f) : 0f;
+            ? Mathf.Clamp(9.8f / (_heliThrust * Mathf.Max(_geApplied, 0.01f)), 0f, 1f) : 0f;
         float IdleCollective => HoverCollective * IdleHoverFraction;
         // Angular ACCELERATION at full deflection (rad/s^2), not a target rate -- these become torque against
         // the body's inertia, so the airframe builds up to a rotation and keeps it. Higher than the old rate
@@ -3042,9 +3078,10 @@ namespace UnturnedGodot
 
             // A wreck is just a falling body -- but it still falls through air, and with LinearDamp now 0 it
             // would free-fall unbounded instead. Applied ISOTROPICALLY, and above this return rather than
-            // below it, which reproduces the old engine damping exactly: terminal fall stays at g / 0.35 =
-            // ~28 m/s, the figure HeliCrashExplodeSpeed and the "an 18.5 m fall is fatal" calibration were
-            // both set against. A tumbling airframe has no meaningful shaft axis to hang a heave term on.
+            // below it, which reproduces the old engine damping to within 1 %: terminal fall stays at
+            // g / HeliHeaveDamp = 9.8 / 0.45 = 21.8 m/s, which is what a wreck has ALWAYS fallen at here --
+            // 0.35 on the body plus Godot's 0.1 project default under Combine. A tumbling airframe has no
+            // meaningful shaft axis to hang a heave term on, so this one is isotropic.
             if (_exploded) { ApplyCentralForce(-LinearVelocity * (HeliHeaveDamp * Mass)); return; }
 
             Basis b = GlobalTransform.Basis;
@@ -3120,14 +3157,23 @@ namespace UnturnedGodot
             // these go in first and the clamp still has the last word.
             //
             // Capped as a PRODUCT, not individually: it is the combination that out-climbs the MP envelope
-            // (1.08 x 1.333 = 1.44 against the Hind's 1.26), and capping each factor separately would let the
+            // (1.05 x 1.333 = 1.40 against the Hind's 1.26), and capping each factor separately would let the
             // product through.
             Vector3 hvel = LinearVelocity;
             var hflat = new Vector3(hvel.X, 0f, hvel.Z);
             float flatSpeed = hflat.Length();
             float etl = 1f + EtlGain * Mathf.Clamp((flatSpeed - EtlOnset) / (EtlFull - EtlOnset), 0f, 1f);
-            _groundEffect = GroundEffect();   // ONE raycast per tick; HoverCollective reads the same cached value
-            lift *= Mathf.Min(etl * _groundEffect, _heliLiftCap);
+            _groundEffect = GroundEffect();   // ONE raycast per tick, two readers
+            float liftMul = Mathf.Min(etl * _groundEffect, _heliLiftCap);
+            // THE GROUND-EFFECT SHARE ACTUALLY DELIVERED, which is what the hands-off trim has to cancel --
+            // and NOT the raw factor. When the cap binds they are different numbers, and dividing the trim by
+            // the raw one over-trims: on a Hind parked in ground effect (raw 1.333 against a cap of 1.261) the
+            // hands-off sink came out 63 % HARDER near the deck than at altitude, which is ground effect
+            // running backwards, in the flare, on the airframe least able to absorb it. ETL is deliberately
+            // left OUT of the trim -- it should still lighten a hands-off machine at speed, and the sink at
+            // 0.92 g * etl stays a sink for any gain under 0.087.
+            _geApplied = etl > 0.01f ? liftMul / etl : _groundEffect;
+            lift *= liftMul;
             // A DEAD TAIL ALSO GROUNDS YOU (strawberry: "dead tail should also have the same effect as
             // killmain of preventing gaining height"). Capped just under g rather than zeroed like a dead main:
             // the tail is not what lifts you, so losing it should leave you able to sink under some control

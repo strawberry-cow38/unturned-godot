@@ -56,25 +56,37 @@ namespace UnturnedGodot.Testing
                 yield return Ticks(1);
             }
             float lowGe = low.DebugGroundEffect, highGe = high.DebugGroundEffect;
+            // THE HIGH SUBJECT NEEDS A POSITIVE CONTROL BEFORE ITS READING MEANS ANYTHING. DebugGroundEffect
+            // is a cached field whose INITIAL value is 1.0, so "it reads 1.0 at altitude" is also what a
+            // machine whose StepHeli never ran would report -- and so would a broken probe, a null space
+            // state, or a ray of any length at all, since Cheeseman-Bennett tends to 1.0 anyway. Spool is only
+            // non-zero if the rotor sim actually ran on THIS body, so it distinguishes "correctly found
+            // nothing" from "never looked".
+            T.Check($"the high subject's flight model really ran, so its reading is a measurement (spool {high.RotorSpool:0.###})",
+                high.RotorSpool > 0.95f);
             T.Check($"a helicopter near the deck is in ground effect (factor {lowGe:0.###} at {low.GlobalPosition.Y:0.#} m)",
                 lowGe > 1.02f);
             T.Check($"...and one at altitude is not ({highGe:0.###} at {high.GlobalPosition.Y:0} m)",
                 Mathf.IsEqualApprox(highGe, 1f, 0.001f));
-            T.Check($"...so the effect is the HEIGHT, not the airframe ({lowGe:0.###} vs {highGe:0.###})",
-                lowGe > highGe + 0.02f);
-            // It must also DECAY, not merely be on or off: a step function would pass all three above.
-            T.Check($"...and it decays with height rather than switching (factor {lowGe:0.###} < the 1.34 hard floor at R/2)",
-                lowGe < 1.34f);
 
-            // ---- 2. IT DECAYS WITH HEIGHT, rather than being a switch. Two readings inside the effect, a few
-            // metres apart: the higher one must be strictly weaker. A single "it is on near the ground"
-            // reading passes on a step function, which is the shape this most plausibly gets wrong, and the
-            // 1.34 bound above only catches the clamp -- not whether anything varies between the clamp and 1.
+            // ---- 2. AND IT DECAYS WITH HEIGHT rather than switching on and off. Two readings INSIDE the
+            // effect: a step function passes every check above and fails this one.
+            //
+            // Driven, not merely spawned and left. The first cut called no DriveHeli on this subject, so it
+            // free-fell through the 30 ticks and reported the factor at ~4.7 m while the comment described the
+            // 6.5 m it was spawned at -- the assertion still held, but the spacing between the two readings
+            // was set by an undeclared fall rather than by the test.
             var mid = Spawn(World, "huey", new Vector3(600f, 6.5f, 0f));
-            yield return Ticks(30);
+            for (int i = 0; i < 30; i++) { mid.DriveHeli(0f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
             float midGe = mid.DebugGroundEffect;
             T.Check($"ground effect falls off with height ({lowGe:0.###} at {low.GlobalPosition.Y:0.#} m vs {midGe:0.###} at {mid.GlobalPosition.Y:0.#} m)",
                 midGe < lowGe - 0.01f && midGe > 1.001f);
+            // Bounded above by the R/2 clamp, which is the pole guard. Now that the probe measures from the
+            // ROTOR HUB rather than the fuselage origin, a parked machine no longer pins to this clamp -- it
+            // reports its own geometry -- so this bound stops being trivially satisfied and starts meaning
+            // something.
+            T.Check($"...and never exceeds the Cheeseman-Bennett clamp ({lowGe:0.###} against the 1.334 pole guard at R/2)",
+                lowGe < 1.334f);
 
             // ---- 3. TRANSLATIONAL LIFT: the same airframe makes more thrust moving than hovering. Measured
             // on the ROTOR's contribution with gravity and damping removed, at altitude so ground effect is
@@ -96,21 +108,31 @@ namespace UnturnedGodot.Testing
             float translating = RotorLift(etl, pv, 0.02f);
             T.Check($"translating out of the hover makes more lift ({translating:0.##} vs {hover:0.##} m/s^2, ratio {translating / hover:0.###})",
                 translating > hover * 1.02f);
-            // BOUNDED. The gain is capped at 0.08 for a reason (see EtlGain), so a check that only asserts
-            // "more" would pass on a value large enough to break the hands-off sink below.
-            T.Check($"...by the intended margin, not more ({translating / hover:0.###} against a designed 1.08)",
-                translating / hover < 1.10f);
+            // BOUNDED, and the bound is TIGHT on purpose. EtlGain is 0.05, so the designed ratio is 1.05. An
+            // earlier version of this check read "< 1.10" against a comment claiming a designed 1.08 -- which
+            // admitted 1.08 itself, the exact value the EtlGain docstring exists to rule out. A bound whose
+            // job is to exclude a value has to actually exclude it.
+            T.Check($"...by the intended margin, not more ({translating / hover:0.###} against a designed 1.05)",
+                translating / hover < 1.07f);
 
-            // ---- 4. AND IT DOES NOT DELETE THE HANDS-OFF SINK. The margin here is genuinely thin -- hands-off
-            // lift is 9.016 and ETL raises it to 9.74 against a g of 9.8 -- so this is the check that fails
-            // first if anyone nudges EtlGain, and it fails for a reason that has nothing to do with speed.
+            // ---- 4. AND IT DOES NOT DELETE THE HANDS-OFF SINK. Hands-off lift is 9.016; ETL raises it to
+            // 9.467 against a g of 9.8, for a settled sink of 0.74 m/s. This is the check that goes red first
+            // if anyone raises EtlGain, and it goes red for a reason that has nothing to do with speed.
+            //
+            // THE WINDOW IS 10 s BECAUSE 4 s MEASURED A TRANSIENT. Zeroing vy while the collective is still at
+            // full opens the window with about 1.4 m/s of climb, which decays on a 1/HeliHeaveDamp = 2.2 s
+            // time constant -- so a 4 s window still carried ~23 % of it and reported +0.14 m/s on a machine
+            // whose steady state was a sink. That misreading is what set EtlGain to 0.05 originally, for a
+            // reason that turned out to be fiction. 10 s is 4.5 time constants, leaving ~1 %. The check now
+            // asserts a MEANINGFUL sink rather than merely a negative one, so it cannot be passed by a
+            // machine that is technically descending at a millimetre per second.
             var sink = Spawn(World, "huey", new Vector3(1400f, 600f, 0f));
             for (int i = 0; i < 260; i++) { sink.DriveHeli(1f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
             var sfwd = new Vector3(-sink.GlobalTransform.Basis.Z.X, 0f, -sink.GlobalTransform.Basis.Z.Z).Normalized();
             sink.LinearVelocity = new Vector3(sfwd.X * 20f, 0f, sfwd.Z * 20f);
-            for (int i = 0; i < 200; i++) { sink.DriveHeli(0f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
-            T.Check($"hands off AT SPEED still sinks -- ETL does not turn the spring-back into a climb ({sink.LinearVelocity.Y:0.##} m/s)",
-                sink.LinearVelocity.Y < 0f);
+            for (int i = 0; i < 500; i++) { sink.DriveHeli(0f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
+            T.Check($"hands off AT SPEED still sinks -- ETL does not turn the spring-back into a hover ({sink.LinearVelocity.Y:0.##} m/s, flat {new Vector3(sink.LinearVelocity.X, 0f, sink.LinearVelocity.Z).Length():0.#} m/s)",
+                sink.LinearVelocity.Y < -0.3f);
 
             // ---- 4b. A PARKED MACHINE STAYS PARKED, engine idling, sitting in its own ground effect.
             //

@@ -37,7 +37,7 @@ namespace UnturnedGodot.Testing
         // 13 s is not padding -- quadratic drag reaches 99 % of terminal at 2.65 * v_terminal / a, which is
         // ~11 s for the slowest-converging airframe (the Hind). Longer windows cost L1 wall clock for nothing,
         // and L1's outer cap is a real constraint: this suite going in at 20 s dives pushed the whole phase
-        // past its 1200 s timeout, which surfaces as a core dump in an unrelated test.
+        // past its then-1200 s timeout (since raised to 1800), which surfaces as a core dump in an unrelated test.
         public override double TimeoutSimSeconds => 600;
 
         const float DiveDeg = 45f;    // committed dive: the fastest a machine can be flown, which is what the
@@ -77,6 +77,32 @@ namespace UnturnedGodot.Testing
             return Mathf.Clamp(0.06f * (-targetDeg - phi) - 0.020f * rateUp, -1f, 1f);
         }
 
+        // HOLD ALTITUDE ON PITCH. "Level flight" is not an attitude, it is a CONSTRAINT: at full collective,
+        // driving vertical speed to zero with the cyclic converges on exactly the steepest lean the machine can
+        // sustain without descending -- which is the attitude LevelFlightAccel solves for and the one the drag
+        // coefficient is derived against. So this controller finds the calibration's own operating point
+        // instead of the test asserting it from the outside.
+        // TRIM INTEGRATOR: vertical speed accumulates into a target ATTITUDE, which the proven attitude loop
+        // then holds. Two earlier shapes both failed, and both failures were informative:
+        //
+        //   - driving the stick straight from vy SATURATES. At T/W 1.45 the Hind climbs hard on full
+        //     collective, so the error pinned the stick nose-down and it kept rotating until vy finally
+        //     reversed -- by then 65 deg down and falling. The minicopter, with three times the pitch
+        //     authority, was fine: the signature of a gain tuned on one airframe.
+        //   - a PROPORTIONAL outer loop cannot get there either. It settles wherever target = k*vy is
+        //     self-consistent, which is a hover-and-climb, not level flight: measured 13.7 deg at +4.56 m/s
+        //     when level flight for that airframe is ~31 deg. Steady-state error is what proportional control
+        //     DOES; the fixed point just looked like convergence.
+        //
+        // Integral action has zero steady-state error by construction, which is the whole requirement here:
+        // the attitude has to end up wherever vy = 0 exactly, and that angle is what the calibration is
+        // derived against. The proportional term is kept for approach speed only.
+        static float LevelTrim(Vehicle v, ref float trim, float dt)
+        {
+            trim = Mathf.Clamp(trim + v.LinearVelocity.Y * 0.60f * dt, 0f, 55f);
+            return Mathf.Clamp(trim + v.LinearVelocity.Y * 1.5f, 0f, 55f);
+        }
+
         static float FlatSpeed(Vehicle v) => new Vector3(v.LinearVelocity.X, 0f, v.LinearVelocity.Z).Length();
 
         public override IEnumerable<Step> Run()
@@ -84,7 +110,7 @@ namespace UnturnedGodot.Testing
             Rigs.Ground(World);
 
             // ---- 1. EVERY AIRFRAME REACHES ITS OWN SPEC, AND STAYS INSIDE THE ENVELOPE.
-            // Flown from high enough that 20 s of diving cannot reach the ground: a machine that lands reports
+            // Flown from high enough that 13 s of diving cannot reach the ground: a machine that lands reports
             // a flat speed near zero, which is indistinguishable from one that could never accelerate.
             string[] fleet = { "minicopter", "scoutcopter", "huey", "hind", "orca", "hummingbird", "skycrane" };
             for (int fi = 0; fi < fleet.Length; fi++)
@@ -150,6 +176,7 @@ namespace UnturnedGodot.Testing
             float v1 = FlatSpeed(m) + 1.5f;
             float step = (vmax * 0.88f - v1) / 2f;
             var accel = new float[3];
+            var windowTilt = new float[3];
             for (int s = 0; s < 3; s++)
             {
                 var fwd = new Vector3(-m.GlobalTransform.Basis.Z.X, 0f, -m.GlobalTransform.Basis.Z.Z).Normalized();
@@ -162,6 +189,7 @@ namespace UnturnedGodot.Testing
                 float v0 = FlatSpeed(m);
                 for (int i = 0; i < 10; i++) { m.DriveHeli(1f, 0f, HoldDive(m, DiveDeg), 0f, 0.02); yield return Ticks(1); }
                 accel[s] = (FlatSpeed(m) - v0) / 0.20f;
+                windowTilt[s] = PitchDownDeg(m);
             }
 
             float dLow = accel[0] - accel[1];    // acceleration lost going v1 -> v1+step
@@ -171,14 +199,104 @@ namespace UnturnedGodot.Testing
             float predQuad = (2f * v1 + 3f * step) / (2f * v1 + step);
             T.Check($"the probe rig survived all three windows (hp {m.Health:0.##}/{m.HealthMax:0.##}, {m.GlobalPosition.Y:0} m up)",
                 m.Health >= m.HealthMax - 0.01f && !m.Exploded && m.GlobalPosition.Y > 80f);
+            // THE PRECONDITION THE WHOLE COMPARISON RESTS ON, and it was previously only asserted in a comment.
+            // The three windows are supposed to differ in SPEED alone; if the PD controller drifts between them
+            // the accelerations differ because the thrust vector moved, and a shallowing drift inflates the
+            // ratio -- a false PASS, in the same family as the tumbling rig this suite already got caught by.
+            T.Check($"...at the same attitude in all three, so only the speed differed ({windowTilt[0]:0.#}, {windowTilt[1]:0.#}, {windowTilt[2]:0.#} deg nose-down)",
+                Mathf.Abs(windowTilt[0] - windowTilt[2]) < 2.5f && Mathf.Abs(windowTilt[0] - windowTilt[1]) < 2.5f);
             // Both decrements must be real before their ratio means anything: if the machine sits at its cap
             // in all three windows the accelerations are all ~0 and the ratio is noise over noise.
             T.Check($"...and the three windows differ enough to compare ({accel[0]:0.##}, {accel[1]:0.##}, {accel[2]:0.##} m/s^2 at {v1:0.#}/{v1 + step:0.#}/{v1 + 2f * step:0.#} m/s)",
                 dLow > 0.15f && dHigh > 0.15f);
             // THE CLAIM, graded against the MIDPOINT of the two predictions so it fires on which law is in
             // force rather than on how well the coefficient happens to be tuned.
-            T.Check($"the resisting force is QUADRATIC in speed, not linear (decrement ratio {dHigh / dLow:0.##}; quadratic predicts {predQuad:0.##} at these samples, linear predicts 1.00)",
-                dHigh / dLow > (1f + predQuad) * 0.5f);
+            float ratio = dHigh / dLow;
+            T.Check($"the resisting force is QUADRATIC in speed, not linear (decrement ratio {ratio:0.##}; quadratic predicts {predQuad:0.##} at these samples, linear predicts 1.00)",
+                ratio > (1f + predQuad) * 0.5f);
+            // ...AND IT IS NOT QUADRATIC PLUS A LITTLE LINEAR, which the ratio alone cannot say. For a mixed
+            // law a = A - c*v - k*v^2 the ratio is 1 + 2*step/(c/k + u) with u = 2*v1 + step, so the midpoint
+            // threshold above passes for ANY c/k < u -- which at these samples is a residual linear
+            // coefficient up to about 0.25 s^-1. The stray damping this whole rework exists to remove is
+            // 0.100 s^-1, so the check written to prove the fix would have stayed green if someone reverted
+            // LinearDampMode to Combine and left the quadratic term in place.
+            //
+            // Inverting the same relation measures c directly instead of bounding it by proxy: it is exactly
+            // zero for a pure quadratic law, and reads back the stray coefficient if one returns.
+            float impliedLinear = m.DebugHeliDragK * (2f * step / Mathf.Max(ratio - 1f, 1e-4f) - (2f * v1 + step));
+            T.Check($"...with no residual LINEAR term hiding underneath it (implied c {impliedLinear:0.####} s^-1; Godot's default_linear_damp is 0.1, and k is {m.DebugHeliDragK:0.#####})",
+                impliedLinear < 0.05f);
+            // Bounded above too. The lower bound alone is satisfied MORE easily by a cubic or quartic law than
+            // by the quadratic one the message claims, so without this the check would endorse a higher power.
+            T.Check($"...and is not a HIGHER power than quadratic (ratio {ratio:0.##} against a quadratic prediction of {predQuad:0.##})",
+                ratio < predQuad * 1.20f);
+
+            // ---- 3. THE DERIVATION'S OWN CLAIM, which until now nothing measured: LEVEL-FLIGHT terminal speed
+            // is Speed_Max. That is the entire purpose of _heliDragFwd, and every other window in this suite is
+            // a 45 deg dive -- which settles against the 1.15 BACKSTOP, not against drag. Halving the drag
+            // coefficient left every check in this file green, because the backstop caught the difference. A
+            // calibration whose only instrument is a limiter that overrides it is not measured at all.
+            //
+            // TEETH CONFIRMED: with the coefficient halved, both checks below go red (1.179x and 1.176x) while
+            // every dive check in section 1 still passes -- which is precisely the hole they could not see.
+            var levelFleet = new[] { "minicopter", "hind" };
+            for (int li = 0; li < levelFleet.Length; li++)
+            {
+                string name = levelFleet[li];
+                // Spaced by INDEX. The first cut spaced them by fleet.Length, which is a constant, so both
+                // airframes spawned on the same spot and collided -- and a collision reads as a control
+                // failure, which is exactly how it was first diagnosed.
+                var lv = Spawn(World, name, new Vector3(-2000f - li * 500f, 1000f, 400f));
+                float lvSpec = lv.SpeedMaxMps;
+                for (int i = 0; i < 200; i++) { lv.DriveHeli(1f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
+                float yStart = lv.GlobalPosition.Y, trim = 0f;
+                for (int i = 0; i < 1400; i++)
+                {
+                    float want = LevelTrim(lv, ref trim, 0.02f);
+                    lv.DriveHeli(1f, 0f, HoldDive(lv, want), 0f, 0.02);
+                    yield return Ticks(1);
+                }
+                float lvFlat = FlatSpeed(lv);
+                // The altitude bound is a PRECONDITION, not a nicety: a machine that is quietly descending is
+                // trading height for speed and its terminal number answers a different question.
+                T.Check($"{name}: the level-flight rig actually held altitude ({lv.GlobalPosition.Y - yStart:+0.#;-0.#;0} m over 28 s, {lv.LinearVelocity.Y:+0.##;-0.##;0} m/s at the end, {PitchDownDeg(lv):0.#} deg nose-down)",
+                    Mathf.Abs(lv.LinearVelocity.Y) < 1.0f && Mathf.Abs(lv.GlobalPosition.Y - yStart) < 200f);
+                T.Check($"{name}: level-flight terminal speed IS Speed_Max, which is what the drag coefficient is derived to produce ({lvFlat:0.#} vs {lvSpec:0.#} m/s = {lvFlat / lvSpec:0.###}x, k {lv.DebugHeliDragK:0.#####})",
+                    lvFlat > lvSpec * 0.92f && lvFlat < lvSpec * 1.08f);
+            }
+
+            // ---- 4. LATERAL IS DRAGGIER THAN FORE/AFT. This is the entire justification for deleting
+            // ForeAftBoost/LateralBoost -- the asymmetry moved from thrust to drag -- and it had NO coverage:
+            // every other flight in this suite is nose-forward, so only the alongFwd branch was ever exercised.
+            // Setting HeliLateralDragRatio to 1.0, i.e. deleting the asymmetry outright, moved no check.
+            //
+            // Asserted as a RATIO between two subjects, because two absolute bounds would be satisfied by any
+            // pair of coefficients I happened to pick. Both machines are held LEVEL so rotor thrust has no
+            // horizontal component and drag is the only horizontal force acting.
+            var faR = Spawn(World, "huey", new Vector3(-2600f, 900f, 0f));
+            var latR = Spawn(World, "huey", new Vector3(-2600f, 900f, 300f));
+            for (int i = 0; i < 200; i++)
+            {
+                faR.DriveHeli(0f, 0f, 0f, 0f, 0.02); latR.DriveHeli(0f, 0f, 0f, 0f, 0.02);
+                yield return Ticks(1);
+            }
+            var bf = faR.GlobalTransform.Basis;
+            var fwdDir = new Vector3(-bf.Z.X, 0f, -bf.Z.Z).Normalized();
+            var sideDir = new Vector3(bf.X.X, 0f, bf.X.Z).Normalized();
+            faR.LinearVelocity = new Vector3(fwdDir.X * 20f, faR.LinearVelocity.Y, fwdDir.Z * 20f);
+            latR.LinearVelocity = new Vector3(sideDir.X * 20f, latR.LinearVelocity.Y, sideDir.Z * 20f);
+            yield return Ticks(2);
+            float fa0 = FlatSpeed(faR), lat0 = FlatSpeed(latR);
+            for (int i = 0; i < 10; i++)
+            {
+                faR.DriveHeli(0f, 0f, 0f, 0f, 0.02); latR.DriveHeli(0f, 0f, 0f, 0f, 0.02);
+                yield return Ticks(1);
+            }
+            float faDecel = (fa0 - FlatSpeed(faR)) / 0.20f, latDecel = (lat0 - FlatSpeed(latR)) / 0.20f;
+            T.Check($"both drag probes actually decelerated, so the ratio below divides real numbers (fore/aft {faDecel:0.##}, lateral {latDecel:0.##} m/s^2)",
+                faDecel > 0.2f && latDecel > 0.2f);
+            T.Check($"sliding SIDEWAYS drags harder than flying forward, by the designed ratio ({latDecel / faDecel:0.##}x against a designed {2.5f:0.##}x)",
+                latDecel > faDecel * 2.0f && latDecel < faDecel * 3.0f);
 
             yield break;
         }
