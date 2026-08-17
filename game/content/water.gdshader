@@ -27,7 +27,9 @@ varying vec3 v_wpos;     // world position of the displaced surface
 // GRADIENT (Perlin) noise -- unlike value noise it has NO axis-aligned cell artifacts (value is 0 at every lattice
 // point, random gradients interpolated), so the surface doesn't read as blocks/squares or SNAP as it scrolls.
 // Same seed/formula in WaveField.cs so the CPU twin still agrees.
-float hashv(vec2 p) { return fract(sin(p.x * 127.1 + p.y * 311.7) * 43758.5453); }
+// precision-robust hash (Hoskins) -- fract() bounds the input FIRST, so it doesn't degrade at large world coords
+// like fract(sin(...)) does. That sin-hash correlates into a GRID once the map's coords get big (the real bug).
+float hashv(vec2 p) { vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
 vec2 grad2(vec2 ip) { float h = hashv(ip) * 6.2831853; return vec2(cos(h), sin(h)); }
 float gnoise(vec2 p) {
     vec2 i = floor(p), f = fract(p);

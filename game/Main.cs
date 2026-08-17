@@ -1041,7 +1041,10 @@ namespace UnturnedGodot
             AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-52f, -42f, 0f), LightEnergy = 1.1f, ShadowEnabled = true });
 
             Terrain.HasWater = true; Terrain.SeaLevelY = 0f;   // flat test sea at Y=0 -- the boat physics reads these
-            var water = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(800f, 800f), SubdivideWidth = 160, SubdivideDepth = 160 }, Position = Vector3.Zero,   // 160 = ~5 m quads = the REAL map's density, so the boattest is an honest test (not a flattering fine mesh)
+            // UG_WATERFAR=1: shove the plane ~2.6k units out to fake the REAL map's large world coords (where the
+            // sin-hash noise degraded into a grid) -- so the test reproduces the real-map condition, not a near-origin one.
+            Vector3 farOff = System.Environment.GetEnvironmentVariable("UG_WATERFAR") == "1" ? new Vector3(2600f, 0f, 2600f) : Vector3.Zero;
+            var water = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(800f, 800f), SubdivideWidth = 160, SubdivideDepth = 160 }, Position = farOff,   // 160 = ~5 m quads = the REAL map's density, so the boattest is an honest test (not a flattering fine mesh)
                 MaterialOverride = new ShaderMaterial { Shader = GD.Load<Shader>("res://content/water.gdshader") } };   // wave/foam shader (master)
             AddChild(water);
             // caustics projected onto the underwater surfaces, seeded from the same wave noise (master 2026-08-16)
@@ -1080,7 +1083,7 @@ namespace UnturnedGodot
                     // look DOWN at the shoreline (the ramp's waterline sits ~Z=14) so the shore-foam band + lapping read clearly
                     _vehCam.LookAtFromPosition(new Vector3(0f, 12f, 40f), new Vector3(0f, -1f, 6f), Vector3.Up);
                 else
-                    _vehCam.LookAtFromPosition(new Vector3(0f, 3.2f, 34f), new Vector3(0f, 0.6f, -50f), Vector3.Up);
+                    _vehCam.LookAtFromPosition(new Vector3(0f, 3.2f, 34f) + farOff, new Vector3(0f, 0.6f, -50f) + farOff, Vector3.Up);
             }
         }
 

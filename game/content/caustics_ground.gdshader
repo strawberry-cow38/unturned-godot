@@ -17,7 +17,7 @@ varying vec3 v_wpos;
 
 // GRADIENT (Perlin) noise -- unlike value noise it has NO axis-aligned cell artifacts (value is 0 at every lattice
 // point, random gradients interpolated between), so the caustic web doesn't read as blocks. Seed shared with the water.
-float hashv(vec2 p) { return fract(sin(p.x * 127.1 + p.y * 311.7) * 43758.5453); }
+float hashv(vec2 p) { vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }   // precision-robust at large world coords (no sin degradation)
 vec2 grad2(vec2 ip) { float h = hashv(ip) * 6.2831853; return vec2(cos(h), sin(h)); }
 float gnoise(vec2 p) {
     vec2 i = floor(p), f = fract(p);

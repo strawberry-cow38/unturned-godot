@@ -23,8 +23,14 @@ namespace UnturnedGodot
         // artifacts, so the CPU-sampled swell matches the smooth visual one).
         static float Hashv(float ix, float iz)
         {
-            double s = Math.Sin(ix * 127.1 + iz * 311.7) * 43758.5453;
-            return (float)(s - Math.Floor(s));
+            // precision-robust hash (Hoskins), matches the shader -- fract() bounds the input first, no sin degradation at large coords
+            float ax = ix * 0.1031f; ax -= MathF.Floor(ax);
+            float ay = iz * 0.1031f; ay -= MathF.Floor(ay);
+            float az = ax;   // == fract(px * 0.1031) per the shader's vec3(p.xyx)
+            float dt = ax * (ay + 33.33f) + ay * (az + 33.33f) + az * (ax + 33.33f);
+            ax += dt; ay += dt; az += dt;
+            float r = (ax + ay) * az;
+            return r - MathF.Floor(r);
         }
         static (float, float) Grad2(float ix, float iz) { float h = Hashv(ix, iz) * 6.2831853f; return (MathF.Cos(h), MathF.Sin(h)); }
         static float Gnoise(float x, float z)
