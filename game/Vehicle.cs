@@ -446,6 +446,70 @@ namespace UnturnedGodot
             return hit.Count > 0 ? Mathf.Max(0f, from.Y - ((Vector3)hit["position"]).Y) : TurbFullAgl;
         }
 
+        /// <summary>Build the belly beacon's mesh from a nav-light lens: ONE lamp, re-centred on the origin, and
+        /// turned to face DOWN.
+        ///
+        /// Two things make the raw lens wrong for a belly fitting. It can contain more than one lamp -- the orca's
+        /// spans 0.96 m in X where every other airframe's is 0.16-0.26, i.e. two lenses in one mesh, which is why its
+        /// belly light appeared as two. And the lens is a thin slab authored facing SIDEWAYS off the hull (thin in X,
+        /// ~0.37 in Y and Z), so dropped on the belly unrotated it points out the side instead of at the ground.
+        ///
+        /// So: split the triangles into X clusters, keep the biggest single cluster, centre it, and rotate its thin
+        /// axis from +/-X onto -Y.</summary>
+        static ArrayMesh BeaconLensMesh(Mesh src)
+        {
+            if (src == null || src.GetSurfaceCount() == 0) return null;
+            var arr = src.SurfaceGetArrays(0);
+            if (arr.Count == 0 || arr[(int)Mesh.ArrayType.Vertex].VariantType == Variant.Type.Nil) return null;
+            var verts = arr[(int)Mesh.ArrayType.Vertex].AsVector3Array();
+            var idx = arr[(int)Mesh.ArrayType.Index].VariantType != Variant.Type.Nil
+                ? arr[(int)Mesh.ArrayType.Index].AsInt32Array() : null;
+            int triCount = (idx != null ? idx.Length : verts.Length) / 3;
+            if (triCount == 0) return null;
+            Vector3 V(int t, int k) => idx != null ? verts[idx[t * 3 + k]] : verts[t * 3 + k];
+
+            // Cluster triangle centroids along X, splitting wherever there is a gap wider than a lamp.
+            var cx = new float[triCount];
+            for (int t = 0; t < triCount; t++) cx[t] = (V(t, 0).X + V(t, 1).X + V(t, 2).X) / 3f;
+            var sorted = (float[])cx.Clone(); System.Array.Sort(sorted);
+            float span = sorted[^1] - sorted[0];
+            float gap = Mathf.Max(0.08f, span * 0.25f);
+            float bestLo = sorted[0], bestHi = sorted[^1];
+            {
+                float lo = sorted[0], prev = sorted[0]; int count = 1, best = -1;
+                for (int i = 1; i <= sorted.Length; i++)
+                {
+                    bool end = i == sorted.Length;
+                    if (!end && sorted[i] - prev <= gap) { count++; prev = sorted[i]; continue; }
+                    if (count > best) { best = count; bestLo = lo; bestHi = prev; }
+                    if (end) break;
+                    lo = prev = sorted[i]; count = 1;
+                }
+            }
+            // Face the thin axis downward: a lamp on the starboard side points +X, one on port points -X.
+            float mid = (bestLo + bestHi) * 0.5f;
+            var turn = new Basis(Vector3.Back, Mathf.DegToRad(mid >= 0f ? -90f : 90f));
+
+            var keep = new System.Collections.Generic.List<Vector3>();
+            for (int t = 0; t < triCount; t++)
+            {
+                if (cx[t] < bestLo - 1e-3f || cx[t] > bestHi + 1e-3f) continue;
+                keep.Add(V(t, 0)); keep.Add(V(t, 1)); keep.Add(V(t, 2));
+            }
+            if (keep.Count < 3) return null;
+            var bounds = new Aabb(keep[0], Vector3.Zero);
+            foreach (var p in keep) bounds = bounds.Expand(p);
+            Vector3 c = bounds.GetCenter();
+            var outArr = new Godot.Collections.Array();
+            outArr.Resize((int)Mesh.ArrayType.Max);
+            var final = new Vector3[keep.Count];
+            for (int i = 0; i < keep.Count; i++) final[i] = turn * (keep[i] - c);   // centred on the origin, then turned to face down
+            outArr[(int)Mesh.ArrayType.Vertex] = final;
+            var am = new ArrayMesh();
+            am.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, outArr);
+            return am;
+        }
+
         // Self + anything we are carrying: a downward probe must never mistake our own load for the ground.
         Godot.Collections.Array<Rid> SlingExclude()
         {
@@ -2761,14 +2825,15 @@ namespace UnturnedGodot
                 // stays a DIRECT MeshInstance3D child named BeaconBelly, which is how the rest of the code and
                 // HeliPartsTests address it. A pivot would have been tidier to read and would have quietly broken
                 // every non-recursive FindChild("BeaconBelly") that expects a mesh.
+                // BeaconLensMesh returns ONE lamp, already centred on the origin and already turned to face down,
+                // so the node just sits at the belly point -- no centroid offset, no basis to get wrong.
+                var beaconLens = BeaconLensMesh(lens);
                 v._beaconMesh = new MeshInstance3D
                 {
                     Name = "BeaconBelly",
-                    Mesh = lens ?? new SphereMesh { Radius = 0.10f, Height = 0.20f, RadialSegments = 8, Rings = 4 },
+                    Mesh = (Mesh)beaconLens ?? new SphereMesh { Radius = 0.10f, Height = 0.20f, RadialSegments = 8, Rings = 4 },
                     MaterialOverride = v._beaconMat,
-                    // The lens is authored at absolute hull coordinates, so shift it by its own centroid to land
-                    // the fitting on the belly. The fallback bead is already origin-centred.
-                    Position = lens != null ? bellyAt - lens.GetAabb().GetCenter() : bellyAt,
+                    Position = bellyAt,
                 };
                 v.AddChild(v._beaconMesh);
                 v._beaconLight = new OmniLight3D { Position = bellyAt, OmniRange = 6f, LightColor = new Color(1f, 0.1f, 0.1f), LightEnergy = 0f };   // the BELLY point, not the mesh node, whose position is now a -centroid offset

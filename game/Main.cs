@@ -1981,7 +1981,16 @@ namespace UnturnedGodot
             {
                 var nav = v.FindChild("NavLightPort", false, false) as MeshInstance3D;
                 bool sameModel = nav != null && bm.Mesh == nav.Mesh;
-                GD.Print($"[BEACON] {name}: mesh {bm.Mesh.GetType().Name}, same object as NavLightPort = {sameModel}, world Y {bm.ToGlobal(bm.Mesh.GetAabb().GetCenter()).Y:0.00}");
+                var ab = bm.Mesh.GetAabb();
+                int nx = 0, px = 0;
+                for (int si = 0; si < bm.Mesh.GetSurfaceCount(); si++)
+                {
+                    var arr = bm.Mesh.SurfaceGetArrays(si);
+                    if (arr.Count == 0 || arr[(int)Mesh.ArrayType.Vertex].VariantType == Variant.Type.Nil) continue;
+                    foreach (var lv in arr[(int)Mesh.ArrayType.Vertex].AsVector3Array())
+                        if (lv.X < -0.02f) nx++; else if (lv.X > 0.02f) px++;
+                }
+                GD.Print($"[BEACON] {name}: {bm.Mesh.GetType().Name} size {ab.Size} centre {ab.GetCenter()} verts -X{nx}/+X{px} sameAsNav={sameModel}");
             }
             var cam = new Camera3D { Current = true, Fov = 40f, Far = 400f };
             AddChild(cam);
