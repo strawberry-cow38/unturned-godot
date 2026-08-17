@@ -471,8 +471,16 @@ namespace UnturnedGodot
                 // Spawned like a vehicle (dropped just above the ground and left to settle) rather than seated:
                 // it is a plain rigid body with no suspension or skids to place on, so a short drop is the honest
                 // way in and matches how the wheeled vehicles arrive.
-                var c = MagnetableContainer.Spawn(Player?.GetParent() ?? GetTree().Root, at + Vector3.Up * 1.2f);
-                Log($"spawned magnetable container ({MagnetableContainer.ContainerMass:0} kg, doors + fixed magnet point on the roof centre) -- fly the skycrane over it and hit Shift");
+                // `at` is the LOOK POINT, and the container is 7.5 m long CENTRED on its origin -- so spawning it
+                // straight there drops half of it behind the aim point and through whoever typed the command. Push it
+                // out along the look direction by half its length (plus clearance) so the near face lands beyond the
+                // aim rather than on the player.
+                Vector3 eye = Player?.GlobalPosition ?? Vector3.Zero;
+                Vector3 outward = new Vector3(at.X - eye.X, 0f, at.Z - eye.Z);
+                outward = outward.LengthSquared() > 0.01f ? outward.Normalized() : Vector3.Forward;
+                Vector3 spot = at + outward * 4.5f + Vector3.Up * 1.2f;
+                var c = MagnetableContainer.Spawn(Player?.GetParent() ?? GetTree().Root, spot);
+                Log($"spawned magnetable container ({MagnetableContainer.ContainerMass:0} kg) {spot.DistanceTo(eye):0.#} m ahead -- doors + a fixed magnet point on the roof centre; fly the skycrane over it and hit Shift");
             }
             else if (verb == "teleport" || verb == "tp")
             {
