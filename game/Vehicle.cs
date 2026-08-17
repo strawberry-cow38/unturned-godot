@@ -2449,9 +2449,7 @@ namespace UnturnedGodot
                 {
                     var bp = s.BurnerPos[i];
                     var mat = new ShaderMaterial { Shader = flameShader };
-                    mat.SetShaderParameter("u_core_color", new Color(0.70f, 0.85f, 1.0f));
-                    mat.SetShaderParameter("u_mid_color", new Color(1.0f, 0.50f, 0.12f));
-                    mat.SetShaderParameter("u_tip_color", new Color(0.55f, 0.09f, 0.02f));
+                    // flame colours (purple->blue->orange) live in afterburner.gdshader defaults -> re-grade with no C# rebuild
                     mat.SetShaderParameter("u_seed", i * 3.7f);
                     mat.SetShaderParameter("u_height", 2.4f);
                     mat.SetShaderParameter("u_throttle", 0f);
