@@ -1675,39 +1675,64 @@ namespace UnturnedGodot
             var cmat = new StandardMaterial3D { Roughness = 0.85f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
             var cimg = new Image();
             if (cimg.Load(dir + "Container_0_tex.png") == Error.Ok) { cimg.GenerateMipmaps(); cmat.AlbedoTexture = ImageTexture.CreateFromImage(cimg); }
-            // These props are authored Z-up (ObjMesh CONV=1), so X=270 stands one on its feet -- the same
-            // transform SinkSource.UprightPlacement names. Without it the box lies on its side.
-            var upright = new Basis(Vector3.Right, Mathf.DegToRad(270f));
             var cab = cmesh.GetAabb();
-            GD.Print($"[SLING] container mesh aabb size={cab.Size} -> upright W {cab.Size.X:0.00} H {cab.Size.Z:0.00} L {cab.Size.Y:0.00}");
+            float cW = cab.Size.X, cH = cab.Size.Z, cL = cab.Size.Y;   // Z-up prop: mesh Z is height, mesh Y is length
 
-            MeshInstance3D Box(Vector3 at) => new() { Mesh = cmesh, MaterialOverride = cmat, Transform = new Transform3D(upright, at) };
+            // The skycrane's own numbers, measured off skycrane_body.txt rather than eyeballed:
+            const float LegBottom = -0.63f, LegZFrom = -4.15f, LegZTo = 2.73f, CockpitRearZ = -1.0f;
+            const float heliUnderside = 1.88f;   // measured: lowest fuselage over the container footprint (|X|<1.44, Z -0.70..6.80, above the struts)
+            float yaw = float.TryParse(System.Environment.GetEnvironmentVariable("UG_SLING_YAW"), out var y0) ? y0 : 180f;
+            float gap = float.TryParse(System.Environment.GetEnvironmentVariable("UG_SLING_GAP"), out var g0) ? g0 : 0.30f;
+            // Doors aft (yaw 180), forward face gapped off the back of the cockpit, base on the ground.
+            float frontZ = CockpitRearZ + gap;
+            float centreZ = frontZ + cL * 0.5f;
+            var basis = new Basis(Vector3.Up, Mathf.DegToRad(yaw)) * new Basis(Vector3.Right, Mathf.DegToRad(270f));
+            AddChild(new MeshInstance3D { Mesh = cmesh, MaterialOverride = cmat, Transform = new Transform3D(basis, new Vector3(0f, cH * 0.5f, centreZ)) });
 
-            // LEFT: container sat in the bay. Positioned so its base rests on the ground between the legs.
-            var inBay = Vehicle.BuildByName("skycrane");
-            AddChild(inBay);
-            inBay.GlobalPosition = new Vector3(-16f, 1.2f, 0f);
-            inBay.Freeze = true; inBay.FreezeMode = RigidBody3D.FreezeModeEnum.Static;
-            AddChild(Box(new Vector3(-16f, 0.02f - cab.Position.Z, 0f)));
-
-            // RIGHT: same aircraft up in the air, container hanging under it on a line -- what a real S-64 does.
-            var slung = Vehicle.BuildByName("skycrane");
-            AddChild(slung);
-            slung.GlobalPosition = new Vector3(16f, 15f, 0f);
-            slung.Freeze = true; slung.FreezeMode = RigidBody3D.FreezeModeEnum.Static;
-            float hang = 6.5f;
-            AddChild(Box(new Vector3(16f, 15f - hang - cab.Size.Z, 0f)));
-            AddChild(new MeshInstance3D   // the hoist line
+            // UG_SLING_TOUCH=1: raise the aircraft until the container's TOP meets its underside -- strawberry's
+            // "lower the container so its top touches the bottom of the tail", done the way round that keeps the
+            // box on the ground. The limiting surface is measured over the container's own footprint rather than
+            // assumed to be the tail: it is actually the BELLY at Y 1.88 (Z 0..2.5); the boom behind it sits
+            // higher at 2.39, so aiming at the tail would have buried the box in the fuselage.
+            bool touch = System.Environment.GetEnvironmentVariable("UG_SLING_TOUCH") == "1";
+            float lift = 0f;
+            if (touch)
             {
-                Mesh = new CylinderMesh { TopRadius = 0.06f, BottomRadius = 0.06f, Height = hang, RadialSegments = 6, Rings = 1 },
-                MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.10f, 0.10f, 0.11f) },
-                Position = new Vector3(16f, 15f - hang * 0.5f, 0f),
-            });
+                float lowest = 9999f;
+                foreach (var mi2 in new[] { heliUnderside })
+                    if (mi2 < lowest) lowest = mi2;
+                lift = cH - lowest;
+            }
+            var heli = Vehicle.BuildByName("skycrane");
+            AddChild(heli);
+            heli.GlobalPosition = new Vector3(0f, -LegBottom + lift, 0f);   // legs on the deck, plus any lift
+            heli.Freeze = true; heli.FreezeMode = RigidBody3D.FreezeModeEnum.Static;
+            if (touch) GD.Print($"[SLING] raised {lift:0.00} m so the container's top meets the underside -> legs {(-LegBottom) + lift:0.00} m tall (were {-LegBottom:0.00})");
 
-            var cam = new Camera3D { Current = true, Fov = 46f, Far = 4000f };
+            float overhang = (centreZ + cL * 0.5f) - LegZTo;
+            GD.Print($"[SLING] container W {cW:0.00} H {cH:0.00} L {cL:0.00}; front face Z {frontZ:0.00} (cockpit rear {CockpitRearZ:0.00} + {gap:0.00} gap), rear face Z {centreZ + cL * 0.5f:0.00}");
+            GD.Print($"[SLING] legs span Z {LegZFrom:0.00}..{LegZTo:0.00} -> container overhangs the gear by {overhang:0.00} m aft");
+
+            // UG_SLING_LEGS=1: draw what the gear WOULD have to become to carry it -- extended aft to the
+            // container's rear face. Ghosted rather than modelled, since this is a question, not a change.
+            if (System.Environment.GetEnvironmentVariable("UG_SLING_LEGS") == "1")
+            {
+                float newTo = centreZ + cL * 0.5f + 0.4f, len = newTo - LegZFrom;
+                var gm = new StandardMaterial3D { AlbedoColor = new Color(1f, 0.55f, 0.1f, 0.6f), Transparency = BaseMaterial3D.TransparencyEnum.Alpha };
+                foreach (float sx in new[] { -2.065f, 2.065f })
+                {
+                    AddChild(new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(0.60f, 0.20f, len) }, MaterialOverride = gm, Position = new Vector3(sx, 0.10f, (LegZFrom + newTo) * 0.5f) });   // the longer skid
+                    foreach (float lz in new[] { LegZFrom + 0.8f, newTo - 0.8f })   // the taller struts up to the hull
+                        AddChild(new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(0.34f, -LegBottom + lift, 0.34f) }, MaterialOverride = gm, Position = new Vector3(sx, (-LegBottom + lift) * 0.5f, lz) });
+                }
+                GD.Print($"[SLING] ghost gear: {len:0.00} m long (was {LegZTo - LegZFrom:0.00}), {-LegBottom + lift:0.00} m tall (was {-LegBottom:0.00})");
+            }
+
+            var cam = new Camera3D { Current = true, Fov = 42f, Far = 4000f };
             AddChild(cam);
-            cam.Position = new Vector3(2f, 13f, 46f);
-            cam.LookAt(new Vector3(0f, 6f, 0f), Vector3.Up);
+            string mode = System.Environment.GetEnvironmentVariable("UG_SLING_CAM");
+            cam.Position = mode == "side" ? new Vector3(42f, 4.0f, 2.5f) : new Vector3(20f, 11f, -19f);
+            cam.LookAt(new Vector3(0f, 2.6f, 2.5f), Vector3.Up);   // side: level with the bay so the container/underside gap reads
         }
 
         void BuildPropTest(string name)
