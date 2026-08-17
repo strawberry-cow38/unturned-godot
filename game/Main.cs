@@ -1061,20 +1061,27 @@ namespace UnturnedGodot
         // Verifies buoyancy floats the hull to the waterline + the drive input becomes water thrust/rudder.
         void BuildBoatTest(string type)
         {
+            bool night = System.Environment.GetEnvironmentVariable("UG_NIGHT") == "1";   // UG_NIGHT=1: dim sun+sky to verify the caustics FADE at night (don't glow nuclear)
             var env = new Godot.Environment
             {
-                BackgroundMode = Godot.Environment.BGMode.Color, BackgroundColor = new Color(0.42f, 0.58f, 0.75f),
-                AmbientLightSource = Godot.Environment.AmbientSource.Color, AmbientLightColor = new Color(0.62f, 0.64f, 0.68f), AmbientLightEnergy = 0.95f,
+                BackgroundMode = Godot.Environment.BGMode.Color, BackgroundColor = night ? new Color(0.02f, 0.03f, 0.06f) : new Color(0.42f, 0.58f, 0.75f),
+                AmbientLightSource = Godot.Environment.AmbientSource.Color, AmbientLightColor = night ? new Color(0.05f, 0.06f, 0.11f) : new Color(0.62f, 0.64f, 0.68f), AmbientLightEnergy = night ? 0.3f : 0.95f,
             };
             AddChild(new WorldEnvironment { Environment = env });
-            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-52f, -42f, 0f), LightEnergy = 1.1f, ShadowEnabled = true });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-52f, -42f, 0f), LightEnergy = night ? 0.04f : 1.1f, ShadowEnabled = true });
 
             Terrain.HasWater = true; Terrain.SeaLevelY = 0f;   // flat test sea at Y=0 -- the boat physics reads these
-            var water = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(800f, 800f) }, Position = Vector3.Zero,
-                MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.10f, 0.34f, 0.52f, 0.78f), Transparency = BaseMaterial3D.TransparencyEnum.Alpha, Metallic = 0.25f, Roughness = 0.12f } };
+            // UG_WATERFAR=1: shove the plane ~2.6k units out to fake the REAL map's large world coords (where the
+            // sin-hash noise degraded into a grid) -- so the test reproduces the real-map condition, not a near-origin one.
+            Vector3 farOff = System.Environment.GetEnvironmentVariable("UG_WATERFAR") == "1" ? new Vector3(2600f, 0f, 2600f) : Vector3.Zero;
+            var water = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(800f, 800f), SubdivideWidth = 160, SubdivideDepth = 160 }, Position = farOff,   // 160 = ~5 m quads = the REAL map's density, so the boattest is an honest test (not a flattering fine mesh)
+                MaterialOverride = new ShaderMaterial { Shader = GD.Load<Shader>("res://content/water.gdshader") } };   // wave/foam shader (master)
             AddChild(water);
+            // caustics projected onto the underwater surfaces, seeded from the same wave noise (master 2026-08-16)
+            var caustShader = GD.Load<Shader>("res://content/caustics_ground.gdshader");
+            ShaderMaterial Caust(Color c) { var m = new ShaderMaterial { Shader = caustShader }; m.SetShaderParameter("base_color", c); m.SetShaderParameter("sea_level", Terrain.SeaLevelY); return m; }
             var seabed = new StaticBody3D { Position = new Vector3(0f, -14f, 0f) };   // deep floor so a swamped boat lands, not falls forever
-            seabed.AddChild(new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(800f, 800f) }, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.22f, 0.26f, 0.20f) } });
+            seabed.AddChild(new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(800f, 800f) }, MaterialOverride = Caust(new Color(0.22f, 0.26f, 0.20f)) });
             seabed.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
             AddChild(seabed);
 
@@ -1085,7 +1092,7 @@ namespace UnturnedGodot
             if (System.Environment.GetEnvironmentVariable("UG_BEACH") == "1")   // AMPHIBIOUS transition: a sandy beach sloping from dry land (+Z) down into the sea (-Z) -> drive off it into the water
             {
                 var ramp = new StaticBody3D { Position = new Vector3(0f, -1f, 14f), RotationDegrees = new Vector3(12f, 0f, 0f) };   // +Z end rises above the sea, -Z end dips under
-                ramp.AddChild(new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(40f, 2f, 44f) }, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.66f, 0.58f, 0.42f) } });
+                ramp.AddChild(new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(40f, 2f, 44f) }, MaterialOverride = Caust(new Color(0.66f, 0.58f, 0.42f)) });
                 ramp.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = new Vector3(40f, 2f, 44f) } });
                 AddChild(ramp);
                 _veh.Position = new Vector3(0f, 6f, 26f);   // start up on the dry land, facing -Z toward the sea
@@ -1095,6 +1102,22 @@ namespace UnturnedGodot
             _vehCam.CullMask &= ~OutlineOverlay.OutlineLayer;
             AddChild(_vehCam);
             _vehTest = true;   // reuse the vehTest auto-drive + chase-cam loop (Drive() -> the boat's water propulsion)
+
+            if (System.Environment.GetEnvironmentVariable("UG_WATERSHOW") == "1")
+            {   // clean open-water scroll showcase for a --write-movie clip: ditch the boat + auto-drive, hold a
+                // static low camera skimming the sea so the swell + foam visibly SCROLL past (no boat/cam motion to mask it).
+                if (_veh != null) { _veh.QueueFree(); _veh = null; }
+                _vehTest = false;
+                GetWindow().Size = new Vector2I(1280, 720);
+                if (System.Environment.GetEnvironmentVariable("UG_SHOREEYE") == "1")
+                    // EYE-HEIGHT looking across the sea to the horizon = the exact "standing at the shore" grazing view master flagged (busy+opaque low-angle)
+                    _vehCam.LookAtFromPosition(new Vector3(0f, 1.8f, 0f) + farOff, new Vector3(0f, 1.4f, -100f) + farOff, Vector3.Up);
+                else if (System.Environment.GetEnvironmentVariable("UG_BEACH") == "1")
+                    // look DOWN at the shoreline (the ramp's waterline sits ~Z=14) so the shore-foam band + lapping read clearly
+                    _vehCam.LookAtFromPosition(new Vector3(0f, 12f, 40f), new Vector3(0f, -1f, 6f), Vector3.Up);
+                else
+                    _vehCam.LookAtFromPosition(new Vector3(0f, 3.2f, 34f) + farOff, new Vector3(0f, 0.6f, -50f) + farOff, Vector3.Up);
+            }
         }
 
         void BuildVehicleTest(string type)

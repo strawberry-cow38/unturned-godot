@@ -46,8 +46,25 @@ uniform sampler2DArray albedos : source_color, filter_nearest_mipmap, repeat_ena
 uniform sampler2D splat0 : filter_linear;
 uniform sampler2D splat1 : filter_linear;
 uniform float tileWorld = 16.0;
+uniform float sea_level = 25.6;                                  // world-Y of the ocean surface -> caustics show only below it
+uniform vec3 caustic_tint : source_color = vec3(0.55, 0.9, 1.0);
+uniform float caustic_strength = 0.15;   // toned down 70% (master)
 varying vec3 wpos;
 void vertex() { wpos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz; }
+// --- caustics: gradient (Perlin) noise so the web is smooth, not blocky; projected in world XZ onto underwater terrain ---
+float chashv(vec2 p) { vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }   // precision-robust at large world coords
+vec2 cgrad(vec2 ip) { float h = chashv(ip) * 6.2831853; return vec2(cos(h), sin(h)); }
+float cnoise(vec2 p) {
+    vec2 i = floor(p), f = fract(p); vec2 u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+    float a = dot(cgrad(i), f), b = dot(cgrad(i + vec2(1.0, 0.0)), f - vec2(1.0, 0.0));
+    float c = dot(cgrad(i + vec2(0.0, 1.0)), f - vec2(0.0, 1.0)), d = dot(cgrad(i + vec2(1.0, 1.0)), f - vec2(1.0, 1.0));
+    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y) * 0.8 + 0.5;
+}
+float cfbm(vec2 p) { float s = 0.0, a = 0.5; for (int i = 0; i < 4; i++) { s += a * cnoise(p); p *= 2.03; a *= 0.5; } return s; }
+float caustics(vec2 p, float t) {
+    float a = cfbm(p + vec2(t, t * 0.4)), b = cfbm(p * 1.31 + vec2(-t * 0.7, t * 0.55) + 17.3);
+    return pow(clamp(1.0 - abs(a - b) * 4.0, 0.0, 1.0), 4.0);
+}
 void fragment() {
     vec4 w0 = texture(splat0, UV);
     vec4 w1 = texture(splat1, UV);
@@ -61,6 +78,18 @@ void fragment() {
     for (int i = 1; i < 8; i++) { if (ws[i] > bw) { bw = ws[i]; best = i; } }
     ALBEDO = texture(albedos, vec3(tuv, float(best))).rgb;
     ROUGHNESS = 1.0;
+    // caustics on underwater terrain: a light web projected in world XZ, faded with depth (master 2026-08-17)
+    float cdepth = sea_level - wpos.y;
+    if (cdepth > 0.0) {
+        vec2 cp = mat2(vec2(0.87, 0.5), vec2(-0.5, 0.87)) * (wpos.xz * 0.11);
+        cp += 0.8 * (vec2(cfbm(cp * 0.5), cfbm(cp * 0.5 + 7.0)) - 0.5);
+        float caust = caustics(cp, TIME * 0.25);
+        caust = max(caust, caustics(cp * 1.6 + 9.0, -TIME * 0.2));
+        float cfade = clamp(cdepth / 0.4, 0.0, 1.0) * (1.0 - clamp(cdepth / 9.0, 0.0, 1.0));
+        // ADD to ALBEDO (not EMISSION) so the scene's sun/sky LIGHTS the caustics -> bright by day, its colour, and
+        // FADE to nothing at night instead of glowing nuclear (master). Real caustics are just focused sunlight.
+        ALBEDO += caustic_tint * caust * caustic_strength * cfade;
+    }
 }
 ";
 
@@ -83,6 +112,7 @@ void fragment() {
             mat.SetShaderParameter("splat0", splat0);
             mat.SetShaderParameter("splat1", splat1);
             mat.SetShaderParameter("tileWorld", 16f);
+            mat.SetShaderParameter("sea_level", SeaLevelY);   // caustics show below this (PEI default 25.6 == the uniform default)
             return mat;
         }
 
@@ -378,6 +408,10 @@ void fragment() {
         public static bool HasWater;
         /// <summary>Is this world point below the ocean surface? (the port's WaterUtility.isPointUnderwater).</summary>
         public static bool IsPointUnderwater(float worldY) => HasWater && worldY < SeaLevelY;
+        /// <summary>Visual water-surface world-Y at a world point = flat sea level + the WaveField swell (the CPU twin of
+        /// water.gdshader). Buoyancy / bobbing samples THIS so floaters ride the same waves the shader draws. Gameplay
+        /// submersion still keys off the flat SeaLevelY above (a wave slopping over your head shouldn't drown you).</summary>
+        public static float WaterSurfaceY(Vector3 p) => SeaLevelY + (HasWater ? WaveField.Height(p.X, p.Z) : 0f);
         public const float MinFishDepth = 4f;   // retail UseableFisher minimumDepth: a bobber needs >=4m of water below the surface
         // The bullet-impact surface material at a world point, from the dominant splat layer (so shooting sand kicks up sand,
         // road/rock = concrete chips, dirt = dirt, grass/forest = foliage -- instead of one flat guess for the whole island).
@@ -615,14 +649,13 @@ void fragment() {
                 float waterY = seaLevel01 * 256f;   // Unturned water surface = seaLevel * Level.TERRAIN(256), Use_Legacy_Water path
                 SeaLevelY = waterY;                 // swim submersion (PlayerController water state) + explosion splashes
                 GD.Print($"[terrain] sea level {seaLevel01:F3} -> world-Y {waterY:F1}");
-                var water = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2((maxX - minX + 1) * TILE_SIZE + 400f, (maxY - minY + 1) * TILE_SIZE + 400f) } };
+                float wsx = (maxX - minX + 1) * TILE_SIZE + 400f, wsdz = (maxY - minY + 1) * TILE_SIZE + 400f;
+                // subdivide so the vertex-displaced waves have geometry to move (~5 m quads); capped for perf on huge maps
+                int subX = Mathf.Clamp((int)(wsx / 4f), 64, 600), subZ = Mathf.Clamp((int)(wsdz / 4f), 64, 600);   // ~4 m quads; per-pixel normal in the shader hides the rest of the facets
+                var water = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(wsx, wsdz), SubdivideWidth = subX, SubdivideDepth = subZ } };
                 water.Position = new Vector3(baseX + GW * UNIT * 0.5f, waterY, -(baseZ + GH * UNIT * 0.5f));
-                water.MaterialOverride = new StandardMaterial3D
-                {
-                    AlbedoColor = new Color(0.13f, 0.29f, 0.44f, 0.74f),
-                    Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
-                    Roughness = 0.12f, Metallic = 0.15f, CullMode = BaseMaterial3D.CullModeEnum.Disabled,
-                };
+                // waves + crest foam (on the peaks) + depth-based shore foam at every coastline (master 2026-08-16)
+                water.MaterialOverride = new ShaderMaterial { Shader = GD.Load<Shader>("res://content/water.gdshader") };
                 terr.AddChild(water);
                 // Bullets-only splash collider on a dedicated layer (bit9): the bullet raycast checks it, but player/
                 // vehicles don't mask bit9 so it never blocks movement/swimming. Shooting the ocean -> Water_Static splash.
