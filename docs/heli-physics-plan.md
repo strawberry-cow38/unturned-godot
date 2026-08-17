@@ -124,6 +124,18 @@ trim of pedal, not a fight. Ka-60/orca is coaxial in reality and would have no c
 
 ## Phase 5 — Per-airframe coefficients from real aircraft
 
+> **Correction found after the reviewers were briefed:** the fleet's `SpeedMax` is **already**
+> derived from real aircraft. `Vehicle.cs:1687` reads *"the .dat says 16, but the fleet is balanced on
+> the real UH-1's 222 km/h"*, and the heli specs carry 20/23/26 m/s rather than their `.dat` values.
+> So this phase is not "derive speeds from real aircraft" — that is done. It is **derive `CdA` and
+> `HeliThrust`** so that the drag equilibrium reproduces those already-correct top speeds. That makes
+> the phase smaller and lower-risk than written, and it means Phase 1's calibration target is a number
+> somebody already justified rather than one to invent.
+
+Exact constants Phase 1 removes, for the implementer: `TiltThrustLoss = 0.55f` (`Vehicle.cs:46`),
+`ForeAftBoost = 1.65f, LateralBoost = 1.15f` (`:50`), applied at `:2940` and `:2954-2956`.
+
+
 strawberry mapped the fleet to real airframes (Mi-24, Ka-60, S-64, Littlebird, UH-1), so mass, disc
 area and installed power are public. Derive `HeliThrust` and `CdA` from those rather than hand-tuning,
 so a skycrane feels like a heavy lifter because its numbers say so. Keep the 20% maneuverability nerf
