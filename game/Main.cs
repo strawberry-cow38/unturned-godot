@@ -1681,28 +1681,31 @@ namespace UnturnedGodot
             // The skycrane's own numbers, measured off skycrane_body.txt rather than eyeballed:
             const float LegBottom = -0.63f, LegZFrom = -4.15f, LegZTo = 2.73f, CockpitRearZ = -1.0f;
             const float heliUnderside = 1.88f;   // measured: lowest fuselage over the container footprint (|X|<1.44, Z -0.70..6.80, above the struts)
+            bool touch = System.Environment.GetEnvironmentVariable("UG_SLING_TOUCH") == "1";
             float yaw = float.TryParse(System.Environment.GetEnvironmentVariable("UG_SLING_YAW"), out var y0) ? y0 : 180f;
             float gap = float.TryParse(System.Environment.GetEnvironmentVariable("UG_SLING_GAP"), out var g0) ? g0 : 0.30f;
             // Doors aft (yaw 180), forward face gapped off the back of the cockpit, base on the ground.
             float frontZ = CockpitRearZ + gap;
             float centreZ = frontZ + cL * 0.5f;
             var basis = new Basis(Vector3.Up, Mathf.DegToRad(yaw)) * new Basis(Vector3.Right, Mathf.DegToRad(270f));
-            AddChild(new MeshInstance3D { Mesh = cmesh, MaterialOverride = cmat, Transform = new Transform3D(basis, new Vector3(0f, cH * 0.5f, centreZ)) });
+            // UG_SLING_TOUCH=1: drop the container until its TOP meets the underside above it. Note the
+            // limiting surface is the BELLY at 1.88 over this footprint, not the tail boom (2.39) -- so
+            // "touching the bottom of the tail" would leave it intersecting the fuselage further forward.
+            float baseY = touch ? heliUnderside - cH : 0f;
+            // THE MESH ORIGIN IS THE CONTAINER'S BASE, NOT ITS CENTRE -- mesh Z runs 0.000..3.243, so after the
+            // Z-up->Y-up rotation the origin sits on the floor of the box. Adding cH/2 here (as if it were
+            // centred, which it is in X and Y) lifted the whole thing 1.62 m and put the top at 3.50 against a
+            // 1.88 underside. It looked plausible and the arithmetic downstream was all consistent with it;
+            // strawberry caught it by eye. Place the ORIGIN at the base and let the mesh extend upward.
+            AddChild(new MeshInstance3D { Mesh = cmesh, MaterialOverride = cmat, Transform = new Transform3D(basis, new Vector3(0f, baseY, centreZ)) });
+            if (touch) GD.Print($"[SLING] container dropped to base Y {baseY:0.00}, top {baseY + cH:0.00} against the {heliUnderside:0.00} underside");
 
             // UG_SLING_TOUCH=1: raise the aircraft until the container's TOP meets its underside -- strawberry's
             // "lower the container so its top touches the bottom of the tail", done the way round that keeps the
             // box on the ground. The limiting surface is measured over the container's own footprint rather than
             // assumed to be the tail: it is actually the BELLY at Y 1.88 (Z 0..2.5); the boom behind it sits
             // higher at 2.39, so aiming at the tail would have buried the box in the fuselage.
-            bool touch = System.Environment.GetEnvironmentVariable("UG_SLING_TOUCH") == "1";
-            float lift = 0f;
-            if (touch)
-            {
-                float lowest = 9999f;
-                foreach (var mi2 in new[] { heliUnderside })
-                    if (mi2 < lowest) lowest = mi2;
-                lift = cH - lowest;
-            }
+            float lift = 0f;   // ghost-gear variant only; the container itself moves by `drop`
             var heli = Vehicle.BuildByName("skycrane");
             AddChild(heli);
             heli.GlobalPosition = new Vector3(0f, -LegBottom + lift, 0f);   // legs on the deck, plus any lift
