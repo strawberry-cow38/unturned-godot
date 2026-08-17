@@ -1041,7 +1041,7 @@ namespace UnturnedGodot
             AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-52f, -42f, 0f), LightEnergy = 1.1f, ShadowEnabled = true });
 
             Terrain.HasWater = true; Terrain.SeaLevelY = 0f;   // flat test sea at Y=0 -- the boat physics reads these
-            var water = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(800f, 800f), SubdivideWidth = 300, SubdivideDepth = 300 }, Position = Vector3.Zero,
+            var water = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(800f, 800f), SubdivideWidth = 160, SubdivideDepth = 160 }, Position = Vector3.Zero,   // 160 = ~5 m quads = the REAL map's density, so the boattest is an honest test (not a flattering fine mesh)
                 MaterialOverride = new ShaderMaterial { Shader = GD.Load<Shader>("res://content/water.gdshader") } };   // wave/foam shader (master)
             AddChild(water);
             // caustics projected onto the underwater surfaces, seeded from the same wave noise (master 2026-08-16)

@@ -21,7 +21,6 @@ uniform vec4 sky_tint : source_color = vec4(0.52, 0.67, 0.86, 1.0);  // colour r
 uniform float reflectivity = 0.55;    // how strongly the sky shows at grazing angles (Fresnel)
 uniform sampler2D depth_tex : hint_depth_texture, repeat_disable, filter_linear;
 
-varying vec3 v_wn;       // world-space base swell normal
 varying float v_crest;   // normalised swell height ~[-1,1], for crest foam
 varying vec3 v_wpos;     // world position of the displaced surface
 
@@ -56,21 +55,25 @@ void vertex() {
     float h = swell_at(wp, tphase);
     VERTEX.y += h * swell_amp;
     v_crest = h;
-    float e = 1.0;
-    float hx = swell_at(wp + vec2(e, 0.0), tphase);
-    float hz = swell_at(wp + vec2(0.0, e), tphase);
-    v_wn = normalize(vec3((h - hx) * swell_amp, e, (h - hz) * swell_amp));
-    v_wpos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+    v_wpos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;   // normal is computed PER-PIXEL in the fragment (below)
 }
 
 void fragment() {
-    // FINE RIPPLE DETAIL: fbm-gradient perturbs the swell normal (fragment space, so it doesn't need dense geometry)
+    // PER-PIXEL SWELL NORMAL: sample the big-wave gradient HERE (not interpolated from the coarse mesh vertices) so
+    // the big waves SHADE smooth even on a low-poly grid -> no grid/snap. The vertex still displaces the geometry.
+    float tp = TIME * swell_speed * swell_fu;
+    float se = 0.6;
+    float sh  = swell_at(v_wpos.xz, tp);
+    float shx = swell_at(v_wpos.xz + vec2(se, 0.0), tp);
+    float shz = swell_at(v_wpos.xz + vec2(0.0, se), tp);
+    vec3 swell_n = vec3((sh - shx) * swell_amp / se, 1.0, (sh - shz) * swell_amp / se);
+    // FINE RIPPLE DETAIL: fbm-gradient perturbs the normal (fragment space)
     vec2 np = v_wpos.xz * 0.15 + vec2(TIME * 0.03, TIME * -0.02);
     float n0 = fbm5(np);
     float nx = fbm5(np + vec2(0.06, 0.0));
     float nz = fbm5(np + vec2(0.0, 0.06));
     vec3 detail = vec3((n0 - nx), 0.0, (n0 - nz)) * detail_strength * 6.0;
-    vec3 wn = normalize(v_wn + detail);
+    vec3 wn = normalize(swell_n + detail);
     NORMAL = normalize((VIEW_MATRIX * vec4(wn, 0.0)).xyz);
 
     // SHORE FOAM: reconstruct the opaque scene behind the water, foam where the water is shallow over it.

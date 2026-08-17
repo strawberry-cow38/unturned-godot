@@ -648,7 +648,7 @@ void fragment() {
                 GD.Print($"[terrain] sea level {seaLevel01:F3} -> world-Y {waterY:F1}");
                 float wsx = (maxX - minX + 1) * TILE_SIZE + 400f, wsdz = (maxY - minY + 1) * TILE_SIZE + 400f;
                 // subdivide so the vertex-displaced waves have geometry to move (~5 m quads); capped for perf on huge maps
-                int subX = Mathf.Clamp((int)(wsx / 5f), 64, 480), subZ = Mathf.Clamp((int)(wsdz / 5f), 64, 480);
+                int subX = Mathf.Clamp((int)(wsx / 4f), 64, 600), subZ = Mathf.Clamp((int)(wsdz / 4f), 64, 600);   // ~4 m quads; per-pixel normal in the shader hides the rest of the facets
                 var water = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(wsx, wsdz), SubdivideWidth = subX, SubdivideDepth = subZ } };
                 water.Position = new Vector3(baseX + GW * UNIT * 0.5f, waterY, -(baseZ + GH * UNIT * 0.5f));
                 // waves + crest foam (on the peaks) + depth-based shore foam at every coastline (master 2026-08-16)
