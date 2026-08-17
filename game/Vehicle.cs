@@ -611,6 +611,11 @@ namespace UnturnedGodot
         /// <summary>Rotor spool 0..1. Thrust scales with its SQUARE (a rotor at half speed makes a quarter of
         /// the lift), so a cold start has to spin up before it will leave the ground.</summary>
         public float RotorSpool => _rotorRpm;
+        /// <summary>Put the rotor straight to full for a machine that is spawned ALREADY FLYING (NPC traffic, and
+        /// any rig that starts a helicopter in mid-air). Even with DebugInstantStart the disc still winds up over
+        /// SpoolUpSeconds = 3.2 s, and an aircraft spawned at cruise height simply falls out of the sky during that
+        /// -- it hit the ground and detonated before the AI had any thrust to fly with.</summary>
+        public void SpawnRotorRunning() { EngineOn = true; _rotorRpm = 1f; }
         /// <summary>Test seam: the collective/yaw/pitch/roll the flight model is currently flying on.</summary>
         public Vector4 DebugHeliInput => new Vector4(_inCollective, _inYaw, _inPitch, _inRoll);
         float _heliClimbMax, _heliFallMax;

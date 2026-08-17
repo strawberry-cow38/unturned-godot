@@ -13,6 +13,26 @@ namespace UnturnedGodot
     {
         public PlayerController Player;
 
+        // The world's Terrain, found by walking the tree rather than threaded in. There are two DevConsole
+        // construction sites (WorldBuilder's playable path and AttachPlayerShell, which is static and has no
+        // terrain in scope), and a joined client has neither -- so a lookup is one place that works on all of them
+        // and cannot go stale when a third path appears.
+        Terrain _terrCache;
+        Terrain WorldTerrain
+        {
+            get
+            {
+                if (_terrCache != null && IsInstanceValid(_terrCache)) return _terrCache;
+                Terrain Find(Node n)
+                {
+                    if (n is Terrain t) return t;
+                    foreach (var c in n.GetChildren()) { var r = Find(c); if (r != null) return r; }
+                    return null;
+                }
+                return _terrCache = Find(GetTree().Root);
+            }
+        }
+
         // MP (Phase 6, §2.3 "all state mutation goes through commands -- including DevConsole"): when this
         // process is a REMOTE client of some server, the state-mutating cheat verbs are sent as a
         // ConsoleCommand and the SERVER validates + applies them against its authoritative state; the
@@ -31,7 +51,7 @@ namespace UnturnedGodot
 
         LineEdit _input;
         Label _log;
-        static readonly string[] Verbs = { "give", "vehicle", "spawnMagnetableContainer", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "toggleGlobalPower", "toggleGlobalWater", "toggleBbat", "infFuel", "infAmmo", "wear", "unwear", "fluid", "date", "dateset", "whenBlackout", "triggerGlobalBrownout", "hurtmain", "killmain", "hurttail", "killtail", "profiler", "renderscale", "zshadows", "freezerigs", "vertexlight", "weather", "fridge", "fill", "empty", "units", "simspeed", "time", "timeset", "timeadd", "timespeed", "daylength", "hitbox" };
+        static readonly string[] Verbs = { "give", "vehicle", "spawnMagnetableContainer", "spawnheli", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "toggleGlobalPower", "toggleGlobalWater", "toggleBbat", "infFuel", "infAmmo", "wear", "unwear", "fluid", "date", "dateset", "whenBlackout", "triggerGlobalBrownout", "hurtmain", "killmain", "hurttail", "killtail", "profiler", "renderscale", "zshadows", "freezerigs", "vertexlight", "weather", "fridge", "fill", "empty", "units", "simspeed", "time", "timeset", "timeadd", "timespeed", "daylength", "hitbox" };
         static readonly EItemType[] ClothingTypes = { EItemType.SHIRT, EItemType.PANTS, EItemType.HAT, EItemType.VEST, EItemType.MASK, EItemType.GLASSES, EItemType.BACKPACK };
         readonly System.Collections.Generic.List<string> _history = new();
         int _histIdx;
@@ -477,6 +497,18 @@ namespace UnturnedGodot
                 if (v.IsHeli) v.PlaceOnGround(at);
                 else v.GlobalPosition = at + Vector3.Up * 1.5f;
                 Log($"spawned {name}" + (v.IsHeli ? $" (seated on skids, {v.GroundClearance:0.##} m clearance -- F to board, W/S collective, A/D yaw, mouse to fly)" : ""));
+            }
+            else if (verb == "spawnheli")
+            {
+                string hname = Vehicle.SpecNames.FirstOrDefault(n => n.Equals(arg, System.StringComparison.OrdinalIgnoreCase))
+                            ?? Vehicle.SpecNames.FirstOrDefault(n => n.StartsWith(arg, System.StringComparison.OrdinalIgnoreCase));
+                if (hname == null) { Log($"no vehicle '{arg}'"); return; }
+                var probe = Vehicle.BuildByName(hname);
+                bool isHeli = probe.IsHeli; probe.QueueFree();
+                if (!isHeli) { Log($"'{hname}' is not a helicopter"); return; }
+                var ai = NpcHeli.Spawn(Player?.GetParent() ?? GetTree().Root, hname, WorldTerrain, at);
+                if (ai == null) { Log("no map nodes to fly to (nodes.tsv empty?)"); return; }
+                Log($"npc {hname} inbound from the map edge -> {ai.TargetName}, holding {NpcHeli.CanopyClearance:0} m over the terrain, will circle at {NpcHeli.OrbitRadius:0} m");
             }
             else if (verb == "spawnmagnetablecontainer" || verb == "magcontainer")
             {
