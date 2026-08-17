@@ -21,7 +21,7 @@ namespace UnturnedGodot
         // and just sank (strawberry: "THE MAGNET IS VERRRYYYY HEAVY"). Every vehicle in this game masses 900 kg
         // regardless of what it is, so a "realistic" coil mass is meaningless; what matters is the share of the budget
         // it spends. 40 kg is ~18 % of the margin, leaving the rest for actual cargo.
-        public const float MagnetMass = 40f;
+        public const float MagnetMass = 12f;
 
         // A magnetised coil only bites FERROUS things. Everything grabbable here is a physics body on the vehicle or
         // prop layers; the reach is measured from the coil FACE (the underside), not the centre, so a load is caught by
@@ -45,7 +45,16 @@ namespace UnturnedGodot
             CollisionLayer = 1u << 5;              // vehicles: it is aircraft equipment, not scenery
             CollisionMask = (1u << 0) | (1u << 6); // world + props, so it lands on terrain and can bump what it lifts
             ContinuousCd = true;                   // it swings fast on a long cable; don't tunnel through the ground
-            LinearDamp = 0.6f; AngularDamp = 2.0f; // a dead weight on a wire, not a pendulum that rings forever
+            // NO TRANSLATIONAL DRAG -- WEIGHT ONLY (strawberry 2026-08-17: "magnet shouldnt apply drag. just
+            // weight"). LinearDamp is what sets the steady trail angle: tan(theta) = LinearDamp * v / g, independent
+            // of mass. At 0.6 the magnet streamed out to a measured 66 deg and hauled 884 N rearward -- 41 % of the
+            // sky-crane's spare thrust spent dragging its own equipment. At 0 it hangs plumb at constant speed and
+            // only swings back under ACCELERATION, where tan(theta) = a/g is the honest pendulum answer.
+            //
+            // The cost of zero is that nothing bleeds a swing once started: the axial cable damper acts ALONG the
+            // cable, and a pendulum swings PERPENDICULAR to it, so the oscillation is undamped by construction.
+            // AngularDamp below is the magnet's own spin, not the swing, and does not help either.
+            LinearDamp = 0f; AngularDamp = 2.0f;
 
             AddChild(new CollisionShape3D { Shape = new CylinderShape3D { Radius = Radius, Height = Thickness } });
 

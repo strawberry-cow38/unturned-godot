@@ -2196,11 +2196,17 @@ namespace UnturnedGodot
 
         // SKYCRANE (S-64) -- the heavy lifter, and counter-intuitively the WORST climber and slowest of the
         // five, because at 21 t what it mostly lifts is itself. Least agile by a wide margin.
-        static readonly Spec _skycrane = HeliBase("skycrane", 12.2f, 0.50f, 0.59f, 0.46f, 5.90f, 1.25f,
+        // BUFFED (strawberry 2026-08-17: "buff the skycrane because it is really slow"). It was both the slowest
+        // airframe in the fleet by a wide margin (22 vs 29-34) AND the least powerful (12.2 vs 13.4-14.2), which is
+        // backwards for the one machine whose entire purpose is heavy lift. Thrust 12.2 -> 16.5 makes it the
+        // strongest, taking spare capacity from 2160 N (~220 kg) to 6030 N (~615 kg) so it can actually carry
+        // something; Speed_Max 22 -> 28 keeps it the slowest, which is right for a crane, without being painful.
+        // Terminal climb becomes (16.5-9.8)/0.45 = 14.9 m/s, still under the 20 m/s HeliClimbMax cap.
+        static readonly Spec _skycrane = HeliBase("skycrane", 16.5f, 0.50f, 0.59f, 0.46f, 5.90f, 1.25f,
             new Vector3(0f, 3.01f, -1.21f), new Vector3(-0.45f, 3.55f, 7.71f),
             new Vector3(3.20f, 2.80f, 6.80f), new Vector3(0f, 1.30f, 0.30f),
             Skids(2.065f, 0.60f, -0.63f, -4.15f, 2.73f, 0.20f),   // the S-64's tall splayed legs, measured
-            22f, 2000f, 900f, "Skycrane", EItemRarity.EPIC);
+            28f, 2000f, 900f, "Skycrane", EItemRarity.EPIC);
         // The sky-crane is the ONLY airframe with the winch: the whole point of the real S-64 is that it has no cargo
         // hold, just a spine and a hook. 9 m of cable clears the 0.63 m gear with room for a tall load to swing.
         static readonly Spec _skycraneRigged = WithSling(_skycrane, 9.0f, new Vector3(0f, 1.88f, 0.00f));

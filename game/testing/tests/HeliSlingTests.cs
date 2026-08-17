@@ -75,7 +75,55 @@ namespace UnturnedGodot.Testing
             T.Check($"the cable pays out to near its full length ({drop:0.00} m of a {slung.DebugSlingLen:0.0} m cable)",
                 drop > slung.DebugSlingLen * 0.7f);
 
-            // ---- 3. NOT DANGLING ON THE GROUND. "Dangles below the heli when in flight" is the spec, and a
+            // ---- 3. THE LOAD MUST NOT HAUL THE AIRCRAFT BACKWARDS. strawberry, flying it: "its pulling the heli
+            // backwards". A slung load DOES trail -- that is real -- but the steady trail angle here is set by the
+            // magnet's own damping, not by anything aerodynamic: with linear damping the balance is
+            // tan(theta) = damp * v / g, which is INDEPENDENT OF MASS. So making the magnet lighter cannot fix the
+            // angle (it only scales the force m*g*tan(theta) down); the damping coefficient is the thing that sets it.
+            //
+            // Cruise is imposed kinematically here rather than flown, so the reading is the cable's steady trail at a
+            // known speed and not a measurement of whatever airspeed the model happened to reach.
+            var cruise = Spawn(World, new Vector3(1200f, 500f, 0f), sling: true);
+            for (int i = 0; i < 260; i++) { cruise.DriveHeli(1f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
+            float v = cruise.SpeedMaxMps;
+            // RAMP to cruise rather than snapping to it. An instantaneous velocity change kicks the pendulum, and
+            // with zero drag that kick never decays -- so a snap would be measuring my own step input forever.
+            for (int i = 0; i < 200; i++)
+            {
+                cruise.LinearVelocity = new Vector3(0f, 0f, -v * (i / 199f));
+                cruise.DriveHeli(1f, 0f, 0f, 0f, 0.02);
+                yield return Ticks(1);
+            }
+            // WITH NO DRAG THE SWING NEVER SETTLES, so a single end-of-window sample is a phase of an undamped
+            // oscillation, not a steady state -- the first cut of this check did exactly that and read 89.9 deg.
+            // The quantity that matters is what the airframe FEELS over time: average the rearward pull across a
+            // long window (a net haul shows up here, an honest pendulum averages toward zero) and keep the peak
+            // separately, because those two numbers answer different questions.
+            float sumBack = 0f, peakBack = 0f, sumTrail = 0f, peakTrail = 0f; int n = 0;
+            for (int i = 0; i < 900; i++)
+            {
+                cruise.LinearVelocity = new Vector3(0f, 0f, -v);
+                cruise.DriveHeli(1f, 0f, 0f, 0f, 0.02);
+                yield return Ticks(1);
+                if (!cruise.SlingDeployed) continue;
+                Vector3 r = cruise.Sling.GlobalPosition - cruise.ToGlobal(cruise.DebugSlingAnchorLocal);
+                float hz = new Vector2(r.X, r.Z).Length(), dn = Mathf.Max(0.01f, -r.Y);
+                float deg = Mathf.RadToDeg(Mathf.Atan2(hz, dn));
+                // Rearward component only: a load swinging FORWARD pushes the aircraft along and is not the complaint.
+                float back = SlingMagnet.MagnetMass * 9.8f * Mathf.Tan(Mathf.DegToRad(Mathf.Min(deg, 80f))) * (r.Z > 0f ? 1f : -1f);
+                sumBack += back; peakBack = Mathf.Max(peakBack, back);
+                sumTrail += deg; peakTrail = Mathf.Max(peakTrail, deg); n++;
+            }
+            float meanBack = n > 0 ? sumBack / n : 0f, meanTrail = n > 0 ? sumTrail / n : 0f;
+            T.Check($"the sim actually produced a hanging load to measure ({n} samples, mean trail {meanTrail:0.#} deg, peak {peakTrail:0.#})",
+                n > 500 && peakTrail > 0.5f);
+            // THE COMPLAINT ITSELF: a NET rearward haul. Weight-only means the load cannot steadily drag the
+            // aircraft back -- it may swing, but it must not average into a tow.
+            T.Check($"weight-only: no NET rearward haul at cruise (mean {meanBack:0} N against {(16.5f - 9.8f) * 900f:0} N of spare thrust)",
+                Mathf.Abs(meanBack) < 60f);
+            T.Check($"...and the worst instantaneous pull is still small ({peakBack:0} N)", peakBack < 400f);
+
+            // ---- 4. NOT DANGLING ON THE GROUND. "Dangles below the heli when in flight" is the spec, and a
             // magnet left out while parked would drag through the terrain under a landed aircraft.
             var parked = Spawn(World, new Vector3(600f, 0.2f, 0f), sling: true);
             for (int i = 0; i < 200; i++) { parked.DriveHeli(0f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
