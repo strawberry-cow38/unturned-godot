@@ -88,6 +88,11 @@ namespace UnturnedGodot
             if (!on) Release();
         }
 
+        // A point on the coil's RIM, the second attachment of the bridle. Two spread attachments are what stop a
+        // slung magnet pivoting freely about a single hook (strawberry: "anchor to the top and bottom of the magnet
+        // ... to stop it spinning around the rope connection point").
+        public Vector3 RimWorld => GlobalPosition + GlobalBasis.X * (Radius * 0.85f) + GlobalBasis.Y * (Thickness * 0.5f);
+
         // The coil FACE, where a load actually makes contact -- the underside of the disc in world space.
         public Vector3 FaceWorld => GlobalPosition + GlobalBasis.Y * -(Thickness * 0.5f);
 

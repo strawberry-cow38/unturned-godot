@@ -24,7 +24,7 @@ namespace UnturnedGodot
         // is just a RigidBody3D, so the base class does not fight flight.
         bool _heli; float _heliThrust, _heliPitchTq, _heliRollTq, _heliYawTq, _heliLevel, _heliDragFwd;
         bool _slingHook; float _slingLen; Vector3 _slingAnchor;   // winch + electromagnet (sky-crane): see UpdateSling
-        SlingMagnet _magnet; TowRope _slingCable; bool _magnetWanted; float _slingOut;   // _slingOut = cable CURRENTLY paid out, ramping to _slingLen
+        SlingMagnet _magnet; TowRope _slingCable, _slingBridle; bool _magnetWanted; float _slingOut;   // _slingOut = cable CURRENTLY paid out, ramping to _slingLen
         public SlingMagnet Sling => _magnet;
         public bool SlingDeployed => _magnet != null && IsInstanceValid(_magnet);
         public bool DebugNoSling;   // suppress winch deployment, so a rig can fly the SAME airframe with and without its magnet
@@ -284,7 +284,7 @@ namespace UnturnedGodot
         public float DebugRotorPhase => _rotorSpin;
         /// <summary>Balance seams: the tuned handling numbers, so a test can pin the fleet's ORDERING without
         /// flying every airframe. The absolute values are taste; the order is the specification.</summary>
-        public float DebugRollAuthority => _heliRollTq;
+        public float DebugRollAuthority => _heliRollTq * SlingAgility;   // LIVE: what the machine actually rolls with right now
         public float DebugThrust => _heliThrust;
         public float DebugHeliDragK => _heliDragFwd;   // 1/m, derived at build time -- see LevelFlightAccel
         public float DebugHeliLiftCap => _heliLiftCap;
@@ -3510,9 +3510,10 @@ namespace UnturnedGodot
             // the main rotor's axis and the vertical one.
             float tn = TailRotorNorm;
             float tailEff = 0.04f + 0.96f * tn * tn;
-            Vector3 cmd = b.X * (_inPitch * HeliPitchRate * _heliPitchTq / 2.6f)
-                        + b.Z * (-_inRoll * HeliRollRate * _heliRollTq / 3.0f * tailEff)
-                        + b.Y * (-_inYaw * HeliYawRate * _heliYawTq / 2.2f * tailEff);
+            float agi = SlingAgility;   // empty hook -> crisper; heavy load -> the spec figures
+            Vector3 cmd = b.X * (_inPitch * HeliPitchRate * _heliPitchTq * agi / 2.6f)
+                        + b.Z * (-_inRoll * HeliRollRate * _heliRollTq * agi / 3.0f * tailEff)
+                        + b.Y * (-_inYaw * HeliYawRate * _heliYawTq * agi / 2.2f * tailEff);
 
             // TORQUE REACTION. A tail rotor's whole job is cancelling the main rotor's torque on the fuselage;
             // with it dead, that torque is unopposed and the airframe spins ("tail rotor dead, go into a
@@ -3875,6 +3876,40 @@ namespace UnturnedGodot
         // sank and crashed at FULL collective. Paying the cable out at a controlled rate keeps tension near the load's
         // static weight, which is the only regime the airframe can actually afford.
         const float SlingPayoutRate = 2.5f;    // m/s of cable out (and back in when stowing)
+        // ANTI-SWAY. Damps the load's velocity RELATIVE TO THE AIRCRAFT, perpendicular to the cable -- not its
+        // absolute velocity, which is what LinearDamp did and what towed the aircraft backwards. Hanging plumb at
+        // cruise the load moves exactly with the airframe, so the relative velocity is zero and this costs nothing;
+        // it only bites on an actual swing. That is what a crane's anti-sway system does, and it is why "stop the
+        // swinging" and "no drag" are not in conflict after all.
+        const float SwayDamp = 2.6f;           // 1/s on the cross-cable relative velocity (~half-critical on a 9 m pendulum)
+        // BRIDLE. Two spread attachments instead of one hook, so the magnet cannot pivot freely at the cable end.
+        // Modelled as an alignment torque rather than a literal second rope constraint: two stiff positional
+        // constraints on one rigid body is over-constrained and buzzes in the solver, whereas a torque toward the
+        // cable axis is exactly the couple a real bridle applies and is unconditionally stable.
+        const float BridleStiff = 9f, BridleDamp = 3.2f;
+        // HANDLING SCALES WITH WHAT IS ON THE HOOK (strawberry: "the current handling of the skycrane should be
+        // when we are hauling a heavy object, with nothing we should handle a lot better"). The SPEC figures stay
+        // the LOADED case, and an empty hook multiplies them up.
+        //
+        // The bonus is CAPPED at 1.30 for a reason worth keeping: the fleet's agility ordering is deliberate and
+        // inverse to weight (Hummingbird 2.16 > Huey 1.32 > Orca 1.07 > Hind 0.81 > Skycrane 0.59), and 0.59 * 1.30
+        // = 0.767 keeps the empty crane just under the Hind. Any more and a 21 t crane out-handles a gunship, which
+        // is a fleet-identity decision rather than a tuning one -- see HeliFlightTests.
+        const float SlingAgilityBonus = 1.30f;
+        const float SlingAgilityLoadRef = 600f;   // kg on the hook at which handling is back to the spec figure
+
+        // 1.0 for every airframe without a hook -- this must never quietly buff the rest of the fleet.
+        float SlingAgility
+        {
+            get
+            {
+                if (!_slingHook) return 1f;
+                float carried = _magnet != null && IsInstanceValid(_magnet)
+                    ? _magnet.Mass + (_magnet.Held != null && IsInstanceValid(_magnet.Held) ? _magnet.Held.Mass : 0f)
+                    : 0f;
+                return Mathf.Lerp(SlingAgilityBonus, 1f, Mathf.Clamp(carried / SlingAgilityLoadRef, 0f, 1f));
+            }
+        }
         const float SlingStowSpeed = 1.5f;     // m/s ground speed under which a landed crane reels the magnet back in
 
         // Shift, from the cockpit. De-energising is also how the load is PUT DOWN, so this is the whole control.
@@ -3899,13 +3934,16 @@ namespace UnturnedGodot
             _magnet = m;
             _slingCable = new TowRope();
             GetParent().AddChild(_slingCable);
+            _slingBridle = new TowRope();   // the second leg of the bridle, drawn to the coil's rim
+            GetParent().AddChild(_slingBridle);
         }
 
         void StowSling()
         {
             if (_magnet != null && IsInstanceValid(_magnet)) { _magnet.Release(); RemoveCollisionExceptionWith(_magnet); _magnet.QueueFree(); }
             if (_slingCable != null && IsInstanceValid(_slingCable)) _slingCable.QueueFree();
-            _magnet = null; _slingCable = null;
+            if (_slingBridle != null && IsInstanceValid(_slingBridle)) _slingBridle.QueueFree();
+            _magnet = null; _slingCable = null; _slingBridle = null;
         }
 
         void UpdateSling(float delta)
@@ -3933,6 +3971,29 @@ namespace UnturnedGodot
                 _magnet.Sleeping = false; Wake(); Sleeping = false;
                 _magnet.ApplyForce(-dir * f, Vector3.Zero);                       // load hauled up toward the aircraft
                 ApplyForce(dir * f, a - ToGlobal(CenterOfMass));                  // and the aircraft feels it AT THE ANCHOR, so a swinging load tilts it
+            }
+
+            if (dist > 1e-3f)
+            {
+                Vector3 dir2 = d / dist;
+                float susp2 = _magnet.Mass + (_magnet.Held != null && IsInstanceValid(_magnet.Held) ? _magnet.Held.Mass : 0f);
+                // Cross-cable RELATIVE velocity: the swing, with the along-cable part (the spring's business) removed.
+                Vector3 rel = _magnet.LinearVelocity - LinearVelocity;
+                Vector3 perp = rel - dir2 * rel.Dot(dir2);
+                // SCALE BY THE MAGNET'S OWN MASS, not the suspended total. These forces are applied to the MAGNET
+                // body, whose inertia is its own 12 kg -- sizing them for a welded 800 kg load meant a 68x overshoot
+                // on the body actually receiving them, and the solver diverged to NaN the moment anything was
+                // picked up. (The cable SPRING legitimately uses the suspended mass: it acts along the weld, where
+                // magnet and load genuinely move as one.) A heavy load now damps and aligns more slowly, which is
+                // also the physically honest answer.
+                Vector3 fSway = -perp * (SwayDamp * _magnet.Mass);
+                _magnet.ApplyForce(fSway, Vector3.Zero);
+                ApplyForce(-fSway, a - ToGlobal(CenterOfMass));   // equal and opposite, at the hook
+                // Bridle: hold the coil's axis along the cable so it hangs face-down instead of tumbling.
+                Vector3 up = _magnet.GlobalBasis.Y, want = -dir2;
+                Vector3 bridle = up.Cross(want) * (BridleStiff * _magnet.Mass) - _magnet.AngularVelocity * (BridleDamp * _magnet.Mass);
+                if (bridle.IsFinite()) _magnet.ApplyTorque(bridle);
+                if (_slingBridle != null && IsInstanceValid(_slingBridle)) _slingBridle.SetEndpoints(a, _magnet.RimWorld, a.DistanceTo(_magnet.RimWorld));
             }
 
             if (_magnetWanted && _magnet.Held == null)   // energised + empty -> bite the first thing the coil touches

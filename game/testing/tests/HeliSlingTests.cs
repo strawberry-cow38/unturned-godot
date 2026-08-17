@@ -100,6 +100,7 @@ namespace UnturnedGodot.Testing
             // long window (a net haul shows up here, an honest pendulum averages toward zero) and keep the peak
             // separately, because those two numbers answer different questions.
             float sumBack = 0f, peakBack = 0f, sumTrail = 0f, peakTrail = 0f; int n = 0;
+            float peakEarly = 0f, peakLate = 0f;   // swing amplitude in the first vs last third -> does it DECAY?
             for (int i = 0; i < 900; i++)
             {
                 cruise.LinearVelocity = new Vector3(0f, 0f, -v);
@@ -113,6 +114,8 @@ namespace UnturnedGodot.Testing
                 float back = SlingMagnet.MagnetMass * 9.8f * Mathf.Tan(Mathf.DegToRad(Mathf.Min(deg, 80f))) * (r.Z > 0f ? 1f : -1f);
                 sumBack += back; peakBack = Mathf.Max(peakBack, back);
                 sumTrail += deg; peakTrail = Mathf.Max(peakTrail, deg); n++;
+                if (i < 300) peakEarly = Mathf.Max(peakEarly, deg);
+                else if (i >= 600) peakLate = Mathf.Max(peakLate, deg);
             }
             float meanBack = n > 0 ? sumBack / n : 0f, meanTrail = n > 0 ? sumTrail / n : 0f;
             T.Check($"the sim actually produced a hanging load to measure ({n} samples, mean trail {meanTrail:0.#} deg, peak {peakTrail:0.#})",
@@ -122,8 +125,36 @@ namespace UnturnedGodot.Testing
             T.Check($"weight-only: no NET rearward haul at cruise (mean {meanBack:0} N against {(16.5f - 9.8f) * 900f:0} N of spare thrust)",
                 Mathf.Abs(meanBack) < 60f);
             T.Check($"...and the worst instantaneous pull is still small ({peakBack:0} N)", peakBack < 400f);
+            // ANTI-SWAY HAS TEETH ONLY IF THE SWING SHRINKS. Amplitude in the last third against the first third:
+            // with weight-only and no cross-cable damper this ratio sat at ~1 (an undamped pendulum rings forever),
+            // so this is the check that separates "we added a damper" from "we added a damper that does nothing".
+            float decay = peakEarly > 0.01f ? peakLate / peakEarly : 1f;
+            T.Check($"the swing DECAYS rather than ringing forever (peak {peakEarly:0.#} deg early -> {peakLate:0.#} deg late, {decay * 100f:0}%)",
+                decay < 0.55f);
 
-            // ---- 4. NOT DANGLING ON THE GROUND. "Dangles below the heli when in flight" is the spec, and a
+            // ---- 4. STABLE WITH SOMETHING ACTUALLY ON THE HOOK. Every check above flies an EMPTY magnet, so the
+            // suspended mass is always 12 kg -- which is precisely why the suite stayed green while the render blew
+            // up to NaN the moment a crate was picked up. The anti-sway and bridle were scaled by the SUSPENDED mass
+            // but applied to the magnet body, so a welded 800 kg load over-drove a 12 kg body by ~68x and the solver
+            // diverged. An all-green suite that never grabs anything cannot see a load-dependent instability.
+            var hauler = Spawn(World, new Vector3(1800f, 12.0f, 0f), sling: true);
+            var crate = new RigidBody3D { Name = "Crate", Mass = 800f, CollisionLayer = 1u << 6, CollisionMask = (1u << 0) | (1u << 5) };
+            var cs = new Vector3(2.4f, 2.4f, 2.4f);
+            crate.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = cs } });
+            crate.AddChild(new MeshInstance3D { Mesh = new BoxMesh { Size = cs } });
+            World.AddChild(crate);
+            crate.GlobalPosition = new Vector3(1800f, cs.Y * 0.5f, 0f);
+            hauler.ToggleSlingMagnet();
+            for (int i = 0; i < 500; i++) { hauler.DriveHeli(0.6f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
+            bool finite = hauler.GlobalPosition.IsFinite() && hauler.LinearVelocity.IsFinite()
+                          && (!hauler.SlingDeployed || (hauler.Sling.GlobalPosition.IsFinite() && hauler.Sling.AngularVelocity.IsFinite()))
+                          && crate.GlobalPosition.IsFinite();
+            T.Check($"carrying a real 800 kg load stays numerically stable (heli {hauler.GlobalPosition.Y:0.0}, crate {crate.GlobalPosition.Y:0.0})",
+                finite);
+            T.Check($"...and the coil is not spun up by its own bridle ({(hauler.SlingDeployed ? hauler.Sling.AngularVelocity.Length() : 0f):0.0} rad/s)",
+                !hauler.SlingDeployed || hauler.Sling.AngularVelocity.Length() < 25f);
+
+            // ---- 5. NOT DANGLING ON THE GROUND. "Dangles below the heli when in flight" is the spec, and a
             // magnet left out while parked would drag through the terrain under a landed aircraft.
             var parked = Spawn(World, new Vector3(600f, 0.2f, 0f), sling: true);
             for (int i = 0; i < 200; i++) { parked.DriveHeli(0f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }

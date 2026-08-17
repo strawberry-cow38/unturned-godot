@@ -1894,6 +1894,10 @@ namespace UnturnedGodot
                 Heli.GlobalTransform = new Transform3D(Basis.Identity, new Vector3(0f, HoldY, 0f));
                 Heli.LinearVelocity = Vector3.Zero; Heli.AngularVelocity = Vector3.Zero;
                 var mag = Heli.Sling;
+                // Record the load's start height the INSTANT it is grabbed, not on a clock. Sampling at a fixed
+                // time meant any change that shifted the grab later (the bridle settling the coil differently)
+                // silently left LoadY0 = NaN and printed "DOES NOT LIFT" for a run that lifted perfectly well.
+                if (float.IsNaN(LoadY0) && mag != null && IsInstanceValid(mag) && mag.Held != null) LoadY0 = mag.Held.GlobalPosition.Y;
                 if (Phase == 0 && T > 1.2f)   // settled -> energise the coil
                 {
                     // CONTROL (UG_MAG_NOENERGISE=1): skip the toggle. The rig must then report DOES NOT LIFT --
@@ -1903,9 +1907,8 @@ namespace UnturnedGodot
                     Phase = 1;
                     GD.Print($"[MAGNET] energised at t={T:0.00}; deployed={Heli.SlingDeployed}");
                 }
-                else if (Phase == 1 && T > 2.6f)   // give it a moment to bite, then record the load height and hoist
+                else if (Phase == 1 && T > 3.4f)   // give it time to bite, then hoist
                 {
-                    if (mag?.Held != null) LoadY0 = mag.Held.GlobalPosition.Y;
                     Phase = 2;
                     GD.Print($"[MAGNET] grab: held={(mag?.Held != null ? mag.Held.Name.ToString() : "NOTHING")}; loadY0={LoadY0:0.00}");
                 }
