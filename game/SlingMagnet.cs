@@ -15,7 +15,13 @@ namespace UnturnedGodot
     {
         public const float Radius = 1.35f;        // "big stinking circle" -- wide enough to read from the cockpit
         const float Thickness = 0.45f;
-        public const float MagnetMass = 260f;     // heavy enough to hang the cable taut, light enough not to fly the aircraft
+        // MASS IS A THRUST BUDGET HERE, not a realism dial. Lift force is HeliThrust * Mass (Vehicle.StepHeli), so the
+        // sky-crane's WHOLE spare capacity at full collective is (12.2 - 9.8) * 900 = 2160 N, about 220 kg. The first
+        // cut of this was 260 kg -- 2548 N, more than the entire margin -- so the crane could not lift its own magnet
+        // and just sank (strawberry: "THE MAGNET IS VERRRYYYY HEAVY"). Every vehicle in this game masses 900 kg
+        // regardless of what it is, so a "realistic" coil mass is meaningless; what matters is the share of the budget
+        // it spends. 40 kg is ~18 % of the margin, leaving the rest for actual cargo.
+        public const float MagnetMass = 40f;
 
         // A magnetised coil only bites FERROUS things. Everything grabbable here is a physics body on the vehicle or
         // prop layers; the reach is measured from the coil FACE (the underside), not the centre, so a load is caught by

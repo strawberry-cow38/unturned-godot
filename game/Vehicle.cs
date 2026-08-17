@@ -24,9 +24,11 @@ namespace UnturnedGodot
         // is just a RigidBody3D, so the base class does not fight flight.
         bool _heli; float _heliThrust, _heliPitchTq, _heliRollTq, _heliYawTq, _heliLevel, _heliDragFwd;
         bool _slingHook; float _slingLen; Vector3 _slingAnchor;   // winch + electromagnet (sky-crane): see UpdateSling
-        SlingMagnet _magnet; TowRope _slingCable; bool _magnetWanted;
+        SlingMagnet _magnet; TowRope _slingCable; bool _magnetWanted; float _slingOut;   // _slingOut = cable CURRENTLY paid out, ramping to _slingLen
         public SlingMagnet Sling => _magnet;
         public bool SlingDeployed => _magnet != null && IsInstanceValid(_magnet);
+        public bool DebugNoSling;   // suppress winch deployment, so a rig can fly the SAME airframe with and without its magnet
+        public float DebugCollective => _inCollective;
         public float DebugSlingLen => _slingLen;
         public Vector3 DebugSlingAnchorLocal => _slingAnchor;
         public bool DebugSlingHook => _slingHook;
@@ -2201,10 +2203,19 @@ namespace UnturnedGodot
             22f, 2000f, 900f, "Skycrane", EItemRarity.EPIC);
         // The sky-crane is the ONLY airframe with the winch: the whole point of the real S-64 is that it has no cargo
         // hold, just a spine and a hook. 9 m of cable clears the 0.63 m gear with room for a tall load to swing.
-        static readonly Spec _skycraneRigged = WithSling(_skycrane, 9.0f, new Vector3(0f, 1.88f, 1.00f));
+        static readonly Spec _skycraneRigged = WithSling(_skycrane, 9.0f, new Vector3(0f, 1.88f, 0.00f));
         public static Vehicle BuildSkycrane(int variant = 0) => Build(_skycraneRigged, variant, "skycrane");
         // Anchor is the MEASURED belly over the load footprint (local Y 1.88 -- the sky-crane's whole shape is a high
         // spine on tall legs, so the winch head sits 2.5 m above the skid bottoms and the cable drops between them).
+        //
+        // X AND Z MUST BE THE CENTRE OF MASS (both 0 here). The cable force is applied as a POSITIONED force, so an
+        // anchor offset from the CoM turns a hanging load into a constant pitching moment: the airframe tips, its
+        // thrust vector tilts off vertical, and it descends however much collective is in. At Z=+1.0 a 40 kg magnet
+        // -- 392 N, under a fifth of the spare thrust -- took the sky-crane from +4.1 m/s of climb to -21 m/s of
+        // descent. That is not a weight problem and no amount of trimming the magnet's mass would have fixed it.
+        // Directly under the CoM the moment arm is parallel to a vertical cable, so the torque is zero when it hangs
+        // straight and appears only as the load swings -- which is the behaviour we actually want. Real sling hooks
+        // are rigged at the CoM for exactly this reason.
         static Spec WithSling(Spec b, float cable, Vector3 anchor) { b.SlingHook = true; b.SlingCable = cable; b.SlingAnchor = anchor; return b; }
 
         // HUMMINGBIRD (MD500 Little Bird) -- the scout. A tenth of the Hind's weight, so far and away the
@@ -3840,9 +3851,24 @@ namespace UnturnedGodot
         // The cable is the tow rope's model turned on its side: a PULL-ONLY damped spring, so slack does nothing and
         // tension drags both ends together. That is what makes the load a real pendulum -- yaw hard and it lags behind,
         // stop and it keeps swinging -- instead of an animation glued under the hull.
-        const float SlingStiffness = 26000f;   // N per metre of stretch past the cable length (steel winch cable, stiffer than hemp)
-        const float SlingDamping = 4200f;      // along-cable damper; without it a heavy load pumps the aircraft vertically
-        const float SlingMaxForce = 60000f;    // clamp: a snatch at the physics rate must not fling a 900 kg airframe
+        // SPRING CONSTANTS ARE DERIVED FROM THE SUSPENDED MASS, not copied. The first cut reused the tow rope's
+        // numbers (k=26000, c=4200), which are tuned to drag ~900 kg cars; hung on a 40 kg magnet the damping term
+        // alone reached 54,600 N as the cable went taut, i.e. 1365 m/s^2 on the magnet -- a single tick overshot by
+        // more than the approach speed and FLUNG the magnet back up at the aircraft, which then rang. A fixed k is
+        // wrong on both ends anyway: the same cable has to hold an empty coil and a car.
+        //
+        // So pick the RESPONSE and solve for the constants: k = m*w^2, c = 2*zeta*m*w. Static stretch under load is
+        // then m*g/k = g/w^2 = 0.20 m whatever is on the hook, and stability is structural rather than tuned --
+        // c <= m/dt and k <= m/dt^2 hold by a wide margin at any mass, so it cannot explode at the physics rate.
+        const float SlingOmega = 7.0f;         // rad/s: cable response. Soft enough to be stable, stiff enough not to read as elastic
+        const float SlingZeta = 0.9f;          // near-critical: a winch snatch arrests, it does not bounce
+        const float SlingMaxAccel = 60f;       // clamp in g-ish terms, scaled by the load, so the guard means the same thing empty or full
+        // A WINCH PAYS OUT; IT DOES NOT DROP. Deploying to full length instantly let the magnet free-fall the whole
+        // 9 m and hit 13 m/s before the cable caught it, and arresting that snatch costs far more than the sky-crane's
+        // entire 2160 N spare thrust -- so every deployment yanked the aircraft down, it rebounded, and the machine
+        // sank and crashed at FULL collective. Paying the cable out at a controlled rate keeps tension near the load's
+        // static weight, which is the only regime the airframe can actually afford.
+        const float SlingPayoutRate = 2.5f;    // m/s of cable out (and back in when stowing)
         const float SlingStowSpeed = 1.5f;     // m/s ground speed under which a landed crane reels the magnet back in
 
         // Shift, from the cockpit. De-energising is also how the load is PUT DOWN, so this is the whole control.
@@ -3860,6 +3886,7 @@ namespace UnturnedGodot
             // Born just under the belly and allowed to FALL to cable length, so deploying reads as paying out a winch
             // rather than teleporting a magnet to the end of a taut wire.
             m.GlobalPosition = ToGlobal(_slingAnchor) + Vector3.Down * 1.2f;
+            _slingOut = 1.2f;   // and the winch starts there, paying out from the hull rather than dropping to full length
             m.LinearVelocity = LinearVelocity;   // match the aircraft or it gets left behind the instant it spawns
             m.AddCollisionExceptionWith(this); AddCollisionExceptionWith(m);
             m.SetMagnetized(_magnetWanted);
@@ -3880,19 +3907,23 @@ namespace UnturnedGodot
             // "Dangles below the heli when in flight" -- so it deploys on leaving the ground and reels in on landing,
             // but NEVER while it is holding something: reeling in with a car on the magnet would delete the car.
             bool airborne = !GroundedByRay() && !_exploded;
-            if (airborne) { if (_magnet == null) DeploySling(); }
+            if (airborne) { if (_magnet == null && !DebugNoSling) DeploySling(); }
             else if (_magnet != null && _magnet.Held == null && LinearVelocity.Length() < SlingStowSpeed) { StowSling(); return; }
             if (_magnet == null || !IsInstanceValid(_magnet)) return;
 
+            _slingOut = Mathf.MoveToward(_slingOut, _slingLen, SlingPayoutRate * delta);
             Vector3 a = ToGlobal(_slingAnchor), b = _magnet.GlobalPosition, d = b - a;
             float dist = d.Length();
-            if (_slingCable != null && IsInstanceValid(_slingCable)) _slingCable.SetEndpoints(a, b, _slingLen);
+            if (_slingCable != null && IsInstanceValid(_slingCable)) _slingCable.SetEndpoints(a, b, _slingOut);
 
-            if (dist > 1e-3f && dist > _slingLen)   // in tension: a cable pulls, it never pushes
+            if (dist > 1e-3f && dist > _slingOut)   // in tension: a cable pulls, it never pushes
             {
                 Vector3 dir = d / dist;
                 float sepVel = (_magnet.LinearVelocity - LinearVelocity).Dot(dir);   // >0 = separating -> damping ADDS tension
-                float f = Mathf.Clamp(SlingStiffness * (dist - _slingLen) + SlingDamping * sepVel, 0f, SlingMaxForce);
+                // The mass the cable is actually carrying: the coil, plus whatever is welded to it.
+                float susp = _magnet.Mass + (_magnet.Held != null && IsInstanceValid(_magnet.Held) ? _magnet.Held.Mass : 0f);
+                float k = susp * SlingOmega * SlingOmega, c = 2f * SlingZeta * susp * SlingOmega;
+                float f = Mathf.Clamp(k * (dist - _slingOut) + c * sepVel, 0f, susp * SlingMaxAccel);
                 _magnet.Sleeping = false; Wake(); Sleeping = false;
                 _magnet.ApplyForce(-dir * f, Vector3.Zero);                       // load hauled up toward the aircraft
                 ApplyForce(dir * f, a - ToGlobal(CenterOfMass));                  // and the aircraft feels it AT THE ANCHOR, so a swinging load tilts it

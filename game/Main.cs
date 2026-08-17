@@ -1869,6 +1869,12 @@ namespace UnturnedGodot
             public override void _PhysicsProcess(double delta)
             {
                 if (Heli == null || !IsInstanceValid(Heli)) return;
+                // NOTE: this rig deliberately does NOT fly the aircraft. An earlier version added a UG_MAG_FLY mode
+                // that drove full collective on the real flight model -- and its CONTROL (no magnet at all) sank at
+                // -27 m/s just like the subject, so it could not distinguish "the magnet is too heavy" from "the rig
+                // is broken", which is the one thing a control exists to do. It was removed rather than left lying
+                // around looking authoritative. Whether the crane can actually CARRY the thing is answered by the
+                // vehicle.heli_sling suite, which flies the real model and has a magnet-free control pair.
                 // Keep BOTH ends in frame: the aircraft climbs away from a load that starts on the ground, so a fixed
                 // camera loses one or the other. Frame the midpoint and pull back with the separation.
                 if (Cam != null && IsInstanceValid(Cam))
@@ -1888,22 +1894,6 @@ namespace UnturnedGodot
                 Heli.GlobalTransform = new Transform3D(Basis.Identity, new Vector3(0f, HoldY, 0f));
                 Heli.LinearVelocity = Vector3.Zero; Heli.AngularVelocity = Vector3.Zero;
                 var mag = Heli.Sling;
-                if (mag != null && (int)(T * 2) != (int)((T - (float)delta) * 2))
-                {
-                    int n = 0; void Cnt(Node k) { if (k is SlingMagnet) n++; foreach (var c in k.GetChildren()) Cnt(c); }
-                    Cnt(GetTree().Root);
-                    GD.Print($"[MAGNET/CNT] t={T:0.00} SlingMagnet nodes in tree = {n}; sling id={mag.GetInstanceId()}");
-                }
-                if (mag != null && (int)(T * 2) != (int)((T - (float)delta) * 2))
-                    {
-                        // CABLE LENGTH IS A 3-D DISTANCE. Reporting the vertical drop instead reads short by the
-                        // swing and invites "why is it 8.08 when the cable is 9.00" -- the answer being that those
-                        // are two different quantities. Print both, and the offset that reconciles them.
-                        Vector3 anc = Heli.ToGlobal(Heli.DebugSlingAnchorLocal), mp = mag.GlobalPosition;
-                        float dist = anc.DistanceTo(mp), drop = anc.Y - mp.Y;
-                        float swing = Mathf.Sqrt(Mathf.Max(0f, dist * dist - drop * drop));
-                        GD.Print($"[MAGNET/DBG] t={T:0.00} cable={dist:0.00}/{Heli.DebugSlingLen:0.00} drop={drop:0.00} swing={swing:0.00} magY={mp.Y:0.00} vel={mag.LinearVelocity.Y:0.00} sleep={mag.Sleeping} held={(mag.Held != null ? "YES" : "no")}");
-                    }
                 if (Phase == 0 && T > 1.2f)   // settled -> energise the coil
                 {
                     // CONTROL (UG_MAG_NOENERGISE=1): skip the toggle. The rig must then report DOES NOT LIFT --
@@ -1950,6 +1940,7 @@ namespace UnturnedGodot
             float holdY = float.TryParse(System.Environment.GetEnvironmentVariable("UG_MAG_HOLD"), out var h0) ? h0 : 10.6f;
             heli.GlobalPosition = new Vector3(0f, holdY, 0f);
             heli.GravityScale = 0f;
+            heli.DebugNoSling = System.Environment.GetEnvironmentVariable("UG_MAG_NOSLING") == "1";
             GD.Print($"[MAGNET/SPEC] slingHook={heli.DebugSlingHook} cableLen={heli.DebugSlingLen:0.00} anchorLocal={heli.DebugSlingAnchorLocal}");
 
             // The load: a plain box on the PROP layer, sized like the shipping container that started all this.

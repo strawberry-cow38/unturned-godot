@@ -53,6 +53,12 @@ namespace UnturnedGodot.Testing
             v.GlobalPosition = at;
             v.DebugNoTurbulence = true;
             v.DebugInstantStart = true;   // these rigs measure FLIGHT; the start-up gate has its own check   // a measuring rig: a gust inside the window is noise in the number
+            // CLEAN AIRFRAME. The sky-crane deploys an electromagnet on a 9 m cable whenever it is airborne, and a
+            // swinging load is a real aerodynamic and attitude disturbance -- at DiveDeg it pulled the nose up to 29
+            // deg, outside this suite's +/-15 window, so the terminal speed being measured stopped being the
+            // airframe's. Speed_Max and the _heliDragFwd derivation this suite validates are properties of the bare
+            // machine, so the bare machine is what it flies. The slung case has its own suite (vehicle.heli_sling).
+            v.DebugNoSling = true;
             v.EngineOn = true;
             return v;
         }
