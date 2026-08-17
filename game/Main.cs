@@ -1085,7 +1085,7 @@ namespace UnturnedGodot
             seabed.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
             AddChild(seabed);
 
-            _veh = Vehicle.BuildByName(type, 0);
+            _veh = Vehicle.BuildByName(type, int.TryParse(System.Environment.GetEnvironmentVariable("UG_SHIPVARIANT"), out var _sv) ? _sv : 0);   // UG_SHIPVARIANT: pick the spawn paint variant -> show the random hull-bottom colours
             _veh.Position = new Vector3(0f, 0.5f, 0f);   // spawn just above the waterline -> gentle settle (a 2.5m drop plunged the voxel-buoyancy hull deep + made it bob)
             AddChild(_veh);
             _veh.EngineOn = true;
