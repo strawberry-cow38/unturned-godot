@@ -207,13 +207,24 @@ namespace UnturnedGodot
         Vector3 _turbKick;     // the current gust, decaying
         float _turbTimer;
         const float CommandSlew = 2.4f;        // stick -> commanded rate (the linkage)
-        const float TurbMinGap = 1.6f, TurbMaxGap = 5.5f;   // seconds between gusts
+        const float TurbMinGap = 1.6f, TurbMaxGap = 5.5f;   // seconds between gusts, at ALTITUDE (see TurbLowGapScale)
         const float TurbStrength = 0.42f;      // rad/s of angular kick at full strength
         const float TurbDecay = 1.5f;          // how fast a gust bleeds away
+        // TURBULENCE SCALES WITH HEIGHT ABOVE GROUND (strawberry: "make turbulence scale with vertical height, in
+        // terms of frequency and severity. low to the ground should be relatively calm"). Measured AGL, not absolute
+        // Y -- otherwise hugging a hilltop at 300 m would be as rough as open sky at 300 m, and the whole point is
+        // that low-level flying is the calm regime.
+        const float TurbCalmAgl = 12f;         // at or below this, as calm as it gets
+        const float TurbFullAgl = 140f;        // at or above this, the full gusts the fleet was tuned with
+        const float TurbLowSeverity = 0.15f;   // fraction of full strength down on the deck -- calm, not dead
+        const float TurbLowGapScale = 3.0f;    // gusts this many times further apart down low
+        const float TurbAglReach = 260f;       // probe length; no hit = open air, treat as full
+        float _turbAgl = TurbFullAgl;          // cached, refreshed on the gust timer rather than every tick
         static readonly RandomNumberGenerator HeliRng = MakeHeliRng();
         static RandomNumberGenerator MakeHeliRng() { var r = new RandomNumberGenerator(); r.Randomize(); return r; }
         /// <summary>Test seam: the live gust, so a test can prove turbulence is real without waiting on a die roll.</summary>
         public Vector3 DebugTurbulence => _turbKick;
+        public float DebugTurbAgl => _turbAgl;
         /// <summary>Test seam: turbulence OFF, so a control-response test measures the pilot and not the weather.</summary>
         public bool DebugNoTurbulence;
         /// <summary>Skip the start-up gate: full rotor immediately, thrust from the first tick.
@@ -418,6 +429,21 @@ namespace UnturnedGodot
             q.Exclude = SlingExclude();
             q.CollisionMask = (1u << 0) | (1u << 5);
             return space.IntersectRay(q).Count > 0;
+        }
+
+        /// <summary>Height above the ground directly below, for turbulence. Long probe, WORLD layer only -- a gust
+        /// regime should not change because another aircraft or a slung container happened to pass underneath. No
+        /// hit means open air, which reads as full altitude.</summary>
+        float ProbeAgl()
+        {
+            var space = GetWorld3D()?.DirectSpaceState;
+            if (space == null) return TurbFullAgl;
+            Vector3 from = GlobalPosition;
+            var q = PhysicsRayQueryParameters3D.Create(from, from + Vector3.Down * TurbAglReach);
+            q.Exclude = SlingExclude();
+            q.CollisionMask = 1u << 0;
+            var hit = space.IntersectRay(q);
+            return hit.Count > 0 ? Mathf.Max(0f, from.Y - ((Vector3)hit["position"]).Y) : TurbFullAgl;
         }
 
         // Self + anything we are carrying: a downward probe must never mistake our own load for the ground.
@@ -3598,10 +3624,17 @@ namespace UnturnedGodot
                 _turbTimer -= dt;
                 if (_turbTimer <= 0f)
                 {
-                    _turbTimer = HeliRng.RandfRange(TurbMinGap, TurbMaxGap);
+                    // Re-probe AGL once per gust, not per tick: gusts are seconds apart and a raycast per frame per
+                    // helicopter buys nothing at this timescale.
+                    _turbAgl = ProbeAgl();
+                    float rough = Mathf.Lerp(TurbLowSeverity, 1f,
+                        Mathf.SmoothStep(TurbCalmAgl, TurbFullAgl, _turbAgl));
+                    float gapScale = Mathf.Lerp(TurbLowGapScale, 1f,
+                        Mathf.SmoothStep(TurbCalmAgl, TurbFullAgl, _turbAgl));
+                    _turbTimer = HeliRng.RandfRange(TurbMinGap, TurbMaxGap) * gapScale;
                     var dir = new Vector3(HeliRng.RandfRange(-1f, 1f), HeliRng.RandfRange(-0.5f, 0.5f), HeliRng.RandfRange(-1f, 1f));
                     if (dir.LengthSquared() > 1e-4f)
-                        _turbKick = dir.Normalized() * HeliRng.RandfRange(0.35f, 1f) * TurbStrength;
+                        _turbKick = dir.Normalized() * HeliRng.RandfRange(0.35f, 1f) * TurbStrength * rough;
                 }
                 _turbKick = _turbKick.Lerp(Vector3.Zero, 1f - Mathf.Exp(-TurbDecay * dt));
                 cmd += _turbKick * spool;
