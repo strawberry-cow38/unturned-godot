@@ -24,6 +24,7 @@ namespace UnturnedGodot
         // is just a RigidBody3D, so the base class does not fight flight.
         bool _heli; float _heliThrust, _heliPitchTq, _heliRollTq, _heliYawTq, _heliLevel, _heliDragFwd;
         float _rotorRadius, _heliLiftCap = 1f, _groundEffect = 1f, _geApplied = 1f;   // cached once per StepHeli; _geApplied is the share the CAP let through
+        MeshInstance3D _beaconMesh; OmniLight3D _beaconLight; StandardMaterial3D _beaconMat; float _beaconTimer;   // belly anti-collision flasher
         bool _tracked;   // TANK: tracked/differential drive -- Drive() branches on this to set per-TRACK torque instead of a steered-wheel angle
         const float TankWheelSlip = 1.0f;   // TANK: lateral wheel friction. Too LOW (0.5) and the yaw torque spins it in place instead of arcing forward (low grip = no forward bite either); too HIGH and turning drags to a crawl. Paired with the speed-faded yaw below. Tunable.
         const float TankComY = 0.1f;   // TANK: low centre of mass (anti-flip -- master "easily flipped"). Tunable.
@@ -86,6 +87,10 @@ namespace UnturnedGodot
         /// MP envelope's EnvelopeSlack of 1.25, so a dive can outrun cruise without ever producing a state the
         /// server would reject.</summary>
         const float HeliEnvelopeBackstop = 1.15f;
+        /// <summary>Anti-collision beacon timing. 1.4 s between flashes is ~43 per minute, inside the real
+        /// 40-45 civil range, and the flash itself is SHORT -- a pulse reads as a strobe, an even blink reads as
+        /// a warning lamp on a dashboard.</summary>
+        const float BeaconPeriod = 1.4f, BeaconFlash = 0.12f;
         /// <summary>EFFECTIVE TRANSLATIONAL LIFT. In a hover a rotor is flying in its own downwash; as the
         /// machine translates it moves into undisturbed air, induced drag falls, and the same collective makes
         /// more thrust. Pilots feel it as a distinct surge and a lightening of the airframe as they come out
@@ -846,6 +851,53 @@ namespace UnturnedGodot
         }
         static StandardMaterial3D SolidMat(Color c) =>
             new() { AlbedoColor = c, Metallic = 0f, Roughness = 0.9f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+
+        /// <summary>A lens that actually emits, rather than a surface painted the colour of light.</summary>
+        static StandardMaterial3D LensMat(Color c, float energy) => new()
+        {
+            AlbedoColor = c, Metallic = 0f, Roughness = 0.4f, CullMode = BaseMaterial3D.CullModeEnum.Disabled,
+            EmissionEnabled = true, Emission = c, EmissionEnergyMultiplier = energy,
+        };
+
+        /// <summary>AIRCRAFT NAVIGATION LIGHTS: red to port, green to starboard, and both STEADY.
+        ///
+        /// The convention is not decoration -- it is how another pilot reads which way you are pointing in the
+        /// dark, so the side lights never blink. The thing that flashes on a real helicopter is a separate red
+        /// anti-collision beacon, which is built as its own node (see _beacon).
+        ///
+        /// EVERY airframe in this fleet ships only ONE lens, so the pair has to be made: huey, hind, skycrane
+        /// and hummingbird carry a lens on the port side, and the ORCA's is on starboard -- yet all five were
+        /// painted the same flat red, which means the orca's light was on the wrong side of the aircraft and
+        /// its green was simply missing. Rather than trust the filename, the side is taken from the mesh's own
+        /// X centroid and the opposite lens is mirrored from it: colour follows GEOMETRY, so an airframe whose
+        /// lens sits to starboard gets green there and red on the mirrored side, automatically.</summary>
+        void BuildNavLights(string txt)
+        {
+            var mesh = ContentProvider.ParseObj($"res://content/{txt}");
+            if (mesh == null) return;
+            float cx = mesh.GetAabb().GetCenter().X;
+            if (Mathf.IsZeroApprox(cx)) cx = -1f;   // dead centre: treat the original as port so the pair is still built
+            // The mirrored copy is a -1 X scale. Winding flips with it, which is why LensMat leaves culling off.
+            for (int i = 0; i < 2; i++)
+            {
+                bool mirrored = i == 1;
+                bool isPort = (cx < 0f) != mirrored;   // the ORIGINAL sits on the side its centroid says; the copy is the other one
+                var col = isPort ? new Color(0.95f, 0.05f, 0.05f) : new Color(0.05f, 0.95f, 0.15f);
+                AddChild(new MeshInstance3D
+                {
+                    Name = isPort ? "NavLightPort" : "NavLightStarboard",
+                    Mesh = mesh, MaterialOverride = LensMat(col, 2.6f),
+                    Scale = mirrored ? new Vector3(-1f, 1f, 1f) : Vector3.One,
+                });
+                // A small omni so the lens tints the airframe around it at night instead of being a flat
+                // bright dot. Short range on purpose: a nav light marks the aircraft, it does not light terrain.
+                AddChild(new OmniLight3D
+                {
+                    Position = new Vector3(mirrored ? -cx : cx, mesh.GetAabb().GetCenter().Y, mesh.GetAabb().GetCenter().Z),
+                    OmniRange = 2.2f, LightColor = col, LightEnergy = 1.4f,
+                });
+            }
+        }
 
         // billboarded smoke/fire burst using the REAL source particle texture (veh_smoke_0/veh_smoke_1/veh_fire,
         // ripped from the vehicle prefab's ParticleSystemRenderer). smoke = grey rising; fire = additive orange.
@@ -2506,6 +2558,21 @@ namespace UnturnedGodot
                 // and it is measurable: 0.100 s^-1, identical across hind, orca and hummingbird.
                 v.LinearDampMode = DampMode.Replace; v.LinearDamp = 0f;
                 v.AngularDamp = 0.25f;   // angular is untouched: still Combine, still the engine's, as it shipped
+                // ANTI-COLLISION BEACON: the red flasher on the belly, and the ONLY light on the aircraft that
+                // blinks. Slung just under the hull on the centreline so it reads from below and from the side.
+                // Rate is the real one -- civil beacons run 40-45 flashes per minute, hence BeaconPeriod -- and
+                // it is a short bright pulse rather than a 50/50 blink, which is what makes it read as a strobe
+                // instead of a warning lamp.
+                v._beaconMat = LensMat(new Color(1f, 0.06f, 0.06f), 0f);
+                v._beaconMesh = new MeshInstance3D
+                {
+                    Name = "BeaconBelly", Mesh = new SphereMesh { Radius = 0.10f, Height = 0.20f, RadialSegments = 8, Rings = 4 },
+                    MaterialOverride = v._beaconMat,
+                    Position = new Vector3(0f, s.BoxCenter.Y - s.BoxSize.Y * 0.5f - 0.08f, s.BoxCenter.Z),
+                };
+                v.AddChild(v._beaconMesh);
+                v._beaconLight = new OmniLight3D { Position = v._beaconMesh.Position, OmniRange = 6f, LightColor = new Color(1f, 0.1f, 0.1f), LightEnergy = 0f };
+                v.AddChild(v._beaconLight);
                 v.ContinuousCd = true;   // a fast dive must not tunnel through terrain between ticks
                 // ISOTROPIC inertia, set explicitly rather than left to Godot's derivation from the collision
                 // boxes. Two reasons: those boxes are a crude stand-in for an open tube frame and would hand us
@@ -2782,6 +2849,10 @@ namespace UnturnedGodot
             if (s.Parts != null)   // detail meshes with their real solid colours (seats grey, lights, steering brown)
                 foreach (var (txt, color) in s.Parts)
                 {
+                    // A helicopter's "taillights" are its NAVIGATION lights, and they are a red/green PAIR that
+                    // has to be built from the single lens the mesh ships. Handled apart from the flat-coloured
+                    // car parts because the colour depends on which SIDE each copy lands on.
+                    if (s.Heli && txt.Contains("taillights")) { v.BuildNavLights(txt); continue; }
                     var pm = SolidMat(color);
                     // Named after its source file so the scene tree is readable and, more usefully, so a test can
                     // ASK for a specific part instead of guessing which unnamed MeshInstance3D is the turret.
@@ -3015,6 +3086,18 @@ namespace UnturnedGodot
             // brick. Spool-down is slower than spool-up for the same reason.
             float want = (EngineOn && !_exploded && (Fuel > 0f || InfiniteFuel)) ? 1f : 0f;
             _rotorRpm = Mathf.MoveToward(_rotorRpm, want, dt / (want > _rotorRpm ? SpoolUpSeconds : SpoolDownSeconds));
+
+            // The beacon runs off the ROTOR, not the ignition switch: its job is to say "this disc is live",
+            // so it keeps flashing through a spool-down and stops only once the blades actually have.
+            if (_beaconMat != null)
+            {
+                bool armed = _rotorRpm > 0.02f && !_exploded;
+                _beaconTimer = armed ? (_beaconTimer + dt) % BeaconPeriod : 0f;
+                bool lit = armed && _beaconTimer < BeaconFlash;
+                _beaconMat.EmissionEnergyMultiplier = lit ? 6f : 0f;
+                _beaconMat.AlbedoColor = lit ? new Color(1f, 0.35f, 0.35f) : new Color(0.28f, 0.05f, 0.05f);
+                if (_beaconLight != null) _beaconLight.LightEnergy = lit ? 3.2f : 0f;
+            }
             if (_rotorNode != null)   // visual only -- the flight model never reads blade phase
             {
                 // STOPS when idle, on death, and slows as the rotor is damaged (strawberry: "rotor should stop
