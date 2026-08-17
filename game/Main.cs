@@ -86,7 +86,7 @@ namespace UnturnedGodot
                 DisplayServer.WindowSetVsyncMode(DisplayServer.VSyncMode.Disabled);
                 GD.Print($"[display] vsync -> {DisplayServer.WindowGetVsyncMode()}");
             }
-            string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null, drivetest = null, proptest = null, animrig = null, rottest = null, itemtest = null, navShot = null, croptest = null, menuShot = null, clothtest = null, boattest = null, ammoRadial = null;
+            string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null, drivetest = null, proptest = null, animrig = null, rottest = null, itemtest = null, navShot = null, croptest = null, menuShot = null, clothtest = null, boattest = null, slingtest = null, ammoRadial = null;
             bool zperf = false;
             bool zbody = false;
             bool deployTest = false, barricadeTest = false, barricadePlay = false;
@@ -115,7 +115,8 @@ namespace UnturnedGodot
                 else if (arg.StartsWith("--containertest=")) { containerTest = true; containerTestName = arg["--containertest=".Length..]; }
                 else if (arg == "--zombietest") zombieTest = true;   // OFFLINE verify: sync world -> bucket Animals.dat into pockets -> check planned spawns land ON the baked navmesh
                 else if (arg == "--zdirtest") zdirTest = true;       // OFFLINE verify: boot the REWRITE on PEI -> do rows tier, query paths and actually MOVE? (implies --newzombies)
-                else if (arg.StartsWith("--proptest=")) { proptest = arg["--proptest=".Length..]; _shotRequested = proptest; }   // spawn ONE named prop at identity + RGB axes -> diagnose mirror/orientation/material
+                else if (arg.StartsWith("--proptest=")) { proptest = arg["--proptest=".Length..]; _shotRequested = proptest; }
+                else if (arg.StartsWith("--slingtest=")) { slingtest = arg["--slingtest=".Length..]; _shotRequested = slingtest; }   // skycrane + shipping container: in-the-bay vs slung-beneath, side by side   // spawn ONE named prop at identity + RGB axes -> diagnose mirror/orientation/material
                 else if (arg.StartsWith("--croptest=")) croptest = arg["--croptest=".Length..];   // spawn a farm crop (young + grown) on a ground plane -> validate mesh/tex/orientation (UG_CROPROT tunes rot)
                 else if (arg == "--zperf") zperf = true;   // GPU perf probe: N zombies, render counters ON vs OFF (MUST run with a rendering driver, not --headless)
                 else if (arg == "--zbody") zbody = true;   // MECHANISM probe: N bare kinematic capsules, moving vs parked -> is the physics cost the BODIES?
@@ -365,6 +366,13 @@ namespace UnturnedGodot
                 return;
             }
 
+            if (slingtest != null)   // diagnostic: can a shipping container ride in the skycrane, or does it have to hang?
+            {
+                GetWindow().Size = new Vector2I(1600, 900);
+                _shotPath = shot;
+                BuildSlingTest();
+                return;
+            }
             if (proptest != null)   // diagnostic: one prop at identity + RGB axis refs (X=red,Y=green,Z=blue) + 3/4 cam
             {
                 GetWindow().Size = new Vector2I(900, 900);
@@ -1641,6 +1649,67 @@ namespace UnturnedGodot
 
         // --proptest=NAME diagnostic: one prop at identity with RGB axis refs (X=red +right, Y=green +up, Z=blue +back)
         // so I can read its orientation/chirality up close and spot a mirror vs the real game.
+        /// <summary>CAN A SHIPPING CONTAINER RIDE IN THE SKYCRANE? Two aircraft side by side, same container:
+        /// left has it sat in the leg bay, right has it slung underneath on a line.
+        ///
+        /// Built because the numbers alone ("6.88 m of bay against a 7.50 m box") are the sort of answer that
+        /// is easy to nod at and hard to picture. The left-hand aircraft shows the overhang at the scale it
+        /// actually happens; the right-hand one shows what the alternative looks like in the air.</summary>
+        void BuildSlingTest()
+        {
+            var env = new Godot.Environment
+            {
+                BackgroundMode = Godot.Environment.BGMode.Color, BackgroundColor = new Color(0.46f, 0.58f, 0.72f),
+                AmbientLightSource = Godot.Environment.AmbientSource.Color,
+                AmbientLightColor = new Color(0.72f, 0.74f, 0.78f), AmbientLightEnergy = 1.0f,
+            };
+            AddChild(new WorldEnvironment { Environment = env });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-48f, -38f, 0f), LightEnergy = 1.25f, ShadowEnabled = true });
+            var ground = new StaticBody3D { CollisionLayer = 1 << 0 };
+            ground.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
+            AddChild(ground);
+            AddChild(new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(400f, 400f) }, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.36f, 0.42f, 0.30f), Roughness = 1f } });
+
+            string dir = ProjectSettings.GlobalizePath("res://content/objects/");
+            var cmesh = ObjMesh.Load(dir + "Container_0.obj");
+            var cmat = new StandardMaterial3D { Roughness = 0.85f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+            var cimg = new Image();
+            if (cimg.Load(dir + "Container_0_tex.png") == Error.Ok) { cimg.GenerateMipmaps(); cmat.AlbedoTexture = ImageTexture.CreateFromImage(cimg); }
+            // These props are authored Z-up (ObjMesh CONV=1), so X=270 stands one on its feet -- the same
+            // transform SinkSource.UprightPlacement names. Without it the box lies on its side.
+            var upright = new Basis(Vector3.Right, Mathf.DegToRad(270f));
+            var cab = cmesh.GetAabb();
+            GD.Print($"[SLING] container mesh aabb size={cab.Size} -> upright W {cab.Size.X:0.00} H {cab.Size.Z:0.00} L {cab.Size.Y:0.00}");
+
+            MeshInstance3D Box(Vector3 at) => new() { Mesh = cmesh, MaterialOverride = cmat, Transform = new Transform3D(upright, at) };
+
+            // LEFT: container sat in the bay. Positioned so its base rests on the ground between the legs.
+            var inBay = Vehicle.BuildByName("skycrane");
+            AddChild(inBay);
+            inBay.GlobalPosition = new Vector3(-16f, 1.2f, 0f);
+            inBay.Freeze = true; inBay.FreezeMode = RigidBody3D.FreezeModeEnum.Static;
+            AddChild(Box(new Vector3(-16f, 0.02f - cab.Position.Z, 0f)));
+
+            // RIGHT: same aircraft up in the air, container hanging under it on a line -- what a real S-64 does.
+            var slung = Vehicle.BuildByName("skycrane");
+            AddChild(slung);
+            slung.GlobalPosition = new Vector3(16f, 15f, 0f);
+            slung.Freeze = true; slung.FreezeMode = RigidBody3D.FreezeModeEnum.Static;
+            float hang = 6.5f;
+            AddChild(Box(new Vector3(16f, 15f - hang - cab.Size.Z, 0f)));
+            AddChild(new MeshInstance3D   // the hoist line
+            {
+                Mesh = new CylinderMesh { TopRadius = 0.06f, BottomRadius = 0.06f, Height = hang, RadialSegments = 6, Rings = 1 },
+                MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.10f, 0.10f, 0.11f) },
+                Position = new Vector3(16f, 15f - hang * 0.5f, 0f),
+            });
+
+            var cam = new Camera3D { Current = true, Fov = 46f, Far = 4000f };
+            AddChild(cam);
+            cam.Position = new Vector3(2f, 13f, 46f);
+            cam.LookAt(new Vector3(0f, 6f, 0f), Vector3.Up);
+        }
+
         void BuildPropTest(string name)
         {
             var env = new Godot.Environment
