@@ -25,6 +25,7 @@ namespace UnturnedGodot
         bool _heli; float _heliThrust, _heliPitchTq, _heliRollTq, _heliYawTq, _heliLevel, _heliDragFwd;
         float _rotorRadius, _heliLiftCap = 1f, _groundEffect = 1f, _geApplied = 1f;   // cached once per StepHeli; _geApplied is the share the CAP let through
         MeshInstance3D _beaconMesh; OmniLight3D _beaconLight; StandardMaterial3D _beaconMat; float _beaconTimer;   // belly anti-collision flasher
+        float _ignitionLeft, _ignitionLen;   // start-up gate: the rotor winds up THROUGH the clip, thrust waits for it
         bool _tracked;   // TANK: tracked/differential drive -- Drive() branches on this to set per-TRACK torque instead of a steered-wheel angle
         const float TankWheelSlip = 1.0f;   // TANK: lateral wheel friction. Too LOW (0.5) and the yaw torque spins it in place instead of arcing forward (low grip = no forward bite either); too HIGH and turning drags to a crawl. Paired with the speed-faded yaw below. Tunable.
         const float TankComY = 0.1f;   // TANK: low centre of mass (anti-flip -- master "easily flipped"). Tunable.
@@ -39,7 +40,8 @@ namespace UnturnedGodot
         // pitches about local X, and MuzzleLocal is the cannon tip for shell spawns. Null/Zero on non-tanks.
         public Node3D TurretPivot, GunPivot; public Vector3 MuzzleLocal;
         MeshInstance3D _bladesMesh, _discMesh, _tailBladesMesh, _tailDiscMesh;   // the two drawn states per rotor
-        const float DiscSwapSpool = 0.35f;   // above this the blades are a smear, so the game draws the plate instead
+        const float DiscSwapSpool = 0.35f;   // RETIRED: the blur-plate swap threshold. Kept as the record of what the
+                                             // retail prefab did; the real blades are drawn and spun at every rpm now.
         public const float TailRotorRollDegrees = 90f;   // stands the tail disc on edge; composed with the spin each tick
         // ---- playtest tuning, strawberry 2026-08-16 ----------------------------------------------------
         /// <summary>Fraction of lift lost to tilting off vertical, ON TOP of the cosine you get for free from
@@ -91,6 +93,17 @@ namespace UnturnedGodot
         /// 40-45 civil range, and the flash itself is SHORT -- a pulse reads as a strobe, an even blink reads as
         /// a warning lamp on a dashboard.</summary>
         const float BeaconPeriod = 1.4f, BeaconFlash = 0.12f;
+        /// <summary>How much of the start-up clip the rotor has to get through before it makes thrust, and
+        /// how long the spin-up itself takes, as a FRACTION of that clip.
+        ///
+        /// 1.0 is strawberry's literal ask -- "only start generating thrust after the sound finishes" -- and
+        /// heli_ignition.ogg is 8.10 s, so that is an eight-second startup during which the machine makes no
+        /// lift whatsoever. That is realistic (a real turbine is slower still) but it is a large gameplay
+        /// change rather than a detail: anything already airborne when it starts simply falls, and a helicopter
+        /// spawned at 60 m reaches the ground before its rotor is legal. It is one number precisely because
+        /// which value is RIGHT is a feel call, not an engineering one -- 0.37 gives ~3 s, thrust arriving
+        /// while the tail of the sound still plays.</summary>
+        const float IgnitionThrustFraction = 1.0f;
         /// <summary>EFFECTIVE TRANSLATIONAL LIFT. In a hover a rotor is flying in its own downwash; as the
         /// machine translates it moves into undisturbed air, induced drag falls, and the same collective makes
         /// more thrust. Pilots feel it as a distinct surge and a lightening of the airframe as they come out
@@ -2069,7 +2082,12 @@ namespace UnturnedGodot
         public static Vehicle BuildHind(int variant = 0) => Build(_hind, variant, "hind");
 
         // ORCA (Ka-60) -- the modern transport. Nearly Hind-fast and noticeably more agile; the all-rounder.
-        static readonly Spec _orca = HeliBase("orca", 13.4f, 0.91f, 1.07f, 0.84f, 5.90f, 1.25f,
+        // Tail radius 0.72, not the fleet's shared 1.25: the ORCA is the one airframe with a DUCTED tail
+        // (a fenestron), and the duct is real geometry -- 256 verts ring its hub in a band at 0.75-1.25 m
+        // with nothing beyond, while every other airframe just has scattered boom geometry there. A 1.25 m
+        // rotor is the duct's own outer rim, so the blades were sweeping THROUGH the housing. 0.72 clears
+        // the inner wall. (strawberry: "the orca tail needs to be shrunk to fit its enclosure")
+        static readonly Spec _orca = HeliBase("orca", 13.4f, 0.91f, 1.07f, 0.84f, 5.90f, 0.72f,
             new Vector3(0f, 3.28f, -0.25f), new Vector3(-0.30f, 1.48f, 7.55f),
             new Vector3(2.60f, 2.50f, 6.40f), new Vector3(0f, 1.20f, 0.10f),
             new (Vector3, Vector3)[]   // REAL gear, measured off orca_wheels.txt: mains forward, twin tail wheels aft
@@ -2945,7 +2963,23 @@ namespace UnturnedGodot
             {
                 var ogg = AudioStreamOggVorbis.LoadFromFile(ProjectSettings.GlobalizePath($"res://content/{s.Sound}"));
                 ogg.Loop = true;
-                v._engineAudio = new AudioStreamPlayer3D { Stream = ogg, UnitSize = 10f, MaxDistance = 80f, PitchScale = s.IdlePitch, VolumeDb = Mathf.LinearToDb(s.IdleVolume * EngineVolumeBoost), Autoplay = true };
+                // HELICOPTERS CARRY. A car at 80 m is a car you have driven past; a helicopter is the thing you
+                // hear long before you see it, and that is most of what makes one feel big. UnitSize is the
+                // distance at which the attenuation curve starts, so raising BOTH is what actually extends the
+                // audible range rather than just making it loud up close. (strawberry: "a lot louder and heard
+                // from far away")
+                //
+                // PITCH FALLS WITH ROTOR SIZE, and the rule is physical rather than picked: blade TIP speed is
+                // roughly constant across helicopters, so rotational frequency -- and with it the blade-passing
+                // thud you actually hear -- goes as 1/R. Square-rooted to tame the extremes and clamped, because
+                // the fleet's radii span 2.65 m to 5.90 m and the raw ratio would put the minicopter an octave
+                // up. Referenced to the Huey, which is the aircraft the clip was recorded from. Without this the
+                // four HeliBase airframes shared one IdlePitch, so the tiny Hummingbird sounded exactly like the
+                // 21-tonne Skycrane. (strawberry: "heavier helis should alter the sound too")
+                float sizePitch = s.Heli && s.RotorRadius > 0.01f
+                    ? Mathf.Clamp(Mathf.Sqrt(5.57f / s.RotorRadius), 0.85f, 1.35f) : 1f;
+                v._engineAudio = new AudioStreamPlayer3D { Stream = ogg, UnitSize = s.Heli ? 34f : 10f, MaxDistance = s.Heli ? 520f : 80f, PitchScale = s.IdlePitch * sizePitch, VolumeDb = Mathf.LinearToDb(s.IdleVolume * EngineVolumeBoost * (s.Heli ? 2.0f : 1f)), Autoplay = true };
+                if (s.Heli) { v._idlePitch = s.IdlePitch * sizePitch; v._maxPitch = s.MaxPitch * sizePitch; }
                 v.AddChild(v._engineAudio);   // Autoplay starts the loop when the vehicle enters the scene tree
             }
             if (s.IgnitionSound != null)   // one-shot spin-up; NOT autoplayed -- StepHeli fires it on a start
@@ -2954,7 +2988,11 @@ namespace UnturnedGodot
                 if (ig != null)
                 {
                     ig.Loop = false;
-                    v._ignitionAudio = new AudioStreamPlayer3D { Stream = ig, UnitSize = 10f, MaxDistance = 80f, VolumeDb = Mathf.LinearToDb(EngineVolumeBoost) };
+                    // The clip's own length becomes the spin-up gate, so "the rotor is ready" and "the start-up
+                    // sound has finished" are the same instant by construction rather than two numbers someone
+                    // has to keep in step.
+                    v._ignitionLen = (float)ig.GetLength();
+                    v._ignitionAudio = new AudioStreamPlayer3D { Stream = ig, UnitSize = s.Heli ? 34f : 10f, MaxDistance = s.Heli ? 520f : 80f, VolumeDb = Mathf.LinearToDb(EngineVolumeBoost * (s.Heli ? 2.0f : 1f)) };
                     v.AddChild(v._ignitionAudio);
                 }
             }
@@ -3085,7 +3123,14 @@ namespace UnturnedGodot
             // disc is up -- and cutting the engine in the air leaves you autorotating down, not dropping like a
             // brick. Spool-down is slower than spool-up for the same reason.
             float want = (EngineOn && !_exploded && (Fuel > 0f || InfiniteFuel)) ? 1f : 0f;
-            _rotorRpm = Mathf.MoveToward(_rotorRpm, want, dt / (want > _rotorRpm ? SpoolUpSeconds : SpoolDownSeconds));
+            // WIND UP THROUGH THE START-UP CLIP. The spin-up used to run on its own fixed SpoolUpSeconds while
+            // the ignition sound played to a completely independent clock, so the rotor could be at full song
+            // with the starter still audible, or ready long before it. Driving the ramp off the clip's own
+            // length makes the two the same event. (strawberry: "rotors should ramp up during the ignition
+            // sound, and we should only start generating thrust after the sound finishes")
+            float spoolUp = _ignitionLen > 0.1f ? _ignitionLen * IgnitionThrustFraction : SpoolUpSeconds;
+            _rotorRpm = Mathf.MoveToward(_rotorRpm, want, dt / (want > _rotorRpm ? spoolUp : SpoolDownSeconds));
+            if (_ignitionLeft > 0f) _ignitionLeft = Mathf.Max(0f, _ignitionLeft - dt);
 
             // The beacon runs off the ROTOR, not the ignition switch: its job is to say "this disc is live",
             // so it keeps flashing through a spool-down and stops only once the blades actually have.
@@ -3124,16 +3169,16 @@ namespace UnturnedGodot
             }
             // Swap blades <-> blur disc by rotor speed, which is why the retail prefab ships both meshes. Below
             // the threshold you see two blades sitting still; above it, the smear plate.
-            bool spun = _rotorRpm > DiscSwapSpool;
+            // THE REAL BLADES SPIN, ALWAYS (strawberry: "instead of a billboard could we actually spin the real
+            // rotor mesh(es)"). The retail prefab ships a separate blur PLATE and swapped to it above
+            // DiscSwapSpool, which is the cheap trick -- it hides blade geometry behind a translucent disc the
+            // moment the rotor is up, so at any real rotor speed you were looking at a smear, not an aircraft.
+            // The mesh is already being turned every tick; it just was not being drawn. The plates stay in the
+            // scene but never show, so the extractor and the meshes do not have to change.
+            if (_bladesMesh != null) _bladesMesh.Visible = true;
             if (_discMesh != null)
             {
-                if (_bladesMesh != null) _bladesMesh.Visible = !spun;
-                _discMesh.Visible = spun;
-            }
-            if (_tailDiscMesh != null)
-            {
-                if (_tailBladesMesh != null) _tailBladesMesh.Visible = !spun;
-                _tailDiscMesh.Visible = spun;
+                _discMesh.Visible = false;
             }
 
             // ENGINE AUDIO rides the ROTOR, not an RPM the machine does not have. The shared car path drives
@@ -3155,7 +3200,7 @@ namespace UnturnedGodot
             if (_ignitionAudio != null)
             {
                 bool starting = want > 0f && _rotorRpm < 0.05f;
-                if (starting && !_ignitionFired) { _ignitionFired = true; _ignitionAudio.Play(); }
+                if (starting && !_ignitionFired) { _ignitionFired = true; _ignitionAudio.Play(); _ignitionLeft = _ignitionLen * IgnitionThrustFraction; }
                 else if (want <= 0f && _rotorRpm < 0.01f) _ignitionFired = false;   // fully stopped -> armed again
             }
 
@@ -3231,6 +3276,11 @@ namespace UnturnedGodot
             // to shove it downward.
             float mainEff = MainRotorNorm;
             float lift = _heliThrust * spool * _inCollective * (0.20f + 0.80f * mainEff);
+            // NO THRUST UNTIL THE STARTER HAS FINISHED. Zeroed at the SOURCE rather than at the ApplyForce so
+            // that everything downstream -- the tilt loss, the dead-tail clamp, ETL, ground effect -- sees a
+            // machine making no lift, instead of each having to know about the gate. The disc still turns and
+            // still makes noise while this holds; it just is not flying yet.
+            if (_ignitionLeft > 0f) lift = 0f;
             // ---- EFFECTIVE TRANSLATIONAL LIFT + GROUND EFFECT, both multipliers on rotor thrust.
             //
             // APPLIED HERE, ABOVE THE DEAD-TAIL CLAMP, and the order is the whole point. That clamp is an

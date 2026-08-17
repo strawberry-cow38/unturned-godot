@@ -33,7 +33,9 @@ namespace UnturnedGodot.Testing
     public sealed class HeliSpeedTests : GameTest
     {
         public override string Name => "vehicle.heli_speed";
-        // Real flying: seven airframes each spool for 4 s then hold a 13 s dive, plus a three-window probe.
+        // Real flying: seven airframes each spool for 9.2 s then hold a 13 s dive, plus a three-window probe.
+        // The spool window is set by the START-UP GATE, not by the rotor: thrust is withheld until the ignition
+        // clip finishes (8.1 s), so anything shorter measures an aircraft that is still starting.
         // 13 s is not padding -- quadratic drag reaches 99 % of terminal at 2.65 * v_terminal / a, which is
         // ~11 s for the slowest-converging airframe (the Hind). Longer windows cost L1 wall clock for nothing,
         // and L1's outer cap is a real constraint: this suite going in at 20 s dives pushed the whole phase
@@ -117,7 +119,7 @@ namespace UnturnedGodot.Testing
             {
                 var a = Spawn(World, fleet[fi], new Vector3(fi * 400f, 1400f, 0f));
                 float spec = a.SpeedMaxMps;
-                for (int i = 0; i < 200; i++) { a.DriveHeli(1f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
+                for (int i = 0; i < 460; i++) { a.DriveHeli(1f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
                 T.Check($"{fleet[fi]}: the rotor is at full spool before the run (spool {a.RotorSpool:0.###})",
                     a.RotorSpool > 0.95f);
 
@@ -164,7 +166,7 @@ namespace UnturnedGodot.Testing
             // vertical keeps the 3-D magnitude nearly unchanged, so no assignment trips the detector.
             var m = Spawn(World, "minicopter", new Vector3(-800f, 1400f, 0f));
             float vmax = m.SpeedMaxMps;
-            for (int i = 0; i < 200; i++) { m.DriveHeli(1f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
+            for (int i = 0; i < 460; i++) { m.DriveHeli(1f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
             // Short: the attitude only has to be established, and every metre per second built here raises the
             // floor the first sample has to clear.
             for (int i = 0; i < 60; i++) { m.DriveHeli(1f, 0f, HoldDive(m, DiveDeg), 0f, 0.02); yield return Ticks(1); }
@@ -248,7 +250,7 @@ namespace UnturnedGodot.Testing
                 // failure, which is exactly how it was first diagnosed.
                 var lv = Spawn(World, name, new Vector3(-2000f - li * 500f, 1000f, 400f));
                 float lvSpec = lv.SpeedMaxMps;
-                for (int i = 0; i < 200; i++) { lv.DriveHeli(1f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
+                for (int i = 0; i < 460; i++) { lv.DriveHeli(1f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
                 float yStart = lv.GlobalPosition.Y, trim = 0f;
                 for (int i = 0; i < 1400; i++)
                 {
@@ -275,7 +277,7 @@ namespace UnturnedGodot.Testing
             // horizontal component and drag is the only horizontal force acting.
             var faR = Spawn(World, "huey", new Vector3(-2600f, 900f, 0f));
             var latR = Spawn(World, "huey", new Vector3(-2600f, 900f, 300f));
-            for (int i = 0; i < 200; i++)
+            for (int i = 0; i < 460; i++)
             {
                 faR.DriveHeli(0f, 0f, 0f, 0f, 0.02); latR.DriveHeli(0f, 0f, 0f, 0f, 0.02);
                 yield return Ticks(1);

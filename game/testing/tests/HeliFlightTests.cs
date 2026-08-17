@@ -108,7 +108,7 @@ namespace UnturnedGodot.Testing
             // So the resting state is a gentle sink -- not a held hover, and not a fall.
             var fresh = Spawn(World, "minicopter", new Vector3(40f, 420f, 0f));   // high: this subject spends ~6 s descending, and once crash damage existed it used to reach the ground and explode mid-test (an exploded heli zeroes its collective, so the spring-back check read 0)
             fresh.EngineOn = true;
-            for (int i = 0; i < 300; i++) { fresh.DriveHeli(1f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
+            for (int i = 0; i < 460; i++) { fresh.DriveHeli(1f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
             T.Check($"W drives the collective to maximum ({fresh.DebugHeliInput.X:0.##})", fresh.DebugHeliInput.X > 0.95f);
 
             for (int i = 0; i < 150; i++) { fresh.DriveHeli(0f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
@@ -136,7 +136,7 @@ namespace UnturnedGodot.Testing
             // fails this one, which is why it is here.
             var lean = Spawn(World, "minicopter", new Vector3(-60f, 60f, 0f));
             lean.EngineOn = true;
-            for (int i = 0; i < 260; i++) { lean.DriveHeli(1f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
+            for (int i = 0; i < 460; i++) { lean.DriveHeli(1f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
             lean.LinearVelocity = Vector3.Zero;
             float x0 = lean.GlobalPosition.X;
             lean.DebugNoTurbulence = true;
@@ -162,7 +162,7 @@ namespace UnturnedGodot.Testing
             // ---- 8. YAW. A/D must turn the nose, and it is a separate axis from roll.
             var spin = Spawn(World, "minicopter", new Vector3(-120f, 60f, 0f));
             spin.EngineOn = true;
-            for (int i = 0; i < 260; i++) { spin.DriveHeli(1f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
+            for (int i = 0; i < 460; i++) { spin.DriveHeli(1f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
             float yaw0 = spin.GlobalTransform.Basis.GetEuler().Y;
             for (int i = 0; i < 120; i++) { spin.DriveHeli(0f, 1f, 0f, 0f, 0.02); yield return Ticks(1); }
             float yawed = Mathf.RadToDeg(Mathf.Wrap(spin.GlobalTransform.Basis.GetEuler().Y - yaw0, -Mathf.Pi, Mathf.Pi));
@@ -178,7 +178,7 @@ namespace UnturnedGodot.Testing
             // wrong, because a self-levelling helicopter still climbs, descends, yaws and translates.
             var hold = Spawn(World, "minicopter", new Vector3(-440f, 90f, 0f));
             hold.EngineOn = true; hold.DebugNoTurbulence = true;   // measuring the pilot, not the weather -- gusts made this flaky
-            for (int i = 0; i < 260; i++) { hold.DriveHeli(1f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
+            for (int i = 0; i < 460; i++) { hold.DriveHeli(1f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
             for (int i = 0; i < 60; i++) { hold.DriveHeli(0f, 0f, 0f, 0.6f, 0.02); yield return Ticks(1); }
             float banked = hold.GlobalTransform.Basis.Y.X;
             T.Check($"a roll input actually banks it (up.X {banked:0.###})", Mathf.Abs(banked) > 0.1f);
@@ -211,7 +211,7 @@ namespace UnturnedGodot.Testing
             // weather on would let it fake the very lag being measured, or mask its absence.
             var inert = Spawn(World, "minicopter", new Vector3(-500f, 90f, 0f));
             inert.EngineOn = true; inert.DebugNoTurbulence = true;
-            for (int i = 0; i < 300; i++) { inert.DriveHeli(1f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
+            for (int i = 0; i < 460; i++) { inert.DriveHeli(1f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
             inert.AngularVelocity = Vector3.Zero;
             yield return Ticks(1);
             inert.DriveHeli(0f, 1f, 0f, 0f, 0.02);
@@ -282,7 +282,7 @@ namespace UnturnedGodot.Testing
             //   yaw   +1 = nose RIGHT
             var conv = Spawn(World, "minicopter", new Vector3(-200f, 80f, 0f));
             conv.EngineOn = true; conv.DebugNoTurbulence = true;
-            for (int i = 0; i < 260; i++) { conv.DriveHeli(1f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
+            for (int i = 0; i < 460; i++) { conv.DriveHeli(1f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
             for (int i = 0; i < 30; i++) { conv.DriveHeli(0f, 0f, 1f, 0f, 0.02); yield return Ticks(1); }   // SHORT: a held stick keeps accelerating the rotation and would roll past 90 deg, flipping the sign being asserted
             float noseY = -conv.GlobalTransform.Basis.Z.Y;   // forward is -Z; its Y component is how far the nose points up
             T.Check($"pitch +1 raises the nose ({noseY:+0.##;-0.##;0} of forward.Y)", noseY > 0.1f);
@@ -316,7 +316,7 @@ namespace UnturnedGodot.Testing
             // throughout the bug.
             var tr = Spawn(World, "minicopter", new Vector3(-380f, 80f, 0f));
             tr.EngineOn = true;
-            for (int i = 0; i < 200; i++) { tr.DriveHeli(1f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
+            for (int i = 0; i < 460; i++) { tr.DriveHeli(1f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
             var tailPivot = tr.FindChild("TailRotor", false, false) as Node3D;
             T.Check("the tail rotor pivot exists", tailPivot != null);
             // Its spin axis is local Y. Standing the disc on edge means that axis points SIDEWAYS (world X),
@@ -362,7 +362,7 @@ namespace UnturnedGodot.Testing
             // check on total angular velocity, so this asserts the yaw component dominates.
             var spun = Spawn(World, "minicopter", new Vector3(-820f, 120f, 0f));
             spun.EngineOn = true; spun.DebugNoTurbulence = true;
-            for (int i = 0; i < 260; i++) { spun.DriveHeli(1f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
+            for (int i = 0; i < 460; i++) { spun.DriveHeli(1f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
             spun.AngularVelocity = Vector3.Zero;
             spun.KillTailRotor();
             T.Check("KillTailRotor kills the tail rotor", spun.TailRotorDead);
@@ -411,7 +411,7 @@ namespace UnturnedGodot.Testing
             // that had simply been zeroed like the main, which is the thing this is meant NOT to be.
             var tdead = Spawn(World, "minicopter", new Vector3(-1000f, 120f, 0f));
             tdead.EngineOn = true; tdead.DebugNoTurbulence = true;
-            for (int i = 0; i < 260; i++) { tdead.DriveHeli(1f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
+            for (int i = 0; i < 460; i++) { tdead.DriveHeli(1f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
             tdead.KillTailRotor();
             tdead.LinearVelocity = Vector3.Zero;
             float ty0 = tdead.GlobalPosition.Y;
@@ -498,7 +498,7 @@ namespace UnturnedGodot.Testing
             // version that kills it instantly.
             var cut = Spawn(World, "minicopter", new Vector3(-1380f, 120f, 0f));
             cut.EngineOn = true; cut.DebugNoTurbulence = true;
-            for (int i = 0; i < 260; i++) { cut.DriveHeli(1f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
+            for (int i = 0; i < 460; i++) { cut.DriveHeli(1f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
             cut.KillMainRotor();
             for (int i = 0; i < 60; i++) { cut.DriveHeli(1f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
             T.Check($"a dead rotor does NOT cut the engine in mid-air (y {cut.GlobalPosition.Y:0.#}, engine {cut.EngineOn})",
@@ -566,7 +566,7 @@ namespace UnturnedGodot.Testing
                 T.Check($"{fleet[fi]}: builds as a rotary wing with its own airframe ({a.DisplayName})",
                     a.IsHeli && a.DisplayName.Length > 0);
                 float y0 = a.GlobalPosition.Y;
-                for (int i = 0; i < 420; i++) { a.DriveHeli(1f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
+                for (int i = 0; i < 460; i++) { a.DriveHeli(1f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
                 T.Check($"{fleet[fi]}: gets off the ground ({a.GlobalPosition.Y - y0:+0.#;-0.#;0} m)", a.GlobalPosition.Y - y0 > 3f);
                 // and each carries its OWN ported .dat health rather than a shared default
                 T.Check($"{fleet[fi]}: carries its own .dat health ({a.HealthMax:0})", a.HealthMax > 0f);
@@ -610,7 +610,7 @@ namespace UnturnedGodot.Testing
             T.Check($"...with the retail airframe, not the procedural frame ({huey.DisplayName})", huey.DisplayName == "Huey");
             huey.EngineOn = true;
             float hy = huey.GlobalPosition.Y;
-            for (int i = 0; i < 400; i++) { huey.DriveHeli(1f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
+            for (int i = 0; i < 460; i++) { huey.DriveHeli(1f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
             T.Check($"the huey climbs too ({huey.GlobalPosition.Y - hy:0.##} m)", huey.GlobalPosition.Y - hy > 4f);
 
             yield break;

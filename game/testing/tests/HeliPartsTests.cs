@@ -279,15 +279,16 @@ namespace UnturnedGodot.Testing
             var lamp = beac.FindChild("BeaconBelly", false, false) as MeshInstance3D;
             T.Check("the huey has a belly anti-collision beacon", lamp != null);
             for (int i = 0; i < 260; i++) { beac.DriveHeli(1f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
-            bool sawLit = false, sawDark = false;
+            bool sawLit = false, sawDark = false; float peakE = 0f;
             for (int i = 0; i < 120 && !(sawLit && sawDark); i++)
             {
                 beac.DriveHeli(1f, 0f, 0f, 0f, 0.02);
                 yield return Ticks(1);
                 float e = ((StandardMaterial3D)lamp.MaterialOverride).EmissionEnergyMultiplier;
+                peakE = Mathf.Max(peakE, e);
                 if (e > 1f) sawLit = true; else sawDark = true;
             }
-            T.Check("...and it FLASHES: seen both lit and dark inside one 2.4 s window with the rotor turning",
+            T.Check($"...and it FLASHES: seen both lit and dark inside one 2.4 s window with the rotor turning (peak emission {peakE:0.##}, spool {beac.RotorSpool:0.###})",
                 sawLit && sawDark);
             // The rotor is the gate, not the ignition switch -- and a beacon that ignores its gate is a beacon
             // that never turns off, which no other check here would notice.
