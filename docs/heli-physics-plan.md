@@ -78,7 +78,22 @@ have made this plan actively harmful.
 `_heliLevel` is confirmed 0 on every spec, with the term kept as a knob — no auto-levelling, as
 required.
 
-## Phase 1 — Drag replaces the excess-spring
+## Phase 1 — Quadratic horizontal drag replaces the excess-spring
+
+**First, is this worth doing at all?** Yes, and here is the arithmetic rather than the intuition.
+`HeliThrust` is an acceleration (lift is multiplied by `Mass` at `ApplyCentralForce`), horizontal
+accel at tilt θ is `thrust·sin(θ)·ForeAftBoost`, and with linear damping terminal `v = a / 0.35`:
+
+| airframe | thrust | `Speed_Max` | terminal v at 15° | 20° | 30° | 40° |
+|---|---|---|---|---|---|---|
+| minicopter | 11.8 | 20 | 14.4 | 19.0 | 27.8 | 35.8 |
+| huey | 12.9 | 23 | 15.7 | 20.8 | 30.4 | 39.1 |
+| hind | 14.2 | 26 | 17.3 | 22.9 | 33.5 | 43.0 |
+
+So every airframe reaches its cap at roughly **20–22° of tilt**, and past ~25° the unclamped terminal
+speed runs well beyond it. The excess-spring is not a rare edge case — it engages on any committed
+fast run, which is precisely when the player is paying attention to how the aircraft accelerates.
+That is the "wall", quantified, and it is why replacing it is worth the change.
 
 Delete `TiltThrustLoss`, `ForeAftBoost`, `LateralBoost`. Apply thrust as the plain shaft vector
 `b.Y * lift`, and add:
