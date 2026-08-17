@@ -326,6 +326,7 @@ namespace UnturnedGodot
         public bool Exploded => _exploded;
         public bool OnFire => _deadTimer >= 0f || _exploded;   // caught fire at 0 HP (burning toward explosion) or a wreck -> engine is DEAD + unfixable (master)
         VehicleWheel3D[] _wNodes; MeshInstance3D[] _wMeshes;   // wheels: VehicleWheel3D auto-rolls its node (mesh child inherits it), so no manual spin. _wMeshes kept for debris/hide.
+        Node3D[] _gearPivots; Vector3[] _gearAxis; float[] _gearAng; float _gearDeploy = 1f;   // retractable gear (jet): per-wheel hinge pivots carry the visual; _gearDeploy lerps 1=down/deployed -> 0=up/retracted
         Mesh _wheelMeshRef; Material _wheelMatRef; float _wheelR;   // kept so the wheels can fly off as debris on explode
         public static float GlobalMass = 900f;   // all vehicles share one mass (the source does: Rigidbody mass = 2.0 for every vehicle)
         float[] _gears; float _reverseGear, _shiftUpRpm; float _engineRpm = 1000f; int _gear = 1;   // engine RPM + gear sim
@@ -622,6 +623,7 @@ namespace UnturnedGodot
         struct Spec
         {
             public string Body, Wheel, WheelTex, Palette, GlassMesh;   // Palette = paintable palette; WheelTex = wheel albedo; GlassMesh = translucent canopy overlay (jet)
+            public bool RetractGear;   // JET: wheels tuck up into the fuselage when airborne (retract pivots + struts)
             public WaterMode Water;   // Car (default) = land only; Boat = floats+water-drives (no useful wheels); Amphibious = land wheels + float/water-drive when its hull is in the sea
             public Vector3[] Buoys;   // hull buoyancy points (local space, Godot); null = auto 4 bottom corners of BoxSize. Boats/amphibious float via a spring at each toward SeaLevelY
             public float BuoyLift;    // added to the auto buoyancy-voxel Y. NEGATIVE = float HIGHER (voxels sit lower -> the hull rides up -> more of the coloured bottom shows above the waterline). 0 = default
@@ -1976,6 +1978,7 @@ namespace UnturnedGodot
             SpeedMax = 36f, Engine = 800f, SteerMax = 32f, SteerMin = 8f, Brake = 30f,         // Steer_Max/Min for GROUND-mode taxi; Speed_Max 36
             Wheel = "fighterjet_wheel.txt", WheelTex = "fighterjet_wheel_albedo.png", WheelRadius = 0.34f,   // the jet's OWN wheel mesh (prefab Wheel_*/Model_0, 168v) not the jeep car wheel
             GlassMesh = "fighterjet_canopy.txt",   // the LOD's closed cockpit cap, re-laid TRANSLUCENT over the open cockpit
+            RetractGear = true,                    // wheels retract up into the fuselage when flying
             Wheels = new (float, float, float, bool)[]   // tricycle gear (Godot Z = -Unity Z): nose steers, 2 wide mains
             {
                 (0f, -0.27f, -2.83f, true),      // nose wheel (forward) -- steers on the ground
@@ -2872,6 +2875,7 @@ namespace UnturnedGodot
             int nw = s.Wheels.Length;
             v._wheelMeshRef = wheelMesh; v._wheelMatRef = wheelMat; v._wheelR = s.WheelRadius;   // for explosion debris
             v._wNodes = new VehicleWheel3D[nw]; v._wMeshes = new MeshInstance3D[nw];
+            if (s.RetractGear) { v._gearPivots = new Node3D[nw]; v._gearAxis = new Vector3[nw]; v._gearAng = new float[nw]; }
             for (int i = 0; i < nw; i++)
             {
                 var (x, y, z, steer) = s.Wheels[i];
@@ -2891,6 +2895,18 @@ namespace UnturnedGodot
                 w.AddChild(mi);
                 v.AddChild(w);
                 v._wNodes[i] = w; v._wMeshes[i] = mi;
+                if (s.RetractGear)   // RETRACTABLE GEAR: hide the suspension-driven wheel; put the visual (strut + wheel) on a hinge PIVOT at the belly that folds up when airborne. VehicleWheel3D stays for physics.
+                {
+                    mi.Visible = false;
+                    var pivot = new Node3D { Name = $"Gear{i}", Position = new Vector3(x, 0f, z) };   // hinge at the belly, directly above the wheel
+                    var strut = new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(0.07f, Mathf.Abs(y) + 0.06f, 0.07f) }, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.20f, 0.20f, 0.22f), Metallic = 0.4f, Roughness = 0.5f }, Position = new Vector3(0f, y * 0.5f, 0f), CastShadow = GeometryInstance3D.ShadowCastingSetting.Off };
+                    var gwheel = new MeshInstance3D { Mesh = wheelMesh, MaterialOverride = wheelMat, Position = new Vector3(0f, y, 0f), Scale = new Vector3((x < 0 ? -1f : 1f) * wscale, wscale, wscale) };
+                    pivot.AddChild(strut); pivot.AddChild(gwheel);
+                    v.AddChild(pivot);
+                    v._gearPivots[i] = pivot;
+                    if (Mathf.Abs(x) < 1f) { v._gearAxis[i] = Vector3.Right; v._gearAng[i] = -85f; }          // nose gear: folds AFT about X
+                    else { v._gearAxis[i] = Vector3.Back; v._gearAng[i] = -Mathf.Sign(x) * 85f; }             // main gear: folds INBOARD about Z
+                }
             }
 
             // Drop the centre of mass to just below the axle line so the car stops rolling on turns and pitching onto its
@@ -3590,6 +3606,18 @@ namespace UnturnedGodot
             // weathervane; the ground-rotation assist below still lifts the nose for takeoff.
             // SIGN CONVENTION matches DriveHeli: pitch +1 = nose up -> +X; roll +1 = bank right -> -Z; yaw +1 = nose right -> -Y.
             bool onGround = (grounded || _planeGroundMode) && !_afloat;   // wheeled land plane sitting/rolling on hard ground (or forced ground/taxi mode)
+
+            // RETRACTABLE GEAR (jet): deploy (down) on the ground or when slow; retract (fold up into the belly) once
+            // airborne + fast. Lerped ~1.5s so it swings up/down smoothly instead of snapping.
+            if (_gearPivots != null)
+            {
+                float gspd = _exploded ? 0f : LinearVelocity.Length();
+                float gTarget = 1f;   // SEPARATION step (master): gear stays DEPLOYED for now. For retraction, flip to: (onGround || gspd < 15f) ? 1f : 0f
+                _ = gspd;
+                _gearDeploy = Mathf.MoveToward(_gearDeploy, gTarget, dt / 1.5f);
+                for (int i = 0; i < _gearPivots.Length; i++)
+                    if (_gearPivots[i] != null) _gearPivots[i].Basis = new Basis(_gearAxis[i], Mathf.DegToRad(_gearAng[i] * (1f - _gearDeploy)));
+            }
             if (onGround)
             {
                 Steering = _steerMax > 0f ? Mathf.DegToRad(-_inYaw * _steerMax) : 0f;   // rudder -> nose-wheel steer, so it actually turns while taxiing
