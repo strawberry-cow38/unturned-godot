@@ -174,7 +174,10 @@ traced with file:line, not yet re-verified by me.
 12. ✅ **The town power grid is ON in SP and OFF on the dedicated server.** `MpLoopback.cs:126` seeds
     every `GridSource` fixture `ToggledOn = true`; `DedicatedServer.cs:121` has only the `GasPump` arm.
     Every joiner arrives in a dead town, and the only remedy is a cheat-gated console verb.
-13. ⬜ **The Power Switch is inert on both server-backed seams** (so the shipped SP game too, not just
+13. ✅ **The Power Switch is inert on both server-backed seams** *(verified: `DeployableReplication.cs:399`
+    is `if (!Schema.TryGet(...) || def.FuelCapacity <= 0f) return false;` and the Power Switch, id 9105,
+    is `Fuel = 0f`. The gate's own comment gives the game away — "a fuelled, not-on-fire generator
+    toggles" — it was written for generators and a switch has no fuel by nature.)* (so the shipped SP game too, not just
     MP) — four independent links drop it, the first fatal: `CanToggle` requires `FuelCapacity > 0` and
     the switch is `Fuel = 0`.
 14. ⬜ **Player-placed doors and the entire fluid stack place locally only** — `DeployableNetSchema`
