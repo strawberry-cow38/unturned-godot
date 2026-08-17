@@ -31,7 +31,7 @@ namespace UnturnedGodot
 
         LineEdit _input;
         Label _log;
-        static readonly string[] Verbs = { "give", "vehicle", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "toggleGlobalPower", "toggleGlobalWater", "toggleBbat", "infFuel", "infAmmo", "wear", "unwear", "fluid", "date", "dateset", "whenBlackout", "triggerGlobalBrownout", "hurtmain", "killmain", "hurttail", "killtail", "profiler", "renderscale", "zshadows", "freezerigs", "vertexlight", "weather", "fridge", "fill", "empty", "units", "simspeed", "time", "timeset", "timeadd", "timespeed", "daylength", "hitbox" };
+        static readonly string[] Verbs = { "give", "vehicle", "spawnMagnetableContainer", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "toggleGlobalPower", "toggleGlobalWater", "toggleBbat", "infFuel", "infAmmo", "wear", "unwear", "fluid", "date", "dateset", "whenBlackout", "triggerGlobalBrownout", "hurtmain", "killmain", "hurttail", "killtail", "profiler", "renderscale", "zshadows", "freezerigs", "vertexlight", "weather", "fridge", "fill", "empty", "units", "simspeed", "time", "timeset", "timeadd", "timespeed", "daylength", "hitbox" };
         static readonly EItemType[] ClothingTypes = { EItemType.SHIRT, EItemType.PANTS, EItemType.HAT, EItemType.VEST, EItemType.MASK, EItemType.GLASSES, EItemType.BACKPACK };
         readonly System.Collections.Generic.List<string> _history = new();
         int _histIdx;
@@ -465,6 +465,14 @@ namespace UnturnedGodot
                 if (v.IsHeli) v.PlaceOnGround(at);
                 else v.GlobalPosition = at + Vector3.Up * 1.5f;
                 Log($"spawned {name}" + (v.IsHeli ? $" (seated on skids, {v.GroundClearance:0.##} m clearance -- F to board, W/S collective, A/D yaw, mouse to fly)" : ""));
+            }
+            else if (verb == "spawnmagnetablecontainer" || verb == "magcontainer")
+            {
+                // Spawned like a vehicle (dropped just above the ground and left to settle) rather than seated:
+                // it is a plain rigid body with no suspension or skids to place on, so a short drop is the honest
+                // way in and matches how the wheeled vehicles arrive.
+                var c = MagnetableContainer.Spawn(Player?.GetParent() ?? GetTree().Root, at + Vector3.Up * 1.2f);
+                Log($"spawned magnetable container ({MagnetableContainer.ContainerMass:0} kg, doors + fixed magnet point on the roof centre) -- fly the skycrane over it and hit Shift");
             }
             else if (verb == "teleport" || verb == "tp")
             {

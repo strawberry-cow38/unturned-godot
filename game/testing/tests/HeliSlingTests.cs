@@ -154,7 +154,32 @@ namespace UnturnedGodot.Testing
             T.Check($"...and the coil is not spun up by its own bridle ({(hauler.SlingDeployed ? hauler.Sling.AngularVelocity.Length() : 0f):0.0} rad/s)",
                 !hauler.SlingDeployed || hauler.Sling.AngularVelocity.Length() < 25f);
 
-            // ---- 5. NOT DANGLING ON THE GROUND. "Dangles below the heli when in flight" is the spec, and a
+            // ---- 5. THE MAGNETABLE CONTAINER'S FIXED ATTACH POINT. The whole point of a declared magnet point is
+            // that the grab is not "wherever the coil brushed it": the load snaps to a known spot and hangs level and
+            // centred. So the container is offset LATERALLY from the magnet before the grab -- the generic path only
+            // ever moves a load in Y, so it would leave that offset in place and this check would catch it.
+            var crane = Spawn(World, new Vector3(2400f, 12.0f, 0f), sling: true);
+            var box = MagnetableContainer.Spawn(World, new Vector3(2400f + 0.9f, 0.2f, 0.8f));
+            yield return Ticks(2);
+            T.Check($"the container built its retail door leaves ({(box.DoorsOpen ? "open" : "shut")} at rest)", !box.DoorsOpen);
+            box.SetDoorsOpen(true);
+            for (int i = 0; i < 60; i++) yield return Ticks(1);
+            T.Check("...and the doors open when told to", box.DoorsOpen);
+
+            crane.ToggleSlingMagnet();
+            for (int i = 0; i < 520; i++) { crane.DriveHeli(0.6f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
+            bool got = crane.SlingDeployed && crane.Sling.Held == box;
+            T.Check($"the crane's magnet grabs the container (held={(crane.SlingDeployed ? crane.Sling.Held?.Name.ToString() ?? "nothing" : "no magnet")})", got);
+            if (got)
+            {
+                // Snapped on ALL THREE axes, so the lateral offset it was spawned with is gone.
+                float off = new Vector2(box.MagnetPointWorld.X - crane.Sling.FaceWorld.X,
+                                        box.MagnetPointWorld.Z - crane.Sling.FaceWorld.Z).Length();
+                T.Check($"...at its FIXED point, so it hangs centred not wherever it was touched ({off:0.00} m lateral offset, spawned 0.90 m off)",
+                    off < 0.25f);
+            }
+
+            // ---- 6. NOT DANGLING ON THE GROUND. "Dangles below the heli when in flight" is the spec, and a
             // magnet left out while parked would drag through the terrain under a landed aircraft.
             var parked = Spawn(World, new Vector3(600f, 0.2f, 0f), sling: true);
             for (int i = 0; i < 200; i++) { parked.DriveHeli(0f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }

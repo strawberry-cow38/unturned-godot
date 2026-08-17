@@ -13,6 +13,11 @@ namespace UnturnedGodot
     // and inertia and the aircraft genuinely feels it.
     public partial class SlingMagnet : RigidBody3D
     {
+        /// <summary>A load that says WHERE it wants to be gripped. Without this the coil welds a body wherever it
+        /// happened to brush it, so a container picked up by a corner hangs cocked; with it the grab snaps to a
+        /// fixed point and the load hangs level and centred every time.</summary>
+        public interface IMagnetAttachPoint { Vector3 MagnetPointWorld { get; } }
+
         public const float Radius = 1.35f;        // "big stinking circle" -- wide enough to read from the cockpit
         const float Thickness = 0.45f;
         // MASS IS A THRUST BUDGET HERE, not a realism dial. Lift force is HeliThrust * Mass (Vehicle.StepHeli), so the
@@ -114,13 +119,24 @@ namespace UnturnedGodot
             // the coil bites from up to GrabReach away -- so welding in place leaves the load hanging in mid-air below
             // the magnet with a visible gap, which reads as telekinesis rather than magnetism. Lift the body until its
             // top touches the coil face, then weld, so contact is what the joint preserves.
-            var ab = BodyAabb(body);
-            if (ab.HasValue)
+            if (body is IMagnetAttachPoint fixedPoint)
             {
-                float gap = FaceWorld.Y - ab.Value.End.Y;
-                if (gap > 0f) body.GlobalPosition += new Vector3(0f, gap, 0f);
-                body.LinearVelocity = LinearVelocity;   // and match speeds, or the weld starts by absorbing a relative slam
+                // A declared attach point moves the load on ALL THREE axes, not just up: that is the difference
+                // between "it stuck where I touched it" and a fixed grip. Level and centred under the coil.
+                body.GlobalPosition += FaceWorld - fixedPoint.MagnetPointWorld;
+                body.LinearVelocity = LinearVelocity;
                 body.AngularVelocity = Vector3.Zero;
+            }
+            else
+            {
+                var ab = BodyAabb(body);
+                if (ab.HasValue)
+                {
+                    float gap = FaceWorld.Y - ab.Value.End.Y;
+                    if (gap > 0f) body.GlobalPosition += new Vector3(0f, gap, 0f);
+                    body.LinearVelocity = LinearVelocity;   // and match speeds, or the weld starts by absorbing a relative slam
+                    body.AngularVelocity = Vector3.Zero;
+                }
             }
 
             var j = new Generic6DofJoint3D { Name = "MagnetWeld" };

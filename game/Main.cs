@@ -1975,6 +1975,36 @@ namespace UnturnedGodot
             }
             GD.Print($"[MAGNET/SPEC] slingHook={heli.DebugSlingHook} cableLen={heli.DebugSlingLen:0.00} forceAnchor={heli.DebugSlingAnchorLocal} drawAnchor={heli.DebugSlingVisualAnchorLocal}");
 
+            // UG_MAG_CONTAINER=1: use the real MagnetableContainer instead of the stand-in box, which exercises the
+            // FIXED attach point (all three axes) rather than the generic seat-the-AABB path.
+            if (System.Environment.GetEnvironmentVariable("UG_MAG_CONTAINER") == "1")
+            {
+                var mc = MagnetableContainer.Spawn(this, new Vector3(0f, 0.2f, 1.0f));
+                if (System.Environment.GetEnvironmentVariable("UG_MAG_DOORS") == "1") mc.CallDeferred(nameof(MagnetableContainer.SetDoorsOpen), true);
+                var g2 = new MagnetGantry { Heli = heli, HoldY = holdY, Load = mc };
+                AddChild(g2);
+                var cam2 = new Camera3D { Current = true, Fov = 46f, Far = 4000f };
+                AddChild(cam2);
+                // Camera choice must NOT key off the door STATE, or the open and shut shots come from different
+                // viewpoints and cannot be compared -- which is exactly what happened the first time.
+                bool doorShot = System.Environment.GetEnvironmentVariable("UG_MAG_DOORSHOT") == "1";
+                if (doorShot)
+                {
+                    // Doors shot: hold a fixed camera on the CONTAINER. The tracking camera frames the aircraft and
+                    // its magnet, which is the wrong subject when the thing being checked is whether the leaves swing.
+                    cam2.Position = new Vector3(11f, 3.4f, -9.5f);
+                    cam2.LookAt(new Vector3(0f, 1.6f, 0.6f), Vector3.Up);
+                }
+                else
+                {
+                    cam2.Position = new Vector3(26f, 7.5f, 10f);
+                    cam2.LookAt(new Vector3(0f, 5.5f, 1.0f), Vector3.Up);
+                    g2.Cam = cam2;   // track only when the aircraft is the subject
+                }
+                GD.Print($"[MAGNET] using a real MagnetableContainer ({MagnetableContainer.ContainerMass:0} kg)");
+                return;
+            }
+
             // The load: a plain box on the PROP layer, sized like the shipping container that started all this.
             var load = new RigidBody3D { Name = "Load", Mass = 800f, CollisionLayer = 1u << 6, CollisionMask = (1u << 0) | (1u << 5) };
             var lsize = new Vector3(2.88f, 3.24f, 3.00f);
