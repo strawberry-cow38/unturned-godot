@@ -27,7 +27,7 @@ namespace UnturnedGodot
         Node3D _propNode; MeshInstance3D _propBlades, _propDisc;   // propeller pivot + its 2 draw states (blades / spin-blur), spun about body forward
         float _propSpin;   // prop visual phase (about local Z)
         Node3D[] _jetFlames; OmniLight3D[] _jetFlameLights; ShaderMaterial[] _jetFlameMats; float _jetFlameT;   // afterburner flame cones (content/afterburner.gdshader, per-burner mat) + glow (jet); throttle-scaled
-        Contrail[] _contrails;   // world-space wingtip/winglet vapour trails (Contrail class below), faded in by airspeed (jet)
+        Contrail[] _contrails; float _contrailFade;   // world-space wingtip/winglet vapour trails (Contrail class below); _contrailFade = LAGGED airspeed fade so they ease in, not pop (jet)
         int _planeDbgFrame;   // UG_PLANEDBG print throttle
         bool _planeGroundMode;   // master: hold Ctrl -> drop onto the ground/water + taxi (no lift), for floatplanes now + wheeled aircraft later
         public bool PlaneGroundMode { get => _planeGroundMode; set => _planeGroundMode = value; }
@@ -3495,11 +3495,12 @@ namespace UnturnedGodot
             {
                 float cspd = _exploded ? 0f : LinearVelocity.Length();
                 float t01 = Mathf.Clamp((cspd - 24f) / 12f, 0f, 1f);   // gated HIGHER: nothing below 24 m/s, full by ~36 (near top speed)
-                float trail = t01 * t01 * (3f - 2f * t01);             // smoothstep -> fades GRADUALLY up from nothing as you reach speed (master)
+                float target = t01 * t01 * (3f - 2f * t01);            // smoothstep over the speed gate
+                _contrailFade = Mathf.MoveToward(_contrailFade, target, dt / 1.6f);   // LAG it ~1.6s so the trails EASE in from nothing instead of popping on the instant you cross the threshold (you accelerate through the gate too fast to see the raw ramp)
                 var camN = GetViewport()?.GetCamera3D();
                 Vector3 camPos = camN != null ? camN.GlobalPosition : GlobalPosition + Vector3.Up * 12f;
                 var xf = GlobalTransform;
-                foreach (var c in _contrails) c.Update(xf * c.Local, trail, camPos, dt);
+                foreach (var c in _contrails) c.Update(xf * c.Local, _contrailFade, camPos, dt);
             }
 
             // ENGINE + IGNITION AUDIO ride the prop spool (same wiring as the heli)
