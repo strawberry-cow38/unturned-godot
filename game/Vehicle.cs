@@ -292,6 +292,7 @@ namespace UnturnedGodot
         }
         public bool IsHeli => _heli;
         public bool IsPlane => _plane;
+        public bool HasWheels => _wNodes != null && _wNodes.Length > 0;   // a WHEELED plane seats on spawn; a floatplane (no wheels) drops onto the water
         float _groundClearance;
         /// <summary>Distance from the body origin down to its lowest collision point (skids, hull floor).</summary>
         public float GroundClearance => _groundClearance;
