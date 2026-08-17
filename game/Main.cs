@@ -1489,7 +1489,11 @@ namespace UnturnedGodot
             else
             {
                 if (!_noZombies) AddChild(new HordeSpawner { Target = player, MaxAlive = int.TryParse(System.Environment.GetEnvironmentVariable("UG_HORDE"), out var _h) ? _h : 8 });   // UG_HORDE overrides the horde size (perf repro)
+                var freezeMode = new FreezeMode();   // ESC -> Freeze Mode: paused sim + freecam + single-tick stepping
+                AddChild(freezeMode);
                 var pause = new PauseMenu();   // ESC -> pause menu (freezes the sim)
+                pause.Freeze = freezeMode;
+                pause.WorldRoot = this;
                 AddChild(pause);
                 player.PauseMenu = pause;
                 AddChild(new Profiler());   // console `profiler` -> perf overlay (fps/frame/worst-frame/timings/draw-calls/mem) for stutter diagnosis (master)

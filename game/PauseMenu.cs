@@ -8,6 +8,8 @@ namespace UnturnedGodot
     public partial class PauseMenu : CanvasLayer
     {
         Control _root, _gfx;
+        public FreezeMode Freeze;      // set by BuildPlayable; null in demos
+        public Node WorldRoot;         // where the freecam is parented
 
         public override void _Ready()
         {
@@ -51,6 +53,17 @@ namespace UnturnedGodot
             var gfx = new Button { Text = "Graphics", CustomMinimumSize = new Vector2(0, 46) };
             gfx.Pressed += () => { _root.Visible = false; _gfx.Visible = true; };
             vbox.AddChild(gfx);
+
+            // FREEZE MODE: hand the paused world over to a freecam instead of resuming. The tree is ALREADY paused
+            // here, so this hides the menu and lets FreezeMode keep it that way -- it never unpauses in between.
+            var freeze = new Button { Text = "Freeze Mode", CustomMinimumSize = new Vector2(0, 46) };
+            freeze.Pressed += () =>
+            {
+                if (Freeze == null) return;
+                Visible = false;
+                Freeze.Enter(WorldRoot);
+            };
+            vbox.AddChild(freeze);
 
             var toMenu = new Button { Text = "Exit to Menu", CustomMinimumSize = new Vector2(0, 46) };
             toMenu.Pressed += ExitToMenu;
