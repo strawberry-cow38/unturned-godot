@@ -1947,7 +1947,7 @@ namespace UnturnedGodot
             SpeedMax = 28f, Engine = 600f, SteerMax = 0f, SteerMin = 0f, Brake = 0f,   // cap ABOVE target so there's cruise room; pilot pitch-trims altitude
             Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", WheelRadius = 0.3f, Wheels = new (float, float, float, bool)[0],
             ForwardGears = new[] { 1f }, ReverseGear = 1f, ShiftUpRpm = 5000f,
-            Sound = "engine_medium.ogg", IdlePitch = 0.9f, MaxPitch = 1.9f, IdleVolume = 0.8f, MaxVolume = 1.0f,
+            Sound = "engine_plane.ogg", IgnitionSound = "otter_ignition.ogg", IdlePitch = 0.9f, MaxPitch = 1.9f, IdleVolume = 0.8f, MaxVolume = 1.0f,   // the REAL shared prop-plane engine loop + the Otter's own ignition
             Fuel = 1750f, Health = 800f, Name = "Otter",
             Seats = new[] { new Vector3(0f, 0.62f, 1.23f), new Vector3(0f, 0.62f, 0.41f) },   // pilot + passenger (from the prefab)
             DriverEye = new Vector3(0f, 1.5f, 1.0f),
@@ -1975,7 +1975,7 @@ namespace UnturnedGodot
                 (2.75f, -0.27f, 2.51f, false),   // main gear R
             },
             ForwardGears = new[] { 24f }, ReverseGear = 8f, ShiftUpRpm = 5000f,
-            Sound = "engine_medium.ogg", IdlePitch = 1.1f, MaxPitch = 2.3f, IdleVolume = 0.85f, MaxVolume = 1.0f,   // higher-pitched jet whine
+            Sound = "fighterjet_engine.ogg", IgnitionSound = "fighterjet_ignition.ogg", IdlePitch = 0.9f, MaxPitch = 1.7f, IdleVolume = 0.85f, MaxVolume = 1.0f,   // the REAL dedicated jet engine + ignition (from the prefab)
             Palette = "fighter_jet_body_tex.png", DefaultPaints = new[] { "#bcbcbc" },   // real .dat DefaultPaintColors = military grey; paintable panels + fixed tan/grey details
             Fuel = 1000f, Health = 800f, Name = "Fighter Jet",
             Seats = new[] { new Vector3(0f, 0.05f, -4.05f) },   // single cockpit, forward (Godot Z = -Unity 4.05)
