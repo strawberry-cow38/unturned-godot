@@ -23,6 +23,7 @@ namespace UnturnedGodot
         // A sibling RigidBody3D would have to rebuild all of it. VehicleBody3D with no VehicleWheel3D children
         // is just a RigidBody3D, so the base class does not fight flight.
         bool _heli; float _heliThrust, _heliPitchTq, _heliRollTq, _heliYawTq, _heliLevel, _heliDragFwd;
+        float _rotorRadius, _heliLiftCap = 1f, _groundEffect = 1f;   // _groundEffect: cached once per StepHeli; one raycast, two readers
         bool _tracked;   // TANK: tracked/differential drive -- Drive() branches on this to set per-TRACK torque instead of a steered-wheel angle
         const float TankWheelSlip = 1.0f;   // TANK: lateral wheel friction. Too LOW (0.5) and the yaw torque spins it in place instead of arcing forward (low grip = no forward bite either); too HIGH and turning drags to a crawl. Paired with the speed-faded yaw below. Tunable.
         const float TankComY = 0.1f;   // TANK: low centre of mass (anti-flip -- master "easily flipped"). Tunable.
@@ -85,6 +86,29 @@ namespace UnturnedGodot
         /// MP envelope's EnvelopeSlack of 1.25, so a dive can outrun cruise without ever producing a state the
         /// server would reject.</summary>
         const float HeliEnvelopeBackstop = 1.15f;
+        /// <summary>EFFECTIVE TRANSLATIONAL LIFT. In a hover a rotor is flying in its own downwash; as the
+        /// machine translates it moves into undisturbed air, induced drag falls, and the same collective makes
+        /// more thrust. Pilots feel it as a distinct surge and a lightening of the airframe as they come out
+        /// of a hover, and it is why a machine too heavy to hover can often still fly away.
+        ///
+        /// THE GAIN IS BOUNDED BY A SIGNED-OFF BEHAVIOUR, not by taste. Hands off, the collective springs to
+        /// IdleHoverFraction (0.92) of hover, so lift is 9.8 * 0.92 = 9.016 and the machine sinks gently --
+        /// which is what VoX asked for. ETL multiplies that, so any gain at or above 9.8/9.016 - 1 = 0.087
+        /// turns the hands-off sink into a hands-off CLIMB and silently deletes the behaviour.
+        ///
+        /// 0.05, NOT THE 0.087 THE ALGEBRA ALLOWS, and the difference was measured rather than reasoned. At
+        /// 0.08 -- comfortably "under the bound" -- a Huey hands-off at 20 m/s CLIMBED at +0.14 m/s. The bound
+        /// assumes the collective sits exactly at its spring target, and it does not: it settles a percent or
+        /// so above, which is more than the 0.06 m/s^2 of margin a gain of 0.08 leaves. A limit derived from
+        /// an idealised state needs headroom for the state actually being reached, so the gain is sized to
+        /// leave about 0.33 m/s^2 instead. vehicle.heli_lift asserts the sink at speed for this reason, and it
+        /// is the check that goes red first if anyone nudges this back up.</summary>
+        const float EtlGain = 0.05f;
+        const float EtlOnset = 4f, EtlFull = 11f;   // m/s: starting to outrun the downwash, and fully clear of it
+        /// <summary>Closest approach used in the ground-effect term, as a fraction of rotor radius.
+        /// Cheeseman-Bennett diverges as z -> R/4, so the disc height is clamped here; at R/2 the factor is
+        /// 1/(1 - 0.25) = 1.333, which is about what a real machine sees sitting on its skids.</summary>
+        const float GroundEffectMinZ = 0.5f;
 
         /// <summary>The horizontal acceleration an airframe can sustain WITHOUT LOSING ALTITUDE: the steepest
         /// attitude whose remaining vertical thrust still holds the machine up, times the sine of it.
@@ -196,6 +220,11 @@ namespace UnturnedGodot
         public float DebugRollAuthority => _heliRollTq;
         public float DebugThrust => _heliThrust;
         public float DebugHeliDragK => _heliDragFwd;   // 1/m, derived at build time -- see LevelFlightAccel
+        public float DebugHeliLiftCap => _heliLiftCap;
+        /// <summary>The value the flight model ACTUALLY used this tick, not a fresh recompute: a test that
+        /// re-probes could agree with the code while the code disagreed with itself, which is the failure a
+        /// debug accessor exists to catch. Reads 1.0 until StepHeli has run once on this machine.</summary>
+        public float DebugGroundEffect => _groundEffect;
         Vector3 _mainHubCentre, _mainHubHalf, _tailHubCentre, _tailHubHalf;
         // A blade strike GRINDS the rotor down over time rather than killing it outright (strawberry
         // 2026-08-16: "rotors' blade damage to be ticked over time instead of instantly killing the rotor").
@@ -313,6 +342,41 @@ namespace UnturnedGodot
             q.Exclude = new Godot.Collections.Array<Rid> { GetRid() };
             q.CollisionMask = (1u << 0) | (1u << 5);
             return space.IntersectRay(q).Count > 0;
+        }
+
+        /// <summary>Rotor thrust multiplier from GROUND EFFECT, 1.0 with nothing underneath.
+        ///
+        /// Within about a rotor diameter of the ground the downwash cannot escape sideways fast enough, the
+        /// rotor's induced velocity falls, and the same collective makes more thrust -- the "cushion" you feel
+        /// settling onto a pad, and what a heavy machine uses to stagger into the air. Cheeseman-Bennett:
+        /// T_ige / T_oge = 1 / (1 - (R / 4z)^2), for disc height z and rotor radius R. It decays fast and
+        /// honestly: 1.33 at half a radius, 1.07 at one radius, 1.02 at two.
+        ///
+        /// ITS OWN RAYCAST, deliberately, rather than reusing GroundedByRay. That one is a landing-gear
+        /// contact test and reaches _groundClearance + 0.45, about 1.4 m; a Huey's rotor is 11 m across, so a
+        /// probe that short cannot see this effect at all. This one reaches two radii, which is where the term
+        /// has decayed to nothing anyway.
+        ///
+        /// The mask is bit 0, which is world geometry AND vehicle bodies -- vehicles sit on bit0|bit5 (see
+        /// _baseCollisionLayer), so bit 0 alone does NOT exclude them and it would be wrong to claim it does.
+        /// That is left as it is on purpose: a surface under the disc is a surface, and a helicopter hovering
+        /// low over a truck really is in ground effect. It is only for a LANDING test that "is that thing
+        /// under me the ground?" needs the distinction. Props (bit 6) are excluded, since a bush is not a
+        /// surface the downwash builds a cushion against.</summary>
+        float GroundEffect()
+        {
+            if (!_heli || _rotorRadius < 0.01f) return 1f;
+            var space = GetWorld3D()?.DirectSpaceState;
+            if (space == null) return 1f;
+            Vector3 from = GlobalPosition;
+            var q = PhysicsRayQueryParameters3D.Create(from, from + Vector3.Down * (_rotorRadius * 2f));
+            q.Exclude = new Godot.Collections.Array<Rid> { GetRid() };
+            q.CollisionMask = 1u << 0;   // WORLD geometry only -- not vehicles (1<<5), not props (1<<6)
+            var hit = space.IntersectRay(q);
+            if (hit.Count == 0) return 1f;
+            float z = Mathf.Max(from.Y - ((Vector3)hit["position"]).Y, _rotorRadius * GroundEffectMinZ);
+            float r = _rotorRadius / (4f * z);
+            return 1f / Mathf.Max(1f - r * r, 0.1f);
         }
 
         /// <summary>Seam to the authoritative destructibles, mirroring PlayerController.NetDamageObject.
@@ -2372,6 +2436,16 @@ namespace UnturnedGodot
             // server rolls back. A dive still exceeds it -- that is what the backstop in StepHeli is for.
             v._heliDragFwd = s.Heli && s.SpeedMax > 0.01f
                 ? LevelFlightAccel(s.HeliThrust) / (s.SpeedMax * s.SpeedMax) : 0f;
+            v._rotorRadius = s.RotorRadius;
+            // CEILING ON THE COMBINED LIFT MULTIPLIERS, derived from this airframe's OWN climb envelope rather
+            // than picked. Terminal climb is (thrust * multipliers - g) / HeliHeaveDamp, and the server checks
+            // vertical motion against HeliClimbMax with ZERO slack -- so a multiplier large enough to out-climb
+            // that envelope does not read as a fast helicopter, it reads as a rollback of a legitimate pilot
+            // doing the single most fun thing in the game. ETL 1.08 x ground effect 1.333 = 1.44 busts the
+            // Hind (cap 1.26) and clears the minicopter (1.59), which is why this is per-airframe. The 0.9
+            // keeps a margin so the cap binds before the envelope does.
+            v._heliLiftCap = s.Heli && s.HeliThrust > 0.01f
+                ? Mathf.Max(1f, (9.8f + HeliHeaveDamp * s.HeliClimbMax * 0.9f) / s.HeliThrust) : 1f;
             if (s.Heli)
             {
                 // A helicopter is flown, not suspended. Damping here is AERODYNAMIC, not friction, and the
@@ -2823,7 +2897,25 @@ namespace UnturnedGodot
         const float IdleHoverFraction = 0.92f;
         /// <summary>Collective that would exactly hold a hover at full rotor spool, from THIS spec's thrust:
         /// thrust * c = g. Derived, not hardcoded, so retuning HeliThrust moves the idle point with it.</summary>
-        float HoverCollective => _heliThrust > 0.01f ? Mathf.Clamp(9.8f / _heliThrust, 0f, 1f) : 0f;
+        /// <summary>Collective needed to hold a hover RIGHT HERE -- including ground effect, which is the whole
+        /// reason this reads a cached field instead of just dividing by thrust.
+        ///
+        /// The hands-off spring targets IdleHoverFraction of this, and VoX's rule is that hands off gives a
+        /// gentle sink: "a bit below the amount of thrust required to counteract gravity". Near the ground,
+        /// the thrust required to counteract gravity is LESS -- so a fixed 0.92 * (g / thrust) stops being a
+        /// bit below hover and becomes comfortably above it. Measured: a parked minicopter with the engine
+        /// idling generated 9.016 * 1.333 = 12.0 against a g of 9.8 and floated off the ground, which broke
+        /// the turbulence test's grounded subject and would have had parked helicopters drifting into the sky.
+        ///
+        /// Making the trim ground-effect-aware fixes that WITHOUT capping the effect: hands-off lift works out
+        /// to 0.92 * g exactly, at any height, while collective you actually pull still gets the full cushion.
+        /// The alternative was clamping ground effect to about 1.06 -- the largest value that leaves the 8.7 %
+        /// idle margin intact -- which preserves the same behaviour by deleting the feature.
+        ///
+        /// The value can be one physics frame stale, since DriveHeli and StepHeli are not ordered relative to
+        /// each other. Ground effect changes over metres of altitude, so a frame of lag is not observable.</summary>
+        float HoverCollective => _heliThrust > 0.01f
+            ? Mathf.Clamp(9.8f / (_heliThrust * Mathf.Max(_groundEffect, 0.01f)), 0f, 1f) : 0f;
         float IdleCollective => HoverCollective * IdleHoverFraction;
         // Angular ACCELERATION at full deflection (rad/s^2), not a target rate -- these become torque against
         // the body's inertia, so the airframe builds up to a rotation and keeps it. Higher than the old rate
@@ -3019,6 +3111,23 @@ namespace UnturnedGodot
             // to shove it downward.
             float mainEff = MainRotorNorm;
             float lift = _heliThrust * spool * _inCollective * (0.20f + 0.80f * mainEff);
+            // ---- EFFECTIVE TRANSLATIONAL LIFT + GROUND EFFECT, both multipliers on rotor thrust.
+            //
+            // APPLIED HERE, ABOVE THE DEAD-TAIL CLAMP, and the order is the whole point. That clamp is an
+            // absolute ceiling encoding a signed-off rule -- a dead tail must prevent gaining height. A
+            // multiplier applied AFTER it lifts the machine straight back through the ceiling, and ground
+            // effect would do it exactly when the pilot is nearest the ground and closest to surviving. So
+            // these go in first and the clamp still has the last word.
+            //
+            // Capped as a PRODUCT, not individually: it is the combination that out-climbs the MP envelope
+            // (1.08 x 1.333 = 1.44 against the Hind's 1.26), and capping each factor separately would let the
+            // product through.
+            Vector3 hvel = LinearVelocity;
+            var hflat = new Vector3(hvel.X, 0f, hvel.Z);
+            float flatSpeed = hflat.Length();
+            float etl = 1f + EtlGain * Mathf.Clamp((flatSpeed - EtlOnset) / (EtlFull - EtlOnset), 0f, 1f);
+            _groundEffect = GroundEffect();   // ONE raycast per tick; HoverCollective reads the same cached value
+            lift *= Mathf.Min(etl * _groundEffect, _heliLiftCap);
             // A DEAD TAIL ALSO GROUNDS YOU (strawberry: "dead tail should also have the same effect as
             // killmain of preventing gaining height"). Capped just under g rather than zeroed like a dead main:
             // the tail is not what lifts you, so losing it should leave you able to sink under some control
@@ -3040,7 +3149,7 @@ namespace UnturnedGodot
             if (lift > 0f) ApplyCentralForce(b.Y * (lift * Mass));
 
             // ---- RESISTANCE. Two axes, two mechanisms, two laws -- the reasoning is at HeliHeaveDamp.
-            Vector3 vel = LinearVelocity;
+            Vector3 vel = hvel;   // read once, above, so ETL and drag cannot disagree about how fast we are going
 
             // VERTICAL: linear heave damping, in the WORLD frame. Deliberately NOT the body shaft axis, which
             // is the more obviously physical choice and was what the physics review recommended -- heave
@@ -3057,8 +3166,7 @@ namespace UnturnedGodot
             // direction AND its magnitude -- never from LinearVelocity. Using the full 3-D speed would scale
             // horizontal drag by the vertical component, so a 40 m/s dive would produce a large horizontal
             // braking force at near-zero horizontal speed.
-            var flat = new Vector3(vel.X, 0f, vel.Z);
-            float flatSpeed = flat.Length();
+            var flat = hflat;     // same vector ETL was sized from, for the same reason
             if (flatSpeed > 0.01f && _heliDragFwd > 0f)
             {
                 var fwd = new Vector3(-b.Z.X, 0f, -b.Z.Z);

@@ -103,13 +103,51 @@ number to the wrong question:
   zeroing the vertical is a large 3-D drop; it bonked the rig and damaged the airframe whose acceleration
   was being measured. Only the horizontal component is assigned now.
 
+## Phases 2 and 3: translational lift and ground effect
+
+Both are multipliers on rotor thrust, both are applied **above the dead-tail clamp**, and both are capped
+as a *product* by a per-airframe ceiling derived from that airframe's own `HeliClimbMax`. Capping each
+factor separately would let the product through, and the product is what out-climbs the envelope: ETL 1.05
+× ground effect 1.333 = 1.40 against the Hind's ceiling of 1.26.
+
+**The ordering is the load-bearing part and it was teeth-checked.** The dead-tail clamp is an absolute
+ceiling encoding a signed-off rule; a multiplier applied after it lifts the machine straight back through.
+Moving the multipliers below the clamp makes a dead-tail helicopter climb +2.3 m and still be rising at
++0.24 m/s at the end of the window — and exactly the two ordering checks go red while the rest stay green.
+
+**ETL is 0.05, not the 0.087 the algebra allows, and the gap was measured.** The bound comes from the
+hands-off sink: idle lift is `9.8 × 0.92 = 9.016`, so a gain of `9.8/9.016 − 1 = 0.087` cancels it. At
+0.08 — comfortably "under the bound" — a Huey hands-off at 20 m/s **climbed at +0.14 m/s**. The bound
+assumes the collective sits exactly on its spring target; it settles about a percent above, which is more
+than the 0.06 m/s² of margin 0.08 leaves. A limit derived from an idealised state needs headroom for the
+state actually reached.
+
+**Ground effect broke a signed-off behaviour, and the fix was not to shrink it.** Cheeseman-Bennett at full
+strength gives 1.333 near the deck, which takes the idling collective's 9.016 up to 12.0 against a g of
+9.8 — so a parked helicopter with the engine running slowly flies away. It surfaced as a failure in the
+*turbulence* test, whose grounded subject stopped being grounded.
+
+The obvious fix is to clamp ground effect to ~1.06, the largest value leaving the 8.7 % idle margin intact
+— which preserves the behaviour by deleting the feature. Instead `HoverCollective` now accounts for ground
+effect, so the hands-off trim targets the thrust needed *right here*. Hands-off lift is then `0.92 × g`
+exactly at any height, while collective the pilot actually pulls still gets the full cushion. That is also
+what a trimmed control does in reality.
+
+The probe is its own raycast reaching two rotor radii. `GroundedByRay` could not serve: it reaches ~1.4 m
+against an 11 m rotor. **Correcting the review on one detail** — it called that cast's `1<<5` the vehicle
+bit, which is right, but bit 0 does not exclude vehicles either: vehicle bodies sit on `bit0|bit5`. So the
+mask is bit 0 and it *does* see vehicles. That is left deliberately — a surface under the disc is a
+surface, and a helicopter hovering low over a truck really is in ground effect. Only a *landing* test needs
+that distinction. Props (bit 6) are excluded, since a bush is not something downwash builds a cushion on.
+
 ## What is not done
 
-Phases 2a, 2, 3 and 4 of the plan remain: multiplicative lift invariants, translational lift, ground
-effect, and torque coupling. The reviews attached hard constraints to each — an ETL gain of ≤ 0.087, a cap
-on the ETL × ground-effect product per airframe (the Hind busts its climb envelope at 1.18), ground effect
-needing a new terrain-only raycast because `GroundedByRay` casts 1.4 m against a rotor diameter of 11 m and
-uses the *vehicle* mask bit — and none of those should be taken on faith either.
+**Phase 4, torque coupling**, is deliberately not implemented. It would make collective input yaw the
+airframe, requiring constant pedal correction — a change to how the machine is *flown*. VoX's brief was
+explicit that the control feel is settled ("remember everything I said about the controls"), so this is a
+sign-off, not an implementation detail. The review also found the plan's own equation contradicted its
+prose and flipped the sign against the existing dead-tail term, so it should not be taken from the plan as
+written either.
 
 **Feel change to flag before this is called done:** removing `ForeAftBoost` costs about 2.6 m/s² of
 low-speed forward acceleration, and removing the linear horizontal damping gives back about 1.3 m/s² — a
