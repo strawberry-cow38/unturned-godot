@@ -1032,13 +1032,14 @@ namespace UnturnedGodot
         // Verifies buoyancy floats the hull to the waterline + the drive input becomes water thrust/rudder.
         void BuildBoatTest(string type)
         {
+            bool night = System.Environment.GetEnvironmentVariable("UG_NIGHT") == "1";   // UG_NIGHT=1: dim sun+sky to verify the caustics FADE at night (don't glow nuclear)
             var env = new Godot.Environment
             {
-                BackgroundMode = Godot.Environment.BGMode.Color, BackgroundColor = new Color(0.42f, 0.58f, 0.75f),
-                AmbientLightSource = Godot.Environment.AmbientSource.Color, AmbientLightColor = new Color(0.62f, 0.64f, 0.68f), AmbientLightEnergy = 0.95f,
+                BackgroundMode = Godot.Environment.BGMode.Color, BackgroundColor = night ? new Color(0.02f, 0.03f, 0.06f) : new Color(0.42f, 0.58f, 0.75f),
+                AmbientLightSource = Godot.Environment.AmbientSource.Color, AmbientLightColor = night ? new Color(0.05f, 0.06f, 0.11f) : new Color(0.62f, 0.64f, 0.68f), AmbientLightEnergy = night ? 0.3f : 0.95f,
             };
             AddChild(new WorldEnvironment { Environment = env });
-            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-52f, -42f, 0f), LightEnergy = 1.1f, ShadowEnabled = true });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-52f, -42f, 0f), LightEnergy = night ? 0.04f : 1.1f, ShadowEnabled = true });
 
             Terrain.HasWater = true; Terrain.SeaLevelY = 0f;   // flat test sea at Y=0 -- the boat physics reads these
             // UG_WATERFAR=1: shove the plane ~2.6k units out to fake the REAL map's large world coords (where the

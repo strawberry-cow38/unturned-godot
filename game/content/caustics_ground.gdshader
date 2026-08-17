@@ -10,7 +10,7 @@ uniform float sea_level = 0.0;
 uniform float caustic_scale = 0.11;     // 1/world-units -> caustic cell size
 uniform float caustic_speed = 0.25;
 uniform vec3  caustic_tint : source_color = vec3(0.55, 0.9, 1.0);
-uniform float caustic_strength = 0.5;
+uniform float caustic_strength = 0.15;   // toned down 70% (master)
 uniform float caustic_depth = 9.0;      // metres of depth the caustics fade out over
 
 varying vec3 v_wpos;
@@ -53,6 +53,6 @@ void fragment() {
         caust = max(caust, caustics(cp * 1.6 + 9.0, -TIME * caustic_speed * 0.8));   // a counter-scrolling layer for a livelier shimmer
         // fade IN just under the waterline, fade OUT with depth (real caustics are strongest in the shallows)
         float fade = clamp(depth / 0.4, 0.0, 1.0) * (1.0 - clamp(depth / caustic_depth, 0.0, 1.0));
-        EMISSION = caustic_tint * caust * caustic_strength * fade;
+        ALBEDO += caustic_tint * caust * caustic_strength * fade;   // ADD to albedo (not EMISSION) -> the sun/sky lights it, so it fades at night instead of glowing nuclear (master)
     }
 }

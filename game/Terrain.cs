@@ -48,7 +48,7 @@ uniform sampler2D splat1 : filter_linear;
 uniform float tileWorld = 16.0;
 uniform float sea_level = 25.6;                                  // world-Y of the ocean surface -> caustics show only below it
 uniform vec3 caustic_tint : source_color = vec3(0.55, 0.9, 1.0);
-uniform float caustic_strength = 0.5;
+uniform float caustic_strength = 0.15;   // toned down 70% (master)
 varying vec3 wpos;
 void vertex() { wpos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz; }
 // --- caustics: gradient (Perlin) noise so the web is smooth, not blocky; projected in world XZ onto underwater terrain ---
@@ -86,7 +86,9 @@ void fragment() {
         float caust = caustics(cp, TIME * 0.25);
         caust = max(caust, caustics(cp * 1.6 + 9.0, -TIME * 0.2));
         float cfade = clamp(cdepth / 0.4, 0.0, 1.0) * (1.0 - clamp(cdepth / 9.0, 0.0, 1.0));
-        EMISSION = caustic_tint * caust * caustic_strength * cfade;
+        // ADD to ALBEDO (not EMISSION) so the scene's sun/sky LIGHTS the caustics -> bright by day, its colour, and
+        // FADE to nothing at night instead of glowing nuclear (master). Real caustics are just focused sunlight.
+        ALBEDO += caustic_tint * caust * caustic_strength * cfade;
     }
 }
 ";
