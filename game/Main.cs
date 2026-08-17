@@ -1680,7 +1680,11 @@ namespace UnturnedGodot
 
             // The skycrane's own numbers, measured off skycrane_body.txt rather than eyeballed:
             const float LegBottom = -0.63f, LegZFrom = -4.15f, LegZTo = 2.73f, CockpitRearZ = -1.0f;
-            const float heliUnderside = 1.88f;   // measured: lowest fuselage over the container footprint (|X|<1.44, Z -0.70..6.80, above the struts)
+            // LOCAL to the heli, not world: 1.88 is a mesh coordinate off skycrane_body.txt, and the aircraft's
+            // ORIGIN stands 0.63 m up (-LegBottom) so the gear reaches the deck. Using it as a world Y made every
+            // clip/burial figure 0.63 m too pessimistic -- the "1.37 m buried" answer is really 0.73 m. The
+            // [SLING/REAL] vertex scan below re-derives this from the actual mesh; keep them agreeing.
+            const float BellyLocal = 1.88f;   // lowest fuselage over the container footprint (|X|<1.44, Z -0.70..6.80, above the struts)
             bool touch = System.Environment.GetEnvironmentVariable("UG_SLING_TOUCH") == "1";
             float yaw = float.TryParse(System.Environment.GetEnvironmentVariable("UG_SLING_YAW"), out var y0) ? y0 : 180f;
             float gap = float.TryParse(System.Environment.GetEnvironmentVariable("UG_SLING_GAP"), out var g0) ? g0 : 0.30f;
@@ -1691,14 +1695,26 @@ namespace UnturnedGodot
             // UG_SLING_TOUCH=1: drop the container until its TOP meets the underside above it. Note the
             // limiting surface is the BELLY at 1.88 over this footprint, not the tail boom (2.39) -- so
             // "touching the bottom of the tail" would leave it intersecting the fuselage further forward.
-            float baseY = touch ? heliUnderside - cH : 0f;
+            // UG_SLING_RAISE: lift the container off the no-clip height. Above 0 it starts cutting into the
+            // belly, and by exactly this much -- so the knob doubles as the readout for how much clearance
+            // the aircraft would have to gain to carry it at that height.
+            float raise = float.TryParse(System.Environment.GetEnvironmentVariable("UG_SLING_RAISE"), out var r0) ? r0 : 0f;
+            // UG_SLING_FLY: lift the WHOLE assembly -- aircraft and load together -- clear of the deck, so how
+            // far the container hangs below the airframe is visible against the sky instead of buried.
+            float fly = float.TryParse(System.Environment.GetEnvironmentVariable("UG_SLING_FLY"), out var f0) ? f0 : 0f;
+            float heliOriginY = -LegBottom + fly;          // where the aircraft's own origin ends up
+            float deckY = fly, underY = heliOriginY + BellyLocal;   // gear plane, and the belly above it
+            float baseY = (touch ? underY - cH : deckY) + raise;
             // THE MESH ORIGIN IS THE CONTAINER'S BASE, NOT ITS CENTRE -- mesh Z runs 0.000..3.243, so after the
             // Z-up->Y-up rotation the origin sits on the floor of the box. Adding cH/2 here (as if it were
             // centred, which it is in X and Y) lifted the whole thing 1.62 m and put the top at 3.50 against a
             // 1.88 underside. It looked plausible and the arithmetic downstream was all consistent with it;
             // strawberry caught it by eye. Place the ORIGIN at the base and let the mesh extend upward.
-            AddChild(new MeshInstance3D { Mesh = cmesh, MaterialOverride = cmat, Transform = new Transform3D(basis, new Vector3(0f, baseY, centreZ)) });
-            if (touch) GD.Print($"[SLING] container dropped to base Y {baseY:0.00}, top {baseY + cH:0.00} against the {heliUnderside:0.00} underside");
+            var cinst = new MeshInstance3D { Mesh = cmesh, MaterialOverride = cmat, Transform = new Transform3D(basis, new Vector3(0f, baseY, centreZ)) };
+            AddChild(cinst);
+            // Report RELATIVE to the airframe, not to the world -- UG_SLING_FLY moves the aircraft too, so a
+            // load measured against a deck that slid out from under it stays articulate and answers the wrong question.
+            if (touch) GD.Print($"[SLING] base Y {baseY:0.00}, top {baseY + cH:0.00} vs underside {underY:0.00} -> {(baseY + cH > underY ? $"CLIPS by {baseY + cH - underY:0.00} m" : "clear")}; sits {deckY - baseY:0.00} m below the deck; ground clearance {baseY:0.00} m");
 
             // UG_SLING_TOUCH=1: raise the aircraft until the container's TOP meets its underside -- strawberry's
             // "lower the container so its top touches the bottom of the tail", done the way round that keeps the
@@ -1708,9 +1724,92 @@ namespace UnturnedGodot
             float lift = 0f;   // ghost-gear variant only; the container itself moves by `drop`
             var heli = Vehicle.BuildByName("skycrane");
             AddChild(heli);
-            heli.GlobalPosition = new Vector3(0f, -LegBottom + lift, 0f);   // legs on the deck, plus any lift
-            heli.Freeze = true; heli.FreezeMode = RigidBody3D.FreezeModeEnum.Static;
+            heli.GlobalPosition = new Vector3(0f, heliOriginY + lift, 0f);   // legs on the deck, plus any lift
+            // HOLD IT UP PROPERLY. Freeze alone does not survive: the machine's own idle logic clears it
+            // (Vehicle.cs "else if (!idle && Freeze) Freeze = false"), so the aircraft quietly fell out from under
+            // the load -- 7.63 -> 5.85 in half a second -- while every build-frame number stayed true. At ground
+            // level it just landed where I wanted it and the bug was invisible; only flying it up exposed it.
+            // Disabling the script is what makes the freeze stick, since nothing is left running to undo it.
+            heli.FreezeMode = RigidBody3D.FreezeModeEnum.Static; heli.Freeze = true;
+            heli.GravityScale = 0f; heli.LinearVelocity = Vector3.Zero; heli.AngularVelocity = Vector3.Zero;
+            heli.ProcessMode = Node.ProcessModeEnum.Disabled;
             if (touch) GD.Print($"[SLING] raised {lift:0.00} m so the container's top meets the underside -> legs {(-LegBottom) + lift:0.00} m tall (were {-LegBottom:0.00})");
+
+            // GROUND TRUTH, read back off the scene rather than off my own intent. Every number above is a
+            // prediction; these two are what actually gathered in the world. A placement that validates against
+            // the value it was told to use cannot detect a frame mix-up, which is exactly what bit this harness.
+            Aabb WorldAabb(Node n)
+            {
+                Aabb? acc = null;
+                void Walk(Node k)
+                {
+                    if (k is MeshInstance3D mi && mi.Mesh != null && mi.Visible)
+                    {
+                        var a = mi.GlobalTransform * mi.Mesh.GetAabb();
+                        acc = acc.HasValue ? acc.Value.Merge(a) : a;
+                    }
+                    foreach (var c in k.GetChildren()) Walk(c);
+                }
+                Walk(n);
+                return acc ?? new Aabb();
+            }
+            var cA = cinst.GlobalTransform * cmesh.GetAabb();
+            var hA = WorldAabb(heli);
+            GD.Print($"[SLING/REAL] container Y {cA.Position.Y:0.00}..{cA.End.Y:0.00}  Z {cA.Position.Z:0.00}..{cA.End.Z:0.00}  X {cA.Position.X:0.00}..{cA.End.X:0.00}");
+            GD.Print($"[SLING/REAL] heli      Y {hA.Position.Y:0.00}..{hA.End.Y:0.00}  Z {hA.Position.Z:0.00}..{hA.End.Z:0.00}  (origin Y {heli.GlobalPosition.Y:0.00})");
+            GD.Print($"[SLING/REAL] container base is {hA.Position.Y - cA.Position.Y:0.00} m below the lowest point of the aircraft (its gear)");
+            // RE-DERIVE the belly from real vertices instead of trusting the number typed at the top. Scan every
+            // heli vertex that lies over the container footprint, drop anything at/below the gear plane, and take
+            // the lowest survivor -- that IS the surface the load would hit.
+            {
+                float gearTop = hA.Position.Y + 0.75f;   // above the skids/struts, so they do not win the minimum
+                float lo = float.MaxValue; string who = "none";
+                void Scan(Node k)
+                {
+                    if (k is MeshInstance3D mi && mi.Mesh != null && mi.Visible)
+                        for (int si = 0; si < mi.Mesh.GetSurfaceCount(); si++)
+                        {
+                            var arr = mi.Mesh.SurfaceGetArrays(si);
+                            if (arr.Count == 0 || arr[(int)Mesh.ArrayType.Vertex].VariantType == Variant.Type.Nil) continue;
+                            foreach (var lv in arr[(int)Mesh.ArrayType.Vertex].AsVector3Array())
+                            {
+                                var w = mi.GlobalTransform * lv;
+                                if (w.X < cA.Position.X || w.X > cA.End.X) continue;
+                                if (w.Z < cA.Position.Z || w.Z > cA.End.Z) continue;
+                                if (w.Y <= gearTop || w.Y >= lo) continue;
+                                lo = w.Y; who = mi.Name;
+                            }
+                        }
+                    foreach (var c in k.GetChildren()) Scan(c);
+                }
+                Scan(heli);
+                // Enumerate EVERY visual node with its own Y range. The union AABB above hides which node owns the
+                // minimum, and a walker that only knows MeshInstance3D is blind to anything drawn another way --
+                // so list node TYPES too, and let the render and the numbers be checked against each other.
+                void List(Node k, string ind)
+                {
+                    string extra = "";
+                    if (k is VisualInstance3D vi)
+                    {
+                        var a = vi.GlobalTransform * vi.GetAabb();
+                        extra = $"  Y {a.Position.Y:0.00}..{a.End.Y:0.00}  vis={vi.Visible}";
+                    }
+                    GD.Print($"[SLING/NODE] {ind}{k.Name} <{k.GetType().Name}>{extra}");
+                    foreach (var c in k.GetChildren()) List(c, ind + "  ");
+                }
+                List(heli, "");
+                // AND AGAIN LATER. Everything above is measured on the BUILD frame, before physics has run once.
+                // The aircraft is a RigidBody3D; if the freeze does not hold it, it falls out of the picture and
+                // every build-frame number stays true while the render shows something else entirely.
+                foreach (double t in new[] { 0.1, 0.5, 1.0 })
+                {
+                    var when = t;
+                    GetTree().CreateTimer(when).Timeout += () =>
+                        GD.Print($"[SLING/LATE {when:0.0}s] heli origin Y {heli.GlobalPosition.Y:0.00} (built at {heliOriginY:0.00}), frozen={heli.Freeze}; container base Y {cinst.GlobalPosition.Y:0.00}");
+                }
+                GD.Print($"[SLING/REAL] belly over the footprint: world Y {lo:0.00} (local {lo - heli.GlobalPosition.Y:0.00}) on \"{who}\"; harness assumed world {underY:0.00}");
+                GD.Print($"[SLING/REAL] container top {cA.End.Y:0.00} -> {(cA.End.Y > lo ? $"CLIPS by {cA.End.Y - lo:0.00} m" : $"clear by {lo - cA.End.Y:0.00} m")}");
+            }
 
             float overhang = (centreZ + cL * 0.5f) - LegZTo;
             GD.Print($"[SLING] container W {cW:0.00} H {cH:0.00} L {cL:0.00}; front face Z {frontZ:0.00} (cockpit rear {CockpitRearZ:0.00} + {gap:0.00} gap), rear face Z {centreZ + cL * 0.5f:0.00}");
@@ -1731,11 +1830,21 @@ namespace UnturnedGodot
                 GD.Print($"[SLING] ghost gear: {len:0.00} m long (was {LegZTo - LegZFrom:0.00}), {-LegBottom + lift:0.00} m tall (was {-LegBottom:0.00})");
             }
 
+            // DATUM: a thin translucent slab at the gear plane. The question is "how much sits below the aircraft",
+            // and screen-Y across a perspective view cannot answer it -- I misread exactly that off the last render.
+            // A plane the container visibly pierces makes the overhang legible instead of inferred.
+            AddChild(new MeshInstance3D {
+                Mesh = new BoxMesh { Size = new Vector3(11f, 0.03f, 15f) },
+                MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(1f, 0.5f, 0.1f, 0.35f), Transparency = BaseMaterial3D.TransparencyEnum.Alpha, CullMode = BaseMaterial3D.CullModeEnum.Disabled },
+                Position = new Vector3(0f, deckY, 1.5f) });
+
             var cam = new Camera3D { Current = true, Fov = 42f, Far = 4000f };
             AddChild(cam);
             string mode = System.Environment.GetEnvironmentVariable("UG_SLING_CAM");
-            cam.Position = mode == "side" ? new Vector3(42f, 4.0f, 2.5f) : new Vector3(20f, 11f, -19f);
-            cam.LookAt(new Vector3(0f, 2.6f, 2.5f), Vector3.Up);   // side: level with the bay so the container/underside gap reads
+            // Side view sits JUST BELOW the gear plane looking slightly up, so the part of the load hanging under
+            // the aircraft is silhouetted rather than foreshortened into the fuselage behind it.
+            cam.Position = mode == "side" ? new Vector3(23f, fly - 0.8f, 2.5f) : new Vector3(16f, 7.5f + fly, -15f);
+            cam.LookAt(new Vector3(0f, fly + 0.9f, 2.5f), Vector3.Up);
         }
 
         void BuildPropTest(string name)
