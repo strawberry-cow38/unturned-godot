@@ -89,6 +89,32 @@ namespace UnturnedGodot
         /// off by feel; this rework is about the horizontal law, and quietly retuning every climb rate inside
         /// it is exactly the kind of change that compiles and ships wrong. Raised separately instead.</summary>
         const float HeliHeaveDamp = 0.45f;
+        /// <summary>LIVE FLIGHT-MODEL KNOBS, driven by the `heliphys` console command (VoX 2026-08-17: "so we are
+        /// essentially applying max speeds to the helis? Can we test removing those please"). Static because the
+        /// question is about the FLEET's feel, not one airframe's, and because they exist to be A/B'd in the air.
+        ///
+        /// NONE OF THESE ARE SHIPPING DEFAULTS. They default to exactly the calibrated behaviour, so a build with
+        /// nobody typing at the console flies identically to one without them. What they are for is answering
+        /// "what would it feel like without the limiter" by flying it rather than arguing about it.
+        ///
+        /// THE MP CAVEAT, because it is not visible from the cockpit: VehicleReplication validates horizontal
+        /// motion against SpeedMaxMps * 1.25 and vertical against HeliClimbMax with ZERO slack. Turning these up
+        /// is free in singleplayer and gets a pilot ROLLED BACK on a server. Tune to taste here, then decide
+        /// whether the spec numbers move to match -- do not ship a feel the envelope will reject.</summary>
+        public static float HeaveDampScale = 1f;      // vertical resistance, 1 = calibrated (terminal fall 21.8 m/s)
+        public static float DragScale = 1f;           // horizontal parasite drag, 1 = level terminal equals Speed_Max
+        public static bool BackstopEnabled = true;    // the 1.25x hard wall that keeps the client inside the envelope
+        /// <summary>Vertical resistance follows the DISC rather than the world vertical: tilt the shaft and the
+        /// disc goes edge-on to the airflow, which is cos^2 of the tilt (one cosine resolving velocity onto the
+        /// shaft, one resolving the force back to vertical). VoX got here from the feel -- "a horizontal heli has
+        /// more vertical drag than a vertical heli right?" -- and the physics review recommended it originally.
+        ///
+        /// DESCENT ONLY. The same factor on the CLIMB side raises terminal climb ~22 % at an ordinary 25 deg
+        /// cruise, straight into HeliClimbMax's zero-slack server check. The asymmetry is the envelope's, not
+        /// physics'. Off by default: it makes a committed dive roughly twice as fast, and HeliCrashExplodeSpeed
+        /// (15 m/s) was settled against the old 21.8 terminal, so every misjudged pullout becomes a fireball
+        /// until that is revisited.</summary>
+        public static bool ShaftAlignedDescent = false;
         /// <summary>How much draggier sideways than forwards. This is what replaces the old ForeAftBoost /
         /// LateralBoost pair, which multiplied THRUST to make leaning into a run build momentum ("increase the
         /// forward/back momentum when tilting forward/back") and lateral slip feel less eager than a drone.
@@ -3595,14 +3621,32 @@ namespace UnturnedGodot
             // vertical axis is unchanged, only who applies the force changed" literally true, which is the
             // stronger requirement of the two. The cost is a coordinate artefact at extreme bank; the benefit
             // is that six calibrated numbers stay valid.
-            ApplyCentralForce(Vector3.Down * (HeliHeaveDamp * vel.Y * Mass));
+            float heave = HeliHeaveDamp * HeaveDampScale;
+            if (ShaftAlignedDescent && vel.Y < 0f)
+            {
+                // cos^2 of the tilt. SQUARED, not clamped to [0,1]: an INVERTED disc is still a flat disc facing
+                // the airflow, so b.Y.Y = -1 has to read as 1, not as 0. Clamping first gave an upside-down
+                // helicopter zero vertical resistance.
+                float shaftUp = b.Y.Y;
+                float factor = shaftUp * shaftUp;
+                // FLOORED AT THIS AIRFRAME'S OWN ENVELOPE. Unfloored the factor reaches ZERO at knife-edge, which
+                // is no vertical resistance at all and a fall that accelerates without limit -- straight past
+                // HeliFallMax and through HeliCrashExplodeSpeed. Deriving the floor from _heliFallMax instead makes
+                // terminal fall land exactly ON the spec number: 9.8 / (0.45 * 40) = 0.544 for a Huey, giving
+                // 40.0 m/s at any steep attitude and the calibrated 21.8 when level. That turns HeliFallMax from a
+                // decoration nothing could reach into the real limit, which is the whole point of the change.
+                float floorFactor = _heliFallMax > 0.01f
+                    ? Mathf.Min(9.8f / (HeliHeaveDamp * _heliFallMax), 1f) : 0.25f;
+                heave *= Mathf.Max(factor, floorFactor);
+            }
+            ApplyCentralForce(Vector3.Down * (heave * vel.Y * Mass));
 
             // HORIZONTAL: quadratic parasite drag, anisotropic. Taken from the FLAT vector only -- both its
             // direction AND its magnitude -- never from LinearVelocity. Using the full 3-D speed would scale
             // horizontal drag by the vertical component, so a 40 m/s dive would produce a large horizontal
             // braking force at near-zero horizontal speed.
             var flat = hflat;     // same vector ETL was sized from, for the same reason
-            if (flatSpeed > 0.01f && _heliDragFwd > 0f)
+            if (flatSpeed > 0.01f && _heliDragFwd * DragScale > 0f)
             {
                 var fwd = new Vector3(-b.Z.X, 0f, -b.Z.Z);
                 Vector3 alongFwd = Vector3.Zero;
@@ -3610,7 +3654,7 @@ namespace UnturnedGodot
                 Vector3 lateral = flat - alongFwd;
                 // F_i = -k_i * |v| * v_i -- the standard anisotropic quadratic form, magnitude set by the total
                 // flat speed and direction resolved per axis, so a diagonal slip is dragged on both.
-                ApplyCentralForce(-(alongFwd + lateral * HeliLateralDragRatio) * (_heliDragFwd * flatSpeed * Mass));
+                ApplyCentralForce(-(alongFwd + lateral * HeliLateralDragRatio) * (_heliDragFwd * DragScale * flatSpeed * Mass));
             }
 
             // BACKSTOP, NOT THE SPEED LIMIT. Drag sets top speed now; this exists only so the sim cannot hand
@@ -3621,7 +3665,7 @@ namespace UnturnedGodot
             // to sit exactly AT Speed_Max as the only limiter, engaging on any committed run at around 20 deg
             // of tilt: undiminished acceleration right up to the cap and then a wall, which is the opposite of
             // how an aircraft approaches its top speed.
-            if (_speedMax > 0f && flatSpeed > _speedMax * HeliEnvelopeBackstop)
+            if (BackstopEnabled && _speedMax > 0f && flatSpeed > _speedMax * HeliEnvelopeBackstop)
             {
                 Vector3 excess = flat.Normalized() * (flatSpeed - _speedMax * HeliEnvelopeBackstop);
                 ApplyCentralForce(-excess * Mass * 3.0f);

@@ -46,12 +46,12 @@ namespace UnturnedGodot
         static readonly string[] ServerGatedVerbs = { "give", "xp", "skill", "teleport", "tp", "toggleglobalpower", "globalpower", "grid" };
         // Verbs below the arg guard that are legal with NO argument. Keep this in step when adding one, or the
         // guard silently swallows it and the verb becomes unreachable from the console.
-        static readonly string[] NoArgVerbs = { "unarmed", "fridge", "fluid", "survival", "spawnmagnetablecontainer", "magcontainer" };
+        static readonly string[] NoArgVerbs = { "unarmed", "fridge", "fluid", "survival", "spawnmagnetablecontainer", "magcontainer", "heliphys" };
         bool _resultHooked;
 
         LineEdit _input;
         Label _log;
-        static readonly string[] Verbs = { "give", "vehicle", "spawnMagnetableContainer", "spawnheli", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "toggleGlobalPower", "toggleGlobalWater", "toggleBbat", "infFuel", "infAmmo", "wear", "unwear", "fluid", "date", "dateset", "whenBlackout", "triggerGlobalBrownout", "hurtmain", "killmain", "hurttail", "killtail", "profiler", "renderscale", "zshadows", "freezerigs", "vertexlight", "weather", "fridge", "fill", "empty", "units", "simspeed", "time", "timeset", "timeadd", "timespeed", "daylength", "hitbox" };
+        static readonly string[] Verbs = { "give", "vehicle", "spawnMagnetableContainer", "spawnheli", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "toggleGlobalPower", "toggleGlobalWater", "toggleBbat", "infFuel", "infAmmo", "wear", "unwear", "fluid", "date", "dateset", "whenBlackout", "triggerGlobalBrownout", "hurtmain", "killmain", "hurttail", "killtail", "profiler", "renderscale", "zshadows", "freezerigs", "vertexlight", "weather", "fridge", "fill", "empty", "units", "simspeed", "time", "timeset", "timeadd", "timespeed", "daylength", "hitbox", "heliphys" };
         static readonly EItemType[] ClothingTypes = { EItemType.SHIRT, EItemType.PANTS, EItemType.HAT, EItemType.VEST, EItemType.MASK, EItemType.GLASSES, EItemType.BACKPACK };
         readonly System.Collections.Generic.List<string> _history = new();
         int _histIdx;
@@ -316,6 +316,40 @@ namespace UnturnedGodot
             }
 
             // --- time of day + sim speed (strawberry). Handled above the arg guard so bare `time` / `simSpeed` report state. ---
+            // LIVE FLIGHT-MODEL KNOBS (VoX: "Can we test removing those please"). Reports the DERIVED
+            // consequence of each setting, not just the number set -- "heave x0.5" means nothing on its own,
+            // "terminal fall 43.6 m/s" is the thing being decided. Defaults are the shipping calibration, so
+            // `heliphys reset` always returns the fleet to how it flies in a build nobody has typed into.
+            if (verb == "heliphys")
+            {
+                var hpArgs = arg.Split(' ', System.StringSplitOptions.RemoveEmptyEntries);
+                if (hpArgs.Length == 0) { Log(HeliPhysStatus()); return; }
+                string k = hpArgs[0].ToLowerInvariant();
+                string val = hpArgs.Length > 1 ? hpArgs[1].ToLowerInvariant() : "";
+                bool on = val is "on" or "1" or "true" or "yes";
+                bool off = val is "off" or "0" or "false" or "no";
+                switch (k)
+                {
+                    case "reset":
+                        Vehicle.HeaveDampScale = 1f; Vehicle.DragScale = 1f;
+                        Vehicle.BackstopEnabled = true; Vehicle.ShaftAlignedDescent = false;
+                        Log("reset to shipping calibration\n" + HeliPhysStatus());
+                        return;
+                    case "heave":
+                    case "drag":
+                        if (!float.TryParse(val, out float x) || x < 0f)
+                        { Log($"usage: heliphys {k} <scale>   (1 = shipping, 0 = off entirely)"); return; }
+                        if (k == "heave") Vehicle.HeaveDampScale = x; else Vehicle.DragScale = x;
+                        Log(HeliPhysStatus()); return;
+                    case "backstop":
+                    case "shaft":
+                        if (!on && !off) { Log($"usage: heliphys {k} <on|off>"); return; }
+                        if (k == "backstop") Vehicle.BackstopEnabled = on; else Vehicle.ShaftAlignedDescent = on;
+                        Log(HeliPhysStatus()); return;
+                }
+                Log("usage: heliphys [heave <scale> | drag <scale> | backstop <on|off> | shaft <on|off> | reset]");
+                return;
+            }
             if (verb == "simspeed")
             {
                 if (arg.Length == 0) { Log($"simSpeed = {(float)Engine.TimeScale:0.##}x   (usage: simSpeed <multiplier>)"); return; }
@@ -811,6 +845,27 @@ namespace UnturnedGodot
             var c = FluidContainer.MakeFitting(role, ways);
             c.Position = pos;
             world.AddChild(c);
+        }
+
+        /// <summary>What the current knobs actually MEAN, in the units the decision gets made in. "heave x0.5"
+        /// tells you nothing on its own; "terminal fall 43.6 m/s" is the thing being judged.</summary>
+        static string HeliPhysStatus()
+        {
+            float hd = 0.45f * Vehicle.HeaveDampScale;
+            string fall = hd > 0.001f ? $"{9.8f / hd:0.#} m/s" : "unlimited (no vertical resistance)";
+            // cos^2(45 deg) = 0.5, so a 45 deg dive halves the resistance and roughly doubles terminal fall.
+            string dive = !Vehicle.ShaftAlignedDescent ? "identical at any attitude (world-aligned)"
+                        : hd > 0.001f ? $"{9.8f / (hd * 0.5f):0.#} m/s at 45 deg nose-down" : "unlimited";
+            string top = Vehicle.DragScale > 0.001f
+                ? $"x{1f / Mathf.Sqrt(Vehicle.DragScale):0.##} of spec (goes as 1/sqrt(drag))"
+                : "no drag at all -- only the backstop limits you";
+            return $"heliphys: heave x{Vehicle.HeaveDampScale:0.##}  drag x{Vehicle.DragScale:0.##}  " +
+                   $"backstop {(Vehicle.BackstopEnabled ? "on" : "off")}  shaftDescent {(Vehicle.ShaftAlignedDescent ? "on" : "off")}\n" +
+                   $"  terminal fall, level: {fall}\n" +
+                   $"  terminal fall, diving: {dive}\n" +
+                   $"  level top speed: {top}\n" +
+                   $"  MP: server validates horizontal at SpeedMax x1.25 and climb at HeliClimbMax with ZERO slack --\n" +
+                   $"  past those it rolls the pilot back, so a feel tuned here needs the spec moved to match.";
         }
 
         static ItemAsset ResolveItem(string arg)
