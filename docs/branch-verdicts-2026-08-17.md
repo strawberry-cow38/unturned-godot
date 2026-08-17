@@ -1,5 +1,10 @@
 # Unmerged branch verdicts — 2026-08-17
 
+> **Merge phase VERIFIED.** Post-merge full sweep on `168c3855`: **2014 passed, 0 failed**, and the
+> log is grep-clean of `NullReferenceException` / `SCRIPT ERROR` (checked by hand, because the harness
+> does not check for them itself — see the review's finding on that). Up from 1958 pre-merge; the ten
+> merged branches brought 56 tests with them. L0 1618, L1 370, L2 15.
+
 Written after merging the ten tractable branches (`a650c9c1` → `168c3855`). These are the ones I did
 **not** merge, with the reason and what it would actually take. Conflict counts are from
 `git merge-tree` against main, which is a dry run — it does not touch the tree.
