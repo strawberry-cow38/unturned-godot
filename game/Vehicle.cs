@@ -621,7 +621,7 @@ namespace UnturnedGodot
 
         struct Spec
         {
-            public string Body, Wheel, WheelTex, Palette;   // Palette = paintable palette; WheelTex = wheel albedo
+            public string Body, Wheel, WheelTex, Palette, GlassMesh;   // Palette = paintable palette; WheelTex = wheel albedo; GlassMesh = translucent canopy overlay (jet)
             public WaterMode Water;   // Car (default) = land only; Boat = floats+water-drives (no useful wheels); Amphibious = land wheels + float/water-drive when its hull is in the sea
             public Vector3[] Buoys;   // hull buoyancy points (local space, Godot); null = auto 4 bottom corners of BoxSize. Boats/amphibious float via a spring at each toward SeaLevelY
             public float BuoyLift;    // added to the auto buoyancy-voxel Y. NEGATIVE = float HIGHER (voxels sit lower -> the hull rides up -> more of the coloured bottom shows above the waterline). 0 = default
@@ -1975,6 +1975,7 @@ namespace UnturnedGodot
             BoxSize = new Vector3(2.4f, 1.0f, 8.0f), BoxCenter = new Vector3(0f, 1.25f, -0.3f),   // UPPER-fuselage collision box, RAISED well clear of the wheels/ground (bottom ~0.75 above the origin) + shortened so it never pokes the nose -- the low/long box was clipping the terrain + freaking out (master). The GEAR (VehicleWheel3D) carries the ground ride.
             SpeedMax = 36f, Engine = 800f, SteerMax = 32f, SteerMin = 8f, Brake = 30f,         // Steer_Max/Min for GROUND-mode taxi; Speed_Max 36
             Wheel = "fighterjet_wheel.txt", WheelTex = "fighterjet_wheel_albedo.png", WheelRadius = 0.34f,   // the jet's OWN wheel mesh (prefab Wheel_*/Model_0, 168v) not the jeep car wheel
+            GlassMesh = "fighterjet_canopy.txt",   // the LOD's closed cockpit cap, re-laid TRANSLUCENT over the open cockpit
             Wheels = new (float, float, float, bool)[]   // tricycle gear (Godot Z = -Unity Z): nose steers, 2 wide mains
             {
                 (0f, -0.27f, -2.83f, true),      // nose wheel (forward) -- steers on the ground
@@ -2396,6 +2397,23 @@ namespace UnturnedGodot
                     v.AddChild(mi);
                     if (v._bodyMesh == null) v._bodyMesh = mi;
                 }
+
+            // ---- CANOPY GLASS (jet): the LOD's closed cockpit cap (fighterjet_canopy.txt) re-laid over the open
+            // cockpit as TRANSLUCENT golden glass (master: "take the golden opaque one from the LOD, give it transparency").
+            if (s.GlassMesh != null)
+            {
+                var gm = LoadOptionalObj(s.GlassMesh);
+                if (gm != null)
+                {
+                    var glassMat = new StandardMaterial3D
+                    {
+                        AlbedoColor = new Color(0.78f, 0.62f, 0.30f, 0.40f),   // golden tint, ~40% opaque
+                        Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
+                        Metallic = 0.35f, Roughness = 0.10f, CullMode = BaseMaterial3D.CullModeEnum.Disabled,
+                    };
+                    v.AddChild(new MeshInstance3D { Name = "Canopy", Mesh = gm, MaterialOverride = glassMat, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off });
+                }
+            }
 
             // ---- PROPELLER (piston planes only). A JET has no prop -> a null PropMeshPrefix skips this whole block
             // (StepPlane already guards _propNode == null). Pivot at the mesh's own centre (the hub); blades +
