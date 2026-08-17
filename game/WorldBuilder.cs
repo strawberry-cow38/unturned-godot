@@ -1175,6 +1175,24 @@ namespace UnturnedGodot
                     else
                         destField.Register(destIndex, destBody, mis, rub.Health, rub.ResetTicks, rub.EffectId, onAlive, RagdollMeshesFor(name));
                 }
+                // EDITOR ONLY: wrap this object's mesh(es) + collider under one Node3D so the map editor can select /
+                // move / delete it with the exact same gizmo/marker/Save path as editor-placed props (EditorObjects
+                // ingests the "editor_loaded_object" group). Server/client/SP keep the flat structure untouched. The
+                // wrapper carries the object's world transform; the re-parented children drop to LOCAL identity (world
+                // transform preserved, since wrap == basis*gpos) so gizmo/Save read the wrapper. Done AFTER the
+                // destructible/fixture wiring so those keep the same node refs.
+                if (mode == WorldMode.Editor)
+                {
+                    var wrap = new Node3D { Transform = new Transform3D(basis, gpos) };
+                    wrap.SetMeta("obj_name", name);
+                    wrap.SetMeta("guid", p[0]);
+                    wrap.SetMeta("editor_loaded", true);
+                    root.AddChild(wrap);
+                    wrap.AddToGroup("editor_loaded_object");
+                    root.RemoveChild(mainMi); wrap.AddChild(mainMi); mainMi.Transform = Transform3D.Identity;   // child[0] = mesh (PositionMarkers/gizmo expect the meshinstance first)
+                    if (folMi != null) { root.RemoveChild(folMi); wrap.AddChild(folMi); folMi.Transform = Transform3D.Identity; }
+                    if (destBody != null) { root.RemoveChild(destBody); wrap.AddChild(destBody); destBody.Transform = Transform3D.Identity; destBody.CollisionLayer |= 1u << 7; }   // + EditorPickLayer (bit7) so the editor pick ray finds it
+                }
                 placed++;
                 var cell = new Vector2I(Mathf.FloorToInt(px / 96f), Mathf.FloorToInt(pz / 96f));
                 cellCount.TryGetValue(cell, out int cc); cellCount[cell] = cc + 1;

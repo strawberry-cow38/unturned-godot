@@ -33,6 +33,16 @@ namespace UnturnedGodot
         float _scaleInitDist;
         float _viewScale = 2f;      // ring/handle world radius (rotate + scale distance scale)
 
+        // snap presets (source ETransformSnapPreset ONE/HALF/QUARTER + ERotateSnapPreset FIFTEEN/TEN/FIVE), cycled by a key;
+        // applied only while the snap modifier (Ctrl) is held during a drag. Replaces the old hardcoded 1u / 15deg.
+        static readonly float[] SnapT = { 1f, 0.5f, 0.25f };
+        static readonly float[] SnapR = { 15f, 10f, 5f };
+        int _snapIdx;
+        public float SnapStep => SnapT[_snapIdx];      // renamed from SnapTranslate: that name is the per-axis snap METHOD below
+        public float SnapRotate => SnapR[_snapIdx];
+        public string SnapLabel => $"{SnapStep:0.##}u/{SnapRotate:0}°";
+        public void CycleSnap() { _snapIdx = (_snapIdx + 1) % SnapT.Length; }
+
         readonly Rid[] _arrowRids = new Rid[3];
         readonly Node3D[] _arrows = new Node3D[3];
         readonly Node3D[] _rings = new Node3D[3];
@@ -179,19 +189,19 @@ namespace UnturnedGodot
                 // on, not global"). Deciding per-component off the drag direction also means a PLANE handle
                 // gets both of its axes snapped and neither of the others, with no extra case, whenever
                 // plane handles exist.
-                if (snap) pos = SnapTranslate(_startPos, _dragDir, delta, pos);
+                if (snap) pos = SnapTranslate(_startPos, _dragDir, delta, pos, SnapStep);
                 _target.GlobalPosition = pos; GlobalPosition = pos;
             }
             else if (_rotAxis >= 0)
             {
                 float ang = ProjectRayOntoRay(from, dir, _rotEdge, _rotTangent) * 90f / _viewScale;   // source: dist*90/viewScale
-                if (snap) ang = Mathf.Round(ang / 15f) * 15f;                                          // snapRotationIntervalDegrees 15
+                if (snap) ang = Mathf.Round(ang / SnapRotate) * SnapRotate;                            // snapRotationIntervalDegrees preset
                 _target.GlobalTransform = new Transform3D(_startBasis.Rotated(_rotAxisWorld, Mathf.DegToRad(ang)), _target.GlobalPosition);
             }
             else if (_scaleIdx >= 0)
             {
                 float dist = (ProjectRayOntoRay(from, dir, _target.GlobalPosition, _scaleWorldDir) - _scaleInitDist) / _viewScale;   // source :509-510
-                if (snap) dist = Mathf.Round(dist);
+                if (snap) { float st = SnapStep; dist = Mathf.Round(dist / st) * st; }
                 if (Mathf.Abs(dist + 1f) < 0.001f) return;   // source: don't let a scale axis hit 0
                 var f = Vector3.One + _scaleLocalDir * dist;
                 var ns = new Vector3(Mathf.Max(0.01f, _scaleStart.X * f.X), Mathf.Max(0.01f, _scaleStart.Y * f.Y), Mathf.Max(0.01f, _scaleStart.Z * f.Z));
@@ -213,11 +223,14 @@ namespace UnturnedGodot
         /// exactly on its own axis and moves in whole units.
         ///
         /// Static and pure so it can be tested without a camera, a viewport or a drag in flight.</summary>
-        public static Vector3 SnapTranslate(Vector3 startPos, Vector3 dragDir, float delta, Vector3 pos)
+        /// <param name="step">Grid size, from the configurable snap presets (EditorGizmo.SnapStep). Defaults to 1
+        /// so the existing tests and any caller that does not care keep whole-unit behaviour.</param>
+        public static Vector3 SnapTranslate(Vector3 startPos, Vector3 dragDir, float delta, Vector3 pos, float step = 1f)
         {
+            if (step <= 0f) step = 1f;
             bool ax = Mathf.Abs(dragDir.X) > 1e-3f, ay = Mathf.Abs(dragDir.Y) > 1e-3f, az = Mathf.Abs(dragDir.Z) > 1e-3f;
-            if (ax && ay && az) return startPos + dragDir * Mathf.Round(delta);
-            var g = pos.Snapped(Vector3.One);
+            if (ax && ay && az) return startPos + dragDir * Mathf.Round(delta / step) * step;
+            var g = pos.Snapped(Vector3.One * step);
             return new Vector3(ax ? g.X : pos.X, ay ? g.Y : pos.Y, az ? g.Z : pos.Z);
         }
 
