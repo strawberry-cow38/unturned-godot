@@ -71,7 +71,7 @@ namespace UnturnedGodot.Testing
             // ---- 2. THE CABLE PAYS OUT. A magnet that deploys but stays jammed under the hull would satisfy
             // every check above. This is the one that caught the ground-ray self-detection bug, where the
             // crane read its own winch as terrain and stow/deployed every tick, pinning the cable at ~1.2 m.
-            float drop = slung.SlingDeployed ? slung.ToGlobal(slung.DebugSlingAnchorLocal).Y - slung.Sling.GlobalPosition.Y : 0f;
+            float drop = slung.SlingDeployed ? slung.ToGlobal(slung.DebugSlingVisualAnchorLocal).Y - slung.Sling.GlobalPosition.Y : 0f;
             T.Check($"the cable pays out to near its full length ({drop:0.00} m of a {slung.DebugSlingLen:0.0} m cable)",
                 drop > slung.DebugSlingLen * 0.7f);
 
@@ -107,7 +107,7 @@ namespace UnturnedGodot.Testing
                 cruise.DriveHeli(1f, 0f, 0f, 0f, 0.02);
                 yield return Ticks(1);
                 if (!cruise.SlingDeployed) continue;
-                Vector3 r = cruise.Sling.GlobalPosition - cruise.ToGlobal(cruise.DebugSlingAnchorLocal);
+                Vector3 r = cruise.Sling.GlobalPosition - cruise.ToGlobal(cruise.DebugSlingVisualAnchorLocal);
                 float hz = new Vector2(r.X, r.Z).Length(), dn = Mathf.Max(0.01f, -r.Y);
                 float deg = Mathf.RadToDeg(Mathf.Atan2(hz, dn));
                 // Rearward component only: a load swinging FORWARD pushes the aircraft along and is not the complaint.

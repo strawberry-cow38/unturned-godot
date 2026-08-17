@@ -23,14 +23,15 @@ namespace UnturnedGodot
         // A sibling RigidBody3D would have to rebuild all of it. VehicleBody3D with no VehicleWheel3D children
         // is just a RigidBody3D, so the base class does not fight flight.
         bool _heli; float _heliThrust, _heliPitchTq, _heliRollTq, _heliYawTq, _heliLevel, _heliDragFwd;
-        bool _slingHook; float _slingLen; Vector3 _slingAnchor;   // winch + electromagnet (sky-crane): see UpdateSling
+        bool _slingHook; float _slingLen; Vector3 _slingAnchor, _slingVisualAnchor;   // winch + electromagnet (sky-crane): see UpdateSling. Anchor = FORCE point (must stay on the CoM axis). VisualAnchor = where the cable is DRAWN from; may differ.
         SlingMagnet _magnet; TowRope _slingCable; TowRope[] _slingLegs; MeshInstance3D _slingLink; bool _magnetWanted; float _slingOut;   // _slingOut = cable CURRENTLY paid out, ramping to _slingLen
         public SlingMagnet Sling => _magnet;
         public bool SlingDeployed => _magnet != null && IsInstanceValid(_magnet);
         public bool DebugNoSling;   // suppress winch deployment, so a rig can fly the SAME airframe with and without its magnet
         public float DebugCollective => _inCollective;
         public float DebugSlingLen => _slingLen;
-        public Vector3 DebugSlingAnchorLocal => _slingAnchor;
+        public Vector3 DebugSlingAnchorLocal => _slingAnchor;           // FORCE point (CoM axis)
+        public Vector3 DebugSlingVisualAnchorLocal => _slingVisualAnchor;   // DRAW point (cable geometry uses this)
         public bool DebugSlingHook => _slingHook;
         float _rotorRadius, _heliLiftCap = 1f, _groundEffect = 1f, _geApplied = 1f;   // cached once per StepHeli; _geApplied is the share the CAP let through
         MeshInstance3D _beaconMesh; OmniLight3D _beaconLight; StandardMaterial3D _beaconMat; float _beaconTimer;   // belly anti-collision flasher
@@ -2210,6 +2211,7 @@ namespace UnturnedGodot
         // The sky-crane is the ONLY airframe with the winch: the whole point of the real S-64 is that it has no cargo
         // hold, just a spine and a hook. 9 m of cable clears the 0.63 m gear with room for a tall load to swing.
         static readonly Spec _skycraneRigged = WithSling(_skycrane, 9.0f, new Vector3(0f, 1.88f, 0.00f));
+        static readonly Vector3 _skycraneSlingVisualLocal = new Vector3(0f, 1.88f, -0.71f);
         public static Vehicle BuildSkycrane(int variant = 0) => Build(_skycraneRigged, variant, "skycrane");
         // Anchor is the MEASURED belly over the load footprint (local Y 1.88 -- the sky-crane's whole shape is a high
         // spine on tall legs, so the winch head sits 2.5 m above the skid bottoms and the cable drops between them).
@@ -2223,6 +2225,14 @@ namespace UnturnedGodot
         // straight and appears only as the load swings -- which is the behaviour we actually want. Real sling hooks
         // are rigged at the CoM for exactly this reason.
         static Spec WithSling(Spec b, float cable, Vector3 anchor) { b.SlingHook = true; b.SlingCable = cable; b.SlingAnchor = anchor; return b; }
+
+        // The VISUAL start of the cable, distinct from the FORCE anchor above (strawberry: "move the heli side rope
+        // anchor point to be in line with the leg posts"). Tried moving the real one there first: the leg posts sit
+        // at local Z -0.71 (their span's centre, Skids(...,-4.15,2.73)), 0.71 m off the CoM axis, and that reintroduced
+        // the exact pitching-moment bug from before at reduced scale -- measured -11.76 m/s of descent instead of a
+        // climb. So the FORCE still applies at the CoM (SlingAnchor, Z=0, torque-free), and only where the cable is
+        // DRAWN moves to line up with the gear. A small, deliberate lie in the render -- the pull doesn't really come
+        // from where the rope appears to leave the hull -- and I said so rather than let the picture imply otherwise.
 
         // HUMMINGBIRD (MD500 Little Bird) -- the scout. A tenth of the Hind's weight, so far and away the
         // sharpest controls in the fleet, and the thinnest hull. The three retail variants share one geometry.
@@ -2658,6 +2668,10 @@ namespace UnturnedGodot
                 ? LevelFlightAccel(s.HeliThrust * (1f + EtlGain)) / (s.SpeedMax * s.SpeedMax) : 0f;
             v._rotorRadius = s.RotorRadius;
             v._slingHook = s.SlingHook; v._slingLen = s.SlingCable > 0.01f ? s.SlingCable : 9f; v._slingAnchor = s.SlingAnchor;
+            // Only the sky-crane has a hook today, so this can be a flat table lookup rather than needing the
+            // per-airframe name threaded through here. Grow this into a per-Spec field if a second hook airframe
+            // ever needs its own leg geometry.
+            v._slingVisualAnchor = s.SlingHook ? _skycraneSlingVisualLocal : s.SlingAnchor;
             // CEILING ON THE COMBINED LIFT MULTIPLIERS, derived from this airframe's OWN climb envelope rather
             // than picked. Terminal climb is (thrust * multipliers - g) / HeliHeaveDamp, and the server checks
             // vertical motion against HeliClimbMax with ZERO slack -- so a multiplier large enough to out-climb
@@ -3928,7 +3942,7 @@ namespace UnturnedGodot
             GetParent().AddChild(m);   // a sibling in the world, like the tow rope's joint -- NOT a child, or it would ride the hull rigidly
             // Born just under the belly and allowed to FALL to cable length, so deploying reads as paying out a winch
             // rather than teleporting a magnet to the end of a taut wire.
-            m.GlobalPosition = ToGlobal(_slingAnchor) + Vector3.Down * 1.2f;
+            m.GlobalPosition = ToGlobal(_slingVisualAnchor) + Vector3.Down * 1.2f;
             _slingOut = 1.2f;   // and the winch starts there, paying out from the hull rather than dropping to full length
             m.LinearVelocity = LinearVelocity;   // match the aircraft or it gets left behind the instant it spawns
             m.AddCollisionExceptionWith(this); AddCollisionExceptionWith(m);
@@ -3967,7 +3981,10 @@ namespace UnturnedGodot
             if (_magnet == null || !IsInstanceValid(_magnet)) return;
 
             _slingOut = Mathf.MoveToward(_slingOut, _slingLen, SlingPayoutRate * delta);
-            Vector3 a = ToGlobal(_slingAnchor), b = _magnet.GlobalPosition, d = b - a;
+            // The two anchors: FORCE at the CoM (fa) so a hanging load applies no pitching moment, DRAW at the leg
+            // line (a) so the rope reads as coming out of the gear. The cable's own droop/tension geometry (a, dist,
+            // _slingOut) is all computed from the visual point; only the actual push/pull uses the force point.
+            Vector3 fa = ToGlobal(_slingAnchor), a = ToGlobal(_slingVisualAnchor), b = _magnet.GlobalPosition, d = b - a;
             float dist = d.Length();
             // The single cable runs to a JUNCTION just above the coil; the bridle legs carry on from there.
             Vector3 fork = dist > 1e-3f ? b + (a - b) / dist * BridleForkGap : b + Vector3.Up * BridleForkGap;
@@ -3983,7 +4000,7 @@ namespace UnturnedGodot
                 float f = Mathf.Clamp(k * (dist - _slingOut) + c * sepVel, 0f, susp * SlingMaxAccel);
                 _magnet.Sleeping = false; Wake(); Sleeping = false;
                 _magnet.ApplyForce(-dir * f, Vector3.Zero);                       // load hauled up toward the aircraft
-                ApplyForce(dir * f, a - ToGlobal(CenterOfMass));                  // and the aircraft feels it AT THE ANCHOR, so a swinging load tilts it
+                ApplyForce(dir * f, fa - ToGlobal(CenterOfMass));                 // FORCE point, not the draw point -- this is what stays torque-free
             }
 
             if (dist > 1e-3f)
@@ -4001,7 +4018,7 @@ namespace UnturnedGodot
                 // also the physically honest answer.
                 Vector3 fSway = -perp * (SwayDamp * _magnet.Mass);
                 _magnet.ApplyForce(fSway, Vector3.Zero);
-                ApplyForce(-fSway, a - ToGlobal(CenterOfMass));   // equal and opposite, at the hook
+                ApplyForce(-fSway, fa - ToGlobal(CenterOfMass));   // equal and opposite, at the FORCE point
                 // Bridle: hold the coil's axis along the cable so it hangs face-down instead of tumbling.
                 Vector3 up = _magnet.GlobalBasis.Y, want = -dir2;
                 Vector3 bridle = up.Cross(want) * (BridleStiff * _magnet.Mass) - _magnet.AngularVelocity * (BridleDamp * _magnet.Mass);

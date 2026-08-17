@@ -1944,7 +1944,7 @@ namespace UnturnedGodot
             heli.GlobalPosition = new Vector3(0f, holdY, 0f);
             heli.GravityScale = 0f;
             heli.DebugNoSling = System.Environment.GetEnvironmentVariable("UG_MAG_NOSLING") == "1";
-            GD.Print($"[MAGNET/SPEC] slingHook={heli.DebugSlingHook} cableLen={heli.DebugSlingLen:0.00} anchorLocal={heli.DebugSlingAnchorLocal}");
+            GD.Print($"[MAGNET/SPEC] slingHook={heli.DebugSlingHook} cableLen={heli.DebugSlingLen:0.00} forceAnchor={heli.DebugSlingAnchorLocal} drawAnchor={heli.DebugSlingVisualAnchorLocal}");
 
             // The load: a plain box on the PROP layer, sized like the shipping container that started all this.
             var load = new RigidBody3D { Name = "Load", Mass = 800f, CollisionLayer = 1u << 6, CollisionMask = (1u << 0) | (1u << 5) };
