@@ -78,6 +78,38 @@ means the inventory subsystem's parity (which IS symmetric across both seams) wa
 
 ## Findings, worst first
 
+### 0. ✅ UNLIMITED FRIDGES, FLUID DEVICES AND PLAYER DOORS — a live dupe in the SHIPPED SP GAME
+
+Not an MP parity bug at all — it fires on every server-backed seam, which since the P6a flip is the
+default singleplayer game. Four links, each verified against source:
+
+1. `game/DeployableNetSchema.cs:16` excludes fluid / storage / door defs from the schema. Its comment
+   states the design: *"Keeping them out of the schema makes the server's ServerPlace no-op a fluid id
+   (no phantom replica) **while OnPlaceDeployable still SPENDS the item**"*.
+2. `core/UnturnedNet/DeployableReplication.cs:367` — `CanPlace` opens
+   `if (!Schema.TryGet(defId, out var def)) return false;`. For an excluded def it returns **false**.
+3. `core/UnturnedNet/ServerTransactions.cs:156` registers `CanPlace` as the command's **`validate:`**,
+   and `CommandRegistry.cs:61` returns on a false validator **before calling `apply`**. So
+   `OnPlaceDeployable` — the thing that spends the item — never runs.
+4. `game/PlayerController.cs:2496` skips the client's own `removeItemAmount` precisely *because* it
+   believes the server will spend it.
+
+**The comment reasons correctly about `ServerPlace` and is wrong about ever reaching it.** The design
+it describes requires the command to pass validation and no-op inside the handler; what actually
+happens is rejection at the gate.
+
+**Effect:** place a fridge, a fluid tank, a pump, or any of the 12 player-placeable doors — the item is
+never consumed, in singleplayer or MP. Unlimited. The tell a player would notice is odd: placing your
+last one reverts you to fists while the item is still in your bag (`getItemCount(id) <= 1`).
+
+**No test covers it** — nothing in `game/testing/tests/` asserts a spend for an `IsStorage`/`Fluid`/
+`DoorProp` def, and the `--direct` harness fleet takes the else-branch that spends correctly, so the
+fallback path hides the regression from the entire suite.
+
+*This is the same shape as yesterday's dupes and as `TryDrag`'s stale comment: a comment asserting a
+mechanism the code does not deliver, with no test on the path that ships.*
+
+
 Severity is "what a player loses in MP". ✅ = I re-verified against source myself; ⬜ = agent-reported,
 traced with file:line, not yet re-verified by me.
 
@@ -174,3 +206,39 @@ with no intent at all, which are reverted on **both** server-backed paths.
 - **Weather was my error, not a divergence** (see finding 1 above, struck through).
 - **Vehicle seats are worse than I described** (single-occupant, not contested-seat).
 - **`HeldId` is on the wire but never written**, so "the data is there and unused" was half wrong.
+
+
+---
+
+## Seam and command coverage (agent: par-seams)
+
+The full tables are the result, not just the gaps — absence of a gap is a real finding.
+
+- **40 `Net*` delegate seams** audited across `MpLoopback` / `ClientWorldSession`. Most one-sided seams
+  are BY DESIGN (a seam only in `ClientWorldSession` means SP takes the direct local path). Genuine
+  problems: `Vehicle.NetDamageObject` (below) and the dead `NetPlantCrop`.
+- **38 `Command*` ids**: every one has both a registration and a `Send*`. No orphans either direction.
+  `CommandDriveInput` has no game-layer caller but is the documented non-predicted fallback.
+- **The `ConsumeDeployables` block**: every entry has a `ClientWorldSession` counterpart except
+  `ItemPickupDenied` (a missing toast) and things the host owns directly.
+
+Additional confirmed findings:
+
+23. ⬜ **`Vehicle.NetDamageObject` is a leaked process-global.** `MpLoopback._ExitTree` deliberately
+    clears two other statics and misses this one, and exit-to-menu is `ReloadCurrentScene()`, which does
+    not reset C# statics. So after playing SP then joining a server, vehicle-vs-prop damage routes into
+    the **dead loopback's** `ServerDestructibles`, calling `_broadcast` on a torn-down session. Also
+    absent from `TestHost.ResetGlobals`, so any L1 that stands up a consuming loopback poisons every
+    later test in that process.
+24. ⬜ **Vehicle-vs-prop damage is SP-only** — `ClientWorldSession` never sets that static and no command
+    carries it, while the joined client's Part-A vehicle is a *real* `Vehicle` node (not a puppet), so
+    its contact handler runs into a null seam. The field comment says "null on an MP puppet", but the
+    client-local predicted vehicle is precisely not a puppet.
+25. ⬜ **`NetPlantCrop` is a dead seam** — declared, assigned in `ClientWorldSession`, invoked nowhere.
+    The only planting path is the dev console.
+
+**A useful non-finding:** `MpLoopback`'s transport is `MemServerTransport` over an in-process
+`MemNetwork` — there is **no UDP listener**, so nobody can join a loopback host. The file header's
+"listen-server proper / remote players joining this session" is aspirational, which makes a whole class
+of loopback-vs-dedicated asymmetries currently unreachable rather than broken. That distinction is why
+several candidate findings were correctly dropped.
