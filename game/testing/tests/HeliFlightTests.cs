@@ -368,8 +368,17 @@ namespace UnturnedGodot.Testing
             T.Check("KillTailRotor kills the tail rotor", spun.TailRotorDead);
             for (int i = 0; i < 150; i++) { spun.DriveHeli(0f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
             Vector3 av = spun.AngularVelocity;
-            float yawPart = Mathf.Abs(av.Dot(spun.GlobalTransform.Basis.Y));
+            float yawSigned = av.Dot(spun.GlobalTransform.Basis.Y);   // SIGNED -- see the direction check below
+            float yawPart = Mathf.Abs(yawSigned);
             T.Check($"a dead tail rotor spins the airframe ({yawPart:0.##} rad/s of yaw)", yawPart > 0.4f);
+            // ...IN THE DIRECTION THE ROTOR'S REACTION TORQUE IMPLIES. The magnitude check above is sign-blind:
+            // `Mathf.Abs` passes just as happily on a spin the wrong way, so it cannot tell a working model from
+            // one with an inverted coupling term. The live term is `cmd += b.Y * (TailLossTorque * ...)` -- a
+            // POSITIVE moment about the body up axis -- so the yaw rate must share that sign. Pinned here because
+            // the heli physics rework proposes rewriting this coupling, and a sign flip is the single easiest
+            // thing to get wrong in that rewrite while every existing check stays green. Review 2026-08-17.
+            T.Check($"...the RIGHT WAY round, matching the rotor's reaction torque ({yawSigned:+0.##;-0.##})",
+                yawSigned > 0f);
             T.Check($"...and it is a SPIN, not a tumble (yaw {yawPart:0.##} of total {av.Length():0.##})",
                 yawPart > av.Length() * 0.7f);
 

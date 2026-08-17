@@ -1,0 +1,186 @@
+using Godot;
+using System.Collections.Generic;
+
+namespace UnturnedGodot.Testing
+{
+    // WHAT HORIZONTAL SPEED DOES A HELICOPTER ACTUALLY REACH, and what LAW is resisting it?
+    //
+    // Nothing else in the repo measures either. vehicle.heli_flight's fleet section reads SpeedMaxMps off the
+    // SPEC FIELD and pins the ordering -- that is the calibration's INPUT, not its output, and it stays green
+    // with the achieved speed landing anywhere at all. So the horizontal flight model is currently untested by
+    // construction, and any rework of it would be graded by a suite that cannot see it.
+    //
+    // TWO CHECKS OF DIFFERENT KIND, because each alone is passable by a wrong model:
+    //
+    //   - MAGNITUDE ("a committed dive reaches roughly spec, and does not blow through the MP envelope"). This
+    //     is what catches an airframe that quietly can no longer reach its own advertised speed -- the exact
+    //     failure a drag rework risks -- but it says nothing about the mechanism.
+    //   - SHAPE. And the obvious shape check is a TRAP, which is worth writing down because I wrote it first:
+    //     "acceleration is lower at high speed than at low speed" does NOT distinguish the old excess-spring
+    //     model from quadratic drag, because the engine damping the old model relied on is ITSELF a linear
+    //     drag. Acceleration already tapered before the rework. That check would have passed before and after
+    //     and proved nothing.
+    //     What actually separates the two laws is CONVEXITY. Sample acceleration at three evenly spaced
+    //     speeds: under a linear law a(v) = A - c*v the two decrements are EQUAL, while under a quadratic law
+    //     a(v) = A - k*v^2 the upper one is larger by (2*v1 + 3*step) / (2*v1 + step). The sample points are
+    //     chosen from the machine's actual state rather than fixed fractions, so that prediction is computed
+    //     below rather than quoted.
+    //
+    // RUN AGAINST THE PRE-REWORK MODEL ON PURPOSE, so the baseline is recorded rather than assumed. It came
+    // back exactly as a check with teeth should: all 36 magnitude checks PASSED and convexity FAILED at a
+    // ratio of 1.08, against a quadratic prediction of 1.51 and a linear prediction of 1.00. The old model was
+    // measurably linear, so this suite's green state is not something it could have reached by accident.
+    public sealed class HeliSpeedTests : GameTest
+    {
+        public override string Name => "vehicle.heli_speed";
+        // Real flying: seven airframes each spool for 4 s then hold a 13 s dive, plus a three-window probe.
+        // 13 s is not padding -- quadratic drag reaches 99 % of terminal at 2.65 * v_terminal / a, which is
+        // ~11 s for the slowest-converging airframe (the Hind). Longer windows cost L1 wall clock for nothing,
+        // and L1's outer cap is a real constraint: this suite going in at 20 s dives pushed the whole phase
+        // past its 1200 s timeout, which surfaces as a core dump in an unrelated test.
+        public override double TimeoutSimSeconds => 600;
+
+        const float DiveDeg = 45f;    // committed dive: the fastest a machine can be flown, which is what the
+                                      // server's envelope has to survive. Level flight cannot produce the peak.
+
+        static Vehicle Spawn(Node world, string name, Vector3 at)
+        {
+            var v = Vehicle.BuildByName(name);
+            world.AddChild(v);
+            v.GlobalPosition = at;
+            v.DebugNoTurbulence = true;   // a measuring rig: a gust inside the window is noise in the number
+            v.EngineOn = true;
+            return v;
+        }
+
+        // Nose-down angle in degrees, POSITIVE when diving. Taken from the body up axis projected on the flat
+        // heading rather than an Euler angle, for the reason heli_flight already records: Euler extraction
+        // order is a mirror waiting to happen, and b.Y is the vector the flight model multiplies thrust by.
+        static float PitchDownDeg(Vehicle v)
+        {
+            Basis b = v.GlobalTransform.Basis;
+            var fwd = new Vector3(-b.Z.X, 0f, -b.Z.Z);
+            if (fwd.LengthSquared() < 1e-6f) return 0f;
+            return Mathf.RadToDeg(Mathf.Asin(Mathf.Clamp(b.Y.Dot(fwd.Normalized()), -1f, 1f)));
+        }
+
+        // HOLD THE ATTITUDE ON THE STICK, the way a pilot does -- releasing does NOT hold it. The model
+        // converges angular VELOCITY toward the commanded rate and then leans on AngularDamp 0.25 (a ~4 s
+        // decay) to bleed the residual off, so letting go at the commanded rate keeps rotating for seconds.
+        // The first cut of this rig pitched to 25 deg, released, and measured a TUMBLING helicopter that fell
+        // 880 m in 30 s: full health, no crash, and a plausible-looking speed that meant nothing. PD rather
+        // than P because a pure proportional term on a rate-commanded axis oscillates.
+        static float HoldDive(Vehicle v, float targetDeg)
+        {
+            float phi = -PitchDownDeg(v);                                        // nose-UP convention: pitch input +1 raises the nose
+            float rateUp = Mathf.RadToDeg(v.AngularVelocity.Dot(v.GlobalTransform.Basis.X));
+            return Mathf.Clamp(0.06f * (-targetDeg - phi) - 0.020f * rateUp, -1f, 1f);
+        }
+
+        static float FlatSpeed(Vehicle v) => new Vector3(v.LinearVelocity.X, 0f, v.LinearVelocity.Z).Length();
+
+        public override IEnumerable<Step> Run()
+        {
+            Rigs.Ground(World);
+
+            // ---- 1. EVERY AIRFRAME REACHES ITS OWN SPEC, AND STAYS INSIDE THE ENVELOPE.
+            // Flown from high enough that 20 s of diving cannot reach the ground: a machine that lands reports
+            // a flat speed near zero, which is indistinguishable from one that could never accelerate.
+            string[] fleet = { "minicopter", "scoutcopter", "huey", "hind", "orca", "hummingbird", "skycrane" };
+            for (int fi = 0; fi < fleet.Length; fi++)
+            {
+                var a = Spawn(World, fleet[fi], new Vector3(fi * 400f, 1400f, 0f));
+                float spec = a.SpeedMaxMps;
+                for (int i = 0; i < 200; i++) { a.DriveHeli(1f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
+                T.Check($"{fleet[fi]}: the rotor is at full spool before the run (spool {a.RotorSpool:0.###})",
+                    a.RotorSpool > 0.95f);
+
+                // PEAK, not final. The envelope validates every tick, so the number that matters is the
+                // largest the sim ever produced, not wherever the window happened to stop.
+                float peak = 0f, lastFlat = 0f;
+                for (int i = 0; i < 650; i++)
+                {
+                    lastFlat = FlatSpeed(a);
+                    a.DriveHeli(1f, 0f, HoldDive(a, DiveDeg), 0f, 0.02);
+                    yield return Ticks(1);
+                    peak = Mathf.Max(peak, FlatSpeed(a));
+                }
+
+                // A CONTROL ON THE MEASUREMENT, not a claim about flight: a machine that clipped the ground or
+                // bonked something both bleeds speed and makes the number above a measurement of a collision.
+                T.Check($"{fleet[fi]}: flew the window clean, so the speed below is flight and not a collision (hp {a.Health:0}/{a.HealthMax:0}, {a.GlobalPosition.Y:0} m up)",
+                    a.Health >= a.HealthMax - 0.01f && !a.Exploded && a.GlobalPosition.Y > 80f);
+                T.Check($"{fleet[fi]}: held the dive attitude ({PitchDownDeg(a):0.#} deg nose-down at exit)",
+                    PitchDownDeg(a) > DiveDeg - 15f && PitchDownDeg(a) < DiveDeg + 15f);
+                // BOUNDED BOTH WAYS. A lower bound alone passes on a model with no limiter at all; an upper
+                // bound alone passes on an airframe too draggy to be worth flying.
+                // The trailing diagnostics are the ones that actually resolved a failure during this rework and
+                // are kept for the next one: k says whether the derivation moved, the attitude says whether the
+                // rig flew what it meant to, and "still gaining" separates "too draggy" from "window too short"
+                // -- which is the distinction that turned a wrong guess about this suite into a measurement.
+                T.Check($"{fleet[fi]}: a committed dive reaches its spec top speed ({peak:0.#} of {spec:0.#} m/s = {peak / spec:0.##}x; k {a.DebugHeliDragK:0.#####} 1/m, {PitchDownDeg(a):0.#} deg nose-down, still gaining {(FlatSpeed(a) - lastFlat) / 0.02f:+0.##;-0.##} m/s^2 at the end)",
+                    peak > spec * 0.90f);
+                // The upper bound is the MP envelope's, not taste: VehicleReplication validates horizontal
+                // motion against SpeedMaxMps * EnvelopeSlack (1.25), so a sim that produces more than that
+                // rolls back a legitimate pilot doing nothing wrong.
+                T.Check($"{fleet[fi]}: ...without producing a state the server would reject ({peak / spec:0.##}x vs the 1.25x envelope)",
+                    peak < spec * 1.25f);
+            }
+
+            // ---- 2. THE LAW OF THE RESISTING FORCE, measured as convexity across three evenly spaced speeds.
+            //
+            // ONLY THE HORIZONTAL COMPONENT IS ASSIGNED, and that is load-bearing rather than tidy. The first
+            // cut of this rig wrote the whole velocity vector, which ZEROES the vertical -- and StepHeli's
+            // crash detector fires on _prevSpeed - curSpeed > 200*dt using the FULL 3-D speed, while I had
+            // reasoned the assignments were safe because they raised the FLAT speed. In a 45 deg dive the
+            // vertical component is the larger one, so dropping it read as a ~6 m/s single-tick deceleration,
+            // bonked the rig, and damaged the airframe whose acceleration was being measured. Preserving the
+            // vertical keeps the 3-D magnitude nearly unchanged, so no assignment trips the detector.
+            var m = Spawn(World, "minicopter", new Vector3(-800f, 1400f, 0f));
+            float vmax = m.SpeedMaxMps;
+            for (int i = 0; i < 200; i++) { m.DriveHeli(1f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
+            // Short: the attitude only has to be established, and every metre per second built here raises the
+            // floor the first sample has to clear.
+            for (int i = 0; i < 60; i++) { m.DriveHeli(1f, 0f, HoldDive(m, DiveDeg), 0f, 0.02); yield return Ticks(1); }
+
+            // SAMPLE POINTS DERIVED FROM THE MACHINE'S ACTUAL STATE, not from fixed fractions of Speed_Max.
+            // Evenly spaced is the only thing convexity needs, and choosing v1 just above the current speed is
+            // what keeps every assignment an increase. The predicted ratios are then computed from the sample
+            // points below rather than quoted from a spacing this rig might not have achieved.
+            float v1 = FlatSpeed(m) + 1.5f;
+            float step = (vmax * 0.88f - v1) / 2f;
+            var accel = new float[3];
+            for (int s = 0; s < 3; s++)
+            {
+                var fwd = new Vector3(-m.GlobalTransform.Basis.Z.X, 0f, -m.GlobalTransform.Basis.Z.Z).Normalized();
+                float want = v1 + step * s;
+                m.LinearVelocity = new Vector3(fwd.X * want, m.LinearVelocity.Y, fwd.Z * want);
+                // Two ticks of settle, then a 10-tick window. The attitude is held throughout, so the thrust
+                // vector is the same in all three windows and only the speed differs.
+                m.DriveHeli(1f, 0f, HoldDive(m, DiveDeg), 0f, 0.02); yield return Ticks(1);
+                m.DriveHeli(1f, 0f, HoldDive(m, DiveDeg), 0f, 0.02); yield return Ticks(1);
+                float v0 = FlatSpeed(m);
+                for (int i = 0; i < 10; i++) { m.DriveHeli(1f, 0f, HoldDive(m, DiveDeg), 0f, 0.02); yield return Ticks(1); }
+                accel[s] = (FlatSpeed(m) - v0) / 0.20f;
+            }
+
+            float dLow = accel[0] - accel[1];    // acceleration lost going v1 -> v1+step
+            float dHigh = accel[1] - accel[2];   // ...and v1+step -> v1+2*step
+            // For a = A - c*v the two decrements are EQUAL. For a = A - k*v^2 the ratio is (2*v1 + 3*step) /
+            // (2*v1 + step), which is why the sample points have to be known to state the prediction.
+            float predQuad = (2f * v1 + 3f * step) / (2f * v1 + step);
+            T.Check($"the probe rig survived all three windows (hp {m.Health:0.##}/{m.HealthMax:0.##}, {m.GlobalPosition.Y:0} m up)",
+                m.Health >= m.HealthMax - 0.01f && !m.Exploded && m.GlobalPosition.Y > 80f);
+            // Both decrements must be real before their ratio means anything: if the machine sits at its cap
+            // in all three windows the accelerations are all ~0 and the ratio is noise over noise.
+            T.Check($"...and the three windows differ enough to compare ({accel[0]:0.##}, {accel[1]:0.##}, {accel[2]:0.##} m/s^2 at {v1:0.#}/{v1 + step:0.#}/{v1 + 2f * step:0.#} m/s)",
+                dLow > 0.15f && dHigh > 0.15f);
+            // THE CLAIM, graded against the MIDPOINT of the two predictions so it fires on which law is in
+            // force rather than on how well the coefficient happens to be tuned.
+            T.Check($"the resisting force is QUADRATIC in speed, not linear (decrement ratio {dHigh / dLow:0.##}; quadratic predicts {predQuad:0.##} at these samples, linear predicts 1.00)",
+                dHigh / dLow > (1f + predQuad) * 0.5f);
+
+            yield break;
+        }
+    }
+}

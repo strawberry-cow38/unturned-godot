@@ -42,25 +42,43 @@ find the surrounding conversation in `notes/chatlogs/discord.jsonl`.
   low → reduced turning; main dead → cannot gain height and sinks; tail dead → spin; both dead →
   kill the hull. Rotor RPM falls with damage; rotors stop when idle and on death.
 
-## The part worth noticing before designing anything
+## THE PART I GOT WRONG — corrected 2026-08-17 after review
 
-strawberry's "reduce the upward thrust more when tilting forward, and increase the forward/back
-momentum when tilting" is **not a fudge — it is the correct physics**, and the requested feel and
-the real model agree here. A rotor produces thrust along its own shaft, so tilting the disc splits
-one vector:
+I originally wrote here that strawberry's "reduce the upward thrust more when tilting forward, and
+increase the forward/back momentum when tilting" was **not a fudge but the correct physics**, on the
+grounds that a rotor thrusts along its shaft so tilting splits one vector into `T·cos(tilt)` up and
+`T·sin(tilt)` forward. I concluded that "the existing feel requirements are the physics requirements"
+and that a physical model would deliver the approved feel for free.
 
+**That is backwards, and git proves it.**
+
+`git log e52fa75d` — the commit that added `TiltThrustLoss`, `ForeAftBoost` and `LateralBoost` — is
+timestamped **2026-08-16 01:24:54**, twenty-one minutes after her 01:03 message. And the parent
+commit's lift code is:
+
+```csharp
+if (lift > 0f) ApplyCentralForce(b.Y * lift * Mass);      // e52fa75d^ -- what she was flying
 ```
-vertical   = T · cos(tilt)      ← lost lift when tilted, exactly as asked
-horizontal = T · sin(tilt)      ← the forward drive, exactly as asked
-```
 
-That means a genuinely physical model delivers the feel that was already approved, rather than
-fighting it. The same is true of VoX's two rules: an attitude that persists without input and keeps
-rotating after the stick centres is what a rigid body with angular momentum does when you stop
-applying a moment. **The existing feel requirements are the physics requirements.** Anywhere the
-rework has to choose, these quotes win — they were signed off in play.
+That is the plain shaft vector. **The free cosine is exactly what she was already flying when she
+asked for the change.** The operative word in her message is *more*: she asked for a departure from
+the physical model, having flown it. `TiltThrustLoss = 0.55` and `ForeAftBoost = 1.65` are that
+departure, and they are a signed-off playtest correction, not ad-hoc terms someone left lying around.
 
-Open question for the rework, not settled here: how far to take blade-element effects (angle of
-attack per blade element, translational lift, retreating-blade stall, ground effect, vortex ring
-state). Each adds fidelity and each adds a way for the aircraft to become unflyable for a player
-who is not a pilot. That trade is the substance of the plan, not an implementation detail.
+**And they are load-bearing for the spec, not just for feel.** Level flight requires `T·cos θ = g`,
+so the maximum horizontal acceleration available is `√(T² − g²)` — and `LinearDamp = 0.35` opposes it:
+
+| airframe | `√(T²−g²)` | drag at `Speed_Max` | reaches spec without the boost? |
+|---|---|---|---|
+| minicopter | 6.57 | 7.00 | **no** |
+| skycrane | 7.27 | 7.70 | **no** |
+| huey | 8.39 | 8.05 | barely |
+| hind | 10.28 | 9.10 | yes |
+
+Remove `ForeAftBoost` and the minicopter and skycrane cannot reach their own spec top speeds at all.
+
+**The rule this restores:** where feel and physics disagree, **these quotes win** — which is what this
+document already said everywhere else, and what I talked myself out of in this one section by
+reasoning from equations instead of from the log. The equations were even right; they were just
+answering a question nobody asked.
+

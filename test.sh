@@ -153,7 +153,12 @@ run_l1() {  # batched in-engine tests: build the game once, boot headless godot,
   # sat UNDER the suite -- it killed the run two tests from the end and the core dump read as a hang in whatever was
   # next in line. An outer cap that the suite has grown past reports as a crash in an innocent test, so keep real
   # headroom here and re-measure when it gets close rather than trimming to fit.
-  timeout 1200 "$GODOT" --path game --headless -- "--tests$glob" >"$log" 2>&1 9>&-   # same: never let the engine inherit the lock fd
+  # 2026-08-17: it happened AGAIN, identically, at 1200 -- L1 needed ~1220 s and died two tests from the end
+  # (vehicle.seats, vehicle.wreck_*), reporting "host never reported (boot/hang)" and a core dump, which reads as
+  # a crash in an innocent test rather than as the cap it actually was. The heli suites alone are now ~450 s.
+  # 1800 restores real headroom. THE FAILURE IS INDISTINGUISHABLE FROM A HANG, so when this fires, check the
+  # arithmetic here BEFORE debugging whatever test happens to be next in the alphabet.
+  timeout 1800 "$GODOT" --path game --headless -- "--tests$glob" >"$log" 2>&1 9>&-   # same: never let the engine inherit the lock fd
   grep -E '^\[TEST\]|^[[:space:]]+✗|^[[:space:]]+repro' "$log"   # per-test detail (human + agent)
   local summary; summary="$(grep -E '^\[L1\] passed=' "$log" | tail -1)"
   if [ -z "$summary" ]; then

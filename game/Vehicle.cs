@@ -22,7 +22,7 @@ namespace UnturnedGodot
         // already carries pitch AND roll (not just yaw) for both the entity and the client-auth state command.
         // A sibling RigidBody3D would have to rebuild all of it. VehicleBody3D with no VehicleWheel3D children
         // is just a RigidBody3D, so the base class does not fight flight.
-        bool _heli; float _heliThrust, _heliPitchTq, _heliRollTq, _heliYawTq, _heliLevel;
+        bool _heli; float _heliThrust, _heliPitchTq, _heliRollTq, _heliYawTq, _heliLevel, _heliDragFwd;
         bool _tracked;   // TANK: tracked/differential drive -- Drive() branches on this to set per-TRACK torque instead of a steered-wheel angle
         const float TankWheelSlip = 1.0f;   // TANK: lateral wheel friction. Too LOW (0.5) and the yaw torque spins it in place instead of arcing forward (low grip = no forward bite either); too HIGH and turning drags to a crawl. Paired with the speed-faded yaw below. Tunable.
         const float TankComY = 0.1f;   // TANK: low centre of mass (anti-flip -- master "easily flipped"). Tunable.
@@ -44,10 +44,76 @@ namespace UnturnedGodot
         /// thrusting along the body axis. strawberry: "reduce the upward thrust more when tilting forward" --
         /// so a nose-down dash costs you altitude rather than being a free way to go fast level.</summary>
         const float TiltThrustLoss = 0.55f;
-        /// <summary>Extra push on the HORIZONTAL component of rotor thrust ("increase the forward/back momentum
-        /// when tilting forward/back"). Fore/aft gets more than lateral, because that is the axis she was
-        /// describing and a helicopter that slides sideways as eagerly as it accelerates feels like a drone.</summary>
-        const float ForeAftBoost = 1.65f, LateralBoost = 1.15f;
+        /// <summary>HEAVE DAMPING, s^-1. The vertical axis's whole resisting force, and deliberately LINEAR --
+        /// which is not the same law as the horizontal below, on purpose. The shaft axis is not dominated by
+        /// fuselage drag: a rotor climbing sees reduced inflow through the disc, so blade angle of attack rises
+        /// and thrust rises with it, a restoring force linear in axial velocity to first order (the Z_w
+        /// stability derivative of rotorcraft flight dynamics). The horizontal axis IS dominated by parasite
+        /// drag, which is quadratic. Two axes, two mechanisms, two laws; modelling both with one law is what
+        /// would actually be inconsistent.
+        ///
+        /// THE VALUE IS LOAD-BEARING AND MUST NOT BE RETUNED CASUALLY: it is what the fleet's terminal fall,
+        /// HeliCrashExplodeSpeed and the "an 18.5 m fall is fatal" calibration were all settled against. It
+        /// was Godot's RigidBody3D.LinearDamp until the drag rework; it is applied by hand now because that
+        /// property is a SCALAR and damps the whole velocity vector, so leaving it set would have applied this
+        /// linear law to the horizontal too -- where, once the old thrust boosts were gone, it became the
+        /// binding constraint and capped six of seven airframes BELOW their own spec top speed (the
+        /// scoutcopter at 18.8 m/s against a spec of 26).
+        ///
+        /// 0.45 AND NOT THE 0.35 THE REST OF THIS FILE SAYS, because 0.45 is what actually shipped. The
+        /// property was set to 0.35, but LinearDampMode defaults to COMBINE, which ADDS the body's value to
+        /// ProjectSettings physics/3d/default_linear_damp -- and this project never overrides that, so it is
+        /// Godot's default 0.1. Measured, not inferred: with the body value at 0 the fleet still showed
+        /// exactly 0.100 s^-1 of horizontal damping, agreeing to three digits across three airframes.
+        ///
+        /// This matters beyond bookkeeping and is left alone DELIBERATELY. The HeliThrust derivation table at
+        /// the Huey spec computes each airframe's thrust as g + 0.35 * (that aircraft's real climb rate), so
+        /// against the 0.45 actually in force the whole fleet climbs about 22 % slower than the real machines
+        /// it was derived from. Fixing that is a change to the VERTICAL axis and to numbers strawberry signed
+        /// off by feel; this rework is about the horizontal law, and quietly retuning every climb rate inside
+        /// it is exactly the kind of change that compiles and ships wrong. Raised separately instead.</summary>
+        const float HeliHeaveDamp = 0.45f;
+        /// <summary>How much draggier sideways than forwards. This is what replaces the old ForeAftBoost /
+        /// LateralBoost pair, which multiplied THRUST to make leaning into a run build momentum ("increase the
+        /// forward/back momentum when tilting forward/back") and lateral slip feel less eager than a drone.
+        /// Resisting the sideways axis harder produces the same asymmetry from the side of the equation where
+        /// it belongs: a fuselage genuinely does present far more area sideways than forwards, so the fore/aft
+        /// axis keeps its speed and a sideways slide does not.</summary>
+        const float HeliLateralDragRatio = 2.5f;
+        /// <summary>Where the hard horizontal wall sits, as a multiple of Speed_Max. Above level flight's own
+        /// terminal (1.0 by construction, since the drag coefficient is derived to put it there) and below the
+        /// MP envelope's EnvelopeSlack of 1.25, so a dive can outrun cruise without ever producing a state the
+        /// server would reject.</summary>
+        const float HeliEnvelopeBackstop = 1.15f;
+
+        /// <summary>The horizontal acceleration an airframe can sustain WITHOUT LOSING ALTITUDE: the steepest
+        /// attitude whose remaining vertical thrust still holds the machine up, times the sine of it.
+        ///
+        /// This exists so the drag coefficient can be DERIVED rather than typed. Nothing about a real
+        /// helicopter would tell us the right number anyway -- every vehicle in this game has GlobalMass 900
+        /// regardless of what it is, and rho and mass are both folded into the coefficient -- so a hand-tuned
+        /// table would be seven magic numbers whose provenance dies with the commit, and whose rank is
+        /// INVERTED against real aircraft (the scrap minicopter ends up the draggiest, the Hind the least).
+        /// Deriving it from HeliThrust and Speed_Max instead means the two authorities that already exist stay
+        /// the only authorities, and retuning either one carries the drag along with it.
+        ///
+        /// Not a closed form because TiltThrustLoss sits inside the tilt term: leaning costs lift twice (the
+        /// free cosine, then that extra bite), so the tilt that maximises horizontal thrust subject to holding
+        /// altitude has no tidy solution. A tenth-of-a-degree sweep is exact enough and runs once per spec at
+        /// build time. The loop breaks rather than continues because lift(theta)*cos(theta) decreases
+        /// monotonically -- once an attitude sinks, every steeper one does too.</summary>
+        static float LevelFlightAccel(float thrust)
+        {
+            float best = 0f;
+            for (int i = 1; i <= 900; i++)
+            {
+                float th = Mathf.DegToRad(i * 0.1f);
+                float lift = thrust * (1f - TiltThrustLoss * (1f - Mathf.Cos(th)));
+                if (lift * Mathf.Cos(th) < 9.8f) break;   // any steeper and it descends -- not level flight any more
+                best = lift * Mathf.Sin(th);
+            }
+            return best;
+        }
 
         // ---- INERTIA + TURBULENCE (strawberry 2026-08-16: "adding inertia. joystick changes should feel
         // slower, heavier and more sluggish. like the heli actually has weight. as well as minor turbulence at
@@ -129,6 +195,7 @@ namespace UnturnedGodot
         /// flying every airframe. The absolute values are taste; the order is the specification.</summary>
         public float DebugRollAuthority => _heliRollTq;
         public float DebugThrust => _heliThrust;
+        public float DebugHeliDragK => _heliDragFwd;   // 1/m, derived at build time -- see LevelFlightAccel
         Vector3 _mainHubCentre, _mainHubHalf, _tailHubCentre, _tailHubHalf;
         // A blade strike GRINDS the rotor down over time rather than killing it outright (strawberry
         // 2026-08-16: "rotors' blade damage to be ticked over time instead of instantly killing the rotor").
@@ -2297,6 +2364,14 @@ namespace UnturnedGodot
             v._heliThrust = s.HeliThrust; v._heliPitchTq = s.HeliPitchTorque; v._heliRollTq = s.HeliRollTorque;
             v._heliYawTq = s.HeliYawTorque; v._heliLevel = s.HeliLevel;
             v._heliClimbMax = s.HeliClimbMax; v._heliFallMax = s.HeliFallMax;
+            // DRAG, 1/m, derived so that LEVEL-FLIGHT TERMINAL SPEED IS EXACTLY Speed_Max: at equilibrium the
+            // sustainable horizontal thrust equals drag, a = k*v^2, so k = a / Speed_Max^2. Speed_Max is the
+            // right target because it is already the number the MP envelope validates against
+            // (VehicleReplication caps horizontal motion at SpeedMaxMps * EnvelopeSlack), so calibrating the
+            // sim's own top speed to anything else would guarantee either an unreachable spec or a pilot the
+            // server rolls back. A dive still exceeds it -- that is what the backstop in StepHeli is for.
+            v._heliDragFwd = s.Heli && s.SpeedMax > 0.01f
+                ? LevelFlightAccel(s.HeliThrust) / (s.SpeedMax * s.SpeedMax) : 0f;
             if (s.Heli)
             {
                 // A helicopter is flown, not suspended. Damping here is AERODYNAMIC, not friction, and the
@@ -2306,7 +2381,21 @@ namespace UnturnedGodot
                 // eventually bring rotations and such to a stop but it should be very very slight"). 0.25 is a
                 // ~4 s decay -- present, so nothing spins forever, but far too slow to fly for you. Stopping a
                 // rotation is the pilot's job; this only cleans up afterwards.
-                v.LinearDamp = 0.35f; v.AngularDamp = 0.25f;
+                // LINEAR DAMP IS ZERO ON PURPOSE, and StepHeli hand-rolls both axes instead. Godot's
+                // RigidBody3D.LinearDamp is a SCALAR -- Jolt's SetLinearDamping takes one float -- so it damps
+                // the whole velocity vector and there is no axis-selective form. Leaving it at the old 0.35
+                // would apply the vertical's linear heave-damping law to the horizontal as well, and once the
+                // thrust boosts were replaced by real drag that linear term became the BINDING horizontal
+                // constraint: terminal = sqrt(thrust^2 - g^2) / 0.35 puts six of the seven airframes below
+                // their own spec top speed, the scoutcopter at 18.8 m/s against a spec of 26. Angular damping
+                // is untouched and stays on the engine.
+                // REPLACE, not the default COMBINE: setting LinearDamp to 0 under Combine does NOT mean zero,
+                // it means the project's default_linear_damp (Godot's 0.1, never overridden here) still
+                // applies. That residual is a LINEAR horizontal drag, which is precisely what this rework
+                // exists to remove -- it left the three fastest airframes short of their own spec top speed,
+                // and it is measurable: 0.100 s^-1, identical across hind, orca and hummingbird.
+                v.LinearDampMode = DampMode.Replace; v.LinearDamp = 0f;
+                v.AngularDamp = 0.25f;   // angular is untouched: still Combine, still the engine's, as it shipped
                 v.ContinuousCd = true;   // a fast dive must not tunnel through terrain between ticks
                 // ISOTROPIC inertia, set explicitly rather than left to Godot's derivation from the collision
                 // boxes. Two reasons: those boxes are a crude stand-in for an open tube frame and would hand us
@@ -2859,7 +2948,12 @@ namespace UnturnedGodot
                 else if (want <= 0f && _rotorRpm < 0.01f) _ignitionFired = false;   // fully stopped -> armed again
             }
 
-            if (_exploded) return;   // a wreck is just a falling body
+            // A wreck is just a falling body -- but it still falls through air, and with LinearDamp now 0 it
+            // would free-fall unbounded instead. Applied ISOTROPICALLY, and above this return rather than
+            // below it, which reproduces the old engine damping exactly: terminal fall stays at g / 0.35 =
+            // ~28 m/s, the figure HeliCrashExplodeSpeed and the "an 18.5 m fall is fatal" calibration were
+            // both set against. A tumbling airframe has no meaningful shaft axis to hang a heave term on.
+            if (_exploded) { ApplyCentralForce(-LinearVelocity * (HeliHeaveDamp * Mass)); return; }
 
             Basis b = GlobalTransform.Basis;
             float spool = _rotorRpm * _rotorRpm;
@@ -2938,32 +3032,55 @@ namespace UnturnedGodot
             // 30 deg nose-down keeps only 87 % of its thrust pointing up); this takes a further bite on top,
             // so committing to a fast nose-down run actually costs you height instead of being free speed.
             lift *= 1f - TiltThrustLoss * (1f - Mathf.Clamp(b.Y.Y, 0f, 1f));
-            if (lift > 0f)
+            // THRUST ALONG THE SHAFT, unmodified. This one line is the whole Rust feel: you do not steer a
+            // helicopter, you tilt it and the lift vector takes you with it. The horizontal half of this vector
+            // used to be split out and multiplied by ForeAftBoost / LateralBoost so that leaning into a run
+            // built real momentum; that asymmetry now lives in the DRAG below, where a fuselage's own geometry
+            // puts it, so the thrust can go back to being a vector.
+            if (lift > 0f) ApplyCentralForce(b.Y * (lift * Mass));
+
+            // ---- RESISTANCE. Two axes, two mechanisms, two laws -- the reasoning is at HeliHeaveDamp.
+            Vector3 vel = LinearVelocity;
+
+            // VERTICAL: linear heave damping, in the WORLD frame. Deliberately NOT the body shaft axis, which
+            // is the more obviously physical choice and was what the physics review recommended -- heave
+            // damping is a rotor property and really does follow the disc. The reason it is world-aligned here
+            // is that the body-frame form scales vertical damping by cos^2(tilt), which silently retunes every
+            // number derived from this constant: terminal climb would rise ~22 % at an ordinary 25 deg cruise,
+            // straight into HeliClimbMax and the server's ZERO-slack vertical check. World-aligned keeps "the
+            // vertical axis is unchanged, only who applies the force changed" literally true, which is the
+            // stronger requirement of the two. The cost is a coordinate artefact at extreme bank; the benefit
+            // is that six calibrated numbers stay valid.
+            ApplyCentralForce(Vector3.Down * (HeliHeaveDamp * vel.Y * Mass));
+
+            // HORIZONTAL: quadratic parasite drag, anisotropic. Taken from the FLAT vector only -- both its
+            // direction AND its magnitude -- never from LinearVelocity. Using the full 3-D speed would scale
+            // horizontal drag by the vertical component, so a 40 m/s dive would produce a large horizontal
+            // braking force at near-zero horizontal speed.
+            var flat = new Vector3(vel.X, 0f, vel.Z);
+            float flatSpeed = flat.Length();
+            if (flatSpeed > 0.01f && _heliDragFwd > 0f)
             {
-                // Split the thrust vector and push the HORIZONTAL part harder -- fore/aft more than lateral --
-                // so leaning into a run builds real momentum. The vertical component is left exactly as the
-                // physics gives it, because that is what the hover point and the climb rate are tuned against.
-                Vector3 t = b.Y * lift;
-                var flatThrust = new Vector3(t.X, 0f, t.Z);
                 var fwd = new Vector3(-b.Z.X, 0f, -b.Z.Z);
-                Vector3 boosted;
-                if (fwd.LengthSquared() > 1e-6f)
-                {
-                    fwd = fwd.Normalized();
-                    Vector3 alongFwd = fwd * flatThrust.Dot(fwd);
-                    boosted = alongFwd * ForeAftBoost + (flatThrust - alongFwd) * LateralBoost;
-                }
-                else boosted = flatThrust * LateralBoost;   // pointing straight up/down: no meaningful fore/aft axis
-                ApplyCentralForce(new Vector3(boosted.X, t.Y, boosted.Z) * Mass);
+                Vector3 alongFwd = Vector3.Zero;
+                if (fwd.LengthSquared() > 1e-6f) { fwd = fwd.Normalized(); alongFwd = fwd * flat.Dot(fwd); }
+                Vector3 lateral = flat - alongFwd;
+                // F_i = -k_i * |v| * v_i -- the standard anisotropic quadratic form, magnitude set by the total
+                // flat speed and direction resolved per axis, so a diagonal slip is dragged on both.
+                ApplyCentralForce(-(alongFwd + lateral * HeliLateralDragRatio) * (_heliDragFwd * flatSpeed * Mass));
             }
 
-            // Horizontal top speed. The MP envelope derives its cap from Speed_Max, so exceeding it here would
-            // have the server roll a legitimate pilot back -- the limit has to bind on the CLIENT that is flying.
-            Vector3 vel = LinearVelocity;
-            var flat = new Vector3(vel.X, 0f, vel.Z);
-            if (_speedMax > 0f && flat.Length() > _speedMax)
+            // BACKSTOP, NOT THE SPEED LIMIT. Drag sets top speed now; this exists only so the sim cannot hand
+            // the server a state it would reject -- VehicleReplication validates horizontal motion against
+            // Speed_Max * EnvelopeSlack (1.25), and the limit has to bind on the CLIENT that is flying or the
+            // server rolls back a legitimate pilot. A committed dive genuinely does exceed Speed_Max, because
+            // gravity is helping, so the wall sits above level flight's reach and inside the envelope. It used
+            // to sit exactly AT Speed_Max as the only limiter, engaging on any committed run at around 20 deg
+            // of tilt: undiminished acceleration right up to the cap and then a wall, which is the opposite of
+            // how an aircraft approaches its top speed.
+            if (_speedMax > 0f && flatSpeed > _speedMax * HeliEnvelopeBackstop)
             {
-                Vector3 excess = flat.Normalized() * (flat.Length() - _speedMax);
+                Vector3 excess = flat.Normalized() * (flatSpeed - _speedMax * HeliEnvelopeBackstop);
                 ApplyCentralForce(-excess * Mass * 3.0f);
             }
 
