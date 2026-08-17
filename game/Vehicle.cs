@@ -2404,7 +2404,7 @@ namespace UnturnedGodot
                 v._voxelHalfHeight = Mathf.Min(vsz.X, Mathf.Min(vsz.Y, vsz.Z)) * 0.5f;   // a voxel is "submerged enough" when its centre is within this of the surface
                 var vox = new Vector3[slices * slices * slices];
                 int vi = 0;
-                float buoyDy = s.BuoyLift + (float.TryParse(System.Environment.GetEnvironmentVariable("UG_BUOYDY"), out var _bdy) ? _bdy : 0f);   // BuoyLift shifts float height (neg=higher); UG_BUOYDY tunes it live
+                float buoyDy = 0.10f * s.BoxSize.Y + s.BuoyLift + (float.TryParse(System.Environment.GetEnvironmentVariable("UG_BUOYDY"), out var _bdy) ? _bdy : 0f);   // +0.10*BoxSize.Y = global 10% boat SINK (master "sink the boats level by ~10%"); BuoyLift per-vehicle (neg=higher); UG_BUOYDY tunes live
                 for (int sx = 0; sx < slices; sx++)
                     for (int sy = 0; sy < slices; sy++)
                         for (int sz = 0; sz < slices; sz++)
