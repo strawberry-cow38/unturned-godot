@@ -19,23 +19,28 @@ namespace UnturnedGodot
         public const float SwellFw     = 0.030f;  // freq along crest (fu/fw = 3:1)
         public const float SwellSpeed  = 3.0f;
 
-        // sin-hash value-noise fbm -- identical formula to the shader's hashv/vnoise/fbm3
+        // GRADIENT (Perlin) noise -- identical formula to the shader's hashv/grad2/gnoise (no axis-aligned cell
+        // artifacts, so the CPU-sampled swell matches the smooth visual one).
         static float Hashv(float ix, float iz)
         {
             double s = Math.Sin(ix * 127.1 + iz * 311.7) * 43758.5453;
             return (float)(s - Math.Floor(s));
         }
-        static float Vnoise(float x, float z)
+        static (float, float) Grad2(float ix, float iz) { float h = Hashv(ix, iz) * 6.2831853f; return (MathF.Cos(h), MathF.Sin(h)); }
+        static float Gnoise(float x, float z)
         {
             float ix = MathF.Floor(x), iz = MathF.Floor(z), fx = x - ix, fz = z - iz;
-            float u = fx * fx * (3f - 2f * fx), v = fz * fz * (3f - 2f * fz);
-            float a = Hashv(ix, iz), b = Hashv(ix + 1f, iz), c = Hashv(ix, iz + 1f), d = Hashv(ix + 1f, iz + 1f);
-            return a * (1 - u) * (1 - v) + b * u * (1 - v) + c * (1 - u) * v + d * u * v;
+            float ux = fx * fx * fx * (fx * (fx * 6f - 15f) + 10f), uz = fz * fz * fz * (fz * (fz * 6f - 15f) + 10f);
+            var ga = Grad2(ix, iz); var gb = Grad2(ix + 1f, iz); var gc = Grad2(ix, iz + 1f); var gd = Grad2(ix + 1f, iz + 1f);
+            float a = ga.Item1 * fx + ga.Item2 * fz, b = gb.Item1 * (fx - 1f) + gb.Item2 * fz;
+            float c = gc.Item1 * fx + gc.Item2 * (fz - 1f), d = gd.Item1 * (fx - 1f) + gd.Item2 * (fz - 1f);
+            float ab = a + ux * (b - a), cd = c + ux * (d - c);
+            return (ab + uz * (cd - ab)) * 0.8f + 0.5f;
         }
         static float Fbm3(float x, float z)
         {
             float s = 0f, a = 0.5f;
-            for (int i = 0; i < 3; i++) { s += a * (Vnoise(x, z) - 0.5f); x *= 2.03f; z *= 2.03f; a *= 0.5f; }
+            for (int i = 0; i < 3; i++) { s += a * (Gnoise(x, z) - 0.5f); x *= 2.03f; z *= 2.03f; a *= 0.5f; }
             return s / 0.4375f;   // -> ~[-1, 1]
         }
 

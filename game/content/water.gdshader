@@ -25,15 +25,22 @@ varying vec3 v_wn;       // world-space base swell normal
 varying float v_crest;   // normalised swell height ~[-1,1], for crest foam
 varying vec3 v_wpos;     // world position of the displaced surface
 
-// sin-hash value-noise fbm -- IDENTICAL formula in wavemap.py + WaveField.cs so all three agree
+// GRADIENT (Perlin) noise -- unlike value noise it has NO axis-aligned cell artifacts (value is 0 at every lattice
+// point, random gradients interpolated), so the surface doesn't read as blocks/squares or SNAP as it scrolls.
+// Same seed/formula in WaveField.cs so the CPU twin still agrees.
 float hashv(vec2 p) { return fract(sin(p.x * 127.1 + p.y * 311.7) * 43758.5453); }
-float vnoise(vec2 p) {
-    vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
-    float a = hashv(i), b = hashv(i + vec2(1.0, 0.0)), c = hashv(i + vec2(0.0, 1.0)), d = hashv(i + vec2(1.0, 1.0));
-    return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+vec2 grad2(vec2 ip) { float h = hashv(ip) * 6.2831853; return vec2(cos(h), sin(h)); }
+float gnoise(vec2 p) {
+    vec2 i = floor(p), f = fract(p);
+    vec2 u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);   // quintic
+    float a = dot(grad2(i), f);
+    float b = dot(grad2(i + vec2(1.0, 0.0)), f - vec2(1.0, 0.0));
+    float c = dot(grad2(i + vec2(0.0, 1.0)), f - vec2(0.0, 1.0));
+    float d = dot(grad2(i + vec2(1.0, 1.0)), f - vec2(1.0, 1.0));
+    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y) * 0.8 + 0.5;   // remap ~[-0.6,0.6] -> ~[0,1]
 }
-float fbm5(vec2 p) { float s = 0.0, a = 0.5; for (int i = 0; i < 5; i++) { s += a * (vnoise(p) - 0.5); p *= 2.03; a *= 0.5; } return s; }
-float fbm3(vec2 p) { float s = 0.0, a = 0.5; for (int i = 0; i < 3; i++) { s += a * (vnoise(p) - 0.5); p *= 2.03; a *= 0.5; } return s / 0.4375; }
+float fbm5(vec2 p) { float s = 0.0, a = 0.5; for (int i = 0; i < 5; i++) { s += a * (gnoise(p) - 0.5); p *= 2.03; a *= 0.5; } return s; }
+float fbm3(vec2 p) { float s = 0.0, a = 0.5; for (int i = 0; i < 3; i++) { s += a * (gnoise(p) - 0.5); p *= 2.03; a *= 0.5; } return s / 0.4375; }
 
 // ANISOTROPIC swell height at world XZ + phase-time (coarse 3-octave swell; the vertex displaces this)
 float swell_at(vec2 wp, float tphase) {

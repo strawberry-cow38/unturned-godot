@@ -1044,8 +1044,11 @@ namespace UnturnedGodot
             var water = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(800f, 800f), SubdivideWidth = 300, SubdivideDepth = 300 }, Position = Vector3.Zero,
                 MaterialOverride = new ShaderMaterial { Shader = GD.Load<Shader>("res://content/water.gdshader") } };   // wave/foam shader (master)
             AddChild(water);
+            // caustics projected onto the underwater surfaces, seeded from the same wave noise (master 2026-08-16)
+            var caustShader = GD.Load<Shader>("res://content/caustics_ground.gdshader");
+            ShaderMaterial Caust(Color c) { var m = new ShaderMaterial { Shader = caustShader }; m.SetShaderParameter("base_color", c); m.SetShaderParameter("sea_level", Terrain.SeaLevelY); return m; }
             var seabed = new StaticBody3D { Position = new Vector3(0f, -14f, 0f) };   // deep floor so a swamped boat lands, not falls forever
-            seabed.AddChild(new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(800f, 800f) }, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.22f, 0.26f, 0.20f) } });
+            seabed.AddChild(new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(800f, 800f) }, MaterialOverride = Caust(new Color(0.22f, 0.26f, 0.20f)) });
             seabed.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
             AddChild(seabed);
 
@@ -1056,7 +1059,7 @@ namespace UnturnedGodot
             if (System.Environment.GetEnvironmentVariable("UG_BEACH") == "1")   // AMPHIBIOUS transition: a sandy beach sloping from dry land (+Z) down into the sea (-Z) -> drive off it into the water
             {
                 var ramp = new StaticBody3D { Position = new Vector3(0f, -1f, 14f), RotationDegrees = new Vector3(12f, 0f, 0f) };   // +Z end rises above the sea, -Z end dips under
-                ramp.AddChild(new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(40f, 2f, 44f) }, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.66f, 0.58f, 0.42f) } });
+                ramp.AddChild(new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(40f, 2f, 44f) }, MaterialOverride = Caust(new Color(0.66f, 0.58f, 0.42f)) });
                 ramp.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = new Vector3(40f, 2f, 44f) } });
                 AddChild(ramp);
                 _veh.Position = new Vector3(0f, 6f, 26f);   // start up on the dry land, facing -Z toward the sea

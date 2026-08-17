@@ -46,8 +46,25 @@ uniform sampler2DArray albedos : source_color, filter_nearest_mipmap, repeat_ena
 uniform sampler2D splat0 : filter_linear;
 uniform sampler2D splat1 : filter_linear;
 uniform float tileWorld = 16.0;
+uniform float sea_level = 25.6;                                  // world-Y of the ocean surface -> caustics show only below it
+uniform vec3 caustic_tint : source_color = vec3(0.55, 0.9, 1.0);
+uniform float caustic_strength = 0.5;
 varying vec3 wpos;
 void vertex() { wpos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz; }
+// --- caustics: gradient (Perlin) noise so the web is smooth, not blocky; projected in world XZ onto underwater terrain ---
+float chashv(vec2 p) { return fract(sin(p.x * 127.1 + p.y * 311.7) * 43758.5453); }
+vec2 cgrad(vec2 ip) { float h = chashv(ip) * 6.2831853; return vec2(cos(h), sin(h)); }
+float cnoise(vec2 p) {
+    vec2 i = floor(p), f = fract(p); vec2 u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+    float a = dot(cgrad(i), f), b = dot(cgrad(i + vec2(1.0, 0.0)), f - vec2(1.0, 0.0));
+    float c = dot(cgrad(i + vec2(0.0, 1.0)), f - vec2(0.0, 1.0)), d = dot(cgrad(i + vec2(1.0, 1.0)), f - vec2(1.0, 1.0));
+    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y) * 0.8 + 0.5;
+}
+float cfbm(vec2 p) { float s = 0.0, a = 0.5; for (int i = 0; i < 4; i++) { s += a * cnoise(p); p *= 2.03; a *= 0.5; } return s; }
+float caustics(vec2 p, float t) {
+    float a = cfbm(p + vec2(t, t * 0.4)), b = cfbm(p * 1.31 + vec2(-t * 0.7, t * 0.55) + 17.3);
+    return pow(clamp(1.0 - abs(a - b) * 4.0, 0.0, 1.0), 4.0);
+}
 void fragment() {
     vec4 w0 = texture(splat0, UV);
     vec4 w1 = texture(splat1, UV);
@@ -61,6 +78,16 @@ void fragment() {
     for (int i = 1; i < 8; i++) { if (ws[i] > bw) { bw = ws[i]; best = i; } }
     ALBEDO = texture(albedos, vec3(tuv, float(best))).rgb;
     ROUGHNESS = 1.0;
+    // caustics on underwater terrain: a light web projected in world XZ, faded with depth (master 2026-08-17)
+    float cdepth = sea_level - wpos.y;
+    if (cdepth > 0.0) {
+        vec2 cp = mat2(vec2(0.87, 0.5), vec2(-0.5, 0.87)) * (wpos.xz * 0.11);
+        cp += 0.8 * (vec2(cfbm(cp * 0.5), cfbm(cp * 0.5 + 7.0)) - 0.5);
+        float caust = caustics(cp, TIME * 0.25);
+        caust = max(caust, caustics(cp * 1.6 + 9.0, -TIME * 0.2));
+        float cfade = clamp(cdepth / 0.4, 0.0, 1.0) * (1.0 - clamp(cdepth / 9.0, 0.0, 1.0));
+        EMISSION = caustic_tint * caust * caustic_strength * cfade;
+    }
 }
 ";
 
@@ -83,6 +110,7 @@ void fragment() {
             mat.SetShaderParameter("splat0", splat0);
             mat.SetShaderParameter("splat1", splat1);
             mat.SetShaderParameter("tileWorld", 16f);
+            mat.SetShaderParameter("sea_level", SeaLevelY);   // caustics show below this (PEI default 25.6 == the uniform default)
             return mat;
         }
 
