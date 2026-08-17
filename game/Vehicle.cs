@@ -1965,7 +1965,7 @@ namespace UnturnedGodot
         // propeller -> thrust is the (jet) engine; PropMeshPrefix null skips the prop. Fast + agile vs the Otter.
         static readonly Spec _fighterjet = new()
         {
-            Plane = true, HeliBodyMeshes = new[] { "fighterjet_body.txt", "fighterjet_body_1.txt" },
+            Plane = true, HeliBodyMeshes = new[] { "fighterjet_body.txt" },   // Model_0 (LOD0) ONLY -- Model_1 is the coincident LOD1 (a closed low-poly shell that CAPS the open cockpit); co-rendering both hid the cockpit interior
             PropMeshPrefix = null,                                                // JET: no propeller
             BurnerPos = new[] { new Vector3(-0.39f, 0.99f, 5.32f), new Vector3(0.39f, 0.99f, 5.32f) },   // the 2 rear engine exhausts (prefab Burner_0/1, Godot Z-neg) -> afterburner flames shoot aft (+Z)
             ContrailPos = new[] { new Vector3(-4.5f, 0.85f, 3.75f), new Vector3(4.5f, 0.85f, 3.75f) },   // wingtip trailing edges (mesh x=+/-4.5, aft z=3.75) -> vapour contrails stream aft

@@ -6184,6 +6184,17 @@ namespace UnturnedGodot
                         if (_vehCam != null) { var vi = _veh.GetGlobalTransformInterpolated(); var fi = -vi.Basis.Z; fi.Y = 0f; fi = fi.LengthSquared() > 0.001f ? fi.Normalized() : Vector3.Forward; var ri = new Vector3(fi.Z, 0f, -fi.X); _vehCam.GlobalPosition = vi.Origin + ri * 8.5f + Vector3.Up * 0.8f; _vehCam.LookAt(vi.Origin + Vector3.Down * 0.4f, Vector3.Up); }   // LOW SIDE profile -> see the hull + gear vs the ground line
                         return;
                     }
+                    if (System.Environment.GetEnvironmentVariable("UG_PLANECOCKPIT") == "1")
+                    {   // COCKPIT INSPECTION: park the jet + hold a front-top-3/4 cam looking down into the cockpit
+                        _veh.DrivePlane(0f, 0f, 0f, 0f, delta);
+                        if (_vehCam != null)
+                        {
+                            var vt = _veh.GetGlobalTransformInterpolated(); var b = vt.Basis; var fwd = -b.Z;
+                            _vehCam.GlobalPosition = vt.Origin + b.X * 3.5f + b.Y * 4.0f + fwd * 6.5f;
+                            _vehCam.LookAt(vt.Origin + b.Y * 1.8f + fwd * 2.0f, Vector3.Up);
+                        }
+                        return;
+                    }
                     if (System.Environment.GetEnvironmentVariable("UG_PLANEBURN") == "1")
                     {   // AFTERBURNER beauty shot: FULL throttle the whole time (burners maxed) + a close, level,
                         // 3/4-rear camera locked on the exhaust cones, gently swinging around dead-astern.
