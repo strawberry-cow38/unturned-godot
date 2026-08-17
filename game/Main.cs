@@ -6184,6 +6184,25 @@ namespace UnturnedGodot
                         if (_vehCam != null) { var vi = _veh.GetGlobalTransformInterpolated(); var fi = -vi.Basis.Z; fi.Y = 0f; fi = fi.LengthSquared() > 0.001f ? fi.Normalized() : Vector3.Forward; var ri = new Vector3(fi.Z, 0f, -fi.X); _vehCam.GlobalPosition = vi.Origin + ri * 8.5f + Vector3.Up * 0.8f; _vehCam.LookAt(vi.Origin + Vector3.Down * 0.4f, Vector3.Up); }   // LOW SIDE profile -> see the hull + gear vs the ground line
                         return;
                     }
+                    if (System.Environment.GetEnvironmentVariable("UG_PLANEBURN") == "1")
+                    {   // AFTERBURNER beauty shot: FULL throttle the whole time (burners maxed) + a close, level,
+                        // 3/4-rear camera locked on the exhaust cones, gently swinging around dead-astern.
+                        var pbb = _veh.GlobalTransform.Basis;
+                        float noseDegB = Mathf.RadToDeg(Mathf.Asin(Mathf.Clamp(-pbb.Z.Y, -1f, 1f)));
+                        float pitchB = Mathf.Clamp((10f - noseDegB) * 0.06f, -0.25f, 0.25f);   // hold ~10 deg climb once airborne
+                        _veh.DrivePlane(1f, 0f, _veh.Afloat ? (spd > 11f ? 0.55f : 0f) : pitchB, 0f, delta);
+                        if (_vehCam != null)
+                        {
+                            var vtB = _veh.GetGlobalTransformInterpolated();
+                            var fwdB = -vtB.Basis.Z; fwdB.Y = 0f; fwdB = fwdB.LengthSquared() > 0.001f ? fwdB.Normalized() : Vector3.Forward;
+                            var rightB = new Vector3(fwdB.Z, 0f, -fwdB.X);
+                            float sway = Mathf.Sin(_frame * 0.010f) * 0.6f;   // +/- ~34 deg swing around dead-astern
+                            var dirB = (-fwdB * Mathf.Cos(sway) + rightB * Mathf.Sin(sway)).Normalized();
+                            _vehCam.GlobalPosition = vtB.Origin + dirB * 7.0f + Vector3.Up * 1.5f;
+                            _vehCam.LookAt(vtB.Origin - fwdB * 2.4f + Vector3.Up * 0.9f, Vector3.Up);   // aim at the exhaust cluster (aft of centre)
+                        }
+                        return;
+                    }
                     float throttle, pitch, roll;
                     if (_veh.Afloat)
                     {   // full-power takeoff run; once up to speed, ease back to ROTATE (raise AoA) and lift off the water

@@ -26,7 +26,7 @@ namespace UnturnedGodot
         bool _plane; float _planeThrust, _planeLift, _planeTargetSpeed, _planePitchTq, _planeRollTq, _planeYawTq, _planeSteerFade = 1f;   // PLANE (EEngine.PLANE): forward thrust + airspeed lift, bank-to-turn
         Node3D _propNode; MeshInstance3D _propBlades, _propDisc;   // propeller pivot + its 2 draw states (blades / spin-blur), spun about body forward
         float _propSpin;   // prop visual phase (about local Z)
-        Node3D[] _jetFlames; OmniLight3D[] _jetFlameLights; float _jetFlameT;   // afterburner flame-cone pivots (scale Y = length) + glow (jet), pulsed + throttle-scaled
+        Node3D[] _jetFlames; OmniLight3D[] _jetFlameLights; ShaderMaterial[] _jetFlameMats; float _jetFlameT;   // afterburner flame cones (content/afterburner.gdshader, per-burner mat) + glow (jet); throttle-scaled
         int _planeDbgFrame;   // UG_PLANEDBG print throttle
         bool _planeGroundMode;   // master: hold Ctrl -> drop onto the ground/water + taxi (no lift), for floatplanes now + wheeled aircraft later
         public bool PlaneGroundMode { get => _planeGroundMode; set => _planeGroundMode = value; }
@@ -2435,37 +2435,38 @@ namespace UnturnedGodot
             }
             }   // end: has a propeller
 
-            // ---- AFTERBURNER FLAMES (jet). A FIRST-PASS look (master wants a proper shader after this): a
-            // stretched additive-glow cone out each rear engine + an orange point light. StepPlane scales the
-            // length + flickers it by throttle. Each flame is a pivot NODE at the nozzle -> scaling its Y grows
-            // the flame AFT from the nozzle; a cone child, wide at the nozzle tapering to a point aft.
+            // ---- AFTERBURNER FLAMES (jet): a procedural-shader flame on a hollow cone shell out each rear engine
+            // (content/afterburner.gdshader -- turbulent gas, hot core -> orange -> smoky tip, shock diamonds), plus
+            // an orange point light. Each flame is a pivot NODE at the nozzle; StepPlane scales its Y for length +
+            // width and feeds u_throttle to the shader. Per-burner u_seed de-syncs the two engines.
             if (s.BurnerPos != null && s.BurnerPos.Length > 0)
             {
-                var flameMat = new StandardMaterial3D
-                {
-                    AlbedoColor = new Color(1f, 0.55f, 0.14f, 0.85f),
-                    EmissionEnabled = true, Emission = new Color(1f, 0.5f, 0.14f), EmissionEnergyMultiplier = 5f,
-                    Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
-                    BlendMode = BaseMaterial3D.BlendModeEnum.Add,        // additive -> reads as glowing fire, not a solid cone
-                    ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
-                    CullMode = BaseMaterial3D.CullModeEnum.Disabled,
-                };
+                var flameShader = GetAfterburnerShader();
                 v._jetFlames = new Node3D[s.BurnerPos.Length];
                 v._jetFlameLights = new OmniLight3D[s.BurnerPos.Length];
+                v._jetFlameMats = new ShaderMaterial[s.BurnerPos.Length];
                 for (int i = 0; i < s.BurnerPos.Length; i++)
                 {
                     var bp = s.BurnerPos[i];
+                    var mat = new ShaderMaterial { Shader = flameShader };
+                    mat.SetShaderParameter("u_core_color", new Color(0.70f, 0.85f, 1.0f));
+                    mat.SetShaderParameter("u_mid_color", new Color(1.0f, 0.50f, 0.12f));
+                    mat.SetShaderParameter("u_tip_color", new Color(0.55f, 0.09f, 0.02f));
+                    mat.SetShaderParameter("u_seed", i * 3.7f);
+                    mat.SetShaderParameter("u_height", 2.4f);
+                    mat.SetShaderParameter("u_throttle", 0f);
                     var pivot = new Node3D { Name = $"Afterburner{i}", Position = bp, RotationDegrees = new Vector3(90f, 0f, 0f) };   // +Y -> +Z (aft)
                     var cone = new MeshInstance3D
                     {
-                        Mesh = new CylinderMesh { TopRadius = 0.04f, BottomRadius = 0.26f, Height = 2.4f, RadialSegments = 12, Rings = 1, CapTop = false, CapBottom = false },
-                        MaterialOverride = flameMat,
-                        Position = new Vector3(0f, 1.2f, 0f),   // wide bottom (-Y) sits at the nozzle; cone runs out +Y (=> aft)
+                        Mesh = new CylinderMesh { TopRadius = 0.03f, BottomRadius = 0.28f, Height = 2.4f, RadialSegments = 16, Rings = 1, CapTop = false, CapBottom = false },
+                        MaterialOverride = mat,
+                        Position = new Vector3(0f, 1.2f, 0f),   // wide bottom (-Y) at the nozzle; runs out +Y (aft)
                         CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
                     };
                     pivot.AddChild(cone);
                     v.AddChild(pivot);
                     v._jetFlames[i] = pivot;
+                    v._jetFlameMats[i] = mat;
                     var light = new OmniLight3D { Position = bp + new Vector3(0f, 0f, 0.7f), LightColor = new Color(1f, 0.5f, 0.18f), LightEnergy = 0f, OmniRange = 4.5f };
                     light.AddToGroup("dynlight");
                     v.AddChild(light);
@@ -2473,6 +2474,12 @@ namespace UnturnedGodot
                 }
             }
         }
+
+        static Shader _afterburnerShader;
+        // Loaded straight from the .gdshader text (not GD.Load) so a freshly-added file needs no Godot reimport
+        // -- same idiom as the vehicle_paint.gdshader load above.
+        static Shader GetAfterburnerShader()
+            => _afterburnerShader ??= new Shader { Code = System.IO.File.ReadAllText(ProjectSettings.GlobalizePath("res://content/afterburner.gdshader")) };
 
         /// <summary>A rotor disc as a monitoring Area3D: the thin cylinder the blades sweep. Masks the world +
         /// vehicle layers (bit0 | bit5) so it notices terrain, buildings and other vehicles, and sits on no
@@ -3378,13 +3385,17 @@ namespace UnturnedGodot
             if (_jetFlames != null)
             {
                 _jetFlameT += dt * 32f;
-                float burn = _exploded ? 0f : _inCollective * _rotorRpm;
-                float flick = 0.82f + 0.18f * Mathf.Sin(_jetFlameT) * Mathf.Sin(_jetFlameT * 0.37f);
+                float burn = _exploded ? 0f : _inCollective * _rotorRpm;   // 0..1 spool
+                float flick = 0.85f + 0.15f * Mathf.Sin(_jetFlameT) * Mathf.Sin(_jetFlameT * 0.37f);
                 bool burning = burn > 0.04f;
                 for (int i = 0; i < _jetFlames.Length; i++)
                 {
                     _jetFlames[i].Visible = burning;
-                    if (burning) _jetFlames[i].Scale = new Vector3(0.7f + 0.4f * burn, (0.35f + 1.3f * burn) * flick, 0.7f + 0.4f * burn);   // Y = length (aft), X/Z = width
+                    if (burning)
+                    {
+                        _jetFlames[i].Scale = new Vector3(0.7f + 0.4f * burn, 0.45f + 1.25f * burn, 0.7f + 0.4f * burn);   // Y = length (aft), X/Z = width; shader flickers
+                        _jetFlameMats[i]?.SetShaderParameter("u_throttle", burn);
+                    }
                     if (_jetFlameLights[i] != null) _jetFlameLights[i].LightEnergy = burning ? (1.5f + 3.5f * burn) * flick : 0f;
                 }
             }
