@@ -274,7 +274,12 @@ namespace UnturnedGodot
 
         void UpdateSelectedLive(bool ok, int ping, int players, int max, bool mismatch)
         {
-            if (_selectedServer == null || _svInfoDetail == null) return;
+            // IsInstanceValid, not just a null check. This runs from a Callable.From(...).CallDeferred() bound to
+            // a managed delegate rather than to a Node, so it fires even after the menu has been freed -- and a
+            // freed Godot node's C# reference is NOT null. Joining inside the 1.5 s query window (the browser
+            // auto-refreshes on first open, so no button press is needed) queued this against a disposed Label.
+            // The row labels above already guard this way; these two did not. Review 2026-08-16.
+            if (_selectedServer == null || _svInfoDetail == null || !IsInstanceValid(_svInfoDetail)) return;
             var sv = _selectedServer;
             string status = mismatch ? "⚠ VERSION MISMATCH — cannot join" : (ok ? $"{players}/{max} players  ·  {ping} ms" : "offline / no response");
             _svInfoDetail.Text = $"Map:  {sv.Map}\nAddress:  {sv.Host}:{sv.Port}\nMode:  {(sv.Pvp ? "PvP" : "PvE")}\nStatus:  {status}";
@@ -283,7 +288,7 @@ namespace UnturnedGodot
         // Row gray-out is per-row (QueryServer); the JOIN button tracks whichever server is currently selected.
         void RefreshJoinButton()
         {
-            if (_joinBtn == null) return;
+            if (_joinBtn == null || !IsInstanceValid(_joinBtn)) return;   // see UpdateSelectedLive -- freed is not null
             bool blocked = _selectedServer != null && _mismatched.Contains(_selectedServer);
             _joinBtn.Disabled = blocked;
             _joinBtn.Text = blocked ? "VERSION MISMATCH" : "JOIN";

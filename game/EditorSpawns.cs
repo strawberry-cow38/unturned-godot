@@ -369,8 +369,14 @@ namespace UnturnedGodot
             {
                 if (!RaycastTerrain(GetViewport().GetMousePosition(), out var pt)) return;
                 var cat = _category;   // undo is category-scoped (a switch reloads _spawns)
-                if (_removeMode) { var rm = RemoveNear(pt); if (rm.Count > 0) _editor.PushUndo("remove spawn", () => { if (_category == cat) { _spawns.AddRange(rm); RebuildMarkers(); } }); }
-                else { AddSpawn(pt, _rotation, _alt, _vehType); var added = _spawns[^1]; _editor.PushUndo("add spawn", () => { if (_category == cat) { _spawns.Remove(added); RebuildMarkers(); } }); }
+                // SWITCH BACK to the category the edit belongs to instead of silently doing nothing. These
+                // closures used to be `if (_category == cat) { ... }`, so after a Tab or a category button the
+                // step ran, matched nothing, and returned -- while Editor.Undo had already POPPED it. Five
+                // Ctrl+Zs after a category switch destroyed five steps and changed nothing, and the sixth
+                // undid something from before them. Editor.PopUndo's own doc names this exact hazard.
+                // Review 2026-08-16.
+                if (_removeMode) { var rm = RemoveNear(pt); if (rm.Count > 0) _editor.PushUndo("remove spawn", () => { if (_category != cat) SetCategoryTo((int)cat); _spawns.AddRange(rm); RebuildMarkers(); }); }
+                else { AddSpawn(pt, _rotation, _alt, _vehType); var added = _spawns[^1]; _editor.PushUndo("add spawn", () => { if (_category != cat) SetCategoryTo((int)cat); _spawns.Remove(added); RebuildMarkers(); }); }
             }
             else if (ev is InputEventKey { Pressed: true, Echo: false } k)
             {

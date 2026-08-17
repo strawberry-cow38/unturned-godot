@@ -14,6 +14,20 @@ namespace UnturnedGodot.Testing
             return ground;
         }
 
+        /// <summary>Grant the demo kit into the joiner's SERVER grid.
+        ///
+        /// The dedicated server used to hand this to every peer on join, so these suites silently depended on
+        /// what a REAL player spawns with -- and emptying the starter kit (strawberry 2026-08-16) broke four
+        /// netcode tests that have nothing to do with loadouts. A fixture belongs at the point that needs it,
+        /// not in production seeding. Returns false if the server has not made the inventory yet, so a caller
+        /// that seeds too early fails loudly instead of asserting against an empty bag.</summary>
+        public static bool SeedServerKit(DedicatedServer ded, ClientWorldSession sess)
+        {
+            if (!ded.Server.Inventories.TryGet(sess.Client.PlayerId, out var inv)) return false;
+            PlayerController.PopulateDemoKit(inv.Inventory);
+            return true;
+        }
+
         public static PlayerController Player(Node3D world, Vector3 pos, string gunPath = null)
         {
             var p = new PlayerController { CaptureMouse = false };

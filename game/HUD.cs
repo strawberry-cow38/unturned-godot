@@ -12,6 +12,14 @@ namespace UnturnedGodot
     public partial class HUD : CanvasLayer
     {
         public PlayerController Player;
+        HBoxContainer _hotbar;
+        // Cheap signature so the row is rebuilt only when its CONTENTS change. A NUMBER, and the entry list is a
+        // reused member, because this runs every frame: the first cut built a List, a second list via ConvertAll,
+        // an interpolated string per entry and a string.Join -- roughly six allocations a frame, ~360 objects a
+        // second, on the main gameplay path, all of it thrown away by the very gate meant to prevent the work.
+        // A gate that allocates to decide whether to skip the work is not saving anything. Review 2026-08-16.
+        ulong _hotbarSig = ulong.MaxValue;   // MaxValue = "not built yet", distinct from the empty row's hash
+        readonly System.Collections.Generic.List<(int Key, ushort Id)> _hbEntries = new();
 
         // Palette.cs: COLOR_R (health), COLOR_O (food), COLOR_B (water), COLOR_Y (stamina), COLOR_G (virus), cyan (oxygen).
         static readonly Color CR = new Color(0.7490196f, 0.12156863f, 0.12156863f);
@@ -93,6 +101,21 @@ namespace UnturnedGodot
             AddStatus(root, 1, "hud_broken.png",   () => Player != null && Player.Broken);
             AddStatus(root, 2, "hud_starved.png",  () => Player != null && (Player.Food <= 0f || Player.Water <= 0f));
             // virus is now the situational infection METER in the vitals (above), not a binary status icon (master)
+
+            // HOTBAR, bottom-centre (strawberry 2026-08-16: "add a 'hotbar' showing the icons of you primary,
+            // secondary slots (providing theres something in those slots) plus whatever item icons for the
+            // things you have bound to numbers (again, providing you have anything bound)").
+            //
+            // Every entry is conditional on ACTUALLY holding something -- an empty hotbar draws nothing at all
+            // rather than a row of empty boxes, because a row of nine empty boxes is what a UI looks like when
+            // it is broken, and this one is empty by design on a fresh spawn now the starter kit is gone.
+            _hotbar = new HBoxContainer();
+            _hotbar.AddThemeConstantOverride("separation", 6);
+            _hotbar.AnchorLeft = 0.5f; _hotbar.AnchorRight = 0.5f; _hotbar.AnchorTop = 1; _hotbar.AnchorBottom = 1;
+            _hotbar.OffsetLeft = -260; _hotbar.OffsetRight = 260; _hotbar.OffsetTop = -86; _hotbar.OffsetBottom = -18;
+            _hotbar.Alignment = BoxContainer.AlignmentMode.Center;
+            _hotbar.MouseFilter = Control.MouseFilterEnum.Ignore;
+            root.AddChild(_hotbar);
 
             // ammo count, bottom-right
             _ammo = new Label();
@@ -259,9 +282,99 @@ namespace UnturnedGodot
             c.MouseFilter = Control.MouseFilterEnum.Ignore;
         }
 
+        /// <summary>Redraw the hotbar row when, and only when, its contents change.
+        ///
+        /// Keyed on a signature rather than rebuilt every frame: this runs in _Process, and tearing down and
+        /// rebuilding nine TextureRects sixty times a second to show the same thing is the kind of cost that
+        /// does not look like a bug until someone profiles it.</summary>
+        /// <summary>Test seam: how many hotbar cells are actually on screen. Distinct from counting slots and
+        /// binds, which is the input -- this is what the player sees.</summary>
+        public int DebugHotbarCells => _hotbar?.GetChildCount() ?? 0;
+
+        /// <summary>Drop the row's cells. RemoveChild BEFORE QueueFree, which is deferred to end-of-frame: while
+        /// the dying cells are still children the HBoxContainer lays out old AND new together for a frame (the row
+        /// visibly widens and shifts on every content change), and DebugHotbarCells reports old+new to anything
+        /// reading before the next frame. The suite only passes because every assertion sits behind a tick wait.</summary>
+        void ClearHotbarCells()
+        {
+            foreach (var c in _hotbar.GetChildren()) { _hotbar.RemoveChild(c); c.QueueFree(); }
+        }
+
+        void RefreshHotbar()
+        {
+            if (_hotbar == null) return;
+            var inv = Player?.Inventory;
+            if (inv == null) { if (_hotbarSig != 0) { _hotbarSig = 0; ClearHotbarCells(); } return; }
+
+            // (key, item id) for every slot that HAS something. Nothing held = nothing drawn.
+            var entries = _hbEntries;
+            entries.Clear();
+            for (byte slot = 0; slot < SDG.Unturned.PlayerInventory.SLOTS; slot++)
+            {
+                var pg = inv.items[slot];
+                if (pg == null || pg.getItemCount() == 0) continue;
+                var it = pg.getItem(0)?.item;
+                if (it != null) entries.Add((slot + 1, it.id));
+            }
+            for (int k = 3; k <= 9; k++)
+            {
+                if (!Player.HotbarBinds.TryGetValue(k, out var loc)) continue;
+                if (loc.page >= inv.items.Length) continue;
+                var pg = inv.items[loc.page];
+                byte idx = pg?.getIndex(loc.x, loc.y) ?? byte.MaxValue;
+                if (idx == byte.MaxValue) continue;   // the bind points at a cell that is now empty -> draw nothing
+                var it = pg.getItem(idx)?.item;
+                if (it != null) entries.Add((k, it.id));
+            }
+
+            // FNV-1a over the (key, id) pairs -- order-sensitive, allocation-free, and 64 bits is far more than
+            // this row's state can collide in.
+            ulong sig = 1469598103934665603UL;
+            foreach (var (key, id) in entries)
+            {
+                sig = (sig ^ (uint)key) * 1099511628211UL;
+                sig = (sig ^ id) * 1099511628211UL;
+            }
+            if (sig == _hotbarSig) return;
+            _hotbarSig = sig;
+            ClearHotbarCells();
+
+            foreach (var (key, id) in entries)
+            {
+                var cell = new PanelContainer { CustomMinimumSize = new Vector2(58, 58) };
+                var sb = new StyleBoxFlat { BgColor = new Color(0f, 0f, 0f, 0.45f), BorderColor = new Color(1f, 1f, 1f, 0.25f) };
+                sb.SetBorderWidthAll(1); sb.SetCornerRadiusAll(3);
+                cell.AddThemeStyleboxOverride("panel", sb);
+                cell.MouseFilter = Control.MouseFilterEnum.Ignore;
+
+                var icon = new TextureRect
+                {
+                    Texture = InventoryUI.IconFor(id),
+                    ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+                    StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered,
+                    MouseFilter = Control.MouseFilterEnum.Ignore,
+                };
+                cell.AddChild(icon);
+
+                // The number, so the row tells you which key rather than making you count boxes -- the entries
+                // are sparse (bind 3 and 7 and nothing else) so position does not imply the key.
+                var num = new Label { Text = key.ToString() };
+                num.AddThemeFontSizeOverride("font_size", 13);
+                num.AddThemeColorOverride("font_outline_color", Colors.Black);
+                num.AddThemeConstantOverride("outline_size", 3);
+                num.MouseFilter = Control.MouseFilterEnum.Ignore;
+                num.SetAnchorsPreset(Control.LayoutPreset.BottomRight);
+                num.OffsetLeft = -14; num.OffsetTop = -18; num.OffsetRight = -3; num.OffsetBottom = -2;
+                cell.AddChild(num);
+
+                _hotbar.AddChild(cell);
+            }
+        }
+
         public override void _Process(double delta)
         {
             foreach (var c in _playerOnly) c.Visible = Player != null;   // hide the on-foot HUD in a vehicle-only view
+            RefreshHotbar();
             if (_crosshair3p != null) _crosshair3p.Visible = Player != null && Player.ThirdPersonActive;   // centre crosshair: third person only
 
             // centre-screen alert: hold at full opacity, then fade over the last second so it clears itself

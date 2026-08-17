@@ -58,7 +58,113 @@ namespace UnturnedGodot
         InventoryUI _invUI;                 // the dashboard (Tab to open)
         CraftingUI _craftUI;                // the crafting menu (K to open)
         SkillsUI _skillsUI;                 // the skills menu (J to open) -- spend XP to level skills
-        BuildTool _build;                   // B = build mode (grid-snapped structures)
+        BuildTool _build;                   // B = build mode. C = construct, V = tier, LMB place, R salvage.
+
+        /// <summary>Upgrade the aimed piece a tier in place. StructureManager.Upgrade had tests and no caller
+        /// anywhere in the game -- the tier ladder existed only as an API, so nothing a player did could climb
+        /// it. Same shape as the doors and beds that carried a TakeDamage nothing ever invoked: green tests
+        /// proving a method works say nothing about whether it is reachable.</summary>
+        void UpgradeAimedStructure()
+        {
+            var piece = AimedStructure();
+            if (piece == null) return;
+            var sm = StructureManager.Instance;
+            int was = piece.Tier;
+            if (sm.Upgrade(piece))
+                GD.Print($"[build] upgraded {piece.Construct}: {StructureCatalog.TierAt(was).Name} -> {StructureCatalog.TierAt(piece.Tier).Name} ({piece.Health} hp)");
+            else
+                GD.Print($"[build] {piece.Construct} is already {StructureCatalog.TierAt(piece.Tier).Name} (top tier)");
+        }
+
+        /// <summary>The structure piece under the crosshair, or null. Shared by salvage/upgrade/melee so all
+        /// three agree on WHICH piece you mean -- three separate raycasts drifting apart is how "salvage took
+        /// the wrong wall" bugs start.</summary>
+        StructureManager.Piece AimedStructure(float reach = -1f)
+        {
+            var sm = StructureManager.Instance;
+            if (sm == null || _cam == null) return null;
+            var space = GetWorld3D()?.DirectSpaceState;
+            if (space == null) return null;
+            if (reach <= 0f) reach = StructureCatalog.MaxPlacementDistance;   // melee reaches less far than placement
+            Vector3 from = _cam.GlobalPosition, dir = -_cam.GlobalTransform.Basis.Z;
+            var q = PhysicsRayQueryParameters3D.Create(from, from + dir * reach);
+            q.CollisionMask = 1u << 0;
+            var hit = space.IntersectRay(q);
+            if (hit.Count == 0) return null;
+            // Resolve by the COLLIDER we actually hit, not by nearest-piece-within-3 m of the hit point. The
+            // radius version picks by distance to each piece's ORIGIN, and an origin sits at the piece's base:
+            // aim high on a wall and the floor tile beside it is nearer to the hit than the wall you are
+            // looking at, so the swing lands on the floor -- or, past 3 m up, on nothing at all. Exactly the
+            // mistake the barricade attach gate made, and worse here because all three callers destroy things.
+            return sm.PieceForCollider(hit["collider"].As<Node>());
+        }
+
+        // Test seams for the three INPUT paths into the structure system. The manager-level Damage/Repair/
+        // Salvage were covered while nothing verified that the crosshair path reached the piece you were
+        // actually looking at -- the "logic tested, never called" gap, which had already bitten once (charges
+        // did not touch structures at all). These drive the real methods, not copies of them.
+        public BuildTool DebugBuildTool => _build;   // the BUILD INPUT path (B/C/V/LMB) had no coverage at all
+        public StructureManager.Piece DebugAimedStructure(float reach = -1f) => AimedStructure(reach);
+        public bool DebugMeleeStructure(float amount, float range) => MeleeStructure(amount, range);
+        public void DebugSalvageAimed() => SalvageAimedStructure();
+        public void DebugUpgradeAimed() => UpgradeAimedStructure();
+        /// <summary>Aim the eye at a world point (the test stand-in for moving the mouse). Returns the eye
+        /// transform actually in force, so a test can assert it took rather than assume it.
+        ///
+        /// Drives the SAME state real mouse input drives -- body yaw plus _pitchDeg -- rather than poking
+        /// _cam.LookAt. A raw LookAt is transient: the player's own setup writes _cam.Rotation back and the aim
+        /// silently reverts on the next frame, so a test that aimed, waited a tick, then acted was acting on a
+        /// stale direction. That produced a suite where two different aims both reported forward = (0,0,-1) and
+        /// a piece "placed at a tile centre" was really the no-hit fallback point.</summary>
+        public Transform3D DebugLookAt(Vector3 target)
+        {
+            if (_cam == null) return Transform3D.Identity;
+            Vector3 d = target - _cam.GlobalPosition;
+            float horiz = new Vector2(d.X, d.Z).Length();
+            if (d.LengthSquared() < 1e-6f) return _cam.GlobalTransform;
+            RotationDegrees = new Vector3(0f, Mathf.RadToDeg(Mathf.Atan2(-d.X, -d.Z)), 0f);
+            _pitchDeg = Mathf.Clamp(Mathf.RadToDeg(Mathf.Atan2(d.Y, horiz)), -89f, 89f);
+            _cam.RotationDegrees = new Vector3(_pitchDeg, 0f, 0f);
+            return _cam.GlobalTransform;
+        }
+        public Transform3D DebugEye => _cam?.GlobalTransform ?? Transform3D.Identity;
+
+        /// <summary>Swing at the structure piece under the crosshair. Returns true if one was hit, so the melee
+        /// chain stops there rather than also swinging at whatever is behind it. A blowtorch repairs instead of
+        /// hitting, matching how vehicles and deployables already behave.</summary>
+        bool MeleeStructure(float amount, float range)
+        {
+            var piece = AimedStructure(range + 1.5f);
+            if (piece == null) return false;
+            var sm = StructureManager.Instance;
+            bool metal = StructureCatalog.TierAt(piece.Tier).Name == "metal";
+            if (HasBlowtorch)
+            {
+                int healed = sm.Repair(piece, Mathf.RoundToInt(amount));
+                if (healed > 0) GD.Print($"[build] repaired {piece.Construct} +{healed}");
+                return true;
+            }
+            var c = piece.Construct;
+            int tier = piece.Tier;
+            bool broke = sm.Damage(piece, Mathf.RoundToInt(amount));
+            MeleeImpactFx(piece.Pos, false, metal ? Surf.Metal : Surf.Wood);
+            GD.Print(broke
+                ? $"[build] destroyed {StructureCatalog.TierAt(tier).Name} {c}"
+                : $"[build] hit {c} for {amount:0} ({piece.Health}/{piece.MaxHealth})");
+            return true;
+        }
+
+        /// <summary>Salvage the structure piece under the crosshair. Uses the eye ray rather than the build
+        /// ghost: the ghost sits at the slot you would BUILD into, which is next to the piece you are looking
+        /// at, so salvaging off the ghost takes down the wrong thing (or nothing).</summary>
+        void SalvageAimedStructure()
+        {
+            var piece = AimedStructure();
+            if (piece == null) return;
+            var c = piece.Construct;
+            int tier = StructureManager.Instance.Salvage(piece);
+            if (tier >= 0) GD.Print($"[build] salvaged {StructureCatalog.TierAt(tier).Name} {c}");
+        }
         string _gunName = "eaglefire";   // gun folder name (eaglefire | maplestrike), derived from the .dat path
         float _pitchDeg;
         float _scopeSwayT, _swayAppliedP, _swayAppliedY;   // scope sway: phase clock + what it has already folded into the aim
@@ -261,6 +367,15 @@ namespace UnturnedGodot
         LampLight _focusLamp;         // the standing/desk lamp being LOOKED AT -> F toggles it on/off
         SDG.Unturned.Item _heldFuelItem;  // a gas can equipped in hand -> RMB a powered pump to fill it (master's fluids)
         SDG.Unturned.Item _heldFluidItem; // a fluid CONTAINER (water bottle / soda / cola / canteen) in hand -> RMB a tank to fill it, LMB to sip clean water (strawberry)
+        // Fishing (UseableFisher port): a rod in hand -> hold LMB to charge the cast gauge, release to fling the
+        // bobber into water, a fish bites, press LMB in the window to land it. _fishing owns the state/timing sim.
+        FishingSim _fishing;
+        SDG.Unturned.Item _heldFisherItem;
+        Node3D _bobber;               // the floating bobber node while a line is deployed
+        Vector3 _bobberVel;           // simple projectile integration until it hits the water surface
+        MeshInstance3D _fishLine;     // rod-tip -> bobber line (ImmediateMesh, redrawn per frame)
+        float _fishTockAccum;         // 50 Hz accumulator driving the strength-gauge Tock at a framerate-independent rate
+        public bool HoldingFisher => _fishing != null;
         Deployable _fHeldDeploy;      // the deployable F is being HELD on (hold-F = pick it up; a quick tap = toggle, on release)
         float _deployPickupTimer;     // seconds F has been held on _fHeldDeploy
         const float DeployPickupTime = 1.0f;    // hold F this long over a deployable to pick it back up (wires disconnect)
@@ -1588,13 +1703,73 @@ namespace UnturnedGodot
         public void Dequip() => EquipUnarmed();
 
         // Unarmed = bare fists: arms in the melee ready hold, LMB weak / RMB strong punch, no weapon mesh.
+        /// <summary>Is anything actually in hand? Fists are the unarmed state, not an item -- so this is false
+        /// when unarmed, which is what makes "press an empty slot to put it away" a no-op rather than a
+        /// pointless viewmodel rebuild every keypress.</summary>
+        // Which holster page the held item came out of, or -1. Needed because "the held item left its slot" and
+        // "a bag-bound consumable is no longer in the bag" are different events with different right answers --
+        // without this, eating the last of a stack would also yank an unrelated weapon out of your hands.
+        int _heldSlotPage = -1;
+
+        public bool HasSomethingHeld => _heldItem != null || Gun != null || _heldConsumable != null
+                                     || _heldFuelItem != null || _heldFluidItem != null || _deployable != null
+                                     || (_heldMeleeName != null && _heldMeleeName != "fists");
+
+        /// <summary>Record that what is now in hand came out of holster page `page` (-1 = not a holster). The
+        /// inventory UI's equip path holsters an item and equips it in one gesture, so it has to say where it
+        /// put it, or "take it out of the slot and it leaves your hands" would not fire for that route.</summary>
+        public void NoteHeldFromSlot(int page) => _heldSlotPage = page;
+
+        // WHERE the held item lives in the grid. Recorded so the held reference can be re-bound after an owner
+        // echo -- see RebindHeldRefs, which is the fix for the held item going dangling. -1 page = not from the
+        // grid (a world pickup held before it lands, fists, a tool).
+        int _heldPage = -1; byte _heldX, _heldY;
+        public void NoteHeldFrom(int page, byte x, byte y)
+        {
+            _heldPage = page; _heldX = x; _heldY = y;
+            _heldSlotPage = page >= 0 && page < PlayerInventory.SLOTS ? page : -1;
+        }
+
+        /// <summary>Re-point the held-item references at the objects that are actually in the grid now.
+        ///
+        /// InventoryReplication.ReadSnapshot allocates a FRESH Item per jar on every snapshot and
+        /// AdoptReplicatedInventory re-seats those into the shell's pages, but _heldItem was only ever assigned at
+        /// equip time -- so one echo left it pointing at an object no longer in any page. Everything that writes
+        /// gun state (SaveGunState is the sole writer of ammo/chamber/firemode/mag/attachments) then wrote into a
+        /// dead object, and everything that compares identity silently disagreed:
+        ///   - fire 25 of 30, holster, re-equip -> RestoreGunState reads gunAmmo -1 off the grid's object and
+        ///     returns early, so LoadGun's defaults stand and the magazine is FULL again;
+        ///   - IsHeld is a ReferenceEquals, so the gun in your hands offered "Equip" instead of "Dequip" and
+        ///     DropSelected's wasHeld never fired -- dropping it left the viewmodel up.
+        /// Re-binding by ADDRESS rather than by scanning for the id: two identical rifles are two different items,
+        /// and picking the wrong one would be a quieter bug than the one being fixed. If the address no longer
+        /// holds the same id the item genuinely moved or went away, and we leave the reference alone rather than
+        /// guessing. Review 2026-08-16.</summary>
+        void RebindHeldRefs()
+        {
+            if (_heldItem == null || _heldPage < 0 || Inventory == null) return;
+            if (_heldPage >= Inventory.items.Length) return;
+            var pg = Inventory.items[_heldPage];
+            byte idx = pg?.getIndex(_heldX, _heldY) ?? byte.MaxValue;
+            var live = idx == byte.MaxValue ? null : pg.getItem(idx)?.item;
+            if (live == null || live.id != _heldItem.id || ReferenceEquals(live, _heldItem)) return;
+            bool wasFuel = ReferenceEquals(_heldFuelItem, _heldItem), wasFluid = ReferenceEquals(_heldFluidItem, _heldItem);
+            _heldItem = live;
+            if (wasFuel) _heldFuelItem = live;
+            if (wasFluid) _heldFluidItem = live;
+            // Stamp the state the CLIENT owns onto the newly adopted object straight away. The server never learns
+            // gunAmmo (no command carries it), so the fresh object arrives with the -1 default; without this the
+            // rebind would swap a stale-but-populated object for a live-but-blank one and lose the magazine.
+            SaveGunState();
+        }
+
         public void EquipUnarmed()
         {
             SaveGunState(); ClearDeployable();
             _heldItem = null; Gun = null; _heldConsumable = null; _heldFuelItem = null; _heldFluidItem = null; _heldConsumableMesh = null;
             _reloading = false; _reloadTimer = 0; _hammerActive = false; _hammerPending = false;
             _needsRechamber = false; _rechambering = false; _shotCountForRechamber = 0;
-            _torchAnimOn = false; _pendingMeleeHit = -1f;
+            _torchAnimOn = false; _pendingMeleeHit = -1f; _heldSlotPage = -1; _heldPage = -1;   // holding nothing -> no grid address to rebind to
             _melee = MeleeDef.Fists; _heldMeleeName = "fists";   // fists ARE a melee -> the existing LMB/RMB swing path punches
             _viewmodel?.QueueFree();
             _viewmodel = new Viewmodel { Fists = true };
@@ -1617,7 +1792,10 @@ namespace UnturnedGodot
             if (Inventory == null || page >= Inventory.items.Length) return;
             var pg = Inventory.items[page];
             byte idx = pg.getIndex(x, y);
-            if (idx == byte.MaxValue) return;                          // empty slot -> nothing to equip
+            // PRESSING AN EMPTY SLOT PUTS WHAT YOU ARE HOLDING AWAY (strawberry 2026-08-16: "if you are holding
+            // an item, and you press a number key for an empty slot, de-equip that way too"). It used to return
+            // silently, so an empty key was a no-op you could press forever.
+            if (idx == byte.MaxValue) { if (HasSomethingHeld) EquipUnarmed(); return; }
             var j = pg.getItem(idx);
             // Pressing the key for what is ALREADY in hand PUTS IT AWAY (strawberry: "switching to the same slot you
             // currently have equipped will put away that item, leaving u unarmed"). Same toggle the inventory's
@@ -1625,7 +1803,19 @@ namespace UnturnedGodot
             // rather than inside EquipItemAsset so a genuine re-equip from elsewhere (revert-after-consumable) is
             // unaffected -- this is specifically the key-press-the-same-slot gesture.
             if (IsHeld(j.GetAsset(), j.item)) { EquipUnarmed(); return; }
-            EquipItemAsset(j.GetAsset(), j.item);
+            // A HOLSTER ITEM ONLY REACHES YOUR HANDS FROM ITS SLOT (strawberry: "guns can only be sent to the
+            // hands if they are in the 1/2 slots"). The .dat's Slot key decides: a rifle is PRIMARY, a sidearm
+            // SECONDARY, and neither can be equipped straight out of a bag page -- so a 3-9 bind on a backpack
+            // cell stops acting as a third weapon slot. Everything else is NONE and unaffected, which is what
+            // "binding items 3-9 still works for the equip path of all non-guns" means.
+            var asset = j.GetAsset();
+            if (page >= PlayerInventory.SLOTS && asset != null && !asset.slot.CanEquipFromBag())
+            {
+                HUD.Alert("Holster it first");
+                return;
+            }
+            NoteHeldFrom(page, x, y);   // records the slot page AND the cell, so the held ref survives an echo
+            EquipItemAsset(asset, j.item);
         }
 
         // Dispatch-equip an item into the hand by its asset type (gun / melee / consumable). True if it equipped.
@@ -1641,6 +1831,7 @@ namespace UnturnedGodot
             var tool = ToolDef.ById(asset.id);
             if (tool != null) { EquipTool(tool, backing); return true; }   // Wire (65) / Rope (64) / future tools = data-driven (was hard-coded ids)
             if (asset.IsFuelContainer) { EquipHeldFuelCan(asset, backing); return true; }   // a gas can -> hold it, RMB a powered pump to fill it
+            if (asset.type == EItemType.FISHER) { EquipHeldFisher(asset, backing); return true; }   // a fishing rod -> hold it, LMB casts (UseableFisher)
             return false;
         }
 
@@ -1660,6 +1851,185 @@ namespace UnturnedGodot
             RelinkViewmodelLighting();
             GD.Print($"[fuel] holding {asset?.itemName} -- {FluidDef.Litres(backing != null ? Mathf.Max(0f, backing.fuelLevel) : 0f)}/{FluidDef.Litres(asset?.fuelCapacity ?? 0f)} (RMB a powered pump to fill)");
         }
+
+        // Equip a fishing rod into the hand (UseableFisher). The rod mesh isn't ripped yet -> EmptyHands hold (the
+        // mechanic + the bobber are what matter). _fishing is a fresh sim configured from the rod + the PEI table +
+        // the caster's FISHING skill; LMB drives it (press to charge/cast/catch, release to fling).
+        public void EquipHeldFisher(ItemAsset asset, SDG.Unturned.Item backing)
+        {
+            SaveGunState(); ClearDeployable();   // ClearDeployable tears down any prior rod/line before we set up the new one
+            _heldItem = null; Gun = null; _melee = null; _heldMeleeName = null; _heldConsumable = null; _heldConsumableMesh = null; _heldFuelItem = null;
+            _reloading = false; _reloadTimer = 0; _hammerActive = false; _hammerPending = false;
+            _needsRechamber = false; _rechambering = false; _shotCountForRechamber = 0;
+            _heldFisherItem = backing;
+            _fishing = new FishingSim((int)(Time.GetTicksMsec() & 0x7fffffff));
+            FishingContent.ConfigureForPei(_fishing, Skills.Level(EPlayerSupport.FISHING));
+            _fishTockAccum = 0f;
+            _viewmodel?.QueueFree();
+            _viewmodel = new Viewmodel { EmptyHands = true };   // no rod mesh yet -> bare arms in the ready hold
+            AddChild(_viewmodel);
+            RelinkViewmodelLighting();
+            GD.Print($"[fishing] holding {asset?.itemName} -- hold LMB to charge the cast, release to fling, LMB again on the bite to reel it in");
+        }
+
+        // Tear down the rod + any deployed line/bobber. Called by every other equip path (so switching items ends the cast)
+        // and on dequip. Safe to call when not fishing.
+        void ClearFisher()
+        {
+            _fishing = null;
+            _heldFisherItem = null;
+            _fishTockAccum = 0f;
+            if (_bobber != null && IsInstanceValid(_bobber)) _bobber.QueueFree();
+            _bobber = null;
+            if (_fishLine != null && IsInstanceValid(_fishLine)) _fishLine.QueueFree();
+            _fishLine = null;
+        }
+
+        // LMB with a rod out (UseableFisher.startPrimary): in Idle it starts the strength gauge; while a line's out
+        // it attempts the catch -- a press inside the bite window lands the fish, otherwise it reels the line in empty.
+        void FisherPrimary()
+        {
+            if (_fishing == null) return;
+            var caught = _fishing.Press();
+            if (caught.Success) GrantFish(caught);
+        }
+
+        // LMB released (UseableFisher.stopPrimary): lock in the charged strength and cast -- TickFishing spawns the bobber.
+        void FisherRelease() => _fishing?.Release();
+
+        // The rod's actual reward: the caught fish into the bag + fishing XP (UseableFisher.GrantRewards). A fish whose
+        // id isn't registered in the catalog just no-ops the add (still pays XP), so a partial table can't crash a catch.
+        void GrantFish(in FishingCatch caught)
+        {
+            var asset = SDG.Unturned.Assets.find(caught.ItemId);
+            bool added = asset != null && Inventory != null && Inventory.tryAddItem(new SDG.Unturned.Item(caught.ItemId));
+            Skills.AwardExperience((uint)caught.Experience);
+            _invUI?.Refresh();
+            GD.Print($"[fishing] caught {(asset?.itemName ?? $"#{caught.ItemId}")}{(added ? "" : " (no bag room)")} +{caught.Experience} fishing xp");
+        }
+
+        // Per-frame fishing update (UseableFisher.tock + simulate + UpdateBobber). Charges the gauge at a steady 50 Hz,
+        // runs the server bite timer, flies the bobber until it hits water, and redraws the line. NetAvatar-safe (guarded
+        // by HoldingFisher, which only the local owner sets).
+        void TickFishing(float dt)
+        {
+            if (_fishing == null) return;
+
+            // 50 Hz strength-gauge tock (framerate-independent), so the cast bar sweeps at the retail rate; the
+            // catch-challenge minigame also steps here (UseableFisher.tock drives both)
+            _fishTockAccum += dt;
+            while (_fishTockAccum >= 0.02f) { _fishing.Tock(); _fishTockAccum -= 0.02f; }
+
+            _fishing.Simulate(dt);
+
+            if (_fishing.TryTakePendingCatch(out var challengeCatch)) GrantFish(challengeCatch);   // won the tracking minigame
+
+            // cast just released -> fling the bobber out along the aim, scaled by the charged strength (retail
+            // AddForce Lerp(500,1000,strength); here a launch speed the sim's projectile step integrates)
+            if (_fishing.State == EFishingState.Casting && _bobber == null)
+                SpawnBobber();
+
+            if (_bobber != null && IsInstanceValid(_bobber))
+            {
+                if (_fishing.State == EFishingState.Casting)
+                {
+                    _bobberVel.Y -= 20f * dt;                                   // gravity until it splashes down
+                    _bobber.GlobalPosition += _bobberVel * dt;
+                    if (Terrain.HasWater && _bobber.GlobalPosition.Y <= Terrain.SeaLevelY)
+                    {
+                        if (BobberOverFishableWater(_bobber.GlobalPosition))
+                        {
+                            var p = _bobber.GlobalPosition; p.Y = Terrain.SeaLevelY; _bobber.GlobalPosition = p;   // snap to the surface
+                            _bobberVel = Vector3.Zero;
+                            _fishing.ConfirmBobberInWater();
+                        }
+                        else ClearFisher();   // splashed onto dry land / too-shallow water -> no cast (retail GetFishingVolume + minimumDepth)
+                    }
+                    else if (_bobber.GlobalPosition.Y < Terrain.SeaLevelY - 60f)
+                        ClearFisher();   // fell into a dry gap / off-map -> abandon the cast
+                }
+                else if (_fishing.State == EFishingState.LineDeployed)
+                {
+                    // gentle bob on the surface; tug down while the fish is on the line (UpdateBobber)
+                    var p = _bobber.GlobalPosition;
+                    p.Y = Terrain.SeaLevelY + (_fishing.IsBiteWindowOpen ? -0.35f : Mathf.Sin(Time.GetTicksMsec() / 250f) * 0.06f);
+                    _bobber.GlobalPosition = p;
+                }
+                else if (_fishing.State == EFishingState.CatchChallenge)
+                {
+                    // fish is fighting on the line -> the bobber stays yanked under the surface
+                    var p = _bobber.GlobalPosition; p.Y = Terrain.SeaLevelY - 0.5f; _bobber.GlobalPosition = p;
+                }
+                UpdateFishLine();
+            }
+
+            // reeled back to Idle (caught or empty) -> pull the bobber + line
+            if (_fishing.State == EFishingState.Idle && _bobber != null)
+            {
+                if (IsInstanceValid(_bobber)) _bobber.QueueFree();
+                _bobber = null;
+                if (_fishLine != null && IsInstanceValid(_fishLine)) { _fishLine.QueueFree(); _fishLine = null; }
+            }
+        }
+
+        // Retail UseableFisher gates a cast on the bobber landing in an actual fishing WaterVolume AND >= minimumDepth(4m)
+        // below the surface. The port has one global ocean plane, so "is there water here" = the terrain floor under the
+        // bobber sits at least MinFishDepth below sea level. Without this you could fish on dry land (the flat Y-plane is
+        // true everywhere below 25.6). Null terrain (test/fallback world) -> trust the plane so headless casts still land.
+        bool BobberOverFishableWater(Vector3 pos)
+        {
+            var t = Terrain.Active;
+            if (t == null) return true;
+            return t.SampleHeight(pos.X, pos.Z) <= Terrain.SeaLevelY - Terrain.MinFishDepth;
+        }
+
+        void SpawnBobber()
+        {
+            Vector3 from = _cam != null ? _cam.GlobalPosition : GlobalPosition + Vector3.Up * 1.75f;
+            Vector3 fwd = _cam != null ? -_cam.GlobalTransform.Basis.Z : -GlobalTransform.Basis.Z;
+            _bobber = new MeshInstance3D
+            {
+                Mesh = new SphereMesh { Radius = 0.08f, Height = 0.16f },
+                MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.9f, 0.2f, 0.15f) },
+            };
+            GetTree().Root.AddChild(_bobber);
+            _bobber.GlobalPosition = from + fwd * 0.6f;
+            float speed = Mathf.Lerp(12f, 26f, _fishing.StrengthMultiplier);   // charged strength -> cast distance
+            _bobberVel = fwd * speed + Vector3.Up * 3f;                        // a little arc
+        }
+
+        void UpdateFishLine()
+        {
+            if (_bobber == null || !IsInstanceValid(_bobber)) return;
+            if (_fishLine == null || !IsInstanceValid(_fishLine))
+            {
+                _fishLine = new MeshInstance3D { Mesh = new ImmediateMesh(),
+                    MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.85f, 0.85f, 0.8f), ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded } };
+                GetTree().Root.AddChild(_fishLine);
+            }
+            // rod tip ~ from the hand/camera; good enough without the rod mesh (bobber end is the real signal)
+            Vector3 tip = _cam != null ? _cam.GlobalPosition + (-_cam.GlobalTransform.Basis.Z) * 0.5f + _cam.GlobalTransform.Basis.X * 0.25f - _cam.GlobalTransform.Basis.Y * 0.2f
+                                       : GlobalPosition + Vector3.Up * 1.4f;
+            var im = (ImmediateMesh)_fishLine.Mesh;
+            im.ClearSurfaces();
+            im.SurfaceBegin(Mesh.PrimitiveType.Lines);
+            im.SurfaceAddVertex(tip);
+            im.SurfaceAddVertex(_bobber.GlobalPosition);
+            im.SurfaceEnd();
+        }
+
+        // --- test seams (headless GameTest can't drive the mouse) ---
+        internal void EquipFisherForTest(ushort rodId, int seed)
+        {
+            _fishing = new FishingSim(seed);
+            FishingContent.ConfigureForPei(_fishing, Skills != null ? Skills.Level(EPlayerSupport.FISHING) : (byte)0);
+            _heldFisherItem = new SDG.Unturned.Item(rodId);
+            _fishTockAccum = 0f;
+        }
+        internal FishingSim FisherSimForTest => _fishing;
+        internal void FisherPrimaryForTest() => FisherPrimary();
+        internal void FisherReleaseForTest() => FisherRelease();
+        internal void TickFishingForTest(float dt) => TickFishing(dt);
 
         // RMB with a gas can in hand + looking at a POWERED pump: fill the can as much as possible = min(its free space,
         // the pump's remaining fuel). One click (master). Nothing happens if the pump's unpowered/empty or the can's full.
@@ -1876,9 +2246,14 @@ namespace UnturnedGodot
         public bool HoldingDetonatorTool => _viewmodel != null && _viewmodel.IsDetonatorViewmodel;   // Detonator (item 1240) in hand -> LMB fires all placed remote Charges; derived from the viewmodel (auto-clears on re-equip)
         DeployableDef _deployable;      // held deployable (null = none)
         SDG.Unturned.Item _deployItem;  // the backing inventory item (null = console `deploy`, i.e. infinite/no consume)
-        DeployablePlacer _placer;       // the world-space ghost preview
+        BarricadePlacer _placer;        // the world-space ghost preview. BarricadePlacer is an API superset of the old
+                                        // DeployablePlacer and behaves identically for Floor-mount defs, but also
+                                        // accepts the WALL and CEILING faces the ground placer rejected outright.
         float _placeTimer;              // >0 while the brief place gesture runs; the object drops at 0
         Vector3 _placePoint; float _placeYaw;   // target FROZEN at click -> the object drops there even if you look away
+        Vector3 _placeNormal = Vector3.Up;      // the surface normal frozen with them: a wall barricade's whole orientation
+                                                // hangs off it, and re-deriving it at drop time would read the surface the
+                                                // player is looking at THEN, not the one they clicked
         const float PlaceTime = 0.45f;  // src UseableBarricade builds over the Use-clip length; a short stand-in here
         public bool HoldingDeployable => _deployable != null;
 
@@ -1982,6 +2357,7 @@ namespace UnturnedGodot
         {
             if (def == null) return;
             SaveGunState();
+            ClearFisher();   // this equip path sets _deployable directly (doesn't go through ClearDeployable) -> reel in the rod here
             if (_deployable == null) _revertEquip = CaptureHeldForRevert();   // fresh switch INTO a deployable -> remember what to fall back to when the last one is placed
             _heldItem = null; Gun = null; _melee = null; _heldMeleeName = null; _heldConsumable = null; _heldFuelItem = null; _heldFluidItem = null; _heldConsumableMesh = null;
             _reloading = false; _torchAnimOn = false;
@@ -1993,9 +2369,13 @@ namespace UnturnedGodot
             AddChild(_viewmodel);
             RelinkViewmodelLighting();
             _placer?.QueueFree();
-            _placer = new DeployablePlacer();
+            _placer = new BarricadePlacer();
             GetParent().AddChild(_placer);      // world space: the ghost stays put in the world, not glued to the player
-            _placer.SetDef(def);
+            // Structures get a say in where a barricade may mount. Via the shared hook, NOT CanAttach directly:
+            // CanAttach answers "is there a structure face here" and returns false on open terrain, which would
+            // make every generator and crate unplaceable on the ground.
+            _placer.CanAttach = StructureManager.BarricadeAttachHook;
+            _placer.SetDef(def);            // carries the def's own mount family (Floor / Wall / Sticky)
             GD.Print($"[deploy] holding {def.Name} -- aim, LMB to place");
         }
 
@@ -2044,6 +2424,7 @@ namespace UnturnedGodot
         // Put the held deployable away (called whenever another item is equipped).
         void ClearDeployable()
         {
+            ClearFisher();   // every equip-into-hand path funnels through here -> a switch away from the rod also reels in the line
             if (_deployable == null && _placer == null) return;
             _deployable = null; _deployItem = null; _placeTimer = 0f;
             _placer?.QueueFree(); _placer = null;
@@ -2055,7 +2436,7 @@ namespace UnturnedGodot
         {
             if (_placer == null || _deployable == null || _placeTimer > 0f || _dead) return;
             if (!_placer.Aim(_cam)) return;   // only from a VALID (blue) spot
-            _placePoint = _placer.Point; _placeYaw = _placer.Yaw;   // FROZEN at click (strawberry: don't drift with the mouse)
+            _placePoint = _placer.Point; _placeYaw = _placer.Yaw; _placeNormal = _placer.Normal;   // FROZEN at click (strawberry: don't drift with the mouse)
             _viewmodel?.PlayDeployUse();   // arms play the src "Use" place motion; the object drops when it finishes
             float useLen = _viewmodel?.DeployUseLength() ?? 0f;
             _placeTimer = useLen > 0f ? useLen : PlaceTime;   // build over the Use-clip length (src useTime), else the short stand-in
@@ -2068,7 +2449,7 @@ namespace UnturnedGodot
             if (_deployable == null || _placer == null) return;
             if (_placeTimer > 0f)   // FROZEN: ghost stays at the click point, aim is ignored until the object drops
             {
-                _placer.Freeze(_placePoint, _placeYaw);
+                _placer.Freeze(_placePoint, _placeNormal, _placeYaw);   // normal too: a wall ghost frozen with an assumed up-normal snaps flat mid-gesture
                 _placeTimer -= dt;
                 if (_placeTimer <= 0f)
                 {
@@ -2142,7 +2523,13 @@ namespace UnturnedGodot
                         _viewmodel?.PlayDeployHold();
                         return;
                     }
-                    Deployable.Spawn(GetParent(), _deployable, _placePoint, _placeYaw, _deployItem);   // backing item restores a picked-up generator's fuel + HP
+                    // A non-Floor def is a SURFACE barricade: it has to be re-seated against the frozen normal, and
+                    // Deployable.Spawn only knows how to stand things up on the ground. Floor defs (every existing
+                    // deployable -- generators, crates, charges) take the original path unchanged.
+                    if (_deployable.Mount != BarricadeMount.Floor)
+                        Barricade.PlaceOnSurface(GetParent(), _deployable, _placePoint, _placeNormal, _placeYaw, backing: _deployItem);
+                    else
+                        Deployable.Spawn(GetParent(), _deployable, _placePoint, _placeYaw, _deployItem);   // backing item restores a picked-up generator's fuel + HP
                     PlayPlaceSound(_deployable.PlaceSound, _placePoint);   // src: playSound(barricadeAsset.use) on build -- the .dat PlacementAudioClip
                     GD.Print($"[deploy] placed {_deployable.Name} at {_placePoint}");
                     // consume one from the bag (like a placed barricade). Console `deploy` has no backing item -> infinite.
@@ -2398,6 +2785,13 @@ namespace UnturnedGodot
                 return;
             }
 
+            // Structures take melee too, or a placed base carries Health that nothing in the game can ever
+            // reduce -- the same gap doors and beds had before their block above was added, where the tests
+            // exercised TakeDamage directly and proved only that the method worked. Vulnerability is the
+            // catalog's (retail's isVulnerable): metal shrugs off a hatchet, which is why the tier ladder is
+            // worth climbing.
+            if (MeleeStructure((_melee?.VehicleDamage ?? 10f) * mult, range)) return;
+
             float dmg = (_melee?.ZombieDamage ?? 45f) * mult * Skills.OverkillMeleeMultiplier();   // weapon .dat Zombie_Damage x OVERKILL skill
             Vector3 origin = GlobalPosition + Vector3.Up * 1.2f, fwd = -_cam.GlobalTransform.Basis.Z;
             // The rewrite's zombies are sim ROWS, not nodes, so the group sweep below cannot see them --
@@ -2635,6 +3029,13 @@ namespace UnturnedGodot
         // Latched on the StorageOpened fact -- never on the request -- so the dashboard mirrors arbitration.
         uint _openCrateNetId;
         public bool DashboardOpen => _invUI?.IsOpen ?? false;   // L1 net tests: did the storage fact open the dashboard
+
+        /// <summary>Is any UI up that wants the cursor? Asked before ANYTHING recaptures the mouse, because
+        /// recapturing under an open panel is worse than leaving it free: every polled input in here gates on
+        /// `MouseMode == Captured`, so the player starts walking and auto-firing while staring at a dashboard
+        /// they can no longer click. Review 2026-08-16.</summary>
+        public bool AnyBlockingUiOpen
+            => (_invUI?.IsOpen ?? false) || (_skillsUI?.IsOpen ?? false) || (AmmoRadial?.IsOpen ?? false);
         public void DebugCloseCrate() => CloseCrate();          // L1 net tests: the ESC/Tab crate-close path without an InputEvent
 
         /// <summary>StorageOpened landed (server-validated): latch the crate + open the dashboard. The
@@ -2659,6 +3060,13 @@ namespace UnturnedGodot
                 var j = from.getItem(i);
                 to.addItem(j.x, j.y, j.rot, j.item);
             }
+            // ANNOUNCE THE REBUILD, once, at the end -- when the page has its FINAL contents. clear() is silent by
+            // design (a mid-rebuild "this page is empty" would de-equip the player's gun on every echo) and addItem
+            // only fires when there is something to add, so a page the SERVER emptied raised no event whatsoever.
+            // That is what made the de-equip-on-slot-emptied rule dead in the shipped game while its direct-path
+            // test passed: the game empties slots through here, and the test called removeItem in-process.
+            // Raising it unconditionally also covers the re-add case, where it is a harmless idempotent repaint.
+            to.raiseStateUpdated();
         }
 
         /// <summary>MP (wired only by ClientWorldSession): copy the replicated owner-block grid INTO the
@@ -2680,6 +3088,7 @@ namespace UnturnedGodot
                 var from = replica.items[p];
                 CopyPage(from, Inventory.items[p], from.width, from.height);
             }
+            RebindHeldRefs();   // the jars are all new objects now -- re-point what the player is holding at them
         }
         /// <summary>MP (called only by ClientWorldSession, each tick): mirror the replicated owner skills
         /// block into the shell's local PlayerSkills -- the AdoptReplicatedInventory analogue. The skill
@@ -2922,7 +3331,11 @@ namespace UnturnedGodot
         public System.Action<byte, byte, byte, byte, byte, byte, byte> NetMoveItem;   // (page0,x0,y0, page1,x1,y1, rot1) -> Client.SendMoveItem
         public System.Action<byte, byte, byte, byte> NetEquipItem;   // (fromPage,x,y, slot) -> Client.SendEquipItem (the holster-to-hand-slot TryDrag; the viewmodel equip stays local)
         public System.Action<byte, byte, byte> NetDropItem;          // (page,x,y) -> Client.SendDropItem (server removes + tosses the world item)
+        public System.Action<byte, byte, byte, ushort> NetFitAttachment;   // (page,x,y,id) -> Client.SendFitAttachment (server spends the fitted item)
         public System.Action<byte, byte, byte> NetConsume;           // (page,x,y) -> Client.SendConsume (server deletes the item; vitals stay client-led until the vitals split)
+        public System.Action<byte, byte, byte, ushort, byte> NetReloadSwap;   // (page,x,y, spentId,spentAmount) -> Client.SendReload (server spends the fresh mag + returns the spent one)
+        public System.Action<byte, byte, byte, byte> NetWearClothing;     // (page,x,y, EItemType slot) -> Client.SendWearClothing (server does the whole swap)
+        public System.Action<byte> NetUnwearClothing;                     // (EItemType slot) -> Client.SendUnwearClothing
         public System.Action<ushort> NetCraft;                       // blueprintIndex (BlueprintRegistry.All order, content-hash-matched) -> Client.SendCraft
         public System.Action<ushort, Vector3, float> NetPlaceDeployable;   // (defId,pos,yaw) -> Client.SendPlaceDeployable (server spends the item + broadcasts; the replica view renders it)
         public System.Action<uint> NetSalvageDeployable;             // -> Client.SendSalvageDeployable (removal echoes back through the replica view)
@@ -3029,6 +3442,54 @@ namespace UnturnedGodot
 
         /// <summary>MP grid move (InventoryUI drag-drop): the server's TryDrag is the validator+applier;
         /// the owner-block echo repaints the bag.</summary>
+        /// <summary>Ask the SERVER to spend the exact item object `want`, by locating its grid cell and routing a
+        /// consume. Returns false if we are not on the wire (pure SP with no server) or the item is not in the bag.
+        ///
+        /// Exists because the bag is SERVER-OWNED on every path that matters -- singleplayer runs through the
+        /// loopback server -- so a local removal the server never hears about is undone by the next owner echo,
+        /// handing the item back. That is the attachment/magazine dupe.</summary>
+        /// <summary>Ask the SERVER to spend `want` because it was just fitted to a gun. Distinct from a consume:
+        /// the server's consume handler refuses anything inedible and applies food/health effects.</summary>
+        public bool RequestFitAttachment(SDG.Unturned.Item want)
+        {
+            if (NetFitAttachment == null || want == null || Inventory == null) return false;
+            for (byte b = 0; b < (byte)(PlayerInventory.PAGES - 2); b++)
+            {
+                var pg = Inventory.items[b];
+                if (pg == null) continue;
+                for (byte i = 0; i < pg.getItemCount(); i++)
+                {
+                    var jar = pg.getItem(i);
+                    if (!ReferenceEquals(jar?.item, want)) continue;
+                    NetFitAttachment(b, jar.x, jar.y, jar.item.id);
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        public bool RequestConsumeInstance(SDG.Unturned.Item want)
+        {
+            if (NetConsume == null || want == null || Inventory == null) return false;
+            for (byte b = 0; b < (byte)(PlayerInventory.PAGES - 2); b++)
+            {
+                var pg = Inventory.items[b];
+                if (pg == null) continue;
+                for (byte i = 0; i < pg.getItemCount(); i++)
+                {
+                    var jar = pg.getItem(i);
+                    if (!ReferenceEquals(jar?.item, want)) continue;
+                    NetConsume(b, jar.x, jar.y);
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        /// <summary>Is this player's inventory server-owned (MP or the SP loopback)? Then local mutations must be
+        /// routed as intents, because the owner echo overwrites anything the server did not do itself.</summary>
+        public bool InventoryIsServerOwned => NetConsume != null;   // the wire seams are wired together; consume is the sentinel
+
         public bool RequestMoveItem(byte page0, byte x0, byte y0, byte page1, byte x1, byte y1, byte rot1)
         {
             if (NetMoveItem == null) return false;
@@ -3327,10 +3788,22 @@ namespace UnturnedGodot
             var (fb, fi, fresh) = found.Value;
             int oldAmmo = Ammo;
             bool chambered = HasChamber && oldAmmo > 0;                                   // a round rides in the chamber through a TACTICAL swap
-            Inventory.items[fb].removeItem(fi);                                          // take the fresh mag out of the bag
             int loaded = System.Math.Min(fresh.amount, CapForMag(SDG.Unturned.Assets.find(fresh.id)));    // rounds off the fresh mag (the drum overrides Ammo_Max; a normal mag is capped by it)
+            byte returned = (byte)System.Math.Max(0, oldAmmo - (chambered ? 1 : 0));      // the outgoing mag MINUS the chambered round (it stayed in the gun)
+            // SERVER-OWNED BAG: the swap is an INTENT. This whole block used to be a local removeItem +
+            // tryAddItem, which the server never heard about -- so the next owner echo put the spare magazine
+            // back at FULL and destroyed the partially-spent one that had been returned. One spare reloaded
+            // forever. The client still moves its own Ammo (that is gun state, which no snapshot carries); only
+            // the GRID edit goes to the server, and the echo brings the real bag back. Review 2026-08-16.
+            var freshJar = Inventory.items[fb].getItem(fi);
+            if (InventoryIsServerOwned && NetReloadSwap != null)
+                NetReloadSwap(fb, freshJar.x, freshJar.y, (ushort)System.Math.Max(0, _loadedMagId), returned);
+            else
+            {
+                Inventory.items[fb].removeItem(fi);                                      // take the fresh mag out of the bag
+                Inventory?.tryAddItem(new Item((ushort)_loadedMagId, returned));         // old mag back
+            }
             Ammo = loaded + (chambered ? 1 : 0);                                         // +1: the already-chambered round stays on top of the fresh mag
-            Inventory?.tryAddItem(new Item((ushort)_loadedMagId, (byte)System.Math.Max(0, oldAmmo - (chambered ? 1 : 0))));   // old mag back MINUS the chambered round (it stayed in the gun)
             _loadedMagId = fresh.id;
             // chamber type is independent of the mag (master): a tactical swap keeps the chambered round's type; a
             // reload from EMPTY chambers a fresh round from the new mag -> takes its type. (_chambered is set by the caller.)
@@ -3706,6 +4179,7 @@ namespace UnturnedGodot
             _deathTimer = 3.5;
             _burstLeft = 0;   // death cancels any in-progress burst (no resume after respawn)
             if (_wiring) CancelWire();   // death drops any in-progress wire (no stale preview / death-cam nodes)
+            ClearFisher();               // death reels in any deployed line (no stale bobber/line surviving into respawn)
             EjectFromVehicleOnDeath();   // review #3: detach before the corpse/respawn setup, else the dead driver wedges
             Velocity = Vector3.Zero;
 
@@ -3735,11 +4209,42 @@ namespace UnturnedGodot
         // (wedged). We restore the body state EnterVehicle disabled -- collision, Visible, HUD, and Park the car --
         // because Respawn() does NOT re-enable those, so the post-respawn shell would otherwise be invisible +
         // non-colliding. Cam + viewmodel are left to Die() (death-cam). Idempotent: no-op when on foot.
+        /// <summary>Lift a vehicle-exit spot out of the ground it may have landed in.
+        ///
+        /// The raw spot is "2.4 m off the driver's side, 1 m up", which lands INSIDE the hill whenever the vehicle
+        /// is parked across a slope with the rise on that side -- and the same block re-enables the player's
+        /// collision shapes, so the body comes back interpenetrating. Both MP exit paths already clamp
+        /// (ClientWorldSession samples the terrain, and the server has AdjustExitSpot); the two SP paths used the
+        /// raw spot. Review 2026-08-16.
+        ///
+        /// Swept with a ray rather than a terrain height sample -- PlayerController has no Terrain reference, and
+        /// a ray also catches the floor you are standing on inside a building, which a heightmap lookup cannot.</summary>
+        Vector3 ClampExitSpot(Vector3 spot)
+        {
+            var space = GetWorld3D()?.DirectSpaceState;
+            if (space == null) return spot;
+            var q = PhysicsRayQueryParameters3D.Create(spot + Vector3.Up * 2f, spot - Vector3.Up * 3f, (1u << 0) | (1u << 4) | (1u << 5));
+            q.Exclude = new Godot.Collections.Array<Rid> { GetRid() };
+            var hit = space.IntersectRay(q);
+            if (hit.Count == 0) return spot;
+            float groundY = hit["position"].AsVector3().Y;
+            return spot.Y < groundY + 0.1f ? new Vector3(spot.X, groundY + 0.5f, spot.Z) : spot;
+        }
+
         void EjectFromVehicleOnDeath()
         {
             if (_driving == null && _riding == null) return;
             var v = _driving; _driving = null; _riding = null;
-            if (v != null) { v.EngineOn = false; v.Park(); GlobalPosition = v.GlobalPosition + v.GlobalTransform.Basis.X * 2.4f + Vector3.Up * 1.0f; }
+            // FREE THE SEAT. OccupiedSeats was only ever released by TrySwitchSeat and ExitVehicle, so dying in a
+            // seat leaked it FOREVER: a single-seat vehicle (tractor, minicopter, skycrane, semi, tank) became
+            // silently un-enterable for the rest of its life -- EnterVehicle's scan walks off the end, hits
+            // _seatIndex >= SeatCount and returns with _driving null, no message, no prompt change. Dying in seat
+            // 0 of a multi-seat vehicle lost the DRIVER's seat, so everyone after boarded as a passenger and
+            // TrySwitchSeat(0) was refused: a jeep nobody can steer. The vehicle-explosion path never showed it
+            // because DriveVehicle calls ExitVehicle() (which frees the seat) BEFORE applying the damage.
+            // Review 2026-08-16.
+            if (v != null) { v.OccupiedSeats.Remove(_seatIndex); v.EngineOn = false; v.Park(); GlobalPosition = ClampExitSpot(v.GlobalPosition + v.GlobalTransform.Basis.X * 2.4f + Vector3.Up * 1.0f); }
+            _seatIndex = 0;
             if (Hud != null) Hud.Vehicle = null;
             foreach (var c in FindChildren("*", "CollisionShape3D", true, false))
                 if (c is CollisionShape3D cs) cs.Disabled = false;
@@ -4067,6 +4572,15 @@ namespace UnturnedGodot
             // the ported inventory + its dashboard. Demo-populate it (real items) so there's something to show.
             ItemCatalog.RegisterAll();
             Inventory = new PlayerInventory();
+            // TAKE IT OUT OF THE SLOT, IT LEAVES YOUR HANDS (strawberry 2026-08-16: "if the item in your hands
+            // was in a pri/sec slot, and you remove it from the pri/sec slot, de-equip the item from your
+            // hands"). Driven off the inventory's own change event rather than every drag/move call site, so a
+            // future path that empties a holster cannot forget to do it.
+            Inventory.onPageChanged += page =>
+            {
+                if (_heldSlotPage < 0 || page != (byte)_heldSlotPage) return;
+                if (Inventory.items[page].getItemCount() == 0) EquipUnarmed();
+            };
             PopulateDemoInventory();
             // P4: dress the 3P body off the worn slots. The demo kit already wears Cargo Pants (209) + Alicepack (253);
             // add a starter shirt + hat, then Refresh() paints/attaches every worn slot so the player isn't bare skin.
@@ -4146,7 +4660,13 @@ namespace UnturnedGodot
                 }
                 else if (_riding != null || DrivingPredicted || IsPassenger)   // FP free-look: the mouse turns the VIEW while the driver steers (real Unturned). MP ride, Part A predicted driving, or ANY passenger seat -- a passenger who cannot look around cannot use the weapon they are allowed to hold. The SP DRIVER keeps the fixed gaze over the hood.
                 {
-                    _rideLookYaw -= mm.Relative.X * MouseSensitivity;
+                    // WRAPPED to (-180, 180]. The camera consumes this through a Basis, which is periodic and so
+                    // never cared -- but AimTurret CLAMPS it against the mount's traverse limits, and an unwrapped
+                    // accumulator makes those limits meaningless: one full spin right leaves the value near -360,
+                    // the camera facing forward again and the turret pinned at -120 deg, firing 120 deg away from
+                    // the crosshair (TryTurretFire deliberately shoots along the barrel, not the look ray).
+                    // Recovering needed ~240 deg of mouse travel before the gun moved at all. Review 2026-08-16.
+                    _rideLookYaw = Mathf.Wrap(_rideLookYaw - mm.Relative.X * MouseSensitivity, -180f, 180f);
                     _rideLookPitch = Mathf.Clamp(_rideLookPitch - mm.Relative.Y * MouseSensitivity, -89f, 89f);   // same Y convention as on-foot look: mouse up -> look up
                 }
                 else if (_driving == null && _riding == null)
@@ -4170,7 +4690,13 @@ namespace UnturnedGodot
             }
             else if (@event is InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.Left })
             {
-                if (_driving != null) _driving.Honk();                 // LMB while driving: horn
+                // A GUNNER fires the mount; only the DRIVER honks. This used to be an unconditional
+                // `if (_driving != null) _driving.Honk();` with no seat check, which made FireTurret unreachable
+                // through input entirely: Fire() is called from StartFire (the on-foot else-branch below) and from
+                // the auto poll, so a Hind nose-gunner could aim the chin gun perfectly, click, and honk the
+                // helicopter. HeliPartsTests calls TryTurretFire on the Vehicle directly, so the routing was never
+                // covered. Fire() already short-circuits to FireTurret for a turret seat. Review 2026-08-16.
+                if (_driving != null) { if (_seatIndex != 0 && _driving.HasTurret(_seatIndex)) Fire(); else _driving.Honk(); }
                 else if (_riding != null) { }                          // riding a replicated vehicle: no net horn in v1
                 else if (HoldingWireTool) WireLmb();                    // wire tool: pick output / place node / complete on a consumer
                 else if (HoldingHoseTool) HoseLmb();                    // hose tool: pick a fluid port / complete on the opposite-role port
@@ -4181,9 +4707,14 @@ namespace UnturnedGodot
                 else if (HoldingConsumable) StartConsume();             // holding a food/drink: LMB eats/drinks it
                 else if (_heldFluidItem != null) TryDrinkContainer();   // holding a fluid container: LMB (aimed away from a tank) sips clean water for hydration (strawberry)
                 else if (_heldFuelItem != null) TryDepositFuel();       // holding a gas can: LMB POURS fuel into the generator/vehicle you're aimed at (master)
+                else if (HoldingFisher) FisherPrimary();                // holding a rod: LMB press starts the cast gauge / lands the fish on the bite (UseableFisher.startPrimary)
                 else if (IsRepeatedMelee) { }                          // Repeated tool (blowtorch/chainsaw): LMB is a continuous HOLD driven by the use-tick (UpdateSalvage), never a swing/punch (source UseableMelee.startPrimary: isRepeated -> startSwing)
                 else if (_melee != null) MeleeAttack(false);            // LMB with a normal melee = WEAK swing (source UseableMelee)
                 else StartFire();
+            }
+            else if (@event is InputEventMouseButton { Pressed: false, ButtonIndex: MouseButton.Left })
+            {
+                if (HoldingFisher) FisherRelease();   // LMB release with a rod: lock in the charge and fling the bobber (UseableFisher.stopPrimary)
             }
             else if (@event is InputEventMouseButton { ButtonIndex: MouseButton.Right } rmb)
             {
@@ -4214,11 +4745,18 @@ namespace UnturnedGodot
                 }
                 else if (rKey.Pressed && HasGunOut) StartReload();   // any other gun: instant reload on press (unchanged)
             }
-            else if (@event is InputEventKey { Pressed: true } hk && hk.Keycode >= Key.Key1 && hk.Keycode <= Key.Key9)
+            // Echo: false, like R and F above. The hotbar keys were the only equip input without it, so HOLDING a
+            // number key ran the equip/de-equip toggle at the OS key-repeat rate -- each pass frees the viewmodel
+            // and builds a new one, so the weapon strobed and ~30 Viewmodel nodes a second were constructed and
+            // thrown away while the key was down. Review 2026-08-16.
+            else if (@event is InputEventKey { Pressed: true, Echo: false } hk && hk.Keycode >= Key.Key1 && hk.Keycode <= Key.Key9)
                 EquipHotbar((int)hk.Keycode - (int)Key.Key0);   // hotbar keys (bag CLOSED): 1/2 = primary/secondary slot, 3-9 = bound item. Binding (RMB item + 3-9) is handled in InventoryUI while the bag's open.
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.V })
             {
-                if (_driving == null && HasGunOut) CycleFiremode();   // V on foot: cycle firemode (only with a gun out)
+                // Gated on build mode the same way C already splits crouch-vs-cycle-structure: while the build
+                // ghost is up, firemode is meaningless and the tier selector is what you want.
+                if (_build != null && _build.Active) _build.CycleTier();
+                else if (_driving == null && HasGunOut) CycleFiremode();   // V on foot: cycle firemode (only with a gun out)
             }
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.H })
                 _fp = !_fp;   // H: toggle 3rd / 1st person camera (on foot + driving)
@@ -4294,7 +4832,11 @@ namespace UnturnedGodot
             // plainly rather than leaving a dead C-cycles-structure branch reading like a live feature.
             // Restoring it is one line here, on whichever key it should have.
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.C })
-                _build?.CycleType();  // cycle the structure type (floor/wall)
+                _build?.CycleType();  // cycle the structure type (floor/wall/pillar/rampart/roof)
+            else if (@event is InputEventKey { Pressed: true, Keycode: Key.R } && (_build?.Active ?? false))
+                SalvageAimedStructure();   // R while building: take the aimed piece back down (reload is meaningless here)
+            else if (@event is InputEventKey { Pressed: true, Keycode: Key.Y } && (_build?.Active ?? false))
+                UpgradeAimedStructure();   // Y while building: wood -> brick -> metal in place
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.G })
                 MeleeAttack();        // melee swing at a zombie in reach
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.H })
@@ -4677,7 +5219,13 @@ namespace UnturnedGodot
                 float aimScale = Mathf.Lerp(1f, Gun.SpreadAim, aimA) * sharp;
                 scatH = Mathf.DegToRad(Gun.ScatterAt(_patternShot, true)) * aimScale;
                 scatV = Mathf.DegToRad(Gun.ScatterAt(_patternShot, false)) * aimScale;
-                spread = 0f;   // superseded
+                // The per-axis scatter sits ON TOP of the cone; it does not replace it. This line used to read
+                // `spread = 0f;   // superseded`, which threw away the base cone computed just above for every
+                // patterned gun -- so pattern scatter alone (0.04-0.59 deg) was the ONLY inaccuracy in the game.
+                // Eaglefire hipfire measured 3.1 cm at 25 m against retail's 124.6 cm, a 40x error on the first
+                // round; dragonfang 1.13 cm against 247 cm. Retail applies both (UseableGun.cs:5049 computes the
+                // cone unconditionally, and the pattern is added by ApplyRecoil), and 2573cde5 removed BLOOM --
+                // not the accuracy floor -- when it added learnable patterns. Review 2026-08-16.
             }   // SHARPSHOOTER tightens spread too (source UseableGun:5055)
             int pellets = UsesShells && ShellAsset != null ? Mathf.Max(1, ShellAsset.pellets) : Mathf.Max(1, Gun?.Pellets ?? 1);   // shotgun buckshot: pellets come from the LOADED shell (source ItemMagazineAsset.pellets) -- 12ga=6, 20ga=8
             float muzzleVel = Gun?.MuzzleVelocity ?? 500f;
@@ -4723,7 +5271,14 @@ namespace UnturnedGodot
                 if (m <= FalloffStart) return 1f;
                 if (m >= FalloffEnd) return FalloffMin;
                 return 1f + (FalloffMin - 1f) * ((m - FalloffStart) / (FalloffEnd - FalloffStart));
-            } public bool Cosmetic; public MeshInstance3D Tracer; public Node3D RocketVis; public Vector3 MuzzleAnchor; public bool HasAnchor; public float TracerW = TracerBaseW; }
+            } public bool Cosmetic; public MeshInstance3D Tracer; public Node3D RocketVis; public Vector3 MuzzleAnchor; public bool HasAnchor; public float TracerW = TracerBaseW;
+            // The warhead travels WITH the round, like every other per-shot property here. It used to be read off
+            // the live `Gun` at impact instead, so the blast belonged to whatever was in the player's hands when
+            // the round landed rather than to the gun that fired it: take a turret seat holding the rocket
+            // launcher and Fire() short-circuits to FireTurret BEFORE the held-weapon gates, leaving Gun as the
+            // launcher -- so every nykorev round detonated a 9 m warhead, including into the airframe the gunner
+            // is sitting in. Review 2026-08-16.
+            public float BlastRadius, BlastZombieDamage, BlastPlayerDamage, BlastVehicleDamage; }
         readonly System.Collections.Generic.List<Bullet> _bullets = new();
 
         // playerDamage is carried SEPARATELY from `damage` (which is the zombie number the SP path has always
@@ -4765,7 +5320,9 @@ namespace UnturnedGodot
         {
             var b = new Bullet { Pos = pos, Origin = pos, Vel = vel, StepsLeft = Mathf.Max(1, steps), Gravity = gravity, Damage = damage, VehicleDamage = vehicleDamage, ObjectDamage = objectDamage, PlayerDamage = playerDamage,
                                  FalloffStart = Gun?.FalloffStart ?? 0f, FalloffEnd = Gun?.FalloffEnd ?? 0f, FalloffMin = Gun?.FalloffMin ?? 1f, Cosmetic = NetFire != null, Tracer = Suppressed ? null : MakeTracer(),   // a suppressed shot draws no streak; every tracer use site is already null-guarded
-                                 TracerW = TracerBaseW * GunDef.TracerScale(Gun?.CaliberName) };   // .22 thin, .50 BMG fat; buckshot deliberately tiny (each pellet is its own bullet, so a shot draws 8 of these)
+                                 TracerW = TracerBaseW * GunDef.TracerScale(Gun?.CaliberName),   // .22 thin, .50 BMG fat; buckshot deliberately tiny (each pellet is its own bullet, so a shot draws 8 of these)
+                                 BlastRadius = Gun?.BlastRadius ?? 0f, BlastZombieDamage = Gun?.BlastZombieDamage ?? 0f,
+                                 BlastPlayerDamage = Gun?.BlastPlayerDamage ?? 0f, BlastVehicleDamage = Gun?.BlastVehicleDamage ?? 0f };
             // LOCAL first-person only: anchor the tracer's near end at the VIEWMODEL MUZZLE (screen-bridged to the world
             // via the viewmodel cam -> world cam), so it looks like it leaves the barrel; it then BENDS onto the real
             // trajectory (which fires from the EYE). Remote/3p bullets have no on-screen viewmodel muzzle, so they keep
@@ -4848,12 +5405,25 @@ namespace UnturnedGodot
                     Vector3 seg = next - b.Pos;
                     float segLen = seg.Length();
                     float wallDist = hit.Count > 0 ? b.Pos.DistanceTo(hit["position"].AsVector3()) : float.MaxValue;
-                    if (segLen > 1e-5f && zdb.ShootSegment(b.Pos, seg / segLen, segLen, wallDist, b.Damage,
+                    // DISTANCE FALLOFF, which the collider branch below has always applied and this one did not --
+                    // the same shot at 200 m dealt 11.2 or 20 depending purely on which zombie system was running.
+                    // Evaluated at the segment MIDPOINT because the real impact point only comes back out of
+                    // ShootSegment: one physics step is ~10 m of flight at rifle velocity, so the estimate is
+                    // within ~5 m of the hit on a 113-212 m ramp. That is a rounding error against the 1.78x
+                    // discrepancy it replaces. Review 2026-08-16.
+                    float segDmg = b.Damage * b.FalloffAt(b.Pos + seg * 0.5f);
+                    if (segLen > 1e-5f && zdb.ShootSegment(b.Pos, seg / segLen, segLen, wallDist, segDmg,
                                                            out Vector3 zPoint, out bool zHead, out bool zKilled))
                     {
                         SpawnFleshImpact(zPoint, b.Vel.Normalized());
                         if (zKilled) Kills++;
                         HitmarkerHUD.Instance?.Show(zHead);
+                        // A WARHEAD STILL DETONATES HERE. This branch exits before the collider block below, where
+                        // the blast used to live exclusively -- so under --newzombies a direct rocket hit on a
+                        // zombie dealt its direct damage and did not explode at all, while the same rocket hitting
+                        // the ground beside it did. Review 2026-08-16.
+                        if (b.BlastRadius > 0f)
+                            Explode(zPoint, b.BlastRadius, b.BlastZombieDamage, b.BlastPlayerDamage, b.BlastVehicleDamage);
                         RemoveBullet(i);
                         continue;
                     }
@@ -4966,10 +5536,11 @@ namespace UnturnedGodot
                     // hardcoded `Action == "Rocket"` branch with the radius and all three damages as literals. Same
                     // numbers for the launcher (they moved into launcher_rocket.dat unchanged), and any other round
                     // that wants to detonate now says so in data instead of adding a second copy of this branch.
-                    if (Gun is { BlastRadius: > 0f } bg)
+                    // ...carried on the BULLET, not read off the live Gun -- see the Bullet fields.
+                    if (b.BlastRadius > 0f)
                     {
-                        Explode(point, bg.BlastRadius, bg.BlastZombieDamage, bg.BlastPlayerDamage, bg.BlastVehicleDamage);
-                        GD.Print($"[blast] {bg.Id} warhead detonated (r={bg.BlastRadius})");
+                        Explode(point, b.BlastRadius, b.BlastZombieDamage, b.BlastPlayerDamage, b.BlastVehicleDamage);
+                        GD.Print($"[blast] warhead detonated (r={b.BlastRadius})");
                     }
                     RemoveBullet(i);
                     continue;
@@ -5271,6 +5842,8 @@ namespace UnturnedGodot
             UpdateFluidPickup((float)delta);    // hold-F to pick a placed fluid device back up (its hoses/power wire disconnect)
             UpdateDoorLockHold((float)delta);   // hold-F on a door you own to lock/unlock it (a tap opens/closes)
             UpdateFluidContainerHud((float)delta);   // held fluid container: show its contents + [LMB] sip / [RMB] fill hint (strawberry)
+            if (HoldingFisher) TickFishing((float)delta);   // rod out: charge gauge + bite timer + bobber flight/bob + line
+
             // Additive recoil (master): drain the pending kick INTO the real aim over a couple frames (a smooth climb),
             // then leave it there -- the view stays kicked up and the player pulls the mouse back down. Never recovers on its own.
             if (_patternShot > 0)
@@ -5597,7 +6170,7 @@ namespace UnturnedGodot
             if (v != null && _seatIndex == 0) { v.EngineOn = false; v.Park(); }   // stop burning fuel + brake so it doesn't roll away
             _seatIndex = 0;
             if (Hud != null) Hud.Vehicle = null;               // hide the vehicle status box
-            if (v != null) GlobalPosition = v.GlobalPosition + v.GlobalTransform.Basis.X * 2.4f + Vector3.Up * 1.0f;
+            if (v != null) GlobalPosition = ClampExitSpot(v.GlobalPosition + v.GlobalTransform.Basis.X * 2.4f + Vector3.Up * 1.0f);
             foreach (var c in FindChildren("*", "CollisionShape3D", true, false))
                 if (c is CollisionShape3D cs) cs.Disabled = false;
             Visible = true;
@@ -5613,7 +6186,8 @@ namespace UnturnedGodot
         public void ExitVehicleAt(Vector3 exitPos)
         {
             var v = _driving; _driving = null;
-            if (v != null) v.EngineOn = false;
+            if (v != null) { v.OccupiedSeats.Remove(_seatIndex); v.EngineOn = false; }   // free the seat -- see EjectFromVehicleOnDeath
+            _seatIndex = 0;
             if (Hud != null) Hud.Vehicle = null;               // hide the vehicle status box
             GlobalPosition = exitPos;
             foreach (var c in FindChildren("*", "CollisionShape3D", true, false))
@@ -5866,6 +6440,13 @@ namespace UnturnedGodot
             }
             TickRechamber(delta);   // bolt/pump: run the post-shot bolt-cycle timer -> the Hammer clip, then re-enable firing
             // burst rounds + full-auto hold fire on cooldown (Fire() still enforces ammo/reload/cd)
+            // A GUNNER holding LMB keeps firing: a belt-fed mount is automatic by nature, and the mount's own
+            // TurretCycle governs the rate inside TryTurretFire. Deliberately OUTSIDE the _fireCd/_reloading gate
+            // below -- those describe the rifle in the gunner's hands, which has nothing to do with the gun bolted
+            // to the airframe, and _firemode (Semi by default, and unreachable while seated) must not gate it
+            // either. Without this, a gunner got one shot per click at best. Review 2026-08-16.
+            if (_driving != null && _seatIndex != 0 && _driving.HasTurret(_seatIndex)
+                && !NetAvatar && !UiInputBlocked && Input.IsMouseButtonPressed(MouseButton.Left)) Fire();
             if (_fireCd <= 0f && !_reloading)
             {
                 if (_burstLeft > 0) { if (Fire()) { _burstLeft--; if (_burstLeft == 0) _burstCd = 0.2f; } else _burstLeft = 0; }

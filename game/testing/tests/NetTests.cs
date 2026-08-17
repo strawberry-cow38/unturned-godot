@@ -1068,6 +1068,7 @@ namespace UnturnedGodot.Testing
             yield return Until(() => sess.Shell != null, 5);
             T.Check("shell spawned on the first authoritative own-entity sample", sess.Shell != null);
             if (sess.Shell == null) yield break;
+            T.Check("seeded the fixture kit into the server grid", Rigs.SeedServerKit(ded, sess));
             T.Check("the shell is a REAL local player (not a NetAvatar)", !sess.Shell.NetAvatar);
             bool ownSeed = sess.Client.Players.TryGetByOwner(sess.Client.PlayerId, out var seed);
             float seedErr = ownSeed ? (seed.Pos - ToU(sess.Shell.TruePhysicsPosition)).magnitude : float.MaxValue;
@@ -2050,11 +2051,18 @@ namespace UnturnedGodot.Testing
             T.Check("shell spawned + bystander joined", sess.Shell != null && bystander.State == NetSessionState.Connected);
             if (sess.Shell == null) yield break;
             T.Check("P3a posture: PvP is ON on the dedicated server", ded.Server.Combat.PvPEnabled);
+            T.Check("seeded the fixture kit into the server grid", Rigs.SeedServerKit(ded, sess));
             // ARM THE SHELL EXPLICITLY. A player no longer SPAWNS holding a gun (strawberry 2026-08-03: the spawn kit
             // is shirt + pants, "fix mp shell to work without it"), so this test arranges its own precondition instead
             // of inheriting one from a demo loadout. The gun is in the shell's adopted server grid either way -- what
             // changed is that something has to equip it, which is exactly what a player does. EquipHotbar(1) is the
             // real primary-slot path, not a test-only shortcut.
+            // WAIT FOR THE ECHO. The kit used to be seeded at join, so it rode the join snapshot and the shell's
+            // bag already held it by the time the shell existed. Granting it here (the starter kit is gone from
+            // real spawns) means the shell has to adopt one more owner update before it owns a gun to equip --
+            // without this the equip runs against an empty bag and the wait below times out saying nothing.
+            yield return Until(() => sess.Shell.Inventory.getItemCount(4) == 1, 5);
+            T.Check("the shell adopted the seeded kit before arming", sess.Shell.Inventory.getItemCount(4) == 1);
             sess.Shell.EquipHotbar(1);
             yield return Until(() => sess.Shell.HasGunOut, 5);
             T.Check($"the shell can arm from its server grid -- the server's validation profile ({sess.Shell.HeldGunName})",
@@ -2189,7 +2197,8 @@ namespace UnturnedGodot.Testing
             T.Check("shell spawned on the first authoritative own-entity sample", sess.Shell != null);
             if (sess.Shell == null) yield break;
 
-            // Step 4 seeding: the joiner's SERVER grid carries the demo kit -- the bag is truth, not fiction
+            T.Check("seeded the fixture kit into the server grid", Rigs.SeedServerKit(ded, sess));
+            // The joiner's SERVER grid carries the kit we just granted -- the bag is truth, not fiction
             bool sHave = ded.Server.Inventories.TryGet(sess.Client.PlayerId, out var sInv);
             T.Check("server grid seeded with the demo kit on join (Eaglefire in the primary slot)",
                     sHave && sInv.Inventory.getItemCount(4) == 1);
@@ -2257,6 +2266,7 @@ namespace UnturnedGodot.Testing
 
             yield return Until(() => sess.Shell != null, 5);
             T.Check("shell spawned", sess.Shell != null);
+            T.Check("seeded the fixture kit into the server grid", Rigs.SeedServerKit(ded, sess));
             if (sess.Shell == null) yield break;
 
             // pack the SERVER grid completely full (1x1 bandages into every free cell -- the authority
@@ -2324,6 +2334,7 @@ namespace UnturnedGodot.Testing
 
             yield return Until(() => sess.Shell != null, 5);
             T.Check("shell spawned", sess.Shell != null);
+            T.Check("seeded the fixture kit into the server grid", Rigs.SeedServerKit(ded, sess));
             if (sess.Shell == null) yield break;
             bool sHave = ded.Server.Inventories.TryGet(sess.Client.PlayerId, out var sInv);
             T.Check("server grid seeded (demo kit)", sHave);
@@ -2387,6 +2398,7 @@ namespace UnturnedGodot.Testing
 
             yield return Until(() => sess.Shell != null, 5);
             T.Check("shell spawned", sess.Shell != null);
+            T.Check("seeded the fixture kit into the server grid", Rigs.SeedServerKit(ded, sess));
             if (sess.Shell == null) yield break;
             bool sHave = ded.Server.Inventories.TryGet(sess.Client.PlayerId, out var sInv);
             yield return Ticks(10);
@@ -2439,6 +2451,7 @@ namespace UnturnedGodot.Testing
 
             yield return Until(() => sess.Shell != null, 5);
             T.Check("shell spawned", sess.Shell != null);
+            T.Check("seeded the fixture kit into the server grid", Rigs.SeedServerKit(ded, sess));
             if (sess.Shell == null) yield break;
 
             ded.Server.Skills.ServerAward(sess.Client.PlayerId, 100, ded.Server.Session.CurrentTick);
@@ -2491,6 +2504,7 @@ namespace UnturnedGodot.Testing
 
             yield return Until(() => sess.Shell != null, 5);
             T.Check("shell spawned", sess.Shell != null);
+            T.Check("seeded the fixture kit into the server grid", Rigs.SeedServerKit(ded, sess));
             if (sess.Shell == null) yield break;
             bool sHave = ded.Server.Inventories.TryGet(sess.Client.PlayerId, out var sInv);
             yield return Ticks(10);
@@ -2563,6 +2577,7 @@ namespace UnturnedGodot.Testing
 
             yield return Until(() => sess.Shell != null, 5);
             T.Check("shell spawned", sess.Shell != null);
+            T.Check("seeded the fixture kit into the server grid", Rigs.SeedServerKit(ded, sess));
             if (sess.Shell == null) yield break;
             bool sHave = ded.Server.Inventories.TryGet(sess.Client.PlayerId, out var sInv);
             yield return Ticks(10);
@@ -3627,6 +3642,7 @@ namespace UnturnedGodot.Testing
 
             yield return Until(() => sess.Shell != null, 5);
             T.Check("shell spawned", sess.Shell != null);
+            T.Check("seeded the fixture kit into the server grid", Rigs.SeedServerKit(ded, sess));
             T.Check($"the client built the SERVER's holiday world ('{applied}')", applied == "CHRISTMAS");
             T.Check($"the deferred holiday content applied exactly once ({calls})", calls == 1);
             T.Check("and BEFORE the shell spawned (colliders exist before the player stands among them)", !shellExistedAtApply);

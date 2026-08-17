@@ -412,6 +412,7 @@ void fragment() {
         /// water.gdshader). Buoyancy / bobbing samples THIS so floaters ride the same waves the shader draws. Gameplay
         /// submersion still keys off the flat SeaLevelY above (a wave slopping over your head shouldn't drown you).</summary>
         public static float WaterSurfaceY(Vector3 p) => SeaLevelY + (HasWater ? WaveField.Height(p.X, p.Z) : 0f);
+        public const float MinFishDepth = 4f;   // retail UseableFisher minimumDepth: a bobber needs >=4m of water below the surface
         // The bullet-impact surface material at a world point, from the dominant splat layer (so shooting sand kicks up sand,
         // road/rock = concrete chips, dirt = dirt, grass/forest = foliage -- instead of one flat guess for the whole island).
         public PlayerController.Surf SurfAt(float worldX, float worldZ) => SampleDominantLayer(worldX, worldZ) switch

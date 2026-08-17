@@ -392,8 +392,24 @@ namespace UnturnedGodot
             var kind = w.Kind;
             float gable = w.GableRise;
             var ops = w.Openings.ToArray();
+            // Capture the fields SpawnWall does not take. Undoing a delete used to rebuild the wall from the
+            // constructor arguments alone, silently dropping texel, the four taper insets, and BOTH back-face
+            // fields -- so undoing the delete of a wall whose back face you had painted brought it back with the
+            // front material on both sides, and an imported retail wall lost its tapers. Snapshot()/RestoreAll()
+            // carry all of them, which is why "wall cut" and "recolour" lose nothing and only this path did.
+            // Review 2026-08-16.
+            int texel = w.Texel, texelBack = w.TexelBack;
+            int matBack = w.MaterialIdBack;
+            float iL0 = w.InsetL0, iL1 = w.InsetL1, iR0 = w.InsetR0, iR1 = w.InsetR1;
             RemoveWall(w);
-            _editor?.PushUndo("wall delete", () => SpawnWall(pos, rot.Y, len, th, mat, ops, h, rot.X, kind, gable));
+            _editor?.PushUndo("wall delete", () =>
+            {
+                var nw = SpawnWall(pos, rot.Y, len, th, mat, ops, h, rot.X, kind, gable);
+                if (nw == null) return;
+                nw.Texel = texel; nw.TexelBack = texelBack; nw.MaterialIdBack = matBack;
+                nw.InsetL0 = iL0; nw.InsetL1 = iL1; nw.InsetR0 = iR0; nw.InsetR1 = iR1;
+                nw.Rebuild();
+            });
         }
 
         public void RemoveWall(WallSurface w)

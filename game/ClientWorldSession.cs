@@ -499,7 +499,11 @@ namespace UnturnedGodot
             shell.NetMoveItem = (p0, x0, y0, p1, x1, y1, rot1) => Client.SendMoveItem(p0, x0, y0, p1, x1, y1, rot1);
             shell.NetEquipItem = (page, x, y, slot) => Client.SendEquipItem(page, x, y, slot);
             shell.NetDropItem = (page, x, y) => Client.SendDropItem(page, x, y);
+            shell.NetFitAttachment = (page, x, y, id) => Client.SendFitAttachment(page, x, y, id);
             shell.NetConsume = (page, x, y) => Client.SendConsume(page, x, y);
+            shell.NetReloadSwap = (page, x, y, sid, samt) => Client.SendReloadSwap(page, x, y, sid, samt);
+            shell.NetWearClothing = (page, x, y, slot) => Client.SendWearClothing(page, x, y, slot);
+            shell.NetUnwearClothing = slot => Client.SendUnwearClothing(slot);
             shell.NetCraft = index => Client.SendCraft(index);
             shell.NetPlaceDeployable = (defId, pos, yaw) => Client.SendPlaceDeployable(defId, ToU(pos), yaw);
             shell.NetSalvageDeployable = netId => Client.SendSalvageDeployable(netId);

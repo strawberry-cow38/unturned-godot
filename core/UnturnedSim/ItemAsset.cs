@@ -10,7 +10,7 @@ namespace SDG.Unturned
     // SIGHT/BARREL/GRIP/TACTICAL appended (not inserted) so no persisted ordinal shifts. Before these existed every
     // attachment in items_catalog.tsv fell through ParseType to GENERIC -- 48 sights, 59 magazines' worth of
     // siblings, all indistinguishable from a rock -- so nothing could ask "what fits this slot?".
-    public enum EItemType { HAT, PANTS, SHIRT, MASK, BACKPACK, VEST, GLASSES, GUN, MAGAZINE, MELEE, FOOD, WATER, MEDICAL, SUPPLY, GENERIC, SIGHT, BARREL, GRIP, TACTICAL }
+    public enum EItemType { HAT, PANTS, SHIRT, MASK, BACKPACK, VEST, GLASSES, GUN, MAGAZINE, MELEE, FOOD, WATER, MEDICAL, SUPPLY, GENERIC, SIGHT, BARREL, GRIP, TACTICAL, FISHER }
 
     // ItemTool rarity -> the tile's colour in the UI (getRarityColorUI)
     public enum EItemRarity { COMMON, UNCOMMON, RARE, EPIC, LEGENDARY, MYTHICAL }
@@ -21,6 +21,9 @@ namespace SDG.Unturned
         public string guid = "";   // the item's own GUID (from items_catalog.tsv) -> lets blueprints resolve ingredient GUIDs to numeric ids
         public string itemName = "";
         public string description = "";   // the real localized Description from the item's English.dat
+        /// <summary>Holster rule from the .dat's `Slot` key. NONE by default, which is right for everything that
+        /// is not a weapon: it stays equippable from the bag.</summary>
+        public ESlotType slot = ESlotType.NONE;
         public byte size_x = 1;
         public byte size_y = 1;
         public EItemType type = EItemType.GENERIC;

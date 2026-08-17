@@ -202,6 +202,14 @@ namespace UnturnedGodot
                 bool changed = false;
                 foreach (var (a, b) in rawHoses)
                 {
+                    // rawHoses comes from the "hoses" group; ceiling is keyed off "fluid_devices". Those two sets
+                    // DIVERGE the moment a device leaves the device group without its hose being removed -- which
+                    // is exactly what SetBroken does to a shot fire hydrant, and what picking up a hosed generator
+                    // does (the hose is parented to the world root and outlives its endpoint). An unguarded index
+                    // then threw KeyNotFoundException out of FluidManager._Process EVERY FRAME thereafter, so one
+                    // smashed hydrant stopped all fluid on the map, not just its own line. WouldNeedPump 95 lines
+                    // up has always had this guard over the identical link list; Tick is the copy that lost it.
+                    if (!ceiling.ContainsKey(a) || !ceiling.ContainsKey(b)) continue;
                     if (a.IsFlowRelay && ceiling[a] > ceiling[b]) { ceiling[b] = ceiling[a]; changed = true; }   // ceiling passes THROUGH a
                     if (b.IsFlowRelay && ceiling[b] > ceiling[a]) { ceiling[a] = ceiling[b]; changed = true; }   // ...and through b
                 }

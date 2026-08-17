@@ -329,6 +329,7 @@ namespace SDG.Unturned
                     var a = Assets.find(id);
                     if (a == null) continue;
                     a.gunName = name; n++;
+                    a.slot = SlotTypeExtension.Parse(d.GetString("Slot"));   // Primary/Secondary from the gun's own .dat
                     if (!UnturnedGodot.Viewmodel.IsKnownGun(name)) noVisual.Add(name);   // this file lives in SDG.Unturned
                 }
                 catch { /* skip a malformed .dat */ }
@@ -399,6 +400,7 @@ namespace SDG.Unturned
             "Hat" => EItemType.HAT, "Pants" => EItemType.PANTS, "Shirt" => EItemType.SHIRT,
             "Mask" => EItemType.MASK, "Backpack" => EItemType.BACKPACK, "Vest" => EItemType.VEST,
             "Glasses" => EItemType.GLASSES, "Supply" => EItemType.SUPPLY,
+            "Fisher" => EItemType.FISHER,
             _ => EItemType.GENERIC,
         };
 

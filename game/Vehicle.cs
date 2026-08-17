@@ -566,6 +566,7 @@ namespace UnturnedGodot
         // character its front bumper touches. dmg = floor(baseDamage * speed); speed = clamp(fwdVel * mult, -10, 10),
         // ignored below the threshold. None of the stock vehicles override these in their .dat, so the defaults hold.
         const float BumperMult = 1f, BumperThreshold = 3f, BumperZombieDmg = 15f, BumperPlayerDmg = 10f, BumperSelfMult = 1f;
+        const float CrashPropThreshold = 4f, CrashPropDmgPerSpeed = 18f, CrashPropMaxDmg = 500f;   // vehicle -> destructible prop: min impact speed to break, dmg per m/s, cap
         const float HornAlertRadius = 32f;   // source InteractableVehicle.tellHorn: AlertTool.alert(pos, 32) -> zombies within earshot investigate
         public bool HeadlightsOn => _headlightsOn;
         public bool TaillightsOn => _taillightsOn;          // MP §3.6: replicated light/brake flags (read-only views of the SP state)
@@ -733,7 +734,22 @@ namespace UnturnedGodot
         // source Bumper.OnTriggerEnter: the front bumper roadkills a character it drives into. Damage scales with impact
         // speed (clamped at 10) x the base BumperZombieDamage; the vehicle takes a little self-damage per hit too.
         public void Wake() { Freeze = false; _parked = false; }   // resume dynamic physics (rammed or re-driven)
-        void OnVehicleContact(Node body) { if (body is Vehicle v && v != this && !v._husk) v.Wake(); }   // ram a frozen parked car -> wake it (a dead husk stays put)
+        // vehicle crash -> authoritative destructible break, through the SAME seam the heli rotors already use
+        // (Vehicle.NetDamageObject, declared once above -- main had added it for rotors while this branch was adding
+        // it for crashes, and the merge brought in a second copy of the field). Null in --direct SP / on an MP
+        // puppet -> a crash just bumps the prop, no break.
+        void OnVehicleContact(Node body)
+        {
+            if (body is Vehicle v && v != this && !v._husk) { v.Wake(); return; }   // ram a frozen parked car -> wake it (a dead husk stays put)
+            if (_exploded || _parked) return;
+            if (body is Node dn && dn.HasMeta(DestructibleField.MetaKey))   // crashed into a destructible prop -> speed-scaled break (server-owned health, same seam as the bullet path)
+            {
+                float speed = LinearVelocity.Length();
+                if (speed < CrashPropThreshold) return;                        // a gentle nudge doesn't break it
+                NetDamageObject?.Invoke((int)dn.GetMeta(DestructibleField.MetaKey), Mathf.Clamp(speed * CrashPropDmgPerSpeed, 0f, CrashPropMaxDmg));
+                TakeDamage(3f * BumperSelfMult);                               // the car takes a little crash damage too (source takeCrashDamage)
+            }
+        }
         public bool HasSiren => _sirenMat0 != null;   // only emergency vehicles (police/fire/ambulance) have a lightbar
         public void ToggleSiren() { if (HasSiren) _sirenOn = !_sirenOn; }   // master: ctrl toggles the siren/lightbar while driving
 
@@ -1873,6 +1889,15 @@ namespace UnturnedGodot
         public static Vehicle BuildByName(string name, int variant = 0) => name switch { "quad" => BuildQuad(variant), "bus" => BuildBus(variant), "sedan" => BuildSedan(variant), "hatchback" => BuildHatchback(variant), "humvee" => BuildHumvee(variant), "roadster" => BuildRoadster(variant), "ambulance" => BuildAmbulance(variant), "firetruck" => BuildFiretruck(variant), "tractor" => BuildTractor(variant), "ural" => BuildUral(variant), "police" => BuildPolice(variant), "semi" => BuildSemi(variant), "trailer" => BuildTrailer(variant), "offroader" => BuildOffRoader(variant), "off_roader" => BuildOffRoader(variant), "truck" => BuildTruck(variant), "van" => BuildVan(variant), "golf" => BuildGolf(variant), "vw_golf" => BuildGolf(variant), "runabout" => BuildRunabout(variant), "apc" => BuildAPC(variant), "minicopter" => BuildMinicopter(variant), "mini" => BuildMinicopter(variant), "heli" => BuildMinicopter(variant), "huey" => BuildHuey(variant), "scoutcopter" => BuildScoutcopter(variant), "scout" => BuildScoutcopter(variant), "hind" => BuildHind(variant), "orca" => BuildOrca(variant), "skycrane" => BuildSkycrane(variant), "hummingbird" => BuildHummingbird(variant), "bird" => BuildHummingbird(variant), "tank" => BuildTank(variant), _ => BuildJeep(variant) };
         public static readonly string[] SpecNames = { "jeep", "quad", "bus", "sedan", "hatchback", "humvee", "roadster", "ambulance", "firetruck", "tractor", "ural", "police", "semi", "trailer", "offroader", "truck", "van", "golf", "runabout", "apc", "minicopter", "huey", "scoutcopter", "hind", "orca", "skycrane", "hummingbird", "tank" };   // F1 dev-console autocomplete + validation ("golf" = VW_Golf, command-only, no natural spawn; runabout = boat + apc = amphibious, both command-spawnable -- drop over water to float)
 
+        /// <summary>The spec's main body BoxCollider (the hull Build() adds as the primary CollisionShape3D)
+        /// for a spec key -- the hitbox debug overlay reconstructs the server's vehicle collider from a
+        /// replicated TypeId through this. Unknown names fall back to the jeep, same as SpecFor.</summary>
+        public static void GetBodyBox(string name, out Vector3 size, out Vector3 center)
+        {
+            var s = SpecFor(name);
+            size = s.BoxSize; center = s.BoxCenter;
+        }
+
         // spec lookup by key (same table as BuildByName) -- the MP puppet builder resolves replicated
         // TypeIds through this so client replicas rebuild the exact meshes/palette the server spawned
         static Spec SpecFor(string name) => name switch
@@ -1881,7 +1906,20 @@ namespace UnturnedGodot
             "roadster" => _roadster, "ambulance" => _ambulance, "firetruck" => _firetruck, "tractor" => _tractor,
             "ural" => _ural, "police" => _police, "semi" => _semi, "trailer" => _trailer,
             "offroader" => _offroader, "off_roader" => _offroader, "truck" => _truck, "van" => _van,
-            "golf" => _golf, "vw_golf" => _golf, "tank" => _tank, _ => _jeep,
+            "golf" => _golf, "vw_golf" => _golf, "tank" => _tank,
+            // The heli fleet, the APC and the runabout were missing here while being present in SpecNames and in
+            // BuildByName, so the MP puppet path resolved all nine to _jeep and built a jeep-shaped replica --
+            // silently, because _jeep builds perfectly. WorldBuilder spawns three real runabouts on the PEI coast
+            // every map load, so this was live without anyone touching a console: jeeps floating on the sea for
+            // every client not driving one, with jeep dimensions and a jeep-sized look-focus hull. The tank was
+            // added when it merged; the helicopters never were. Keep this switch in step with BuildByName --
+            // SpecNames is the list both must cover. Review 2026-08-16.
+            "runabout" => _runabout, "apc" => _apc,
+            "minicopter" => _minicopter, "mini" => _minicopter, "heli" => _minicopter,
+            "huey" => _huey, "scoutcopter" => _scoutcopter, "scout" => _scoutcopter,
+            "hind" => _hind, "orca" => _orca, "skycrane" => _skycrane,
+            "hummingbird" => _hummingbird, "bird" => _hummingbird,
+            _ => _jeep,
         };
 
         // MP §3.6 client replica: a mesh-only PUPPET -- the same ripped body/palette/parts/wheels as
@@ -2248,8 +2286,9 @@ namespace UnturnedGodot
             var v = new Vehicle { Mass = GlobalMass };   // source uses one constant mass (2.0) for ALL vehicles -> one global Godot mass
             v.SpecKey = specKey; v.SpawnVariant = variant;   // MP §3.6: replicated so puppets rebuild the same spec + paint
             v.CollisionLayer |= 1u << 5;   // bit 5 = "vehicle" so player bullets can raycast-hit it (see PlayerController.StepBullets)
+            v.CollisionMask |= 1u << 8;    // bit 8 = "solid small prop" -> a car collides with fences/hydrants/barrels instead of phasing through (NOT bit6, so trailer ghosting is unaffected) (strawberry)
             v._baseCollisionLayer = v.CollisionLayer;   // remember the un-ghosted layer (bit0|bit5) so a towed trailer can swap bit0->bit6 and restore it
-            v._baseCollisionMask = v.CollisionMask;      // and the un-ghosted mask, so a ghosted trailer can add bit6 (to hit the cab's sleeper hull) and restore it
+            v._baseCollisionMask = v.CollisionMask;      // and the un-ghosted mask (now incl. bit8), so a ghosted trailer can add bit6 (to hit the cab's sleeper hull) and restore it
             v.AddToGroup("vehicles");      // so NearestVehicle + explosion damage (grenades) find every vehicle, not just harness-grouped ones
             v.ContactMonitor = true; v.MaxContactsReported = 6; v.BodyEntered += v.OnVehicleContact;   // wake a frozen parked car when another vehicle rams it (master)
             v._engineForce = s.Engine; v._steerMax = s.SteerMax; v._steerMin = s.SteerMin;

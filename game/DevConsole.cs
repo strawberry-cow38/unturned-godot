@@ -24,11 +24,14 @@ namespace UnturnedGodot
         // BEFORE its AllowCheats gate. The early toggleGlobalPower branch below does the routing; membership here
         // documents that the local process-global flip only happens on the pure-direct SP path (RemoteClient == null).
         static readonly string[] ServerGatedVerbs = { "give", "xp", "skill", "teleport", "tp", "toggleglobalpower", "globalpower", "grid" };
+        // Verbs below the arg guard that are legal with NO argument. Keep this in step when adding one, or the
+        // guard silently swallows it and the verb becomes unreachable from the console.
+        static readonly string[] NoArgVerbs = { "unarmed", "fridge", "fluid", "survival" };
         bool _resultHooked;
 
         LineEdit _input;
         Label _log;
-        static readonly string[] Verbs = { "give", "vehicle", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "toggleGlobalPower", "toggleGlobalWater", "toggleBbat", "infFuel", "infAmmo", "wear", "unwear", "fluid", "date", "dateset", "whenBlackout", "triggerGlobalBrownout", "hurtmain", "killmain", "hurttail", "killtail", "profiler", "renderscale", "zshadows", "freezerigs", "vertexlight" };
+        static readonly string[] Verbs = { "give", "vehicle", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "toggleGlobalPower", "toggleGlobalWater", "toggleBbat", "infFuel", "infAmmo", "wear", "unwear", "fluid", "date", "dateset", "whenBlackout", "triggerGlobalBrownout", "hurtmain", "killmain", "hurttail", "killtail", "profiler", "renderscale", "zshadows", "freezerigs", "vertexlight", "weather", "fridge", "fill", "empty", "units", "simspeed", "time", "timeset", "timeadd", "timespeed", "daylength", "hitbox" };
         static readonly EItemType[] ClothingTypes = { EItemType.SHIRT, EItemType.PANTS, EItemType.HAT, EItemType.VEST, EItemType.MASK, EItemType.GLASSES, EItemType.BACKPACK };
         readonly System.Collections.Generic.List<string> _history = new();
         int _histIdx;
@@ -70,7 +73,16 @@ namespace UnturnedGodot
             _input.Visible = open;
             _log.Visible = open;
             if (open) { _input.GrabFocus(); Input.MouseMode = Input.MouseModeEnum.Visible; }
-            else { _input.ReleaseFocus(); _input.Clear(); Input.MouseMode = Input.MouseModeEnum.Captured; }
+            else
+            {
+                _input.ReleaseFocus(); _input.Clear();
+                // Only recapture if nothing ELSE still wants the cursor. This used to recapture unconditionally,
+                // so opening the inventory (Tab) then toggling the console twice left the mouse Captured with the
+                // dashboard still drawn: the cursor vanished so the grid could not be clicked, while
+                // PlayerController's polled input -- which gates on `MouseMode != Captured` -- came back to life
+                // and walked the player around, auto-firing through the open UI on a held LMB. Review 2026-08-16.
+                if (!(Player?.AnyBlockingUiOpen ?? false)) Input.MouseMode = Input.MouseModeEnum.Captured;
+            }
         }
 
         void OnSubmit(string text)
@@ -152,8 +164,13 @@ namespace UnturnedGodot
                                               : vl == "off" || vl == "0" || vl == "false" ? false
                                               : !GraphicsOptions.VertexShading;
                 int changed = GraphicsOptions.ApplyShading(GetTree()?.Root);
+                // Report what could NOT be converted alongside what was. A ShaderMaterial has no ShadingMode to
+                // flip, and the terrain and grass are both ShaderMaterial -- so a big `changed` number on its own
+                // still reads as "vertex lighting measured" when a large share of the frame never moved.
+                int shaderOnly = GraphicsOptions.CountShaderMaterialRenderers(GetTree()?.Root);
                 Log($"vertex lighting {(GraphicsOptions.VertexShading ? "ON" : "OFF")} -- {changed} material(s) changed"
-                    + (changed == 0 ? " (nothing matched -- the switch did nothing, do not read the fps as a result)" : ""));
+                    + (changed == 0 ? " (nothing matched -- the switch did nothing, do not read the fps as a result)" : "")
+                    + (shaderOnly > 0 ? $"; {shaderOnly} shader-material renderer(s) UNCHANGED (terrain/grass -- their lighting is in the shader, so this is a partial A/B)" : ""));
                 return;
             }
 
@@ -191,6 +208,25 @@ namespace UnturnedGodot
 
             // infFuel [on|off]  -- dev/playtesting: ALL cars stop burning fuel. ON by DEFAULT (master 2026-07-20);
             // bare form FLIPS it. Handled above the arg guard so the no-arg toggle works. SP-local static, not networked.
+            // structures [count|save|load|clear]  -- inspect and drive the structure system without having to
+            // build a base by hand every time you want to check persistence. Bare form reports the count, which
+            // is the fastest way to tell "load did nothing" apart from "load worked and the base is elsewhere".
+            if (verb == "structures" || verb == "struct")
+            {
+                var sm = StructureManager.Instance;
+                if (sm == null) { Log("structures: no StructureManager in this world (build mode provisions one -- press B)"); return; }
+                string a = arg.Trim().ToLowerInvariant();
+                if (a == "save") { Log(sm.SaveToDisk() ? $"structures: saved {sm.Count} piece(s)" : "structures: SAVE FAILED"); return; }
+                if (a == "load") { int n = sm.LoadFromDisk(); Log($"structures: loaded {n} piece(s)"); return; }
+                if (a == "clear") { int had = sm.Count; sm.Clear(); Log($"structures: cleared {had} piece(s)"); return; }
+                var byTier = new int[StructureCatalog.TierCount];
+                foreach (var pc in sm.All) byTier[Mathf.Clamp(pc.Tier, 0, byTier.Length - 1)]++;
+                var tierBits = new System.Collections.Generic.List<string>();
+                for (int i = 0; i < byTier.Length; i++) if (byTier[i] > 0) tierBits.Add($"{byTier[i]} {StructureCatalog.TierAt(i).Name}");
+                Log($"structures: {sm.Count} piece(s){(tierBits.Count > 0 ? " -- " + string.Join(", ", tierBits) : "")}");
+                return;
+            }
+
             if (verb == "inffuel")
             {
                 string f = arg.ToLowerInvariant();
@@ -361,7 +397,16 @@ namespace UnturnedGodot
                 return;
             }
 
-            if (arg.Length == 0) { Log("usage: give <item> | vehicle <name>"); return; }
+            // NO-ARG VERBS LIVE BELOW THIS LINE, so the guard only fires for verbs that genuinely need an argument.
+            // It used to sit above `unarmed`, `fridge`, `fluid` and `survival`, which take none -- typing `unarmed`
+            // printed "usage: give <item> | vehicle <name>" and EquipUnarmed was unreachable from the console
+            // entirely. The verbs handled above the guard already carry a comment about this exact hazard; these
+            // four were added underneath it. Review 2026-08-16.
+            if (arg.Length == 0 && System.Array.IndexOf(NoArgVerbs, verb) < 0)
+            {
+                Log("usage: give <item> | vehicle <name>");
+                return;
+            }
 
             if (RemoteClient != null && System.Array.IndexOf(ServerGatedVerbs, verb) >= 0)
             {
@@ -510,6 +555,25 @@ namespace UnturnedGodot
                 Player.EquipHeldDeployable(def);
                 Log($"holding {def.Name} -- aim (blue=ok / red=blocked), LMB to place");
             }
+            else if (verb == "weather")
+            {
+                // weather [clear|rain|heavy|lightning]  -- src CommandWeather. No arg = report the forecast.
+                // Weather is normally SCHEDULED off PEI's Weather_Types table, so this is how you see it on demand
+                // instead of waiting out a 2.3-5.6 day-cycle forecast.
+                var wm = GetTree().GetNodesInGroup("weather").Count > 0 ? GetTree().GetNodesInGroup("weather")[0] as WeatherManager : null;
+                if (wm == null || wm.Sim == null) { Log("no weather manager in this world"); return; }
+                string a = (arg ?? "").Trim();
+                if (a.Length == 0)
+                {
+                    var act = wm.Sim.Active;
+                    Log(act == null
+                        ? $"clear -- next weather in {wm.Sim.ForecastTimer:0}s"
+                        : $"{act.Value.Name} -- stage {wm.Sim.Stage}, blend {wm.Sim.BlendAlpha:0.00}, {wm.Sim.ActiveTimer:0}s left");
+                    return;
+                }
+                if (wm.ApplyCommand(a)) Log($"weather -> {a}");
+                else Log("usage: weather [clear|rain|heavy|lightning]");
+            }
             else if (verb == "unarmed")
             {
                 // unarmed  -- go to the bare-fists state (LMB weak / RMB strong punch)
@@ -647,6 +711,12 @@ namespace UnturnedGodot
                 Player?.UnwearClothing(slot);
                 Log($"removed {slot.ToString().ToLowerInvariant()}");
             }
+            else if (verb == "hitbox" || verb == "hb")
+            {
+                // hitbox client|server|off -- collision wireframe overlays (cyan = this process's colliders,
+                // magenta = the server's, reconstructed from replicas). Client-LOCAL debug: never server-gated.
+                Log(HitboxDebugOverlay.Console(arg, GetTree()));
+            }
             else Log($"unknown command '{verb}' -- give / vehicle / teleport / plant / skill / xp / hold / deploy / unarmed / survival / toggleGlobalPower / wear / unwear");
         }
 
@@ -707,6 +777,8 @@ namespace UnturnedGodot
             string verb = parts[0].ToLowerInvariant(), pre = parts[1].Replace(" ", "");
             string match = verb.StartsWith("veh") ? Vehicle.SpecNames.FirstOrDefault(n => n.StartsWith(pre, System.StringComparison.OrdinalIgnoreCase))
                 : (verb == "teleport" || verb == "tp") ? MapNodes.Locations.Select(n => n.Name).Where(n => n.Replace(" ", "").StartsWith(pre, System.StringComparison.OrdinalIgnoreCase)).OrderBy(n => n.Length).FirstOrDefault()
+                : verb == "hitbox" ? new[] { "client", "server", "off" }.FirstOrDefault(n => n.StartsWith(pre, System.StringComparison.OrdinalIgnoreCase))
+                : verb == "hitbox" ? new[] { "client", "server", "off" }.FirstOrDefault(n => n.StartsWith(pre, System.StringComparison.OrdinalIgnoreCase))
                 : Assets.all().Select(x => x.itemName).Where(n => !string.IsNullOrEmpty(n) && n.Replace(" ", "").StartsWith(pre, System.StringComparison.OrdinalIgnoreCase))
                             .OrderBy(n => n.Length).FirstOrDefault();
             if (match != null) SetInput(parts[0] + " " + match);

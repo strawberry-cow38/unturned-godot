@@ -22,6 +22,7 @@ namespace UnturnedGodot.Testing
 
         public override void _Ready()
         {
+            StructureManager.PersistenceEnabled = false;   // L1 must never touch the real user://structures.json -- see that field
             Deployable.InstantRampForTests = true;   // L1: generators settle their spin-up/cooldown instantly so power-flow checks see steady state (the gradual ramp is gameplay-verified in-render)
             Discover();
             _t0 = Time.GetTicksMsec();

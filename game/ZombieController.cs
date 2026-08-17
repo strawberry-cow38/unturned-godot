@@ -725,6 +725,7 @@ namespace UnturnedGodot
         public override void _PhysicsProcess(double delta)
         {
             float dt = (float)delta;
+            Vector3 was = GlobalPosition;
             Velocity += new Vector3(0f, -9.81f, 0f) * dt;   // gravity arc
             GlobalPosition += Velocity * dt;
             _life -= delta;
@@ -733,7 +734,19 @@ namespace UnturnedGodot
                 Target.TakeDamage(Damage);
                 QueueFree(); return;
             }
-            if (GlobalPosition.Y < 0.05f || _life <= 0.0) QueueFree();   // splat / expire
+            // SPLAT ON WHATEVER IT ACTUALLY HIT. This used to be `GlobalPosition.Y < 0.05f` -- an ABSOLUTE world
+            // height, which only reads as "the floor" on ground sitting at sea level, so anywhere higher the glob
+            // sailed through the floor and kept arcing until its 4 s life expired. Sweeping the step it just took
+            // also catches roofs, decks and interior floors, which a terrain height sample would miss, and cannot
+            // tunnel at the speeds this thing travels. Review 2026-08-16.
+            var space = GetWorld3D()?.DirectSpaceState;
+            bool landed = false;
+            if (space != null && was.DistanceSquaredTo(GlobalPosition) > 1e-8f)
+            {
+                var q = PhysicsRayQueryParameters3D.Create(was, GlobalPosition, (1u << 0) | (1u << 4) | (1u << 5));
+                landed = space.IntersectRay(q).Count > 0;
+            }
+            if (landed || _life <= 0.0) QueueFree();   // splat / expire
         }
     }
 }

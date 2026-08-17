@@ -1078,7 +1078,10 @@ namespace UnturnedGodot
                         var ab = mesh.GetAabb();
                         float maxDim = Mathf.Max(ab.Size.X * sx, Mathf.Max(ab.Size.Y * sy, ab.Size.Z * sz));
                         bool losBlocker = maxDim >= 5f && MatFor(matName).Transparency == BaseMaterial3D.TransparencyEnum.Disabled;
-                        var body = new StaticBody3D { Transform = new Transform3D(basis, gpos), CollisionLayer = losBlocker ? 1u << 0 : 1u << 6 };
+                        // Small props go on the see-through layer 6 (bullets/LOS pass through) PLUS bit8 = "solid to vehicles"
+                        // so a car can't phase through a fence/hydrant/barrel (bit8 is NOT the trailer-ghost bit6, so towing
+                        // still works). Large structures on layer 0 already stop vehicles via the base bit0 mask. (strawberry)
+                        var body = new StaticBody3D { Transform = new Transform3D(basis, gpos), CollisionLayer = losBlocker ? 1u << 0 : (1u << 6) | (1u << 8) };
                         body.SetMeta(PlayerController.SurfMeta, (int)(fmesh != null ? PlayerController.Surf.Wood : PlayerController.Surf.Concrete));   // trees (have foliage) = wood impacts; buildings/props = concrete
                         // Climbable: the player's forward probe resolves a hit collider back to the prop through
                         // this meta, and reads the ladder's facing off the BODY's basis (retail keys off the
@@ -1171,6 +1174,24 @@ namespace UnturnedGodot
                                                   rub.Health, rub.ResetTicks, rub.EffectId, onAlive, RagdollMeshesFor(name));
                     else
                         destField.Register(destIndex, destBody, mis, rub.Health, rub.ResetTicks, rub.EffectId, onAlive, RagdollMeshesFor(name));
+                }
+                // EDITOR ONLY: wrap this object's mesh(es) + collider under one Node3D so the map editor can select /
+                // move / delete it with the exact same gizmo/marker/Save path as editor-placed props (EditorObjects
+                // ingests the "editor_loaded_object" group). Server/client/SP keep the flat structure untouched. The
+                // wrapper carries the object's world transform; the re-parented children drop to LOCAL identity (world
+                // transform preserved, since wrap == basis*gpos) so gizmo/Save read the wrapper. Done AFTER the
+                // destructible/fixture wiring so those keep the same node refs.
+                if (mode == WorldMode.Editor)
+                {
+                    var wrap = new Node3D { Transform = new Transform3D(basis, gpos) };
+                    wrap.SetMeta("obj_name", name);
+                    wrap.SetMeta("guid", p[0]);
+                    wrap.SetMeta("editor_loaded", true);
+                    root.AddChild(wrap);
+                    wrap.AddToGroup("editor_loaded_object");
+                    root.RemoveChild(mainMi); wrap.AddChild(mainMi); mainMi.Transform = Transform3D.Identity;   // child[0] = mesh (PositionMarkers/gizmo expect the meshinstance first)
+                    if (folMi != null) { root.RemoveChild(folMi); wrap.AddChild(folMi); folMi.Transform = Transform3D.Identity; }
+                    if (destBody != null) { root.RemoveChild(destBody); wrap.AddChild(destBody); destBody.Transform = Transform3D.Identity; destBody.CollisionLayer |= 1u << 7; }   // + EditorPickLayer (bit7) so the editor pick ray finds it
                 }
                 placed++;
                 var cell = new Vector2I(Mathf.FloorToInt(px / 96f), Mathf.FloorToInt(pz / 96f));
@@ -1792,7 +1813,8 @@ namespace UnturnedGodot
 
             CharacterModel.LoadBundled();
             var player = new PlayerController();
-            player.LoadGun("res://content/eaglefire.dat");
+            // No gun at spawn: empty hands, empty primary/secondary (strawberry 2026-08-16). Guns are
+            // spawnable from the console (`give`), which is how everything else in this world arrives.
             root.AddChild(player);
             player.GlobalPosition = new Vector3(0f, 1.2f, 0f);
             player.LinkWorldLighting(sun, env);
@@ -1852,7 +1874,8 @@ namespace UnturnedGodot
 
             CharacterModel.LoadBundled();
             var player = new PlayerController();
-            player.LoadGun("res://content/eaglefire.dat");
+            // No gun at spawn: empty hands, empty primary/secondary (strawberry 2026-08-16). Guns are
+            // spawnable from the console (`give`), which is how everything else in this world arrives.
             root.AddChild(player);
             player.LinkWorldLighting(sun, env);   // FP gun takes the world day/night sun + ambient (same missing hookup as Drive PEI)
             if (System.Environment.GetEnvironmentVariable("UG_HOLD") is string _hc && _hc.Length > 0)

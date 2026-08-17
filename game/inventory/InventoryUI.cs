@@ -479,10 +479,53 @@ namespace UnturnedGodot
             return MoveTo(page, idx, jar, dest);
         }
 
+        /// <summary>Turn the quick-move's "somewhere with room" into the explicit (page, x, y, rot) the wire
+        /// needs. dest 255 = the first of my OWN pages with space, walked in the same order tryAddItem uses
+        /// (SLOTS..PAGES-2), so the routed result lands where the local path would have put it.
+        ///
+        /// Holster pages are skipped for a 255 search on purpose: tryAddItem does not auto-fill them either, and
+        /// quick-moving a rifle should not silently holster it.</summary>
+        bool ResolveMoveDest(ItemJar jar, byte dest, out byte page, out byte x, out byte y, out byte rot)
+        {
+            page = x = y = rot = 0;
+            if (jar?.item == null) return false;
+            if (dest != 255)
+            {
+                var pg = Inv.items[dest];
+                if (pg == null || !pg.tryFindSpace(jar.size_x, jar.size_y, out x, out y, out rot)) return false;
+                page = dest;
+                return true;
+            }
+            for (byte p = PlayerInventory.SLOTS; p < (byte)(PlayerInventory.PAGES - 2); p++)
+            {
+                var pg = Inv.items[p];
+                if (pg != null && pg.tryFindSpace(jar.size_x, jar.size_y, out x, out y, out rot)) { page = p; return true; }
+            }
+            return false;
+        }
+
         // Move a jar out of `page` into `dest` (255 = first of my own pages with room). Puts it back if the
         // destination has no room, so a failed quick-move can never eat an item.
         bool MoveTo(byte page, byte idx, ItemJar jar, byte dest)
         {
+            // SERVER-OWNED BAG: the transfer has to be a REQUEST, exactly like the drag path above. This used to
+            // be the bare local remove+add below on every path, so "Store" visually moved a medkit into a crate,
+            // the server never heard about it, and CloseStorage wrote the crate's UNCHANGED page back -- the item
+            // had never left your bag. Ctrl+RMB and the ground-take branch of CtrlGrab route through here too, so
+            // all three were inert. The drag immediately above it always routed, which is what marks this as an
+            // oversight rather than a decision. Review 2026-08-16.
+            //
+            // The wire needs an EXPLICIT destination cell where the quick-move only has "somewhere with room", so
+            // resolve one against the local grid first. If the server disagrees (someone else took the cell) the
+            // move simply fails and the echo repaints -- the same losing race the drag path already accepts.
+            if (Player != null && Player.InventoryIsServerOwned)
+            {
+                if (!ResolveMoveDest(jar, dest, out byte dp, out byte dx, out byte dy, out byte drot)) return false;
+                if (!Player.RequestMoveItem(page, jar.x, jar.y, dp, dx, dy, drot)) return false;
+                if (page != PlayerInventory.AREA) PlayInventoryAudio(jar);
+                CloseSelection(); Refresh();
+                return true;
+            }
             Inv.items[page].removeItem(idx);
             bool ok = dest == 255 ? Inv.tryAddItem(jar.item) : Inv.items[dest].tryAddItem(jar.item);
             if (!ok) Inv.items[page].tryAddItem(jar.item);   // no room -> restore, no-op rather than a loss
@@ -588,6 +631,16 @@ namespace UnturnedGodot
             var item = jar.item;
             var old = WornFor(slotType);
             if (ReferenceEquals(old, item)) return false;                // already worn here -> nothing to do
+            // SERVER-OWNED BAG: the whole swap is an INTENT, and the echo brings back the result. Done locally
+            // it was reverted a moment later -- the backpack went back into the bag and its page re-sized to
+            // 0x0 -- so a dragged-on bag un-equipped itself. The on-body VISUAL still updates locally off the
+            // adopted worn refs (PlayerClothingController reads them), so the paperdoll does not wait on the
+            // round trip. Review 2026-08-16.
+            if (Player != null && Player.InventoryIsServerOwned && Player.NetWearClothing != null)
+            {
+                Player.NetWearClothing(page, x, y, (byte)slotType);
+                return true;
+            }
             pg.removeItem(idx);                                          // out of the grid (source: inventory.removeItem)
             WearVisual(item);                                            // state + on-body visual (+ resize this slot's bag page)
             if (old != null && !ReferenceEquals(old, item)) ReturnToGrid(old);   // the displaced garment goes back to the grid
@@ -600,6 +653,13 @@ namespace UnturnedGodot
         {
             var old = WornFor(slotType);
             if (old == null) return false;
+            // Server-owned: an intent, same as WearFromGrid. Locally this resized the bag page to 0x0 and
+            // DISCARDED every jar in it (Items.loadSize drops what no longer fits) until the echo restored them.
+            if (Player != null && Player.InventoryIsServerOwned && Player.NetUnwearClothing != null)
+            {
+                Player.NetUnwearClothing((byte)slotType);
+                return true;
+            }
             UnwearVisual(slotType);   // clears the worn slot + the on-body visual (+ resizes a bag page to 0x0)
             ReturnToGrid(old);
             return true;
@@ -764,6 +824,8 @@ namespace UnturnedGodot
                     AddActionButton(panel, "Equip", new Vector2(228, by), PlaceSelected);   // equip the deployable -> close inventory, aim the ghost, LMB plants it
                 else if (tool != null)
                     AddActionButton(panel, "Equip", new Vector2(228, by), ToolSelected);   // wire -> wiring mode, rope -> tow mode, any ToolDef -> its mode
+                else if (asset.type == EItemType.FISHER)
+                    AddActionButton(panel, "Equip", new Vector2(228, by), FisherSelected);   // a fishing rod -> hold it, LMB casts (UseableFisher)
                 else
                     AddActionButton(panel, "Equip", new Vector2(228, by), EquipSelected);
                 by += 44;
@@ -796,7 +858,8 @@ namespace UnturnedGodot
         // A new holdable type is added HERE + the button dispatch in openSelection; regressed by InventoryTests.HandActions.
         public static bool HasHandAction(ItemAsset asset) =>
             asset != null && (asset.gunName != null || asset.meleeName != null || asset.IsConsumable
-                || DeployableDef.ById(asset.id) != null || ToolDef.ById(asset.id) != null || asset.IsFuelContainer || asset.IsFluidContainer);
+                || DeployableDef.ById(asset.id) != null || ToolDef.ById(asset.id) != null || asset.IsFuelContainer || asset.IsFluidContainer
+                || asset.type == EItemType.FISHER);   // a rod is holdable (EquipHeldFisher); without this it has the equip code but NO menu option (the Rope bug)
 
         void EquipSelected()
         {
@@ -810,14 +873,31 @@ namespace UnturnedGodot
             // holster a grid gun into the first empty hand slot; an already-slotted gun just stays put.
             // MP: the slot pick is computed on the mirrored grid and the server runs the same TryDrag
             // (the echo re-seats the jar); the in-hand equip above stays local either way.
-            if (_selPage >= PlayerInventory.SLOTS)
-                for (byte slot = 0; slot < PlayerInventory.SLOTS; slot++)
-                    if (Inv.items[slot].getItemCount() == 0)
-                    {
-                        if (Player == null || !Player.RequestEquipItem(_selPage, _selX, _selY, slot))
-                            Inv.TryDrag(_selPage, _selX, _selY, slot, 0, 0, 0);
-                        break;
-                    }
+            // TO ITS PREFERRED SLOT, SWAPPING WHAT IS THERE (strawberry 2026-08-16: "equipping a gun via the
+            // rmb context menu will send it to its preferred slot, swapping whatever is in that slot"). The
+            // preference comes from the .dat's Slot key: a sidearm goes to the hip, a rifle to the primary, and
+            // a rifle is never put in the secondary at all.
+            //
+            // An EMPTY compatible slot still wins over evicting someone. A sidearm with a full secondary and an
+            // empty primary should holster into the primary rather than throwing the other sidearm out -- the
+            // instruction is about where it PREFERS to go, not about always displacing.
+            if (_selPage >= PlayerInventory.SLOTS && asset != null)
+            {
+                int want = asset.slot.PreferredSlot();
+                if (want >= 0)
+                {
+                    byte slot = (byte)want;
+                    if (Inv.items[slot].getItemCount() > 0)
+                        for (byte alt = 0; alt < PlayerInventory.SLOTS; alt++)
+                            if (asset.slot.CanEquipInPage(alt) && Inv.items[alt].getItemCount() == 0) { slot = alt; break; }
+                    if (Player == null || !Player.RequestEquipItem(_selPage, _selX, _selY, slot))
+                        Inv.TryDrag(_selPage, _selX, _selY, slot, 0, 0, 0);   // TryDrag SWAPS when the destination is occupied
+                    // Address, not just the page: a holster is single-item so the item lands at (0,0). The cell is
+                    // what lets the held reference survive an owner echo (PlayerController.RebindHeldRefs).
+                    Player?.NoteHeldFrom(slot, 0, 0);   // so emptying that slot later pulls it out of the hands
+                }
+            }
+            else if (_selPage < PlayerInventory.SLOTS) Player?.NoteHeldFrom(_selPage, _selX, _selY);
             CloseSelection();
             Refresh();
             // #8: source closes the dashboard on EVERY successful weapon equip -- checkSlot (both branches, :928/:955)
@@ -883,6 +963,23 @@ namespace UnturnedGodot
             if (asset == null || !asset.IsFuelContainer || jar.item == null) return;
             jar.item.fuelLevel = 0f;
             Refresh();
+        }
+
+
+        // Equip a fishing rod INTO the hands -> close the inventory so LMB casts. Routes through EquipItemAsset (the
+        // unified dispatch that owns the EItemType.FISHER -> EquipHeldFisher branch), like the other hand actions.
+        void FisherSelected()
+        {
+            var pg = Inv.items[_selPage];
+            byte idx = pg.getIndex(_selX, _selY);
+            if (idx == byte.MaxValue) return;
+            var jar = pg.getItem(idx);
+            var asset = jar.GetAsset();
+            if (asset == null || asset.type != EItemType.FISHER) return;
+            Player?.EquipHeldFisher(asset, jar.item);
+            CloseSelection();
+            Close();   // leave the inventory so LMB begins the cast
+            Input.MouseMode = Input.MouseModeEnum.Captured;
         }
 
         void ToggleAutoDrinkSelected()   // flip a fluid container's autodrink; reopen the panel so the button label updates
@@ -1394,6 +1491,11 @@ namespace UnturnedGodot
         // real ground-truth item icons (the game's Extras/Icons, matched by id + downscaled) -> content/items/icons/<id>.png.
         // SleekItem draws the rendered item ICON on the rarity tile, not a name -> load once, cache, fall back to the name label.
         static readonly Dictionary<int, Texture2D> _iconCache = new();
+        /// <summary>Item icon by id, cached. Public so the HUD's hotbar draws the SAME texture the bag does --
+        /// a second loader would be a second cache and a second chance to disagree about what an item looks
+        /// like.</summary>
+        public static Texture2D IconFor(int id) => Icon(id);
+
         static Texture2D Icon(int id)
         {
             if (_iconCache.TryGetValue(id, out var t)) return t;

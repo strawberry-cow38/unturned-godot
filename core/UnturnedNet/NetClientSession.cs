@@ -81,6 +81,14 @@ namespace UnturnedGodot.Net
             while (_transport.Receive(_rx, out long size))
                 _session.HandleDatagram(_tick, _rx, (int)size);
 
+            // Advance the session clock in EVERY state, not just Connected. It used to move only in the Connected
+            // branch below, so every Connect datagram was stamped SendTick = 0 and the first RTT sample came back
+            // as the client's absolute tick count: an Accept landing at tick 200 gave SRTT 200 -> RTO 300 ticks
+            // (6 s) on the FIRST sample, exactly while the join snapshot is being fragmented onto the reliable
+            // channel. One lost fragment then waited six seconds for its first retransmit -- a black join instead
+            // of ~100 ms. It decayed over the next ~30 acks, which is why it only ever looked like "joining is
+            // slow sometimes". Review 2026-08-16.
+            _session.Tick(_tick);
             switch (State)
             {
                 case NetSessionState.Connecting:
@@ -96,7 +104,7 @@ namespace UnturnedGodot.Net
                     break;
 
                 case NetSessionState.Connected:
-                    _session.Tick(_tick);
+                    // (the session tick now runs above, for every state -- do not call it twice per frame)
                     if (_tick - _session.LastReceiveTick >= NetProtocol.TimeoutTicks)
                     {
                         State = NetSessionState.Disconnected;

@@ -105,17 +105,7 @@ namespace UnturnedGodot
                     string label = rounds >= 0 ? $"{a.itemName} — {rounds} rounds" : a.itemName;
                     list.Add(AddOption(sl, label, a.id, () =>
                     {
-                        var held = Player?.HeldItemForTest;
-                        // ALWAYS return the outgoing attachment, INCLUDING when it is the same item id (master: "do
-                        // not allow attaching multiple of the same attachment on a gun, should swap between the ones
-                        // we select"). The old guard was `prev != a.id`, which skipped the give-back on a same-id
-                        // swap while still consuming one from the bag -- so swapping your 12/30 magazine for your
-                        // 30/30 silently DESTROYED one of them. A gun has one slot per type; fitting is always a
-                        // swap, never a stack.
-                        int prev = AttachmentFit.InstalledId(held, sl);
-                        if (prev >= 0) Player?.Inventory?.tryAddItem(new Item((ushort)prev));
-                        if (!TakeFromBagInstance(inst)) return;          // consume THE ONE CLICKED, not any of its id
-                        AttachmentFit.SetInstalledId(held, sl, a.id);
+                        if (!FitAttachment(sl, a.id, inst)) return;
                         // An attachment with no ripped mesh still ATTACHES -- it just renders nothing. Hiding those
                         // would hide most of the arsenal from a menu whose whole job is showing what you own.
                         if (mesh != null) VM.SetSlotMesh(sl, mesh);
@@ -155,6 +145,85 @@ namespace UnturnedGodot
             Player?.PlaySelectorSwitchSound();   // detach click (source: shared firemode/selector sound)
             Refresh();
             return true;
+        }
+
+        /// <summary>Fit `newId` into `slot`, consuming the exact instance the player clicked and returning
+        /// whatever it displaces. Returns false, having changed NOTHING, if either half cannot be done.
+        ///
+        /// ORDER MATTERS AND USED TO BE WRONG. The old path gave the outgoing attachment back to the bag FIRST and
+        /// consumed the incoming one second -- and the consume can legitimately fail ("gone from under us", a stale
+        /// ring after the bag changed underneath). On that path the give-back had already happened and the early
+        /// return left the slot untouched, so the attachment was on the gun AND back in the bag. One item, two
+        /// places. Moving any item was enough to stale the ring and trigger it, and the next inventory refresh
+        /// showed the extra copy, which is what it looked like from the outside: things reappearing after a move.
+        ///
+        /// ALWAYS returns the outgoing attachment, INCLUDING on a same-id swap (master: "should swap between the
+        /// ones we select"). An older guard of `prev != a.id` skipped the give-back there while still consuming,
+        /// which DESTROYED one instead of duplicating it -- the same ordering mistake pointing the other way.
+        ///
+        /// If the bag cannot take what we displaced, the consume is undone rather than the attachment destroyed,
+        /// matching DetachSlot's rule: a full bag refuses the swap, it does not eat the difference.</summary>
+        public bool FitAttachment(string slot, ushort newId, Item clicked)
+        {
+            // SERVER-OWNED BAG (MP, and singleplayer too -- SP runs through the loopback server): the spend has
+            // to be an INTENT, or the server never removes it, still thinks the player owns it, and the next
+            // owner echo hands it straight back. The player keeps the attachment AND the item. That is the dupe
+            // strawberry reported twice, and it is why the local-only path below cannot be the whole story.
+            if (Player != null && Player.InventoryIsServerOwned)
+            {
+                // The displaced attachment cannot be returned server-side: there is no intent that ADDS an item
+                // to a player's grid (consume/move/drop/equip/pickup are the whole set). Rather than dupe it or
+                // silently destroy it, refuse the swap and say so -- detaching first goes through DetachSlot,
+                // which has the same gap and is the next thing to wire.
+                if (AttachmentFit.InstalledId(Player.HeldItemForTest, slot) >= 0)
+                {
+                    HUD.Alert("Take the old one off first");
+                    return false;
+                }
+                if (!Player.RequestFitAttachment(clicked)) return false;   // server spends it; the echo removes it locally
+                AttachmentFit.SetInstalledId(Player.HeldItemForTest, slot, newId);
+                return true;
+            }
+            bool ok = FitAttachmentTo(Player?.HeldItemForTest, Player?.Inventory, slot, newId, clicked, out var refusal);
+            if (!ok && refusal != null) HUD.Alert(refusal);
+            return ok;
+        }
+
+        /// <summary>The swap itself, over a bare (held item, inventory) pair rather than a live player.
+        ///
+        /// Static and parameterised ON PURPOSE. The old version lived inside the ring's click lambda, which is why
+        /// the suite that covers this could not call it and re-implemented the sequence inline instead -- a test
+        /// that mirrors the code it is checking agrees with it by construction, and this bug sat underneath one
+        /// for as long as it existed. Now the test drives the real thing.</summary>
+        public static bool FitAttachmentTo(Item held, PlayerInventory inv, string slot, ushort newId, Item clicked,
+                                           out string refusal)
+        {
+            refusal = null;
+            int prev = AttachmentFit.InstalledId(held, slot);
+            if (!TakeFromBagInstanceIn(inv, clicked)) return false;   // consume THE ONE CLICKED, not any of its id
+            if (prev >= 0 && inv != null && !inv.tryAddItem(new Item((ushort)prev)))
+            {
+                if (clicked != null) inv.tryAddItem(clicked);   // undo: never destroy what we took
+                refusal = "No room to swap that — free a slot first";
+                return false;
+            }
+            AttachmentFit.SetInstalledId(held, slot, newId);
+            return true;
+        }
+
+        /// <summary>Remove the EXACT clicked object from `inv`, by reference. See TakeFromBagInstance.</summary>
+        static bool TakeFromBagInstanceIn(PlayerInventory inv, Item want)
+        {
+            if (inv == null) return true;    // no bag (the --attach viewmodel harness): nothing to consume, still fit it
+            if (want == null) return false;
+            for (byte b = 0; b < (byte)(PlayerInventory.PAGES - 2); b++)
+            {
+                var pg = inv.items[b];
+                if (pg == null) continue;
+                for (byte i = 0; i < pg.getItemCount(); i++)
+                    if (ReferenceEquals(pg.getItem(i)?.item, want)) { pg.removeItem(i); return true; }
+            }
+            return false;   // gone from under us -> fit nothing rather than an item the player no longer owns
         }
 
         /// <summary>Run the DETACH exactly as a slot click does. A test seam because the reported bug ("won't drag

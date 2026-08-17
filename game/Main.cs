@@ -89,7 +89,7 @@ namespace UnturnedGodot
             string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null, drivetest = null, proptest = null, animrig = null, rottest = null, itemtest = null, navShot = null, croptest = null, menuShot = null, clothtest = null, boattest = null, ammoRadial = null;
             bool zperf = false;
             bool zbody = false;
-            bool deployTest = false;
+            bool deployTest = false, barricadeTest = false, barricadePlay = false;
             bool wearcloth = false;
             bool skillsui = false;
             bool fluidTest = false;
@@ -98,7 +98,7 @@ namespace UnturnedGodot
             bool containerTest = false; string containerTestName = null;
             bool wallDemo = false;
             bool clockTest = false;
-            bool play = false, demo = false, netdemo = false, server = false, dedicated = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, lightTest = false, trafficTest = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, playground = false, objects = false, peidrive = false, craftui = false, bakenav = false, navPathTest = false, zombieTest = false, zdirTest = false, editorMode = false, impactTest = false, doorGallery = false, lampTest = false, beamTest = false, impTest = false, treeSweep = false, bakeLods = false, bakeLodsDry = false;
+            bool play = false, demo = false, netdemo = false, server = false, dedicated = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, lightTest = false, trafficTest = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, playground = false, objects = false, peidrive = false, craftui = false, bakenav = false, navPathTest = false, zombieTest = false, zdirTest = false, editorMode = false, impactTest = false, doorGallery = false, lampTest = false, beamTest = false, impTest = false, treeSweep = false, bakeLods = false, bakeLodsDry = false, netobserve = false;
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
                 if (arg.StartsWith("--catalog=")) catalog = arg["--catalog=".Length..];
@@ -122,6 +122,8 @@ namespace UnturnedGodot
                 else if (arg == "--deploytest") deployTest = true;   // both deployables placed on a ground plane + a valid(blue)+invalid(red) ghost -> verify models/palette/stand-up/ghost materials
                 else if (arg == "--impacttest") impactTest = true;   // one bullet-impact FX per surface (concrete/metal/wood/dirt/grass/sand/water/blood) across a wall -> verify the reimplemented ImpactFx
                 else if (arg == "--doorgallery") doorGallery = true;   // --shot=OUT : lineup of the 12 ripped WOODEN door barricade models (Door/Doubledoor/Gate/Hatch x Birch/Maple/Pine) for master to eyeball
+                else if (arg == "--barricadetest") barricadeTest = true;   // barricades mounted on a STRUCTURE wall (upright, facing out) + a valid ghost + a floor barricade -> verify surface placement
+                else if (arg == "--barricadeplay") barricadePlay = true;   // INTERACTIVE: fly (hold RMB) + LMB-place barricades on a structure room -- test placement feel ([1-3]=def, Tab=mount, R=rotate)
                 else if (arg == "--skillsui") skillsui = true;   // render the skills menu (showcase/validate the SkillsUI)
                 else if (arg.StartsWith("--itemtest=")) itemtest = arg["--itemtest=".Length..];   // drop a row of loot items (ids) as physics WorldItems -> validate real mesh/tex/scale/settle
                 else if (arg.StartsWith("--ammoradial=")) { ammoRadial = arg["--ammoradial=".Length..]; _shotRequested = ammoRadial; }   // open the R-hold shotgun ammo radial (mock 12ga choices) -> screenshot the picker UI
@@ -153,7 +155,12 @@ namespace UnturnedGodot
                 else if (arg == "--horde") _peiHorde = true;       // with --peiplay: a zombie ring converges on the jeep -> vehicle<->zombie combat on real PEI
                 else if (arg.StartsWith("--pick=")) picks = arg["--pick=".Length..];
                 else if (arg.StartsWith("--gun=")) gun = arg["--gun=".Length..];
-                else if (arg == "--demo") demo = true;
+                // NOTE: `--demo` is claimed higher up this same else-if chain (it sets _demo, the scripted
+                // honk/explode script), so the second branch that used to live here could never run. `demo` stayed
+                // false forever, which made the DemoDirector + overview camera + fixed 1920x1080 capture size
+                // unreachable: `--play --demo --write-movie` recorded interactive play from the player camera at
+                // the window size instead of the scripted demo. Both meanings now ride the ONE flag, so the two
+                // cannot drift apart again. Review 2026-08-16.
                 else if (arg == "--play") play = true;
                 else if (arg == "--nozombies") _noZombies = true;   // no-zombie test environment
                 else if (arg == "--newzombies") ZombieDirector.Enabled = true;   // the rewrite (docs/ZOMBIE_REWRITE_PLAN.md): sim rows + borrowed rigs, no per-zombie body. Off = the old ZombieField/ZombieController path, untouched
@@ -166,6 +173,7 @@ namespace UnturnedGodot
                 else if (arg == "--direct") _direct = true;            // SP/MP-unify P6a: opt OUT of the consuming-loopback DEFAULT on the SP GAME entries -> pure direct SP path (reversible fallback + A/B; equivalent env UG_DIRECT=1)
                 else if (arg == "--client") client = true;   // bare demo/test client: real world + the C1 overhead cam + ClientNode capsules (no player shell)
                 else if (arg.StartsWith("--connect=")) { client = true; _playableClient = true; _connectHost = arg["--connect=".Length..]; }   // join a dedicated server by IP -- C3: the PLAYABLE client (ClientWorldSession: predicted first-person shell)
+                else if (arg == "--netobserve") netobserve = true;   // headless net-observer: full netcode + replica state, NO render world (combine with --connect= for the target; see BuildNetObserver)
                 else if (arg == "--smoke") smoke = true;
                 else if (arg == "--hurtdemo") hurtdemo = true;
                 else if (arg == "--firetest") firetest = true;   // player fires near a distant zombie: verify the gunshot alert (+ --supp = suppressed -> no alert)
@@ -383,6 +391,22 @@ namespace UnturnedGodot
                 return;
             }
 
+            if (barricadeTest)   // barricades-on-structures showcase: upright wall-mounts facing out + a valid ghost + a floor barricade
+            {
+                GetWindow().Size = new Vector2I(1280, 720);
+                _shotPath = shot;
+                BuildBarricadeTest();
+                return;
+            }
+
+            if (barricadePlay)   // INTERACTIVE barricade placement sandbox (fly + place). Live; --shot=OUT still captures the opening frame for a build check
+            {
+                GetWindow().Size = new Vector2I(1280, 720);
+                _shotPath = shot;
+                BuildBarricadePlay();
+                return;
+            }
+
             if (croptest != null)   // farm crop showcase: young + grown on a ground plane -> validate mesh/tex/orientation
             {
                 GetWindow().Size = new Vector2I(900, 900);
@@ -543,12 +567,14 @@ namespace UnturnedGodot
             if (buildmode)  // script a small structure (floor + walls) to show the build system
             {
                 GetWindow().Size = new Vector2I(1280, 720);
+                _shotPath = shot; _shotRequested = shot;   // --build never armed the capture: every other shot mode sets these two, this one did not, so --shot was silently ignored and the run just timed out
                 BuildBuildDemo(gun);
                 return;
             }
 
             if (dedicated) { BuildDedicated(); return; }        // headless dedicated server: real world + NetServerSession (MP_PLAN §4 Phase 3)
             if (server) { BuildServer(); return; }              // headless demo server (bare arena + a scripted bot)
+            if (netobserve) { BuildNetObserver(); return; }     // headless net-observer -- MUST precede the client dispatch: --connect= also sets `client`, and that path world-builds WorldMode.Client (headless-unsafe)
             if (client) { if (DisplayServer.GetName() != "headless") GetWindow().Mode = Window.ModeEnum.Maximized; BuildClient(); return; }   // fill the screen (same "tiny viewport" fix as --play below). Guard the window op for --headless (dummy DisplayServer, no window) -> a headless CLIENT runs the full netcode + world STATE with no rasterization (diagnostics / future scripted-client harness).
 
             if (netdemo)
@@ -558,6 +584,9 @@ namespace UnturnedGodot
                 return;
             }
 
+            // `demo` is the SAME flag as _demo now (see the arg loop) -- the second --demo branch that used to set
+            // this local was dead, so the scripted-demo build path had been unreachable since it was written.
+            demo = _demo;
             if (play || demo)
             {
                 // Interactive play fills the screen (maximized). Setting a fixed Size while the project opens
@@ -1363,7 +1392,12 @@ namespace UnturnedGodot
             AddChild(sun);
             var dn = new DayNightCycle { Sun = sun, Env = env, DayLength = 300f };   // a 5-minute day/night cycle
             AddChild(dn);
-            AddChild(new RainOverlay { Cycle = dn, Raining = GD.Randf() < 0.35f });   // ~a third of runs start rainy
+            // Weather is now SCHEDULED off PEI's real Weather_Types table instead of a one-shot coin flip at
+            // world build -- forecast, fade in, hold, fade out, repeat (src LightingManager). The overlay is the
+            // same shader; WeatherManager just owns whether and how hard it rains.
+            var rain = new RainOverlay { Cycle = dn, Raining = false };
+            AddChild(rain);
+            WeatherManager.Attach(this, rain, dn);
 
             var ground = new StaticBody3D { CollisionLayer = 1 << 0 };
             ground.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
@@ -2328,6 +2362,119 @@ namespace UnturnedGodot
             cam.LookAt(new Vector3(0.7f, 3.3f, -1f), Vector3.Up);
         }
 
+        // --barricadetest : the barricades-on-structures showcase. A grey STRUCTURE wall (in the "structures" group)
+        // with two barricades mounted UPRIGHT on its face, each yawed to face straight out of the wall (Wall mount);
+        // a blue VALID placement ghost snapped to the wall; and a floor barricade in front for contrast. Demonstrates
+        // the surface-placement gap the ground DeployablePlacer couldn't do (it rejects any normal.y < 0.01).
+        void BuildBarricadeTest()
+        {
+            var env = new Godot.Environment
+            {
+                BackgroundMode = Godot.Environment.BGMode.Color,
+                BackgroundColor = new Color(0.30f, 0.34f, 0.42f),
+                AmbientLightSource = Godot.Environment.AmbientSource.Color,
+                AmbientLightColor = new Color(0.72f, 0.72f, 0.75f), AmbientLightEnergy = 1.0f,
+            };
+            AddChild(new WorldEnvironment { Environment = env });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-48f, -40f, 0f), LightEnergy = 1.3f, ShadowEnabled = true });
+
+            AddChild(new MeshInstance3D
+            {
+                Mesh = new PlaneMesh { Size = new Vector2(40f, 40f) },
+                MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.34f, 0.40f, 0.28f), Roughness = 1f },
+            });
+            var groundBody = new StaticBody3D();
+            groundBody.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
+            groundBody.AddToGroup("terrain");
+            AddChild(groundBody);
+
+            // a STRUCTURE wall (grey, in the "structures" group -- where StructureManager parents its pieces)
+            var wallSize = new Vector3(6f, 4f, 0.4f);
+            var wallPos = new Vector3(0f, 2f, -2f);
+            var wall = new StaticBody3D { Position = wallPos };
+            wall.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = wallSize } });
+            wall.AddChild(new MeshInstance3D { Mesh = new BoxMesh { Size = wallSize }, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.56f, 0.57f, 0.61f), Roughness = 0.85f } });
+            wall.AddToGroup("structures");
+            AddChild(wall);
+
+            var n = Vector3.Back;                                   // the wall's front face normal (+Z, toward the camera)
+            float faceZ = wallPos.Z + wallSize.Z * 0.5f;
+            float wallYaw = BarricadePlacer.YawFacing(n);           // face straight out of the wall
+
+            // WALL: two metal-plate barricades flush on the wall face. Mount comes from the def (Wall) -> upright, facing out.
+            Barricade.PlaceOnSurface(this, DeployableDef.MetalBarricade, new Vector3(-1.6f, 1.7f, faceZ), n, wallYaw);
+            Barricade.PlaceOnSurface(this, DeployableDef.MetalBarricade, new Vector3(1.6f, 1.7f, faceZ), n, wallYaw);
+
+            // a blue VALID placement ghost snapped to the wall (the placer preview; SetDef reads Mount=Wall from the def)
+            var placer = new BarricadePlacer();
+            AddChild(placer);
+            placer.SetDef(DeployableDef.MetalBarricade);
+            placer.Freeze(new Vector3(0f, 1.7f, faceZ), n, wallYaw);
+
+            // FLOOR: a deployable on the ground in front for contrast (Floor mount, upright, free yaw)
+            Deployable.Spawn(this, DeployableDef.Generator, new Vector3(-3.4f, 0f, 2.2f), 25f);
+
+            var cam = new Camera3D { Current = true, Fov = 56f, Far = 10000f };
+            AddChild(cam);
+            cam.Position = new Vector3(5.6f, 3.2f, 8.2f);
+            cam.LookAt(new Vector3(-0.3f, 1.5f, -0.6f), Vector3.Up);
+        }
+
+        // --barricadeplay : an interactive sandbox to TEST barricade placement feel before the in-game held-item flow
+        // is wired. A small structure room (walls + roof, all in "structures"), a free-fly EditorCamera (hold RMB), a
+        // BarricadePlayground driving a BarricadePlacer off the screen-centre aim, and a centre crosshair. LMB places;
+        // [1-3] cycle def, Tab cycles mount family, R rotates.
+        void BuildBarricadePlay()
+        {
+            var env = new Godot.Environment
+            {
+                BackgroundMode = Godot.Environment.BGMode.Color,
+                BackgroundColor = new Color(0.30f, 0.34f, 0.42f),
+                AmbientLightSource = Godot.Environment.AmbientSource.Color,
+                AmbientLightColor = new Color(0.72f, 0.72f, 0.75f), AmbientLightEnergy = 1.0f,
+            };
+            AddChild(new WorldEnvironment { Environment = env });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-48f, -40f, 0f), LightEnergy = 1.3f, ShadowEnabled = true });
+
+            AddChild(new MeshInstance3D
+            {
+                Mesh = new PlaneMesh { Size = new Vector2(60f, 60f) },
+                MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.34f, 0.40f, 0.28f), Roughness = 1f },
+            });
+            var groundBody = new StaticBody3D();
+            groundBody.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
+            groundBody.AddToGroup("terrain");
+            AddChild(groundBody);
+
+            // a small structure room to place on: back wall + left wall + a roof (Sticky targets), all in "structures"
+            void Slab(Vector3 pos, Vector3 size)
+            {
+                var b = new StaticBody3D { Position = pos };
+                b.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = size } });
+                b.AddChild(new MeshInstance3D { Mesh = new BoxMesh { Size = size }, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.56f, 0.57f, 0.61f), Roughness = 0.85f } });
+                b.AddToGroup("structures");
+                AddChild(b);
+            }
+            Slab(new Vector3(0f, 2f, -3f), new Vector3(8f, 4f, 0.4f));    // back wall
+            Slab(new Vector3(-4f, 2f, 0f), new Vector3(0.4f, 4f, 6f));    // left wall
+            Slab(new Vector3(0f, 4.1f, 0f), new Vector3(8f, 0.4f, 6f));   // roof (Sticky targets on its underside)
+
+            var cam = new EditorCamera { Position = new Vector3(0f, 2f, 1.6f), RotationDegrees = new Vector3(-3f, 0f, 0f) };   // start within the barricade Range of the back wall so the opening ghost is placeable
+            AddChild(cam);
+            var pg = new BarricadePlayground();
+            AddChild(pg);
+            pg.Setup(cam);
+
+            // centre crosshair so you can see where the ghost will land
+            var layer = new CanvasLayer();
+            AddChild(layer);
+            var dot = new ColorRect { Color = new Color(1f, 1f, 1f, 0.85f), Size = new Vector2(6f, 6f) };
+            dot.SetAnchorsPreset(Control.LayoutPreset.Center);
+            dot.Position = new Vector2(-3f, -3f);
+            layer.AddChild(dot);
+            GD.Print("[barricadeplay] HOLD RMB to fly/look (WASD move, scroll=speed). LMB=place. [1-3]=def, Tab=mount family, R=rotate 90.");
+        }
+
         void BuildDeployTest()
         {
             if (System.Environment.GetEnvironmentVariable("UG_WINDMAP") == "1") { RenderWindMap(); return; }   // wind heatmap over PEI, then quit
@@ -3172,7 +3319,7 @@ namespace UnturnedGodot
             editor.AddChild(cam);
             editor.Setup(mapName, null, cam);
             LootTables.Load(_mapRoot + "/Spawns/Items.dat");   // new maps use PEI's loot tables as the pool (for loot crates)
-            var objs = new EditorObjects(editor, this, cam); editor.AddChild(objs); editor.Objects = objs;
+            var objs = new EditorObjects(editor, this, cam, objectsPreloaded: false); editor.AddChild(objs); editor.Objects = objs;
             var spawns = new EditorSpawns(editor, cam, MapDir(mapName)); editor.AddChild(spawns); editor.Spawns = spawns;   // dir doesn't exist -> starts empty
             var envEd = new EditorEnvironment(editor, dayNight, SetCleanEditorLighting); editor.AddChild(envEd); editor.Environment = envEd;
             var terrainEd = new EditorTerrain(editor, cam, terr); editor.AddChild(terrainEd); editor.TerrainEd = terrainEd;
@@ -3749,7 +3896,12 @@ namespace UnturnedGodot
         async void BuildEditor()
         {
             _worldBuild = true;
-            var res = await WorldBuilder.BuildFullWorld(this, WorldMode.Editor, _mapRoot, _mapPlace, noZombies: true,
+            // EDITOR object source: once a prior editor Save has materialized editor_PEI.txt (the our-format map),
+            // load objects from THAT instead of the retail placements -- so edits persist and the first open converts
+            // retail->ours one-way (the retail placements file is never written). Same 10-field format either way.
+            string editorObjFile = "editor_PEI.txt";
+            string objPlace = System.IO.File.Exists(ProjectSettings.GlobalizePath("res://content/objects/") + editorObjFile) ? editorObjFile : _mapPlace;
+            var res = await WorldBuilder.BuildFullWorld(this, WorldMode.Editor, _mapRoot, objPlace, noZombies: true,
                                                         syncLoad: false, bakeNav: false, ActiveHoliday());
             // Clean, legible editor lighting. The DayNightCycle re-applies a warm-tan ambient + fog + glow EVERY
             // frame (source-faithful sky, but it reads as thick haze from the aerial editor cam), so freeze its
@@ -3774,10 +3926,12 @@ namespace UnturnedGodot
             var editor = new Editor();
             AddChild(editor);
             var cam = new EditorCamera { Position = new Vector3(0f, 140f, 160f), RotationDegrees = new Vector3(-32f, 0f, 0f) };
+            var camEnv = System.Environment.GetEnvironmentVariable("UG_EDITOR_CAM");   // "x,y,z,pitch" headless verify override (e.g. aim at a town cluster)
+            if (camEnv != null) { var q = camEnv.Split(','); if (q.Length >= 4 && float.TryParse(q[0], out var cx) && float.TryParse(q[1], out var cy) && float.TryParse(q[2], out var cz) && float.TryParse(q[3], out var cp)) { cam.Position = new Vector3(cx, cy, cz); cam.RotationDegrees = new Vector3(cp, 0f, 0f); } }
             editor.AddChild(cam);
             editor.Setup("PEI", null, cam);
             LootTables.Load(_mapRoot + "/Spawns/Items.dat");   // so loot-crate tables can be named/picked in the editor
-            var objs = new EditorObjects(editor, this, cam);   // Phase 2: place/select/delete props (picks the WorldMode.Editor colliders)
+            var objs = new EditorObjects(editor, this, cam, objectsPreloaded: true);   // Phase 1a: WorldBuilder wrapped the loaded map objects as editable; ingest them, don't re-load the main object sidecar (avoids double-load)
             editor.AddChild(objs);
             editor.Objects = objs;
             var buildings = new EditorBuildings();   // building tool: walls + openings, shares the Level tab with Objects
@@ -5070,7 +5224,28 @@ namespace UnturnedGodot
             AddChild(sun);
             var cyc = new DayNightCycle { Sun = sun, Env = env, DayLength = 5f, Time = 0.5f };   // fast; start at noon
             AddChild(cyc);
-            AddChild(new RainOverlay { Cycle = cyc, Raining = true });   // demo the rain too
+            // UG_WEATHER=clear|rain|heavy drives the REAL WeatherManager over this reference scene so the weather
+            // system can be render-verified; unset leaves the original forced-rain demo exactly as it was (the
+            // existing daynight golden must not move).
+            string wmode = System.Environment.GetEnvironmentVariable("UG_WEATHER");
+            var dnRain = new RainOverlay { Cycle = cyc, Raining = wmode == null };   // demo the rain too
+            AddChild(dnRain);
+            if (wmode != null)
+            {
+                // Freeze the sky for the render: this demo runs a 5 s day, so between two runs the sun moves far
+                // enough that a pixel diff measures the LIGHTING, not the weather (first comparison showed light
+                // and heavy rain differing from clear by 53.9% vs 54.1% -- pure noise). Frozen, the only variable
+                // left is the weather.
+                cyc.Speed = 0f; cyc.Time = 0.5f;
+                var wm = WeatherManager.Attach(this, dnRain, cyc, seed: 4242);
+                // Hold the weather PERPETUALLY for a still frame. Stepping a scheduled shower here does not work:
+                // this demo scene runs a 5 s day, so PEI's 0.05-0.15 cycle window is a sub-second shower that a
+                // settle loop blows straight through (first attempt rendered blend=0.00 with the type re-rolled).
+                if (wmode == "rain") wm.Sim.SetPerpetual(0);
+                else if (wmode == "heavy") wm.Sim.SetPerpetual(1);                      // density only, no flash
+                else if (wmode == "lightning") { wm.Sim.SetPerpetual(1); wm.Strike(); } // the flash, judged separately
+                GD.Print($"[WEATHERSHOT] mode={wmode} stage={wm.Sim.Stage} blend={wm.Sim.BlendAlpha:0.00} active={wm.Sim.Active?.Name ?? "none"}");
+            }
 
             var ground = new StaticBody3D { CollisionLayer = 1 << 0 };
             ground.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
@@ -5153,21 +5328,71 @@ namespace UnturnedGodot
             ground.AddChild(gmesh);
             AddChild(ground);
 
+            // A small base on the REAL 6 m lattice, one tier per row so the upgrade ladder is visible at a
+            // glance. Everything goes through StructureManager.Place, so what this renders is what the
+            // placement rules actually permit -- a demo that bypassed them would look right and prove nothing.
+            var sm = new StructureManager { Name = "StructureManager" };
+            AddChild(sm);
             var bt = new BuildTool();
             AddChild(bt);
-            bt.Type = 0;   // 2x2 floor of tiles
-            bt.Spawn(new Vector3(-1.5f, 0.1f, -1.5f), 0); bt.Spawn(new Vector3(1.5f, 0.1f, -1.5f), 0);
-            bt.Spawn(new Vector3(-1.5f, 0.1f, 1.5f), 0);  bt.Spawn(new Vector3(1.5f, 0.1f, 1.5f), 0);
-            bt.Type = 1;   // three walls
-            bt.Spawn(new Vector3(-3f, 1.5f, 0f), 90f);
-            bt.Spawn(new Vector3(3f, 1.5f, 0f), 90f);
-            bt.Spawn(new Vector3(0f, 1.5f, -3f), 0f);
+            for (int tier = 0; tier < StructureCatalog.TierCount; tier++)
+            {
+                float z = (tier - 1) * StructureCatalog.EdgeLength;
+                bt.Spawn(new Vector3(0f, 0f, z), EConstruct.Floor, tier);                       // 2 tiles of floor
+                bt.Spawn(new Vector3(StructureCatalog.EdgeLength, 0f, z), EConstruct.Floor, tier);
+                bt.Spawn(new Vector3(-StructureCatalog.HalfEdge, 0f, z), EConstruct.Wall, tier); // wall on the outer edge
+                bt.Spawn(new Vector3(StructureCatalog.EdgeLength * 1.5f, 0f, z), EConstruct.Wall, tier);
+            }
 
-            var overview = new Camera3D { Current = true, Fov = 60f };
+            // Pillars at the tile CORNERS and a roof over the middle tile. The corners are what the pillar
+            // lattice exists for: aimed at the same points, the face rule would snap all four into the middle
+            // of the tile they are supposed to hold up, so a render that shows them standing at the corners is
+            // the check on it. Counted rather than assumed -- these go through the same CanPlace as everything
+            // else, and silently placing nothing would still render a tidy-looking base.
+            int pillars = 0;
+            float midZ = 0f;
+            foreach (float px in new[] { -StructureCatalog.HalfEdge, StructureCatalog.HalfEdge })
+                foreach (float pz in new[] { midZ - StructureCatalog.HalfEdge, midZ + StructureCatalog.HalfEdge })
+                    if (bt.Spawn(new Vector3(px, 0f, pz), EConstruct.Pillar, 2) != null) pillars++;
+            bool roof = bt.Spawn(new Vector3(0f, StructureCatalog.WallHeight, midZ), EConstruct.Roof, 2) != null;
+            GD.Print($"[BUILD] corner pillars placed: {pillars}/4, roof: {roof}");
+
+            // INTEGRATION proof: a barricade mounted on a structure WALL. This is the whole point of merging the
+            // two branches -- the ground DeployablePlacer rejected any surface with normal.y < 0.01, so before
+            // this a barricade could only ever sit on the floor. Mounted through Barricade.PlaceOnSurface with
+            // the wall's real outward face, the same call the held-item place flow makes.
+            // a doorway on the front edge: same slot class as a wall, with a hole you can actually walk through
+            float frontZ = StructureCatalog.EdgeLength + StructureCatalog.HalfEdge;
+            bool doorway = bt.Spawn(new Vector3(0f, 0f, frontZ), EConstruct.Doorway, 2) != null;
+            GD.Print($"[BUILD] doorway: {doorway}");
+
+            int mounted = 0;
+            foreach (var pc in StructureManager.Instance.All)
+            {
+                if (pc.Construct != EConstruct.Wall || pc.Tier != 2) continue;   // one, on a metal wall
+                var n = StructureManager.FaceNormal(pc);
+                float halfThick = StructureCatalog.Extents(EConstruct.Wall).Z * 0.5f;
+                var at = pc.Pos + Vector3.Up * StructureCatalog.WallPivotOffset + n * (halfThick + 0.02f);
+                Barricade.PlaceOnSurface(this, DeployableDef.MetalBarricade, at, n, BarricadePlacer.YawFacing(n));
+                mounted++;
+                break;
+            }
+            GD.Print($"[BUILD] wall-mounted barricades: {mounted}");
+
+            // Framed off the LATTICE, not hardcoded metres. The old camera sat at (6, 4.5, 7) for a 3 m demo;
+            // on the real 6 m tile that is INSIDE the base looking at the back of a wall, which is what the
+            // first render of this showed. Deriving it from EdgeLength means the shot survives the next
+            // geometry change instead of quietly framing the inside of something.
+            float span = StructureCatalog.EdgeLength * StructureCatalog.TierCount;
+            var overview = new Camera3D { Current = true, Fov = 55f };
             AddChild(overview);
-            overview.Position = new Vector3(6f, 4.5f, 7f);
-            overview.LookAt(new Vector3(0f, 1f, 0f), Vector3.Up);
-            GD.Print("[BUILD] scripted a small structure (floor + walls)");
+            // Higher than a natural eye-level 3/4: at 0.85x span the perimeter walls stand between the camera
+            // and the corner pillars, so the shot showed two of four and could not evidence the corner lattice
+            // at all. Looking DOWN into the base is the only angle from which "a pillar at each corner" is a
+            // checkable claim rather than a caption.
+            overview.Position = new Vector3(span * 0.95f, span * 1.45f, span * 1.35f);
+            overview.LookAt(new Vector3(StructureCatalog.HalfEdge, 1.0f, 0f), Vector3.Up);
+            GD.Print("[BUILD] scripted a small structure (floors + walls + corner pillars + roof)");
         }
 
         // Building-tool demo: walls carrying openings at the MEASURED retail dimensions, so the first thing
@@ -5454,6 +5679,34 @@ namespace UnturnedGodot
             catch (System.Exception e)
             {
                 GD.PrintErr($"[DEDICATED] world build FAILED: {e}");
+                GetTree().Quit(1);
+            }
+        }
+
+        // Headless NET-OBSERVER (--netobserve): a diagnostics client that stands up ONLY netcode +
+        // replica state and logs the client-side vehicle picture (NetObserver.cs). World scaffold =
+        // the SAME WorldMode.Dedicated + syncLoad:true build the dedicated server uses, because the
+        // Client world-build is headless-UNSAFE: syncLoad:false awaits RenderingServer.FramePostDraw
+        // between load phases (WorldBuilder.Phase) and the --headless dummy renderer never presents a
+        // frame -> the await never resumes and BuildClient hangs forever. The Dedicated path never
+        // frame-yields (the live server proves it boots headless). noZombies always: the observer is
+        // authority for NOTHING -- a local zombie/loot sim would be pure CPU waste on the shared box.
+        // Cheapest run: leave UG_UNTURNED_DIR unset -> the flat-fallback scaffold (no map, no local
+        // vehicle/loot spawns); replica observation reads the wire, it never needs local terrain.
+        async void BuildNetObserver()
+        {
+            // async void swallows exceptions silently (the BuildDedicated trap) -- surface + hard-exit.
+            try
+            {
+                var res = await WorldBuilder.BuildFullWorld(this, WorldMode.Dedicated, _mapRoot, _mapPlace,
+                    noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: ActiveHoliday());
+                _worldReady = res.Ready;
+                AddChild(new NetObserver { Host = _connectHost, Port = PortEnv(), Driver = res.Sim });
+                GD.Print($"[NETOBS] scaffold up (terrain={(res.Terr != null ? "real map" : "fallback plane")}); observing {_connectHost}:{PortEnv()}");
+            }
+            catch (System.Exception e)
+            {
+                GD.PrintErr($"[NETOBS] build FAILED: {e}");
                 GetTree().Quit(1);
             }
         }

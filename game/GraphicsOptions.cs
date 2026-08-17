@@ -71,22 +71,65 @@ namespace UnturnedGodot
         {
             var mode = VertexShading ? BaseMaterial3D.ShadingModeEnum.PerVertex : BaseMaterial3D.ShadingModeEnum.PerPixel;
             int n = 0;
+            // Unshaded materials are left alone throughout. They are unshaded on purpose (build ghosts, port
+            // arrows, wire overlays) and dragging them into a lit mode would be a visual change masquerading as
+            // a perf experiment.
+            void Flip(Material m)
+            {
+                if (m is StandardMaterial3D s && s.ShadingMode != BaseMaterial3D.ShadingModeEnum.Unshaded
+                    && s.ShadingMode != mode) { s.ShadingMode = mode; n++; }
+            }
             void Walk(Node node)
             {
-                if (node is MeshInstance3D mi)
+                // GeometryInstance3D, not MeshInstance3D. This walk used to descend only into MeshInstance3D,
+                // and MultiMeshInstance3D does NOT derive from it -- both come off GeometryInstance3D. So every
+                // tree, rock, pebble and grass patch in the world (ResourceField, FoliageField, PropBatcher) was
+                // skipped, along with the terrain and the grass, whose materials are ShaderMaterial rather than
+                // StandardMaterial3D. The switch converted the placed-prop set, printed a large count, and left
+                // the renderers that actually dominate the frame on per-pixel -- so an A/B through it measured a
+                // lower bound of unknown tightness and would have read as "vertex lighting barely helps".
+                // Review 2026-08-16.
+                if (node is GeometryInstance3D gi)
                 {
-                    // Unshaded materials are left alone. They are unshaded on purpose (build ghosts, port
-                    // arrows, wire overlays) and dragging them into a lit mode would be a visual change
-                    // masquerading as a perf experiment.
-                    if (mi.MaterialOverride is StandardMaterial3D so && so.ShadingMode != BaseMaterial3D.ShadingModeEnum.Unshaded
-                        && so.ShadingMode != mode) { so.ShadingMode = mode; n++; }
-                    for (int i = 0; i < mi.GetSurfaceOverrideMaterialCount(); i++)
-                        if (mi.GetSurfaceOverrideMaterial(i) is StandardMaterial3D ss && ss.ShadingMode != BaseMaterial3D.ShadingModeEnum.Unshaded
-                            && ss.ShadingMode != mode) { ss.ShadingMode = mode; n++; }
-                    if (mi.Mesh != null)
+                    Flip(gi.MaterialOverride);
+                    Flip(gi.MaterialOverlay);
+                    if (gi is MeshInstance3D mi)
+                    {
+                        for (int i = 0; i < mi.GetSurfaceOverrideMaterialCount(); i++) Flip(mi.GetSurfaceOverrideMaterial(i));
+                        if (mi.Mesh != null)
+                            for (int i = 0; i < mi.Mesh.GetSurfaceCount(); i++) Flip(mi.Mesh.SurfaceGetMaterial(i));
+                    }
+                    else if (gi is MultiMeshInstance3D mmi && mmi.Multimesh?.Mesh is { } mm)
+                        for (int i = 0; i < mm.GetSurfaceCount(); i++) Flip(mm.SurfaceGetMaterial(i));
+                }
+                foreach (var c in node.GetChildren()) Walk(c);
+            }
+            if (root != null) Walk(root);
+            return n;
+        }
+
+        /// <summary>How many renderers this switch CANNOT convert, and why: a ShaderMaterial has no ShadingMode
+        /// to flip -- its lighting is written into the shader itself.
+        ///
+        /// Reported alongside the changed count because the two together are the honest reading. The terrain and
+        /// the grass are both ShaderMaterial, and they are a large share of the frame; an A/B that silently
+        /// leaves them on per-pixel is not measuring "vertex lighting", it is measuring vertex lighting on the
+        /// props only. Converting them means writing vertex-lit variants of those shaders, which is real work
+        /// rather than a toggle -- so the switch names what it skipped instead of implying it covered everything.</summary>
+        public static int CountShaderMaterialRenderers(Node root)
+        {
+            int n = 0;
+            void Walk(Node node)
+            {
+                if (node is GeometryInstance3D gi)
+                {
+                    if (gi.MaterialOverride is ShaderMaterial) n++;
+                    if (gi is MeshInstance3D mi && mi.Mesh != null)
                         for (int i = 0; i < mi.Mesh.GetSurfaceCount(); i++)
-                            if (mi.Mesh.SurfaceGetMaterial(i) is StandardMaterial3D ms && ms.ShadingMode != BaseMaterial3D.ShadingModeEnum.Unshaded
-                                && ms.ShadingMode != mode) { ms.ShadingMode = mode; n++; }
+                            if (mi.Mesh.SurfaceGetMaterial(i) is ShaderMaterial) n++;
+                    if (gi is MultiMeshInstance3D mmi && mmi.Multimesh?.Mesh is { } mm)
+                        for (int i = 0; i < mm.GetSurfaceCount(); i++)
+                            if (mm.SurfaceGetMaterial(i) is ShaderMaterial) n++;
                 }
                 foreach (var c in node.GetChildren()) Walk(c);
             }

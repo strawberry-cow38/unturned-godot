@@ -101,6 +101,76 @@ namespace UnturnedGodot.Net
         }
     }
 
+    /// <summary>"I fitted the item in this cell onto my gun -- spend it." Carries the expected item ID as well
+    /// as the cell so the server can refuse a stale address rather than deleting whatever happens to be there
+    /// now: the client's grid can shift between the click and the packet.</summary>
+    public struct FitAttachmentCommand
+    {
+        public byte Page, X, Y;
+        public ushort Id;
+        public void Write(NetPakWriter w) { w.WriteUInt8(Page); w.WriteUInt8(X); w.WriteUInt8(Y); w.WriteUInt16(Id); }
+        public static bool TryRead(NetPakReader r, out FitAttachmentCommand cmd)
+        {
+            cmd = default;
+            if (!r.ReadUInt8(out byte p) || !r.ReadUInt8(out byte x) || !r.ReadUInt8(out byte y) || !r.ReadUInt16(out ushort id)) return false;
+            cmd = new FitAttachmentCommand { Page = p, X = x, Y = y, Id = id };
+            return true;
+        }
+    }
+
+    /// <summary>Reloading, as an intent. The client picked a magazine and knows how many rounds came out of the
+    /// gun; the server owns whether that magazine is really there.
+    ///
+    /// SpentId/SpentAmount are the outgoing magazine, and they are the one client-supplied quantity here -- the
+    /// server has no gun state to derive them from (nothing on the wire carries gunAmmo). OnReload clamps the
+    /// amount to the magazine asset's real capacity, so the worst a lying client gets is a full magazine back
+    /// instead of a partial one, not an arbitrary stack. SpentId 0 = nothing to return (reloading from empty).</summary>
+    public struct ReloadSwapCommand
+    {
+        public byte Page, X, Y;      // the fresh magazine being loaded
+        public ushort SpentId;       // the magazine coming out (0 = none)
+        public byte SpentAmount;     // rounds left in it
+        public void Write(NetPakWriter w) { w.WriteUInt8(Page); w.WriteUInt8(X); w.WriteUInt8(Y); w.WriteUInt16(SpentId); w.WriteUInt8(SpentAmount); }
+        public static bool TryRead(NetPakReader r, out ReloadSwapCommand cmd)
+        {
+            cmd = default;
+            if (!r.ReadUInt8(out byte p) || !r.ReadUInt8(out byte x) || !r.ReadUInt8(out byte y)
+                || !r.ReadUInt16(out ushort sid) || !r.ReadUInt8(out byte samt)) return false;
+            cmd = new ReloadSwapCommand { Page = p, X = x, Y = y, SpentId = sid, SpentAmount = samt };
+            return true;
+        }
+    }
+
+    /// <summary>Wear the garment at (Page,X,Y) into clothing slot Slot (an EItemType). The displaced garment, if
+    /// any, goes back to the grid -- the server does the whole swap, because doing half of it locally is what made
+    /// a dragged-on backpack un-equip itself on the next echo.</summary>
+    public struct WearClothingCommand
+    {
+        public byte Page, X, Y, Slot;
+        public void Write(NetPakWriter w) { w.WriteUInt8(Page); w.WriteUInt8(X); w.WriteUInt8(Y); w.WriteUInt8(Slot); }
+        public static bool TryRead(NetPakReader r, out WearClothingCommand cmd)
+        {
+            cmd = default;
+            if (!r.ReadUInt8(out byte p) || !r.ReadUInt8(out byte x) || !r.ReadUInt8(out byte y) || !r.ReadUInt8(out byte s)) return false;
+            cmd = new WearClothingCommand { Page = p, X = x, Y = y, Slot = s };
+            return true;
+        }
+    }
+
+    /// <summary>Take clothing slot Slot off, back into the grid.</summary>
+    public struct UnwearClothingCommand
+    {
+        public byte Slot;
+        public void Write(NetPakWriter w) => w.WriteUInt8(Slot);
+        public static bool TryRead(NetPakReader r, out UnwearClothingCommand cmd)
+        {
+            cmd = default;
+            if (!r.ReadUInt8(out byte s)) return false;
+            cmd = new UnwearClothingCommand { Slot = s };
+            return true;
+        }
+    }
+
     public struct OpenStorageCommand
     {
         public uint NetId;
@@ -244,6 +314,18 @@ namespace UnturnedGodot.Net
             _byOwner.Remove(ownerPlayerId);
         }
 
+        /// <summary>Mark an owner's inventory changed when the change was a BARE FIELD WRITE on an Item rather
+        /// than a grid operation -- a decremented stack, a gas can's fuelLevel, a bottle's contents.
+        ///
+        /// Dirty is otherwise raised only by Items.onStateUpdated (add / remove / resize) and the storage
+        /// open/close pair, so writing a field on an Item fired nothing and WriteDelta emitted an empty block:
+        /// the change never reached the owner until some UNRELATED grid edit happened to dirty the entry. That is
+        /// why a pump-filled gas can read empty on the client while the server's copy was full. Review 2026-08-16.</summary>
+        public void ServerMarkDirty(ushort ownerPlayerId)
+        {
+            if (_byOwner.TryGetValue(ownerPlayerId, out var e)) e.Dirty = true;
+        }
+
         /// <summary>Stamp this tick onto every entry the last dispatch round dirtied. Call once per server
         /// tick, after command dispatch, so the delta baseline math sees a real tick number.</summary>
         public void ServerCommitDirty(long tick)
@@ -377,6 +459,28 @@ namespace UnturnedGodot.Net
             w.WriteInt8((sbyte)(j.item?.gunFiremode ?? -1));
             w.WriteInt32(j.item?.gunMagId ?? -1);
             w.WriteInt32(j.item?.gunAttach ?? -1);
+            // PER-SLOT ATTACHMENTS. These were added to Item after the schema was written and never joined it, so
+            // every owner echo rebuilt the jar WITHOUT them: fitting a scope really did delete it from the server
+            // grid (OnFitAttachment works), then the echo handed back a gun with no scope on it. The scope was
+            // gone from the gun AND from the bag -- destroyed, the mirror image of the dupe we fixed in 076879ab.
+            // gunAttachSeeded has to travel too, or AttachmentFit.SeedDefaults re-installs a gun's factory irons
+            // on the next equip and silently undoes a detach. Review 2026-08-16.
+            //
+            // Gated behind one bit because the overwhelming majority of jars are not guns: a bandage costs 1 bit
+            // here rather than 16 bytes. The bit is the ONLY thing that decides whether the four ids follow, on
+            // both sides -- keep this block and ReadJar's edited together.
+            bool att = j.item != null && (j.item.gunSightId >= 0 || j.item.gunBarrelId >= 0 || j.item.gunGripId >= 0
+                                          || j.item.gunTacticalId >= 0 || j.item.gunChambered || j.item.gunAttachSeeded);
+            w.WriteBit(att);
+            if (att)
+            {
+                w.WriteInt32(j.item.gunSightId);
+                w.WriteInt32(j.item.gunBarrelId);
+                w.WriteInt32(j.item.gunGripId);
+                w.WriteInt32(j.item.gunTacticalId);
+                w.WriteBit(j.item.gunChambered);
+                w.WriteBit(j.item.gunAttachSeeded);
+            }
             // fuel-container level (gas can): server-owned -- a pump extract fills the can SERVER-side, and the
             // owner-inventory echo re-adopts it, so the level MUST ride the wire or a filled can shows empty on the
             // client ("can won't fill", the unified-SP regression from the old local-fill path). -1 (non-fuel /
@@ -405,13 +509,33 @@ namespace UnturnedGodot.Net
             if (!r.ReadInt8(out sbyte gunFiremode)) return false;
             if (!r.ReadInt32(out int gunMagId)) return false;
             if (!r.ReadInt32(out int gunAttach)) return false;
+            // Per-slot attachments -- symmetric with WriteJar's `att` block; see the note there.
+            int sight = -1, barrel = -1, grip = -1, tactical = -1;
+            bool chambered = false, attachSeeded = false;
+            if (!r.ReadBit(out bool att)) return false;
+            if (att)
+            {
+                if (!r.ReadInt32(out sight)) return false;
+                if (!r.ReadInt32(out barrel)) return false;
+                if (!r.ReadInt32(out grip)) return false;
+                if (!r.ReadInt32(out tactical)) return false;
+                if (!r.ReadBit(out chambered)) return false;
+                if (!r.ReadBit(out attachSeeded)) return false;
+            }
             if (!r.ReadClampedFloat(12, 2, out float fuelLevel)) return false;   // gas-can fuel level (server-filled)
             if (!r.ReadUInt8(out byte fluidType)) return false;                  // fluid-container contents (server-owned)
             if (!r.ReadClampedFloat(20, 1, out float fluidAmount)) return false;
             if (!r.ReadUInt8(out byte fluidQuality)) return false;
             if (!r.ReadBit(out bool autoDrink)) return false;                    // autodrink toggle
             item = new Item(id, amount, quality) { gunAmmo = gunAmmo, gunFiremode = gunFiremode, gunMagId = gunMagId, gunAttach = gunAttach, fuelLevel = fuelLevel,
-                                                   fluidType = fluidType, fluidAmount = fluidAmount, fluidQuality = fluidQuality, autoDrink = autoDrink };
+                                                   fluidType = fluidType, fluidAmount = fluidAmount, fluidQuality = fluidQuality, autoDrink = autoDrink,
+                                                   gunSightId = sight, gunBarrelId = barrel, gunGripId = grip, gunTacticalId = tactical,
+                                                   gunChambered = chambered, gunAttachSeeded = attachSeeded };
+            // The chambered round's AMMO TYPE is re-derived from the loaded magazine rather than sent: it is a
+            // string, this stack has no string primitive, and the mag id it comes from is already on the wire.
+            // One case loses fidelity by doing it this way and it is worth naming: after a TACTICAL swap the
+            // chambered round keeps the PREVIOUS magazine's type, and that distinction does not survive an echo.
+            if (chambered && gunMagId >= 0) item.gunChamberedType = Assets.find((ushort)gunMagId)?.ammoType;
             return true;
         }
 
