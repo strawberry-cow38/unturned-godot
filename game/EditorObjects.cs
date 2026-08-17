@@ -669,6 +669,18 @@ namespace UnturnedGodot
 
         public override void _Process(double delta)   // hover readout: name the object under the cursor (source EditorObjects hover hint)
         {
+            // A CAMERALESS INSTANCE IS LEGAL, and this ran without checking. Two test fixtures build
+            // `new EditorObjects(ed, World, null)` because they only exercise placement and never need a
+            // viewport -- and the constructor takes that null straight into _flyCam, so this line threw a
+            // NullReferenceException every frame those nodes were in the tree. The suites still passed, since
+            // nothing they assert goes through the hover readout, so it surfaced only as five stack traces in
+            // the L1 log: the failure mode where a green suite and a broken frame look identical.
+            //
+            // It needs the FULL L1 to reproduce -- running the editor suites alone throws nothing, with or
+            // without this guard, because the throwing nodes are ones an EARLIER suite left in the tree. So
+            // "I ran the editor tests and saw no exception" is not evidence this is fixed; only a full-run
+            // grep is.
+            if (_editor == null || _flyCam == null) { HoverName = null; return; }
             if (_editor.Mode != EEditorMode.Level || _flyCam.Flying || Editor.PointerOverUI(this)) { HoverName = null; return; }
             if (Raycast(GetViewport().GetMousePosition(), PickLayer, out _, out var rid) && _pickToObj.TryGetValue(rid, out var obj))
                 HoverName = obj.HasMeta("obj_name") ? (string)obj.GetMeta("obj_name")
