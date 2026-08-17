@@ -2718,14 +2718,34 @@ namespace UnturnedGodot
                 // it is a short bright pulse rather than a 50/50 blink, which is what makes it read as a strobe
                 // instead of a warning lamp.
                 v._beaconMat = LensMat(new Color(1f, 0.06f, 0.06f), 0f);
+                // SAME LENS MODEL AS THE NAV LIGHTS (strawberry) rather than a procedural sphere, so the three
+                // lights on an airframe are visibly the same fitting in three places. The taillights mesh is
+                // authored at ABSOLUTE positions in the airframe's own frame -- it is the port/starboard lens where
+                // it sits on the hull -- so it cannot simply be dropped at the belly: re-centre it on its own
+                // centroid first (a pivot at the belly, the mesh offset by -centroid inside it), which is the same
+                // trick the door leaves use for their hinges.
+                Vector3 bellyAt = new Vector3(0f, s.BoxCenter.Y - s.BoxSize.Y * 0.5f - 0.08f, s.BoxCenter.Z);
+                // Parts is NULL on the specs that predate HeliParts (minicopter, scoutcopter) -- they carry no detail
+                // meshes at all, which is also why they have no nav lights. Those fall through to the bead below.
+                Mesh lens = null;
+                if (s.Parts != null)
+                    foreach (var (ptxt, _) in s.Parts)
+                        if (ptxt.Contains("taillights")) { lens = ContentProvider.ParseObj($"res://content/{ptxt}"); break; }
+                // Bake the re-centring into the node's own Position rather than wrapping it in a pivot: the beacon
+                // stays a DIRECT MeshInstance3D child named BeaconBelly, which is how the rest of the code and
+                // HeliPartsTests address it. A pivot would have been tidier to read and would have quietly broken
+                // every non-recursive FindChild("BeaconBelly") that expects a mesh.
                 v._beaconMesh = new MeshInstance3D
                 {
-                    Name = "BeaconBelly", Mesh = new SphereMesh { Radius = 0.10f, Height = 0.20f, RadialSegments = 8, Rings = 4 },
+                    Name = "BeaconBelly",
+                    Mesh = lens ?? new SphereMesh { Radius = 0.10f, Height = 0.20f, RadialSegments = 8, Rings = 4 },
                     MaterialOverride = v._beaconMat,
-                    Position = new Vector3(0f, s.BoxCenter.Y - s.BoxSize.Y * 0.5f - 0.08f, s.BoxCenter.Z),
+                    // The lens is authored at absolute hull coordinates, so shift it by its own centroid to land
+                    // the fitting on the belly. The fallback bead is already origin-centred.
+                    Position = lens != null ? bellyAt - lens.GetAabb().GetCenter() : bellyAt,
                 };
                 v.AddChild(v._beaconMesh);
-                v._beaconLight = new OmniLight3D { Position = v._beaconMesh.Position, OmniRange = 6f, LightColor = new Color(1f, 0.1f, 0.1f), LightEnergy = 0f };
+                v._beaconLight = new OmniLight3D { Position = bellyAt, OmniRange = 6f, LightColor = new Color(1f, 0.1f, 0.1f), LightEnergy = 0f };   // the BELLY point, not the mesh node, whose position is now a -centroid offset
                 v.AddChild(v._beaconLight);
                 v.ContinuousCd = true;   // a fast dive must not tunnel through terrain between ticks
                 // ISOTROPIC inertia, set explicitly rather than left to Godot's derivation from the collision

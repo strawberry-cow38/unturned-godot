@@ -1975,6 +1975,14 @@ namespace UnturnedGodot
                 Position = hub,
             });
             GD.Print($"[TAILSHOT] {name}: hub {hub} (red pip)");
+            // Report what the belly beacon actually IS. "It exists and flashes" is what the parts suite checks;
+            // whether it is the same FITTING as the nav lights is a different claim and needs the mesh type.
+            if (v.FindChild("BeaconBelly", false, false) is MeshInstance3D bm)
+            {
+                var nav = v.FindChild("NavLightPort", false, false) as MeshInstance3D;
+                bool sameModel = nav != null && bm.Mesh == nav.Mesh;
+                GD.Print($"[BEACON] {name}: mesh {bm.Mesh.GetType().Name}, same object as NavLightPort = {sameModel}, world Y {bm.ToGlobal(bm.Mesh.GetAabb().GetCenter()).Y:0.00}");
+            }
             var cam = new Camera3D { Current = true, Fov = 40f, Far = 400f };
             AddChild(cam);
             // UG_TAIL_CAM="x,y,z" overrides the offset: a hub buried INSIDE the fuselage puts the default camera
