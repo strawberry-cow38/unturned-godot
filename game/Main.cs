@@ -1085,7 +1085,7 @@ namespace UnturnedGodot
             seabed.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
             AddChild(seabed);
 
-            _veh = Vehicle.BuildByName(type, 0);
+            _veh = Vehicle.BuildByName(type, int.TryParse(System.Environment.GetEnvironmentVariable("UG_SHIPVARIANT"), out var _sv) ? _sv : 0);   // UG_SHIPVARIANT: pick the spawn paint variant -> show the random hull-bottom colours
             _veh.Position = new Vector3(0f, 0.5f, 0f);   // spawn just above the waterline -> gentle settle (a 2.5m drop plunged the voxel-buoyancy hull deep + made it bob)
             AddChild(_veh);
             _veh.EngineOn = true;
@@ -1103,6 +1103,26 @@ namespace UnturnedGodot
             AddChild(_vehCam);
             _vehTest = true;   // reuse the vehTest auto-drive + chase-cam loop (Drive() -> the boat's water propulsion)
 
+            if (System.Environment.GetEnvironmentVariable("UG_SHIPSHOW") == "1")
+            {   // BIG SHIP showcase: keep the ship, kill auto-drive, hold a wide 3/4 aerial cam far enough back to
+                // frame the whole 67.5m hull afloat (the boattest chase cam buries itself inside a hull this big).
+                _vehTest = System.Environment.GetEnvironmentVariable("UG_SHIPDRIVE") == "1";   // UG_SHIPDRIVE=1 -> let it auto-drive (moving clip); else static float
+                GetWindow().Size = new Vector2I(1280, 720);
+                Vector3 shipCam = new Vector3(44f, 20f, 42f);   // UG_SHIPCAM="x,y,z" overrides -> iterate framing without a rebuild
+                string _sc = System.Environment.GetEnvironmentVariable("UG_SHIPCAM");
+                if (!string.IsNullOrEmpty(_sc)) { var a = _sc.Split(','); shipCam = new Vector3(float.Parse(a[0]), float.Parse(a[1]), float.Parse(a[2])); }
+                Vector3 lookAt = new Vector3(0f, 6f, 0f);
+                if (System.Environment.GetEnvironmentVariable("UG_SHIPREF") == "1")
+                {   // STATIC reference hull at the retail PEI Alberton draft (keel 4.8m below sea) BESIDE the floating one -> "ours vs pei's" waterline compare
+                    var refMi = new MeshInstance3D { Mesh = ContentProvider.ParseObj("res://content/ship_body.txt"), Position = new Vector3(34f, Terrain.SeaLevelY - 4.8f, 0f) };
+                    var refMat = new StandardMaterial3D { CullMode = BaseMaterial3D.CullModeEnum.Disabled, TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest };
+                    var refImg = new Image();
+                    if (refImg.Load(ProjectSettings.GlobalizePath("res://content/ship_body_tex.png")) == Error.Ok) refMat.AlbedoTexture = ImageTexture.CreateFromImage(refImg);
+                    refMi.MaterialOverride = refMat; AddChild(refMi);
+                    shipCam = new Vector3(17f, 22f, 62f); lookAt = new Vector3(17f, 4f, 0f);   // frame BOTH: floating @X0, static ref @X34
+                }
+                _vehCam.LookAtFromPosition(shipCam, lookAt, Vector3.Up);
+            }
             if (System.Environment.GetEnvironmentVariable("UG_WATERSHOW") == "1")
             {   // clean open-water scroll showcase for a --write-movie clip: ditch the boat + auto-drive, hold a
                 // static low camera skimming the sea so the swell + foam visibly SCROLL past (no boat/cam motion to mask it).
