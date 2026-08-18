@@ -223,7 +223,25 @@ namespace UnturnedGodot
                 float L = Mathf.Max(SegLength(r, i), 0.001f);
                 if (distance <= L || i == segs - 1)
                 {
-                    float t = Mathf.Clamp(distance / L, 0f, 1f);
+                    // ARC-LENGTH reparameterise: find the bezier t whose arc length from 0..t == `distance`.
+                    // distance/L would feed arc-distance straight in as the BEZIER parameter, which is NOT uniform
+                    // in arc length, so a constant ds/dt (the train's drive) becomes a variable WORLD speed -- it
+                    // visibly slows through tight curves (master 2026-08-18). Walk the same 16 subsamples SegLength
+                    // uses so the per-segment total agrees, and lerp t within the crossing sub-interval.
+                    const int SUB = 16;
+                    Vector3 sp = SplinePos(r, i, 0f); float acc = 0f, t = 1f;
+                    for (int k = 1; k <= SUB; k++)
+                    {
+                        Vector3 p = SplinePos(r, i, (float)k / SUB);
+                        float seg = p.DistanceTo(sp);
+                        if (acc + seg >= distance || k == SUB)
+                        {
+                            float f = seg > 1e-6f ? (distance - acc) / seg : 0f;
+                            t = Mathf.Clamp(((k - 1) + Mathf.Clamp(f, 0f, 1f)) / SUB, 0f, 1f);
+                            break;
+                        }
+                        acc += seg; sp = p;
+                    }
                     pos = SplinePos(r, i, t);
                     if (Terr != null && !r.Joints[i].IgnoreTerrain) pos.Y = Terr.SampleHeight(pos.X, pos.Z);
                     Vector3 d = SplinePos(r, i, Mathf.Min(t + 0.02f, 1f)) - SplinePos(r, i, Mathf.Max(t - 0.02f, 0f));
