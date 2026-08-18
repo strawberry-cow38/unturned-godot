@@ -111,10 +111,15 @@ namespace UnturnedGodot
         ///
         /// DESCENT ONLY. The same factor on the CLIMB side raises terminal climb ~22 % at an ordinary 25 deg
         /// cruise, straight into HeliClimbMax's zero-slack server check. The asymmetry is the envelope's, not
-        /// physics'. Off by default: it makes a committed dive roughly twice as fast, and HeliCrashExplodeSpeed
-        /// (15 m/s) was settled against the old 21.8 terminal, so every misjudged pullout becomes a fireball
-        /// until that is revisited.</summary>
-        public static bool ShaftAlignedDescent = false;
+        /// physics'. ON BY DEFAULT since VoX 2026-08-18 ("can you make sure my preference is the defaut for
+        /// testing") -- he reached this from the feel before seeing the code, so the fleet now flies his version
+        /// without anyone typing at the console, and `heliphys shaft off` is how you get the old behaviour back.
+        ///
+        /// STILL UNRESOLVED AND DELIBERATELY NOT PAPERED OVER: HeliCrashExplodeSpeed is 15 m/s and was settled
+        /// against the old 21.8 terminal fall. A floored dive now reaches the airframe's HeliFallMax (39.9 on a
+        /// Huey), so a misjudged pullout is a fireball where it used to be a hard landing. That is a difficulty
+        /// decision, not a physics one, so it is flagged rather than silently retuned alongside this.</summary>
+        public static bool ShaftAlignedDescent = true;
         /// <summary>How much draggier sideways than forwards. This is what replaces the old ForeAftBoost /
         /// LateralBoost pair, which multiplied THRUST to make leaning into a run build momentum ("increase the
         /// forward/back momentum when tilting forward/back") and lateral slip feel less eager than a drone.

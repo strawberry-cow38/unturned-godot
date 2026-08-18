@@ -109,14 +109,17 @@ namespace UnturnedGodot.Testing
             console.RunForTest("heliphys reset");
             yield return Ticks(2);
 
-            T.Check($"`heliphys reset` restores the shipping calibration (heave x{Vehicle.HeaveDampScale:0.##}, shaft {Vehicle.ShaftAlignedDescent})",
-                Mathf.Abs(Vehicle.HeaveDampScale - 1f) < 0.001f && !Vehicle.ShaftAlignedDescent
+            // `reset` means the SHIPPING default, not "everything off" -- shaft-aligned descent has been the
+            // default since VoX asked for it, so a reset that turned it off would quietly undo his setting.
+            T.Check($"`heliphys reset` restores the shipping calibration (heave x{Vehicle.HeaveDampScale:0.##}, shaft {Vehicle.ShaftAlignedDescent} -- expected on)",
+                Mathf.Abs(Vehicle.HeaveDampScale - 1f) < 0.001f && Vehicle.ShaftAlignedDescent
                 && Mathf.Abs(Vehicle.DragScale - 1f) < 0.001f && Vehicle.BackstopEnabled);
 
-            // Leave the statics as we found them: they are GLOBAL, so a test that walks away from a knob
-            // silently retunes every test that runs after it in the same boot.
+            // Leave the statics at the SHIPPING DEFAULTS: they are GLOBAL, so a test that walks away from a knob
+            // silently retunes every test that runs after it in the same boot -- and restoring them to the wrong
+            // value would be the same bug with extra steps.
             Vehicle.HeaveDampScale = 1f; Vehicle.DragScale = 1f;
-            Vehicle.BackstopEnabled = true; Vehicle.ShaftAlignedDescent = false;
+            Vehicle.BackstopEnabled = true; Vehicle.ShaftAlignedDescent = true;
         }
     }
 }

@@ -332,7 +332,7 @@ namespace UnturnedGodot
                 {
                     case "reset":
                         Vehicle.HeaveDampScale = 1f; Vehicle.DragScale = 1f;
-                        Vehicle.BackstopEnabled = true; Vehicle.ShaftAlignedDescent = false;
+                        Vehicle.BackstopEnabled = true; Vehicle.ShaftAlignedDescent = true;   // reset means the SHIPPING default, which is now on
                         Log("reset to shipping calibration\n" + HeliPhysStatus());
                         return;
                     case "heave":
