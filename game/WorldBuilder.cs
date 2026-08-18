@@ -367,7 +367,7 @@ namespace UnturnedGodot
                 || prop.StartsWith("Cane_")            // sugarcane, thin stalks
                 || prop.StartsWith("Mushroom_");       // ankle height
 
-            var shapeCache = new System.Collections.Generic.Dictionary<string, ConcavePolygonShape3D>();   // one trimesh collider per unique prop mesh, shared across instances
+            var shapeCache = new System.Collections.Generic.Dictionary<string, Shape3D>();   // one collider per unique prop mesh, shared across instances -- Shape3D not ConcavePolygonShape3D: ladders get a BoxShape3D instead of a trimesh (see below)
             var matCache = new System.Collections.Generic.Dictionary<string, StandardMaterial3D>();
             StandardMaterial3D MatFor(string nm)
             {
@@ -1070,7 +1070,27 @@ namespace UnturnedGodot
                 StaticBody3D destBody = null;
                 if (colliders && !IsWalkThrough(name))   // walkable collision: trimesh of the VISUAL mesh (trees collide on the trunk only; the separate leaf mesh has no collider, so you walk through foliage)
                 {
-                    if (!shapeCache.TryGetValue(name, out var shp)) { shp = mesh.CreateTrimeshShape(); shapeCache[name] = shp; }
+                    Shape3D shp;
+                    if (!shapeCache.TryGetValue(name, out shp))
+                    {
+                        // LADDERS ARE A SPECIAL CASE: a trimesh of the raw rip is a trimesh of RUNGS -- open
+                        // rails with 0.75 m gaps between each bar, confirmed against Ladder_Metal_0.obj's own
+                        // vertices (9 discrete Z-clusters 0.75 m apart, zero verts at any gap midpoint). The
+                        // player-attach probe (Ladder.cs, PlayerController.StepLadder) is a SINGLE ray at a
+                        // fixed height, so as a player's feet rise through a climb the probe sweeps in and out
+                        // of alignment with the rungs -- attach, immediately lose the probe in the gap, fall
+                        // off, re-attach at the next rung. Strawberry: "fix ladders... i dont even know how to
+                        // describe. they simply dont work" -- this is exactly what that looks like from the
+                        // player's side, and neither ladder test caught it because both hand-build a solid
+                        // BoxShape3D fixture instead of going through this trimesh path (ladder.attach_rules,
+                        // ladder.climb_end_to_end) -- the same "passes every test that builds its own fixture"
+                        // shape as the door bug this file's SpawnInteractables comment already warns about.
+                        // Fix: a solid box matching the mesh's own AABB (1.15 x 0.15 x 6.75, both catalogue
+                        // ladders share it) instead of the open-rung trimesh -- climbable end to end, not rung
+                        // to rung.
+                        shp = Ladder.IsLadderProp(name) ? new BoxShape3D { Size = mesh.GetAabb().Size } : mesh.CreateTrimeshShape();
+                        shapeCache[name] = shp;
+                    }
                     if (shp != null)
                     {
                         // Only LARGE opaque structures (buildings, gated by scaled mesh size) block the item LOS raycast; every small prop
