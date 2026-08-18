@@ -32,6 +32,21 @@ namespace UnturnedGodot
                 return _terrCache = Find(GetTree().Root);
             }
         }
+        RoadField _roadsCache;
+        RoadField WorldRoads
+        {
+            get
+            {
+                if (_roadsCache != null && IsInstanceValid(_roadsCache)) return _roadsCache;
+                RoadField Find(Node n)
+                {
+                    if (n is RoadField r) return r;
+                    foreach (var c in n.GetChildren()) { var f = Find(c); if (f != null) return f; }
+                    return null;
+                }
+                return _roadsCache = Find(GetTree().Root);
+            }
+        }
 
         // MP (Phase 6, §2.3 "all state mutation goes through commands -- including DevConsole"): when this
         // process is a REMOTE client of some server, the state-mutating cheat verbs are sent as a
@@ -51,7 +66,7 @@ namespace UnturnedGodot
 
         LineEdit _input;
         Label _log;
-        static readonly string[] Verbs = { "give", "vehicle", "spawnMagnetableContainer", "spawnheli", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "toggleGlobalPower", "toggleGlobalWater", "toggleBbat", "infFuel", "infAmmo", "wear", "unwear", "fluid", "date", "dateset", "whenBlackout", "triggerGlobalBrownout", "hurtmain", "killmain", "hurttail", "killtail", "profiler", "renderscale", "zshadows", "freezerigs", "vertexlight", "weather", "fridge", "fill", "empty", "units", "simspeed", "time", "timeset", "timeadd", "timespeed", "daylength", "hitbox", "heliphys" };
+        static readonly string[] Verbs = { "give", "vehicle", "spawnMagnetableContainer", "spawnheli", "spawntrain", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "toggleGlobalPower", "toggleGlobalWater", "toggleBbat", "infFuel", "infAmmo", "wear", "unwear", "fluid", "date", "dateset", "whenBlackout", "triggerGlobalBrownout", "hurtmain", "killmain", "hurttail", "killtail", "profiler", "renderscale", "zshadows", "freezerigs", "vertexlight", "weather", "fridge", "fill", "empty", "units", "simspeed", "time", "timeset", "timeadd", "timespeed", "daylength", "hitbox", "heliphys" };
         static readonly EItemType[] ClothingTypes = { EItemType.SHIRT, EItemType.PANTS, EItemType.HAT, EItemType.VEST, EItemType.MASK, EItemType.GLASSES, EItemType.BACKPACK };
         readonly System.Collections.Generic.List<string> _history = new();
         int _histIdx;
@@ -554,6 +569,15 @@ namespace UnturnedGodot
                 var ai = NpcHeli.Spawn(Player?.GetParent() ?? GetTree().Root, hname, WorldTerrain, at);
                 if (ai == null) { Log("no map nodes to fly to (nodes.tsv empty?)"); return; }
                 Log($"npc {hname} inbound from the map edge -> {ai.TargetName}, holding {NpcHeli.CanopyClearance:0} m over the terrain, will circle at {NpcHeli.OrbitRadius:0} m");
+            }
+            else if (verb == "spawntrain")
+            {
+                var roads = WorldRoads;
+                if (roads == null) { Log("no road network in this world"); return; }
+                Vector3 near = Player?.GlobalPosition ?? at;
+                var tr = Train.Spawn(Player?.GetParent() ?? GetTree().Root, roads, near);
+                if (tr == null) { Log("no train track nearby -- only Yukon has rails (tracks = road material 4)"); return; }
+                Log("spawned a train on the nearest track spline");
             }
             else if (verb == "spawnmagnetablecontainer" || verb == "magcontainer")
             {
