@@ -6242,6 +6242,19 @@ namespace UnturnedGodot
                         }
                         return;
                     }
+                    if (System.Environment.GetEnvironmentVariable("UG_CANOPYSHOT") == "1")
+                    {   // CANOPY FIT: parked jet, cycle a close FRONT(0-40)/SIDE(40-80)/TOP(80+) cam on the cockpit
+                        _veh.DrivePlane(0f, 0f, 0f, 0f, delta);
+                        if (_vehCam != null)
+                        {
+                            var vt = _veh.GetGlobalTransformInterpolated(); var b = vt.Basis; var fwd = -b.Z;
+                            var ck = vt.Origin + b.Y * 1.0f - b.Z * 4.5f;   // cockpit centre (vehicle-local ~ (0,1.0,-4.5))
+                            if (_frame < 40)      { _vehCam.GlobalPosition = ck + fwd * 4.2f + b.Y * 0.5f; _vehCam.LookAt(ck, Vector3.Up); }
+                            else if (_frame < 80) { _vehCam.GlobalPosition = ck + b.X * 4.2f + b.Y * 0.5f; _vehCam.LookAt(ck, Vector3.Up); }
+                            else                  { _vehCam.GlobalPosition = ck + b.Y * 4.5f;              _vehCam.LookAt(ck, fwd); }
+                        }
+                        return;
+                    }
                     if (System.Environment.GetEnvironmentVariable("UG_PLANEBURN") == "1")
                     {   // AFTERBURNER beauty shot: FULL throttle the whole time (burners maxed) + a close, level,
                         // 3/4-rear camera locked on the exhaust cones, gently swinging around dead-astern.

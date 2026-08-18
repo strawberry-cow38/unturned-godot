@@ -2423,11 +2423,7 @@ namespace UnturnedGodot
                         Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
                         Metallic = 0.35f, Roughness = 0.10f, CullMode = BaseMaterial3D.CullModeEnum.Disabled,
                     };
-                    var canopy = new MeshInstance3D { Name = "Canopy", Mesh = gm, MaterialOverride = glassMat, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off };
-                    var cRot = new Basis(Vector3.Up, Mathf.Pi);                       // 180deg YAW (master 2026-08-18)
-                    var cCtr = gm.GetAabb().GetCenter();
-                    canopy.Transform = new Transform3D(cRot, cCtr - cRot * cCtr);      // rotate about the canopy's OWN centre -> flips in place, not flung to the tail
-                    v.AddChild(canopy);
+                    v.AddChild(new MeshInstance3D { Name = "Canopy", Mesh = gm, MaterialOverride = glassMat, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off });   // canopy mesh is now built windscreen-forward + fitted -> no runtime yaw needed
                 }
             }
 
