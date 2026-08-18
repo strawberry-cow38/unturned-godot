@@ -196,8 +196,13 @@ namespace UnturnedGodot.Testing
             // is the deliverable, so the sizes are what get asserted -- "a flash exists" would pass on the 0.55 m
             // held-gun quad, which at the range you watch a gunship from is invisible, and on the UnitSize 5-8 /
             // MaxDistance 45-70 one-shots used elsewhere for doors and impacts.
+            // READ BEFORE ANY TICK. NpcTurretFx frees the flash on a REAL-TIME 0.05s SceneTreeTimer (it is meant
+            // to be a visible one-shot, not a simulated one), while AddChild happens synchronously inside Invoke --
+            // so the flash is already in the tree the instant Invoke returns, with zero elapsed real time. Reading
+            // it after `yield return Ticks(1)` instead cost a false FAIL under the full L1 sweep (quad 0.0 m): a
+            // "1 physics tick" of SIM time is not bounded in REAL wall-clock time, and late in an hours-long run on
+            // a loaded box that one tick can take longer than 0.05s, freeing the flash before this ever looks.
             NpcHeli.NpcShot?.Invoke(new Vector3(600f, 30f, -12f), Vector3.Forward, "hmg");
-            yield return Ticks(1);
             float flashQuad = 0f, sndDist = 0f, lightRange = 0f;
             foreach (var n in World.GetChildren())
             {

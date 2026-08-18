@@ -13,7 +13,7 @@ namespace UnturnedGodot
         float _brakeForce = 32f;                     // Brake -- source .dat value
         float _steerTarget, _steerAngle, _steerTurnSpeed = 70f;   // steering smoothing: MoveTowards target at deg/s. LOWERED for a weighty/laggy feel -- the wheels float behind the input, slow to turn AND slow to re-center (master)
         WaterMode _water; Vector3[] _buoys; float _inThrottle, _inSteer; int _waterFrame;   // BOAT/AMPHIBIOUS: water mode + hull buoyancy VOXELS + the last drive input (water propulsion runs in _PhysicsProcess)
-        float _voxelHalfHeight, _waterTime, _gravityMag = 9.8f, _buoyDamp = 1f;   // source Buoyancy.cs port: voxel half-height (submersion test), wave-ripple clock, gravity magnitude (Archimedes balance); _buoyDamp = per-vehicle damping multiplier
+        float _voxelHalfHeight, _waterTime, _gravityMag = 9.8f, _buoyDamp = 1f, _turnScale = 1f;   // source Buoyancy.cs port: voxel half-height (submersion test), wave-ripple clock, gravity magnitude (Archimedes balance); _buoyDamp = per-vehicle damping multiplier
         bool _afloat;   // currently floating (any buoy submerged) -- HUD/anim can read it
         public bool Afloat => _afloat;
         // ---- ROTARY WING (VoX 2026-08-15: "a rust style minicopeter"). A helicopter is a Vehicle rather than a
@@ -1093,6 +1093,8 @@ namespace UnturnedGodot
             public Vector3[] Buoys;   // hull buoyancy points (local space, Godot); null = auto 4 bottom corners of BoxSize. Boats/amphibious float via a spring at each toward SeaLevelY
             public float BuoyLift;    // added to the auto buoyancy-voxel Y. NEGATIVE = float HIGHER (voxels sit lower -> the hull rides up -> more of the coloured bottom shows above the waterline). 0 = default
             public float BuoyDamp;    // multiplier on the buoyancy VELOCITY damping (source Buoyancy.cs 0.1). >1 = settles faster / bobs less (a big hull is underdamped otherwise). 0 = default (1x)
+            public float TurnScale;   // multiplier on the rudder torque. 0 = default (1x). NOT cosmetic: the rudder torque is MASS-scaled (BoatTurn * Mass) but a hull's yaw INERTIA scales with its LENGTH SQUARED, so the same constant that spins a 9 m runabout at 58 deg/s moves a 66 m ship at 0.74 -- 360 degrees in eight minutes (strawberry: "almost impossible to turn"). A long hull has to buy the difference back explicitly.
+            public int BuoySlices;    // voxels PER AXIS for the buoyancy grid. 0 = source default (2 -> 2x2x2 = 8). A big hull needs more: at 2 slices a 20x11x66 ship gets ONE voxel per 10x5.5x33 m block, so its whole waterplane is 2 points across the beam and the vertical resolution is coarser than the draft -- measured as a 2.5 m dead band with zero heave AND zero roll stiffness (see vehicle.boat_hull_probe)
             public string[] DefaultPaints;   // source .dat DefaultPaintColors (random on spawn); null + !RandomHueGray = unpainted white
             public bool RandomHueGray;       // source RandomHueOrGrayscale mode (quad/sedan/hatchback)
             public float WheelRadius, Engine, SteerMax, SteerMin, SpeedMax, SpeedMin, Brake;
@@ -2088,8 +2090,10 @@ namespace UnturnedGodot
             Palette = "ship_palette.png", RandomHueGray = true,   // orange hull-BOTTOM texel (3,1) flagged paintable (alpha 0) -> random colour per spawn (master); the other texels keep the ship's own albedo
             Engine = 600f, SteerMax = 0f, SteerMin = 0f, SpeedMax = 12f, SpeedMin = 6f, Brake = 0f,   // boat: BoatThrust propels + rudder-yaws; a touch slower than the runabout (it's a SHIP)
             BoxSize = new Vector3(20f, 11f, 66f), BoxCenter = new Vector3(0f, 5.5f, 0f),   // hull collision box (mesh x±11, z±33.75, keel y0); covers the lower hull -> 4 corner buoys at the keel, COM low
-            BuoyLift = -3.0f,   // matches the retail static Alberton ship's 4.8m draft -- VERIFIED against a static reference hull placed at that exact draft (UG_SHIPREF). (my first-pass analytic draft model was wrong on magnitude; -3.0 is the empirical match) (master)
+            BuoyLift = -0.7f,   // keel 4.80 m under, matching the retail static Alberton reference hull Main.cs parks at that draft. MEASURED, not eyeballed: -3.0 settled the keel at 2.44 m, less than HALF the draft its own comment claimed to have verified -- the visual compare that "verified" it was made against a hull sitting at 27 deg of heel (see BuoySlices), which walks the waterline up the hull side until it looks right. Draft moves 1:1 with this value (vehicle.boat_slice_sweep).
             BuoyDamp = 4f,      // settle FAST + calm -- a 67.5m hull is heavily underdamped at the source 1x (master "settles really slowly, way too buoyant")
+            BuoySlices = 3,     // 27 voxels, NOT the source's 8. At 2 slices the ship capsized ITSELF: upright was an UNSTABLE equilibrium (restoring POSITIVE out to 20 deg) and it settled at 26.7 deg of heel with no input at all, sitting on a 3 m band of exactly ZERO heave stiffness -- and a hull with no waterline has no roll stiffness either, because it is the same voxels doing both. Full submersion is 2x weight, so equilibrium needs half the voxel DECKS under; on an EVEN count that lands exactly on a deck boundary, where nothing varies with either depth or heel. 3, 5 and 7 all measure clean (0 m dead band, restoring at every angle 2-60 deg); 3 wins on both axes -- strongest small-heel restoring (-0.45 rad/s2 at 5 deg vs -0.30 and -0.23) and 27 force applications a tick instead of 343. Sweep: UG_BOATSWEEP=1 ./test.sh --l1 --only 'vehicle.boat_slice_sweep'.
+            TurnScale = 20f,    // 360 deg in 28 s at 14 m/s, against the runabout's 6 s and the 593 s this hull gets at the fleet default. strawberry asked for "ship like but usable" and this is the measured knee: scale 15 = 38 s, 20 = 28 s, 30 = 19 s, and 20 is also the last rung where the turn is nearly free (13.9 m/s held, vs 12.6 at scale 50). Sweep: UG_BOATSWEEP=1 ./test.sh --l1 --only 'vehicle.boat_turn_sweep'.
             ForwardGears = new[] { 1f }, ReverseGear = 1f, ShiftUpRpm = 5000f,
             Sound = "engine_medium.ogg", IdlePitch = 0.5f, MaxPitch = 0.95f, IdleVolume = 0.9f, MaxVolume = 1.0f,   // low ship-engine rumble
             Fuel = 5000f, Health = 4000f, Name = "Container Ship",
@@ -3170,7 +3174,8 @@ namespace UnturnedGodot
             v._water = s.Water;   // BOAT/AMPHIBIOUS: voxelize the hull box for the source Buoyancy.cs voxel-Archimedes model
             if (s.Water != WaterMode.Car)
             {
-                const int slices = 2;   // source Buoyancy.slicesPerAxis default -> 2x2x2 = 8 voxels
+                int slices = s.BuoySlices > 0 ? s.BuoySlices : 2;   // source Buoyancy.slicesPerAxis default -> 2x2x2 = 8 voxels; per-spec for hulls the source's 2 cannot resolve
+                if (int.TryParse(System.Environment.GetEnvironmentVariable("UG_BUOYSLICES"), out var _bslc) && _bslc >= 2) slices = _bslc;   // live sweep knob (probe)
                 Vector3 vsz = s.BoxSize / slices, minExt = s.BoxCenter - s.BoxSize * 0.5f;
                 v._voxelHalfHeight = Mathf.Min(vsz.X, Mathf.Min(vsz.Y, vsz.Z)) * 0.5f;   // a voxel is "submerged enough" when its centre is within this of the surface
                 var vox = new Vector3[slices * slices * slices];
@@ -3182,6 +3187,8 @@ namespace UnturnedGodot
                             vox[vi++] = new Vector3(minExt.X + vsz.X * (0.5f + sx), minExt.Y + vsz.Y * (0.5f + sy) + buoyDy, minExt.Z + vsz.Z * (0.5f + sz));
                 v._buoys = vox;
                 v._buoyDamp = s.BuoyDamp > 0f ? s.BuoyDamp : 1f;   // per-vehicle buoyancy damping (big hulls settle slowly at 1x)
+                v._turnScale = s.TurnScale > 0f ? s.TurnScale : 1f;   // per-vehicle rudder authority (a long hull's yaw inertia is not paid for by the mass-scaled torque)
+                if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_BOATTURN"), out var _bt) && _bt > 0f) v._turnScale = _bt;   // live sweep knob (probe)
                 v._gravityMag = Mathf.Abs(ProjectSettings.GetSetting("physics/3d/default_gravity", 9.8f).AsSingle());   // the g the body actually falls under -> Archimedes must balance it
             }
             v.FifthWheelLocal = s.FifthWheel; v.KingpinLocal = s.Kingpin;   // trailer-hitch coupling points (Zero = neither)
@@ -5248,8 +5255,15 @@ namespace UnturnedGodot
                 submerged++;
                 var pv = LinearVelocity + AngularVelocity.Cross(worldPoint - comGlobal);  // source: rootRigidbody.GetPointVelocity(worldPoint)
                 float _bdMul = float.TryParse(System.Environment.GetEnvironmentVariable("UG_BUOYDAMP"), out var _bd) ? _bd : _buoyDamp;   // damping mult: env override else the per-vehicle spec value
-                var damping = -pv * 0.1f * Mass;                                          // source: -velocity * 0.1 * mass (all-axis)
-                damping.Y += -pv.Y * 0.1f * Mass * (_bdMul - 1f);                         // EXTRA vertical-only damping -> a big hull settles FAST without adding horizontal drag (won't slow driving)
+                // PER-VOXEL, so the grid RESOLUTION is not also a drag knob. The source hardcodes 0.1 at its own
+                // 2x2x2, i.e. a whole-hull coefficient of 0.8*Mass split 8 ways -- but it splits the ARCHIMEDES
+                // force by _buoys.Length and never splits this one, so raising the ship to 27 voxels tripled its
+                // water drag and halved its top speed (14.1 -> 7.0 m/s) as a pure side effect of resolving the
+                // hull better. Drag follows submerged VOLUME, which is the submerged FRACTION, not the count.
+                // The 8f keeps every 2-slice hull (runabout, APC) bit-identical to the source calibration.
+                float dampPerVox = 0.1f * (8f / _buoys.Length);
+                var damping = -pv * dampPerVox * Mass;                                    // source: -velocity * 0.1 * mass (all-axis)
+                damping.Y += -pv.Y * dampPerVox * Mass * (_bdMul - 1f);                   // EXTRA vertical-only damping -> a big hull settles FAST without adding horizontal drag (won't slow driving)
                 float subFactor = Mathf.Sqrt(Mathf.Clamp((surface - worldPoint.Y) / (2f * _voxelHalfHeight) + 0.5f, 0f, 1f));   // source sqrt depth curve
                 ApplyForce(damping + subFactor * archPerVoxel, worldPoint - GlobalPosition);   // source: AddForceAtPosition(force, worldPoint)
             }
@@ -5260,7 +5274,7 @@ namespace UnturnedGodot
             ApplyCentralForce(fwd * thr * BoatThrust * Mass);                             // propulsion
             float spd = LinearVelocity.Dot(fwd);
             float rudder = Mathf.Clamp(Mathf.Abs(spd) * 0.25f + 0.25f, 0.25f, 1f);        // speed-dependent rudder + a little idle authority
-            ApplyTorque(Vector3.Up * -_inSteer * BoatTurn * Mass * rudder);               // rudder yaw
+            ApplyTorque(Vector3.Up * -_inSteer * BoatTurn * Mass * rudder * _turnScale);  // rudder yaw (x _turnScale: see Spec.TurnScale -- mass-scaled torque vs length-scaled inertia)
             ApplyCentralForce(new Vector3(-LinearVelocity.X, 0f, -LinearVelocity.Z) * BoatDrag * Mass);   // extra horizontal water drag -> controllable top speed
             if (_water == WaterMode.Boat) { EngineForce = 0f; Brake = 0f; }               // a pure boat has no useful wheels
             if (++_waterFrame % 30 == 0 && System.Environment.GetEnvironmentVariable("UG_BOATDBG") == "1") GD.Print($"[boat] afloat={_afloat} sub={submerged}/{_buoys.Length} y={GlobalPosition.Y:F2} spd={LinearVelocity.Length():F1} thr={_inThrottle:F1} str={_inSteer:F1}");   // gated behind UG_BOATDBG -- was spamming the console every 30 frames afloat (master); counter still ticks
