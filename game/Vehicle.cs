@@ -633,7 +633,7 @@ namespace UnturnedGodot
 
         struct Spec
         {
-            public string Body, Wheel, WheelTex, Palette, GlassMesh, MissileMesh;   // Palette = paintable palette; WheelTex = wheel albedo; GlassMesh = translucent canopy overlay (jet)
+            public string Body, Wheel, WheelTex, Palette, GlassMesh, MissileMesh, SteerMesh;   // Palette = paintable palette; WheelTex = wheel albedo; GlassMesh = translucent canopy overlay (jet)
             public bool RetractGear;   // JET: wheels tuck up into the fuselage when airborne (retract pivots + struts)
             public WaterMode Water;   // Car (default) = land only; Boat = floats+water-drives (no useful wheels); Amphibious = land wheels + float/water-drive when its hull is in the sea
             public Vector3[] Buoys;   // hull buoyancy points (local space, Godot); null = auto 4 bottom corners of BoxSize. Boats/amphibious float via a spring at each toward SeaLevelY
@@ -1990,6 +1990,7 @@ namespace UnturnedGodot
             Wheel = "fighterjet_wheel.txt", WheelTex = "fighterjet_wheel_albedo.png", WheelRadius = 0.34f,   // the jet's OWN wheel mesh (prefab Wheel_*/Model_0, 168v) not the jeep car wheel
             GlassMesh = "fighterjet_canopy.txt",   // the LOD's closed cockpit cap, re-laid TRANSLUCENT over the open cockpit
             MissileMesh = "fighterjet_missiles.txt",   // the 4 wing missiles carved into their own DARKER-GREY mesh (master 2026-08-18)
+            SteerMesh = "fighterjet_joystick.txt",   // cockpit control stick (source Objects/Steer)
             RetractGear = true,                    // wheels retract up into the fuselage when flying
             Wheels = new (float, float, float, bool)[]   // tricycle gear (Godot Z = -Unity Z): nose steers, 2 wide mains
             {
@@ -2434,6 +2435,11 @@ namespace UnturnedGodot
             {
                 var mmesh = LoadOptionalObj(s.MissileMesh);
                 if (mmesh != null) v.AddChild(new MeshInstance3D { Name = "Missiles", Mesh = mmesh, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.34f, 0.34f, 0.36f), Metallic = 0.15f, Roughness = 0.65f, CullMode = BaseMaterial3D.CullModeEnum.Disabled } });   // wing missiles separated -> darker grey (master 2026-08-18)
+            }
+            if (s.SteerMesh != null)
+            {
+                var jmesh = LoadOptionalObj(s.SteerMesh);
+                if (jmesh != null) v.AddChild(new MeshInstance3D { Name = "Joystick", Mesh = jmesh, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.14f, 0.14f, 0.16f), Metallic = 0.2f, Roughness = 0.7f, CullMode = BaseMaterial3D.CullModeEnum.Disabled } });   // cockpit control stick (source Objects/Steer), baked vehicle-local (master 2026-08-18)
             }
 
             // ---- PROPELLER (piston planes only). A JET has no prop -> a null PropMeshPrefix skips this whole block
