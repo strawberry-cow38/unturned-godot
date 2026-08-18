@@ -13,10 +13,10 @@ namespace UnturnedGodot
         RoadField _roads;
         int _road;
         float _s;                       // distance-along the track of the LOCO's centre
-        const float RailY = 0.9f;       // lift the body so its floor rides above the rail
+        const float RailY = 1.4f;       // lift the body so its wheels sit ON the rail (wheel-bottom ~1.32 below the body origin)
         const float BogieHalf = 3.5f;   // bogie spacing from a unit's centre (source Track_Front/Back at +-3.5)
         const float CarGap = 11f;       // car-to-car spacing along the rail (source Train_Car spacing)
-        readonly List<(MeshInstance3D body, MeshInstance3D bf, MeshInstance3D bb, float off)> _units = new();
+        readonly List<(Node3D body, MeshInstance3D bf, MeshInstance3D bb, float off)> _units = new();
 
         /// <summary>Spawn a train onto the nearest track spline to <paramref name="near"/>. Null if there is no
         /// track road (material 4) in the world (only Yukon has tracks).</summary>
@@ -57,31 +57,33 @@ namespace UnturnedGodot
             Mesh Lm(string n) => ContentProvider.ParseObj($"res://content/{n}.txt");
             Mesh body = Lm("train_body"), bogie = Lm("train_bogie"), car = Lm("train_car");
 
-            void MakeUnit(Mesh m, Material mat, float off)
+            void MakeUnit(Mesh m, Material mat, float off, Vector3 boxSize, Vector3 boxCenter)
             {
-                var mi = new MeshInstance3D { Mesh = m, MaterialOverride = mat };
+                var sb = new StaticBody3D();   // solid: the player collides with it + can stand on it
+                sb.AddChild(new MeshInstance3D { Mesh = m, MaterialOverride = mat });
+                sb.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = boxSize }, Position = boxCenter });
                 var bf = new MeshInstance3D { Mesh = bogie, MaterialOverride = bogieMat };
                 var bb = new MeshInstance3D { Mesh = bogie, MaterialOverride = bogieMat };
-                AddChild(mi); AddChild(bf); AddChild(bb);
-                _units.Add((mi, bf, bb, off));
+                AddChild(sb); AddChild(bf); AddChild(bb);
+                _units.Add((sb, bf, bb, off));
             }
-            MakeUnit(body, bodyMat, 0f);
-            MakeUnit(car, carMat, CarGap);
-            MakeUnit(car, carMat, 2f * CarGap);
-            MakeUnit(car, carMat, 3f * CarGap);
+            MakeUnit(body, bodyMat, 0f, new Vector3(3.4f, 4.1f, 10.8f), new Vector3(0f, 1.27f, 0f));           // loco
+            MakeUnit(car, carMat, CarGap, new Vector3(3.4f, 1.8f, 10.8f), new Vector3(0f, 0.13f, 0f));        // car 1
+            MakeUnit(car, carMat, 2f * CarGap, new Vector3(3.4f, 1.8f, 10.8f), new Vector3(0f, 0.13f, 0f));   // car 2
+            MakeUnit(car, carMat, 3f * CarGap, new Vector3(3.4f, 1.8f, 10.8f), new Vector3(0f, 0.13f, 0f));   // car 3
             Place();
         }
 
-        void PlaceUnit((MeshInstance3D body, MeshInstance3D bf, MeshInstance3D bb, float off) u, float sctr)
+        void PlaceUnit((Node3D body, MeshInstance3D bf, MeshInstance3D bb, float off) u, float sctr)
         {
             _roads.EvaluateAlong(_road, sctr + BogieHalf, out var pf, out var tf);
             _roads.EvaluateAlong(_road, sctr - BogieHalf, out var pb, out var tb);
             Vector3 c = (pf + pb) * 0.5f + Vector3.Up * RailY;
             Vector3 fwd = pf - pb; fwd = fwd.LengthSquared() > 1e-4f ? fwd.Normalized() : Vector3.Forward;
             u.body.GlobalTransform = new Transform3D(Basis.Identity, c).LookingAt(c + fwd, Vector3.Up);
-            Vector3 cf = pf + Vector3.Up * (RailY - 0.5f);
+            Vector3 cf = pf + Vector3.Up * (RailY - 0.4f);
             u.bf.GlobalTransform = new Transform3D(Basis.Identity, cf).LookingAt(cf + tf, Vector3.Up);
-            Vector3 cb = pb + Vector3.Up * (RailY - 0.5f);
+            Vector3 cb = pb + Vector3.Up * (RailY - 0.4f);
             u.bb.GlobalTransform = new Transform3D(Basis.Identity, cb).LookingAt(cb + tb, Vector3.Up);
         }
 

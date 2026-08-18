@@ -58,7 +58,7 @@ namespace UnturnedGodot
         bool _planeTest;   // UG_PLANETEST (with --boattest --gun=otter): scripted fixed-wing flight (throttle/pitch/roll injected) to verify the flight model in a render
         System.Collections.Generic.List<Vector3> _trP; System.Collections.Generic.List<float> _trD;
         System.Collections.Generic.List<(MeshInstance3D body, MeshInstance3D bf, MeshInstance3D bb, float off)> _trUnits;
-        float _trS, _trRailY = 0.9f; bool _trAnim;
+        float _trS, _trRailY = 1.4f; bool _trAnim;
         readonly System.Collections.Generic.List<(Node3D mark, Vehicle veh, Vector3 local)> _pivotMarks = new();   // --pivots: arrow markers pinned to each coupling point
         bool _driveTest, _swarm, _drivethru, _nade; PlayerController _dtPlayer;      // --drivetest=DIR [--swarm|--drivethru|--nade] : enter/drive a jeep; swarm = mob it; drivethru = loud drive wakes zombies; nade = grenade the parked car
         bool _fireTest; PlayerController _ftPlayer; int _ftFrame;   // --firetest [--supp] : player fires near a distant zombie -> gunshot alert (suppressed = none)
@@ -2428,7 +2428,7 @@ namespace UnturnedGodot
             _trS = 45f; _trAnim = true;
             foreach (var u in _trUnits) PlaceTrainUnit(u, _trS - u.off);
             var cam = new Camera3D { Current = true, Fov = 52f, Far = 10000f }; AddChild(cam);
-            cam.Position = new Vector3(12f, 50f, 78f); cam.LookAt(new Vector3(12f, 0f, 22f), new Vector3(0f, 0f, -1f));
+            cam.Position = new Vector3(38f, 9f, 40f); cam.LookAt(new Vector3(2f, 1.5f, 38f), Vector3.Up);
         }
 
         void EvalTrack(float ss, out Vector3 pos, out Vector3 tan) {
@@ -2440,8 +2440,8 @@ namespace UnturnedGodot
             EvalTrack(sctr + 3.5f, out var pf, out var tf); EvalTrack(sctr - 3.5f, out var pb, out var tb);
             Vector3 c = (pf + pb) * 0.5f + Vector3.Up * _trRailY; Vector3 fwd = pf - pb; fwd = fwd.LengthSquared() > 1e-4f ? fwd.Normalized() : Vector3.Forward;
             u.body.GlobalTransform = new Transform3D(Basis.Identity, c).LookingAt(c + fwd, Vector3.Up);
-            Vector3 cf = pf + Vector3.Up * (_trRailY - 0.5f); u.bf.GlobalTransform = new Transform3D(Basis.Identity, cf).LookingAt(cf + tf, Vector3.Up);
-            Vector3 cb = pb + Vector3.Up * (_trRailY - 0.5f); u.bb.GlobalTransform = new Transform3D(Basis.Identity, cb).LookingAt(cb + tb, Vector3.Up);
+            Vector3 cf = pf + Vector3.Up * (_trRailY - 0.4f); u.bf.GlobalTransform = new Transform3D(Basis.Identity, cf).LookingAt(cf + tf, Vector3.Up);
+            Vector3 cb = pb + Vector3.Up * (_trRailY - 0.4f); u.bb.GlobalTransform = new Transform3D(Basis.Identity, cb).LookingAt(cb + tb, Vector3.Up);
         }
         void StepTrainAnim(float dt) {
             if (_trUnits == null || _trD == null || _trD.Count < 2) return;
