@@ -2375,11 +2375,11 @@ namespace UnturnedGodot
             Material Tex(string t) { var m = new StandardMaterial3D { TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest, Metallic = 0f, Roughness = 0.75f, CullMode = BaseMaterial3D.CullModeEnum.Disabled }; var img = new Image(); if (img.Load(ProjectSettings.GlobalizePath($"res://content/{t}.png")) == Error.Ok) m.AlbedoTexture = ImageTexture.CreateFromImage(img); return m; }
             Material carMat = Tex("train_car_tex"), bogieMat = Tex("train_bogie_tex");
             // PAINTABLE LIVERY: recolour the body palette slot (blue) to a random livery, and the stripe slot
-            // (orange) to a DARKER shade of it (master). Demo colour here; per-spawn xorshift in the real vehicle.
+            // (orange) STAYS fixed orange (master). Demo body colour here; per-spawn xorshift in the real vehicle.
             Color livery = new Color(0.16f, 0.42f, 0.22f);
             var bodyMat = new StandardMaterial3D { TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest, Metallic = 0f, Roughness = 0.75f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
             var _bimg = new Image();
-            if (_bimg.Load(ProjectSettings.GlobalizePath("res://content/train_body_tex.png")) == Error.Ok) { _bimg.Convert(Image.Format.Rgba8); _bimg.SetPixel(0, 1, livery); _bimg.SetPixel(3, 1, livery.Darkened(0.45f)); bodyMat.AlbedoTexture = ImageTexture.CreateFromImage(_bimg); }
+            if (_bimg.Load(ProjectSettings.GlobalizePath("res://content/train_body_tex.png")) == Error.Ok) { _bimg.Convert(Image.Format.Rgba8); _bimg.SetPixel(0, 1, livery); bodyMat.AlbedoTexture = ImageTexture.CreateFromImage(_bimg); }
             void Am(Mesh m, Vector3 pp, Material mat) { if (m != null) AddChild(new MeshInstance3D { Mesh = m, Position = pp, MaterialOverride = mat }); }
             Mesh body = Lm("train_body"), bogie = Lm("train_bogie"), car = Lm("train_car"), head = Lm("train_headlights"), steer = Lm("train_steer"), seat = Lm("train_seat");
             Am(body, Vector3.Zero, bodyMat); Am(head, Vector3.Zero, bodyMat); Am(steer, Vector3.Zero, bodyMat); Am(seat, Vector3.Zero, bodyMat);
