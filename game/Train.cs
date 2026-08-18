@@ -75,6 +75,7 @@ namespace UnturnedGodot
             MakeUnit(car, carMat, 2f * CarGap, new Vector3(3.4f, 1.8f, 10.8f), new Vector3(0f, 0.13f, 0f));   // car 2
             MakeUnit(car, carMat, 3f * CarGap, new Vector3(3.4f, 1.8f, 10.8f), new Vector3(0f, 0.13f, 0f));   // car 3
             Place();
+            ResetPhysicsInterpolation();   // placed this frame -> don't interpolate the units up from the origin pose (project physics_interpolation=true)
         }
 
         void PlaceUnit((Node3D body, MeshInstance3D bf, MeshInstance3D bb, float off) u, float sctr)
@@ -98,7 +99,7 @@ namespace UnturnedGodot
         /// <summary>Driver eye/seat in the loco cab, facing forward down the rail (loco -Z).</summary>
         public Transform3D DriverEyeWorld
         {
-            get { var l = Loco; return l != null ? l.GlobalTransform * new Transform3D(Basis.Identity, new Vector3(0f, 2.3f, -2.6f)) : GlobalTransform; }
+            get { var l = Loco; return l != null ? l.GetGlobalTransformInterpolated() * new Transform3D(Basis.Identity, new Vector3(0f, 2.3f, -2.6f)) : GlobalTransform; }
         }
 
         /// <summary>Advance the whole train along the rail by the throttle (W/S). No steering -- the rail steers.
