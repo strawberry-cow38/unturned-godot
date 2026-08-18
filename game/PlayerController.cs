@@ -4629,7 +4629,7 @@ namespace UnturnedGodot
                     GetViewport().SetInputAsHandled();
                     return;
                 }
-                bool allowedKey = @event is InputEventKey { Pressed: true } dk && (dk.Keycode == Key.F || dk.Keycode == Key.H || dk.Keycode == Key.L || dk.Keycode == Key.Ctrl || dk.Keycode == Key.Escape);   // F = exit (interact key moved off E); H cam, L lights, Ctrl siren, Esc pause
+                bool allowedKey = @event is InputEventKey { Pressed: true } dk && (dk.Keycode == Key.F || dk.Keycode == Key.G || dk.Keycode == Key.H || dk.Keycode == Key.L || dk.Keycode == Key.Ctrl || dk.Keycode == Key.Escape);   // F = exit (interact key moved off E); G = landing gear (retract-gear planes); H cam, L lights, Ctrl siren, Esc pause. ROOT CAUSE of "G does nothing while flying": this allow-list gated G out before the gear handler ever saw it (master 2026-08-18)
                 bool allowedMouse = @event is InputEventMouseButton { ButtonIndex: MouseButton.Left or MouseButton.Right };
                 bool camOrbit = @event is InputEventMouseMotion;   // mouse MOTION must pass through -> it orbits the 3rd-person chase cam (this guard was silently eating it, so the cam sat fixed) (strawberry 2026-07-15)
                 if (!allowedKey && !allowedMouse && !camOrbit) return;
@@ -4839,9 +4839,9 @@ namespace UnturnedGodot
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.Y } && (_build?.Active ?? false))
                 UpgradeAimedStructure();   // Y while building: wood -> brick -> metal in place
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.G } && _driving != null && _driving.HasRetractGear)
-                _driving.ToggleGear();   // G while flying a retract-gear plane: toggle the landing gear (debounced in Vehicle) (master 2026-08-18)
+                { GD.Print("[GEAR] G-input -> retract branch"); _driving.ToggleGear(); }   // G while flying a retract-gear plane: toggle the landing gear (debounced in Vehicle) (master 2026-08-18)
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.G })
-                MeleeAttack();        // melee swing at a zombie in reach
+                { GD.Print($"[GEAR] G-input -> melee branch (driving={_driving!=null} retractGear={(_driving!=null && _driving.HasRetractGear)})"); MeleeAttack(); }        // melee swing at a zombie in reach
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.H })
                 ThrowGrenade();       // throw a grenade
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.P, Echo: false })
