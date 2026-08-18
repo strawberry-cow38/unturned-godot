@@ -75,8 +75,11 @@ namespace UnturnedGodot
         const float TurretSlewDegPerSec = 55f;      // THE LAG: the mount cannot snap, so the aim trails a mover
         const float FireConeDeg = 6f;               // only shoot once the barrel is roughly there
         const float AimSpreadDeg = 4.0f;            // inaccuracy ON TOP of the gun's own 1.43 deg
-        const int BurstRounds = 7;
-        const float BurstGapSeconds = 1.5f;
+        // BURSTS VARY IN BOTH DIMENSIONS (strawberry: "the bursts should vary in length, and time between them").
+        // A fixed 7-and-1.5 reads as a metronome once you have been shot at twice; the point of a burst is that
+        // you cannot time it. Re-rolled per burst, so length and gap are independent.
+        const int BurstMinRounds = 4, BurstMaxRounds = 11;
+        const float BurstGapMin = 0.8f, BurstGapMax = 2.6f;
         const float GunRange = 250f;                // retail HMG.dat Range
 
         double _seenDamageAtMsec = -1e9;            // the newest damage event already consumed
@@ -174,22 +177,35 @@ namespace UnturnedGodot
             // ---- 3. SLEW. Rate-limited, so the mount visibly trails a moving target instead of snapping onto it.
             var (wantYaw, wantPitch) = AimAnglesFor(LastSeen);
             float step = TurretSlewDegPerSec * dt;
-            _turYaw = Mathf.MoveToward(_turYaw, Mathf.Wrap(wantYaw, -180f, 180f), step);
+            // Slew the SHORT way. MoveToward on raw degrees crosses +-180 the long way round -- chasing a target
+            // that drifts from +170 to -170 sweeps the mount through zero, a 340 deg traverse to cover 20.
+            _turYaw += Mathf.Clamp(Mathf.Wrap(wantYaw - _turYaw, -180f, 180f), -step, step);
+            _turYaw = Mathf.Wrap(_turYaw, -180f, 180f);
             _turPitch = Mathf.MoveToward(_turPitch, wantPitch, step);
             Heli.AimTurret(Heli.Turrets[0].Seat, _turYaw, _turPitch);
 
             // ---- 4. FIRE, in bursts, only with eyes on and the barrel roughly there. Firing at a remembered
             // point with nobody in it would be a wall of tracer through empty sky forever.
             _burstWait = Mathf.Max(0f, _burstWait - dt);
-            bool onTarget = Mathf.Abs(Mathf.Wrap(wantYaw - _turYaw, -180f, 180f)) < FireConeDeg
-                         && Mathf.Abs(wantPitch - _turPitch) < FireConeDeg;
+            // GATE ON WHERE THE BARREL ACTUALLY POINTS, not on the angles requested. AimTurret CLAMPS to the
+            // mount's traverse (yaw +-120, pitch -60..+15), so comparing the commanded angle against itself says
+            // "on target" while the gun is pegged at its stop pointing somewhere else entirely -- a Hind with a
+            // target behind its shoulder would have hosed the scenery at 50 deg off and reported success. Reading
+            // the real barrel axis makes the clamp part of the answer instead of something to remember.
+            bool onTarget = false;
+            if (muzzle.HasValue)
+            {
+                Vector3 want = (LastSeen - muzzle.Value);
+                if (want.LengthSquared() > 1e-4f)
+                    onTarget = Heli.TurretBarrelDir(Heli.Turrets[0].Seat).AngleTo(want.Normalized()) < Mathf.DegToRad(FireConeDeg);
+            }
             if (DebugCombat && Engine.GetPhysicsFrames() % 25 == 0)
                 GD.Print($"[COMBAT] mode={Mode} eyesOn={eyesOn} onTarget={onTarget} muzzle={(muzzle.HasValue ? "y" : "NULL")} " +
                          $"player={(player != null ? "y" : "NULL")} want=({wantYaw:0.0},{wantPitch:0.0}) cur=({_turYaw:0.0},{_turPitch:0.0}) " +
                          $"burstWait={_burstWait:0.00} burstLeft={_burstLeft}");
             if (eyesOn && onTarget && _burstWait <= 0f)
             {
-                if (_burstLeft <= 0) _burstLeft = BurstRounds;
+                if (_burstLeft <= 0) _burstLeft = Rng.RandiRange(BurstMinRounds, BurstMaxRounds);
                 if (Heli.TryTurretFire(Heli.Turrets[0].Seat, out var o, out var dir, out var gun))
                 {
                     // INACCURACY IS THE BALANCE. The HMG's magazine is explosive .50 -- an accurate one would
@@ -197,7 +213,7 @@ namespace UnturnedGodot
                     Vector3 spread = new Vector3(Rng.RandfRange(-1f, 1f), Rng.RandfRange(-1f, 1f), Rng.RandfRange(-1f, 1f));
                     dir = (dir + spread.Normalized() * Mathf.Tan(Mathf.DegToRad(AimSpreadDeg)) * Rng.Randf()).Normalized();
                     NpcShot?.Invoke(o, dir, gun);
-                    if (--_burstLeft <= 0) _burstWait = BurstGapSeconds;
+                    if (--_burstLeft <= 0) _burstWait = Rng.RandfRange(BurstGapMin, BurstGapMax);
                 }
             }
 
@@ -396,6 +412,7 @@ namespace UnturnedGodot
             v.LookAt(new Vector3(best.Pos.X, at.Y, best.Pos.Z), Vector3.Up);
             v.LinearVelocity = new Vector3(toT.X, 0f, toT.Y) * (v.SpeedMaxMps * 0.5f);
 
+            v.InfiniteTurretBelt = true;   // nobody is aboard to reload it
             var ai = new NpcHeli { Heli = v, Terr = terr, Target = best.Pos, TargetName = best.Name };
             world.AddChild(ai);
             return ai;

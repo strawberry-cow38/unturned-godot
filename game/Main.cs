@@ -2007,6 +2007,25 @@ namespace UnturnedGodot
             }
             else GD.Print($"[BELLYSHOT] {name}: NO BeaconBelly node -- nothing to look at");
 
+            // UG_TURRET_AIM="yaw,pitch" swings the mount before the shot, so "the barrel disappears" can be
+            // looked at rather than reasoned about -- a chin turret at full depression is exactly the case where
+            // geometry can end up inside its own airframe.
+            string ta = System.Environment.GetEnvironmentVariable("UG_TURRET_AIM");
+            if (!string.IsNullOrEmpty(ta) && v.Turrets.Length > 0)
+            {
+                var tp = ta.Split(',');
+                if (tp.Length == 2)
+                {
+                    v.AimTurret(v.Turrets[0].Seat, float.Parse(tp[0]), float.Parse(tp[1]));
+                    var mz = v.TurretMuzzle(v.Turrets[0].Seat);
+                    GD.Print($"[BELLYSHOT] turret aimed ({tp[0]},{tp[1]}) muzzle {mz} barrel {v.TurretBarrelDir(v.Turrets[0].Seat)}");
+                    if (v.FindChild($"TurretPitch{v.Turrets[0].Seat}", true, false) is Node3D pn)
+                        foreach (var ch in pn.GetChildren())
+                            if (ch is MeshInstance3D pm)
+                                GD.Print($"[BELLYSHOT] pitch mesh '{pm.Name}' visible={pm.Visible} aabb {pm.Mesh?.GetAabb().Size} globalY {pm.GlobalPosition.Y:0.00}");
+                }
+            }
+
             var cam = new Camera3D { Current = true, Fov = 42f, Far = 400f };
             AddChild(cam);
             Vector3 off = new Vector3(1.6f, -2.6f, 3.0f);   // below, offset, looking back and up at the belly
@@ -2016,8 +2035,17 @@ namespace UnturnedGodot
                 var cp = co.Split(',');
                 if (cp.Length == 3) off = new Vector3(float.Parse(cp[0]), float.Parse(cp[1]), float.Parse(cp[2]));
             }
-            cam.Position = belly + off;
-            cam.LookAt(belly, Vector3.Up);
+            // UG_BELLY_LOOK="x,y,z" aims at an arbitrary vehicle-local point instead of the belly, so a nose
+            // fitting can be framed side-on rather than glimpsed across the whole airframe.
+            Vector3 look = belly;
+            string bl = System.Environment.GetEnvironmentVariable("UG_BELLY_LOOK");
+            if (!string.IsNullOrEmpty(bl))
+            {
+                var lp = bl.Split(',');
+                if (lp.Length == 3) look = new Vector3(float.Parse(lp[0]), float.Parse(lp[1]), float.Parse(lp[2]));
+            }
+            cam.Position = look + off;
+            cam.LookAt(look, Vector3.Up);
         }
 
         // --tailshot=NAME:OUT -- frame one helicopter's tail from BEHIND AND ABOVE, close in. The scan reports which

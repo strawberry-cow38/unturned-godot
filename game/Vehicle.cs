@@ -769,13 +769,18 @@ namespace UnturnedGodot
                 origin = _turretPitch[i].ToGlobal(t.Muzzle);
                 dir = -_turretPitch[i].GlobalTransform.Basis.Z;   // barrel axis, not the look ray
                 gunId = t.GunId;
-                _turretAmmo[i]--;
+                if (!InfiniteTurretBelt) _turretAmmo[i]--;   // an AI gunship is not a looting problem; see the field
                 _turretCd[i] = TurretCycle;
                 return true;
             }
             return false;
         }
         const float TurretCycle = 0.12f;   // belt-fed cadence; the gun's own Firerate governs the held-weapon path
+        /// <summary>Never run this mount dry (strawberry: "does it have infinite ammo? it should"). Set by the AI
+        /// on the aircraft it flies, NOT on the spec -- a player who takes the Hind's gunner seat still gets the
+        /// finite 200-round belt, because the reason to give an NPC an endless one is that nobody can reload it,
+        /// and that reason does not apply to a person sitting in the chair.</summary>
+        public bool InfiniteTurretBelt;
 
         /// <summary>Aim the turret operated by `seat`, in degrees, clamped to its traverse limits. Returns false
         /// if that seat has no turret -- callers must not assume every seat is a gun position.</summary>

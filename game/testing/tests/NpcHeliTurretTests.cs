@@ -101,20 +101,43 @@ namespace UnturnedGodot.Testing
             // spawner, so a counter installed first is silently replaced and reads zero while the gun is firing
             // perfectly well. That is what the first run of this check actually measured.
             int rounds = 0;
+            var shotFrames = new List<ulong>();
             var prevHook = NpcHeli.NpcShot;
-            NpcHeli.NpcShot = (o, d, g) => rounds++;
+            NpcHeli.NpcShot = (o, d, g) => { rounds++; shotFrames.Add(Engine.GetPhysicsFrames()); };
 
             gun.NoteAttackedFrom(victim.GlobalPosition);
-            for (int i = 0; i < 260; i++) yield return Ticks(1);   // ~5 s: slew onto target, then bursts
+            for (int i = 0; i < 900; i++) yield return Ticks(1);   // ~18 s: long enough for several bursts
             NpcHeli.NpcShot = prevHook;
 
-            GD.Print($"[TURRET] rounds fired in ~5 s: {rounds}");
-            T.Check($"it actually opens fire on a player it can see ({rounds} rounds in ~5 s)", rounds > 0);
-            // BOUNDED ABOVE TOO. The belt cycles at 0.12 s, so an unbroken stream would be ~42 rounds in 5 s.
-            // Bursts of 7 with a 1.5 s gap is roughly 21. A check with no ceiling would pass just as happily on
-            // a gun that never stops, which is the thing "shoot bursts" exists to rule out.
-            T.Check($"...in BURSTS rather than one continuous stream ({rounds} rounds; unbroken fire would be ~42)",
-                rounds < 32);
+            // Rebuild the bursts from the shot timestamps: a gap of more than a few cycles ends one.
+            var bursts = new List<int>();
+            for (int i = 0; i < shotFrames.Count; i++)
+            {
+                if (i == 0 || shotFrames[i] - shotFrames[i - 1] > 20) bursts.Add(1);
+                else bursts[^1]++;
+            }
+
+            GD.Print($"[TURRET] {rounds} rounds in ~18 s, bursts [{string.Join(",", bursts)}]");
+            T.Check($"it actually opens fire on a player it can see ({rounds} rounds)", rounds > 0);
+            // BOUNDED ABOVE TOO. The belt cycles at 0.12 s, so unbroken fire is ~150 rounds in 18 s. A check with
+            // no ceiling would pass just as happily on a gun that never stops, which is the thing "bursts" rules
+            // out. Generous, because burst length and gap are both randomised now and the total moves run to run.
+            T.Check($"...in BURSTS rather than one continuous stream ({rounds} rounds; unbroken fire would be ~150)",
+                rounds < 110);
+            // "the bursts should vary in length, and time between them" -- so ASSERT the variation, or the
+            // randomisation is a claim in a comment. Distinct lengths, not just several bursts: a metronome would
+            // produce plenty of bursts and every one the same size.
+            var distinct = new HashSet<int>(bursts);
+            T.Check($"burst LENGTHS vary rather than being a metronome ({bursts.Count} bursts, {distinct.Count} distinct lengths: [{string.Join(",", bursts)}])",
+                bursts.Count >= 3 && distinct.Count >= 2);
+            // And the GAPS. Measured between the last shot of one burst and the first of the next.
+            var gaps = new List<ulong>();
+            int seen = 0;
+            for (int bi = 0; bi < bursts.Count - 1; bi++) { seen += bursts[bi]; gaps.Add(shotFrames[seen] - shotFrames[seen - 1]); }
+            var gapSpread = gaps.Count > 1 ? gaps[0] : 0UL;
+            bool gapsVary = false;
+            foreach (var gp in gaps) if (gp != gapSpread) gapsVary = true;
+            T.Check($"...and so do the GAPS between them (frames: [{string.Join(",", gaps)}])", gapsVary);
             victim.QueueFree(); gun.QueueFree(); gunAi.QueueFree();
             yield return Ticks(2);
 
