@@ -55,8 +55,11 @@ namespace UnturnedGodot.Testing
             float rollRateAboutFwd = rv.AngularVelocity.Dot(rfwd);
             T.Check($"ROLL +1 puts the RIGHT wing down: Basis.X.Y {bank:0.000} (negative), rate about forward {rollRateAboutFwd:0.000}",
                 bank < -0.1f);
-            T.Check($"ROLL +1 rate about FORWARD is {(rollRateAboutFwd > 0f ? "POSITIVE" : "NEGATIVE")} ({rollRateAboutFwd:0.000}) -- damping must oppose THIS",
-                Mathf.Abs(rollRateAboutFwd) > 0.05f);
+            // ASSERT THE SIGN, not the magnitude. This was written as |rate| > 0.05, which passes either way --
+            // a check that interpolates POSITIVE/NEGATIVE into its own message and then does not test it. The
+            // comment above claims it is the guard against the anti-damper bug, so make it one.
+            T.Check($"ROLL +1 drives the rate about FORWARD POSITIVE ({rollRateAboutFwd:0.000}) -- a damper must SUBTRACT this term",
+                rollRateAboutFwd > 0.05f);
             T.Check($"PITCH +1 raises the NOSE: forward.Y {(-pv.GlobalTransform.Basis.Z).Y:0.000} (positive)",
                 (-pv.GlobalTransform.Basis.Z).Y > 0.1f);
         }

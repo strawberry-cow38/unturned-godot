@@ -60,7 +60,7 @@ namespace UnturnedGodot.Testing
                 if (v.Exploded) break;
             }
             GD.Print($"[NPCHELI/SUMMARY] worstBank={worstBankDeg:0.0}deg bankedTicks={bankedSamples}/{bankSamples} " +
-                     $"y={minY:0.0}..{maxY:0.0} closest={closest:0}m topSpeed={topSpeed:0.0}m/s cruiseTarget={v.SpeedMaxMps * 0.62f:0.0}m/s");
+                     $"y={minY:0.0}..{maxY:0.0} closest={closest:0}m topSpeed={topSpeed:0.0}m/s transitTarget={v.SpeedMaxMps * NpcHeli.TransitSpeedFrac:0.0}m/s");
             Vector3 end = v.GlobalPosition;
             float endRange = new Vector2(end.X, end.Z).Length();
 
@@ -84,6 +84,16 @@ namespace UnturnedGodot.Testing
             T.Check($"it actually banked during the flight ({bankedSamples} of {bankSamples} ticks past 6 deg) -- without this the bank bound below is vacuous",
                 bankedSamples > bankSamples / 100);
             T.Check($"it does not roll itself back and forth (worst bank {worstBankDeg:0.#} deg)", worstBankDeg < 42f);
+
+            // IT ACTUALLY BUILDS SPEED. topSpeed was being measured and printed and then never asserted, so the
+            // whole speed/attitude system the flight phases exist to drive had no check on it at all -- the nose
+            // could go back to being too polite to accelerate and every remaining check would still pass.
+            // Bounded at 0.70 of the transit target rather than at it: the speed->attitude law is proportional, so
+            // it carries a standing offset by construction and settling ~15-18 % short is expected, not a fault.
+            // It still has teeth -- the pre-fix controller trimmed at 9.5 m/s, which is 0.52 of target.
+            float transitTarget = v.SpeedMaxMps * NpcHeli.TransitSpeedFrac;
+            T.Check($"it builds real transit speed (top {topSpeed:0.0} m/s against a {transitTarget:0.0} m/s target; a proportional law settles short by design)",
+                topSpeed > transitTarget * 0.70f);
 
             // IT ORBITS rather than parking on top: it should still be out near the orbit radius at the end,
             // not sat at zero range. A controller that flew to the centre and hovered passes every check above.

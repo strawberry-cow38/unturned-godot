@@ -343,8 +343,12 @@ namespace UnturnedGodot
                         Log(HeliPhysStatus()); return;
                     case "heave":
                     case "drag":
-                        if (!float.TryParse(val, out float x) || x < 0f)
-                        { Log($"usage: heliphys {k} <scale>   (1 = shipping, 0 = off entirely)"); return; }
+                        // UPPER BOUND, because the damper is explicit Euler: heave is applied once per tick as
+                        // -heave*vy, so the discrete pole is 1 - 0.45*x*dt. Past x ~ 133 at 60 Hz the vertical axis
+                        // rings, and past ~267 it diverges outright -- a debug knob should not be able to blow up
+                        // the integrator on a typo.
+                        if (!float.TryParse(val, out float x) || x < 0f || x > 50f)
+                        { Log($"usage: heliphys {k} <scale 0..50>   (1 = shipping, 0 = off entirely)"); return; }
                         if (k == "heave") Vehicle.HeaveDampScale = x; else Vehicle.DragScale = x;
                         Log(HeliPhysStatus()); return;
                     case "backstop":

@@ -276,7 +276,7 @@ namespace UnturnedGodot
         float _turbTimer;
         const float CommandSlew = 2.4f;        // stick -> commanded rate (the linkage)
         const float TurbMinGap = 1.6f, TurbMaxGap = 5.5f;   // seconds between gusts, at ALTITUDE (see TurbLowGapScale)
-        const float TurbStrength = 0.42f;      // rad/s of angular kick at full strength
+        const float TurbStrength = 0.42f;      // rad/s^2 of angular kick at full strength -- it is added to `cmd`, which is an angular ACCELERATION (see the ApplyTorque at the end of StepHeli), not a rate
         const float TurbDecay = 1.5f;          // how fast a gust bleeds away
         // TURBULENCE SCALES WITH HEIGHT ABOVE GROUND (strawberry: "make turbulence scale with vertical height, in
         // terms of frequency and severity. low to the ground should be relatively calm"). Measured AGL, not absolute

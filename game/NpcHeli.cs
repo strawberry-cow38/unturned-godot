@@ -49,7 +49,8 @@ namespace UnturnedGodot
         }
         // TRANSIT leans on it. ARRIVE flares nose-UP to kill the speed it built rather than sailing through the
         // monument. ORBIT sits near level, because a helicopter loitering over a target is not a diving one.
-        static readonly Envelope TransitEnv = new Envelope(0.80f, 4.0f, 38f, 6f);
+        public const float TransitSpeedFrac = 0.80f;   // exposed so the suite asserts against the REAL target
+        static readonly Envelope TransitEnv = new Envelope(TransitSpeedFrac, 4.0f, 38f, 6f);
         static readonly Envelope ArriveEnv  = new Envelope(0.30f, 5.0f,  8f, 22f);
         static readonly Envelope OrbitEnv   = new Envelope(0.45f, 2.5f, 14f, 8f);
 
@@ -58,7 +59,6 @@ namespace UnturnedGodot
         public override void _PhysicsProcess(double delta)
         {
             if (Heli == null || !IsInstanceValid(Heli) || Heli.Exploded) return;
-            float dt = (float)delta;
             Vector3 pos = Heli.GlobalPosition;
 
             // ---- HEIGHT: terrain under the aircraft, plus canopy clearance.
@@ -214,7 +214,12 @@ namespace UnturnedGodot
                              : new Vector3(best.Pos.X, 0f, maxZ - inset);
                 at.Y = terr.SampleHeight(at.X, at.Z) + CanopyClearance;
             }
-            else at = best.Pos + new Vector3(600f, CanopyClearance, 0f);
+            // NO TERRAIN: the flight loop reads ground = 0 and therefore flies to an ABSOLUTE CanopyClearance,
+            // so the spawn has to use the same datum. It used to spawn at best.Pos.Y + CanopyClearance, which is
+            // node-RELATIVE -- on a node at y = 80 the aircraft was born 80 m above its own target height and
+            // commanded a full descent on the first tick. Only reachable in a test rig today, but the two
+            // branches disagreeing about what "height" means is exactly the bug that hides until it doesn't.
+            else at = new Vector3(best.Pos.X + 600f, CanopyClearance, best.Pos.Z);
 
             var v = Vehicle.BuildByName(name);
             world.AddChild(v);
