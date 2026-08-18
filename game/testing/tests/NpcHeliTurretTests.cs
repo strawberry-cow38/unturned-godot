@@ -141,6 +141,32 @@ namespace UnturnedGodot.Testing
             victim.QueueFree(); gun.QueueFree(); gunAi.QueueFree();
             yield return Ticks(2);
 
+            // ---- 2c. THE BRANCH I CHANGED, NOT JUST THE ONE I WROTE. Marking NPC rounds meant touching the
+            // hitmarker path, which only runs for PLAYER shots -- and a scripted edit had rewritten the two
+            // helpers into calling themselves, so any player hit recursed until the stack died. Every check above
+            // passed straight through it, because they all fire NPC rounds where the guard short-circuits first.
+            // So: fire a REAL player bullet at a real target and require the hit to resolve.
+            var shootMe = Vehicle.BuildByName("jeep");
+            World.AddChild(shootMe);
+            shootMe.GlobalPosition = new Vector3(-200f, 0f, 0f);
+            var shooter = new PlayerController { CaptureMouse = false, Inventory = new PlayerInventory() };
+            World.AddChild(shooter);
+            shooter.GlobalPosition = new Vector3(-200f, 1.5f, 14f);
+            yield return Ticks(3);
+            float hpBefore = shootMe.Health;
+            // AIM AT THE THING. Firing flat from eye height sails straight over a jeep whose roof is at 1.14 m,
+            // which is how the first run of this check read "no damage" and looked like a product bug.
+            Vector3 from = shooter.GlobalPosition + Vector3.Up;
+            Vector3 aimPoint = shootMe.GlobalPosition + new Vector3(0f, 0.6f, 0f);
+            shooter.DebugFireBullet(from, (aimPoint - from).Normalized(), 40f);
+            for (int i = 0; i < 30; i++) yield return Ticks(1);
+
+            GD.Print($"[TURRET] player shot: jeep {hpBefore:0} -> {shootMe.Health:0}");
+            T.Check($"a PLAYER's shot still resolves through the hitmarker path (jeep {hpBefore:0} -> {shootMe.Health:0} hp)",
+                shootMe.Health < hpBefore);
+            shooter.QueueFree(); shootMe.QueueFree();
+            yield return Ticks(2);
+
             // ---- 3. NO MOUNT, NO FIGHT. The rule is "only the Hind", but expressed as data (does it carry a
             // turret) rather than a name check, so a future gunship inherits it and a future transport does not.
             var (huey, hai) = Spawn("huey", new Vector3(300f, 40f, 0f));

@@ -5339,8 +5339,8 @@ namespace UnturnedGodot
         /// point. the damage counts as coming from ME, as i get hitmarkers for what the heli hit."</summary>
         // "the damage counts as coming from ME, as i get hitmarkers for what the heli hit" -- a hitmarker is a
         // first-person claim of authorship, so it is gated on the round being the local player's.
-        void Hitmark(Bullet b, bool head) { if (!b.Npc) Hitmark(b, head); }
-        void HitmarkCircle(Bullet b) { if (!b.Npc) HitmarkCircle(b); }
+        void Hitmark(Bullet b, bool head) { if (!b.Npc) HitmarkerHUD.Instance?.Show(head); }
+        void HitmarkCircle(Bullet b) { if (!b.Npc) HitmarkerHUD.Instance?.ShowCircle(); }
 
         void SpawnBullet(Vector3 pos, Vector3 vel, int steps, float gravity, float damage, float vehicleDamage, float objectDamage, float playerDamage = 0f, GunDef srcGun = null, bool npc = false)
         {
