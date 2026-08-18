@@ -93,7 +93,7 @@ namespace UnturnedGodot
             bool wearcloth = false;
             bool skillsui = false;
             bool fluidTest = false;
-            bool tailCheck = false; string tailShot = null;
+            bool tailCheck = false; string tailShot = null; string bellyShot = null;
             bool doorTest = false;
             string doorTestName = null;
             bool containerTest = false; string containerTestName = null;
@@ -120,6 +120,7 @@ namespace UnturnedGodot
                 else if (arg.StartsWith("--slingtest=")) { slingtest = arg["--slingtest=".Length..]; _shotRequested = slingtest; }
                 else if (arg.StartsWith("--magnettest=")) { magnettest = arg["--magnettest=".Length..]; _shotRequested = magnettest; }
                 else if (arg == "--tailcheck") tailCheck = true;
+                else if (arg.StartsWith("--bellyshot=")) { bellyShot = arg["--bellyshot=".Length..]; _shotRequested = bellyShot; }
                 else if (arg.StartsWith("--tailshot=")) { tailShot = arg["--tailshot=".Length..]; _shotRequested = tailShot; }   // NAME:OUT -- close-up of one heli's tail from behind   // audit every heli: which side is the tail-rotor POST on, vs where the spec puts the hub   // sky-crane winch + electromagnet: dangle, energise, bite a load, lift it   // skycrane + shipping container: in-the-bay vs slung-beneath, side by side   // spawn ONE named prop at identity + RGB axes -> diagnose mirror/orientation/material
                 else if (arg.StartsWith("--croptest=")) croptest = arg["--croptest=".Length..];   // spawn a farm crop (young + grown) on a ground plane -> validate mesh/tex/orientation (UG_CROPROT tunes rot)
                 else if (arg == "--zperf") zperf = true;   // GPU perf probe: N zombies, render counters ON vs OFF (MUST run with a rendering driver, not --headless)
@@ -370,6 +371,14 @@ namespace UnturnedGodot
                 return;
             }
 
+            if (bellyShot != null)   // look UP at the underside: the belly beacon's AABB has been right and its picture wrong three times
+            {
+                GetWindow().Size = new Vector2I(1100, 800);
+                var bbits = bellyShot.Split(':');
+                _shotPath = bbits.Length > 1 ? bbits[1] : bellyShot;
+                BuildBellyShot(bbits[0]);
+                return;
+            }
             if (tailShot != null)   // eyeball ONE tail: the scan says which side has reach, this says what it IS
             {
                 GetWindow().Size = new Vector2I(1100, 800);
@@ -1951,6 +1960,66 @@ namespace UnturnedGodot
         // both roughly centred on X=0, so the giveaway is asymmetry: sample vertices in a box around the hub and ask
         // which side carries the outlying geometry. Reading it off the mesh rather than off a render, because a
         // render answers "does this look wrong" and this needs "which side, by how much, on which airframes".
+        // --bellyshot=NAME:OUT -- look UP at one helicopter's underside, so the belly beacon can actually be
+        // SEEN rather than inferred from its AABB. The tail camera cannot do this: it always aims at the tail
+        // hub, which is 9 m aft of the belly fitting on a Hind, so the beacon is never in frame.
+        //
+        // This exists because the belly light has now been wrong three separate times -- the Orca built as two
+        // overlapping lamps, the whole fleet rotated so the lens faced sideways, and the Hind's lamp measuring
+        // 0.338 x 0.288 x 0.256 against a 0.368-square, 0.161-thin fitting everywhere else. Every one of those
+        // was a number that looked fine next to a picture nobody had taken. UG_BELLY_CAM="x,y,z" overrides the
+        // offset from the belly point; the beacon is force-LIT here so it reads at any exposure.
+        void BuildBellyShot(string name)
+        {
+            var env = new Godot.Environment
+            {
+                BackgroundMode = Godot.Environment.BGMode.Color, BackgroundColor = new Color(0.42f, 0.54f, 0.68f),
+                AmbientLightSource = Godot.Environment.AmbientSource.Color,
+                AmbientLightColor = new Color(0.80f, 0.81f, 0.84f), AmbientLightEnergy = 1.15f,
+            };
+            AddChild(new WorldEnvironment { Environment = env });
+            // Lit from BELOW, because that is the side being inspected and the default key light leaves the
+            // underside in its own shadow -- an unlit belly renders as a silhouette and hides the very thing here.
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(58f, -24f, 0f), LightEnergy = 1.25f });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-40f, 150f, 0f), LightEnergy = 0.45f });
+            var v = Vehicle.BuildByName(name);
+            AddChild(v);
+            v.GlobalPosition = Vector3.Zero;
+            v.Freeze = true; v.FreezeMode = RigidBody3D.FreezeModeEnum.Static;
+            v.ProcessMode = Node.ProcessModeEnum.Disabled;
+
+            Vector3 belly = Vector3.Zero;
+            if (v.FindChild("BeaconBelly", false, false) is MeshInstance3D bm)
+            {
+                belly = bm.Position;
+                var ab = bm.Mesh.GetAabb();
+                GD.Print($"[BELLYSHOT] {name}: beacon at {belly} size {ab.Size} (X/Z square = a flush panel, thick Y = a lump)");
+                // Force it ON: the flasher is driven by rotor rpm and this rig has no running rotor, so an
+                // unlit beacon here would be the harness, not the fitting -- exactly the reading I would
+                // otherwise have to guess at.
+                if (bm.MaterialOverride is StandardMaterial3D mat)
+                {
+                    mat.EmissionEnabled = true;
+                    mat.Emission = new Color(1f, 0.12f, 0.12f);
+                    mat.EmissionEnergyMultiplier = 6f;
+                    mat.AlbedoColor = new Color(1f, 0.35f, 0.35f);
+                }
+            }
+            else GD.Print($"[BELLYSHOT] {name}: NO BeaconBelly node -- nothing to look at");
+
+            var cam = new Camera3D { Current = true, Fov = 42f, Far = 400f };
+            AddChild(cam);
+            Vector3 off = new Vector3(1.6f, -2.6f, 3.0f);   // below, offset, looking back and up at the belly
+            string co = System.Environment.GetEnvironmentVariable("UG_BELLY_CAM");
+            if (!string.IsNullOrEmpty(co))
+            {
+                var cp = co.Split(',');
+                if (cp.Length == 3) off = new Vector3(float.Parse(cp[0]), float.Parse(cp[1]), float.Parse(cp[2]));
+            }
+            cam.Position = belly + off;
+            cam.LookAt(belly, Vector3.Up);
+        }
+
         // --tailshot=NAME:OUT -- frame one helicopter's tail from BEHIND AND ABOVE, close in. The scan reports which
         // side carries the outlying geometry, but "reach at the hub" cannot tell a tail-rotor post from a horizontal
         // stabiliser, and the orca reads symmetric precisely because something spans both ways. So look.

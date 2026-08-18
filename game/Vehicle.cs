@@ -1049,6 +1049,14 @@ namespace UnturnedGodot
             public float SlingCable;                             // deployed cable length, metres (0 = use the default)
             public Vector3 SlingAnchor;                          // LOCAL point the winch hangs from (mesh frame, so it must be offset by nothing at use)
             public Vector3 RotorHub, TailRotorHub;               // local mount points for the two rotors
+            /// <summary>Take the BELLY beacon's lens from ANOTHER airframe's taillight mesh. Null = use this
+            /// airframe's own, which is the right answer for six of the seven. The Hind's own lens is the odd one
+            /// out: measured across the fleet it is the only non-square lamp and the only fat one -- 0.338 x 0.288
+            /// footprint against a uniform 0.368 square elsewhere, and 0.256 THICK against 0.161 -- so on the
+            /// biggest airframe in the game it reads as a small lump stuck to the belly rather than a fitting set
+            /// into it (strawberry: "the belly light of the hind is weird and small? doesnt fit the bottom").
+            /// The nav lights are untouched; this is the belly fitting only.</summary>
+            public string BeaconLensFrom;
             public float MainRotorHp, TailRotorHp;                // independent rotor health (0 = derive from Health)
             public Vector3 MainHubBox, TailHubBox;                // the BULLET hitbox at each mast (full size); Zero = a default off the rotor radius
             public string[] HeliBodyMeshes;                      // airframe .obj(s); null = build one of the procedural frames below
@@ -2319,7 +2327,7 @@ namespace UnturnedGodot
         };
         // HIND -- the gunship, and the FASTEST thing in the fleet as well as the second heaviest. Fast and
         // unwieldy: it will outrun anything and hates changing its mind.
-        static readonly Spec _hind = WithTurrets(HeliBase("hind", 14.2f, 0.69f, 0.81f, 0.63f, 5.90f, 1.25f,
+        static readonly Spec _hind = WithBeaconLens(WithTurrets(HeliBase("hind", 14.2f, 0.69f, 0.81f, 0.63f, 5.90f, 1.25f,
             new Vector3(0f, 4.18f, 0.58f), new Vector3(0.57f, 4.46f, 9.60f),   // tail hub on the RIGHT: the boom carries a horizontal mounting post whose end face is 16 verts at X +0.57, Y 4.46, Z 9.60 -- the old -0.30 had the right height and station but the mirrored side, so the rotor hung in clear air with the post sticking out opposite it (strawberry)
             new Vector3(2.90f, 2.60f, 7.20f), new Vector3(0f, 1.40f, 0.20f),
             new (Vector3, Vector3)[]   // REAL gear, measured off hind_wheels.txt: twin nose wheels forward, mains aft
@@ -2333,10 +2341,11 @@ namespace UnturnedGodot
             // NOT hind_turret.txt any more -- that merged lump is replaced by the articulated yaw/pitch pair
             // built from Spec.Turrets below. Leaving it here would draw a second, permanently-forward turret
             // clipping through the one that aims.
-            ("hind_wheels.txt", new Color(0.09f, 0.09f, 0.10f))), HindTurret);   // 4 landing wheels -- tyre black
+            ("hind_wheels.txt", new Color(0.09f, 0.09f, 0.10f))), HindTurret), "skycrane_taillights.txt");   // 4 landing wheels -- tyre black
 
         /// <summary>Attach turret mounts to a spec built by HeliBase, which has no parameter for them.</summary>
         static Spec WithTurrets(Spec s, TurretDef[] t) { s.Turrets = t; return s; }
+        static Spec WithBeaconLens(Spec s, string file) { s.BeaconLensFrom = file; return s; }
 
         public static Vehicle BuildHind(int variant = 0) => Build(_hind, variant, "hind");
 
@@ -2900,7 +2909,9 @@ namespace UnturnedGodot
                 // Parts is NULL on the specs that predate HeliParts (minicopter, scoutcopter) -- they carry no detail
                 // meshes at all, which is also why they have no nav lights. Those fall through to the bead below.
                 Mesh lens = null;
-                if (s.Parts != null)
+                if (s.BeaconLensFrom != null)
+                    lens = ContentProvider.ParseObj($"res://content/{s.BeaconLensFrom}");   // borrowed lamp; see Spec.BeaconLensFrom
+                else if (s.Parts != null)
                     foreach (var (ptxt, _) in s.Parts)
                         if (ptxt.Contains("taillights")) { lens = ContentProvider.ParseObj($"res://content/{ptxt}"); break; }
                 // Bake the re-centring into the node's own Position rather than wrapping it in a pivot: the beacon
