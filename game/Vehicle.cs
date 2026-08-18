@@ -795,6 +795,18 @@ namespace UnturnedGodot
             return false;
         }
 
+        /// <summary>World direction the BARREL points for `seat`, or the hull's forward if there is no such
+        /// mount. Exposed so a test can measure where the gun ended up instead of trusting the maths that aimed
+        /// it -- the aim derivation is a sign question and this file has a history with those.</summary>
+        public Vector3 TurretBarrelDir(int seat)
+        {
+            if (_turretPitch != null)
+                for (int i = 0; i < Turrets.Length; i++)
+                    if (Turrets[i].Seat == seat && _turretPitch[i] != null)
+                        return -_turretPitch[i].GlobalTransform.Basis.Z;
+            return -GlobalTransform.Basis.Z;
+        }
+
         /// <summary>World-space muzzle of the turret on `seat`, for spawning a shot where the barrel actually
         /// points rather than where the operator's head is.</summary>
         public Vector3? TurretMuzzle(int seat)
@@ -1240,6 +1252,20 @@ namespace UnturnedGodot
             // NOTE: source Bumper also roadkills Players ("Player" tag -> BumperPlayerDamage) and Animals (Animal on the
             // "Agent" tag -> BumperAnimalDamage) the same way. No player/animal targets share a scene in the port yet,
             // so only the zombie path is wired + tested here; add those branches when those entities co-exist.
+        }
+
+        /// <summary>Where this vehicle was last shot FROM, in world space, and when. Recorded for every vehicle
+        /// because it costs two fields; acted on only by an NPC Hind (strawberry: "dont wire up the other helis
+        /// for attack behavior"). It is the SHOOTER's position, not the impact point -- the point of it is "where
+        /// were you standing", which is what an aircraft would turn toward, and the two differ by the whole length
+        /// of the bullet's flight.</summary>
+        public Vector3 LastAttackedFrom { get; private set; }
+        public double LastAttackedAtMsec { get; private set; } = -1e9;
+        public bool HasBeenAttacked => LastAttackedAtMsec > -1e8;
+        public void NoteAttackedFrom(Vector3 shooterWorldPos)
+        {
+            LastAttackedFrom = shooterWorldPos;
+            LastAttackedAtMsec = Godot.Time.GetTicksMsec();
         }
 
         public void TakeDamage(float amount)   // source askDamage: reduce health; at 0 the EXPLODE timer starts
@@ -2323,6 +2349,12 @@ namespace UnturnedGodot
                 Muzzle = new Vector3(0.229f, -0.2f, -2.6f),   // Aim(-0.275,-0.2,-0.4) + Barrel(0.504,0,-2.2)
                 YawMin = -120f, YawMax = 120f,   // a chin turret cannot shoot through its own airframe
                 PitchMin = -60f, PitchMax = 15f, // mostly DOWNWARD: it is a ground-attack gun slung under the nose
+                // THE HMG, not the Nykorev (strawberry: "uses the HMG weapon from the source"). Retail HMG.dat is
+                // ID 1394 and carries the `Turret` flag, i.e. the game itself marks it as the mount gun: Range 250,
+                // Firerate 7, Spread_Angle_Degrees 1.43. Its HMG_50 magazine is EXPLOSIVE .50 (Player_Damage 30,
+                // Vehicle_Damage 40), which is why the AI's added inaccuracy below is load-bearing rather than
+                // flavour -- an accurate one of these would delete a player instantly.
+                GunId = "hmg",
             },
         };
         // HIND -- the gunship, and the FASTEST thing in the fleet as well as the second heaviest. Fast and

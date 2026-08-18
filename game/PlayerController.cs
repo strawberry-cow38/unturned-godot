@@ -4499,6 +4499,20 @@ namespace UnturnedGodot
         public override void _Ready()
         {
             AddToGroup("players");     // so vehicle explosions (+ future area effects) can find nearby players
+            // AN NPC HIND'S ROUNDS GO THROUGH THE REAL BULLET SYSTEM. NpcHeli raises a delegate rather than
+            // calling in directly, so the AI does not have to know how a shot is drawn or resolved -- it gets
+            // tracers, surface impacts, falloff and player damage for free, and stays testable without a
+            // renderer. Wired here because this is where the bullet pool actually lives.
+            NpcHeli.NpcShot = (origin, dir, gunId) =>
+            {
+                var g = TurretGunDef(gunId);
+                float dmg = g?.PlayerDamage ?? 30f;
+                float veh = g?.VehicleDamage ?? 40f;
+                float obj = g?.ObjectDamage ?? 20f;
+                float vel = g?.MuzzleVelocity ?? 120f;
+                int steps = g != null ? Mathf.Max(1, (int)(g.Range / 2f)) : 125;
+                SpawnBullet(origin, dir * vel, steps, 0f, dmg, veh, obj, dmg);
+            };
             CollisionLayer = 1 << 3;   // player bit
             CollisionMask = (1 << 0) | (1 << 6);    // walk on ground (bit 0) + collide with transparent props on bit 6 (see-through to the item LOS raycast but still solid for the player -- master)
 
@@ -5452,6 +5466,12 @@ namespace UnturnedGodot
                         if (part == Vehicle.HeliPart.MainRotor) veh.DamageMainRotor(b.VehicleDamage);
                         else if (part == Vehicle.HeliPart.TailRotor) veh.DamageTailRotor(b.VehicleDamage);
                         else veh.TakeDamage(b.VehicleDamage);
+                        // WHERE THE SHOT CAME FROM, not where it landed (strawberry: "it will track the position
+                        // that you shot it from"). b.Origin is the muzzle this round actually left, which is the
+                        // answer to "where were you standing" -- the impact point is on the aircraft itself and
+                        // would have it turning to face its own hull. Recorded on ANY hit including the rotors,
+                        // because shooting the tail off is still being shot at.
+                        veh.NoteAttackedFrom(b.Origin);
                         SpawnSurfaceImpact(point, hit["normal"].AsVector3(), Surf.Metal, veh); HitmarkerHUD.Instance?.ShowCircle();   // source Vehicle_Damage (35) + metal sparks, hole follows the car; circle hitmarker (master)
                     }
                     else if (collider is Deployable dep && !dep.IsWreck) { dep.TakeDamage(b.VehicleDamage); SpawnSurfaceImpact(point, hit["normal"].AsVector3(), Surf.Metal); HitmarkerHUD.Instance?.ShowCircle(); }   // gunfire damages a placed generator (metal sparks) -- Vehicle_Damage; circle hitmarker

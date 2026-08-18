@@ -56,6 +56,161 @@ namespace UnturnedGodot
 
         float _wantClimb;   // m/s of climb the AI is asking for; telemetry only
 
+        // ================= COMBAT (strawberry 2026-08-18) =================
+        // "if you damage an npc copter, it will track the position that you shot it from. hinds will turn to face
+        // the point where it last saw you, while the turret has line of sight on you, it will lock onto your
+        // position (roughly, lagging behind a little) it will then shoot bursts as you (uses the HMG weapon from
+        // the source) its pretty innaccurate, but the hind will stay locked onto your last seen position for five
+        // minutes, if it doesnt see you again it will go back to its path (going to the nearest path point to it)."
+        //
+        // ATTACK IS THE ONLY TRIGGER (confirmed): it will not open up on someone who merely flies past. And only
+        // an airframe with a mount fights -- "dont wire up the other helis for attack behavior" -- which falls out
+        // of the data rather than a name check, since the Hind is the only spec carrying Turrets.
+        public enum Stance { Patrol, Engaged }
+        public Stance Mode { get; private set; } = Stance.Patrol;
+        public Vector3 LastSeen { get; private set; }      // the point it is watching: shot origin, or you
+        public bool Armed => Heli != null && Heli.Turrets.Length > 0;
+
+        public const float LockSeconds = 300f;      // five minutes of holding the grudge
+        const float TurretSlewDegPerSec = 55f;      // THE LAG: the mount cannot snap, so the aim trails a mover
+        const float FireConeDeg = 6f;               // only shoot once the barrel is roughly there
+        const float AimSpreadDeg = 4.0f;            // inaccuracy ON TOP of the gun's own 1.43 deg
+        const int BurstRounds = 7;
+        const float BurstGapSeconds = 1.5f;
+        const float GunRange = 250f;                // retail HMG.dat Range
+
+        double _seenDamageAtMsec = -1e9;            // the newest damage event already consumed
+        double _lockUntilMsec = -1e9;
+        float _turYaw, _turPitch;                   // the SLEWED aim, in degrees, which is what actually fires
+        int _burstLeft; float _burstWait;
+        public int DebugBurstLeft => _burstLeft;
+        public float DebugTurretYaw => _turYaw;
+        public float DebugTurretPitch => _turPitch;
+        public double DebugLockLeftSec => Mathf.Max(0.0, (_lockUntilMsec - Time.GetTicksMsec()) / 1000.0);
+
+        static readonly RandomNumberGenerator Rng = new();
+        public static bool DebugCombat;
+
+        /// <summary>Test seam: point the mount at a world position immediately, bypassing the slew. The slew is
+        /// the FEEL; the angles are the CORRECTNESS, and mixing them in one check would let a wrong sign hide
+        /// behind "it was still turning".</summary>
+        public void DebugAimAt(Vector3 worldPoint)
+        {
+            var (y, p) = AimAnglesFor(worldPoint);
+            _turYaw = y; _turPitch = p;
+            Heli.AimTurret(Heli.Turrets[0].Seat, y, p);
+        }
+
+        /// <summary>Aim angles, in the mount's own frame, that point the barrel at a world point. Derived from the
+        /// rotation AimTurret applies -- and then MEASURED, because three separate control-axis signs in this file
+        /// were derived confidently and were wrong. vehicle.npc_heli_turret asserts the barrel really does end up
+        /// pointing at the thing these numbers were computed for.</summary>
+        (float yaw, float pitch) AimAnglesFor(Vector3 worldPoint)
+        {
+            Vector3 d = Heli.GlobalTransform.AffineInverse() * worldPoint;   // vehicle-local offset
+            float h = Mathf.Sqrt(d.X * d.X + d.Z * d.Z);
+            return (Mathf.RadToDeg(Mathf.Atan2(-d.X, -d.Z)), Mathf.RadToDeg(Mathf.Atan2(d.Y, h)));
+        }
+
+        PlayerController NearestPlayer()
+        {
+            PlayerController best = null; float bestD = float.MaxValue;
+            foreach (var n in GetTree().GetNodesInGroup("players"))
+            {
+                if (n is not PlayerController p || p.Health <= 0f) continue;
+                float d = p.GlobalPosition.DistanceSquaredTo(Heli.GlobalPosition);
+                if (d < bestD) { bestD = d; best = p; }
+            }
+            return best;
+        }
+
+        /// <summary>Clear shot from the muzzle to `target`? Two things have to be excluded or this never returns
+        /// true. The AIRCRAFT ITSELF, because a chin turret sits under the nose and would self-hit every frame.
+        /// And THE TARGET, because the ray ends at the player's own capsule -- a plain "did the ray hit anything"
+        /// test therefore reads the player as the thing blocking the shot at the player, and the gun would never
+        /// once fire. Hitting the target IS the clear shot; only something in between is not.</summary>
+        bool ClearShotTo(Vector3 from, Vector3 to, Node target)
+        {
+            var space = Heli.GetWorld3D()?.DirectSpaceState;
+            if (space == null) return false;
+            var q = PhysicsRayQueryParameters3D.Create(from, to);
+            q.Exclude = new Godot.Collections.Array<Rid> { Heli.GetRid() };
+            var hit = space.IntersectRay(q);
+            if (hit.Count == 0) return true;
+            return target != null && hit["collider"].As<GodotObject>() == target;
+        }
+
+        void StepCombat(float dt)
+        {
+            double now = Time.GetTicksMsec();
+
+            // ---- 1. NEW DAMAGE. Adopting the shot ORIGIN, which is where the shooter stood.
+            if (Heli.LastAttackedAtMsec > _seenDamageAtMsec)
+            {
+                _seenDamageAtMsec = Heli.LastAttackedAtMsec;
+                LastSeen = Heli.LastAttackedFrom;
+                Mode = Stance.Engaged;
+                _lockUntilMsec = now + LockSeconds * 1000.0;
+            }
+            if (Mode != Stance.Engaged) return;
+
+            // ---- 2. EYES. If the turret can actually see a player, that refreshes both the aim point and the
+            // clock -- "if it doesnt see you again it will go back to its path" means SEEING resets the five
+            // minutes, so a player who keeps showing themselves is never let go.
+            Vector3? muzzle = Heli.TurretMuzzle(Heli.Turrets[0].Seat);
+            var player = NearestPlayer();
+            bool eyesOn = false;
+            if (player != null && muzzle.HasValue)
+            {
+                Vector3 eye = player.GlobalPosition + Vector3.Up * 1.2f;
+                if (eye.DistanceTo(muzzle.Value) <= GunRange && ClearShotTo(muzzle.Value, eye, player))
+                {
+                    eyesOn = true;
+                    LastSeen = eye;
+                    _lockUntilMsec = now + LockSeconds * 1000.0;
+                }
+            }
+
+            // ---- 3. SLEW. Rate-limited, so the mount visibly trails a moving target instead of snapping onto it.
+            var (wantYaw, wantPitch) = AimAnglesFor(LastSeen);
+            float step = TurretSlewDegPerSec * dt;
+            _turYaw = Mathf.MoveToward(_turYaw, Mathf.Wrap(wantYaw, -180f, 180f), step);
+            _turPitch = Mathf.MoveToward(_turPitch, wantPitch, step);
+            Heli.AimTurret(Heli.Turrets[0].Seat, _turYaw, _turPitch);
+
+            // ---- 4. FIRE, in bursts, only with eyes on and the barrel roughly there. Firing at a remembered
+            // point with nobody in it would be a wall of tracer through empty sky forever.
+            _burstWait = Mathf.Max(0f, _burstWait - dt);
+            bool onTarget = Mathf.Abs(Mathf.Wrap(wantYaw - _turYaw, -180f, 180f)) < FireConeDeg
+                         && Mathf.Abs(wantPitch - _turPitch) < FireConeDeg;
+            if (DebugCombat && Engine.GetPhysicsFrames() % 25 == 0)
+                GD.Print($"[COMBAT] mode={Mode} eyesOn={eyesOn} onTarget={onTarget} muzzle={(muzzle.HasValue ? "y" : "NULL")} " +
+                         $"player={(player != null ? "y" : "NULL")} want=({wantYaw:0.0},{wantPitch:0.0}) cur=({_turYaw:0.0},{_turPitch:0.0}) " +
+                         $"burstWait={_burstWait:0.00} burstLeft={_burstLeft}");
+            if (eyesOn && onTarget && _burstWait <= 0f)
+            {
+                if (_burstLeft <= 0) _burstLeft = BurstRounds;
+                if (Heli.TryTurretFire(Heli.Turrets[0].Seat, out var o, out var dir, out var gun))
+                {
+                    // INACCURACY IS THE BALANCE. The HMG's magazine is explosive .50 -- an accurate one would
+                    // erase a player -- so the AI adds a cone well beyond the gun's own 1.43 deg.
+                    Vector3 spread = new Vector3(Rng.RandfRange(-1f, 1f), Rng.RandfRange(-1f, 1f), Rng.RandfRange(-1f, 1f));
+                    dir = (dir + spread.Normalized() * Mathf.Tan(Mathf.DegToRad(AimSpreadDeg)) * Rng.Randf()).Normalized();
+                    NpcShot?.Invoke(o, dir, gun);
+                    if (--_burstLeft <= 0) _burstWait = BurstGapSeconds;
+                }
+            }
+
+            // ---- 5. LET IT GO. The phase machine then does the rest: out past ArriveDist * 1.6 it re-enters
+            // Transit and flies back to its node, which is "the nearest path point to it".
+            if (now > _lockUntilMsec) { Mode = Stance.Patrol; _burstLeft = 0; }
+        }
+
+        /// <summary>Raised for every round the AI fires: world muzzle, direction, gun id. A delegate rather than a
+        /// direct call into the player's bullet system so this file does not have to know how shots are drawn --
+        /// and so a test can count rounds without a renderer.</summary>
+        public static System.Action<Vector3, Vector3, string> NpcShot;
+
         public override void _PhysicsProcess(double delta)
         {
             if (Heli == null || !IsInstanceValid(Heli) || Heli.Exploded) return;
@@ -82,11 +237,20 @@ namespace UnturnedGodot
             float collective = climbErr > ClimbDeadband ? 1f : climbErr < -ClimbDeadband ? -1f : 0f;
             _wantClimb = wantClimb;
 
+            if (Armed) StepCombat((float)delta);
+
             // ---- WHERE TO GO: run the target down, then circle it.
             Vector2 here = new Vector2(pos.X, pos.Z), goal = new Vector2(Target.X, Target.Z);
             float range = here.DistanceTo(goal);
             Vector2 aim;
-            if (range > ArriveDist)
+            if (Mode == Stance.Engaged)
+            {
+                // TURN TO FACE where it last saw you. The airframe flies where its nose points, so facing the
+                // contact is also closing on it -- which is what a gunship does and what "turn to face" buys you
+                // visually. Height hold is untouched, so it cannot fly itself into the ground doing this.
+                aim = new Vector2(LastSeen.X, LastSeen.Z);
+            }
+            else if (range > ArriveDist)
             {
                 aim = goal;   // transit
             }
