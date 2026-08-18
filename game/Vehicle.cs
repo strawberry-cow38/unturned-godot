@@ -2469,7 +2469,7 @@ namespace UnturnedGodot
             if (s.SteerMesh != null)
             {
                 var jmesh = LoadOptionalObj(s.SteerMesh);
-                if (jmesh != null) v.AddChild(new MeshInstance3D { Name = "Joystick", Mesh = jmesh, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.14f, 0.14f, 0.16f), Metallic = 0.2f, Roughness = 0.7f, CullMode = BaseMaterial3D.CullModeEnum.Disabled } });   // cockpit control stick (source Objects/Steer), baked vehicle-local (master 2026-08-18)
+                if (jmesh != null) v.AddChild(new MeshInstance3D { Name = "Joystick", Mesh = jmesh, Position = new Vector3(0f, 0.30f, 0f), MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.14f, 0.14f, 0.16f), Metallic = 0.2f, Roughness = 0.7f, CullMode = BaseMaterial3D.CullModeEnum.Disabled } });   // cockpit control stick (source Objects/Steer), baked vehicle-local (master 2026-08-18)
             }
 
             // ---- PROPELLER (piston planes only). A JET has no prop -> a null PropMeshPrefix skips this whole block
