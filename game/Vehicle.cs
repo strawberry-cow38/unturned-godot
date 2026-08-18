@@ -294,6 +294,8 @@ namespace UnturnedGodot
         }
         public bool IsHeli => _heli;
         public bool IsPlane => _plane;
+        public bool HasRetractGear => _gearPivots != null;   // driven vehicle has retractable gear (jet) -> G toggles it
+        public void ToggleGear() { if (_gearPivots != null && (_gearDeploy <= 0.001f || _gearDeploy >= 0.999f)) _gearWantDown = !_gearWantDown; }   // DEBOUNCED: only flip when FULLY up or down so mashing G mid-fold is ignored (master)
         public bool HasWheels => _wNodes != null && _wNodes.Length > 0;   // a WHEELED plane seats on spawn; a floatplane (no wheels) drops onto the water
         float _groundClearance;
         /// <summary>Distance from the body origin down to its lowest collision point (skids, hull floor).</summary>
@@ -327,6 +329,7 @@ namespace UnturnedGodot
         public bool OnFire => _deadTimer >= 0f || _exploded;   // caught fire at 0 HP (burning toward explosion) or a wreck -> engine is DEAD + unfixable (master)
         VehicleWheel3D[] _wNodes; MeshInstance3D[] _wMeshes;   // wheels: VehicleWheel3D auto-rolls its node (mesh child inherits it), so no manual spin. _wMeshes kept for debris/hide.
         Node3D[] _gearPivots; Vector3[] _gearAxis; float[] _gearAng; float _gearDeploy = 1f;   // retractable gear (jet): per-wheel hinge pivots carry the visual; _gearDeploy lerps 1=down/deployed -> 0=up/retracted
+        bool _gearWantDown = true; bool _gearPhysOn = true; float[] _wheelSuspF, _wheelFricF;   // manual G-toggle target (starts DOWN), wheel-physics-active flag, + original suspension/friction to restore on deploy (master 2026-08-18)
         Mesh _wheelMeshRef; Material _wheelMatRef; float _wheelR;   // kept so the wheels can fly off as debris on explode
         public static float GlobalMass = 900f;   // all vehicles share one mass (the source does: Rigidbody mass = 2.0 for every vehicle)
         float[] _gears; float _reverseGear, _shiftUpRpm; float _engineRpm = 1000f; int _gear = 1;   // engine RPM + gear sim
@@ -2875,7 +2878,7 @@ namespace UnturnedGodot
             int nw = s.Wheels.Length;
             v._wheelMeshRef = wheelMesh; v._wheelMatRef = wheelMat; v._wheelR = s.WheelRadius;   // for explosion debris
             v._wNodes = new VehicleWheel3D[nw]; v._wMeshes = new MeshInstance3D[nw];
-            if (s.RetractGear) { v._gearPivots = new Node3D[nw]; v._gearAxis = new Vector3[nw]; v._gearAng = new float[nw]; }
+            if (s.RetractGear) { v._gearPivots = new Node3D[nw]; v._gearAxis = new Vector3[nw]; v._gearAng = new float[nw]; v._wheelSuspF = new float[nw]; v._wheelFricF = new float[nw]; }
             for (int i = 0; i < nw; i++)
             {
                 var (x, y, z, steer) = s.Wheels[i];
@@ -2898,6 +2901,7 @@ namespace UnturnedGodot
                 if (s.RetractGear)   // RETRACTABLE GEAR: hide the suspension-driven wheel; put the visual (strut + wheel) on a hinge PIVOT at the belly that folds up when airborne. VehicleWheel3D stays for physics.
                 {
                     mi.Visible = false;
+                    v._wheelSuspF[i] = w.SuspensionMaxForce; v._wheelFricF[i] = w.WheelFrictionSlip;   // remember the wheel's physics to restore when the gear deploys
                     var pivot = new Node3D { Name = $"Gear{i}", Position = new Vector3(x, 0.55f, z) };   // hinge at the TOP of the leg (matches the carve's re-centre) so the whole leg tucks up cleanly
                     var gm = LoadOptionalObj(Mathf.Abs(x) < 1f ? "fighterjet_gear_nose.txt" : (x < 0 ? "fighterjet_gear_mainL.txt" : "fighterjet_gear_mainR.txt"));   // the ACTUAL strut geometry, carved out of the body + re-centred to this pivot so it folds WITH the wheel
                     if (gm != null) pivot.AddChild(new MeshInstance3D { Name = "Strut", Mesh = gm, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.72f, 0.72f, 0.74f), Metallic = 0.1f, Roughness = 0.6f }, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off });
@@ -3612,11 +3616,17 @@ namespace UnturnedGodot
             // airborne + fast. Lerped ~1.5s so it swings up/down smoothly instead of snapping.
             if (_gearPivots != null)
             {
-                float gspd = _exploded ? 0f : LinearVelocity.Length();
-                float gTarget = (onGround || gspd < 15f) ? 1f : 0f;   // deploy (down) on ground/slow; retract (fold up) once airborne + fast
+                float gTarget = _gearWantDown ? 1f : 0f;   // MANUAL: G toggles _gearWantDown (debounced in ToggleGear) -- no more auto speed-based retract (master 2026-08-18)
                 _gearDeploy = Mathf.MoveToward(_gearDeploy, gTarget, dt / 1.5f);
                 for (int i = 0; i < _gearPivots.Length; i++)
                     if (_gearPivots[i] != null) _gearPivots[i].Basis = new Basis(_gearAxis[i], Mathf.DegToRad(_gearAng[i] * (1f - _gearDeploy)));
+                bool physOn = _gearDeploy > 0.5f;   // wheel PHYSICS off once the gear is >half UP -> retracted plane has no phantom invisible-wheel ground contact (master)
+                if (physOn != _gearPhysOn)
+                {
+                    _gearPhysOn = physOn;
+                    for (int wi = 0; wi < _wNodes.Length; wi++)
+                        if (_wNodes[wi] != null && _wheelSuspF != null) { _wNodes[wi].SuspensionMaxForce = physOn ? _wheelSuspF[wi] : 0f; _wNodes[wi].WheelFrictionSlip = physOn ? _wheelFricF[wi] : 0f; }
+                }
             }
             if (onGround)
             {

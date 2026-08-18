@@ -6190,6 +6190,7 @@ namespace UnturnedGodot
                         float noseDegG = Mathf.RadToDeg(Mathf.Asin(Mathf.Clamp(-pbg.Z.Y, -1f, 1f)));
                         float pitchG = Mathf.Clamp((9f - noseDegG) * 0.06f, -0.25f, 0.25f);
                         _veh.DrivePlane(1f, 0f, _veh.Afloat ? (spd > 11f ? 0.55f : 0f) : pitchG, 0f, delta);
+                        if (_frame == 260) _veh.ToggleGear();   // gear is MANUAL now -> trigger the retract mid-render so the demo still shows the fold
                         if (_vehCam != null)
                         {
                             var vtG = _veh.GetGlobalTransformInterpolated();

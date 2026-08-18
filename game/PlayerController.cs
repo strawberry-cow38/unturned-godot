@@ -4838,6 +4838,8 @@ namespace UnturnedGodot
                 SalvageAimedStructure();   // R while building: take the aimed piece back down (reload is meaningless here)
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.Y } && (_build?.Active ?? false))
                 UpgradeAimedStructure();   // Y while building: wood -> brick -> metal in place
+            else if (@event is InputEventKey { Pressed: true, Keycode: Key.G } && _driving != null && _driving.HasRetractGear)
+                _driving.ToggleGear();   // G while flying a retract-gear plane: toggle the landing gear (debounced in Vehicle) (master 2026-08-18)
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.G })
                 MeleeAttack();        // melee swing at a zombie in reach
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.H })
