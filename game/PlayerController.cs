@@ -6364,7 +6364,7 @@ namespace UnturnedGodot
                 // Every other vehicle keeps a world-level chase cam because a car's roll is noise; on a
                 // helicopter the roll IS the control input, and a level camera hides the thing being steered.
                 // No mouse orbit either: while flying, the mouse is the cyclic, not a camera.
-                float dist = Mathf.Clamp(size * 1.1f, 6.5f, 34f);
+                float dist = _driving.IsPlane ? Mathf.Clamp(size * 0.62f, 6.5f, 20f) : Mathf.Clamp(size * 1.1f, 6.5f, 34f);   // planes: the long fuselage+wingspan inflate the AABB diagonal (~14.7 jet -> 16m) -> pull the chase cam IN (master 2026-08-18: jet 3p was way too far); helis unchanged (tinyclaw)
                 Basis vb = vt.Basis.Orthonormalized();
                 // Offset in the VEHICLE's frame, so the camera keeps station on the airframe through a roll.
                 // The up-offset is deliberately small: the view direction is exactly the machine's heading, so
