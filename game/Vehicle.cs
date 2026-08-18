@@ -1994,15 +1994,15 @@ namespace UnturnedGodot
             Wheels = new (float, float, float, bool)[]   // tricycle gear (Godot Z = -Unity Z): nose steers, 2 wide mains
             {
                 (0f, -0.27f, -2.83f, true),      // nose wheel (forward) -- steers on the ground
-                (-0.85f, -0.27f, 2.51f, false),  // main gear L (F-15: on the FUSELAGE, not the wings -> clears the wing missiles on retract; master 2026-08-18)
-                (0.85f, -0.27f, 2.51f, false),   // main gear R
+                (-0.85f, -0.27f, 2.00f, false),  // main gear L (F-15: on the FUSELAGE, not the wings -> clears the wing missiles on retract; master 2026-08-18)
+                (0.85f, -0.27f, 2.00f, false),   // main gear R
             },
             ForwardGears = new[] { 24f }, ReverseGear = 8f, ShiftUpRpm = 5000f,
             Sound = "fighterjet_engine.ogg", IgnitionSound = "fighterjet_ignition.ogg", IdlePitch = 0.9f, MaxPitch = 1.7f, IdleVolume = 0.85f, MaxVolume = 1.0f,   // the REAL dedicated jet engine + ignition (from the prefab)
             Palette = "fighter_jet_body_tex.png", DefaultPaints = new[] { "#bcbcbc" },   // real .dat DefaultPaintColors = military grey; paintable panels + fixed tan/grey details
             Fuel = 1000f, Health = 800f, Name = "Fighter Jet",
-            Seats = new[] { new Vector3(0f, 0.20f, -4.30f) },   // driver seat IN the cockpit tub (master 2026-08-18)
-            DriverEye = new Vector3(0f, 1.10f, -4.50f),   // FP eye in the cockpit, under the canopy, looking out the windscreen (master 2026-08-18)
+            Seats = new[] { new Vector3(0f, 0.55f, -4.30f) },   // driver seat IN the cockpit tub (master 2026-08-18)
+            DriverEye = new Vector3(0f, 1.40f, -4.50f),   // FP eye in the cockpit, under the canopy, looking out the windscreen (master 2026-08-18)
         };
         public static Vehicle BuildFighterJet(int variant = 0) => Build(_fighterjet, variant, "fighterjet");
         public static Vehicle BuildByName(string name, int variant = 0) => name switch { "quad" => BuildQuad(variant), "bus" => BuildBus(variant), "sedan" => BuildSedan(variant), "hatchback" => BuildHatchback(variant), "humvee" => BuildHumvee(variant), "roadster" => BuildRoadster(variant), "ambulance" => BuildAmbulance(variant), "firetruck" => BuildFiretruck(variant), "tractor" => BuildTractor(variant), "ural" => BuildUral(variant), "police" => BuildPolice(variant), "semi" => BuildSemi(variant), "trailer" => BuildTrailer(variant), "offroader" => BuildOffRoader(variant), "off_roader" => BuildOffRoader(variant), "truck" => BuildTruck(variant), "van" => BuildVan(variant), "golf" => BuildGolf(variant), "vw_golf" => BuildGolf(variant), "runabout" => BuildRunabout(variant), "apc" => BuildAPC(variant), "minicopter" => BuildMinicopter(variant), "mini" => BuildMinicopter(variant), "heli" => BuildMinicopter(variant), "huey" => BuildHuey(variant), "scoutcopter" => BuildScoutcopter(variant), "scout" => BuildScoutcopter(variant), "hind" => BuildHind(variant), "orca" => BuildOrca(variant), "skycrane" => BuildSkycrane(variant), "hummingbird" => BuildHummingbird(variant), "bird" => BuildHummingbird(variant), "tank" => BuildTank(variant), "ship" => BuildContainerShip(variant), "containership" => BuildContainerShip(variant), "otter" => BuildOtter(variant), "plane" => BuildOtter(variant), "fighterjet" => BuildFighterJet(variant), "jet" => BuildFighterJet(variant), _ => BuildJeep(variant) };
@@ -2924,7 +2924,7 @@ namespace UnturnedGodot
                     pivot.AddChild(gwheel);
                     v.AddChild(pivot);
                     v._gearPivots[i] = pivot;
-                    if (Mathf.Abs(x) < 1f) { v._gearAxis[i] = Vector3.Right; v._gearAng[i] = -85f; }          // nose gear: folds AFT about X
+                    if (z < 0f) { v._gearAxis[i] = Vector3.Right; v._gearAng[i] = -85f; }          // nose gear (forward, z<0): folds AFT about X
                     else { v._gearAxis[i] = Vector3.Right; v._gearAng[i] = 95f; }                             // main gear (fuselage, F-15): folds FORWARD + up into the belly about X -> X stays 0.85 so it clears the wing missiles (master 2026-08-18)
                 }
             }

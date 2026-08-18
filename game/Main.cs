@@ -6270,6 +6270,15 @@ namespace UnturnedGodot
                         }
                         return;
                     }
+                    if (System.Environment.GetEnvironmentVariable("UG_GEARCYCLE") == "1")
+                    {   // GEAR direction check: pin the jet level+airborne, retract at frame 20, side cam (+X). nose = -Z = RIGHT in frame
+                        var o = new Vector3(0f, 7f, 60f);
+                        _veh.GlobalTransform = new Transform3D(Basis.Identity, o);
+                        _veh.LinearVelocity = Vector3.Zero; _veh.AngularVelocity = Vector3.Zero; _veh.PlaneGroundMode = false;
+                        if (_frame == 20) _veh.ToggleGear();
+                        if (_vehCam != null) { _vehCam.GlobalPosition = o + new Vector3(8.5f, -0.6f, 0f); _vehCam.LookAt(o + new Vector3(0f, -0.6f, 0f), Vector3.Up); }
+                        return;
+                    }
                     if (System.Environment.GetEnvironmentVariable("UG_PLANEBURN") == "1")
                     {   // AFTERBURNER beauty shot: FULL throttle the whole time (burners maxed) + a close, level,
                         // 3/4-rear camera locked on the exhaust cones, gently swinging around dead-astern.
