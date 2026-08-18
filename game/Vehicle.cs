@@ -2910,7 +2910,7 @@ namespace UnturnedGodot
                     v._wheelSuspF[i] = w.SuspensionMaxForce; v._wheelFricF[i] = w.WheelFrictionSlip;   // remember the wheel's physics to restore when the gear deploys
                     var pivot = new Node3D { Name = $"Gear{i}", Position = new Vector3(x, 0.55f, z) };   // hinge at the TOP of the leg (matches the carve's re-centre) so the whole leg tucks up cleanly
                     var gm = LoadOptionalObj(Mathf.Abs(x) < 1f ? "fighterjet_gear_nose.txt" : (x < 0 ? "fighterjet_gear_mainL.txt" : "fighterjet_gear_mainR.txt"));   // the ACTUAL strut geometry, carved out of the body + re-centred to this pivot so it folds WITH the wheel
-                    if (gm != null) pivot.AddChild(new MeshInstance3D { Name = "Strut", Mesh = gm, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.72f, 0.72f, 0.74f), Metallic = 0.1f, Roughness = 0.6f }, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off });
+                    if (gm != null) pivot.AddChild(new MeshInstance3D { Name = "Strut", Mesh = gm, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.72f, 0.72f, 0.74f), Metallic = 0.1f, Roughness = 0.6f, CullMode = BaseMaterial3D.CullModeEnum.Disabled }, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off });
                     var gwheel = new MeshInstance3D { Mesh = wheelMesh, MaterialOverride = wheelMat, Position = new Vector3(0f, y - 0.55f, 0f), Scale = new Vector3((x < 0 ? -1f : 1f) * wscale, wscale, wscale) };   // wheel hangs below the top hinge (world y stays at the spec axle)
                     pivot.AddChild(gwheel);
                     v.AddChild(pivot);
@@ -3624,8 +3624,9 @@ namespace UnturnedGodot
             {
                 float gTarget = _gearWantDown ? 1f : 0f;   // MANUAL: G toggles _gearWantDown (debounced in ToggleGear) -- no more auto speed-based retract (master 2026-08-18)
                 _gearDeploy = Mathf.MoveToward(_gearDeploy, gTarget, dt / 1.5f);
+                bool gearVis = _gearDeploy > 0.01f;   // fully retracted -> hide the gear + wheels entirely, not just tucked (master 2026-08-18)
                 for (int i = 0; i < _gearPivots.Length; i++)
-                    if (_gearPivots[i] != null) _gearPivots[i].Basis = new Basis(_gearAxis[i], Mathf.DegToRad(_gearAng[i] * (1f - _gearDeploy)));
+                    if (_gearPivots[i] != null) { _gearPivots[i].Visible = gearVis; _gearPivots[i].Basis = new Basis(_gearAxis[i], Mathf.DegToRad(_gearAng[i] * (1f - _gearDeploy))); }
                 bool physOn = _gearDeploy > 0.5f;   // wheel PHYSICS off once the gear is >half UP -> retracted plane has no phantom invisible-wheel ground contact (master)
                 if (physOn != _gearPhysOn)
                 {
