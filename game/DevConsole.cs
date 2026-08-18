@@ -333,8 +333,14 @@ namespace UnturnedGodot
                     case "reset":
                         Vehicle.HeaveDampScale = 1f; Vehicle.DragScale = 1f;
                         Vehicle.BackstopEnabled = true; Vehicle.ShaftAlignedDescent = true;   // reset means the SHIPPING default, which is now on
+                        Vehicle.HeaveRedirect = 0f;
                         Log("reset to shipping calibration\n" + HeliPhysStatus());
                         return;
+                    case "redirect":
+                        if (!float.TryParse(val, out float r) || r < 0f)
+                        { Log("usage: heliphys redirect <0..1>   (0 = shipped, 1 = full sink-to-speed conversion)"); return; }
+                        Vehicle.HeaveRedirect = r;
+                        Log(HeliPhysStatus()); return;
                     case "heave":
                     case "drag":
                         if (!float.TryParse(val, out float x) || x < 0f)
@@ -347,7 +353,7 @@ namespace UnturnedGodot
                         if (k == "backstop") Vehicle.BackstopEnabled = on; else Vehicle.ShaftAlignedDescent = on;
                         Log(HeliPhysStatus()); return;
                 }
-                Log("usage: heliphys [heave <scale> | drag <scale> | backstop <on|off> | shaft <on|off> | reset]");
+                Log("usage: heliphys [heave <scale> | drag <scale> | redirect <0..1> | backstop <on|off> | shaft <on|off> | reset]");
                 return;
             }
             if (verb == "simspeed")
@@ -860,7 +866,9 @@ namespace UnturnedGodot
                 ? $"x{1f / Mathf.Sqrt(Vehicle.DragScale):0.##} of spec (goes as 1/sqrt(drag))"
                 : "no drag at all -- only the backstop limits you";
             return $"heliphys: heave x{Vehicle.HeaveDampScale:0.##}  drag x{Vehicle.DragScale:0.##}  " +
-                   $"backstop {(Vehicle.BackstopEnabled ? "on" : "off")}  shaftDescent {(Vehicle.ShaftAlignedDescent ? "on" : "off")}\n" +
+                   $"backstop {(Vehicle.BackstopEnabled ? "on" : "off")}  shaftDescent {(Vehicle.ShaftAlignedDescent ? "on" : "off")}  " +
+                   $"redirect x{Vehicle.HeaveRedirect:0.##}\n" +
+                   $"  sink->speed conversion: {(Vehicle.HeaveRedirect > 0f ? $"{Vehicle.HeaveRedirect * 100f:0}% of the sink is pushed along the disc instead of destroyed" : "NONE -- vertical velocity cannot affect horizontal speed at all")}\n" +
                    $"  terminal fall, level: {fall}\n" +
                    $"  terminal fall, diving: {dive}\n" +
                    $"  level top speed: {top}\n" +

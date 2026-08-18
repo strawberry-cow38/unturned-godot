@@ -133,6 +133,30 @@ namespace UnturnedGodot
         /// Huey), so a misjudged pullout is a fireball where it used to be a hard landing. That is a difficulty
         /// decision, not a physics one, so it is flagged rather than silently retuned alongside this.</summary>
         public static bool ShaftAlignedDescent = true;
+        /// <summary>HOW MUCH OF THE SINK IS REDIRECTED FORWARD instead of destroyed, 0 = shipped behaviour.
+        ///
+        /// VoX's second complaint -- "when I level out it doesnt translate my falling speed into forward speed
+        /// enough" -- is not a tuning problem. The horizontal equation of motion contains NO term that depends on
+        /// vertical velocity: lift reads attitude and flatSpeed, parasite drag and the backstop read the flat
+        /// vector only, and the heave damper is the single vel.Y-dependent force in the model but is applied
+        /// along Vector3.Down, whose horizontal component is zero at every attitude. Conversion is therefore
+        /// exactly 0 %, not merely low. Flying the identical pullout with entry sink rates of 0 and 60 m/s gives
+        /// bit-identical exit speed, and ShaftAlignedDescent does not change that -- it only makes the fall
+        /// faster, so it answers the first half of his sentence and none of the second.
+        ///
+        /// The fix falls out of the cos^2 derivation already documented above: "one cosine resolving velocity onto
+        /// the shaft, one resolving the force back to vertical". The implementation kept only the vertical
+        /// projection and silently discarded the IN-PLANE component -- which is precisely the forward push. This
+        /// restores it, and because the vertical axis is untouched, terminal fall, the FallMax floor, ClimbMax,
+        /// _heliLiftCap and the k derivation all stay exactly as calibrated.
+        ///
+        /// Signs come out right without special-casing: nose-down tilts b.Y forward, so a descent pushes FORWARD;
+        /// a nose-up flare tilts it aft, so flaring brakes; a descending bank pushes into the turn.
+        ///
+        /// DEFAULT 0 -- OFF. This is a real feel change nobody has flown yet, so it ships inert and is opted into
+        /// with `heliphys redirect 1`. At 1.0 a Huey exits a 200 m dive at ~22 m/s instead of ~6, peaking near the
+        /// 1.25 MP envelope -- so anything above 1.0 needs a per-airframe envelope check before it goes further.</summary>
+        public static float HeaveRedirect = 0f;
         /// <summary>How much draggier sideways than forwards. This is what replaces the old ForeAftBoost /
         /// LateralBoost pair, which multiplied THRUST to make leaning into a run build momentum ("increase the
         /// forward/back momentum when tilting forward/back") and lateral slip feel less eager than a drone.
@@ -3682,6 +3706,14 @@ namespace UnturnedGodot
                     heave = Mathf.Max(heave, downAccel / (_heliFallMax * FallEnvelopeMargin));
             }
             ApplyCentralForce(Vector3.Down * (heave * vel.Y * Mass));
+            // THE HORIZONTAL PARTNER OF THAT SAME FORCE, which the vertical-only projection throws away. Descent
+            // only, matching the shaft factor above, and zero by default. See HeaveRedirect.
+            if (HeaveRedirect > 0f && vel.Y < 0f)
+            {
+                Vector3 shaftFlat = new Vector3(b.Y.X, 0f, b.Y.Z);
+                if (shaftFlat.LengthSquared() > 1e-6f)
+                    ApplyCentralForce(shaftFlat * (heave * -vel.Y * HeaveRedirect * Mass));
+            }
 
             // HORIZONTAL: quadratic parasite drag, anisotropic. Taken from the FLAT vector only -- both its
             // direction AND its magnitude -- never from LinearVelocity. Using the full 3-D speed would scale
