@@ -2837,7 +2837,16 @@ namespace UnturnedGodot
                 // exists to remove -- it left the three fastest airframes short of their own spec top speed,
                 // and it is measurable: 0.100 s^-1, identical across hind, orca and hummingbird.
                 v.LinearDampMode = DampMode.Replace; v.LinearDamp = 0f;
-                v.AngularDamp = 0.25f;   // angular is untouched: still Combine, still the engine's, as it shipped
+                // MEASURED 0.351 s^-1, NOT 0.25 (vehicle.heli_angular_damp, 2026-08-18). AngularDampMode is left
+                // at Combine, so the project's default_angular_damp (Godot's 0.1, never overridden) is ADDED to
+                // this. That is the identical trap the LINEAR axis hit and fixed twenty lines above -- measured at
+                // 0.100 s^-1, switched to Replace -- and nobody came back for the angular one. It matters more
+                // than it looks: cmd is an angular ACCELERATION integrated by ApplyTorque, so total attitude change
+                // per stick input is alpha/zeta and the damping is a DIVISOR on how far the machine ends up
+                // rotating, not merely on how fast. The real decay constant is 1/0.351 = 2.85 s, not the ~4 s
+                // claimed below. Left as Combine deliberately for now: correcting it to Replace would make every
+                // airframe 40 % looser, which is a feel change and VoX's call, not a silent cleanup.
+                v.AngularDamp = 0.25f;   // -> 0.35 effective under Combine; see the measurement above
                 // ANTI-COLLISION BEACON: the red flasher on the belly, and the ONLY light on the aircraft that
                 // blinks. Slung just under the hull on the centreline so it reads from below and from the side.
                 // Rate is the real one -- civil beacons run 40-45 flashes per minute, hence BeaconPeriod -- and
