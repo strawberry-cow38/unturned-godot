@@ -89,6 +89,12 @@ namespace UnturnedGodot
         /// off by feel; this rework is about the horizontal law, and quietly retuning every climb rate inside
         /// it is exactly the kind of change that compiles and ships wrong. Raised separately instead.</summary>
         const float HeliHeaveDamp = 0.45f;
+        /// <summary>How much of HeliFallMax a shaft-aligned descent is allowed to reach. Mirrors the 0.9 the CLIMB
+        /// side already applies via _heliLiftCap, and for the same stated reason -- "keeps a margin so the cap
+        /// binds before the envelope does". Targeting the cap exactly, which is what the first cut did, leaves
+        /// nothing to absorb position quantization (1/256 m, truncating) or a suspended sling load, both of which
+        /// add to the fall rate the server actually measures.</summary>
+        const float FallEnvelopeMargin = 0.9f;
         /// <summary>LIVE FLIGHT-MODEL KNOBS, driven by the `heliphys` console command (VoX 2026-08-17: "so we are
         /// essentially applying max speeds to the helis? Can we test removing those please"). Static because the
         /// question is about the FLEET's feel, not one airframe's, and because they exist to be A/B'd in the air.
@@ -109,9 +115,16 @@ namespace UnturnedGodot
         /// shaft, one resolving the force back to vertical). VoX got here from the feel -- "a horizontal heli has
         /// more vertical drag than a vertical heli right?" -- and the physics review recommended it originally.
         ///
-        /// DESCENT ONLY. The same factor on the CLIMB side raises terminal climb ~22 % at an ordinary 25 deg
-        /// cruise, straight into HeliClimbMax's zero-slack server check. The asymmetry is the envelope's, not
-        /// physics'. ON BY DEFAULT since VoX 2026-08-18 ("can you make sure my preference is the defaut for
+        /// DESCENT ONLY -- but NOT for the reason originally given here, which was wrong and is worth recording
+        /// rather than quietly deleting. The claim was that the same factor on the CLIMB side raises terminal
+        /// climb ~22 % into HeliClimbMax's zero-slack check. The 22 % is real but it is a SAME-ATTITUDE
+        /// comparison, and the server does not check climb at 25 deg -- it checks whatever the rate actually is.
+        /// Terminal climb under the shaft form is strictly increasing in cos(tilt) for every airframe in the
+        /// fleet, so its maximum is at LEVEL, where cos^2 = 1 and the shaft form IS the world form. Verified per
+        /// airframe: max 8.32 m/s at 0 deg on a Huey, 11.36 at 0 deg on a Hind, both identical to the world-
+        /// aligned figure. A symmetric version would LOWER climb at every tilted attitude and raise nothing the
+        /// server looks at. It stays descent-only because the descent is the axis VoX was complaining about and
+        /// a one-sided change is the smaller one -- not because the climb side was ever unsafe. ON BY DEFAULT since VoX 2026-08-18 ("can you make sure my preference is the defaut for
         /// testing") -- he reached this from the feel before seeing the code, so the fleet now flies his version
         /// without anyone typing at the console, and `heliphys shaft off` is how you get the old behaviour back.
         ///
@@ -3639,19 +3652,34 @@ namespace UnturnedGodot
             if (ShaftAlignedDescent && vel.Y < 0f)
             {
                 // cos^2 of the tilt. SQUARED, not clamped to [0,1]: an INVERTED disc is still a flat disc facing
-                // the airflow, so b.Y.Y = -1 has to read as 1, not as 0. Clamping first gave an upside-down
+                // the airflow, so b.Y.Y = -1 has to read as 1, not 0. Clamping first gave an upside-down
                 // helicopter zero vertical resistance.
                 float shaftUp = b.Y.Y;
-                float factor = shaftUp * shaftUp;
-                // FLOORED AT THIS AIRFRAME'S OWN ENVELOPE. Unfloored the factor reaches ZERO at knife-edge, which
-                // is no vertical resistance at all and a fall that accelerates without limit -- straight past
-                // HeliFallMax and through HeliCrashExplodeSpeed. Deriving the floor from _heliFallMax instead makes
-                // terminal fall land exactly ON the spec number: 9.8 / (0.45 * 40) = 0.544 for a Huey, giving
-                // 40.0 m/s at any steep attitude and the calibrated 21.8 when level. That turns HeliFallMax from a
-                // decoration nothing could reach into the real limit, which is the whole point of the change.
-                float floorFactor = _heliFallMax > 0.01f
-                    ? Mathf.Min(9.8f / (HeliHeaveDamp * _heliFallMax), 1f) : 0.25f;
-                heave *= Mathf.Max(factor, floorFactor);
+                heave *= shaftUp * shaftUp;
+
+                // ---- ENVELOPE FLOOR. Everything below exists because VehicleReplication validates the fall rate
+                // with ZERO slack (the horizontal check gets 1.25; the vertical gets none), and a failure is not a
+                // soft correction -- it teleports the pilot to the last good pose and resumes them FROM REST.
+                //
+                // THREE THINGS THE FIRST VERSION GOT WRONG, all of which let this feature INTRODUCE violations
+                // that did not exist before it:
+                //
+                // 1. IT USED g AS THE WHOLE DOWNWARD ACCELERATION. Inverted, the tilt loss above clamps at zero
+                //    so the rotor keeps 45 % of its thrust, and :3615 applies it along b.Y -- pointing at the
+                //    ground, ADDING to gravity -- while cos^2 is near its minimum. Measured on the shipped
+                //    constants: 58 m/s on a Huey against a 40 cap (+46 %), 66 vs 42 on a Skycrane. Both sit at
+                //    32-34 with this feature OFF. Terminal is ABOVE the cap, so it is a recov loop every ~5 s,
+                //    not a single blip. Using the real downward accel makes the guarantee hold at EVERY attitude.
+                // 2. IT TARGETED THE CAP EXACTLY, so the designed margin was zero -- against a check that is
+                //    strict, quantized (1/256 m, truncating, worth +0.098 m/s), and clamps dt. The climb side has
+                //    mirrored this problem for ages and solves it by targeting 0.9 * ClimbMax; do the same.
+                // 3. IT DERIVED THE FLOOR FROM THE RAW CONSTANT while the damping it floored was scaled by
+                //    HeaveDampScale, so the guarantee silently evaporated off scale 1 -- `heliphys heave 0.5`
+                //    gave 80 m/s against a 40 cap. The floor is applied to the PRODUCT now, so the envelope holds
+                //    whatever the debug knob is set to.
+                float downAccel = 9.8f + Mathf.Max(0f, -lift * b.Y.Y);
+                if (_heliFallMax > 0.01f)
+                    heave = Mathf.Max(heave, downAccel / (_heliFallMax * FallEnvelopeMargin));
             }
             ApplyCentralForce(Vector3.Down * (heave * vel.Y * Mass));
 

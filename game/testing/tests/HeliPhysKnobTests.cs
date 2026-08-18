@@ -40,6 +40,14 @@ namespace UnturnedGodot.Testing
 
         public override IEnumerable<Step> Run()
         {
+            // TRY/FINALLY, because these statics are GLOBAL and the restore used to be the last two statements of
+            // the iterator body -- i.e. on the SUCCESS PATH ONLY. TestHost abandons the enumerator on a watchdog
+            // timeout or an exception, so a bail-out anywhere after the HeaveDampScale = 3f below would have left
+            // it at 3 for the rest of the boot. Tests run in name order, so vehicle.heli_sling, heli_speed,
+            // heli_turbulence and npc_heli all follow this one and would have flown in a world with a third of
+            // the vertical resistance -- npc_heli's height check would then pass for entirely the wrong reason.
+            try
+            {
             // ---- 1. CONTROL: defaults are the shipping calibration.
             Vehicle.HeaveDampScale = 1f; Vehicle.DragScale = 1f;
             Vehicle.BackstopEnabled = true; Vehicle.ShaftAlignedDescent = false;
@@ -75,15 +83,52 @@ namespace UnturnedGodot.Testing
             yield return Ticks(2);
 
             T.Check($"shaft-aligned: the same 45 deg dive now falls at {diveOnFall:0.#} m/s, against {diveOffFall:0.#} world-aligned (expect ~2x, cos^2(45)=0.5)",
-                diveOnFall > diveOffFall * 1.6f);
-            // The floor is derived so terminal fall lands ON HeliFallMax, not merely near it -- so this is bounded
-            // BOTH ways. Too low and the knob did nothing; over the spec and it breaks the MP envelope it exists
-            // to make reachable. A one-sided bound here would pass on a knob that never engaged at all.
-            T.Check($"...and terminal fall lands ON the MP envelope it makes reachable (HeliFallMax {fallMaxSpec:0} m/s, got {diveOnFall:0.#})",
-                diveOnFall <= fallMaxSpec * 1.02f && diveOnFall >= fallMaxSpec * 0.95f);
+                diveOnFall > diveOffFall * 1.5f);
+
+            // THE cos^2 TERM ITSELF, which the 45 deg case above NEVER TOUCHES. cos^2(45) = 0.500 is BELOW the
+            // Huey's floor of 0.544, so Mathf.Max picks the floor and both checks above read the floor value --
+            // they would pass unchanged with the cos^2 factor deleted outright. The floor takes over past 42.5 deg
+            // on this airframe, so the entire 0-42.5 band, which is all normal flying, was untested and the drop
+            // angle sat 2.5 deg the wrong side of the only line that mattered.
+            // At 30 deg: cos^2 = 0.750, comfortably above the floor, so this reads the real term.
+            var diveShallow = DropAt(-30f);
+            yield return Ticks(SettleTicks);
+            float shallowFall = -diveShallow.LinearVelocity.Y;
+            diveShallow.QueueFree();
+            yield return Ticks(2);
+
+            float shallowExpect = 9.8f / (0.45f * 0.75f);   // 29.0 m/s
+            T.Check($"the cos^2 term is what's acting at 30 deg (fall {shallowFall:0.#} m/s, cos^2=0.75 predicts {shallowExpect:0.#}; the floor would give {fallMaxSpec:0})",
+                Mathf.Abs(shallowFall - shallowExpect) < 2.0f);
+            // BOUNDED BOTH WAYS, AND THE UPPER BOUND IS THE ENVELOPE ITSELF. The previous version allowed
+            // fallMaxSpec * 1.02, i.e. it PASSED on 40.8 m/s -- a state VehicleReplication rejects outright. A
+            // check whose pass band includes the failure is not checking anything. The fall now targets
+            // FallEnvelopeMargin * FallMax, so require it strictly inside the cap and still clearly engaged.
+            T.Check($"terminal fall stays strictly INSIDE the MP envelope while still being raised ({diveOnFall:0.#} m/s vs HeliFallMax {fallMaxSpec:0})",
+                diveOnFall < fallMaxSpec && diveOnFall > fallMaxSpec * 0.80f);
 
             GD.Print($"[HELIPHYS] level={levelFall:0.0}m/s  dive45_world={diveOffFall:0.0}m/s  dive45_shaft={diveOnFall:0.0}m/s  " +
                      $"ratio={diveOnFall / Mathf.Max(diveOffFall, 0.01f):0.00}x  fallMaxSpec={fallMaxSpec:0}m/s");
+
+            // ---- 3b. INVERTED, UNDER POWER. The floor used to be derived from g alone, which is only right
+            // while gravity is the only thing pushing down. Upside-down it is not: the tilt loss clamps at zero
+            // so the rotor keeps 45 % of its thrust and it is applied along b.Y, which points at the ground.
+            // The g-only floor let this reach 58 m/s against a 40 m/s FallMax -- a violation the feature
+            // INTRODUCED, since the same attitude with the toggle off sits at 32.
+            var inv = Vehicle.BuildByName("huey");
+            World.AddChild(inv);
+            inv.GlobalPosition = new Vector3(500f, DropHeight, 0f);
+            inv.EngineOn = true; inv.DebugInstantStart = true; inv.SpawnRotorRunning();
+            inv.DebugNoTurbulence = true;
+            inv.LinearVelocity = Vector3.Zero; inv.AngularVelocity = Vector3.Zero;
+            inv.GlobalTransform = new Transform3D(new Basis(Vector3.Right, Mathf.DegToRad(137f)), inv.GlobalPosition);
+            for (int i = 0; i < SettleTicks; i++) { inv.DriveHeli(1f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
+            float invFall = -inv.LinearVelocity.Y;
+            GD.Print($"[HELIPHYS] inverted137_powered={invFall:0.0}m/s (FallMax {fallMaxSpec:0}; g-only floor gave 58)");
+            T.Check($"inverted under power stays inside the fall envelope ({invFall:0.#} m/s against HeliFallMax {fallMaxSpec:0}) -- the server checks this with ZERO slack",
+                invFall < fallMaxSpec);
+            inv.QueueFree();
+            yield return Ticks(2);
 
             // ---- 4. CLIMB IS UNTOUCHED BY THE SHAFT TOGGLE, which is the whole reason it is descent-only:
             // the same factor on the climb side busts HeliClimbMax, checked server-side with ZERO slack.
@@ -115,11 +160,13 @@ namespace UnturnedGodot.Testing
                 Mathf.Abs(Vehicle.HeaveDampScale - 1f) < 0.001f && Vehicle.ShaftAlignedDescent
                 && Mathf.Abs(Vehicle.DragScale - 1f) < 0.001f && Vehicle.BackstopEnabled);
 
-            // Leave the statics at the SHIPPING DEFAULTS: they are GLOBAL, so a test that walks away from a knob
-            // silently retunes every test that runs after it in the same boot -- and restoring them to the wrong
-            // value would be the same bug with extra steps.
-            Vehicle.HeaveDampScale = 1f; Vehicle.DragScale = 1f;
-            Vehicle.BackstopEnabled = true; Vehicle.ShaftAlignedDescent = true;
+            }
+            finally
+            {
+                // Restore the SHIPPING DEFAULTS on every exit path, not just the happy one.
+                Vehicle.HeaveDampScale = 1f; Vehicle.DragScale = 1f;
+                Vehicle.BackstopEnabled = true; Vehicle.ShaftAlignedDescent = true;
+            }
         }
     }
 }
