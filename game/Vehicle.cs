@@ -733,9 +733,12 @@ namespace UnturnedGodot
             public float PitchMin = -20f, PitchMax = 60f;
             // The mount carries its OWN gun and its OWN belt, which is retail's model (TurretInfo.itemID): a
             // turret is a gun item bolted to a seat, so it does not eat the gunner's rifle rounds.
-            /// <summary>Where the CREW MEMBER stands, vehicle-local. Zero = no crew: the Hind's chin turret is
-            /// remote-operated from inside, so there is nobody to shoot. A door gun has somebody hanging out of
-            /// the doorway behind it, and killing them is supposed to silence that side.</summary>
+            /// <summary>Where the CREW MEMBER stands, vehicle-local. For a door gun this is the DOORWAY, level
+            /// with the mount, not tucked inboard: a gunner at 0.62 of the cabin half-width has a 0.42 m hit
+            /// radius and therefore sits entirely inside the hull box, so every shot from abeam struck the
+            /// fuselage first and the gunner could not be killed at all -- "the hitbox of the helis overlap the
+            /// hitboxes of the gunners. so its impossible to hit them". Standing them in the door puts 0.27 m of
+            /// body outside the skin, which is both the fix and what a door gunner actually does.</summary>
             public Vector3 GunnerAt = Vector3.Zero;
             /// <summary>Euler degrees applied to the gun MESH inside its pitch frame. A held-weapon model is not
             /// authored pointing down -Z: dragonfang_gun.txt measures 0.22 x 1.14 x 0.37, i.e. its length runs
@@ -2435,7 +2438,7 @@ namespace UnturnedGodot
                     Seat = 1,   // PORT
                     PitchMesh = gunMesh,
                     Pivot = new Vector3(-halfWidth, gunY, z),
-                    GunnerAt = new Vector3(-halfWidth * 0.62f, floorY, z),
+                    GunnerAt = new Vector3(-halfWidth, floorY, z),
                     Muzzle = new Vector3(0f, 0f, -0.90f),
                     MeshRotationDeg = new Vector3(-90f, 0f, 0f),   // lay the Y-axis gun model down the barrel line
                     YawMin = 45f, YawMax = 135f,      // 90 deg centred on the port beam (strawberry tightened it from 120)
@@ -2447,7 +2450,7 @@ namespace UnturnedGodot
                     Seat = 2,   // STARBOARD
                     PitchMesh = gunMesh,
                     Pivot = new Vector3(halfWidth, gunY, z),
-                    GunnerAt = new Vector3(halfWidth * 0.62f, floorY, z),
+                    GunnerAt = new Vector3(halfWidth, floorY, z),
                     Muzzle = new Vector3(0f, 0f, -0.90f),
                     MeshRotationDeg = new Vector3(-90f, 0f, 0f),
                     YawMin = -135f, YawMax = -45f,

@@ -246,6 +246,35 @@ namespace UnturnedGodot.Testing
             bare.QueueFree(); bareAi.QueueFree();
             yield return Ticks(2);
 
+            // ---- 3c. THE GUNNER HAS TO BE SHOOTABLE (strawberry: "the hitbox of the helis overlap the hitboxes
+            // of the gunners. so its impossible to hit them"). The crew sat at 0.62 of the cabin half-width with
+            // a 0.42 m hit radius, i.e. entirely INSIDE the hull box, so a side-on shot always struck the
+            // fuselage first and the gunner could not be killed at all -- which removes the whole point of them.
+            // A door gunner stands IN the doorway with their gun, so their box now protrudes past the skin.
+            // Asserted by casting the ray a player would: what does it hit FIRST?
+            // held:false ON PURPOSE. A frozen aircraft (FreezeMode.Static + ProcessMode.Disabled) never flushes
+            // its moved transform into the physics space in this rig, so the ray hit NOTHING AT ALL -- neither
+            // hull nor gunner -- and the check would have "failed" for a reason unrelated to the bug.
+            var (shootable, shAi) = Spawn("huey", new Vector3(2000f, 40f, 0f), held: false);
+            yield return Ticks(3);
+            var stbdCrew = shootable.FindChild($"Gunner{shootable.Turrets[1].Seat}", false, false) as Node3D;
+            T.Check("the starboard gunner exists to be shot at", stbdCrew != null);
+            if (stbdCrew != null)
+            {
+                Vector3 chest = stbdCrew.GlobalPosition + Vector3.Up * 1.1f;
+                Vector3 shotFrom = chest + new Vector3(25f, 0f, 0f);   // straight in from abeam, the natural shot
+                var sq = PhysicsRayQueryParameters3D.Create(shotFrom, chest + new Vector3(-0.2f, 0f, 0f));
+                sq.CollisionMask = (1u << 0) | (1u << 5) | (1u << 6);   // the bullet's own mask
+                var sres = shootable.GetWorld3D().DirectSpaceState.IntersectRay(sq);
+                string firstHit = sres.Count > 0 ? sres["collider"].As<GodotObject>().GetType().Name : "NOTHING";
+                GD.Print($"[TURRET] veh at {shootable.GlobalPosition} crew at {stbdCrew.GlobalPosition} chest {chest} from {shotFrom}");
+                GD.Print($"[TURRET] shot from abeam hits '{firstHit}' first (want TargetDummy, not Vehicle)");
+                T.Check($"a shot from abeam reaches the GUNNER before the hull (first hit: {firstHit})",
+                    sres.Count > 0 && sres["collider"].As<GodotObject>() is TargetDummy);
+            }
+            shootable.QueueFree(); shAi.QueueFree();
+            yield return Ticks(2);
+
             // ---- 4. DOOR GUNNERS. Two crewed mounts, and killing them takes the sides away one at a time.
             var (huey, hai) = Spawn("huey", new Vector3(300f, 40f, 0f));
             yield return Ticks(3);
@@ -295,6 +324,37 @@ namespace UnturnedGodot.Testing
             T.Check($"a fleeing Huey actually runs AWAY, not just reports it (mode {rai.Mode}, {dStart:0} -> {dEnd:0} m from the contact)",
                 rai.Mode == NpcHeli.Stance.Flee && dEnd > dStart + 60f);
             runner.QueueFree(); rai.QueueFree();
+            yield return Ticks(2);
+
+            // ---- 5. SIDE STRAFE. Beam guns cannot bear on a target the aircraft is flying AT, so an engaged
+            // door-gunner airframe has to hold the contact abeam. Implemented as an ORBIT of the contact rather
+            // than an offset aim point -- an offset is recomputed from wherever the aircraft currently is, so it
+            // rotates as it closes and collapses into a pursuit curve (measured: contact local X +57.6, and
+            // flipping the sign moved it to +57.4, so the sign was never what drove it).
+            //
+            // Measured in VEHICLE-LOCAL X, the frame the cone is defined in: port barrels point -X.
+            var (strafer, sai) = Spawn("huey", new Vector3(-1200f, 60f, 260f), held: false);
+            yield return Ticks(3);
+            Vector3 mark = new Vector3(-1200f, 6f, 0f);
+            strafer.NoteAttackedFrom(mark);
+            for (int i = 0; i < 900; i++) yield return Ticks(1);   // ~18 s: close, then settle onto the circle
+            float xBoth = (strafer.GlobalTransform.AffineInverse() * mark).X;
+            float rBoth = new Vector2(strafer.GlobalPosition.X - mark.X, strafer.GlobalPosition.Z - mark.Z).Length();
+            GD.Print($"[TURRET] strafe both-up: contact local X {xBoth:0.0}, range {rBoth:0} m");
+            // BOTH GUNNERS UP -> it favours PORT, whose barrels point -X, so the contact must sit at NEGATIVE
+            // local X. Asserting the SIDE, not just "some side": the first version checked only |X| > 15 and a
+            // sign flip, and passed happily while the aircraft presented the contact to the gunner who could not
+            // see it. "It is abeam" and "it is abeam of the RIGHT gunner" are different claims.
+            T.Check($"an engaged door-gunner heli holds the contact abeam on the LIVE gunner's side (port up -> contact local X {xBoth:0.0}, want negative, at {rBoth:0} m)",
+                xBoth < -15f);
+
+            strafer.DebugKillCrew(strafer.Turrets[0].Seat);   // kill PORT; the survivor is starboard
+            for (int i = 0; i < 900; i++) yield return Ticks(1);
+            float xStbd = (strafer.GlobalTransform.AffineInverse() * mark).X;
+            GD.Print($"[TURRET] strafe port-dead: contact local X {xStbd:0.0} (want the opposite sign)");
+            T.Check($"losing the port gunner swaps it to present the STARBOARD arc (local X {xBoth:0.0} -> {xStbd:0.0}, want positive)",
+                xStbd > 15f);
+            strafer.QueueFree(); sai.QueueFree();
             yield return Ticks(2);
 
             // NO CHECK HERE FOR THE YAW DEPARTURE, DELIBERATELY, AND THIS IS THE HONEST STATE OF IT.

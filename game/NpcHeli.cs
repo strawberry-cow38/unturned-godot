@@ -120,6 +120,46 @@ namespace UnturnedGodot
             _turPitch = new float[Heli.Turrets.Length];
         }
 
+        const float StrafeRadius = 85f;   // how wide a beam-gun airframe circles the contact
+
+        /// <summary>WHERE TO FLY so the guns can bear, which is not the same as "at the target".
+        ///
+        /// A HIND shoots forward and down, so flying straight over the top is the firing solution. A door-gunner
+        /// airframe's guns point SIDEWAYS, so flying at the contact is the one path on which neither gun can
+        /// bear -- it has to hold you abeam.
+        ///
+        /// THIS IS AN ORBIT, NOT AN OFFSET, and that distinction is the whole fix. The first attempt nudged the
+        /// aim POINT sideways; but the aim point is recomputed from wherever the aircraft currently is, so the
+        /// offset rotated as it closed and the path collapsed into a pursuit curve straight at the contact.
+        /// Measured local X of the contact came out +57.6, and flipping the sign moved it to +57.4 -- the sign
+        /// was not what was driving it. Steering at the TANGENT of a circle centred on the contact holds you
+        /// abeam by construction instead, and it is the same geometry the monument orbit already flies.
+        ///
+        /// The circling direction follows whichever gunner is alive, so losing one changes the flight path to
+        /// give the survivor the shot rather than merely silencing a side.</summary>
+        Vector2 StrafeAim(Vector2 here, Vector2 tgt)
+        {
+            if (!CrewServed) return tgt;   // chin turret: overhead is the firing solution
+            bool portLive = false, stbdLive = false;
+            foreach (var t in Heli.Turrets)
+            {
+                if (!Heli.TurretCrewAlive(t.Seat)) continue;
+                if (t.YawMin > 0f) portLive = true; else stbdLive = true;   // port cones are the positive ones
+            }
+            if (!portLive && !stbdLive) return tgt;
+            Vector2 radial = here - tgt;
+            if (radial.LengthSquared() < 1f) radial = Vector2.Right;
+            radial = radial.Normalized();
+            Vector2 tangent = new Vector2(-radial.Y, radial.X);
+            // MEASURED, not derived. With dir = +1 and the PORT gunner alive the contact settled at local X
+            // +108.9, i.e. off the STARBOARD side -- it was presenting the dead gunner's arc. A port barrel
+            // points -X, so a live port gunner needs the contact at NEGATIVE local X. Every control sign guessed
+            // in this file has been wrong, and this one was caught only because the check reads the SIDE rather
+            // than merely that a side exists.
+            float dir = portLive ? -1f : 1f;
+            return tgt + radial * StrafeRadius + tangent * (StrafeRadius * 0.9f * dir);
+        }
+
         /// <summary>The mount best placed to shoot `at`: crew alive, and the smallest bearing error once its own
         /// traverse limits are applied. Returns -1 when nobody can bring a gun to bear. This is what makes a door
         /// gunner airframe different from the Hind -- it has a LEFT gun and a RIGHT gun, each blind to the other's
@@ -338,10 +378,7 @@ namespace UnturnedGodot
             }
             else if (Mode == Stance.Engaged)
             {
-                // TURN TO FACE where it last saw you. The airframe flies where its nose points, so facing the
-                // contact is also closing on it -- which is what a gunship does and what "turn to face" buys you
-                // visually. Height hold is untouched, so it cannot fly itself into the ground doing this.
-                aim = new Vector2(LastSeen.X, LastSeen.Z);
+                aim = StrafeAim(here, new Vector2(LastSeen.X, LastSeen.Z));
             }
             else if (range > ArriveDist)
             {
