@@ -6288,13 +6288,23 @@ namespace UnturnedGodot
                     }
                     if (System.Environment.GetEnvironmentVariable("UG_PLANEPARK") == "1")
                     {   // SPAWN-SETTLE + SLIDE diagnostic: zero input, let it sit on the (sloped) ground; side cam TRACKS it so drift is visible
-                        _veh.DrivePlane(0f, 0f, 0f, 0f, delta);
+                        float _tthr = 0f, _tstr = 0f;
+                        if (System.Environment.GetEnvironmentVariable("UG_TAXI") == "1")
+                        {   // scripted taxi: FORWARD+steer-right, coast, then REVERSE+steer-left
+                            if (_frame < 8) { _tthr = 0f; _tstr = 0f; }           // settle at rest
+                            else { _tthr = -1f; _tstr = 1f; }                     // REVERSE + steer right, from rest
+                        }
+                        _veh.DrivePlane(_tthr, _tstr, 0f, 0f, delta);
                         if (_frame == 1)
                         {
                             if (System.Environment.GetEnvironmentVariable("UG_SEATSPAWN") == "1") _veh.PlaceOnGround(new Vector3(_veh.GlobalPosition.X, 0f, _veh.GlobalPosition.Z));
                             if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_LANDSPEED"), out var _ls)) _veh.LinearVelocity = -_veh.GlobalTransform.Basis.Z * _ls;
                         }
-                        if (_vehCam != null) { var vt = _veh.GetGlobalTransformInterpolated(); _vehCam.GlobalPosition = vt.Origin + new Vector3(9f, 1.8f, 0f); _vehCam.LookAt(vt.Origin + new Vector3(0f, -0.2f, 0f), Vector3.Up); }
+                        if (_vehCam != null)
+                        {
+                            if (System.Environment.GetEnvironmentVariable("UG_TAXI") == "1") { _vehCam.GlobalPosition = new Vector3(6f, 46f, 64f); _vehCam.LookAt(new Vector3(6f, 0f, 64f), new Vector3(0f, 0f, -1f)); }   // TOP-DOWN over the taxi path (up = -Z = nose-fwd)
+                            else { var vt = _veh.GetGlobalTransformInterpolated(); _vehCam.GlobalPosition = vt.Origin + new Vector3(9f, 1.8f, 0f); _vehCam.LookAt(vt.Origin + new Vector3(0f, -0.2f, 0f), Vector3.Up); }
+                        }
                         if (System.Environment.GetEnvironmentVariable("UG_PLANEDBG") == "1" && _frame % 20 == 0) GD.Print($"[park] f={_frame} pos={_veh.GlobalPosition} spd={_veh.LinearVelocity.Length():F2} frozen={_veh.Freeze}");
                         return;
                     }

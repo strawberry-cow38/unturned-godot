@@ -37,7 +37,7 @@ namespace UnturnedGodot
         const float TankTrackDiff = 0.3f;   // TANK: how much steer biases the two tracks' SPEED (both still drive -- fully stopping a track halves the power = crawl, master). The yaw torque does the turning; this is just feel. Tunable.
         const float TankMaxYawRate = 0.6f, TankYawGain = 60000f, TankYawSpeedFade = 0.7f;   // TANK skid-steer: a REAL torque (ApplyTorque -- integrated into owned momentum, MP-safe + survives slopes/walls, per VoX) GOVERNED toward TankMaxYawRate*input. A plain constant torque is bang-bang here (the wheels' yaw resistance is ~constant -> stalls or runs away), so this feedback torque holds a stable rate. TankYawSpeedFade FADES the target as forward speed rises: a tight pivot at rest, a WIDE arc at speed, so a turn doesn't drag to a crawl (master). Tunable.
         float _tankYawInput;   // TANK: yaw request [-1,1] from the track difference (set in Drive, applied as a real torque in _PhysicsProcess)
-        float _inCollective, _inYaw, _inPitch, _inRoll;   // the pilot's held axes (W/S, A/D, mouse Y, mouse X)
+        float _inCollective, _inYaw, _inPitch, _inRoll, _rawThrottle;   // the pilot's held axes (W/S, A/D, mouse Y, mouse X); _rawThrottle = last raw W/S axis (for ground reverse)
         float _rotorSpin, _tailSpin, _rotorRpm;            // visual blade phases (main/tail) + spool state (0..1)
         Node3D _rotorNode, _tailRotorNode;
         // ---- TRACKED ARMOUR (tank). The turret + gun ride their OWN pivots so the vehicle-weapon system
@@ -3199,6 +3199,7 @@ namespace UnturnedGodot
             _parked = false;
             if (Freeze) Freeze = false;   // any input wakes a settled plane
             // sticky throttle: hold the current setting when hands-off, ramp toward 1 on W, toward 0 on S
+            _rawThrottle = throttle;   // remember the raw W/S axis so the ground code can tell 'S held' (reverse) from 'throttle spooled to 0'
             float target = throttle > 0.05f ? 1f : throttle < -0.05f ? 0f : _inCollective;
             float rate = throttle > 0.05f ? PlaneThrottleUp : throttle < -0.05f ? PlaneThrottleDown : 0f;
             _inCollective = Mathf.MoveToward(_inCollective, target, rate * (float)delta);
@@ -3686,7 +3687,17 @@ namespace UnturnedGodot
                 // BRAKE the gear when not driving forward, so a parked plane HOLDS instead of free-rolling down any
                 // slope forever ("slides along the floor" -- the wheels never brake + StepPlane's settle needs
                 // vel~0 to freeze, which a rolling plane never reaches). Release the brake once you throttle up.
-                Brake = _inCollective < 0.08f ? _brakeForce * HandbrakeScale : 0f;   // proper PARKING brake (was Max(_,30) -- 13x too weak, slid/rolled on slopes + long landing rollouts) (master 2026-08-18)
+                // REVERSE (ground taxi): hold S at idle throttle to back up slowly on the wheels. A jet has no
+                // reverse thrust, but Unturned vehicles reverse -- a gentle backward push capped at a slow taxi-back
+                // speed; the nose wheel still steers, and the parking brake releases so it can roll. (master 2026-08-18)
+                bool reversing = _rawThrottle < -0.05f && _inCollective < 0.08f;
+                if (reversing)
+                {
+                    Brake = 0f;
+                    if (LinearVelocity.Dot(b.Z) < 6f) ApplyCentralForce(b.Z * (pThrust * 0.35f) * Mass);   // b.Z = body BACKWARD; cap ~6 m/s reverse
+                }
+                else
+                    Brake = _inCollective < 0.08f ? _brakeForce * HandbrakeScale : 0f;   // proper PARKING brake (was Max(_,30) -- 13x too weak)
                 // NO flight ApplyTorque while grounded -- torque against the gear is the freak-out
             }
             else
@@ -3742,7 +3753,7 @@ namespace UnturnedGodot
             // throttle low and moving slowly, FREEZE it solid: the freeze zeroes the slide AND the spin. It wakes
             // instantly on throttle. The velocity gate (< 2 m/s) means a fast landing ROLLOUT isn't frozen mid-roll
             // -- only once it's slowed to park. No angular gate on purpose: killing the spin is the whole point.
-            bool idle = onSurface && throttle < 0.1f && vel.LengthSquared() < 4.0f;
+            bool idle = onSurface && throttle < 0.1f && _rawThrottle >= -0.05f && vel.LengthSquared() < 4.0f;   // holding S (reverse) keeps it awake so it doesn't park-freeze mid-back-up
             if (idle && _spawnGrace <= 0f && !Freeze)
             {
                 LinearVelocity = Vector3.Zero; AngularVelocity = Vector3.Zero;
