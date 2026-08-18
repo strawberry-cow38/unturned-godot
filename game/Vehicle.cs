@@ -2906,7 +2906,7 @@ namespace UnturnedGodot
                     v.AddChild(pivot);
                     v._gearPivots[i] = pivot;
                     if (Mathf.Abs(x) < 1f) { v._gearAxis[i] = Vector3.Right; v._gearAng[i] = -85f; }          // nose gear: folds AFT about X
-                    else { v._gearAxis[i] = Vector3.Back; v._gearAng[i] = -Mathf.Sign(x) * 85f; }             // main gear: folds INBOARD about Z
+                    else { v._gearAxis[i] = Vector3.Back; v._gearAng[i] = -Mathf.Sign(x) * 110f; }             // main gear: folds INBOARD about Z
                 }
             }
 
