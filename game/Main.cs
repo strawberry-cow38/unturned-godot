@@ -56,6 +56,9 @@ namespace UnturnedGodot
         bool _vmAttach; AttachmentMenu _am; bool _vmSightSet;   // --attach : hold the T attachment menu open for the render; UG_SIGHT=<mesh.txt> mounts a specific sight/scope for a demo
         bool _vehTest; Vehicle _veh; Camera3D _vehCam; int _vehVariant; bool _night, _demo, _crash, _roadkill, _chain, _hitch, _backunder, _pivots; Vehicle _buTrailer; int _buCoupledFrame = 999999;   // --vehicle=DIR [--variant=N] [--night] [--demo] [--crash] [--roadkill] [--chain] [--hitch] [--backunder] [--pivots]
         bool _planeTest;   // UG_PLANETEST (with --boattest --gun=otter): scripted fixed-wing flight (throttle/pitch/roll injected) to verify the flight model in a render
+        System.Collections.Generic.List<Vector3> _trP; System.Collections.Generic.List<float> _trD;
+        System.Collections.Generic.List<(MeshInstance3D body, MeshInstance3D bf, MeshInstance3D bb, float off)> _trUnits;
+        float _trS, _trRailY = 0.9f; bool _trAnim;
         readonly System.Collections.Generic.List<(Node3D mark, Vehicle veh, Vector3 local)> _pivotMarks = new();   // --pivots: arrow markers pinned to each coupling point
         bool _driveTest, _swarm, _drivethru, _nade; PlayerController _dtPlayer;      // --drivetest=DIR [--swarm|--drivethru|--nade] : enter/drive a jeep; swarm = mob it; drivethru = loud drive wakes zombies; nade = grenade the parked car
         bool _fireTest; PlayerController _ftPlayer; int _ftFrame;   // --firetest [--supp] : player fires near a distant zombie -> gunshot alert (suppressed = none)
@@ -2400,7 +2403,7 @@ namespace UnturnedGodot
             AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-50f, -40f, 0f), LightEnergy = 1.2f, ShadowEnabled = true });
             AddChild(new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(400f, 400f) }, Position = new Vector3(15f, -0.05f, 25f), MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.30f, 0.34f, 0.27f) } });
             Vector3[] ctrl = { new(-40f, 0f, -30f), new(-40f, 0f, 5f), new(-20f, 0f, 40f), new(15f, 0f, 55f), new(45f, 0f, 55f), new(70f, 0f, 35f) };
-            var P = new System.Collections.Generic.List<Vector3>(); var D = new System.Collections.Generic.List<float>();
+            _trP = new(); _trD = new(); _trUnits = new(); var P = _trP; var D = _trD;
             Vector3 CR(Vector3 a, Vector3 b, Vector3 c, Vector3 d, float t) { float t2 = t * t, t3 = t2 * t; return 0.5f * ((2f * b) + (-a + c) * t + (2f * a - 5f * b + 4f * c - d) * t2 + (-a + 3f * b - 3f * c + d) * t3); }
             { float dd = 0f; Vector3 prev = ctrl[1]; for (int i = 1; i < ctrl.Length - 2; i++) for (int k = 0; k < 40; k++) { float t = k / 40f; var pp = CR(ctrl[i - 1], ctrl[i], ctrl[i + 1], ctrl[i + 2], t); if (P.Count > 0) dd += pp.DistanceTo(prev); P.Add(pp); D.Add(dd); prev = pp; } }
             void Eval(float ss, out Vector3 pos, out Vector3 tan) { ss = Mathf.Clamp(ss, 0f, D[D.Count - 1]); int i = 0; while (i < D.Count - 2 && D[i + 1] < ss) i++; float seg = Mathf.Max(D[i + 1] - D[i], 1e-3f); float f = (ss - D[i]) / seg; pos = P[i].Lerp(P[i + 1], f); var tt = P[i + 1] - P[i]; tan = tt.LengthSquared() > 1e-6f ? tt.Normalized() : Vector3.Forward; }
@@ -2414,17 +2417,36 @@ namespace UnturnedGodot
             var bodyMat = new StandardMaterial3D { TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest, Roughness = 0.75f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
             { var bimg = new Image(); if (bimg.Load(ProjectSettings.GlobalizePath("res://content/train_body_tex.png")) == Error.Ok) { bimg.Convert(Image.Format.Rgba8); bimg.SetPixel(0, 1, new Color(0.16f, 0.42f, 0.22f)); bodyMat.AlbedoTexture = ImageTexture.CreateFromImage(bimg); } }
             Mesh body = Lm("train_body"), bogie = Lm("train_bogie"), car = Lm("train_car");
-            float railY = 0.9f;
-            void Unit(Mesh m, Material mat, float sctr) {
-                Eval(sctr + 3.5f, out var pf, out _); Eval(sctr - 3.5f, out var pb, out _);
-                Vector3 c = (pf + pb) * 0.5f + Vector3.Up * railY; Vector3 fwd = pf - pb; fwd = fwd.LengthSquared() > 1e-4f ? fwd.Normalized() : Vector3.Forward;
-                var mi = new MeshInstance3D { Mesh = m, MaterialOverride = mat }; AddChild(mi); mi.GlobalTransform = new Transform3D(Basis.Identity, c).LookingAt(c + fwd, Vector3.Up);
-                foreach (var bs in new[] { sctr + 3.5f, sctr - 3.5f }) { Eval(bs, out var bp, out var bt); Vector3 bc = bp + Vector3.Up * (railY - 0.5f); var bmi = new MeshInstance3D { Mesh = bogie, MaterialOverride = bogieMat }; AddChild(bmi); bmi.GlobalTransform = new Transform3D(Basis.Identity, bc).LookingAt(bc + bt, Vector3.Up); }
+            _trRailY = 0.9f;
+            void MakeUnit(Mesh m, Material mat, float off) {
+                var mi = new MeshInstance3D { Mesh = m, MaterialOverride = mat }; AddChild(mi);
+                var bf = new MeshInstance3D { Mesh = bogie, MaterialOverride = bogieMat }; AddChild(bf);
+                var bb = new MeshInstance3D { Mesh = bogie, MaterialOverride = bogieMat }; AddChild(bb);
+                _trUnits.Add((mi, bf, bb, off));
             }
-            float head = D[D.Count - 1] - 10f;
-            Unit(body, bodyMat, head); Unit(car, carMat, head - 11f); Unit(car, carMat, head - 22f); Unit(car, carMat, head - 33f);
-            var cam = new Camera3D { Current = true, Fov = 50f, Far = 10000f }; AddChild(cam);
-            Eval(head - 16f, out var look, out _); cam.Position = look + new Vector3(22f, 20f, 22f); cam.LookAt(look + Vector3.Up * 1f, Vector3.Up);
+            MakeUnit(body, bodyMat, 0f); MakeUnit(car, carMat, 11f); MakeUnit(car, carMat, 22f); MakeUnit(car, carMat, 33f);
+            _trS = 45f; _trAnim = true;
+            foreach (var u in _trUnits) PlaceTrainUnit(u, _trS - u.off);
+            var cam = new Camera3D { Current = true, Fov = 52f, Far = 10000f }; AddChild(cam);
+            cam.Position = new Vector3(12f, 50f, 78f); cam.LookAt(new Vector3(12f, 0f, 22f), new Vector3(0f, 0f, -1f));
+        }
+
+        void EvalTrack(float ss, out Vector3 pos, out Vector3 tan) {
+            ss = Mathf.Clamp(ss, 0f, _trD[_trD.Count - 1]); int i = 0; while (i < _trD.Count - 2 && _trD[i + 1] < ss) i++;
+            float seg = Mathf.Max(_trD[i + 1] - _trD[i], 1e-3f); float f = (ss - _trD[i]) / seg; pos = _trP[i].Lerp(_trP[i + 1], f);
+            var tt = _trP[i + 1] - _trP[i]; tan = tt.LengthSquared() > 1e-6f ? tt.Normalized() : Vector3.Forward;
+        }
+        void PlaceTrainUnit((MeshInstance3D body, MeshInstance3D bf, MeshInstance3D bb, float off) u, float sctr) {
+            EvalTrack(sctr + 3.5f, out var pf, out var tf); EvalTrack(sctr - 3.5f, out var pb, out var tb);
+            Vector3 c = (pf + pb) * 0.5f + Vector3.Up * _trRailY; Vector3 fwd = pf - pb; fwd = fwd.LengthSquared() > 1e-4f ? fwd.Normalized() : Vector3.Forward;
+            u.body.GlobalTransform = new Transform3D(Basis.Identity, c).LookingAt(c + fwd, Vector3.Up);
+            Vector3 cf = pf + Vector3.Up * (_trRailY - 0.5f); u.bf.GlobalTransform = new Transform3D(Basis.Identity, cf).LookingAt(cf + tf, Vector3.Up);
+            Vector3 cb = pb + Vector3.Up * (_trRailY - 0.5f); u.bb.GlobalTransform = new Transform3D(Basis.Identity, cb).LookingAt(cb + tb, Vector3.Up);
+        }
+        void StepTrainAnim(float dt) {
+            if (_trUnits == null || _trD == null || _trD.Count < 2) return;
+            _trS += 9f * dt; if (_trS > _trD[_trD.Count - 1] + 5f) _trS = 45f;
+            foreach (var u in _trUnits) PlaceTrainUnit(u, _trS - u.off);
         }
 
         // --doorgallery --shot=OUT : a lit, front-on LINEUP of the 12 ripped WOODEN door barricade models
@@ -6719,6 +6741,7 @@ namespace UnturnedGodot
             // FIRST, because several capture modes below own the frame and return before the main
             // capture gate -- a watchdog placed at that gate never runs for --vehicle/--rig/--menushot.
             if (_shotRequested != null && ShotWatchdogTripped()) return;
+            if (_trAnim) StepTrainAnim((float)delta);   // --traintrack: drive the train along the curve
             if (_doorAnim && _doorAnimDoor != null)   // --doortest UG_DOOR_ANIM=1: drive a real DEFAULT->away->DEFAULT cycle at REAL elapsed time (never fast-forwarded), so a --write-movie capture shows the actual retail-curve swing from the real default state (see BuildDoorTest for the timeline setup)
             {
                 _doorAnimElapsed += delta;
