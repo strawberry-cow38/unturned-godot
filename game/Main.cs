@@ -2026,6 +2026,22 @@ namespace UnturnedGodot
                 }
             }
 
+            // Report the CREW and the MOUNTS, so "I can't see a gunner" separates into "none was built" and
+            // "one was built inside the floor" -- two different bugs that look identical in a render.
+            foreach (var ch in v.GetChildren())
+            {
+                if (ch is TargetDummy td)
+                    GD.Print($"[BELLYSHOT] crew '{td.Name}' local {td.Position} world {td.GlobalPosition} down={td.Down} hp={td.MaxHealth:0}");
+                if (ch is Node3D n3 && n3.Name.ToString().StartsWith("TurretYaw"))
+                {
+                    GD.Print($"[BELLYSHOT] mount '{n3.Name}' local {n3.Position}");
+                    foreach (var g2 in n3.GetChildren())
+                        if (g2 is Node3D pn2 && pn2.Name.ToString().StartsWith("TurretPitch"))
+                            foreach (var m2 in pn2.GetChildren())
+                                GD.Print($"[BELLYSHOT]   gun child '{m2.GetType().Name}:{m2.Name}' mesh={(m2 is MeshInstance3D mi2 ? (mi2.Mesh == null ? "NULL" : mi2.Mesh.GetAabb().Size.ToString()) : "-")}");
+                }
+            }
+
             var cam = new Camera3D { Current = true, Fov = 42f, Far = 400f };
             AddChild(cam);
             Vector3 off = new Vector3(1.6f, -2.6f, 3.0f);   // below, offset, looking back and up at the belly

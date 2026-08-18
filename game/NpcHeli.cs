@@ -66,7 +66,7 @@ namespace UnturnedGodot
         // ATTACK IS THE ONLY TRIGGER (confirmed): it will not open up on someone who merely flies past. And only
         // an airframe with a mount fights -- "dont wire up the other helis for attack behavior" -- which falls out
         // of the data rather than a name check, since the Hind is the only spec carrying Turrets.
-        public enum Stance { Patrol, Engaged }
+        public enum Stance { Patrol, Engaged, Flee }
         public Stance Mode { get; private set; } = Stance.Patrol;
         public Vector3 LastSeen { get; private set; }      // the point it is watching: shot origin, or you
         public bool Armed => Heli != null && Heli.Turrets.Length > 0;
@@ -79,16 +79,24 @@ namespace UnturnedGodot
         // A fixed 7-and-1.5 reads as a metronome once you have been shot at twice; the point of a burst is that
         // you cannot time it. Re-rolled per burst, so length and gap are independent.
         const int BurstMinRounds = 4, BurstMaxRounds = 11;
+        // "both infinite ammo, longer bursts than the hind." A crewed door gun is a man leaning on a trigger, not
+        // a stabilised remote mount, so it hoses for longer. Keyed off whether the mount HAS a crew rather than
+        // off the airframe's name, so it stays true of anything else that grows a door gunner.
+        const int CrewBurstMinRounds = 10, CrewBurstMaxRounds = 22;
+        bool CrewServed => Heli.Turrets.Length > 0 && Heli.Turrets[0].GunnerAt != Vector3.Zero;
+        int BurstMin() => CrewServed ? CrewBurstMinRounds : BurstMinRounds;
+        int BurstMax() => CrewServed ? CrewBurstMaxRounds : BurstMaxRounds;
         const float BurstGapMin = 0.8f, BurstGapMax = 2.6f;
         const float GunRange = 250f;                // retail HMG.dat Range
 
         double _seenDamageAtMsec = -1e9;            // the newest damage event already consumed
         double _lockUntilMsec = -1e9;
-        float _turYaw, _turPitch;                   // the SLEWED aim, in degrees, which is what actually fires
+        float[] _turYaw, _turPitch;                 // the SLEWED aim per MOUNT, in degrees -- a door-gun airframe has two
         int _burstLeft; float _burstWait;
         public int DebugBurstLeft => _burstLeft;
-        public float DebugTurretYaw => _turYaw;
-        public float DebugTurretPitch => _turPitch;
+        public float DebugTurretYaw => _turYaw != null && _turYaw.Length > 0 ? _turYaw[0] : 0f;
+        public float DebugTurretPitch => _turPitch != null && _turPitch.Length > 0 ? _turPitch[0] : 0f;
+        public int DebugLiveMounts { get { int n = 0; if (Heli != null) foreach (var t in Heli.Turrets) if (Heli.TurretCrewAlive(t.Seat)) n++; return n; } }
         public double DebugLockLeftSec => Mathf.Max(0.0, (_lockUntilMsec - Time.GetTicksMsec()) / 1000.0);
 
         static readonly RandomNumberGenerator Rng = new();
@@ -99,9 +107,37 @@ namespace UnturnedGodot
         /// behind "it was still turning".</summary>
         public void DebugAimAt(Vector3 worldPoint)
         {
+            EnsureMountState();
             var (y, p) = AimAnglesFor(worldPoint);
-            _turYaw = y; _turPitch = p;
+            _turYaw[0] = y; _turPitch[0] = p;
             Heli.AimTurret(Heli.Turrets[0].Seat, y, p);
+        }
+
+        void EnsureMountState()
+        {
+            if (_turYaw != null && _turYaw.Length == Heli.Turrets.Length) return;
+            _turYaw = new float[Heli.Turrets.Length];
+            _turPitch = new float[Heli.Turrets.Length];
+        }
+
+        /// <summary>The mount best placed to shoot `at`: crew alive, and the smallest bearing error once its own
+        /// traverse limits are applied. Returns -1 when nobody can bring a gun to bear. This is what makes a door
+        /// gunner airframe different from the Hind -- it has a LEFT gun and a RIGHT gun, each blind to the other's
+        /// side, and killing one is supposed to take that arc away permanently.</summary>
+        int BestMount(Vector3 at)
+        {
+            int best = -1; float bestErr = float.MaxValue;
+            var (wantYaw, wantPitch) = AimAnglesFor(at);
+            for (int i = 0; i < Heli.Turrets.Length; i++)
+            {
+                var t = Heli.Turrets[i];
+                if (!Heli.TurretCrewAlive(t.Seat)) continue;   // that side is dead and stays dead
+                float cy = Mathf.Clamp(Mathf.Wrap(wantYaw, -180f, 180f), t.YawMin, t.YawMax);
+                float cp = Mathf.Clamp(wantPitch, t.PitchMin, t.PitchMax);
+                float err = Mathf.Abs(Mathf.Wrap(wantYaw - cy, -180f, 180f)) + Mathf.Abs(wantPitch - cp);
+                if (err < bestErr) { bestErr = err; best = i; }
+            }
+            return best;
         }
 
         /// <summary>Aim angles, in the mount's own frame, that point the barrel at a world point. Derived from the
@@ -157,10 +193,22 @@ namespace UnturnedGodot
             }
             if (Mode != Stance.Engaged) return;
 
-            // ---- 2. EYES. If the turret can actually see a player, that refreshes both the aim point and the
-            // clock -- "if it doesnt see you again it will go back to its path" means SEEING resets the five
-            // minutes, so a player who keeps showing themselves is never let go.
-            Vector3? muzzle = Heli.TurretMuzzle(Heli.Turrets[0].Seat);
+            // ---- 2. WHICH GUN. A door-gunner airframe has a left gun and a right gun, each blind to the
+            // other's arc, and a dead gunner takes that arc away for good. Everything below runs on the mount
+            // actually chosen, so the Hind (one remote mount, always crewed) is just the single-mount case.
+            EnsureMountState();
+            int m = BestMount(LastSeen);
+            if (m < 0)
+            {
+                // NOBODY LEFT TO SHOOT WITH. "if both die, enters a new 'flee' state, where it leaves the map at
+                // the closest point."
+                Mode = Stance.Flee;
+                _burstLeft = 0;
+                return;
+            }
+            int seat = Heli.Turrets[m].Seat;
+
+            Vector3? muzzle = Heli.TurretMuzzle(seat);
             var player = NearestPlayer();
             bool eyesOn = false;
             if (player != null && muzzle.HasValue)
@@ -179,34 +227,33 @@ namespace UnturnedGodot
             float step = TurretSlewDegPerSec * dt;
             // Slew the SHORT way. MoveToward on raw degrees crosses +-180 the long way round -- chasing a target
             // that drifts from +170 to -170 sweeps the mount through zero, a 340 deg traverse to cover 20.
-            _turYaw += Mathf.Clamp(Mathf.Wrap(wantYaw - _turYaw, -180f, 180f), -step, step);
-            _turYaw = Mathf.Wrap(_turYaw, -180f, 180f);
-            _turPitch = Mathf.MoveToward(_turPitch, wantPitch, step);
-            Heli.AimTurret(Heli.Turrets[0].Seat, _turYaw, _turPitch);
+            _turYaw[m] += Mathf.Clamp(Mathf.Wrap(wantYaw - _turYaw[m], -180f, 180f), -step, step);
+            _turYaw[m] = Mathf.Wrap(_turYaw[m], -180f, 180f);
+            _turPitch[m] = Mathf.MoveToward(_turPitch[m], wantPitch, step);
+            Heli.AimTurret(seat, _turYaw[m], _turPitch[m]);
 
             // ---- 4. FIRE, in bursts, only with eyes on and the barrel roughly there. Firing at a remembered
             // point with nobody in it would be a wall of tracer through empty sky forever.
             _burstWait = Mathf.Max(0f, _burstWait - dt);
             // GATE ON WHERE THE BARREL ACTUALLY POINTS, not on the angles requested. AimTurret CLAMPS to the
-            // mount's traverse (yaw +-120, pitch -60..+15), so comparing the commanded angle against itself says
-            // "on target" while the gun is pegged at its stop pointing somewhere else entirely -- a Hind with a
-            // target behind its shoulder would have hosed the scenery at 50 deg off and reported success. Reading
-            // the real barrel axis makes the clamp part of the answer instead of something to remember.
+            // mount's traverse, so comparing the commanded angle against itself says "on target" while the gun is
+            // pegged at its stop pointing somewhere else entirely. Reading the real barrel axis makes the clamp
+            // part of the answer instead of something to remember -- and it is what makes a 120 deg door cone
+            // mean something rather than being a number in a table.
             bool onTarget = false;
             if (muzzle.HasValue)
             {
                 Vector3 want = (LastSeen - muzzle.Value);
                 if (want.LengthSquared() > 1e-4f)
-                    onTarget = Heli.TurretBarrelDir(Heli.Turrets[0].Seat).AngleTo(want.Normalized()) < Mathf.DegToRad(FireConeDeg);
+                    onTarget = Heli.TurretBarrelDir(seat).AngleTo(want.Normalized()) < Mathf.DegToRad(FireConeDeg);
             }
             if (DebugCombat && Engine.GetPhysicsFrames() % 25 == 0)
-                GD.Print($"[COMBAT] mode={Mode} eyesOn={eyesOn} onTarget={onTarget} muzzle={(muzzle.HasValue ? "y" : "NULL")} " +
-                         $"player={(player != null ? "y" : "NULL")} want=({wantYaw:0.0},{wantPitch:0.0}) cur=({_turYaw:0.0},{_turPitch:0.0}) " +
-                         $"burstWait={_burstWait:0.00} burstLeft={_burstLeft}");
+                GD.Print($"[COMBAT] mode={Mode} mount={m}/seat{seat} live={DebugLiveMounts} eyesOn={eyesOn} onTarget={onTarget} " +
+                         $"want=({wantYaw:0.0},{wantPitch:0.0}) cur=({_turYaw[m]:0.0},{_turPitch[m]:0.0}) burstLeft={_burstLeft}");
             if (eyesOn && onTarget && _burstWait <= 0f)
             {
-                if (_burstLeft <= 0) _burstLeft = Rng.RandiRange(BurstMinRounds, BurstMaxRounds);
-                if (Heli.TryTurretFire(Heli.Turrets[0].Seat, out var o, out var dir, out var gun))
+                if (_burstLeft <= 0) _burstLeft = Rng.RandiRange(BurstMin(), BurstMax());
+                if (Heli.TryTurretFire(seat, out var o, out var dir, out var gun))
                 {
                     // INACCURACY IS THE BALANCE. The HMG's magazine is explosive .50 -- an accurate one would
                     // erase a player -- so the AI adds a cone well beyond the gun's own 1.43 deg.
@@ -256,10 +303,30 @@ namespace UnturnedGodot
             if (Armed) StepCombat((float)delta);
 
             // ---- WHERE TO GO: run the target down, then circle it.
+            Vector3 fwdNow = -Heli.GlobalTransform.Basis.Z;
+            Vector2 fwdFlat = new Vector2(fwdNow.X, fwdNow.Z).Normalized();
             Vector2 here = new Vector2(pos.X, pos.Z), goal = new Vector2(Target.X, Target.Z);
             float range = here.DistanceTo(goal);
             Vector2 aim;
-            if (Mode == Stance.Engaged)
+            if (Mode == Stance.Flee)
+            {
+                // "if both die, enters a new 'flee' state, where it leaves the map at the closest point."
+                // NEAREST EDGE, not the nearest map node -- it is running for the boundary, and which boundary is
+                // whichever one it is already closest to. Without terrain there are no bounds to run for, so it
+                // just holds its heading outward rather than pretending to know where the edge is.
+                if (Terr != null)
+                {
+                    var (minX, maxX, minZ, maxZ) = Terr.WorldBoundsXZ();
+                    float dW = pos.X - minX, dE = maxX - pos.X, dS = pos.Z - minZ, dN = maxZ - pos.Z;
+                    float m2 = Mathf.Min(Mathf.Min(dW, dE), Mathf.Min(dS, dN));
+                    aim = m2 == dW ? new Vector2(minX - 200f, pos.Z)
+                        : m2 == dE ? new Vector2(maxX + 200f, pos.Z)
+                        : m2 == dS ? new Vector2(pos.X, minZ - 200f)
+                                   : new Vector2(pos.X, maxZ + 200f);
+                }
+                else aim = here + new Vector2(-fwdFlat.X, -fwdFlat.Y) * -1000f;
+            }
+            else if (Mode == Stance.Engaged)
             {
                 // TURN TO FACE where it last saw you. The airframe flies where its nose points, so facing the
                 // contact is also closing on it -- which is what a gunship does and what "turn to face" buys you
@@ -322,7 +389,8 @@ namespace UnturnedGodot
                     if (range > ArriveDist * 1.6f) Phase = FlightPhase.Transit;   // blown off station, or retargeted
                     break;
             }
-            Envelope env = Phase == FlightPhase.Transit ? TransitEnv : Phase == FlightPhase.Arrive ? ArriveEnv : OrbitEnv;
+            Envelope env = Mode == Stance.Flee ? TransitEnv
+                         : Phase == FlightPhase.Transit ? TransitEnv : Phase == FlightPhase.Arrive ? ArriveEnv : OrbitEnv;
             float wantSpeed = Heli.SpeedMaxMps * env.SpeedFrac;
             // COMMIT THE NOSE. 20 deg was too polite to build speed (strawberry: "it should definitely tilt forward
             // more"); 38 still leaves the thrust vector doing most of its work vertically.

@@ -193,14 +193,65 @@ namespace UnturnedGodot.Testing
             owner.QueueFree();
             yield return Ticks(2);
 
-            // ---- 3. NO MOUNT, NO FIGHT. The rule is "only the Hind", but expressed as data (does it carry a
-            // turret) rather than a name check, so a future gunship inherits it and a future transport does not.
+            // ---- 3. NO MOUNT, NO FIGHT -- expressed as data (does it carry a turret) rather than a name check.
+            // This used to assert that a HUEY does not fight, which was correct while "dont wire up the other
+            // helis for attack behavior" stood. strawberry reversed that deliberately in the same session
+            // (huey + orca get door gunners), so the check now pins the CURRENT rule and the Skycrane -- which
+            // carries no mount at all -- is the airframe that must stay out of it.
+            var (crane, crai) = Spawn("skycrane", new Vector3(900f, 40f, 0f));
+            yield return Ticks(3);
+            crane.NoteAttackedFrom(new Vector3(900f, 12f, -90f));
+            yield return Ticks(5);
+            T.Check($"shooting an unarmed airframe does NOT start a gunfight (skycrane armed={crai.Armed}, mode {crai.Mode})",
+                !crai.Armed && crai.Mode == NpcHeli.Stance.Patrol);
+
+            // ---- 4. DOOR GUNNERS. Two crewed mounts, and killing them takes the sides away one at a time.
             var (huey, hai) = Spawn("huey", new Vector3(300f, 40f, 0f));
             yield return Ticks(3);
+            T.Check($"the Huey carries TWO crewed door guns ({huey.Turrets.Length} mounts, {hai.DebugLiveMounts} manned)",
+                huey.Turrets.Length == 2 && hai.DebugLiveMounts == 2);
+            T.Check($"...with a 120 deg cone on each beam, port and starboard (port {huey.Turrets[0].YawMin:0}..{huey.Turrets[0].YawMax:0}, stbd {huey.Turrets[1].YawMin:0}..{huey.Turrets[1].YawMax:0})",
+                Mathf.IsEqualApprox(huey.Turrets[0].YawMax - huey.Turrets[0].YawMin, 120f)
+                && Mathf.IsEqualApprox(huey.Turrets[1].YawMax - huey.Turrets[1].YawMin, 120f)
+                && huey.Turrets[0].YawMin > 0f && huey.Turrets[1].YawMax < 0f);
+            T.Check($"...and it uses the Dragonfang, the Orca the Nykorev (huey '{huey.Turrets[0].GunId}')",
+                huey.Turrets[0].GunId == "dragonfang");
+
             huey.NoteAttackedFrom(new Vector3(300f, 12f, -90f));
             yield return Ticks(5);
-            T.Check($"shooting a Huey does NOT start a gunfight (armed={hai.Armed}, mode {hai.Mode})",
-                !hai.Armed && hai.Mode == NpcHeli.Stance.Patrol);
+            T.Check($"shooting a Huey now DOES start a gunfight (mode {hai.Mode})", hai.Mode == NpcHeli.Stance.Engaged);
+
+            huey.DebugKillCrew(huey.Turrets[0].Seat);
+            yield return Ticks(5);
+            T.Check($"killing one gunner silences that side and leaves the other ({hai.DebugLiveMounts} manned, mode {hai.Mode})",
+                hai.DebugLiveMounts == 1 && hai.Mode == NpcHeli.Stance.Engaged);
+
+            huey.DebugKillCrew(huey.Turrets[1].Seat);
+            yield return Ticks(5);
+            T.Check($"killing BOTH sends it running ({hai.DebugLiveMounts} manned, mode {hai.Mode})",
+                hai.DebugLiveMounts == 0 && hai.Mode == NpcHeli.Stance.Flee);
+
+            // AND FLEEING HAS TO MEAN FLYING AWAY. The state was a label first: the flight code had no Flee
+            // branch, so the aircraft kept patrolling while reporting Flee, and the check above passed on it --
+            // the same inert-flag shape that has bitten this feature twice already. So measure the distance from
+            // the contact, which must GROW.
+            var (runner, rai) = Spawn("huey", new Vector3(1500f, 60f, 0f), held: false);
+            runner.LinearVelocity = new Vector3(0f, 0f, -12f);
+            yield return Ticks(3);
+            Vector3 contact = new Vector3(1500f, 5f, -120f);
+            runner.NoteAttackedFrom(contact);
+            yield return Ticks(5);
+            runner.DebugKillCrew(runner.Turrets[0].Seat);
+            runner.DebugKillCrew(runner.Turrets[1].Seat);
+            yield return Ticks(5);
+            float dStart = runner.GlobalPosition.DistanceTo(contact);
+            for (int i = 0; i < 500; i++) yield return Ticks(1);   // ~10 s
+            float dEnd = runner.GlobalPosition.DistanceTo(contact);
+            GD.Print($"[TURRET] flee: mode={rai.Mode} range from contact {dStart:0} -> {dEnd:0} m");
+            T.Check($"a fleeing Huey actually runs AWAY, not just reports it (mode {rai.Mode}, {dStart:0} -> {dEnd:0} m from the contact)",
+                rai.Mode == NpcHeli.Stance.Flee && dEnd > dStart + 20f);
+            runner.QueueFree(); rai.QueueFree();
+            yield return Ticks(2);
         }
     }
 }

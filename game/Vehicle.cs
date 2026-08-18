@@ -733,6 +733,15 @@ namespace UnturnedGodot
             public float PitchMin = -20f, PitchMax = 60f;
             // The mount carries its OWN gun and its OWN belt, which is retail's model (TurretInfo.itemID): a
             // turret is a gun item bolted to a seat, so it does not eat the gunner's rifle rounds.
+            /// <summary>Where the CREW MEMBER stands, vehicle-local. Zero = no crew: the Hind's chin turret is
+            /// remote-operated from inside, so there is nobody to shoot. A door gun has somebody hanging out of
+            /// the doorway behind it, and killing them is supposed to silence that side.</summary>
+            public Vector3 GunnerAt = Vector3.Zero;
+            /// <summary>Euler degrees applied to the gun MESH inside its pitch frame. A held-weapon model is not
+            /// authored pointing down -Z: dragonfang_gun.txt measures 0.22 x 1.14 x 0.37, i.e. its length runs
+            /// along Y, so dropped straight onto a mount it stands upright like a fence post. Measured, not
+            /// assumed -- the AABB says which axis is the barrel.</summary>
+            public Vector3 MeshRotationDeg = Vector3.Zero;
             public string GunId = "nykorev";
             public int Belt = 200;
             public Color Colour = new Color(0.16f, 0.17f, 0.14f);
@@ -740,6 +749,24 @@ namespace UnturnedGodot
         public TurretDef[] Turrets = System.Array.Empty<TurretDef>();
         Node3D[] _turretYaw, _turretPitch;
         int[] _turretAmmo; float[] _turretCd;
+        TargetDummy[] _turretCrew;
+        /// <summary>Can this mount still shoot? A mount with no crew (a remote chin turret) is always manned; a
+        /// door gun is manned only while its gunner is alive.</summary>
+        public bool TurretCrewAlive(int seat)
+        {
+            if (_turretCrew == null) return true;
+            for (int i = 0; i < Turrets.Length; i++)
+                if (Turrets[i].Seat == seat) return _turretCrew[i] == null || !_turretCrew[i].Down;
+            return false;
+        }
+        /// <summary>Test seam: drop this mount's gunner without shooting them five times.</summary>
+        public bool DebugKillCrew(int seat)
+        {
+            if (_turretCrew == null) return false;
+            for (int i = 0; i < Turrets.Length; i++)
+                if (Turrets[i].Seat == seat && _turretCrew[i] != null) { _turretCrew[i].DebugKill(); return true; }
+            return false;
+        }
 
         public int TurretAmmo(int seat)
         {
@@ -2205,6 +2232,7 @@ namespace UnturnedGodot
             RotorRadius = 5.57f, TailRotorRadius = 1.28f,        // the mesh's own spans -- no scaling for this one
             RotorHub = new Vector3(0f, 3.01f, -0.25f), TailRotorHub = new Vector3(0.55f, 3.57f, 6.68f),   // prefab local positions, Z negated. Tail hub X was -0.45: the post is on the STARBOARD side (measured +0.55), so the hub sat in empty air off the port boom -- see the note on _hind
             HeliBodyMeshes = new[] { "huey_body.txt", "huey_body_1.txt" },
+            Turrets = HueyDoorGuns(),   // door gunners, port + starboard
             Parts = HeliParts("huey"),   // same three as the rest of the fleet, despite this spec predating HeliBase
             Body = null, Palette = "huey_palette.png",   // MilitaryPaintable; see the note in HeliBase
             DefaultPaints = new[] { "#475e83", "#a69884", "#437c44", "#495631" },   // .dat DefaultPaintColors
@@ -2342,6 +2370,62 @@ namespace UnturnedGodot
         // Declared BEFORE _hind on purpose. Static field initialisers run in DECLARATION order, so with this
         // below the spec it was still null when _hind's initialiser read it -- the turret silently became "no
         // turrets" and the Hind built without a mount, with nothing anywhere reporting a problem.
+        /// <summary>A PAIR of door guns, port and starboard (strawberry: "one on each side, they have a 120 deg
+        /// cone and will try to point at least one side at you when agro'd").
+        ///
+        /// The cone is expressed as ASYMMETRIC YAW LIMITS rather than a new concept: yaw +90 points the barrel at
+        /// -X (port) and -90 at +X (starboard), measured in vehicle.npc_heli_turret, so a 120 deg beam cone is
+        /// simply [30,150] and [-150,-30]. AimTurret already clamps to those, which means a door gunner
+        /// physically cannot swing across its own cabin and shoot the crew on the other side.
+        ///
+        /// Each mount declares a GunnerAt, so a killable body is built behind it. That is the whole point: these
+        /// are people leaning out of a doorway, not the Hind's remote chin turret.</summary>
+        static TurretDef[] DoorGuns(string gunId, string gunMesh, float halfWidth, float gunY, float floorY, float z)
+        {
+            return new[]
+            {
+                new TurretDef
+                {
+                    Seat = 1,   // PORT
+                    PitchMesh = gunMesh,
+                    Pivot = new Vector3(-halfWidth, gunY, z),
+                    GunnerAt = new Vector3(-halfWidth * 0.62f, floorY, z),
+                    Muzzle = new Vector3(0f, 0f, -0.90f),
+                    MeshRotationDeg = new Vector3(-90f, 0f, 0f),   // lay the Y-axis gun model down the barrel line
+                    YawMin = 30f, YawMax = 150f,      // 120 deg centred on the port beam
+                    PitchMin = -70f, PitchMax = 20f,  // a door gun leans out and shoots well below itself
+                    GunId = gunId,
+                },
+                new TurretDef
+                {
+                    Seat = 2,   // STARBOARD
+                    PitchMesh = gunMesh,
+                    Pivot = new Vector3(halfWidth, gunY, z),
+                    GunnerAt = new Vector3(halfWidth * 0.62f, floorY, z),
+                    Muzzle = new Vector3(0f, 0f, -0.90f),
+                    MeshRotationDeg = new Vector3(-90f, 0f, 0f),
+                    YawMin = -150f, YawMax = -30f,
+                    PitchMin = -70f, PitchMax = 20f,
+                    GunId = gunId,
+                },
+            };
+        }
+
+        // CALLED, NOT STORED IN A STATIC FIELD. These began as `static readonly TurretDef[] HueyDoorGuns = ...`
+        // and the Huey silently had no turrets at all: C# runs static field initializers in TEXTUAL ORDER, _huey
+        // is declared ABOVE them, so it read null -- and `s.Turrets ?? Array.Empty` downstream turned that null
+        // into "this airframe has no mounts" without a word. The Orca worked purely because it happens to be
+        // declared lower in the file. A static method has no such ordering, so the spec table cannot be broken by
+        // where someone chooses to put a helper.
+        //
+        // GEOMETRY IS MEASURED OFF THE MESHES, not the collision box -- the box is the hull envelope and put the
+        // crew 0.38 m under the floor on the first render. Cabin floor from *_seats.txt (huey +0.08, orca +0.03),
+        // and the fore-aft station from the NAV LIGHT, which is where strawberry asked for them: "align
+        // horizontally based off where the green light is". BuildNavLights places those at the taillight mesh's
+        // own AABB centre, so the station is huey Z -0.258 and orca Z -0.221 rather than anything chosen here.
+        static TurretDef[] HueyDoorGuns() => DoorGuns("dragonfang", "dragonfang_gun.txt", 1.05f, 1.15f, 0.08f, -0.26f);
+        static TurretDef[] OrcaDoorGuns() => DoorGuns("nykorev", "nykorev_gun.txt", 1.15f, 1.10f, 0.03f, -0.22f);
+
         static readonly TurretDef[] HindTurret =
         {
             // tools/extract_turret.py --vehicle hind. Turret_1 -> seat 1, which is the nose gunner seat the seat
@@ -2392,7 +2476,7 @@ namespace UnturnedGodot
         // with nothing beyond, while every other airframe just has scattered boom geometry there. A 1.25 m
         // rotor is the duct's own outer rim, so the blades were sweeping THROUGH the housing. 0.72 clears
         // the inner wall. (strawberry: "the orca tail needs to be shrunk to fit its enclosure")
-        static readonly Spec _orca = HeliBase("orca", 13.4f, 0.91f, 1.07f, 0.84f, 5.90f, 0.72f,
+        static readonly Spec _orca = WithTurrets(HeliBase("orca", 13.4f, 0.91f, 1.07f, 0.84f, 5.90f, 0.72f,
             new Vector3(0f, 3.28f, -0.25f), new Vector3(-0.30f, 1.48f, 7.55f),
             new Vector3(2.60f, 2.50f, 6.40f), new Vector3(0f, 1.20f, 0.10f),
             new (Vector3, Vector3)[]   // REAL gear, measured off orca_wheels.txt: mains forward, twin tail wheels aft
@@ -2403,7 +2487,7 @@ namespace UnturnedGodot
                 (new Vector3(0.24f, 0.20f, 0.76f), new Vector3( 0.21f, -0.86f,  3.11f)),
             },
             31f, 2000f, 1000f, "Orca", EItemRarity.EPIC,
-            ("orca_wheels.txt", new Color(0.09f, 0.09f, 0.10f)));    // 4 landing wheels -- tyre black
+            ("orca_wheels.txt", new Color(0.09f, 0.09f, 0.10f))), OrcaDoorGuns());    // 4 landing wheels -- tyre black
         public static Vehicle BuildOrca(int variant = 0) => Build(_orca, variant, "orca");
 
         // SKYCRANE (S-64) -- the heavy lifter, and counter-intuitively the WORST climber and slowest of the
@@ -3077,10 +3161,33 @@ namespace UnturnedGodot
                 if (t.YawMesh != null)
                     yaw.AddChild(new MeshInstance3D { Name = t.YawMesh.Replace(".txt", ""), Mesh = ContentProvider.ParseObj($"res://content/{t.YawMesh}"), MaterialOverride = mat });
                 if (t.PitchMesh != null)
-                    pitch.AddChild(new MeshInstance3D { Name = t.PitchMesh.Replace(".txt", ""), Mesh = ContentProvider.ParseObj($"res://content/{t.PitchMesh}"), MaterialOverride = mat });
+                    pitch.AddChild(new MeshInstance3D
+                    {
+                        Name = t.PitchMesh.Replace(".txt", ""),
+                        Mesh = ContentProvider.ParseObj($"res://content/{t.PitchMesh}"),
+                        MaterialOverride = mat,
+                        RotationDegrees = t.MeshRotationDeg,
+                    });
                 yaw.AddChild(pitch);
                 v.AddChild(yaw);
                 v._turretYaw[i] = yaw; v._turretPitch[i] = pitch;
+            }
+            // CREW. One killable body per mount that declares a gunner position. StaticBody3D parented to the
+            // aircraft, so it rides along and a bullet raycast resolves against the GUNNER rather than the hull --
+            // which is what makes "shoot the door gunner" a different act from "shoot the helicopter".
+            v._turretCrew = new TargetDummy[v.Turrets.Length];
+            for (int i = 0; i < v.Turrets.Length; i++)
+            {
+                if (v.Turrets[i].GunnerAt == Vector3.Zero) continue;
+                var crew = new TargetDummy
+                {
+                    Name = $"Gunner{v.Turrets[i].Seat}",
+                    Position = v.Turrets[i].GunnerAt,
+                    MaxHealth = new PlayerVitalsSim().MaxHealth,   // "same hp as a player": taken FROM the player's sim, so it tracks if that ever moves
+                    NeverRespawn = true,
+                };
+                v.AddChild(crew);
+                v._turretCrew[i] = crew;
             }
             v._turretAmmo = new int[v.Turrets.Length];
             v._turretCd = new float[v.Turrets.Length];
