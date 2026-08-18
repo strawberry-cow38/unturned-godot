@@ -6291,8 +6291,8 @@ namespace UnturnedGodot
                         float _tthr = 0f, _tstr = 0f;
                         if (System.Environment.GetEnvironmentVariable("UG_TAXI") == "1")
                         {   // scripted taxi: FORWARD+steer-right, coast, then REVERSE+steer-left
-                            if (_frame < 8) { _tthr = 0f; _tstr = 0f; }           // settle at rest
-                            else { _tthr = -1f; _tstr = 1f; }                     // REVERSE + steer right, from rest
+                            if (_frame < 8) { _tthr = 0f; _tstr = 0f; }           // settle
+                            else { _tthr = 1f; _tstr = 0.6f; }                    // powered taxi + steer (final jitter check)
                         }
                         _veh.DrivePlane(_tthr, _tstr, 0f, 0f, delta);
                         if (_frame == 1)
@@ -6305,7 +6305,7 @@ namespace UnturnedGodot
                             if (System.Environment.GetEnvironmentVariable("UG_TAXI") == "1") { _vehCam.GlobalPosition = new Vector3(6f, 46f, 64f); _vehCam.LookAt(new Vector3(6f, 0f, 64f), new Vector3(0f, 0f, -1f)); }   // TOP-DOWN over the taxi path (up = -Z = nose-fwd)
                             else { var vt = _veh.GetGlobalTransformInterpolated(); _vehCam.GlobalPosition = vt.Origin + new Vector3(9f, 1.8f, 0f); _vehCam.LookAt(vt.Origin + new Vector3(0f, -0.2f, 0f), Vector3.Up); }
                         }
-                        if (System.Environment.GetEnvironmentVariable("UG_PLANEDBG") == "1" && _frame % 20 == 0) GD.Print($"[park] f={_frame} pos={_veh.GlobalPosition} spd={_veh.LinearVelocity.Length():F2} frozen={_veh.Freeze}");
+                        if (System.Environment.GetEnvironmentVariable("UG_PLANEDBG") == "1" && _frame % 2 == 0) GD.Print($"[park] f={_frame} x={_veh.GlobalPosition.X:F2} spd={_veh.LinearVelocity.Length():F2} angv={_veh.AngularVelocity.Length():F2} roll={_veh.GlobalTransform.Basis.X.Y:F3} frozen={_veh.Freeze}");
                         return;
                     }
                     if (System.Environment.GetEnvironmentVariable("UG_PLANEBURN") == "1")
