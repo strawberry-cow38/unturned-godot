@@ -87,7 +87,7 @@ namespace UnturnedGodot
                 DisplayServer.WindowSetVsyncMode(DisplayServer.VSyncMode.Disabled);
                 GD.Print($"[display] vsync -> {DisplayServer.WindowGetVsyncMode()}");
             }
-            string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null, drivetest = null, proptest = null, magnettest = null, animrig = null, rottest = null, itemtest = null, navShot = null, croptest = null, menuShot = null, clothtest = null, boattest = null, slingtest = null, ammoRadial = null;
+            string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null, drivetest = null, proptest = null, magnettest = null, animrig = null, rottest = null, itemtest = null, navShot = null, croptest = null, menuShot = null, clothtest = null, boattest = null, slingtest = null, trainshow = null, ammoRadial = null;
             bool zperf = false;
             bool zbody = false;
             bool deployTest = false, barricadeTest = false, barricadePlay = false;
@@ -118,6 +118,7 @@ namespace UnturnedGodot
                 else if (arg == "--zombietest") zombieTest = true;   // OFFLINE verify: sync world -> bucket Animals.dat into pockets -> check planned spawns land ON the baked navmesh
                 else if (arg == "--zdirtest") zdirTest = true;       // OFFLINE verify: boot the REWRITE on PEI -> do rows tier, query paths and actually MOVE? (implies --newzombies)
                 else if (arg.StartsWith("--proptest=")) { proptest = arg["--proptest=".Length..]; _shotRequested = proptest; }
+                else if (arg == "--trainshow") trainshow = "1";   // assemble train_cargo_0 from its extracted pieces for a 3/4 shot
                 else if (arg.StartsWith("--slingtest=")) { slingtest = arg["--slingtest=".Length..]; _shotRequested = slingtest; }
                 else if (arg.StartsWith("--magnettest=")) { magnettest = arg["--magnettest=".Length..]; _shotRequested = magnettest; }
                 else if (arg == "--tailcheck") tailCheck = true;
@@ -414,6 +415,7 @@ namespace UnturnedGodot
                 BuildPropTest(proptest);
                 return;
             }
+            if (trainshow != null) { GetWindow().Size = new Vector2I(1600, 720); BuildTrainShow(); return; }
 
             if (zbody) { BuildZBody(); return; }
             if (zperf) { BuildZPerf(); return; }
@@ -2360,6 +2362,25 @@ namespace UnturnedGodot
                               : new Vector3(r * 1.15f, r * 0.85f, r * 1.15f));
             cam.LookAt(c, _camMode == "top" ? Vector3.Back : Vector3.Up);
             GD.Print($"[PROPTEST] {name} aabb size={aabb.Size} center={c}");
+        }
+
+        // --trainshow : assemble train_cargo_0 from its extracted pieces (loco + 8 bogies + 3 cars +
+        // headlights/steer/seat) at their source positions for a 3/4 render-movie shot (master).
+        void BuildTrainShow()
+        {
+            var env = new Godot.Environment { BackgroundMode = Godot.Environment.BGMode.Color, BackgroundColor = new Color(0.52f, 0.62f, 0.74f), AmbientLightSource = Godot.Environment.AmbientSource.Color, AmbientLightColor = new Color(0.7f, 0.7f, 0.72f), AmbientLightEnergy = 0.9f };
+            AddChild(new WorldEnvironment { Environment = env });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-45f, -50f, 0f), LightEnergy = 1.2f, ShadowEnabled = true });
+            Mesh Lm(string n) => ContentProvider.ParseObj($"res://content/{n}.txt");
+            Material grey = new StandardMaterial3D { AlbedoColor = new Color(0.42f, 0.46f, 0.44f), Metallic = 0.1f, Roughness = 0.7f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+            Material dark = new StandardMaterial3D { AlbedoColor = new Color(0.12f, 0.12f, 0.14f), Metallic = 0.25f, Roughness = 0.55f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+            void Am(Mesh m, Vector3 pp, Material mat) { if (m != null) AddChild(new MeshInstance3D { Mesh = m, Position = pp, MaterialOverride = mat }); }
+            Mesh body = Lm("train_body"), bogie = Lm("train_bogie"), car = Lm("train_car"), head = Lm("train_headlights"), steer = Lm("train_steer"), seat = Lm("train_seat");
+            Am(body, Vector3.Zero, grey); Am(head, Vector3.Zero, grey); Am(steer, Vector3.Zero, dark); Am(seat, Vector3.Zero, dark);
+            foreach (var bz in new[] { -3.5f, 3.5f, 7.5f, 14.5f, 18.5f, 25.5f, 29.5f, 36.5f }) Am(bogie, new Vector3(0f, -0.40f, bz), dark);
+            foreach (var cz in new[] { 11f, 22f, 33f }) Am(car, new Vector3(0f, 0f, cz), grey);
+            var cam = new Camera3D { Current = true, Fov = 42f, Far = 10000f }; AddChild(cam);
+            cam.Position = new Vector3(26f, 14f, -20f); cam.LookAt(new Vector3(0f, 1.2f, 13f), Vector3.Up);
         }
 
         // --doorgallery --shot=OUT : a lit, front-on LINEUP of the 12 ripped WOODEN door barricade models
