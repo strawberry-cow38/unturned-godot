@@ -1091,6 +1091,16 @@ namespace UnturnedGodot
                 MaterialOverride = planeGround ? new StandardMaterial3D { AlbedoColor = new Color(0.30f, 0.30f, 0.33f) } : (Material)Caust(new Color(0.22f, 0.26f, 0.20f)) });
             seabed.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
             AddChild(seabed);
+            if (System.Environment.GetEnvironmentVariable("UG_ROUGH") == "1")
+            {   // a slightly-rough HEIGHTMAP under the taxi area -> reproduce the map terrain that the flat plane cannot (wheel chatter)
+                int _N = 129; float _cell = 1.2f, _amp = 0.06f;
+                var _hd = new float[_N * _N];
+                for (int _j = 0; _j < _N; _j++) for (int _i = 0; _i < _N; _i++) _hd[_j * _N + _i] = _amp * (Mathf.Sin(_i * 2.3f + _j * 0.4f) + 0.6f * Mathf.Sin(_i * 4.7f - _j * 1.1f) + 0.5f * Mathf.Cos(_j * 3.1f + _i * 0.6f));
+                var _hm = new HeightMapShape3D { MapWidth = _N, MapDepth = _N }; _hm.MapData = _hd;
+                var _rough = new StaticBody3D { Position = new Vector3(0f, 0.3f, 60f) };
+                _rough.AddChild(new CollisionShape3D { Shape = _hm, Scale = new Vector3(_cell, 1f, _cell) });
+                AddChild(_rough);
+            }
             if (System.Environment.GetEnvironmentVariable("UG_NOSEBUMP") == "1")
             {   // a RISE under the nose-wheel spawn spot (world ~0,*,57.2) to reproduce single-point seating burying the nose
                 var bump = new StaticBody3D { Position = new Vector3(0f, 0.4f, 57.17f) };
@@ -6292,7 +6302,7 @@ namespace UnturnedGodot
                         if (System.Environment.GetEnvironmentVariable("UG_TAXI") == "1")
                         {   // scripted taxi: FORWARD+steer-right, coast, then REVERSE+steer-left
                             if (_frame < 8) { _tthr = 0f; _tstr = 0f; }           // settle at rest
-                            else { _tthr = -1f; _tstr = 1f; }                     // REVERSE + steer right, from rest
+                            else { _tthr = 1f; _tstr = 0.4f; }                    // taxi forward + gentle steer (UG_ROUGH to test chatter)
                         }
                         _veh.DrivePlane(_tthr, _tstr, 0f, 0f, delta);
                         if (_frame == 1)
@@ -6302,10 +6312,10 @@ namespace UnturnedGodot
                         }
                         if (_vehCam != null)
                         {
-                            if (System.Environment.GetEnvironmentVariable("UG_TAXI") == "1") { _vehCam.GlobalPosition = new Vector3(6f, 46f, 64f); _vehCam.LookAt(new Vector3(6f, 0f, 64f), new Vector3(0f, 0f, -1f)); }   // TOP-DOWN over the taxi path (up = -Z = nose-fwd)
+                            if (System.Environment.GetEnvironmentVariable("UG_TAXI") == "1") { var _vt = _veh.GetGlobalTransformInterpolated(); _vehCam.GlobalPosition = _vt.Origin + new Vector3(0f, 13f, 0f); _vehCam.LookAt(_vt.Origin, new Vector3(0f, 0f, -1f)); }   // CLOSE top-down TRACKER, world-fixed (up=-Z): yaw jitter = nose wobbling L/R
                             else { var vt = _veh.GetGlobalTransformInterpolated(); _vehCam.GlobalPosition = vt.Origin + new Vector3(9f, 1.8f, 0f); _vehCam.LookAt(vt.Origin + new Vector3(0f, -0.2f, 0f), Vector3.Up); }
                         }
-                        if (System.Environment.GetEnvironmentVariable("UG_PLANEDBG") == "1" && _frame % 20 == 0) GD.Print($"[park] f={_frame} pos={_veh.GlobalPosition} spd={_veh.LinearVelocity.Length():F2} frozen={_veh.Freeze}");
+                        if (System.Environment.GetEnvironmentVariable("UG_PLANEDBG") == "1") GD.Print($"[park] f={_frame} spd={_veh.LinearVelocity.Length():F2} yawv={_veh.AngularVelocity.Y:F3} rollv={_veh.AngularVelocity.Z:F3} steer={_veh.Steering:F3}");
                         return;
                     }
                     if (System.Environment.GetEnvironmentVariable("UG_PLANEBURN") == "1")

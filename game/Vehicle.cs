@@ -2942,7 +2942,7 @@ namespace UnturnedGodot
                     // stiffer + higher max force so 900kg doesn't compress the suspension into a permanent SQUAT; more
                     // damping to settle without bounce; higher friction slip = more TRACTION (was sliding/understeering).
                     // Trailer = low friction so the wheels free-roll behind the cab instead of gripping/dragging.
-                    SuspensionStiffness = 55f, SuspensionMaxForce = 12000f, DampingCompression = 3.5f, DampingRelaxation = 4.2f, WheelFrictionSlip = s.Tracked ? TankWheelSlip : (s.Kingpin != Vector3.Zero ? 1.5f : 6.0f),
+                    SuspensionStiffness = s.Plane ? 30f : 55f, SuspensionMaxForce = 12000f, DampingCompression = s.Plane ? 7f : 3.5f, DampingRelaxation = s.Plane ? 8f : 4.2f, WheelFrictionSlip = s.Tracked ? TankWheelSlip : (s.Kingpin != Vector3.Zero ? 1.5f : s.Plane ? 2.0f : 6.0f),   // PLANE: softer + heavily-damped gear + lower friction slip so the narrow fuselage wheels do not CHATTER into a yaw wobble on rough terrain (master 2026-08-18)
                 };
                 // left wheels: flip the mesh so the tread faces outward
                 var mi = new MeshInstance3D { Mesh = wheelMesh, MaterialOverride = wheelMat, Scale = new Vector3((x < 0 ? -1f : 1f) * wscale, wscale, wscale) };
@@ -3663,6 +3663,7 @@ namespace UnturnedGodot
             // weathervane; the ground-rotation assist below still lifts the nose for takeoff.
             // SIGN CONVENTION matches DriveHeli: pitch +1 = nose up -> +X; roll +1 = bank right -> -Z; yaw +1 = nose right -> -Y.
             bool onGround = (grounded || _planeGroundMode) && !_afloat;   // wheeled land plane sitting/rolling on hard ground (or forced ground/taxi mode)
+            AngularDamp = onGround ? 12f : 0f;   // GROUND: bleed the wheel-chatter yaw/roll wobble on rough terrain; airborne = free rotation for flight (master 2026-08-18)
 
             // RETRACTABLE GEAR (jet): deploy (down) on the ground or when slow; retract (fold up into the belly) once
             // airborne + fast. Lerped ~1.5s so it swings up/down smoothly instead of snapping.
