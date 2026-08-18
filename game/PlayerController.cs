@@ -4516,6 +4516,7 @@ namespace UnturnedGodot
                 // and the suite was green because it hooks this delegate with its own counter and never reaches
                 // the real wiring at all.
                 SpawnBullet(origin, dir * vel, steps, 0f, dmg, veh, obj, dmg, srcGun: g, npc: true);
+                NpcTurretFx(origin, dir, gunId);
             };
             CollisionLayer = 1 << 3;   // player bit
             CollisionMask = (1 << 0) | (1 << 6);    // walk on ground (bit 0) + collide with transparent props on bit 6 (see-through to the item LOS raycast but still solid for the player -- master)
@@ -5319,6 +5320,66 @@ namespace UnturnedGodot
             int steps = def != null ? Mathf.Max(1, (int)(def.Range / 2f)) : 75;
             SpawnBullet(origin, dir * muzzleVel, steps, 0f, dmg, veh, obj, dmg);
             return true;
+        }
+
+        static ImageTexture _npcFlashTex; static bool _npcFlashTexTried;
+        static readonly System.Collections.Generic.Dictionary<string, AudioStream> _npcShotSnd = new();
+
+        /// <summary>Report and muzzle flash for an NPC turret shot (strawberry: "turn up the volume and travel of
+        /// the gunshot sounds from helis, adding the muzzle flashes we already have on guns, scaling them up
+        /// quite a bit").
+        ///
+        /// SCALE IS THE WHOLE POINT HERE. The positional one-shots elsewhere in this file run UnitSize 5-8 and
+        /// MaxDistance 45-70, which is right for a door closing and completely wrong for a belt-fed gun on an
+        /// aircraft: a helicopter shooting at you is heard across a valley, and by the time it is close enough
+        /// to be audible on those numbers it is already on top of you. Likewise the 1P/3P muzzle flash is a
+        /// 0.55 m quad seen from arm's length -- at the range you watch a gunship from, that is invisible.
+        ///
+        /// Sounds and the flash texture are cached: a burst is seven to twenty two rounds and neither a
+        /// per-shot file read nor a per-shot PNG decode is acceptable at that rate.</summary>
+        void NpcTurretFx(Vector3 origin, Vector3 dir, string gunId)
+        {
+            // ---- REPORT. The HMG ships no loose audio (retail keeps it in the bundle), so it falls back the way
+            // the viewmodel does -- but to the Nykorev rather than the Eaglefire, since a .50 belt gun should not
+            // crack like an assault rifle.
+            if (!_npcShotSnd.TryGetValue(gunId ?? "", out var snd))
+            {
+                snd = NpcLoadOgg($"res://content/{gunId}_shoot.ogg") ?? NpcLoadOgg("res://content/nykorev_shoot.ogg");
+                _npcShotSnd[gunId ?? ""] = snd;
+            }
+            var host = GetParent();
+            if (snd != null && host != null)
+            {
+                var ap = new AudioStreamPlayer3D { Stream = snd, UnitSize = 34f, MaxDistance = 650f, VolumeDb = 9f };
+                host.AddChild(ap);
+                ap.GlobalPosition = origin;   // world position is only meaningful once it is in the tree
+                ap.Play();
+                ap.Finished += ap.QueueFree;
+            }
+
+            // ---- FLASH. Same Muzzle_0 star the held guns use, on the same shader, scaled well up.
+            if (!_npcFlashTexTried)
+            {
+                _npcFlashTexTried = true;
+                string fp = ProjectSettings.GlobalizePath("res://content/muzzleflash.png");
+                if (System.IO.File.Exists(fp)) { var im = Image.LoadFromFile(fp); if (im != null) _npcFlashTex = ImageTexture.CreateFromImage(im); }
+            }
+            if (host == null) return;
+            var mat = new ShaderMaterial { Shader = GD.Load<Shader>("res://content/muzzleflash.gdshader") };
+            if (_npcFlashTex != null) mat.SetShaderParameter("tex", _npcFlashTex);
+            mat.SetShaderParameter("roll", GD.Randf() * 6.28318f);   // the star spins per shot, as the 1P one does
+            var flash = new Node3D { Name = "NpcMuzzleFlash" };
+            flash.AddChild(new MeshInstance3D { Mesh = new QuadMesh { Size = new Vector2(2.6f, 2.6f) }, MaterialOverride = mat });
+            flash.AddChild(new OmniLight3D { OmniRange = 18f, LightColor = new Color(0.941f, 0.756f, 0.152f), LightEnergy = 7f, ShadowEnabled = false });
+            host.AddChild(flash);
+            flash.GlobalPosition = origin + dir.Normalized() * 0.35f;   // just off the muzzle, not inside the barrel
+            GetTree().CreateTimer(0.05).Timeout += () => { if (IsInstanceValid(flash)) flash.QueueFree(); };
+        }
+
+        static AudioStream NpcLoadOgg(string res)
+        {
+            string p = ProjectSettings.GlobalizePath(res);
+            return System.IO.File.Exists(p) ? AudioStreamOggVorbis.LoadFromFile(p) : null;
         }
 
         static readonly System.Collections.Generic.Dictionary<string, GunDef> _turretGuns = new();

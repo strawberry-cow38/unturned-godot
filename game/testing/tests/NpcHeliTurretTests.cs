@@ -191,6 +191,29 @@ namespace UnturnedGodot.Testing
             // passed whether or not srcGun was ever passed, which is the exact failure this whole section exists
             // to stop. Discriminating it needs a player holding a gun with different ballistics; until then the
             // npc flag above is what is actually verified, and srcGun is carried on the same line as it.
+            // MUZZLE FLASH AND REPORT (strawberry: "turn up the volume and travel of the gunshot sounds from
+            // helis, adding the muzzle flashes we already have on guns, scaling them up quite a bit"). The SIZE
+            // is the deliverable, so the sizes are what get asserted -- "a flash exists" would pass on the 0.55 m
+            // held-gun quad, which at the range you watch a gunship from is invisible, and on the UnitSize 5-8 /
+            // MaxDistance 45-70 one-shots used elsewhere for doors and impacts.
+            NpcHeli.NpcShot?.Invoke(new Vector3(600f, 30f, -12f), Vector3.Forward, "hmg");
+            yield return Ticks(1);
+            float flashQuad = 0f, sndDist = 0f, lightRange = 0f;
+            foreach (var n in World.GetChildren())
+            {
+                if (n is Node3D fn && fn.Name.ToString() == "NpcMuzzleFlash")
+                    foreach (var c in fn.GetChildren())
+                    {
+                        if (c is MeshInstance3D mi && mi.Mesh is QuadMesh qm) flashQuad = qm.Size.X;
+                        if (c is OmniLight3D ol) lightRange = ol.OmniRange;
+                    }
+                if (n is AudioStreamPlayer3D ap) sndDist = ap.MaxDistance;
+            }
+            GD.Print($"[TURRET] fx: flash quad {flashQuad:0.0} m, light range {lightRange:0} m, report carries {sndDist:0} m");
+            T.Check($"the muzzle flash is scaled for an aircraft, not a held rifle (quad {flashQuad:0.0} m vs the 0.55 m 1P/3P one)",
+                flashQuad > 1.5f && lightRange > 8f);
+            T.Check($"...and the report carries across a valley, not a room (MaxDistance {sndDist:0} m vs 45-70 for doors and impacts)",
+                sndDist > 300f);
             owner.QueueFree();
             yield return Ticks(2);
 
