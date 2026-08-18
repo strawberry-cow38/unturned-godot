@@ -357,6 +357,44 @@ namespace UnturnedGodot.Testing
             strafer.QueueFree(); sai.QueueFree();
             yield return Ticks(2);
 
+            // ---- 6. ORBIT STRAFE, the Hind's version: "circles you facing you". The claim has TWO halves and
+            // they fail independently, so both get measured -- an aircraft that merely flies past holds its nose
+            // on you briefly, and one that circles without facing you is just the beam-gun strafe.
+            var (pylon, pai) = Spawn("hind", new Vector3(4000f, 55f, 240f), held: false);
+            yield return Ticks(3);
+            Vector3 tgt = new Vector3(4000f, 6f, 0f);
+            pylon.NoteAttackedFrom(tgt);
+            for (int i = 0; i < 700; i++) yield return Ticks(1);   // ~14 s to close and settle onto the circle
+
+            float minR = 9999f, maxR = 0f, worstOffBore = 0f;
+            for (int i = 0; i < 600; i++)                            // then ~12 s of watching the turn itself
+            {
+                yield return Ticks(1);
+                Vector2 rad = new Vector2(pylon.GlobalPosition.X - tgt.X, pylon.GlobalPosition.Z - tgt.Z);
+                minR = Mathf.Min(minR, rad.Length()); maxR = Mathf.Max(maxR, rad.Length());
+                Vector3 nose = -pylon.GlobalTransform.Basis.Z;
+                Vector3 toT = (tgt - pylon.GlobalPosition);
+                if (toT.LengthSquared() > 1f)
+                    worstOffBore = Mathf.Max(worstOffBore, Mathf.RadToDeg(nose.AngleTo(toT.Normalized())));
+            }
+            GD.Print($"[TURRET] orbit strafe: range {minR:0}..{maxR:0} m, worst off-bore {worstOffBore:0} deg, banking={pai.OrbitStrafing} bankTarget={pai.DebugBankTarget:0.00}");
+
+            // IT STAYS AROUND YOU rather than running in or sailing off. A pursuit curve collapses the range; a
+            // flypast opens it without bound.
+            // BOUNDS SET FROM THE MEASURED TURN, not picked loose. The first cut spiralled 27..95 m at 63 deg
+            // off-bore and PASSED a 25..320 m / 75 deg check -- bounds wide enough to accept the bug they were
+            // meant to catch. The fixed turn holds 49..64 m at 27 deg, so these are drawn to reject the spiral.
+            T.Check($"the Hind holds a standoff circle rather than spiralling in ({minR:0}..{maxR:0} m over 12 s)",
+                minR > 35f && maxR < 90f);
+            // AND IT KEEPS YOU ON THE NOSE, which is the half that distinguishes this from the beam strafe. The
+            // chin turret only depresses 60 deg, so the nose has to stay roughly on you for the gun to bear.
+            T.Check($"...while keeping its nose on the contact throughout (worst off-bore {worstOffBore:0} deg)",
+                worstOffBore < 40f);
+            T.Check($"...and it is the BANK doing the turning, not the heading loop (orbitStrafing={pai.OrbitStrafing}, bankTarget {pai.DebugBankTarget:0.00})",
+                pai.OrbitStrafing && Mathf.Abs(pai.DebugBankTarget) > 0.02f);
+            pylon.QueueFree(); pai.QueueFree();
+            yield return Ticks(2);
+
             // NO CHECK HERE FOR THE YAW DEPARTURE, DELIBERATELY, AND THIS IS THE HONEST STATE OF IT.
             //
             // strawberry: "orca and huey spin violently out of control yaw axis" -- introduced by putting crew

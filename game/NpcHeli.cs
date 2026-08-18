@@ -53,6 +53,8 @@ namespace UnturnedGodot
         static readonly Envelope TransitEnv = new Envelope(TransitSpeedFrac, 4.0f, 38f, 6f);
         static readonly Envelope ArriveEnv  = new Envelope(0.30f, 5.0f,  8f, 22f);
         static readonly Envelope OrbitEnv   = new Envelope(0.45f, 2.5f, 14f, 8f);
+        // The pylon turn: slow, and near level. It is NOT trying to get anywhere -- the bank is doing the work.
+        static readonly Envelope OrbitStrafeEnv = new Envelope(0.28f, 2.0f, 7f, 10f);
 
         float _wantClimb;   // m/s of climb the AI is asking for; telemetry only
 
@@ -100,6 +102,8 @@ namespace UnturnedGodot
         public double DebugLockLeftSec => Mathf.Max(0.0, (_lockUntilMsec - Time.GetTicksMsec()) / 1000.0);
 
         static readonly RandomNumberGenerator Rng = new();
+        // Which way round it circles. Fixed per aircraft rather than random, so a pass is predictable to fly against.
+        const float OrbitStrafeDir = 1f;
         public static bool DebugCombat;
 
         /// <summary>Test seam: point the mount at a world position immediately, bypassing the slew. The slew is
@@ -120,7 +124,10 @@ namespace UnturnedGodot
             _turPitch = new float[Heli.Turrets.Length];
         }
 
-        const float StrafeRadius = 85f;   // how wide a beam-gun airframe circles the contact
+        const float StrafeRadius = 85f;    // how wide a beam-gun airframe circles the contact
+        const float OrbitStrafeRadius = 95f;   // and how wide a chin-turret one circles while facing you
+        public bool OrbitStrafing { get; private set; }
+        public float DebugBankTarget { get; private set; }
 
         /// <summary>WHERE TO FLY so the guns can bear, which is not the same as "at the target".
         ///
@@ -378,7 +385,11 @@ namespace UnturnedGodot
             }
             else if (Mode == Stance.Engaged)
             {
-                aim = StrafeAim(here, new Vector2(LastSeen.X, LastSeen.Z));
+                // A chin-turret gunship points AT you (the gun is bore-sighted forward and down, so the nose is
+                // the firing solution, and the bank below is what carries it around you). A beam-gun airframe
+                // has to hold you abeam instead, which is the orbit in StrafeAim.
+                aim = CrewServed ? StrafeAim(here, new Vector2(LastSeen.X, LastSeen.Z))
+                                 : new Vector2(LastSeen.X, LastSeen.Z);
             }
             else if (range > ArriveDist)
             {
@@ -436,7 +447,13 @@ namespace UnturnedGodot
                     if (range > ArriveDist * 1.6f) Phase = FlightPhase.Transit;   // blown off station, or retargeted
                     break;
             }
+            // A PYLON TURN NEEDS A LEVEL NOSE. With the nose held ON the contact, any nose-DOWN attitude thrusts
+            // straight at it, so the bank is fighting the pitch loop and the circle decays into a spiral -- which
+            // is exactly what the first cut measured: 27..95 m of radius instead of a held standoff. Orbit-strafe
+            // therefore flies its own envelope: a low speed target, so the attitude sits near level and the bank
+            // is the only thing shaping the path.
             Envelope env = Mode == Stance.Flee ? TransitEnv
+                         : OrbitStrafing ? OrbitStrafeEnv
                          : Phase == FlightPhase.Transit ? TransitEnv : Phase == FlightPhase.Arrive ? ArriveEnv : OrbitEnv;
             float wantSpeed = Heli.SpeedMaxMps * env.SpeedFrac;
             // COMMIT THE NOSE. 20 deg was too polite to build speed (strawberry: "it should definitely tilt forward
@@ -459,6 +476,35 @@ namespace UnturnedGodot
             // over. So: a small lean into the turn, low P, and damping as the dominant term.
             float bank = Heli.GlobalTransform.Basis.X.Y;
             float bankTarget = Mathf.Clamp(0.30f * err, -0.22f, 0.22f);   // sin-space: a gentle ~13 deg lean into the turn
+
+            // ORBIT STRAFE -- "circles you facing you" (strawberry). This is the one manoeuvre the rest of the
+            // controller cannot express, because everything else here steers by pointing the nose where it wants
+            // to GO. Facing the contact while travelling around it means the nose and the velocity are ninety
+            // degrees apart, so the turn cannot come from the heading loop at all: the yaw holds the nose ON the
+            // contact and the BANK supplies the lateral acceleration that carries it round.
+            //
+            // The bank is derived, not dialled: circular motion needs a = v^2 / r, thrust tilts by sin(theta),
+            // so sin(theta) = v^2 / (r * lift) and bankTarget is already in sin-space. A Hind at 15 m/s on a 95 m
+            // circle wants about 0.18, i.e. ~10 deg -- gentle, which is why this reads as a menacing pylon turn
+            // rather than a wingover.
+            //
+            // Chin-turret airframes only, and only once it is close enough for the circle to mean anything.
+            // Gated hard so patrol, transit and the beam-gun strafe are untouched by it -- the roll axis is where
+            // the anti-damper bug lived, and it is not somewhere to make speculative changes.
+            OrbitStrafing = false;
+            if (Mode == Stance.Engaged && !CrewServed)
+            {
+                Vector2 toContact = new Vector2(LastSeen.X - pos.X, LastSeen.Z - pos.Z);
+                float contactRange = toContact.Length();
+                if (contactRange < OrbitStrafeRadius * 1.6f && contactRange > 12f)
+                {
+                    OrbitStrafing = true;
+                    float lift = Mathf.Max(Heli.DebugThrust, 1f);
+                    float need = (speed * speed) / (OrbitStrafeRadius * lift);
+                    bankTarget = Mathf.Clamp(need, 0f, 0.34f) * OrbitStrafeDir;
+                }
+            }
+            DebugBankTarget = bankTarget;
             // MEASURED (heli_axis_probe): roll +1 produces a POSITIVE rate about forward, i.e. the rate is in the
             // same sense as the stick. So damping must SUBTRACT it. It was +, which is an ANTI-damper -- it fed the
             // roll rate back in and drove the oscillation strawberry reported ("rolling back and forth 45 degrees
