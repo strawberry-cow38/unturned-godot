@@ -167,6 +167,32 @@ namespace UnturnedGodot.Testing
             shooter.QueueFree(); shootMe.QueueFree();
             yield return Ticks(2);
 
+            // ---- 2d. IS THE TRIGGER CONNECTED TO ANYTHING? Every check above hooks NpcHeli.NpcShot with a stub,
+            // which proves the AI pulls the trigger and nothing at all about what the trigger drives. The real
+            // hook is installed by PlayerController._Ready, and the first version of the ownership fix added the
+            // srcGun/npc parameters to SpawnBullet and then never passed them at that one call site -- so the
+            // rounds were still the player's, the tracers still came off her muzzle, and the suite was green.
+            // This drives the REAL delegate and reads the bullet back out.
+            var owner = new PlayerController { CaptureMouse = false, Inventory = new PlayerInventory() };
+            World.AddChild(owner);
+            owner.GlobalPosition = new Vector3(600f, 2f, 0f);
+            yield return Ticks(3);
+            NpcHeli.NpcShot?.Invoke(new Vector3(600f, 30f, -10f), Vector3.Forward, "hmg");
+            yield return Ticks(1);
+
+            GD.Print($"[TURRET] real hook -> npc={owner.DebugNewestBulletIsNpc}");
+            T.Check($"the round the REAL hook spawns is owned by the heli, not the player (npc={owner.DebugNewestBulletIsNpc})",
+                owner.DebugNewestBulletIsNpc);
+            // NOT ALSO ASSERTING srcGun HERE, and the reason is worth writing down rather than quietly dropping
+            // the check. The obvious probe is the bullet's falloff -- but HMG.dat declares no falloff fields, so
+            // the honest reading is 0 either way, and this rig's player holds no weapon, which makes srcGun and
+            // the held Gun BOTH null and the two paths indistinguishable by construction. A check here would have
+            // passed whether or not srcGun was ever passed, which is the exact failure this whole section exists
+            // to stop. Discriminating it needs a player holding a gun with different ballistics; until then the
+            // npc flag above is what is actually verified, and srcGun is carried on the same line as it.
+            owner.QueueFree();
+            yield return Ticks(2);
+
             // ---- 3. NO MOUNT, NO FIGHT. The rule is "only the Hind", but expressed as data (does it carry a
             // turret) rather than a name check, so a future gunship inherits it and a future transport does not.
             var (huey, hai) = Spawn("huey", new Vector3(300f, 40f, 0f));

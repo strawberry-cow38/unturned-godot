@@ -4511,7 +4511,11 @@ namespace UnturnedGodot
                 float obj = g?.ObjectDamage ?? 20f;
                 float vel = g?.MuzzleVelocity ?? 120f;
                 int steps = g != null ? Mathf.Max(1, (int)(g.Range / 2f)) : 125;
-                SpawnBullet(origin, dir * vel, steps, 0f, dmg, veh, obj, dmg);
+                // srcGun AND npc: BOTH have to be passed. Adding the parameters and leaving the call unchanged is
+                // how the first attempt at this shipped completely inert -- the mechanism existed, nothing used it,
+                // and the suite was green because it hooks this delegate with its own counter and never reaches
+                // the real wiring at all.
+                SpawnBullet(origin, dir * vel, steps, 0f, dmg, veh, obj, dmg, srcGun: g, npc: true);
             };
             CollisionLayer = 1 << 3;   // player bit
             CollisionMask = (1 << 0) | (1 << 6);    // walk on ground (bit 0) + collide with transparent props on bit 6 (see-through to the item LOS raycast but still solid for the player -- master)
@@ -5363,6 +5367,14 @@ namespace UnturnedGodot
             if (g?.Action == "Rocket") b.RocketVis = SpawnRocketVis(pos);   // launcher: the rocket is a VISIBLE flying projectile, not an invisible bullet
             _bullets.Add(b);
         }
+
+        /// <summary>Test seam: is the newest bullet in flight flagged as somebody else's? The ONLY way to check
+        /// that the NPC path is wired end to end -- a test that calls NpcHeli.NpcShot with its own stub proves the
+        /// AI pulls the trigger and nothing whatsoever about what the trigger is connected to.</summary>
+        public bool DebugNewestBulletIsNpc => _bullets.Count > 0 && _bullets[^1].Npc;
+        /// <summary>Test seam: the newest bullet's falloff start, which comes from the FIRING gun. If the NPC
+        /// path is not passing srcGun this reads back the player's held weapon instead.</summary>
+        public float DebugNewestBulletFalloff => _bullets.Count > 0 ? _bullets[^1].FalloffStart : -1f;
 
         /// <summary>Test seam: put a real bullet in flight. Deliberately only FIRES -- StepBullets still
         /// does the raycast and decides what was hit and for how much, so a test using this exercises the
