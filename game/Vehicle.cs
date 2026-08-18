@@ -295,7 +295,13 @@ namespace UnturnedGodot
         public bool IsHeli => _heli;
         public bool IsPlane => _plane;
         public bool HasRetractGear => _gearPivots != null;   // driven vehicle has retractable gear (jet) -> G toggles it
-        public void ToggleGear() { if (_gearPivots != null && (_gearDeploy <= 0.001f || _gearDeploy >= 0.999f)) _gearWantDown = !_gearWantDown; }   // DEBOUNCED: only flip when FULLY up or down so mashing G mid-fold is ignored (master)
+        public void ToggleGear()
+        {
+            if (_gearPivots == null) return;
+            if (_gearDeploy > 0.001f && _gearDeploy < 0.999f) return;   // DEBOUNCED: ignore G mid-fold -- only act when FULLY up or down (master)
+            if (_gearWantDown && (GroundedByRay() || _planeGroundMode) && !_afloat) return;   // CAN'T RETRACT while landed -> no belly-sink; only fold up once airborne (master 2026-08-18)
+            _gearWantDown = !_gearWantDown;
+        }
         public bool HasWheels => _wNodes != null && _wNodes.Length > 0;   // a WHEELED plane seats on spawn; a floatplane (no wheels) drops onto the water
         float _groundClearance;
         /// <summary>Distance from the body origin down to its lowest collision point (skids, hull floor).</summary>
