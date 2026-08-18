@@ -1086,11 +1086,18 @@ namespace UnturnedGodot
             // seabed doubles as the RUNWAY for the land-plane test (raised to Y=0, grey tarmac); else the deep boat floor.
             // UG_PLANESLOPE tilts it into a SLOPE -> reproduce the real terrain (where the plane slides/freaks), not flat.
             var seabed = new StaticBody3D { Position = new Vector3(0f, planeGround ? 0f : -14f, 0f),
-                RotationDegrees = System.Environment.GetEnvironmentVariable("UG_PLANESLOPE") == "1" ? new Vector3(0f, 0f, 11f) : Vector3.Zero };
+                RotationDegrees = System.Environment.GetEnvironmentVariable("UG_PLANESLOPE") == "1" ? new Vector3(0f, 0f, float.TryParse(System.Environment.GetEnvironmentVariable("UG_SLOPEDEG"), out var _sd) ? _sd : 11f) : Vector3.Zero };
             seabed.AddChild(new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(800f, 800f) },
                 MaterialOverride = planeGround ? new StandardMaterial3D { AlbedoColor = new Color(0.30f, 0.30f, 0.33f) } : (Material)Caust(new Color(0.22f, 0.26f, 0.20f)) });
             seabed.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
             AddChild(seabed);
+            if (System.Environment.GetEnvironmentVariable("UG_NOSEBUMP") == "1")
+            {   // a RISE under the nose-wheel spawn spot (world ~0,*,57.2) to reproduce single-point seating burying the nose
+                var bump = new StaticBody3D { Position = new Vector3(0f, 0.4f, 57.17f) };
+                bump.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = new Vector3(1.4f, 0.8f, 1.4f) } });
+                bump.AddChild(new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(1.4f, 0.8f, 1.4f) }, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.5f, 0.32f, 0.2f) } });
+                AddChild(bump);
+            }
 
             _veh = Vehicle.BuildByName(type, int.TryParse(System.Environment.GetEnvironmentVariable("UG_SHIPVARIANT"), out var _sv) ? _sv : 0);   // UG_SHIPVARIANT: pick the spawn paint variant -> show the random hull-bottom colours
             _veh.Position = new Vector3(0f, 0.5f, 0f);   // spawn just above the waterline -> gentle settle (a 2.5m drop plunged the voxel-buoyancy hull deep + made it bob)
@@ -6277,6 +6284,18 @@ namespace UnturnedGodot
                         _veh.LinearVelocity = Vector3.Zero; _veh.AngularVelocity = Vector3.Zero; _veh.PlaneGroundMode = false;
                         if (_frame == 20) _veh.ToggleGear();
                         if (_vehCam != null) { _vehCam.GlobalPosition = o + new Vector3(8.5f, -0.6f, 0f); _vehCam.LookAt(o + new Vector3(0f, -0.6f, 0f), Vector3.Up); }
+                        return;
+                    }
+                    if (System.Environment.GetEnvironmentVariable("UG_PLANEPARK") == "1")
+                    {   // SPAWN-SETTLE + SLIDE diagnostic: zero input, let it sit on the (sloped) ground; side cam TRACKS it so drift is visible
+                        _veh.DrivePlane(0f, 0f, 0f, 0f, delta);
+                        if (_frame == 1)
+                        {
+                            if (System.Environment.GetEnvironmentVariable("UG_SEATSPAWN") == "1") _veh.PlaceOnGround(new Vector3(_veh.GlobalPosition.X, 0f, _veh.GlobalPosition.Z));
+                            if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_LANDSPEED"), out var _ls)) _veh.LinearVelocity = -_veh.GlobalTransform.Basis.Z * _ls;
+                        }
+                        if (_vehCam != null) { var vt = _veh.GetGlobalTransformInterpolated(); _vehCam.GlobalPosition = vt.Origin + new Vector3(9f, 1.8f, 0f); _vehCam.LookAt(vt.Origin + new Vector3(0f, -0.2f, 0f), Vector3.Up); }
+                        if (System.Environment.GetEnvironmentVariable("UG_PLANEDBG") == "1" && _frame % 20 == 0) GD.Print($"[park] f={_frame} pos={_veh.GlobalPosition} spd={_veh.LinearVelocity.Length():F2} frozen={_veh.Freeze}");
                         return;
                     }
                     if (System.Environment.GetEnvironmentVariable("UG_PLANEBURN") == "1")

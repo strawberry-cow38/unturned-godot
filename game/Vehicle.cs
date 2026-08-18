@@ -312,7 +312,37 @@ namespace UnturnedGodot
         /// lowest collision point lands on <paramref name="ground"/>, plus a hair so it is not born intersecting.
         /// A 2 mm interpenetration at spawn is a solver impulse, and on a skidded airframe with no suspension
         /// that reads as the helicopter flinging itself sideways the moment it appears.</summary>
-        public void PlaceOnGround(Vector3 ground) => GlobalPosition = ground + Vector3.Up * (_groundClearance + 0.02f);
+        public void PlaceOnGround(Vector3 ground)
+        {
+            GlobalPosition = ground + Vector3.Up * (_groundClearance + 0.02f);
+            // A WHEELED plane on UNEVEN terrain: single-point seating buries whatever wheel sits over a rise
+            // -- classically the far-forward NOSE wheel ("front wheel stuck under the ground"), which then
+            // spawns the airframe interpenetrating and the solver flings it (the "freaks out + slides"). Probe
+            // straight down under each wheel and RAISE the body until the highest-ground wheel clears, so nothing
+            // is born inside the terrain; the suspension then extends the low wheels down onto it. (master 2026-08-18)
+            if (_plane && _wNodes != null && _wNodes.Length > 0) SeatWheelsClear(0.06f);
+        }
+        void SeatWheelsClear(float margin)
+        {
+            var space = GetWorld3D()?.DirectSpaceState; if (space == null) return;
+            float maxRaise = 0f;
+            foreach (var w in _wNodes)
+            {
+                if (w == null) continue;
+                Vector3 wp = w.GlobalPosition;
+                var q = PhysicsRayQueryParameters3D.Create(wp + Vector3.Up * 2f, wp + Vector3.Down * 4f);
+                q.Exclude = new Godot.Collections.Array<Rid> { GetRid() };
+                q.CollisionMask = (1u << 0) | (1u << 5);
+                var hit = space.IntersectRay(q);
+                if (hit.Count == 0) continue;
+                float groundY = ((Vector3)hit["position"]).Y;
+                float wheelBottomY = w.GlobalPosition.Y - w.WheelRadius;
+                float needed = (groundY + margin) - wheelBottomY;
+                if (needed > maxRaise) maxRaise = needed;
+            }
+            if (maxRaise > 0f) GlobalPosition += Vector3.Up * maxRaise;
+        }
+
         /// <summary>Rotor spool 0..1. Thrust scales with its SQUARE (a rotor at half speed makes a quarter of
         /// the lift), so a cold start has to spin up before it will leave the ground.</summary>
         public float RotorSpool => _rotorRpm;
@@ -3656,7 +3686,7 @@ namespace UnturnedGodot
                 // BRAKE the gear when not driving forward, so a parked plane HOLDS instead of free-rolling down any
                 // slope forever ("slides along the floor" -- the wheels never brake + StepPlane's settle needs
                 // vel~0 to freeze, which a rolling plane never reaches). Release the brake once you throttle up.
-                Brake = _inCollective < 0.08f ? Mathf.Max(_brakeForce, 30f) : 0f;
+                Brake = _inCollective < 0.08f ? _brakeForce * HandbrakeScale : 0f;   // proper PARKING brake (was Max(_,30) -- 13x too weak, slid/rolled on slopes + long landing rollouts) (master 2026-08-18)
                 // NO flight ApplyTorque while grounded -- torque against the gear is the freak-out
             }
             else
