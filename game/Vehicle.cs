@@ -3615,14 +3615,7 @@ namespace UnturnedGodot
 
             // FORWARD THRUST from the prop -- pulls along body forward (-Z), scaled by the throttle setting + spool.
             float throttle = _inCollective;
-            bool onGround = (grounded || _planeGroundMode) && !_afloat;
-            // GROUND throttle is CAR-PEDAL responsive: spool the flight throttle FAST while W is held (so taxi/takeoff
-            // respond now instead of over ~2s, AND the throttle is already up at liftoff -> no thrust dropout), and the
-            // engine-spool gate is dropped on the ground (assumed running for taxi). The parking brake (below) releases
-            // the instant W is pressed, so nothing fights it -- that brake-vs-slow-spool toggle WAS the low-speed jitter.
-            if (onGround && _rawThrottle > 0.05f) { _inCollective = Mathf.MoveToward(_inCollective, _rawThrottle, dt * 4f); throttle = _inCollective; }
-            float fwdThr = onGround ? throttle : throttle * spool;
-            ApplyCentralForce(-b.Z * (pThrust * fwdThr) * Mass);
+            ApplyCentralForce(-b.Z * (pThrust * throttle * spool) * Mass);
 
             // AIRSPEED = forward component of velocity.
             float airspeed = LinearVelocity.Dot(-b.Z);
@@ -3669,6 +3662,7 @@ namespace UnturnedGodot
             // exactly what makes it FREAK OUT on contact (master). In the AIR it's full 3-axis control +
             // weathervane; the ground-rotation assist below still lifts the nose for takeoff.
             // SIGN CONVENTION matches DriveHeli: pitch +1 = nose up -> +X; roll +1 = bank right -> -Z; yaw +1 = nose right -> -Y.
+            bool onGround = (grounded || _planeGroundMode) && !_afloat;   // wheeled land plane sitting/rolling on hard ground (or forced ground/taxi mode)
 
             // RETRACTABLE GEAR (jet): deploy (down) on the ground or when slow; retract (fold up into the belly) once
             // airborne + fast. Lerped ~1.5s so it swings up/down smoothly instead of snapping.
@@ -3696,10 +3690,14 @@ namespace UnturnedGodot
                 // REVERSE (ground taxi): hold S at idle throttle to back up slowly on the wheels. A jet has no
                 // reverse thrust, but Unturned vehicles reverse -- a gentle backward push capped at a slow taxi-back
                 // speed; the nose wheel still steers, and the parking brake releases so it can roll. (master 2026-08-18)
-                bool reversing = _rawThrottle < -0.05f && LinearVelocity.Dot(b.Z) < 6f;
-                if (_rawThrottle > 0.05f) Brake = 0f;                                  // W held -> release the brake NOW (thrust is applied above); fighting the slow engine WAS the jitter
-                else if (reversing) { Brake = 0f; ApplyCentralForce(b.Z * (pThrust * 0.35f) * Mass); }   // S -> gentle wheel reverse, capped ~6 m/s
-                else Brake = _brakeForce * HandbrakeScale;                             // no throttle input -> hold on the parking brake
+                bool reversing = _rawThrottle < -0.05f && _inCollective < 0.08f;
+                if (reversing)
+                {
+                    Brake = 0f;
+                    if (LinearVelocity.Dot(b.Z) < 6f) ApplyCentralForce(b.Z * (pThrust * 0.35f) * Mass);   // b.Z = body BACKWARD; cap ~6 m/s reverse
+                }
+                else
+                    Brake = _inCollective < 0.08f ? _brakeForce * HandbrakeScale : 0f;   // proper PARKING brake (was Max(_,30) -- 13x too weak)
                 // NO flight ApplyTorque while grounded -- torque against the gear is the freak-out
             }
             else
@@ -3755,7 +3753,7 @@ namespace UnturnedGodot
             // throttle low and moving slowly, FREEZE it solid: the freeze zeroes the slide AND the spin. It wakes
             // instantly on throttle. The velocity gate (< 2 m/s) means a fast landing ROLLOUT isn't frozen mid-roll
             // -- only once it's slowed to park. No angular gate on purpose: killing the spin is the whole point.
-            bool idle = onSurface && Mathf.Abs(_rawThrottle) < 0.05f && vel.LengthSquared() < 4.0f;   // park-freeze only with NO throttle input (W or S keeps it awake)
+            bool idle = onSurface && throttle < 0.1f && _rawThrottle >= -0.05f && vel.LengthSquared() < 4.0f;   // holding S (reverse) keeps it awake so it doesn't park-freeze mid-back-up
             if (idle && _spawnGrace <= 0f && !Freeze)
             {
                 LinearVelocity = Vector3.Zero; AngularVelocity = Vector3.Zero;
