@@ -1994,8 +1994,8 @@ namespace UnturnedGodot
             Wheels = new (float, float, float, bool)[]   // tricycle gear (Godot Z = -Unity Z): nose steers, 2 wide mains
             {
                 (0f, -0.27f, -2.83f, true),      // nose wheel (forward) -- steers on the ground
-                (-2.75f, -0.27f, 2.51f, false),  // main gear L (wide, aft)
-                (2.75f, -0.27f, 2.51f, false),   // main gear R
+                (-0.85f, -0.27f, 2.51f, false),  // main gear L (F-15: on the FUSELAGE, not the wings -> clears the wing missiles on retract; master 2026-08-18)
+                (0.85f, -0.27f, 2.51f, false),   // main gear R
             },
             ForwardGears = new[] { 24f }, ReverseGear = 8f, ShiftUpRpm = 5000f,
             Sound = "fighterjet_engine.ogg", IgnitionSound = "fighterjet_ignition.ogg", IdlePitch = 0.9f, MaxPitch = 1.7f, IdleVolume = 0.85f, MaxVolume = 1.0f,   // the REAL dedicated jet engine + ignition (from the prefab)
@@ -2925,7 +2925,7 @@ namespace UnturnedGodot
                     v.AddChild(pivot);
                     v._gearPivots[i] = pivot;
                     if (Mathf.Abs(x) < 1f) { v._gearAxis[i] = Vector3.Right; v._gearAng[i] = -85f; }          // nose gear: folds AFT about X
-                    else { v._gearAxis[i] = Vector3.Back; v._gearAng[i] = -Mathf.Sign(x) * 110f; }             // main gear: folds INBOARD about Z
+                    else { v._gearAxis[i] = Vector3.Right; v._gearAng[i] = 95f; }                             // main gear (fuselage, F-15): folds FORWARD + up into the belly about X -> X stays 0.85 so it clears the wing missiles (master 2026-08-18)
                 }
             }
 
