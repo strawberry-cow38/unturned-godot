@@ -2372,13 +2372,19 @@ namespace UnturnedGodot
             AddChild(new WorldEnvironment { Environment = env });
             AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-45f, -50f, 0f), LightEnergy = 1.2f, ShadowEnabled = true });
             Mesh Lm(string n) => ContentProvider.ParseObj($"res://content/{n}.txt");
-            Material grey = new StandardMaterial3D { AlbedoColor = new Color(0.42f, 0.46f, 0.44f), Metallic = 0.1f, Roughness = 0.7f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
-            Material dark = new StandardMaterial3D { AlbedoColor = new Color(0.12f, 0.12f, 0.14f), Metallic = 0.25f, Roughness = 0.55f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+            Material Tex(string t) { var m = new StandardMaterial3D { TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest, Metallic = 0f, Roughness = 0.75f, CullMode = BaseMaterial3D.CullModeEnum.Disabled }; var img = new Image(); if (img.Load(ProjectSettings.GlobalizePath($"res://content/{t}.png")) == Error.Ok) m.AlbedoTexture = ImageTexture.CreateFromImage(img); return m; }
+            Material carMat = Tex("train_car_tex"), bogieMat = Tex("train_bogie_tex");
+            // PAINTABLE LIVERY: recolour the body palette slot (blue) to a random livery, and the stripe slot
+            // (orange) to a DARKER shade of it (master). Demo colour here; per-spawn xorshift in the real vehicle.
+            Color livery = new Color(0.16f, 0.42f, 0.22f);
+            var bodyMat = new StandardMaterial3D { TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest, Metallic = 0f, Roughness = 0.75f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+            var _bimg = new Image();
+            if (_bimg.Load(ProjectSettings.GlobalizePath("res://content/train_body_tex.png")) == Error.Ok) { _bimg.Convert(Image.Format.Rgba8); _bimg.SetPixel(0, 1, livery); _bimg.SetPixel(3, 1, livery.Darkened(0.45f)); bodyMat.AlbedoTexture = ImageTexture.CreateFromImage(_bimg); }
             void Am(Mesh m, Vector3 pp, Material mat) { if (m != null) AddChild(new MeshInstance3D { Mesh = m, Position = pp, MaterialOverride = mat }); }
             Mesh body = Lm("train_body"), bogie = Lm("train_bogie"), car = Lm("train_car"), head = Lm("train_headlights"), steer = Lm("train_steer"), seat = Lm("train_seat");
-            Am(body, Vector3.Zero, grey); Am(head, Vector3.Zero, grey); Am(steer, Vector3.Zero, dark); Am(seat, Vector3.Zero, dark);
-            foreach (var bz in new[] { -3.5f, 3.5f, 7.5f, 14.5f, 18.5f, 25.5f, 29.5f, 36.5f }) Am(bogie, new Vector3(0f, -0.40f, bz), dark);
-            foreach (var cz in new[] { 11f, 22f, 33f }) Am(car, new Vector3(0f, 0f, cz), grey);
+            Am(body, Vector3.Zero, bodyMat); Am(head, Vector3.Zero, bodyMat); Am(steer, Vector3.Zero, bodyMat); Am(seat, Vector3.Zero, bodyMat);
+            foreach (var bz in new[] { -3.5f, 3.5f, 7.5f, 14.5f, 18.5f, 25.5f, 29.5f, 36.5f }) Am(bogie, new Vector3(0f, -0.40f, bz), bogieMat);
+            foreach (var cz in new[] { 11f, 22f, 33f }) Am(car, new Vector3(0f, 0f, cz), carMat);
             var cam = new Camera3D { Current = true, Fov = 42f, Far = 10000f }; AddChild(cam);
             cam.Position = new Vector3(26f, 14f, -20f); cam.LookAt(new Vector3(0f, 1.2f, 13f), Vector3.Up);
         }
