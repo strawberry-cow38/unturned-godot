@@ -17,6 +17,8 @@ namespace UnturnedGodot
         const float BogieHalf = 3.5f;   // bogie spacing from a unit's centre (source Track_Front/Back at +-3.5)
         const float CarGap = 11f;       // car-to-car spacing along the rail (source Train_Car spacing)
         readonly List<(Node3D body, MeshInstance3D bf, MeshInstance3D bb, float off)> _units = new();
+        const float MaxSpeed = 16f, Accel = 5f;   // rail top speed (m/s) + accel
+        float _speed;
 
         /// <summary>Spawn a train onto the nearest track spline to <paramref name="near"/>. Null if there is no
         /// track road (material 4) in the world (only Yukon has tracks).</summary>
@@ -49,6 +51,7 @@ namespace UnturnedGodot
 
         void Build()
         {
+            AddToGroup("trains");   // so the player can find + board the nearest one
             // random livery per spawn: 10% muted grey else a muted random hue (the game's RandomHueOrGrayscale feel)
             Color livery = GD.Randf() < 0.1f ? new Color(0.45f, 0.45f, 0.47f) : Color.FromHsv(GD.Randf(), 0.5f, 0.55f);
             var bodyMat = MakeMat("train_body_tex", livery);
@@ -88,5 +91,29 @@ namespace UnturnedGodot
         }
 
         void Place() { foreach (var u in _units) PlaceUnit(u, _s - u.off); }
+
+        /// <summary>The loco body (unit 0) -- proximity + seat reference.</summary>
+        public Node3D Loco => _units.Count > 0 ? _units[0].body : null;
+
+        /// <summary>Driver eye/seat in the loco cab, facing forward down the rail (loco -Z).</summary>
+        public Transform3D DriverEyeWorld
+        {
+            get { var l = Loco; return l != null ? l.GlobalTransform * new Transform3D(Basis.Identity, new Vector3(0f, 2.3f, -2.6f)) : GlobalTransform; }
+        }
+
+        /// <summary>Advance the whole train along the rail by the throttle (W/S). No steering -- the rail steers.
+        /// Cars trail on their fixed offsets. Open roads stop at the ends; a loop wraps.</summary>
+        public void Drive(float throttle, float dt)
+        {
+            _speed = Mathf.MoveToward(_speed, Mathf.Clamp(throttle, -0.6f, 1f) * MaxSpeed, Accel * dt);
+            _s += _speed * dt;
+            if (!_roads.RoadLoops(_road))
+            {
+                float lo = 3f * CarGap + BogieHalf, hi = Mathf.Max(lo, _roads.RoadLength(_road) - BogieHalf);
+                if (_s < lo) { _s = lo; _speed = 0f; }
+                if (_s > hi) { _s = hi; _speed = 0f; }
+            }
+            Place();
+        }
     }
 }

@@ -183,6 +183,7 @@ namespace UnturnedGodot
         public int DebugPatternShot => _patternShot;
         /// <summary>The viewmodel's rotational recoil, surfaced so a test can prove the gun stopped taking one.</summary>
         public Vector3 DebugViewmodelRecoilRot => _viewmodel?.DebugRecoilRot ?? Vector3.Zero;
+        Train _ridingTrain;   // a boarded train (spline-follower, not a Vehicle) -- parallel low-risk ride path (master: "i cant get into the train")
         Vehicle _driving; bool _fp = true;   // vehicle being driven + camera mode: true = 1st person (spawn default, strawberry), false = 3rd; H toggles (on foot + driving)
         float _driveCamYaw, _driveCamPitch = 15f;   // 3rd-person driving orbit: mouse yaws/pitches the chase cam around the car (master)
         // FP RIDE free-look (#37, MP only): mouse yaw/pitch of the view in VEHICLE-LOCAL space while seated on a
@@ -4794,12 +4795,14 @@ namespace UnturnedGodot
                 if (_noteReader != null && _noteReader.IsOpen) _noteReader.Close();   // F while a note is open -> close it first (same as Esc)
                 else if (_invUI != null && _invUI.IsOpen) { SaveGunState(); CloseCrate(); _invUI.Close(); Input.MouseMode = Input.MouseModeEnum.Captured; }   // F while a container inventory is open -> CLOSE it (CloseCrate swings the door shut too), same as Escape (master)
                 else if (_driving != null && !DrivingPredicted) ExitVehicle();  // hop out (SP direct exit; a Part A predicted drive falls through to the server REQUEST below)
+                else if (_ridingTrain != null) ExitTrain();                     // hop out of a boarded train (parallel ride path)
                 else if (RequestExitPuppet()) { }                          // riding a replicated vehicle: ask the server to free the seat (C6)
                 else if (TryToggleHitch()) { }                             // on foot at a trailer hitch: couple / uncouple
                 else if (_focusShelfItem != null || _focusItem != null) TryPickup();   // looking at a SHELF item or a dropped item: grab it (shelf item takes priority in TryPickup)
                 else if (RequestPickupFocusedPuppet()) { }                 // MP: looking at a REPLICATED dropped item -> ask the server for it (like SP, a focused item wins over a nearby vehicle)
                 else if (_focusVehicle != null && IsInstanceValid(_focusVehicle) && !_focusVehicle.IsWreck && !_focusVehicle.IsTrailer) EnterVehicle(_focusVehicle); // looking at a LIVE, drivable vehicle: get in (a wreck is salvaged with LMB; a trailer is towed, not driven)
                 else if (RequestEnterNearestPuppet()) { }                  // MP shell near a REPLICATED vehicle: ask the server for the seat (C6; false in SP -- no puppets)
+                else if (NearestTrain() is Train nt) BoardTrain(nt);       // near a train (not a Vehicle): board it (master: "i cant get into the train")
                 else if (_focusDeployable != null && IsInstanceValid(_focusDeployable))
                 {   // looking at a placed deployable: F starts a HOLD -> pick it up (UpdateDeployPickup); a quick TAP toggles
                     // a generator's power (fired on release). Consume F so it doesn't fall through to open a nearby crate.
@@ -5117,7 +5120,7 @@ namespace UnturnedGodot
             if (_driving != null && _seatIndex != 0 && _driving.HasTurret(_seatIndex))
                 return FireTurret();
 
-            if (_fireCd > 0f || Ammo <= 0 || _reloading || _unloading || _magSwapAnimTimer > 0 || _needsRechamber || _rechambering || _cam == null || _dead || (_driving != null && (_seatIndex == 0 || !_fp))
+            if (_fireCd > 0f || Ammo <= 0 || _reloading || _unloading || _magSwapAnimTimer > 0 || _needsRechamber || _rechambering || _cam == null || _dead || _ridingTrain != null || (_driving != null && (_seatIndex == 0 || !_fp))
                 || !HasGunOut || IsSwimming || (_invUI?.IsOpen ?? false)) return false;   // IsSwimming: guns are canUseUnderwater=false -> no shot while swimming, incl. the polled AUTO/burst tick (source PlayerEquipment). !HasGunOut: no gun in hand (melee/held item disarm it) -> no shot, even from the polled auto/burst tick after switching away mid-fire (master)
             // -- also while the bolt/pump still needs cycling -- kills a queued burst the frame we die (the tick calls Fire()) + ignores death-screen clicks (master). _driving guard fixes the "stray tracer flies straight south" bug: the auto/burst tick (_PhysicsProcess) calls Fire() on held-LMB WITHOUT a driving check, and while driving _cam is TopLevel (detached chase cam) -> aim = the chase cam's fixed heading, not the player's look. LMB honks while driving anyway.
             if (AmmoRadial?.IsOpen ?? false) return false;   // no firing while the ammo radial is up -- you're picking ammo, not shooting
@@ -5930,10 +5933,12 @@ namespace UnturnedGodot
             // burning in your pocket. Costs one bool test per frame and cannot go stale.
             if (_heldLightOn && !HoldingLight) { _heldLightOn = false; ApplyHeldLight(); }
             UpdateGrassDisplacement();
-            if (_interpReady && !_dead && _driving == null)   // RENDER INTERPOLATION (master): lerp the visual position between the last two 50Hz ticks so it doesn't step at 50Hz while rendering at 60+
+            if (_interpReady && !_dead && _driving == null && _ridingTrain == null)   // RENDER INTERPOLATION (master): lerp the visual position between the last two 50Hz ticks so it doesn't step at 50Hz while rendering at 60+
                 GlobalPosition = _interpPrev.Lerp(_interpCurr, (float)Engine.GetPhysicsInterpolationFraction());
             if (_driving != null && !_dead)   // driving: position the cam from the vehicle's Godot-INTERPOLATED visual transform, so cam + car mesh are both smooth + IN SYNC (master: godot smoothing for the car)
                 PositionDriveCam(_driving.GetGlobalTransformInterpolated());
+            if (_ridingTrain != null && !_dead && _cam != null)   // riding a train: lock the cam to the loco cab, looking forward down the rail
+                _cam.GlobalTransform = _ridingTrain.DriverEyeWorld;
             if (_riding != null && !_dead && IsInstanceValid(_riding))   // C6 riding: chase the dead-reckoned puppet (it moves per-FRAME in VehicleReplicaView, no physics interp to sample)
                 PositionRideCam(_riding.GlobalTransform);
             OutlineOverlay.DrivingSuppress = _driving != null || _riding != null;   // in a vehicle: nothing focusable -> kill the outline overlay's per-frame 2nd cull + dilate (the 3p-cam POI fps drop, strawberry)
@@ -6019,7 +6024,7 @@ namespace UnturnedGodot
             // The eye height is lerped whether or not the first-person camera is the one being drawn: in third person
             // nothing reads _cam.Position any more, but the BULLETS still come out of the eyes, so it has to keep up.
             _eyeHeight = Mathf.Lerp(_eyeHeight, EyeHeight, Mathf.Min(1f, 4f * (float)delta));
-            if (_cam != null && !_dead && _driving == null && _riding == null)   // while driving/riding, the drive cam above owns the view
+            if (_cam != null && !_dead && _driving == null && _riding == null && _ridingTrain == null)   // while driving/riding, the drive cam above owns the view
             {
                 if (_ugFp) _fp = true;   // render harness (UG_FP=1): force 1st-person so the FP viewmodel is captured
                 if (_fp)
@@ -6213,6 +6218,54 @@ namespace UnturnedGodot
 
         // Public since Part A: ClientWorldSession seats the shell on its client-local vehicle through this
         // EXACT SP path (one enter seam, zero MP-only side effects here).
+        /// <summary>Nearest boardable train's loco within reach (trains aren't Vehicles, so the vehicle finder
+        /// misses them). Generous radius -- the loco is ~11m long, so the cab can sit several metres off centre.</summary>
+        Train NearestTrain()
+        {
+            Train best = null; float bestD = 10f * 10f;
+            foreach (var n in GetTree().GetNodesInGroup("trains"))
+                if (n is Train t && t.Loco != null)
+                {
+                    float d = GlobalPosition.DistanceSquaredTo(t.Loco.GlobalPosition);
+                    if (d < bestD) { bestD = d; best = t; }
+                }
+            return best;
+        }
+
+        /// <summary>Board a train: hide + free the camera exactly as EnterVehicle does, but with no seat/MP
+        /// bookkeeping -- a train is a lone spline-follower, so this ride path never touches the vehicle/MP logic.</summary>
+        void BoardTrain(Train t)
+        {
+            _ridingTrain = t;
+            _viewmodel?.SetShown(false);
+            if (_cam != null) _cam.TopLevel = true;
+            foreach (var c in FindChildren("*", "CollisionShape3D", true, false))
+                if (c is CollisionShape3D cs) cs.Disabled = true;
+            Visible = false;
+            Velocity = Vector3.Zero;
+        }
+
+        void ExitTrain()
+        {
+            var t = _ridingTrain; _ridingTrain = null;
+            foreach (var c in FindChildren("*", "CollisionShape3D", true, false))
+                if (c is CollisionShape3D cs) cs.Disabled = false;
+            Visible = true;
+            _viewmodel?.SetShown(true);
+            if (_cam != null) _cam.TopLevel = false;
+            if (t?.Loco != null) GlobalPosition = t.Loco.GlobalPosition + t.Loco.GlobalTransform.Basis.X * 3f + Vector3.Up * 1.5f;   // step out beside the cab
+        }
+
+        /// <summary>Advance the boarded train along its rail from W/S (no steering -- the spline steers), then
+        /// ride the loco so the exit spot + camera track it.</summary>
+        void DriveTrain(float delta)
+        {
+            float throttle = UiInputBlocked ? 0f
+                : (Input.IsPhysicalKeyPressed(Key.W) ? 1f : 0f) - (Input.IsPhysicalKeyPressed(Key.S) ? 1f : 0f);
+            _ridingTrain.Drive(throttle, delta);
+            if (_ridingTrain.Loco != null) GlobalPosition = _ridingTrain.Loco.GlobalPosition;
+        }
+
         public void EnterVehicle(Vehicle v)
         {
             if (v.NetDriverId != 0) return;   // MP §3.6: a remote player holds the seat (single driver) -- never set in pure SP, so the direct path is unchanged
@@ -6516,6 +6569,7 @@ namespace UnturnedGodot
             if (NetHold) return;   // mp-clientauth-foot: a follower body never moves itself -- the entity owns the transform, PlayerNetSync teleports this body onto it
             StepLean((float)delta);   // BEFORE the driving/riding returns below: those bail out of the tick entirely, so a lean
                                       //  polled after them would freeze at whatever it was when you got into the car and stay there.
+            if (_ridingTrain != null) { _interpReady = false; LastMoveInput = UnityEngine.Vector2.zero; LastJumpInput = false; DriveTrain((float)delta); return; }   // riding a train: skip on-foot movement, drive the rail
             if (_driving != null) { _interpReady = false; LastMoveInput = UnityEngine.Vector2.zero; LastJumpInput = false; DriveVehicle((float)delta); return; }   // driving: skip on-foot movement (+ pause the render-interp so exiting doesn't smear)
             if (_riding != null) { _interpReady = false; LastMoveInput = UnityEngine.Vector2.zero; LastJumpInput = false; RidePuppet(); return; }   // C6 ride mode: same freeze -- capture drive intent only, the SERVER drives
             if (_interpReady && !_dead) GlobalPosition = _interpCurr;   // render-interp (master): restore the TRUE physics position before moving (undoes the _Process visual smoothing)
