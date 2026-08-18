@@ -297,10 +297,12 @@ namespace UnturnedGodot
         public bool HasRetractGear => _gearPivots != null;   // driven vehicle has retractable gear (jet) -> G toggles it
         public void ToggleGear()
         {
-            if (_gearPivots == null) return;
-            if (_gearDeploy > 0.001f && _gearDeploy < 0.999f) return;   // DEBOUNCED: ignore G mid-fold -- only act when FULLY up or down (master)
-            if (_gearWantDown && (GroundedByRay() || _planeGroundMode) && !_afloat) return;   // CAN'T RETRACT while landed -> no belly-sink; only fold up once airborne (master 2026-08-18)
+            GD.Print($"[GEAR] ToggleGear deploy={_gearDeploy:0.###} grounded={GroundedByRay()} wantDown={_gearWantDown} afloat={_afloat} pgm={_planeGroundMode} pivots={_gearPivots!=null}");
+            if (_gearPivots == null) { GD.Print("[GEAR] blocked: no pivots"); return; }
+            if (_gearDeploy > 0.001f && _gearDeploy < 0.999f) { GD.Print("[GEAR] blocked: mid-fold"); return; }
+            if (_gearWantDown && (GroundedByRay() || _planeGroundMode) && !_afloat) { GD.Print("[GEAR] blocked: ground-lock (retract only when airborne)"); return; }
             _gearWantDown = !_gearWantDown;
+            GD.Print($"[GEAR] TOGGLED -> wantDown={_gearWantDown}");
         }
         public bool HasWheels => _wNodes != null && _wNodes.Length > 0;   // a WHEELED plane seats on spawn; a floatplane (no wheels) drops onto the water
         float _groundClearance;
@@ -631,7 +633,7 @@ namespace UnturnedGodot
 
         struct Spec
         {
-            public string Body, Wheel, WheelTex, Palette, GlassMesh;   // Palette = paintable palette; WheelTex = wheel albedo; GlassMesh = translucent canopy overlay (jet)
+            public string Body, Wheel, WheelTex, Palette, GlassMesh, MissileMesh;   // Palette = paintable palette; WheelTex = wheel albedo; GlassMesh = translucent canopy overlay (jet)
             public bool RetractGear;   // JET: wheels tuck up into the fuselage when airborne (retract pivots + struts)
             public WaterMode Water;   // Car (default) = land only; Boat = floats+water-drives (no useful wheels); Amphibious = land wheels + float/water-drive when its hull is in the sea
             public Vector3[] Buoys;   // hull buoyancy points (local space, Godot); null = auto 4 bottom corners of BoxSize. Boats/amphibious float via a spring at each toward SeaLevelY
@@ -1987,6 +1989,7 @@ namespace UnturnedGodot
             SpeedMax = 36f, Engine = 800f, SteerMax = 32f, SteerMin = 8f, Brake = 30f,         // Steer_Max/Min for GROUND-mode taxi; Speed_Max 36
             Wheel = "fighterjet_wheel.txt", WheelTex = "fighterjet_wheel_albedo.png", WheelRadius = 0.34f,   // the jet's OWN wheel mesh (prefab Wheel_*/Model_0, 168v) not the jeep car wheel
             GlassMesh = "fighterjet_canopy.txt",   // the LOD's closed cockpit cap, re-laid TRANSLUCENT over the open cockpit
+            MissileMesh = "fighterjet_missiles.txt",   // the 4 wing missiles carved into their own DARKER-GREY mesh (master 2026-08-18)
             RetractGear = true,                    // wheels retract up into the fuselage when flying
             Wheels = new (float, float, float, bool)[]   // tricycle gear (Godot Z = -Unity Z): nose steers, 2 wide mains
             {
@@ -2425,6 +2428,12 @@ namespace UnturnedGodot
                     };
                     v.AddChild(new MeshInstance3D { Name = "Canopy", Mesh = gm, MaterialOverride = glassMat, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off });   // canopy mesh is now built windscreen-forward + fitted -> no runtime yaw needed
                 }
+            }
+
+            if (s.MissileMesh != null)
+            {
+                var mmesh = LoadOptionalObj(s.MissileMesh);
+                if (mmesh != null) v.AddChild(new MeshInstance3D { Name = "Missiles", Mesh = mmesh, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.34f, 0.34f, 0.36f), Metallic = 0.15f, Roughness = 0.65f, CullMode = BaseMaterial3D.CullModeEnum.Disabled } });   // wing missiles separated -> darker grey (master 2026-08-18)
             }
 
             // ---- PROPELLER (piston planes only). A JET has no prop -> a null PropMeshPrefix skips this whole block

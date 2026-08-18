@@ -6242,6 +6242,21 @@ namespace UnturnedGodot
                         }
                         return;
                     }
+                    if (System.Environment.GetEnvironmentVariable("UG_BELLYSHOT") == "1")
+                    {   // BELLY inspection: pin the jet level + elevated, look up at the underside from below(0-40)/front-below(40-80)/side-below(80+)
+                        var o = new Vector3(0f, 7f, 60f);
+                        _veh.GlobalTransform = new Transform3D(Basis.Identity, o);
+                        _veh.LinearVelocity = Vector3.Zero; _veh.AngularVelocity = Vector3.Zero;
+                        if (_vehCam != null)
+                        {
+                            Vector3 cp; Vector3 up = Vector3.Up;
+                            if (_frame < 40)      { cp = o + new Vector3(0.02f, -7f, 0f); up = Vector3.Forward; }   // straight below, nose = up in frame
+                            else if (_frame < 80) { cp = o + new Vector3(0f, -3.2f, -8f); }                        // front-below (nose is -Z)
+                            else                  { cp = o + new Vector3(8f, -3.2f, 0.5f); }                        // side-below
+                            _vehCam.GlobalPosition = cp; _vehCam.LookAt(o, up);
+                        }
+                        return;
+                    }
                     if (System.Environment.GetEnvironmentVariable("UG_CANOPYSHOT") == "1")
                     {   // CANOPY FIT: parked jet, cycle a close FRONT(0-40)/SIDE(40-80)/TOP(80+) cam on the cockpit
                         _veh.DrivePlane(0f, 0f, 0f, 0f, delta);
