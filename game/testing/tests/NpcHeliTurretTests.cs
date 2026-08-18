@@ -31,6 +31,7 @@ namespace UnturnedGodot.Testing
                 v.Freeze = true; v.FreezeMode = RigidBody3D.FreezeModeEnum.Static;
                 v.ProcessMode = Node.ProcessModeEnum.Disabled;   // hold the attitude still; the aim maths is the subject
             }
+            v.EquipDoorGunners();   // an NPC brings its crew; the console `vehicle` command does not
             var ai = new NpcHeli { Heli = v, Terr = null, Target = Vector3.Zero, TargetName = "T" };
             World.AddChild(ai);
             return (v, ai);
@@ -205,6 +206,20 @@ namespace UnturnedGodot.Testing
             T.Check($"shooting an unarmed airframe does NOT start a gunfight (skycrane armed={crai.Armed}, mode {crai.Mode})",
                 !crai.Armed && crai.Mode == NpcHeli.Stance.Patrol);
 
+            // ---- 3b. A PLAYER-SPAWNED AIRFRAME IS EMPTY (strawberry: "helis spawned with the vehicle command
+            // shouldnt have gunners"). Same airframe, built the ordinary way, with nobody aboard -- so its door
+            // guns are unmanned and it cannot fight.
+            var bare = Vehicle.BuildByName("huey");
+            World.AddChild(bare);
+            bare.GlobalPosition = new Vector3(1200f, 40f, 0f);
+            var bareAi = new NpcHeli { Heli = bare, Terr = null, Target = Vector3.Zero, TargetName = "T" };
+            World.AddChild(bareAi);
+            yield return Ticks(3);
+            T.Check($"a Huey spawned by the vehicle command has mounts but NO gunners ({bare.Turrets.Length} mounts, {bareAi.DebugLiveMounts} manned)",
+                bare.Turrets.Length == 2 && bareAi.DebugLiveMounts == 0);
+            bare.QueueFree(); bareAi.QueueFree();
+            yield return Ticks(2);
+
             // ---- 4. DOOR GUNNERS. Two crewed mounts, and killing them takes the sides away one at a time.
             var (huey, hai) = Spawn("huey", new Vector3(300f, 40f, 0f));
             yield return Ticks(3);
@@ -245,13 +260,32 @@ namespace UnturnedGodot.Testing
             runner.DebugKillCrew(runner.Turrets[1].Seat);
             yield return Ticks(5);
             float dStart = runner.GlobalPosition.DistanceTo(contact);
-            for (int i = 0; i < 500; i++) yield return Ticks(1);   // ~10 s
+            // 20 s, not 10: it enters Flee still closing at 12 m/s, so most of a short window goes on reversing
+            // that rather than on opening the range. Lengthening the window tests the same claim; loosening the
+            // threshold would have tested a weaker one.
+            for (int i = 0; i < 1000; i++) yield return Ticks(1);   // ~20 s
             float dEnd = runner.GlobalPosition.DistanceTo(contact);
             GD.Print($"[TURRET] flee: mode={rai.Mode} range from contact {dStart:0} -> {dEnd:0} m");
             T.Check($"a fleeing Huey actually runs AWAY, not just reports it (mode {rai.Mode}, {dStart:0} -> {dEnd:0} m from the contact)",
-                rai.Mode == NpcHeli.Stance.Flee && dEnd > dStart + 20f);
+                rai.Mode == NpcHeli.Stance.Flee && dEnd > dStart + 60f);
             runner.QueueFree(); rai.QueueFree();
             yield return Ticks(2);
+
+            // NO CHECK HERE FOR THE YAW DEPARTURE, DELIBERATELY, AND THIS IS THE HONEST STATE OF IT.
+            //
+            // strawberry: "orca and huey spin violently out of control yaw axis" -- introduced by putting crew
+            // aboard. The likely cause is that TargetDummy is a StaticBody3D on collision layer 1 (the WORLD
+            // layer) and a vehicle's mask includes the world, so two of them parented inside the fuselage are
+            // immovable obstacles embedded in the hull. EquipDoorGunners now calls AddCollisionExceptionWith on
+            // each, which is correct on its own terms: an aircraft should not collide with its own crew.
+            //
+            // BUT I COULD NOT REPRODUCE THE DEPARTURE IN THIS RIG. A crewed Orca flown here peaks at 0.69 rad/s
+            // with the exception and 0.01 without it -- so a spin-rate check passes either way and would have been
+            // a check that cannot fail on the bug it names. Writing one anyway would convert "unverified" into
+            // "green", which is the exact failure this file has hit repeatedly tonight.
+            //
+            // So the fix ships unverified and is labelled as such, and reproducing the departure in a rig is the
+            // outstanding work. Whatever reproduces it belongs here.
         }
     }
 }

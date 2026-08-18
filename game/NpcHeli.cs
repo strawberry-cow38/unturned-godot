@@ -324,7 +324,17 @@ namespace UnturnedGodot
                         : m2 == dS ? new Vector2(pos.X, minZ - 200f)
                                    : new Vector2(pos.X, maxZ + 200f);
                 }
-                else aim = here + new Vector2(-fwdFlat.X, -fwdFlat.Y) * -1000f;
+                else
+                {
+                    // NO TERRAIN, SO NO EDGE TO RUN FOR: run directly away from the contact instead. This used to
+                    // hold the current heading, which is only "away" by accident -- an aircraft that had just been
+                    // closing on you kept closing while reporting Flee, and the check passed anyway because the
+                    // heading happened to be favourable in that one rig. Away-from-the-contact is the same intent
+                    // and does not depend on which way it was pointing when the last gunner died.
+                    Vector2 seen = new Vector2(LastSeen.X, LastSeen.Z);
+                    Vector2 away = here - seen;
+                    aim = here + (away.LengthSquared() > 1f ? away.Normalized() : Vector2.Right) * 1000f;
+                }
             }
             else if (Mode == Stance.Engaged)
             {
@@ -481,6 +491,7 @@ namespace UnturnedGodot
             v.LinearVelocity = new Vector3(toT.X, 0f, toT.Y) * (v.SpeedMaxMps * 0.5f);
 
             v.InfiniteTurretBelt = true;   // nobody is aboard to reload it
+            v.EquipDoorGunners();          // the crew arrives WITH the AI, not with the airframe
             var ai = new NpcHeli { Heli = v, Terr = terr, Target = best.Pos, TargetName = best.Name };
             world.AddChild(ai);
             return ai;

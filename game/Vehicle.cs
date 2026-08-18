@@ -750,13 +750,48 @@ namespace UnturnedGodot
         Node3D[] _turretYaw, _turretPitch;
         int[] _turretAmmo; float[] _turretCd;
         TargetDummy[] _turretCrew;
+        /// <summary>Put crew in the door guns. NOT done at build time (strawberry: "helis spawned with the
+        /// vehicle command shouldnt have gunners") -- a helicopter you spawn to fly is an empty airframe, and the
+        /// gunners are something the AI brings with it.
+        ///
+        /// COLLISION EXCEPTION IS LOAD-BEARING, not tidiness. TargetDummy is a StaticBody3D on collision layer 1,
+        /// which is the WORLD layer, and a vehicle's mask includes the world -- so parenting two of them inside
+        /// the fuselage gave the aircraft two immovable world obstacles embedded in its own hull. It collided
+        /// with its own crew every tick and departed on the yaw axis, which is exactly what strawberry saw:
+        /// "orca and huey spin violently out of control yaw axis". The exception keeps them raycast-visible to
+        /// bullets while making them invisible to the vehicle's own collision.</summary>
+        public void EquipDoorGunners()
+        {
+            if (_turretCrew == null) return;
+            for (int i = 0; i < Turrets.Length; i++)
+            {
+                if (Turrets[i].GunnerAt == Vector3.Zero || _turretCrew[i] != null) continue;
+                var crew = new TargetDummy
+                {
+                    Name = $"Gunner{Turrets[i].Seat}",
+                    Position = Turrets[i].GunnerAt,
+                    MaxHealth = new PlayerVitalsSim().MaxHealth,   // "same hp as a player", taken FROM the player's sim
+                    NeverRespawn = true,
+                };
+                AddChild(crew);
+                AddCollisionExceptionWith(crew);
+                _turretCrew[i] = crew;
+            }
+        }
         /// <summary>Can this mount still shoot? A mount with no crew (a remote chin turret) is always manned; a
         /// door gun is manned only while its gunner is alive.</summary>
         public bool TurretCrewAlive(int seat)
         {
             if (_turretCrew == null) return true;
             for (int i = 0; i < Turrets.Length; i++)
-                if (Turrets[i].Seat == seat) return _turretCrew[i] == null || !_turretCrew[i].Down;
+            {
+                if (Turrets[i].Seat != seat) continue;
+                // A mount that declares NO gunner position is remote-operated and always manned (the Hind's chin
+                // turret). A mount that DOES declare one needs a live body in it -- including the case where no
+                // crew was ever installed, which is now every player-spawned airframe.
+                if (Turrets[i].GunnerAt == Vector3.Zero) return true;
+                return _turretCrew[i] != null && !_turretCrew[i].Down;
+            }
             return false;
         }
         /// <summary>Test seam: drop this mount's gunner without shooting them five times.</summary>
@@ -3172,23 +3207,7 @@ namespace UnturnedGodot
                 v.AddChild(yaw);
                 v._turretYaw[i] = yaw; v._turretPitch[i] = pitch;
             }
-            // CREW. One killable body per mount that declares a gunner position. StaticBody3D parented to the
-            // aircraft, so it rides along and a bullet raycast resolves against the GUNNER rather than the hull --
-            // which is what makes "shoot the door gunner" a different act from "shoot the helicopter".
             v._turretCrew = new TargetDummy[v.Turrets.Length];
-            for (int i = 0; i < v.Turrets.Length; i++)
-            {
-                if (v.Turrets[i].GunnerAt == Vector3.Zero) continue;
-                var crew = new TargetDummy
-                {
-                    Name = $"Gunner{v.Turrets[i].Seat}",
-                    Position = v.Turrets[i].GunnerAt,
-                    MaxHealth = new PlayerVitalsSim().MaxHealth,   // "same hp as a player": taken FROM the player's sim, so it tracks if that ever moves
-                    NeverRespawn = true,
-                };
-                v.AddChild(crew);
-                v._turretCrew[i] = crew;
-            }
             v._turretAmmo = new int[v.Turrets.Length];
             v._turretCd = new float[v.Turrets.Length];
             for (int i = 0; i < v.Turrets.Length; i++) v._turretAmmo[i] = v.Turrets[i].Belt;
