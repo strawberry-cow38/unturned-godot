@@ -20,6 +20,9 @@ namespace UnturnedGodot
     {
         [Export] public float MaxHealth = 100f;
         [Export] public float RespawnSeconds = 3f;
+        /// <summary>Stay down. A range dummy getting back up is the point of a range dummy; a helicopter's door
+        /// gunner getting back up would undo the thing the player just did.</summary>
+        [Export] public bool NeverRespawn;
         [Export] public string Label = "";        // shown under the dummy, e.g. its range in metres
 
         public float Health { get; private set; }
@@ -72,7 +75,7 @@ namespace UnturnedGodot
 
         public override void _PhysicsProcess(double delta)
         {
-            if (!Down) return;
+            if (!Down || NeverRespawn) return;
             _respawnT -= (float)delta;
             if (_respawnT > 0f) return;
             Health = MaxHealth;

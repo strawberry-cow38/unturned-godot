@@ -13,6 +13,26 @@ namespace UnturnedGodot
     {
         public PlayerController Player;
 
+        // The world's Terrain, found by walking the tree rather than threaded in. There are two DevConsole
+        // construction sites (WorldBuilder's playable path and AttachPlayerShell, which is static and has no
+        // terrain in scope), and a joined client has neither -- so a lookup is one place that works on all of them
+        // and cannot go stale when a third path appears.
+        Terrain _terrCache;
+        Terrain WorldTerrain
+        {
+            get
+            {
+                if (_terrCache != null && IsInstanceValid(_terrCache)) return _terrCache;
+                Terrain Find(Node n)
+                {
+                    if (n is Terrain t) return t;
+                    foreach (var c in n.GetChildren()) { var r = Find(c); if (r != null) return r; }
+                    return null;
+                }
+                return _terrCache = Find(GetTree().Root);
+            }
+        }
+
         // MP (Phase 6, §2.3 "all state mutation goes through commands -- including DevConsole"): when this
         // process is a REMOTE client of some server, the state-mutating cheat verbs are sent as a
         // ConsoleCommand and the SERVER validates + applies them against its authoritative state; the
@@ -26,12 +46,12 @@ namespace UnturnedGodot
         static readonly string[] ServerGatedVerbs = { "give", "xp", "skill", "teleport", "tp", "toggleglobalpower", "globalpower", "grid" };
         // Verbs below the arg guard that are legal with NO argument. Keep this in step when adding one, or the
         // guard silently swallows it and the verb becomes unreachable from the console.
-        static readonly string[] NoArgVerbs = { "unarmed", "fridge", "fluid", "survival" };
+        static readonly string[] NoArgVerbs = { "unarmed", "fridge", "fluid", "survival", "spawnmagnetablecontainer", "magcontainer", "heliphys" };
         bool _resultHooked;
 
         LineEdit _input;
         Label _log;
-        static readonly string[] Verbs = { "give", "vehicle", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "toggleGlobalPower", "toggleGlobalWater", "toggleBbat", "infFuel", "infAmmo", "wear", "unwear", "fluid", "date", "dateset", "whenBlackout", "triggerGlobalBrownout", "hurtmain", "killmain", "hurttail", "killtail", "profiler", "renderscale", "zshadows", "freezerigs", "vertexlight", "weather", "fridge", "fill", "empty", "units", "simspeed", "time", "timeset", "timeadd", "timespeed", "daylength", "hitbox" };
+        static readonly string[] Verbs = { "give", "vehicle", "spawnMagnetableContainer", "spawnheli", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "toggleGlobalPower", "toggleGlobalWater", "toggleBbat", "infFuel", "infAmmo", "wear", "unwear", "fluid", "date", "dateset", "whenBlackout", "triggerGlobalBrownout", "hurtmain", "killmain", "hurttail", "killtail", "profiler", "renderscale", "zshadows", "freezerigs", "vertexlight", "weather", "fridge", "fill", "empty", "units", "simspeed", "time", "timeset", "timeadd", "timespeed", "daylength", "hitbox", "heliphys" };
         static readonly EItemType[] ClothingTypes = { EItemType.SHIRT, EItemType.PANTS, EItemType.HAT, EItemType.VEST, EItemType.MASK, EItemType.GLASSES, EItemType.BACKPACK };
         readonly System.Collections.Generic.List<string> _history = new();
         int _histIdx;
@@ -99,6 +119,11 @@ namespace UnturnedGodot
         /// than letting tests call the dev tools directly -- the thing most likely to break is the WIRING between
         /// a typed verb and the tool it drives, and a direct call skips precisely that.</summary>
         public void DebugRun(string cmd) => Run(cmd);
+
+        /// <summary>Run a console line as if typed. Exists so tests can exercise the REAL dispatch -- including the
+        /// no-arg guard, which silently swallowed spawnMagnetableContainer and made it look like an unknown command.
+        /// "It compiles" and "the console runs it" are different claims and only this one checks the second.</summary>
+        public void RunForTest(string cmd) => Run(cmd);
 
         void Run(string cmd)
         {
@@ -291,6 +316,50 @@ namespace UnturnedGodot
             }
 
             // --- time of day + sim speed (strawberry). Handled above the arg guard so bare `time` / `simSpeed` report state. ---
+            // LIVE FLIGHT-MODEL KNOBS (VoX: "Can we test removing those please"). Reports the DERIVED
+            // consequence of each setting, not just the number set -- "heave x0.5" means nothing on its own,
+            // "terminal fall 43.6 m/s" is the thing being decided. Defaults are the shipping calibration, so
+            // `heliphys reset` always returns the fleet to how it flies in a build nobody has typed into.
+            if (verb == "heliphys")
+            {
+                var hpArgs = arg.Split(' ', System.StringSplitOptions.RemoveEmptyEntries);
+                if (hpArgs.Length == 0) { Log(HeliPhysStatus()); return; }
+                string k = hpArgs[0].ToLowerInvariant();
+                string val = hpArgs.Length > 1 ? hpArgs[1].ToLowerInvariant() : "";
+                bool on = val is "on" or "1" or "true" or "yes";
+                bool off = val is "off" or "0" or "false" or "no";
+                switch (k)
+                {
+                    case "reset":
+                        Vehicle.HeaveDampScale = 1f; Vehicle.DragScale = 1f;
+                        Vehicle.BackstopEnabled = true; Vehicle.ShaftAlignedDescent = true;   // reset means the SHIPPING default, which is now on
+                        Vehicle.HeaveRedirect = 0f;
+                        Log("reset to shipping calibration\n" + HeliPhysStatus());
+                        return;
+                    case "redirect":
+                        if (!float.TryParse(val, out float r) || r < 0f)
+                        { Log("usage: heliphys redirect <0..1>   (0 = shipped, 1 = full sink-to-speed conversion)"); return; }
+                        Vehicle.HeaveRedirect = r;
+                        Log(HeliPhysStatus()); return;
+                    case "heave":
+                    case "drag":
+                        // UPPER BOUND, because the damper is explicit Euler: heave is applied once per tick as
+                        // -heave*vy, so the discrete pole is 1 - 0.45*x*dt. Past x ~ 133 at 60 Hz the vertical axis
+                        // rings, and past ~267 it diverges outright -- a debug knob should not be able to blow up
+                        // the integrator on a typo.
+                        if (!float.TryParse(val, out float x) || x < 0f || x > 50f)
+                        { Log($"usage: heliphys {k} <scale 0..50>   (1 = shipping, 0 = off entirely)"); return; }
+                        if (k == "heave") Vehicle.HeaveDampScale = x; else Vehicle.DragScale = x;
+                        Log(HeliPhysStatus()); return;
+                    case "backstop":
+                    case "shaft":
+                        if (!on && !off) { Log($"usage: heliphys {k} <on|off>"); return; }
+                        if (k == "backstop") Vehicle.BackstopEnabled = on; else Vehicle.ShaftAlignedDescent = on;
+                        Log(HeliPhysStatus()); return;
+                }
+                Log("usage: heliphys [heave <scale> | drag <scale> | redirect <0..1> | backstop <on|off> | shaft <on|off> | reset]");
+                return;
+            }
             if (verb == "simspeed")
             {
                 if (arg.Length == 0) { Log($"simSpeed = {(float)Engine.TimeScale:0.##}x   (usage: simSpeed <multiplier>)"); return; }
@@ -404,7 +473,14 @@ namespace UnturnedGodot
             // four were added underneath it. Review 2026-08-16.
             if (arg.Length == 0 && System.Array.IndexOf(NoArgVerbs, verb) < 0)
             {
-                Log("usage: give <item> | vehicle <name>");
+                // NAME THE VERB. The old text was a fixed "usage: give | vehicle" line, so a no-arg verb missing from
+                // NoArgVerbs looked to the user like the console simply did not know the command -- which is exactly
+                // how strawberry reported it ("i dont think the console is recognizing the command") when
+                // spawnMagnetableContainer landed here. Echoing the verb back makes the failure self-diagnosing:
+                // "it wants an argument" and "it does not exist" stop looking identical.
+                Log(System.Array.IndexOf(Verbs, verb) >= 0 || Verbs.Any(v => v.ToLowerInvariant() == verb)
+                    ? $"{verb}: needs an argument (or add it to NoArgVerbs if it should run bare)"
+                    : $"unknown command '{verb}' -- try: give <item> | vehicle <name>");
                 return;
             }
 
@@ -466,6 +542,34 @@ namespace UnturnedGodot
                 else v.GlobalPosition = at + Vector3.Up * 1.5f;
                 Log($"spawned {name}" + (v.IsHeli ? $" (seated on skids, {v.GroundClearance:0.##} m clearance -- F to board, W/S collective, A/D yaw, mouse to fly)"
                                                  : v.IsPlane ? " (F to board -- W/S throttle, A/D rudder, mouse pitch/roll, hold Ctrl to taxi; floatplane needs water, wheeled needs runway)" : ""));
+            }
+            else if (verb == "spawnheli")
+            {
+                string hname = Vehicle.SpecNames.FirstOrDefault(n => n.Equals(arg, System.StringComparison.OrdinalIgnoreCase))
+                            ?? Vehicle.SpecNames.FirstOrDefault(n => n.StartsWith(arg, System.StringComparison.OrdinalIgnoreCase));
+                if (hname == null) { Log($"no vehicle '{arg}'"); return; }
+                var probe = Vehicle.BuildByName(hname);
+                bool isHeli = probe.IsHeli; probe.QueueFree();
+                if (!isHeli) { Log($"'{hname}' is not a helicopter"); return; }
+                var ai = NpcHeli.Spawn(Player?.GetParent() ?? GetTree().Root, hname, WorldTerrain, at);
+                if (ai == null) { Log("no map nodes to fly to (nodes.tsv empty?)"); return; }
+                Log($"npc {hname} inbound from the map edge -> {ai.TargetName}, holding {NpcHeli.CanopyClearance:0} m over the terrain, will circle at {NpcHeli.OrbitRadius:0} m");
+            }
+            else if (verb == "spawnmagnetablecontainer" || verb == "magcontainer")
+            {
+                // Spawned like a vehicle (dropped just above the ground and left to settle) rather than seated:
+                // it is a plain rigid body with no suspension or skids to place on, so a short drop is the honest
+                // way in and matches how the wheeled vehicles arrive.
+                // `at` is the LOOK POINT, and the container is 7.5 m long CENTRED on its origin -- so spawning it
+                // straight there drops half of it behind the aim point and through whoever typed the command. Push it
+                // out along the look direction by half its length (plus clearance) so the near face lands beyond the
+                // aim rather than on the player.
+                Vector3 eye = Player?.GlobalPosition ?? Vector3.Zero;
+                Vector3 outward = new Vector3(at.X - eye.X, 0f, at.Z - eye.Z);
+                outward = outward.LengthSquared() > 0.01f ? outward.Normalized() : Vector3.Forward;
+                Vector3 spot = at + outward * 4.5f + Vector3.Up * 1.2f;
+                var c = MagnetableContainer.Spawn(Player?.GetParent() ?? GetTree().Root, spot);
+                Log($"spawned magnetable container ({MagnetableContainer.ContainerMass:0} kg) {spot.DistanceTo(eye):0.#} m ahead -- doors + a fixed magnet point on the roof centre; fly the skycrane over it and hit Shift");
             }
             else if (verb == "teleport" || verb == "tp")
             {
@@ -752,6 +856,29 @@ namespace UnturnedGodot
             var c = FluidContainer.MakeFitting(role, ways);
             c.Position = pos;
             world.AddChild(c);
+        }
+
+        /// <summary>What the current knobs actually MEAN, in the units the decision gets made in. "heave x0.5"
+        /// tells you nothing on its own; "terminal fall 43.6 m/s" is the thing being judged.</summary>
+        static string HeliPhysStatus()
+        {
+            float hd = 0.45f * Vehicle.HeaveDampScale;
+            string fall = hd > 0.001f ? $"{9.8f / hd:0.#} m/s" : "unlimited (no vertical resistance)";
+            // cos^2(45 deg) = 0.5, so a 45 deg dive halves the resistance and roughly doubles terminal fall.
+            string dive = !Vehicle.ShaftAlignedDescent ? "identical at any attitude (world-aligned)"
+                        : hd > 0.001f ? $"{9.8f / (hd * 0.5f):0.#} m/s at 45 deg nose-down" : "unlimited";
+            string top = Vehicle.DragScale > 0.001f
+                ? $"x{1f / Mathf.Sqrt(Vehicle.DragScale):0.##} of spec (goes as 1/sqrt(drag))"
+                : "no drag at all -- only the backstop limits you";
+            return $"heliphys: heave x{Vehicle.HeaveDampScale:0.##}  drag x{Vehicle.DragScale:0.##}  " +
+                   $"backstop {(Vehicle.BackstopEnabled ? "on" : "off")}  shaftDescent {(Vehicle.ShaftAlignedDescent ? "on" : "off")}  " +
+                   $"redirect x{Vehicle.HeaveRedirect:0.##}\n" +
+                   $"  sink->speed conversion: {(Vehicle.HeaveRedirect > 0f ? $"{Vehicle.HeaveRedirect * 100f:0}% of the sink is pushed along the disc instead of destroyed" : "NONE -- vertical velocity cannot affect horizontal speed at all")}\n" +
+                   $"  terminal fall, level: {fall}\n" +
+                   $"  terminal fall, diving: {dive}\n" +
+                   $"  level top speed: {top}\n" +
+                   $"  MP: server validates horizontal at SpeedMax x1.25 and climb at HeliClimbMax with ZERO slack --\n" +
+                   $"  past those it rolls the pilot back, so a feel tuned here needs the spec moved to match.";
         }
 
         static ItemAsset ResolveItem(string arg)

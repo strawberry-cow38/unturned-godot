@@ -20,7 +20,11 @@ namespace UnturnedGodot.Testing
         // Five 3 s settle drops plus the build pass; the default watchdog cuts in at 15 s.
         public override double TimeoutSimSeconds => 90;
 
-        // Every airframe carries seats/steer/taillights; the Hind adds a turret, and the Hind and Orca each
+        // Every airframe carries seats/steer; the Hind adds a turret, and the Hind and Orca each
+        // The `_taillights` mesh is deliberately NOT in this list any more: on a helicopter it is a
+        // NAVIGATION light, and BuildNavLights turns that single lens into a red/green PAIR named
+        // NavLightPort / NavLightStarboard. The nav-light section below checks it properly -- by which
+        // SIDE each lens lands on, which is the thing that was actually wrong.
         // carry four landing WHEELS. Counted explicitly rather than derived from the spec, so a spec that
         // quietly loses its Parts array fails here instead of agreeing with itself.
         //
@@ -30,11 +34,11 @@ namespace UnturnedGodot.Testing
         // them. Every automated check here passed the whole time, because none of them knew a wheel was owed.
         static readonly (string heli, string[] parts)[] Fleet =
         {
-            ("huey",        new[] { "huey_seats", "huey_steer", "huey_taillights" }),
-            ("hind",        new[] { "hind_seats", "hind_steer", "hind_taillights", "hind_wheels" }),
-            ("orca",        new[] { "orca_seats", "orca_steer", "orca_taillights", "orca_wheels" }),
-            ("skycrane",    new[] { "skycrane_seats", "skycrane_steer", "skycrane_taillights" }),
-            ("hummingbird", new[] { "hummingbird_seats", "hummingbird_steer", "hummingbird_taillights" }),
+            ("huey",        new[] { "huey_seats", "huey_steer" }),
+            ("hind",        new[] { "hind_seats", "hind_steer", "hind_wheels" }),
+            ("orca",        new[] { "orca_seats", "orca_steer", "orca_wheels" }),
+            ("skycrane",    new[] { "skycrane_seats", "skycrane_steer" }),
+            ("hummingbird", new[] { "hummingbird_seats", "hummingbird_steer" }),
         };
 
         static MeshInstance3D FindPart(Node root, string name)
@@ -222,6 +226,138 @@ namespace UnturnedGodot.Testing
                 v.QueueFree();
                 yield return Ticks(1);
             }
+
+            // ---- NAVIGATION LIGHTS: red to PORT, green to STARBOARD, and both steady.
+            //
+            // Asserted by SIDE, not by name, because the name is the thing that was wrong. Every airframe ships
+            // exactly ONE lens mesh and all five were painted flat red -- but the orca's lens is on STARBOARD
+            // (mesh X +0.27..+1.24), so that aircraft was flying a red light on its right-hand side and had no
+            // green at all. A check that trusted the node names would have agreed with the bug. This one reads
+            // each lens's actual geometry and demands the colour match the side it is on.
+            foreach (var heli in new[] { "huey", "hind", "orca", "skycrane", "hummingbird" })
+            {
+                var v = Vehicle.BuildByName(heli);
+                World.AddChild(v);
+                v.GlobalPosition = new Vector3(0f, 3f, 0f);
+                yield return Ticks(1);
+
+                var port = v.FindChild("NavLightPort", false, false) as MeshInstance3D;
+                var star = v.FindChild("NavLightStarboard", false, false) as MeshInstance3D;
+                T.Check($"{heli}: carries BOTH navigation lights, not just the one lens the mesh ships",
+                    port != null && star != null);
+                if (port != null && star != null)
+                {
+                    // Where the lens actually renders: the mirrored copy carries a -1 X scale, so the centre of
+                    // its transformed AABB is the only honest answer to "which side is this on".
+                    float px = (port.Transform * port.Mesh.GetAabb()).GetCenter().X;
+                    float sx = (star.Transform * star.Mesh.GetAabb()).GetCenter().X;
+                    T.Check($"{heli}: the RED light is on the port side ({px:+0.00;-0.00} m, left is negative)", px < 0f);
+                    T.Check($"{heli}: the GREEN light is on the starboard side ({sx:+0.00;-0.00} m)", sx > 0f);
+                    var pm = port.MaterialOverride as StandardMaterial3D;
+                    var sm = star.MaterialOverride as StandardMaterial3D;
+                    // EMISSIVE is the actual request -- "work as lights" -- and a lens merely PAINTED red looks
+                    // identical in a lit render, so this asks the material rather than the pixels.
+                    T.Check($"{heli}: both lenses actually emit rather than being painted the colour of light",
+                        pm != null && sm != null && pm.EmissionEnabled && sm.EmissionEnabled);
+                    T.Check($"{heli}: ...and they emit the RIGHT colours (port {pm.Emission.R:0.0}/{pm.Emission.G:0.0}, starboard {sm.Emission.R:0.0}/{sm.Emission.G:0.0})",
+                        pm.Emission.R > 0.5f && pm.Emission.G < 0.3f && sm.Emission.G > 0.5f && sm.Emission.R < 0.3f);
+                }
+                v.QueueFree();
+                yield return Ticks(1);
+            }
+
+            // ---- THE BEACON IS THE ONLY THING THAT BLINKS, and it blinks off the ROTOR.
+            //
+            // Two states are needed before "it flashes" means anything: a machine with a live rotor has to be
+            // seen both LIT and DARK, and a machine with a stopped rotor has to stay dark throughout. Checking
+            // only that the node exists would pass on a beacon welded permanently on, which is exactly the
+            // failure mode of a light with no timer.
+            var beac = Vehicle.BuildByName("huey");
+            World.AddChild(beac);
+            beac.GlobalPosition = new Vector3(0f, 2.5f, 0f);   // ON THE GROUND: the beacon is about the ROTOR, and a rig parked at 60 m just falls while thrust is gated during start-up
+            beac.EngineOn = true;
+            var lamp = beac.FindChild("BeaconBelly", false, false) as MeshInstance3D;
+            T.Check("the huey has a belly anti-collision beacon", lamp != null);
+            for (int i = 0; i < 460; i++) { beac.DriveHeli(1f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
+            bool sawLit = false, sawDark = false; float peakE = 0f;
+            for (int i = 0; i < 120 && !(sawLit && sawDark); i++)
+            {
+                beac.DriveHeli(1f, 0f, 0f, 0f, 0.02);
+                yield return Ticks(1);
+                float e = ((StandardMaterial3D)lamp.MaterialOverride).EmissionEnergyMultiplier;
+                peakE = Mathf.Max(peakE, e);
+                if (e > 1f) sawLit = true; else sawDark = true;
+            }
+            T.Check($"...and it FLASHES: seen both lit and dark inside one 2.4 s window with the rotor turning (peak emission {peakE:0.##}, spool {beac.RotorSpool:0.###})",
+                sawLit && sawDark);
+            // The rotor is the gate, not the ignition switch -- and a beacon that ignores its gate is a beacon
+            // that never turns off, which no other check here would notice.
+            var idleHeli = Vehicle.BuildByName("huey");
+            World.AddChild(idleHeli);
+            idleHeli.GlobalPosition = new Vector3(60f, 3f, 0f);
+            var idleLamp = idleHeli.FindChild("BeaconBelly", false, false) as MeshInstance3D;
+            bool everLit = false;
+            for (int i = 0; i < 120; i++)
+            {
+                yield return Ticks(1);
+                if (((StandardMaterial3D)idleLamp.MaterialOverride).EmissionEnergyMultiplier > 1f) everLit = true;
+            }
+            T.Check("...and stays DARK on a machine whose rotor never spun", !everLit);
+            beac.QueueFree(); idleHeli.QueueFree();
+            yield return Ticks(1);
+
+            // ---- THE START-UP GATE: no thrust until the ignition clip has stopped being a start-up.
+            //
+            // This is the ONLY rig that flies the gate. Every other heli suite sets DebugInstantStart, because a
+            // check about roll authority that also has to sit through six seconds of ignition is a check that
+            // silently breaks whenever the start-up constant moves -- which is exactly what happened when the
+            // gate first went in and 18 unrelated checks went red.
+            //
+            // Asserted as a BEFORE and an AFTER on one machine. "It eventually climbs" passes on a heli with no
+            // gate at all, so the load-bearing half is that it is still on the ground PART WAY THROUGH.
+            var gate = Vehicle.BuildByName("huey");
+            World.AddChild(gate);
+            gate.GlobalPosition = new Vector3(120f, 2.5f, 0f);
+            gate.DebugNoTurbulence = true;
+            gate.EngineOn = true;
+            float gy = gate.GlobalPosition.Y;
+            for (int i = 0; i < 200; i++) { gate.DriveHeli(1f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
+            T.Check($"4 s in, full collective, the rotor is turning but the machine has NOT lifted ({gate.GlobalPosition.Y - gy:+0.##;-0.##;0} m, spool {gate.RotorSpool:0.##})",
+                gate.GlobalPosition.Y < gy + 0.30f && gate.RotorSpool > 0.4f);
+            for (int i = 0; i < 500; i++) { gate.DriveHeli(1f, 0f, 0f, 0f, 0.02); yield return Ticks(1); }
+            T.Check($"...and once the start-up has faded it flies normally ({gate.GlobalPosition.Y - gy:+0.##;-0.##;0} m at 14 s)",
+                gate.GlobalPosition.Y > gy + 3f);
+            gate.QueueFree();
+            yield return Ticks(1);
+
+            // ---- A BIG HELICOPTER SOUNDS LOW AND A SMALL ONE SOUNDS HIGH (strawberry: "big hind low pitch,
+            // mini higher pitched"). Asserted as an ORDERING across the fleet rather than as magnitudes: the
+            // absolute values are taste and will get retuned, but "the Skycrane is never higher-pitched than
+            // the minicopter" is the actual claim and it survives any retune that keeps the rule.
+            //
+            // The START-UP is checked alongside the loop because it was the half that was missing -- the engine
+            // already scaled with size while every airframe's ignition played at the same pitch, so a Skycrane
+            // thudded at idle and then started up sounding like a Huey.
+            var pitches = new System.Collections.Generic.Dictionary<string, (float eng, float ign)>();
+            foreach (var n in new[] { "minicopter", "scoutcopter", "hummingbird", "huey", "orca", "hind", "skycrane" })
+            {
+                var pv = Vehicle.BuildByName(n);
+                World.AddChild(pv);
+                yield return Ticks(1);
+                pitches[n] = (pv.DebugEnginePitch, pv.DebugIgnitionPitch);
+                T.Check($"{n}: its start-up clip is pitched at all ({pv.DebugIgnitionPitch:0.###})", pv.DebugIgnitionPitch > 0.01f);
+                pv.QueueFree();
+                yield return Ticks(1);
+            }
+            T.Check($"the minicopter is higher-pitched than the Huey ({pitches["minicopter"].eng:0.##} vs {pitches["huey"].eng:0.##})",
+                pitches["minicopter"].eng > pitches["huey"].eng);
+            T.Check($"...and the Hind is LOWER than the Huey ({pitches["hind"].eng:0.##})",
+                pitches["hind"].eng < pitches["huey"].eng);
+            T.Check($"...and the Skycrane, the heaviest airframe, is the lowest of the fleet ({pitches["skycrane"].eng:0.##})",
+                pitches["skycrane"].eng <= pitches["hind"].eng && pitches["skycrane"].eng < pitches["orca"].eng);
+            // The two clips must agree with each other, or one aircraft has two voices.
+            T.Check($"the START-UP scales the same way the engine does (mini {pitches["minicopter"].ign:0.##} > hind {pitches["hind"].ign:0.##} > skycrane {pitches["skycrane"].ign:0.##})",
+                pitches["minicopter"].ign > pitches["hind"].ign && pitches["hind"].ign > pitches["skycrane"].ign);
         }
     }
 }

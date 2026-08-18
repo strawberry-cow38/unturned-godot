@@ -4499,6 +4499,25 @@ namespace UnturnedGodot
         public override void _Ready()
         {
             AddToGroup("players");     // so vehicle explosions (+ future area effects) can find nearby players
+            // AN NPC HIND'S ROUNDS GO THROUGH THE REAL BULLET SYSTEM. NpcHeli raises a delegate rather than
+            // calling in directly, so the AI does not have to know how a shot is drawn or resolved -- it gets
+            // tracers, surface impacts, falloff and player damage for free, and stays testable without a
+            // renderer. Wired here because this is where the bullet pool actually lives.
+            NpcHeli.NpcShot = (origin, dir, gunId) =>
+            {
+                var g = TurretGunDef(gunId);
+                float dmg = g?.PlayerDamage ?? 30f;
+                float veh = g?.VehicleDamage ?? 40f;
+                float obj = g?.ObjectDamage ?? 20f;
+                float vel = g?.MuzzleVelocity ?? 120f;
+                int steps = g != null ? Mathf.Max(1, (int)(g.Range / 2f)) : 125;
+                // srcGun AND npc: BOTH have to be passed. Adding the parameters and leaving the call unchanged is
+                // how the first attempt at this shipped completely inert -- the mechanism existed, nothing used it,
+                // and the suite was green because it hooks this delegate with its own counter and never reaches
+                // the real wiring at all.
+                SpawnBullet(origin, dir * vel, steps, 0f, dmg, veh, obj, dmg, srcGun: g, npc: true);
+                NpcTurretFx(origin, dir, gunId);
+            };
             CollisionLayer = 1 << 3;   // player bit
             CollisionMask = (1 << 0) | (1 << 6);    // walk on ground (bit 0) + collide with transparent props on bit 6 (see-through to the item LOS raycast but still solid for the player -- master)
 
@@ -5264,7 +5283,8 @@ namespace UnturnedGodot
         // event (single fx authority -- otherwise the shooter would render both its local impact AND the echo)
         // and the hitmarker moves to HitConfirmed so it only ever tells the truth. Never set in SP.
         const float TracerBaseW = 0.065f;   // 5.56's tracer half-width; every other cartridge is this times GunDef.TracerScale
-        sealed class Bullet { public Vector3 Pos, Vel, Origin; public int StepsLeft; public float Gravity, Damage, VehicleDamage, ObjectDamage, PlayerDamage;
+        sealed class Bullet { public bool Npc;   // fired by an AI, NOT by the local player: no viewmodel anchor, no hitmarker
+            public Vector3 Pos, Vel, Origin; public int StepsLeft; public float Gravity, Damage, VehicleDamage, ObjectDamage, PlayerDamage;
             public float FalloffStart, FalloffEnd, FalloffMin = 1f;
             /// <summary>Damage multiplier for THIS bullet at an impact point, from distance actually flown.</summary>
             public float FalloffAt(Vector3 impact)
@@ -5305,6 +5325,66 @@ namespace UnturnedGodot
             return true;
         }
 
+        static ImageTexture _npcFlashTex; static bool _npcFlashTexTried;
+        static readonly System.Collections.Generic.Dictionary<string, AudioStream> _npcShotSnd = new();
+
+        /// <summary>Report and muzzle flash for an NPC turret shot (strawberry: "turn up the volume and travel of
+        /// the gunshot sounds from helis, adding the muzzle flashes we already have on guns, scaling them up
+        /// quite a bit").
+        ///
+        /// SCALE IS THE WHOLE POINT HERE. The positional one-shots elsewhere in this file run UnitSize 5-8 and
+        /// MaxDistance 45-70, which is right for a door closing and completely wrong for a belt-fed gun on an
+        /// aircraft: a helicopter shooting at you is heard across a valley, and by the time it is close enough
+        /// to be audible on those numbers it is already on top of you. Likewise the 1P/3P muzzle flash is a
+        /// 0.55 m quad seen from arm's length -- at the range you watch a gunship from, that is invisible.
+        ///
+        /// Sounds and the flash texture are cached: a burst is seven to twenty two rounds and neither a
+        /// per-shot file read nor a per-shot PNG decode is acceptable at that rate.</summary>
+        void NpcTurretFx(Vector3 origin, Vector3 dir, string gunId)
+        {
+            // ---- REPORT. The HMG ships no loose audio (retail keeps it in the bundle), so it falls back the way
+            // the viewmodel does -- but to the Nykorev rather than the Eaglefire, since a .50 belt gun should not
+            // crack like an assault rifle.
+            if (!_npcShotSnd.TryGetValue(gunId ?? "", out var snd))
+            {
+                snd = NpcLoadOgg($"res://content/{gunId}_shoot.ogg") ?? NpcLoadOgg("res://content/nykorev_shoot.ogg");
+                _npcShotSnd[gunId ?? ""] = snd;
+            }
+            var host = GetParent();
+            if (snd != null && host != null)
+            {
+                var ap = new AudioStreamPlayer3D { Stream = snd, UnitSize = 34f, MaxDistance = 650f, VolumeDb = 9f };
+                host.AddChild(ap);
+                ap.GlobalPosition = origin;   // world position is only meaningful once it is in the tree
+                ap.Play();
+                ap.Finished += ap.QueueFree;
+            }
+
+            // ---- FLASH. Same Muzzle_0 star the held guns use, on the same shader, scaled well up.
+            if (!_npcFlashTexTried)
+            {
+                _npcFlashTexTried = true;
+                string fp = ProjectSettings.GlobalizePath("res://content/muzzleflash.png");
+                if (System.IO.File.Exists(fp)) { var im = Image.LoadFromFile(fp); if (im != null) _npcFlashTex = ImageTexture.CreateFromImage(im); }
+            }
+            if (host == null) return;
+            var mat = new ShaderMaterial { Shader = GD.Load<Shader>("res://content/muzzleflash.gdshader") };
+            if (_npcFlashTex != null) mat.SetShaderParameter("tex", _npcFlashTex);
+            mat.SetShaderParameter("roll", GD.Randf() * 6.28318f);   // the star spins per shot, as the 1P one does
+            var flash = new Node3D { Name = "NpcMuzzleFlash" };
+            flash.AddChild(new MeshInstance3D { Mesh = new QuadMesh { Size = new Vector2(2.6f, 2.6f) }, MaterialOverride = mat });
+            flash.AddChild(new OmniLight3D { OmniRange = 18f, LightColor = new Color(0.941f, 0.756f, 0.152f), LightEnergy = 7f, ShadowEnabled = false });
+            host.AddChild(flash);
+            flash.GlobalPosition = origin + dir.Normalized() * 0.35f;   // just off the muzzle, not inside the barrel
+            GetTree().CreateTimer(0.05).Timeout += () => { if (IsInstanceValid(flash)) flash.QueueFree(); };
+        }
+
+        static AudioStream NpcLoadOgg(string res)
+        {
+            string p = ProjectSettings.GlobalizePath(res);
+            return System.IO.File.Exists(p) ? AudioStreamOggVorbis.LoadFromFile(p) : null;
+        }
+
         static readonly System.Collections.Generic.Dictionary<string, GunDef> _turretGuns = new();
         /// <summary>The mount's gun, loaded once per id and cached. A turret firing every frame must not re-parse
         /// a .dat every shot.</summary>
@@ -5319,25 +5399,46 @@ namespace UnturnedGodot
             return g;
         }
 
-        void SpawnBullet(Vector3 pos, Vector3 vel, int steps, float gravity, float damage, float vehicleDamage, float objectDamage, float playerDamage = 0f)
+        /// <summary>`srcGun` is the gun that actually FIRED this round. It defaults to the player's held weapon,
+        /// which is right for every player shot and wrong for every other kind: an NPC turret's rounds were taking
+        /// their falloff, blast and tracer width from whatever the player happened to be carrying. `npc` marks the
+        /// round as somebody else's, which suppresses the viewmodel muzzle anchor and the hitmarker -- both of
+        /// those say "YOU hit that", and strawberry saw exactly that: "the tracers come from my gun's muzzle
+        /// point. the damage counts as coming from ME, as i get hitmarkers for what the heli hit."</summary>
+        // "the damage counts as coming from ME, as i get hitmarkers for what the heli hit" -- a hitmarker is a
+        // first-person claim of authorship, so it is gated on the round being the local player's.
+        void Hitmark(Bullet b, bool head) { if (!b.Npc) HitmarkerHUD.Instance?.Show(head); }
+        void HitmarkCircle(Bullet b) { if (!b.Npc) HitmarkerHUD.Instance?.ShowCircle(); }
+
+        void SpawnBullet(Vector3 pos, Vector3 vel, int steps, float gravity, float damage, float vehicleDamage, float objectDamage, float playerDamage = 0f, GunDef srcGun = null, bool npc = false)
         {
-            var b = new Bullet { Pos = pos, Origin = pos, Vel = vel, StepsLeft = Mathf.Max(1, steps), Gravity = gravity, Damage = damage, VehicleDamage = vehicleDamage, ObjectDamage = objectDamage, PlayerDamage = playerDamage,
-                                 FalloffStart = Gun?.FalloffStart ?? 0f, FalloffEnd = Gun?.FalloffEnd ?? 0f, FalloffMin = Gun?.FalloffMin ?? 1f, Cosmetic = NetFire != null, Tracer = Suppressed ? null : MakeTracer(),   // a suppressed shot draws no streak; every tracer use site is already null-guarded
-                                 TracerW = TracerBaseW * GunDef.TracerScale(Gun?.CaliberName),   // .22 thin, .50 BMG fat; buckshot deliberately tiny (each pellet is its own bullet, so a shot draws 8 of these)
-                                 BlastRadius = Gun?.BlastRadius ?? 0f, BlastZombieDamage = Gun?.BlastZombieDamage ?? 0f,
-                                 BlastPlayerDamage = Gun?.BlastPlayerDamage ?? 0f, BlastVehicleDamage = Gun?.BlastVehicleDamage ?? 0f };
+            var g = srcGun ?? Gun;
+            var b = new Bullet { Npc = npc, Pos = pos, Origin = pos, Vel = vel, StepsLeft = Mathf.Max(1, steps), Gravity = gravity, Damage = damage, VehicleDamage = vehicleDamage, ObjectDamage = objectDamage, PlayerDamage = playerDamage,
+                                 FalloffStart = g?.FalloffStart ?? 0f, FalloffEnd = g?.FalloffEnd ?? 0f, FalloffMin = g?.FalloffMin ?? 1f, Cosmetic = NetFire != null && !npc, Tracer = (Suppressed && !npc) ? null : MakeTracer(),   // a suppressed shot draws no streak; every tracer use site is already null-guarded
+                                 TracerW = TracerBaseW * GunDef.TracerScale(g?.CaliberName),   // .22 thin, .50 BMG fat; buckshot deliberately tiny (each pellet is its own bullet, so a shot draws 8 of these)
+                                 BlastRadius = g?.BlastRadius ?? 0f, BlastZombieDamage = g?.BlastZombieDamage ?? 0f,
+                                 BlastPlayerDamage = g?.BlastPlayerDamage ?? 0f, BlastVehicleDamage = g?.BlastVehicleDamage ?? 0f };
             // LOCAL first-person only: anchor the tracer's near end at the VIEWMODEL MUZZLE (screen-bridged to the world
             // via the viewmodel cam -> world cam), so it looks like it leaves the barrel; it then BENDS onto the real
             // trajectory (which fires from the EYE). Remote/3p bullets have no on-screen viewmodel muzzle, so they keep
             // the straight-from-origin streak (HasAnchor stays false; a point behind the cam fails the guard).
-            if (!NetAvatar && !_fp && _body != null && _body.MuzzleWorld is Vector3 _bmz)   // 3P: anchor the tracer at the 3P gun's OWN muzzle (position); it still flies to the converged aim, so it tracks the bullet
+            if (npc) { }   // somebody else's gun: straight-from-origin streak, never the player's muzzle
+            else if (!NetAvatar && !_fp && _body != null && _body.MuzzleWorld is Vector3 _bmz)   // 3P: anchor the tracer at the 3P gun's OWN muzzle (position); it still flies to the converged aim, so it tracks the bullet
             { b.MuzzleAnchor = _bmz; b.HasAnchor = true; }
             else if (!NetAvatar && _viewmodel != null && _cam != null && _viewmodel.TryMuzzleScreenPos(out var _mpx))
             { b.MuzzleAnchor = _cam.ProjectPosition(_mpx, 1.5f); b.HasAnchor = true; }   // a bit down the barrel line: the muzzle reference for the tracer's teardrop axis
             if (b.Tracer != null) { GetTree().CurrentScene?.AddChild(b.Tracer); UpdateTracer(b); }
-            if (Gun?.Action == "Rocket") b.RocketVis = SpawnRocketVis(pos);   // launcher: the rocket is a VISIBLE flying projectile, not an invisible bullet
+            if (g?.Action == "Rocket") b.RocketVis = SpawnRocketVis(pos);   // launcher: the rocket is a VISIBLE flying projectile, not an invisible bullet
             _bullets.Add(b);
         }
+
+        /// <summary>Test seam: is the newest bullet in flight flagged as somebody else's? The ONLY way to check
+        /// that the NPC path is wired end to end -- a test that calls NpcHeli.NpcShot with its own stub proves the
+        /// AI pulls the trigger and nothing whatsoever about what the trigger is connected to.</summary>
+        public bool DebugNewestBulletIsNpc => _bullets.Count > 0 && _bullets[^1].Npc;
+        /// <summary>Test seam: the newest bullet's falloff start, which comes from the FIRING gun. If the NPC
+        /// path is not passing srcGun this reads back the player's held weapon instead.</summary>
+        public float DebugNewestBulletFalloff => _bullets.Count > 0 ? _bullets[^1].FalloffStart : -1f;
 
         /// <summary>Test seam: put a real bullet in flight. Deliberately only FIRES -- StepBullets still
         /// does the raycast and decides what was hit and for how much, so a test using this exercises the
@@ -5420,7 +5521,7 @@ namespace UnturnedGodot
                     {
                         SpawnFleshImpact(zPoint, b.Vel.Normalized());
                         if (zKilled) Kills++;
-                        HitmarkerHUD.Instance?.Show(zHead);
+                        Hitmark(b, zHead);
                         // A WARHEAD STILL DETONATES HERE. This branch exits before the collider block below, where
                         // the blast used to live exclusively -- so under --newzombies a direct rocket hit on a
                         // zombie dealt its direct damage and did not explode at all, while the same rocket hitting
@@ -5437,12 +5538,12 @@ namespace UnturnedGodot
                     Vector3 point = hit["position"].AsVector3();
                     Vector3 hdir = b.Vel.Normalized();
                     var collider = hit["collider"].As<GodotObject>();
-                    if (collider is ZombieController z) { bool head = z.IsHeadshot(point); SpawnFleshImpact(point, hdir); bool wd = z.Dead; z.DamageHitLimb(b.Damage * b.FalloffAt(point), point, hdir); if (!wd && z.Dead) Kills++; HitmarkerHUD.Instance?.Show(head); }   // hitmarker: white body / red headshot (source EPlayerHit)
+                    if (collider is ZombieController z) { bool head = z.IsHeadshot(point); SpawnFleshImpact(point, hdir); bool wd = z.Dead; z.DamageHitLimb(b.Damage * b.FalloffAt(point), point, hdir); if (!wd && z.Dead) Kills++; Hitmark(b, head); }   // hitmarker: white body / red headshot (source EPlayerHit)
                     else if (collider is TargetDummy dummy)
                     {   // playground target: PLAYER damage through the humanoid zones, floating number, hitmarker
                         float dealt = dummy.TakeHit(b.PlayerDamage * b.FalloffAt(point), point);
                         SpawnFleshImpact(point, hdir);
-                        HitmarkerHUD.Instance?.Show(dummy.LastZone == TargetDummy.HitZone.Head);
+                        Hitmark(b, dummy.LastZone == TargetDummy.HitZone.Head);
                     }
                     else if (collider is PhysicalBone3D pb) { SpawnFleshImpact(point, hdir); pb.ApplyImpulse(hdir * 7f, point - pb.GlobalPosition); }
                     else if (collider is Vehicle veh)
@@ -5455,12 +5556,18 @@ namespace UnturnedGodot
                         if (part == Vehicle.HeliPart.MainRotor) veh.DamageMainRotor(b.VehicleDamage);
                         else if (part == Vehicle.HeliPart.TailRotor) veh.DamageTailRotor(b.VehicleDamage);
                         else veh.TakeDamage(b.VehicleDamage);
-                        SpawnSurfaceImpact(point, hit["normal"].AsVector3(), Surf.Metal, veh); HitmarkerHUD.Instance?.ShowCircle();   // source Vehicle_Damage (35) + metal sparks, hole follows the car; circle hitmarker (master)
+                        // WHERE THE SHOT CAME FROM, not where it landed (strawberry: "it will track the position
+                        // that you shot it from"). b.Origin is the muzzle this round actually left, which is the
+                        // answer to "where were you standing" -- the impact point is on the aircraft itself and
+                        // would have it turning to face its own hull. Recorded on ANY hit including the rotors,
+                        // because shooting the tail off is still being shot at.
+                        veh.NoteAttackedFrom(b.Origin);
+                        SpawnSurfaceImpact(point, hit["normal"].AsVector3(), Surf.Metal, veh); HitmarkCircle(b);   // source Vehicle_Damage (35) + metal sparks, hole follows the car; circle hitmarker (master)
                     }
-                    else if (collider is Deployable dep && !dep.IsWreck) { dep.TakeDamage(b.VehicleDamage); SpawnSurfaceImpact(point, hit["normal"].AsVector3(), Surf.Metal); HitmarkerHUD.Instance?.ShowCircle(); }   // gunfire damages a placed generator (metal sparks) -- Vehicle_Damage; circle hitmarker
-                    else if (collider is Door bdoor) { bdoor.TakeDamage(b.VehicleDamage); SpawnSurfaceImpact(point, hit["normal"].AsVector3(), Surf.Wood); HitmarkerHUD.Instance?.ShowCircle(); }   // you can shoot a door open the hard way; circle hitmarker
-                    else if (collider is Bed bbed) { bbed.TakeDamage(b.VehicleDamage); SpawnSurfaceImpact(point, hit["normal"].AsVector3(), Surf.Wood); HitmarkerHUD.Instance?.ShowCircle(); }   // circle hitmarker
-                    else if (collider is GlassPane gpane) { gpane.TakeDamage(b.ObjectDamage); HitmarkerHUD.Instance?.ShowCircle(); }   // glass pane -> shatter; the pane's own Glass_0 shards ARE the impact (no surface burst)
+                    else if (collider is Deployable dep && !dep.IsWreck) { dep.TakeDamage(b.VehicleDamage); SpawnSurfaceImpact(point, hit["normal"].AsVector3(), Surf.Metal); HitmarkCircle(b); }   // gunfire damages a placed generator (metal sparks) -- Vehicle_Damage; circle hitmarker
+                    else if (collider is Door bdoor) { bdoor.TakeDamage(b.VehicleDamage); SpawnSurfaceImpact(point, hit["normal"].AsVector3(), Surf.Wood); HitmarkCircle(b); }   // you can shoot a door open the hard way; circle hitmarker
+                    else if (collider is Bed bbed) { bbed.TakeDamage(b.VehicleDamage); SpawnSurfaceImpact(point, hit["normal"].AsVector3(), Surf.Wood); HitmarkCircle(b); }   // circle hitmarker
+                    else if (collider is GlassPane gpane) { gpane.TakeDamage(b.ObjectDamage); HitmarkCircle(b); }   // glass pane -> shatter; the pane's own Glass_0 shards ARE the impact (no surface burst)
                     else   // world/prop/terrain -> material impact; terrain samples its splatmap PER-POINT (sand/road/dirt/grass) for the real ground material
                     {
                         Surf sf = Surf.Concrete;
@@ -6295,6 +6402,12 @@ namespace UnturnedGodot
                     if (arrowP != 0f) _heliStickP = Mathf.MoveToward(_heliStickP, arrowP, ArrowStickRate * delta);
                     if (arrowR != 0f) _heliStickR = Mathf.MoveToward(_heliStickR, arrowR, ArrowStickRate * delta);
                 }
+                // SHIFT = the sky-crane's electromagnet (strawberry 2026-08-17). Free in the cockpit -- Shift is
+                // sprint on foot, which has no meaning while flying. Edge-triggered: it TOGGLES, so a held key does
+                // not chatter the coil on and off every frame, and de-energising is how you set the load down.
+                bool magNow = !UiInputBlocked && Input.IsPhysicalKeyPressed(Key.Shift);
+                if (magNow && !_slingShiftPrev) _driving.ToggleSlingMagnet();
+                _slingShiftPrev = magNow;
                 float sp = _heliStickP, sr = _heliStickR;
                 float fp = Mathf.Max(0f, Mathf.Abs(sp) - HeliStickCrossDeadzone * Mathf.Abs(sr)) * Mathf.Sign(sp);
                 float fr = Mathf.Max(0f, Mathf.Abs(sr) - HeliStickCrossDeadzone * Mathf.Abs(sp)) * Mathf.Sign(sr);
@@ -6315,6 +6428,8 @@ namespace UnturnedGodot
             LastHandbrakeInput = handbrake;
             GlobalPosition = _driving.GlobalPosition;   // ride along so exit + FP cam land at the vehicle (the cam is positioned in _Process from the vehicle's INTERPOLATED transform)
         }
+
+        bool _slingShiftPrev;   // Shift edge for the sky-crane magnet toggle (see the heli branch above)
 
         void PositionDriveCam(Transform3D vt)   // SP driving: the cam math below, fed by the driven Vehicle's eye + size
         {

@@ -198,7 +198,12 @@ with no intent at all, which are reverted on **both** server-backed paths.
     `(id, defId, owner, pos, yaw, tick)` and no condition. Free repair and free refuel, repeatable.
 18. ⬜ **Detaching an attachment is client-local**, which also makes attachment *swap* unreachable on
     any server-backed seam.
-19. ⬜ **Four of the five magazine/ammo grid paths never reach the server** — only `DoMagSwap` was fixed
+19. ✅ **Four of the five magazine/ammo grid paths never reach the server** *(verified 3 of the 4
+    directly — `LoadMagInstance` does `pg.removeItem` + `tryAddItem`, `RemoveMagazine` and `RackGun`
+    each do a bare `tryAddItem`, and NONE of the three contains a `Net*` call or an
+    `InventoryIsServerOwned` branch. `ConsumeShells` I did not re-derive; the agent cites its in-place
+    `amount -=` at :3870. So `DoMagSwap` got yesterday's `NetReloadSwap` intent and its siblings were
+    left behind — the fix was narrower than the bug.)* — only `DoMagSwap` was fixed
     yesterday; `ConsumeShells`, `LoadMagInstance`, `RemoveMagazine` and `RackGun` are the same shape.
 20. ⬜ **The Nearby/ground-pickup page is dead on both server-backed seams**, for two different reasons —
     `TryDrag` rejects `page0 >= PAGES-1` (which is the AREA page), and on a joined client the page is

@@ -87,13 +87,14 @@ namespace UnturnedGodot
                 DisplayServer.WindowSetVsyncMode(DisplayServer.VSyncMode.Disabled);
                 GD.Print($"[display] vsync -> {DisplayServer.WindowGetVsyncMode()}");
             }
-            string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null, drivetest = null, proptest = null, animrig = null, rottest = null, itemtest = null, navShot = null, croptest = null, menuShot = null, clothtest = null, boattest = null, ammoRadial = null;
+            string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null, drivetest = null, proptest = null, magnettest = null, animrig = null, rottest = null, itemtest = null, navShot = null, croptest = null, menuShot = null, clothtest = null, boattest = null, slingtest = null, ammoRadial = null;
             bool zperf = false;
             bool zbody = false;
             bool deployTest = false, barricadeTest = false, barricadePlay = false;
             bool wearcloth = false;
             bool skillsui = false;
             bool fluidTest = false;
+            bool tailCheck = false; string tailShot = null; string bellyShot = null;
             bool doorTest = false;
             string doorTestName = null;
             bool containerTest = false; string containerTestName = null;
@@ -116,7 +117,12 @@ namespace UnturnedGodot
                 else if (arg.StartsWith("--containertest=")) { containerTest = true; containerTestName = arg["--containertest=".Length..]; }
                 else if (arg == "--zombietest") zombieTest = true;   // OFFLINE verify: sync world -> bucket Animals.dat into pockets -> check planned spawns land ON the baked navmesh
                 else if (arg == "--zdirtest") zdirTest = true;       // OFFLINE verify: boot the REWRITE on PEI -> do rows tier, query paths and actually MOVE? (implies --newzombies)
-                else if (arg.StartsWith("--proptest=")) { proptest = arg["--proptest=".Length..]; _shotRequested = proptest; }   // spawn ONE named prop at identity + RGB axes -> diagnose mirror/orientation/material
+                else if (arg.StartsWith("--proptest=")) { proptest = arg["--proptest=".Length..]; _shotRequested = proptest; }
+                else if (arg.StartsWith("--slingtest=")) { slingtest = arg["--slingtest=".Length..]; _shotRequested = slingtest; }
+                else if (arg.StartsWith("--magnettest=")) { magnettest = arg["--magnettest=".Length..]; _shotRequested = magnettest; }
+                else if (arg == "--tailcheck") tailCheck = true;
+                else if (arg.StartsWith("--bellyshot=")) { bellyShot = arg["--bellyshot=".Length..]; _shotRequested = bellyShot; }
+                else if (arg.StartsWith("--tailshot=")) { tailShot = arg["--tailshot=".Length..]; _shotRequested = tailShot; }   // NAME:OUT -- close-up of one heli's tail from behind   // audit every heli: which side is the tail-rotor POST on, vs where the spec puts the hub   // sky-crane winch + electromagnet: dangle, energise, bite a load, lift it   // skycrane + shipping container: in-the-bay vs slung-beneath, side by side   // spawn ONE named prop at identity + RGB axes -> diagnose mirror/orientation/material
                 else if (arg.StartsWith("--croptest=")) croptest = arg["--croptest=".Length..];   // spawn a farm crop (young + grown) on a ground plane -> validate mesh/tex/orientation (UG_CROPROT tunes rot)
                 else if (arg == "--zperf") zperf = true;   // GPU perf probe: N zombies, render counters ON vs OFF (MUST run with a rendering driver, not --headless)
                 else if (arg == "--zbody") zbody = true;   // MECHANISM probe: N bare kinematic capsules, moving vs parked -> is the physics cost the BODIES?
@@ -366,6 +372,41 @@ namespace UnturnedGodot
                 return;
             }
 
+            if (bellyShot != null)   // look UP at the underside: the belly beacon's AABB has been right and its picture wrong three times
+            {
+                GetWindow().Size = new Vector2I(1100, 800);
+                var bbits = bellyShot.Split(':');
+                _shotPath = bbits.Length > 1 ? bbits[1] : bellyShot;
+                BuildBellyShot(bbits[0]);
+                return;
+            }
+            if (tailShot != null)   // eyeball ONE tail: the scan says which side has reach, this says what it IS
+            {
+                GetWindow().Size = new Vector2I(1100, 800);
+                var bits = tailShot.Split(':');
+                _shotPath = bits.Length > 1 ? bits[1] : tailShot;
+                BuildTailShot(bits[0]);
+                return;
+            }
+            if (tailCheck)   // audit the whole fleet's tail-rotor mounting side against the mesh
+            {
+                BuildTailCheck();
+                return;
+            }
+            if (magnettest != null)   // sky-crane electromagnet: does the cable dangle, bite a load and actually lift it?
+            {
+                GetWindow().Size = new Vector2I(1600, 900);
+                _shotPath = shot ?? magnettest;
+                BuildMagnetTest();
+                return;
+            }
+            if (slingtest != null)   // diagnostic: can a shipping container ride in the skycrane, or does it have to hang?
+            {
+                GetWindow().Size = new Vector2I(1600, 900);
+                _shotPath = shot;
+                BuildSlingTest();
+                return;
+            }
             if (proptest != null)   // diagnostic: one prop at identity + RGB axis refs (X=red,Y=green,Z=blue) + 3/4 cam
             {
                 GetWindow().Size = new Vector2I(900, 900);
@@ -1490,7 +1531,11 @@ namespace UnturnedGodot
             else
             {
                 if (!_noZombies) AddChild(new HordeSpawner { Target = player, MaxAlive = int.TryParse(System.Environment.GetEnvironmentVariable("UG_HORDE"), out var _h) ? _h : 8 });   // UG_HORDE overrides the horde size (perf repro)
+                var freezeMode = new FreezeMode();   // ESC -> Freeze Mode: paused sim + freecam + single-tick stepping
+                AddChild(freezeMode);
                 var pause = new PauseMenu();   // ESC -> pause menu (freezes the sim)
+                pause.Freeze = freezeMode;
+                pause.WorldRoot = this;
                 AddChild(pause);
                 player.PauseMenu = pause;
                 AddChild(new Profiler());   // console `profiler` -> perf overlay (fps/frame/worst-frame/timings/draw-calls/mem) for stutter diagnosis (master)
@@ -1674,6 +1719,593 @@ namespace UnturnedGodot
 
         // --proptest=NAME diagnostic: one prop at identity with RGB axis refs (X=red +right, Y=green +up, Z=blue +back)
         // so I can read its orientation/chirality up close and spot a mirror vs the real game.
+        /// <summary>CAN A SHIPPING CONTAINER RIDE IN THE SKYCRANE? Two aircraft side by side, same container:
+        /// left has it sat in the leg bay, right has it slung underneath on a line.
+        ///
+        /// Built because the numbers alone ("6.88 m of bay against a 7.50 m box") are the sort of answer that
+        /// is easy to nod at and hard to picture. The left-hand aircraft shows the overhang at the scale it
+        /// actually happens; the right-hand one shows what the alternative looks like in the air.</summary>
+        void BuildSlingTest()
+        {
+            var env = new Godot.Environment
+            {
+                BackgroundMode = Godot.Environment.BGMode.Color, BackgroundColor = new Color(0.46f, 0.58f, 0.72f),
+                AmbientLightSource = Godot.Environment.AmbientSource.Color,
+                AmbientLightColor = new Color(0.72f, 0.74f, 0.78f), AmbientLightEnergy = 1.0f,
+            };
+            AddChild(new WorldEnvironment { Environment = env });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-48f, -38f, 0f), LightEnergy = 1.25f, ShadowEnabled = true });
+            var ground = new StaticBody3D { CollisionLayer = 1 << 0 };
+            ground.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
+            AddChild(ground);
+            AddChild(new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(400f, 400f) }, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.36f, 0.42f, 0.30f), Roughness = 1f } });
+
+            string dir = ProjectSettings.GlobalizePath("res://content/objects/");
+            var cmesh = ObjMesh.Load(dir + "Container_0.obj");
+            var cmat = new StandardMaterial3D { Roughness = 0.85f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+            var cimg = new Image();
+            if (cimg.Load(dir + "Container_0_tex.png") == Error.Ok) { cimg.GenerateMipmaps(); cmat.AlbedoTexture = ImageTexture.CreateFromImage(cimg); }
+            var cab = cmesh.GetAabb();
+            float cW = cab.Size.X, cH = cab.Size.Z, cL = cab.Size.Y;   // Z-up prop: mesh Z is height, mesh Y is length
+
+            // The skycrane's own numbers, measured off skycrane_body.txt rather than eyeballed:
+            const float LegBottom = -0.63f, LegZFrom = -4.15f, LegZTo = 2.73f, CockpitRearZ = -1.0f;
+            // LOCAL to the heli, not world: 1.88 is a mesh coordinate off skycrane_body.txt, and the aircraft's
+            // ORIGIN stands 0.63 m up (-LegBottom) so the gear reaches the deck. Using it as a world Y made every
+            // clip/burial figure 0.63 m too pessimistic -- the "1.37 m buried" answer is really 0.73 m. The
+            // [SLING/REAL] vertex scan below re-derives this from the actual mesh; keep them agreeing.
+            const float BellyLocal = 1.88f;   // lowest fuselage over the container footprint (|X|<1.44, Z -0.70..6.80, above the struts)
+            bool touch = System.Environment.GetEnvironmentVariable("UG_SLING_TOUCH") == "1";
+            float yaw = float.TryParse(System.Environment.GetEnvironmentVariable("UG_SLING_YAW"), out var y0) ? y0 : 180f;
+            float gap = float.TryParse(System.Environment.GetEnvironmentVariable("UG_SLING_GAP"), out var g0) ? g0 : 0.30f;
+            // Doors aft (yaw 180), forward face gapped off the back of the cockpit, base on the ground.
+            float frontZ = CockpitRearZ + gap;
+            float centreZ = frontZ + cL * 0.5f;
+            var basis = new Basis(Vector3.Up, Mathf.DegToRad(yaw)) * new Basis(Vector3.Right, Mathf.DegToRad(270f));
+            // UG_SLING_TOUCH=1: drop the container until its TOP meets the underside above it. Note the
+            // limiting surface is the BELLY at 1.88 over this footprint, not the tail boom (2.39) -- so
+            // "touching the bottom of the tail" would leave it intersecting the fuselage further forward.
+            // UG_SLING_RAISE: lift the container off the no-clip height. Above 0 it starts cutting into the
+            // belly, and by exactly this much -- so the knob doubles as the readout for how much clearance
+            // the aircraft would have to gain to carry it at that height.
+            float raise = float.TryParse(System.Environment.GetEnvironmentVariable("UG_SLING_RAISE"), out var r0) ? r0 : 0f;
+            // UG_SLING_FLY: lift the WHOLE assembly -- aircraft and load together -- clear of the deck, so how
+            // far the container hangs below the airframe is visible against the sky instead of buried.
+            float fly = float.TryParse(System.Environment.GetEnvironmentVariable("UG_SLING_FLY"), out var f0) ? f0 : 0f;
+            float heliOriginY = -LegBottom + fly;          // where the aircraft's own origin ends up
+            float deckY = fly, underY = heliOriginY + BellyLocal;   // gear plane, and the belly above it
+            float baseY = (touch ? underY - cH : deckY) + raise;
+            // THE MESH ORIGIN IS THE CONTAINER'S BASE, NOT ITS CENTRE -- mesh Z runs 0.000..3.243, so after the
+            // Z-up->Y-up rotation the origin sits on the floor of the box. Adding cH/2 here (as if it were
+            // centred, which it is in X and Y) lifted the whole thing 1.62 m and put the top at 3.50 against a
+            // 1.88 underside. It looked plausible and the arithmetic downstream was all consistent with it;
+            // strawberry caught it by eye. Place the ORIGIN at the base and let the mesh extend upward.
+            var cinst = new MeshInstance3D { Mesh = cmesh, MaterialOverride = cmat, Transform = new Transform3D(basis, new Vector3(0f, baseY, centreZ)) };
+            AddChild(cinst);
+            // Report RELATIVE to the airframe, not to the world -- UG_SLING_FLY moves the aircraft too, so a
+            // load measured against a deck that slid out from under it stays articulate and answers the wrong question.
+            if (touch) GD.Print($"[SLING] base Y {baseY:0.00}, top {baseY + cH:0.00} vs underside {underY:0.00} -> {(baseY + cH > underY ? $"CLIPS by {baseY + cH - underY:0.00} m" : "clear")}; sits {deckY - baseY:0.00} m below the deck; ground clearance {baseY:0.00} m");
+
+            // UG_SLING_TOUCH=1: raise the aircraft until the container's TOP meets its underside -- strawberry's
+            // "lower the container so its top touches the bottom of the tail", done the way round that keeps the
+            // box on the ground. The limiting surface is measured over the container's own footprint rather than
+            // assumed to be the tail: it is actually the BELLY at Y 1.88 (Z 0..2.5); the boom behind it sits
+            // higher at 2.39, so aiming at the tail would have buried the box in the fuselage.
+            float lift = 0f;   // ghost-gear variant only; the container itself moves by `drop`
+            var heli = Vehicle.BuildByName("skycrane");
+            AddChild(heli);
+            heli.GlobalPosition = new Vector3(0f, heliOriginY + lift, 0f);   // legs on the deck, plus any lift
+            // HOLD IT UP PROPERLY. Freeze alone does not survive: the machine's own idle logic clears it
+            // (Vehicle.cs "else if (!idle && Freeze) Freeze = false"), so the aircraft quietly fell out from under
+            // the load -- 7.63 -> 5.85 in half a second -- while every build-frame number stayed true. At ground
+            // level it just landed where I wanted it and the bug was invisible; only flying it up exposed it.
+            // Disabling the script is what makes the freeze stick, since nothing is left running to undo it.
+            heli.FreezeMode = RigidBody3D.FreezeModeEnum.Static; heli.Freeze = true;
+            heli.GravityScale = 0f; heli.LinearVelocity = Vector3.Zero; heli.AngularVelocity = Vector3.Zero;
+            heli.ProcessMode = Node.ProcessModeEnum.Disabled;
+            if (touch) GD.Print($"[SLING] raised {lift:0.00} m so the container's top meets the underside -> legs {(-LegBottom) + lift:0.00} m tall (were {-LegBottom:0.00})");
+
+            // GROUND TRUTH, read back off the scene rather than off my own intent. Every number above is a
+            // prediction; these two are what actually gathered in the world. A placement that validates against
+            // the value it was told to use cannot detect a frame mix-up, which is exactly what bit this harness.
+            Aabb WorldAabb(Node n)
+            {
+                Aabb? acc = null;
+                void Walk(Node k)
+                {
+                    if (k is MeshInstance3D mi && mi.Mesh != null && mi.Visible)
+                    {
+                        var a = mi.GlobalTransform * mi.Mesh.GetAabb();
+                        acc = acc.HasValue ? acc.Value.Merge(a) : a;
+                    }
+                    foreach (var c in k.GetChildren()) Walk(c);
+                }
+                Walk(n);
+                return acc ?? new Aabb();
+            }
+            var cA = cinst.GlobalTransform * cmesh.GetAabb();
+            var hA = WorldAabb(heli);
+            GD.Print($"[SLING/REAL] container Y {cA.Position.Y:0.00}..{cA.End.Y:0.00}  Z {cA.Position.Z:0.00}..{cA.End.Z:0.00}  X {cA.Position.X:0.00}..{cA.End.X:0.00}");
+            GD.Print($"[SLING/REAL] heli      Y {hA.Position.Y:0.00}..{hA.End.Y:0.00}  Z {hA.Position.Z:0.00}..{hA.End.Z:0.00}  (origin Y {heli.GlobalPosition.Y:0.00})");
+            GD.Print($"[SLING/REAL] container base is {hA.Position.Y - cA.Position.Y:0.00} m below the lowest point of the aircraft (its gear)");
+            // RE-DERIVE the belly from real vertices instead of trusting the number typed at the top. Scan every
+            // heli vertex that lies over the container footprint, drop anything at/below the gear plane, and take
+            // the lowest survivor -- that IS the surface the load would hit.
+            {
+                float gearTop = hA.Position.Y + 0.75f;   // above the skids/struts, so they do not win the minimum
+                float lo = float.MaxValue; string who = "none";
+                void Scan(Node k)
+                {
+                    if (k is MeshInstance3D mi && mi.Mesh != null && mi.Visible)
+                        for (int si = 0; si < mi.Mesh.GetSurfaceCount(); si++)
+                        {
+                            var arr = mi.Mesh.SurfaceGetArrays(si);
+                            if (arr.Count == 0 || arr[(int)Mesh.ArrayType.Vertex].VariantType == Variant.Type.Nil) continue;
+                            foreach (var lv in arr[(int)Mesh.ArrayType.Vertex].AsVector3Array())
+                            {
+                                var w = mi.GlobalTransform * lv;
+                                if (w.X < cA.Position.X || w.X > cA.End.X) continue;
+                                if (w.Z < cA.Position.Z || w.Z > cA.End.Z) continue;
+                                if (w.Y <= gearTop || w.Y >= lo) continue;
+                                lo = w.Y; who = mi.Name;
+                            }
+                        }
+                    foreach (var c in k.GetChildren()) Scan(c);
+                }
+                Scan(heli);
+                // Enumerate EVERY visual node with its own Y range. The union AABB above hides which node owns the
+                // minimum, and a walker that only knows MeshInstance3D is blind to anything drawn another way --
+                // so list node TYPES too, and let the render and the numbers be checked against each other.
+                void List(Node k, string ind)
+                {
+                    string extra = "";
+                    if (k is VisualInstance3D vi)
+                    {
+                        var a = vi.GlobalTransform * vi.GetAabb();
+                        extra = $"  Y {a.Position.Y:0.00}..{a.End.Y:0.00}  vis={vi.Visible}";
+                    }
+                    GD.Print($"[SLING/NODE] {ind}{k.Name} <{k.GetType().Name}>{extra}");
+                    foreach (var c in k.GetChildren()) List(c, ind + "  ");
+                }
+                List(heli, "");
+                // AND AGAIN LATER. Everything above is measured on the BUILD frame, before physics has run once.
+                // The aircraft is a RigidBody3D; if the freeze does not hold it, it falls out of the picture and
+                // every build-frame number stays true while the render shows something else entirely.
+                foreach (double t in new[] { 0.1, 0.5, 1.0 })
+                {
+                    var when = t;
+                    GetTree().CreateTimer(when).Timeout += () =>
+                        GD.Print($"[SLING/LATE {when:0.0}s] heli origin Y {heli.GlobalPosition.Y:0.00} (built at {heliOriginY:0.00}), frozen={heli.Freeze}; container base Y {cinst.GlobalPosition.Y:0.00}");
+                }
+                GD.Print($"[SLING/REAL] belly over the footprint: world Y {lo:0.00} (local {lo - heli.GlobalPosition.Y:0.00}) on \"{who}\"; harness assumed world {underY:0.00}");
+                GD.Print($"[SLING/REAL] container top {cA.End.Y:0.00} -> {(cA.End.Y > lo ? $"CLIPS by {cA.End.Y - lo:0.00} m" : $"clear by {lo - cA.End.Y:0.00} m")}");
+            }
+
+            float overhang = (centreZ + cL * 0.5f) - LegZTo;
+            GD.Print($"[SLING] container W {cW:0.00} H {cH:0.00} L {cL:0.00}; front face Z {frontZ:0.00} (cockpit rear {CockpitRearZ:0.00} + {gap:0.00} gap), rear face Z {centreZ + cL * 0.5f:0.00}");
+            GD.Print($"[SLING] legs span Z {LegZFrom:0.00}..{LegZTo:0.00} -> container overhangs the gear by {overhang:0.00} m aft");
+
+            // UG_SLING_LEGS=1: draw what the gear WOULD have to become to carry it -- extended aft to the
+            // container's rear face. Ghosted rather than modelled, since this is a question, not a change.
+            if (System.Environment.GetEnvironmentVariable("UG_SLING_LEGS") == "1")
+            {
+                float newTo = centreZ + cL * 0.5f + 0.4f, len = newTo - LegZFrom;
+                var gm = new StandardMaterial3D { AlbedoColor = new Color(1f, 0.55f, 0.1f, 0.6f), Transparency = BaseMaterial3D.TransparencyEnum.Alpha };
+                foreach (float sx in new[] { -2.065f, 2.065f })
+                {
+                    AddChild(new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(0.60f, 0.20f, len) }, MaterialOverride = gm, Position = new Vector3(sx, 0.10f, (LegZFrom + newTo) * 0.5f) });   // the longer skid
+                    foreach (float lz in new[] { LegZFrom + 0.8f, newTo - 0.8f })   // the taller struts up to the hull
+                        AddChild(new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(0.34f, -LegBottom + lift, 0.34f) }, MaterialOverride = gm, Position = new Vector3(sx, (-LegBottom + lift) * 0.5f, lz) });
+                }
+                GD.Print($"[SLING] ghost gear: {len:0.00} m long (was {LegZTo - LegZFrom:0.00}), {-LegBottom + lift:0.00} m tall (was {-LegBottom:0.00})");
+            }
+
+            // DATUM: a thin translucent slab at the gear plane. The question is "how much sits below the aircraft",
+            // and screen-Y across a perspective view cannot answer it -- I misread exactly that off the last render.
+            // A plane the container visibly pierces makes the overhang legible instead of inferred.
+            AddChild(new MeshInstance3D {
+                Mesh = new BoxMesh { Size = new Vector3(11f, 0.03f, 15f) },
+                MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(1f, 0.5f, 0.1f, 0.35f), Transparency = BaseMaterial3D.TransparencyEnum.Alpha, CullMode = BaseMaterial3D.CullModeEnum.Disabled },
+                Position = new Vector3(0f, deckY, 1.5f) });
+
+            var cam = new Camera3D { Current = true, Fov = 42f, Far = 4000f };
+            AddChild(cam);
+            string mode = System.Environment.GetEnvironmentVariable("UG_SLING_CAM");
+            // Side view sits JUST BELOW the gear plane looking slightly up, so the part of the load hanging under
+            // the aircraft is silhouetted rather than foreshortened into the fuselage behind it.
+            cam.Position = mode == "side" ? new Vector3(23f, fly - 0.8f, 2.5f) : new Vector3(16f, 7.5f + fly, -15f);
+            cam.LookAt(new Vector3(0f, fly + 0.9f, 2.5f), Vector3.Up);
+        }
+
+        // --magnettest=OUT: the sky-crane's winch + electromagnet on a TEST STAND. The aircraft is held on a gantry
+        // (velocity zeroed each tick, gravity off) rather than flown, so this measures the CABLE and the MAGNET without
+        // the flight model in the loop -- deliberately NOT a flight test, and it should not be quoted as one. What it
+        // does prove is the part that can silently not work: deploy -> dangle taut at cable length -> energise -> bite a
+        // load -> and RAISE it, which is the only step whose failure looks exactly like success in a screenshot.
+        //
+        // Phased on elapsed time: settle, energise, then hoist the gantry and check the load's height went UP.
+        partial class MagnetGantry : Node3D
+        {
+            public Vehicle Heli; public float HoldY; public RigidBody3D Load; public Camera3D Cam;
+            public float T; public int Phase; public float LoadY0 = float.NaN; public bool Reported;
+            public override void _PhysicsProcess(double delta)
+            {
+                if (Heli == null || !IsInstanceValid(Heli)) return;
+                // NOTE: this rig deliberately does NOT fly the aircraft. An earlier version added a UG_MAG_FLY mode
+                // that drove full collective on the real flight model -- and its CONTROL (no magnet at all) sank at
+                // -27 m/s just like the subject, so it could not distinguish "the magnet is too heavy" from "the rig
+                // is broken", which is the one thing a control exists to do. It was removed rather than left lying
+                // around looking authoritative. Whether the crane can actually CARRY the thing is answered by the
+                // vehicle.heli_sling suite, which flies the real model and has a magnet-free control pair.
+                // Keep BOTH ends in frame: the aircraft climbs away from a load that starts on the ground, so a fixed
+                // camera loses one or the other. Frame the midpoint and pull back with the separation.
+                if (Cam != null && IsInstanceValid(Cam))
+                {
+                    float lowY = Heli.Sling != null && IsInstanceValid(Heli.Sling) ? Heli.Sling.GlobalPosition.Y - 2.5f : 0f;
+                    float midY = (Heli.GlobalPosition.Y + 3f + lowY) * 0.5f;
+                    float span = Mathf.Max(12f, (Heli.GlobalPosition.Y + 3f) - lowY);
+                    Cam.Position = new Vector3(span * 1.55f, midY + span * 0.10f, span * 0.62f);
+                    Cam.LookAt(new Vector3(0f, midY, 1.0f), Vector3.Up);
+                }
+                T += (float)delta;
+                // The stand: pin the airframe where it is put. Runs every tick so the winch reaction cannot walk it.
+                // Pin ATTITUDE as well as position. The cable pulls at an anchor offset from the CoM, so it torques
+                // the airframe; zeroing angular velocity alone still lets the tilt accumulate a little each tick and
+                // the stand ends up hanging visibly banked. A gantry holds a machine level -- that the cable wants to
+                // tip it is a real result, but it belongs to a FLIGHT test, not to this one.
+                Heli.GlobalTransform = new Transform3D(Basis.Identity, new Vector3(0f, HoldY, 0f));
+                Heli.LinearVelocity = Vector3.Zero; Heli.AngularVelocity = Vector3.Zero;
+                var mag = Heli.Sling;
+                // Record the load's start height the INSTANT it is grabbed, not on a clock. Sampling at a fixed
+                // time meant any change that shifted the grab later (the bridle settling the coil differently)
+                // silently left LoadY0 = NaN and printed "DOES NOT LIFT" for a run that lifted perfectly well.
+                if (float.IsNaN(LoadY0) && mag != null && IsInstanceValid(mag) && mag.Held != null) LoadY0 = mag.Held.GlobalPosition.Y;
+                if (Phase == 0 && T > 1.2f)   // settled -> energise the coil
+                {
+                    // CONTROL (UG_MAG_NOENERGISE=1): skip the toggle. The rig must then report DOES NOT LIFT --
+                    // otherwise the verdict is measuring something other than the magnet (the load shoved by the
+                    // falling coil, say) and a PASS would look identical to a real one.
+                    if (System.Environment.GetEnvironmentVariable("UG_MAG_NOENERGISE") != "1") Heli.ToggleSlingMagnet();
+                    Phase = 1;
+                    GD.Print($"[MAGNET] energised at t={T:0.00}; deployed={Heli.SlingDeployed}");
+                }
+                else if (Phase == 1 && T > 3.4f)   // give it time to bite, then hoist
+                {
+                    Phase = 2;
+                    GD.Print($"[MAGNET] grab: held={(mag?.Held != null ? mag.Held.Name.ToString() : "NOTHING")}; loadY0={LoadY0:0.00}");
+                }
+                else if (Phase == 2 && T > 2.7f) { HoldY += 2.2f * (float)delta; }   // hoist the whole stand
+                if (Phase == 2 && T > 5.0f && !Reported)
+                {
+                    Reported = true;
+                    float lifted = (mag?.Held != null && !float.IsNaN(LoadY0)) ? mag.Held.GlobalPosition.Y - LoadY0 : float.NaN;
+                    GD.Print($"[MAGNET] t={T:0.00} heli {HoldY:0.00}; magnet Y {(mag != null ? mag.GlobalPosition.Y : float.NaN):0.00}; held={(mag?.Held != null ? "YES" : "no")}; load RAISED {lifted:0.00} m");
+                    GD.Print($"[MAGNET] VERDICT: {((mag?.Held != null && lifted > 0.5f) ? "LIFTS" : "DOES NOT LIFT")}");
+                }
+            }
+        }
+
+        // --tailcheck: for every helicopter, find where the tail-rotor MOUNTING POST actually is in the mesh and
+        // compare it with where the spec puts the hub (strawberry: "check all helis for posts sticking out of their
+        // tails, some still have the tail rotor on the wrong side").
+        //
+        // The post is the geometry that sticks out SIDEWAYS from the tail boom at the hub. The boom and the fin are
+        // both roughly centred on X=0, so the giveaway is asymmetry: sample vertices in a box around the hub and ask
+        // which side carries the outlying geometry. Reading it off the mesh rather than off a render, because a
+        // render answers "does this look wrong" and this needs "which side, by how much, on which airframes".
+        // --bellyshot=NAME:OUT -- look UP at one helicopter's underside, so the belly beacon can actually be
+        // SEEN rather than inferred from its AABB. The tail camera cannot do this: it always aims at the tail
+        // hub, which is 9 m aft of the belly fitting on a Hind, so the beacon is never in frame.
+        //
+        // This exists because the belly light has now been wrong three separate times -- the Orca built as two
+        // overlapping lamps, the whole fleet rotated so the lens faced sideways, and the Hind's lamp measuring
+        // 0.338 x 0.288 x 0.256 against a 0.368-square, 0.161-thin fitting everywhere else. Every one of those
+        // was a number that looked fine next to a picture nobody had taken. UG_BELLY_CAM="x,y,z" overrides the
+        // offset from the belly point; the beacon is force-LIT here so it reads at any exposure.
+        void BuildBellyShot(string name)
+        {
+            var env = new Godot.Environment
+            {
+                BackgroundMode = Godot.Environment.BGMode.Color, BackgroundColor = new Color(0.42f, 0.54f, 0.68f),
+                AmbientLightSource = Godot.Environment.AmbientSource.Color,
+                AmbientLightColor = new Color(0.80f, 0.81f, 0.84f), AmbientLightEnergy = 1.15f,
+            };
+            AddChild(new WorldEnvironment { Environment = env });
+            // Lit from BELOW, because that is the side being inspected and the default key light leaves the
+            // underside in its own shadow -- an unlit belly renders as a silhouette and hides the very thing here.
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(58f, -24f, 0f), LightEnergy = 1.25f });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-40f, 150f, 0f), LightEnergy = 0.45f });
+            var v = Vehicle.BuildByName(name);
+            AddChild(v);
+            v.GlobalPosition = Vector3.Zero;
+            v.Freeze = true; v.FreezeMode = RigidBody3D.FreezeModeEnum.Static;
+            v.ProcessMode = Node.ProcessModeEnum.Disabled;
+
+            Vector3 belly = Vector3.Zero;
+            if (v.FindChild("BeaconBelly", false, false) is MeshInstance3D bm)
+            {
+                belly = bm.Position;
+                var ab = bm.Mesh.GetAabb();
+                GD.Print($"[BELLYSHOT] {name}: beacon at {belly} size {ab.Size} (X/Z square = a flush panel, thick Y = a lump)");
+                // Force it ON: the flasher is driven by rotor rpm and this rig has no running rotor, so an
+                // unlit beacon here would be the harness, not the fitting -- exactly the reading I would
+                // otherwise have to guess at.
+                if (bm.MaterialOverride is StandardMaterial3D mat)
+                {
+                    mat.EmissionEnabled = true;
+                    mat.Emission = new Color(1f, 0.12f, 0.12f);
+                    mat.EmissionEnergyMultiplier = 6f;
+                    mat.AlbedoColor = new Color(1f, 0.35f, 0.35f);
+                }
+            }
+            else GD.Print($"[BELLYSHOT] {name}: NO BeaconBelly node -- nothing to look at");
+
+            // UG_TURRET_AIM="yaw,pitch" swings the mount before the shot, so "the barrel disappears" can be
+            // looked at rather than reasoned about -- a chin turret at full depression is exactly the case where
+            // geometry can end up inside its own airframe.
+            string ta = System.Environment.GetEnvironmentVariable("UG_TURRET_AIM");
+            if (!string.IsNullOrEmpty(ta) && v.Turrets.Length > 0)
+            {
+                var tp = ta.Split(',');
+                if (tp.Length == 2)
+                {
+                    v.AimTurret(v.Turrets[0].Seat, float.Parse(tp[0]), float.Parse(tp[1]));
+                    var mz = v.TurretMuzzle(v.Turrets[0].Seat);
+                    GD.Print($"[BELLYSHOT] turret aimed ({tp[0]},{tp[1]}) muzzle {mz} barrel {v.TurretBarrelDir(v.Turrets[0].Seat)}");
+                    if (v.FindChild($"TurretPitch{v.Turrets[0].Seat}", true, false) is Node3D pn)
+                        foreach (var ch in pn.GetChildren())
+                            if (ch is MeshInstance3D pm)
+                                GD.Print($"[BELLYSHOT] pitch mesh '{pm.Name}' visible={pm.Visible} aabb {pm.Mesh?.GetAabb().Size} globalY {pm.GlobalPosition.Y:0.00}");
+                }
+            }
+
+            // Report the CREW and the MOUNTS, so "I can't see a gunner" separates into "none was built" and
+            // "one was built inside the floor" -- two different bugs that look identical in a render.
+            foreach (var ch in v.GetChildren())
+            {
+                if (ch is TargetDummy td)
+                    GD.Print($"[BELLYSHOT] crew '{td.Name}' local {td.Position} world {td.GlobalPosition} down={td.Down} hp={td.MaxHealth:0}");
+                if (ch is Node3D n3 && n3.Name.ToString().StartsWith("TurretYaw"))
+                {
+                    GD.Print($"[BELLYSHOT] mount '{n3.Name}' local {n3.Position}");
+                    foreach (var g2 in n3.GetChildren())
+                        if (g2 is Node3D pn2 && pn2.Name.ToString().StartsWith("TurretPitch"))
+                            foreach (var m2 in pn2.GetChildren())
+                                GD.Print($"[BELLYSHOT]   gun child '{m2.GetType().Name}:{m2.Name}' mesh={(m2 is MeshInstance3D mi2 ? (mi2.Mesh == null ? "NULL" : mi2.Mesh.GetAabb().Size.ToString()) : "-")}");
+                }
+            }
+
+            var cam = new Camera3D { Current = true, Fov = 42f, Far = 400f };
+            AddChild(cam);
+            Vector3 off = new Vector3(1.6f, -2.6f, 3.0f);   // below, offset, looking back and up at the belly
+            string co = System.Environment.GetEnvironmentVariable("UG_BELLY_CAM");
+            if (!string.IsNullOrEmpty(co))
+            {
+                var cp = co.Split(',');
+                if (cp.Length == 3) off = new Vector3(float.Parse(cp[0]), float.Parse(cp[1]), float.Parse(cp[2]));
+            }
+            // UG_BELLY_LOOK="x,y,z" aims at an arbitrary vehicle-local point instead of the belly, so a nose
+            // fitting can be framed side-on rather than glimpsed across the whole airframe.
+            Vector3 look = belly;
+            string bl = System.Environment.GetEnvironmentVariable("UG_BELLY_LOOK");
+            if (!string.IsNullOrEmpty(bl))
+            {
+                var lp = bl.Split(',');
+                if (lp.Length == 3) look = new Vector3(float.Parse(lp[0]), float.Parse(lp[1]), float.Parse(lp[2]));
+            }
+            cam.Position = look + off;
+            cam.LookAt(look, Vector3.Up);
+        }
+
+        // --tailshot=NAME:OUT -- frame one helicopter's tail from BEHIND AND ABOVE, close in. The scan reports which
+        // side carries the outlying geometry, but "reach at the hub" cannot tell a tail-rotor post from a horizontal
+        // stabiliser, and the orca reads symmetric precisely because something spans both ways. So look.
+        void BuildTailShot(string name)
+        {
+            var env = new Godot.Environment
+            {
+                BackgroundMode = Godot.Environment.BGMode.Color, BackgroundColor = new Color(0.46f, 0.58f, 0.72f),
+                AmbientLightSource = Godot.Environment.AmbientSource.Color,
+                AmbientLightColor = new Color(0.78f, 0.79f, 0.82f), AmbientLightEnergy = 1.0f,
+            };
+            AddChild(new WorldEnvironment { Environment = env });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-42f, -30f, 0f), LightEnergy = 1.2f });
+            var v = Vehicle.BuildByName(name);
+            AddChild(v);
+            v.GlobalPosition = Vector3.Zero;
+            v.Freeze = true; v.FreezeMode = RigidBody3D.FreezeModeEnum.Static;
+            v.ProcessMode = Node.ProcessModeEnum.Disabled;   // or it unfreezes itself and falls (see the sling harness)
+            Vector3 hub = v.DebugTailHub;
+            // A red pip exactly AT the spec's hub, so the render answers "is the hub where the post is" directly
+            // instead of me measuring pixels off it afterwards.
+            AddChild(new MeshInstance3D
+            {
+                Mesh = new SphereMesh { Radius = 0.13f, Height = 0.26f },
+                MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(1f, 0.1f, 0.1f), EmissionEnabled = true, Emission = new Color(1f, 0.1f, 0.1f), EmissionEnergyMultiplier = 0.8f },
+                Position = hub,
+            });
+            GD.Print($"[TAILSHOT] {name}: hub {hub} (red pip)");
+            // Report what the belly beacon actually IS. "It exists and flashes" is what the parts suite checks;
+            // whether it is the same FITTING as the nav lights is a different claim and needs the mesh type.
+            if (v.FindChild("BeaconBelly", false, false) is MeshInstance3D bm)
+            {
+                var nav = v.FindChild("NavLightPort", false, false) as MeshInstance3D;
+                bool sameModel = nav != null && bm.Mesh == nav.Mesh;
+                var ab = bm.Mesh.GetAabb();
+                int nx = 0, px = 0;
+                for (int si = 0; si < bm.Mesh.GetSurfaceCount(); si++)
+                {
+                    var arr = bm.Mesh.SurfaceGetArrays(si);
+                    if (arr.Count == 0 || arr[(int)Mesh.ArrayType.Vertex].VariantType == Variant.Type.Nil) continue;
+                    foreach (var lv in arr[(int)Mesh.ArrayType.Vertex].AsVector3Array())
+                        if (lv.X < -0.02f) nx++; else if (lv.X > 0.02f) px++;
+                }
+                GD.Print($"[BEACON] {name}: {bm.Mesh.GetType().Name} size {ab.Size} centre {ab.GetCenter()} verts -X{nx}/+X{px} sameAsNav={sameModel}");
+            }
+            var cam = new Camera3D { Current = true, Fov = 40f, Far = 400f };
+            AddChild(cam);
+            // UG_TAIL_CAM="x,y,z" overrides the offset: a hub buried INSIDE the fuselage puts the default camera
+            // inside the mesh and renders a flat wall of hull, which is its own diagnosis but shows nothing else.
+            Vector3 off = new Vector3(0.35f, 0.85f, 2.3f);
+            string co = System.Environment.GetEnvironmentVariable("UG_TAIL_CAM");
+            if (!string.IsNullOrEmpty(co))
+            {
+                var cp = co.Split(',');
+                if (cp.Length == 3) off = new Vector3(float.Parse(cp[0]), float.Parse(cp[1]), float.Parse(cp[2]));
+            }
+            cam.Position = hub + off;
+            cam.LookAt(hub, Vector3.Up);
+        }
+
+        void BuildTailCheck()
+        {
+            string[] fleet = { "minicopter", "huey", "scoutcopter", "hind", "orca", "skycrane", "hummingbird" };
+            GD.Print("[TAIL] airframe      specX  side   reach-X  reach+X   verts     nearest  verdict");
+            foreach (var name in fleet)
+            {
+                var v = Vehicle.BuildByName(name);
+                AddChild(v);
+                v.GlobalPosition = Vector3.Zero;
+                Vector3 hub = v.DebugTailHub;
+                int negN = 0, posN = 0; float negX = 0f, posX = 0f, nearest = 9999f;
+                void Scan(Node k)
+                {
+                    // EVERY visible mesh, not just nodes named Body*. The first cut filtered on that prefix and
+                    // reported the scoutcopter's hub as 2.34 m off the mesh -- which is what "I only looked at some
+                    // of the geometry" produces, and is indistinguishable from a genuinely misplaced hub.
+                    if (k is MeshInstance3D mi && mi.Mesh != null && mi.Visible)
+                        for (int si = 0; si < mi.Mesh.GetSurfaceCount(); si++)
+                        {
+                            var arr = mi.Mesh.SurfaceGetArrays(si);
+                            if (arr.Count == 0 || arr[(int)Mesh.ArrayType.Vertex].VariantType == Variant.Type.Nil) continue;
+                            foreach (var lv in arr[(int)Mesh.ArrayType.Vertex].AsVector3Array())
+                            {
+                                var w = v.ToLocal(mi.GlobalTransform * lv);
+                                nearest = Mathf.Min(nearest, w.DistanceTo(hub));
+                                if (Mathf.Abs(w.Z - hub.Z) > 0.9f || Mathf.Abs(w.Y - hub.Y) > 0.9f) continue;
+                                if (w.X < -0.06f) { negN++; negX = Mathf.Min(negX, w.X); }
+                                else if (w.X > 0.06f) { posN++; posX = Mathf.Max(posX, w.X); }
+                            }
+                        }
+                    foreach (var c in k.GetChildren()) Scan(c);
+                }
+                Scan(v);
+                // Which side actually carries the protrusion: more vertices AND reaching further out.
+                // Decide on REACH -- how far the outlying geometry sticks out each way -- with the vertex counts kept
+                // only as supporting evidence. Counting alone called a 2:1 split "symmetric" on two airframes.
+                float reach = Mathf.Max(posX, -negX);
+                string meshSide = reach < 0.12f ? "none" : (posX > -negX + 0.06f) ? "+X" : (-negX > posX + 0.06f) ? "-X" : "sym";
+                string specSide = hub.X > 0.06f ? "+X" : hub.X < -0.06f ? "-X" : "0";
+                string verdict = nearest > 1.2f ? $"HUB IS OFF THE MESH ({nearest:0.00} m to the nearest vertex)"
+                               : meshSide == "none" || meshSide == "sym" ? "no protruding post -- faired or centred"
+                               : meshSide == specSide ? "ok"
+                               : $"MISMATCH: hub is {specSide} but the post is {meshSide}";
+                GD.Print($"[TAIL] {name,-12} {hub.X,6:0.00}  {meshSide,-5} -X{negX,6:0.00} +X{posX,6:0.00}  n{negN,3}/{posN,-3} near{nearest,5:0.00}  {verdict}");
+                v.QueueFree();
+            }
+            GetTree().Quit();
+        }
+
+        void BuildMagnetTest()
+        {
+            var env = new Godot.Environment
+            {
+                BackgroundMode = Godot.Environment.BGMode.Color, BackgroundColor = new Color(0.46f, 0.58f, 0.72f),
+                AmbientLightSource = Godot.Environment.AmbientSource.Color,
+                AmbientLightColor = new Color(0.72f, 0.74f, 0.78f), AmbientLightEnergy = 1.0f,
+            };
+            AddChild(new WorldEnvironment { Environment = env });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-48f, -38f, 0f), LightEnergy = 1.25f, ShadowEnabled = true });
+            var ground = new StaticBody3D { CollisionLayer = 1 << 0 };
+            ground.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
+            AddChild(ground);
+            AddChild(new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(400f, 400f) }, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.36f, 0.42f, 0.30f), Roughness = 1f } });
+
+            var heli = Vehicle.BuildByName("skycrane");
+            AddChild(heli);
+            float holdY = float.TryParse(System.Environment.GetEnvironmentVariable("UG_MAG_HOLD"), out var h0) ? h0 : 10.6f;
+            heli.GlobalPosition = new Vector3(0f, holdY, 0f);
+            heli.GravityScale = 0f;
+            heli.DebugNoSling = System.Environment.GetEnvironmentVariable("UG_MAG_NOSLING") == "1";
+            // One-off: where are the VISIBLE leg posts? The spec's Skids(...) numbers are COLLISION boxes, and I
+            // used their centre as "in line with the leg posts" -- which strawberry says came out the wrong way.
+            // Scan the actual mesh for gear-region geometry and report where it really sits in Z.
+            {
+                var bins = new System.Collections.Generic.SortedDictionary<int, int>();
+                float lo = 1e9f, hi = -1e9f;
+                void Scan(Node k)
+                {
+                    if (k is MeshInstance3D mi && mi.Mesh != null && mi.Visible)
+                        for (int si = 0; si < mi.Mesh.GetSurfaceCount(); si++)
+                        {
+                            var arr = mi.Mesh.SurfaceGetArrays(si);
+                            if (arr.Count == 0 || arr[(int)Mesh.ArrayType.Vertex].VariantType == Variant.Type.Nil) continue;
+                            foreach (var lv in arr[(int)Mesh.ArrayType.Vertex].AsVector3Array())
+                            {
+                                var w = heli.ToLocal(mi.GlobalTransform * lv);
+                                if (w.Y > 0.75f || Mathf.Abs(w.X) < 1.4f) continue;   // gear region only: low + outboard
+                                int b = Mathf.RoundToInt(w.Z * 2f);
+                                bins[b] = bins.TryGetValue(b, out var c) ? c + 1 : 1;
+                                lo = Mathf.Min(lo, w.Z); hi = Mathf.Max(hi, w.Z);
+                            }
+                        }
+                    foreach (var c in k.GetChildren()) Scan(c);
+                }
+                Scan(heli);
+                var top = new System.Collections.Generic.List<string>();
+                foreach (var kv in bins) if (kv.Value >= 4) top.Add($"Z{kv.Key / 2f:0.0}x{kv.Value}");
+                GD.Print($"[GEAR] visible gear geometry Z {lo:0.00}..{hi:0.00}; clusters: {string.Join(" ", top)}");
+            }
+            GD.Print($"[MAGNET/SPEC] slingHook={heli.DebugSlingHook} cableLen={heli.DebugSlingLen:0.00} forceAnchor={heli.DebugSlingAnchorLocal} drawAnchor={heli.DebugSlingVisualAnchorLocal}");
+
+            // UG_MAG_CONTAINER=1: use the real MagnetableContainer instead of the stand-in box, which exercises the
+            // FIXED attach point (all three axes) rather than the generic seat-the-AABB path.
+            if (System.Environment.GetEnvironmentVariable("UG_MAG_CONTAINER") == "1")
+            {
+                var mc = MagnetableContainer.Spawn(this, new Vector3(0f, 0.2f, 1.0f));
+                if (System.Environment.GetEnvironmentVariable("UG_MAG_DOORS") == "1") mc.CallDeferred(nameof(MagnetableContainer.SetDoorsOpen), true);
+                var g2 = new MagnetGantry { Heli = heli, HoldY = holdY, Load = mc };
+                AddChild(g2);
+                var cam2 = new Camera3D { Current = true, Fov = 46f, Far = 4000f };
+                AddChild(cam2);
+                // Camera choice must NOT key off the door STATE, or the open and shut shots come from different
+                // viewpoints and cannot be compared -- which is exactly what happened the first time.
+                bool doorShot = System.Environment.GetEnvironmentVariable("UG_MAG_DOORSHOT") == "1";
+                if (doorShot)
+                {
+                    // Doors shot: hold a fixed camera on the CONTAINER. The tracking camera frames the aircraft and
+                    // its magnet, which is the wrong subject when the thing being checked is whether the leaves swing.
+                    cam2.Position = new Vector3(11f, 3.4f, -9.5f);
+                    cam2.LookAt(new Vector3(0f, 1.6f, 0.6f), Vector3.Up);
+                }
+                else
+                {
+                    cam2.Position = new Vector3(26f, 7.5f, 10f);
+                    cam2.LookAt(new Vector3(0f, 5.5f, 1.0f), Vector3.Up);
+                    g2.Cam = cam2;   // track only when the aircraft is the subject
+                }
+                GD.Print($"[MAGNET] using a real MagnetableContainer ({MagnetableContainer.ContainerMass:0} kg)");
+                return;
+            }
+
+            // The load: a plain box on the PROP layer, sized like the shipping container that started all this.
+            var load = new RigidBody3D { Name = "Load", Mass = 800f, CollisionLayer = 1u << 6, CollisionMask = (1u << 0) | (1u << 5) };
+            var lsize = new Vector3(2.88f, 3.24f, 3.00f);
+            load.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = lsize } });
+            load.AddChild(new MeshInstance3D { Mesh = new BoxMesh { Size = lsize }, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.55f, 0.35f, 0.20f), Roughness = 0.9f } });
+            AddChild(load);
+            load.GlobalPosition = new Vector3(0f, lsize.Y * 0.5f, 1.0f);   // under the winch anchor's Z
+
+            var gantry = new MagnetGantry { Heli = heli, HoldY = holdY, Load = load };
+            AddChild(gantry);
+
+            var cam = new Camera3D { Current = true, Fov = 46f, Far = 4000f };
+            AddChild(cam);
+            cam.Position = new Vector3(26f, 7.5f, 10f);
+            cam.LookAt(new Vector3(0f, 5.5f, 1.0f), Vector3.Up);
+            gantry.Cam = cam;
+        }
+
         void BuildPropTest(string name)
         {
             var env = new Godot.Environment

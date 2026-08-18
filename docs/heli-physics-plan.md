@@ -16,8 +16,34 @@ effect height), each of which has a real-world source per airframe.
 
 ## Corrections from reading the code before designing against it
 
-Four things I assumed from the deep dive turned out to be wrong or already handled. Recording them
-because two of them would have made this plan actively harmful.
+Five things I assumed turned out to be wrong or already handled. Recording them because three would
+have made this plan actively harmful.
+
+0. **THE MODEL ALREADY HAS DRAG, and the whole fleet is calibrated against it.** My framing — "no
+   drag below `Speed_Max`, then a wall" — is wrong. `Vehicle.cs:2309` sets **`LinearDamp = 0.35f`**
+   on every heli, which is Godot's built-in `F = -damp · v`. And it is load-bearing: `Vehicle.cs:1732`
+   states *"Thrust is **derived, not chosen**: terminal climb in this model is
+   `(thrust - g) / LinearDamp`, so thrust = 9.8 + 0.35 × the real climb rate."*
+
+   So every airframe's `HeliThrust` was solved from that damping constant against its real-world climb
+   rate, and the fleet's relative performance rests on it. `HeliFlightTests` encodes the same
+   arithmetic ("at T/W 1.20 and this drag the terminal climb is ~5.7 m/s").
+
+   **This reframes Phase 1 completely.** It is not "add drag to a model that has none". It is
+   **"replace LINEAR damping with QUADRATIC drag"** — changing the *power of v*, which is the part
+   that is actually unphysical (air resistance goes as v², not v). And it means:
+   - every `HeliThrust` must be **re-derived**, because its current value is a solution to an equation
+     whose form is changing;
+   - climb rates change unless the re-derivation targets the same terminal climb, so the existing
+     climb bounds in `HeliFlightTests` are a real constraint, not incidental;
+   - the honest benefit shrinks. Linear damping already gives an asymptotic approach to terminal
+     velocity — so "acceleration tapers instead of hitting a wall" is **already true vertically**. The
+     wall is only on the HORIZONTAL axis, where the excess-spring sits on top of the linear damp.
+
+   **Recommendation for the fold-in: narrow Phase 1 to the horizontal axis.** Replace the
+   excess-spring with quadratic fore/aft and lateral drag, leave `LinearDamp` doing the vertical, and
+   re-derive nothing. That keeps every airframe's derived thrust valid, keeps the climb tests honest,
+   and still buys the thing worth buying — a top speed that emerges from drag instead of a spring.
 
 1. **The speed limit is NOT a hard clamp.** `Vehicle.cs:2964` applies a spring force proportional to
    the *excess* over `_speedMax`:
@@ -52,7 +78,22 @@ because two of them would have made this plan actively harmful.
 `_heliLevel` is confirmed 0 on every spec, with the term kept as a knob — no auto-levelling, as
 required.
 
-## Phase 1 — Drag replaces the excess-spring
+## Phase 1 — Quadratic horizontal drag replaces the excess-spring
+
+**First, is this worth doing at all?** Yes, and here is the arithmetic rather than the intuition.
+`HeliThrust` is an acceleration (lift is multiplied by `Mass` at `ApplyCentralForce`), horizontal
+accel at tilt θ is `thrust·sin(θ)·ForeAftBoost`, and with linear damping terminal `v = a / 0.35`:
+
+| airframe | thrust | `Speed_Max` | terminal v at 15° | 20° | 30° | 40° |
+|---|---|---|---|---|---|---|
+| minicopter | 11.8 | 20 | 14.4 | 19.0 | 27.8 | 35.8 |
+| huey | 12.9 | 23 | 15.7 | 20.8 | 30.4 | 39.1 |
+| hind | 14.2 | 26 | 17.3 | 22.9 | 33.5 | 43.0 |
+
+So every airframe reaches its cap at roughly **20–22° of tilt**, and past ~25° the unclamped terminal
+speed runs well beyond it. The excess-spring is not a rare edge case — it engages on any committed
+fast run, which is precisely when the player is paying attention to how the aircraft accelerates.
+That is the "wall", quantified, and it is why replacing it is worth the change.
 
 Delete `TiltThrustLoss`, `ForeAftBoost`, `LateralBoost`. Apply thrust as the plain shaft vector
 `b.Y * lift`, and add:

@@ -22,7 +22,7 @@ namespace UnturnedGodot
         // already carries pitch AND roll (not just yaw) for both the entity and the client-auth state command.
         // A sibling RigidBody3D would have to rebuild all of it. VehicleBody3D with no VehicleWheel3D children
         // is just a RigidBody3D, so the base class does not fight flight.
-        bool _heli; float _heliThrust, _heliPitchTq, _heliRollTq, _heliYawTq, _heliLevel;
+        bool _heli; float _heliThrust, _heliPitchTq, _heliRollTq, _heliYawTq, _heliLevel, _heliDragFwd;
         bool _plane; float _planeThrust, _planeLift, _planeTargetSpeed, _planePitchTq, _planeRollTq, _planeYawTq, _planeSteerFade = 1f;   // PLANE (EEngine.PLANE): forward thrust + airspeed lift, bank-to-turn
         Node3D _propNode; MeshInstance3D _propBlades, _propDisc;   // propeller pivot + its 2 draw states (blades / spin-blur), spun about body forward
         float _propSpin;   // prop visual phase (about local Z)
@@ -31,6 +31,21 @@ namespace UnturnedGodot
         int _planeDbgFrame;   // UG_PLANEDBG print throttle
         bool _planeGroundMode;   // master: hold Ctrl -> drop onto the ground/water + taxi (no lift), for floatplanes now + wheeled aircraft later
         public bool PlaneGroundMode { get => _planeGroundMode; set => _planeGroundMode = value; }
+        bool _slingHook; float _slingLen; Vector3 _slingAnchor, _slingVisualAnchor;   // winch + electromagnet (sky-crane): see UpdateSling. Anchor = FORCE point (must stay on the CoM axis). VisualAnchor = where the cable is DRAWN from; may differ.
+        SlingMagnet _magnet; TowRope _slingCable; TowRope[] _slingLegs; MeshInstance3D _slingLink; bool _magnetWanted; float _slingOut;
+        RigidBody3D _slingHeldPrev;   // what the coil held last tick, so the carrier's collision exception tracks it   // _slingOut = cable CURRENTLY paid out, ramping to _slingLen
+        public SlingMagnet Sling => _magnet;
+        public bool SlingDeployed => _magnet != null && IsInstanceValid(_magnet);
+        public bool DebugNoSling;   // suppress winch deployment, so a rig can fly the SAME airframe with and without its magnet
+        public Vector3 DebugTailHub => _tailHubCentre;
+        public float DebugCollective => _inCollective;
+        public float DebugSlingLen => _slingLen;
+        public Vector3 DebugSlingAnchorLocal => _slingAnchor;           // FORCE point (CoM axis)
+        public Vector3 DebugSlingVisualAnchorLocal => _slingVisualAnchor;   // DRAW point (cable geometry uses this)
+        public bool DebugSlingHook => _slingHook;
+        float _rotorRadius, _heliLiftCap = 1f, _groundEffect = 1f, _geApplied = 1f;   // cached once per StepHeli; _geApplied is the share the CAP let through
+        MeshInstance3D _beaconMesh; OmniLight3D _beaconLight; StandardMaterial3D _beaconMat; float _beaconTimer;   // belly anti-collision flasher
+        float _ignitionLeft, _ignitionLen;   // start-up gate: the rotor winds up THROUGH the clip, thrust waits for it
         bool _tracked;   // TANK: tracked/differential drive -- Drive() branches on this to set per-TRACK torque instead of a steered-wheel angle
         const float TankWheelSlip = 1.0f;   // TANK: lateral wheel friction. Too LOW (0.5) and the yaw torque spins it in place instead of arcing forward (low grip = no forward bite either); too HIGH and turning drags to a crawl. Paired with the speed-faded yaw below. Tunable.
         const float TankComY = 0.1f;   // TANK: low centre of mass (anti-flip -- master "easily flipped"). Tunable.
@@ -45,17 +60,215 @@ namespace UnturnedGodot
         // pitches about local X, and MuzzleLocal is the cannon tip for shell spawns. Null/Zero on non-tanks.
         public Node3D TurretPivot, GunPivot; public Vector3 MuzzleLocal;
         MeshInstance3D _bladesMesh, _discMesh, _tailBladesMesh, _tailDiscMesh;   // the two drawn states per rotor
-        const float DiscSwapSpool = 0.35f;   // above this the blades are a smear, so the game draws the plate instead
+        const float DiscSwapSpool = 0.35f;   // RETIRED: the blur-plate swap threshold. Kept as the record of what the
+                                             // retail prefab did; the real blades are drawn and spun at every rpm now.
         public const float TailRotorRollDegrees = 90f;   // stands the tail disc on edge; composed with the spin each tick
         // ---- playtest tuning, strawberry 2026-08-16 ----------------------------------------------------
         /// <summary>Fraction of lift lost to tilting off vertical, ON TOP of the cosine you get for free from
         /// thrusting along the body axis. strawberry: "reduce the upward thrust more when tilting forward" --
         /// so a nose-down dash costs you altitude rather than being a free way to go fast level.</summary>
         const float TiltThrustLoss = 0.55f;
-        /// <summary>Extra push on the HORIZONTAL component of rotor thrust ("increase the forward/back momentum
-        /// when tilting forward/back"). Fore/aft gets more than lateral, because that is the axis she was
-        /// describing and a helicopter that slides sideways as eagerly as it accelerates feels like a drone.</summary>
-        const float ForeAftBoost = 1.65f, LateralBoost = 1.15f;
+        /// <summary>HEAVE DAMPING, s^-1. The vertical axis's whole resisting force, and deliberately LINEAR --
+        /// which is not the same law as the horizontal below, on purpose. The shaft axis is not dominated by
+        /// fuselage drag: a rotor climbing sees reduced inflow through the disc, so blade angle of attack rises
+        /// and thrust rises with it, a restoring force linear in axial velocity to first order (the Z_w
+        /// stability derivative of rotorcraft flight dynamics). The horizontal axis IS dominated by parasite
+        /// drag, which is quadratic. Two axes, two mechanisms, two laws; modelling both with one law is what
+        /// would actually be inconsistent.
+        ///
+        /// THE VALUE IS LOAD-BEARING AND MUST NOT BE RETUNED CASUALLY: it is what the fleet's terminal fall
+        /// (g / 0.45 = 21.8 m/s) and HeliCrashExplodeSpeed were settled against. It
+        /// was Godot's RigidBody3D.LinearDamp until the drag rework; it is applied by hand now because that
+        /// property is a SCALAR and damps the whole velocity vector, so leaving it set would have applied this
+        /// linear law to the horizontal too -- where, once the old thrust boosts were gone, it became the
+        /// binding constraint and capped six of seven airframes BELOW their own spec top speed (the
+        /// scoutcopter at 18.8 m/s against a spec of 26).
+        ///
+        /// 0.45 AND NOT THE 0.35 THE REST OF THIS FILE SAYS, because 0.45 is what actually shipped. The
+        /// property was set to 0.35, but LinearDampMode defaults to COMBINE, which ADDS the body's value to
+        /// ProjectSettings physics/3d/default_linear_damp -- and this project never overrides that, so it is
+        /// Godot's default 0.1. Measured, not inferred: with the body value at 0 the fleet still showed
+        /// exactly 0.100 s^-1 of horizontal damping, agreeing to three digits across three airframes.
+        ///
+        /// This matters beyond bookkeeping and is left alone DELIBERATELY. The HeliThrust derivation table at
+        /// the Huey spec computes each airframe's thrust as g + 0.35 * (that aircraft's real climb rate), so
+        /// against the 0.45 actually in force the whole fleet climbs about 22 % slower than the real machines
+        /// it was derived from. Fixing that is a change to the VERTICAL axis and to numbers strawberry signed
+        /// off by feel; this rework is about the horizontal law, and quietly retuning every climb rate inside
+        /// it is exactly the kind of change that compiles and ships wrong. Raised separately instead.</summary>
+        const float HeliHeaveDamp = 0.45f;
+        /// <summary>How much of HeliFallMax a shaft-aligned descent is allowed to reach. Mirrors the 0.9 the CLIMB
+        /// side already applies via _heliLiftCap, and for the same stated reason -- "keeps a margin so the cap
+        /// binds before the envelope does". Targeting the cap exactly, which is what the first cut did, leaves
+        /// nothing to absorb position quantization (1/256 m, truncating) or a suspended sling load, both of which
+        /// add to the fall rate the server actually measures.</summary>
+        const float FallEnvelopeMargin = 0.9f;
+        /// <summary>LIVE FLIGHT-MODEL KNOBS, driven by the `heliphys` console command (VoX 2026-08-17: "so we are
+        /// essentially applying max speeds to the helis? Can we test removing those please"). Static because the
+        /// question is about the FLEET's feel, not one airframe's, and because they exist to be A/B'd in the air.
+        ///
+        /// NONE OF THESE ARE SHIPPING DEFAULTS. They default to exactly the calibrated behaviour, so a build with
+        /// nobody typing at the console flies identically to one without them. What they are for is answering
+        /// "what would it feel like without the limiter" by flying it rather than arguing about it.
+        ///
+        /// THE MP CAVEAT, because it is not visible from the cockpit: VehicleReplication validates horizontal
+        /// motion against SpeedMaxMps * 1.25 and vertical against HeliClimbMax with ZERO slack. Turning these up
+        /// is free in singleplayer and gets a pilot ROLLED BACK on a server. Tune to taste here, then decide
+        /// whether the spec numbers move to match -- do not ship a feel the envelope will reject.</summary>
+        public static float HeaveDampScale = 1f;      // vertical resistance, 1 = calibrated (terminal fall 21.8 m/s)
+        public static float DragScale = 1f;           // horizontal parasite drag, 1 = level terminal equals Speed_Max
+        public static bool BackstopEnabled = true;    // the 1.25x hard wall that keeps the client inside the envelope
+        /// <summary>Vertical resistance follows the DISC rather than the world vertical: tilt the shaft and the
+        /// disc goes edge-on to the airflow, which is cos^2 of the tilt (one cosine resolving velocity onto the
+        /// shaft, one resolving the force back to vertical). VoX got here from the feel -- "a horizontal heli has
+        /// more vertical drag than a vertical heli right?" -- and the physics review recommended it originally.
+        ///
+        /// DESCENT ONLY -- but NOT for the reason originally given here, which was wrong and is worth recording
+        /// rather than quietly deleting. The claim was that the same factor on the CLIMB side raises terminal
+        /// climb ~22 % into HeliClimbMax's zero-slack check. The 22 % is real but it is a SAME-ATTITUDE
+        /// comparison, and the server does not check climb at 25 deg -- it checks whatever the rate actually is.
+        /// Terminal climb under the shaft form is strictly increasing in cos(tilt) for every airframe in the
+        /// fleet, so its maximum is at LEVEL, where cos^2 = 1 and the shaft form IS the world form. Verified per
+        /// airframe: max 8.32 m/s at 0 deg on a Huey, 11.36 at 0 deg on a Hind, both identical to the world-
+        /// aligned figure. A symmetric version would LOWER climb at every tilted attitude and raise nothing the
+        /// server looks at. It stays descent-only because the descent is the axis VoX was complaining about and
+        /// a one-sided change is the smaller one -- not because the climb side was ever unsafe. ON BY DEFAULT since VoX 2026-08-18 ("can you make sure my preference is the defaut for
+        /// testing") -- he reached this from the feel before seeing the code, so the fleet now flies his version
+        /// without anyone typing at the console, and `heliphys shaft off` is how you get the old behaviour back.
+        ///
+        /// STILL UNRESOLVED AND DELIBERATELY NOT PAPERED OVER: HeliCrashExplodeSpeed is 15 m/s and was settled
+        /// against the old 21.8 terminal fall. A floored dive now reaches the airframe's HeliFallMax (39.9 on a
+        /// Huey), so a misjudged pullout is a fireball where it used to be a hard landing. That is a difficulty
+        /// decision, not a physics one, so it is flagged rather than silently retuned alongside this.</summary>
+        public static bool ShaftAlignedDescent = true;
+        /// <summary>HOW MUCH OF THE SINK IS REDIRECTED FORWARD instead of destroyed, 0 = shipped behaviour.
+        ///
+        /// VoX's second complaint -- "when I level out it doesnt translate my falling speed into forward speed
+        /// enough" -- is not a tuning problem. The horizontal equation of motion contains NO term that depends on
+        /// vertical velocity: lift reads attitude and flatSpeed, parasite drag and the backstop read the flat
+        /// vector only, and the heave damper is the single vel.Y-dependent force in the model but is applied
+        /// along Vector3.Down, whose horizontal component is zero at every attitude. Conversion is therefore
+        /// exactly 0 %, not merely low. Flying the identical pullout with entry sink rates of 0 and 60 m/s gives
+        /// bit-identical exit speed, and ShaftAlignedDescent does not change that -- it only makes the fall
+        /// faster, so it answers the first half of his sentence and none of the second.
+        ///
+        /// The fix falls out of the cos^2 derivation already documented above: "one cosine resolving velocity onto
+        /// the shaft, one resolving the force back to vertical". The implementation kept only the vertical
+        /// projection and silently discarded the IN-PLANE component -- which is precisely the forward push. This
+        /// restores it, and because the vertical axis is untouched, terminal fall, the FallMax floor, ClimbMax,
+        /// _heliLiftCap and the k derivation all stay exactly as calibrated.
+        ///
+        /// Signs come out right without special-casing: nose-down tilts b.Y forward, so a descent pushes FORWARD;
+        /// a nose-up flare tilts it aft, so flaring brakes; a descending bank pushes into the turn.
+        ///
+        /// DEFAULT 0 -- OFF. This is a real feel change nobody has flown yet, so it ships inert and is opted into
+        /// with `heliphys redirect 1`. At 1.0 a Huey exits a 200 m dive at ~22 m/s instead of ~6, peaking near the
+        /// 1.25 MP envelope -- so anything above 1.0 needs a per-airframe envelope check before it goes further.</summary>
+        public static float HeaveRedirect = 0f;
+        /// <summary>How much draggier sideways than forwards. This is what replaces the old ForeAftBoost /
+        /// LateralBoost pair, which multiplied THRUST to make leaning into a run build momentum ("increase the
+        /// forward/back momentum when tilting forward/back") and lateral slip feel less eager than a drone.
+        /// Resisting the sideways axis harder produces the same asymmetry from the side of the equation where
+        /// it belongs: a fuselage genuinely does present far more area sideways than forwards, so the fore/aft
+        /// axis keeps its speed and a sideways slide does not.</summary>
+        const float HeliLateralDragRatio = 2.5f;
+        /// <summary>Where the hard horizontal wall sits, as a multiple of Speed_Max. Above level flight's own
+        /// terminal (1.0 by construction, since the drag coefficient is derived to put it there) and below the
+        /// MP envelope's EnvelopeSlack of 1.25, so a dive can outrun cruise without ever producing a state the
+        /// server would reject.</summary>
+        const float HeliEnvelopeBackstop = 1.15f;
+        /// <summary>Anti-collision beacon timing. 1.4 s between flashes is ~43 per minute, inside the real
+        /// 40-45 civil range, and the flash itself is SHORT -- a pulse reads as a strobe, an even blink reads as
+        /// a warning lamp on a dashboard.</summary>
+        const float BeaconPeriod = 1.4f, BeaconFlash = 0.12f;
+        /// <summary>How much of the start-up clip the rotor has to get through before it makes thrust, and
+        /// how long the spin-up itself takes, as a FRACTION of that clip.
+        ///
+        /// 1.0 is strawberry's literal ask -- "only start generating thrust after the sound finishes" -- and
+        /// heli_ignition.ogg is 8.10 s, so that is an eight-second startup during which the machine makes no
+        /// lift whatsoever. That is realistic (a real turbine is slower still) but it is a large gameplay
+        /// change rather than a detail: anything already airborne when it starts simply falls, and a helicopter
+        /// spawned at 60 m reaches the ground before its rotor is legal. It is one number precisely because
+        /// which value is RIGHT is a feel call, not an engineering one.
+        ///
+        /// 0.74 = 6.0 s of the 8.10 s clip, and it is MEASURED rather than picked. strawberry: "i think the
+        /// heli ignition has a big fadeout tail. should overlap engine starting as it fades" -- and the
+        /// clip's RMS envelope says exactly that: it holds 60-75 % of peak from 2.7 s to 5.7 s, then falls
+        /// away monotonically (48 % at 6.0, 32 % at 6.9, 21 % at 7.2, 7 % at 7.8). So the START-UP ends and
+        /// the fade begins at ~6.0 s, and thrust arriving there leaves the last 2.1 s of tail playing over
+        /// a running engine. Gating on the full 8.10 s instead meant eight seconds of no lift, which drops
+        /// anything already airborne.</summary>
+        const float IgnitionThrustFraction = 0.74f;
+        /// <summary>EFFECTIVE TRANSLATIONAL LIFT. In a hover a rotor is flying in its own downwash; as the
+        /// machine translates it moves into undisturbed air, induced drag falls, and the same collective makes
+        /// more thrust. Pilots feel it as a distinct surge and a lightening of the airframe as they come out
+        /// of a hover, and it is why a machine too heavy to hover can often still fly away.
+        ///
+        /// THE GAIN IS BOUNDED BY A SIGNED-OFF BEHAVIOUR, not by taste. Hands off, the collective springs to
+        /// IdleHoverFraction (0.92) of hover, so lift is 9.8 * 0.92 = 9.016 and the machine sinks gently --
+        /// which is what VoX asked for. ETL multiplies that, so any gain at or above 9.8/9.016 - 1 = 0.087
+        /// turns the hands-off sink into a hands-off CLIMB and silently deletes the behaviour.
+        ///
+        /// 0.05, NOT THE 0.087 THE ALGEBRA ALLOWS, because the bound is where the sink INVERTS and the
+        /// behaviour dies well before that. At 0.08 the steady-state hands-off sink is 0.139 m/s -- 1.4 m of
+        /// descent over ten seconds, which is a hover with a rounding error, not the "gentle sink" that was
+        /// asked for. At 0.05 it is 0.74 m/s: still gentle, still unmistakably down. Sizing a gain to the
+        /// point where a behaviour reverses leaves nothing of the behaviour.
+        ///
+        /// CORRECTION, recorded because the wrong version shipped in this file and in a commit message: the
+        /// original justification here claimed a measurement of a +0.14 m/s CLIMB at 0.08, blamed on the
+        /// collective settling above its spring target. That reading was a rig artefact -- the test zeroed
+        /// vertical velocity while the collective was still at full, so the window opened with ~1.4 m/s of
+        /// climb which decays on a 2.2 s time constant, and 4 s was not long enough for it to settle. The
+        /// stated mechanism was wrong too: DriveHeli converges with MoveToward, which cannot overshoot its
+        /// target. The number was real and the question it answered was "what is this machine doing one time
+        /// constant in", not "where does it settle". Found by review, not by me.</summary>
+        const float EtlGain = 0.05f;
+        const float EtlOnset = 4f, EtlFull = 11f;   // m/s: starting to outrun the downwash, and fully clear of it
+        /// <summary>Closest approach used in the ground-effect term, as a fraction of rotor radius.
+        /// Cheeseman-Bennett diverges as z -> R/4, so the disc height is clamped here; at R/2 the factor is
+        /// 1/(1 - 0.25) = 1.333, which is about what a real machine sees sitting on its skids.</summary>
+        const float GroundEffectMinZ = 0.5f;
+
+        /// <summary>The horizontal acceleration an airframe can sustain WITHOUT LOSING ALTITUDE: the steepest
+        /// attitude whose remaining vertical thrust still holds the machine up, times the sine of it.
+        ///
+        /// This exists so the drag coefficient can be DERIVED rather than typed. Nothing about a real
+        /// helicopter would tell us the right number anyway -- every vehicle in this game has GlobalMass 900
+        /// regardless of what it is, and rho and mass are both folded into the coefficient -- so a hand-tuned
+        /// table would be seven magic numbers whose provenance dies with the commit, and whose rank is
+        /// INVERTED against real aircraft (the scrap minicopter ends up the draggiest, the Hind the least).
+        /// Deriving it from HeliThrust and Speed_Max instead means the two authorities that already exist stay
+        /// the only authorities, and retuning either one carries the drag along with it.
+        ///
+        /// Not a closed form because TiltThrustLoss sits inside the tilt term: leaning costs lift twice (the
+        /// free cosine, then that extra bite), so the tilt that maximises horizontal thrust subject to holding
+        /// altitude has no tidy solution. A tenth-of-a-degree sweep is exact enough and runs once per spec at
+        /// build time. The loop breaks rather than continues because lift(theta)*cos(theta) decreases
+        /// monotonically -- once an attitude sinks, every steeper one does too.</summary>
+        static float LevelFlightAccel(float thrust)
+        {
+            float best = 0f;
+            for (int i = 1; i <= 900; i++)
+            {
+                float th = Mathf.DegToRad(i * 0.1f);
+                float lift = thrust * (1f - TiltThrustLoss * (1f - Mathf.Cos(th)));
+                if (lift * Mathf.Cos(th) < 9.8f) break;   // any steeper and it descends -- not level flight any more
+                // MAX, not last. The break is provably safe -- with c = cos(theta), vertical thrust is
+                // T(0.45c + 0.55c^2), whose derivative T(0.45 + 1.1c) is positive for every c >= 0, so it
+                // decreases monotonically in theta and no feasible attitude hides past an infeasible one.
+                // The OBJECTIVE is not monotone though: lift*sin(theta) peaks at 57.9 deg. The altitude
+                // constraint currently binds at 27.6-38.4 deg, well short of that, so taking the last feasible
+                // angle happens to be the maximum today -- and stops being so above thrust 24.8, where it
+                // would under-derive the coefficient and put top speed over spec. Cheap to just be correct.
+                best = Mathf.Max(best, lift * Mathf.Sin(th));
+            }
+            // A rotor that cannot lift its own weight breaks on the first step and leaves best at 0, which
+            // downstream becomes a drag coefficient of 0 -- an airframe with NO horizontal drag whatsoever,
+            // limited only by the backstop. Nothing in the fleet is close (minimum thrust 11.8), but the
+            // failure is silent and the guard is one line.
+            return best > 0.01f ? best : 0.01f;
+        }
 
         // ---- INERTIA + TURBULENCE (strawberry 2026-08-16: "adding inertia. joystick changes should feel
         // slower, heavier and more sluggish. like the heli actually has weight. as well as minor turbulence at
@@ -70,15 +283,34 @@ namespace UnturnedGodot
         Vector3 _turbKick;     // the current gust, decaying
         float _turbTimer;
         const float CommandSlew = 2.4f;        // stick -> commanded rate (the linkage)
-        const float TurbMinGap = 1.6f, TurbMaxGap = 5.5f;   // seconds between gusts
-        const float TurbStrength = 0.42f;      // rad/s of angular kick at full strength
+        const float TurbMinGap = 1.6f, TurbMaxGap = 5.5f;   // seconds between gusts, at ALTITUDE (see TurbLowGapScale)
+        const float TurbStrength = 0.42f;      // rad/s^2 of angular kick at full strength -- it is added to `cmd`, which is an angular ACCELERATION (see the ApplyTorque at the end of StepHeli), not a rate
         const float TurbDecay = 1.5f;          // how fast a gust bleeds away
+        // TURBULENCE SCALES WITH HEIGHT ABOVE GROUND (strawberry: "make turbulence scale with vertical height, in
+        // terms of frequency and severity. low to the ground should be relatively calm"). Measured AGL, not absolute
+        // Y -- otherwise hugging a hilltop at 300 m would be as rough as open sky at 300 m, and the whole point is
+        // that low-level flying is the calm regime.
+        const float TurbCalmAgl = 12f;         // at or below this, as calm as it gets
+        const float TurbFullAgl = 140f;        // at or above this, the full gusts the fleet was tuned with
+        const float TurbLowSeverity = 0.15f;   // fraction of full strength down on the deck -- calm, not dead
+        const float TurbLowGapScale = 3.0f;    // gusts this many times further apart down low
+        const float TurbAglReach = 260f;       // probe length; no hit = open air, treat as full
+        float _turbAgl = TurbFullAgl;          // cached, refreshed on the gust timer rather than every tick
         static readonly RandomNumberGenerator HeliRng = MakeHeliRng();
         static RandomNumberGenerator MakeHeliRng() { var r = new RandomNumberGenerator(); r.Randomize(); return r; }
         /// <summary>Test seam: the live gust, so a test can prove turbulence is real without waiting on a die roll.</summary>
         public Vector3 DebugTurbulence => _turbKick;
+        public float DebugTurbAgl => _turbAgl;
         /// <summary>Test seam: turbulence OFF, so a control-response test measures the pilot and not the weather.</summary>
         public bool DebugNoTurbulence;
+        /// <summary>Skip the start-up gate: full rotor immediately, thrust from the first tick.
+        ///
+        /// For rigs whose subject is something ELSE. A check about roll authority should not have to fly
+        /// six seconds of ignition first -- padding every window to clear the gate makes each test slower,
+        /// makes them all depend on a gameplay constant they do not care about, and (the reason this exists)
+        /// silently turns them into tests of the START-UP whenever that number moves. The gate has its own
+        /// dedicated check instead, which is where it belongs.</summary>
+        public bool DebugInstantStart;
 
         // ---- ROTOR DAMAGE (VoX 2026-08-16) --------------------------------------------------------------
         // "give the main rotor and tail rotor independent HP values. main rotor hp low -> reduced thrust. tail
@@ -102,11 +334,18 @@ namespace UnturnedGodot
         /// <summary>Impact speed that writes the machine off outright, ~54 km/h.
         ///
         /// Set against what the airframe can actually REACH, not picked as a round number. Horizontal top speed
-        /// is 26 m/s, so flying into a cliff at cruise is always fatal. Vertically, drag caps terminal at
-        /// ~28 m/s but a 45 m drop only arrives at ~17.5 -- so a threshold of 19, which is what this was, meant
-        /// falling out of the sky from any survivable height could NOT write the machine off, while a horizontal
-        /// crash could. 15 puts a genuine plummet and a fast collision on the same side of the line, and leaves
-        /// the 10-12 m/s arrivals of a botched landing survivable.</summary>
+        /// is 26 m/s, so flying into a cliff at cruise is always fatal. Vertically, damping caps terminal fall
+        /// at 21.8 m/s (g / HeliHeaveDamp) but a 45 m drop only arrives at ~18 -- so a threshold of 19, which
+        /// is what this was, meant falling out of the sky from any survivable height could NOT write the
+        /// machine off, while a horizontal crash could. 15 puts a genuine plummet and a fast collision on the
+        /// same side of the line, and leaves the 10-12 m/s arrivals of a botched landing survivable.
+        ///
+        /// The terminal figure here read "~28 m/s" until 2026-08-17, which is g / 0.35 -- the damping the file
+        /// SAID it had. The value actually in force was 0.45 (see HeliHeaveDamp), giving 21.8. The companion
+        /// 45 m number beside it was measured and is right, which is the tell: one figure was observed and the
+        /// one next to it was reasoned from a constant that was never true. The threshold of 15 was chosen
+        /// against the measured arrival speeds, so it does not move -- but the "18.5 m fall is fatal" figure
+        /// quoted elsewhere IS a 0.35 number: at 0.45 you need about 23 m to reach 15 m/s.</summary>
         const float HeliCrashExplodeSpeed = 15f;
         /// <summary>Below this an impact is not a crash at all -- setting down firmly, brushing a wall while
         /// hovering. Without a floor, every landing would chip the airframe.</summary>
@@ -135,8 +374,16 @@ namespace UnturnedGodot
         public float DebugRotorPhase => _rotorSpin;
         /// <summary>Balance seams: the tuned handling numbers, so a test can pin the fleet's ORDERING without
         /// flying every airframe. The absolute values are taste; the order is the specification.</summary>
-        public float DebugRollAuthority => _heliRollTq;
+        public float DebugRollAuthority => _heliRollTq * SlingAgility;   // LIVE: what the machine actually rolls with right now
         public float DebugThrust => _heliThrust;
+        public float DebugHeliDragK => _heliDragFwd;   // 1/m, derived at build time -- see LevelFlightAccel
+        public float DebugHeliLiftCap => _heliLiftCap;
+        public float DebugEnginePitch => _engineAudio?.PitchScale ?? 0f;
+        public float DebugIgnitionPitch => _ignitionAudio?.PitchScale ?? 0f;
+        /// <summary>The value the flight model ACTUALLY used this tick, not a fresh recompute: a test that
+        /// re-probes could agree with the code while the code disagreed with itself, which is the failure a
+        /// debug accessor exists to catch. Reads 1.0 until StepHeli has run once on this machine.</summary>
+        public float DebugGroundEffect => _groundEffect;
         Vector3 _mainHubCentre, _mainHubHalf, _tailHubCentre, _tailHubHalf;
         // A blade strike GRINDS the rotor down over time rather than killing it outright (strawberry
         // 2026-08-16: "rotors' blade damage to be ticked over time instead of instantly killing the rotor").
@@ -251,9 +498,145 @@ namespace UnturnedGodot
             if (space == null) return false;
             Vector3 from = GlobalPosition;
             var q = PhysicsRayQueryParameters3D.Create(from, from + Vector3.Down * (_groundClearance + 0.45f));
-            q.Exclude = new Godot.Collections.Array<Rid> { GetRid() };
+            // Exclude our OWN slung equipment. The magnet is aircraft kit on the vehicle layer hanging directly
+            // under the hull, so an un-excluded ray reads it as ground: the crane "landed" every tick, stowed the
+            // winch, un-landed the next tick with the magnet gone, and redeployed -- a 1-tick deploy/stow oscillation
+            // that presented as a magnet that would not pay out past ~1.2 m. Nothing in the cable maths was wrong.
+            q.Exclude = SlingExclude();
             q.CollisionMask = (1u << 0) | (1u << 5);
             return space.IntersectRay(q).Count > 0;
+        }
+
+        /// <summary>Height above the ground directly below, for turbulence. Long probe, WORLD layer only -- a gust
+        /// regime should not change because another aircraft or a slung container happened to pass underneath. No
+        /// hit means open air, which reads as full altitude.</summary>
+        float ProbeAgl()
+        {
+            var space = GetWorld3D()?.DirectSpaceState;
+            if (space == null) return TurbFullAgl;
+            Vector3 from = GlobalPosition;
+            var q = PhysicsRayQueryParameters3D.Create(from, from + Vector3.Down * TurbAglReach);
+            q.Exclude = SlingExclude();
+            q.CollisionMask = 1u << 0;
+            var hit = space.IntersectRay(q);
+            return hit.Count > 0 ? Mathf.Max(0f, from.Y - ((Vector3)hit["position"]).Y) : TurbFullAgl;
+        }
+
+        /// <summary>Build the belly beacon's mesh from a nav-light lens: ONE lamp, re-centred on the origin, and
+        /// turned to face DOWN.
+        ///
+        /// Two things make the raw lens wrong for a belly fitting. It can contain more than one lamp -- the orca's
+        /// spans 0.96 m in X where every other airframe's is 0.16-0.26, i.e. two lenses in one mesh, which is why its
+        /// belly light appeared as two. And the lens is a thin slab authored facing SIDEWAYS off the hull (thin in X,
+        /// ~0.37 in Y and Z), so dropped on the belly unrotated it points out the side instead of at the ground.
+        ///
+        /// So: split the triangles into X clusters, keep the biggest single cluster, centre it, and rotate its thin
+        /// axis from +/-X onto -Y.</summary>
+        static ArrayMesh BeaconLensMesh(Mesh src)
+        {
+            if (src == null || src.GetSurfaceCount() == 0) return null;
+            var arr = src.SurfaceGetArrays(0);
+            if (arr.Count == 0 || arr[(int)Mesh.ArrayType.Vertex].VariantType == Variant.Type.Nil) return null;
+            var verts = arr[(int)Mesh.ArrayType.Vertex].AsVector3Array();
+            var idx = arr[(int)Mesh.ArrayType.Index].VariantType != Variant.Type.Nil
+                ? arr[(int)Mesh.ArrayType.Index].AsInt32Array() : null;
+            int triCount = (idx != null ? idx.Length : verts.Length) / 3;
+            if (triCount == 0) return null;
+            Vector3 V(int t, int k) => idx != null ? verts[idx[t * 3 + k]] : verts[t * 3 + k];
+
+            // Cluster triangle centroids along X, splitting wherever there is a gap wider than a lamp.
+            var cx = new float[triCount];
+            for (int t = 0; t < triCount; t++) cx[t] = (V(t, 0).X + V(t, 1).X + V(t, 2).X) / 3f;
+            var sorted = (float[])cx.Clone(); System.Array.Sort(sorted);
+            float span = sorted[^1] - sorted[0];
+            float gap = Mathf.Max(0.08f, span * 0.25f);
+            float bestLo = sorted[0], bestHi = sorted[^1];
+            {
+                float lo = sorted[0], prev = sorted[0]; int count = 1, best = -1;
+                for (int i = 1; i <= sorted.Length; i++)
+                {
+                    bool end = i == sorted.Length;
+                    if (!end && sorted[i] - prev <= gap) { count++; prev = sorted[i]; continue; }
+                    if (count > best) { best = count; bestLo = lo; bestHi = prev; }
+                    if (end) break;
+                    lo = prev = sorted[i]; count = 1;
+                }
+            }
+            // Face the thin axis downward: a lamp on the starboard side points +X, one on port points -X.
+            float mid = (bestLo + bestHi) * 0.5f;
+            var turn = new Basis(Vector3.Back, Mathf.DegToRad(mid >= 0f ? -90f : 90f));
+
+            var keep = new System.Collections.Generic.List<Vector3>();
+            for (int t = 0; t < triCount; t++)
+            {
+                if (cx[t] < bestLo - 1e-3f || cx[t] > bestHi + 1e-3f) continue;
+                keep.Add(V(t, 0)); keep.Add(V(t, 1)); keep.Add(V(t, 2));
+            }
+            if (keep.Count < 3) return null;
+            var bounds = new Aabb(keep[0], Vector3.Zero);
+            foreach (var p in keep) bounds = bounds.Expand(p);
+            Vector3 c = bounds.GetCenter();
+            var outArr = new Godot.Collections.Array();
+            outArr.Resize((int)Mesh.ArrayType.Max);
+            var final = new Vector3[keep.Count];
+            for (int i = 0; i < keep.Count; i++) final[i] = turn * (keep[i] - c);   // centred on the origin, then turned to face down
+            outArr[(int)Mesh.ArrayType.Vertex] = final;
+            var am = new ArrayMesh();
+            am.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, outArr);
+            return am;
+        }
+
+        // Self + anything we are carrying: a downward probe must never mistake our own load for the ground.
+        Godot.Collections.Array<Rid> SlingExclude()
+        {
+            var ex = new Godot.Collections.Array<Rid> { GetRid() };
+            if (_magnet != null && IsInstanceValid(_magnet))
+            {
+                ex.Add(_magnet.GetRid());
+                if (_magnet.Held != null && IsInstanceValid(_magnet.Held)) ex.Add(_magnet.Held.GetRid());
+            }
+            return ex;
+        }
+
+        /// <summary>Rotor thrust multiplier from GROUND EFFECT, 1.0 with nothing underneath.
+        ///
+        /// Within about a rotor diameter of the ground the downwash cannot escape sideways fast enough, the
+        /// rotor's induced velocity falls, and the same collective makes more thrust -- the "cushion" you feel
+        /// settling onto a pad, and what a heavy machine uses to stagger into the air. Cheeseman-Bennett:
+        /// T_ige / T_oge = 1 / (1 - (R / 4z)^2), for disc height z and rotor radius R. It decays fast and
+        /// honestly: 1.33 at half a radius, 1.07 at one radius, 1.02 at two.
+        ///
+        /// ITS OWN RAYCAST, deliberately, rather than reusing GroundedByRay. That one is a landing-gear
+        /// contact test and reaches _groundClearance + 0.45, about 1.4 m; a Huey's rotor is 11 m across, so a
+        /// probe that short cannot see this effect at all. This one reaches two radii, which is where the term
+        /// has decayed to nothing anyway.
+        ///
+        /// The mask is bit 0, which is world geometry AND vehicle bodies -- vehicles sit on bit0|bit5 (see
+        /// _baseCollisionLayer), so bit 0 alone does NOT exclude them and it would be wrong to claim it does.
+        /// That is left as it is on purpose: a surface under the disc is a surface, and a helicopter hovering
+        /// low over a truck really is in ground effect. It is only for a LANDING test that "is that thing
+        /// under me the ground?" needs the distinction. Props (bit 6) are excluded, since a bush is not a
+        /// surface the downwash builds a cushion against.</summary>
+        float GroundEffect()
+        {
+            if (!_heli || _rotorRadius < 0.01f) return 1f;
+            var space = GetWorld3D()?.DirectSpaceState;
+            if (space == null) return 1f;
+            // FROM THE ROTOR HUB, not the fuselage origin. Cheeseman-Bennett's z is the height of the DISC, and
+            // the hub sits 1.12 m (scoutcopter) to 4.18 m (Hind) above the origin. Measuring from the origin
+            // overstated the cushion by 11-22 % on the deck and, worse, shifted the whole decay curve upward by
+            // that offset -- a Hind kept a meaningful boost until its fuselage was at 2R, with the disc nearly
+            // three rotor radii up. It also made every airframe pin to the R/2 clamp while parked, so the clamp
+            // was silently standing in for the geometry instead of guarding the pole.
+            Vector3 from = ToGlobal(_mainHubCentre);
+            var q = PhysicsRayQueryParameters3D.Create(from, from + Vector3.Down * (_rotorRadius * 2f));
+            q.Exclude = new Godot.Collections.Array<Rid> { GetRid() };
+            q.CollisionMask = 1u << 0;   // WORLD geometry only -- not vehicles (1<<5), not props (1<<6)
+            var hit = space.IntersectRay(q);
+            if (hit.Count == 0) return 1f;
+            float z = Mathf.Max(from.Y - ((Vector3)hit["position"]).Y, _rotorRadius * GroundEffectMinZ);
+            float r = _rotorRadius / (4f * z);
+            return 1f / Mathf.Max(1f - r * r, 0.1f);
         }
 
         /// <summary>Seam to the authoritative destructibles, mirroring PlayerController.NetDamageObject.
@@ -346,6 +729,11 @@ namespace UnturnedGodot
         /// <summary>Rotor spool 0..1. Thrust scales with its SQUARE (a rotor at half speed makes a quarter of
         /// the lift), so a cold start has to spin up before it will leave the ground.</summary>
         public float RotorSpool => _rotorRpm;
+        /// <summary>Put the rotor straight to full for a machine that is spawned ALREADY FLYING (NPC traffic, and
+        /// any rig that starts a helicopter in mid-air). Even with DebugInstantStart the disc still winds up over
+        /// SpoolUpSeconds = 3.2 s, and an aircraft spawned at cruise height simply falls out of the sky during that
+        /// -- it hit the ground and detonated before the AI had any thrust to fly with.</summary>
+        public void SpawnRotorRunning() { EngineOn = true; _rotorRpm = 1f; }
         /// <summary>Test seam: the collective/yaw/pitch/roll the flight model is currently flying on.</summary>
         public Vector4 DebugHeliInput => new Vector4(_inCollective, _inYaw, _inPitch, _inRoll);
         float _heliClimbMax, _heliFallMax;
@@ -397,6 +785,18 @@ namespace UnturnedGodot
             public float PitchMin = -20f, PitchMax = 60f;
             // The mount carries its OWN gun and its OWN belt, which is retail's model (TurretInfo.itemID): a
             // turret is a gun item bolted to a seat, so it does not eat the gunner's rifle rounds.
+            /// <summary>Where the CREW MEMBER stands, vehicle-local. For a door gun this is the DOORWAY, level
+            /// with the mount, not tucked inboard: a gunner at 0.62 of the cabin half-width has a 0.42 m hit
+            /// radius and therefore sits entirely inside the hull box, so every shot from abeam struck the
+            /// fuselage first and the gunner could not be killed at all -- "the hitbox of the helis overlap the
+            /// hitboxes of the gunners. so its impossible to hit them". Standing them in the door puts 0.27 m of
+            /// body outside the skin, which is both the fix and what a door gunner actually does.</summary>
+            public Vector3 GunnerAt = Vector3.Zero;
+            /// <summary>Euler degrees applied to the gun MESH inside its pitch frame. A held-weapon model is not
+            /// authored pointing down -Z: dragonfang_gun.txt measures 0.22 x 1.14 x 0.37, i.e. its length runs
+            /// along Y, so dropped straight onto a mount it stands upright like a fence post. Measured, not
+            /// assumed -- the AABB says which axis is the barrel.</summary>
+            public Vector3 MeshRotationDeg = Vector3.Zero;
             public string GunId = "nykorev";
             public int Belt = 200;
             public Color Colour = new Color(0.16f, 0.17f, 0.14f);
@@ -404,6 +804,64 @@ namespace UnturnedGodot
         public TurretDef[] Turrets = System.Array.Empty<TurretDef>();
         Node3D[] _turretYaw, _turretPitch;
         int[] _turretAmmo; float[] _turretCd;
+        TargetDummy[] _turretCrew;
+        readonly System.Collections.Generic.List<StandardMaterial3D> _navMats = new();
+        readonly System.Collections.Generic.List<OmniLight3D> _navOmnis = new();
+        /// <summary>Put crew in the door guns. NOT done at build time (strawberry: "helis spawned with the
+        /// vehicle command shouldnt have gunners") -- a helicopter you spawn to fly is an empty airframe, and the
+        /// gunners are something the AI brings with it.
+        ///
+        /// COLLISION EXCEPTION IS LOAD-BEARING, not tidiness. TargetDummy is a StaticBody3D on collision layer 1,
+        /// which is the WORLD layer, and a vehicle's mask includes the world -- so parenting two of them inside
+        /// the fuselage gave the aircraft two immovable world obstacles embedded in its own hull. It collided
+        /// with its own crew every tick and departed on the yaw axis, which is exactly what strawberry saw:
+        /// "orca and huey spin violently out of control yaw axis". The exception keeps them raycast-visible to
+        /// bullets while making them invisible to the vehicle's own collision.</summary>
+        public void EquipDoorGunners()
+        {
+            if (_turretCrew == null) return;
+            for (int i = 0; i < Turrets.Length; i++)
+            {
+                if (Turrets[i].GunnerAt == Vector3.Zero || _turretCrew[i] != null) continue;
+                var crew = new TargetDummy
+                {
+                    Name = $"Gunner{Turrets[i].Seat}",
+                    Position = Turrets[i].GunnerAt,
+                    MaxHealth = new PlayerVitalsSim().MaxHealth,   // "same hp as a player", taken FROM the player's sim
+                    NeverRespawn = true,
+                };
+                AddChild(crew);
+                AddCollisionExceptionWith(crew);
+                _turretCrew[i] = crew;
+                if (_turretPitch?[i] != null)
+                    foreach (var g in _turretPitch[i].GetChildren())
+                        if (g is MeshInstance3D gm) gm.Visible = true;   // the gun comes with the gunner
+            }
+        }
+        /// <summary>Can this mount still shoot? A mount with no crew (a remote chin turret) is always manned; a
+        /// door gun is manned only while its gunner is alive.</summary>
+        public bool TurretCrewAlive(int seat)
+        {
+            if (_turretCrew == null) return true;
+            for (int i = 0; i < Turrets.Length; i++)
+            {
+                if (Turrets[i].Seat != seat) continue;
+                // A mount that declares NO gunner position is remote-operated and always manned (the Hind's chin
+                // turret). A mount that DOES declare one needs a live body in it -- including the case where no
+                // crew was ever installed, which is now every player-spawned airframe.
+                if (Turrets[i].GunnerAt == Vector3.Zero) return true;
+                return _turretCrew[i] != null && !_turretCrew[i].Down;
+            }
+            return false;
+        }
+        /// <summary>Test seam: drop this mount's gunner without shooting them five times.</summary>
+        public bool DebugKillCrew(int seat)
+        {
+            if (_turretCrew == null) return false;
+            for (int i = 0; i < Turrets.Length; i++)
+                if (Turrets[i].Seat == seat && _turretCrew[i] != null) { _turretCrew[i].DebugKill(); return true; }
+            return false;
+        }
 
         public int TurretAmmo(int seat)
         {
@@ -433,13 +891,20 @@ namespace UnturnedGodot
                 origin = _turretPitch[i].ToGlobal(t.Muzzle);
                 dir = -_turretPitch[i].GlobalTransform.Basis.Z;   // barrel axis, not the look ray
                 gunId = t.GunId;
-                _turretAmmo[i]--;
+                if (!InfiniteTurretBelt) _turretAmmo[i]--;   // an AI gunship is not a looting problem; see the field
                 _turretCd[i] = TurretCycle;
                 return true;
             }
             return false;
         }
         const float TurretCycle = 0.12f;   // belt-fed cadence; the gun's own Firerate governs the held-weapon path
+        /// <summary>Never run this mount dry (strawberry: "does it have infinite ammo? it should"). Set by the AI
+        /// on the aircraft it flies, NOT on the spec -- a player who takes the Hind's gunner seat still gets the
+        /// finite 200-round belt, because the reason to give an NPC an endless one is that nobody can reload it,
+        /// and that reason does not apply to a person sitting in the chair.</summary>
+        public bool InfiniteTurretBelt;
+        /// <summary>Test seam: are the navigation lights lit right now?</summary>
+        public bool DebugNavLightsOn => _navMats.Count > 0 && _navMats[0].EmissionEnergyMultiplier > 0.01f;
 
         /// <summary>Aim the turret operated by `seat`, in degrees, clamped to its traverse limits. Returns false
         /// if that seat has no turret -- callers must not assume every seat is a gun position.</summary>
@@ -457,6 +922,18 @@ namespace UnturnedGodot
                 return true;
             }
             return false;
+        }
+
+        /// <summary>World direction the BARREL points for `seat`, or the hull's forward if there is no such
+        /// mount. Exposed so a test can measure where the gun ended up instead of trusting the maths that aimed
+        /// it -- the aim derivation is a sign question and this file has a history with those.</summary>
+        public Vector3 TurretBarrelDir(int seat)
+        {
+            if (_turretPitch != null)
+                for (int i = 0; i < Turrets.Length; i++)
+                    if (Turrets[i].Seat == seat && _turretPitch[i] != null)
+                        return -_turretPitch[i].GlobalTransform.Basis.Z;
+            return -GlobalTransform.Basis.Z;
         }
 
         /// <summary>World-space muzzle of the turret on `seat`, for spawning a shot where the barrel actually
@@ -710,7 +1187,18 @@ namespace UnturnedGodot
             public float HeliLevel;                              // self-levelling strength (0 = none, fully manual)
             public float HeliClimbMax, HeliFallMax;              // MP envelope caps, m/s (0 = inherit the car defaults)
             public float RotorRadius, TailRotorRadius;           // blade half-spans (the rotor mesh is scaled to these)
+            public bool SlingHook;                               // carries a winch + electromagnet under the belly (sky-crane duty)
+            public float SlingCable;                             // deployed cable length, metres (0 = use the default)
+            public Vector3 SlingAnchor;                          // LOCAL point the winch hangs from (mesh frame, so it must be offset by nothing at use)
             public Vector3 RotorHub, TailRotorHub;               // local mount points for the two rotors
+            /// <summary>Take the BELLY beacon's lens from ANOTHER airframe's taillight mesh. Null = use this
+            /// airframe's own, which is the right answer for six of the seven. The Hind's own lens is the odd one
+            /// out: measured across the fleet it is the only non-square lamp and the only fat one -- 0.338 x 0.288
+            /// footprint against a uniform 0.368 square elsewhere, and 0.256 THICK against 0.161 -- so on the
+            /// biggest airframe in the game it reads as a small lump stuck to the belly rather than a fitting set
+            /// into it (strawberry: "the belly light of the hind is weird and small? doesnt fit the bottom").
+            /// The nav lights are untouched; this is the belly fitting only.</summary>
+            public string BeaconLensFrom;
             public float MainRotorHp, TailRotorHp;                // independent rotor health (0 = derive from Health)
             public Vector3 MainHubBox, TailHubBox;                // the BULLET hitbox at each mast (full size); Zero = a default off the rotor radius
             public string[] HeliBodyMeshes;                      // airframe .obj(s); null = build one of the procedural frames below
@@ -751,8 +1239,82 @@ namespace UnturnedGodot
             return new AudioStreamWav { Data = pcm, Format = AudioStreamWav.FormatEnum.Format16Bits, MixRate = rate, Stereo = channels == 2,
                                         LoopMode = AudioStreamWav.LoopModeEnum.Forward, LoopEnd = dataSize / (channels * bits / 8) };
         }
+        /// <summary>Per-airframe pitch multiplier: a big helicopter sounds LOW, a small one sounds high.
+        /// Applied to the engine loop AND the start-up clip, since a Skycrane whose idle is a low thud but
+        /// whose ignition is Huey-pitched just sounds like two different aircraft.
+        ///
+        /// Sized off the AIRFRAME's box volume, not the rotor. Rotor radius was the obvious choice and it is
+        /// nearly useless here: the hind, orca and skycrane are all 5.90 m, so the three heaviest machines came
+        /// out within 3 % of each other. The collision box actually separates them -- 60.9 m^3 for the
+        /// Skycrane, 19.3 for the Hummingbird, 1.3 for the minicopter -- and its cube root is a real
+        /// characteristic LENGTH, which is the quantity a resonating structure's frequency scales inversely
+        /// with. Square-rooted to tame the extremes (the minicopter is 45x smaller than the Skycrane by volume,
+        /// which raw would put it two octaves up) and referenced to the Huey, the aircraft the clips came from.
+        ///
+        /// Result across the fleet: minicopter/scoutcopter 1.50, hummingbird 1.05, huey 1.00, orca 0.93,
+        /// hind 0.89, skycrane 0.87. (strawberry: "big hind low pitch, mini higher pitched")</summary>
+        static float HeliSizePitch(Spec s)
+        {
+            if (!s.Heli) return 1f;
+            float vol = s.BoxSize.X * s.BoxSize.Y * s.BoxSize.Z;
+            if (vol < 0.01f) return 1f;
+            const float HueyLength = 2.970f;   // cbrt(2.40 * 2.10 * 5.20)
+            return Mathf.Clamp(Mathf.Sqrt(HueyLength / Mathf.Pow(vol, 1f / 3f)), 0.78f, 1.50f);
+        }
+
         static StandardMaterial3D SolidMat(Color c) =>
             new() { AlbedoColor = c, Metallic = 0f, Roughness = 0.9f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+
+        /// <summary>A lens that actually emits, rather than a surface painted the colour of light.</summary>
+        static StandardMaterial3D LensMat(Color c, float energy) => new()
+        {
+            AlbedoColor = c, Metallic = 0f, Roughness = 0.4f, CullMode = BaseMaterial3D.CullModeEnum.Disabled,
+            EmissionEnabled = true, Emission = c, EmissionEnergyMultiplier = energy,
+        };
+
+        /// <summary>AIRCRAFT NAVIGATION LIGHTS: red to port, green to starboard, and both STEADY.
+        ///
+        /// The convention is not decoration -- it is how another pilot reads which way you are pointing in the
+        /// dark, so the side lights never blink. The thing that flashes on a real helicopter is a separate red
+        /// anti-collision beacon, which is built as its own node (see _beacon).
+        ///
+        /// EVERY airframe in this fleet ships only ONE lens, so the pair has to be made: huey, hind, skycrane
+        /// and hummingbird carry a lens on the port side, and the ORCA's is on starboard -- yet all five were
+        /// painted the same flat red, which means the orca's light was on the wrong side of the aircraft and
+        /// its green was simply missing. Rather than trust the filename, the side is taken from the mesh's own
+        /// X centroid and the opposite lens is mirrored from it: colour follows GEOMETRY, so an airframe whose
+        /// lens sits to starboard gets green there and red on the mirrored side, automatically.</summary>
+        void BuildNavLights(string txt)
+        {
+            var mesh = ContentProvider.ParseObj($"res://content/{txt}");
+            if (mesh == null) return;
+            float cx = mesh.GetAabb().GetCenter().X;
+            if (Mathf.IsZeroApprox(cx)) cx = -1f;   // dead centre: treat the original as port so the pair is still built
+            // The mirrored copy is a -1 X scale. Winding flips with it, which is why LensMat leaves culling off.
+            for (int i = 0; i < 2; i++)
+            {
+                bool mirrored = i == 1;
+                bool isPort = (cx < 0f) != mirrored;   // the ORIGINAL sits on the side its centroid says; the copy is the other one
+                var col = isPort ? new Color(0.95f, 0.05f, 0.05f) : new Color(0.05f, 0.95f, 0.15f);
+                var navMat = LensMat(col, 2.6f);
+                _navMats.Add(navMat);
+                AddChild(new MeshInstance3D
+                {
+                    Name = isPort ? "NavLightPort" : "NavLightStarboard",
+                    Mesh = mesh, MaterialOverride = navMat,
+                    Scale = mirrored ? new Vector3(-1f, 1f, 1f) : Vector3.One,
+                });
+                // A small omni so the lens tints the airframe around it at night instead of being a flat
+                // bright dot. Short range on purpose: a nav light marks the aircraft, it does not light terrain.
+                var navOmni = new OmniLight3D
+                {
+                    Position = new Vector3(mirrored ? -cx : cx, mesh.GetAabb().GetCenter().Y, mesh.GetAabb().GetCenter().Z),
+                    OmniRange = 2.2f, LightColor = col, LightEnergy = 1.4f,
+                };
+                _navOmnis.Add(navOmni);
+                AddChild(navOmni);
+            }
+        }
 
         // billboarded smoke/fire burst using the REAL source particle texture (veh_smoke_0/veh_smoke_1/veh_fire,
         // ripped from the vehicle prefab's ParticleSystemRenderer). smoke = grey rising; fire = additive orange.
@@ -838,6 +1400,20 @@ namespace UnturnedGodot
             // NOTE: source Bumper also roadkills Players ("Player" tag -> BumperPlayerDamage) and Animals (Animal on the
             // "Agent" tag -> BumperAnimalDamage) the same way. No player/animal targets share a scene in the port yet,
             // so only the zombie path is wired + tested here; add those branches when those entities co-exist.
+        }
+
+        /// <summary>Where this vehicle was last shot FROM, in world space, and when. Recorded for every vehicle
+        /// because it costs two fields; acted on only by an NPC Hind (strawberry: "dont wire up the other helis
+        /// for attack behavior"). It is the SHOOTER's position, not the impact point -- the point of it is "where
+        /// were you standing", which is what an aircraft would turn toward, and the two differ by the whole length
+        /// of the bullet's flight.</summary>
+        public Vector3 LastAttackedFrom { get; private set; }
+        public double LastAttackedAtMsec { get; private set; } = -1e9;
+        public bool HasBeenAttacked => LastAttackedAtMsec > -1e8;
+        public void NoteAttackedFrom(Vector3 shooterWorldPos)
+        {
+            LastAttackedFrom = shooterWorldPos;
+            LastAttackedAtMsec = Godot.Time.GetTicksMsec();
         }
 
         public void TakeDamage(float amount)   // source askDamage: reduce health; at 0 the EXPLODE timer starts
@@ -1770,8 +2346,9 @@ namespace UnturnedGodot
             HeliThrust = 12.9f, HeliPitchTorque = 1.12f, HeliRollTorque = 1.32f, HeliYawTorque = 1.03f, HeliLevel = 0f,
             HeliClimbMax = 18f, HeliFallMax = 40f,
             RotorRadius = 5.57f, TailRotorRadius = 1.28f,        // the mesh's own spans -- no scaling for this one
-            RotorHub = new Vector3(0f, 3.01f, -0.25f), TailRotorHub = new Vector3(-0.45f, 3.57f, 6.68f),   // prefab local positions, Z negated
+            RotorHub = new Vector3(0f, 3.01f, -0.25f), TailRotorHub = new Vector3(0.55f, 3.57f, 6.68f),   // prefab local positions, Z negated. Tail hub X was -0.45: the post is on the STARBOARD side (measured +0.55), so the hub sat in empty air off the port boom -- see the note on _hind
             HeliBodyMeshes = new[] { "huey_body.txt", "huey_body_1.txt" },
+            Turrets = HueyDoorGuns(),   // door gunners, port + starboard
             Parts = HeliParts("huey"),   // same three as the rest of the fleet, despite this spec predating HeliBase
             Body = null, Palette = "huey_palette.png",   // MilitaryPaintable; see the note in HeliBase
             DefaultPaints = new[] { "#475e83", "#a69884", "#437c44", "#495631" },   // .dat DefaultPaintColors
@@ -1909,6 +2486,62 @@ namespace UnturnedGodot
         // Declared BEFORE _hind on purpose. Static field initialisers run in DECLARATION order, so with this
         // below the spec it was still null when _hind's initialiser read it -- the turret silently became "no
         // turrets" and the Hind built without a mount, with nothing anywhere reporting a problem.
+        /// <summary>A PAIR of door guns, port and starboard (strawberry: "one on each side, they have a 120 deg
+        /// cone and will try to point at least one side at you when agro'd").
+        ///
+        /// The cone is expressed as ASYMMETRIC YAW LIMITS rather than a new concept: yaw +90 points the barrel at
+        /// -X (port) and -90 at +X (starboard), measured in vehicle.npc_heli_turret, so a 90 deg beam cone is
+        /// simply [45,135] and [-135,-45]. AimTurret already clamps to those, which means a door gunner
+        /// physically cannot swing across its own cabin and shoot the crew on the other side.
+        ///
+        /// Each mount declares a GunnerAt, so a killable body is built behind it. That is the whole point: these
+        /// are people leaning out of a doorway, not the Hind's remote chin turret.</summary>
+        static TurretDef[] DoorGuns(string gunId, string gunMesh, float halfWidth, float gunY, float floorY, float z)
+        {
+            return new[]
+            {
+                new TurretDef
+                {
+                    Seat = 1,   // PORT
+                    PitchMesh = gunMesh,
+                    Pivot = new Vector3(-halfWidth, gunY, z),
+                    GunnerAt = new Vector3(-halfWidth, floorY, z),
+                    Muzzle = new Vector3(0f, 0f, -0.90f),
+                    MeshRotationDeg = new Vector3(-90f, 0f, 0f),   // lay the Y-axis gun model down the barrel line
+                    YawMin = 45f, YawMax = 135f,      // 90 deg centred on the port beam (strawberry tightened it from 120)
+                    PitchMin = -70f, PitchMax = 20f,  // a door gun leans out and shoots well below itself
+                    GunId = gunId,
+                },
+                new TurretDef
+                {
+                    Seat = 2,   // STARBOARD
+                    PitchMesh = gunMesh,
+                    Pivot = new Vector3(halfWidth, gunY, z),
+                    GunnerAt = new Vector3(halfWidth, floorY, z),
+                    Muzzle = new Vector3(0f, 0f, -0.90f),
+                    MeshRotationDeg = new Vector3(-90f, 0f, 0f),
+                    YawMin = -135f, YawMax = -45f,
+                    PitchMin = -70f, PitchMax = 20f,
+                    GunId = gunId,
+                },
+            };
+        }
+
+        // CALLED, NOT STORED IN A STATIC FIELD. These began as `static readonly TurretDef[] HueyDoorGuns = ...`
+        // and the Huey silently had no turrets at all: C# runs static field initializers in TEXTUAL ORDER, _huey
+        // is declared ABOVE them, so it read null -- and `s.Turrets ?? Array.Empty` downstream turned that null
+        // into "this airframe has no mounts" without a word. The Orca worked purely because it happens to be
+        // declared lower in the file. A static method has no such ordering, so the spec table cannot be broken by
+        // where someone chooses to put a helper.
+        //
+        // GEOMETRY IS MEASURED OFF THE MESHES, not the collision box -- the box is the hull envelope and put the
+        // crew 0.38 m under the floor on the first render. Cabin floor from *_seats.txt (huey +0.08, orca +0.03),
+        // and the fore-aft station from the NAV LIGHT, which is where strawberry asked for them: "align
+        // horizontally based off where the green light is". BuildNavLights places those at the taillight mesh's
+        // own AABB centre, so the station is huey Z -0.258 and orca Z -0.221 rather than anything chosen here.
+        static TurretDef[] HueyDoorGuns() => DoorGuns("dragonfang", "dragonfang_gun.txt", 1.05f, 1.15f, 0.08f, -0.26f);
+        static TurretDef[] OrcaDoorGuns() => DoorGuns("nykorev", "nykorev_gun.txt", 1.15f, 1.10f, 0.03f, -0.22f);
+
         static readonly TurretDef[] HindTurret =
         {
             // tools/extract_turret.py --vehicle hind. Turret_1 -> seat 1, which is the nose gunner seat the seat
@@ -1921,12 +2554,18 @@ namespace UnturnedGodot
                 Muzzle = new Vector3(0.229f, -0.2f, -2.6f),   // Aim(-0.275,-0.2,-0.4) + Barrel(0.504,0,-2.2)
                 YawMin = -120f, YawMax = 120f,   // a chin turret cannot shoot through its own airframe
                 PitchMin = -60f, PitchMax = 15f, // mostly DOWNWARD: it is a ground-attack gun slung under the nose
+                // THE HMG, not the Nykorev (strawberry: "uses the HMG weapon from the source"). Retail HMG.dat is
+                // ID 1394 and carries the `Turret` flag, i.e. the game itself marks it as the mount gun: Range 250,
+                // Firerate 7, Spread_Angle_Degrees 1.43. Its HMG_50 magazine is EXPLOSIVE .50 (Player_Damage 30,
+                // Vehicle_Damage 40), which is why the AI's added inaccuracy below is load-bearing rather than
+                // flavour -- an accurate one of these would delete a player instantly.
+                GunId = "hmg",
             },
         };
         // HIND -- the gunship, and the FASTEST thing in the fleet as well as the second heaviest. Fast and
         // unwieldy: it will outrun anything and hates changing its mind.
-        static readonly Spec _hind = WithTurrets(HeliBase("hind", 14.2f, 0.69f, 0.81f, 0.63f, 5.90f, 1.25f,
-            new Vector3(0f, 4.18f, 0.58f), new Vector3(-0.30f, 4.47f, 9.60f),
+        static readonly Spec _hind = WithBeaconLens(WithTurrets(HeliBase("hind", 14.2f, 0.69f, 0.81f, 0.63f, 5.90f, 1.25f,
+            new Vector3(0f, 4.18f, 0.58f), new Vector3(0.57f, 4.46f, 9.60f),   // tail hub on the RIGHT: the boom carries a horizontal mounting post whose end face is 16 verts at X +0.57, Y 4.46, Z 9.60 -- the old -0.30 had the right height and station but the mirrored side, so the rotor hung in clear air with the post sticking out opposite it (strawberry)
             new Vector3(2.90f, 2.60f, 7.20f), new Vector3(0f, 1.40f, 0.20f),
             new (Vector3, Vector3)[]   // REAL gear, measured off hind_wheels.txt: twin nose wheels forward, mains aft
             {
@@ -1939,15 +2578,21 @@ namespace UnturnedGodot
             // NOT hind_turret.txt any more -- that merged lump is replaced by the articulated yaw/pitch pair
             // built from Spec.Turrets below. Leaving it here would draw a second, permanently-forward turret
             // clipping through the one that aims.
-            ("hind_wheels.txt", new Color(0.09f, 0.09f, 0.10f))), HindTurret);   // 4 landing wheels -- tyre black
+            ("hind_wheels.txt", new Color(0.09f, 0.09f, 0.10f))), HindTurret), "skycrane_taillights.txt");   // 4 landing wheels -- tyre black
 
         /// <summary>Attach turret mounts to a spec built by HeliBase, which has no parameter for them.</summary>
         static Spec WithTurrets(Spec s, TurretDef[] t) { s.Turrets = t; return s; }
+        static Spec WithBeaconLens(Spec s, string file) { s.BeaconLensFrom = file; return s; }
 
         public static Vehicle BuildHind(int variant = 0) => Build(_hind, variant, "hind");
 
         // ORCA (Ka-60) -- the modern transport. Nearly Hind-fast and noticeably more agile; the all-rounder.
-        static readonly Spec _orca = HeliBase("orca", 13.4f, 0.91f, 1.07f, 0.84f, 5.90f, 1.25f,
+        // Tail radius 0.72, not the fleet's shared 1.25: the ORCA is the one airframe with a DUCTED tail
+        // (a fenestron), and the duct is real geometry -- 256 verts ring its hub in a band at 0.75-1.25 m
+        // with nothing beyond, while every other airframe just has scattered boom geometry there. A 1.25 m
+        // rotor is the duct's own outer rim, so the blades were sweeping THROUGH the housing. 0.72 clears
+        // the inner wall. (strawberry: "the orca tail needs to be shrunk to fit its enclosure")
+        static readonly Spec _orca = WithTurrets(HeliBase("orca", 13.4f, 0.91f, 1.07f, 0.84f, 5.90f, 0.72f,
             new Vector3(0f, 3.28f, -0.25f), new Vector3(-0.30f, 1.48f, 7.55f),
             new Vector3(2.60f, 2.50f, 6.40f), new Vector3(0f, 1.20f, 0.10f),
             new (Vector3, Vector3)[]   // REAL gear, measured off orca_wheels.txt: mains forward, twin tail wheels aft
@@ -1958,22 +2603,57 @@ namespace UnturnedGodot
                 (new Vector3(0.24f, 0.20f, 0.76f), new Vector3( 0.21f, -0.86f,  3.11f)),
             },
             31f, 2000f, 1000f, "Orca", EItemRarity.EPIC,
-            ("orca_wheels.txt", new Color(0.09f, 0.09f, 0.10f)));    // 4 landing wheels -- tyre black
+            ("orca_wheels.txt", new Color(0.09f, 0.09f, 0.10f))), OrcaDoorGuns());    // 4 landing wheels -- tyre black
         public static Vehicle BuildOrca(int variant = 0) => Build(_orca, variant, "orca");
 
         // SKYCRANE (S-64) -- the heavy lifter, and counter-intuitively the WORST climber and slowest of the
         // five, because at 21 t what it mostly lifts is itself. Least agile by a wide margin.
-        static readonly Spec _skycrane = HeliBase("skycrane", 12.2f, 0.50f, 0.59f, 0.46f, 5.90f, 1.25f,
-            new Vector3(0f, 3.01f, -1.21f), new Vector3(-0.45f, 3.55f, 7.71f),
+        // BUFFED (strawberry 2026-08-17: "buff the skycrane because it is really slow"). It was both the slowest
+        // airframe in the fleet by a wide margin (22 vs 29-34) AND the least powerful (12.2 vs 13.4-14.2), which is
+        // backwards for the one machine whose entire purpose is heavy lift. Thrust 12.2 -> 16.5 makes it the
+        // strongest, taking spare capacity from 2160 N (~220 kg) to 6030 N (~615 kg) so it can actually carry
+        // something; Speed_Max 22 -> 28 keeps it the slowest, which is right for a crane, without being painful.
+        // Terminal climb becomes (16.5-9.8)/0.45 = 14.9 m/s, still under the 20 m/s HeliClimbMax cap.
+        static readonly Spec _skycrane = HeliBase("skycrane", 16.5f, 0.50f, 0.59f, 0.46f, 5.90f, 1.25f,
+            new Vector3(0f, 3.01f, -1.21f), new Vector3(0.55f, 3.55f, 7.71f),   // tail hub X -0.45 -> +0.55: the post is starboard
             new Vector3(3.20f, 2.80f, 6.80f), new Vector3(0f, 1.30f, 0.30f),
             Skids(2.065f, 0.60f, -0.63f, -4.15f, 2.73f, 0.20f),   // the S-64's tall splayed legs, measured
-            22f, 2000f, 900f, "Skycrane", EItemRarity.EPIC);
-        public static Vehicle BuildSkycrane(int variant = 0) => Build(_skycrane, variant, "skycrane");
+            28f, 2000f, 900f, "Skycrane", EItemRarity.EPIC);
+        // The sky-crane is the ONLY airframe with the winch: the whole point of the real S-64 is that it has no cargo
+        // hold, just a spine and a hook. 9 m of cable clears the 0.63 m gear with room for a tall load to swing.
+        static readonly Spec _skycraneRigged = WithSling(_skycrane, 9.0f, new Vector3(0f, 1.88f, 0.00f));
+        // MEASURED off the mesh, not inferred from the collision Skids(). The visible gear runs Z -3.05..2.73 and is
+        // dominated by the MAIN posts at Z 0.5..2.5 (438 verts, centroid +1.70), with a small forward cluster at -3.0.
+        // My first attempt used the collision skid span's centre (-0.71), which is on the OPPOSITE side of the origin
+        // from where the posts actually are -- strawberry, immediately: "thats the opposite direction." The collision
+        // boxes and the visible legs are simply not the same geometry, and only one of them is what a player sees.
+        static readonly Vector3 _skycraneSlingVisualLocal = new Vector3(0f, 1.88f, 1.70f);
+        public static Vehicle BuildSkycrane(int variant = 0) => Build(_skycraneRigged, variant, "skycrane");
+        // Anchor is the MEASURED belly over the load footprint (local Y 1.88 -- the sky-crane's whole shape is a high
+        // spine on tall legs, so the winch head sits 2.5 m above the skid bottoms and the cable drops between them).
+        //
+        // X AND Z MUST BE THE CENTRE OF MASS (both 0 here). The cable force is applied as a POSITIONED force, so an
+        // anchor offset from the CoM turns a hanging load into a constant pitching moment: the airframe tips, its
+        // thrust vector tilts off vertical, and it descends however much collective is in. At Z=+1.0 a 40 kg magnet
+        // -- 392 N, under a fifth of the spare thrust -- took the sky-crane from +4.1 m/s of climb to -21 m/s of
+        // descent. That is not a weight problem and no amount of trimming the magnet's mass would have fixed it.
+        // Directly under the CoM the moment arm is parallel to a vertical cable, so the torque is zero when it hangs
+        // straight and appears only as the load swings -- which is the behaviour we actually want. Real sling hooks
+        // are rigged at the CoM for exactly this reason.
+        static Spec WithSling(Spec b, float cable, Vector3 anchor) { b.SlingHook = true; b.SlingCable = cable; b.SlingAnchor = anchor; return b; }
+
+        // The VISUAL start of the cable, distinct from the FORCE anchor above (strawberry: "move the heli side rope
+        // anchor point to be in line with the leg posts"). Tried moving the real one there first: the leg posts sit
+        // at local Z -0.71 (their span's centre, Skids(...,-4.15,2.73)), 0.71 m off the CoM axis, and that reintroduced
+        // the exact pitching-moment bug from before at reduced scale -- measured -11.76 m/s of descent instead of a
+        // climb. So the FORCE still applies at the CoM (SlingAnchor, Z=0, torque-free), and only where the cable is
+        // DRAWN moves to line up with the gear. A small, deliberate lie in the render -- the pull doesn't really come
+        // from where the rope appears to leave the hull -- and I said so rather than let the picture imply otherwise.
 
         // HUMMINGBIRD (MD500 Little Bird) -- the scout. A tenth of the Hind's weight, so far and away the
         // sharpest controls in the fleet, and the thinnest hull. The three retail variants share one geometry.
         static readonly Spec _hummingbird = HeliBase("hummingbird", 13.5f, 1.84f, 2.16f, 1.68f, 5.57f, 1.25f,
-            new Vector3(0f, 3.01f, -0.25f), new Vector3(-0.45f, 3.45f, 6.95f),
+            new Vector3(0f, 3.01f, -0.25f), new Vector3(0.55f, 3.45f, 6.95f),   // tail hub X -0.45 -> +0.55: the post is starboard
             new Vector3(2.00f, 2.10f, 4.60f), new Vector3(0f, 1.00f, 0.10f),
             Skids(1.125f, 0.30f, -0.88f, -3.25f, 1.75f),   // classic skids, same shape as the Huey's, measured
             29f, 1750f, 750f, "Hummingbird", EItemRarity.EPIC);
@@ -2659,6 +3339,34 @@ namespace UnturnedGodot
             v._heliThrust = s.HeliThrust; v._heliPitchTq = s.HeliPitchTorque; v._heliRollTq = s.HeliRollTorque;
             v._heliYawTq = s.HeliYawTorque; v._heliLevel = s.HeliLevel;
             v._heliClimbMax = s.HeliClimbMax; v._heliFallMax = s.HeliFallMax;
+            // DRAG, 1/m, derived so that LEVEL-FLIGHT TERMINAL SPEED IS EXACTLY Speed_Max: at equilibrium the
+            // sustainable horizontal thrust equals drag, a = k*v^2, so k = a / Speed_Max^2. Speed_Max is the
+            // right target because it is already the number the MP envelope validates against
+            // (VehicleReplication caps horizontal motion at SpeedMaxMps * EnvelopeSlack), so calibrating the
+            // sim's own top speed to anything else would guarantee either an unreachable spec or a pilot the
+            // server rolls back. A dive still exceeds it -- that is what the backstop in StepHeli is for.
+            // DERIVED AGAINST ETL-BOOSTED THRUST, because cruise is always inside ETL. EtlFull is 11 m/s and
+            // the slowest airframe's Speed_Max is 20, so translational lift is pinned at its maximum at every
+            // speed this calibration is about, and no lift cap binds it (every cap is >= 1.26 against 1.05).
+            // Deriving from bare thrust made the stated invariant false by 4.2 % (Hind) to 7.0 % (minicopter)
+            // -- not an envelope break, but it quietly spent a third of the backstop's margin.
+            v._heliDragFwd = s.Heli && s.SpeedMax > 0.01f
+                ? LevelFlightAccel(s.HeliThrust * (1f + EtlGain)) / (s.SpeedMax * s.SpeedMax) : 0f;
+            v._rotorRadius = s.RotorRadius;
+            v._slingHook = s.SlingHook; v._slingLen = s.SlingCable > 0.01f ? s.SlingCable : 9f; v._slingAnchor = s.SlingAnchor;
+            // Only the sky-crane has a hook today, so this can be a flat table lookup rather than needing the
+            // per-airframe name threaded through here. Grow this into a per-Spec field if a second hook airframe
+            // ever needs its own leg geometry.
+            v._slingVisualAnchor = s.SlingHook ? _skycraneSlingVisualLocal : s.SlingAnchor;
+            // CEILING ON THE COMBINED LIFT MULTIPLIERS, derived from this airframe's OWN climb envelope rather
+            // than picked. Terminal climb is (thrust * multipliers - g) / HeliHeaveDamp, and the server checks
+            // vertical motion against HeliClimbMax with ZERO slack -- so a multiplier large enough to out-climb
+            // that envelope does not read as a fast helicopter, it reads as a rollback of a legitimate pilot
+            // doing the single most fun thing in the game. ETL 1.05 x ground effect 1.333 = 1.40 busts the
+            // Hind (cap 1.26) and clears the minicopter (1.59), which is why this is per-airframe. The 0.9
+            // keeps a margin so the cap binds before the envelope does.
+            v._heliLiftCap = s.Heli && s.HeliThrust > 0.01f
+                ? Mathf.Max(1f, (9.8f + HeliHeaveDamp * s.HeliClimbMax * 0.9f) / s.HeliThrust) : 1f;
             if (s.Heli)
             {
                 // A helicopter is flown, not suspended. Damping here is AERODYNAMIC, not friction, and the
@@ -2668,7 +3376,68 @@ namespace UnturnedGodot
                 // eventually bring rotations and such to a stop but it should be very very slight"). 0.25 is a
                 // ~4 s decay -- present, so nothing spins forever, but far too slow to fly for you. Stopping a
                 // rotation is the pilot's job; this only cleans up afterwards.
-                v.LinearDamp = 0.35f; v.AngularDamp = 0.25f;
+                // LINEAR DAMP IS ZERO ON PURPOSE, and StepHeli hand-rolls both axes instead. Godot's
+                // RigidBody3D.LinearDamp is a SCALAR -- Jolt's SetLinearDamping takes one float -- so it damps
+                // the whole velocity vector and there is no axis-selective form. Leaving it at the old 0.35
+                // would apply the vertical's linear heave-damping law to the horizontal as well, and once the
+                // thrust boosts were replaced by real drag that linear term became the BINDING horizontal
+                // constraint: terminal = sqrt(thrust^2 - g^2) / 0.35 puts six of the seven airframes below
+                // their own spec top speed, the scoutcopter at 18.8 m/s against a spec of 26. Angular damping
+                // is untouched and stays on the engine.
+                // REPLACE, not the default COMBINE: setting LinearDamp to 0 under Combine does NOT mean zero,
+                // it means the project's default_linear_damp (Godot's 0.1, never overridden here) still
+                // applies. That residual is a LINEAR horizontal drag, which is precisely what this rework
+                // exists to remove -- it left the three fastest airframes short of their own spec top speed,
+                // and it is measurable: 0.100 s^-1, identical across hind, orca and hummingbird.
+                v.LinearDampMode = DampMode.Replace; v.LinearDamp = 0f;
+                // MEASURED 0.351 s^-1, NOT 0.25 (vehicle.heli_angular_damp, 2026-08-18). AngularDampMode is left
+                // at Combine, so the project's default_angular_damp (Godot's 0.1, never overridden) is ADDED to
+                // this. That is the identical trap the LINEAR axis hit and fixed twenty lines above -- measured at
+                // 0.100 s^-1, switched to Replace -- and nobody came back for the angular one. It matters more
+                // than it looks: cmd is an angular ACCELERATION integrated by ApplyTorque, so total attitude change
+                // per stick input is alpha/zeta and the damping is a DIVISOR on how far the machine ends up
+                // rotating, not merely on how fast. The real decay constant is 1/0.351 = 2.85 s, not the ~4 s
+                // claimed below. Left as Combine deliberately for now: correcting it to Replace would make every
+                // airframe 40 % looser, which is a feel change and VoX's call, not a silent cleanup.
+                v.AngularDamp = 0.25f;   // -> 0.35 effective under Combine; see the measurement above
+                // ANTI-COLLISION BEACON: the red flasher on the belly, and the ONLY light on the aircraft that
+                // blinks. Slung just under the hull on the centreline so it reads from below and from the side.
+                // Rate is the real one -- civil beacons run 40-45 flashes per minute, hence BeaconPeriod -- and
+                // it is a short bright pulse rather than a 50/50 blink, which is what makes it read as a strobe
+                // instead of a warning lamp.
+                v._beaconMat = LensMat(new Color(1f, 0.06f, 0.06f), 0f);
+                // SAME LENS MODEL AS THE NAV LIGHTS (strawberry) rather than a procedural sphere, so the three
+                // lights on an airframe are visibly the same fitting in three places. The taillights mesh is
+                // authored at ABSOLUTE positions in the airframe's own frame -- it is the port/starboard lens where
+                // it sits on the hull -- so it cannot simply be dropped at the belly: re-centre it on its own
+                // centroid first (a pivot at the belly, the mesh offset by -centroid inside it), which is the same
+                // trick the door leaves use for their hinges.
+                Vector3 bellyAt = new Vector3(0f, s.BoxCenter.Y - s.BoxSize.Y * 0.5f - 0.08f, s.BoxCenter.Z);
+                // Parts is NULL on the specs that predate HeliParts (minicopter, scoutcopter) -- they carry no detail
+                // meshes at all, which is also why they have no nav lights. Those fall through to the bead below.
+                Mesh lens = null;
+                if (s.BeaconLensFrom != null)
+                    lens = ContentProvider.ParseObj($"res://content/{s.BeaconLensFrom}");   // borrowed lamp; see Spec.BeaconLensFrom
+                else if (s.Parts != null)
+                    foreach (var (ptxt, _) in s.Parts)
+                        if (ptxt.Contains("taillights")) { lens = ContentProvider.ParseObj($"res://content/{ptxt}"); break; }
+                // Bake the re-centring into the node's own Position rather than wrapping it in a pivot: the beacon
+                // stays a DIRECT MeshInstance3D child named BeaconBelly, which is how the rest of the code and
+                // HeliPartsTests address it. A pivot would have been tidier to read and would have quietly broken
+                // every non-recursive FindChild("BeaconBelly") that expects a mesh.
+                // BeaconLensMesh returns ONE lamp, already centred on the origin and already turned to face down,
+                // so the node just sits at the belly point -- no centroid offset, no basis to get wrong.
+                var beaconLens = BeaconLensMesh(lens);
+                v._beaconMesh = new MeshInstance3D
+                {
+                    Name = "BeaconBelly",
+                    Mesh = (Mesh)beaconLens ?? new SphereMesh { Radius = 0.10f, Height = 0.20f, RadialSegments = 8, Rings = 4 },
+                    MaterialOverride = v._beaconMat,
+                    Position = bellyAt,
+                };
+                v.AddChild(v._beaconMesh);
+                v._beaconLight = new OmniLight3D { Position = bellyAt, OmniRange = 6f, LightColor = new Color(1f, 0.1f, 0.1f), LightEnergy = 0f };   // the BELLY point, not the mesh node, whose position is now a -centroid offset
+                v.AddChild(v._beaconLight);
                 v.ContinuousCd = true;   // a fast dive must not tunnel through terrain between ticks
                 // ISOTROPIC inertia, set explicitly rather than left to Godot's derivation from the collision
                 // boxes. Two reasons: those boxes are a crude stand-in for an open tube frame and would hand us
@@ -2789,11 +3558,22 @@ namespace UnturnedGodot
                 if (t.YawMesh != null)
                     yaw.AddChild(new MeshInstance3D { Name = t.YawMesh.Replace(".txt", ""), Mesh = ContentProvider.ParseObj($"res://content/{t.YawMesh}"), MaterialOverride = mat });
                 if (t.PitchMesh != null)
-                    pitch.AddChild(new MeshInstance3D { Name = t.PitchMesh.Replace(".txt", ""), Mesh = ContentProvider.ParseObj($"res://content/{t.PitchMesh}"), MaterialOverride = mat });
+                    pitch.AddChild(new MeshInstance3D
+                    {
+                        Name = t.PitchMesh.Replace(".txt", ""),
+                        Mesh = ContentProvider.ParseObj($"res://content/{t.PitchMesh}"),
+                        MaterialOverride = mat,
+                        RotationDegrees = t.MeshRotationDeg,
+                        // A CREWED mount's gun is the gunner's, so it arrives with them: "hide the
+                        // dragonfangs/nyks when spawned via vehicle command". A remote mount (the Hind's chin
+                        // turret) is part of the airframe and is always there.
+                        Visible = t.GunnerAt == Vector3.Zero,
+                    });
                 yaw.AddChild(pitch);
                 v.AddChild(yaw);
                 v._turretYaw[i] = yaw; v._turretPitch[i] = pitch;
             }
+            v._turretCrew = new TargetDummy[v.Turrets.Length];
             v._turretAmmo = new int[v.Turrets.Length];
             v._turretCd = new float[v.Turrets.Length];
             for (int i = 0; i < v.Turrets.Length; i++) v._turretAmmo[i] = v.Turrets[i].Belt;
@@ -2978,6 +3758,10 @@ namespace UnturnedGodot
             if (s.Parts != null)   // detail meshes with their real solid colours (seats grey, lights, steering brown)
                 foreach (var (txt, color) in s.Parts)
                 {
+                    // A helicopter's "taillights" are its NAVIGATION lights, and they are a red/green PAIR that
+                    // has to be built from the single lens the mesh ships. Handled apart from the flat-coloured
+                    // car parts because the colour depends on which SIDE each copy lands on.
+                    if (s.Heli && txt.Contains("taillights")) { v.BuildNavLights(txt); continue; }
                     var pm = SolidMat(color);
                     // Named after its source file so the scene tree is readable and, more usefully, so a test can
                     // ASK for a specific part instead of guessing which unnamed MeshInstance3D is the turret.
@@ -3070,7 +3854,22 @@ namespace UnturnedGodot
             {
                 var ogg = AudioStreamOggVorbis.LoadFromFile(ProjectSettings.GlobalizePath($"res://content/{s.Sound}"));
                 ogg.Loop = true;
-                v._engineAudio = new AudioStreamPlayer3D { Stream = ogg, UnitSize = 10f, MaxDistance = 80f, PitchScale = s.IdlePitch, VolumeDb = Mathf.LinearToDb(s.IdleVolume * EngineVolumeBoost), Autoplay = true };
+                // HELICOPTERS CARRY. A car at 80 m is a car you have driven past; a helicopter is the thing you
+                // hear long before you see it, and that is most of what makes one feel big. UnitSize is the
+                // distance at which the attenuation curve starts, so raising BOTH is what actually extends the
+                // audible range rather than just making it loud up close. (strawberry: "a lot louder and heard
+                // from far away")
+                //
+                // PITCH FALLS WITH ROTOR SIZE, and the rule is physical rather than picked: blade TIP speed is
+                // roughly constant across helicopters, so rotational frequency -- and with it the blade-passing
+                // thud you actually hear -- goes as 1/R. Square-rooted to tame the extremes and clamped, because
+                // the fleet's radii span 2.65 m to 5.90 m and the raw ratio would put the minicopter an octave
+                // up. Referenced to the Huey, which is the aircraft the clip was recorded from. Without this the
+                // four HeliBase airframes shared one IdlePitch, so the tiny Hummingbird sounded exactly like the
+                // 21-tonne Skycrane. (strawberry: "heavier helis should alter the sound too")
+                float sizePitch = HeliSizePitch(s);
+                v._engineAudio = new AudioStreamPlayer3D { Stream = ogg, UnitSize = s.Heli ? 34f : 10f, MaxDistance = s.Heli ? 520f : 80f, PitchScale = s.IdlePitch * sizePitch, VolumeDb = Mathf.LinearToDb(s.IdleVolume * EngineVolumeBoost * (s.Heli ? 2.0f : 1f)), Autoplay = true };
+                if (s.Heli) { v._idlePitch = s.IdlePitch * sizePitch; v._maxPitch = s.MaxPitch * sizePitch; }
                 v.AddChild(v._engineAudio);   // Autoplay starts the loop when the vehicle enters the scene tree
             }
             if (s.IgnitionSound != null)   // one-shot spin-up; NOT autoplayed -- StepHeli fires it on a start
@@ -3079,7 +3878,14 @@ namespace UnturnedGodot
                 if (ig != null)
                 {
                     ig.Loop = false;
-                    v._ignitionAudio = new AudioStreamPlayer3D { Stream = ig, UnitSize = 10f, MaxDistance = 80f, VolumeDb = Mathf.LinearToDb(EngineVolumeBoost) };
+                    // The clip's own length becomes the spin-up gate, so "the rotor is ready" and "the start-up
+                    // sound has finished" are the same instant by construction rather than two numbers someone
+                    // has to keep in step.
+                    v._ignitionAudio = new AudioStreamPlayer3D { Stream = ig, UnitSize = s.Heli ? 34f : 10f, MaxDistance = s.Heli ? 520f : 80f, PitchScale = HeliSizePitch(s), VolumeDb = Mathf.LinearToDb(EngineVolumeBoost * (s.Heli ? 2.0f : 1f)) };
+                    // The GATE follows the pitch. PitchScale resamples the clip, so a Skycrane's start-up at
+                    // 0.87 actually runs 8.10 / 0.87 = 9.3 s of wall time -- gating on the unpitched length
+                    // would cut a heavy machine's thrust in before its own start-up had finished.
+                    v._ignitionLen = (float)ig.GetLength() / Mathf.Max(HeliSizePitch(s), 0.01f);
                     v.AddChild(v._ignitionAudio);
                 }
             }
@@ -3129,7 +3935,25 @@ namespace UnturnedGodot
         const float IdleHoverFraction = 0.92f;
         /// <summary>Collective that would exactly hold a hover at full rotor spool, from THIS spec's thrust:
         /// thrust * c = g. Derived, not hardcoded, so retuning HeliThrust moves the idle point with it.</summary>
-        float HoverCollective => _heliThrust > 0.01f ? Mathf.Clamp(9.8f / _heliThrust, 0f, 1f) : 0f;
+        /// <summary>Collective needed to hold a hover RIGHT HERE -- including ground effect, which is the whole
+        /// reason this reads a cached field instead of just dividing by thrust.
+        ///
+        /// The hands-off spring targets IdleHoverFraction of this, and VoX's rule is that hands off gives a
+        /// gentle sink: "a bit below the amount of thrust required to counteract gravity". Near the ground,
+        /// the thrust required to counteract gravity is LESS -- so a fixed 0.92 * (g / thrust) stops being a
+        /// bit below hover and becomes comfortably above it. Measured: a parked minicopter with the engine
+        /// idling generated 9.016 * 1.333 = 12.0 against a g of 9.8 and floated off the ground, which broke
+        /// the turbulence test's grounded subject and would have had parked helicopters drifting into the sky.
+        ///
+        /// Making the trim ground-effect-aware fixes that WITHOUT capping the effect: hands-off lift works out
+        /// to 0.92 * g exactly, at any height, while collective you actually pull still gets the full cushion.
+        /// The alternative was clamping ground effect to about 1.06 -- the largest value that leaves the 8.7 %
+        /// idle margin intact -- which preserves the same behaviour by deleting the feature.
+        ///
+        /// The value can be one physics frame stale, since DriveHeli and StepHeli are not ordered relative to
+        /// each other. Ground effect changes over metres of altitude, so a frame of lag is not observable.</summary>
+        float HoverCollective => _heliThrust > 0.01f
+            ? Mathf.Clamp(9.8f / (_heliThrust * Mathf.Max(_geApplied, 0.01f)), 0f, 1f) : 0f;
         float IdleCollective => HoverCollective * IdleHoverFraction;
         // Angular ACCELERATION at full deflection (rad/s^2), not a target rate -- these become torque against
         // the body's inertia, so the airframe builds up to a rotation and keeps it. Higher than the old rate
@@ -3228,7 +4052,34 @@ namespace UnturnedGodot
             // disc is up -- and cutting the engine in the air leaves you autorotating down, not dropping like a
             // brick. Spool-down is slower than spool-up for the same reason.
             float want = (EngineOn && !_exploded && (Fuel > 0f || InfiniteFuel)) ? 1f : 0f;
-            _rotorRpm = Mathf.MoveToward(_rotorRpm, want, dt / (want > _rotorRpm ? SpoolUpSeconds : SpoolDownSeconds));
+            // WIND UP THROUGH THE START-UP CLIP. The spin-up used to run on its own fixed SpoolUpSeconds while
+            // the ignition sound played to a completely independent clock, so the rotor could be at full song
+            // with the starter still audible, or ready long before it. Driving the ramp off the clip's own
+            // length makes the two the same event. (strawberry: "rotors should ramp up during the ignition
+            // sound, and we should only start generating thrust after the sound finishes")
+            float spoolUp = !DebugInstantStart && _ignitionLen > 0.1f ? _ignitionLen * IgnitionThrustFraction : SpoolUpSeconds;
+            _rotorRpm = Mathf.MoveToward(_rotorRpm, want, dt / (want > _rotorRpm ? spoolUp : SpoolDownSeconds));
+            if (_ignitionLeft > 0f) _ignitionLeft = Mathf.Max(0f, _ignitionLeft - dt);
+
+            // NAV LIGHTS RUN OFF THE ENGINE, not the rotor -- they are electrical, and a parked machine with the
+            // switches off is dark (strawberry: "make the heading lights only on when the heli's engine is on.
+            // make sure the heading lights turn off when the heli is destroyed"). A wreck is dark for the more
+            // obvious reason. This is the opposite rule from the beacon below, which follows the DISC.
+            bool navOn = EngineOn && !_exploded && Health > 0f;
+            for (int i = 0; i < _navMats.Count; i++) _navMats[i].EmissionEnergyMultiplier = navOn ? 2.6f : 0f;
+            for (int i = 0; i < _navOmnis.Count; i++) _navOmnis[i].LightEnergy = navOn ? 1.4f : 0f;
+
+            // The beacon runs off the ROTOR, not the ignition switch: its job is to say "this disc is live",
+            // so it keeps flashing through a spool-down and stops only once the blades actually have.
+            if (_beaconMat != null)
+            {
+                bool armed = _rotorRpm > 0.02f && !_exploded;
+                _beaconTimer = armed ? (_beaconTimer + dt) % BeaconPeriod : 0f;
+                bool lit = armed && _beaconTimer < BeaconFlash;
+                _beaconMat.EmissionEnergyMultiplier = lit ? 6f : 0f;
+                _beaconMat.AlbedoColor = lit ? new Color(1f, 0.35f, 0.35f) : new Color(0.28f, 0.05f, 0.05f);
+                if (_beaconLight != null) _beaconLight.LightEnergy = lit ? 3.2f : 0f;
+            }
             if (_rotorNode != null)   // visual only -- the flight model never reads blade phase
             {
                 // STOPS when idle, on death, and slows as the rotor is damaged (strawberry: "rotor should stop
@@ -3255,16 +4106,16 @@ namespace UnturnedGodot
             }
             // Swap blades <-> blur disc by rotor speed, which is why the retail prefab ships both meshes. Below
             // the threshold you see two blades sitting still; above it, the smear plate.
-            bool spun = _rotorRpm > DiscSwapSpool;
+            // THE REAL BLADES SPIN, ALWAYS (strawberry: "instead of a billboard could we actually spin the real
+            // rotor mesh(es)"). The retail prefab ships a separate blur PLATE and swapped to it above
+            // DiscSwapSpool, which is the cheap trick -- it hides blade geometry behind a translucent disc the
+            // moment the rotor is up, so at any real rotor speed you were looking at a smear, not an aircraft.
+            // The mesh is already being turned every tick; it just was not being drawn. The plates stay in the
+            // scene but never show, so the extractor and the meshes do not have to change.
+            if (_bladesMesh != null) _bladesMesh.Visible = true;
             if (_discMesh != null)
             {
-                if (_bladesMesh != null) _bladesMesh.Visible = !spun;
-                _discMesh.Visible = spun;
-            }
-            if (_tailDiscMesh != null)
-            {
-                if (_tailBladesMesh != null) _tailBladesMesh.Visible = !spun;
-                _tailDiscMesh.Visible = spun;
+                _discMesh.Visible = false;
             }
 
             // ENGINE AUDIO rides the ROTOR, not an RPM the machine does not have. The shared car path drives
@@ -3286,11 +4137,17 @@ namespace UnturnedGodot
             if (_ignitionAudio != null)
             {
                 bool starting = want > 0f && _rotorRpm < 0.05f;
-                if (starting && !_ignitionFired) { _ignitionFired = true; _ignitionAudio.Play(); }
+                if (starting && !_ignitionFired) { _ignitionFired = true; _ignitionAudio.Play(); _ignitionLeft = DebugInstantStart ? 0f : _ignitionLen * IgnitionThrustFraction; }
                 else if (want <= 0f && _rotorRpm < 0.01f) _ignitionFired = false;   // fully stopped -> armed again
             }
 
-            if (_exploded) return;   // a wreck is just a falling body
+            // A wreck is just a falling body -- but it still falls through air, and with LinearDamp now 0 it
+            // would free-fall unbounded instead. Applied ISOTROPICALLY, and above this return rather than
+            // below it, which reproduces the old engine damping to within 1 %: terminal fall stays at
+            // g / HeliHeaveDamp = 9.8 / 0.45 = 21.8 m/s, which is what a wreck has ALWAYS fallen at here --
+            // 0.35 on the body plus Godot's 0.1 project default under Combine. A tumbling airframe has no
+            // meaningful shaft axis to hang a heave term on, so this one is isotropic.
+            if (_exploded) { ApplyCentralForce(-LinearVelocity * (HeliHeaveDamp * Mass)); return; }
 
             Basis b = GlobalTransform.Basis;
             float spool = _rotorRpm * _rotorRpm;
@@ -3356,6 +4213,37 @@ namespace UnturnedGodot
             // to shove it downward.
             float mainEff = MainRotorNorm;
             float lift = _heliThrust * spool * _inCollective * (0.20f + 0.80f * mainEff);
+            // NO THRUST UNTIL THE STARTER HAS FINISHED. Zeroed at the SOURCE rather than at the ApplyForce so
+            // that everything downstream -- the tilt loss, the dead-tail clamp, ETL, ground effect -- sees a
+            // machine making no lift, instead of each having to know about the gate. The disc still turns and
+            // still makes noise while this holds; it just is not flying yet.
+            if (_ignitionLeft > 0f) lift = 0f;
+            // ---- EFFECTIVE TRANSLATIONAL LIFT + GROUND EFFECT, both multipliers on rotor thrust.
+            //
+            // APPLIED HERE, ABOVE THE DEAD-TAIL CLAMP, and the order is the whole point. That clamp is an
+            // absolute ceiling encoding a signed-off rule -- a dead tail must prevent gaining height. A
+            // multiplier applied AFTER it lifts the machine straight back through the ceiling, and ground
+            // effect would do it exactly when the pilot is nearest the ground and closest to surviving. So
+            // these go in first and the clamp still has the last word.
+            //
+            // Capped as a PRODUCT, not individually: it is the combination that out-climbs the MP envelope
+            // (1.05 x 1.333 = 1.40 against the Hind's 1.26), and capping each factor separately would let the
+            // product through.
+            Vector3 hvel = LinearVelocity;
+            var hflat = new Vector3(hvel.X, 0f, hvel.Z);
+            float flatSpeed = hflat.Length();
+            float etl = 1f + EtlGain * Mathf.Clamp((flatSpeed - EtlOnset) / (EtlFull - EtlOnset), 0f, 1f);
+            _groundEffect = GroundEffect();   // ONE raycast per tick, two readers
+            float liftMul = Mathf.Min(etl * _groundEffect, _heliLiftCap);
+            // THE GROUND-EFFECT SHARE ACTUALLY DELIVERED, which is what the hands-off trim has to cancel --
+            // and NOT the raw factor. When the cap binds they are different numbers, and dividing the trim by
+            // the raw one over-trims: on a Hind parked in ground effect (raw 1.333 against a cap of 1.261) the
+            // hands-off sink came out 63 % HARDER near the deck than at altitude, which is ground effect
+            // running backwards, in the flare, on the airframe least able to absorb it. ETL is deliberately
+            // left OUT of the trim -- it should still lighten a hands-off machine at speed, and the sink at
+            // 0.92 g * etl stays a sink for any gain under 0.087.
+            _geApplied = etl > 0.01f ? liftMul / etl : _groundEffect;
+            lift *= liftMul;
             // A DEAD TAIL ALSO GROUNDS YOU (strawberry: "dead tail should also have the same effect as
             // killmain of preventing gaining height"). Capped just under g rather than zeroed like a dead main:
             // the tail is not what lifts you, so losing it should leave you able to sink under some control
@@ -3369,32 +4257,95 @@ namespace UnturnedGodot
             // 30 deg nose-down keeps only 87 % of its thrust pointing up); this takes a further bite on top,
             // so committing to a fast nose-down run actually costs you height instead of being free speed.
             lift *= 1f - TiltThrustLoss * (1f - Mathf.Clamp(b.Y.Y, 0f, 1f));
-            if (lift > 0f)
+            // THRUST ALONG THE SHAFT, unmodified. This one line is the whole Rust feel: you do not steer a
+            // helicopter, you tilt it and the lift vector takes you with it. The horizontal half of this vector
+            // used to be split out and multiplied by ForeAftBoost / LateralBoost so that leaning into a run
+            // built real momentum; that asymmetry now lives in the DRAG below, where a fuselage's own geometry
+            // puts it, so the thrust can go back to being a vector.
+            if (lift > 0f) ApplyCentralForce(b.Y * (lift * Mass));
+
+            // ---- RESISTANCE. Two axes, two mechanisms, two laws -- the reasoning is at HeliHeaveDamp.
+            Vector3 vel = hvel;   // read once, above, so ETL and drag cannot disagree about how fast we are going
+
+            // VERTICAL: linear heave damping, in the WORLD frame. Deliberately NOT the body shaft axis, which
+            // is the more obviously physical choice and was what the physics review recommended -- heave
+            // damping is a rotor property and really does follow the disc. The reason it is world-aligned here
+            // is that the body-frame form scales vertical damping by cos^2(tilt), which silently retunes every
+            // number derived from this constant: terminal climb would rise ~22 % at an ordinary 25 deg cruise,
+            // straight into HeliClimbMax and the server's ZERO-slack vertical check. World-aligned keeps "the
+            // vertical axis is unchanged, only who applies the force changed" literally true, which is the
+            // stronger requirement of the two. The cost is a coordinate artefact at extreme bank; the benefit
+            // is that six calibrated numbers stay valid.
+            float heave = HeliHeaveDamp * HeaveDampScale;
+            if (ShaftAlignedDescent && vel.Y < 0f)
             {
-                // Split the thrust vector and push the HORIZONTAL part harder -- fore/aft more than lateral --
-                // so leaning into a run builds real momentum. The vertical component is left exactly as the
-                // physics gives it, because that is what the hover point and the climb rate are tuned against.
-                Vector3 t = b.Y * lift;
-                var flatThrust = new Vector3(t.X, 0f, t.Z);
-                var fwd = new Vector3(-b.Z.X, 0f, -b.Z.Z);
-                Vector3 boosted;
-                if (fwd.LengthSquared() > 1e-6f)
-                {
-                    fwd = fwd.Normalized();
-                    Vector3 alongFwd = fwd * flatThrust.Dot(fwd);
-                    boosted = alongFwd * ForeAftBoost + (flatThrust - alongFwd) * LateralBoost;
-                }
-                else boosted = flatThrust * LateralBoost;   // pointing straight up/down: no meaningful fore/aft axis
-                ApplyCentralForce(new Vector3(boosted.X, t.Y, boosted.Z) * Mass);
+                // cos^2 of the tilt. SQUARED, not clamped to [0,1]: an INVERTED disc is still a flat disc facing
+                // the airflow, so b.Y.Y = -1 has to read as 1, not 0. Clamping first gave an upside-down
+                // helicopter zero vertical resistance.
+                float shaftUp = b.Y.Y;
+                heave *= shaftUp * shaftUp;
+
+                // ---- ENVELOPE FLOOR. Everything below exists because VehicleReplication validates the fall rate
+                // with ZERO slack (the horizontal check gets 1.25; the vertical gets none), and a failure is not a
+                // soft correction -- it teleports the pilot to the last good pose and resumes them FROM REST.
+                //
+                // THREE THINGS THE FIRST VERSION GOT WRONG, all of which let this feature INTRODUCE violations
+                // that did not exist before it:
+                //
+                // 1. IT USED g AS THE WHOLE DOWNWARD ACCELERATION. Inverted, the tilt loss above clamps at zero
+                //    so the rotor keeps 45 % of its thrust, and :3615 applies it along b.Y -- pointing at the
+                //    ground, ADDING to gravity -- while cos^2 is near its minimum. Measured on the shipped
+                //    constants: 58 m/s on a Huey against a 40 cap (+46 %), 66 vs 42 on a Skycrane. Both sit at
+                //    32-34 with this feature OFF. Terminal is ABOVE the cap, so it is a recov loop every ~5 s,
+                //    not a single blip. Using the real downward accel makes the guarantee hold at EVERY attitude.
+                // 2. IT TARGETED THE CAP EXACTLY, so the designed margin was zero -- against a check that is
+                //    strict, quantized (1/256 m, truncating, worth +0.098 m/s), and clamps dt. The climb side has
+                //    mirrored this problem for ages and solves it by targeting 0.9 * ClimbMax; do the same.
+                // 3. IT DERIVED THE FLOOR FROM THE RAW CONSTANT while the damping it floored was scaled by
+                //    HeaveDampScale, so the guarantee silently evaporated off scale 1 -- `heliphys heave 0.5`
+                //    gave 80 m/s against a 40 cap. The floor is applied to the PRODUCT now, so the envelope holds
+                //    whatever the debug knob is set to.
+                float downAccel = 9.8f + Mathf.Max(0f, -lift * b.Y.Y);
+                if (_heliFallMax > 0.01f)
+                    heave = Mathf.Max(heave, downAccel / (_heliFallMax * FallEnvelopeMargin));
+            }
+            ApplyCentralForce(Vector3.Down * (heave * vel.Y * Mass));
+            // THE HORIZONTAL PARTNER OF THAT SAME FORCE, which the vertical-only projection throws away. Descent
+            // only, matching the shaft factor above, and zero by default. See HeaveRedirect.
+            if (HeaveRedirect > 0f && vel.Y < 0f)
+            {
+                Vector3 shaftFlat = new Vector3(b.Y.X, 0f, b.Y.Z);
+                if (shaftFlat.LengthSquared() > 1e-6f)
+                    ApplyCentralForce(shaftFlat * (heave * -vel.Y * HeaveRedirect * Mass));
             }
 
-            // Horizontal top speed. The MP envelope derives its cap from Speed_Max, so exceeding it here would
-            // have the server roll a legitimate pilot back -- the limit has to bind on the CLIENT that is flying.
-            Vector3 vel = LinearVelocity;
-            var flat = new Vector3(vel.X, 0f, vel.Z);
-            if (_speedMax > 0f && flat.Length() > _speedMax)
+            // HORIZONTAL: quadratic parasite drag, anisotropic. Taken from the FLAT vector only -- both its
+            // direction AND its magnitude -- never from LinearVelocity. Using the full 3-D speed would scale
+            // horizontal drag by the vertical component, so a 40 m/s dive would produce a large horizontal
+            // braking force at near-zero horizontal speed.
+            var flat = hflat;     // same vector ETL was sized from, for the same reason
+            if (flatSpeed > 0.01f && _heliDragFwd * DragScale > 0f)
             {
-                Vector3 excess = flat.Normalized() * (flat.Length() - _speedMax);
+                var fwd = new Vector3(-b.Z.X, 0f, -b.Z.Z);
+                Vector3 alongFwd = Vector3.Zero;
+                if (fwd.LengthSquared() > 1e-6f) { fwd = fwd.Normalized(); alongFwd = fwd * flat.Dot(fwd); }
+                Vector3 lateral = flat - alongFwd;
+                // F_i = -k_i * |v| * v_i -- the standard anisotropic quadratic form, magnitude set by the total
+                // flat speed and direction resolved per axis, so a diagonal slip is dragged on both.
+                ApplyCentralForce(-(alongFwd + lateral * HeliLateralDragRatio) * (_heliDragFwd * DragScale * flatSpeed * Mass));
+            }
+
+            // BACKSTOP, NOT THE SPEED LIMIT. Drag sets top speed now; this exists only so the sim cannot hand
+            // the server a state it would reject -- VehicleReplication validates horizontal motion against
+            // Speed_Max * EnvelopeSlack (1.25), and the limit has to bind on the CLIENT that is flying or the
+            // server rolls back a legitimate pilot. A committed dive genuinely does exceed Speed_Max, because
+            // gravity is helping, so the wall sits above level flight's reach and inside the envelope. It used
+            // to sit exactly AT Speed_Max as the only limiter, engaging on any committed run at around 20 deg
+            // of tilt: undiminished acceleration right up to the cap and then a wall, which is the opposite of
+            // how an aircraft approaches its top speed.
+            if (BackstopEnabled && _speedMax > 0f && flatSpeed > _speedMax * HeliEnvelopeBackstop)
+            {
+                Vector3 excess = flat.Normalized() * (flatSpeed - _speedMax * HeliEnvelopeBackstop);
                 ApplyCentralForce(-excess * Mass * 3.0f);
             }
 
@@ -3418,9 +4369,10 @@ namespace UnturnedGodot
             // the main rotor's axis and the vertical one.
             float tn = TailRotorNorm;
             float tailEff = 0.04f + 0.96f * tn * tn;
-            Vector3 cmd = b.X * (_inPitch * HeliPitchRate * _heliPitchTq / 2.6f)
-                        + b.Z * (-_inRoll * HeliRollRate * _heliRollTq / 3.0f * tailEff)
-                        + b.Y * (-_inYaw * HeliYawRate * _heliYawTq / 2.2f * tailEff);
+            float agi = SlingAgility;   // empty hook -> crisper; heavy load -> the spec figures
+            Vector3 cmd = b.X * (_inPitch * HeliPitchRate * _heliPitchTq * agi / 2.6f)
+                        + b.Z * (-_inRoll * HeliRollRate * _heliRollTq * agi / 3.0f * tailEff)
+                        + b.Y * (-_inYaw * HeliYawRate * _heliYawTq * agi / 2.2f * tailEff);
 
             // TORQUE REACTION. A tail rotor's whole job is cancelling the main rotor's torque on the fuselage;
             // with it dead, that torque is unopposed and the airframe spins ("tail rotor dead, go into a
@@ -3464,10 +4416,17 @@ namespace UnturnedGodot
                 _turbTimer -= dt;
                 if (_turbTimer <= 0f)
                 {
-                    _turbTimer = HeliRng.RandfRange(TurbMinGap, TurbMaxGap);
+                    // Re-probe AGL once per gust, not per tick: gusts are seconds apart and a raycast per frame per
+                    // helicopter buys nothing at this timescale.
+                    _turbAgl = ProbeAgl();
+                    float rough = Mathf.Lerp(TurbLowSeverity, 1f,
+                        Mathf.SmoothStep(TurbCalmAgl, TurbFullAgl, _turbAgl));
+                    float gapScale = Mathf.Lerp(TurbLowGapScale, 1f,
+                        Mathf.SmoothStep(TurbCalmAgl, TurbFullAgl, _turbAgl));
+                    _turbTimer = HeliRng.RandfRange(TurbMinGap, TurbMaxGap) * gapScale;
                     var dir = new Vector3(HeliRng.RandfRange(-1f, 1f), HeliRng.RandfRange(-0.5f, 0.5f), HeliRng.RandfRange(-1f, 1f));
                     if (dir.LengthSquared() > 1e-4f)
-                        _turbKick = dir.Normalized() * HeliRng.RandfRange(0.35f, 1f) * TurbStrength;
+                        _turbKick = dir.Normalized() * HeliRng.RandfRange(0.35f, 1f) * TurbStrength * rough;
                 }
                 _turbKick = _turbKick.Lerp(Vector3.Zero, 1f - Mathf.Exp(-TurbDecay * dt));
                 cmd += _turbKick * spool;
@@ -4008,9 +4967,201 @@ namespace UnturnedGodot
             }
         }
 
+        // --- Sky-crane winch + electromagnet -------------------------------------------------------------
+        // The cable is the tow rope's model turned on its side: a PULL-ONLY damped spring, so slack does nothing and
+        // tension drags both ends together. That is what makes the load a real pendulum -- yaw hard and it lags behind,
+        // stop and it keeps swinging -- instead of an animation glued under the hull.
+        // SPRING CONSTANTS ARE DERIVED FROM THE SUSPENDED MASS, not copied. The first cut reused the tow rope's
+        // numbers (k=26000, c=4200), which are tuned to drag ~900 kg cars; hung on a 40 kg magnet the damping term
+        // alone reached 54,600 N as the cable went taut, i.e. 1365 m/s^2 on the magnet -- a single tick overshot by
+        // more than the approach speed and FLUNG the magnet back up at the aircraft, which then rang. A fixed k is
+        // wrong on both ends anyway: the same cable has to hold an empty coil and a car.
+        //
+        // So pick the RESPONSE and solve for the constants: k = m*w^2, c = 2*zeta*m*w. Static stretch under load is
+        // then m*g/k = g/w^2 = 0.20 m whatever is on the hook, and stability is structural rather than tuned --
+        // c <= m/dt and k <= m/dt^2 hold by a wide margin at any mass, so it cannot explode at the physics rate.
+        const float SlingOmega = 7.0f;         // rad/s: cable response. Soft enough to be stable, stiff enough not to read as elastic
+        const float SlingZeta = 0.9f;          // near-critical: a winch snatch arrests, it does not bounce
+        // Clamp in g-ish terms, scaled by the load, so the guard means the same thing empty or full. 60 was a pure
+        // anti-explosion backstop and far too permissive as a WINCH limit: hauling full collective off the ground with
+        // a container on the hook snapped the cable taut and dealt the load 6g, which threw it up PAST the aircraft
+        // and left the cable slack with the freight above the rotor. 25 still gives 2.5x the 9.8 needed to lift
+        // anything, while making the cable behave like a winch rather than a catapult.
+        const float SlingMaxAccel = 25f;
+        // A WINCH PAYS OUT; IT DOES NOT DROP. Deploying to full length instantly let the magnet free-fall the whole
+        // 9 m and hit 13 m/s before the cable caught it, and arresting that snatch costs far more than the sky-crane's
+        // entire 2160 N spare thrust -- so every deployment yanked the aircraft down, it rebounded, and the machine
+        // sank and crashed at FULL collective. Paying the cable out at a controlled rate keeps tension near the load's
+        // static weight, which is the only regime the airframe can actually afford.
+        const float SlingPayoutRate = 2.5f;    // m/s of cable out (and back in when stowing)
+        // ANTI-SWAY. Damps the load's velocity RELATIVE TO THE AIRCRAFT, perpendicular to the cable -- not its
+        // absolute velocity, which is what LinearDamp did and what towed the aircraft backwards. Hanging plumb at
+        // cruise the load moves exactly with the airframe, so the relative velocity is zero and this costs nothing;
+        // it only bites on an actual swing. That is what a crane's anti-sway system does, and it is why "stop the
+        // swinging" and "no drag" are not in conflict after all.
+        const float SwayDamp = 2.6f;           // 1/s on the cross-cable relative velocity (~half-critical on a 9 m pendulum)
+        // BRIDLE. Two spread attachments instead of one hook, so the magnet cannot pivot freely at the cable end.
+        // Modelled as an alignment torque rather than a literal second rope constraint: two stiff positional
+        // constraints on one rigid body is over-constrained and buzzes in the solver, whereas a torque toward the
+        // cable axis is exactly the couple a real bridle applies and is unconditionally stable.
+        const float BridleStiff = 9f, BridleDamp = 3.2f;
+        const float BridleForkGap = 1.6f;      // how far above the coil the cable ends at the master link
+        const int BridleLegs = 4;              // legs from the link down to the coil, spaced around its rim
+        // HANDLING SCALES WITH WHAT IS ON THE HOOK (strawberry: "the current handling of the skycrane should be
+        // when we are hauling a heavy object, with nothing we should handle a lot better"). The SPEC figures stay
+        // the LOADED case, and an empty hook multiplies them up.
+        //
+        // The bonus is CAPPED at 1.30 for a reason worth keeping: the fleet's agility ordering is deliberate and
+        // inverse to weight (Hummingbird 2.16 > Huey 1.32 > Orca 1.07 > Hind 0.81 > Skycrane 0.59), and 0.59 * 1.30
+        // = 0.767 keeps the empty crane just under the Hind. Any more and a 21 t crane out-handles a gunship, which
+        // is a fleet-identity decision rather than a tuning one -- see HeliFlightTests.
+        const float SlingAgilityBonus = 1.30f;
+        const float SlingAgilityLoadRef = 600f;   // kg on the hook at which handling is back to the spec figure
+
+        // 1.0 for every airframe without a hook -- this must never quietly buff the rest of the fleet.
+        float SlingAgility
+        {
+            get
+            {
+                if (!_slingHook) return 1f;
+                float carried = _magnet != null && IsInstanceValid(_magnet)
+                    ? _magnet.Mass + (_magnet.Held != null && IsInstanceValid(_magnet.Held) ? _magnet.Held.Mass : 0f)
+                    : 0f;
+                return Mathf.Lerp(SlingAgilityBonus, 1f, Mathf.Clamp(carried / SlingAgilityLoadRef, 0f, 1f));
+            }
+        }
+        const float SlingStowSpeed = 1.5f;     // m/s ground speed under which a landed crane reels the magnet back in
+
+        // Shift, from the cockpit. De-energising is also how the load is PUT DOWN, so this is the whole control.
+        public void ToggleSlingMagnet()
+        {
+            _magnetWanted = !_magnetWanted;
+            if (_magnet != null && IsInstanceValid(_magnet)) _magnet.SetMagnetized(_magnetWanted);
+        }
+
+        void DeploySling()
+        {
+            if (_magnet != null && IsInstanceValid(_magnet)) return;
+            var m = new SlingMagnet { Name = "SlingMagnet" };
+            GetParent().AddChild(m);   // a sibling in the world, like the tow rope's joint -- NOT a child, or it would ride the hull rigidly
+            // Born just under the belly and allowed to FALL to cable length, so deploying reads as paying out a winch
+            // rather than teleporting a magnet to the end of a taut wire.
+            m.GlobalPosition = ToGlobal(_slingVisualAnchor) + Vector3.Down * 1.2f;
+            _slingOut = 1.2f;   // and the winch starts there, paying out from the hull rather than dropping to full length
+            m.LinearVelocity = LinearVelocity;   // match the aircraft or it gets left behind the instant it spawns
+            m.AddCollisionExceptionWith(this); AddCollisionExceptionWith(m);
+            m.SetMagnetized(_magnetWanted);
+            _magnet = m;
+            _slingCable = new TowRope();
+            GetParent().AddChild(_slingCable);
+            // ONE cable down to a MASTER LINK, then four legs fanning onto the coil (strawberry: "one rope to a
+            // link, then 3-4 from link onto the magnet"). That is how a real lifting magnet is slung.
+            _slingLegs = new TowRope[BridleLegs];
+            for (int i = 0; i < BridleLegs; i++) { _slingLegs[i] = new TowRope(); GetParent().AddChild(_slingLegs[i]); }
+            _slingLink = new MeshInstance3D
+            {
+                Mesh = new TorusMesh { InnerRadius = 0.13f, OuterRadius = 0.24f },
+                MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.22f, 0.23f, 0.26f), Metallic = 0.9f, Roughness = 0.35f },
+            };
+            GetParent().AddChild(_slingLink);
+        }
+
+        void StowSling()
+        {
+            if (_slingHeldPrev != null && IsInstanceValid(_slingHeldPrev)) RemoveCollisionExceptionWith(_slingHeldPrev);
+            _slingHeldPrev = null;
+            if (_magnet != null && IsInstanceValid(_magnet)) { _magnet.Release(); RemoveCollisionExceptionWith(_magnet); _magnet.QueueFree(); }
+            if (_slingCable != null && IsInstanceValid(_slingCable)) _slingCable.QueueFree();
+            if (_slingLegs != null) foreach (var l in _slingLegs) if (l != null && IsInstanceValid(l)) l.QueueFree();
+            if (_slingLink != null && IsInstanceValid(_slingLink)) _slingLink.QueueFree();
+            _magnet = null; _slingCable = null; _slingLegs = null; _slingLink = null;
+        }
+
+        void UpdateSling(float delta)
+        {
+            // "Dangles below the heli when in flight" -- so it deploys on leaving the ground and reels in on landing,
+            // but NEVER while it is holding something: reeling in with a car on the magnet would delete the car.
+            bool airborne = !GroundedByRay() && !_exploded;
+            if (airborne) { if (_magnet == null && !DebugNoSling) DeploySling(); }
+            else if (_magnet != null && _magnet.Held == null && LinearVelocity.Length() < SlingStowSpeed) { StowSling(); return; }
+            if (_magnet == null || !IsInstanceValid(_magnet)) return;
+
+            _slingOut = Mathf.MoveToward(_slingOut, _slingLen, SlingPayoutRate * delta);
+            // The two anchors: FORCE at the CoM (fa) so a hanging load applies no pitching moment, DRAW at the leg
+            // line (a) so the rope reads as coming out of the gear. The cable's own droop/tension geometry (a, dist,
+            // _slingOut) is all computed from the visual point; only the actual push/pull uses the force point.
+            Vector3 fa = ToGlobal(_slingAnchor), a = ToGlobal(_slingVisualAnchor), b = _magnet.GlobalPosition, d = b - a;
+            float dist = d.Length();
+            // The single cable runs to a JUNCTION just above the coil; the bridle legs carry on from there.
+            Vector3 fork = dist > 1e-3f ? b + (a - b) / dist * BridleForkGap : b + Vector3.Up * BridleForkGap;
+            if (_slingCable != null && IsInstanceValid(_slingCable)) _slingCable.SetEndpoints(a, fork, Mathf.Max(0.1f, _slingOut - BridleForkGap));
+
+            if (dist > 1e-3f && dist > _slingOut)   // in tension: a cable pulls, it never pushes
+            {
+                Vector3 dir = d / dist;
+                float sepVel = (_magnet.LinearVelocity - LinearVelocity).Dot(dir);   // >0 = separating -> damping ADDS tension
+                // The mass the cable is actually carrying: the coil, plus whatever is welded to it.
+                float susp = _magnet.Mass + (_magnet.Held != null && IsInstanceValid(_magnet.Held) ? _magnet.Held.Mass : 0f);
+                float k = susp * SlingOmega * SlingOmega, c = 2f * SlingZeta * susp * SlingOmega;
+                float f = Mathf.Clamp(k * (dist - _slingOut) + c * sepVel, 0f, susp * SlingMaxAccel);
+                _magnet.Sleeping = false; Wake(); Sleeping = false;
+                _magnet.ApplyForce(-dir * f, Vector3.Zero);                       // load hauled up toward the aircraft
+                ApplyForce(dir * f, fa - ToGlobal(CenterOfMass));                 // FORCE point, not the draw point -- this is what stays torque-free
+            }
+
+            if (dist > 1e-3f)
+            {
+                Vector3 dir2 = d / dist;
+                float susp2 = _magnet.Mass + (_magnet.Held != null && IsInstanceValid(_magnet.Held) ? _magnet.Held.Mass : 0f);
+                // Cross-cable RELATIVE velocity: the swing, with the along-cable part (the spring's business) removed.
+                Vector3 rel = _magnet.LinearVelocity - LinearVelocity;
+                Vector3 perp = rel - dir2 * rel.Dot(dir2);
+                // SCALE BY THE MAGNET'S OWN MASS, not the suspended total. These forces are applied to the MAGNET
+                // body, whose inertia is its own 12 kg -- sizing them for a welded 800 kg load meant a 68x overshoot
+                // on the body actually receiving them, and the solver diverged to NaN the moment anything was
+                // picked up. (The cable SPRING legitimately uses the suspended mass: it acts along the weld, where
+                // magnet and load genuinely move as one.) A heavy load now damps and aligns more slowly, which is
+                // also the physically honest answer.
+                Vector3 fSway = -perp * (SwayDamp * _magnet.Mass);
+                _magnet.ApplyForce(fSway, Vector3.Zero);
+                ApplyForce(-fSway, fa - ToGlobal(CenterOfMass));   // equal and opposite, at the FORCE point
+                // Bridle: hold the coil's axis along the cable so it hangs face-down instead of tumbling.
+                Vector3 up = _magnet.GlobalBasis.Y, want = -dir2;
+                Vector3 bridle = up.Cross(want) * (BridleStiff * _magnet.Mass) - _magnet.AngularVelocity * (BridleDamp * _magnet.Mass);
+                if (bridle.IsFinite()) _magnet.ApplyTorque(bridle);
+                if (_slingLink != null && IsInstanceValid(_slingLink)) _slingLink.GlobalPosition = fork;
+                if (_slingLegs != null)
+                    for (int li = 0; li < _slingLegs.Length; li++)
+                    {
+                        if (_slingLegs[li] == null || !IsInstanceValid(_slingLegs[li])) continue;
+                        Vector3 foot = _magnet.RimWorldAt(Mathf.Tau * li / _slingLegs.Length);
+                        _slingLegs[li].SetEndpoints(fork, foot, fork.DistanceTo(foot));   // taut: rest == actual, so no droop on a short leg
+                    }
+            }
+
+            // THE AIRCRAFT MUST NOT COLLIDE WITH WHAT IT IS CARRYING. The magnet already has an exception with the
+            // hull, but the LOAD did not -- so a crane that descended onto its own container simply sat on it, at
+            // full collective, going nowhere, with the load pinned to the ground underneath. Nothing about the lift
+            // maths was wrong; the machine was standing on its own cargo.
+            if (_magnet.Held != _slingHeldPrev)
+            {
+                if (_slingHeldPrev != null && IsInstanceValid(_slingHeldPrev)) RemoveCollisionExceptionWith(_slingHeldPrev);
+                if (_magnet.Held != null && IsInstanceValid(_magnet.Held)) AddCollisionExceptionWith(_magnet.Held);
+                _slingHeldPrev = _magnet.Held;
+            }
+
+            if (_magnetWanted && _magnet.Held == null)   // energised + empty -> bite the first thing the coil touches
+            {
+                var skip = new Godot.Collections.Array<Rid> { GetRid(), _magnet.GetRid() };
+                var t = _magnet.FindGrabTarget(skip);
+                if (t != null) _magnet.Grab(t);
+            }
+        }
+
         public override void _ExitTree()   // a despawned/unloaded car drops its rope (either end) so no dangling TowedBy/Towing ref survives
         {
             if (Towing != null || TowedBy != null) DetachTow();
+            if (_magnet != null) StowSling();   // a despawned/wrecked crane must not leave an orphan magnet hanging in the sky
         }
 
         // Swap this trailer's body layer bit0->bit6 while a cab is coupled/backing under. This is ONLY for the cab's
@@ -4527,7 +5678,7 @@ namespace UnturnedGodot
                 return;
             }
             if (_plane) { StepPlane((float)delta); return; }   // fixed wing: prop thrust + airspeed lift replace the wheel/tow/settle sim (buoyancy still runs for a floatplane)
-            if (_heli) { StepHeli((float)delta); return; }   // rotary wing: rotor thrust replaces the wheel/tow/settle sim entirely
+            if (_heli) { if (_slingHook) UpdateSling((float)delta); StepHeli((float)delta); return; }   // rotary wing: rotor thrust replaces the wheel/tow/settle sim entirely
             if (_tracked && !_exploded && !_parked && EngineOn && !Freeze)   // TANK skid-steer turn authority: a REAL yaw torque (integrated -> owned momentum, survives slopes/walls + the MP transform-adopt path). FADED by forward speed -- a tight pivot at rest but a WIDE arc at speed, so a full-rate yaw while driving doesn't fight the wheels' grip and crawl (master). The per-track EngineForces carry the fwd/back drive.
             {
                 float tfwd = LinearVelocity.Dot(-GlobalTransform.Basis.Z);

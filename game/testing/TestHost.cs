@@ -22,6 +22,12 @@ namespace UnturnedGodot.Testing
 
         public override void _Ready()
         {
+            // SURVIVE A PAUSED TREE. This host drives every test from _PhysicsProcess, so as a pausable node it
+            // would stop the instant a test called GetTree().Paused = true -- and the test would then sit there
+            // until the watchdog killed it, reporting a TIMEOUT that looks like a hang in the code under test.
+            // Freeze mode is exactly such a feature, and it cannot be tested at all without this.
+            ProcessMode = Node.ProcessModeEnum.Always;
+
             StructureManager.PersistenceEnabled = false;   // L1 must never touch the real user://structures.json -- see that field
             Deployable.InstantRampForTests = true;   // L1: generators settle their spin-up/cooldown instantly so power-flow checks see steady state (the gradual ramp is gameplay-verified in-render)
             Discover();
@@ -102,6 +108,9 @@ namespace UnturnedGodot.Testing
 
         void FinishTest()
         {
+            // A test that paused the tree and did not restore it would leave EVERY later test running frozen, which
+            // surfaces as a cascade of unrelated timeouts. Cheap to make impossible; expensive to debug.
+            if (GetTree().Paused) GetTree().Paused = false;
             double secs = _sw.Elapsed.TotalSeconds;
             bool failed = _ctx.Failed;
             if (failed)
