@@ -6367,12 +6367,20 @@ namespace UnturnedGodot
                 // helicopter the roll IS the control input, and a level camera hides the thing being steered.
                 // No mouse orbit either: while flying, the mouse is the cyclic, not a camera.
                 float dist = _driving.IsPlane ? Mathf.Clamp(size * 0.62f, 6.5f, 20f) : Mathf.Clamp(size * 1.1f, 6.5f, 34f);   // planes: the long fuselage+wingspan inflate the AABB diagonal (~14.7 jet -> 16m) -> pull the chase cam IN (master 2026-08-18: jet 3p was way too far); helis unchanged (tinyclaw)
-                Basis vb = vt.Basis.Orthonormalized();
-                // Offset in the VEHICLE's frame, so the camera keeps station on the airframe through a roll.
-                // The up-offset is deliberately small: the view direction is exactly the machine's heading, so
-                // anything more parks the helicopter near the bottom of the screen instead of in front of you.
-                var eye = vt.Origin + vb.Z * (dist * 0.86f) + vb.Y * (dist * 0.16f + size * 0.06f);
-                _cam.GlobalTransform = new Transform3D(vb, eye);
+                if (_driving.IsPlane)
+                {
+                    // WORLD-STABLE chase for the PLANE (level horizon). The airframe-locked cam below swung the
+                    // whole view around during rolls/loops -> master 2026-08-18 "the 3p camera keeps getting messed up".
+                    var pf = -vt.Basis.Z; pf.Y = 0f; pf = pf.LengthSquared() > 0.001f ? pf.Normalized() : Vector3.Forward;   // flattened heading
+                    var peye = vt.Origin - pf * (dist * 0.9f) + Vector3.Up * (dist * 0.34f + size * 0.05f);
+                    _cam.GlobalTransform = new Transform3D(Basis.Identity, peye).LookingAt(vt.Origin + Vector3.Up * 0.4f, Vector3.Up);
+                }
+                else
+                {
+                    Basis vb = vt.Basis.Orthonormalized();   // HELI: the camera BECOMES the airframe (roll IS the control input -- VoX)
+                    var eye = vt.Origin + vb.Z * (dist * 0.86f) + vb.Y * (dist * 0.16f + size * 0.06f);
+                    _cam.GlobalTransform = new Transform3D(vb, eye);
+                }
             }
             else            // third-person chase: ORBIT behind the car (mouse yaw/pitch), AUTO-ZOOMED for the vehicle's size (master)
             {
