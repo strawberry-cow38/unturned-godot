@@ -87,7 +87,7 @@ namespace UnturnedGodot
                 DisplayServer.WindowSetVsyncMode(DisplayServer.VSyncMode.Disabled);
                 GD.Print($"[display] vsync -> {DisplayServer.WindowGetVsyncMode()}");
             }
-            string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null, drivetest = null, proptest = null, magnettest = null, animrig = null, rottest = null, itemtest = null, navShot = null, croptest = null, menuShot = null, clothtest = null, boattest = null, slingtest = null, trainshow = null, ammoRadial = null;
+            string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null, drivetest = null, proptest = null, magnettest = null, animrig = null, rottest = null, itemtest = null, navShot = null, croptest = null, menuShot = null, clothtest = null, boattest = null, slingtest = null, trainshow = null, traintrack = null, ammoRadial = null;
             bool zperf = false;
             bool zbody = false;
             bool deployTest = false, barricadeTest = false, barricadePlay = false;
@@ -119,6 +119,7 @@ namespace UnturnedGodot
                 else if (arg == "--zdirtest") zdirTest = true;       // OFFLINE verify: boot the REWRITE on PEI -> do rows tier, query paths and actually MOVE? (implies --newzombies)
                 else if (arg.StartsWith("--proptest=")) { proptest = arg["--proptest=".Length..]; _shotRequested = proptest; }
                 else if (arg == "--trainshow") trainshow = "1";   // assemble train_cargo_0 from its extracted pieces for a 3/4 shot
+                else if (arg == "--traintrack") traintrack = "1";   // ride the train along a curved test track
                 else if (arg.StartsWith("--slingtest=")) { slingtest = arg["--slingtest=".Length..]; _shotRequested = slingtest; }
                 else if (arg.StartsWith("--magnettest=")) { magnettest = arg["--magnettest=".Length..]; _shotRequested = magnettest; }
                 else if (arg == "--tailcheck") tailCheck = true;
@@ -416,6 +417,7 @@ namespace UnturnedGodot
                 return;
             }
             if (trainshow != null) { GetWindow().Size = new Vector2I(1600, 720); BuildTrainShow(); return; }
+            if (traintrack != null) { GetWindow().Size = new Vector2I(1600, 900); BuildTrainTrack(); return; }
 
             if (zbody) { BuildZBody(); return; }
             if (zperf) { BuildZPerf(); return; }
@@ -2387,6 +2389,42 @@ namespace UnturnedGodot
             foreach (var cz in new[] { 11f, 22f, 33f }) Am(car, new Vector3(0f, 0f, cz), carMat);
             var cam = new Camera3D { Current = true, Fov = 42f, Far = 10000f }; AddChild(cam);
             cam.Position = new Vector3(26f, 14f, -20f); cam.LookAt(new Vector3(0f, 1.2f, 13f), Vector3.Up);
+        }
+
+        // --traintrack : the assembled train riding a CURVED test track. Each unit rides 2 bogies snapped to the
+        // rail; the body SPANS them so it angles through curves -- the bogie-follows-spline mechanic (local curve).
+        void BuildTrainTrack()
+        {
+            var env = new Godot.Environment { BackgroundMode = Godot.Environment.BGMode.Color, BackgroundColor = new Color(0.52f, 0.62f, 0.74f), AmbientLightSource = Godot.Environment.AmbientSource.Color, AmbientLightColor = new Color(0.7f, 0.7f, 0.72f), AmbientLightEnergy = 0.9f };
+            AddChild(new WorldEnvironment { Environment = env });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-50f, -40f, 0f), LightEnergy = 1.2f, ShadowEnabled = true });
+            AddChild(new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(400f, 400f) }, Position = new Vector3(15f, -0.05f, 25f), MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.30f, 0.34f, 0.27f) } });
+            Vector3[] ctrl = { new(-40f, 0f, -30f), new(-40f, 0f, 5f), new(-20f, 0f, 40f), new(15f, 0f, 55f), new(45f, 0f, 55f), new(70f, 0f, 35f) };
+            var P = new System.Collections.Generic.List<Vector3>(); var D = new System.Collections.Generic.List<float>();
+            Vector3 CR(Vector3 a, Vector3 b, Vector3 c, Vector3 d, float t) { float t2 = t * t, t3 = t2 * t; return 0.5f * ((2f * b) + (-a + c) * t + (2f * a - 5f * b + 4f * c - d) * t2 + (-a + 3f * b - 3f * c + d) * t3); }
+            { float dd = 0f; Vector3 prev = ctrl[1]; for (int i = 1; i < ctrl.Length - 2; i++) for (int k = 0; k < 40; k++) { float t = k / 40f; var pp = CR(ctrl[i - 1], ctrl[i], ctrl[i + 1], ctrl[i + 2], t); if (P.Count > 0) dd += pp.DistanceTo(prev); P.Add(pp); D.Add(dd); prev = pp; } }
+            void Eval(float ss, out Vector3 pos, out Vector3 tan) { ss = Mathf.Clamp(ss, 0f, D[D.Count - 1]); int i = 0; while (i < D.Count - 2 && D[i + 1] < ss) i++; float seg = Mathf.Max(D[i + 1] - D[i], 1e-3f); float f = (ss - D[i]) / seg; pos = P[i].Lerp(P[i + 1], f); var tt = P[i + 1] - P[i]; tan = tt.LengthSquared() > 1e-6f ? tt.Normalized() : Vector3.Forward; }
+            var im = new ImmediateMesh();
+            im.SurfaceBegin(Mesh.PrimitiveType.Triangles, new StandardMaterial3D { AlbedoColor = new Color(0.17f, 0.15f, 0.13f), CullMode = BaseMaterial3D.CullModeEnum.Disabled });
+            for (int i = 0; i < P.Count - 1; i++) { Vector3 t = (P[i + 1] - P[i]).Normalized(); Vector3 side = new Vector3(t.Z, 0f, -t.X) * 1.7f; Vector3 a = P[i] - side, b = P[i] + side, c = P[i + 1] - side, e = P[i + 1] + side; foreach (var v in new[] { a, b, c, b, e, c }) im.SurfaceAddVertex(v + Vector3.Up * 0.02f); }
+            im.SurfaceEnd(); AddChild(new MeshInstance3D { Mesh = im });
+            Mesh Lm(string n) => ContentProvider.ParseObj($"res://content/{n}.txt");
+            Material Tex(string tn) { var m = new StandardMaterial3D { TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest, Roughness = 0.75f, CullMode = BaseMaterial3D.CullModeEnum.Disabled }; var img = new Image(); if (img.Load(ProjectSettings.GlobalizePath($"res://content/{tn}.png")) == Error.Ok) m.AlbedoTexture = ImageTexture.CreateFromImage(img); return m; }
+            var carMat = Tex("train_car_tex"); var bogieMat = Tex("train_bogie_tex");
+            var bodyMat = new StandardMaterial3D { TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest, Roughness = 0.75f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+            { var bimg = new Image(); if (bimg.Load(ProjectSettings.GlobalizePath("res://content/train_body_tex.png")) == Error.Ok) { bimg.Convert(Image.Format.Rgba8); bimg.SetPixel(0, 1, new Color(0.16f, 0.42f, 0.22f)); bodyMat.AlbedoTexture = ImageTexture.CreateFromImage(bimg); } }
+            Mesh body = Lm("train_body"), bogie = Lm("train_bogie"), car = Lm("train_car");
+            float railY = 0.9f;
+            void Unit(Mesh m, Material mat, float sctr) {
+                Eval(sctr + 3.5f, out var pf, out _); Eval(sctr - 3.5f, out var pb, out _);
+                Vector3 c = (pf + pb) * 0.5f + Vector3.Up * railY; Vector3 fwd = pf - pb; fwd = fwd.LengthSquared() > 1e-4f ? fwd.Normalized() : Vector3.Forward;
+                var mi = new MeshInstance3D { Mesh = m, MaterialOverride = mat }; AddChild(mi); mi.GlobalTransform = new Transform3D(Basis.Identity, c).LookingAt(c + fwd, Vector3.Up);
+                foreach (var bs in new[] { sctr + 3.5f, sctr - 3.5f }) { Eval(bs, out var bp, out var bt); Vector3 bc = bp + Vector3.Up * (railY - 0.5f); var bmi = new MeshInstance3D { Mesh = bogie, MaterialOverride = bogieMat }; AddChild(bmi); bmi.GlobalTransform = new Transform3D(Basis.Identity, bc).LookingAt(bc + bt, Vector3.Up); }
+            }
+            float head = D[D.Count - 1] - 10f;
+            Unit(body, bodyMat, head); Unit(car, carMat, head - 11f); Unit(car, carMat, head - 22f); Unit(car, carMat, head - 33f);
+            var cam = new Camera3D { Current = true, Fov = 50f, Far = 10000f }; AddChild(cam);
+            Eval(head - 16f, out var look, out _); cam.Position = look + new Vector3(22f, 20f, 22f); cam.LookAt(look + Vector3.Up * 1f, Vector3.Up);
         }
 
         // --doorgallery --shot=OUT : a lit, front-on LINEUP of the 12 ripped WOODEN door barricade models
