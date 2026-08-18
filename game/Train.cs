@@ -115,5 +115,47 @@ namespace UnturnedGodot
             }
             Place();
         }
+
+        bool _lookFocused;
+        System.Collections.Generic.List<MeshInstance3D> _locoMeshes;
+
+        static void CollectMeshes(Node n, System.Collections.Generic.List<MeshInstance3D> outl)
+        {
+            if (n is MeshInstance3D mi) outl.Add(mi);
+            foreach (var c in n.GetChildren()) CollectMeshes(c, outl);
+        }
+
+        /// <summary>Outline the LOCO (its body mesh + 2 bogies) when the player looks at it, exactly like a
+        /// Vehicle: flip the meshes onto OutlineOverlay.OutlineLayer so the mask cam draws the rim.</summary>
+        public void SetLookFocused(bool on)
+        {
+            if (_lookFocused == on) return;
+            _lookFocused = on;
+            if (_locoMeshes == null)
+            {
+                _locoMeshes = new System.Collections.Generic.List<MeshInstance3D>();
+                if (_units.Count > 0)
+                {
+                    CollectMeshes(_units[0].body, _locoMeshes);
+                    if (_units[0].bf != null) _locoMeshes.Add(_units[0].bf);
+                    if (_units[0].bb != null) _locoMeshes.Add(_units[0].bb);
+                }
+            }
+            foreach (var mi in _locoMeshes)
+                if (IsInstanceValid(mi))
+                    mi.Layers = on ? (mi.Layers | OutlineOverlay.OutlineLayer) : (mi.Layers & ~OutlineOverlay.OutlineLayer);
+            if (on) WorldItem.FocusColor = new Color(0.55f, 0.8f, 1f);
+        }
+
+        /// <summary>Does the look-ray pass through the loco's hull box? Segment vs the loco OBB (3.4x4.1x10.8 at
+        /// local (0,1.27,0)), matching Vehicle.LookRayHitsHull -- lets the player focus it through the cab glass.</summary>
+        public bool LookRayHitsLoco(Vector3 from, Vector3 to)
+        {
+            if (_units.Count == 0 || !IsInstanceValid(_units[0].body)) return false;
+            var inv = _units[0].body.GlobalTransform.AffineInverse();
+            var size = new Vector3(3.4f, 4.1f, 10.8f);
+            var min = new Vector3(0f, 1.27f, 0f) - size * 0.5f;
+            return new Aabb(min, size).IntersectsSegment(inv * from, inv * to);
+        }
     }
 }

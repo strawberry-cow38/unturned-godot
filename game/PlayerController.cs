@@ -317,6 +317,7 @@ namespace UnturnedGodot
         ShelfItemBody _focusShelfItem;   // the SHELF display item being looked at (glowing, F to grab straight off the shelf)
         StoreShelf _focusShelf;          // the shelf being looked at (whole-shelf outline) -- the shelf of the focused item
         Vehicle _focusVehicle;  // the vehicle the player is LOOKING AT (outlined + info panel), enter target for E
+        Train _focusTrain;      // the train the player is LOOKING AT (loco outlined; F boards it) -- not a Vehicle, own scan
         Deployable _focusDeployable;  // the placed deployable (generator) the player is LOOKING AT (outlined + HP/fuel billboard)
         Door _focusDoor;              // the door being looked at -> F toggles it
         NoteBody _focusNote;          // the readable lore note being looked at -> F reads it
@@ -443,6 +444,7 @@ namespace UnturnedGodot
             LampLight hitLamp = null;         // standing/desk lamp under the ray -> F on/off + outline
             ShelfItemBody hitShelfItem = null; StoreShelf hitShelf = null;   // shelf display item / its shelf under the look-sphere
             IPuppetFocusable hitPuppet = null;   // MP ONLY: nearest replicated car/item puppet under the look-sphere (SP hits real Vehicle/WorldItem instead)
+            Train hitTrain = null;   // train loco under the look-ray (own scan; not in ResolveFocus)
             bool rayTerminal = false, rayShelfItem = false;   // did the RAY claim the target, and was it a shelf item? (see the arbitration below)
             if (!_dead && _driving == null && _riding == null && _cam != null && Input.MouseMode == Input.MouseModeEnum.Captured)
             {
@@ -554,6 +556,22 @@ namespace UnturnedGodot
                             if (d < maxD && d < bestV && vv.LookRayHitsHull(from, _lookEnd)) { bestV = d; hitVeh = vv; }   // cheap distance gate before the tight per-hull (oriented-box) test -- no world-AABB bloat / cross-vehicle overlap (strawberry)
                         }
                 }
+                // TRAIN look-focus (not in ResolveFocus -- a train is a lone rail vehicle): when nothing else won,
+                // focus a train whose loco the look-ray passes through, so it outlines + F boards it like a car.
+                if (_ridingTrain == null && hitVeh == null && hitItem == null && hitShelfItem == null && hitPuppet == null)
+                {
+                    float maxTrainD = (LookReach + 8f) * (LookReach + 8f);
+                    foreach (var node in GetTree().GetNodesInGroup("trains"))
+                        if (node is Train tr && tr.Loco != null && IsInstanceValid(tr.Loco)
+                            && tr.Loco.GlobalPosition.DistanceSquaredTo(from) < maxTrainD && tr.LookRayHitsLoco(from, _lookEnd))
+                        { hitTrain = tr; break; }
+                }
+            }
+            if (hitTrain != _focusTrain)
+            {
+                if (IsInstanceValid(_focusTrain)) _focusTrain.SetLookFocused(false);
+                _focusTrain = hitTrain;
+                _focusTrain?.SetLookFocused(true);
             }
             if (_lookViz != null) { _lookViz.Visible = WorldItem.ShowLookSphere && !_dead && _driving == null; if (_lookViz.Visible) _lookViz.GlobalPosition = _lookEnd; }
             if (hitItem != _focusItem)
@@ -4802,7 +4820,8 @@ namespace UnturnedGodot
                 else if (RequestPickupFocusedPuppet()) { }                 // MP: looking at a REPLICATED dropped item -> ask the server for it (like SP, a focused item wins over a nearby vehicle)
                 else if (_focusVehicle != null && IsInstanceValid(_focusVehicle) && !_focusVehicle.IsWreck && !_focusVehicle.IsTrailer) EnterVehicle(_focusVehicle); // looking at a LIVE, drivable vehicle: get in (a wreck is salvaged with LMB; a trailer is towed, not driven)
                 else if (RequestEnterNearestPuppet()) { }                  // MP shell near a REPLICATED vehicle: ask the server for the seat (C6; false in SP -- no puppets)
-                else if (NearestTrain() is Train nt) BoardTrain(nt);       // near a train (not a Vehicle): board it (master: "i cant get into the train")
+                else if (_focusTrain != null && IsInstanceValid(_focusTrain)) BoardTrain(_focusTrain);   // LOOKING at a train loco: board it (outlined affordance, master)
+                else if (NearestTrain() is Train nt) BoardTrain(nt);       // fallback: stood next to a train, board it
                 else if (_focusDeployable != null && IsInstanceValid(_focusDeployable))
                 {   // looking at a placed deployable: F starts a HOLD -> pick it up (UpdateDeployPickup); a quick TAP toggles
                     // a generator's power (fired on release). Consume F so it doesn't fall through to open a nearby crate.
@@ -6237,6 +6256,7 @@ namespace UnturnedGodot
         void BoardTrain(Train t)
         {
             _ridingTrain = t;
+            if (_focusTrain != null) { if (IsInstanceValid(_focusTrain)) _focusTrain.SetLookFocused(false); _focusTrain = null; }   // drop the look-outline once aboard
             _viewmodel?.SetShown(false);
             if (_cam != null) _cam.TopLevel = true;
             foreach (var c in FindChildren("*", "CollisionShape3D", true, false))
