@@ -750,6 +750,8 @@ namespace UnturnedGodot
         Node3D[] _turretYaw, _turretPitch;
         int[] _turretAmmo; float[] _turretCd;
         TargetDummy[] _turretCrew;
+        readonly System.Collections.Generic.List<StandardMaterial3D> _navMats = new();
+        readonly System.Collections.Generic.List<OmniLight3D> _navOmnis = new();
         /// <summary>Put crew in the door guns. NOT done at build time (strawberry: "helis spawned with the
         /// vehicle command shouldnt have gunners") -- a helicopter you spawn to fly is an empty airframe, and the
         /// gunners are something the AI brings with it.
@@ -776,6 +778,9 @@ namespace UnturnedGodot
                 AddChild(crew);
                 AddCollisionExceptionWith(crew);
                 _turretCrew[i] = crew;
+                if (_turretPitch?[i] != null)
+                    foreach (var g in _turretPitch[i].GetChildren())
+                        if (g is MeshInstance3D gm) gm.Visible = true;   // the gun comes with the gunner
             }
         }
         /// <summary>Can this mount still shoot? A mount with no crew (a remote chin turret) is always manned; a
@@ -843,6 +848,8 @@ namespace UnturnedGodot
         /// finite 200-round belt, because the reason to give an NPC an endless one is that nobody can reload it,
         /// and that reason does not apply to a person sitting in the chair.</summary>
         public bool InfiniteTurretBelt;
+        /// <summary>Test seam: are the navigation lights lit right now?</summary>
+        public bool DebugNavLightsOn => _navMats.Count > 0 && _navMats[0].EmissionEnergyMultiplier > 0.01f;
 
         /// <summary>Aim the turret operated by `seat`, in degrees, clamped to its traverse limits. Returns false
         /// if that seat has no turret -- callers must not assume every seat is a gun position.</summary>
@@ -1219,19 +1226,23 @@ namespace UnturnedGodot
                 bool mirrored = i == 1;
                 bool isPort = (cx < 0f) != mirrored;   // the ORIGINAL sits on the side its centroid says; the copy is the other one
                 var col = isPort ? new Color(0.95f, 0.05f, 0.05f) : new Color(0.05f, 0.95f, 0.15f);
+                var navMat = LensMat(col, 2.6f);
+                _navMats.Add(navMat);
                 AddChild(new MeshInstance3D
                 {
                     Name = isPort ? "NavLightPort" : "NavLightStarboard",
-                    Mesh = mesh, MaterialOverride = LensMat(col, 2.6f),
+                    Mesh = mesh, MaterialOverride = navMat,
                     Scale = mirrored ? new Vector3(-1f, 1f, 1f) : Vector3.One,
                 });
                 // A small omni so the lens tints the airframe around it at night instead of being a flat
                 // bright dot. Short range on purpose: a nav light marks the aircraft, it does not light terrain.
-                AddChild(new OmniLight3D
+                var navOmni = new OmniLight3D
                 {
                     Position = new Vector3(mirrored ? -cx : cx, mesh.GetAabb().GetCenter().Y, mesh.GetAabb().GetCenter().Z),
                     OmniRange = 2.2f, LightColor = col, LightEnergy = 1.4f,
-                });
+                };
+                _navOmnis.Add(navOmni);
+                AddChild(navOmni);
             }
         }
 
@@ -2409,8 +2420,8 @@ namespace UnturnedGodot
         /// cone and will try to point at least one side at you when agro'd").
         ///
         /// The cone is expressed as ASYMMETRIC YAW LIMITS rather than a new concept: yaw +90 points the barrel at
-        /// -X (port) and -90 at +X (starboard), measured in vehicle.npc_heli_turret, so a 120 deg beam cone is
-        /// simply [30,150] and [-150,-30]. AimTurret already clamps to those, which means a door gunner
+        /// -X (port) and -90 at +X (starboard), measured in vehicle.npc_heli_turret, so a 90 deg beam cone is
+        /// simply [45,135] and [-135,-45]. AimTurret already clamps to those, which means a door gunner
         /// physically cannot swing across its own cabin and shoot the crew on the other side.
         ///
         /// Each mount declares a GunnerAt, so a killable body is built behind it. That is the whole point: these
@@ -2427,7 +2438,7 @@ namespace UnturnedGodot
                     GunnerAt = new Vector3(-halfWidth * 0.62f, floorY, z),
                     Muzzle = new Vector3(0f, 0f, -0.90f),
                     MeshRotationDeg = new Vector3(-90f, 0f, 0f),   // lay the Y-axis gun model down the barrel line
-                    YawMin = 30f, YawMax = 150f,      // 120 deg centred on the port beam
+                    YawMin = 45f, YawMax = 135f,      // 90 deg centred on the port beam (strawberry tightened it from 120)
                     PitchMin = -70f, PitchMax = 20f,  // a door gun leans out and shoots well below itself
                     GunId = gunId,
                 },
@@ -2439,7 +2450,7 @@ namespace UnturnedGodot
                     GunnerAt = new Vector3(halfWidth * 0.62f, floorY, z),
                     Muzzle = new Vector3(0f, 0f, -0.90f),
                     MeshRotationDeg = new Vector3(-90f, 0f, 0f),
-                    YawMin = -150f, YawMax = -30f,
+                    YawMin = -135f, YawMax = -45f,
                     PitchMin = -70f, PitchMax = 20f,
                     GunId = gunId,
                 },
@@ -3202,6 +3213,10 @@ namespace UnturnedGodot
                         Mesh = ContentProvider.ParseObj($"res://content/{t.PitchMesh}"),
                         MaterialOverride = mat,
                         RotationDegrees = t.MeshRotationDeg,
+                        // A CREWED mount's gun is the gunner's, so it arrives with them: "hide the
+                        // dragonfangs/nyks when spawned via vehicle command". A remote mount (the Hind's chin
+                        // turret) is part of the airframe and is always there.
+                        Visible = t.GunnerAt == Vector3.Zero,
                     });
                 yaw.AddChild(pitch);
                 v.AddChild(yaw);
@@ -3638,6 +3653,14 @@ namespace UnturnedGodot
             float spoolUp = !DebugInstantStart && _ignitionLen > 0.1f ? _ignitionLen * IgnitionThrustFraction : SpoolUpSeconds;
             _rotorRpm = Mathf.MoveToward(_rotorRpm, want, dt / (want > _rotorRpm ? spoolUp : SpoolDownSeconds));
             if (_ignitionLeft > 0f) _ignitionLeft = Mathf.Max(0f, _ignitionLeft - dt);
+
+            // NAV LIGHTS RUN OFF THE ENGINE, not the rotor -- they are electrical, and a parked machine with the
+            // switches off is dark (strawberry: "make the heading lights only on when the heli's engine is on.
+            // make sure the heading lights turn off when the heli is destroyed"). A wreck is dark for the more
+            // obvious reason. This is the opposite rule from the beacon below, which follows the DISC.
+            bool navOn = EngineOn && !_exploded && Health > 0f;
+            for (int i = 0; i < _navMats.Count; i++) _navMats[i].EmissionEnergyMultiplier = navOn ? 2.6f : 0f;
+            for (int i = 0; i < _navOmnis.Count; i++) _navOmnis[i].LightEnergy = navOn ? 1.4f : 0f;
 
             // The beacon runs off the ROTOR, not the ignition switch: its job is to say "this disc is live",
             // so it keeps flashing through a spool-down and stops only once the blades actually have.

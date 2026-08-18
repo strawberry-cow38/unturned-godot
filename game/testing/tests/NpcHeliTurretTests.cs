@@ -217,6 +217,32 @@ namespace UnturnedGodot.Testing
             yield return Ticks(3);
             T.Check($"a Huey spawned by the vehicle command has mounts but NO gunners ({bare.Turrets.Length} mounts, {bareAi.DebugLiveMounts} manned)",
                 bare.Turrets.Length == 2 && bareAi.DebugLiveMounts == 0);
+            // AND NO GUNS EITHER. The Dragonfang belongs to the gunner, so an empty airframe must not be flying
+            // around with two of them floating in its doorways.
+            bool anyGunVisible = false;
+            foreach (var ch in bare.GetChildren())
+                if (ch is Node3D yawN && yawN.Name.ToString().StartsWith("TurretYaw"))
+                    foreach (var pc in yawN.GetChildren())
+                        if (pc is Node3D pitchN)
+                            foreach (var g in pitchN.GetChildren())
+                                if (g is MeshInstance3D gm && gm.Visible) anyGunVisible = true;
+            T.Check($"...and its Dragonfangs are hidden too, not floating in the empty doorways (anyVisible={anyGunVisible})",
+                !anyGunVisible);
+
+            // NAV LIGHTS FOLLOW THE ENGINE, and go out with the aircraft.
+            bare.EngineOn = false;
+            yield return Ticks(3);
+            bool offWhenCold = bare.DebugNavLightsOn;
+            bare.EngineOn = true; bare.DebugInstantStart = true;
+            yield return Ticks(3);
+            bool onWhenRunning = bare.DebugNavLightsOn;
+            GD.Print($"[TURRET] nav lights: engine off={offWhenCold} engine on={onWhenRunning}");
+            T.Check($"heading lights are OUT with the engine off and LIT with it on (off={offWhenCold}, on={onWhenRunning})",
+                !offWhenCold && onWhenRunning);
+            bare.TakeDamage(bare.HealthMax * 2f);
+            yield return Ticks(5);
+            T.Check($"...and they go out when the aircraft is destroyed (lit={bare.DebugNavLightsOn}, hp {bare.Health:0})",
+                !bare.DebugNavLightsOn);
             bare.QueueFree(); bareAi.QueueFree();
             yield return Ticks(2);
 
@@ -225,9 +251,9 @@ namespace UnturnedGodot.Testing
             yield return Ticks(3);
             T.Check($"the Huey carries TWO crewed door guns ({huey.Turrets.Length} mounts, {hai.DebugLiveMounts} manned)",
                 huey.Turrets.Length == 2 && hai.DebugLiveMounts == 2);
-            T.Check($"...with a 120 deg cone on each beam, port and starboard (port {huey.Turrets[0].YawMin:0}..{huey.Turrets[0].YawMax:0}, stbd {huey.Turrets[1].YawMin:0}..{huey.Turrets[1].YawMax:0})",
-                Mathf.IsEqualApprox(huey.Turrets[0].YawMax - huey.Turrets[0].YawMin, 120f)
-                && Mathf.IsEqualApprox(huey.Turrets[1].YawMax - huey.Turrets[1].YawMin, 120f)
+            T.Check($"...with a 90 deg cone on each beam, port and starboard (port {huey.Turrets[0].YawMin:0}..{huey.Turrets[0].YawMax:0}, stbd {huey.Turrets[1].YawMin:0}..{huey.Turrets[1].YawMax:0})",
+                Mathf.IsEqualApprox(huey.Turrets[0].YawMax - huey.Turrets[0].YawMin, 90f)
+                && Mathf.IsEqualApprox(huey.Turrets[1].YawMax - huey.Turrets[1].YawMin, 90f)
                 && huey.Turrets[0].YawMin > 0f && huey.Turrets[1].YawMax < 0f);
             T.Check($"...and it uses the Dragonfang, the Orca the Nykorev (huey '{huey.Turrets[0].GunId}')",
                 huey.Turrets[0].GunId == "dragonfang");
