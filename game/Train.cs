@@ -215,7 +215,7 @@ namespace UnturnedGodot
         public Node3D Loco => EngineCar?.Body;
         public Transform3D DriverEyeWorld
         {
-            get { var l = Loco; return l != null ? l.GetGlobalTransformInterpolated() * new Transform3D(Basis.Identity, new Vector3(0f, 2.3f, -2.6f)) : GlobalTransform; }
+            get { var l = (_boardedCar != null && IsInstanceValid(_boardedCar.Body)) ? _boardedCar.Body : Loco; return l != null ? l.GetGlobalTransformInterpolated() * new Transform3D(Basis.Identity, new Vector3(0f, 2.3f, -2.6f)) : GlobalTransform; }
         }
 
         public void Drive(float throttle, float dt)
@@ -377,6 +377,7 @@ namespace UnturnedGodot
         public void SetOccupied(bool on)
         {
             _occupied = on;
+            if (!on) _boardedCar = null;
             foreach (var c in _cars)
             {
                 if (c.EngSnd != null) { if (on) { if (!c.EngSnd.Playing) c.EngSnd.Play(); } else c.EngSnd.Stop(); }
@@ -389,32 +390,54 @@ namespace UnturnedGodot
 
         // ---- look-focus outline of the ENGINE car (only a drivable consist is boardable) ----
         bool _lookFocused;
-        List<MeshInstance3D> _locoMeshes;
+        Car _lookEngine, _boardedCar, _outlinedEngine;   // engine the player is LOOKING at / IS IN / whose outline is lit -- board ANY engine (master)
         static void CollectMeshes(Node n, List<MeshInstance3D> outl) { if (n is MeshInstance3D mi) outl.Add(mi); foreach (var c in n.GetChildren()) CollectMeshes(c, outl); }
+
+        // nearest ENGINE car whose hull box the look-ray passes through (so any engine is boardable, not just the first)
+        Car EngineHit(Vector3 from, Vector3 to)
+        {
+            Car best = null; float bestD = float.MaxValue;
+            foreach (var c in _cars)
+            {
+                if (!c.S.Engine || !IsInstanceValid(c.Body)) continue;
+                var inv = c.Body.GlobalTransform.AffineInverse();
+                var size = c.S.Box;
+                if (new Aabb(c.S.BoxCtr - size * 0.5f, size).IntersectsSegment(inv * from, inv * to))
+                {
+                    float d = c.Body.GlobalPosition.DistanceSquaredTo(from);
+                    if (d < bestD) { bestD = d; best = c; }
+                }
+            }
+            return best;
+        }
+
+        void OutlineEngine(Car c, bool on)
+        {
+            if (c == null) return;
+            var meshes = new List<MeshInstance3D>();
+            if (IsInstanceValid(c.Body)) CollectMeshes(c.Body, meshes);
+            if (c.Bf != null) meshes.Add(c.Bf);
+            if (c.Bb != null) meshes.Add(c.Bb);
+            foreach (var mi in meshes) if (IsInstanceValid(mi)) mi.Layers = on ? (mi.Layers | OutlineOverlay.OutlineLayer) : (mi.Layers & ~OutlineOverlay.OutlineLayer);
+        }
+
+        /// <summary>Remember which engine the player is in (the one they looked at) -> the driver cam sits in ITS cab.</summary>
+        public void MarkBoarded() { _boardedCar = _lookEngine ?? EngineCar; }
 
         public void SetLookFocused(bool on)
         {
             if (_lookFocused == on) return;
             _lookFocused = on;
-            if (on)
-            {
-                _locoMeshes = new List<MeshInstance3D>();
-                var eng = EngineCar;
-                if (eng != null) { CollectMeshes(eng.Body, _locoMeshes); if (eng.Bf != null) _locoMeshes.Add(eng.Bf); if (eng.Bb != null) _locoMeshes.Add(eng.Bb); }
-            }
-            if (_locoMeshes != null)
-                foreach (var mi in _locoMeshes)
-                    if (IsInstanceValid(mi)) mi.Layers = on ? (mi.Layers | OutlineOverlay.OutlineLayer) : (mi.Layers & ~OutlineOverlay.OutlineLayer);
-            if (on) WorldItem.FocusColor = new Color(0.55f, 0.8f, 1f);
+            if (on) { _outlinedEngine = _lookEngine ?? EngineCar; OutlineEngine(_outlinedEngine, true); WorldItem.FocusColor = new Color(0.55f, 0.8f, 1f); }
+            else { OutlineEngine(_outlinedEngine, false); _outlinedEngine = null; }
         }
 
         public bool LookRayHitsLoco(Vector3 from, Vector3 to)
         {
-            var eng = EngineCar;
-            if (eng == null || !IsInstanceValid(eng.Body)) return false;
-            var inv = eng.Body.GlobalTransform.AffineInverse();
-            var size = eng.S.Box;
-            return new Aabb(eng.S.BoxCtr - size * 0.5f, size).IntersectsSegment(inv * from, inv * to);
+            var hit = EngineHit(from, to);
+            if (_lookFocused && hit != _outlinedEngine) { OutlineEngine(_outlinedEngine, false); OutlineEngine(hit, true); _outlinedEngine = hit; }   // move the outline as you look between engines
+            _lookEngine = hit;
+            return hit != null;
         }
 
         // ---- coupler ropes + uncoupling (phase 2) ----

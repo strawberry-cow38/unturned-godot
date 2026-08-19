@@ -6300,6 +6300,7 @@ namespace UnturnedGodot
         {
             _ridingTrain = t;
             t.SetOccupied(true);   // start the engine loop (base plays only while occupied, master)
+            t.MarkBoarded();       // control from whichever engine the player looked at (master)
             if (_focusTrain != null) { if (IsInstanceValid(_focusTrain)) _focusTrain.SetLookFocused(false); _focusTrain = null; }   // drop the look-outline once aboard
             _driveCamYaw = 0f; _driveCamPitch = 15f;   // 3P chase starts squarely behind the loco
             _viewmodel?.SetShown(false);
