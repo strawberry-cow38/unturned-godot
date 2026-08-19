@@ -13,11 +13,11 @@ namespace UnturnedGodot
         RoadField _roads;
         int _road;
         float _s;                       // distance-along the track of the LOCO's centre
-        const float RailY = 1.4f;       // lift the body so its wheels sit ON the rail (wheel-bottom ~1.32 below the body origin)
+        const float RailY = 1.55f;      // lift the body so its wheels sit ON the rail (master: "a little higher on the tracks")
         const float BogieHalf = 3.5f;   // bogie spacing from a unit's centre (source Track_Front/Back at +-3.5)
         const float CarGap = 11f;       // car-to-car spacing along the rail (source Train_Car spacing)
         readonly List<(Node3D body, MeshInstance3D bf, MeshInstance3D bb, float off)> _units = new();
-        const float MaxSpeed = 16f, Accel = 5f;   // rail top speed (m/s) + accel
+        const float MaxSpeed = 40f, Accel = 3f, Decel = 2f;   // BIG inertia (master): high top speed, slow to build, long coast
         float _speed;
 
         /// <summary>Spawn a train onto the nearest track spline to <paramref name="near"/>. Null if there is no
@@ -106,7 +106,9 @@ namespace UnturnedGodot
         /// Cars trail on their fixed offsets. Open roads stop at the ends; a loop wraps.</summary>
         public void Drive(float throttle, float dt)
         {
-            _speed = Mathf.MoveToward(_speed, Mathf.Clamp(throttle, -0.6f, 1f) * MaxSpeed, Accel * dt);
+            float target = Mathf.Clamp(throttle, -0.6f, 1f) * MaxSpeed;
+            float rate = Mathf.Abs(throttle) < 0.05f ? Decel : Accel;   // released -> long coast (Decel); throttle held -> slow build / brake (Accel)
+            _speed = Mathf.MoveToward(_speed, target, rate * dt);
             _s += _speed * dt;
             if (!_roads.RoadLoops(_road))
             {
