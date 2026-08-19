@@ -40,7 +40,8 @@ namespace UnturnedGodot
         float _speed, _wheelSpin, _trolleyX, _hoistDrop;
         readonly List<MeshInstance3D> _wheels = new();
         readonly List<MeshInstance3D> _ropes = new();
-        readonly List<(Vector3 c, Vector3 h)> _frameBoxes = new();   // convex leg/beam boxes = the FRAME collider (drive axis), derived from the gantry mesh; portal openings left OPEN so you can drive over low stuff
+        readonly List<(Vector3 c, Vector3 h)> _frameBoxes = new();
+        readonly List<Rid> _selfColliders = new();   // the crane's OWN real trimesh colliders (player/vehicle hit these) -> excluded from the self-stop casts   // convex leg/beam boxes = the FRAME collider (drive axis), derived from the gantry mesh; portal openings left OPEN so you can drive over low stuff
         MeshInstance3D _trolley, _hoist;
         bool _magnetOn; RigidBody3D _held; Vector3 _heldOffset; Aabb _heldAabb; Vector3 _faceAtGrab;   // hoist ELECTROMAGNET (steal the skycrane's magnet -> lift a MagnetableContainer)
         const uint ObstacleMask = (1u << 0) | (1u << 5) | (1u << 6); // terrain/statics + vehicles + props: what STOPS the gantry/trolley when the hoist (or its load) hits it
@@ -68,9 +69,11 @@ namespace UnturnedGodot
         {
             AddToGroup("cranes");
             AddChild(new MeshInstance3D { Mesh = Lm("Harbor_0_gantry"), MaterialOverride = MakeMat("Harbor_0"), Basis = Upright });
-            ComputeFrameBoxes();
+            ComputeFrameBoxes();   // derives the self-stop boxes AND builds the real frame collider (convex boxes -> valid on a MOVING body, unlike a concave trimesh)
             _trolley = new MeshInstance3D { Mesh = Lm("Harbor_0_trolley"), MaterialOverride = MakeMat("Harbor_0"), Transform = new Transform3D(Upright, Vector3.Zero) };
             AddChild(_trolley);
+            _trolley.CreateConvexCollision();   // carriage collider (convex hull -> valid moving); collect its RID for the self-stop exclude
+            foreach (var ch in _trolley.GetChildren()) if (ch is StaticBody3D tsb) _selfColliders.Add(tsb.GetRid());
             var wm = Lm("Wheel_3"); var wmat = MakeMat("Wheel_3");
             foreach (var off in WheelOff)
             {
@@ -208,7 +211,10 @@ namespace UnturnedGodot
             if (space == null) return 1f;
             var shape = new BoxShape3D { Size = size };
             var p = new PhysicsShapeQueryParameters3D { ShapeRid = shape.GetRid(), Transform = new Transform3D(basis, center), Motion = motion, CollisionMask = mask, CollideWithBodies = true };
-            if (_held != null && IsInstanceValid(_held)) p.Exclude = new Godot.Collections.Array<Rid> { _held.GetRid() };
+            var ex = new Godot.Collections.Array<Rid>();
+            for (int i = 0; i < _selfColliders.Count; i++) ex.Add(_selfColliders[i]);   // don't let the crane self-block on its OWN colliders
+            if (_held != null && IsInstanceValid(_held)) ex.Add(_held.GetRid());
+            p.Exclude = ex;
             float[] r = space.CastMotion(p);
             return (r != null && r.Length > 0) ? r[0] : 1f;
         }
@@ -249,6 +255,14 @@ namespace UnturnedGodot
                 int b = xi * 2 + (v.Z >= 0 ? 0 : 1);
                 lmn[b] = lmn[b].Min(v); lmx[b] = lmx[b].Max(v);
             }
+            // REAL COLLIDER: full-extent convex boxes per leg + the top rail, so player/vehicles hit the frame 1:1-ish.
+            // Boxes (not a concave trimesh) so it's valid on the MOVING crane; raw mesh extent so no invisible walls; portal left OPEN.
+            var frameBody = new StaticBody3D { Name = "FrameCollider" };
+            if (bmx.X > bmn.X) frameBody.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = bmx - bmn }, Position = (bmn + bmx) * 0.5f });
+            for (int k = 0; k < 8; k++) if (lmx[k].X > lmn[k].X) frameBody.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = lmx[k] - lmn[k] }, Position = (lmn[k] + lmx[k]) * 0.5f });
+            AddChild(frameBody);
+            _selfColliders.Add(frameBody.GetRid());
+
             float beamBottom = topY;
             if (bmx.X > bmn.X) { _frameBoxes.Add(((bmn + bmx) * 0.5f, (bmx - bmn) * 0.5f)); beamBottom = bmn.Y; }
             for (int k = 0; k < 8; k++)
