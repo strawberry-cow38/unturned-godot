@@ -262,27 +262,31 @@ namespace UnturnedGodot
                 if (node is not Train o || o == this || !IsInstanceValid(o) || o._cars.Count == 0 || o._road != _road) continue;
                 float oFront = o._s + o._cars[0].S.HalfLen;
                 float oRear = o._s - o._cars.Last().Off - o._cars.Last().S.HalfLen;
-                bool overlap = myFront > oRear && oFront > myRear;
-                float gap = Mathf.Min(Mathf.Abs(myFront - oRear), Mathf.Abs(myRear - oFront));
-                bool suppressed = _noRecouple.Contains(o);
-                if (suppressed && !overlap && gap > CoupleRange + SeparateMargin) { _noRecouple.Remove(o); o._noRecouple.Remove(this); suppressed = false; }
-                if (!overlap && gap >= CoupleRange) continue;   // too far apart to interact
-                // Decide by CLOSING (relative) speed, not absolute -- else a fast slam bleeds to ~0 on impact and
-                // then "counts as slow" and wrongly couples (master). Pick the side I am on + its approach rate.
+                // Contact happens at the FIXED ATTACH DISTANCE (CoupleGap), never body-touch: cars couple AT that
+                // distance and can't get below it -- anything closer is pushed back out to it (master).
                 float penA = myFront - oRear, penB = oFront - myRear;
                 bool behind = penA <= penB;
+                float pen = behind ? penA : penB;          // >0 = bodies overlap; the body gap is -pen
+                float bodyGap = -pen;
+                bool suppressed = _noRecouple.Contains(o);
+                if (bodyGap > CoupleGap)                    // still farther apart than the coupler reach -> no contact yet
+                {
+                    if (suppressed && bodyGap > CoupleGap + SeparateMargin) { _noRecouple.Remove(o); o._noRecouple.Remove(this); }
+                    continue;
+                }
+                // AT/within the fixed attach distance. Decide by CLOSING (relative) speed, not absolute.
                 float closing = behind ? (_speed - o._speed) : (o._speed - _speed);
-                if (closing <= 0.15f) continue;   // parked beside it / separating / just collided -> don't couple, don't re-hit
-                if (!suppressed && closing <= CoupleMaxSpeed) { Couple(o); return; }   // slow CLOSING contact -> couple
-                if (!overlap) continue;   // fast but not touching yet -> wait until they actually meet
-                // Fast CLOSING + overlapping -> COLLIDE. 1D momentum + restitution, MASS-WEIGHTED, so ramming a heavy
-                // coupled chain launches the whole chain (less), a light car more; total momentum conserved (master).
-                float m1 = TotalWeight, m2 = o.TotalWeight, mt = Mathf.Max(0.01f, m1 + m2);
-                float u1 = _speed, u2 = o._speed;
-                const float e = 0.35f;   // restitution
-                _speed   = (m1 * u1 + m2 * u2 - m2 * e * (u1 - u2)) / mt;
-                o._speed = (m1 * u1 + m2 * u2 + m1 * e * (u1 - u2)) / mt;
-                if (behind) _s -= penA; else _s += penB;   // separate to the contact face
+                if (!suppressed && closing > 0.15f && closing <= CoupleMaxSpeed) { Couple(o); return; }   // reached it slowly -> COUPLE (locks to CoupleGap)
+                // else (too fast / suppressed / just resting): hold them at exactly the attach distance, collide if fast
+                float sep = pen + CoupleGap;                // >=0: push apart until bodyGap == CoupleGap
+                if (closing > CoupleMaxSpeed)               // fast slam -> mass-weighted momentum exchange, launches the car
+                {
+                    float m1 = TotalWeight, m2 = o.TotalWeight, mt = Mathf.Max(0.01f, m1 + m2);
+                    float u1 = _speed, u2 = o._speed; const float e = 0.35f;
+                    _speed   = (m1 * u1 + m2 * u2 - m2 * e * (u1 - u2)) / mt;
+                    o._speed = (m1 * u1 + m2 * u2 + m1 * e * (u1 - u2)) / mt;
+                }
+                if (sep > 1e-4f) { if (behind) _s -= sep; else _s += sep; }
                 o.Place(); Place();
                 return;
             }
@@ -338,7 +342,7 @@ namespace UnturnedGodot
             _s = all[0].AbsS;                               // lead stays put; the rest snap to coupler spacing behind it
             _cars.Clear(); _cars.AddRange(all);
             o._cars.Clear();
-            foreach (var c in _cars) c.Off = _s - c.AbsS;   // link at CURRENT positions -> coupling never pulls the loose stock in (master)
+            RecomputeOffsets();   // lock to the fixed CoupleGap spacing -- they couple AT the attach distance so this is exact, not a pull (master)
             RebuildRopes();
             RebuildAudio();
             Place();
