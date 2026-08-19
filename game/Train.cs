@@ -45,6 +45,7 @@ namespace UnturnedGodot
         readonly List<Car> _cars = new();
         readonly List<MeshInstance3D> _ropes = new();   // short coupler rope per gap (also the look-at/F-uncouple target)
         AudioStreamPlayer3D _engineSnd, _addSnd, _hornSnd;
+        bool _occupied;   // base engine loop + rev layer only run while someone is aboard (master)
 
         static Mesh Lm(string n) => ContentProvider.ParseObj($"res://content/{n}.txt");
 
@@ -204,11 +205,12 @@ namespace UnturnedGodot
             TeardownAudio();
             var loco = eng.Body;
             var e = PlayerController.LoadWavOneShot("res://content/train_engine.wav", loop: true);
-            if (e != null) { _engineSnd = new AudioStreamPlayer3D { Stream = e, VolumeDb = -9f, UnitSize = 12f, MaxDistance = 75f, PitchScale = 0.8f }; loco.AddChild(_engineSnd); _engineSnd.Play(); }
+            if (e != null) { _engineSnd = new AudioStreamPlayer3D { Stream = e, VolumeDb = -6f, UnitSize = 12f, MaxDistance = 80f, PitchScale = 0.8f }; loco.AddChild(_engineSnd); }   // base: plays only while OCCUPIED (SetOccupied)
             var a = PlayerController.LoadWavOneShot("res://content/train_engine_add.wav", loop: true);
-            if (a != null) { _addSnd = new AudioStreamPlayer3D { Stream = a, VolumeDb = -80f, UnitSize = 12f, MaxDistance = 75f, PitchScale = 0.85f }; loco.AddChild(_addSnd); _addSnd.Play(); }
-            var h = PlayerController.LoadWavOneShot("res://content/train_horn.wav", loop: true);
-            if (h != null) { _hornSnd = new AudioStreamPlayer3D { Stream = h, VolumeDb = -1f, UnitSize = 15f, MaxDistance = 110f }; loco.AddChild(_hornSnd); }
+            if (a != null) { _addSnd = new AudioStreamPlayer3D { Stream = a, VolumeDb = -80f, UnitSize = 12f, MaxDistance = 80f, PitchScale = 0.85f }; loco.AddChild(_addSnd); }   // rev layer: volume rides MOTION
+            var h = PlayerController.LoadWavOneShot("res://content/train_horn.wav", loop: false);
+            if (h != null) { _hornSnd = new AudioStreamPlayer3D { Stream = h, VolumeDb = 6f, UnitSize = 18f, MaxDistance = 140f }; loco.AddChild(_hornSnd); }   // ONE-SHOT press-to-honk, loud
+            if (_occupied) SetOccupied(true);   // rebuilt while aboard (e.g. after coupling) -> resume the loops
         }
         void TeardownAudio()
         {
@@ -222,22 +224,21 @@ namespace UnturnedGodot
             if (_addSnd != null)
             {
                 _addSnd.PitchScale = 0.85f + 0.95f * sp;
-                bool onGas = Mathf.Abs(throttle) > 0.05f && (_speed == 0f || Mathf.Sign(throttle) == Mathf.Sign(_speed));
-                _addSnd.VolumeDb = Mathf.MoveToward(_addSnd.VolumeDb, onGas ? -5f : -80f, 90f * dt);
+                float mv = Mathf.Abs(_speed);
+                float target = mv > 0.2f ? Mathf.Lerp(-8f, -2f, Mathf.Clamp(mv / 15f, 0f, 1f)) : -80f;   // audible in ANY motion, louder the faster (master)
+                _addSnd.VolumeDb = Mathf.MoveToward(_addSnd.VolumeDb, target, 120f * dt);
             }
         }
-        public void SetIdleAudio()
+        /// <summary>Someone boarded/left the engine. Base engine loop + rev layer run only while occupied.</summary>
+        public void SetOccupied(bool on)
         {
-            if (_engineSnd != null) _engineSnd.PitchScale = 0.8f;
-            if (_addSnd != null) _addSnd.VolumeDb = -80f;
-            if (_hornSnd != null && _hornSnd.Playing) _hornSnd.Stop();
+            _occupied = on;
+            if (_engineSnd != null) { if (on) { if (!_engineSnd.Playing) _engineSnd.Play(); } else _engineSnd.Stop(); }
+            if (_addSnd != null) { if (on) { if (!_addSnd.Playing) _addSnd.Play(); _addSnd.VolumeDb = -80f; } else _addSnd.Stop(); }
+            if (!on && _hornSnd != null && _hornSnd.Playing) _hornSnd.Stop();
         }
-        public void SetHorn(bool on)
-        {
-            if (_hornSnd == null) return;
-            if (on) { if (!_hornSnd.Playing) _hornSnd.Play(); }
-            else if (_hornSnd.Playing) _hornSnd.Stop();
-        }
+        /// <summary>One honk per LMB press (restarts the clip; it is a one-shot, not a loop). (master)</summary>
+        public void Honk() { _hornSnd?.Play(); }
 
         // ---- look-focus outline of the ENGINE car (only a drivable consist is boardable) ----
         bool _lookFocused;

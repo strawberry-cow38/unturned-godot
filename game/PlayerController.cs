@@ -4672,7 +4672,7 @@ namespace UnturnedGodot
             if (_ridingTrain != null)   // RIDING A TRAIN: self-contained input (H = 1P/3P cam, mouse orbits the 3P chase). F-exit + rest use the normal chain below; no vehicle/MP paths touched.
             {
                 if (@event is InputEventKey { Pressed: true, Keycode: Key.H }) { _fp = !_fp; GetViewport().SetInputAsHandled(); return; }
-                if (@event is InputEventMouseButton { ButtonIndex: MouseButton.Left } mb) { _ridingTrain.SetHorn(mb.Pressed); GetViewport().SetInputAsHandled(); return; }   // LMB = horn (hold to sustain, master)
+                if (@event is InputEventMouseButton { ButtonIndex: MouseButton.Left } mb) { if (mb.Pressed) _ridingTrain.Honk(); GetViewport().SetInputAsHandled(); return; }   // LMB = press-to-honk (one-shot, master)
                 if (@event is InputEventMouseMotion tmm && Input.MouseMode == Input.MouseModeEnum.Captured)
                 {
                     if (!_fp) { _driveCamYaw -= tmm.Relative.X * MouseSensitivity; _driveCamPitch = Mathf.Clamp(_driveCamPitch + tmm.Relative.Y * MouseSensitivity, -25f, 70f); }
@@ -6299,6 +6299,7 @@ namespace UnturnedGodot
         void BoardTrain(Train t)
         {
             _ridingTrain = t;
+            t.SetOccupied(true);   // start the engine loop (base plays only while occupied, master)
             if (_focusTrain != null) { if (IsInstanceValid(_focusTrain)) _focusTrain.SetLookFocused(false); _focusTrain = null; }   // drop the look-outline once aboard
             _driveCamYaw = 0f; _driveCamPitch = 15f;   // 3P chase starts squarely behind the loco
             _viewmodel?.SetShown(false);
@@ -6312,7 +6313,7 @@ namespace UnturnedGodot
         void ExitTrain()
         {
             var t = _ridingTrain; _ridingTrain = null;
-            if (t != null) t.SetIdleAudio();   // engine back to idle + horn off (the train freezes when you hop off)
+            if (t != null) t.SetOccupied(false);   // stop the engine loops + horn (base only runs while occupied, master)
             foreach (var c in FindChildren("*", "CollisionShape3D", true, false))
                 if (c is CollisionShape3D cs) cs.Disabled = false;
             Visible = true;
