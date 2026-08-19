@@ -10,13 +10,13 @@ namespace UnturnedGodot
     // sluggishly it accelerates + brakes. Uncouple hitbox + rope are phase 2. (master 2026-08-19)
     public partial class Train : Node3D
     {
-        class Spec { public string Mesh, Tex; public float Weight, HalfLen, YOff; public Vector3 Box, BoxCtr; public bool Engine, Livery, FlipY; }
+        class Spec { public string Mesh, Tex; public float Weight, HalfLen, YOff; public Vector3 Box, BoxCtr; public bool Engine, Livery, FlipY; public Color? Spawn; }
         static readonly Dictionary<string, Spec> Specs = new()
         {
             ["engine"]  = new Spec { Mesh = "train_body",   Tex = "train_body_tex",   Weight = 20f, HalfLen = 5.34f, YOff = 0f,    Box = new Vector3(3.4f, 4.1f, 10.8f),  BoxCtr = new Vector3(0f, 1.27f, 0f),  Engine = true,  Livery = true  },
             ["flatbed"] = new Spec { Mesh = "train_car",    Tex = "train_car_tex",    Weight = 8f,  HalfLen = 5.34f, YOff = 0f,    Box = new Vector3(3.4f, 1.8f, 10.8f),  BoxCtr = new Vector3(0f, 0.13f, 0f),  Engine = false, Livery = false },
             ["boxcar"]  = new Spec { Mesh = "train_boxcar", Tex = "train_boxcar_tex", Weight = 14f, HalfLen = 5.25f, YOff = 0f, FlipY = true, Box = new Vector3(3.6f, 4.75f, 10.5f), BoxCtr = new Vector3(0f, 1.62f, 0f), Engine = false, Livery = true  },
-            ["tanker"]  = new Spec { Mesh = "train_tanker", Tex = "train_tanker_tex", Weight = 16f, HalfLen = 5.34f, YOff = 0f, FlipY = true, Box = new Vector3(3.4f, 4.1f, 10.7f),  BoxCtr = new Vector3(0f, 1.29f, 0f), Engine = false, Livery = true  },
+            ["tanker"]  = new Spec { Mesh = "train_tanker", Tex = "train_tanker_tex", Weight = 16f, HalfLen = 5.34f, YOff = 0f, FlipY = true, Box = new Vector3(3.4f, 4.1f, 10.7f),  BoxCtr = new Vector3(0f, 1.29f, 0f), Engine = false, Livery = true, Spawn = new Color(0.85f, 0.85f, 0.85f)  },
         };
         static readonly Dictionary<string, string> Alias = new() { ["loco"] = "engine", ["locomotive"] = "engine", ["fuel"] = "tanker", ["fueltanker"] = "tanker", ["car"] = "flatbed", ["flat"] = "flatbed", ["box"] = "boxcar" };
         public static string ResolveType(string name)
@@ -94,7 +94,8 @@ namespace UnturnedGodot
             var s = Specs[type];
             var bogieMat = MakeMat("train_bogie_tex", null);
             Color livery = GD.Randf() < 0.1f ? new Color(0.45f, 0.45f, 0.47f) : Color.FromHsv(GD.Randf(), 0.5f, 0.55f);
-            var mat = MakeMat(s.Tex, s.Livery ? livery : (Color?)null);
+            Color? body = s.Livery ? (s.Spawn ?? livery) : (Color?)null;   // tanker spawns a FIXED white; the recolor path stays live for a future paint system (master)
+            var mat = MakeMat(s.Tex, body);
             var sb = new StaticBody3D();
             var mi = new MeshInstance3D { Mesh = Lm(s.Mesh), MaterialOverride = mat };
             if (s.FlipY) mi.RotationDegrees = new Vector3(0f, 0f, 180f);   // boxcar/tanker meshes are authored upside-down -> flip upright (master)
