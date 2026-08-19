@@ -6962,6 +6962,28 @@ namespace UnturnedGodot
         }
 
         PhysicsShapeQueryParameters3D _ladderFitQ;
+        // ARE WE ALREADY ON THE LADDER? Tracked HERE and not read off _move.Stance, which cannot answer it:
+        // PlayerStanceSim.Step only ever returns STAND/CROUCH/PRONE/SPRINT, so `_move.Stance == CLIMB` inside
+        // StepLadder was ALWAYS false and retail's "already attached, don't re-snap" branch never once ran.
+        // Every tick of every climb was therefore a fresh ENTRY: the capsule fit re-tested and the player
+        // TELEPORTED back onto the ladder's centre line 50 times a second. Retail snaps once, on entry
+        // (PlayerStance.simulate: `if (stance != EPlayerStance.CLIMB)`), and lets movement carry you after.
+        // That per-tick re-snap is why a ladder felt like it grabbed from too far and would not let go
+        // (strawberry) -- you were being pulled back onto it faster than you could walk away.
+        bool _climbing;
+        /// <summary>Test seam: is the ladder attachment currently held? (Not the same question as the stance.)</summary>
+        public bool DebugClimbing => _climbing;
+
+        // RE-ATTACH HYSTERESIS. Detach and re-attach were the SAME threshold -- you come off when the 0.5m-up
+        // probe clears the ladder's top, and you can grab again the instant it doesn't. At the top of a ladder
+        // that is a knife edge: step off, gravity pulls you 2cm, the probe re-acquires, you are back on. Measured
+        // 17 detach/re-attach pairs in 1.2s (ladder.top_exit), which is exactly strawberry's "i keep snapping
+        // back onto it". Retail never needs this because its ladders meet a ledge you land on; ours are placed
+        // from the same data but the player still has to be GIVEN the moment of control to step forward onto it.
+        // So: after coming off a ladder, refuse to re-grab briefly. Long enough to walk clear, short enough that
+        // deliberately re-grabbing after a slip still feels immediate.
+        const float LadderReattachCooldown = 0.45f;
+        float _ladderCd;
 
         /// <summary>Ladder attach/hold/detach, once per tick. True = we are on a ladder this frame.
         ///
@@ -6971,21 +6993,34 @@ namespace UnturnedGodot
         /// stepping sideways off a ladder work without any explicit dismount.</summary>
         bool StepLadder()
         {
+            if (_ladderCd > 0f) _ladderCd -= (float)GetPhysicsProcessDeltaTime();
             var space = GetWorld3D()?.DirectSpaceState;
-            if (space == null) return false;
+            if (space == null) return LadderDetach();
 
-            var from = GlobalPosition + Vector3.Up * Ladder.ProbeHeight;
+            // ENTRY IS STRICT, HOLDING IS LOOSE -- and they are different questions. The probe starts 0.5 m up,
+            // so while attached the highest a player's FEET can get is (ladderTop - 0.5): they are handed off
+            // half a metre below the ladder's top. Retail gets away with the same 0.5 m because its ladders
+            // poke well above whatever you step onto. Ours are the mesh's own extent, so on a roof flush with
+            // the ladder top the player detaches BELOW the surface, beside the edge, with nothing underfoot --
+            // and then falls the whole way back down (ladder.top_flush_roof measured exactly that: off at
+            // 6.25, roof at 6.75, landed at 0.00).
+            // Dropping the origin only while ALREADY climbing lets you ride to the actual top without making
+            // the ladder one millimetre easier to grab in the first place, which is the complaint I do NOT
+            // want to make worse.
+            float probeH = _climbing ? Ladder.HoldProbeHeight : Ladder.ProbeHeight;
+            var from = GlobalPosition + Vector3.Up * probeH;
             var fwd = -GlobalTransform.Basis.Z;                       // body facing, not the camera's
             var q = PhysicsRayQueryParameters3D.Create(from, from + fwd * Ladder.ProbeDist);
             q.Exclude = new Godot.Collections.Array<Rid> { GetRid() };
             var hit = space.IntersectRay(q);
             // Any of these failing means "not on a ladder", and the caller turns that into STAND -- which is
             // the whole dismount mechanism: step sideways, the probe misses, you are walking again.
-            if (hit == null || hit.Count == 0 || !hit.ContainsKey("collider")) return false;
-            if (hit["collider"].As<GodotObject>() is not Node3D body || !body.HasMeta(Ladder.Meta)) return false;
-            if (!Ladder.IsClimbable((Vector3)hit["normal"], Ladder.FaceAxis(body))) return false;
+            if (hit == null || hit.Count == 0 || !hit.ContainsKey("collider")) return LadderDetach();
+            if (hit["collider"].As<GodotObject>() is not Node3D body || !body.HasMeta(Ladder.Meta)) return LadderDetach();
+            if (!Ladder.IsClimbable((Vector3)hit["normal"], Ladder.FaceAxis(body))) return LadderDetach();
 
-            if (_move.Stance == EPlayerStance.CLIMB) return true;     // already on it; nothing to re-snap
+            if (_climbing) return true;     // already on it; nothing to re-snap (retail snaps on ENTRY only)
+            if (_ladderCd > 0f) return false;   // just came off one: give the player their moment to walk away
 
             var target = Ladder.ClimbPoint(body.GlobalPosition, (Vector3)hit["position"], (Vector3)hit["normal"]);
             // Refuse if the destination is occupied. Tested with IntersectShape AT the target rather than a
@@ -7005,10 +7040,20 @@ namespace UnturnedGodot
             _ladderFitQ.Transform = new Transform3D(Basis.Identity,
                 target + Vector3.Up * (FloorInset + (PlayerMovementDef.HEIGHT_STAND - FloorInset * 1.5f) * 0.5f));
             _ladderFitQ.Exclude = new Godot.Collections.Array<Rid> { GetRid() };
-            if (space.IntersectShape(_ladderFitQ, 1).Count > 0) return false;   // blocked -> stay off, keep walking
+            if (space.IntersectShape(_ladderFitQ, 1).Count > 0) return LadderDetach();   // blocked -> stay off, keep walking
 
             GlobalPosition = target;
+            _climbing = true;
             return true;
+        }
+
+        /// <summary>Leave the ladder, and arm the re-grab cooldown ONLY if we were actually on one -- otherwise
+        /// simply walking near a ladder would keep re-arming it and the first attach would never happen.</summary>
+        bool LadderDetach()
+        {
+            if (_climbing) _ladderCd = LadderReattachCooldown;
+            _climbing = false;
+            return false;
         }
 
         /// <summary>Movement half: grounded resolve -> sim Step -> StepUp -> MoveAndSlide.

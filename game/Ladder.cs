@@ -26,6 +26,11 @@ namespace UnturnedGodot
 
         public const float ProbeDist = 0.75f;    // PlayerStance: Physics.Raycast(ray, out ladder, 0.75f, LADDER_INTERACT)
         public const float ProbeHeight = 0.5f;   // ray starts at transform.position + up * 0.5
+        /// <summary>Probe origin while ALREADY attached. Lower than the entry probe on purpose: the entry
+        /// height doubles as the grab radius, but it also caps how high you can ride (feet stop 0.5 m below
+        /// the ladder top), which strands you below a roof flush with the ladder. Holding lower lets the climb
+        /// finish at the top without widening the grab. See PlayerController.StepLadder.</summary>
+        public const float HoldProbeHeight = 0.1f;
         public const float FaceDot = 0.9f;       // |dot(hitNormal, faceAxis)| > 0.9  -> front/back, not the edge
         public const float SlopeDot = 0.1f;      // |dot(worldUp, faceAxis)| <= 0.1   -> upright ladders only
         public const float OutOffset = 0.5f;     // climb point pushed out along the hit normal

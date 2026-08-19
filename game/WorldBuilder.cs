@@ -1073,9 +1073,14 @@ namespace UnturnedGodot
                     Shape3D shp;
                     if (!shapeCache.TryGetValue(name, out shp))
                     {
-                        // LADDERS ARE A SPECIAL CASE: a trimesh of the raw rip is a trimesh of RUNGS -- open
-                        // rails with 0.75 m gaps between each bar, confirmed against Ladder_Metal_0.obj's own
-                        // vertices (9 discrete Z-clusters 0.75 m apart, zero verts at any gap midpoint). The
+                        // LADDERS ARE A SPECIAL CASE: a trimesh of the raw rip is a trimesh of RUNGS -- bars
+                        // 0.75 m apart with open air between them (Ladder_Metal_0.obj has 9 discrete rung
+                        // Z-clusters at that spacing). CORRECTION to this comment's first version: I justified
+                        // it with "zero vertices at any gap midpoint", which is true and proves nothing -- a
+                        // long side rail spanning the whole ladder has no vertices in its middle either. The
+                        // mechanism that actually holds is that the attach probe is a single ray down the
+                        // ladder's CENTRE LINE, where only the rungs cross; the rails sit out at x = +-0.575
+                        // and the centre ray never touches them. So between rungs the ray hits nothing. The
                         // player-attach probe (Ladder.cs, PlayerController.StepLadder) is a SINGLE ray at a
                         // fixed height, so as a player's feet rise through a climb the probe sweeps in and out
                         // of alignment with the rungs -- attach, immediately lose the probe in the gap, fall
@@ -1718,14 +1723,25 @@ namespace UnturnedGodot
             Door.Spawn(root, new Vector3(ax - 3.0f, H(ax - 3.0f, az + 2.0f), az + 2.0f), 0f, owner: 1UL);
             Bed.Spawn(root, new Vector3(ax - 5.0f, H(ax - 5.0f, az + 2.0f), az + 2.0f), 90f);
 
+            // NO DEMO DEADZONE. There used to be a 60 x 50 x 60 m contaminated volume placed here at
+            // anchor + (120, 120) -- added so the radiation-proof clothing already sitting in the item data
+            // had something to protect against. It shipped, and strawberry hit it: "on all maps there seems
+            // to be a spot that randomly gives me bleed?"
+            //
+            // It was neither random nor map data. The player spawn and this anchor BOTH pick from
+            // LevelSpawns.PlayerSpawns with the same hardcoded Seed = 7, so the volume landed at exactly the
+            // same ~170 m diagonal from wherever the player spawned, on every map, every load. DeadzoneField
+            // renders nothing at all -- no mesh, no fog, no particles -- so it was an invisible box near
+            // spawn that ticked TakeDamage, and any damage above 1 sets Bleeding. Deleted on his call
+            // (2026-08-19); real deadzones belong in map data, not in a hardcoded offset from the spawn.
+            //
+            // The FIELD itself stays: it is the system, it is what the net path copies to peers, and it is
+            // still exercised by net.deadzone_roundtrip and the DoorBedDeadzone tests -- all of which add
+            // their own volumes. What is gone is the furniture, not the feature.
             var deadzones = new DeadzoneField();
             root.AddChild(deadzones);
-            // A 60 m contaminated pocket. Radiation-proof clothing already existed in item data with nothing
-            // to protect against; this is the hazard that finally gives it a job.
-            deadzones.AddVolume(new Vector3(ax + 120f, H(ax + 120f, az + 120f) + 15f, az + 120f),
-                                new Vector3(30f, 25f, 30f));
             if (result != null) result.Deadzones = deadzones;
-            GD.Print($"[interactables] door + bed at ({ax:0},{az:0}), 1 deadzone volume ({deadzones.VolumeCount} total)");
+            GD.Print($"[interactables] door + bed at ({ax:0},{az:0}), {deadzones.VolumeCount} deadzone volumes (demo hazard removed 2026-08-19)");
         }
 
         /// <summary>Where the ported interactables stand, from MAP DATA alone.
