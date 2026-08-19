@@ -184,6 +184,7 @@ namespace UnturnedGodot
         /// <summary>The viewmodel's rotational recoil, surfaced so a test can prove the gun stopped taking one.</summary>
         public Vector3 DebugViewmodelRecoilRot => _viewmodel?.DebugRecoilRot ?? Vector3.Zero;
         Train _ridingTrain;   // a boarded train (spline-follower, not a Vehicle) -- parallel low-risk ride path (master: "i cant get into the train")
+        HarborCrane _ridingCrane;   // a boarded harbor crane (custom vehicle, same parallel ride path as the train)
         Vehicle _driving; bool _fp = true;   // vehicle being driven + camera mode: true = 1st person (spawn default, strawberry), false = 3rd; H toggles (on foot + driving)
         float _driveCamYaw, _driveCamPitch = 15f;   // 3rd-person driving orbit: mouse yaws/pitches the chase cam around the car (master)
         // FP RIDE free-look (#37, MP only): mouse yaw/pitch of the view in VEHICLE-LOCAL space while seated on a
@@ -560,7 +561,7 @@ namespace UnturnedGodot
                 }
                 // TRAIN look-focus (not in ResolveFocus -- a train is a lone rail vehicle): when nothing else won,
                 // focus a train whose loco the look-ray passes through, so it outlines + F boards it like a car.
-                if (_ridingTrain == null && hitVeh == null && hitItem == null && hitShelfItem == null && hitPuppet == null)
+                if (_ridingTrain == null && _ridingCrane == null && hitVeh == null && hitItem == null && hitShelfItem == null && hitPuppet == null)
                 {
                     float maxTrainD = (LookReach + 8f) * (LookReach + 8f);
                     foreach (var node in GetTree().GetNodesInGroup("trains"))
@@ -4669,6 +4670,14 @@ namespace UnturnedGodot
             if (_invUI != null && _invUI.IsOpen && !(@event is InputEventKey { Keycode: Key.Tab or Key.Escape or Key.F })) return;   // F also allowed through -> closes an open container inventory (handled at the top of the F branch), master
             // while driving, only E (exit) / V (cam) / L (lights) / Escape + LMB (horn) / RMB (lights) are live -- no fire, aim, reload, etc.
             // (riding a replicated puppet gates identically -- the vehicle-side keys just no-op below in v1)
+            if (_ridingCrane != null)   // RIDING A CRANE: mouse orbits the 3P chase; F-exit + W/S/A/D/Q/E drive keys go through the normal chain
+            {
+                if (@event is InputEventMouseMotion cmm && Input.MouseMode == Input.MouseModeEnum.Captured)
+                {
+                    _driveCamYaw -= cmm.Relative.X * MouseSensitivity; _driveCamPitch = Mathf.Clamp(_driveCamPitch + cmm.Relative.Y * MouseSensitivity, -20f, 75f);
+                    GetViewport().SetInputAsHandled(); return;
+                }
+            }
             if (_ridingTrain != null)   // RIDING A TRAIN: self-contained input (H = 1P/3P cam, mouse orbits the 3P chase). F-exit + rest use the normal chain below; no vehicle/MP paths touched.
             {
                 if (@event is InputEventKey { Pressed: true, Keycode: Key.H }) { _fp = !_fp; GetViewport().SetInputAsHandled(); return; }
@@ -4840,6 +4849,7 @@ namespace UnturnedGodot
                 else if (_invUI != null && _invUI.IsOpen) { SaveGunState(); CloseCrate(); _invUI.Close(); Input.MouseMode = Input.MouseModeEnum.Captured; }   // F while a container inventory is open -> CLOSE it (CloseCrate swings the door shut too), same as Escape (master)
                 else if (_driving != null && !DrivingPredicted) ExitVehicle();  // hop out (SP direct exit; a Part A predicted drive falls through to the server REQUEST below)
                 else if (_ridingTrain != null) ExitTrain();                     // hop out of a boarded train (parallel ride path)
+                else if (_ridingCrane != null) ExitCrane();                     // hop out of a boarded crane
                 else if (RequestExitPuppet()) { }                          // riding a replicated vehicle: ask the server to free the seat (C6)
                 else if (TryToggleHitch()) { }                             // on foot at a trailer hitch: couple / uncouple
                 else if (_focusShelfItem != null || _focusItem != null) TryPickup();   // looking at a SHELF item or a dropped item: grab it (shelf item takes priority in TryPickup)
@@ -4849,6 +4859,7 @@ namespace UnturnedGodot
                 else if (_focusCouplerTrain != null && IsInstanceValid(_focusCouplerTrain)) _focusCouplerTrain.Uncouple(_focusCouplerIdx);   // LOOKING at a coupler: F splits the train there (master)
                 else if (_focusTrain != null && IsInstanceValid(_focusTrain)) BoardTrain(_focusTrain);   // LOOKING at a train loco: board it (outlined affordance, master)
                 else if (NearestTrain() is Train nt) BoardTrain(nt);       // fallback: stood next to a train, board it
+                else if (NearestCrane() is HarborCrane nc) BoardCrane(nc);   // stood next to a harbor crane, board it
                 else if (_focusDeployable != null && IsInstanceValid(_focusDeployable))
                 {   // looking at a placed deployable: F starts a HOLD -> pick it up (UpdateDeployPickup); a quick TAP toggles
                     // a generator's power (fired on release). Consume F so it doesn't fall through to open a nearby crate.
@@ -5166,7 +5177,7 @@ namespace UnturnedGodot
             if (_driving != null && _seatIndex != 0 && _driving.HasTurret(_seatIndex))
                 return FireTurret();
 
-            if (_fireCd > 0f || Ammo <= 0 || _reloading || _unloading || _magSwapAnimTimer > 0 || _needsRechamber || _rechambering || _cam == null || _dead || _ridingTrain != null || (_driving != null && (_seatIndex == 0 || !_fp))
+            if (_fireCd > 0f || Ammo <= 0 || _reloading || _unloading || _magSwapAnimTimer > 0 || _needsRechamber || _rechambering || _cam == null || _dead || _ridingTrain != null || _ridingCrane != null || (_driving != null && (_seatIndex == 0 || !_fp))
                 || !HasGunOut || IsSwimming || (_invUI?.IsOpen ?? false)) return false;   // IsSwimming: guns are canUseUnderwater=false -> no shot while swimming, incl. the polled AUTO/burst tick (source PlayerEquipment). !HasGunOut: no gun in hand (melee/held item disarm it) -> no shot, even from the polled auto/burst tick after switching away mid-fire (master)
             // -- also while the bolt/pump still needs cycling -- kills a queued burst the frame we die (the tick calls Fire()) + ignores death-screen clicks (master). _driving guard fixes the "stray tracer flies straight south" bug: the auto/burst tick (_PhysicsProcess) calls Fire() on held-LMB WITHOUT a driving check, and while driving _cam is TopLevel (detached chase cam) -> aim = the chase cam's fixed heading, not the player's look. LMB honks while driving anyway.
             if (AmmoRadial?.IsOpen ?? false) return false;   // no firing while the ammo radial is up -- you're picking ammo, not shooting
@@ -5979,7 +5990,7 @@ namespace UnturnedGodot
             // burning in your pocket. Costs one bool test per frame and cannot go stale.
             if (_heldLightOn && !HoldingLight) { _heldLightOn = false; ApplyHeldLight(); }
             UpdateGrassDisplacement();
-            if (_interpReady && !_dead && _driving == null && _ridingTrain == null)   // RENDER INTERPOLATION (master): lerp the visual position between the last two 50Hz ticks so it doesn't step at 50Hz while rendering at 60+
+            if (_interpReady && !_dead && _driving == null && _ridingTrain == null && _ridingCrane == null)   // RENDER INTERPOLATION (master): lerp the visual position between the last two 50Hz ticks so it doesn't step at 50Hz while rendering at 60+
                 GlobalPosition = _interpPrev.Lerp(_interpCurr, (float)Engine.GetPhysicsInterpolationFraction());
             if (_driving != null && !_dead)   // driving: position the cam from the vehicle's Godot-INTERPOLATED visual transform, so cam + car mesh are both smooth + IN SYNC (master: godot smoothing for the car)
                 PositionDriveCam(_driving.GetGlobalTransformInterpolated());
@@ -5995,6 +6006,15 @@ namespace UnturnedGodot
                     var teye = lt.Origin + tdir * (tdist * Mathf.Cos(tpitch)) + Vector3.Up * (tdist * Mathf.Sin(tpitch) + 4f);
                     _cam.GlobalTransform = new Transform3D(Basis.Identity, teye).LookingAt(lt.Origin + Vector3.Up * 2.5f, Vector3.Up);
                 }
+            }
+            if (_ridingCrane != null && !_dead && _cam != null)   // riding a crane: 3P chase orbit, held well back (the gantry is big)
+            {
+                var ct = _ridingCrane.GlobalTransform;
+                var cfwd = -ct.Basis.Z; cfwd.Y = 0f; cfwd = cfwd.LengthSquared() > 0.001f ? cfwd.Normalized() : Vector3.Forward;
+                float cdist = 62f, cpitch = Mathf.DegToRad(_driveCamPitch);
+                Vector3 cdir = new Basis(Vector3.Up, Mathf.DegToRad(_driveCamYaw)) * (-cfwd);
+                var ceye = ct.Origin + cdir * (cdist * Mathf.Cos(cpitch)) + Vector3.Up * (cdist * Mathf.Sin(cpitch) + 20f);
+                _cam.GlobalTransform = new Transform3D(Basis.Identity, ceye).LookingAt(ct.Origin + Vector3.Up * 10f, Vector3.Up);
             }
             if (_riding != null && !_dead && IsInstanceValid(_riding))   // C6 riding: chase the dead-reckoned puppet (it moves per-FRAME in VehicleReplicaView, no physics interp to sample)
                 PositionRideCam(_riding.GlobalTransform);
@@ -6081,7 +6101,7 @@ namespace UnturnedGodot
             // The eye height is lerped whether or not the first-person camera is the one being drawn: in third person
             // nothing reads _cam.Position any more, but the BULLETS still come out of the eyes, so it has to keep up.
             _eyeHeight = Mathf.Lerp(_eyeHeight, EyeHeight, Mathf.Min(1f, 4f * (float)delta));
-            if (_cam != null && !_dead && _driving == null && _riding == null && _ridingTrain == null)   // while driving/riding, the drive cam above owns the view
+            if (_cam != null && !_dead && _driving == null && _riding == null && _ridingTrain == null && _ridingCrane == null)   // while driving/riding, the drive cam above owns the view
             {
                 if (_ugFp) _fp = true;   // render harness (UG_FP=1): force 1st-person so the FP viewmodel is captured
                 if (_fp)
@@ -6334,6 +6354,47 @@ namespace UnturnedGodot
                 : (Input.IsPhysicalKeyPressed(Key.W) ? 1f : 0f) - (Input.IsPhysicalKeyPressed(Key.S) ? 1f : 0f);
             _ridingTrain.Drive(throttle, delta);
             if (_ridingTrain.Loco != null) GlobalPosition = _ridingTrain.Loco.GlobalPosition;
+        }
+
+        // ---- harbor crane ride path (master 2026-08-19): board/drive/exit, mirroring the train ----
+        HarborCrane NearestCrane()
+        {
+            HarborCrane best = null; float bestD = 45f * 45f;   // the gantry is huge -> board from farther
+            foreach (var n in GetTree().GetNodesInGroup("cranes"))
+                if (n is HarborCrane c && IsInstanceValid(c))
+                {
+                    float d = GlobalPosition.DistanceSquaredTo(c.GlobalPosition);
+                    if (d < bestD) { bestD = d; best = c; }
+                }
+            return best;
+        }
+        void BoardCrane(HarborCrane c)
+        {
+            _ridingCrane = c;
+            _driveCamYaw = 0f; _driveCamPitch = 20f;
+            _viewmodel?.SetShown(false);
+            if (_cam != null) _cam.TopLevel = true;
+            foreach (var ch in FindChildren("*", "CollisionShape3D", true, false))
+                if (ch is CollisionShape3D cs) cs.Disabled = true;
+            Visible = false; Velocity = Vector3.Zero;
+        }
+        void ExitCrane()
+        {
+            var c = _ridingCrane; _ridingCrane = null;
+            foreach (var ch in FindChildren("*", "CollisionShape3D", true, false))
+                if (ch is CollisionShape3D cs) cs.Disabled = false;
+            Visible = true; _viewmodel?.SetShown(true);
+            if (_cam != null) _cam.TopLevel = false;
+            if (c != null) GlobalPosition = c.GlobalPosition + c.GlobalTransform.Basis.Z * 12f + Vector3.Up * 1.5f;   // step out beside the gantry
+        }
+        // W/S = drive on the wheels; A/D = slide the gantry trolley along the beam; Q/E = winch the hoist up/down (master)
+        void DriveCrane(float delta)
+        {
+            float throttle = UiInputBlocked ? 0f : (Input.IsPhysicalKeyPressed(Key.W) ? 1f : 0f) - (Input.IsPhysicalKeyPressed(Key.S) ? 1f : 0f);
+            float trolley  = UiInputBlocked ? 0f : (Input.IsPhysicalKeyPressed(Key.D) ? 1f : 0f) - (Input.IsPhysicalKeyPressed(Key.A) ? 1f : 0f);
+            float hoist    = UiInputBlocked ? 0f : (Input.IsPhysicalKeyPressed(Key.E) ? 1f : 0f) - (Input.IsPhysicalKeyPressed(Key.Q) ? 1f : 0f);
+            _ridingCrane.Drive(throttle, trolley, hoist, delta);
+            GlobalPosition = _ridingCrane.GlobalPosition;
         }
 
         public void EnterVehicle(Vehicle v)
@@ -6639,6 +6700,7 @@ namespace UnturnedGodot
             if (NetHold) return;   // mp-clientauth-foot: a follower body never moves itself -- the entity owns the transform, PlayerNetSync teleports this body onto it
             StepLean((float)delta);   // BEFORE the driving/riding returns below: those bail out of the tick entirely, so a lean
                                       //  polled after them would freeze at whatever it was when you got into the car and stay there.
+            if (_ridingCrane != null) { _interpReady = false; LastMoveInput = UnityEngine.Vector2.zero; LastJumpInput = false; DriveCrane((float)delta); return; }   // riding a crane: skip on-foot movement, drive the gantry
             if (_ridingTrain != null) { _interpReady = false; LastMoveInput = UnityEngine.Vector2.zero; LastJumpInput = false; DriveTrain((float)delta); return; }   // riding a train: skip on-foot movement, drive the rail
             if (_driving != null) { _interpReady = false; LastMoveInput = UnityEngine.Vector2.zero; LastJumpInput = false; DriveVehicle((float)delta); return; }   // driving: skip on-foot movement (+ pause the render-interp so exiting doesn't smear)
             if (_riding != null) { _interpReady = false; LastMoveInput = UnityEngine.Vector2.zero; LastJumpInput = false; RidePuppet(); return; }   // C6 ride mode: same freeze -- capture drive intent only, the SERVER drives

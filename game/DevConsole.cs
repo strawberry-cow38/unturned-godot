@@ -66,7 +66,7 @@ namespace UnturnedGodot
 
         LineEdit _input;
         Label _log;
-        static readonly string[] Verbs = { "give", "vehicle", "spawnMagnetableContainer", "spawnheli", "spawntrain", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "toggleGlobalPower", "toggleGlobalWater", "toggleBbat", "infFuel", "infAmmo", "wear", "unwear", "fluid", "date", "dateset", "whenBlackout", "triggerGlobalBrownout", "hurtmain", "killmain", "hurttail", "killtail", "profiler", "renderscale", "zshadows", "freezerigs", "vertexlight", "weather", "fridge", "fill", "empty", "units", "simspeed", "time", "timeset", "timeadd", "timespeed", "daylength", "hitbox", "heliphys" };
+        static readonly string[] Verbs = { "give", "vehicle", "spawnMagnetableContainer", "spawnheli", "spawntrain", "spawncrane", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "toggleGlobalPower", "toggleGlobalWater", "toggleBbat", "infFuel", "infAmmo", "wear", "unwear", "fluid", "date", "dateset", "whenBlackout", "triggerGlobalBrownout", "hurtmain", "killmain", "hurttail", "killtail", "profiler", "renderscale", "zshadows", "freezerigs", "vertexlight", "weather", "fridge", "fill", "empty", "units", "simspeed", "time", "timeset", "timeadd", "timespeed", "daylength", "hitbox", "heliphys" };
         static readonly EItemType[] ClothingTypes = { EItemType.SHIRT, EItemType.PANTS, EItemType.HAT, EItemType.VEST, EItemType.MASK, EItemType.GLASSES, EItemType.BACKPACK };
         readonly System.Collections.Generic.List<string> _history = new();
         int _histIdx;
@@ -579,6 +579,15 @@ namespace UnturnedGodot
                 var tr = Train.Spawn(Player?.GetParent() ?? GetTree().Root, roads, near, ttype);
                 if (tr == null) { Log(Train.ResolveType(ttype) == null ? $"unknown car '''{arg}''' -- types: {Train.TypeList}" : "no train track nearby -- only Yukon has rails (tracks = road material 4)"); return; }
                 Log($"spawned a {Train.ResolveType(ttype)} car on the nearest track (drive an engine into it to couple)");
+            }
+            else if (verb == "spawncrane")
+            {
+                Vector3 cfwd = Player != null ? -Player.GlobalTransform.Basis.Z : Vector3.Forward; cfwd.Y = 0f;
+                cfwd = cfwd.LengthSquared() > 0.01f ? cfwd.Normalized() : Vector3.Forward;
+                Vector3 cnear = (Player?.GlobalPosition ?? at) + cfwd * 35f;
+                float cyaw = Player != null ? Player.RotationDegrees.Y : 0f;
+                var cr = HarborCrane.Spawn(Player?.GetParent() ?? GetTree().Root, cnear, cyaw);
+                Log(cr != null ? "spawned a harbor crane -- F to board, W/S drive, A/D gantry, Q/E hoist" : "crane spawn failed");
             }
             else if (verb == "spawnmagnetablecontainer" || verb == "magcontainer")
             {
