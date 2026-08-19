@@ -144,7 +144,14 @@ namespace UnturnedGodot
         }
         void ReleaseHeld()
         {
-            if (_held != null && IsInstanceValid(_held)) { _held.Freeze = false; _held.Sleeping = false; }
+            if (_held != null && IsInstanceValid(_held))
+            {
+                _held.Freeze = false;
+                _held.LinearVelocity = Vector3.Zero; _held.AngularVelocity = Vector3.Zero;   // kill residual kinematic velocity so it doesn't flick up on drop
+                _held.Sleeping = false;
+                _held.PhysicsInterpolationMode = Node.PhysicsInterpolationModeEnum.Inherit;   // physics owns it again
+                _held.ResetPhysicsInterpolation();
+            }
             _held = null;
         }
         Vector3 HoistFace => _hoist != null && IsInstanceValid(_hoist) ? _hoist.GlobalPosition - GlobalTransform.Basis.Y * 0.35f : GlobalPosition;
@@ -166,8 +173,10 @@ namespace UnturnedGodot
                         {
                             mc.Freeze = false; mc.Sleeping = false;
                             mc.FreezeMode = RigidBody3D.FreezeModeEnum.Kinematic; mc.Freeze = true;
-                            _held = mc; _heldOffset = mc.GlobalPosition - face;   // connect WHERE they touch; no reposition -- the hoist then pulls it up or down
-                            _heldAabb = WalkWorldAabb(mc); _faceAtGrab = face;
+                            _heldOffset = mc.GlobalPosition - face; _heldAabb = WalkWorldAabb(mc); _faceAtGrab = face;
+                            mc.PhysicsInterpolationMode = Node.PhysicsInterpolationModeEnum.Off;   // we drive its transform each frame -> opt OUT of global physics-interp so it renders EXACTLY under the hoist (kills the follow-lag)
+                            mc.ResetPhysicsInterpolation();
+                            _held = mc;
                             break;
                         }
                     }
