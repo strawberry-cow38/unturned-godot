@@ -7251,9 +7251,57 @@ namespace UnturnedGodot
             wasAirborne = !grounded;                     // ground state going into this step
             Velocity = new Vector3(world.X, v.y, world.Z);
             StepUp(delta, grounded);   // climb small curbs/thresholds so we don't snag (master)
+
+            // MOVING DECK -- ROTATION ONLY, and the "only" is the whole point. The obvious implementation is
+            // to add the deck's velocity around MoveAndSlide; it is also WRONG, because CharacterBody3D's floor
+            // handling already carries the capsule along a moving floor by itself. Measured: with the added
+            // velocity the player covered 88.6 m while the ship made 66.0 and ended jammed against the bow rail;
+            // with it removed the player held station to 0.1 m over 72 m unaided. Translation needs no help.
+            // Facing does -- nothing rotates the capsule with the hull, so without this a 180 leaves you looking
+            // over the side of a ship you are still standing squarely on.
+            RideDeckRotation(grounded, delta);
             MoveAndSlide();
             verticalVel = v.y;
         }
+
+        PhysicsRayQueryParameters3D _deckRayQ;
+        Godot.Collections.Array<Rid> _deckRayExclude;
+
+        /// <summary>Turn with the deck under our feet. Rotation only -- CharacterBody3D already carries the
+        /// capsule along a moving floor, so TRANSLATION here would be a second copy of a thing already happening
+        /// (measured: 88.6 m travelled against the hull's 66.0, ending pinned against the bow rail). Nothing
+        /// rotates it though, so a hull that turns underneath you leaves you facing where you started in WORLD
+        /// terms -- a 180 ends with you looking over the rail of a ship you are stood squarely on.
+        ///
+        /// The floor is found with a short ray straight down onto the VEHICLE layer rather than by reading slide
+        /// collisions, because standing perfectly still does not reliably produce a slide collision every tick
+        /// and the answer would flicker. Masked to bit5 alone, so standing on ordinary ground costs nothing --
+        /// vehicles carry bit0 too, which is why the capsule collides with them in the first place.</summary>
+        void RideDeckRotation(bool grounded, float delta)
+        {
+            DebugOnDeck = null;
+            if (!grounded || !DeckCarryEnabled) return;
+            var space = GetWorld3D()?.DirectSpaceState;
+            if (space == null) return;
+            _deckRayQ ??= new PhysicsRayQueryParameters3D { CollisionMask = 1u << 5 };   // vehicles only
+            _deckRayQ.From = GlobalPosition + Vector3.Up * 0.3f;
+            _deckRayQ.To = GlobalPosition + Vector3.Down * 0.6f;
+            _deckRayQ.Exclude = _deckRayExclude ??= new Godot.Collections.Array<Rid> { GetRid() };
+            var hit = space.IntersectRay(_deckRayQ);
+            if (hit.Count == 0) return;
+            if (hit["collider"].As<GodotObject>() is not Vehicle deck || !deck.CarriesRiders) return;
+            float yawRate = deck.DeckYawRate;
+            if (Mathf.Abs(yawRate) > 1e-5f) RotateY(yawRate * delta);
+            DebugOnDeck = deck;
+        }
+
+        /// <summary>Test seam: the vessel we are being carried by this tick, or null.</summary>
+        public Vehicle DebugOnDeck;
+
+        /// <summary>Test seam: turn the deck carry off, so a test can measure the SAME run with and without it.
+        /// "the player stayed on the ship" is not evidence on its own -- a ship that barely moved would produce
+        /// it too.</summary>
+        public static bool DeckCarryEnabled = true;
 
         /// <summary>Swim movement (PlayerMovement.cs:1134-1164): no gravity. Submerged (or look-down + push
         /// forward) = free-swim following the 3D aim, space swims UP at 3 m/s. At the surface = horizontal in

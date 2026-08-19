@@ -6080,6 +6080,21 @@ namespace UnturnedGodot
         /// fidelity test can measure both in one run and its pass means something.</summary>
         public static bool ForceBoxHull;
 
+        /// <summary>True when this vessel has a deck things can ride on (see Spec.DeckVolume).</summary>
+        public bool CarriesRiders => _deckVolume != Vector3.Zero;
+
+        /// <summary>How fast a point on this hull is actually travelling, INCLUDING the tangential term from its
+        /// own rotation -- which is the whole difference on a turning ship, where the bow and the stern are going
+        /// in visibly different directions. Horizontal only: the vertical axis belongs to gravity and contact.</summary>
+        public Vector3 DeckPointVelocity(Vector3 worldPoint)
+        {
+            var v = LinearVelocity + AngularVelocity.Cross(worldPoint - ToGlobal(CenterOfMass));
+            return new Vector3(v.X, 0f, v.Z);
+        }
+
+        /// <summary>Yaw rate, rad/s -- what a rider has to turn at to keep facing the same way along the deck.</summary>
+        public float DeckYawRate => AngularVelocity.Y;
+
         const float DeckGrace = 0.35f;    // how long a rider stays a rider after its last contact frame
         const float DeckSettle = 0.10f;   // contact time required BEFORE carrying starts. A machine that has landed
                                           // spends many ticks settling onto the plating and clears this immediately;
@@ -6187,6 +6202,17 @@ namespace UnturnedGodot
                     st.LastVel = deckVel;
                     rb.AngularVelocity += Vector3.Up * (AngularVelocity.Y - st.LastYawRate);   // turn with the hull
                     st.LastYawRate = AngularVelocity.Y;
+
+                    // CARGO DOES NOT WEIGH ON THE HULL (strawberry 2026-08-19: "we should have the ship have an
+                    // effect on other vehicles, but other vehicles have no effect on the ship"). Every vehicle in
+                    // this game masses the same GlobalMass 900, so a ship and the helicopter parked on it weigh
+                    // the same and any honest displacement model puts the deck underwater in short order --
+                    // reserve buoyancy got it from 10.21 m down to 0.76, and 0.76 is still visibly settling.
+                    // Cancelled at the RIDER'S OWN POSITION rather than at the centre, so it removes the trim
+                    // moment too: a heli parked on the bow would otherwise pitch the ship down by the head even
+                    // once its weight was handled. Scaled by the rider's GravityScale, because a body that is not
+                    // falling is not pressing on anything and "cancelling" its weight would shove the hull upward.
+                    ApplyForce(Vector3.Up * (rb.Mass * _gravityMag * rb.GravityScale), key.GlobalPosition - GlobalPosition);
                 }
                 else if (key is not CharacterBody3D)
                 {

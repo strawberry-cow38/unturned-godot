@@ -73,8 +73,12 @@ namespace UnturnedGodot.Testing
                          $"lateral offset from ship {(new Vector3(heli.GlobalPosition.X - ship.GlobalPosition.X, 0f, heli.GlobalPosition.Z - ship.GlobalPosition.Z)).Length():0.0} m");
 
                 // ---- GATES. The probe printed numbers; these are the ones that are allowed to regress.
-                T.Check($"a single 900 kg vehicle no longer founders the hull (sank {sank:0.00} m, was 10.21 m and still going)",
-                        sank < 2.0f);
+                // strawberry 2026-08-19: "we should have the ship have an effect on other vehicles, but other
+                // vehicles have no effect on the ship." Not "less", none -- so this is checked at centimetres,
+                // not metres. 10.21 m unbounded -> 0.76 m with reserve buoyancy -> nothing, with the rider's
+                // weight cancelled where it presses on the deck.
+                T.Check($"a vehicle on deck has NO effect on the hull's draft (sank {sank:0.00} m; was 10.21 m unbounded, then 0.76 m on buoyancy alone)",
+                        Mathf.Abs(sank) < 0.10f);
                 T.Check($"...and it FOUND a new equilibrium rather than settling slowly forever (heli still on deck at t+10s, y={heli.GlobalPosition.Y:0.00} vs ship {ship.GlobalPosition.Y:0.00})",
                         heli.GlobalPosition.Y > ship.GlobalPosition.Y + 8f);
                 T.Check($"the heli is CARRIED: it travelled with the hull ({heliMoved.Length():0.0} m against the ship's {shipMoved.Length():0.0} m)",
