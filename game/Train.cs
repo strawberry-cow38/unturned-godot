@@ -42,7 +42,7 @@ namespace UnturnedGodot
         readonly HashSet<Train> _noRecouple = new();   // consists just split from this one: can't re-couple until they've SEPARATED (condition-based, master)
         const float RailY = 1.55f, BogieHalf = 3.5f, CoupleGap = 0.9f;
         const float MaxSpeed = 48f, BaseAccel = 2f, BaseDecel = 1.2f, BaseBrake = 12f, RefWeight = 20f;
-        const float CoupleRange = 2.4f, CoupleMaxSpeed = 7f, SeparateMargin = 1.5f;   // couple when adjacent ends are within range at low speed; must part by +margin before re-coupling
+        const float CoupleRange = 1.3f, CoupleMaxSpeed = 7f, SeparateMargin = 1.5f;   // couple only when the ends are CLOSE (waits until in range, master); must part by +margin before re-coupling
         readonly List<Car> _cars = new();
         readonly List<MeshInstance3D> _ropes = new();   // short coupler rope per gap (also the look-at/F-uncouple target)
         AudioStreamPlayer3D _engineSnd, _addSnd, _hornSnd;
@@ -197,7 +197,7 @@ namespace UnturnedGodot
             _s = all[0].AbsS;                               // lead stays put; the rest snap to coupler spacing behind it
             _cars.Clear(); _cars.AddRange(all);
             o._cars.Clear();
-            RecomputeOffsets();
+            foreach (var c in _cars) c.Off = _s - c.AbsS;   // link at CURRENT positions -> coupling never pulls the loose stock in (master)
             RebuildRopes();
             RebuildAudio();
             Place();
@@ -334,15 +334,16 @@ namespace UnturnedGodot
             if (i < 0 || i >= _cars.Count - 1) return;
             int n = _cars.Count - (i + 1);
             var rear = _cars.GetRange(i + 1, n);
+            float leadOff = rear[0].Off;   // rear lead's offset from THIS lead -- rebase the rear offsets by it so positions are UNCHANGED (no pull)
             _cars.RemoveRange(i + 1, n);
             var nt = new Train { _roads = _roads, _road = _road, _speed = _speed };
             (GetParent() ?? GetTree().Root).AddChild(nt);
             nt.AddToGroup("trains");
-            foreach (var c in rear) { c.Body.Reparent(nt, true); c.Bf.Reparent(nt, true); c.Bb.Reparent(nt, true); nt._cars.Add(c); }
-            nt._s = _s - rear[0].Off;
-            nt.RecomputeOffsets(); nt.RebuildRopes(); nt.RebuildAudio(); nt.Place(); nt.ResetPhysicsInterpolation();
+            foreach (var c in rear) { c.Body.Reparent(nt, true); c.Bf.Reparent(nt, true); c.Bb.Reparent(nt, true); c.Off -= leadOff; nt._cars.Add(c); }
+            nt._s = _s - leadOff;
+            nt.RebuildRopes(); nt.RebuildAudio(); nt.Place(); nt.ResetPhysicsInterpolation();
             _noRecouple.Add(nt); nt._noRecouple.Add(this);   // neither half re-couples to the other until they've driven apart (master: condition, not a timer)
-            RecomputeOffsets(); RebuildRopes(); RebuildAudio(); Place();
+            RebuildRopes(); RebuildAudio(); Place();   // this keeps its offsets (the front cars never moved)
         }
     }
 }
