@@ -32,6 +32,7 @@ namespace UnturnedGodot
             public string Type; public Spec S;
             public StaticBody3D Body; public MeshInstance3D Bf, Bb;
             public readonly List<MeshInstance3D> Wheels = new();   // 8 per car (4 per bogie); each spins about its axle
+            public CpuParticles3D SparkF, SparkB;   // hard-brake sparks from each bogie's wheel-contact line
             public float Off;    // centre offset BEHIND the consist lead (_s); recomputed on couple/uncouple
             public float AbsS;   // scratch: absolute rail distance, used when merging two consists
         }
@@ -118,6 +119,8 @@ namespace UnturnedGodot
                     bogie.AddChild(w);
                     car.Wheels.Add(w);
                 }
+            car.SparkF = MakeBrakeSparks(); bf.AddChild(car.SparkF);
+            car.SparkB = MakeBrakeSparks(); bb.AddChild(car.SparkB);
             _cars.Add(car);
         }
 
@@ -159,6 +162,42 @@ namespace UnturnedGodot
                     if (IsInstanceValid(w)) w.Rotation = new Vector3(_spinAngle, 0f, 0f);
         }
 
+        // Metal-impact brake sparks: a continuous hot-orange emitter along each bogie's wheel-contact line, off by
+        // default, switched on only under HARD braking (master). Additive glowing quads that fly in the travel
+        // direction + down and fade fast.
+        static CpuParticles3D MakeBrakeSparks()
+        {
+            var mat = new StandardMaterial3D
+            {
+                ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
+                Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
+                BlendMode = BaseMaterial3D.BlendModeEnum.Add,
+                BillboardMode = BaseMaterial3D.BillboardModeEnum.Particles,
+                AlbedoColor = new Color(1f, 0.6f, 0.16f),
+            };
+            var fade = new Curve(); fade.AddPoint(new Vector2(0f, 1f)); fade.AddPoint(new Vector2(1f, 0f));
+            return new CpuParticles3D
+            {
+                Emitting = false, OneShot = false, Amount = 26, Lifetime = 0.34f, Randomness = 0.5f,
+                Direction = new Vector3(0f, -0.4f, -1f).Normalized(), Spread = 22f,
+                InitialVelocityMin = 4f, InitialVelocityMax = 9f,
+                Gravity = new Vector3(0f, -14f, 0f),
+                ScaleAmountMin = 0.03f, ScaleAmountMax = 0.07f, ScaleAmountCurve = fade,
+                EmissionShape = CpuParticles3D.EmissionShapeEnum.Box, EmissionBoxExtents = new Vector3(1.5f, 0.02f, 1.0f),
+                Position = new Vector3(0f, -0.92f, 0f),   // the wheel-contact line, bogie-local
+                Mesh = new QuadMesh { Size = Vector2.One, Material = mat },
+                VisibilityAabb = new Aabb(new Vector3(-6f, -6f, -6f), new Vector3(12f, 12f, 12f)),
+            };
+        }
+
+        void SetBrakeSparks(bool on, float speed)
+        {
+            var dir = new Vector3(0f, -0.4f, speed >= 0f ? -1f : 1f).Normalized();   // sparks trail in the travel direction (bogie -Z is +s) + down
+            foreach (var c in _cars)
+                foreach (var sp in new[] { c.SparkF, c.SparkB })
+                    if (IsInstanceValid(sp)) { if (on) sp.Direction = dir; sp.Emitting = on; }
+        }
+
         public Node3D Loco => EngineCar?.Body;
         public Transform3D DriverEyeWorld
         {
@@ -170,15 +209,16 @@ namespace UnturnedGodot
             if (!HasEngine || _cars.Count == 0) return;
             float wf = RefWeight / Mathf.Max(1f, TotalWeight);   // heavier consist -> proportionally weaker accel + brake (master)
             float target = Mathf.Clamp(throttle, -0.6f, 1f) * MaxSpeed;
-            float rate;
+            float rate; bool hardBrake = false;
             if (Mathf.Abs(throttle) < 0.05f) rate = BaseDecel * wf;
-            else if (_speed != 0f && Mathf.Sign(throttle) != Mathf.Sign(_speed)) rate = BaseBrake * wf;
+            else if (_speed != 0f && Mathf.Sign(throttle) != Mathf.Sign(_speed)) { rate = BaseBrake * wf; hardBrake = Mathf.Abs(_speed) > 3f; }   // throttle against motion + moving = hard brake -> sparks
             else rate = BaseAccel * wf;
             _speed = Mathf.MoveToward(_speed, target, rate * dt);
             _s += _speed * dt;
             ClampS();
             Place();
             SpinWheels(_speed * dt);
+            SetBrakeSparks(hardBrake, _speed);
             UpdateAudio(throttle, dt);
             ResolveContact();
         }
