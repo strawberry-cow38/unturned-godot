@@ -46,7 +46,12 @@ namespace UnturnedGodot.Testing
             }
             T.Check($"the DEDICATED world build placed a door ({doorsInWorld} found)", doorsInWorld >= 1);
             T.Check($"...and a bed ({bedsInWorld} found)", bedsInWorld >= 1);
-            T.Check("...and a deadzone volume", world.Deadzones != null && world.Deadzones.VolumeCount >= 1);
+            // The FIELD must exist (peers copy it, and a null here used to crash the net path); it is
+            // deliberately EMPTY. The demo volume that used to be placed at spawn+120,+120 on every map was
+            // deleted 2026-08-19 -- see SpawnInteractables. Asserting ==0 rather than dropping the check,
+            // so that re-adding a world-build hazard has to be a decision someone makes on purpose.
+            T.Check($"...and a deadzone FIELD, carrying no demo volume ({world.Deadzones?.VolumeCount})",
+                    world.Deadzones != null && world.Deadzones.VolumeCount == 0);
 
             var net = new MemNetwork(7073);
             var pump = new DelegateSimStep((t, dt) => net.Tick(), "l1.clientpump");

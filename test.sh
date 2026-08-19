@@ -158,7 +158,15 @@ run_l1() {  # batched in-engine tests: build the game once, boot headless godot,
   # a crash in an innocent test rather than as the cap it actually was. The heli suites alone are now ~450 s.
   # 1800 restores real headroom. THE FAILURE IS INDISTINGUISHABLE FROM A HANG, so when this fires, check the
   # arithmetic here BEFORE debugging whatever test happens to be next in the alphabet.
-  timeout 1800 "$GODOT" --path game --headless -- "--tests$glob" >"$log" 2>&1 9>&-   # same: never let the engine inherit the lock fd
+  # 2026-08-18: THIRD time, at 1800. Did what the line above says and measured before touching anything else:
+  # 386 tests exist, 353 finished, and their test time alone was 1437 s when the cap fired at ~1766 s wall --
+  # so the run died with 33 tests never started and reported "host never reported (boot/hang)" again. The gap
+  # between 1437 s of test time and 1766 s of wall is ~315 s of per-test world setup/teardown (~0.9 s x 353)
+  # plus ~15 s of boot, so the cap has to cover roughly 1.25x the summed test time, not the test time itself.
+  # Projecting the missing 33 puts a full clean run near ~1950 s on this box, and the box is shared (a
+  # dedicated server + other jobs), which is a real multiplier -- 3000 buys headroom for both.
+  # The heli suites are ~450 s of it and vehicle.boat_hull added another 78 s (3rd slowest single test).
+  timeout "${UG_L1_TIMEOUT:-3000}" "$GODOT" --path game --headless -- "--tests$glob" >"$log" 2>&1 9>&-   # same: never let the engine inherit the lock fd
   grep -E '^\[TEST\]|^[[:space:]]+✗|^[[:space:]]+repro' "$log"   # per-test detail (human + agent)
   local summary; summary="$(grep -E '^\[L1\] passed=' "$log" | tail -1)"
   if [ -z "$summary" ]; then
