@@ -217,18 +217,30 @@ namespace UnturnedGodot
             if (road < 0 || road >= _roads.Count) return false;
             var r = _roads[road]; int jc = r.Joints.Count; if (jc < 2) return false;
             int segs = r.IsLoop ? jc : jc - 1; float total = RoadLength(road);
+            pos = PosAlong(r, segs, total, distance);
+            // Tangent from a JOINT-CONTINUOUS arc-length finite diff. The old fixed bezier-t delta clamped at each
+            // segment boundary -> a one-sided, discontinuous tangent, so a bogie crossing every joint snapped its
+            // heading -> the wheels "jitter at high speed / on turns" (master 2026-08-19). Sampling the position a
+            // metre either side (which walks across joints) gives a smooth heading everywhere.
+            const float dd = 1.0f;
+            Vector3 tg = PosAlong(r, segs, total, distance + dd) - PosAlong(r, segs, total, distance - dd);
+            tangent = tg.LengthSquared() > 1e-6f ? tg.Normalized() : Vector3.Forward;
+            return true;
+        }
+
+        // Position at an arc-length `distance` along a road (arc-length reparam of the bezier + terrain snap).
+        // Split out so EvaluateAlong can sample it a metre either side for a joint-continuous tangent.
+        Vector3 PosAlong(RoadData r, int segs, float total, float distance)
+        {
             if (r.IsLoop && total > 0.001f) distance = Mathf.PosMod(distance, total); else distance = Mathf.Clamp(distance, 0f, total);
             for (int i = 0; i < segs; i++)
             {
                 float L = Mathf.Max(SegLength(r, i), 0.001f);
                 if (distance <= L || i == segs - 1)
                 {
-                    // ARC-LENGTH reparameterise: find the bezier t whose arc length from 0..t == `distance`.
-                    // distance/L would feed arc-distance straight in as the BEZIER parameter, which is NOT uniform
-                    // in arc length, so a constant ds/dt (the train's drive) becomes a variable WORLD speed -- it
-                    // visibly slows through tight curves (master 2026-08-18). Walk the same 16 subsamples SegLength
-                    // uses so the per-segment total agrees, and lerp t within the crossing sub-interval.
-                    const int SUB = 16;
+                    // arc-length reparam: find the bezier t whose arc length from 0..t == distance (bezier t is
+                    // NOT uniform in arc length -> feeding distance/L straight in slowed the train through curves).
+                    const int SUB = 24;
                     Vector3 sp = SplinePos(r, i, 0f); float acc = 0f, t = 1f;
                     for (int k = 1; k <= SUB; k++)
                     {
@@ -242,15 +254,13 @@ namespace UnturnedGodot
                         }
                         acc += seg; sp = p;
                     }
-                    pos = SplinePos(r, i, t);
+                    Vector3 pos = SplinePos(r, i, t);
                     if (Terr != null && !r.Joints[i].IgnoreTerrain) pos.Y = Terr.SampleHeight(pos.X, pos.Z);
-                    Vector3 d = SplinePos(r, i, Mathf.Min(t + 0.02f, 1f)) - SplinePos(r, i, Mathf.Max(t - 0.02f, 0f));
-                    tangent = d.LengthSquared() > 1e-6f ? d.Normalized() : Vector3.Forward;
-                    return true;
+                    return pos;
                 }
                 distance -= L;
             }
-            return false;
+            return SplinePos(r, segs - 1, 1f);
         }
         /// <summary>Nearest TRACK road (material 4) to a world point, + the distance-along of the closest sampled point.</summary>
         public bool NearestTrack(Vector3 world, out int road, out float distanceAlong)

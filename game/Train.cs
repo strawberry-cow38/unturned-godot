@@ -17,7 +17,7 @@ namespace UnturnedGodot
         const float BogieHalf = 3.5f;   // bogie spacing from a unit's centre (source Track_Front/Back at +-3.5)
         const float CarGap = 11f;       // car-to-car spacing along the rail (source Train_Car spacing)
         readonly List<(Node3D body, MeshInstance3D bf, MeshInstance3D bb, float off)> _units = new();
-        const float MaxSpeed = 48f, Accel = 2f, Decel = 1.2f;   // BIGGER inertia (master): higher top speed, slower build, longer coast
+        const float MaxSpeed = 48f, Accel = 2f, Decel = 1.2f, Brake = 12f;   // inertia (master): high top speed, slow build, long coast, but FAST active brake
         float _speed;
 
         /// <summary>Spawn a train onto the nearest track spline to <paramref name="near"/>. Null if there is no
@@ -107,7 +107,10 @@ namespace UnturnedGodot
         public void Drive(float throttle, float dt)
         {
             float target = Mathf.Clamp(throttle, -0.6f, 1f) * MaxSpeed;
-            float rate = Mathf.Abs(throttle) < 0.05f ? Decel : Accel;   // released -> long coast (Decel); throttle held -> slow build / brake (Accel)
+            float rate;
+            if (Mathf.Abs(throttle) < 0.05f) rate = Decel;                                       // released -> long weighty coast
+            else if (_speed != 0f && Mathf.Sign(throttle) != Mathf.Sign(_speed)) rate = Brake;   // throttle against motion -> HARD brake (master: brake a lot faster)
+            else rate = Accel;                                                                    // building speed in the travel direction -> the tuned "perfect" accel
             _speed = Mathf.MoveToward(_speed, target, rate * dt);
             _s += _speed * dt;
             if (!_roads.RoadLoops(_road))
