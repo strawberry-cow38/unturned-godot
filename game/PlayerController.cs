@@ -6300,6 +6300,7 @@ namespace UnturnedGodot
         void BoardTrain(Train t)
         {
             _ridingTrain = t;
+            if (Hud != null) Hud.Train = t;   // drive HUD: title + speedo box (master: vehicle UI on the train)
             t.SetOccupied(true);   // start the engine loop (base plays only while occupied, master)
             t.MarkBoarded();       // control from whichever engine the player looked at (master)
             if (_focusTrain != null) { if (IsInstanceValid(_focusTrain)) _focusTrain.SetLookFocused(false); _focusTrain = null; }   // drop the look-outline once aboard
@@ -6315,6 +6316,7 @@ namespace UnturnedGodot
         void ExitTrain()
         {
             var t = _ridingTrain; _ridingTrain = null;
+            if (Hud != null) Hud.Train = null;   // hide the drive HUD box
             if (t != null) t.SetOccupied(false);   // stop the engine loops + horn (base only runs while occupied, master)
             foreach (var c in FindChildren("*", "CollisionShape3D", true, false))
                 if (c is CollisionShape3D cs) cs.Disabled = false;

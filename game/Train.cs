@@ -99,6 +99,7 @@ namespace UnturnedGodot
             RebuildRopes();
             Place();
             ResetPhysicsInterpolation();
+            _info = new InfoBillboard { TopLevel = true }; AddChild(_info); _info.SetActive(false);   // look-at name/prompt billboard (master: vehicle UI on the train)
         }
 
         void AddCar(string type)
@@ -172,6 +173,8 @@ namespace UnturnedGodot
         Car EngineCar => _cars.FirstOrDefault(c => c.S.Engine);
         float TotalWeight => _cars.Sum(c => c.S.Weight);
         public bool Drivable => HasEngine;
+        public string DisplayName => EngineCount > 1 ? $"Locomotive x{EngineCount}" : "Locomotive";
+        public float SpeedMps => _speed;
 
         void PlaceCar(Car c, float sctr)
         {
@@ -434,6 +437,7 @@ namespace UnturnedGodot
 
         // ---- look-focus outline of the ENGINE car (only a drivable consist is boardable) ----
         bool _lookFocused;
+        InfoBillboard _info;   // look-at name/prompt billboard (created in Build/Uncouple; like vehicles)
         Car _lookEngine, _boardedCar, _outlinedEngine;   // engine the player is LOOKING at / IS IN / whose outline is lit -- board ANY engine (master)
         static void CollectMeshes(Node n, List<MeshInstance3D> outl) { if (n is MeshInstance3D mi) outl.Add(mi); foreach (var c in n.GetChildren()) CollectMeshes(c, outl); }
 
@@ -472,8 +476,22 @@ namespace UnturnedGodot
         {
             if (_lookFocused == on) return;
             _lookFocused = on;
-            if (on) { _outlinedEngine = _lookEngine ?? EngineCar; OutlineEngine(_outlinedEngine, true); WorldItem.FocusColor = new Color(0.55f, 0.8f, 1f); }
-            else { OutlineEngine(_outlinedEngine, false); _outlinedEngine = null; }
+            var col = new Color(0.55f, 0.8f, 1f);
+            if (on)
+            {
+                _outlinedEngine = _lookEngine ?? EngineCar; OutlineEngine(_outlinedEngine, true); WorldItem.FocusColor = col;
+                if (_info != null) { _info.SetActive(true); _info.SetName(DisplayName, col); _info.SetPrompt("[F] Drive", col); _info.SetBar(0, 0f, InfoBillboard.HealthColor, false); _info.SetBar(1, 0f, InfoBillboard.FuelColor, false); _info.SetBar(2, 0f, InfoBillboard.FuelColor, false); }
+            }
+            else { OutlineEngine(_outlinedEngine, false); _outlinedEngine = null; _info?.SetActive(false); }
+        }
+
+        // Keep the look-at billboard planted on the engine you're actually looking at (it moves as you glance between
+        // engines), floating just above the cab. Only runs while focused. (master: vehicle UI on the train)
+        public override void _Process(double delta)
+        {
+            if (!_lookFocused || _info == null) return;
+            var eng = _outlinedEngine ?? EngineCar;
+            if (eng != null && IsInstanceValid(eng.Body)) _info.GlobalPosition = eng.Body.GlobalPosition + Vector3.Up * 3.6f;
         }
 
         public bool LookRayHitsLoco(Vector3 from, Vector3 to)
@@ -547,6 +565,7 @@ namespace UnturnedGodot
             foreach (var c in rear) { c.Body.Reparent(nt, true); c.Bf.Reparent(nt, true); c.Bb.Reparent(nt, true); c.Off -= leadOff; nt._cars.Add(c); }
             nt._s = _s - leadOff;
             nt.RebuildRopes(); nt.Place(); nt.ResetPhysicsInterpolation();
+            nt._info = new InfoBillboard { TopLevel = true }; nt.AddChild(nt._info); nt._info.SetActive(false);   // the split-off consist keeps its own look-at billboard
             _noRecouple.Add(nt); nt._noRecouple.Add(this);   // neither half re-couples to the other until they've driven apart (master: condition, not a timer)
             RebuildRopes(); Place();   // this keeps its offsets (the front cars never moved)
         }

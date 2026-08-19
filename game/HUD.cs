@@ -57,7 +57,9 @@ namespace UnturnedGodot
 
         // PlayerUI messageBox (VEHICLE_ENTER): bottom-centre dark box with the vehicle's fuel/health/battery bars, shown while driving
         public Vehicle Vehicle;   // bound driven vehicle; the box is visible while this is non-null
+        public Train Train;    // bound ridden train (parallel to Vehicle): same box, title + speedo, no fuel/HP/battery bars
         Control _vehBox; Label _vehTitle, _vehRpmGear; ColorRect _vehFuel, _vehHealth, _vehBattery;
+        readonly System.Collections.Generic.List<(Control icon, ColorRect bg)> _vehRows = new();   // the 3 gauge rows -> hidden for a train
         readonly System.Collections.Generic.List<Control> _playerOnly = new();   // on-foot HUD, hidden when Player == null (vehicle-only render)
 
         public override void _Ready()
@@ -229,6 +231,7 @@ namespace UnturnedGodot
             fill.AnchorLeft = 0; fill.AnchorRight = 1f; fill.AnchorTop = 0; fill.AnchorBottom = 1;
             fill.MouseFilter = Control.MouseFilterEnum.Ignore;
             bg.AddChild(fill);
+            _vehRows.Add((ic, bg));   // remember the row so a train (no gauges) can hide it
             return fill;
         }
 
@@ -422,14 +425,23 @@ namespace UnturnedGodot
                 _pain.Color = new Color(CR.R, CR.G, CR.B, Player.PainAlpha);   // colorOverlayImage.TintColor.a = painAlpha
             }
 
-            _vehBox.Visible = Vehicle != null;   // messageBox: shown while in a vehicle
-            if (Vehicle != null)
+            bool inVeh = Vehicle != null;
+            bool inRail = !inVeh && Train != null && IsInstanceValid(Train);   // riding a train: same box, no fuel/health/battery rows
+            _vehBox.Visible = inVeh || inRail;
+            foreach (var (ic, bg) in _vehRows) { ic.Visible = inVeh; bg.Visible = inVeh; }   // trains have none of the three gauges
+            _vehBox.OffsetTop = inRail ? -140f : -210f;                                       // shrink the box to just title + speed for a train
+            if (inVeh)
             {
                 _vehFuel.AnchorRight = Mathf.Clamp(Vehicle.FuelNorm, 0f, 1f);
                 _vehHealth.AnchorRight = Mathf.Clamp(Vehicle.HealthNorm, 0f, 1f);
                 _vehBattery.AnchorRight = Mathf.Clamp(Vehicle.BatteryNorm, 0f, 1f);
                 _vehTitle.Text = Vehicle.DisplayName;
                 _vehRpmGear.Text = $"{Vehicle.LinearVelocity.Length() * 2.23694f:0} mph · {Vehicle.EngineRpm:0} rpm · {Vehicle.GearLabel}";   // MPH speedometer + rpm + gear (master)
+            }
+            else if (inRail)
+            {
+                _vehTitle.Text = Train.DisplayName;
+                _vehRpmGear.Text = $"{Train.SpeedMps * 2.23694f:0} mph";   // trains: just the speedo (no gears/rpm)
             }
         }
 
