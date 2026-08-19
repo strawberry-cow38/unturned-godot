@@ -39,10 +39,10 @@ namespace UnturnedGodot
         int _road;
         float _s;       // rail distance of the LEAD car's centre (_cars[0])
         float _speed;
-        float _coupleCd;   // brief no-couple window after an uncouple so the cars don't instantly re-grab (master)
+        readonly HashSet<Train> _noRecouple = new();   // consists just split from this one: can't re-couple until they've SEPARATED (condition-based, master)
         const float RailY = 1.55f, BogieHalf = 3.5f, CoupleGap = 0.9f;
         const float MaxSpeed = 48f, BaseAccel = 2f, BaseDecel = 1.2f, BaseBrake = 12f, RefWeight = 20f;
-        const float CoupleRange = 2.4f, CoupleMaxSpeed = 7f;   // couple when adjacent ends are within range at low speed
+        const float CoupleRange = 2.4f, CoupleMaxSpeed = 7f, SeparateMargin = 1.5f;   // couple when adjacent ends are within range at low speed; must part by +margin before re-coupling
         readonly List<Car> _cars = new();
         readonly List<MeshInstance3D> _ropes = new();   // short coupler rope per gap (also the look-at/F-uncouple target)
         AudioStreamPlayer3D _engineSnd, _addSnd, _hornSnd;
@@ -141,7 +141,6 @@ namespace UnturnedGodot
         public void Drive(float throttle, float dt)
         {
             if (!HasEngine || _cars.Count == 0) return;
-            _coupleCd = Mathf.Max(0f, _coupleCd - dt);
             float wf = RefWeight / Mathf.Max(1f, TotalWeight);   // heavier consist -> proportionally weaker accel + brake (master)
             float target = Mathf.Clamp(throttle, -0.6f, 1f) * MaxSpeed;
             float rate;
@@ -169,7 +168,8 @@ namespace UnturnedGodot
         // ---- coupling: drive an engine consist into another car at low speed -> they link into one ----
         void TryCouple()
         {
-            if (_coupleCd > 0f || _speed == 0f || Mathf.Abs(_speed) > CoupleMaxSpeed) return;
+            if (_speed == 0f || Mathf.Abs(_speed) > CoupleMaxSpeed) return;
+            _noRecouple.RemoveWhere(t => !IsInstanceValid(t) || t._cars.Count == 0);
             float myFront = _s + _cars[0].S.HalfLen;
             float myRear = _s - _cars.Last().Off - _cars.Last().S.HalfLen;
             foreach (var node in GetTree().GetNodesInGroup("trains"))
@@ -177,8 +177,13 @@ namespace UnturnedGodot
                 if (node is not Train o || o == this || !IsInstanceValid(o) || o._cars.Count == 0 || o._road != _road) continue;
                 float oFront = o._s + o._cars[0].S.HalfLen;
                 float oRear = o._s - o._cars.Last().Off - o._cars.Last().S.HalfLen;
-                if (Mathf.Abs(myFront - oRear) < CoupleRange || Mathf.Abs(myRear - oFront) < CoupleRange)
-                { Couple(o); return; }
+                float gap = Mathf.Min(Mathf.Abs(myFront - oRear), Mathf.Abs(myRear - oFront));
+                if (_noRecouple.Contains(o))
+                {
+                    if (gap > CoupleRange + SeparateMargin) { _noRecouple.Remove(o); o._noRecouple.Remove(this); }   // parted far enough -> re-coupling allowed again
+                    continue;   // still hugging the car we just split from -> do not re-grab it
+                }
+                if (gap < CoupleRange) { Couple(o); return; }
             }
         }
 
@@ -336,7 +341,7 @@ namespace UnturnedGodot
             foreach (var c in rear) { c.Body.Reparent(nt, true); c.Bf.Reparent(nt, true); c.Bb.Reparent(nt, true); nt._cars.Add(c); }
             nt._s = _s - rear[0].Off;
             nt.RecomputeOffsets(); nt.RebuildRopes(); nt.RebuildAudio(); nt.Place(); nt.ResetPhysicsInterpolation();
-            _coupleCd = nt._coupleCd = 2f;   // both halves get a no-couple window so driving off doesn't instantly re-grab
+            _noRecouple.Add(nt); nt._noRecouple.Add(this);   // neither half re-couples to the other until they've driven apart (master: condition, not a timer)
             RecomputeOffsets(); RebuildRopes(); RebuildAudio(); Place();
         }
     }
