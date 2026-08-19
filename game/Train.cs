@@ -33,6 +33,7 @@ namespace UnturnedGodot
             public StaticBody3D Body; public MeshInstance3D Bf, Bb;
             public readonly List<MeshInstance3D> Wheels = new();   // 8 per car (4 per bogie); each spins about its axle
             public readonly List<(CpuParticles3D ps, float z)> Sparks = new();   // per-wheel brake-spark emitter + its bogie-local Z (axle tag)
+            public AudioStreamPlayer3D EngSnd, AddSnd, HornSnd;   // per-ENGINE-car audio (each engine sounds); null on non-engine cars
             public float Off;    // centre offset BEHIND the consist lead (_s); recomputed on couple/uncouple
             public float AbsS;   // scratch: absolute rail distance, used when merging two consists
         }
@@ -53,7 +54,6 @@ namespace UnturnedGodot
         const float SeparateSpeed = 5f, StuckGap = 0.4f;   // fixer: un-stick overlapping consists at this rate, to this gap (master)
         readonly List<Car> _cars = new();
         readonly List<MeshInstance3D> _ropes = new();   // short coupler rope per gap (also the look-at/F-uncouple target)
-        AudioStreamPlayer3D _engineSnd, _addSnd, _hornSnd;
         bool _occupied;   // base engine loop + rev layer only run while someone is aboard (master)
 
         static Mesh Lm(string n) => ContentProvider.ParseObj($"res://content/{n}.txt");
@@ -94,7 +94,6 @@ namespace UnturnedGodot
             RebuildRopes();
             Place();
             ResetPhysicsInterpolation();
-            RebuildAudio();
         }
 
         void AddCar(string type)
@@ -128,6 +127,7 @@ namespace UnturnedGodot
                     ps.Position = new Vector3(off.X, off.Y - WheelRadius, off.Z);   // the wheel's rail-contact point
                     bogie.AddChild(ps); car.Sparks.Add((ps, off.Z));
                 }
+            if (s.Engine) SetupCarAudio(car);
             _cars.Add(car);
         }
 
@@ -139,6 +139,7 @@ namespace UnturnedGodot
         }
 
         bool HasEngine => _cars.Any(c => c.S.Engine);
+        int EngineCount => _cars.Count(c => c.S.Engine);
         Car EngineCar => _cars.FirstOrDefault(c => c.S.Engine);
         float TotalWeight => _cars.Sum(c => c.S.Weight);
         public bool Drivable => HasEngine;
@@ -220,7 +221,7 @@ namespace UnturnedGodot
         public void Drive(float throttle, float dt)
         {
             if (!HasEngine || _cars.Count == 0) return;
-            float wf = RefWeight / Mathf.Max(1f, TotalWeight);   // heavier consist -> proportionally weaker accel + brake (master)
+            float wf = (EngineCount * RefWeight) / Mathf.Max(1f, TotalWeight);   // COMBINED engine power / total weight -> more engines pull more (master)
             float target = Mathf.Clamp(throttle, -0.6f, 1f) * MaxSpeed;
             float rate; bool braking = false;
             if (Mathf.Abs(throttle) < 0.05f) rate = BaseDecel * wf;
@@ -334,7 +335,6 @@ namespace UnturnedGodot
 
         void Couple(Train o)
         {
-            o.TeardownAudio();   // if the absorbed consist had its own engine audio, silence it -> the merged consist rebuilds ONE set below
             var all = new List<Car>();
             foreach (var c in _cars) { c.AbsS = _s - c.Off; all.Add(c); }
             foreach (var c in o._cars) { c.AbsS = o._s - c.Off; c.Body.Reparent(this, true); c.Bf.Reparent(this, true); c.Bb.Reparent(this, true); all.Add(c); }
@@ -344,55 +344,48 @@ namespace UnturnedGodot
             o._cars.Clear();
             RecomputeOffsets();   // lock to the fixed CoupleGap spacing -- they couple AT the attach distance so this is exact, not a pull (master)
             RebuildRopes();
-            RebuildAudio();
             Place();
+            SetOccupied(_occupied);   // newly-joined engine cars keep their own audio through the reparent -> start their loops if occupied
             ResetPhysicsInterpolation();
             if (IsInstanceValid(o)) o.QueueFree();
         }
 
         // ---- audio: only a consist WITH an engine hums; parented to the engine car so it's 3D-positional ----
-        void RebuildAudio()
+        // Each ENGINE car owns its own audio (parented to its Body, so it follows the car through couple/uncouple).
+        // Multiple engines in a consist therefore all sound at once. (master)
+        void SetupCarAudio(Car c)
         {
-            var eng = EngineCar;
-            if (eng == null) { TeardownAudio(); return; }
-            if (_engineSnd != null && IsInstanceValid(_engineSnd) && _engineSnd.GetParent() == eng.Body) return;   // already on the right car -> no restart blip
-            TeardownAudio();
-            var loco = eng.Body;
             var e = PlayerController.LoadWavOneShot("res://content/train_engine.wav", loop: true);
-            if (e != null) { _engineSnd = new AudioStreamPlayer3D { Stream = e, VolumeDb = 3f, UnitSize = 16f, MaxDistance = 100f, PitchScale = 0.8f }; loco.AddChild(_engineSnd); }   // base: plays only while OCCUPIED (SetOccupied)
+            if (e != null) { c.EngSnd = new AudioStreamPlayer3D { Stream = e, VolumeDb = 3f, UnitSize = 16f, MaxDistance = 100f, PitchScale = 0.8f }; c.Body.AddChild(c.EngSnd); }
             var a = PlayerController.LoadWavOneShot("res://content/train_engine_add.wav", loop: true);
-            if (a != null) { _addSnd = new AudioStreamPlayer3D { Stream = a, VolumeDb = -80f, UnitSize = 12f, MaxDistance = 80f, PitchScale = 0.85f }; loco.AddChild(_addSnd); }   // rev layer: volume rides MOTION
+            if (a != null) { c.AddSnd = new AudioStreamPlayer3D { Stream = a, VolumeDb = -80f, UnitSize = 12f, MaxDistance = 80f, PitchScale = 0.85f }; c.Body.AddChild(c.AddSnd); }
             var h = PlayerController.LoadWavOneShot("res://content/train_horn.wav", loop: false);
-            if (h != null) { _hornSnd = new AudioStreamPlayer3D { Stream = h, VolumeDb = 13f, UnitSize = 22f, MaxDistance = 170f }; loco.AddChild(_hornSnd); }   // ONE-SHOT press-to-honk, loud
-            if (_occupied) SetOccupied(true);   // rebuilt while aboard (e.g. after coupling) -> resume the loops
-        }
-        void TeardownAudio()
-        {
-            foreach (var p in new[] { _engineSnd, _addSnd, _hornSnd }) if (p != null && IsInstanceValid(p)) p.QueueFree();
-            _engineSnd = _addSnd = _hornSnd = null;
+            if (h != null) { c.HornSnd = new AudioStreamPlayer3D { Stream = h, VolumeDb = 13f, UnitSize = 22f, MaxDistance = 170f }; c.Body.AddChild(c.HornSnd); }
         }
         void UpdateAudio(float throttle, float dt)
         {
             float sp = MaxSpeed > 0f ? Mathf.Abs(_speed) / MaxSpeed : 0f;
-            if (_engineSnd != null) _engineSnd.PitchScale = 0.8f + 0.7f * sp;
-            if (_addSnd != null)
+            float mv = Mathf.Abs(_speed);
+            float target = mv > 0.2f ? Mathf.Lerp(-2f, 5f, Mathf.Clamp(mv / 15f, 0f, 1f)) : -80f;   // rev layer audible in ANY motion
+            foreach (var c in _cars)
             {
-                _addSnd.PitchScale = 0.85f + 0.95f * sp;
-                float mv = Mathf.Abs(_speed);
-                float target = mv > 0.2f ? Mathf.Lerp(-2f, 5f, Mathf.Clamp(mv / 15f, 0f, 1f)) : -80f;   // audible in ANY motion, louder the faster (master)
-                _addSnd.VolumeDb = Mathf.MoveToward(_addSnd.VolumeDb, target, 120f * dt);
+                if (c.EngSnd != null) c.EngSnd.PitchScale = 0.8f + 0.7f * sp;
+                if (c.AddSnd != null) { c.AddSnd.PitchScale = 0.85f + 0.95f * sp; c.AddSnd.VolumeDb = Mathf.MoveToward(c.AddSnd.VolumeDb, target, 120f * dt); }
             }
         }
-        /// <summary>Someone boarded/left the engine. Base engine loop + rev layer run only while occupied.</summary>
+        /// <summary>Boarded/left: EVERY engine car's base loop + rev layer run only while occupied. (master)</summary>
         public void SetOccupied(bool on)
         {
             _occupied = on;
-            if (_engineSnd != null) { if (on) { if (!_engineSnd.Playing) _engineSnd.Play(); } else _engineSnd.Stop(); }
-            if (_addSnd != null) { if (on) { if (!_addSnd.Playing) _addSnd.Play(); _addSnd.VolumeDb = -80f; } else _addSnd.Stop(); }
-            if (!on && _hornSnd != null && _hornSnd.Playing) _hornSnd.Stop();
+            foreach (var c in _cars)
+            {
+                if (c.EngSnd != null) { if (on) { if (!c.EngSnd.Playing) c.EngSnd.Play(); } else c.EngSnd.Stop(); }
+                if (c.AddSnd != null) { if (on) { if (!c.AddSnd.Playing) c.AddSnd.Play(); c.AddSnd.VolumeDb = -80f; } else c.AddSnd.Stop(); }
+                if (!on && c.HornSnd != null && c.HornSnd.Playing) c.HornSnd.Stop();
+            }
         }
-        /// <summary>One honk per LMB press (restarts the clip; it is a one-shot, not a loop). (master)</summary>
-        public void Honk() { _hornSnd?.Play(); }
+        /// <summary>One honk per LMB press from EVERY engine car (one-shot, not a loop). (master)</summary>
+        public void Honk() { foreach (var c in _cars) if (c.HornSnd != null) c.HornSnd.Play(); }
 
         // ---- look-focus outline of the ENGINE car (only a drivable consist is boardable) ----
         bool _lookFocused;
@@ -486,9 +479,9 @@ namespace UnturnedGodot
             nt.AddToGroup("trains");
             foreach (var c in rear) { c.Body.Reparent(nt, true); c.Bf.Reparent(nt, true); c.Bb.Reparent(nt, true); c.Off -= leadOff; nt._cars.Add(c); }
             nt._s = _s - leadOff;
-            nt.RebuildRopes(); nt.RebuildAudio(); nt.Place(); nt.ResetPhysicsInterpolation();
+            nt.RebuildRopes(); nt.Place(); nt.ResetPhysicsInterpolation();
             _noRecouple.Add(nt); nt._noRecouple.Add(this);   // neither half re-couples to the other until they've driven apart (master: condition, not a timer)
-            RebuildRopes(); RebuildAudio(); Place();   // this keeps its offsets (the front cars never moved)
+            RebuildRopes(); Place();   // this keeps its offsets (the front cars never moved)
         }
     }
 }
