@@ -31,6 +31,7 @@ namespace UnturnedGodot
         {
             public string Type; public Spec S;
             public StaticBody3D Body; public MeshInstance3D Bf, Bb;
+            public readonly List<MeshInstance3D> Wheels = new();   // 8 per car (4 per bogie); each spins about its axle
             public float Off;    // centre offset BEHIND the consist lead (_s); recomputed on couple/uncouple
             public float AbsS;   // scratch: absolute rail distance, used when merging two consists
         }
@@ -41,6 +42,9 @@ namespace UnturnedGodot
         float _speed;
         readonly HashSet<Train> _noRecouple = new();   // consists just split from this one: can't re-couple until they've SEPARATED (condition-based, master)
         const float RailY = 1.55f, BogieHalf = 3.5f, CoupleGap = 0.9f;
+        const float WheelRadius = 0.6f;   // extracted wheel radius; wheels roll without slip
+        static readonly Vector3[] WheelOff = { new Vector3(1.47f, -0.32f, 0.94f), new Vector3(-1.47f, -0.32f, 0.94f), new Vector3(1.47f, -0.32f, -0.94f), new Vector3(-1.47f, -0.32f, -0.94f) };
+        float _spinAngle;   // shared wheel roll angle (rad), advanced by distance travelled
         const float MaxSpeed = 48f, BaseAccel = 2f, BaseDecel = 1.2f, BaseBrake = 12f, RefWeight = 20f;
         const float CoupleRange = 1.3f, CoupleMaxSpeed = 11f, SeparateMargin = 1.5f, RollFriction = 3f;   // couple only when ends CLOSE + <=CoupleMaxSpeed; a FASTER hit bonks the car along the rail; passive cars coast + decay (master)
         const float SeparateSpeed = 5f, StuckGap = 0.4f;   // fixer: un-stick overlapping consists at this rate, to this gap (master)
@@ -102,10 +106,19 @@ namespace UnturnedGodot
             if (s.FlipY) mi.RotationDegrees = new Vector3(0f, 0f, 180f);   // boxcar/tanker meshes are authored upside-down -> flip upright (master)
             sb.AddChild(mi);
             sb.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = s.Box }, Position = s.BoxCtr });
-            var bf = new MeshInstance3D { Mesh = Lm("train_bogie"), MaterialOverride = bogieMat };
-            var bb = new MeshInstance3D { Mesh = Lm("train_bogie"), MaterialOverride = bogieMat };
+            var frameMesh = Lm("train_bogie_frame"); var wheelMesh = Lm("train_wheel");
+            var bf = new MeshInstance3D { Mesh = frameMesh, MaterialOverride = bogieMat };
+            var bb = new MeshInstance3D { Mesh = frameMesh, MaterialOverride = bogieMat };
             AddChild(sb); AddChild(bf); AddChild(bb);
-            _cars.Add(new Car { Type = type, S = s, Body = sb, Bf = bf, Bb = bb });
+            var car = new Car { Type = type, S = s, Body = sb, Bf = bf, Bb = bb };
+            foreach (var bogie in new[] { bf, bb })          // each bogie: the frame plate + its 4 wheels as spinnable children
+                foreach (var off in WheelOff)
+                {
+                    var w = new MeshInstance3D { Mesh = wheelMesh, MaterialOverride = bogieMat, Position = off };
+                    bogie.AddChild(w);
+                    car.Wheels.Add(w);
+                }
+            _cars.Add(car);
         }
 
         // Lead car has offset 0; each following car sits its own half + a coupler gap + the previous car's half behind.
@@ -134,6 +147,18 @@ namespace UnturnedGodot
         }
         void Place() { foreach (var c in _cars) PlaceCar(c, _s - c.Off); PlaceRopes(); }
 
+        // Roll every wheel by the distance travelled (roll without slip). Wheels are children of the bogies, so
+        // PlaceCar re-seats the bogie each tick but leaves the wheel's LOCAL spin intact; each turns about its own
+        // axle (local X). (master: split the wheels + rotate each separately)
+        void SpinWheels(float dist)
+        {
+            if (Mathf.Abs(dist) < 1e-5f) return;
+            _spinAngle += dist / WheelRadius;
+            foreach (var c in _cars)
+                foreach (var w in c.Wheels)
+                    if (IsInstanceValid(w)) w.Rotation = new Vector3(_spinAngle, 0f, 0f);
+        }
+
         public Node3D Loco => EngineCar?.Body;
         public Transform3D DriverEyeWorld
         {
@@ -153,6 +178,7 @@ namespace UnturnedGodot
             _s += _speed * dt;
             ClampS();
             Place();
+            SpinWheels(_speed * dt);
             UpdateAudio(throttle, dt);
             ResolveContact();
         }
@@ -218,6 +244,7 @@ namespace UnturnedGodot
             _s += _speed * dt;
             ClampS();
             Place();
+            SpinWheels(_speed * dt);
             ResolveContact();
         }
 
