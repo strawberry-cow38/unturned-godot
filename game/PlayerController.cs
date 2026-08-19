@@ -6010,7 +6010,7 @@ namespace UnturnedGodot
             }
             if (_ridingCrane != null && !_dead && _cam != null)   // riding a crane: 3P chase orbit, held well back (the gantry is big)
             {
-                var ct = _ridingCrane.GlobalTransform;
+                var ct = _ridingCrane.GetGlobalTransformInterpolated();   // INTERPOLATED visual transform, not raw physics -> cam + gantry both smooth + IN SYNC (like the train/car cam); fixes the gantry jitter
                 var cfwd = -ct.Basis.Z; cfwd.Y = 0f; cfwd = cfwd.LengthSquared() > 0.001f ? cfwd.Normalized() : Vector3.Forward;
                 float cdist = 62f, cpitch = Mathf.DegToRad(_driveCamPitch);
                 Vector3 cdir = new Basis(Vector3.Up, Mathf.DegToRad(_driveCamYaw)) * (-cfwd);

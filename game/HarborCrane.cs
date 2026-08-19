@@ -60,6 +60,7 @@ namespace UnturnedGodot
             var c = new HarborCrane { Position = pos, RotationDegrees = new Vector3(0f, yawDeg, 0f) };
             parent.AddChild(c);
             c.Build();
+            c.ResetPhysicsInterpolation();   // don't smear from the origin on frame 1 (train parity)
             return c;
         }
 
