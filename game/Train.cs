@@ -42,7 +42,7 @@ namespace UnturnedGodot
         readonly HashSet<Train> _noRecouple = new();   // consists just split from this one: can't re-couple until they've SEPARATED (condition-based, master)
         const float RailY = 1.55f, BogieHalf = 3.5f, CoupleGap = 0.9f;
         const float MaxSpeed = 48f, BaseAccel = 2f, BaseDecel = 1.2f, BaseBrake = 12f, RefWeight = 20f;
-        const float CoupleRange = 1.3f, CoupleMaxSpeed = 11f, SeparateMargin = 1.5f, BonkTransfer = 0.6f, RollFriction = 3f;   // couple only when ends CLOSE + <=CoupleMaxSpeed; a FASTER hit bonks the car along the rail; passive cars coast + decay (master)
+        const float CoupleRange = 1.3f, CoupleMaxSpeed = 11f, SeparateMargin = 1.5f, RollFriction = 3f;   // couple only when ends CLOSE + <=CoupleMaxSpeed; a FASTER hit bonks the car along the rail; passive cars coast + decay (master)
         const float SeparateSpeed = 5f, StuckGap = 0.4f;   // fixer: un-stick overlapping consists at this rate, to this gap (master)
         readonly List<Car> _cars = new();
         readonly List<MeshInstance3D> _ropes = new();   // short coupler rope per gap (also the look-at/F-uncouple target)
@@ -185,15 +185,23 @@ namespace UnturnedGodot
                 float gap = Mathf.Min(Mathf.Abs(myFront - oRear), Mathf.Abs(myRear - oFront));
                 bool suppressed = _noRecouple.Contains(o);
                 if (suppressed && !overlap && gap > CoupleRange + SeparateMargin) { _noRecouple.Remove(o); o._noRecouple.Remove(this); suppressed = false; }
-                if (!overlap)
-                {
-                    if (!suppressed && gap < CoupleRange && Mathf.Abs(_speed) <= CoupleMaxSpeed) { Couple(o); return; }   // close + slow -> couple
-                    continue;
-                }
-                if (!suppressed && Mathf.Abs(_speed) <= CoupleMaxSpeed) { Couple(o); return; }   // slow even mid-overlap -> couple (never tunnels past a car)
-                // too fast (or still suppressed): BONK the car along the rail, back myself off to the contact face
-                if (_speed >= 0f) { float pen = myFront - oRear; if (pen > 0f) { o._s += pen; _s -= pen; o._speed = _speed * BonkTransfer; _speed *= 0.3f; } }
-                else            { float pen = oFront - myRear; if (pen > 0f) { o._s -= pen; _s += pen; o._speed = _speed * BonkTransfer; _speed *= 0.3f; } }
+                if (!overlap && gap >= CoupleRange) continue;   // too far apart to interact
+                // Decide by CLOSING (relative) speed, not absolute -- else a fast slam bleeds to ~0 on impact and
+                // then "counts as slow" and wrongly couples (master). Pick the side I am on + its approach rate.
+                float penA = myFront - oRear, penB = oFront - myRear;
+                bool behind = penA <= penB;
+                float closing = behind ? (_speed - o._speed) : (o._speed - _speed);
+                if (closing <= 0.15f) continue;   // parked beside it / separating / just collided -> don't couple, don't re-hit
+                if (!suppressed && closing <= CoupleMaxSpeed) { Couple(o); return; }   // slow CLOSING contact -> couple
+                if (!overlap) continue;   // fast but not touching yet -> wait until they actually meet
+                // Fast CLOSING + overlapping -> COLLIDE. 1D momentum + restitution, MASS-WEIGHTED, so ramming a heavy
+                // coupled chain launches the whole chain (less), a light car more; total momentum conserved (master).
+                float m1 = TotalWeight, m2 = o.TotalWeight, mt = Mathf.Max(0.01f, m1 + m2);
+                float u1 = _speed, u2 = o._speed;
+                const float e = 0.35f;   // restitution
+                _speed   = (m1 * u1 + m2 * u2 - m2 * e * (u1 - u2)) / mt;
+                o._speed = (m1 * u1 + m2 * u2 + m1 * e * (u1 - u2)) / mt;
+                if (behind) _s -= penA; else _s += penB;   // separate to the contact face
                 o.Place(); Place();
                 return;
             }
