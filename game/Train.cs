@@ -32,7 +32,7 @@ namespace UnturnedGodot
             public string Type; public Spec S;
             public StaticBody3D Body; public MeshInstance3D Bf, Bb;
             public readonly List<MeshInstance3D> Wheels = new();   // 8 per car (4 per bogie); each spins about its axle
-            public CpuParticles3D SparkF, SparkB;   // hard-brake sparks from each bogie's wheel-contact line
+            public readonly List<(CpuParticles3D ps, float z)> Sparks = new();   // per-wheel brake-spark emitter + its bogie-local Z (axle tag)
             public float Off;    // centre offset BEHIND the consist lead (_s); recomputed on couple/uncouple
             public float AbsS;   // scratch: absolute rail distance, used when merging two consists
         }
@@ -46,6 +46,7 @@ namespace UnturnedGodot
         const float WheelRadius = 0.6f;   // extracted wheel radius; wheels roll without slip
         static readonly Vector3[] WheelOff = { new Vector3(1.47f, -0.32f, 0.94f), new Vector3(-1.47f, -0.32f, 0.94f), new Vector3(1.47f, -0.32f, -0.94f), new Vector3(-1.47f, -0.32f, -0.94f) };
         float _spinAngle;   // shared wheel roll angle (rad), advanced by distance travelled
+        const float DecelThreshold = 7f;   // brake sparks only above this deceleration (m/s^2) (master)
         const float MaxSpeed = 48f, BaseAccel = 2f, BaseDecel = 1.2f, BaseBrake = 12f, RefWeight = 20f;
         const float CoupleRange = 1.3f, CoupleMaxSpeed = 11f, SeparateMargin = 1.5f, RollFriction = 3f;   // couple only when ends CLOSE + <=CoupleMaxSpeed; a FASTER hit bonks the car along the rail; passive cars coast + decay (master)
         const float SeparateSpeed = 5f, StuckGap = 0.4f;   // fixer: un-stick overlapping consists at this rate, to this gap (master)
@@ -119,8 +120,13 @@ namespace UnturnedGodot
                     bogie.AddChild(w);
                     car.Wheels.Add(w);
                 }
-            car.SparkF = MakeBrakeSparks(); bf.AddChild(car.SparkF);
-            car.SparkB = MakeBrakeSparks(); bb.AddChild(car.SparkB);
+            foreach (var bogie in new[] { bf, bb })
+                foreach (var off in WheelOff)
+                {
+                    var ps = MakeBrakeSparks();
+                    ps.Position = new Vector3(off.X, off.Y - WheelRadius, off.Z);   // the wheel's rail-contact point
+                    bogie.AddChild(ps); car.Sparks.Add((ps, off.Z));
+                }
             _cars.Add(car);
         }
 
@@ -184,8 +190,7 @@ namespace UnturnedGodot
                 InitialVelocityMin = 4f, InitialVelocityMax = 9f,
                 Gravity = new Vector3(0f, -16f, 0f),
                 ScaleAmountMin = 0.03f, ScaleAmountMax = 0.07f, ScaleAmountCurve = fade,
-                EmissionShape = CpuParticles3D.EmissionShapeEnum.Box, EmissionBoxExtents = new Vector3(1.47f, 0.02f, 0.08f),
-                Position = new Vector3(0f, -0.92f, 0f),   // the wheel-contact line, bogie-local
+                EmissionShape = CpuParticles3D.EmissionShapeEnum.Point,   // a POINT at one wheel's rail contact (Position set per-wheel in AddCar)
                 Mesh = new QuadMesh { Size = Vector2.One, Material = mat },
                 VisibilityAabb = new Aabb(new Vector3(-6f, -6f, -6f), new Vector3(12f, 12f, 12f)),
             };
@@ -195,10 +200,14 @@ namespace UnturnedGodot
         {
             float fwdZ = speed >= 0f ? 1f : -1f;                  // leading axle + spark dir along travel (bogie orientation, matches the spin flip); flips on reverse
             var dir = new Vector3(0f, 1f, fwdZ).Normalized();    // launch UP at 45deg in the braking/travel direction (master)
-            var pos = new Vector3(0f, -0.92f, 0.94f * fwdZ);     // the LEADING axle's 2 wheels (front pair in the travel direction)
             foreach (var c in _cars)
-                foreach (var sp in new[] { c.SparkF, c.SparkB })
-                    if (IsInstanceValid(sp)) { if (on) { sp.Direction = dir; sp.Position = pos; sp.Visible = true; } sp.Emitting = on; }
+                foreach (var (ps, z) in c.Sparks)
+                    if (IsInstanceValid(ps))
+                    {
+                        bool lead = on && Mathf.Sign(z) == fwdZ;   // ONLY the leading axle's 2 wheels emit
+                        if (lead) { ps.Direction = dir; ps.Visible = true; }
+                        ps.Emitting = lead;
+                    }
         }
 
         public Node3D Loco => EngineCar?.Body;
@@ -214,7 +223,7 @@ namespace UnturnedGodot
             float target = Mathf.Clamp(throttle, -0.6f, 1f) * MaxSpeed;
             float rate; bool hardBrake = false;
             if (Mathf.Abs(throttle) < 0.05f) rate = BaseDecel * wf;
-            else if (_speed != 0f && Mathf.Sign(throttle) != Mathf.Sign(_speed)) { rate = BaseBrake * wf; hardBrake = Mathf.Abs(_speed) > 3f; }   // throttle against motion + moving = hard brake -> sparks
+            else if (_speed != 0f && Mathf.Sign(throttle) != Mathf.Sign(_speed)) { rate = BaseBrake * wf; hardBrake = Mathf.Abs(_speed) > 3f && rate >= DecelThreshold; }   // hard brake AND decel past the threshold -> sparks (master)
             else rate = BaseAccel * wf;
             _speed = Mathf.MoveToward(_speed, target, rate * dt);
             _s += _speed * dt;
@@ -282,7 +291,7 @@ namespace UnturnedGodot
         {
             float dt = (float)delta;
             SeparateOverlaps(dt);   // fixer: shove stuck-inside-each-other consists apart, even when parked (master)
-            if (HasEngine || _cars.Count == 0 || Mathf.Abs(_speed) < 0.02f) return;
+            if (_occupied || _cars.Count == 0 || Mathf.Abs(_speed) < 0.02f) return;   // occupied -> Drive owns it; empty engine consist coasts (keeps momentum on exit, master)
             _speed = Mathf.MoveToward(_speed, 0f, RollFriction * dt);
             _s += _speed * dt;
             ClampS();
