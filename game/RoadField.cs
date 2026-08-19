@@ -211,26 +211,26 @@ namespace UnturnedGodot
             float total = 0f; for (int i = 0; i < segs; i++) total += SegLength(r, i); return total;
         }
         /// <summary>World point (terrain-snapped) + unit tangent at a DISTANCE along a road. Loops wrap; open roads clamp.</summary>
-        public bool EvaluateAlong(int road, float distance, out Vector3 pos, out Vector3 tangent)
+        public bool EvaluateAlong(int road, float distance, out Vector3 pos, out Vector3 tangent, bool snapTerrain = true)
         {
             pos = Vector3.Zero; tangent = Vector3.Forward;
             if (road < 0 || road >= _roads.Count) return false;
             var r = _roads[road]; int jc = r.Joints.Count; if (jc < 2) return false;
             int segs = r.IsLoop ? jc : jc - 1; float total = RoadLength(road);
-            pos = PosAlong(r, segs, total, distance);
+            pos = PosAlong(r, segs, total, distance, snapTerrain);
             // Tangent from a JOINT-CONTINUOUS arc-length finite diff. The old fixed bezier-t delta clamped at each
             // segment boundary -> a one-sided, discontinuous tangent, so a bogie crossing every joint snapped its
             // heading -> the wheels "jitter at high speed / on turns" (master 2026-08-19). Sampling the position a
             // metre either side (which walks across joints) gives a smooth heading everywhere.
             const float dd = 1.0f;
-            Vector3 tg = PosAlong(r, segs, total, distance + dd) - PosAlong(r, segs, total, distance - dd);
+            Vector3 tg = PosAlong(r, segs, total, distance + dd, snapTerrain) - PosAlong(r, segs, total, distance - dd, snapTerrain);
             tangent = tg.LengthSquared() > 1e-6f ? tg.Normalized() : Vector3.Forward;
             return true;
         }
 
         // Position at an arc-length `distance` along a road (arc-length reparam of the bezier + terrain snap).
         // Split out so EvaluateAlong can sample it a metre either side for a joint-continuous tangent.
-        Vector3 PosAlong(RoadData r, int segs, float total, float distance)
+        Vector3 PosAlong(RoadData r, int segs, float total, float distance, bool snapTerrain = true)
         {
             if (r.IsLoop && total > 0.001f) distance = Mathf.PosMod(distance, total); else distance = Mathf.Clamp(distance, 0f, total);
             for (int i = 0; i < segs; i++)
@@ -255,7 +255,7 @@ namespace UnturnedGodot
                         acc += seg; sp = p;
                     }
                     Vector3 pos = SplinePos(r, i, t);
-                    if (Terr != null && !r.Joints[i].IgnoreTerrain) pos.Y = Terr.SampleHeight(pos.X, pos.Z);
+                    if (snapTerrain && Terr != null && !r.Joints[i].IgnoreTerrain) pos.Y = Terr.SampleHeight(pos.X, pos.Z);   // train passes snapTerrain:false -> ride the track's own smooth spline Y, not the bumpy heightmap (master: ignore terrain, follow the track)
                     return pos;
                 }
                 distance -= L;

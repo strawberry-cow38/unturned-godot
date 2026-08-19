@@ -146,8 +146,8 @@ namespace UnturnedGodot
 
         void PlaceCar(Car c, float sctr)
         {
-            _roads.EvaluateAlong(_road, sctr + BogieHalf, out var pf, out var tf);
-            _roads.EvaluateAlong(_road, sctr - BogieHalf, out var pb, out var tb);
+            _roads.EvaluateAlong(_road, sctr + BogieHalf, out var pf, out var tf, snapTerrain: false);
+            _roads.EvaluateAlong(_road, sctr - BogieHalf, out var pb, out var tb, snapTerrain: false);
             Vector3 ctr = (pf + pb) * 0.5f + Vector3.Up * (RailY + c.S.YOff);
             Vector3 fwd = pf - pb; fwd = fwd.LengthSquared() > 1e-4f ? fwd.Normalized() : Vector3.Forward;
             c.Body.GlobalTransform = new Transform3D(Basis.Identity, ctr).LookingAt(ctr + fwd, Vector3.Up);
@@ -460,8 +460,8 @@ namespace UnturnedGodot
             {
                 float sRear = (_s - _cars[i].Off) - _cars[i].S.HalfLen;
                 float sFront = (_s - _cars[i + 1].Off) + _cars[i + 1].S.HalfLen;
-                _roads.EvaluateAlong(_road, sRear, out var pa, out _);
-                _roads.EvaluateAlong(_road, sFront, out var pb, out _);
+                _roads.EvaluateAlong(_road, sRear, out var pa, out _, snapTerrain: false);
+                _roads.EvaluateAlong(_road, sFront, out var pb, out _, snapTerrain: false);
                 PositionRope(_ropes[i], pa + Vector3.Up * (RailY + 0.05f), pb + Vector3.Up * (RailY + 0.05f));
             }
         }
