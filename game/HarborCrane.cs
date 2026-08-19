@@ -41,7 +41,7 @@ namespace UnturnedGodot
         readonly List<MeshInstance3D> _wheels = new();
         readonly List<MeshInstance3D> _ropes = new();
         MeshInstance3D _trolley, _hoist;
-        bool _magnetOn; RigidBody3D _held; Vector3 _heldOffset; OmniLight3D _coilGlow;   // hoist ELECTROMAGNET (steal the skycrane's magnet -> lift a MagnetableContainer)
+        bool _magnetOn; RigidBody3D _held; Vector3 _heldOffset;   // hoist ELECTROMAGNET (steal the skycrane's magnet -> lift a MagnetableContainer)
         const float GrabReach = 3f;
 
         static Mesh Lm(string n) => ObjMesh.Load(ProjectSettings.GlobalizePath($"res://content/objects/{n}.obj"));
@@ -76,8 +76,6 @@ namespace UnturnedGodot
             // HOIST: a clone of the block on 4 corner ropes, hanging under the carriage
             _hoist = new MeshInstance3D { Mesh = Lm("Harbor_0_hoistblk"), MaterialOverride = MakeMat("Harbor_0") };
             AddChild(_hoist);
-            _coilGlow = new OmniLight3D { LightColor = new Color(0.5f, 0.72f, 1f), LightEnergy = 0f, OmniRange = 9f, ShadowEnabled = false, Position = new Vector3(0f, -0.4f, 0f) };
-            _hoist.AddChild(_coilGlow);
             var ropeMat = new StandardMaterial3D { AlbedoColor = new Color(0.12f, 0.10f, 0.08f), Roughness = 1f };
             for (int i = 0; i < 4; i++)
             {
@@ -127,7 +125,6 @@ namespace UnturnedGodot
         public void ToggleMagnet()
         {
             _magnetOn = !_magnetOn;
-            if (_coilGlow != null) _coilGlow.LightEnergy = _magnetOn ? 2.4f : 0f;
             if (!_magnetOn) ReleaseHeld();
         }
         void ReleaseHeld()
