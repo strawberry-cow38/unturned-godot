@@ -40,9 +40,9 @@ namespace UnturnedGodot
         float _speed, _wheelSpin, _trolleyX, _hoistDrop;
         readonly List<MeshInstance3D> _wheels = new();
         readonly List<MeshInstance3D> _ropes = new();
+        readonly List<(Vector3 c, Vector3 h)> _frameBoxes = new();   // convex leg/beam boxes = the FRAME collider (drive axis), derived from the gantry mesh; portal openings left OPEN so you can drive over low stuff
         MeshInstance3D _trolley, _hoist;
         bool _magnetOn; RigidBody3D _held; Vector3 _heldOffset; Aabb _heldAabb; Vector3 _faceAtGrab;   // hoist ELECTROMAGNET (steal the skycrane's magnet -> lift a MagnetableContainer)
-        const float GrabReach = 1.5f;
         const uint ObstacleMask = (1u << 0) | (1u << 5) | (1u << 6); // terrain/statics + vehicles + props: what STOPS the gantry/trolley when the hoist (or its load) hits it
         const uint GroundMask = (1u << 0) | (1u << 5) | (1u << 6); // + terrain: what stops the hoist DESCENT so a load is never pushed underground
 
@@ -67,6 +67,7 @@ namespace UnturnedGodot
         {
             AddToGroup("cranes");
             AddChild(new MeshInstance3D { Mesh = Lm("Harbor_0_gantry"), MaterialOverride = MakeMat("Harbor_0"), Basis = Upright });
+            ComputeFrameBoxes();
             _trolley = new MeshInstance3D { Mesh = Lm("Harbor_0_trolley"), MaterialOverride = MakeMat("Harbor_0"), Transform = new Transform3D(Upright, Vector3.Zero) };
             AddChild(_trolley);
             var wm = Lm("Wheel_3"); var wmat = MakeMat("Wheel_3");
@@ -95,7 +96,7 @@ namespace UnturnedGodot
             float rate = Mathf.Abs(throttle) < 0.05f ? Decel : Accel;
             _speed = Mathf.MoveToward(_speed, target, rate * dt);
             Vector3 driveMotion = -GlobalTransform.Basis.Z * (_speed * dt);
-            float sfDrive = SafeFrac(driveMotion, ObstacleMask);
+            float sfDrive = SafeFracWithFrame(driveMotion, ObstacleMask);
             GlobalPosition += driveMotion * sfDrive;
             SpinWheels(_speed * dt * sfDrive);
             if (sfDrive < 0.999f) _speed = 0f;   // blocked -> the gantry stops rather than shoving through
@@ -156,17 +157,16 @@ namespace UnturnedGodot
                 var space = GetWorld3D()?.DirectSpaceState;
                 if (space != null)
                 {
-                    var shape = new SphereShape3D { Radius = GrabReach };
-                    var q = new PhysicsShapeQueryParameters3D { ShapeRid = shape.GetRid(), Transform = new Transform3D(Basis.Identity, face), CollisionMask = 1u << 6, CollideWithBodies = true };
+                    Aabb hb = _hoist.GlobalTransform * _hoist.GetAabb();
+                    var shape = new BoxShape3D { Size = hb.Size + new Vector3(0.5f, 0.5f, 0.5f) };   // the block's OWN volume + a small skin: connect only on CONTACT, never from range
+                    var q = new PhysicsShapeQueryParameters3D { ShapeRid = shape.GetRid(), Transform = new Transform3D(Basis.Identity, hb.GetCenter()), CollisionMask = 1u << 6, CollideWithBodies = true };
                     foreach (var hit in space.IntersectShape(q, 8))
                     {
                         if (hit["collider"].Obj is MagnetableContainer mc && IsInstanceValid(mc))
                         {
                             mc.Freeze = false; mc.Sleeping = false;
-                            Vector3 seat = face - mc.MagnetPointWorld;
-                            if (seat.Y > 0f) mc.GlobalPosition += seat;   // pull the container UP to close the gap; NEVER push it DOWN into the ground
                             mc.FreezeMode = RigidBody3D.FreezeModeEnum.Kinematic; mc.Freeze = true;
-                            _held = mc; _heldOffset = mc.GlobalPosition - face;
+                            _held = mc; _heldOffset = mc.GlobalPosition - face;   // connect WHERE they touch; no reposition -- the hoist then pulls it up or down
                             _heldAabb = WalkWorldAabb(mc); _faceAtGrab = face;
                             break;
                         }
@@ -190,18 +190,66 @@ namespace UnturnedGodot
             W(n);
             return acc ?? new Aabb();
         }
-        float SafeFrac(Vector3 motion, uint mask)
+        float CastBox(Vector3 center, Vector3 size, Basis basis, Vector3 motion, uint mask)
         {
             if (motion.LengthSquared() < 1e-8f) return 1f;
+            if (size.X < 0.05f || size.Y < 0.05f || size.Z < 0.05f) return 1f;
             var space = GetWorld3D()?.DirectSpaceState;
             if (space == null) return 1f;
-            Aabb box = HoistLoadAabb();
-            if (box.Size.X < 0.05f || box.Size.Y < 0.05f || box.Size.Z < 0.05f) return 1f;
-            var shape = new BoxShape3D { Size = box.Size * 0.9f };
-            var p = new PhysicsShapeQueryParameters3D { ShapeRid = shape.GetRid(), Transform = new Transform3D(Basis.Identity, box.GetCenter()), Motion = motion, CollisionMask = mask, CollideWithBodies = true };
+            var shape = new BoxShape3D { Size = size };
+            var p = new PhysicsShapeQueryParameters3D { ShapeRid = shape.GetRid(), Transform = new Transform3D(basis, center), Motion = motion, CollisionMask = mask, CollideWithBodies = true };
             if (_held != null && IsInstanceValid(_held)) p.Exclude = new Godot.Collections.Array<Rid> { _held.GetRid() };
             float[] r = space.CastMotion(p);
             return (r != null && r.Length > 0) ? r[0] : 1f;
+        }
+        float SafeFrac(Vector3 motion, uint mask)   // hoist(+load) box only -- trolley/hoist move just the carriage
+        {
+            Aabb box = HoistLoadAabb();
+            return CastBox(box.GetCenter(), box.Size * 0.9f, Basis.Identity, motion, mask);
+        }
+        float SafeFracWithFrame(Vector3 motion, uint mask)   // + the frame legs/beam: the DRIVE moves the whole gantry
+        {
+            float sf = SafeFrac(motion, mask);
+            Basis gb = GlobalTransform.Basis;
+            foreach (var fb in _frameBoxes) sf = Mathf.Min(sf, CastBox(GlobalTransform * fb.c, fb.h * (2f * 0.95f), gb, motion, mask));
+            return sf;
+        }
+        // derive convex FRAME colliders from the gantry mesh: one top-beam box + up to 8 leg boxes (per portal X x Z-side),
+        // leaving the portal OPENINGS open so low objects pass under the beam / between the legs as the gantry rolls over them.
+        void ComputeFrameBoxes()
+        {
+            _frameBoxes.Clear();
+            var mesh = Lm("Harbor_0_gantry");
+            if (mesh == null || mesh.GetSurfaceCount() == 0) return;
+            var vRaw = mesh.SurfaceGetArrays(0)[(int)Mesh.ArrayType.Vertex].AsVector3Array();
+            if (vRaw == null || vRaw.Length == 0) { GD.Print("[FRAMEBOX] no verts"); return; }
+            Vector3 big = new Vector3(1e9f, 1e9f, 1e9f);
+            Vector3 mn = Upright * vRaw[0], mx = mn;
+            var verts = new Vector3[vRaw.Length];
+            for (int i = 0; i < vRaw.Length; i++) { var v = Upright * vRaw[i]; verts[i] = v; mn = mn.Min(v); mx = mx.Max(v); }
+            float topY = mx.Y, beamCut = topY - (topY - mn.Y) * 0.30f;
+            float[] xc = { -49.5f, -22.5f, 22.5f, 49.5f };
+            Vector3 bmn = big, bmx = -big; var lmn = new Vector3[8]; var lmx = new Vector3[8];
+            for (int k = 0; k < 8; k++) { lmn[k] = big; lmx[k] = -big; }
+            foreach (var v in verts)
+            {
+                if (v.Y >= beamCut) { bmn = bmn.Min(v); bmx = bmx.Max(v); continue; }
+                int xi = 0; float bd = 1e9f;
+                for (int j = 0; j < 4; j++) { float d = Mathf.Abs(v.X - xc[j]); if (d < bd) { bd = d; xi = j; } }
+                int b = xi * 2 + (v.Z >= 0 ? 0 : 1);
+                lmn[b] = lmn[b].Min(v); lmx[b] = lmx[b].Max(v);
+            }
+            float beamBottom = topY;
+            if (bmx.X > bmn.X) { _frameBoxes.Add(((bmn + bmx) * 0.5f, (bmx - bmn) * 0.5f)); beamBottom = bmn.Y; }
+            for (int k = 0; k < 8; k++)
+            {
+                if (lmx[k].X <= lmn[k].X) continue;
+                Vector3 lo = lmn[k], hi = lmx[k];
+                lo.Y += 1.2f;                         // lift the leg-box bottom off the ground so a horizontal drive-cast does not graze the flat terrain
+                hi.Y = Mathf.Max(hi.Y, beamBottom);   // and extend the leg column UP to the beam so there is no open mid-height band
+                if (lo.Y >= hi.Y) continue;
+                _frameBoxes.Add(((lo + hi) * 0.5f, (hi - lo) * 0.5f));
+            }
         }
 
         static void PlaceRope(MeshInstance3D rope, Vector3 a, Vector3 b)
