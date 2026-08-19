@@ -7180,6 +7180,7 @@ namespace UnturnedGodot
             if (hit["collider"].As<GodotObject>() is not Node3D body || !body.HasMeta(Ladder.Meta)) return LadderDetach();
             if (!Ladder.IsClimbable((Vector3)hit["normal"], Ladder.FaceAxis(body))) return LadderDetach();
 
+            _ladderBody = body;             // remembered for the CLIMB carry: a ladder bolted to a SHIP moves
             if (_climbing) return true;     // already on it; nothing to re-snap (retail snaps on ENTRY only)
             if (_ladderCd > 0f) return false;   // just came off one: give the player their moment to walk away
 
@@ -7210,10 +7211,13 @@ namespace UnturnedGodot
 
         /// <summary>Leave the ladder, and arm the re-grab cooldown ONLY if we were actually on one -- otherwise
         /// simply walking near a ladder would keep re-arming it and the first attach would never happen.</summary>
+        Node3D _ladderBody;   // the ladder we are on, or null. See the CLIMB branch of StepMoveOnce.
+
         bool LadderDetach()
         {
             if (_climbing) _ladderCd = LadderReattachCooldown;
             _climbing = false;
+            _ladderBody = null;
             return false;
         }
 
@@ -7237,7 +7241,20 @@ namespace UnturnedGodot
             {
                 // Purely vertical: PlayerMovement's CLIMB branch is `velocity = (0, move.z * speed * 0.5, 0)`.
                 // No horizontal term at all, which is what keeps you glued to the rungs while you look around.
-                Velocity = new Vector3(0f, Ladder.ClimbVelocity(forward), 0f);
+                //
+                // ...unless the LADDER is moving. Climbing is its own stance, so neither the deck carry nor
+                // CharacterBody3D's own moving-floor handling reaches it -- both need you standing on something.
+                // And StepLadder deliberately does not re-snap while climbing ("retail snaps on ENTRY only"), so
+                // on a ship under way the player would rise straight up in WORLD space, the hull would sail out
+                // from under them, and the probe would miss within a tick or two and drop them in the sea.
+                var climbCarry = Vector3.Zero;
+                if (DeckCarryEnabled && _ladderBody != null && IsInstanceValid(_ladderBody)
+                    && _ladderBody.GetParent() is Vehicle lv && lv.CarriesRiders)
+                {
+                    climbCarry = lv.DeckPointVelocity(GlobalPosition);
+                    if (Mathf.Abs(lv.DeckYawRate) > 1e-5f) RotateY(lv.DeckYawRate * delta);
+                }
+                Velocity = new Vector3(climbCarry.X, Ladder.ClimbVelocity(forward), climbCarry.Z);
                 MoveAndSlide();
                 wasAirborne = false;    // retail forces isGrounded while climbing -> stepping off a ladder is never a fall
                 verticalVel = 0f;       // ...and so must never book fall damage

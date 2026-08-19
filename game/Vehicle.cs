@@ -1168,6 +1168,11 @@ namespace UnturnedGodot
                                       // it. Measured: the hull sank 10.2 m in 10 s and was still going, never finding a new
                                       // equilibrium (vehicle.ship_deck_probe). Raising this and re-tuning BuoyLift keeps the
                                       // draft where it was while giving the hull headroom to carry things.
+            public (Vector3 center, float height, float yawDeg)[] Ladders;   // climbable ladders bolted to this
+                                      // vessel. `center` is local, `height` the vertical span, `yawDeg` which way the
+                                      // climbable FACE points (0 = aft, +Z). Built as a solid box like every other
+                                      // ladder in the world -- the open-rung trimesh is what made the map's ladders
+                                      // unclimbable, see WorldBuilder.PlaceObject.
             public bool SteadyHull;   // hold this hull STILL: heavy extra heave damping, for a vessel meant to be
                                       // stood and built on. strawberry 2026-08-19: "the idea is that the ship is
                                       // eventually a spot where you can build a base, if its constantly wobbling,
@@ -2246,6 +2251,13 @@ namespace UnturnedGodot
             // headroom. Measured off the ship mesh, not guessed. The aft superstructure stands inside this box
             // and is part of the hull, so it simply never registers as a rider.
             DeckVolume = new Vector3(23f, 6f, 66.5f), DeckCenter = new Vector3(0f, 14f, 0f),
+            // STERN LADDER (strawberry: "add a ladder to the back of the container ship"). Spans y 0.5 to 14.0,
+            // so the foot is well below the 4.79 m waterline -- you can reach it swimming -- and the head stands
+            // 3 m proud of the deck. That overshoot is deliberate: Ladder.cs documents that a player's feet stop
+            // short of the ladder top, so one ending flush with the deck strands you beside the edge with nothing
+            // underfoot. It sits at z=34, just aft of the transom (hull ends at 33.75), so it is climbable from
+            // open water rather than buried in the plating.
+            Ladders = new (Vector3, float, float)[] { (new Vector3(0f, 7.25f, 34f), 13.5f, 0f) },
             SteadyHull = true,  // she is meant to be BUILT ON (strawberry), and a hull this size never settles on
                                 // her own -- 0.259 m/s of vertical motion with an empty deck, measured 18 s after
                                 // spawn (vehicle.ship_orca_landing's control). Reads as life on a runabout; reads
@@ -3629,6 +3641,33 @@ namespace UnturnedGodot
                 v.ContinuousCd = true;
                 v.Inertia = Vector3.One * (GlobalMass * HeliInertiaPerKg);
             }
+            if (s.Ladders != null)
+                foreach (var (centre, height, yawDeg) in s.Ladders)
+                {
+                    // The body's LOCAL Y is the climbable face normal (Ladder.FaceAxis reads GlobalBasis.Y), and
+                    // the mesh's own thin axis is mesh Y too -- so one rotation serves both. Y -> +Z puts the face
+                    // aft; yawDeg turns it elsewhere.
+                    var faceAft = new Basis(Vector3.Right, Mathf.Pi * 0.5f);          // local Y -> +Z, local Z -> -Y (down)
+                    var basis = new Basis(Vector3.Up, Mathf.DegToRad(yawDeg)) * faceAft;
+                    var lad = new StaticBody3D
+                    {
+                        Name = "Ladder",
+                        Transform = new Transform3D(basis, centre),
+                        CollisionLayer = 1u << 0,   // the layer the player's body and the climb probe both see
+                        CollisionMask = 0,
+                    };
+                    lad.SetMeta(Ladder.Meta, lad);   // what PlayerController.StepLadder resolves a probe hit through
+                    // SOLID box, not the rung geometry. Local Z is the long axis after the rotation above.
+                    lad.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = new Vector3(1.15f, 0.2f, height) } });
+                    var rungs = ContentProvider.ParseObj("res://content/objects/Ladder_Metal_0.obj");
+                    if (rungs != null)
+                    {
+                        var lmat = SolidMat(new Color(0.44f, 0.45f, 0.47f));
+                        for (float z = -height * 0.5f + 3.375f; z < height * 0.5f; z += 6.75f)
+                            lad.AddChild(new MeshInstance3D { Mesh = rungs, MaterialOverride = lmat, Position = new Vector3(0f, 0f, z) });
+                    }
+                    v.AddChild(lad);
+                }
             v._deckVolume = s.DeckVolume; v._deckCenter = s.DeckCenter;
             if (v._deckVolume != Vector3.Zero)
             {
