@@ -79,7 +79,9 @@ namespace UnturnedGodot.Testing
         Volume MeasureVolume(Vehicle ship, Vector3[] tris)
         {
             var space = ship.GetWorld3D().DirectSpaceState;
-            var q = new PhysicsPointQueryParameters3D { CollisionMask = 1u << 5, CollideWithBodies = true };
+            // bit0 TOO: the deckhouse rides on a StaticBody3D child (Spec.HullTrimesh), and masking only the
+            // vehicle layer would report it missing -- measuring my own wiring instead of the collider.
+            var q = new PhysicsPointQueryParameters3D { CollisionMask = (1u << 0) | (1u << 5), CollideWithBodies = true };
             var v = new Volume();
             var origin = ship.GlobalPosition;
             for (float x = -12f; x <= 12f; x += 1.5f)
@@ -101,7 +103,7 @@ namespace UnturnedGodot.Testing
         Score Measure(Vehicle ship, Vector3[] tris)
         {
             var space = ship.GetWorld3D().DirectSpaceState;
-            var q = new PhysicsRayQueryParameters3D { CollisionMask = (1u << 5), CollideWithBodies = true };
+            var q = new PhysicsRayQueryParameters3D { CollisionMask = (1u << 0) | (1u << 5), CollideWithBodies = true };
             float sum = 0f, worst = 0f; int n = 0, missing = 0, phantom = 0;
             Vector3 worstAt = Vector3.Zero; float worstMesh = 0f, worstCol = 0f;
             var origin = ship.GlobalPosition;
@@ -175,7 +177,7 @@ namespace UnturnedGodot.Testing
                 // SPOT CHECKS, because a mean can hide a specific thing being wrong. Each is a place the old box
                 // was measurably absent.
                 var space = hull.GetWorld3D().DirectSpaceState;
-                var q = new PhysicsRayQueryParameters3D { CollisionMask = (1u << 5), CollideWithBodies = true };
+                var q = new PhysicsRayQueryParameters3D { CollisionMask = (1u << 0) | (1u << 5), CollideWithBodies = true };
                 float Probe(Vector3 at)
                 {
                     q.From = hull.GlobalPosition + at + new Vector3(0f, 30f, 0f);

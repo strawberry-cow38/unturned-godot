@@ -1186,6 +1186,16 @@ namespace UnturnedGodot
                                       // voxels at a time instead of all of them at once. It is DITHER, and without
                                       // it the quantised buoyancy is a staircase the hull chatters up and down.
                                       // So the ripple stays and the residual motion is damped instead.
+            public (Vector3 min, Vector3 max)? HullTrimesh;   // region given the model's ACTUAL geometry, on a STATIC
+                                      // child body that rides along. Godot forbids a concave trimesh on a body that
+                                      // moves -- it is static-only, and cow tools watched one drop a crane through
+                                      // the floor the moment it moved. But a deckhouse does not need to be part of
+                                      // the hull's rigid body at all: it is scenery you walk on and into, it never
+                                      // has to push the ship. As a static child it may carry the exact mesh,
+                                      // interior walls and all, which no convex decomposition can reproduce.
+                                      // strawberry: "its pretty complex collision, with interior walls. i dont
+                                      // think casting rays is the solution here. why cant we just use the model's
+                                      // colliders?"
             public (Vector3 min, Vector3 max)? HullDecompose;   // region handed to Godot's own convex DECOMPOSITION
                                       // (VHACD) instead of to hand-cut bands. Bands are fine for a shape that is
                                       // convex slice by slice -- a hull is. A deckhouse is not: it is stepped,
@@ -2237,6 +2247,14 @@ namespace UnturnedGodot
             // strawberry, on the collider that scored 0.23 m by the old ray test: "the entire superstructure is
             // messed up", and, asked whether it was invisible walls or walk-through, "both".
             HullDecompose = (new Vector3(-10f, 12f, 8f), new Vector3(10f, 23f, 27f)),
+            // NOT HullTrimesh, though the machinery for it is kept below and it is the obvious next thing to try.
+            // Handing the deckhouse the model's real mesh on a static child DOES work -- Godot allows a concave
+            // trimesh on a static body -- but it measured WORSE on every probe I have (deck surface 11.47 against
+            // the model's 11.00, bridge roof 21.44 against 22.00), and the volumetric test cannot adjudicate it at
+            // all: a trimesh is a SURFACE with no interior, so "is this point inside the collider" is not a
+            // question it can answer, and the walk-through count leapt 148 -> 745 purely as an artefact of asking
+            // it. Shipping a collider I cannot measure, in response to a report that my measurements were wrong,
+            // is the one move clearly not available here. Wants a surface-distance instrument first.
             // The BULWARK, as four boxes. It is a RING, so no single convex hull can hold it -- one spanning
             // y 11..12 fills the deck in flush with the top of the rail, which both raises the walking surface a
             // metre above the visible deck and removes the only thing stopping a parked vehicle rolling over the
@@ -3833,6 +3851,21 @@ namespace UnturnedGodot
                 && System.Environment.GetEnvironmentVariable("UG_SHIPBOX") != "1")   // live A/B knob, same seam as ForceBoxHull
             {
                 int made = 0;
+                if (s.HullTrimesh.HasValue && bodyMesh != null)
+                {
+                    var (tlo, thi) = s.HullTrimesh.Value;
+                    var region = MeshRegion(bodyMesh, tlo, thi);
+                    if (region != null)
+                    {
+                        // Its own body, not a shape on the vehicle: the vehicle is a VehicleBody3D and a trimesh
+                        // on it is exactly the unsupported case. A StaticBody3D child inherits the parent's
+                        // transform, so it rides along for free.
+                        var tri = new StaticBody3D { Name = "HullMesh", CollisionLayer = 1u << 0, CollisionMask = 0 };
+                        tri.AddChild(new CollisionShape3D { Shape = region.CreateTrimeshShape() });
+                        v.AddChild(tri);
+                        made++;
+                    }
+                }
                 if (s.HullDecompose.HasValue && bodyMesh != null)
                 {
                     var (dlo, dhi) = s.HullDecompose.Value;
