@@ -46,7 +46,8 @@ namespace UnturnedGodot
         const float WheelRadius = 0.6f;   // extracted wheel radius; wheels roll without slip
         static readonly Vector3[] WheelOff = { new Vector3(1.47f, -0.32f, 0.94f), new Vector3(-1.47f, -0.32f, 0.94f), new Vector3(1.47f, -0.32f, -0.94f), new Vector3(-1.47f, -0.32f, -0.94f) };
         float _spinAngle;   // shared wheel roll angle (rad), advanced by distance travelled
-        const float DecelThreshold = 7f;   // brake sparks only above this deceleration (m/s^2) (master)
+        const float BrakeSparkDelay = 1f;   // sustained braking this long (s) -> sparks (master, time-based not decel-based)
+        float _brakeTime;
         const float MaxSpeed = 48f, BaseAccel = 2f, BaseDecel = 1.2f, BaseBrake = 12f, RefWeight = 20f;
         const float CoupleRange = 1.3f, CoupleMaxSpeed = 11f, SeparateMargin = 1.5f, RollFriction = 3f;   // couple only when ends CLOSE + <=CoupleMaxSpeed; a FASTER hit bonks the car along the rail; passive cars coast + decay (master)
         const float SeparateSpeed = 5f, StuckGap = 0.4f;   // fixer: un-stick overlapping consists at this rate, to this gap (master)
@@ -221,10 +222,12 @@ namespace UnturnedGodot
             if (!HasEngine || _cars.Count == 0) return;
             float wf = RefWeight / Mathf.Max(1f, TotalWeight);   // heavier consist -> proportionally weaker accel + brake (master)
             float target = Mathf.Clamp(throttle, -0.6f, 1f) * MaxSpeed;
-            float rate; bool hardBrake = false;
+            float rate; bool braking = false;
             if (Mathf.Abs(throttle) < 0.05f) rate = BaseDecel * wf;
-            else if (_speed != 0f && Mathf.Sign(throttle) != Mathf.Sign(_speed)) { rate = BaseBrake * wf; hardBrake = Mathf.Abs(_speed) > 3f && rate >= DecelThreshold; }   // hard brake AND decel past the threshold -> sparks (master)
+            else if (_speed != 0f && Mathf.Sign(throttle) != Mathf.Sign(_speed)) { rate = BaseBrake * wf; braking = true; }
             else rate = BaseAccel * wf;
+            _brakeTime = (braking && Mathf.Abs(_speed) > 3f) ? _brakeTime + dt : 0f;   // sustained hold builds up; any release/accel resets it
+            bool hardBrake = _brakeTime > BrakeSparkDelay;   // sparks kick in after ~1s of held braking (master)
             _speed = Mathf.MoveToward(_speed, target, rate * dt);
             _s += _speed * dt;
             ClampS();
