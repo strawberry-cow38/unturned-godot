@@ -42,6 +42,62 @@ namespace UnturnedGodot.Testing
 
         struct Score { public float mean, max; public int sampled, missing, phantom; public Vector3 worstAt; public float worstMesh, worstCollider; }
 
+        /// <summary>Is this point inside the mesh? Ray parity: fire along +X and count triangle crossings, odd
+        /// = inside. Needed because the ray-grid score above is a HEIGHTMAP comparison -- it only ever looks at
+        /// the topmost surface, so it is structurally blind to vertical faces, undersides, and any void beneath
+        /// an overhang. strawberry, on a collider that scored 0.23 m mean error: "ur 1:1 model of the ship was
+        /// not 1:1 at all." He was right and the number was answering a different question.</summary>
+        static bool InsideMesh(Vector3[] tris, Vector3 p)
+        {
+            int crossings = 0;
+            for (int i = 0; i + 2 < tris.Length; i += 3)
+            {
+                Vector3 a = tris[i], b = tris[i + 1], c = tris[i + 2];
+                // Does the +X ray from p pass through this triangle? Solve in the YZ plane, then check x.
+                float d = (b.Z - c.Z) * (a.Y - c.Y) + (c.Y - b.Y) * (a.Z - c.Z);
+                if (Mathf.Abs(d) < 1e-9f) continue;
+                float u = ((b.Z - c.Z) * (p.Y - c.Y) + (c.Y - b.Y) * (p.Z - c.Z)) / d;
+                float v = ((c.Z - a.Z) * (p.Y - c.Y) + (a.Y - c.Y) * (p.Z - c.Z)) / d;
+                float w = 1f - u - v;
+                if (u < 0f || v < 0f || w < 0f) continue;
+                if (u * a.X + v * b.X + w * c.X > p.X) crossings++;
+            }
+            return (crossings & 1) == 1;
+        }
+
+        struct Volume { public int sampled, falseSolid, falseAir, agree; }
+
+        // WHERE the invisible walls are, not just how many. A count says the decomposition is worse than the box
+        // on this axis (287 -> 633); it cannot say which piece to fix.
+        readonly System.Collections.Generic.SortedDictionary<int, int> _falseSolidByY = new();
+        void FalseSolidAt(Vector3 local) =>
+            _falseSolidByY[Mathf.RoundToInt(local.Y)] = _falseSolidByY.TryGetValue(Mathf.RoundToInt(local.Y), out var n) ? n + 1 : 1;
+
+        /// <summary>Volumetric fidelity: for a grid of points through the whole hull, does being inside the
+        /// COLLIDER agree with being inside the MODEL? This is the question "1:1" actually asks, and the one
+        /// the ray grid cannot answer.</summary>
+        Volume MeasureVolume(Vehicle ship, Vector3[] tris)
+        {
+            var space = ship.GetWorld3D().DirectSpaceState;
+            var q = new PhysicsPointQueryParameters3D { CollisionMask = 1u << 5, CollideWithBodies = true };
+            var v = new Volume();
+            var origin = ship.GlobalPosition;
+            for (float x = -12f; x <= 12f; x += 1.5f)
+                for (float y = 0.5f; y <= 22f; y += 1.0f)
+                    for (float z = -33f; z <= 33f; z += 2.0f)
+                    {
+                        var local = new Vector3(x, y, z);
+                        bool inModel = InsideMesh(tris, local);
+                        q.Position = origin + local;
+                        bool inCollider = space.IntersectPoint(q, 1).Count > 0;
+                        v.sampled++;
+                        if (inModel == inCollider) v.agree++;
+                        else if (inCollider) { v.falseSolid++; FalseSolidAt(local); }   // invisible wall
+                        else v.falseAir++;                                              // walk through it
+                    }
+            return v;
+        }
+
         Score Measure(Vehicle ship, Vector3[] tris)
         {
             var space = ship.GetWorld3D().DirectSpaceState;
@@ -148,6 +204,23 @@ namespace UnturnedGodot.Testing
                 GD.Print($"[HULL] bulwark: inbound ray at deck+0.5 stopped at x={railX:0.00} (rail outer face 12.00)");
                 T.Check($"there IS a bulwark around the deck at rail height (stopped at x={railX:0.00}, expected ~12)",
                         !float.IsNaN(railX) && railX > 11f);
+
+                // ---- THE MEASUREMENT THE RAY GRID CANNOT MAKE. Everything above compares heights; this asks
+                // whether the collider occupies the same SPACE as the model. Run on both hulls, because the
+                // box's number is the only thing that makes the decomposition's number readable.
+                var vb = MeasureVolume(box, tris);
+                _falseSolidByY.Clear();
+                var vh = MeasureVolume(hull, tris);
+                GD.Print($"[HULL] VOLUME box:        {100f * vb.agree / vb.sampled:0.0}% agree over {vb.sampled} points " +
+                         $"({vb.falseSolid} solid-where-model-is-air, {vb.falseAir} air-where-model-is-solid)");
+                GD.Print($"[HULL] VOLUME decomposed: {100f * vh.agree / vh.sampled:0.0}% agree over {vh.sampled} points " +
+                         $"({vh.falseSolid} solid-where-model-is-air, {vh.falseAir} air-where-model-is-solid)");
+                var byY = new System.Text.StringBuilder();
+                foreach (var kv in _falseSolidByY) byY.Append($"y{kv.Key}:{kv.Value} ");
+                GD.Print($"[HULL] invisible wall by height (decomposed run only): {byY}");
+                T.Check($"the decomposition occupies the model's actual SPACE, not just its silhouette from above " +
+                        $"({100f * vh.agree / vh.sampled:0.0}% of sampled points agree, against the box's {100f * vb.agree / vb.sampled:0.0}%)",
+                        vh.agree > vb.agree);
             }
             finally { Terrain.HasWater = hadWater; Vehicle.ForceBoxHull = false; }
         }

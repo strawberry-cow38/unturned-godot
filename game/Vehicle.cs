@@ -1186,6 +1186,14 @@ namespace UnturnedGodot
                                       // voxels at a time instead of all of them at once. It is DITHER, and without
                                       // it the quantised buoyancy is a staircase the hull chatters up and down.
                                       // So the ripple stays and the residual motion is damped instead.
+            public (Vector3 min, Vector3 max)? HullDecompose;   // region handed to Godot's own convex DECOMPOSITION
+                                      // (VHACD) instead of to hand-cut bands. Bands are fine for a shape that is
+                                      // convex slice by slice -- a hull is. A deckhouse is not: it is stepped,
+                                      // overhanging and hollow, and four bands over it measured 630 sample points
+                                      // SOLID WHERE THE MODEL IS AIR, which is 99.5% of the whole ship's invisible
+                                      // wall (vehicle.ship_hull_1to1's volume pass). strawberry: "the entire
+                                      // superstructure is messed up." Voxelising it instead would need 164-521
+                                      // boxes; VHACD gets it in a handful of hulls.
             public (Vector3 min, Vector3 max)[] HullBands;   // 1:1 COLLISION. Each entry is an AABB filter in MESH
                                       // space; every body-mesh vertex inside it becomes one CONVEX hull shape. Set this
                                       // and the single BoxShape3D hull below is REPLACED. Godot cannot give a MOVING
@@ -2222,11 +2230,13 @@ namespace UnturnedGodot
             HullBands = new (Vector3, Vector3)[]
             {
                 (new Vector3(-13f, -0.1f, -35f), new Vector3(13f, 11.001f, 35f)),      // lower hull + weather deck
-                (new Vector3(-9.6f, 10.9f, 10f), new Vector3(9.6f, 13.9f, 26.5f)),     // superstructure, deck level
-                (new Vector3(-9.6f, 13.5f, 10f), new Vector3(9.6f, 16.9f, 26.5f)),     // ...mid
-                (new Vector3(-9.6f, 16.6f, 10f), new Vector3(9.6f, 19.7f, 26.5f)),     // ...funnel deck (footprint pulls IN to z 19.6 here)
-                (new Vector3(-9.6f, 19.4f, 10f), new Vector3(9.6f, 22.1f, 26.5f)),     // ...bridge, which OVERHANGS it back out to z 25.75
             },
+            // THE DECKHOUSE GETS A REAL DECOMPOSITION, not bands. Bands work on the hull because a hull is convex
+            // slice by slice; the deckhouse is stepped, overhanging and hollow, and four bands over it accounted
+            // for 630 of the ship's 633 invisible-wall sample points -- the lower hull and rails contributed 3.
+            // strawberry, on the collider that scored 0.23 m by the old ray test: "the entire superstructure is
+            // messed up", and, asked whether it was invisible walls or walk-through, "both".
+            HullDecompose = (new Vector3(-10f, 12f, 8f), new Vector3(10f, 23f, 27f)),
             // The BULWARK, as four boxes. It is a RING, so no single convex hull can hold it -- one spanning
             // y 11..12 fills the deck in flush with the top of the rail, which both raises the walking surface a
             // metre above the visible deck and removes the only thing stopping a parked vehicle rolling over the
@@ -2246,6 +2256,12 @@ namespace UnturnedGodot
                 (new Vector3(0.5f, 1f, 5.6f), new Vector3(10.25f, 11.5f, 30.75f), -26.6f),  // starboard stern taper
                 (new Vector3(6f, 1f, 0.5f), new Vector3(0f, 11.5f, -33.5f), 0f),            // stem, 6 m across at the bow
                 (new Vector3(18f, 1f, 0.5f), new Vector3(0f, 11.5f, 33.5f), 0f),            // transom, 18 m across
+                // BRIDGE ROOF as an explicit slab. VHACD reproduces the deckhouse WALLS well but shaves its top:
+                // it put the roof at 20.64 where the model has 22.00, i.e. you would stand a metre and a half
+                // inside the visible bridge. A thin plate is the one thing a concavity-driven decomposition
+                // consistently under-serves, and it is cheap to just state. Measured: the top runs y 21.75..22.5
+                // over z 10.5..25.5 with |x| <= 9.0.
+                (new Vector3(18f, 0.7f, 15f), new Vector3(0f, 21.9f, 18f), 0f),             // bridge roof
             },
             // The weather deck: x +-11.5, z +-33.25 at y=11 (the top of the hull collision box), given 6 m of
             // headroom. Measured off the ship mesh, not guessed. The aft superstructure stands inside this box
@@ -3817,6 +3833,13 @@ namespace UnturnedGodot
                 && System.Environment.GetEnvironmentVariable("UG_SHIPBOX") != "1")   // live A/B knob, same seam as ForceBoxHull
             {
                 int made = 0;
+                if (s.HullDecompose.HasValue && bodyMesh != null)
+                {
+                    var (dlo, dhi) = s.HullDecompose.Value;
+                    v._decomposeMesh = MeshRegion(bodyMesh, dlo, dhi);
+                    v._decomposeKey = $"{s.Body}|{dlo}|{dhi}";
+                    if (v._decomposeMesh != null) made++;
+                }
                 if (s.HullBands != null && bodyMesh != null)
                     foreach (var band in s.HullBands)
                     {
@@ -6147,6 +6170,69 @@ namespace UnturnedGodot
         /// <summary>Test seam: build the OLD single-box hull even for a spec that has a convex decomposition, so a
         /// fidelity test can measure both in one run and its pass means something.</summary>
         public static bool ForceBoxHull;
+
+        Mesh _decomposeMesh;   // set at build; turned into collision shapes on _Ready (VHACD needs a scene tree)
+        static readonly System.Collections.Generic.Dictionary<string, Godot.Collections.Array<Shape3D>> _decomposeCache = new();
+        string _decomposeKey;
+        public int DebugDecomposedHulls;   // test seam: how many convex hulls the decomposition produced
+
+        /// <summary>Run Godot's convex decomposition on the region a spec asked for, and hang the resulting hulls
+        /// on this body. Deferred to _Ready because CreateMultipleConvexCollisions works by adding a StaticBody3D
+        /// SIBLING, so it needs to be in a tree -- and cached per mesh region, because VHACD is far too slow to
+        /// repeat for every ship that spawns.</summary>
+        public override void _Ready()
+        {
+            base._Ready();
+            if (_decomposeMesh == null || ForceBoxHull) return;
+            if (!_decomposeCache.TryGetValue(_decomposeKey, out var shapes))
+            {
+                var mi = new MeshInstance3D { Mesh = _decomposeMesh };
+                AddChild(mi);
+                // Tight, because the whole point is not to fill in the deckhouse's steps and voids. At the
+                // defaults (24 hulls / 0.15 concavity) VHACD merged it down to 8 hulls and only got the
+                // invisible-wall count from 633 to 527 -- barely better than the hand-cut bands it replaced.
+                var settings = new MeshConvexDecompositionSettings
+                {
+                    MaxConvexHulls = 48,
+                    MaxConcavity = 0.02f,
+                    MaxNumVerticesPerConvexHull = 24,
+                    Resolution = 50000,
+                };
+                mi.CreateMultipleConvexCollisions(settings);
+                // The generated StaticBody3D is a child of the MESH INSTANCE, not a sibling of it -- harvesting
+                // from the vehicle's own children found nothing and reported "hulls harvested: 0" while the
+                // vehicle's child count sat unchanged at 22, which is what pointed at this.
+                shapes = new Godot.Collections.Array<Shape3D>();
+                foreach (var gen in mi.GetChildren())
+                    if (gen is StaticBody3D sb)
+                        foreach (var cs in sb.GetChildren())
+                            if (cs is CollisionShape3D csh && csh.Shape is ConvexPolygonShape3D) shapes.Add(csh.Shape);
+                GD.Print($"[DECOMP] region tris={_decomposeMesh.GetFaces().Length / 3} -> {shapes.Count} convex hulls");
+                _decomposeCache[_decomposeKey] = shapes;
+                mi.QueueFree();   // takes the generated body with it; the shapes themselves are refcounted and survive
+            }
+            foreach (var sh in shapes) AddChild(new CollisionShape3D { Shape = sh });
+            DebugDecomposedHulls = shapes.Count;
+            GD.Print($"[DECOMP] hulls harvested: {shapes.Count}");
+            _decomposeMesh = null;
+        }
+
+        /// <summary>The triangles of `mesh` inside an AABB, as their own mesh -- what gets decomposed.</summary>
+        static Mesh MeshRegion(Mesh mesh, Vector3 lo, Vector3 hi)
+        {
+            var src = mesh.GetFaces();
+            var st = new SurfaceTool();
+            st.Begin(Mesh.PrimitiveType.Triangles);
+            int kept = 0;
+            for (int i = 0; i + 2 < src.Length; i += 3)
+            {
+                var c = (src[i] + src[i + 1] + src[i + 2]) / 3f;
+                if (c.X < lo.X || c.X > hi.X || c.Y < lo.Y || c.Y > hi.Y || c.Z < lo.Z || c.Z > hi.Z) continue;
+                st.AddVertex(src[i]); st.AddVertex(src[i + 1]); st.AddVertex(src[i + 2]);
+                kept += 3;
+            }
+            return kept >= 3 ? st.Commit() : null;
+        }
 
         /// <summary>True when this vessel has a deck things can ride on (see Spec.DeckVolume).</summary>
         public bool CarriesRiders => _deckVolume != Vector3.Zero;
