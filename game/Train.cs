@@ -352,11 +352,11 @@ namespace UnturnedGodot
             TeardownAudio();
             var loco = eng.Body;
             var e = PlayerController.LoadWavOneShot("res://content/train_engine.wav", loop: true);
-            if (e != null) { _engineSnd = new AudioStreamPlayer3D { Stream = e, VolumeDb = -6f, UnitSize = 12f, MaxDistance = 80f, PitchScale = 0.8f }; loco.AddChild(_engineSnd); }   // base: plays only while OCCUPIED (SetOccupied)
+            if (e != null) { _engineSnd = new AudioStreamPlayer3D { Stream = e, VolumeDb = 3f, UnitSize = 16f, MaxDistance = 100f, PitchScale = 0.8f }; loco.AddChild(_engineSnd); }   // base: plays only while OCCUPIED (SetOccupied)
             var a = PlayerController.LoadWavOneShot("res://content/train_engine_add.wav", loop: true);
             if (a != null) { _addSnd = new AudioStreamPlayer3D { Stream = a, VolumeDb = -80f, UnitSize = 12f, MaxDistance = 80f, PitchScale = 0.85f }; loco.AddChild(_addSnd); }   // rev layer: volume rides MOTION
             var h = PlayerController.LoadWavOneShot("res://content/train_horn.wav", loop: false);
-            if (h != null) { _hornSnd = new AudioStreamPlayer3D { Stream = h, VolumeDb = 6f, UnitSize = 18f, MaxDistance = 140f }; loco.AddChild(_hornSnd); }   // ONE-SHOT press-to-honk, loud
+            if (h != null) { _hornSnd = new AudioStreamPlayer3D { Stream = h, VolumeDb = 13f, UnitSize = 22f, MaxDistance = 170f }; loco.AddChild(_hornSnd); }   // ONE-SHOT press-to-honk, loud
             if (_occupied) SetOccupied(true);   // rebuilt while aboard (e.g. after coupling) -> resume the loops
         }
         void TeardownAudio()
@@ -372,7 +372,7 @@ namespace UnturnedGodot
             {
                 _addSnd.PitchScale = 0.85f + 0.95f * sp;
                 float mv = Mathf.Abs(_speed);
-                float target = mv > 0.2f ? Mathf.Lerp(-8f, -2f, Mathf.Clamp(mv / 15f, 0f, 1f)) : -80f;   // audible in ANY motion, louder the faster (master)
+                float target = mv > 0.2f ? Mathf.Lerp(-2f, 5f, Mathf.Clamp(mv / 15f, 0f, 1f)) : -80f;   // audible in ANY motion, louder the faster (master)
                 _addSnd.VolumeDb = Mathf.MoveToward(_addSnd.VolumeDb, target, 120f * dt);
             }
         }
