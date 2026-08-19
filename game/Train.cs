@@ -178,12 +178,12 @@ namespace UnturnedGodot
             var fade = new Curve(); fade.AddPoint(new Vector2(0f, 1f)); fade.AddPoint(new Vector2(1f, 0f));
             return new CpuParticles3D
             {
-                Emitting = false, OneShot = false, Amount = 26, Lifetime = 0.34f, Randomness = 0.5f,
-                Direction = new Vector3(0f, -0.4f, -1f).Normalized(), Spread = 22f,
+                Emitting = false, Visible = false, OneShot = false, Amount = 22, Lifetime = 0.4f, Randomness = 0.5f,
+                Direction = new Vector3(0f, 1f, -1f).Normalized(), Spread = 18f,
                 InitialVelocityMin = 4f, InitialVelocityMax = 9f,
-                Gravity = new Vector3(0f, -14f, 0f),
+                Gravity = new Vector3(0f, -16f, 0f),
                 ScaleAmountMin = 0.03f, ScaleAmountMax = 0.07f, ScaleAmountCurve = fade,
-                EmissionShape = CpuParticles3D.EmissionShapeEnum.Box, EmissionBoxExtents = new Vector3(1.5f, 0.02f, 1.0f),
+                EmissionShape = CpuParticles3D.EmissionShapeEnum.Box, EmissionBoxExtents = new Vector3(1.47f, 0.02f, 0.08f),
                 Position = new Vector3(0f, -0.92f, 0f),   // the wheel-contact line, bogie-local
                 Mesh = new QuadMesh { Size = Vector2.One, Material = mat },
                 VisibilityAabb = new Aabb(new Vector3(-6f, -6f, -6f), new Vector3(12f, 12f, 12f)),
@@ -192,10 +192,12 @@ namespace UnturnedGodot
 
         void SetBrakeSparks(bool on, float speed)
         {
-            var dir = new Vector3(0f, -0.4f, speed >= 0f ? -1f : 1f).Normalized();   // sparks trail in the travel direction (bogie -Z is +s) + down
+            float fwdZ = speed >= 0f ? -1f : 1f;                 // bogie -Z = +s (forward); the emitting axle + dir flip with reverse
+            var dir = new Vector3(0f, 1f, fwdZ).Normalized();    // launch UP at 45deg in the braking/travel direction (master)
+            var pos = new Vector3(0f, -0.92f, 0.94f * fwdZ);     // the LEADING axle's 2 wheels (front pair in the travel direction)
             foreach (var c in _cars)
                 foreach (var sp in new[] { c.SparkF, c.SparkB })
-                    if (IsInstanceValid(sp)) { if (on) sp.Direction = dir; sp.Emitting = on; }
+                    if (IsInstanceValid(sp)) { if (on) { sp.Direction = dir; sp.Position = pos; sp.Visible = true; } sp.Emitting = on; }
         }
 
         public Node3D Loco => EngineCar?.Body;
