@@ -42,7 +42,6 @@ namespace UnturnedGodot
         int _road;
         float _s;       // rail distance of the LEAD car's centre (_cars[0])
         float _speed;
-        float _prevS, _currS; bool _visReady;   // render-frame CURVE interp: sample the real rail curve each frame, not Godot's linear-between-50Hz-ticks (kills corner jitter at speed, master)
         readonly HashSet<Train> _noRecouple = new();   // consists just split from this one: can't re-couple until they've SEPARATED (condition-based, master)
         const float RailY = 1.55f, BogieHalf = 3.5f, CoupleGap = 0.9f;
         const float WheelRadius = 0.6f;   // extracted wheel radius; wheels roll without slip
@@ -90,7 +89,6 @@ namespace UnturnedGodot
         void Build(string type)
         {
             AddToGroup("trains");
-            PhysicsInterpolationMode = Node.PhysicsInterpolationModeEnum.Off;   // our _Process samples the rail curve each frame -> no linear corner-cutting between ticks
             AddCar(type);
             RecomputeOffsets();
             RebuildRopes();
@@ -158,22 +156,15 @@ namespace UnturnedGodot
             Vector3 cb = pb + Vector3.Up * (RailY - 0.4f);
             c.Bb.GlobalTransform = new Transform3D(Basis.Identity, cb).LookingAt(cb + tb, Vector3.Up);
         }
-        void Place() => PlaceAt(_s);
-        void PlaceAt(float s) { foreach (var c in _cars) PlaceCar(c, s - c.Off); PlaceRopesAt(s); SpinTo(s); }
-        void SnapVis() { _prevS = _currS = _s; _visReady = true; }
-        void AdvanceS(float ds) { _prevS = _visReady ? _currS : _s; _s += ds; ClampS(); _currS = _s; _visReady = true; }
-        public override void _Process(double delta)
-        {
-            if (_visReady && _cars.Count > 0)
-                PlaceAt(Mathf.Lerp(_prevS, _currS, Mathf.Clamp((float)Engine.GetPhysicsInterpolationFraction(), 0f, 1f)));
-        }
+        void Place() { foreach (var c in _cars) PlaceCar(c, _s - c.Off); PlaceRopes(); }
 
         // Roll every wheel by the distance travelled (roll without slip). Wheels are children of the bogies, so
         // PlaceCar re-seats the bogie each tick but leaves the wheel's LOCAL spin intact; each turns about its own
         // axle (local X). (master: split the wheels + rotate each separately)
-        void SpinTo(float s)
+        void SpinWheels(float dist)
         {
-            _spinAngle = -s / WheelRadius;   // absolute: wheel roll proportional to distance along the rail (roll without slip; negated dir, master)
+            if (Mathf.Abs(dist) < 1e-5f) return;
+            _spinAngle -= dist / WheelRadius;   // negated: rolls the correct way (master)
             foreach (var c in _cars)
                 foreach (var w in c.Wheels)
                     if (IsInstanceValid(w)) w.Rotation = new Vector3(_spinAngle, 0f, 0f);
@@ -224,7 +215,7 @@ namespace UnturnedGodot
         public Node3D Loco => EngineCar?.Body;
         public Transform3D DriverEyeWorld
         {
-            get { var l = (_boardedCar != null && IsInstanceValid(_boardedCar.Body)) ? _boardedCar.Body : Loco; return l != null ? l.GlobalTransform * new Transform3D(Basis.Identity, new Vector3(0f, 2.3f, -2.6f)) : GlobalTransform; }
+            get { var l = (_boardedCar != null && IsInstanceValid(_boardedCar.Body)) ? _boardedCar.Body : Loco; return l != null ? l.GetGlobalTransformInterpolated() * new Transform3D(Basis.Identity, new Vector3(0f, 2.3f, -2.6f)) : GlobalTransform; }
         }
 
         public void Drive(float throttle, float dt)
@@ -239,8 +230,10 @@ namespace UnturnedGodot
             _brakeTime = (braking && Mathf.Abs(_speed) > 3f) ? _brakeTime + dt : 0f;   // sustained hold builds up; any release/accel resets it
             bool hardBrake = _brakeTime > BrakeSparkDelay;   // sparks kick in after ~1s of held braking (master)
             _speed = Mathf.MoveToward(_speed, target, rate * dt);
-            AdvanceS(_speed * dt);
+            _s += _speed * dt;
+            ClampS();
             Place();
+            SpinWheels(_speed * dt);
             SetBrakeSparks(hardBrake, _speed);
             UpdateAudio(throttle, dt);
             ResolveContact();
@@ -308,8 +301,10 @@ namespace UnturnedGodot
             SeparateOverlaps(dt);   // fixer: shove stuck-inside-each-other consists apart, even when parked (master)
             if (_occupied || _cars.Count == 0 || Mathf.Abs(_speed) < 0.02f) return;   // occupied -> Drive owns it; empty engine consist coasts (keeps momentum on exit, master)
             _speed = Mathf.MoveToward(_speed, 0f, RollFriction * dt);
-            AdvanceS(_speed * dt);
+            _s += _speed * dt;
+            ClampS();
             Place();
+            SpinWheels(_speed * dt);
             ResolveContact();
         }
 
@@ -333,7 +328,7 @@ namespace UnturnedGodot
                 float step = SeparateSpeed * dt;
                 if (pushFwd <= pushBack) _s -= Mathf.Min(pushFwd, step);
                 else _s += Mathf.Min(pushBack, step);
-                Place(); SnapVis();
+                Place();
                 return;   // one unstick per tick
             }
         }
@@ -350,7 +345,6 @@ namespace UnturnedGodot
             RecomputeOffsets();   // lock to the fixed CoupleGap spacing -- they couple AT the attach distance so this is exact, not a pull (master)
             RebuildRopes();
             Place();
-            SnapVis();
             SetOccupied(_occupied);   // newly-joined engine cars keep their own audio through the reparent -> start their loops if occupied
             ResetPhysicsInterpolation();
             if (IsInstanceValid(o)) o.QueueFree();
@@ -460,12 +454,12 @@ namespace UnturnedGodot
             }
         }
 
-        void PlaceRopesAt(float s)
+        void PlaceRopes()
         {
             for (int i = 0; i < _ropes.Count && i + 1 < _cars.Count; i++)
             {
-                float sRear = (s - _cars[i].Off) - _cars[i].S.HalfLen;
-                float sFront = (s - _cars[i + 1].Off) + _cars[i + 1].S.HalfLen;
+                float sRear = (_s - _cars[i].Off) - _cars[i].S.HalfLen;
+                float sFront = (_s - _cars[i + 1].Off) + _cars[i + 1].S.HalfLen;
                 _roads.EvaluateAlong(_road, sRear, out var pa, out _);
                 _roads.EvaluateAlong(_road, sFront, out var pb, out _);
                 PositionRope(_ropes[i], pa + Vector3.Up * (RailY + 0.05f), pb + Vector3.Up * (RailY + 0.05f));
@@ -508,9 +502,9 @@ namespace UnturnedGodot
             nt.AddToGroup("trains");
             foreach (var c in rear) { c.Body.Reparent(nt, true); c.Bf.Reparent(nt, true); c.Bb.Reparent(nt, true); c.Off -= leadOff; nt._cars.Add(c); }
             nt._s = _s - leadOff;
-            nt.RebuildRopes(); nt.Place(); nt.SnapVis(); nt.ResetPhysicsInterpolation();
+            nt.RebuildRopes(); nt.Place(); nt.ResetPhysicsInterpolation();
             _noRecouple.Add(nt); nt._noRecouple.Add(this);   // neither half re-couples to the other until they've driven apart (master: condition, not a timer)
-            RebuildRopes(); Place(); SnapVis();   // this keeps its offsets (the front cars never moved)
+            RebuildRopes(); Place();   // this keeps its offsets (the front cars never moved)
         }
     }
 }
