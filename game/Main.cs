@@ -55,6 +55,10 @@ namespace UnturnedGodot
         bool _vmAimed; int _vmAimStart; int _vmSettle;
         bool _vmAttach; AttachmentMenu _am; bool _vmSightSet;   // --attach : hold the T attachment menu open for the render; UG_SIGHT=<mesh.txt> mounts a specific sight/scope for a demo
         bool _vehTest; Vehicle _veh; Camera3D _vehCam; int _vehVariant; bool _night, _demo, _crash, _roadkill, _chain, _hitch, _backunder, _pivots; Vehicle _buTrailer; int _buCoupledFrame = 999999;   // --vehicle=DIR [--variant=N] [--night] [--demo] [--crash] [--roadkill] [--chain] [--hitch] [--backunder] [--pivots]
+        bool _planeTest;   // UG_PLANETEST (with --boattest --gun=otter): scripted fixed-wing flight (throttle/pitch/roll injected) to verify the flight model in a render
+        System.Collections.Generic.List<Vector3> _trP; System.Collections.Generic.List<float> _trD;
+        System.Collections.Generic.List<(MeshInstance3D body, MeshInstance3D bf, MeshInstance3D bb, float off)> _trUnits;
+        float _trS, _trRailY = 1.4f; bool _trAnim;
         readonly System.Collections.Generic.List<(Node3D mark, Vehicle veh, Vector3 local)> _pivotMarks = new();   // --pivots: arrow markers pinned to each coupling point
         bool _driveTest, _swarm, _drivethru, _nade; PlayerController _dtPlayer;      // --drivetest=DIR [--swarm|--drivethru|--nade] : enter/drive a jeep; swarm = mob it; drivethru = loud drive wakes zombies; nade = grenade the parked car
         bool _fireTest; PlayerController _ftPlayer; int _ftFrame;   // --firetest [--supp] : player fires near a distant zombie -> gunshot alert (suppressed = none)
@@ -86,7 +90,7 @@ namespace UnturnedGodot
                 DisplayServer.WindowSetVsyncMode(DisplayServer.VSyncMode.Disabled);
                 GD.Print($"[display] vsync -> {DisplayServer.WindowGetVsyncMode()}");
             }
-            string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null, drivetest = null, proptest = null, magnettest = null, animrig = null, rottest = null, itemtest = null, navShot = null, croptest = null, menuShot = null, clothtest = null, boattest = null, slingtest = null, ammoRadial = null;
+            string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null, drivetest = null, proptest = null, magnettest = null, animrig = null, rottest = null, itemtest = null, navShot = null, croptest = null, menuShot = null, clothtest = null, boattest = null, slingtest = null, trainshow = null, traintrack = null, ammoRadial = null;
             bool zperf = false;
             bool zbody = false;
             bool deployTest = false, barricadeTest = false, barricadePlay = false;
@@ -117,6 +121,8 @@ namespace UnturnedGodot
                 else if (arg == "--zombietest") zombieTest = true;   // OFFLINE verify: sync world -> bucket Animals.dat into pockets -> check planned spawns land ON the baked navmesh
                 else if (arg == "--zdirtest") zdirTest = true;       // OFFLINE verify: boot the REWRITE on PEI -> do rows tier, query paths and actually MOVE? (implies --newzombies)
                 else if (arg.StartsWith("--proptest=")) { proptest = arg["--proptest=".Length..]; _shotRequested = proptest; }
+                else if (arg == "--trainshow") trainshow = "1";   // assemble train_cargo_0 from its extracted pieces for a 3/4 shot
+                else if (arg == "--traintrack") traintrack = "1";   // ride the train along a curved test track
                 else if (arg.StartsWith("--slingtest=")) { slingtest = arg["--slingtest=".Length..]; _shotRequested = slingtest; }
                 else if (arg.StartsWith("--magnettest=")) { magnettest = arg["--magnettest=".Length..]; _shotRequested = magnettest; }
                 else if (arg == "--tailcheck") tailCheck = true;
@@ -413,6 +419,8 @@ namespace UnturnedGodot
                 BuildPropTest(proptest);
                 return;
             }
+            if (trainshow != null) { GetWindow().Size = new Vector2I(1600, 720); BuildTrainShow(); return; }
+            if (traintrack != null) { GetWindow().Size = new Vector2I(1600, 900); BuildTrainTrack(); return; }
 
             if (zbody) { BuildZBody(); return; }
             if (zperf) { BuildZPerf(); return; }
@@ -1111,20 +1119,43 @@ namespace UnturnedGodot
             AddChild(new WorldEnvironment { Environment = env });
             AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-52f, -42f, 0f), LightEnergy = night ? 0.04f : 1.1f, ShadowEnabled = true });
 
-            Terrain.HasWater = true; Terrain.SeaLevelY = 0f;   // flat test sea at Y=0 -- the boat physics reads these
+            bool planeGround = System.Environment.GetEnvironmentVariable("UG_PLANEGROUND") == "1";   // LAND-plane test: a solid runway at Y=0 instead of water (jet/wheeled planes)
+            Terrain.HasWater = !planeGround; Terrain.SeaLevelY = 0f;   // flat test sea at Y=0 -- the boat physics reads these
             // UG_WATERFAR=1: shove the plane ~2.6k units out to fake the REAL map's large world coords (where the
             // sin-hash noise degraded into a grid) -- so the test reproduces the real-map condition, not a near-origin one.
             Vector3 farOff = System.Environment.GetEnvironmentVariable("UG_WATERFAR") == "1" ? new Vector3(2600f, 0f, 2600f) : Vector3.Zero;
             var water = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(800f, 800f), SubdivideWidth = 160, SubdivideDepth = 160 }, Position = farOff,   // 160 = ~5 m quads = the REAL map's density, so the boattest is an honest test (not a flattering fine mesh)
                 MaterialOverride = new ShaderMaterial { Shader = GD.Load<Shader>("res://content/water.gdshader") } };   // wave/foam shader (master)
             AddChild(water);
+            if (planeGround) water.Visible = false;   // runway test: no sea
             // caustics projected onto the underwater surfaces, seeded from the same wave noise (master 2026-08-16)
             var caustShader = GD.Load<Shader>("res://content/caustics_ground.gdshader");
             ShaderMaterial Caust(Color c) { var m = new ShaderMaterial { Shader = caustShader }; m.SetShaderParameter("base_color", c); m.SetShaderParameter("sea_level", Terrain.SeaLevelY); return m; }
-            var seabed = new StaticBody3D { Position = new Vector3(0f, -14f, 0f) };   // deep floor so a swamped boat lands, not falls forever
-            seabed.AddChild(new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(800f, 800f) }, MaterialOverride = Caust(new Color(0.22f, 0.26f, 0.20f)) });
+            // seabed doubles as the RUNWAY for the land-plane test (raised to Y=0, grey tarmac); else the deep boat floor.
+            // UG_PLANESLOPE tilts it into a SLOPE -> reproduce the real terrain (where the plane slides/freaks), not flat.
+            var seabed = new StaticBody3D { Position = new Vector3(0f, planeGround ? 0f : -14f, 0f),
+                RotationDegrees = System.Environment.GetEnvironmentVariable("UG_PLANESLOPE") == "1" ? new Vector3(0f, 0f, float.TryParse(System.Environment.GetEnvironmentVariable("UG_SLOPEDEG"), out var _sd) ? _sd : 11f) : Vector3.Zero };
+            seabed.AddChild(new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(800f, 800f) },
+                MaterialOverride = planeGround ? new StandardMaterial3D { AlbedoColor = new Color(0.30f, 0.30f, 0.33f) } : (Material)Caust(new Color(0.22f, 0.26f, 0.20f)) });
             seabed.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
             AddChild(seabed);
+            if (System.Environment.GetEnvironmentVariable("UG_ROUGH") == "1")
+            {   // a slightly-rough HEIGHTMAP under the taxi area -> reproduce the map terrain that the flat plane cannot (wheel chatter)
+                int _N = 129; float _cell = 1.2f, _amp = 0.06f;
+                var _hd = new float[_N * _N];
+                for (int _j = 0; _j < _N; _j++) for (int _i = 0; _i < _N; _i++) _hd[_j * _N + _i] = _amp * (Mathf.Sin(_i * 2.3f + _j * 0.4f) + 0.6f * Mathf.Sin(_i * 4.7f - _j * 1.1f) + 0.5f * Mathf.Cos(_j * 3.1f + _i * 0.6f));
+                var _hm = new HeightMapShape3D { MapWidth = _N, MapDepth = _N }; _hm.MapData = _hd;
+                var _rough = new StaticBody3D { Position = new Vector3(0f, 0.3f, 60f) };
+                _rough.AddChild(new CollisionShape3D { Shape = _hm, Scale = new Vector3(_cell, 1f, _cell) });
+                AddChild(_rough);
+            }
+            if (System.Environment.GetEnvironmentVariable("UG_NOSEBUMP") == "1")
+            {   // a RISE under the nose-wheel spawn spot (world ~0,*,57.2) to reproduce single-point seating burying the nose
+                var bump = new StaticBody3D { Position = new Vector3(0f, 0.4f, 57.17f) };
+                bump.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = new Vector3(1.4f, 0.8f, 1.4f) } });
+                bump.AddChild(new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(1.4f, 0.8f, 1.4f) }, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.5f, 0.32f, 0.2f) } });
+                AddChild(bump);
+            }
 
             _veh = Vehicle.BuildByName(type, int.TryParse(System.Environment.GetEnvironmentVariable("UG_SHIPVARIANT"), out var _sv) ? _sv : 0);   // UG_SHIPVARIANT: pick the spawn paint variant -> show the random hull-bottom colours
             _veh.Position = new Vector3(0f, 0.5f, 0f);   // spawn just above the waterline -> gentle settle (a 2.5m drop plunged the voxel-buoyancy hull deep + made it bob)
@@ -1163,6 +1194,15 @@ namespace UnturnedGodot
                     shipCam = new Vector3(17f, 22f, 62f); lookAt = new Vector3(17f, 4f, 0f);   // frame BOTH: floating @X0, static ref @X34
                 }
                 _vehCam.LookAtFromPosition(shipCam, lookAt, Vector3.Up);
+            }
+            if (System.Environment.GetEnvironmentVariable("UG_PLANETEST") == "1")
+            {   // FLYABLE-PLANE showcase: script the fixed-wing controls (full throttle, rotate, then bank) + a
+                // world-up chase cam, so a --write-movie clip shows the water takeoff + the bank-to-turn flight model.
+                _vehTest = false; _planeTest = true;
+                GetWindow().Size = new Vector2I(1280, 720);
+                _veh.Position = new Vector3(0f, planeGround ? 1.0f : 0.6f, 60f);   // runway: a touch above so it drops onto its wheels; water: on the sea. Long -Z runway ahead
+                _veh.ResetPhysicsInterpolation();   // don't smear from the origin on frame 1 (the WorldItem lesson)
+                _rigCaptureFrames = new[] { 60, 260, 460, 660, 860, 1000 };   // stretch the harness's auto-quit out; render this at --fixed-fps 50 (== the 50Hz physics) so every movie frame is exactly ONE physics tick -> perfectly even motion, no 30/50 sampling judder
             }
             if (System.Environment.GetEnvironmentVariable("UG_WATERSHOW") == "1")
             {   // clean open-water scroll showcase for a --write-movie clip: ditch the boat + auto-drive, hold a
@@ -2327,6 +2367,86 @@ namespace UnturnedGodot
                               : new Vector3(r * 1.15f, r * 0.85f, r * 1.15f));
             cam.LookAt(c, _camMode == "top" ? Vector3.Back : Vector3.Up);
             GD.Print($"[PROPTEST] {name} aabb size={aabb.Size} center={c}");
+        }
+
+        // --trainshow : assemble train_cargo_0 from its extracted pieces (loco + 8 bogies + 3 cars +
+        // headlights/steer/seat) at their source positions for a 3/4 render-movie shot (master).
+        void BuildTrainShow()
+        {
+            var env = new Godot.Environment { BackgroundMode = Godot.Environment.BGMode.Color, BackgroundColor = new Color(0.52f, 0.62f, 0.74f), AmbientLightSource = Godot.Environment.AmbientSource.Color, AmbientLightColor = new Color(0.7f, 0.7f, 0.72f), AmbientLightEnergy = 0.9f };
+            AddChild(new WorldEnvironment { Environment = env });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-45f, -50f, 0f), LightEnergy = 1.2f, ShadowEnabled = true });
+            Mesh Lm(string n) => ContentProvider.ParseObj($"res://content/{n}.txt");
+            Material Tex(string t) { var m = new StandardMaterial3D { TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest, Metallic = 0f, Roughness = 0.75f, CullMode = BaseMaterial3D.CullModeEnum.Disabled }; var img = new Image(); if (img.Load(ProjectSettings.GlobalizePath($"res://content/{t}.png")) == Error.Ok) m.AlbedoTexture = ImageTexture.CreateFromImage(img); return m; }
+            Material carMat = Tex("train_car_tex"), bogieMat = Tex("train_bogie_tex");
+            // PAINTABLE LIVERY: recolour the body palette slot (blue) to a random livery, and the stripe slot
+            // (orange) STAYS fixed orange (master). Demo body colour here; per-spawn xorshift in the real vehicle.
+            Color livery = new Color(0.16f, 0.42f, 0.22f);
+            var bodyMat = new StandardMaterial3D { TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest, Metallic = 0f, Roughness = 0.75f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+            var _bimg = new Image();
+            if (_bimg.Load(ProjectSettings.GlobalizePath("res://content/train_body_tex.png")) == Error.Ok) { _bimg.Convert(Image.Format.Rgba8); _bimg.SetPixel(0, 1, livery); bodyMat.AlbedoTexture = ImageTexture.CreateFromImage(_bimg); }
+            void Am(Mesh m, Vector3 pp, Material mat) { if (m != null) AddChild(new MeshInstance3D { Mesh = m, Position = pp, MaterialOverride = mat }); }
+            Mesh body = Lm("train_body"), bogie = Lm("train_bogie"), car = Lm("train_car"), head = Lm("train_headlights"), steer = Lm("train_steer"), seat = Lm("train_seat");
+            Am(body, Vector3.Zero, bodyMat); Am(head, Vector3.Zero, bodyMat); Am(steer, Vector3.Zero, bodyMat); Am(seat, Vector3.Zero, bodyMat);
+            foreach (var bz in new[] { -3.5f, 3.5f, 7.5f, 14.5f, 18.5f, 25.5f, 29.5f, 36.5f }) Am(bogie, new Vector3(0f, -0.40f, bz), bogieMat);
+            foreach (var cz in new[] { 11f, 22f, 33f }) Am(car, new Vector3(0f, 0f, cz), carMat);
+            var cam = new Camera3D { Current = true, Fov = 42f, Far = 10000f }; AddChild(cam);
+            cam.Position = new Vector3(26f, 14f, -20f); cam.LookAt(new Vector3(0f, 1.2f, 13f), Vector3.Up);
+        }
+
+        // --traintrack : the assembled train riding a CURVED test track. Each unit rides 2 bogies snapped to the
+        // rail; the body SPANS them so it angles through curves -- the bogie-follows-spline mechanic (local curve).
+        void BuildTrainTrack()
+        {
+            var env = new Godot.Environment { BackgroundMode = Godot.Environment.BGMode.Color, BackgroundColor = new Color(0.52f, 0.62f, 0.74f), AmbientLightSource = Godot.Environment.AmbientSource.Color, AmbientLightColor = new Color(0.7f, 0.7f, 0.72f), AmbientLightEnergy = 0.9f };
+            AddChild(new WorldEnvironment { Environment = env });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-50f, -40f, 0f), LightEnergy = 1.2f, ShadowEnabled = true });
+            AddChild(new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(400f, 400f) }, Position = new Vector3(15f, -0.05f, 25f), MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.30f, 0.34f, 0.27f) } });
+            Vector3[] ctrl = { new(-40f, 0f, -30f), new(-40f, 0f, 5f), new(-20f, 0f, 40f), new(15f, 0f, 55f), new(45f, 0f, 55f), new(70f, 0f, 35f) };
+            _trP = new(); _trD = new(); _trUnits = new(); var P = _trP; var D = _trD;
+            Vector3 CR(Vector3 a, Vector3 b, Vector3 c, Vector3 d, float t) { float t2 = t * t, t3 = t2 * t; return 0.5f * ((2f * b) + (-a + c) * t + (2f * a - 5f * b + 4f * c - d) * t2 + (-a + 3f * b - 3f * c + d) * t3); }
+            { float dd = 0f; Vector3 prev = ctrl[1]; for (int i = 1; i < ctrl.Length - 2; i++) for (int k = 0; k < 40; k++) { float t = k / 40f; var pp = CR(ctrl[i - 1], ctrl[i], ctrl[i + 1], ctrl[i + 2], t); if (P.Count > 0) dd += pp.DistanceTo(prev); P.Add(pp); D.Add(dd); prev = pp; } }
+            void Eval(float ss, out Vector3 pos, out Vector3 tan) { ss = Mathf.Clamp(ss, 0f, D[D.Count - 1]); int i = 0; while (i < D.Count - 2 && D[i + 1] < ss) i++; float seg = Mathf.Max(D[i + 1] - D[i], 1e-3f); float f = (ss - D[i]) / seg; pos = P[i].Lerp(P[i + 1], f); var tt = P[i + 1] - P[i]; tan = tt.LengthSquared() > 1e-6f ? tt.Normalized() : Vector3.Forward; }
+            var im = new ImmediateMesh();
+            im.SurfaceBegin(Mesh.PrimitiveType.Triangles, new StandardMaterial3D { AlbedoColor = new Color(0.17f, 0.15f, 0.13f), CullMode = BaseMaterial3D.CullModeEnum.Disabled });
+            for (int i = 0; i < P.Count - 1; i++) { Vector3 t = (P[i + 1] - P[i]).Normalized(); Vector3 side = new Vector3(t.Z, 0f, -t.X) * 1.7f; Vector3 a = P[i] - side, b = P[i] + side, c = P[i + 1] - side, e = P[i + 1] + side; foreach (var v in new[] { a, b, c, b, e, c }) im.SurfaceAddVertex(v + Vector3.Up * 0.02f); }
+            im.SurfaceEnd(); AddChild(new MeshInstance3D { Mesh = im });
+            Mesh Lm(string n) => ContentProvider.ParseObj($"res://content/{n}.txt");
+            Material Tex(string tn) { var m = new StandardMaterial3D { TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest, Roughness = 0.75f, CullMode = BaseMaterial3D.CullModeEnum.Disabled }; var img = new Image(); if (img.Load(ProjectSettings.GlobalizePath($"res://content/{tn}.png")) == Error.Ok) m.AlbedoTexture = ImageTexture.CreateFromImage(img); return m; }
+            var carMat = Tex("train_car_tex"); var bogieMat = Tex("train_bogie_tex");
+            var bodyMat = new StandardMaterial3D { TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest, Roughness = 0.75f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+            { var bimg = new Image(); if (bimg.Load(ProjectSettings.GlobalizePath("res://content/train_body_tex.png")) == Error.Ok) { bimg.Convert(Image.Format.Rgba8); bimg.SetPixel(0, 1, new Color(0.16f, 0.42f, 0.22f)); bodyMat.AlbedoTexture = ImageTexture.CreateFromImage(bimg); } }
+            Mesh body = Lm("train_body"), bogie = Lm("train_bogie"), car = Lm("train_car");
+            _trRailY = 0.9f;
+            void MakeUnit(Mesh m, Material mat, float off) {
+                var mi = new MeshInstance3D { Mesh = m, MaterialOverride = mat }; AddChild(mi);
+                var bf = new MeshInstance3D { Mesh = bogie, MaterialOverride = bogieMat }; AddChild(bf);
+                var bb = new MeshInstance3D { Mesh = bogie, MaterialOverride = bogieMat }; AddChild(bb);
+                _trUnits.Add((mi, bf, bb, off));
+            }
+            MakeUnit(body, bodyMat, 0f); MakeUnit(car, carMat, 11f); MakeUnit(car, carMat, 22f); MakeUnit(car, carMat, 33f);
+            _trS = 45f; _trAnim = true;
+            foreach (var u in _trUnits) PlaceTrainUnit(u, _trS - u.off);
+            var cam = new Camera3D { Current = true, Fov = 52f, Far = 10000f }; AddChild(cam);
+            cam.Position = new Vector3(38f, 9f, 40f); cam.LookAt(new Vector3(2f, 1.5f, 38f), Vector3.Up);
+        }
+
+        void EvalTrack(float ss, out Vector3 pos, out Vector3 tan) {
+            ss = Mathf.Clamp(ss, 0f, _trD[_trD.Count - 1]); int i = 0; while (i < _trD.Count - 2 && _trD[i + 1] < ss) i++;
+            float seg = Mathf.Max(_trD[i + 1] - _trD[i], 1e-3f); float f = (ss - _trD[i]) / seg; pos = _trP[i].Lerp(_trP[i + 1], f);
+            var tt = _trP[i + 1] - _trP[i]; tan = tt.LengthSquared() > 1e-6f ? tt.Normalized() : Vector3.Forward;
+        }
+        void PlaceTrainUnit((MeshInstance3D body, MeshInstance3D bf, MeshInstance3D bb, float off) u, float sctr) {
+            EvalTrack(sctr + 3.5f, out var pf, out var tf); EvalTrack(sctr - 3.5f, out var pb, out var tb);
+            Vector3 c = (pf + pb) * 0.5f + Vector3.Up * _trRailY; Vector3 fwd = pf - pb; fwd = fwd.LengthSquared() > 1e-4f ? fwd.Normalized() : Vector3.Forward;
+            u.body.GlobalTransform = new Transform3D(Basis.Identity, c).LookingAt(c + fwd, Vector3.Up);
+            Vector3 cf = pf + Vector3.Up * (_trRailY - 0.4f); u.bf.GlobalTransform = new Transform3D(Basis.Identity, cf).LookingAt(cf + tf, Vector3.Up);
+            Vector3 cb = pb + Vector3.Up * (_trRailY - 0.4f); u.bb.GlobalTransform = new Transform3D(Basis.Identity, cb).LookingAt(cb + tb, Vector3.Up);
+        }
+        void StepTrainAnim(float dt) {
+            if (_trUnits == null || _trD == null || _trD.Count < 2) return;
+            _trS += 9f * dt; if (_trS > _trD[_trD.Count - 1] + 5f) _trS = 45f;
+            foreach (var u in _trUnits) PlaceTrainUnit(u, _trS - u.off);
         }
 
         // --doorgallery --shot=OUT : a lit, front-on LINEUP of the 12 ripped WOODEN door barricade models
@@ -6624,6 +6744,7 @@ namespace UnturnedGodot
             // FIRST, because several capture modes below own the frame and return before the main
             // capture gate -- a watchdog placed at that gate never runs for --vehicle/--rig/--menushot.
             if (_shotRequested != null && ShotWatchdogTripped()) return;
+            if (_trAnim) StepTrainAnim((float)delta);   // --traintrack: drive the train along the curve
             if (_doorAnim && _doorAnimDoor != null)   // --doortest UG_DOOR_ANIM=1: drive a real DEFAULT->away->DEFAULT cycle at REAL elapsed time (never fast-forwarded), so a --write-movie capture shows the actual retail-curve swing from the real default state (see BuildDoorTest for the timeline setup)
             {
                 _doorAnimElapsed += delta;
@@ -6782,6 +6903,231 @@ namespace UnturnedGodot
                     }
                     foreach (var (mark, veh, local) in _pivotMarks)
                         if (IsInstanceValid(mark) && IsInstanceValid(veh)) mark.GlobalPosition = veh.ToGlobal(local);
+                }
+                else if (_planeTest && _veh != null)
+                {
+                    // SCRIPTED FIXED-WING FLIGHT, driven off the plane's STATE (frame-rate-map independent):
+                    // full throttle; hold level while it accelerates across the water; rotate/climb the moment it
+                    // lifts off the pontoons; then bank once it has climbed out, to show the lift vector carry it
+                    // into the turn (master's "realistic" bank-to-turn model).
+                    float alt = _veh.GlobalPosition.Y;
+                    float spd = _veh.LinearVelocity.Length();
+                    if (System.Environment.GetEnvironmentVariable("UG_PLANETAXI") == "1")   // TAXI test: low throttle + full right rudder on the ground -> does it TURN + stay stable?
+                    {
+                        _veh.DrivePlane(0.35f, 1f, 0f, 0f, delta);
+                        if (_vehCam != null) { var vt3 = _veh.GetGlobalTransformInterpolated(); _vehCam.GlobalPosition = vt3.Origin + new Vector3(0f, 14f, 14f); _vehCam.LookAt(vt3.Origin, Vector3.Up); }
+                        return;
+                    }
+                    if (System.Environment.GetEnvironmentVariable("UG_PLANEIDLE") == "1")   // just SIT (no input) -> reproduce the "freak out on ground contact" report
+                    {
+                        _veh.DrivePlane(0f, 0f, 0f, 0f, delta);
+                        if (_vehCam != null) { var vi = _veh.GetGlobalTransformInterpolated(); var fi = -vi.Basis.Z; fi.Y = 0f; fi = fi.LengthSquared() > 0.001f ? fi.Normalized() : Vector3.Forward; var ri = new Vector3(fi.Z, 0f, -fi.X); _vehCam.GlobalPosition = vi.Origin + ri * 8.5f + Vector3.Up * 0.8f; _vehCam.LookAt(vi.Origin + Vector3.Down * 0.4f, Vector3.Up); }   // LOW SIDE profile -> see the hull + gear vs the ground line
+                        return;
+                    }
+                    if (System.Environment.GetEnvironmentVariable("UG_PLANEGEAR") == "1")
+                    {   // GEAR RETRACTION demo: full-throttle takeoff + a SIDE, near-level cam so the wheels folding up read
+                        var pbg = _veh.GlobalTransform.Basis;
+                        float noseDegG = Mathf.RadToDeg(Mathf.Asin(Mathf.Clamp(-pbg.Z.Y, -1f, 1f)));
+                        float pitchG = Mathf.Clamp((9f - noseDegG) * 0.06f, -0.25f, 0.25f);
+                        _veh.DrivePlane(1f, 0f, _veh.Afloat ? (spd > 11f ? 0.55f : 0f) : pitchG, 0f, delta);
+                        if (_frame == 260) _veh.ToggleGear();   // gear is MANUAL now -> trigger the retract mid-render so the demo still shows the fold
+                        if (_vehCam != null)
+                        {
+                            var vtG = _veh.GetGlobalTransformInterpolated();
+                            var fwdG = -vtG.Basis.Z; fwdG.Y = 0f; fwdG = fwdG.LengthSquared() > 0.001f ? fwdG.Normalized() : Vector3.Forward;
+                            var rightG = new Vector3(fwdG.Z, 0f, -fwdG.X);
+                            _vehCam.GlobalPosition = vtG.Origin + rightG * 6.5f + fwdG * 0.5f + Vector3.Up * 0.2f;   // off to the side, near level -> the belly gear is visible
+                            _vehCam.LookAt(vtG.Origin + Vector3.Down * 0.2f, Vector3.Up);
+                        }
+                        return;
+                    }
+                    if (System.Environment.GetEnvironmentVariable("UG_PLANETURN") == "1")
+                    {   // hard continuous BANK -> the jet circles -> the WORLD-SPACE contrails curve into arcs; a
+                        // high bird's-eye cam (fixed world orientation, follows position) shows the curved trails.
+                        var pbt = _veh.GlobalTransform.Basis;
+                        float noseDegT = Mathf.RadToDeg(Mathf.Asin(Mathf.Clamp(-pbt.Z.Y, -1f, 1f)));
+                        float rollDegT = Mathf.RadToDeg(Mathf.Asin(Mathf.Clamp(pbt.X.Y, -1f, 1f)));
+                        float pitchT = Mathf.Clamp((8f - noseDegT) * 0.05f, -0.2f, 0.25f);
+                        float targetRollT = _frame < 170 ? 0f : 40f;   // roll into a hard sustained bank once airborne
+                        float rollT = Mathf.Clamp((rollDegT - targetRollT) * 0.04f, -0.4f, 0.4f);
+                        _veh.DrivePlane(1f, 0f, _veh.Afloat ? (spd > 11f ? 0.55f : 0f) : pitchT, rollT, delta);
+                        if (_vehCam != null)
+                        {
+                            var vtT = _veh.GetGlobalTransformInterpolated();
+                            var fwdT = -vtT.Basis.Z; fwdT.Y = 0f; fwdT = fwdT.LengthSquared() > 0.001f ? fwdT.Normalized() : Vector3.Forward;
+                            _vehCam.GlobalPosition = vtT.Origin - fwdT * 15f + Vector3.Up * 7f;   // chase behind the flattened heading + elevated -> the curving trails sweep in from the side
+                            _vehCam.LookAt(vtT.Origin + Vector3.Up * 0.5f, Vector3.Up);
+                        }
+                        return;
+                    }
+                    if (System.Environment.GetEnvironmentVariable("UG_PLANETOP") == "1")
+                    {   // TOP-DOWN inspection: straight down over the cockpit, nose = up in frame
+                        _veh.DrivePlane(0f, 0f, 0f, 0f, delta);
+                        if (_vehCam != null)
+                        {
+                            var vt = _veh.GetGlobalTransformInterpolated(); var b = vt.Basis; var fwd = -b.Z;
+                            _vehCam.GlobalPosition = vt.Origin + Vector3.Up * 8f + fwd * 1.5f;
+                            _vehCam.LookAt(vt.Origin + fwd * 1.5f + Vector3.Up * 1.0f, fwd);
+                        }
+                        return;
+                    }
+                    if (System.Environment.GetEnvironmentVariable("UG_PLANECOCKPIT") == "1")
+                    {   // COCKPIT INSPECTION: park the jet + hold a front-top-3/4 cam looking down into the cockpit
+                        _veh.DrivePlane(0f, 0f, 0f, 0f, delta);
+                        if (_vehCam != null)
+                        {
+                            var vt = _veh.GetGlobalTransformInterpolated(); var b = vt.Basis; var fwd = -b.Z;
+                            _vehCam.GlobalPosition = vt.Origin + b.X * 3.5f + b.Y * 4.0f + fwd * 6.5f;
+                            _vehCam.LookAt(vt.Origin + b.Y * 1.8f + fwd * 2.0f, Vector3.Up);
+                        }
+                        return;
+                    }
+                    if (System.Environment.GetEnvironmentVariable("UG_BELLYSHOT") == "1")
+                    {   // BELLY inspection: pin the jet level + elevated, look up at the underside from below(0-40)/front-below(40-80)/side-below(80+)
+                        var o = new Vector3(0f, 7f, 60f);
+                        _veh.GlobalTransform = new Transform3D(Basis.Identity, o);
+                        _veh.LinearVelocity = Vector3.Zero; _veh.AngularVelocity = Vector3.Zero;
+                        if (_vehCam != null)
+                        {
+                            Vector3 cp; Vector3 up = Vector3.Up;
+                            if (_frame < 40)      { cp = o + new Vector3(0.02f, -7f, 0f); up = Vector3.Forward; }   // straight below, nose = up in frame
+                            else if (_frame < 80) { cp = o + new Vector3(0f, -3.2f, -8f); }                        // front-below (nose is -Z)
+                            else                  { cp = o + new Vector3(8f, -3.2f, 0.5f); }                        // side-below
+                            _vehCam.GlobalPosition = cp; _vehCam.LookAt(o, up);
+                        }
+                        return;
+                    }
+                    if (System.Environment.GetEnvironmentVariable("UG_CANOPYSHOT") == "1")
+                    {   // CANOPY FIT: parked jet, cycle a close FRONT(0-40)/SIDE(40-80)/TOP(80+) cam on the cockpit
+                        _veh.DrivePlane(0f, 0f, 0f, 0f, delta);
+                        if (_vehCam != null)
+                        {
+                            var vt = _veh.GetGlobalTransformInterpolated(); var b = vt.Basis; var fwd = -b.Z;
+                            var ck = vt.Origin + b.Y * 1.0f - b.Z * 4.5f;   // cockpit centre (vehicle-local ~ (0,1.0,-4.5))
+                            if (_frame < 40)      { _vehCam.GlobalPosition = ck + fwd * 4.2f + b.Y * 0.5f; _vehCam.LookAt(ck, Vector3.Up); }
+                            else if (_frame < 80) { _vehCam.GlobalPosition = ck + b.X * 4.2f + b.Y * 0.5f; _vehCam.LookAt(ck, Vector3.Up); }
+                            else                  { _vehCam.GlobalPosition = ck + b.Y * 4.5f;              _vehCam.LookAt(ck, fwd); }
+                        }
+                        return;
+                    }
+                    if (System.Environment.GetEnvironmentVariable("UG_GEARCYCLE") == "1")
+                    {   // GEAR direction check: pin the jet level+airborne, retract at frame 20, side cam (+X). nose = -Z = RIGHT in frame
+                        var o = new Vector3(0f, 7f, 60f);
+                        _veh.GlobalTransform = new Transform3D(Basis.Identity, o);
+                        _veh.LinearVelocity = Vector3.Zero; _veh.AngularVelocity = Vector3.Zero; _veh.PlaneGroundMode = false;
+                        if (_frame == 20) _veh.ToggleGear();
+                        if (_vehCam != null) { _vehCam.GlobalPosition = o + new Vector3(8.5f, -0.6f, 0f); _vehCam.LookAt(o + new Vector3(0f, -0.6f, 0f), Vector3.Up); }
+                        return;
+                    }
+                    if (System.Environment.GetEnvironmentVariable("UG_PLANEPARK") == "1")
+                    {   // SPAWN-SETTLE + SLIDE diagnostic: zero input, let it sit on the (sloped) ground; side cam TRACKS it so drift is visible
+                        float _tthr = 0f, _tstr = 0f;
+                        if (System.Environment.GetEnvironmentVariable("UG_TAXI") == "1")
+                        {   // scripted taxi: FORWARD+steer-right, coast, then REVERSE+steer-left
+                            if (_frame < 8) { _tthr = 0f; _tstr = 0f; }           // settle at rest
+                            else { _tthr = 1f; _tstr = 0.4f; }                    // taxi forward + gentle steer (UG_ROUGH to test chatter)
+                        }
+                        _veh.DrivePlane(_tthr, _tstr, 0f, 0f, delta);
+                        if (_frame == 1)
+                        {
+                            if (System.Environment.GetEnvironmentVariable("UG_SEATSPAWN") == "1") _veh.PlaceOnGround(new Vector3(_veh.GlobalPosition.X, 0f, _veh.GlobalPosition.Z));
+                            if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_LANDSPEED"), out var _ls)) _veh.LinearVelocity = -_veh.GlobalTransform.Basis.Z * _ls;
+                        }
+                        if (_vehCam != null)
+                        {
+                            if (System.Environment.GetEnvironmentVariable("UG_TAXI") == "1") { var _vt = _veh.GetGlobalTransformInterpolated(); _vehCam.GlobalPosition = _vt.Origin + new Vector3(0f, 13f, 0f); _vehCam.LookAt(_vt.Origin, new Vector3(0f, 0f, -1f)); }   // CLOSE top-down TRACKER, world-fixed (up=-Z): yaw jitter = nose wobbling L/R
+                            else { var vt = _veh.GetGlobalTransformInterpolated(); _vehCam.GlobalPosition = vt.Origin + new Vector3(9f, 1.8f, 0f); _vehCam.LookAt(vt.Origin + new Vector3(0f, -0.2f, 0f), Vector3.Up); }
+                        }
+                        if (System.Environment.GetEnvironmentVariable("UG_PLANEDBG") == "1") GD.Print($"[park] f={_frame} spd={_veh.LinearVelocity.Length():F2} yawv={_veh.AngularVelocity.Y:F3} rollv={_veh.AngularVelocity.Z:F3} steer={_veh.Steering:F3}");
+                        return;
+                    }
+                    if (System.Environment.GetEnvironmentVariable("UG_PLANEBURN") == "1")
+                    {   // AFTERBURNER beauty shot: FULL throttle the whole time (burners maxed) + a close, level,
+                        // 3/4-rear camera locked on the exhaust cones, gently swinging around dead-astern.
+                        var pbb = _veh.GlobalTransform.Basis;
+                        float noseDegB = Mathf.RadToDeg(Mathf.Asin(Mathf.Clamp(-pbb.Z.Y, -1f, 1f)));
+                        float pitchB = Mathf.Clamp((10f - noseDegB) * 0.06f, -0.25f, 0.25f);   // hold ~10 deg climb once airborne
+                        _veh.DrivePlane(1f, 0f, _veh.Afloat ? (spd > 11f ? 0.55f : 0f) : pitchB, 0f, delta);
+                        if (_vehCam != null)
+                        {
+                            var vtB = _veh.GetGlobalTransformInterpolated();
+                            var fwdB = -vtB.Basis.Z; fwdB.Y = 0f; fwdB = fwdB.LengthSquared() > 0.001f ? fwdB.Normalized() : Vector3.Forward;
+                            var rightB = new Vector3(fwdB.Z, 0f, -fwdB.X);
+                            float sway = Mathf.Sin(_frame * 0.010f) * 0.6f;   // +/- ~34 deg swing around dead-astern
+                            var dirB = (-fwdB * Mathf.Cos(sway) + rightB * Mathf.Sin(sway)).Normalized();
+                            _vehCam.GlobalPosition = vtB.Origin + dirB * 7.0f + Vector3.Up * 1.5f;
+                            _vehCam.LookAt(vtB.Origin - fwdB * 2.4f + Vector3.Up * 0.9f, Vector3.Up);   // aim at the exhaust cluster (aft of centre)
+                        }
+                        return;
+                    }
+                    if (System.Environment.GetEnvironmentVariable("UG_PLANEDEMO") == "1")
+                    {   // FX DEMO: throttle RAMPS full->0->full so the afterburners visibly SCALE with thrust, while the
+                        // jet accelerates (wingtip CONTRAILS fade IN with speed). A pulled-back 3/4-rear cam frames the
+                        // whole plane so both the trails + the burners read.
+                        float th;
+                        if (_frame < 130) th = 1f;                                   // takeoff + get fast (contrails fade in)
+                        else if (_frame < 250) th = 1f - (_frame - 130) / 120f;      // ramp DOWN -> burners shrink to nothing
+                        else th = (_frame - 250) / 120f;                             // ramp back UP -> burners grow again
+                        th = Mathf.Clamp(th, 0f, 1f);
+                        var pbd = _veh.GlobalTransform.Basis;
+                        float noseDegD = Mathf.RadToDeg(Mathf.Asin(Mathf.Clamp(-pbd.Z.Y, -1f, 1f)));
+                        float pitchD = Mathf.Clamp((6f - noseDegD) * 0.05f, -0.2f, 0.2f);
+                        _veh.DrivePlane(th, 0f, _veh.Afloat ? (spd > 11f ? 0.55f : 0f) : pitchD, 0f, delta);
+                        if (_vehCam != null)
+                        {
+                            var vtD = _veh.GetGlobalTransformInterpolated();
+                            var fwdD = -vtD.Basis.Z; fwdD.Y = 0f; fwdD = fwdD.LengthSquared() > 0.001f ? fwdD.Normalized() : Vector3.Forward;
+                            var rightD = new Vector3(fwdD.Z, 0f, -fwdD.X);
+                            float swayD = Mathf.Sin(_frame * 0.008f) * 0.5f;
+                            var dirD = (-fwdD * Mathf.Cos(swayD) + rightD * Mathf.Sin(swayD)).Normalized();
+                            _vehCam.GlobalPosition = vtD.Origin + dirD * 16f + Vector3.Up * 4.5f;   // pulled back -> whole plane + both wingtip trails
+                            _vehCam.LookAt(vtD.Origin + Vector3.Up * 0.5f, Vector3.Up);
+                        }
+                        return;
+                    }
+                    float throttle, pitch, roll;
+                    if (_veh.Afloat)
+                    {   // full-power takeoff run; once up to speed, ease back to ROTATE (raise AoA) and lift off the water
+                        throttle = 1f; roll = 0f;
+                        pitch = spd > 11f ? 0.55f : 0f;   // firm back-stick to rotate off the water once up to speed
+                    }
+                    else
+                    {
+                        // Showcase attitude-hold autopilot (test harness, NOT the flight model): ease to cruise
+                        // power once up, and a proportional elevator holds a target nose angle so the clip shows a
+                        // steady climb-out -> a near-level banked cruise; a gentle bank once climbed shows bank-to-turn.
+                        var pb = _veh.GlobalTransform.Basis;
+                        float noseDeg = Mathf.RadToDeg(Mathf.Asin(Mathf.Clamp(-pb.Z.Y, -1f, 1f)));
+                        float rollDeg = Mathf.RadToDeg(Mathf.Asin(Mathf.Clamp(pb.X.Y, -1f, 1f)));
+                        if (_frame > 620)
+                        {   // GLIDE TEST (master "throttle down -> nosedive or glide?"): CUT the engine, level the
+                            // wings, and let GO of the elevator -> does the airframe settle into a glide on its own?
+                            throttle = -1f;                                              // S = bleed the sticky throttle to 0 (engine off), not hands-off
+                            pitch = 0f;                                                  // hands off the elevator
+                            roll = Mathf.Clamp(rollDeg * 0.05f, -0.3f, 0.3f);            // just level the wings
+                        }
+                        else
+                        {
+                            throttle = alt > 45f ? 0.6f : 1f;   // climb higher before cruise so the glide test has room
+                            bool turning = _frame > 460;
+                            float targetDeg = turning ? 4f : 9f;
+                            pitch = Mathf.Clamp((targetDeg - noseDeg) * 0.06f, -0.25f, 0.25f);
+                            // roll-ANGLE hold: bank to a steady target + HOLD it (instead of rolling forever)
+                            float targetRoll = turning ? 20f : 0f;
+                            roll = Mathf.Clamp((rollDeg - targetRoll) * 0.05f, -0.35f, 0.35f);
+                        }
+                    }
+                    _veh.DrivePlane(throttle, 0f, pitch, roll, delta);
+                    if (_vehCam != null)   // world-up chase cam behind the flattened heading -> the bank reads against a level horizon
+                    {
+                        var vt = _veh.GetGlobalTransformInterpolated();   // follow the INTERPOLATED visual transform, not the raw 50Hz physics one -> the clip is smooth instead of stepping at 50Hz (same as the in-game drive cam)
+                        var fwd = -vt.Basis.Z; fwd.Y = 0f;
+                        fwd = fwd.LengthSquared() > 0.001f ? fwd.Normalized() : Vector3.Forward;
+                        float cd = 13f; var cde = System.Environment.GetEnvironmentVariable("UG_CAMDIST");
+                        if (!string.IsNullOrEmpty(cde) && float.TryParse(cde, out var cdv)) cd = cdv;
+                        _vehCam.GlobalPosition = vt.Origin - fwd * cd + Vector3.Up * 5f;
+                        _vehCam.LookAt(vt.Origin + Vector3.Up * 0.5f, Vector3.Up);
+                    }
                 }
                 else if (_vehTest && _veh != null)
                 {

@@ -19,6 +19,14 @@ namespace UnturnedGodot
 
         public static string InvertHeliPitchLabel => InvertHeliPitch ? "Inverted" : "Regular";
 
+        /// <summary>Plane pitch axis, SEPARATE from the helicopter's (strawberry 2026-08-17: "add inverted y
+        /// option for planes too separately"). Same meaning as <see cref="InvertHeliPitch"/>: FALSE ("Regular") =
+        /// push the mouse forward and the nose drops; TRUE ("Inverted") = mouse forward brings the nose UP, like a
+        /// flight-sim yoke. Kept independent so a player can fly the heli one way and the plane the other.</summary>
+        public static bool InvertPlanePitch;
+
+        public static string InvertPlanePitchLabel => InvertPlanePitch ? "Inverted" : "Regular";
+
         /// <summary>Helicopter cyclic sensitivity, as a MULTIPLIER on the base gain rather than a raw
         /// pixels-per-degree number (strawberry 2026-08-16: "lower the default sens for piloting too, and add a
         /// slider to the options menu"). A multiplier means retuning the flight model's base feel does not

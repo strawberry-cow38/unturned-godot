@@ -32,6 +32,21 @@ namespace UnturnedGodot
                 return _terrCache = Find(GetTree().Root);
             }
         }
+        RoadField _roadsCache;
+        RoadField WorldRoads
+        {
+            get
+            {
+                if (_roadsCache != null && IsInstanceValid(_roadsCache)) return _roadsCache;
+                RoadField Find(Node n)
+                {
+                    if (n is RoadField r) return r;
+                    foreach (var c in n.GetChildren()) { var f = Find(c); if (f != null) return f; }
+                    return null;
+                }
+                return _roadsCache = Find(GetTree().Root);
+            }
+        }
 
         // MP (Phase 6, §2.3 "all state mutation goes through commands -- including DevConsole"): when this
         // process is a REMOTE client of some server, the state-mutating cheat verbs are sent as a
@@ -51,7 +66,7 @@ namespace UnturnedGodot
 
         LineEdit _input;
         Label _log;
-        static readonly string[] Verbs = { "give", "vehicle", "spawnMagnetableContainer", "spawnheli", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "toggleGlobalPower", "toggleGlobalWater", "toggleBbat", "infFuel", "infAmmo", "wear", "unwear", "fluid", "date", "dateset", "whenBlackout", "triggerGlobalBrownout", "hurtmain", "killmain", "hurttail", "killtail", "profiler", "renderscale", "zshadows", "freezerigs", "vertexlight", "weather", "fridge", "fill", "empty", "units", "simspeed", "time", "timeset", "timeadd", "timespeed", "daylength", "hitbox", "heliphys" };
+        static readonly string[] Verbs = { "give", "vehicle", "spawnMagnetableContainer", "spawnheli", "spawntrain", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "toggleGlobalPower", "toggleGlobalWater", "toggleBbat", "infFuel", "infAmmo", "wear", "unwear", "fluid", "date", "dateset", "whenBlackout", "triggerGlobalBrownout", "hurtmain", "killmain", "hurttail", "killtail", "profiler", "renderscale", "zshadows", "freezerigs", "vertexlight", "weather", "fridge", "fill", "empty", "units", "simspeed", "time", "timeset", "timeadd", "timespeed", "daylength", "hitbox", "heliphys" };
         static readonly EItemType[] ClothingTypes = { EItemType.SHIRT, EItemType.PANTS, EItemType.HAT, EItemType.VEST, EItemType.MASK, EItemType.GLASSES, EItemType.BACKPACK };
         readonly System.Collections.Generic.List<string> _history = new();
         int _histIdx;
@@ -538,9 +553,10 @@ namespace UnturnedGodot
                 // A wheeled vehicle is DROPPED and lets its suspension sort out the landing. A helicopter has no
                 // suspension: seat it exactly on its skids instead, or it either bangs down from 1.5 m or spawns
                 // with them already through the terrain (which the solver answers by launching it).
-                if (v.IsHeli) v.PlaceOnGround(at);
+                if (v.IsHeli || (v.IsPlane && v.HasWheels)) v.PlaceOnGround(at);   // no suspension (heli) / a long low airframe on gear (wheeled plane): SEAT it exactly instead of dropping 1.5m, which bounced/clipped it. A FLOATPLANE keeps the drop (buoyancy catches it on the water; PlaceOnGround could seat it under the surface).
                 else v.GlobalPosition = at + Vector3.Up * 1.5f;
-                Log($"spawned {name}" + (v.IsHeli ? $" (seated on skids, {v.GroundClearance:0.##} m clearance -- F to board, W/S collective, A/D yaw, mouse to fly)" : ""));
+                Log($"spawned {name}" + (v.IsHeli ? $" (seated on skids, {v.GroundClearance:0.##} m clearance -- F to board, W/S collective, A/D yaw, mouse to fly)"
+                                                 : v.IsPlane ? " (F to board -- W/S throttle, A/D rudder, mouse pitch/roll, hold Ctrl to taxi; floatplane needs water, wheeled needs runway)" : ""));
             }
             else if (verb == "spawnheli")
             {
@@ -553,6 +569,16 @@ namespace UnturnedGodot
                 var ai = NpcHeli.Spawn(Player?.GetParent() ?? GetTree().Root, hname, WorldTerrain, at);
                 if (ai == null) { Log("no map nodes to fly to (nodes.tsv empty?)"); return; }
                 Log($"npc {hname} inbound from the map edge -> {ai.TargetName}, holding {NpcHeli.CanopyClearance:0} m over the terrain, will circle at {NpcHeli.OrbitRadius:0} m");
+            }
+            else if (verb == "spawntrain")
+            {
+                var roads = WorldRoads;
+                if (roads == null) { Log("no road network in this world"); return; }
+                Vector3 near = Player?.GlobalPosition ?? at;
+                string ttype = string.IsNullOrWhiteSpace(arg) ? "engine" : arg;
+                var tr = Train.Spawn(Player?.GetParent() ?? GetTree().Root, roads, near, ttype);
+                if (tr == null) { Log(Train.ResolveType(ttype) == null ? $"unknown car '''{arg}''' -- types: {Train.TypeList}" : "no train track nearby -- only Yukon has rails (tracks = road material 4)"); return; }
+                Log($"spawned a {Train.ResolveType(ttype)} car on the nearest track (drive an engine into it to couple)");
             }
             else if (verb == "spawnmagnetablecontainer" || verb == "magcontainer")
             {

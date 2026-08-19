@@ -183,6 +183,7 @@ namespace UnturnedGodot
         public int DebugPatternShot => _patternShot;
         /// <summary>The viewmodel's rotational recoil, surfaced so a test can prove the gun stopped taking one.</summary>
         public Vector3 DebugViewmodelRecoilRot => _viewmodel?.DebugRecoilRot ?? Vector3.Zero;
+        Train _ridingTrain;   // a boarded train (spline-follower, not a Vehicle) -- parallel low-risk ride path (master: "i cant get into the train")
         Vehicle _driving; bool _fp = true;   // vehicle being driven + camera mode: true = 1st person (spawn default, strawberry), false = 3rd; H toggles (on foot + driving)
         float _driveCamYaw, _driveCamPitch = 15f;   // 3rd-person driving orbit: mouse yaws/pitches the chase cam around the car (master)
         // FP RIDE free-look (#37, MP only): mouse yaw/pitch of the view in VEHICLE-LOCAL space while seated on a
@@ -316,6 +317,8 @@ namespace UnturnedGodot
         ShelfItemBody _focusShelfItem;   // the SHELF display item being looked at (glowing, F to grab straight off the shelf)
         StoreShelf _focusShelf;          // the shelf being looked at (whole-shelf outline) -- the shelf of the focused item
         Vehicle _focusVehicle;  // the vehicle the player is LOOKING AT (outlined + info panel), enter target for E
+        Train _focusTrain;      // the train the player is LOOKING AT (loco outlined; F boards it) -- not a Vehicle, own scan
+        Train _focusCouplerTrain; int _focusCouplerIdx = -1;   // the coupler the player is looking at (rope outlined; F uncouples there)
         Deployable _focusDeployable;  // the placed deployable (generator) the player is LOOKING AT (outlined + HP/fuel billboard)
         Door _focusDoor;              // the door being looked at -> F toggles it
         NoteBody _focusNote;          // the readable lore note being looked at -> F reads it
@@ -442,6 +445,8 @@ namespace UnturnedGodot
             LampLight hitLamp = null;         // standing/desk lamp under the ray -> F on/off + outline
             ShelfItemBody hitShelfItem = null; StoreShelf hitShelf = null;   // shelf display item / its shelf under the look-sphere
             IPuppetFocusable hitPuppet = null;   // MP ONLY: nearest replicated car/item puppet under the look-sphere (SP hits real Vehicle/WorldItem instead)
+            Train hitTrain = null;   // train loco under the look-ray (own scan; not in ResolveFocus)
+            Train hitCT = null; int hitCI = -1;   // train + coupler index under the look-ray
             bool rayTerminal = false, rayShelfItem = false;   // did the RAY claim the target, and was it a shelf item? (see the arbitration below)
             if (!_dead && _driving == null && _riding == null && _cam != null && Input.MouseMode == Input.MouseModeEnum.Captured)
             {
@@ -553,6 +558,35 @@ namespace UnturnedGodot
                             if (d < maxD && d < bestV && vv.LookRayHitsHull(from, _lookEnd)) { bestV = d; hitVeh = vv; }   // cheap distance gate before the tight per-hull (oriented-box) test -- no world-AABB bloat / cross-vehicle overlap (strawberry)
                         }
                 }
+                // TRAIN look-focus (not in ResolveFocus -- a train is a lone rail vehicle): when nothing else won,
+                // focus a train whose loco the look-ray passes through, so it outlines + F boards it like a car.
+                if (_ridingTrain == null && hitVeh == null && hitItem == null && hitShelfItem == null && hitPuppet == null)
+                {
+                    float maxTrainD = (LookReach + 8f) * (LookReach + 8f);
+                    foreach (var node in GetTree().GetNodesInGroup("trains"))
+                        if (node is Train tr && tr.Loco != null && IsInstanceValid(tr.Loco)
+                            && tr.Loco.GlobalPosition.DistanceSquaredTo(from) < maxTrainD && tr.LookRayHitsLoco(from, _lookEnd))
+                        { hitTrain = tr; break; }
+                    // coupler focus: nearest coupler whose gap the look-ray passes within ~1.1m of -> F uncouples it
+                    float bestC = 1.1f * 1.1f;
+                    foreach (var node in GetTree().GetNodesInGroup("trains"))
+                        if (node is Train tc && IsInstanceValid(tc))
+                            for (int ci = 0; ci < tc.CouplerCount; ci++)
+                            { float d = SegPointDistSq(from, _lookEnd, tc.CouplerWorld(ci)); if (d < bestC) { bestC = d; hitCT = tc; hitCI = ci; } }
+                    if (hitCT != null) hitTrain = null;   // a coupler in your sights beats boarding the engine behind it
+                }
+            }
+            if (hitTrain != _focusTrain)
+            {
+                if (IsInstanceValid(_focusTrain)) _focusTrain.SetLookFocused(false);
+                _focusTrain = hitTrain;
+                _focusTrain?.SetLookFocused(true);
+            }
+            if (hitCT != _focusCouplerTrain || hitCI != _focusCouplerIdx)
+            {
+                if (_focusCouplerTrain != null && IsInstanceValid(_focusCouplerTrain)) _focusCouplerTrain.SetCouplerFocused(_focusCouplerIdx, false);
+                _focusCouplerTrain = hitCT; _focusCouplerIdx = hitCI;
+                if (_focusCouplerTrain != null) _focusCouplerTrain.SetCouplerFocused(_focusCouplerIdx, true);
             }
             if (_lookViz != null) { _lookViz.Visible = WorldItem.ShowLookSphere && !_dead && _driving == null; if (_lookViz.Visible) _lookViz.GlobalPosition = _lookEnd; }
             if (hitItem != _focusItem)
@@ -4635,6 +4669,17 @@ namespace UnturnedGodot
             if (_invUI != null && _invUI.IsOpen && !(@event is InputEventKey { Keycode: Key.Tab or Key.Escape or Key.F })) return;   // F also allowed through -> closes an open container inventory (handled at the top of the F branch), master
             // while driving, only E (exit) / V (cam) / L (lights) / Escape + LMB (horn) / RMB (lights) are live -- no fire, aim, reload, etc.
             // (riding a replicated puppet gates identically -- the vehicle-side keys just no-op below in v1)
+            if (_ridingTrain != null)   // RIDING A TRAIN: self-contained input (H = 1P/3P cam, mouse orbits the 3P chase). F-exit + rest use the normal chain below; no vehicle/MP paths touched.
+            {
+                if (@event is InputEventKey { Pressed: true, Keycode: Key.H }) { _fp = !_fp; GetViewport().SetInputAsHandled(); return; }
+                if (@event is InputEventMouseButton { ButtonIndex: MouseButton.Left } mb) { if (mb.Pressed) _ridingTrain.Honk(); GetViewport().SetInputAsHandled(); return; }   // LMB = press-to-honk (one-shot, master)
+                if (@event is InputEventMouseButton { ButtonIndex: MouseButton.Right } rmbT) { if (rmbT.Pressed) _ridingTrain.ToggleHeadlights(); GetViewport().SetInputAsHandled(); return; }   // RMB = toggle headlights (master), like vehicles
+                if (@event is InputEventMouseMotion tmm && Input.MouseMode == Input.MouseModeEnum.Captured)
+                {
+                    if (!_fp) { _driveCamYaw -= tmm.Relative.X * MouseSensitivity; _driveCamPitch = Mathf.Clamp(_driveCamPitch + tmm.Relative.Y * MouseSensitivity, -25f, 70f); }
+                    GetViewport().SetInputAsHandled(); return;   // consume look while riding (orbit in 3P; cab is fixed-forward in 1P)
+                }
+            }
             if (_driving != null || _riding != null)
             {
                 // SEAT SELECTION, handled ABOVE the allow-list below rather than added to it. That list exists to
@@ -4648,7 +4693,7 @@ namespace UnturnedGodot
                     GetViewport().SetInputAsHandled();
                     return;
                 }
-                bool allowedKey = @event is InputEventKey { Pressed: true } dk && (dk.Keycode == Key.F || dk.Keycode == Key.H || dk.Keycode == Key.L || dk.Keycode == Key.Ctrl || dk.Keycode == Key.Escape);   // F = exit (interact key moved off E); H cam, L lights, Ctrl siren, Esc pause
+                bool allowedKey = @event is InputEventKey { Pressed: true } dk && (dk.Keycode == Key.F || dk.Keycode == Key.G || dk.Keycode == Key.H || dk.Keycode == Key.L || dk.Keycode == Key.Ctrl || dk.Keycode == Key.Escape);   // F = exit (interact key moved off E); G = landing gear (retract-gear planes); H cam, L lights, Ctrl siren, Esc pause. ROOT CAUSE of "G does nothing while flying": this allow-list gated G out before the gear handler ever saw it (master 2026-08-18)
                 bool allowedMouse = @event is InputEventMouseButton { ButtonIndex: MouseButton.Left or MouseButton.Right };
                 bool camOrbit = @event is InputEventMouseMotion;   // mouse MOTION must pass through -> it orbits the 3rd-person chase cam (this guard was silently eating it, so the cam sat fixed) (strawberry 2026-07-15)
                 if (!allowedKey && !allowedMouse && !camOrbit) return;
@@ -4657,9 +4702,9 @@ namespace UnturnedGodot
             if (@event is InputEventMouseButton && Input.MouseMode != Input.MouseModeEnum.Captured) return;
             if (@event is InputEventMouseMotion mm && Input.MouseMode == Input.MouseModeEnum.Captured)
             {
-                if (_driving != null && _driving.IsHeli)
+                if (_driving != null && (_driving.IsHeli || _driving.IsPlane))
                 {
-                    // FLYING: the mouse is the cyclic, not a camera orbit.
+                    // FLYING (heli OR plane): the mouse is the stick (roll on X, pitch on Y), not a camera orbit.
                     //
                     // PITCH SIGN IS A SETTING, not a decision (ControlsOptions.InvertHeliPitch). Godot's
                     // Relative.Y is negative when the mouse moves forward, and the flight model takes pitch
@@ -4669,7 +4714,8 @@ namespace UnturnedGodot
                     // and strawberry liked -- they were both describing the same behaviour and disagreeing
                     // about it, which is what a toggle is for.
                     _heliStickR = Mathf.Clamp(_heliStickR + mm.Relative.X * HeliStickGain, -1f, 1f);
-                    float pitchDelta = ControlsOptions.InvertHeliPitch ? -mm.Relative.Y : mm.Relative.Y;
+                    bool invertFly = _driving.IsPlane ? ControlsOptions.InvertPlanePitch : ControlsOptions.InvertHeliPitch;   // the plane has its OWN invert-Y toggle, separate from the heli's (master)
+                    float pitchDelta = invertFly ? -mm.Relative.Y : mm.Relative.Y;
                     _heliStickP = Mathf.Clamp(_heliStickP + pitchDelta * HeliStickGain, -1f, 1f);
                 }
                 else if ((_driving != null || _riding != null) && !_fp)   // driving in 3rd person: the mouse ORBITS the chase cam around the car instead of turning the driver (master)
@@ -4793,12 +4839,16 @@ namespace UnturnedGodot
                 if (_noteReader != null && _noteReader.IsOpen) _noteReader.Close();   // F while a note is open -> close it first (same as Esc)
                 else if (_invUI != null && _invUI.IsOpen) { SaveGunState(); CloseCrate(); _invUI.Close(); Input.MouseMode = Input.MouseModeEnum.Captured; }   // F while a container inventory is open -> CLOSE it (CloseCrate swings the door shut too), same as Escape (master)
                 else if (_driving != null && !DrivingPredicted) ExitVehicle();  // hop out (SP direct exit; a Part A predicted drive falls through to the server REQUEST below)
+                else if (_ridingTrain != null) ExitTrain();                     // hop out of a boarded train (parallel ride path)
                 else if (RequestExitPuppet()) { }                          // riding a replicated vehicle: ask the server to free the seat (C6)
                 else if (TryToggleHitch()) { }                             // on foot at a trailer hitch: couple / uncouple
                 else if (_focusShelfItem != null || _focusItem != null) TryPickup();   // looking at a SHELF item or a dropped item: grab it (shelf item takes priority in TryPickup)
                 else if (RequestPickupFocusedPuppet()) { }                 // MP: looking at a REPLICATED dropped item -> ask the server for it (like SP, a focused item wins over a nearby vehicle)
                 else if (_focusVehicle != null && IsInstanceValid(_focusVehicle) && !_focusVehicle.IsWreck && !_focusVehicle.IsTrailer) EnterVehicle(_focusVehicle); // looking at a LIVE, drivable vehicle: get in (a wreck is salvaged with LMB; a trailer is towed, not driven)
                 else if (RequestEnterNearestPuppet()) { }                  // MP shell near a REPLICATED vehicle: ask the server for the seat (C6; false in SP -- no puppets)
+                else if (_focusCouplerTrain != null && IsInstanceValid(_focusCouplerTrain)) _focusCouplerTrain.Uncouple(_focusCouplerIdx);   // LOOKING at a coupler: F splits the train there (master)
+                else if (_focusTrain != null && IsInstanceValid(_focusTrain)) BoardTrain(_focusTrain);   // LOOKING at a train loco: board it (outlined affordance, master)
+                else if (NearestTrain() is Train nt) BoardTrain(nt);       // fallback: stood next to a train, board it
                 else if (_focusDeployable != null && IsInstanceValid(_focusDeployable))
                 {   // looking at a placed deployable: F starts a HOLD -> pick it up (UpdateDeployPickup); a quick TAP toggles
                     // a generator's power (fired on release). Consume F so it doesn't fall through to open a nearby crate.
@@ -4856,8 +4906,10 @@ namespace UnturnedGodot
                 SalvageAimedStructure();   // R while building: take the aimed piece back down (reload is meaningless here)
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.Y } && (_build?.Active ?? false))
                 UpgradeAimedStructure();   // Y while building: wood -> brick -> metal in place
+            else if (@event is InputEventKey { Pressed: true, Keycode: Key.G } && _driving != null && _driving.HasRetractGear)
+                { GD.Print("[GEAR] G-input -> retract branch"); _driving.ToggleGear(); }   // G while flying a retract-gear plane: toggle the landing gear (debounced in Vehicle) (master 2026-08-18)
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.G })
-                MeleeAttack();        // melee swing at a zombie in reach
+                { GD.Print($"[GEAR] G-input -> melee branch (driving={_driving!=null} retractGear={(_driving!=null && _driving.HasRetractGear)})"); MeleeAttack(); }        // melee swing at a zombie in reach
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.H })
                 ThrowGrenade();       // throw a grenade
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.P, Echo: false })
@@ -5114,7 +5166,7 @@ namespace UnturnedGodot
             if (_driving != null && _seatIndex != 0 && _driving.HasTurret(_seatIndex))
                 return FireTurret();
 
-            if (_fireCd > 0f || Ammo <= 0 || _reloading || _unloading || _magSwapAnimTimer > 0 || _needsRechamber || _rechambering || _cam == null || _dead || (_driving != null && (_seatIndex == 0 || !_fp))
+            if (_fireCd > 0f || Ammo <= 0 || _reloading || _unloading || _magSwapAnimTimer > 0 || _needsRechamber || _rechambering || _cam == null || _dead || _ridingTrain != null || (_driving != null && (_seatIndex == 0 || !_fp))
                 || !HasGunOut || IsSwimming || (_invUI?.IsOpen ?? false)) return false;   // IsSwimming: guns are canUseUnderwater=false -> no shot while swimming, incl. the polled AUTO/burst tick (source PlayerEquipment). !HasGunOut: no gun in hand (melee/held item disarm it) -> no shot, even from the polled auto/burst tick after switching away mid-fire (master)
             // -- also while the bolt/pump still needs cycling -- kills a queued burst the frame we die (the tick calls Fire()) + ignores death-screen clicks (master). _driving guard fixes the "stray tracer flies straight south" bug: the auto/burst tick (_PhysicsProcess) calls Fire() on held-LMB WITHOUT a driving check, and while driving _cam is TopLevel (detached chase cam) -> aim = the chase cam's fixed heading, not the player's look. LMB honks while driving anyway.
             if (AmmoRadial?.IsOpen ?? false) return false;   // no firing while the ammo radial is up -- you're picking ammo, not shooting
@@ -5927,10 +5979,23 @@ namespace UnturnedGodot
             // burning in your pocket. Costs one bool test per frame and cannot go stale.
             if (_heldLightOn && !HoldingLight) { _heldLightOn = false; ApplyHeldLight(); }
             UpdateGrassDisplacement();
-            if (_interpReady && !_dead && _driving == null)   // RENDER INTERPOLATION (master): lerp the visual position between the last two 50Hz ticks so it doesn't step at 50Hz while rendering at 60+
+            if (_interpReady && !_dead && _driving == null && _ridingTrain == null)   // RENDER INTERPOLATION (master): lerp the visual position between the last two 50Hz ticks so it doesn't step at 50Hz while rendering at 60+
                 GlobalPosition = _interpPrev.Lerp(_interpCurr, (float)Engine.GetPhysicsInterpolationFraction());
             if (_driving != null && !_dead)   // driving: position the cam from the vehicle's Godot-INTERPOLATED visual transform, so cam + car mesh are both smooth + IN SYNC (master: godot smoothing for the car)
                 PositionDriveCam(_driving.GetGlobalTransformInterpolated());
+            if (_ridingTrain != null && !_dead && _cam != null)   // riding a train: 1P cab (H=fp) or 3P chase behind the loco (mouse-orbited)
+            {
+                if (_fp) _cam.GlobalTransform = _ridingTrain.DriverEyeWorld;   // cab, looking forward down the rail
+                else
+                {
+                    var lt = _ridingTrain.Loco != null ? _ridingTrain.Loco.GetGlobalTransformInterpolated() : _ridingTrain.GlobalTransform;
+                    var tfwd = -lt.Basis.Z; tfwd.Y = 0f; tfwd = tfwd.LengthSquared() > 0.001f ? tfwd.Normalized() : Vector3.Forward;
+                    float tdist = 18f, tpitch = Mathf.DegToRad(_driveCamPitch);   // long loco -> hold the cam well back
+                    Vector3 tdir = new Basis(Vector3.Up, Mathf.DegToRad(_driveCamYaw)) * (-tfwd);   // behind the heading, mouse-orbited
+                    var teye = lt.Origin + tdir * (tdist * Mathf.Cos(tpitch)) + Vector3.Up * (tdist * Mathf.Sin(tpitch) + 4f);
+                    _cam.GlobalTransform = new Transform3D(Basis.Identity, teye).LookingAt(lt.Origin + Vector3.Up * 2.5f, Vector3.Up);
+                }
+            }
             if (_riding != null && !_dead && IsInstanceValid(_riding))   // C6 riding: chase the dead-reckoned puppet (it moves per-FRAME in VehicleReplicaView, no physics interp to sample)
                 PositionRideCam(_riding.GlobalTransform);
             OutlineOverlay.DrivingSuppress = _driving != null || _riding != null;   // in a vehicle: nothing focusable -> kill the outline overlay's per-frame 2nd cull + dilate (the 3p-cam POI fps drop, strawberry)
@@ -6016,7 +6081,7 @@ namespace UnturnedGodot
             // The eye height is lerped whether or not the first-person camera is the one being drawn: in third person
             // nothing reads _cam.Position any more, but the BULLETS still come out of the eyes, so it has to keep up.
             _eyeHeight = Mathf.Lerp(_eyeHeight, EyeHeight, Mathf.Min(1f, 4f * (float)delta));
-            if (_cam != null && !_dead && _driving == null && _riding == null)   // while driving/riding, the drive cam above owns the view
+            if (_cam != null && !_dead && _driving == null && _riding == null && _ridingTrain == null)   // while driving/riding, the drive cam above owns the view
             {
                 if (_ugFp) _fp = true;   // render harness (UG_FP=1): force 1st-person so the FP viewmodel is captured
                 if (_fp)
@@ -6210,6 +6275,67 @@ namespace UnturnedGodot
 
         // Public since Part A: ClientWorldSession seats the shell on its client-local vehicle through this
         // EXACT SP path (one enter seam, zero MP-only side effects here).
+        /// <summary>Nearest boardable train's loco within reach (trains aren't Vehicles, so the vehicle finder
+        /// misses them). Generous radius -- the loco is ~11m long, so the cab can sit several metres off centre.</summary>
+        static float SegPointDistSq(Vector3 a, Vector3 b, Vector3 p)
+        {
+            Vector3 ab = b - a; float t = ab.LengthSquared() > 1e-9f ? Mathf.Clamp((p - a).Dot(ab) / ab.LengthSquared(), 0f, 1f) : 0f;
+            return (a + ab * t - p).LengthSquared();
+        }
+
+        Train NearestTrain()
+        {
+            Train best = null; float bestD = 10f * 10f;
+            foreach (var n in GetTree().GetNodesInGroup("trains"))
+                if (n is Train t && t.Loco != null)
+                {
+                    float d = GlobalPosition.DistanceSquaredTo(t.Loco.GlobalPosition);
+                    if (d < bestD) { bestD = d; best = t; }
+                }
+            return best;
+        }
+
+        /// <summary>Board a train: hide + free the camera exactly as EnterVehicle does, but with no seat/MP
+        /// bookkeeping -- a train is a lone spline-follower, so this ride path never touches the vehicle/MP logic.</summary>
+        void BoardTrain(Train t)
+        {
+            _ridingTrain = t;
+            if (Hud != null) Hud.Train = t;   // drive HUD: title + speedo box (master: vehicle UI on the train)
+            t.SetOccupied(true);   // start the engine loop (base plays only while occupied, master)
+            t.MarkBoarded();       // control from whichever engine the player looked at (master)
+            if (_focusTrain != null) { if (IsInstanceValid(_focusTrain)) _focusTrain.SetLookFocused(false); _focusTrain = null; }   // drop the look-outline once aboard
+            _driveCamYaw = 0f; _driveCamPitch = 15f;   // 3P chase starts squarely behind the loco
+            _viewmodel?.SetShown(false);
+            if (_cam != null) _cam.TopLevel = true;
+            foreach (var c in FindChildren("*", "CollisionShape3D", true, false))
+                if (c is CollisionShape3D cs) cs.Disabled = true;
+            Visible = false;
+            Velocity = Vector3.Zero;
+        }
+
+        void ExitTrain()
+        {
+            var t = _ridingTrain; _ridingTrain = null;
+            if (Hud != null) Hud.Train = null;   // hide the drive HUD box
+            if (t != null) t.SetOccupied(false);   // stop the engine loops + horn (base only runs while occupied, master)
+            foreach (var c in FindChildren("*", "CollisionShape3D", true, false))
+                if (c is CollisionShape3D cs) cs.Disabled = false;
+            Visible = true;
+            _viewmodel?.SetShown(true);
+            if (_cam != null) _cam.TopLevel = false;
+            if (t?.Loco != null) GlobalPosition = t.Loco.GlobalPosition + t.Loco.GlobalTransform.Basis.X * 3f + Vector3.Up * 1.5f;   // step out beside the cab
+        }
+
+        /// <summary>Advance the boarded train along its rail from W/S (no steering -- the spline steers), then
+        /// ride the loco so the exit spot + camera track it.</summary>
+        void DriveTrain(float delta)
+        {
+            float throttle = UiInputBlocked ? 0f
+                : (Input.IsPhysicalKeyPressed(Key.W) ? 1f : 0f) - (Input.IsPhysicalKeyPressed(Key.S) ? 1f : 0f);
+            _ridingTrain.Drive(throttle, delta);
+            if (_ridingTrain.Loco != null) GlobalPosition = _ridingTrain.Loco.GlobalPosition;
+        }
+
         public void EnterVehicle(Vehicle v)
         {
             if (v.NetDriverId != 0) return;   // MP §3.6: a remote player holds the seat (single driver) -- never set in pure SP, so the direct path is unchanged
@@ -6350,6 +6476,32 @@ namespace UnturnedGodot
                 steer = (Input.IsPhysicalKeyPressed(Key.D) ? 1f : 0f) - (Input.IsPhysicalKeyPressed(Key.A) ? 1f : 0f);
             }
             bool handbrake = !UiInputBlocked && Input.IsPhysicalKeyPressed(Key.Space);
+            // FIXED WING (master 2026-08-17): W/S throttle, A/D tail rudder, mouse L/R = roll, mouse up/down =
+            // pitch (the SAME virtual stick the heli uses, captured in _Input with the plane's own invert-Y
+            // toggle). Hold Ctrl -> ground/taxi mode: lift is cut so it drops onto its floats/wheels and drives
+            // like a car (also for wheeled helis later). Arrow keys mirror the mouse stick.
+            if (_driving.IsPlane)
+            {
+                if (!UiInputBlocked)
+                {
+                    float arrowP = (Input.IsPhysicalKeyPressed(Key.Down) ? 1f : 0f) - (Input.IsPhysicalKeyPressed(Key.Up) ? 1f : 0f);
+                    float arrowR = (Input.IsPhysicalKeyPressed(Key.Right) ? 1f : 0f) - (Input.IsPhysicalKeyPressed(Key.Left) ? 1f : 0f);
+                    if (ControlsOptions.InvertPlanePitch) arrowP = -arrowP;
+                    if (arrowP != 0f) _heliStickP = Mathf.MoveToward(_heliStickP, arrowP, ArrowStickRate * delta);
+                    if (arrowR != 0f) _heliStickR = Mathf.MoveToward(_heliStickR, arrowR, ArrowStickRate * delta);
+                }
+                float psp = _heliStickP, psr = _heliStickR;
+                float pfp = Mathf.Max(0f, Mathf.Abs(psp) - HeliStickCrossDeadzone * Mathf.Abs(psr)) * Mathf.Sign(psp);
+                float pfr = Mathf.Max(0f, Mathf.Abs(psr) - HeliStickCrossDeadzone * Mathf.Abs(psp)) * Mathf.Sign(psr);
+                _driving.PlaneGroundMode = !UiInputBlocked && Input.IsPhysicalKeyPressed(Key.Ctrl);   // hold Ctrl -> drop + taxi like a car (master)
+                _driving.DrivePlane(throttle, steer, pfp, pfr, delta);
+                LastDriveInput = new UnityEngine.Vector2(steer, throttle);   // MP fallback axes (throttle/rudder); attitude rides the reported transform
+                LastHandbrakeInput = false;
+                float pk = Mathf.Exp(-HeliStickDecay * delta);   // self-centre the stick (same reasoning as the heli)
+                _heliStickP *= pk; _heliStickR *= pk;
+                GlobalPosition = _driving.GlobalPosition;
+                return;
+            }
             // ROTARY WING: the same W/S/A/D keys mean different things in the air. W/S is the collective (a
             // sticky throttle -- see Vehicle.DriveHeli), A/D is the pedals, and pitch/roll come off the mouse
             // stick captured in _Input. Handbrake has no meaning on a helicopter and is dropped.
@@ -6437,11 +6589,11 @@ namespace UnturnedGodot
                 else   // SP driving: the classic fixed forward gaze over the hood
                     // FP: same rule as the chase cam -- in a helicopter the view IS the airframe's orientation,
                     // so take its basis outright rather than looking at a point with an up hint.
-                    _cam.GlobalTransform = _driving != null && _driving.IsHeli
-                        ? new Transform3D(vt.Basis.Orthonormalized(), eye)
+                    _cam.GlobalTransform = _driving != null && (_driving.IsHeli || _driving.IsPlane)
+                        ? new Transform3D(vt.Basis.Orthonormalized(), eye)   // flying: the cockpit view IS the airframe's orientation -> it rolls/pitches with the plane
                         : new Transform3D(Basis.Identity, eye).LookingAt(vt * (eyeL + new Vector3(0f, -0.6f, -3.9f)), Vector3.Up);
             }
-            else if (_driving != null && _driving.IsHeli)
+            else if (_driving != null && (_driving.IsHeli || _driving.IsPlane))
             {
                 // FLYING: the camera BECOMES the airframe. VoX 2026-08-16, first "I want the players view to
                 // tilt with the copter's role and pitch", then exactly: "the player's view should exacly match
@@ -6452,13 +6604,21 @@ namespace UnturnedGodot
                 // Every other vehicle keeps a world-level chase cam because a car's roll is noise; on a
                 // helicopter the roll IS the control input, and a level camera hides the thing being steered.
                 // No mouse orbit either: while flying, the mouse is the cyclic, not a camera.
-                float dist = Mathf.Clamp(size * 1.1f, 6.5f, 34f);
-                Basis vb = vt.Basis.Orthonormalized();
-                // Offset in the VEHICLE's frame, so the camera keeps station on the airframe through a roll.
-                // The up-offset is deliberately small: the view direction is exactly the machine's heading, so
-                // anything more parks the helicopter near the bottom of the screen instead of in front of you.
-                var eye = vt.Origin + vb.Z * (dist * 0.86f) + vb.Y * (dist * 0.16f + size * 0.06f);
-                _cam.GlobalTransform = new Transform3D(vb, eye);
+                float dist = _driving.IsPlane ? Mathf.Clamp(size * 0.62f, 6.5f, 20f) : Mathf.Clamp(size * 1.1f, 6.5f, 34f);   // planes: the long fuselage+wingspan inflate the AABB diagonal (~14.7 jet -> 16m) -> pull the chase cam IN (master 2026-08-18: jet 3p was way too far); helis unchanged (tinyclaw)
+                if (_driving.IsPlane)
+                {
+                    // WORLD-STABLE chase for the PLANE (level horizon). The airframe-locked cam below swung the
+                    // whole view around during rolls/loops -> master 2026-08-18 "the 3p camera keeps getting messed up".
+                    var pf = -vt.Basis.Z; pf.Y = 0f; pf = pf.LengthSquared() > 0.001f ? pf.Normalized() : Vector3.Forward;   // flattened heading
+                    var peye = vt.Origin - pf * (dist * 0.9f) + Vector3.Up * (dist * 0.34f + size * 0.05f);
+                    _cam.GlobalTransform = new Transform3D(Basis.Identity, peye).LookingAt(vt.Origin + Vector3.Up * 0.4f, Vector3.Up);
+                }
+                else
+                {
+                    Basis vb = vt.Basis.Orthonormalized();   // HELI: the camera BECOMES the airframe (roll IS the control input -- VoX)
+                    var eye = vt.Origin + vb.Z * (dist * 0.86f) + vb.Y * (dist * 0.16f + size * 0.06f);
+                    _cam.GlobalTransform = new Transform3D(vb, eye);
+                }
             }
             else            // third-person chase: ORBIT behind the car (mouse yaw/pitch), AUTO-ZOOMED for the vehicle's size (master)
             {
@@ -6479,6 +6639,7 @@ namespace UnturnedGodot
             if (NetHold) return;   // mp-clientauth-foot: a follower body never moves itself -- the entity owns the transform, PlayerNetSync teleports this body onto it
             StepLean((float)delta);   // BEFORE the driving/riding returns below: those bail out of the tick entirely, so a lean
                                       //  polled after them would freeze at whatever it was when you got into the car and stay there.
+            if (_ridingTrain != null) { _interpReady = false; LastMoveInput = UnityEngine.Vector2.zero; LastJumpInput = false; DriveTrain((float)delta); return; }   // riding a train: skip on-foot movement, drive the rail
             if (_driving != null) { _interpReady = false; LastMoveInput = UnityEngine.Vector2.zero; LastJumpInput = false; DriveVehicle((float)delta); return; }   // driving: skip on-foot movement (+ pause the render-interp so exiting doesn't smear)
             if (_riding != null) { _interpReady = false; LastMoveInput = UnityEngine.Vector2.zero; LastJumpInput = false; RidePuppet(); return; }   // C6 ride mode: same freeze -- capture drive intent only, the SERVER drives
             if (_interpReady && !_dead) GlobalPosition = _interpCurr;   // render-interp (master): restore the TRUE physics position before moving (undoes the _Process visual smoothing)

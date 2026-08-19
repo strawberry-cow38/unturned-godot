@@ -441,6 +441,91 @@ namespace UnturnedGodot
         public int RoadMaterial(int road) => road >= 0 && road < _roads.Count ? _roads[road].Material : 0;
         public void SetRoadMaterial(int road, int m) { if (road >= 0 && road < _roads.Count) { _roads[road].Material = m; RebuildRoad(road); } }
         public int MaterialCount => _mats.Count;
+        // ===== TRAIN spline API: ride the rails. Tracks = Roads.unity3d material index 4. A train advances a
+        // DISTANCE-along parameter; EvaluateAlong gives the terrain-snapped point + unit tangent to sit a bogie on. =====
+        public const int TracksMaterial = 4;
+        public int RoadMaterialOf(int road) => (road >= 0 && road < _roads.Count) ? _roads[road].Material : -1;
+        public bool RoadLoops(int road) => road >= 0 && road < _roads.Count && _roads[road].IsLoop;
+        public float RoadLength(int road)
+        {
+            if (road < 0 || road >= _roads.Count) return 0f;
+            var r = _roads[road]; int segs = r.IsLoop ? r.Joints.Count : r.Joints.Count - 1; if (r.Joints.Count < 2) return 0f;
+            float total = 0f; for (int i = 0; i < segs; i++) total += SegLength(r, i); return total;
+        }
+        /// <summary>World point (terrain-snapped) + unit tangent at a DISTANCE along a road. Loops wrap; open roads clamp.</summary>
+        public bool EvaluateAlong(int road, float distance, out Vector3 pos, out Vector3 tangent, bool snapTerrain = true)
+        {
+            pos = Vector3.Zero; tangent = Vector3.Forward;
+            if (road < 0 || road >= _roads.Count) return false;
+            var r = _roads[road]; int jc = r.Joints.Count; if (jc < 2) return false;
+            int segs = r.IsLoop ? jc : jc - 1; float total = RoadLength(road);
+            pos = PosAlong(r, segs, total, distance, snapTerrain);
+            // Tangent from a JOINT-CONTINUOUS arc-length finite diff. The old fixed bezier-t delta clamped at each
+            // segment boundary -> a one-sided, discontinuous tangent, so a bogie crossing every joint snapped its
+            // heading -> the wheels "jitter at high speed / on turns" (master 2026-08-19). Sampling the position a
+            // metre either side (which walks across joints) gives a smooth heading everywhere.
+            const float dd = 1.0f;
+            Vector3 tg = PosAlong(r, segs, total, distance + dd, snapTerrain) - PosAlong(r, segs, total, distance - dd, snapTerrain);
+            tangent = tg.LengthSquared() > 1e-6f ? tg.Normalized() : Vector3.Forward;
+            return true;
+        }
+
+        // Position at an arc-length `distance` along a road (arc-length reparam of the bezier + terrain snap).
+        // Split out so EvaluateAlong can sample it a metre either side for a joint-continuous tangent.
+        Vector3 PosAlong(RoadData r, int segs, float total, float distance, bool snapTerrain = true)
+        {
+            if (r.IsLoop && total > 0.001f) distance = Mathf.PosMod(distance, total); else distance = Mathf.Clamp(distance, 0f, total);
+            for (int i = 0; i < segs; i++)
+            {
+                float L = Mathf.Max(SegLength(r, i), 0.001f);
+                if (distance <= L || i == segs - 1)
+                {
+                    // arc-length reparam: find the bezier t whose arc length from 0..t == distance (bezier t is
+                    // NOT uniform in arc length -> feeding distance/L straight in slowed the train through curves).
+                    const int SUB = 24;
+                    Vector3 sp = SplinePos(r, i, 0f); float acc = 0f, t = 1f;
+                    for (int k = 1; k <= SUB; k++)
+                    {
+                        Vector3 p = SplinePos(r, i, (float)k / SUB);
+                        float seg = p.DistanceTo(sp);
+                        if (acc + seg >= distance || k == SUB)
+                        {
+                            float f = seg > 1e-6f ? (distance - acc) / seg : 0f;
+                            t = Mathf.Clamp(((k - 1) + Mathf.Clamp(f, 0f, 1f)) / SUB, 0f, 1f);
+                            break;
+                        }
+                        acc += seg; sp = p;
+                    }
+                    Vector3 pos = SplinePos(r, i, t);
+                    if (snapTerrain && Terr != null && !r.Joints[i].IgnoreTerrain) pos.Y = Terr.SampleHeight(pos.X, pos.Z);   // train passes snapTerrain:false -> ride the track's own smooth spline Y, not the bumpy heightmap (master: ignore terrain, follow the track)
+                    return pos;
+                }
+                distance -= L;
+            }
+            return SplinePos(r, segs - 1, 1f);
+        }
+        /// <summary>Nearest TRACK road (material 4) to a world point, + the distance-along of the closest sampled point.</summary>
+        public bool NearestTrack(Vector3 world, out int road, out float distanceAlong)
+        {
+            road = -1; distanceAlong = 0f; float best = float.MaxValue;
+            for (int ri = 0; ri < _roads.Count; ri++)
+            {
+                var r = _roads[ri]; if (r.Material != TracksMaterial || r.Joints.Count < 2) continue;
+                int segs = r.IsLoop ? r.Joints.Count : r.Joints.Count - 1; float acc = 0f;
+                for (int i = 0; i < segs; i++)
+                {
+                    float L = Mathf.Max(SegLength(r, i), 0.001f); int n = Mathf.Max(2, (int)(L / 4f));
+                    for (int k = 0; k <= n; k++)
+                    {
+                        float t = (float)k / n; Vector3 pp = SplinePos(r, i, t); float dsq = pp.DistanceSquaredTo(world);
+                        if (dsq < best) { best = dsq; road = ri; distanceAlong = acc + t * L; }
+                    }
+                    acc += L;
+                }
+            }
+            return road >= 0;
+        }
+
         // Roads.unity3d container order (same as TexHeight) -> friendly names for the picker; concrete/dirt as a fallback tag
         static readonly string[] MatNames = { "Highway_0", "Highway_1", "Racetrack", "Road", "Tracks", "Trail", "White", "Yellow", "Road_8", "Road_9" };
         public string RoadMaterialName(int road)
