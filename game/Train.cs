@@ -19,6 +19,7 @@ namespace UnturnedGodot
         readonly List<(Node3D body, MeshInstance3D bf, MeshInstance3D bb, float off)> _units = new();
         const float MaxSpeed = 48f, Accel = 2f, Decel = 1.2f, Brake = 12f;   // inertia (master): high top speed, slow build, long coast, but FAST active brake
         float _speed;
+        AudioStreamPlayer3D _engineSnd, _addSnd, _hornSnd;   // engine loop (pitched to speed) + additive rev layer (blends in on the gas) + horn (hold C)
 
         /// <summary>Spawn a train onto the nearest track spline to <paramref name="near"/>. Null if there is no
         /// track road (material 4) in the world (only Yukon has tracks).</summary>
@@ -76,6 +77,7 @@ namespace UnturnedGodot
             MakeUnit(car, carMat, 3f * CarGap, new Vector3(3.4f, 1.8f, 10.8f), new Vector3(0f, 0.13f, 0f));   // car 3
             Place();
             ResetPhysicsInterpolation();   // placed this frame -> don't interpolate the units up from the origin pose (project physics_interpolation=true)
+            SetupAudio();
         }
 
         void PlaceUnit((Node3D body, MeshInstance3D bf, MeshInstance3D bb, float off) u, float sctr)
@@ -120,6 +122,50 @@ namespace UnturnedGodot
                 if (_s > hi) { _s = hi; _speed = 0f; }
             }
             Place();
+            UpdateAudio(throttle, dt);
+        }
+
+        // Engine sounds live on the loco so they're 3D-positional and ride with it. Base loop always plays (idle
+        // hum), the additive layer is silent until you're on the gas, the horn waits on its key. (master picked
+        // engine base + additive rev + the long horn, 2026-08-19.)
+        void SetupAudio()
+        {
+            Node3D loco = _units.Count > 0 ? _units[0].body : this;
+            var eng = PlayerController.LoadWavOneShot("res://content/train_engine.wav", loop: true);
+            if (eng != null) { _engineSnd = new AudioStreamPlayer3D { Stream = eng, VolumeDb = -9f, UnitSize = 12f, MaxDistance = 75f, PitchScale = 0.8f }; loco.AddChild(_engineSnd); _engineSnd.Play(); }
+            var add = PlayerController.LoadWavOneShot("res://content/train_engine_add.wav", loop: true);
+            if (add != null) { _addSnd = new AudioStreamPlayer3D { Stream = add, VolumeDb = -80f, UnitSize = 12f, MaxDistance = 75f, PitchScale = 0.85f }; loco.AddChild(_addSnd); _addSnd.Play(); }
+            var horn = PlayerController.LoadWavOneShot("res://content/train_horn.wav", loop: true);
+            if (horn != null) { _hornSnd = new AudioStreamPlayer3D { Stream = horn, VolumeDb = -1f, UnitSize = 15f, MaxDistance = 110f }; loco.AddChild(_hornSnd); }
+        }
+
+        void UpdateAudio(float throttle, float dt)
+        {
+            float sp = MaxSpeed > 0f ? Mathf.Abs(_speed) / MaxSpeed : 0f;   // 0..1
+            if (_engineSnd != null) _engineSnd.PitchScale = 0.8f + 0.7f * sp;               // pitch climbs with speed
+            if (_addSnd != null)
+            {
+                _addSnd.PitchScale = 0.85f + 0.95f * sp;
+                bool onGas = Mathf.Abs(throttle) > 0.05f && (_speed == 0f || Mathf.Sign(throttle) == Mathf.Sign(_speed));   // pulling in the travel direction
+                _addSnd.VolumeDb = Mathf.MoveToward(_addSnd.VolumeDb, onGas ? -5f : -80f, 90f * dt);   // growl blends in under throttle
+            }
+        }
+
+        /// <summary>Park the audio: engine back to idle pitch, rev layer silent, horn off (called on exit -- the
+        /// train freezes when you hop off).</summary>
+        public void SetIdleAudio()
+        {
+            if (_engineSnd != null) _engineSnd.PitchScale = 0.8f;
+            if (_addSnd != null) _addSnd.VolumeDb = -80f;
+            if (_hornSnd != null && _hornSnd.Playing) _hornSnd.Stop();
+        }
+
+        /// <summary>Horn on/off (held). The clip loops while playing so holding the key sustains the honk.</summary>
+        public void SetHorn(bool on)
+        {
+            if (_hornSnd == null) return;
+            if (on) { if (!_hornSnd.Playing) _hornSnd.Play(); }
+            else if (_hornSnd.Playing) _hornSnd.Stop();
         }
 
         bool _lookFocused;

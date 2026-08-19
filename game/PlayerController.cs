@@ -4657,6 +4657,7 @@ namespace UnturnedGodot
             if (_ridingTrain != null)   // RIDING A TRAIN: self-contained input (H = 1P/3P cam, mouse orbits the 3P chase). F-exit + rest use the normal chain below; no vehicle/MP paths touched.
             {
                 if (@event is InputEventKey { Pressed: true, Keycode: Key.H }) { _fp = !_fp; GetViewport().SetInputAsHandled(); return; }
+                if (@event is InputEventKey { Echo: false, Keycode: Key.C } ck) { _ridingTrain.SetHorn(ck.Pressed); GetViewport().SetInputAsHandled(); return; }   // C = horn (hold to sustain)
                 if (@event is InputEventMouseMotion tmm && Input.MouseMode == Input.MouseModeEnum.Captured)
                 {
                     if (!_fp) { _driveCamYaw -= tmm.Relative.X * MouseSensitivity; _driveCamPitch = Mathf.Clamp(_driveCamPitch + tmm.Relative.Y * MouseSensitivity, -25f, 70f); }
@@ -6289,6 +6290,7 @@ namespace UnturnedGodot
         void ExitTrain()
         {
             var t = _ridingTrain; _ridingTrain = null;
+            if (t != null) t.SetIdleAudio();   // engine back to idle + horn off (the train freezes when you hop off)
             foreach (var c in FindChildren("*", "CollisionShape3D", true, false))
                 if (c is CollisionShape3D cs) cs.Disabled = false;
             Visible = true;
