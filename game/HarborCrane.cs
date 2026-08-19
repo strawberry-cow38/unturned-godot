@@ -19,10 +19,19 @@ namespace UnturnedGodot
             new Vector3(22.098f, -0.174f, -7.450f), new Vector3(22.098f, -0.174f, -8.395f),
             new Vector3(22.890f, -0.174f, 8.383f), new Vector3(22.890f, -0.174f, 7.439f),
             new Vector3(22.890f, -0.174f, -7.450f), new Vector3(22.890f, -0.174f, -8.395f),
+            // END-FRAME wheels: inner set cloned + shifted to the outer legs (+-22.5 -> +-49.5, master)
+            new Vector3(-49.908f, -0.174f, 8.383f), new Vector3(-49.908f, -0.174f, 7.439f),
+            new Vector3(-49.908f, -0.174f, -7.450f), new Vector3(-49.908f, -0.174f, -8.395f),
+            new Vector3(-49.115f, -0.174f, 8.383f), new Vector3(-49.115f, -0.174f, 7.439f),
+            new Vector3(-49.115f, -0.174f, -7.450f), new Vector3(-49.115f, -0.174f, -8.395f),
+            new Vector3(49.098f, -0.174f, 8.383f), new Vector3(49.098f, -0.174f, 7.439f),
+            new Vector3(49.098f, -0.174f, -7.450f), new Vector3(49.098f, -0.174f, -8.395f),
+            new Vector3(49.890f, -0.174f, 8.383f), new Vector3(49.890f, -0.174f, 7.439f),
+            new Vector3(49.890f, -0.174f, -7.450f), new Vector3(49.890f, -0.174f, -8.395f),
         };
         const float WheelRadius = 0.4f;
         const float MaxSpeed = 6f, Accel = 2f, Decel = 3f;
-        const float TrolleySpeed = 8f, TrolleyMin = -31f, TrolleyMax = 9f;
+        const float TrolleySpeed = 12f, TrolleyMin = -52f, TrolleyMax = 30f;
         const float CarriageX = 11.5f;      // carriage centre along the beam (local X, before the slide offset)
         const float HoistSpeed = 4f, HoistRestY = 13f, HoistMax = 11f, CarriageAttachY = 14.3f;
         static readonly Basis Upright = new Basis(Vector3.Right, Mathf.DegToRad(-90f));
