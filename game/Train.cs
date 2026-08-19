@@ -43,6 +43,7 @@ namespace UnturnedGodot
         const float RailY = 1.55f, BogieHalf = 3.5f, CoupleGap = 0.9f;
         const float MaxSpeed = 48f, BaseAccel = 2f, BaseDecel = 1.2f, BaseBrake = 12f, RefWeight = 20f;
         const float CoupleRange = 1.3f, CoupleMaxSpeed = 11f, SeparateMargin = 1.5f, BonkTransfer = 0.6f, RollFriction = 3f;   // couple only when ends CLOSE + <=CoupleMaxSpeed; a FASTER hit bonks the car along the rail; passive cars coast + decay (master)
+        const float SeparateSpeed = 5f, StuckGap = 0.4f;   // fixer: un-stick overlapping consists at this rate, to this gap (master)
         readonly List<Car> _cars = new();
         readonly List<MeshInstance3D> _ropes = new();   // short coupler rope per gap (also the look-at/F-uncouple target)
         AudioStreamPlayer3D _engineSnd, _addSnd, _hornSnd;
@@ -202,13 +203,39 @@ namespace UnturnedGodot
         // the rail then settles. Engine consists move only via Drive() (or stay put unoccupied) and skip this.
         public override void _PhysicsProcess(double delta)
         {
-            if (HasEngine || _cars.Count == 0 || Mathf.Abs(_speed) < 0.02f) return;
             float dt = (float)delta;
+            SeparateOverlaps(dt);   // fixer: shove stuck-inside-each-other consists apart, even when parked (master)
+            if (HasEngine || _cars.Count == 0 || Mathf.Abs(_speed) < 0.02f) return;
             _speed = Mathf.MoveToward(_speed, 0f, RollFriction * dt);
             _s += _speed * dt;
             ClampS();
             Place();
             ResolveContact();
+        }
+
+        // FIXER (master): shove any two SEPARATE consists that are penetrating each other apart along the rail,
+        // each pushing only ITSELF away (so both halves move, no cross-instance races). Gated to ~stationary
+        // consists so it never fights an active drive-in/bonk (ResolveContact owns those); handles the stuck case
+        // where both are parked and overlapping (e.g. two trains spawned on the same spot).
+        void SeparateOverlaps(float dt)
+        {
+            if (_cars.Count == 0 || Mathf.Abs(_speed) > 1f) return;
+            float myFront = _s + _cars[0].S.HalfLen;
+            float myRear = _s - _cars.Last().Off - _cars.Last().S.HalfLen;
+            foreach (var node in GetTree().GetNodesInGroup("trains"))
+            {
+                if (node is not Train o || o == this || !IsInstanceValid(o) || o._cars.Count == 0 || o._road != _road || Mathf.Abs(o._speed) > 1f) continue;
+                float oFront = o._s + o._cars[0].S.HalfLen;
+                float oRear = o._s - o._cars.Last().Off - o._cars.Last().S.HalfLen;
+                if (!(myFront > oRear && oFront > myRear)) continue;   // no penetration
+                float pushFwd = myFront - oRear + StuckGap;    // I'm behind o -> back off (-s) to clear + a small gap
+                float pushBack = oFront - myRear + StuckGap;   // I'm ahead of o -> move forward (+s)
+                float step = SeparateSpeed * dt;
+                if (pushFwd <= pushBack) _s -= Mathf.Min(pushFwd, step);
+                else _s += Mathf.Min(pushBack, step);
+                Place();
+                return;   // one unstick per tick
+            }
         }
 
         void Couple(Train o)
