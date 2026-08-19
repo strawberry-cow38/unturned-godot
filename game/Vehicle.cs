@@ -13,12 +13,16 @@ namespace UnturnedGodot
         float _brakeForce = 32f;                     // Brake -- source .dat value
         float _steerTarget, _steerAngle, _steerTurnSpeed = 70f;   // steering smoothing: MoveTowards target at deg/s. LOWERED for a weighty/laggy feel -- the wheels float behind the input, slow to turn AND slow to re-center (master)
         WaterMode _water; Vector3[] _buoys; float _inThrottle, _inSteer; int _waterFrame;   // BOAT/AMPHIBIOUS: water mode + hull buoyancy VOXELS + the last drive input (water propulsion runs in _PhysicsProcess)
+        float _waveAmp = 0.1f;                                  // sea-surface ripple amplitude for THIS hull
+        bool _steadyHull;                                       // hold her still: extra heave damping (Spec.SteadyHull)
         Vector3 _deckVolume, _deckCenter;                       // MOVING DECK: the carry box (local space); Zero = not a carrier
         Transform3D _deckPrevXf; bool _deckHasPrev;
         PhysicsShapeQueryParameters3D _deckQ;
         struct DeckRider { public float Grace, Settle; public Vector3 LastVel; public float LastYawRate; }
         readonly System.Collections.Generic.Dictionary<Node3D, DeckRider> _deckRiders = new();
+        readonly System.Collections.Generic.Dictionary<Node3D, float> _deckLoadVy = new();   // load -> its vertical velocity last tick
         public int DebugDeckRiders;                             // test seam: bodies carried on the last tick
+        public int DebugDeckLoads;                              // test seam: bodies whose weight we cancelled last tick
         float _voxelHalfHeight, _waterTime, _gravityMag = 9.8f, _buoyDamp = 1f, _turnScale = 1f, _buoyReserve = 1f;   // source Buoyancy.cs port: voxel half-height (submersion test), wave-ripple clock, gravity magnitude (Archimedes balance); _buoyDamp = per-vehicle damping multiplier
         bool _afloat;   // currently floating (any buoy submerged) -- HUD/anim can read it
         public bool Afloat => _afloat;
@@ -1161,6 +1165,19 @@ namespace UnturnedGodot
                                       // it. Measured: the hull sank 10.2 m in 10 s and was still going, never finding a new
                                       // equilibrium (vehicle.ship_deck_probe). Raising this and re-tuning BuoyLift keeps the
                                       // draft where it was while giving the hull headroom to carry things.
+            public bool SteadyHull;   // hold this hull STILL: heavy extra heave damping, for a vessel meant to be
+                                      // stood and built on. strawberry 2026-08-19: "the idea is that the ship is
+                                      // eventually a spot where you can build a base, if its constantly wobbling,
+                                      // its hard to build on."
+                                      //
+                                      // Implemented as DAMPING, and not as the obvious thing. The obvious thing is
+                                      // to switch off the per-voxel wave ripple that is visibly driving the bob --
+                                      // I tried it and the hull got WORSE, 0.259 m/s to 0.763. The ripple is doing
+                                      // a second job nobody wrote down: it gives each voxel a slightly different
+                                      // sea surface, so the submerged/not-submerged threshold is crossed by a few
+                                      // voxels at a time instead of all of them at once. It is DITHER, and without
+                                      // it the quantised buoyancy is a staircase the hull chatters up and down.
+                                      // So the ripple stays and the residual motion is damped instead.
             public (Vector3 min, Vector3 max)[] HullBands;   // 1:1 COLLISION. Each entry is an AABB filter in MESH
                                       // space; every body-mesh vertex inside it becomes one CONVEX hull shape. Set this
                                       // and the single BoxShape3D hull below is REPLACED. Godot cannot give a MOVING
@@ -2226,6 +2243,10 @@ namespace UnturnedGodot
             // headroom. Measured off the ship mesh, not guessed. The aft superstructure stands inside this box
             // and is part of the hull, so it simply never registers as a rider.
             DeckVolume = new Vector3(23f, 6f, 66.5f), DeckCenter = new Vector3(0f, 14f, 0f),
+            SteadyHull = true,  // she is meant to be BUILT ON (strawberry), and a hull this size never settles on
+                                // her own -- 0.259 m/s of vertical motion with an empty deck, measured 18 s after
+                                // spawn (vehicle.ship_orca_landing's control). Reads as life on a runabout; reads
+                                // as unbuildable on a 66 m ship.
             BuoyReserve = 4f,   // RESERVE BUOYANCY -- the volume a real hull carries above its waterline, and the
                                 // thing this ship had none of. Displacement comes from Mass/HullDensity, and every
                                 // vehicle here masses the same GlobalMass 900, so full submersion produced exactly 2x
@@ -3611,7 +3632,11 @@ namespace UnturnedGodot
                 // Contact reporting is the honest "is it actually standing on me" test, so it is switched on ONLY
                 // for a vessel that carries -- it is not free, and no other vehicle needs it.
                 v.ContactMonitor = true;
-                v.MaxContactsReported = 16;
+                // 32, not 16. The load cancellation below reads the contact list, so anything that falls off the
+                // end of it keeps its full weight on the hull -- and a busy deck (several vehicles, a player, a
+                // barricade) plus whatever the bow is nudging can reach 16 without trying. A cap that silently
+                // drops loads is exactly the kind of limit that shows up as "it still sinks sometimes".
+                v.MaxContactsReported = 32;
             }
             v._water = s.Water;   // BOAT/AMPHIBIOUS: voxelize the hull box for the source Buoyancy.cs voxel-Archimedes model
             if (s.Water != WaterMode.Car)
@@ -3628,6 +3653,7 @@ namespace UnturnedGodot
                         for (int sz = 0; sz < slices; sz++)
                             vox[vi++] = new Vector3(minExt.X + vsz.X * (0.5f + sx), minExt.Y + vsz.Y * (0.5f + sy) + buoyDy, minExt.Z + vsz.Z * (0.5f + sz));
                 v._buoys = vox;
+                v._steadyHull = s.SteadyHull;
                 v._buoyReserve = s.BuoyReserve > 0f ? s.BuoyReserve : 1f;
                 if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_BUOYRESERVE"), out var _br) && _br > 0f) v._buoyReserve = _br;   // live sweep knob
                 v._buoyDamp = s.BuoyDamp > 0f ? s.BuoyDamp : 1f;   // per-vehicle buoyancy damping (big hulls settle slowly at 1x)
@@ -6095,6 +6121,14 @@ namespace UnturnedGodot
         /// <summary>Yaw rate, rad/s -- what a rider has to turn at to keep facing the same way along the deck.</summary>
         public float DeckYawRate => AngularVelocity.Y;
 
+        // Spec.SteadyHull: hold her flat and level. 10, not the 4 this started at -- 4 already took the EMPTY
+        // hull from 0.259 m/s to a clean 0.000, but a machine parked on the deck still rang her 22.7 mm
+        // peak-to-peak, because what a load actually presses with oscillates around its weight and only the mean
+        // is cancelled. Damping the leftover is cheaper and steadier than trying to track the AC part of a
+        // contact force through a finite difference, which was measurably worse (see DeckImpactMinSpeed).
+        const float SteadyHeaveDamp = 10f, SteadyTrimDamp = 12f;
+        const float DeckImpactMinSpeed = 1f;   // m/s of descent below which a load is parked, not landing
+        const float DeckImpactCap = 200f;   // m/s^2, ~20g: the most deceleration we will believe as contact force
         const float DeckGrace = 0.35f;    // how long a rider stays a rider after its last contact frame
         const float DeckSettle = 0.10f;   // contact time required BEFORE carrying starts. A machine that has landed
                                           // spends many ticks settling onto the plating and clears this immediately;
@@ -6159,6 +6193,73 @@ namespace UnturnedGodot
                 if (body is Vehicle bv && bv._water != WaterMode.Car && bv._afloat) continue;   // another hull FLOATING alongside is not cargo
                 aboard.Add(body);
             }
+            // 2a. CARGO DOES NOT WEIGH ON THE HULL (strawberry 2026-08-19: "we should have the ship have an
+            // effect on other vehicles, but other vehicles have no effect on the ship"). Every vehicle in this
+            // game masses the same GlobalMass 900, so a ship and the helicopter parked on it weigh exactly the
+            // same, and any honest displacement model puts the deck under in short order.
+            //
+            // Scoped to RESTING ON US, which is not the same question as the carry's "is it on the deck" and so
+            // is answered separately. The first version reused the deck box and the rider settle timer, and left
+            // three holes strawberry could still see the hull move through: something on the BRIDGE ROOF (above
+            // the box), something half over the RAIL (outside it), and the moment of TOUCHDOWN itself (before
+            // the timer). No upper or lateral bound here, and no settle wait.
+            //
+            // The floor of it matters though: cancelling the weight of anything merely TOUCHING would shove the
+            // hull UPWARD every time a boat came alongside, since that boat's weight was never on us to begin
+            // with. So the test is contact plus "at or above deck height", which separates a machine on the
+            // plating (local y 11+) from one bobbing against the side at the waterline (local y ~4.8).
+            float deckFloorLocal = _deckCenter.Y - _deckVolume.Y * 0.5f;
+            var invXf = xf.AffineInverse();
+            DebugDeckLoads = 0;
+            // Velocity history is seeded from ABOARD (box overlap), not from contact, and that detail is the
+            // difference between this working and not. The cancellation needs the load's velocity from the
+            // PREVIOUS tick to know how hard it is being arrested; seeded on first contact there is no previous
+            // sample, so the very first tick of the impact -- by far the largest -- was cancelled by exactly
+            // zero. An incoming machine is in the deck box for many ticks before it touches anything, so track
+            // it from there and the history is already warm when it arrives.
+            foreach (var b in aboard) if (b is RigidBody3D pre && !touching.Contains(b)) _deckLoadVy[b] = pre.LinearVelocity.Y;
+            foreach (var b in touching)
+            {
+                if (b is not RigidBody3D load) continue;
+                if (b is Vehicle lv && lv._water != WaterMode.Car && lv._afloat) continue;   // a hull FLOATING alongside carries itself
+                if ((invXf * b.GlobalPosition).Y < deckFloorLocal - 2f) continue;            // alongside or beneath us, not resting on us
+                // WEIGHT, at the LOAD'S OWN POSITION so the trim moment goes with it -- a heli parked on the bow
+                // would otherwise still pitch her down by the head. Scaled by GravityScale, because a body that is
+                // not falling is not pressing on anything and "cancelling" it would push the hull up.
+                float cancel = load.Mass * _gravityMag * load.GravityScale;
+
+                // ...PLUS THE IMPACT, which is the half that was missing. What a load actually presses on the deck
+                // with is weight PLUS whatever is decelerating it (F = m*a), and only the weight term was being
+                // removed. So the settled draft came out perfect while the moment of TOUCHDOWN still punched the
+                // hull down -- 0.08 to 0.12 m for an orca arriving at 8.8 m/s, which reads exactly as strawberry
+                // put it: "it sinks when i first land". The deceleration IS the contact force, so cancel it too.
+                //
+                // Capped, because a single frame of deep interpenetration can report an enormous deceleration and
+                // an uncapped cancellation would fire the ship out of the sea. Only upward deceleration counts: a
+                // load ACCELERATING downward is in free fall and pressing on nothing.
+                float vy = load.LinearVelocity.Y;
+                float prevVy = _deckLoadVy.TryGetValue(b, out var pv) ? pv : vy;
+                _deckLoadVy[b] = vy;
+                // ONLY WHILE IT IS ACTUALLY ARRIVING. The impact term is a finite difference of the load's
+                // velocity, and a machine sitting on the deck jitters on its own suspension every tick, so run
+                // continuously it is mostly noise -- and because only the upward half is cancelled, biased noise:
+                // an impulse train that pushed the hull into a 0.247 m/s ring it does not have when empty (it
+                // measures 0.000 with nothing aboard). Gated on a real descent rate it fires for the landing and
+                // is silent for the parking, which is the only thing it was ever meant to cover.
+                if (prevVy < -DeckImpactMinSpeed)
+                {
+                    float decel = (vy - prevVy) / Mathf.Max(delta, 1e-5f);
+                    if (decel > 0f) cancel += load.Mass * Mathf.Min(decel, DeckImpactCap);
+                }
+
+                ApplyForce(Vector3.Up * cancel, b.GlobalPosition - GlobalPosition);
+                DebugDeckLoads++;
+            }
+            if (_deckLoadVy.Count > touching.Count)   // drop anything that has left, so the table cannot grow forever
+                foreach (var stale in new System.Collections.Generic.List<Node3D>(_deckLoadVy.Keys))
+                    if (!touching.Contains(stale)) _deckLoadVy.Remove(stale);
+
+
             // A rider is one that is BOTH aboard and in contact. Touching alone is not enough: a machine that
             // slides off the deck edge and scrapes down the hull side is still touching, and refreshing on
             // contact alone would glue it there and carry it around forever.
@@ -6203,16 +6304,6 @@ namespace UnturnedGodot
                     rb.AngularVelocity += Vector3.Up * (AngularVelocity.Y - st.LastYawRate);   // turn with the hull
                     st.LastYawRate = AngularVelocity.Y;
 
-                    // CARGO DOES NOT WEIGH ON THE HULL (strawberry 2026-08-19: "we should have the ship have an
-                    // effect on other vehicles, but other vehicles have no effect on the ship"). Every vehicle in
-                    // this game masses the same GlobalMass 900, so a ship and the helicopter parked on it weigh
-                    // the same and any honest displacement model puts the deck underwater in short order --
-                    // reserve buoyancy got it from 10.21 m down to 0.76, and 0.76 is still visibly settling.
-                    // Cancelled at the RIDER'S OWN POSITION rather than at the centre, so it removes the trim
-                    // moment too: a heli parked on the bow would otherwise pitch the ship down by the head even
-                    // once its weight was handled. Scaled by the rider's GravityScale, because a body that is not
-                    // falling is not pressing on anything and "cancelling" its weight would shove the hull upward.
-                    ApplyForce(Vector3.Up * (rb.Mass * _gravityMag * rb.GravityScale), key.GlobalPosition - GlobalPosition);
                 }
                 else if (key is not CharacterBody3D)
                 {
@@ -6265,7 +6356,7 @@ namespace UnturnedGodot
             {
                 var worldPoint = xf * localPoint;                                         // source: transform.TransformPoint(localPoint)
                 if (worldPoint.Y >= seaY) continue;                                       // WaterUtility: above the flat sea surface -> not underwater
-                float surface = seaY + Mathf.Sin((worldPoint.X + worldPoint.Z) * 8f + _waterTime) * 0.1f;   // source client-side wave ripple
+                float surface = seaY + Mathf.Sin((worldPoint.X + worldPoint.Z) * 8f + _waterTime) * _waveAmp;   // source client-side wave ripple (_waveAmp 0 on a SteadyHull -- see Spec.SteadyHull)
                 if (worldPoint.Y - _voxelHalfHeight >= surface) continue;                 // voxel not yet within voxelHalfHeight of the surface -> no force
                 submerged++;
                 var pv = LinearVelocity + AngularVelocity.Cross(worldPoint - comGlobal);  // source: rootRigidbody.GetPointVelocity(worldPoint)
@@ -6296,6 +6387,16 @@ namespace UnturnedGodot
             }
             _afloat = submerged > 0;
             if (!_afloat) return;
+            if (_steadyHull)
+            {
+                // A BUILD PLATFORM HOLDS STILL. Damps the hull's own heave and roll rate directly, rather than
+                // going through the voxels -- the voxel forces are what is exciting the motion in the first
+                // place, and the residual is a limit cycle around the quantisation, not something a stiffer
+                // spring fixes. Vertical and rotational only, so it costs her nothing in forward speed.
+                ApplyCentralForce(new Vector3(0f, -LinearVelocity.Y * SteadyHeaveDamp * Mass, 0f));
+                var av = AngularVelocity;
+                ApplyTorque(new Vector3(-av.X, 0f, -av.Z) * (SteadyTrimDamp * Mass));   // pitch + roll, never yaw
+            }
             if (_plane)
             {
                 // ROLL DAMPING on the water: damp the roll RATE about the body forward axis so a wave-induced

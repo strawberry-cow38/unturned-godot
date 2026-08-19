@@ -175,8 +175,73 @@ namespace UnturnedGodot.Testing
                         deckSpeed > 5f);
                 T.Check($"an unmatched landing ends up ON the deck rather than flung off it (hull frame {landLocal.X:0.0},{landLocal.Y:0.0},{landLocal.Z:0.0})",
                         landLocal.Y > 10.9f && landLocal.Y < 14f && Mathf.Abs(landLocal.X) < 11.5f && Mathf.Abs(landLocal.Z) < 33.25f);
-                T.Check($"...and afterwards it travels WITH the hull instead of sliding down the deck ({relSpeed:0.00} m/s relative)",
-                        relSpeed < 1.5f);
+                // "Is it sliding down the deck" asked as a DISPLACEMENT over a couple of seconds rather than as
+                // an instantaneous relative speed. The speed reading is noisy -- it caught the lander mid-settle
+                // and read 0.19, 0.56 and 1.71 m/s on three runs of the same code -- and the thing actually worth
+                // knowing is whether it ends up somewhere else on the ship, which is a distance.
+                var slideFrom = ship.GlobalTransform.AffineInverse() * lander.GlobalPosition;
+                for (int i = 0; i < 120; i++) { ship.Drive(1f, 0f, false); yield return Ticks(1); }
+                var slideTo = ship.GlobalTransform.AffineInverse() * lander.GlobalPosition;
+                float landerSlide = new Vector2(slideTo.X - slideFrom.X, slideTo.Z - slideFrom.Z).Length();
+                GD.Print($"[DECK] ...and over the NEXT 2.4 s it moved {landerSlide:0.00} m across the deck (instantaneous relative speed was {relSpeed:0.00} m/s)");
+                T.Check($"...and afterwards it holds its spot on the deck rather than sliding down it ({landerSlide:0.00} m over 2.4 s)",
+                        landerSlide < 2.0f);
+
+                // ---- ON THE BRIDGE ROOF, which is ABOVE the deck carry volume (y 11..17) and so was invisible
+                // to the first version of the load cancellation -- it reused the deck box, so a machine sat on
+                // top of the deckhouse at y=22 pressed on the hull with its full weight and nothing removed it.
+                // strawberry's rule has no deck in it: other vehicles have no effect on the ship, wherever they
+                // happen to be sitting on her.
+                float beforeRoof = ship.GlobalPosition.Y;
+                var roofer = Vehicle.BuildByName("huey");
+                World.AddChild(roofer);
+                roofer.EngineOn = false;
+                roofer.GlobalPosition = ship.GlobalTransform * new Vector3(0f, 24f, 17f);   // 2 m over the bridge roof
+                yield return Ticks(2);
+                for (int i = 0; i < 400; i++) { ship.Drive(0f, 0f, false); yield return Ticks(1); }
+                float roofSank = beforeRoof - ship.GlobalPosition.Y;
+                var rooferLocal = ship.GlobalTransform.AffineInverse() * roofer.GlobalPosition;
+                GD.Print($"[DECK] a vehicle on the BRIDGE ROOF (hull frame {rooferLocal.X:0.0},{rooferLocal.Y:0.0},{rooferLocal.Z:0.0}): hull moved {roofSank:0.00} m");
+                T.Check($"it actually landed on the deckhouse rather than falling past it (hull-frame y {rooferLocal.Y:0.0}, roof is 22)",
+                        rooferLocal.Y > 20f);
+                T.Check($"a vehicle on the bridge roof has no effect on the hull either ({roofSank:0.00} m)",
+                        Mathf.Abs(roofSank) < 0.10f);
+
+                // ---- ALONGSIDE, NOT ABOARD. The hovering-heli control only covers things directly OVER the
+                // deck. The other way "aboard" could misfire is a boat sitting against the hull SIDE at the
+                // waterline: it is in sustained contact, which is half the rider test. The geometry says it
+                // cannot qualify -- the carry box spans hull-local y 11..17 and x +-11.5, while the waterline
+                // sits around y 4.8 -- but that is an argument, and the ship towing every boat that moors
+                // against it would be a bad way to find out the argument was wrong.
+                var alongside = Vehicle.BuildByName("runabout");
+                World.AddChild(alongside);
+                alongside.GlobalPosition = ship.GlobalTransform * new Vector3(12.5f, 5.5f, -6f);   // against the hull, at the waterline
+                yield return Ticks(2);
+                for (int i = 0; i < 100; i++) { ship.Drive(0f, 0f, false); yield return Ticks(1); }   // let it settle alongside
+                var alongStart = alongside.GlobalPosition;
+                var alongShipXf = ship.GlobalTransform;   // read the frame NOW: taking it after the run reports
+                                                          // the boat's start position in the hull's END frame, which
+                                                          // is a number about nothing
+
+                var alongShipStart = ship.GlobalPosition;
+                int alongMaxRiders = 0;
+                for (int i = 0; i < 200; i++)
+                {
+                    ship.Drive(1f, 0f, false); yield return Ticks(1);
+                    if (ship.DebugDeckRiders > alongMaxRiders) alongMaxRiders = ship.DebugDeckRiders;
+                }
+                float alongMoved = (alongside.GlobalPosition - alongStart).Length();
+                float alongShipMoved = (ship.GlobalPosition - alongShipStart).Length();
+                var alongLocal = alongShipXf.AffineInverse() * alongStart;   // in the hull frame it STARTED in
+                GD.Print($"[DECK] ALONGSIDE control: a boat against the hull at {alongLocal.X:0.0},{alongLocal.Y:0.0},{alongLocal.Z:0.0} " +
+                         $"moved {alongMoved:0.0} m while the ship made {alongShipMoved:0.0} m; peak riders {alongMaxRiders}");
+
+                T.Check($"the ship moved during the alongside leg ({alongShipMoved:0.0} m) -- else it was never a chance to tow anything",
+                        alongShipMoved > 15f);
+                T.Check($"a boat ALONGSIDE the hull is never counted as cargo (peak riders {alongMaxRiders}, expected 2 -- the parked heli and the lander)",
+                        alongMaxRiders <= 2);
+                T.Check($"...and is not towed along by it ({alongMoved:0.0} m against the ship's {alongShipMoved:0.0} m)",
+                        alongMoved < alongShipMoved * 0.3f);
             }
             finally { Terrain.HasWater = hadWater; Terrain.SeaLevelY = oldSea; }
         }
