@@ -41,7 +41,7 @@ namespace UnturnedGodot
         readonly List<MeshInstance3D> _wheels = new();
         readonly List<MeshInstance3D> _ropes = new();
         readonly List<(Vector3 c, Vector3 h)> _frameBoxes = new();
-        readonly List<Rid> _selfColliders = new();   // the crane's OWN real trimesh colliders (player/vehicle hit these) -> excluded from the self-stop casts   // convex leg/beam boxes = the FRAME collider (drive axis), derived from the gantry mesh; portal openings left OPEN so you can drive over low stuff
+        Rid _frameColliderRid, _trolleyColliderRid, _hoistColliderRid;   // the crane's OWN exact-mesh colliders (player/vehicles/loose containers hit these); the self-stop casts exclude whichever moves WITH that cast   // convex leg/beam boxes = the FRAME collider (drive axis), derived from the gantry mesh; portal openings left OPEN so you can drive over low stuff
         MeshInstance3D _trolley, _hoist;
         bool _magnetOn; RigidBody3D _held; Vector3 _heldOffset; Aabb _heldAabb; Vector3 _faceAtGrab;   // hoist ELECTROMAGNET (steal the skycrane's magnet -> lift a MagnetableContainer)
         const uint ObstacleMask = (1u << 0) | (1u << 5) | (1u << 6); // terrain/statics + vehicles + props: what STOPS the gantry/trolley when the hoist (or its load) hits it
@@ -68,12 +68,15 @@ namespace UnturnedGodot
         void Build()
         {
             AddToGroup("cranes");
-            AddChild(new MeshInstance3D { Mesh = Lm("Harbor_0_gantry"), MaterialOverride = MakeMat("Harbor_0"), Basis = Upright });
-            ComputeFrameBoxes();   // derives the self-stop boxes AND builds the real frame collider (convex boxes -> valid on a MOVING body, unlike a concave trimesh)
+            var gantryMesh = new MeshInstance3D { Mesh = Lm("Harbor_0_gantry"), MaterialOverride = MakeMat("Harbor_0"), Basis = Upright };
+            AddChild(gantryMesh);
+            gantryMesh.CreateTrimeshCollision();   // EXACT 1:1 frame collider -- concave trimesh on a STATIC child body IS allowed (esp. on Jolt); rides the slow crane so no tunnelling. Every bar, uniform, surface verified 1:1.
+            _frameColliderRid = FirstStaticBodyRid(gantryMesh);
+            ComputeFrameBoxes();   // (self-stop cast boxes only now)
             _trolley = new MeshInstance3D { Mesh = Lm("Harbor_0_trolley"), MaterialOverride = MakeMat("Harbor_0"), Transform = new Transform3D(Upright, Vector3.Zero) };
             AddChild(_trolley);
-            _trolley.CreateConvexCollision();   // carriage collider (convex hull -> valid moving); collect its RID for the self-stop exclude
-            foreach (var ch in _trolley.GetChildren()) if (ch is StaticBody3D tsb) _selfColliders.Add(tsb.GetRid());
+            _trolley.CreateTrimeshCollision();   // exact carriage collider
+            _trolleyColliderRid = FirstStaticBodyRid(_trolley);
             var wm = Lm("Wheel_3"); var wmat = MakeMat("Wheel_3");
             foreach (var off in WheelOff)
             {
@@ -83,6 +86,8 @@ namespace UnturnedGodot
             // HOIST: a clone of the block on 4 corner ropes, hanging under the carriage
             _hoist = new MeshInstance3D { Mesh = Lm("Harbor_0_hoistblk"), MaterialOverride = MakeMat("Harbor_0") };
             AddChild(_hoist);
+            _hoist.CreateTrimeshCollision();   // hoist-block collider: a LOOSE container physically hits it (the HELD one is excluded from the casts + kinematic, so no fight)
+            _hoistColliderRid = FirstStaticBodyRid(_hoist);
             var ropeMat = new StandardMaterial3D { AlbedoColor = new Color(0.12f, 0.10f, 0.08f), Roughness = 1f };
             for (int i = 0; i < 4; i++)
             {
@@ -100,7 +105,7 @@ namespace UnturnedGodot
             float rate = Mathf.Abs(throttle) < 0.05f ? Decel : Accel;
             _speed = Mathf.MoveToward(_speed, target, rate * dt);
             Vector3 driveMotion = -GlobalTransform.Basis.Z * (_speed * dt);
-            float sfDrive = SafeFracWithFrame(driveMotion, ObstacleMask);
+            float sfDrive = SafeFracWithFrame(driveMotion, ObstacleMask, CastEx(true, true, true));
             GlobalPosition += driveMotion * sfDrive;
             SpinWheels(_speed * dt * sfDrive);
             if (sfDrive < 0.999f) _speed = 0f;   // blocked -> the gantry stops rather than shoving through
@@ -109,7 +114,7 @@ namespace UnturnedGodot
             {
                 float want = Mathf.Clamp(_trolleyX + Mathf.Clamp(trolleyIn, -1f, 1f) * TrolleySpeed * dt, TrolleyMin, TrolleyMax);
                 float d = want - _trolleyX;
-                _trolleyX += d * SafeFrac(GlobalTransform.Basis.X * d, ObstacleMask);
+                _trolleyX += d * SafeFrac(GlobalTransform.Basis.X * d, ObstacleMask, CastEx(false, true, true));   // frame left IN -> the hoist + its load stop against the legs/bars
                 if (_trolley != null) _trolley.Position = new Vector3(_trolleyX, 0f, 0f);
             }
             // hoist winch (local Y); the descent stops on ground/props so a load is never pushed underground
@@ -117,7 +122,7 @@ namespace UnturnedGodot
             {
                 float want = Mathf.Clamp(_hoistDrop + Mathf.Clamp(hoistIn, -1f, 1f) * HoistSpeed * dt, 0f, HoistMax);
                 float d = want - _hoistDrop;                       // + = drop (down)
-                _hoistDrop += d * SafeFrac(-GlobalTransform.Basis.Y * d, GroundMask);
+                _hoistDrop += d * SafeFrac(-GlobalTransform.Basis.Y * d, GroundMask, CastEx(false, false, true));   // frame + trolley left IN
             }
             UpdateHoist();
             UpdateMagnet();
@@ -203,31 +208,39 @@ namespace UnturnedGodot
             W(n);
             return acc ?? new Aabb();
         }
-        float CastBox(Vector3 center, Vector3 size, Basis basis, Vector3 motion, uint mask)
+        static Rid FirstStaticBodyRid(Node n) { foreach (var c in n.GetChildren()) if (c is StaticBody3D sb) return sb.GetRid(); return default; }
+        // Exclude whichever of the crane's own colliders MOVES with this cast (+ the held container always). What's NOT
+        // excluded is HIT: e.g. the trolley/hoist casts leave the frame IN, so the hoist + its load stop against the frame.
+        Godot.Collections.Array<Rid> CastEx(bool frame, bool trolley, bool hoist)
+        {
+            var a = new Godot.Collections.Array<Rid>();
+            if (frame && _frameColliderRid.IsValid) a.Add(_frameColliderRid);
+            if (trolley && _trolleyColliderRid.IsValid) a.Add(_trolleyColliderRid);
+            if (hoist && _hoistColliderRid.IsValid) a.Add(_hoistColliderRid);
+            if (_held != null && IsInstanceValid(_held)) a.Add(_held.GetRid());
+            return a;
+        }
+        float CastBox(Vector3 center, Vector3 size, Basis basis, Vector3 motion, uint mask, Godot.Collections.Array<Rid> exclude)
         {
             if (motion.LengthSquared() < 1e-8f) return 1f;
             if (size.X < 0.05f || size.Y < 0.05f || size.Z < 0.05f) return 1f;
             var space = GetWorld3D()?.DirectSpaceState;
             if (space == null) return 1f;
             var shape = new BoxShape3D { Size = size };
-            var p = new PhysicsShapeQueryParameters3D { ShapeRid = shape.GetRid(), Transform = new Transform3D(basis, center), Motion = motion, CollisionMask = mask, CollideWithBodies = true };
-            var ex = new Godot.Collections.Array<Rid>();
-            for (int i = 0; i < _selfColliders.Count; i++) ex.Add(_selfColliders[i]);   // don't let the crane self-block on its OWN colliders
-            if (_held != null && IsInstanceValid(_held)) ex.Add(_held.GetRid());
-            p.Exclude = ex;
+            var p = new PhysicsShapeQueryParameters3D { ShapeRid = shape.GetRid(), Transform = new Transform3D(basis, center), Motion = motion, CollisionMask = mask, CollideWithBodies = true, Exclude = exclude };
             float[] r = space.CastMotion(p);
             return (r != null && r.Length > 0) ? r[0] : 1f;
         }
-        float SafeFrac(Vector3 motion, uint mask)   // hoist(+load) box only -- trolley/hoist move just the carriage
+        float SafeFrac(Vector3 motion, uint mask, Godot.Collections.Array<Rid> exclude)   // the hoist(+load) box
         {
             Aabb box = HoistLoadAabb();
-            return CastBox(box.GetCenter(), box.Size * 0.9f, Basis.Identity, motion, mask);
+            return CastBox(box.GetCenter(), box.Size * 0.9f, Basis.Identity, motion, mask, exclude);
         }
-        float SafeFracWithFrame(Vector3 motion, uint mask)   // + the frame legs/beam: the DRIVE moves the whole gantry
+        float SafeFracWithFrame(Vector3 motion, uint mask, Godot.Collections.Array<Rid> exclude)   // + the frame boxes: the DRIVE moves the whole gantry
         {
-            float sf = SafeFrac(motion, mask);
+            float sf = SafeFrac(motion, mask, exclude);
             Basis gb = GlobalTransform.Basis;
-            foreach (var fb in _frameBoxes) sf = Mathf.Min(sf, CastBox(GlobalTransform * fb.c, fb.h * (2f * 0.95f), gb, motion, mask));
+            foreach (var fb in _frameBoxes) sf = Mathf.Min(sf, CastBox(GlobalTransform * fb.c, fb.h * (2f * 0.95f), gb, motion, mask, exclude));
             return sf;
         }
         // derive convex FRAME colliders from the gantry mesh: one top-beam box + up to 8 leg boxes (per portal X x Z-side),
@@ -255,14 +268,6 @@ namespace UnturnedGodot
                 int b = xi * 2 + (v.Z >= 0 ? 0 : 1);
                 lmn[b] = lmn[b].Min(v); lmx[b] = lmx[b].Max(v);
             }
-            // REAL COLLIDER: full-extent convex boxes per leg + the top rail, so player/vehicles hit the frame 1:1-ish.
-            // Boxes (not a concave trimesh) so it's valid on the MOVING crane; raw mesh extent so no invisible walls; portal left OPEN.
-            var frameBody = new StaticBody3D { Name = "FrameCollider" };
-            if (bmx.X > bmn.X) frameBody.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = bmx - bmn }, Position = (bmn + bmx) * 0.5f });
-            for (int k = 0; k < 8; k++) if (lmx[k].X > lmn[k].X) frameBody.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = lmx[k] - lmn[k] }, Position = (lmn[k] + lmx[k]) * 0.5f });
-            AddChild(frameBody);
-            _selfColliders.Add(frameBody.GetRid());
-
             float beamBottom = topY;
             if (bmx.X > bmn.X) { _frameBoxes.Add(((bmn + bmx) * 0.5f, (bmx - bmn) * 0.5f)); beamBottom = bmn.Y; }
             for (int k = 0; k < 8; k++)
