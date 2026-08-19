@@ -207,6 +207,19 @@ namespace UnturnedGodot.Testing
                 T.Check($"there IS a bulwark around the deck at rail height (stopped at x={railX:0.00}, expected ~12)",
                         !float.IsNaN(railX) && railX > 11f);
 
+                // ---- IS THE DECKHOUSE ACTUALLY SOLID? Asked with a SIDEWAYS ray, because everything else here
+                // would pass with it missing entirely: the volume test cannot see a trimesh (a surface has no
+                // interior, so point-inside reads its whole inside as air -- identical to absent), and the roof
+                // probe hits an explicit box slab, not the mesh. Removing the walls would "fix" the invisible-wall
+                // count by deleting the walls, which is the one outcome that must not be able to pass.
+                q.From = hull.GlobalPosition + new Vector3(0f, 17f, 40f);    // outside the stern, level with the deckhouse
+                q.To = hull.GlobalPosition + new Vector3(0f, 17f, 15f);      // ...aimed into the middle of it
+                var wall = space.IntersectRay(q);
+                float wallZ = wall.Count > 0 ? wall["position"].AsVector3().Z - hull.GlobalPosition.Z : float.NaN;
+                GD.Print($"[HULL] deckhouse wall: inbound ray at y=17 stopped at z={wallZ:0.00} (model's aft face is 25.75)");
+                T.Check($"the deckhouse is SOLID to something coming at it from outside (stopped at z={wallZ:0.00}, model aft face 25.75)",
+                        !float.IsNaN(wallZ) && wallZ > 24f && wallZ < 27f);
+
                 // ---- THE MEASUREMENT THE RAY GRID CANNOT MAKE. Everything above compares heights; this asks
                 // whether the collider occupies the same SPACE as the model. Run on both hulls, because the
                 // box's number is the only thing that makes the decomposition's number readable.

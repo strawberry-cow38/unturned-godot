@@ -2246,7 +2246,7 @@ namespace UnturnedGodot
             // for 630 of the ship's 633 invisible-wall sample points -- the lower hull and rails contributed 3.
             // strawberry, on the collider that scored 0.23 m by the old ray test: "the entire superstructure is
             // messed up", and, asked whether it was invisible walls or walk-through, "both".
-            HullDecompose = (new Vector3(-10f, 12f, 8f), new Vector3(10f, 23f, 27f)),
+            HullTrimesh = (new Vector3(-10f, 11.4f, 9f), new Vector3(10f, 23f, 27f)),
             // NOT HullTrimesh, though the machinery for it is kept below and it is the obvious next thing to try.
             // Handing the deckhouse the model's real mesh on a static child DOES work -- Godot allows a concave
             // trimesh on a static body -- but it measured WORSE on every probe I have (deck surface 11.47 against
@@ -3863,6 +3863,13 @@ namespace UnturnedGodot
                         var tri = new StaticBody3D { Name = "HullMesh", CollisionLayer = 1u << 0, CollisionMask = 0 };
                         tri.AddChild(new CollisionShape3D { Shape = region.CreateTrimeshShape() });
                         v.AddChild(tri);
+                        // AND EXEMPT THE HULL FROM ITS OWN DECKHOUSE. A static child is a SEPARATE body, not a
+                        // shape on this one, and the vessel's mask scans the layer it sits on -- so she collides
+                        // with her own superstructure, cannot resolve the overlap she is permanently inside, and
+                        // is thrown out of the sea. Measured, without this: sank 80.83 m and finished at 179.99
+                        // degrees of tilt, i.e. upside down. Every geometry check still PASSED while that
+                        // happened; only the physics tests caught it.
+                        v.AddCollisionExceptionWith(tri);
                         made++;
                     }
                 }
@@ -6251,6 +6258,9 @@ namespace UnturnedGodot
         }
 
         /// <summary>The triangles of `mesh` inside an AABB, as their own mesh -- what gets decomposed.</summary>
+        static bool In(Vector3 p, Vector3 lo, Vector3 hi) =>
+            p.X >= lo.X && p.X <= hi.X && p.Y >= lo.Y && p.Y <= hi.Y && p.Z >= lo.Z && p.Z <= hi.Z;
+
         static Mesh MeshRegion(Mesh mesh, Vector3 lo, Vector3 hi)
         {
             var src = mesh.GetFaces();
@@ -6259,8 +6269,12 @@ namespace UnturnedGodot
             int kept = 0;
             for (int i = 0; i + 2 < src.Length; i += 3)
             {
-                var c = (src[i] + src[i + 1] + src[i + 2]) / 3f;
-                if (c.X < lo.X || c.X > hi.X || c.Y < lo.Y || c.Y > hi.Y || c.Z < lo.Z || c.Z > hi.Z) continue;
+                // EVERY vertex must be inside, not the centroid. A centroid test keeps the WHOLE triangle, and
+                // the deck plate is triangulated into enormous triangles running most of the ship's length -- one
+                // with a corner up on the 12 m rim has its centroid above y=12 and gets kept, dragging collision
+                // geometry out to z=-10 with it. That is why the trimesh deckhouse made the deck read 11.47
+                // instead of 11.00: not the approach, my extraction.
+                if (!In(src[i], lo, hi) || !In(src[i + 1], lo, hi) || !In(src[i + 2], lo, hi)) continue;
                 st.AddVertex(src[i]); st.AddVertex(src[i + 1]); st.AddVertex(src[i + 2]);
                 kept += 3;
             }
