@@ -575,9 +575,10 @@ namespace UnturnedGodot
                 var roads = WorldRoads;
                 if (roads == null) { Log("no road network in this world"); return; }
                 Vector3 near = Player?.GlobalPosition ?? at;
-                var tr = Train.Spawn(Player?.GetParent() ?? GetTree().Root, roads, near);
-                if (tr == null) { Log("no train track nearby -- only Yukon has rails (tracks = road material 4)"); return; }
-                Log("spawned a train on the nearest track spline");
+                string ttype = string.IsNullOrWhiteSpace(arg) ? "engine" : arg;
+                var tr = Train.Spawn(Player?.GetParent() ?? GetTree().Root, roads, near, ttype);
+                if (tr == null) { Log(Train.ResolveType(ttype) == null ? $"unknown car '''{arg}''' -- types: {Train.TypeList}" : "no train track nearby -- only Yukon has rails (tracks = road material 4)"); return; }
+                Log($"spawned a {Train.ResolveType(ttype)} car on the nearest track (drive an engine into it to couple)");
             }
             else if (verb == "spawnmagnetablecontainer" || verb == "magcontainer")
             {

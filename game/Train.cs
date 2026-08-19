@@ -1,166 +1,234 @@
 using Godot;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace UnturnedGodot
 {
-    // A train that rides a track ROAD spline (RoadField material 4 = Tracks): a locomotive + trailing cargo cars,
-    // each sitting on 2 bogies snapped to the rail at its distance-along. The body SPANS its two bogies so it
-    // articulates correctly through curves; the cars trail at fixed 11 m offsets. Spawned onto the nearest track
-    // by the `spawntrain` console command. Movement (throttle -> advance the distance) is the next phase; for now
-    // it is placed statically on the rail. (master 2026-08-18)
+    // A TRAIN is a consist of coupled cars riding a track spline (RoadField material 4 = Tracks). Each car spawns
+    // solo via `spawntrain <type>` (engine/flatbed/boxcar/tanker); driving an engine into another car at low speed
+    // COUPLES them into one consist. Only a consist containing an engine can be driven; total car weight sets how
+    // sluggishly it accelerates + brakes. Uncouple hitbox + rope are phase 2. (master 2026-08-19)
     public partial class Train : Node3D
     {
-        RoadField _roads;
-        int _road;
-        float _s;                       // distance-along the track of the LOCO's centre
-        const float RailY = 1.55f;      // lift the body so its wheels sit ON the rail (master: "a little higher on the tracks")
-        const float BogieHalf = 3.5f;   // bogie spacing from a unit's centre (source Track_Front/Back at +-3.5)
-        const float CarGap = 11f;       // car-to-car spacing along the rail (source Train_Car spacing)
-        readonly List<(Node3D body, MeshInstance3D bf, MeshInstance3D bb, float off)> _units = new();
-        const float MaxSpeed = 48f, Accel = 2f, Decel = 1.2f, Brake = 12f;   // inertia (master): high top speed, slow build, long coast, but FAST active brake
-        float _speed;
-        AudioStreamPlayer3D _engineSnd, _addSnd, _hornSnd;   // engine loop (pitched to speed) + additive rev layer (blends in on the gas) + horn (hold C)
-
-        /// <summary>Spawn a train onto the nearest track spline to <paramref name="near"/>. Null if there is no
-        /// track road (material 4) in the world (only Yukon has tracks).</summary>
-        public static Train Spawn(Node parent, RoadField roads, Vector3 near)
+        class Spec { public string Mesh, Tex; public float Weight, HalfLen, YOff; public Vector3 Box, BoxCtr; public bool Engine, Livery; }
+        static readonly Dictionary<string, Spec> Specs = new()
         {
-            if (roads == null || !roads.NearestTrack(near, out int road, out float s)) return null;
-            var t = new Train { _roads = roads, _road = road };
-            // Keep the whole train ON the rail: the tail car sits at s-33, the loco's front bogie at s+3.5, so
-            // clamp the loco's centre into a range that fits (open roads clamp; a loop wraps so any s is fine).
-            if (roads.RoadLoops(road)) t._s = s;
-            else { float len = roads.RoadLength(road); t._s = Mathf.Clamp(s, 3f * CarGap + BogieHalf, Mathf.Max(3f * CarGap + BogieHalf, len - BogieHalf)); }
-            parent.AddChild(t);
-            t.Build();
-            return t;
+            ["engine"]  = new Spec { Mesh = "train_body",   Tex = "train_body_tex",   Weight = 20f, HalfLen = 5.34f, YOff = 0f,    Box = new Vector3(3.4f, 4.1f, 10.8f),  BoxCtr = new Vector3(0f, 1.27f, 0f),  Engine = true,  Livery = true  },
+            ["flatbed"] = new Spec { Mesh = "train_car",    Tex = "train_car_tex",    Weight = 8f,  HalfLen = 5.34f, YOff = 0f,    Box = new Vector3(3.4f, 1.8f, 10.8f),  BoxCtr = new Vector3(0f, 0.13f, 0f),  Engine = false, Livery = false },
+            ["boxcar"]  = new Spec { Mesh = "train_boxcar", Tex = "train_boxcar_tex", Weight = 14f, HalfLen = 5.25f, YOff = 3.24f, Box = new Vector3(3.6f, 4.75f, 10.5f), BoxCtr = new Vector3(0f, -1.62f, 0f), Engine = false, Livery = true  },
+            ["tanker"]  = new Spec { Mesh = "train_tanker", Tex = "train_tanker_tex", Weight = 16f, HalfLen = 5.34f, YOff = 2.58f, Box = new Vector3(3.4f, 4.1f, 10.7f),  BoxCtr = new Vector3(0f, -1.29f, 0f), Engine = false, Livery = true  },
+        };
+        static readonly Dictionary<string, string> Alias = new() { ["loco"] = "engine", ["locomotive"] = "engine", ["fuel"] = "tanker", ["fueltanker"] = "tanker", ["car"] = "flatbed", ["flat"] = "flatbed", ["box"] = "boxcar" };
+        public static string ResolveType(string name)
+        {
+            name = (name ?? "").ToLowerInvariant().Trim();
+            if (Alias.TryGetValue(name, out var a)) name = a;
+            return Specs.ContainsKey(name) ? name : null;
+        }
+        public static string TypeList => string.Join(", ", Specs.Keys);
+
+        class Car
+        {
+            public string Type; public Spec S;
+            public StaticBody3D Body; public MeshInstance3D Bf, Bb;
+            public float Off;    // centre offset BEHIND the consist lead (_s); recomputed on couple/uncouple
+            public float AbsS;   // scratch: absolute rail distance, used when merging two consists
         }
 
-        Material MakeMat(string tex, Color? liveryBody)
+        RoadField _roads;
+        int _road;
+        float _s;       // rail distance of the LEAD car's centre (_cars[0])
+        float _speed;
+        const float RailY = 1.55f, BogieHalf = 3.5f, CoupleGap = 0.9f;
+        const float MaxSpeed = 48f, BaseAccel = 2f, BaseDecel = 1.2f, BaseBrake = 12f, RefWeight = 20f;
+        const float CoupleRange = 2.4f, CoupleMaxSpeed = 7f;   // couple when adjacent ends are within range at low speed
+        readonly List<Car> _cars = new();
+        AudioStreamPlayer3D _engineSnd, _addSnd, _hornSnd;
+
+        static Mesh Lm(string n) => ContentProvider.ParseObj($"res://content/{n}.txt");
+
+        static Material MakeMat(string tex, Color? liveryBody)
         {
             var m = new StandardMaterial3D { TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest, Roughness = 0.75f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
             var img = new Image();
             if (img.Load(ProjectSettings.GlobalizePath($"res://content/{tex}.png")) == Error.Ok)
             {
-                // PAINTABLE LIVERY: recolour the body palette slot (0,1) to a random livery; the orange stripe
-                // slot (3,1) stays fixed (master). vanilla trains are not paintable -- this is our addition.
-                if (liveryBody.HasValue) { img.Convert(Image.Format.Rgba8); img.SetPixel(0, 1, liveryBody.Value); }
+                if (liveryBody.HasValue) { img.Convert(Image.Format.Rgba8); img.SetPixel(0, 1, liveryBody.Value); }   // random livery -> body palette slot (0,1)
                 m.AlbedoTexture = ImageTexture.CreateFromImage(img);
             }
             return m;
         }
 
-        void Build()
+        /// <summary>Spawn a single car of <paramref name="type"/> onto the nearest track spline. Null if the type is
+        /// unknown or there is no track road (material 4) in the world (only Yukon has tracks).</summary>
+        public static Train Spawn(Node parent, RoadField roads, Vector3 near, string type)
         {
-            AddToGroup("trains");   // so the player can find + board the nearest one
-            // random livery per spawn: 10% muted grey else a muted random hue (the game's RandomHueOrGrayscale feel)
-            Color livery = GD.Randf() < 0.1f ? new Color(0.45f, 0.45f, 0.47f) : Color.FromHsv(GD.Randf(), 0.5f, 0.55f);
-            var bodyMat = MakeMat("train_body_tex", livery);
-            var carMat = MakeMat("train_car_tex", null);
-            var bogieMat = MakeMat("train_bogie_tex", null);
-            Mesh Lm(string n) => ContentProvider.ParseObj($"res://content/{n}.txt");
-            Mesh body = Lm("train_body"), bogie = Lm("train_bogie"), car = Lm("train_car");
-
-            void MakeUnit(Mesh m, Material mat, float off, Vector3 boxSize, Vector3 boxCenter)
-            {
-                var sb = new StaticBody3D();   // solid: the player collides with it + can stand on it
-                sb.AddChild(new MeshInstance3D { Mesh = m, MaterialOverride = mat });
-                sb.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = boxSize }, Position = boxCenter });
-                var bf = new MeshInstance3D { Mesh = bogie, MaterialOverride = bogieMat };
-                var bb = new MeshInstance3D { Mesh = bogie, MaterialOverride = bogieMat };
-                AddChild(sb); AddChild(bf); AddChild(bb);
-                _units.Add((sb, bf, bb, off));
-            }
-            MakeUnit(body, bodyMat, 0f, new Vector3(3.4f, 4.1f, 10.8f), new Vector3(0f, 1.27f, 0f));           // loco
-            MakeUnit(car, carMat, CarGap, new Vector3(3.4f, 1.8f, 10.8f), new Vector3(0f, 0.13f, 0f));        // car 1
-            MakeUnit(car, carMat, 2f * CarGap, new Vector3(3.4f, 1.8f, 10.8f), new Vector3(0f, 0.13f, 0f));   // car 2
-            MakeUnit(car, carMat, 3f * CarGap, new Vector3(3.4f, 1.8f, 10.8f), new Vector3(0f, 0.13f, 0f));   // car 3
-            Place();
-            ResetPhysicsInterpolation();   // placed this frame -> don't interpolate the units up from the origin pose (project physics_interpolation=true)
-            SetupAudio();
+            type = ResolveType(type);
+            if (type == null || roads == null || !roads.NearestTrack(near, out int road, out float s)) return null;
+            var spec = Specs[type];
+            var t = new Train { _roads = roads, _road = road };
+            float end = spec.HalfLen + BogieHalf;
+            if (roads.RoadLoops(road)) t._s = s;
+            else { float len = roads.RoadLength(road); t._s = Mathf.Clamp(s, end, Mathf.Max(end, len - end)); }
+            parent.AddChild(t);
+            t.Build(type);
+            return t;
         }
 
-        void PlaceUnit((Node3D body, MeshInstance3D bf, MeshInstance3D bb, float off) u, float sctr)
+        void Build(string type)
+        {
+            AddToGroup("trains");
+            AddCar(type);
+            RecomputeOffsets();
+            Place();
+            ResetPhysicsInterpolation();
+            RebuildAudio();
+        }
+
+        void AddCar(string type)
+        {
+            var s = Specs[type];
+            var bogieMat = MakeMat("train_bogie_tex", null);
+            Color livery = GD.Randf() < 0.1f ? new Color(0.45f, 0.45f, 0.47f) : Color.FromHsv(GD.Randf(), 0.5f, 0.55f);
+            var mat = MakeMat(s.Tex, s.Livery ? livery : (Color?)null);
+            var sb = new StaticBody3D();
+            sb.AddChild(new MeshInstance3D { Mesh = Lm(s.Mesh), MaterialOverride = mat });
+            sb.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = s.Box }, Position = s.BoxCtr });
+            var bf = new MeshInstance3D { Mesh = Lm("train_bogie"), MaterialOverride = bogieMat };
+            var bb = new MeshInstance3D { Mesh = Lm("train_bogie"), MaterialOverride = bogieMat };
+            AddChild(sb); AddChild(bf); AddChild(bb);
+            _cars.Add(new Car { Type = type, S = s, Body = sb, Bf = bf, Bb = bb });
+        }
+
+        // Lead car has offset 0; each following car sits its own half + a coupler gap + the previous car's half behind.
+        void RecomputeOffsets()
+        {
+            for (int i = 0; i < _cars.Count; i++)
+                _cars[i].Off = i == 0 ? 0f : _cars[i - 1].Off + _cars[i - 1].S.HalfLen + CoupleGap + _cars[i].S.HalfLen;
+        }
+
+        bool HasEngine => _cars.Any(c => c.S.Engine);
+        Car EngineCar => _cars.FirstOrDefault(c => c.S.Engine);
+        float TotalWeight => _cars.Sum(c => c.S.Weight);
+        public bool Drivable => HasEngine;
+
+        void PlaceCar(Car c, float sctr)
         {
             _roads.EvaluateAlong(_road, sctr + BogieHalf, out var pf, out var tf);
             _roads.EvaluateAlong(_road, sctr - BogieHalf, out var pb, out var tb);
-            Vector3 c = (pf + pb) * 0.5f + Vector3.Up * RailY;
+            Vector3 ctr = (pf + pb) * 0.5f + Vector3.Up * (RailY + c.S.YOff);
             Vector3 fwd = pf - pb; fwd = fwd.LengthSquared() > 1e-4f ? fwd.Normalized() : Vector3.Forward;
-            u.body.GlobalTransform = new Transform3D(Basis.Identity, c).LookingAt(c + fwd, Vector3.Up);
+            c.Body.GlobalTransform = new Transform3D(Basis.Identity, ctr).LookingAt(ctr + fwd, Vector3.Up);
             Vector3 cf = pf + Vector3.Up * (RailY - 0.4f);
-            u.bf.GlobalTransform = new Transform3D(Basis.Identity, cf).LookingAt(cf + tf, Vector3.Up);
+            c.Bf.GlobalTransform = new Transform3D(Basis.Identity, cf).LookingAt(cf + tf, Vector3.Up);
             Vector3 cb = pb + Vector3.Up * (RailY - 0.4f);
-            u.bb.GlobalTransform = new Transform3D(Basis.Identity, cb).LookingAt(cb + tb, Vector3.Up);
+            c.Bb.GlobalTransform = new Transform3D(Basis.Identity, cb).LookingAt(cb + tb, Vector3.Up);
         }
+        void Place() { foreach (var c in _cars) PlaceCar(c, _s - c.Off); }
 
-        void Place() { foreach (var u in _units) PlaceUnit(u, _s - u.off); }
-
-        /// <summary>The loco body (unit 0) -- proximity + seat reference.</summary>
-        public Node3D Loco => _units.Count > 0 ? _units[0].body : null;
-
-        /// <summary>Driver eye/seat in the loco cab, facing forward down the rail (loco -Z).</summary>
+        public Node3D Loco => EngineCar?.Body;
         public Transform3D DriverEyeWorld
         {
             get { var l = Loco; return l != null ? l.GetGlobalTransformInterpolated() * new Transform3D(Basis.Identity, new Vector3(0f, 2.3f, -2.6f)) : GlobalTransform; }
         }
 
-        /// <summary>Advance the whole train along the rail by the throttle (W/S). No steering -- the rail steers.
-        /// Cars trail on their fixed offsets. Open roads stop at the ends; a loop wraps.</summary>
         public void Drive(float throttle, float dt)
         {
+            if (!HasEngine || _cars.Count == 0) return;
+            float wf = RefWeight / Mathf.Max(1f, TotalWeight);   // heavier consist -> proportionally weaker accel + brake (master)
             float target = Mathf.Clamp(throttle, -0.6f, 1f) * MaxSpeed;
             float rate;
-            if (Mathf.Abs(throttle) < 0.05f) rate = Decel;                                       // released -> long weighty coast
-            else if (_speed != 0f && Mathf.Sign(throttle) != Mathf.Sign(_speed)) rate = Brake;   // throttle against motion -> HARD brake (master: brake a lot faster)
-            else rate = Accel;                                                                    // building speed in the travel direction -> the tuned "perfect" accel
+            if (Mathf.Abs(throttle) < 0.05f) rate = BaseDecel * wf;
+            else if (_speed != 0f && Mathf.Sign(throttle) != Mathf.Sign(_speed)) rate = BaseBrake * wf;
+            else rate = BaseAccel * wf;
             _speed = Mathf.MoveToward(_speed, target, rate * dt);
             _s += _speed * dt;
-            if (!_roads.RoadLoops(_road))
-            {
-                float lo = 3f * CarGap + BogieHalf, hi = Mathf.Max(lo, _roads.RoadLength(_road) - BogieHalf);
-                if (_s < lo) { _s = lo; _speed = 0f; }
-                if (_s > hi) { _s = hi; _speed = 0f; }
-            }
+            ClampS();
             Place();
             UpdateAudio(throttle, dt);
+            TryCouple();
         }
 
-        // Engine sounds live on the loco so they're 3D-positional and ride with it. Base loop always plays (idle
-        // hum), the additive layer is silent until you're on the gas, the horn waits on its key. (master picked
-        // engine base + additive rev + the long horn, 2026-08-19.)
-        void SetupAudio()
+        void ClampS()
         {
-            Node3D loco = _units.Count > 0 ? _units[0].body : this;
-            var eng = PlayerController.LoadWavOneShot("res://content/train_engine.wav", loop: true);
-            if (eng != null) { _engineSnd = new AudioStreamPlayer3D { Stream = eng, VolumeDb = -9f, UnitSize = 12f, MaxDistance = 75f, PitchScale = 0.8f }; loco.AddChild(_engineSnd); _engineSnd.Play(); }
-            var add = PlayerController.LoadWavOneShot("res://content/train_engine_add.wav", loop: true);
-            if (add != null) { _addSnd = new AudioStreamPlayer3D { Stream = add, VolumeDb = -80f, UnitSize = 12f, MaxDistance = 75f, PitchScale = 0.85f }; loco.AddChild(_addSnd); _addSnd.Play(); }
-            var horn = PlayerController.LoadWavOneShot("res://content/train_horn.wav", loop: true);
-            if (horn != null) { _hornSnd = new AudioStreamPlayer3D { Stream = horn, VolumeDb = -1f, UnitSize = 15f, MaxDistance = 110f }; loco.AddChild(_hornSnd); }
+            if (_roads.RoadLoops(_road)) return;
+            float total = _roads.RoadLength(_road);
+            float lo = _cars.Last().Off + _cars.Last().S.HalfLen;   // rear car's rear end >= 0
+            float hi = Mathf.Max(lo, total - _cars[0].S.HalfLen);   // lead car's front end <= total
+            if (_s < lo) { _s = lo; _speed = 0f; }
+            if (_s > hi) { _s = hi; _speed = 0f; }
         }
 
+        // ---- coupling: drive an engine consist into another car at low speed -> they link into one ----
+        void TryCouple()
+        {
+            if (_speed == 0f || Mathf.Abs(_speed) > CoupleMaxSpeed) return;
+            float myFront = _s + _cars[0].S.HalfLen;
+            float myRear = _s - _cars.Last().Off - _cars.Last().S.HalfLen;
+            foreach (var node in GetTree().GetNodesInGroup("trains"))
+            {
+                if (node is not Train o || o == this || !IsInstanceValid(o) || o._cars.Count == 0 || o._road != _road) continue;
+                float oFront = o._s + o._cars[0].S.HalfLen;
+                float oRear = o._s - o._cars.Last().Off - o._cars.Last().S.HalfLen;
+                if (Mathf.Abs(myFront - oRear) < CoupleRange || Mathf.Abs(myRear - oFront) < CoupleRange)
+                { Couple(o); return; }
+            }
+        }
+
+        void Couple(Train o)
+        {
+            o.TeardownAudio();   // if the absorbed consist had its own engine audio, silence it -> the merged consist rebuilds ONE set below
+            var all = new List<Car>();
+            foreach (var c in _cars) { c.AbsS = _s - c.Off; all.Add(c); }
+            foreach (var c in o._cars) { c.AbsS = o._s - c.Off; c.Body.Reparent(this, true); c.Bf.Reparent(this, true); c.Bb.Reparent(this, true); all.Add(c); }
+            all.Sort((a, b) => b.AbsS.CompareTo(a.AbsS));   // front (highest rail distance) first
+            _s = all[0].AbsS;                               // lead stays put; the rest snap to coupler spacing behind it
+            _cars.Clear(); _cars.AddRange(all);
+            o._cars.Clear();
+            RecomputeOffsets();
+            RebuildAudio();
+            Place();
+            ResetPhysicsInterpolation();
+            if (IsInstanceValid(o)) o.QueueFree();
+        }
+
+        // ---- audio: only a consist WITH an engine hums; parented to the engine car so it's 3D-positional ----
+        void RebuildAudio()
+        {
+            var eng = EngineCar;
+            if (eng == null) { TeardownAudio(); return; }
+            if (_engineSnd != null && IsInstanceValid(_engineSnd) && _engineSnd.GetParent() == eng.Body) return;   // already on the right car -> no restart blip
+            TeardownAudio();
+            var loco = eng.Body;
+            var e = PlayerController.LoadWavOneShot("res://content/train_engine.wav", loop: true);
+            if (e != null) { _engineSnd = new AudioStreamPlayer3D { Stream = e, VolumeDb = -9f, UnitSize = 12f, MaxDistance = 75f, PitchScale = 0.8f }; loco.AddChild(_engineSnd); _engineSnd.Play(); }
+            var a = PlayerController.LoadWavOneShot("res://content/train_engine_add.wav", loop: true);
+            if (a != null) { _addSnd = new AudioStreamPlayer3D { Stream = a, VolumeDb = -80f, UnitSize = 12f, MaxDistance = 75f, PitchScale = 0.85f }; loco.AddChild(_addSnd); _addSnd.Play(); }
+            var h = PlayerController.LoadWavOneShot("res://content/train_horn.wav", loop: true);
+            if (h != null) { _hornSnd = new AudioStreamPlayer3D { Stream = h, VolumeDb = -1f, UnitSize = 15f, MaxDistance = 110f }; loco.AddChild(_hornSnd); }
+        }
+        void TeardownAudio()
+        {
+            foreach (var p in new[] { _engineSnd, _addSnd, _hornSnd }) if (p != null && IsInstanceValid(p)) p.QueueFree();
+            _engineSnd = _addSnd = _hornSnd = null;
+        }
         void UpdateAudio(float throttle, float dt)
         {
-            float sp = MaxSpeed > 0f ? Mathf.Abs(_speed) / MaxSpeed : 0f;   // 0..1
-            if (_engineSnd != null) _engineSnd.PitchScale = 0.8f + 0.7f * sp;               // pitch climbs with speed
+            float sp = MaxSpeed > 0f ? Mathf.Abs(_speed) / MaxSpeed : 0f;
+            if (_engineSnd != null) _engineSnd.PitchScale = 0.8f + 0.7f * sp;
             if (_addSnd != null)
             {
                 _addSnd.PitchScale = 0.85f + 0.95f * sp;
-                bool onGas = Mathf.Abs(throttle) > 0.05f && (_speed == 0f || Mathf.Sign(throttle) == Mathf.Sign(_speed));   // pulling in the travel direction
-                _addSnd.VolumeDb = Mathf.MoveToward(_addSnd.VolumeDb, onGas ? -5f : -80f, 90f * dt);   // growl blends in under throttle
+                bool onGas = Mathf.Abs(throttle) > 0.05f && (_speed == 0f || Mathf.Sign(throttle) == Mathf.Sign(_speed));
+                _addSnd.VolumeDb = Mathf.MoveToward(_addSnd.VolumeDb, onGas ? -5f : -80f, 90f * dt);
             }
         }
-
-        /// <summary>Park the audio: engine back to idle pitch, rev layer silent, horn off (called on exit -- the
-        /// train freezes when you hop off).</summary>
         public void SetIdleAudio()
         {
             if (_engineSnd != null) _engineSnd.PitchScale = 0.8f;
             if (_addSnd != null) _addSnd.VolumeDb = -80f;
             if (_hornSnd != null && _hornSnd.Playing) _hornSnd.Stop();
         }
-
-        /// <summary>Horn on/off (held). The clip loops while playing so holding the key sustains the honk.</summary>
         public void SetHorn(bool on)
         {
             if (_hornSnd == null) return;
@@ -168,46 +236,34 @@ namespace UnturnedGodot
             else if (_hornSnd.Playing) _hornSnd.Stop();
         }
 
+        // ---- look-focus outline of the ENGINE car (only a drivable consist is boardable) ----
         bool _lookFocused;
-        System.Collections.Generic.List<MeshInstance3D> _locoMeshes;
+        List<MeshInstance3D> _locoMeshes;
+        static void CollectMeshes(Node n, List<MeshInstance3D> outl) { if (n is MeshInstance3D mi) outl.Add(mi); foreach (var c in n.GetChildren()) CollectMeshes(c, outl); }
 
-        static void CollectMeshes(Node n, System.Collections.Generic.List<MeshInstance3D> outl)
-        {
-            if (n is MeshInstance3D mi) outl.Add(mi);
-            foreach (var c in n.GetChildren()) CollectMeshes(c, outl);
-        }
-
-        /// <summary>Outline the LOCO (its body mesh + 2 bogies) when the player looks at it, exactly like a
-        /// Vehicle: flip the meshes onto OutlineOverlay.OutlineLayer so the mask cam draws the rim.</summary>
         public void SetLookFocused(bool on)
         {
             if (_lookFocused == on) return;
             _lookFocused = on;
-            if (_locoMeshes == null)
+            if (on)
             {
-                _locoMeshes = new System.Collections.Generic.List<MeshInstance3D>();
-                if (_units.Count > 0)
-                {
-                    CollectMeshes(_units[0].body, _locoMeshes);
-                    if (_units[0].bf != null) _locoMeshes.Add(_units[0].bf);
-                    if (_units[0].bb != null) _locoMeshes.Add(_units[0].bb);
-                }
+                _locoMeshes = new List<MeshInstance3D>();
+                var eng = EngineCar;
+                if (eng != null) { CollectMeshes(eng.Body, _locoMeshes); if (eng.Bf != null) _locoMeshes.Add(eng.Bf); if (eng.Bb != null) _locoMeshes.Add(eng.Bb); }
             }
-            foreach (var mi in _locoMeshes)
-                if (IsInstanceValid(mi))
-                    mi.Layers = on ? (mi.Layers | OutlineOverlay.OutlineLayer) : (mi.Layers & ~OutlineOverlay.OutlineLayer);
+            if (_locoMeshes != null)
+                foreach (var mi in _locoMeshes)
+                    if (IsInstanceValid(mi)) mi.Layers = on ? (mi.Layers | OutlineOverlay.OutlineLayer) : (mi.Layers & ~OutlineOverlay.OutlineLayer);
             if (on) WorldItem.FocusColor = new Color(0.55f, 0.8f, 1f);
         }
 
-        /// <summary>Does the look-ray pass through the loco's hull box? Segment vs the loco OBB (3.4x4.1x10.8 at
-        /// local (0,1.27,0)), matching Vehicle.LookRayHitsHull -- lets the player focus it through the cab glass.</summary>
         public bool LookRayHitsLoco(Vector3 from, Vector3 to)
         {
-            if (_units.Count == 0 || !IsInstanceValid(_units[0].body)) return false;
-            var inv = _units[0].body.GlobalTransform.AffineInverse();
-            var size = new Vector3(3.4f, 4.1f, 10.8f);
-            var min = new Vector3(0f, 1.27f, 0f) - size * 0.5f;
-            return new Aabb(min, size).IntersectsSegment(inv * from, inv * to);
+            var eng = EngineCar;
+            if (eng == null || !IsInstanceValid(eng.Body)) return false;
+            var inv = eng.Body.GlobalTransform.AffineInverse();
+            var size = eng.S.Box;
+            return new Aabb(eng.S.BoxCtr - size * 0.5f, size).IntersectsSegment(inv * from, inv * to);
         }
     }
 }
