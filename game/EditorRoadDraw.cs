@@ -34,6 +34,17 @@ namespace UnturnedGodot
         /// far cheaper to fix than the failure of not snapping (a junction that looks right and is not).</summary>
         public const float SnapRadius = 12f;
 
+        /// <summary>Sub-tools inside the road tool, Cities-Skylines style (strawberry 2026-08-19). Straight
+        /// and Curve are CLICK-TO-PLACE (click start, click end; Curve takes a middle control click), Freehand
+        /// is the original drag. They all funnel into the same commit path, so snapping and node creation
+        /// behave identically whichever one drew the points.</summary>
+        public enum ETool { Straight, Curve, Freehand }
+        public static readonly string[] ToolNames = { "Straight", "Curve", "Freehand" };
+        ETool _tool = ETool.Straight;
+        public ETool Tool => _tool;
+        public void SetTool(ETool t) { _tool = t; CancelStroke(); }
+
+        readonly List<Vector3> _clicks = new();   // click-to-place anchors for Straight/Curve
         bool _drawing;                       // tool active (R)
         bool _stroke;                        // mid-drag, laying points
         readonly List<Vector3> _pts = new();
@@ -58,7 +69,7 @@ namespace UnturnedGodot
 
         public string ModeText => !_drawing
             ? "R draw road/rail · Shift+R legacy"
-            : $"DRAW{(_stroke ? $" ({_pts.Count} pts)" : "")}{(_selNode >= 0 ? $" · NODE {_selNode} ({_roads.JunctionEdges(_selNode).Count} rails)" : "")} · LMB drag to lay / grab a node · M mat={MatName()} · {_roads.JunctionCount} nodes, {_roads.Junctions().Count} junctions · Del · Esc";
+            : $"DRAW[{ToolNames[(int)_tool]}]{(_clicks.Count > 0 ? $" {_clicks.Count} placed" : "")}{(_selNode >= 0 ? $" · NODE {_selNode} ({_roads.JunctionEdges(_selNode).Count} rails)" : "")} · T tool · LMB place/grab · M mat={MatName()} · {_roads.JunctionCount} nodes, {_roads.Junctions().Count} junctions · Del · Esc";
 
         string MatName() => _roads != null && _roads.MaterialCount > 0 ? _roads.RoadMaterialName(_lastRoad >= 0 ? _lastRoad : 0) ?? $"{_material}" : $"{_material}";
 
@@ -137,7 +148,11 @@ namespace UnturnedGodot
             }
             if (!_drawing) return;
 
-            if (ev is InputEventKey { Pressed: true, Echo: false, Keycode: Key.Escape }) { if (_stroke) CancelStroke(); else SetDrawing(false); return; }
+            if (ev is InputEventKey { Pressed: true, Echo: false, Keycode: Key.Escape })
+            { if (_stroke || _clicks.Count > 0) CancelStroke(); else SetDrawing(false); return; }
+            // T cycles the sub-tool from the keyboard; the panel buttons drive the same SetTool seam.
+            if (ev is InputEventKey { Pressed: true, Echo: false, Keycode: Key.T })
+            { SetTool((ETool)(((int)_tool + 1) % ToolNames.Length)); GetViewport().SetInputAsHandled(); return; }
 
             if (ev is InputEventMouseButton mb && mb.ButtonIndex == MouseButton.Left && !Editor.PointerOverUI(this))
             {
@@ -148,9 +163,10 @@ namespace UnturnedGodot
                     // it is a node.
                     int n = PickNode(GetViewport().GetMousePosition());
                     if (n >= 0) { _selNode = n; _dragNode = true; SnapUndo("move junction"); BuildNodeMarkers(); }
-                    else { _selNode = -1; BuildNodeMarkers(); BeginStroke(); }
+                    else if (_tool == ETool.Freehand) { _selNode = -1; BuildNodeMarkers(); BeginStroke(); }
+                    else { _selNode = -1; BuildNodeMarkers(); ClickPlace(); }
                 }
-                else { if (_dragNode) _dragNode = false; else EndStroke(); }
+                else { if (_dragNode) _dragNode = false; else if (_tool == ETool.Freehand) EndStroke(); }
                 GetViewport().SetInputAsHandled();
                 return;
             }
@@ -163,7 +179,7 @@ namespace UnturnedGodot
                     { _roads.MoveJunction(_selNode, np); BuildNodeMarkers(); }
                 }
                 else if (_stroke) SampleStroke();
-                else UpdateSnapRing();
+                else { if (_clicks.Count > 0) DrawClickPreview(); UpdateSnapRing(); }
                 return;
             }
 
@@ -224,6 +240,12 @@ namespace UnturnedGodot
             if (!_stroke) return;
             _stroke = false;
             ClearPreview();
+            CommitStroke();
+        }
+
+        /// <summary>The ONE place a piece is committed, whichever sub-tool produced the points.</summary>
+        void CommitStroke()
+        {
             if (_pts.Count < 2) { _pts.Clear(); return; }
 
             // Resolve BOTH ends to junction nodes before the road exists, then bind the road to them after.
@@ -261,29 +283,102 @@ namespace UnturnedGodot
             if (work.Count == 0) return -1;
             int i = index < 0 ? work.Count - 1 : 0;
 
+            // 1. An existing NODE wins. This is how a 4th rail joins a 3-way, and how two pieces drawn
+            //    end-to-end share one node instead of stacking two on the same spot.
             int node = _roads.JunctionAt(work[i], SnapRadius);
             if (node >= 0) { work[i] = _roads.JunctionPos(node); return node; }
 
-            if (!_roads.NearestJoint(work[i], SnapRadius, out int r, out int j)) return -1;
-            var at = _roads.JointPos(r, j);
-            work[i] = at;
-
-            bool isEnd = j == 0 || j == _roads.JointCount(r) - 1;
-            if (isEnd)
+            // 2. A road END. Promote it to a node and bind it, so the two pieces meet properly.
+            if (_roads.NearestJoint(work[i], SnapRadius, out int r, out int j))
             {
-                node = _roads.AddJunction(at);
-                _roads.BindRoadEnd(r, atEnd: j != 0, node);
+                bool isEnd = j == 0 || j == _roads.JointCount(r) - 1;
+                if (isEnd)
+                {
+                    var atEndPos = _roads.JointPos(r, j);
+                    work[i] = atEndPos;
+                    node = _roads.AddJunction(atEndPos);
+                    _roads.BindRoadEnd(r, atEnd: j != 0, node);
+                    return node;
+                }
+            }
+
+            // 3. ANYWHERE ALONG A SPLINE. The point of snapping to the curve rather than to its joints: the
+            //    junction lands where you aimed, not at the nearest joint several metres away. Insert a joint
+            //    at that exact point, split there, and bind both halves.
+            if (_roads.NearestPointOnSpline(work[i], SnapRadius, out int sr, out int seg, out _, out var sp))
+            {
+                work[i] = sp;
+                int ji = _roads.InsertJointOnSegment(sr, seg, sp);
+                if (ji > 0 && ji < _roads.JointCount(sr) - 1)
+                {
+                    int tail = _roads.SplitRoadAt(sr, ji);
+                    node = _roads.AddJunction(sp);
+                    _roads.BindRoadEnd(sr, atEnd: true, node);
+                    if (tail >= 0) _roads.BindRoadEnd(tail, atEnd: false, node);
+                    return node;
+                }
+                // Landed on (or beside) an existing end after insertion -- treat it as an end.
+                node = _roads.AddJunction(sp);
+                _roads.BindRoadEnd(sr, atEnd: ji >= _roads.JointCount(sr) - 1, node);
                 return node;
             }
 
-            int tail = _roads.SplitRoadAt(r, j);
-            node = _roads.AddJunction(at);
-            _roads.BindRoadEnd(r, atEnd: true, node);                 // head half now ENDS here
-            if (tail >= 0) _roads.BindRoadEnd(tail, atEnd: false, node);   // tail half now STARTS here
+            // 4. Nothing to snap to: a piece still gets a node at each end (strawberry: "nodes are just at
+            //    the ends of each road piece"), so a later piece has something to snap to.
+            node = _roads.AddJunction(work[i]);
             return node;
         }
 
-        void CancelStroke() { _stroke = false; _pts.Clear(); ClearPreview(); }
+        /// <summary>Straight = 2 clicks (start, end). Curve = 3 (start, control, end), sampled off a
+        /// quadratic bezier through the control point. Both commit through the same path a freehand stroke
+        /// does, so a straight piece snaps and makes nodes identically -- there is one commit path on purpose.</summary>
+        void ClickPlace()
+        {
+            if (!RaycastTerrain(GetViewport().GetMousePosition(), out var pt)) return;
+            _clicks.Add(pt);
+            int need = _tool == ETool.Curve ? 3 : 2;
+            if (_clicks.Count < need) { DrawClickPreview(); return; }
+
+            _pts.Clear();
+            if (_tool == ETool.Straight)
+            {
+                // Enough intermediate points that the piece follows the ground rather than spearing through
+                // a hill -- a "straight" road is straight in plan, not in elevation.
+                int n = Mathf.Max(2, Mathf.CeilToInt(_clicks[0].DistanceTo(_clicks[1]) / SampleSpacing) + 1);
+                for (int i = 0; i < n; i++) _pts.Add(_clicks[0].Lerp(_clicks[1], i / (float)(n - 1)));
+            }
+            else
+            {
+                var a = _clicks[0]; var c = _clicks[1]; var b = _clicks[2];
+                int n = Mathf.Max(3, Mathf.CeilToInt((a.DistanceTo(c) + c.DistanceTo(b)) / SampleSpacing) + 1);
+                for (int i = 0; i < n; i++)
+                {
+                    float t = i / (float)(n - 1), u = 1f - t;
+                    _pts.Add(u * u * a + 2f * u * t * c + t * t * b);   // quadratic bezier through the control click
+                }
+            }
+            _clicks.Clear();
+            ClearPreview();
+            CommitStroke();
+        }
+
+        void DrawClickPreview()
+        {
+            ClearPreview();
+            if (_clicks.Count == 0) return;
+            if (!RaycastTerrain(GetViewport().GetMousePosition(), out var cur)) return;
+            var line = new List<Vector3>(_clicks) { cur };
+            _preview = new MeshInstance3D();
+            var im = new ImmediateMesh();
+            im.SurfaceBegin(Mesh.PrimitiveType.LineStrip, new StandardMaterial3D
+            { AlbedoColor = new Color(0.2f, 1f, 0.4f), ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, NoDepthTest = true });
+            foreach (var p in line) im.SurfaceAddVertex(p + Vector3.Up * 0.25f);
+            im.SurfaceEnd();
+            _preview.Mesh = im;
+            AddChild(_preview);
+        }
+
+        void CancelStroke() { _stroke = false; _pts.Clear(); _clicks.Clear(); ClearPreview(); }
 
         void DrawPreview()
         {
@@ -338,6 +433,7 @@ namespace UnturnedGodot
         public void DebugSetDrawing(bool on) => SetDrawing(on);
         public int DebugNodeMarkerCount => _nodeMarkers.Count;
         public int DebugSelectedNode => _selNode;
+        public void DebugSetTool(ETool t) => SetTool(t);
         public void DebugDragNode(int node, Vector3 to) { _selNode = node; _roads.MoveJunction(node, to); BuildNodeMarkers(); }
         public int DebugDrawRoad(IReadOnlyList<Vector3> pts, bool snapEnds = true)
         {

@@ -15,6 +15,7 @@ namespace UnturnedGodot
         readonly EditorRoadDraw _draw;
         readonly EditorRoads _legacy;
         Button _drawBtn, _legacyBtn;
+        readonly Button[] _toolBtns = new Button[EditorRoadDraw.ToolNames.Length];
         Label _stats;
 
         public EditorRoadsPanel(EditorRoadDraw draw, EditorRoads legacy) { _draw = draw; _legacy = legacy; }
@@ -42,7 +43,20 @@ namespace UnturnedGodot
             box.AddChild(_legacyBtn);
 
             box.AddChild(new HSeparator());
-            box.AddChild(Dim("Draw: drag on the ground to lay a path.\nEnds snap to nodes and rail ends; drawing\nonto a rail's middle splits it into a junction.\nDrag a node to move every rail bound to it."));
+            box.AddChild(Dim("Shape"));
+            var shapes = new HBoxContainer();
+            for (int i = 0; i < EditorRoadDraw.ToolNames.Length; i++)
+            {
+                int ti = i;
+                var tb = new Button { Text = EditorRoadDraw.ToolNames[i], ToggleMode = true, CustomMinimumSize = new Vector2(68, 0) };
+                tb.Pressed += () => { _draw?.SetTool((EditorRoadDraw.ETool)ti); _draw?.SetActive(true); _legacy?.SetActive(false); Sync(); };
+                shapes.AddChild(tb);
+                _toolBtns[i] = tb;
+            }
+            box.AddChild(shapes);
+
+            box.AddChild(new HSeparator());
+            box.AddChild(Dim("Straight/Curve: click to place ends\n(Curve takes a middle control click).\nFreehand: drag on the ground.\nEnds snap to nodes, rail ends, and anywhere\nALONG a spline -- which splits it into a\njunction right where you aimed.\nDrag a node to move every rail bound to it."));
             box.AddChild(new HSeparator());
             _stats = Dim("");
             box.AddChild(_stats);
@@ -64,6 +78,11 @@ namespace UnturnedGodot
         {
             if (_drawBtn != null && _draw != null) _drawBtn.ButtonPressed = _draw.Drawing;
             if (_legacyBtn != null && _legacy != null) _legacyBtn.ButtonPressed = _legacy.Paving;
+            // Shape buttons show the ACTIVE sub-tool, and only while the draw tool owns the mouse -- a lit
+            // "Straight" while the legacy node tool is running would be a straight lie about what LMB does.
+            if (_draw != null)
+                for (int i = 0; i < _toolBtns.Length; i++)
+                    if (_toolBtns[i] != null) _toolBtns[i].ButtonPressed = _draw.Drawing && (int)_draw.Tool == i;
         }
 
         public override void _Process(double delta)

@@ -265,6 +265,55 @@ namespace UnturnedGodot
             return ti;
         }
 
+        // ---- SNAP TO THE SPLINE ITSELF, not to the joints on it ------------------------------------------
+        // strawberry 2026-08-19: "the tool can snap along the splines... the spline line is what new roads
+        // snap to". Snapping to JOINTS only lets you branch where a joint happens to sit -- roughly every 8 m
+        // on a drawn road, and wherever the retail data put them on an imported one. Snapping to the CURVE
+        // means the junction lands where you actually aimed, which is the difference between a road tool and
+        // a road tool you fight.
+
+        /// <summary>Closest point on any road's spline to a world point. Returns false if nothing is within
+        /// maxDist. <paramref name="seg"/> is the joint index the segment starts at and <paramref name="t"/>
+        /// its bezier parameter, which together locate the point precisely enough to insert a joint there.</summary>
+        public bool NearestPointOnSpline(Vector3 p, float maxDist, out int road, out int seg, out float t, out Vector3 pos, int skipRoad = -1)
+        {
+            road = -1; seg = -1; t = 0f; pos = Vector3.Zero;
+            float best = maxDist * maxDist;
+            const int Steps = 12;   // per segment; segments are short, and a joint is inserted at the hit anyway
+            for (int ri = 0; ri < _roads.Count; ri++)
+            {
+                if (ri == skipRoad) continue;
+                var r = _roads[ri];
+                int last = r.IsLoop ? r.Joints.Count - 1 : r.Joints.Count - 2;
+                for (int si = 0; si <= last; si++)
+                {
+                    for (int k = 0; k <= Steps; k++)
+                    {
+                        float tt = k / (float)Steps;
+                        var q = SplinePos(r, si, tt);
+                        float d = (q - p).LengthSquared();
+                        if (d < best) { best = d; road = ri; seg = si; t = tt; pos = q; }
+                    }
+                }
+            }
+            return road >= 0;
+        }
+
+        /// <summary>Insert a joint at a point on a segment, so the curve can be split exactly there. Returns
+        /// the new joint's index. Tangents are re-fitted across the road afterwards, which keeps the shape
+        /// close to what it was -- an inserted joint should not visibly kink the road you branched off.</summary>
+        public int InsertJointOnSegment(int road, int seg, Vector3 pos)
+        {
+            if (road < 0 || road >= _roads.Count) return -1;
+            var r = _roads[road];
+            if (seg < 0 || seg >= r.Joints.Count) return -1;
+            int at = seg + 1;
+            r.Joints.Insert(at, new Joint { Vertex = pos, Mode = 0 });
+            RetangentRoad(r);
+            RebuildRoad(road);
+            return at;
+        }
+
         public int JunctionCount => _junctions.Count;
         public Vector3 JunctionPos(int j) => j >= 0 && j < _junctions.Count ? _junctions[j].Pos : Vector3.Zero;
 

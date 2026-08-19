@@ -171,17 +171,25 @@ namespace UnturnedGodot.Testing
 
             int a = tool.DebugDrawRoad(Line(new Vector3(0, 0, 0), new Vector3(100, 0, 0), 6));
             int b = tool.DebugDrawRoad(Line(new Vector3(103, 0, 2), new Vector3(103, 0, 100), 6));
-            T.Check($"drawing onto an existing end made a node ({field.JunctionCount})", field.JunctionCount == 1);
+            // EVERY PIECE gets a node at each end now (strawberry: "nodes are just at the ends of each road
+            // piece"), so two pieces sharing one end is 3 nodes, not 1: A's free start, the shared one, B's
+            // free end. Only the shared one is a JUNCTION (2+ roads bound).
+            T.Check($"each piece gets a node per end, sharing the joined one ({field.JunctionCount} nodes)",
+                    field.JunctionCount == 3);
+            T.Check($"...of which exactly one is a junction ({field.Junctions().Count})", field.Junctions().Count == 1);
 
             tool.DebugSetDrawing(true);
             yield return Ticks(1);
             T.Check($"entering the tool builds a marker per node ({tool.DebugNodeMarkerCount} vs {field.JunctionCount})",
-                    tool.DebugNodeMarkerCount == field.JunctionCount && tool.DebugNodeMarkerCount == 1);
+                    tool.DebugNodeMarkerCount == field.JunctionCount && tool.DebugNodeMarkerCount == 3);
 
-            // Dragging the node must carry BOTH bound rail ends. This is the behaviour the whole node model
-            // exists for, driven through the tool rather than the field.
+            // Dragging the SHARED node must carry BOTH rail ends. Found by degree, not by index -- node 0 is
+            // A's free start, and the first version of this test dragged that and "proved" nothing moved.
+            int shared = -1;
+            for (int i = 0; i < field.JunctionCount; i++) if (field.JunctionEdges(i).Count >= 2) { shared = i; break; }
+            T.Check($"found the shared node ({shared})", shared >= 0);
             var to = new Vector3(140f, 0f, 40f);
-            tool.DebugDragNode(0, to);
+            tool.DebugDragNode(shared, to);
             T.Check($"dragging the node moved rail A's end ({field.JointPos(a, field.JointCount(a) - 1)})",
                     field.JointPos(a, field.JointCount(a) - 1) == to);
             T.Check($"...and rail B's end ({field.JointPos(b, 0)})", field.JointPos(b, 0) == to);
@@ -190,11 +198,59 @@ namespace UnturnedGodot.Testing
             // Deleting the node frees the ends but must NOT delete the rails -- losing two roads because you
             // removed a connector would be a nasty surprise.
             int roadsBefore = field.RoadCount;
-            field.RemoveJunction(0);
+            field.RemoveJunction(shared);
             T.Check($"deleting a node keeps the rails ({roadsBefore} -> {field.RoadCount})", field.RoadCount == roadsBefore);
             T.Check($"...and frees their ends (a.end={field.RoadEndJunction(a, true)}, b.start={field.RoadEndJunction(b, false)})",
                     field.RoadEndJunction(a, true) == -1 && field.RoadEndJunction(b, false) == -1);
             T.Check($"...so there is no junction left ({field.Junctions().Count})", field.Junctions().Count == 0);
+
+            tool.QueueFree(); field.QueueFree(); cam.QueueFree(); ed.QueueFree();
+        }
+    }
+
+    // SNAPPING TO THE SPLINE ITSELF (strawberry 2026-08-19: "the tool can snap along the splines... the spline
+    // line is what new roads snap to"). The distinction that matters: a road's JOINTS are discrete points, so
+    // joint-snapping only lets you branch where a joint happens to sit. This aims at a spot deliberately
+    // BETWEEN two joints and requires the junction to land there -- which is only possible if the tool
+    // measured against the curve, inserted a joint at the hit, and split.
+    public class RoadDrawSplineSnap : GameTest
+    {
+        public override string Name => "editor.road_spline_snap";
+        public override double TimeoutSimSeconds => 20;
+
+        public override IEnumerable<Step> Run()
+        {
+            var ed = new Editor(); World.AddChild(ed);
+            var field = new RoadField(); World.AddChild(field);
+            var cam = new Camera3D(); World.AddChild(cam);
+            var tool = new EditorRoadDraw(ed, cam, field); World.AddChild(tool);
+            yield return Ticks(1);
+
+            // A road with joints exactly every 20 m: 0, 20, 40, 60, 80, 100.
+            var pts = new List<Vector3>();
+            for (int i = 0; i <= 5; i++) pts.Add(new Vector3(i * 20f, 0f, 0f));
+            int a = tool.DebugDrawRoad(pts);
+            T.Check($"base road laid with joints every 20 m ({field.JointCount(a)})", field.JointCount(a) == 6);
+
+            // Aim at x=50 -- the MIDPOINT between joints 2 (40) and 3 (60), 10 m from either. A joint-snapping
+            // tool would pull this to 40 or 60; the curve is what it must measure against.
+            var target = new Vector3(50f, 0f, 0f);
+            bool onSpline = field.NearestPointOnSpline(target, 12f, out int sr, out int seg, out _, out var sp);
+            T.Check($"the spline query finds a point ON the curve, not at a joint ({sp})",
+                    onSpline && sr == a && Mathf.Abs(sp.X - 50f) < 1.5f);
+
+            int nodesBefore = field.JunctionCount;
+            int b = tool.DebugDrawRoad(new List<Vector3> { target, new Vector3(50f, 0f, -60f), new Vector3(50f, 0f, -120f) });
+            T.Check($"the branch was laid ({b})", b >= 0);
+
+            // The junction must be AT x=50, not dragged to a joint.
+            var three = field.Junctions().Find(x => x.Ends.Count >= 3);
+            T.Check($"branching mid-segment makes a 3-way (largest group {(three.Ends?.Count ?? 0)})",
+                    three.Ends != null && three.Ends.Count == 3);
+            T.Check($"...and it sits where we aimed, x={three.Pos.X:0.0} (not snapped back to 40 or 60)",
+                    three.Ends != null && Mathf.Abs(three.Pos.X - 50f) < 1.5f);
+            T.Check($"...which required splitting the base road ({nodesBefore} nodes -> {field.JunctionCount})",
+                    field.RoadCount >= 3);
 
             tool.QueueFree(); field.QueueFree(); cam.QueueFree(); ed.QueueFree();
         }
