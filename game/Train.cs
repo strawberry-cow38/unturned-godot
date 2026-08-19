@@ -42,7 +42,7 @@ namespace UnturnedGodot
         readonly HashSet<Train> _noRecouple = new();   // consists just split from this one: can't re-couple until they've SEPARATED (condition-based, master)
         const float RailY = 1.55f, BogieHalf = 3.5f, CoupleGap = 0.9f;
         const float MaxSpeed = 48f, BaseAccel = 2f, BaseDecel = 1.2f, BaseBrake = 12f, RefWeight = 20f;
-        const float CoupleRange = 1.3f, CoupleMaxSpeed = 7f, SeparateMargin = 1.5f;   // couple only when the ends are CLOSE (waits until in range, master); must part by +margin before re-coupling
+        const float CoupleRange = 1.3f, CoupleMaxSpeed = 11f, SeparateMargin = 1.5f, BonkTransfer = 0.6f, RollFriction = 3f;   // couple only when ends CLOSE + <=CoupleMaxSpeed; a FASTER hit bonks the car along the rail; passive cars coast + decay (master)
         readonly List<Car> _cars = new();
         readonly List<MeshInstance3D> _ropes = new();   // short coupler rope per gap (also the look-at/F-uncouple target)
         AudioStreamPlayer3D _engineSnd, _addSnd, _hornSnd;
@@ -153,7 +153,7 @@ namespace UnturnedGodot
             ClampS();
             Place();
             UpdateAudio(throttle, dt);
-            TryCouple();
+            ResolveContact();
         }
 
         void ClampS()
@@ -167,9 +167,11 @@ namespace UnturnedGodot
         }
 
         // ---- coupling: drive an engine consist into another car at low speed -> they link into one ----
-        void TryCouple()
+        // Consist-vs-consist contact: a slow touch COUPLES, a faster hit BONKS the other car along the rail
+        // (momentum transfer + separate to the contact face). Runs from Drive (engine) and the passive coast.
+        void ResolveContact()
         {
-            if (_speed == 0f || Mathf.Abs(_speed) > CoupleMaxSpeed) return;
+            if (_cars.Count == 0) return;
             _noRecouple.RemoveWhere(t => !IsInstanceValid(t) || t._cars.Count == 0);
             float myFront = _s + _cars[0].S.HalfLen;
             float myRear = _s - _cars.Last().Off - _cars.Last().S.HalfLen;
@@ -178,14 +180,35 @@ namespace UnturnedGodot
                 if (node is not Train o || o == this || !IsInstanceValid(o) || o._cars.Count == 0 || o._road != _road) continue;
                 float oFront = o._s + o._cars[0].S.HalfLen;
                 float oRear = o._s - o._cars.Last().Off - o._cars.Last().S.HalfLen;
+                bool overlap = myFront > oRear && oFront > myRear;
                 float gap = Mathf.Min(Mathf.Abs(myFront - oRear), Mathf.Abs(myRear - oFront));
-                if (_noRecouple.Contains(o))
+                bool suppressed = _noRecouple.Contains(o);
+                if (suppressed && !overlap && gap > CoupleRange + SeparateMargin) { _noRecouple.Remove(o); o._noRecouple.Remove(this); suppressed = false; }
+                if (!overlap)
                 {
-                    if (gap > CoupleRange + SeparateMargin) { _noRecouple.Remove(o); o._noRecouple.Remove(this); }   // parted far enough -> re-coupling allowed again
-                    continue;   // still hugging the car we just split from -> do not re-grab it
+                    if (!suppressed && gap < CoupleRange && Mathf.Abs(_speed) <= CoupleMaxSpeed) { Couple(o); return; }   // close + slow -> couple
+                    continue;
                 }
-                if (gap < CoupleRange) { Couple(o); return; }
+                if (!suppressed && Mathf.Abs(_speed) <= CoupleMaxSpeed) { Couple(o); return; }   // slow even mid-overlap -> couple (never tunnels past a car)
+                // too fast (or still suppressed): BONK the car along the rail, back myself off to the contact face
+                if (_speed >= 0f) { float pen = myFront - oRear; if (pen > 0f) { o._s += pen; _s -= pen; o._speed = _speed * BonkTransfer; _speed *= 0.3f; } }
+                else            { float pen = oFront - myRear; if (pen > 0f) { o._s -= pen; _s += pen; o._speed = _speed * BonkTransfer; _speed *= 0.3f; } }
+                o.Place(); Place();
+                return;
             }
+        }
+
+        // Passive consists (no engine) coast their residual speed with friction here, so a BONKED car rolls along
+        // the rail then settles. Engine consists move only via Drive() (or stay put unoccupied) and skip this.
+        public override void _PhysicsProcess(double delta)
+        {
+            if (HasEngine || _cars.Count == 0 || Mathf.Abs(_speed) < 0.02f) return;
+            float dt = (float)delta;
+            _speed = Mathf.MoveToward(_speed, 0f, RollFriction * dt);
+            _s += _speed * dt;
+            ClampS();
+            Place();
+            ResolveContact();
         }
 
         void Couple(Train o)
