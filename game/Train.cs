@@ -153,7 +153,7 @@ namespace UnturnedGodot
         void SpinWheels(float dist)
         {
             if (Mathf.Abs(dist) < 1e-5f) return;
-            _spinAngle += dist / WheelRadius;
+            _spinAngle -= dist / WheelRadius;   // negated: rolls the correct way (master)
             foreach (var c in _cars)
                 foreach (var w in c.Wheels)
                     if (IsInstanceValid(w)) w.Rotation = new Vector3(_spinAngle, 0f, 0f);
