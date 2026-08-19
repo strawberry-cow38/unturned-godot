@@ -173,7 +173,8 @@ namespace UnturnedGodot
                 Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
                 BlendMode = BaseMaterial3D.BlendModeEnum.Add,
                 BillboardMode = BaseMaterial3D.BillboardModeEnum.Particles,
-                AlbedoColor = new Color(1f, 0.6f, 0.16f),
+                AlbedoColor = new Color(1f, 0.62f, 0.18f),
+                CullMode = BaseMaterial3D.CullModeEnum.Disabled,
             };
             var fade = new Curve(); fade.AddPoint(new Vector2(0f, 1f)); fade.AddPoint(new Vector2(1f, 0f));
             return new CpuParticles3D
@@ -192,7 +193,7 @@ namespace UnturnedGodot
 
         void SetBrakeSparks(bool on, float speed)
         {
-            float fwdZ = speed >= 0f ? -1f : 1f;                 // bogie -Z = +s (forward); the emitting axle + dir flip with reverse
+            float fwdZ = speed >= 0f ? 1f : -1f;                  // leading axle + spark dir along travel (bogie orientation, matches the spin flip); flips on reverse
             var dir = new Vector3(0f, 1f, fwdZ).Normalized();    // launch UP at 45deg in the braking/travel direction (master)
             var pos = new Vector3(0f, -0.92f, 0.94f * fwdZ);     // the LEADING axle's 2 wheels (front pair in the travel direction)
             foreach (var c in _cars)
