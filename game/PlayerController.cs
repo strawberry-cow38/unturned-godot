@@ -318,6 +318,7 @@ namespace UnturnedGodot
         StoreShelf _focusShelf;          // the shelf being looked at (whole-shelf outline) -- the shelf of the focused item
         Vehicle _focusVehicle;  // the vehicle the player is LOOKING AT (outlined + info panel), enter target for E
         Train _focusTrain;      // the train the player is LOOKING AT (loco outlined; F boards it) -- not a Vehicle, own scan
+        Train _focusCouplerTrain; int _focusCouplerIdx = -1;   // the coupler the player is looking at (rope outlined; F uncouples there)
         Deployable _focusDeployable;  // the placed deployable (generator) the player is LOOKING AT (outlined + HP/fuel billboard)
         Door _focusDoor;              // the door being looked at -> F toggles it
         NoteBody _focusNote;          // the readable lore note being looked at -> F reads it
@@ -445,6 +446,7 @@ namespace UnturnedGodot
             ShelfItemBody hitShelfItem = null; StoreShelf hitShelf = null;   // shelf display item / its shelf under the look-sphere
             IPuppetFocusable hitPuppet = null;   // MP ONLY: nearest replicated car/item puppet under the look-sphere (SP hits real Vehicle/WorldItem instead)
             Train hitTrain = null;   // train loco under the look-ray (own scan; not in ResolveFocus)
+            Train hitCT = null; int hitCI = -1;   // train + coupler index under the look-ray
             bool rayTerminal = false, rayShelfItem = false;   // did the RAY claim the target, and was it a shelf item? (see the arbitration below)
             if (!_dead && _driving == null && _riding == null && _cam != null && Input.MouseMode == Input.MouseModeEnum.Captured)
             {
@@ -565,6 +567,13 @@ namespace UnturnedGodot
                         if (node is Train tr && tr.Loco != null && IsInstanceValid(tr.Loco)
                             && tr.Loco.GlobalPosition.DistanceSquaredTo(from) < maxTrainD && tr.LookRayHitsLoco(from, _lookEnd))
                         { hitTrain = tr; break; }
+                    // coupler focus: nearest coupler whose gap the look-ray passes within ~1.1m of -> F uncouples it
+                    float bestC = 1.1f * 1.1f;
+                    foreach (var node in GetTree().GetNodesInGroup("trains"))
+                        if (node is Train tc && IsInstanceValid(tc))
+                            for (int ci = 0; ci < tc.CouplerCount; ci++)
+                            { float d = SegPointDistSq(from, _lookEnd, tc.CouplerWorld(ci)); if (d < bestC) { bestC = d; hitCT = tc; hitCI = ci; } }
+                    if (hitCT != null) hitTrain = null;   // a coupler in your sights beats boarding the engine behind it
                 }
             }
             if (hitTrain != _focusTrain)
@@ -572,6 +581,12 @@ namespace UnturnedGodot
                 if (IsInstanceValid(_focusTrain)) _focusTrain.SetLookFocused(false);
                 _focusTrain = hitTrain;
                 _focusTrain?.SetLookFocused(true);
+            }
+            if (hitCT != _focusCouplerTrain || hitCI != _focusCouplerIdx)
+            {
+                if (_focusCouplerTrain != null && IsInstanceValid(_focusCouplerTrain)) _focusCouplerTrain.SetCouplerFocused(_focusCouplerIdx, false);
+                _focusCouplerTrain = hitCT; _focusCouplerIdx = hitCI;
+                if (_focusCouplerTrain != null) _focusCouplerTrain.SetCouplerFocused(_focusCouplerIdx, true);
             }
             if (_lookViz != null) { _lookViz.Visible = WorldItem.ShowLookSphere && !_dead && _driving == null; if (_lookViz.Visible) _lookViz.GlobalPosition = _lookEnd; }
             if (hitItem != _focusItem)
@@ -4830,6 +4845,7 @@ namespace UnturnedGodot
                 else if (RequestPickupFocusedPuppet()) { }                 // MP: looking at a REPLICATED dropped item -> ask the server for it (like SP, a focused item wins over a nearby vehicle)
                 else if (_focusVehicle != null && IsInstanceValid(_focusVehicle) && !_focusVehicle.IsWreck && !_focusVehicle.IsTrailer) EnterVehicle(_focusVehicle); // looking at a LIVE, drivable vehicle: get in (a wreck is salvaged with LMB; a trailer is towed, not driven)
                 else if (RequestEnterNearestPuppet()) { }                  // MP shell near a REPLICATED vehicle: ask the server for the seat (C6; false in SP -- no puppets)
+                else if (_focusCouplerTrain != null && IsInstanceValid(_focusCouplerTrain)) _focusCouplerTrain.Uncouple(_focusCouplerIdx);   // LOOKING at a coupler: F splits the train there (master)
                 else if (_focusTrain != null && IsInstanceValid(_focusTrain)) BoardTrain(_focusTrain);   // LOOKING at a train loco: board it (outlined affordance, master)
                 else if (NearestTrain() is Train nt) BoardTrain(nt);       // fallback: stood next to a train, board it
                 else if (_focusDeployable != null && IsInstanceValid(_focusDeployable))
@@ -6260,6 +6276,12 @@ namespace UnturnedGodot
         // EXACT SP path (one enter seam, zero MP-only side effects here).
         /// <summary>Nearest boardable train's loco within reach (trains aren't Vehicles, so the vehicle finder
         /// misses them). Generous radius -- the loco is ~11m long, so the cab can sit several metres off centre.</summary>
+        static float SegPointDistSq(Vector3 a, Vector3 b, Vector3 p)
+        {
+            Vector3 ab = b - a; float t = ab.LengthSquared() > 1e-9f ? Mathf.Clamp((p - a).Dot(ab) / ab.LengthSquared(), 0f, 1f) : 0f;
+            return (a + ab * t - p).LengthSquared();
+        }
+
         Train NearestTrain()
         {
             Train best = null; float bestD = 10f * 10f;

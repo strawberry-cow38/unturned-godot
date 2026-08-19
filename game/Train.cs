@@ -43,6 +43,7 @@ namespace UnturnedGodot
         const float MaxSpeed = 48f, BaseAccel = 2f, BaseDecel = 1.2f, BaseBrake = 12f, RefWeight = 20f;
         const float CoupleRange = 2.4f, CoupleMaxSpeed = 7f;   // couple when adjacent ends are within range at low speed
         readonly List<Car> _cars = new();
+        readonly List<MeshInstance3D> _ropes = new();   // short coupler rope per gap (also the look-at/F-uncouple target)
         AudioStreamPlayer3D _engineSnd, _addSnd, _hornSnd;
 
         static Mesh Lm(string n) => ContentProvider.ParseObj($"res://content/{n}.txt");
@@ -80,6 +81,7 @@ namespace UnturnedGodot
             AddToGroup("trains");
             AddCar(type);
             RecomputeOffsets();
+            RebuildRopes();
             Place();
             ResetPhysicsInterpolation();
             RebuildAudio();
@@ -124,7 +126,7 @@ namespace UnturnedGodot
             Vector3 cb = pb + Vector3.Up * (RailY - 0.4f);
             c.Bb.GlobalTransform = new Transform3D(Basis.Identity, cb).LookingAt(cb + tb, Vector3.Up);
         }
-        void Place() { foreach (var c in _cars) PlaceCar(c, _s - c.Off); }
+        void Place() { foreach (var c in _cars) PlaceCar(c, _s - c.Off); PlaceRopes(); }
 
         public Node3D Loco => EngineCar?.Body;
         public Transform3D DriverEyeWorld
@@ -186,6 +188,7 @@ namespace UnturnedGodot
             _cars.Clear(); _cars.AddRange(all);
             o._cars.Clear();
             RecomputeOffsets();
+            RebuildRopes();
             RebuildAudio();
             Place();
             ResetPhysicsInterpolation();
@@ -264,6 +267,71 @@ namespace UnturnedGodot
             var inv = eng.Body.GlobalTransform.AffineInverse();
             var size = eng.S.Box;
             return new Aabb(eng.S.BoxCtr - size * 0.5f, size).IntersectsSegment(inv * from, inv * to);
+        }
+
+        // ---- coupler ropes + uncoupling (phase 2) ----
+        void RebuildRopes()
+        {
+            foreach (var r in _ropes) if (IsInstanceValid(r)) r.QueueFree();
+            _ropes.Clear();
+            var mat = new StandardMaterial3D { AlbedoColor = new Color(0.14f, 0.11f, 0.08f), Roughness = 1f };
+            for (int i = 0; i < _cars.Count - 1; i++)
+            {
+                var rope = new MeshInstance3D { Mesh = new CylinderMesh { TopRadius = 0.055f, BottomRadius = 0.055f, Height = 1f, RadialSegments = 6, Rings = 0 }, MaterialOverride = mat };
+                AddChild(rope);
+                _ropes.Add(rope);
+            }
+        }
+
+        void PlaceRopes()
+        {
+            for (int i = 0; i < _ropes.Count && i + 1 < _cars.Count; i++)
+            {
+                float sRear = (_s - _cars[i].Off) - _cars[i].S.HalfLen;
+                float sFront = (_s - _cars[i + 1].Off) + _cars[i + 1].S.HalfLen;
+                _roads.EvaluateAlong(_road, sRear, out var pa, out _);
+                _roads.EvaluateAlong(_road, sFront, out var pb, out _);
+                PositionRope(_ropes[i], pa + Vector3.Up * (RailY + 0.05f), pb + Vector3.Up * (RailY + 0.05f));
+            }
+        }
+
+        static void PositionRope(MeshInstance3D rope, Vector3 a, Vector3 b)
+        {
+            if (!IsInstanceValid(rope)) return;
+            Vector3 mid = (a + b) * 0.5f, d = b - a; float len = d.Length();
+            if (len < 1e-3f) { rope.Visible = false; return; }
+            rope.Visible = true;
+            Vector3 y = d / len, x = y.Cross(Vector3.Up);
+            if (x.LengthSquared() < 1e-4f) x = Vector3.Right;
+            x = x.Normalized(); Vector3 z = x.Cross(y).Normalized();
+            rope.GlobalTransform = new Transform3D(new Basis(x, y, z).Scaled(new Vector3(1f, len, 1f)), mid);
+        }
+
+        public int CouplerCount => Mathf.Max(0, _cars.Count - 1);
+        public Vector3 CouplerWorld(int i) => (i >= 0 && i < _ropes.Count && IsInstanceValid(_ropes[i])) ? _ropes[i].GlobalPosition : GlobalPosition;
+        public void SetCouplerFocused(int i, bool on)
+        {
+            if (i < 0 || i >= _ropes.Count || !IsInstanceValid(_ropes[i])) return;
+            var r = _ropes[i];
+            r.Layers = on ? (r.Layers | OutlineOverlay.OutlineLayer) : (r.Layers & ~OutlineOverlay.OutlineLayer);
+            if (on) WorldItem.FocusColor = new Color(1f, 0.55f, 0.15f);
+        }
+
+        /// <summary>Split the consist at coupler i (between car i and i+1): the cars behind break off into their own
+        /// Train, keeping position + momentum. On foot only (F on the coupler rope).</summary>
+        public void Uncouple(int i)
+        {
+            if (i < 0 || i >= _cars.Count - 1) return;
+            int n = _cars.Count - (i + 1);
+            var rear = _cars.GetRange(i + 1, n);
+            _cars.RemoveRange(i + 1, n);
+            var nt = new Train { _roads = _roads, _road = _road, _speed = _speed };
+            (GetParent() ?? GetTree().Root).AddChild(nt);
+            nt.AddToGroup("trains");
+            foreach (var c in rear) { c.Body.Reparent(nt, true); c.Bf.Reparent(nt, true); c.Bb.Reparent(nt, true); nt._cars.Add(c); }
+            nt._s = _s - rear[0].Off;
+            nt.RecomputeOffsets(); nt.RebuildRopes(); nt.RebuildAudio(); nt.Place(); nt.ResetPhysicsInterpolation();
+            RecomputeOffsets(); RebuildRopes(); RebuildAudio(); Place();
         }
     }
 }
