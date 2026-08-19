@@ -41,8 +41,10 @@ namespace UnturnedGodot
         readonly List<MeshInstance3D> _wheels = new();
         readonly List<MeshInstance3D> _ropes = new();
         MeshInstance3D _trolley, _hoist;
-        bool _magnetOn; RigidBody3D _held; Vector3 _heldOffset;   // hoist ELECTROMAGNET (steal the skycrane's magnet -> lift a MagnetableContainer)
-        const float GrabReach = 3f;
+        bool _magnetOn; RigidBody3D _held; Vector3 _heldOffset; Aabb _heldAabb; Vector3 _faceAtGrab;   // hoist ELECTROMAGNET (steal the skycrane's magnet -> lift a MagnetableContainer)
+        const float GrabReach = 1.5f;
+        const uint ObstacleMask = (1u << 0) | (1u << 5) | (1u << 6); // terrain/statics + vehicles + props: what STOPS the gantry/trolley when the hoist (or its load) hits it
+        const uint GroundMask = (1u << 0) | (1u << 5) | (1u << 6); // + terrain: what stops the hoist DESCENT so a load is never pushed underground
 
         static Mesh Lm(string n) => ObjMesh.Load(ProjectSettings.GlobalizePath($"res://content/objects/{n}.obj"));
         static Material MakeMat(string tex)
@@ -88,18 +90,30 @@ namespace UnturnedGodot
         /// <summary>W/S drives straight (local -Z); A/D slides the trolley along the beam (local X); hoistIn winches the block up/down.</summary>
         public void Drive(float throttle, float trolleyIn, float hoistIn, float dt)
         {
+            // gantry drive along local -Z; the hoist(+load) collision stops it at contact instead of clipping through
             float target = Mathf.Clamp(throttle, -1f, 1f) * MaxSpeed;
             float rate = Mathf.Abs(throttle) < 0.05f ? Decel : Accel;
             _speed = Mathf.MoveToward(_speed, target, rate * dt);
-            GlobalPosition += -GlobalTransform.Basis.Z * (_speed * dt);
-            SpinWheels(_speed * dt);
+            Vector3 driveMotion = -GlobalTransform.Basis.Z * (_speed * dt);
+            float sfDrive = SafeFrac(driveMotion, ObstacleMask);
+            GlobalPosition += driveMotion * sfDrive;
+            SpinWheels(_speed * dt * sfDrive);
+            if (sfDrive < 0.999f) _speed = 0f;   // blocked -> the gantry stops rather than shoving through
+            // trolley along the beam (local X)
             if (Mathf.Abs(trolleyIn) > 0.05f)
             {
-                _trolleyX = Mathf.Clamp(_trolleyX + Mathf.Clamp(trolleyIn, -1f, 1f) * TrolleySpeed * dt, TrolleyMin, TrolleyMax);
+                float want = Mathf.Clamp(_trolleyX + Mathf.Clamp(trolleyIn, -1f, 1f) * TrolleySpeed * dt, TrolleyMin, TrolleyMax);
+                float d = want - _trolleyX;
+                _trolleyX += d * SafeFrac(GlobalTransform.Basis.X * d, ObstacleMask);
                 if (_trolley != null) _trolley.Position = new Vector3(_trolleyX, 0f, 0f);
             }
+            // hoist winch (local Y); the descent stops on ground/props so a load is never pushed underground
             if (Mathf.Abs(hoistIn) > 0.05f)
-                _hoistDrop = Mathf.Clamp(_hoistDrop + Mathf.Clamp(hoistIn, -1f, 1f) * HoistSpeed * dt, 0f, HoistMax);
+            {
+                float want = Mathf.Clamp(_hoistDrop + Mathf.Clamp(hoistIn, -1f, 1f) * HoistSpeed * dt, 0f, HoistMax);
+                float d = want - _hoistDrop;                       // + = drop (down)
+                _hoistDrop += d * SafeFrac(-GlobalTransform.Basis.Y * d, GroundMask);
+            }
             UpdateHoist();
             UpdateMagnet();
         }
@@ -149,15 +163,45 @@ namespace UnturnedGodot
                         if (hit["collider"].Obj is MagnetableContainer mc && IsInstanceValid(mc))
                         {
                             mc.Freeze = false; mc.Sleeping = false;
-                            mc.GlobalPosition += face - mc.MagnetPointWorld;   // seat its roof magnet-point onto the coil face
+                            Vector3 seat = face - mc.MagnetPointWorld;
+                            if (seat.Y > 0f) mc.GlobalPosition += seat;   // pull the container UP to close the gap; NEVER push it DOWN into the ground
                             mc.FreezeMode = RigidBody3D.FreezeModeEnum.Kinematic; mc.Freeze = true;
                             _held = mc; _heldOffset = mc.GlobalPosition - face;
+                            _heldAabb = WalkWorldAabb(mc); _faceAtGrab = face;
                             break;
                         }
                     }
                 }
             }
             if (_held != null && IsInstanceValid(_held)) _held.GlobalPosition = face + _heldOffset;   // ride the hoist (trolley + up/down)
+        }
+
+        // ---- kinematic collision: sweep the hoist(+load) box along a motion, return the safe fraction (0..1) ----
+        Aabb HoistLoadAabb()
+        {
+            Aabb a = _hoist.GlobalTransform * _hoist.GetAabb();
+            if (_held != null && IsInstanceValid(_held)) { Aabb hb = _heldAabb; hb.Position += HoistFace - _faceAtGrab; a = a.Merge(hb); }
+            return a;
+        }
+        static Aabb WalkWorldAabb(Node n)
+        {
+            Aabb? acc = null;
+            void W(Node k) { if (k is VisualInstance3D vi && vi.Visible) { var a = vi.GlobalTransform * vi.GetAabb(); acc = acc.HasValue ? acc.Value.Merge(a) : a; } foreach (var c in k.GetChildren()) W(c); }
+            W(n);
+            return acc ?? new Aabb();
+        }
+        float SafeFrac(Vector3 motion, uint mask)
+        {
+            if (motion.LengthSquared() < 1e-8f) return 1f;
+            var space = GetWorld3D()?.DirectSpaceState;
+            if (space == null) return 1f;
+            Aabb box = HoistLoadAabb();
+            if (box.Size.X < 0.05f || box.Size.Y < 0.05f || box.Size.Z < 0.05f) return 1f;
+            var shape = new BoxShape3D { Size = box.Size * 0.9f };
+            var p = new PhysicsShapeQueryParameters3D { ShapeRid = shape.GetRid(), Transform = new Transform3D(Basis.Identity, box.GetCenter()), Motion = motion, CollisionMask = mask, CollideWithBodies = true };
+            if (_held != null && IsInstanceValid(_held)) p.Exclude = new Godot.Collections.Array<Rid> { _held.GetRid() };
+            float[] r = space.CastMotion(p);
+            return (r != null && r.Length > 0) ? r[0] : 1f;
         }
 
         static void PlaceRope(MeshInstance3D rope, Vector3 a, Vector3 b)
