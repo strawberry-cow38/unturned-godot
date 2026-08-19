@@ -17,7 +17,7 @@ namespace UnturnedGodot
         const float BogieHalf = 3.5f;   // bogie spacing from a unit's centre (source Track_Front/Back at +-3.5)
         const float CarGap = 11f;       // car-to-car spacing along the rail (source Train_Car spacing)
         readonly List<(Node3D body, MeshInstance3D bf, MeshInstance3D bb, float off)> _units = new();
-        const float MaxSpeed = 40f, Accel = 3f, Decel = 2f;   // BIG inertia (master): high top speed, slow to build, long coast
+        const float MaxSpeed = 48f, Accel = 2f, Decel = 1.2f;   // BIGGER inertia (master): higher top speed, slower build, longer coast
         float _speed;
 
         /// <summary>Spawn a train onto the nearest track spline to <paramref name="near"/>. Null if there is no

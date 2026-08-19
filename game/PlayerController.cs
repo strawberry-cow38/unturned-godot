@@ -4654,6 +4654,15 @@ namespace UnturnedGodot
             if (_invUI != null && _invUI.IsOpen && !(@event is InputEventKey { Keycode: Key.Tab or Key.Escape or Key.F })) return;   // F also allowed through -> closes an open container inventory (handled at the top of the F branch), master
             // while driving, only E (exit) / V (cam) / L (lights) / Escape + LMB (horn) / RMB (lights) are live -- no fire, aim, reload, etc.
             // (riding a replicated puppet gates identically -- the vehicle-side keys just no-op below in v1)
+            if (_ridingTrain != null)   // RIDING A TRAIN: self-contained input (H = 1P/3P cam, mouse orbits the 3P chase). F-exit + rest use the normal chain below; no vehicle/MP paths touched.
+            {
+                if (@event is InputEventKey { Pressed: true, Keycode: Key.H }) { _fp = !_fp; GetViewport().SetInputAsHandled(); return; }
+                if (@event is InputEventMouseMotion tmm && Input.MouseMode == Input.MouseModeEnum.Captured)
+                {
+                    if (!_fp) { _driveCamYaw -= tmm.Relative.X * MouseSensitivity; _driveCamPitch = Mathf.Clamp(_driveCamPitch + tmm.Relative.Y * MouseSensitivity, -25f, 70f); }
+                    GetViewport().SetInputAsHandled(); return;   // consume look while riding (orbit in 3P; cab is fixed-forward in 1P)
+                }
+            }
             if (_driving != null || _riding != null)
             {
                 // SEAT SELECTION, handled ABOVE the allow-list below rather than added to it. That list exists to
@@ -5956,8 +5965,19 @@ namespace UnturnedGodot
                 GlobalPosition = _interpPrev.Lerp(_interpCurr, (float)Engine.GetPhysicsInterpolationFraction());
             if (_driving != null && !_dead)   // driving: position the cam from the vehicle's Godot-INTERPOLATED visual transform, so cam + car mesh are both smooth + IN SYNC (master: godot smoothing for the car)
                 PositionDriveCam(_driving.GetGlobalTransformInterpolated());
-            if (_ridingTrain != null && !_dead && _cam != null)   // riding a train: lock the cam to the loco cab, looking forward down the rail
-                _cam.GlobalTransform = _ridingTrain.DriverEyeWorld;
+            if (_ridingTrain != null && !_dead && _cam != null)   // riding a train: 1P cab (H=fp) or 3P chase behind the loco (mouse-orbited)
+            {
+                if (_fp) _cam.GlobalTransform = _ridingTrain.DriverEyeWorld;   // cab, looking forward down the rail
+                else
+                {
+                    var lt = _ridingTrain.Loco != null ? _ridingTrain.Loco.GetGlobalTransformInterpolated() : _ridingTrain.GlobalTransform;
+                    var tfwd = -lt.Basis.Z; tfwd.Y = 0f; tfwd = tfwd.LengthSquared() > 0.001f ? tfwd.Normalized() : Vector3.Forward;
+                    float tdist = 18f, tpitch = Mathf.DegToRad(_driveCamPitch);   // long loco -> hold the cam well back
+                    Vector3 tdir = new Basis(Vector3.Up, Mathf.DegToRad(_driveCamYaw)) * (-tfwd);   // behind the heading, mouse-orbited
+                    var teye = lt.Origin + tdir * (tdist * Mathf.Cos(tpitch)) + Vector3.Up * (tdist * Mathf.Sin(tpitch) + 4f);
+                    _cam.GlobalTransform = new Transform3D(Basis.Identity, teye).LookingAt(lt.Origin + Vector3.Up * 2.5f, Vector3.Up);
+                }
+            }
             if (_riding != null && !_dead && IsInstanceValid(_riding))   // C6 riding: chase the dead-reckoned puppet (it moves per-FRAME in VehicleReplicaView, no physics interp to sample)
                 PositionRideCam(_riding.GlobalTransform);
             OutlineOverlay.DrivingSuppress = _driving != null || _riding != null;   // in a vehicle: nothing focusable -> kill the outline overlay's per-frame 2nd cull + dilate (the 3p-cam POI fps drop, strawberry)
@@ -6257,6 +6277,7 @@ namespace UnturnedGodot
         {
             _ridingTrain = t;
             if (_focusTrain != null) { if (IsInstanceValid(_focusTrain)) _focusTrain.SetLookFocused(false); _focusTrain = null; }   // drop the look-outline once aboard
+            _driveCamYaw = 0f; _driveCamPitch = 15f;   // 3P chase starts squarely behind the loco
             _viewmodel?.SetShown(false);
             if (_cam != null) _cam.TopLevel = true;
             foreach (var c in FindChildren("*", "CollisionShape3D", true, false))
