@@ -15,6 +15,7 @@ namespace UnturnedGodot
         EditorObjectBrowser _browser;   // the Objects-tab palette (shown only in Objects mode)
         EditorTerrainPanel _terrainPanel;   // the Terrain-tab tool buttons (shown only in Terrain mode)
         EditorSpawnsPanel _spawnsPanel;     // the Spawns-tab tool buttons (shown only in Spawns mode)
+        EditorRoadsPanel _roadsPanel;       // the road/rail tool buttons (shown only in Environment mode)
         EditorBuildingsPanel _buildPanel;   // the Level-tab building tool (shares the tab with the browser)
         readonly Dictionary<EEditorMode, Button> _tabs = new();
         Label _toast; double _toastT;                       // transient centered message (source EditorUI.message / EEditorMessage)
@@ -93,6 +94,7 @@ namespace UnturnedGodot
             if (Editor?.Buildings != null) { _buildPanel = new EditorBuildingsPanel(Editor.Buildings); AddChild(_buildPanel); }
             if (Editor?.TerrainEd != null) { _terrainPanel = new EditorTerrainPanel(Editor.TerrainEd); AddChild(_terrainPanel); }
             if (Editor?.Spawns != null) { _spawnsPanel = new EditorSpawnsPanel(Editor.Spawns); AddChild(_spawnsPanel); }
+            if (Editor?.RoadDrawEd != null || Editor?.RoadsEd != null) { _roadsPanel = new EditorRoadsPanel(Editor.RoadDrawEd, Editor.RoadsEd); AddChild(_roadsPanel); }
             if (Editor != null) Editor.ModeChanged += _ => Refresh();
             Refresh();
         }
@@ -107,6 +109,7 @@ namespace UnturnedGodot
             if (_buildPanel != null) _buildPanel.Visible = active == EEditorMode.Buildings;
             if (_terrainPanel != null) _terrainPanel.Visible = active == EEditorMode.Terrain;   // terrain tool buttons under the Terrain tab
             if (_spawnsPanel != null) _spawnsPanel.Visible = active == EEditorMode.Spawns;       // spawns tool buttons under the Spawns tab
+            if (_roadsPanel != null) _roadsPanel.Visible = active == EEditorMode.Environment;     // road/rail tool buttons under the Environment tab
         }
 
         // transient centered notice (source EditorUI.message): e.g. save confirmation

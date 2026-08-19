@@ -12,7 +12,6 @@ namespace UnturnedGodot
     {
         readonly Editor _editor;
         readonly DayNightCycle _dayNight;
-        readonly System.Action _cleanLighting;   // restore the editor's clean fog-free look (BuildEditor's setup)
         bool _wasActive;
 
         public float Time => _dayNight?.Time ?? 0.5f;
@@ -21,21 +20,28 @@ namespace UnturnedGodot
 
         string TimeName() => Time < 0.2f || Time > 0.85f ? "night" : Time < 0.35f ? "dawn" : Time < 0.65f ? "day" : "dusk";
 
-        public EditorEnvironment(Editor editor, DayNightCycle dayNight, System.Action cleanLighting)
+        public EditorEnvironment(Editor editor, DayNightCycle dayNight)
         {
-            _editor = editor; _dayNight = dayNight; _cleanLighting = cleanLighting;
+            _editor = editor; _dayNight = dayNight;
             Load();
             _editor.ModeChanged += _ => Sync();
             Sync();
         }
 
-        void Sync()   // Environment tab -> preview the real day-night; other tabs -> the clean editor look
+        // THE REAL LIGHTING, IN EVERY TAB (strawberry 2026-08-19: "the global lighting etc etc should always
+        // be on, not just with the environment tab open"). This used to swap to a flat fog-free editor look --
+        // blue sky, uniform bright ambient, no glow -- the moment you left the Environment tab, so every other
+        // tab was dressing a scene under lighting the game never uses. Placing a prop or drawing a rail under
+        // a light you are not shipping is guessing.
+        //
+        // The clean-look callback is gone rather than left switched off: an unused branch that silently
+        // re-skins the world is exactly the thing someone re-enables by accident later.
+        void Sync()
         {
-            bool active = _editor.Mode == EEditorMode.Environment;
-            if (active == _wasActive || _dayNight == null) { _wasActive = active; return; }
-            _wasActive = active;
-            if (active) { _dayNight.VisualsEnabled = true; _dayNight.Apply(); }
-            else { _dayNight.VisualsEnabled = false; _cleanLighting?.Invoke(); }
+            if (_dayNight == null) return;
+            _wasActive = true;
+            _dayNight.VisualsEnabled = true;
+            _dayNight.Apply();
         }
 
         public override void _UnhandledInput(InputEvent ev)

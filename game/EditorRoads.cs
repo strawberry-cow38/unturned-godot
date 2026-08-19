@@ -31,6 +31,8 @@ namespace UnturnedGodot
         static readonly Color VertColor = new(1f, 0.85f, 0.2f), TanColor = new(0.2f, 0.85f, 1f), SelColor = new(1f, 0.15f, 0.1f);
 
         public bool Paving => _paving;
+        /// <summary>Panel entry point -- same seam as Shift+R (see EditorRoadDraw.SetActive).</summary>
+        public void SetActive(bool on) { if (_paving != on) SetPaving(on); }
         public string ModeText => _paving
             ? (_selRoad >= 0
                 ? $"LEGACY PAVE r{_selRoad}{(_roads.RoadIsLoop(_selRoad) ? "(loop)" : "")} {(_selTan >= 0 ? $"tan{_selTan}" : $"j{_selJoint}")} · E move · N {ModeNames[_roads.JointMode(_selRoad, _selJoint)]} · M {_roads.RoadMaterialName(_selRoad)} · L loop · [/] h={_roads.JointOffset(_selRoad, _selJoint):0} · I ign={(_roads.JointIgnoreTerrain(_selRoad, _selJoint) ? "on" : "off")} · Del · Esc"

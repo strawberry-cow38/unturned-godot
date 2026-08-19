@@ -200,6 +200,53 @@ namespace UnturnedGodot.Testing
         }
     }
 
+    // THE BUTTONS (strawberry: "add both road tools as actual ui buttons"). Two things are worth testing and
+    // neither is "a button exists": that the tools are MUTUALLY EXCLUSIVE (they both bind LMB on the terrain,
+    // so two live tools means one click doing two things), and that the buttons reflect the tools' REAL state
+    // rather than the panel's memory of its own last click -- because the keys still work, and a button
+    // claiming a tool is on while it is off is worse than having no button.
+    public class RoadPanelButtons : GameTest
+    {
+        public override string Name => "editor.road_panel_buttons";
+        public override double TimeoutSimSeconds => 20;
+
+        public override IEnumerable<Step> Run()
+        {
+            var ed = new Editor(); World.AddChild(ed);
+            var field = new RoadField(); World.AddChild(field);
+            var cam = new Camera3D(); World.AddChild(cam);
+            var draw = new EditorRoadDraw(ed, cam, field); World.AddChild(draw);
+            var legacy = new EditorRoads(ed, cam, field); World.AddChild(legacy);
+            var panel = new EditorRoadsPanel(draw, legacy); World.AddChild(panel);
+            yield return Ticks(2);
+
+            T.Check($"both tools start off (draw {draw.Drawing}, legacy {legacy.Paving})", !draw.Drawing && !legacy.Paving);
+
+            panel.DebugClick(draw: true);
+            T.Check($"the Draw button turns the draw tool on ({draw.Drawing})", draw.Drawing);
+            T.Check($"...and leaves the legacy tool off ({legacy.Paving})", !legacy.Paving);
+
+            panel.DebugClick(draw: false);
+            T.Check($"the Legacy button turns the legacy tool on ({legacy.Paving})", legacy.Paving);
+            T.Check($"...and turns the DRAW tool off -- one owner of the mouse ({draw.Drawing})", !draw.Drawing);
+
+            panel.DebugClick(draw: true);
+            T.Check($"and back again, exclusively (draw {draw.Drawing}, legacy {legacy.Paving})",
+                    draw.Drawing && !legacy.Paving);
+
+            // The keys still work. Drive the TOOL directly (as a keypress does) and the button must follow --
+            // this is the check that catches a panel trusting its own last click.
+            draw.SetActive(false);
+            panel.DebugSync();
+            T.Check($"a tool turned off by the KEY updates its button ({panel.DebugDrawButtonOn})", !panel.DebugDrawButtonOn);
+            legacy.SetActive(true);
+            panel.DebugSync();
+            T.Check($"...and a tool turned on by the key does too ({panel.DebugLegacyButtonOn})", panel.DebugLegacyButtonOn);
+
+            panel.QueueFree(); draw.QueueFree(); legacy.QueueFree(); field.QueueFree(); cam.QueueFree(); ed.QueueFree();
+        }
+    }
+
     // ...AND THAT IT SURVIVES A SAVE. The junction graph is a NEW sidecar file next to Paths.dat, and its road
     // links are POSITIONAL against that file's road order -- there is no per-road id to key on. That is the
     // kind of coupling that works perfectly until the two files disagree and then binds the wrong rails to the

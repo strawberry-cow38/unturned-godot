@@ -3963,8 +3963,6 @@ namespace UnturnedGodot
             AddChild(new WorldEnvironment { Environment = env });
             var dayNight = new DayNightCycle { Sun = sun, Env = env, DayLength = 300f, VisualsEnabled = false };
             AddChild(dayNight);
-            void SetCleanEditorLighting() { env.SetFogEnabled(false); env.GlowEnabled = false; }
-
             var editor = new Editor();
             AddChild(editor);
             var cam = new EditorCamera { Position = new Vector3(0f, 130f, 190f), RotationDegrees = new Vector3(-30f, 0f, 0f) };
@@ -3973,7 +3971,7 @@ namespace UnturnedGodot
             LootTables.Load(_mapRoot + "/Spawns/Items.dat");   // new maps use PEI's loot tables as the pool (for loot crates)
             var objs = new EditorObjects(editor, this, cam, objectsPreloaded: false); editor.AddChild(objs); editor.Objects = objs;
             var spawns = new EditorSpawns(editor, cam, MapDir(mapName)); editor.AddChild(spawns); editor.Spawns = spawns;   // dir doesn't exist -> starts empty
-            var envEd = new EditorEnvironment(editor, dayNight, SetCleanEditorLighting); editor.AddChild(envEd); editor.Environment = envEd;
+            var envEd = new EditorEnvironment(editor, dayNight); editor.AddChild(envEd); editor.Environment = envEd;
             var terrainEd = new EditorTerrain(editor, cam, terr); editor.AddChild(terrainEd); editor.TerrainEd = terrainEd;
             var rf = new RoadField { Terr = terr };
             rf.LoadMaterialsOnly(_mapRoot + "/Environment");   // shared road materials so roads can be added on the blank map
@@ -4556,26 +4554,12 @@ namespace UnturnedGodot
             string objPlace = System.IO.File.Exists(ProjectSettings.GlobalizePath("res://content/objects/") + editorObjFile) ? editorObjFile : _mapPlace;
             var res = await WorldBuilder.BuildFullWorld(this, WorldMode.Editor, _mapRoot, objPlace, noZombies: true,
                                                         syncLoad: false, bakeNav: false, ActiveHoliday());
-            // Clean, legible editor lighting. The DayNightCycle re-applies a warm-tan ambient + fog + glow EVERY
-            // frame (source-faithful sky, but it reads as thick haze from the aerial editor cam), so freeze its
-            // visuals first, then set a bright fog-free environment so the map is clearly editable.
-            void SetCleanEditorLighting()   // the editor's clean fog-free look; restored when leaving the Environment tab
-            {
-                foreach (var n in GetChildren())
-                    if (n is WorldEnvironment we && we.Environment is Godot.Environment ev)
-                    {
-                        ev.SetFogEnabled(false);
-                        ev.BackgroundMode = Godot.Environment.BGMode.Color;
-                        ev.BackgroundColor = new Color(0.53f, 0.67f, 0.86f);   // clear sky blue
-                        ev.AmbientLightSource = Godot.Environment.AmbientSource.Color;
-                        ev.AmbientLightColor = new Color(0.92f, 0.92f, 0.94f);
-                        ev.AmbientLightEnergy = 1.15f;
-                        ev.GlowEnabled = false;
-                        break;
-                    }
-            }
-            if (res.DayNight != null) res.DayNight.VisualsEnabled = false;
-            SetCleanEditorLighting();
+            // THE EDITOR BOOTS UNDER THE REAL LIGHTING (strawberry 2026-08-19: "the global lighting etc etc
+            // should always be on, not just with the environment tab open"). It used to freeze the day-night
+            // visuals and paint a flat fog-free sky, so every tab except Environment dressed the map under a
+            // light the game never renders -- fine for legibility, useless for judging what you just placed.
+            // EditorEnvironment now keeps the real cycle applied in every tab; the clean look survives only
+            // for the road-demo RENDER below, which needs a deterministic frame rather than a pretty one.
             var editor = new Editor();
             AddChild(editor);
             var cam = new EditorCamera { Position = new Vector3(0f, 140f, 160f), RotationDegrees = new Vector3(-32f, 0f, 0f) };
@@ -4643,7 +4627,7 @@ namespace UnturnedGodot
             var spawns = new EditorSpawns(editor, cam, _mapRoot);   // Phase 3: visualize/edit spawn points (Spawns tab)
             editor.AddChild(spawns);
             editor.Spawns = spawns;
-            var env = new EditorEnvironment(editor, res.DayNight, SetCleanEditorLighting);   // Phase 4: lighting/time/weather (Environment tab)
+            var env = new EditorEnvironment(editor, res.DayNight);   // Phase 4: lighting/time/weather -- the real day-night now runs in EVERY tab
             editor.AddChild(env);
             editor.Environment = env;
             var terrainEd = new EditorTerrain(editor, cam, res.Terr);   // Phase 5: heightmap sculpt (Terrain tab)
@@ -4769,6 +4753,23 @@ namespace UnturnedGodot
                 }
                 cam.GlobalPosition = focus + (loopDemo ? new Vector3(30f, 135f, 30f) : new Vector3(48f, 54f, 48f));   // loop: taller aerial to see the closed shape
                 cam.LookAt(focus, Vector3.Up);
+                // RENDER-ONLY clean lighting: this is a golden-image path, so it wants a flat deterministic
+                // frame, not the shipping sky. Deliberately NOT how the editor boots any more (see above).
+                void SetCleanEditorLighting()
+                {
+                    foreach (var n in GetChildren())
+                        if (n is WorldEnvironment we && we.Environment is Godot.Environment ev)
+                        {
+                            ev.SetFogEnabled(false);
+                            ev.BackgroundMode = Godot.Environment.BGMode.Color;
+                            ev.BackgroundColor = new Color(0.53f, 0.67f, 0.86f);
+                            ev.AmbientLightSource = Godot.Environment.AmbientSource.Color;
+                            ev.AmbientLightColor = new Color(0.92f, 0.92f, 0.94f);
+                            ev.AmbientLightEnergy = 1.15f;
+                            ev.GlowEnabled = false;
+                            break;
+                        }
+                }
                 if (res.DayNight != null) res.DayNight.VisualsEnabled = false;   // Environment preview hazes -> clean lighting for the render
                 SetCleanEditorLighting();
                 editor.Save();   // verify the Paths.dat round-trip (writes content/roads/editor_Paths.dat)

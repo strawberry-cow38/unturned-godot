@@ -49,6 +49,12 @@ namespace UnturnedGodot
 
         public bool Drawing => _drawing;
         public int LastRoad => _lastRoad;
+        /// <summary>Panel entry point. A button must drive the same seam the key does -- synthesising a
+        /// keypress instead would leave the two able to disagree, which is how a UI ends up lying about
+        /// which tool is live.</summary>
+        public void SetActive(bool on) { if (_drawing != on) SetDrawing(on); }
+        public int JunctionNodeCount => _roads?.JunctionCount ?? 0;
+        public int RealJunctionCount => _roads?.Junctions().Count ?? 0;
 
         public string ModeText => !_drawing
             ? "R draw road/rail · Shift+R legacy"
