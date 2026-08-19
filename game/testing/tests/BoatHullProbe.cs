@@ -170,10 +170,13 @@ namespace UnturnedGodot.Testing
                 // reference hull with its keel 4.8 m under, and the shipping ship measures 2.44 m, so the "-3.0
                 // matches the 4.8 m draft" note on the spec is wrong by 2.4 m -- it was eyeballed against a hull
                 // that was heeled 27 deg at the time, which puts the waterline up the hull side where it looks right.
-                foreach (var (slices, dy) in new[] { (3, 0f), (5, 0f), (7, 0f), (3, 1f), (3, 2f), (3, 2.5f), (3, 3f) })
+                // RESERVE sweep: with displacement multiplied, the hull floats higher, so BuoyLift has to come
+                // back down to hold the 4.80 m draft. Sweeping both together because they trade directly.
+                foreach (var (slices, dy) in new[] { (3, 0f), (3, -1f), (3, -2f), (3, -2.5f), (3, -3f), (3, -3.5f), (3, -4f) })
                 {
                     float x = col++ * 400f;
                     System.Environment.SetEnvironmentVariable("UG_BUOYSLICES", slices.ToString());
+                    System.Environment.SetEnvironmentVariable("UG_BUOYRESERVE", "4");
                     System.Environment.SetEnvironmentVariable("UG_BUOYDY", dy.ToString(System.Globalization.CultureInfo.InvariantCulture));
                     var v = Vehicle.BuildByName("ship");
                     World.AddChild(v);
@@ -209,10 +212,10 @@ namespace UnturnedGodot.Testing
                     v.QueueFree();
                     yield return Ticks(2);
                 }
-                System.Environment.SetEnvironmentVariable("UG_BUOYSLICES", null); System.Environment.SetEnvironmentVariable("UG_BUOYDY", null);
+                System.Environment.SetEnvironmentVariable("UG_BUOYSLICES", null); System.Environment.SetEnvironmentVariable("UG_BUOYDY", null); System.Environment.SetEnvironmentVariable("UG_BUOYRESERVE", null);
                 T.Check("slice sweep ran (see [BOAT-SLICE] lines)", true);
             }
-            finally { System.Environment.SetEnvironmentVariable("UG_BUOYSLICES", null); System.Environment.SetEnvironmentVariable("UG_BUOYDY", null); Terrain.HasWater = hadWater; Terrain.SeaLevelY = oldSea; }
+            finally { System.Environment.SetEnvironmentVariable("UG_BUOYSLICES", null); System.Environment.SetEnvironmentVariable("UG_BUOYDY", null); System.Environment.SetEnvironmentVariable("UG_BUOYRESERVE", null); Terrain.HasWater = hadWater; Terrain.SeaLevelY = oldSea; }
         }
     }
 

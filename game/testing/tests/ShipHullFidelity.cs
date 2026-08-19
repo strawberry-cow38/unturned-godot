@@ -1,0 +1,155 @@
+using Godot;
+using System.Collections.Generic;
+
+namespace UnturnedGodot.Testing
+{
+    // strawberry 2026-08-19: "make the ship's hitbox actually match the model completely. 1:1".
+    //
+    // "1:1" is a claim about a DISTANCE, so this measures one instead of asserting a vibe. A grid of rays is
+    // dropped straight down over the whole ship; at each one the first COLLIDER hit is compared against the
+    // height of the MESH's own surface at that exact (x,z), computed here by intersecting the same vertical ray
+    // with ship_body.txt's triangles. The error between those two is the fidelity, in metres.
+    //
+    // The single number that makes this test worth having is that it runs TWICE -- once with the old single
+    // BoxShape3D (Vehicle.ForceBoxHull) and once with the convex decomposition -- because "mean error 0.31 m"
+    // on its own is unreadable. Against the box's own number it is an argument. This is also the only structure
+    // in which the pass carries information: a decomposition that silently failed to build would score the same
+    // as the box, and the comparison would say so.
+    public sealed class ShipHullFidelity : GameTest
+    {
+        public override string Name => "vehicle.ship_hull_1to1";
+        public override double TimeoutSimSeconds => 120;
+
+        // Vertical ray vs the mesh: highest surface at (x,z), or null if the ship isn't over that spot at all.
+        static float? MeshTopAt(Vector3[] tris, float x, float z)
+        {
+            float best = float.NegativeInfinity;
+            for (int i = 0; i + 2 < tris.Length; i += 3)
+            {
+                Vector3 a = tris[i], b = tris[i + 1], c = tris[i + 2];
+                // barycentric in the XZ plane
+                float d = (b.Z - c.Z) * (a.X - c.X) + (c.X - b.X) * (a.Z - c.Z);
+                if (Mathf.Abs(d) < 1e-9f) continue;                       // triangle is edge-on from above
+                float u = ((b.Z - c.Z) * (x - c.X) + (c.X - b.X) * (z - c.Z)) / d;
+                float v = ((c.Z - a.Z) * (x - c.X) + (a.X - c.X) * (z - c.Z)) / d;
+                float w = 1f - u - v;
+                if (u < 0f || v < 0f || w < 0f) continue;
+                float y = u * a.Y + v * b.Y + w * c.Y;
+                if (y > best) best = y;
+            }
+            return float.IsNegativeInfinity(best) ? null : best;
+        }
+
+        struct Score { public float mean, max; public int sampled, missing, phantom; public Vector3 worstAt; public float worstMesh, worstCollider; }
+
+        Score Measure(Vehicle ship, Vector3[] tris)
+        {
+            var space = ship.GetWorld3D().DirectSpaceState;
+            var q = new PhysicsRayQueryParameters3D { CollisionMask = (1u << 5), CollideWithBodies = true };
+            float sum = 0f, worst = 0f; int n = 0, missing = 0, phantom = 0;
+            Vector3 worstAt = Vector3.Zero; float worstMesh = 0f, worstCol = 0f;
+            var origin = ship.GlobalPosition;
+            for (float x = -11.5f; x <= 11.5f; x += 1.0f)
+                for (float z = -33f; z <= 33f; z += 1.5f)
+                {
+                    var meshTop = MeshTopAt(tris, x, z);
+                    q.From = origin + new Vector3(x, 40f, z);
+                    q.To = origin + new Vector3(x, -2f, z);
+                    var hit = space.IntersectRay(q);
+                    bool hasCollider = hit.Count > 0;
+                    if (meshTop == null) { if (hasCollider) phantom++; continue; }   // collider where the model has nothing
+                    if (!hasCollider) { missing++; continue; }                       // model where the collider has nothing
+                    float colY = hit["position"].AsVector3().Y - origin.Y;
+                    float err = Mathf.Abs(colY - meshTop.Value);
+                    sum += err;
+                    if (err > worst) { worst = err; worstAt = new Vector3(x, 0f, z); worstMesh = meshTop.Value; worstCol = colY; }
+                    n++;
+                }
+            return new Score { mean = n > 0 ? sum / n : 999f, max = worst, sampled = n, missing = missing, phantom = phantom,
+                               worstAt = worstAt, worstMesh = worstMesh, worstCollider = worstCol };
+        }
+
+        Vehicle Spawn(bool forceBox, float atX)
+        {
+            Vehicle.ForceBoxHull = forceBox;
+            var v = Vehicle.BuildByName("ship");
+            World.AddChild(v);
+            v.GlobalPosition = new Vector3(atX, 0f, 0f);
+            v.Freeze = true;            // this is a geometry measurement, not a physics one -- hold it still
+            Vehicle.ForceBoxHull = false;
+            return v;
+        }
+
+        public override IEnumerable<Step> Run()
+        {
+            // No water: a floating hull drifts mid-measurement and every ray lands somewhere slightly different.
+            bool hadWater = Terrain.HasWater;
+            Terrain.HasWater = false;
+            try
+            {
+                var tris = ContentProvider.ParseObj("res://content/ship_body.txt").GetFaces();
+                T.Check($"the ship mesh loaded to measure against ({tris.Length / 3} triangles)", tris.Length >= 3);
+                if (tris.Length < 3) yield break;
+
+                var box = Spawn(true, -400f);      // CONTROL: the collider as it shipped
+                var hull = Spawn(false, 400f);     // TREATMENT: the convex decomposition
+                yield return Ticks(4);
+
+                int boxShapes = 0, hullShapes = 0;
+                foreach (var c in box.GetChildren()) if (c is CollisionShape3D) boxShapes++;
+                foreach (var c in hull.GetChildren()) if (c is CollisionShape3D) hullShapes++;
+                T.Check($"the decomposition actually built its shapes ({hullShapes} against the box hull's {boxShapes})",
+                        hullShapes >= 8 && boxShapes == 1);
+
+                var sb = Measure(box, tris);
+                var sh = Measure(hull, tris);
+                GD.Print($"[HULL] BOX      mean err {sb.mean:0.00} m  max {sb.max:0.00} m  over {sb.sampled} samples; " +
+                         $"{sb.missing} spots with model but NO collider, {sb.phantom} with collider but no model");
+                GD.Print($"[HULL] DECOMPOSED mean err {sh.mean:0.00} m  max {sh.max:0.00} m  over {sh.sampled} samples; " +
+                         $"{sh.missing} spots with model but NO collider, {sh.phantom} with collider but no model");
+
+                GD.Print($"[HULL] worst spot, decomposed: x={sh.worstAt.X:0.0} z={sh.worstAt.Z:0.0} -> model y={sh.worstMesh:0.00}, collider y={sh.worstCollider:0.00}");
+                T.Check($"the box hull really was a poor fit -- else 'the new one is better' proves nothing (mean {sb.mean:0.00} m off the model)",
+                        sb.mean > 0.5f);
+                T.Check($"the decomposition tracks the model far more closely (mean {sh.mean:0.00} m vs the box's {sb.mean:0.00} m)",
+                        sh.mean < sb.mean * 0.5f);
+                T.Check($"...and no longer leaves whole regions of the model uncollidable ({sh.missing} bare spots vs the box's {sb.missing})",
+                        sh.missing <= sb.missing && sh.missing < 20);
+
+                // SPOT CHECKS, because a mean can hide a specific thing being wrong. Each is a place the old box
+                // was measurably absent.
+                var space = hull.GetWorld3D().DirectSpaceState;
+                var q = new PhysicsRayQueryParameters3D { CollisionMask = (1u << 5), CollideWithBodies = true };
+                float Probe(Vector3 at)
+                {
+                    q.From = hull.GlobalPosition + at + new Vector3(0f, 30f, 0f);
+                    q.To = hull.GlobalPosition + at + new Vector3(0f, -2f, 0f);
+                    var h = space.IntersectRay(q);
+                    return h.Count > 0 ? h["position"].AsVector3().Y - hull.GlobalPosition.Y : float.NaN;
+                }
+                float deck = Probe(new Vector3(0f, 0f, -10f));
+                float bridge = Probe(new Vector3(0f, 0f, 18f));
+                float beam = Probe(new Vector3(11.2f, 0f, 0f));
+                GD.Print($"[HULL] deck surface y={deck:0.00} (model 11.00)  bridge roof y={bridge:0.00} (model 22.00)  outer beam x=11.2 y={beam:0.00}");
+
+                T.Check($"you stand on the DECK, not a metre above it on the rail cap (collider y={deck:0.00}, model deck y=11.00)",
+                        Mathf.Abs(deck - 11f) < 0.35f);
+                T.Check($"the superstructure is SOLID -- the old box stopped at y=11 and the bridge was walk-through scenery (roof y={bridge:0.00}, model 22.00)",
+                        Mathf.Abs(bridge - 22f) < 0.6f);
+                T.Check($"the hull reaches its real beam: x=11.2 is inside the ship, and the old x+-10 box had nothing there (y={beam:0.00})",
+                        !float.IsNaN(beam));
+
+                // THE BULWARK, checked from the side: a horizontal ray just above deck height, coming inboard from
+                // outside, must stop at the rail. Without it a parked vehicle simply rolls over the side.
+                q.From = hull.GlobalPosition + new Vector3(20f, 11.5f, 0f);
+                q.To = hull.GlobalPosition + new Vector3(0f, 11.5f, 0f);
+                var rail = space.IntersectRay(q);
+                float railX = rail.Count > 0 ? rail["position"].AsVector3().X - hull.GlobalPosition.X : float.NaN;
+                GD.Print($"[HULL] bulwark: inbound ray at deck+0.5 stopped at x={railX:0.00} (rail outer face 12.00)");
+                T.Check($"there IS a bulwark around the deck at rail height (stopped at x={railX:0.00}, expected ~12)",
+                        !float.IsNaN(railX) && railX > 11f);
+            }
+            finally { Terrain.HasWater = hadWater; Vehicle.ForceBoxHull = false; }
+        }
+    }
+}

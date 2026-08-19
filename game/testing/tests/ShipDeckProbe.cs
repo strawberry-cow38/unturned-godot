@@ -1,0 +1,180 @@
+using Godot;
+using System.Collections.Generic;
+
+namespace UnturnedGodot.Testing
+{
+    // strawberry 2026-08-19: "make vehicles on the deck not completely sink the ship, and actual handle
+    // relative to the ship. ie if i land a heli on a ship, it stays on the deck and moves with the ship."
+    //
+    // Measuring BEFORE designing, because two of the three things here might not be problems at all and I do
+    // not want to fix a symptom I have not seen. Specifically: every vehicle in this game masses the same
+    // GlobalMass 900, and the ship's Archimedes force is derived from ITS mass -- so a single heli is a 100%
+    // load increase. Whether that "completely sinks" it or just settles it deeper is a question about the
+    // heave stiffness the BuoySlices fix gave it, and the answer is a number, not an opinion.
+    public sealed class ShipDeckProbe : GameTest
+    {
+        public override string Name => "vehicle.ship_deck_probe";
+        public override double TimeoutSimSeconds => 220;
+
+        public override IEnumerable<Step> Run()
+        {
+            bool hadWater = Terrain.HasWater; float oldSea = Terrain.SeaLevelY;
+            Terrain.HasWater = true; Terrain.SeaLevelY = 0f;
+            try
+            {
+                var ship = Vehicle.BuildByName("ship");
+                World.AddChild(ship);
+                ship.GlobalPosition = new Vector3(0f, 2f, 0f);
+                ship.EngineOn = true;
+                yield return Ticks(2);
+                for (int i = 0; i < 1200; i++) { ship.Drive(0f, 0f, false); yield return Ticks(1); }
+                float restAlone = ship.GlobalPosition.Y;
+                GD.Print($"[DECK] ship alone settles at y={restAlone:0.00}");
+
+                // Where IS the deck, in world terms, right now? The collider stops at the hull box top; the
+                // MESH deck is at y=11 local. Report both so the drop height is not a guess.
+                GD.Print($"[DECK] collider box top (local y) = {11f:0.0}, ship y {restAlone:0.00} -> deck world y ~= {restAlone + 11f:0.00}");
+
+                // Drop a heli onto the deck and watch what the hull does.
+                var heli = Vehicle.BuildByName("huey");
+                World.AddChild(heli);
+                // OVER THE OPEN DECK, forward of the superstructure. This used to be z=+12, which is inside the
+                // deckhouse footprint (z 10.4..25.75) -- harmless while the superstructure had no collision at
+                // all, and an instant ejection the moment it got some. The probe was quietly dropping the heli
+                // INTO the bridge, and then reporting "sank 0.00 m" because the load had bounced off into the sea.
+                heli.GlobalPosition = new Vector3(0f, restAlone + 15f, -10f);
+                heli.EngineOn = false;
+                yield return Ticks(2);
+
+                for (int i = 0; i < 10; i++)
+                {
+                    for (int k = 0; k < 50; k++) { ship.Drive(0f, 0f, false); yield return Ticks(1); }
+                    GD.Print($"[DECK] t+{(i + 1) * 1.0f:0.0}s ship y={ship.GlobalPosition.Y:0.00} (was {restAlone:0.00}, " +
+                             $"delta {ship.GlobalPosition.Y - restAlone:+0.00;-0.00})  heli y={heli.GlobalPosition.Y:0.00}  " +
+                             $"heliRestingOnShip={(heli.GlobalPosition.Y > ship.GlobalPosition.Y + 8f ? "yes" : "NO")}");
+                }
+
+                // PENETRATION CREEP, named explicitly because it is the failure mode this feature actually has and
+                // it is invisible in world coordinates -- rider and hull descend together, so both look fine right
+                // up until the hull falls through the gap between two buoyancy voxel decks and goes 47 m under.
+                // In the HULL'S frame it is obvious: a rider resting on the deck must hold its height.
+                var deckY0 = (ship.GlobalTransform.AffineInverse() * heli.GlobalPosition).Y;
+                float sank = restAlone - ship.GlobalPosition.Y;
+                GD.Print($"[DECK] VERDICT: a single 900 kg vehicle sank the hull {sank:0.00} m");
+
+                // Now get underway and see whether the heli comes with it.
+                var heliStart = heli.GlobalPosition;
+                var shipStart = ship.GlobalPosition;
+                for (int i = 0; i < 500; i++) { ship.Drive(1f, 0f, false); yield return Ticks(1); }
+                var shipMoved = ship.GlobalPosition - shipStart;
+                var heliMoved = heli.GlobalPosition - heliStart;
+                GD.Print($"[DECK] under way 10 s: ship moved {shipMoved.Length():0.0} m, heli moved {heliMoved.Length():0.0} m");
+                GD.Print($"[DECK] heli still aboard? y={heli.GlobalPosition.Y:0.00} vs ship {ship.GlobalPosition.Y:0.00}; " +
+                         $"lateral offset from ship {(new Vector3(heli.GlobalPosition.X - ship.GlobalPosition.X, 0f, heli.GlobalPosition.Z - ship.GlobalPosition.Z)).Length():0.0} m");
+
+                // ---- GATES. The probe printed numbers; these are the ones that are allowed to regress.
+                T.Check($"a single 900 kg vehicle no longer founders the hull (sank {sank:0.00} m, was 10.21 m and still going)",
+                        sank < 2.0f);
+                T.Check($"...and it FOUND a new equilibrium rather than settling slowly forever (heli still on deck at t+10s, y={heli.GlobalPosition.Y:0.00} vs ship {ship.GlobalPosition.Y:0.00})",
+                        heli.GlobalPosition.Y > ship.GlobalPosition.Y + 8f);
+                T.Check($"the heli is CARRIED: it travelled with the hull ({heliMoved.Length():0.0} m against the ship's {shipMoved.Length():0.0} m)",
+                        Mathf.Abs(heliMoved.Length() - shipMoved.Length()) < 5f);
+                float aboardOff = new Vector3(heli.GlobalPosition.X - ship.GlobalPosition.X, 0f, heli.GlobalPosition.Z - ship.GlobalPosition.Z).Length();
+                T.Check($"...and it is still ON the deck afterwards, not merely moving at a similar speed somewhere else ({aboardOff:0.0} m from the hull centre, deck half-length 33)",
+                        aboardOff < 34f);
+
+                var deckY1 = (ship.GlobalTransform.AffineInverse() * heli.GlobalPosition).Y;
+                GD.Print($"[DECK] rider height in the HULL's frame: {deckY0:0.00} -> {deckY1:0.00} (deck plate is y=11)");
+                T.Check($"the rider does not sink INTO the deck over time (hull-frame height {deckY0:0.00} -> {deckY1:0.00})",
+                        Mathf.Abs(deckY1 - deckY0) < 0.30f && deckY1 > 10.9f);
+
+                // ---- THROUGH A TURN. This is the case a velocity-match passes the straight-line check on and
+                // then quietly fails: matching the hull's LINEAR velocity keeps station on a straight course and
+                // slides steadily off the stern as soon as the ship puts the rudder over. Measured as the rider's
+                // offset IN THE HULL'S OWN FRAME, which is the only frame where "did it slide on the deck" is a
+                // question with an answer.
+                var deckPosBefore = ship.GlobalTransform.AffineInverse() * heli.GlobalPosition;
+                for (int i = 0; i < 900; i++) { ship.Drive(1f, 1f, false); yield return Ticks(1); }
+                var deckPosAfter = ship.GlobalTransform.AffineInverse() * heli.GlobalPosition;
+                float slide = (deckPosAfter - deckPosBefore).Length();
+                float yawTurned = Mathf.RadToDeg(Mathf.Abs(ship.GlobalRotation.Y));
+                GD.Print($"[DECK] through an 18 s turn (hull yawed ~{yawTurned:0} deg): rider slid {slide:0.00} m across the deck " +
+                         $"(deck-frame {deckPosBefore.X:0.0},{deckPosBefore.Y:0.0},{deckPosBefore.Z:0.0} -> {deckPosAfter.X:0.0},{deckPosAfter.Y:0.0},{deckPosAfter.Z:0.0})");
+                T.Check($"the hull actually TURNED during that leg ({yawTurned:0} deg) -- else the slide check below proves nothing",
+                        yawTurned > 30f);
+                T.Check($"the rider holds station THROUGH the turn, not just on a straight course (slid {slide:0.00} m in the hull's frame)",
+                        slide < 4f);
+
+                // ---- CONTROL: a HOVERING aircraft must NOT be dragged. Without this, "carry works" is
+                // indistinguishable from "anything within 30 m of the ship gets towed", which would be a far
+                // worse bug than the one being fixed and would feel awful to fly anywhere near a ship.
+                var hover = Vehicle.BuildByName("huey");
+                World.AddChild(hover);
+                // IN THE SHIP'S OWN FRAME. A world-space offset was wrong the moment the turn leg above left the
+                // hull pointing somewhere else -- it would have parked the control heli off the side of the ship,
+                // where "it was not dragged along" is true of any implementation and proves nothing.
+                // OVER THE FOREDECK, and the leg below is kept SHORT on purpose. A world-stationary object is not
+                // stationary relative to the ship: the hull travels ~12 m/s, so anything parked over the deck
+                // drifts aft through the hull's frame at that rate, and the superstructure -- which now has
+                // collision up to y=22 -- eventually arrives and rams it. That is correct physics and a broken
+                // control: it read as "the hover was dragged 44 m" when what actually happened was the deckhouse
+                // hit it. Starting 32 m forward and running 3 s keeps it over open deck the whole time.
+                hover.GlobalPosition = ship.GlobalTransform * new Vector3(0f, 16f, -32f);   // over the foredeck, never landed
+                hover.GravityScale = 0f;                                                   // hold it up without flying it
+                hover.LinearVelocity = Vector3.Zero; hover.AngularVelocity = Vector3.Zero;
+                yield return Ticks(2);
+                var hoverStart = hover.GlobalPosition;
+                var shipXfAtHover = ship.GlobalTransform;
+                var shipStart2 = ship.GlobalPosition;
+                int maxRiders = 0;
+                for (int i = 0; i < 150; i++)   // 3 s: far enough to prove the ship moved, short enough that the
+                {                               // deckhouse never reaches the hovering aircraft
+                    ship.Drive(1f, 0f, false); yield return Ticks(1);
+                    if (ship.DebugDeckRiders > maxRiders) maxRiders = ship.DebugDeckRiders;
+                }
+                float hoverMoved = (hover.GlobalPosition - hoverStart).Length();
+                // The DIRECT reading, so "was it dragged" stops being an inference from a distance. One rider is
+                // the heli parked on the deck; two means the hovering one was being carried as well.
+                GD.Print($"[DECK] most riders carried at once during the control leg: {maxRiders} (1 = only the parked heli)");
+                T.Check($"the hovering aircraft was never counted as a rider (peak {maxRiders}, expected 1 -- the parked heli)",
+                        maxRiders <= 1);
+                float shipMoved2 = (ship.GlobalPosition - shipStart2).Length();
+                GD.Print($"[DECK] CONTROL hovering heli: moved {hoverMoved:0.0} m while the ship moved {shipMoved2:0.0} m");
+                T.Check($"the ship actually moved during the control leg ({shipMoved2:0.0} m) -- else 'the hover was not dragged' is vacuous",
+                        shipMoved2 > 20f);
+                // ...and it has to have been OVER THE DECK to begin with, or it was never a candidate for being
+                // carried and the control is measuring nothing.
+                var hoverLocal = shipXfAtHover.AffineInverse() * hoverStart;
+                T.Check($"the control heli started INSIDE the deck-carry volume (hull frame {hoverLocal.X:0.0},{hoverLocal.Y:0.0},{hoverLocal.Z:0.0}; box is x+-11.5, y 11..17, z+-33.25)",
+                        Mathf.Abs(hoverLocal.X) < 11.5f && hoverLocal.Y > 11f && hoverLocal.Y < 17f && Mathf.Abs(hoverLocal.Z) < 33.25f);
+                T.Check($"a HOVERING aircraft over the deck is NOT dragged along ({hoverMoved:0.0} m against the ship's {shipMoved2:0.0} m)",
+                        hoverMoved < shipMoved2 * 0.25f);
+
+                // ---- LANDING ON A MOVING SHIP (strawberry asked for "considerations for landing on a moving
+                // ship"). The hard version of it: the approach is deliberately NOT speed-matched. The lander is
+                // left hanging at zero velocity while the hull sails underneath, so at the instant of touchdown
+                // the deck is passing beneath it at full speed. If a touchdown flings anything, it is here.
+                var lander = Vehicle.BuildByName("huey");
+                World.AddChild(lander);
+                lander.EngineOn = false;
+                lander.GlobalPosition = ship.GlobalTransform * new Vector3(0f, 13.5f, -26f);   // 2.5 m over the foredeck
+                lander.LinearVelocity = Vector3.Zero;                                          // NOT matched, on purpose
+                lander.AngularVelocity = Vector3.Zero;
+                yield return Ticks(2);
+                float deckSpeed = ship.LinearVelocity.Length();
+                for (int i = 0; i < 300; i++) { ship.Drive(1f, 0f, false); yield return Ticks(1); }
+                var landLocal = ship.GlobalTransform.AffineInverse() * lander.GlobalPosition;
+                float relSpeed = (lander.LinearVelocity - ship.LinearVelocity).Length();
+                GD.Print($"[DECK] unmatched landing onto a deck doing {deckSpeed:0.0} m/s: settled at hull-frame " +
+                         $"{landLocal.X:0.0},{landLocal.Y:0.0},{landLocal.Z:0.0}; closing speed against the hull now {relSpeed:0.00} m/s");
+                T.Check($"the deck really was moving underneath it ({deckSpeed:0.0} m/s) -- landing on a stopped ship would prove nothing",
+                        deckSpeed > 5f);
+                T.Check($"an unmatched landing ends up ON the deck rather than flung off it (hull frame {landLocal.X:0.0},{landLocal.Y:0.0},{landLocal.Z:0.0})",
+                        landLocal.Y > 10.9f && landLocal.Y < 14f && Mathf.Abs(landLocal.X) < 11.5f && Mathf.Abs(landLocal.Z) < 33.25f);
+                T.Check($"...and afterwards it travels WITH the hull instead of sliding down the deck ({relSpeed:0.00} m/s relative)",
+                        relSpeed < 1.5f);
+            }
+            finally { Terrain.HasWater = hadWater; Terrain.SeaLevelY = oldSea; }
+        }
+    }
+}

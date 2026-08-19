@@ -13,7 +13,13 @@ namespace UnturnedGodot
         float _brakeForce = 32f;                     // Brake -- source .dat value
         float _steerTarget, _steerAngle, _steerTurnSpeed = 70f;   // steering smoothing: MoveTowards target at deg/s. LOWERED for a weighty/laggy feel -- the wheels float behind the input, slow to turn AND slow to re-center (master)
         WaterMode _water; Vector3[] _buoys; float _inThrottle, _inSteer; int _waterFrame;   // BOAT/AMPHIBIOUS: water mode + hull buoyancy VOXELS + the last drive input (water propulsion runs in _PhysicsProcess)
-        float _voxelHalfHeight, _waterTime, _gravityMag = 9.8f, _buoyDamp = 1f, _turnScale = 1f;   // source Buoyancy.cs port: voxel half-height (submersion test), wave-ripple clock, gravity magnitude (Archimedes balance); _buoyDamp = per-vehicle damping multiplier
+        Vector3 _deckVolume, _deckCenter;                       // MOVING DECK: the carry box (local space); Zero = not a carrier
+        Transform3D _deckPrevXf; bool _deckHasPrev;
+        PhysicsShapeQueryParameters3D _deckQ;
+        struct DeckRider { public float Grace, Settle; public Vector3 LastVel; public float LastYawRate; }
+        readonly System.Collections.Generic.Dictionary<Node3D, DeckRider> _deckRiders = new();
+        public int DebugDeckRiders;                             // test seam: bodies carried on the last tick
+        float _voxelHalfHeight, _waterTime, _gravityMag = 9.8f, _buoyDamp = 1f, _turnScale = 1f, _buoyReserve = 1f;   // source Buoyancy.cs port: voxel half-height (submersion test), wave-ripple clock, gravity magnitude (Archimedes balance); _buoyDamp = per-vehicle damping multiplier
         bool _afloat;   // currently floating (any buoy submerged) -- HUD/anim can read it
         public bool Afloat => _afloat;
         // ---- ROTARY WING (VoX 2026-08-15: "a rust style minicopeter"). A helicopter is a Vehicle rather than a
@@ -1147,6 +1153,31 @@ namespace UnturnedGodot
             public float BuoyLift;    // added to the auto buoyancy-voxel Y. NEGATIVE = float HIGHER (voxels sit lower -> the hull rides up -> more of the coloured bottom shows above the waterline). 0 = default
             public float BuoyDamp;    // multiplier on the buoyancy VELOCITY damping (source Buoyancy.cs 0.1). >1 = settles faster / bobs less (a big hull is underdamped otherwise). 0 = default (1x)
             public float TurnScale;   // multiplier on the rudder torque. 0 = default (1x). NOT cosmetic: the rudder torque is MASS-scaled (BoatTurn * Mass) but a hull's yaw INERTIA scales with its LENGTH SQUARED, so the same constant that spins a 9 m runabout at 58 deg/s moves a 66 m ship at 0.74 -- 360 degrees in eight minutes (strawberry: "almost impossible to turn"). A long hull has to buy the difference back explicitly.
+            public float BuoyReserve; // multiplier on the hull's DISPLACEMENT. 0 = default (1x). Reserve buoyancy: the
+                                      // volume a real hull carries ABOVE its waterline, which is what lets it take cargo
+                                      // without foundering. Ours had none -- displacement is derived from Mass/HullDensity
+                                      // and every vehicle in this game masses the same GlobalMass 900, so full submersion
+                                      // generated exactly 2x the ship's own weight and ONE 900 kg vehicle on deck matched
+                                      // it. Measured: the hull sank 10.2 m in 10 s and was still going, never finding a new
+                                      // equilibrium (vehicle.ship_deck_probe). Raising this and re-tuning BuoyLift keeps the
+                                      // draft where it was while giving the hull headroom to carry things.
+            public (Vector3 min, Vector3 max)[] HullBands;   // 1:1 COLLISION. Each entry is an AABB filter in MESH
+                                      // space; every body-mesh vertex inside it becomes one CONVEX hull shape. Set this
+                                      // and the single BoxShape3D hull below is REPLACED. Godot cannot give a MOVING
+                                      // body a concave trimesh collider at all (they are static-only), so "matches the
+                                      // model" means a convex DECOMPOSITION -- bands are how the model gets cut into
+                                      // pieces each of which genuinely is convex.
+            public (Vector3 size, Vector3 center, float yawDeg)[] HullBoxes;   // extra box shapes alongside HullBands,
+                                      // for the parts a convex hull cannot express -- a RING (a deck bulwark) is the
+                                      // case: any single convex hull spanning it fills the deck in flush with the top
+                                      // of the rail. yawDeg lets a rail follow a hull that TAPERS instead of running
+                                      // straight past the end of the deck and out over open water.
+            public Vector3 DeckVolume, DeckCenter;   // MOVING DECK. Non-zero = the local-space box inside which things
+                                      // RIDE this vessel: anything resting in here is carried with the hull as it moves
+                                      // and turns. Without it a deck is scenery -- measured, a helicopter parked on the
+                                      // ship was 106 m astern ten seconds after it got under way (vehicle.ship_deck_probe),
+                                      // because contact friction between two rigid bodies transfers essentially nothing
+                                      // at this mass ratio. 0 = not a carrier (every other vehicle).
             public int BuoySlices;    // voxels PER AXIS for the buoyancy grid. 0 = source default (2 -> 2x2x2 = 8). A big hull needs more: at 2 slices a 20x11x66 ship gets ONE voxel per 10x5.5x33 m block, so its whole waterplane is 2 points across the beam and the vertical resolution is coarser than the draft -- measured as a 2.5 m dead band with zero heave AND zero roll stiffness (see vehicle.boat_hull_probe)
             public string[] DefaultPaints;   // source .dat DefaultPaintColors (random on spawn); null + !RandomHueGray = unpainted white
             public bool RandomHueGray;       // source RandomHueOrGrayscale mode (quad/sedan/hatchback)
@@ -2157,16 +2188,71 @@ namespace UnturnedGodot
             Palette = "ship_palette.png", RandomHueGray = true,   // orange hull-BOTTOM texel (3,1) flagged paintable (alpha 0) -> random colour per spawn (master); the other texels keep the ship's own albedo
             Engine = 600f, SteerMax = 0f, SteerMin = 0f, SpeedMax = 12f, SpeedMin = 6f, Brake = 0f,   // boat: BoatThrust propels + rudder-yaws; a touch slower than the runabout (it's a SHIP)
             BoxSize = new Vector3(20f, 11f, 66f), BoxCenter = new Vector3(0f, 5.5f, 0f),   // hull collision box (mesh x±11, z±33.75, keel y0); covers the lower hull -> 4 corner buoys at the keel, COM low
-            BuoyLift = -0.7f,   // keel 4.80 m under, matching the retail static Alberton reference hull Main.cs parks at that draft. MEASURED, not eyeballed: -3.0 settled the keel at 2.44 m, less than HALF the draft its own comment claimed to have verified -- the visual compare that "verified" it was made against a hull sitting at 27 deg of heel (see BuoySlices), which walks the waterline up the hull side until it looks right. Draft moves 1:1 with this value (vehicle.boat_slice_sweep).
+            // 1:1 HULL, cut into pieces that are each genuinely convex. Every bound below is MEASURED off
+            // ship_body.txt's own vertex planes, not eyeballed: the hull reaches full beam (x +-12) at y=8 and
+            // tapers to a x +-10 keel; the deck is a FULL PLATE at y=11 (x +-11.5, z +-33.25); the aft
+            // superstructure stands x +-9.1, z 10.4..25.75, stepping up to y=22. The single BoxShape3D this
+            // replaces was x +-10 by y 0..11 -- 4 m narrower than the real beam, 1 m short of the sheer, and it
+            // gave the superstructure no collision whatsoever, so the bridge was scenery you walked through.
+            HullBands = new (Vector3, Vector3)[]
+            {
+                (new Vector3(-13f, -0.1f, -35f), new Vector3(13f, 11.001f, 35f)),      // lower hull + weather deck
+                (new Vector3(-9.6f, 10.9f, 10f), new Vector3(9.6f, 13.9f, 26.5f)),     // superstructure, deck level
+                (new Vector3(-9.6f, 13.5f, 10f), new Vector3(9.6f, 16.9f, 26.5f)),     // ...mid
+                (new Vector3(-9.6f, 16.6f, 10f), new Vector3(9.6f, 19.7f, 26.5f)),     // ...funnel deck (footprint pulls IN to z 19.6 here)
+                (new Vector3(-9.6f, 19.4f, 10f), new Vector3(9.6f, 22.1f, 26.5f)),     // ...bridge, which OVERHANGS it back out to z 25.75
+            },
+            // The BULWARK, as four boxes. It is a RING, so no single convex hull can hold it -- one spanning
+            // y 11..12 fills the deck in flush with the top of the rail, which both raises the walking surface a
+            // metre above the visible deck and removes the only thing stopping a parked vehicle rolling over the
+            // side. Measured: deck edge at x +-11.5 / z +-33.25, outer sheer at +-12 / +-33.75, rail top y=12.
+            // The deck is HULL-SHAPED in plan, not rectangular, and the rails follow it. Measured half-widths
+            // along the deck plate: 3.0 m at the bow (z -33.25), opening to 11.5 by z -18.25, held to z +28.25,
+            // then closing to 9.0 at the stern. Straight full-length rails at x +-11.75 were the first attempt
+            // and they hang up to 8 m out over open water across the whole bow -- an invisible wall you walk into
+            // where there is no ship. The two taper sections are yawed to sit on the sheer line instead.
+            HullBoxes = new (Vector3, Vector3, float)[]
+            {
+                (new Vector3(0.5f, 1f, 46.5f), new Vector3(-11.75f, 11.5f, 5f), 0f),        // port rail, parallel body
+                (new Vector3(0.5f, 1f, 46.5f), new Vector3(11.75f, 11.5f, 5f), 0f),         // starboard rail, parallel body
+                (new Vector3(0.5f, 1f, 17.3f), new Vector3(-7.25f, 11.5f, -25.75f), -29.5f),// port bow taper
+                (new Vector3(0.5f, 1f, 17.3f), new Vector3(7.25f, 11.5f, -25.75f), 29.5f),  // starboard bow taper
+                (new Vector3(0.5f, 1f, 5.6f), new Vector3(-10.25f, 11.5f, 30.75f), 26.6f),  // port stern taper
+                (new Vector3(0.5f, 1f, 5.6f), new Vector3(10.25f, 11.5f, 30.75f), -26.6f),  // starboard stern taper
+                (new Vector3(6f, 1f, 0.5f), new Vector3(0f, 11.5f, -33.5f), 0f),            // stem, 6 m across at the bow
+                (new Vector3(18f, 1f, 0.5f), new Vector3(0f, 11.5f, 33.5f), 0f),            // transom, 18 m across
+            },
+            // The weather deck: x +-11.5, z +-33.25 at y=11 (the top of the hull collision box), given 6 m of
+            // headroom. Measured off the ship mesh, not guessed. The aft superstructure stands inside this box
+            // and is part of the hull, so it simply never registers as a rider.
+            DeckVolume = new Vector3(23f, 6f, 66.5f), DeckCenter = new Vector3(0f, 14f, 0f),
+            BuoyReserve = 4f,   // RESERVE BUOYANCY -- the volume a real hull carries above its waterline, and the
+                                // thing this ship had none of. Displacement comes from Mass/HullDensity, and every
+                                // vehicle here masses the same GlobalMass 900, so full submersion produced exactly 2x
+                                // the ship's own weight: ONE 900 kg vehicle on deck matched it and the hull sank 10.2 m
+                                // in 10 s without ever finding a new equilibrium (vehicle.ship_deck_probe). At 4x it
+                                // supports itself plus ~7 vehicles before the voxels saturate. BuoyLift below is
+                                // re-tuned against this -- the two trade 1:1 and must move together.
+            BuoyLift = 2.96f,   // keel 4.80 m under, matching the retail static Alberton reference hull Main.cs parks at that draft. MEASURED, not eyeballed: was -0.7 at 1x reserve; 4x reserve floats the hull 3.66 m higher, so this comes up by the same amount to hold the SAME draft. (Originally -3.0, which settled the keel at 2.44 m, less than HALF the draft its own comment claimed to have verified -- the visual compare that "verified" it was made against a hull sitting at 27 deg of heel (see BuoySlices), which walks the waterline up the hull side until it looks right. Draft moves 1:1 with this value (vehicle.boat_slice_sweep).
             BuoyDamp = 4f,      // settle FAST + calm -- a 67.5m hull is heavily underdamped at the source 1x (master "settles really slowly, way too buoyant")
             BuoySlices = 3,     // 27 voxels, NOT the source's 8. At 2 slices the ship capsized ITSELF: upright was an UNSTABLE equilibrium (restoring POSITIVE out to 20 deg) and it settled at 26.7 deg of heel with no input at all, sitting on a 3 m band of exactly ZERO heave stiffness -- and a hull with no waterline has no roll stiffness either, because it is the same voxels doing both. Full submersion is 2x weight, so equilibrium needs half the voxel DECKS under; on an EVEN count that lands exactly on a deck boundary, where nothing varies with either depth or heel. 3, 5 and 7 all measure clean (0 m dead band, restoring at every angle 2-60 deg); 3 wins on both axes -- strongest small-heel restoring (-0.45 rad/s2 at 5 deg vs -0.30 and -0.23) and 27 force applications a tick instead of 343. Sweep: UG_BOATSWEEP=1 ./test.sh --l1 --only 'vehicle.boat_slice_sweep'.
-            TurnScale = 20f,    // 360 deg in 28 s at 14 m/s, against the runabout's 6 s and the 593 s this hull gets at the fleet default. strawberry asked for "ship like but usable" and this is the measured knee: scale 15 = 38 s, 20 = 28 s, 30 = 19 s, and 20 is also the last rung where the turn is nearly free (13.9 m/s held, vs 12.6 at scale 50). Sweep: UG_BOATSWEEP=1 ./test.sh --l1 --only 'vehicle.boat_turn_sweep'.
+            TurnScale = 26f,    // 360 deg in ~28 s. Was 20 before reserve buoyancy landed: the drag compensation
+                                // is close but not exact (the sqrt depth curve means submerged count does not scale
+                                // perfectly as 1/reserve), which took the circle to 36 s. 26 puts it back on the
+                                // number strawberry actually drove and approved rather than leaving the feel moved
+                                // by a buoyancy change he did not ask to affect handling. Original note: 360 deg in 28 s at 14 m/s, against the runabout's 6 s and the 593 s this hull gets at the fleet default. strawberry asked for "ship like but usable" and this is the measured knee: scale 15 = 38 s, 20 = 28 s, 30 = 19 s, and 20 is also the last rung where the turn is nearly free (13.9 m/s held, vs 12.6 at scale 50). Sweep: UG_BOATSWEEP=1 ./test.sh --l1 --only 'vehicle.boat_turn_sweep'.
             ForwardGears = new[] { 1f }, ReverseGear = 1f, ShiftUpRpm = 5000f,
             Sound = "engine_medium.ogg", IdlePitch = 0.5f, MaxPitch = 0.95f, IdleVolume = 0.9f, MaxVolume = 1.0f,   // low ship-engine rumble
             Fuel = 5000f, Health = 4000f, Name = "Container Ship",
             Wheels = new (float, float, float, bool)[0],   // NO wheels -- floats on buoyancy
-            Seats = new[] { new Vector3(0f, 13f, 26f) },   // helm: up in the bridge (stern +Z, elevated) -- driver seat (index 0)
-            DriverEye = new Vector3(0f, 15f, 24f),   // FP view from the bridge, looking forward over the deck
+            // THE HELM, actually in the bridge. Was (0,13,26): z=26 is aft of the superstructure's own back wall
+            // (it ends at 25.75) and y=13 is two metres off the deck, so the "bridge" seat was a spot hanging off
+            // the stern at deck height -- strawberry asked for it "up to in the superstructure, looking down onto
+            // the deck". The bridge is the top enclosed band, floor y=19.6, roof y=22, forward bulkhead z=10.4;
+            // this sits on that floor at its forward end.
+            Seats = new[] { new Vector3(0f, 20f, 12f) },      // driver seat (index 0), on the bridge floor
+            DriverEye = new Vector3(0f, 21.2f, 11f),          // eye 1.2 m up, just inside the forward windows: 10 m
+                                                              // above the deck and looking down the full 45 m of it
         };
         public static Vehicle BuildContainerShip(int variant = 0) => Build(_ship, variant, "ship");
         // APC -- 8-wheeled AMPHIBIOUS armored car (source vehicles/apc). WaterMode.Amphibious: drives on land via the
@@ -3519,6 +3605,14 @@ namespace UnturnedGodot
                 v.ContinuousCd = true;
                 v.Inertia = Vector3.One * (GlobalMass * HeliInertiaPerKg);
             }
+            v._deckVolume = s.DeckVolume; v._deckCenter = s.DeckCenter;
+            if (v._deckVolume != Vector3.Zero)
+            {
+                // Contact reporting is the honest "is it actually standing on me" test, so it is switched on ONLY
+                // for a vessel that carries -- it is not free, and no other vehicle needs it.
+                v.ContactMonitor = true;
+                v.MaxContactsReported = 16;
+            }
             v._water = s.Water;   // BOAT/AMPHIBIOUS: voxelize the hull box for the source Buoyancy.cs voxel-Archimedes model
             if (s.Water != WaterMode.Car)
             {
@@ -3534,6 +3628,8 @@ namespace UnturnedGodot
                         for (int sz = 0; sz < slices; sz++)
                             vox[vi++] = new Vector3(minExt.X + vsz.X * (0.5f + sx), minExt.Y + vsz.Y * (0.5f + sy) + buoyDy, minExt.Z + vsz.Z * (0.5f + sz));
                 v._buoys = vox;
+                v._buoyReserve = s.BuoyReserve > 0f ? s.BuoyReserve : 1f;
+                if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_BUOYRESERVE"), out var _br) && _br > 0f) v._buoyReserve = _br;   // live sweep knob
                 v._buoyDamp = s.BuoyDamp > 0f ? s.BuoyDamp : 1f;   // per-vehicle buoyancy damping (big hulls settle slowly at 1x)
                 v._turnScale = s.TurnScale > 0f ? s.TurnScale : 1f;   // per-vehicle rudder authority (a long hull's yaw inertia is not paid for by the mass-scaled torque)
                 if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_BOATTURN"), out var _bt) && _bt > 0f) v._turnScale = _bt;   // live sweep knob (probe)
@@ -3646,8 +3742,34 @@ namespace UnturnedGodot
                 v._taillightMat = tlMat;
             }
 
-            // source BoxCollider hull (Godot space), not the mesh AABB (which wrongly included the roll bar)
-            v.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = s.BoxSize }, Position = s.BoxCenter });
+            // source BoxCollider hull (Godot space), not the mesh AABB (which wrongly included the roll bar) --
+            // UNLESS the spec asks for a real convex decomposition of its own mesh (Spec.HullBands), which is what
+            // "make the hitbox match the model 1:1" has to mean for a body that MOVES.
+            if ((s.HullBands != null || s.HullBoxes != null) && !ForceBoxHull
+                && System.Environment.GetEnvironmentVariable("UG_SHIPBOX") != "1")   // live A/B knob, same seam as ForceBoxHull
+            {
+                int made = 0;
+                if (s.HullBands != null && bodyMesh != null)
+                    foreach (var band in s.HullBands)
+                    {
+                        var cv = ConvexBand(bodyMesh, band.min, band.max);
+                        if (cv != null) { v.AddChild(new CollisionShape3D { Shape = cv }); made++; }
+                    }
+                if (s.HullBoxes != null)
+                    foreach (var b in s.HullBoxes)
+                    {
+                        v.AddChild(new CollisionShape3D
+                        {
+                            Shape = new BoxShape3D { Size = b.size },
+                            Transform = new Transform3D(new Basis(Vector3.Up, Mathf.DegToRad(b.yawDeg)), b.center),
+                        });
+                        made++;
+                    }
+                // FALL BACK rather than ship a vehicle with NO collision: an empty band list would otherwise be a
+                // silent hole you drive through the world in.
+                if (made == 0) v.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = s.BoxSize }, Position = s.BoxCenter });
+            }
+            else v.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = s.BoxSize }, Position = s.BoxCenter });
             var roof = RoofBox(s.Name);   // source 2nd body box (roof slab): the port only had the main box, so the roof had no collision (master); jeep/quad/tractor are open, no roof
             if (roof.HasValue)
             {
@@ -3761,6 +3883,25 @@ namespace UnturnedGodot
             else comY = s.BoxCenter.Y - s.BoxSize.Y * 0.25f;   // BOAT (no wheels): low COM below the hull centre so buoyancy keeps it upright (was a div-by-zero)
             v.CenterOfMassMode = RigidBody3D.CenterOfMassModeEnum.Custom;
             v.CenterOfMass = new Vector3(0f, comY, 0f);
+
+            // INERTIA IS PINNED TO THE HULL BOX for anything with a convex decomposition, because otherwise
+            // HANDLING IS A FUNCTION OF THE COLLISION MESH. Godot derives a body's inertia tensor from its
+            // collision shapes whenever Inertia is left at zero, and the centre of mass is already Custom here --
+            // so the two halves of the mass model disagreed: CoM was authored, inertia was whatever the collider
+            // happened to be. Measured directly on the ship, same build, only the collider swapped
+            // (UG_SHIPBOX=1): box hull 12.6 m/s and a 28 s circle, convex decomposition 12.0 m/s and 26 s. That
+            // is a 1:1 HITBOX change quietly re-tuning a boat whose feel strawberry drove and signed off on.
+            // BoxSize is the authored hull volume and is what TurnScale was calibrated against, so it stays the
+            // authority for the mass distribution and the collider is free to describe the SHAPE instead.
+            if (s.HullBands != null || s.HullBoxes != null)
+            {
+                var e = s.BoxSize;
+                float dy = s.BoxCenter.Y - comY;                     // parallel-axis shift onto the real CoM
+                v.Inertia = new Vector3(
+                    v.Mass / 12f * (e.Y * e.Y + e.Z * e.Z) + v.Mass * dy * dy,
+                    v.Mass / 12f * (e.X * e.X + e.Z * e.Z),          // yaw axis is along the offset, so unshifted
+                    v.Mass / 12f * (e.X * e.X + e.Y * e.Y) + v.Mass * dy * dy);
+            }
 
             if (s.Parts != null)   // detail meshes with their real solid colours (seats grey, lights, steering brown)
                 foreach (var (txt, color) in s.Parts)
@@ -5877,7 +6018,196 @@ namespace UnturnedGodot
             _steerAngle = Mathf.MoveToward(_steerAngle, _steerTarget, _steerTurnSpeed * (float)delta);
             Steering = Mathf.DegToRad(_steerAngle);
             if (_steerPivot != null) _steerPivot.Basis = new Basis(_steerAxis, Mathf.DegToRad(_steerAngle));   // steering wheel model turns 1:1 with the steer angle (source line 4020, AnimatedSteeringAngle)
+            CarryDeckRiders((float)delta);   // MOVING DECK: carry anything standing on us. Outside ApplyWaterPhysics
+                                             // deliberately -- that returns early when the hull is not afloat, and a
+                                             // grounded or beached vessel still has a deck.
             if (_water != WaterMode.Car) ApplyWaterPhysics((float)delta);   // BOAT/AMPHIBIOUS: buoyancy float + water propulsion (overrides wheel drive while afloat)
+        }
+
+        /// <summary>One convex collision hull built from the body mesh's OWN vertices inside an AABB slice of it.
+        ///
+        /// The point cloud is REDUCED before it becomes a shape, and the reduction is exact rather than a
+        /// tolerance: any vertex of a 3D convex hull is also a vertex of the 2D hull of its own horizontal plane,
+        /// so taking the 2D hull per distinct y-plane and unioning the results yields precisely the same 3D hull
+        /// from far fewer points. The ship's lower hull drops from 360 vertices to a few dozen that way, which
+        /// matters because a convex shape's support function is linear in its point count and this one is
+        /// queried every tick.</summary>
+        static ConvexPolygonShape3D ConvexBand(Mesh mesh, Vector3 lo, Vector3 hi)
+        {
+            var planes = new System.Collections.Generic.SortedDictionary<int, System.Collections.Generic.List<Vector2>>();
+            foreach (var v in mesh.GetFaces())
+            {
+                if (v.X < lo.X || v.X > hi.X || v.Y < lo.Y || v.Y > hi.Y || v.Z < lo.Z || v.Z > hi.Z) continue;
+                int key = Mathf.RoundToInt(v.Y * 1000f);
+                if (!planes.TryGetValue(key, out var list)) planes[key] = list = new System.Collections.Generic.List<Vector2>();
+                list.Add(new Vector2(v.X, v.Z));
+            }
+            var pts = new System.Collections.Generic.List<Vector3>();
+            foreach (var kv in planes)
+            {
+                float y = kv.Key / 1000f;
+                foreach (var p in Hull2D(kv.Value)) pts.Add(new Vector3(p.X, y, p.Y));
+            }
+            // Fewer than two planes is a flat sheet, which is not a volume -- refuse it rather than hand the
+            // physics server a degenerate shape.
+            return planes.Count >= 2 && pts.Count >= 4 ? new ConvexPolygonShape3D { Points = pts.ToArray() } : null;
+        }
+
+        /// <summary>Andrew's monotone chain, counter-clockwise, colinear points dropped.</summary>
+        static System.Collections.Generic.List<Vector2> Hull2D(System.Collections.Generic.List<Vector2> src)
+        {
+            var p = new System.Collections.Generic.List<Vector2>(new System.Collections.Generic.HashSet<Vector2>(src));
+            p.Sort((a, b) => a.X != b.X ? a.X.CompareTo(b.X) : a.Y.CompareTo(b.Y));
+            if (p.Count < 3) return p;
+            static float Cross(Vector2 o, Vector2 a, Vector2 b) => (a.X - o.X) * (b.Y - o.Y) - (a.Y - o.Y) * (b.X - o.X);
+            var h = new System.Collections.Generic.List<Vector2>();
+            for (int i = 0; i < p.Count; i++)
+            {
+                while (h.Count >= 2 && Cross(h[h.Count - 2], h[h.Count - 1], p[i]) <= 0f) h.RemoveAt(h.Count - 1);
+                h.Add(p[i]);
+            }
+            int lower = h.Count + 1;
+            for (int i = p.Count - 2; i >= 0; i--)
+            {
+                while (h.Count >= lower && Cross(h[h.Count - 2], h[h.Count - 1], p[i]) <= 0f) h.RemoveAt(h.Count - 1);
+                h.Add(p[i]);
+            }
+            h.RemoveAt(h.Count - 1);   // the closing point repeats the first
+            return h;
+        }
+
+        /// <summary>Test seam: build the OLD single-box hull even for a spec that has a convex decomposition, so a
+        /// fidelity test can measure both in one run and its pass means something.</summary>
+        public static bool ForceBoxHull;
+
+        const float DeckGrace = 0.35f;    // how long a rider stays a rider after its last contact frame
+        const float DeckSettle = 0.10f;   // contact time required BEFORE carrying starts. A machine that has landed
+                                          // spends many ticks settling onto the plating and clears this immediately;
+                                          // a hovering one that grazes the deck for a tick or two never does. Without
+                                          // it a single glancing frame hands over the hull's full velocity for good --
+                                          // measured, a helicopter hovering 5 m over the deck was towed 46 m.
+
+        /// <summary>Carry whatever is standing on this vessel's deck -- the moving-platform problem.
+        ///
+        /// Applied as the hull's DELTA TRANSFORM since the previous tick (translation, plus yaw about the hull's
+        /// own origin), not as a velocity match. A rider has to hold STATION on a deck that is also TURNING, and
+        /// matching linear velocity keeps up with the translation while sliding steadily aft through every turn.
+        /// At 50 Hz the delta is under 25 cm even at full speed, so writing the rider's position reads as being
+        /// carried rather than as a teleport, and it preserves the contact geometry exactly (rider and deck move
+        /// together), so the solver has no new penetration to resolve.
+        ///
+        /// WHO COUNTS AS A RIDER is the part worth being careful about. Box overlap alone would drag a helicopter
+        /// that is merely HOVERING over the deck, which is wrong and would feel awful to fly. Contact alone drops
+        /// riders constantly -- a machine that has just touched down settles over several ticks and is not in
+        /// contact on every one of them. So: in contact AND inside the deck box, with a short grace window that
+        /// covers the bounce frames.
+        ///
+        /// LEAVING is where the "landing on a moving ship" half lives. A rider is released with the deck's own
+        /// velocity added once, because that is what it was actually doing -- stepping off a moving deck, not
+        /// coming to a dead stop in mid-air. That is also what makes taking off from a moving ship work: the
+        /// aircraft is already doing 12 m/s when it breaks contact, exactly like a real deck launch.</summary>
+        void CarryDeckRiders(float delta)
+        {
+            DebugDeckRiders = 0;
+            if (_deckVolume == Vector3.Zero) return;
+            var xf = GlobalTransform;
+            if (!_deckHasPrev) { _deckPrevXf = xf; _deckHasPrev = true; return; }
+            var prev = _deckPrevXf; _deckPrevXf = xf;
+
+            var space = GetWorld3D()?.DirectSpaceState;
+            if (space == null) return;
+
+            // 1. WHO IS TOUCHING US AT ALL. Cheap, and it is the difference between carrying and dragging.
+            var touching = new System.Collections.Generic.HashSet<Node3D>();
+            foreach (var b in GetCollidingBodies())
+                if (b is Node3D n3 && n3 != this) touching.Add(n3);
+
+            // 2. ...AND IS INSIDE THE DECK BOX. Filters out a boat nudging the hull SIDE, which is touching but
+            //    is not aboard.
+            _deckQ ??= new PhysicsShapeQueryParameters3D
+            {
+                Shape = new BoxShape3D(),
+                CollisionMask = (1u << 3) | (1u << 5),   // players (bit3) + vehicles (bit5); NOT bit0, or every tick
+                                                         // scoops up the terrain the hull is floating over
+                CollideWithBodies = true,
+            };
+            ((BoxShape3D)_deckQ.Shape).Size = _deckVolume;
+            _deckQ.Transform = new Transform3D(xf.Basis, xf * _deckCenter);
+            _deckQ.Exclude = new Godot.Collections.Array<Rid> { GetRid() };
+
+            var aboard = new System.Collections.Generic.HashSet<Node3D>();
+            foreach (var h in space.IntersectShape(_deckQ, 24))
+            {
+                if (h["collider"].As<GodotObject>() is not Node3D body) continue;
+                if (body == this || IsAncestorOf(body) || body.IsAncestorOf(this)) continue;
+                if (body is StaticBody3D) continue;                              // the world does not ride
+                if (body is Vehicle bv && bv._water != WaterMode.Car && bv._afloat) continue;   // another hull FLOATING alongside is not cargo
+                aboard.Add(body);
+            }
+            // A rider is one that is BOTH aboard and in contact. Touching alone is not enough: a machine that
+            // slides off the deck edge and scrapes down the hull side is still touching, and refreshing on
+            // contact alone would glue it there and carry it around forever.
+            foreach (var b in aboard)
+                if (touching.Contains(b))
+                {
+                    if (!_deckRiders.ContainsKey(b)) _deckRiders[b] = new DeckRider();   // brand new: it has none of our motion yet
+                    var st0 = _deckRiders[b]; st0.Grace = DeckGrace; _deckRiders[b] = st0;
+                }
+
+            // 3. CARRY, and expire anyone whose grace ran out.
+            var comG = ToGlobal(CenterOfMass);
+            var delta3 = xf * prev.AffineInverse();                              // how the hull moved this tick
+            float dyaw = Mathf.Wrap(xf.Basis.GetEuler().Y - prev.Basis.GetEuler().Y, -Mathf.Pi, Mathf.Pi);
+            System.Collections.Generic.List<Node3D> drop = null;
+            foreach (var key in new System.Collections.Generic.List<Node3D>(_deckRiders.Keys))
+            {
+                if (!GodotObject.IsInstanceValid(key)) { (drop ??= new()).Add(key); continue; }
+                var st = _deckRiders[key];
+                bool onDeck = aboard.Contains(key) && touching.Contains(key);
+                if (onDeck) st.Settle += delta; else st.Grace -= delta;
+                if (st.Grace <= 0f) { (drop ??= new()).Add(key); continue; }
+                if (st.Settle < DeckSettle) { _deckRiders[key] = st; continue; }   // touched, but not yet aboard for real
+
+                if (key is RigidBody3D rb)
+                {
+                    // A RIGID rider is moved by shifting the FRAME its velocity is measured in, not by writing its
+                    // position. Pinning the position looks perfect and is a trap: the rider becomes immovable, the
+                    // deck slides against it every tick, and the friction brakes the ship -- measured, one 900 kg
+                    // heli aboard cut the hull from 12.5 m/s to 1.4. Handing it the deck's own velocity instead
+                    // means there is no relative sliding to generate that friction at all.
+                    //
+                    // Only the DIFFERENCE since last tick is applied, so the rider keeps whatever velocity is its
+                    // own: a car can still be driven around on the deck, and a helicopter can still lift off it.
+                    // A rider that has just come aboard has LastVel zero, so it receives the deck's full velocity
+                    // on its first tick -- which is exactly "it landed, and now it is going where the ship goes".
+                    // Nothing is subtracted on release: something leaving a moving deck keeps the deck's motion.
+                    var deckVel = LinearVelocity + AngularVelocity.Cross(key.GlobalPosition - comG);
+                    deckVel.Y = 0f;                                              // vertical stays with gravity + contact
+                    rb.LinearVelocity += deckVel - st.LastVel;
+                    st.LastVel = deckVel;
+                    rb.AngularVelocity += Vector3.Up * (AngularVelocity.Y - st.LastYawRate);   // turn with the hull
+                    st.LastYawRate = AngularVelocity.Y;
+                }
+                else if (key is not CharacterBody3D)
+                {
+                    // Anything else that is not a character: carry it positionally, horizontally only. The vertical
+                    // axis is left to gravity and contact because overwriting it also overwrites the solver's
+                    // penetration correction -- with the full 3D write a rider sank into the deck a little further
+                    // every tick and the growing contact impulse drove the hull 47 m under water.
+                    var carried = delta3 * key.GlobalPosition;
+                    key.GlobalPosition = new Vector3(carried.X, key.GlobalPosition.Y, carried.Z);
+                    if (Mathf.Abs(dyaw) > 1e-6f)
+                        key.GlobalRotation = new Vector3(key.GlobalRotation.X, key.GlobalRotation.Y + dyaw, key.GlobalRotation.Z);
+                }
+                // A PLAYER (CharacterBody3D) is deliberately NOT carried yet. Its controller rewrites Velocity from
+                // input every tick so the frame shift above is erased, and a bare GlobalPosition write on it is
+                // undone one tick later by the render-interpolation snapshot (see PlayerController.TeleportTo).
+                // Walking the deck of a moving ship needs its own path in that controller; claiming it here would
+                // be a carry that silently does nothing.
+                _deckRiders[key] = st;
+                DebugDeckRiders++;
+            }
+            if (drop != null) foreach (var d in drop) _deckRiders.Remove(d);
         }
 
         const float BoatThrust = 15f, BoatTurn = 2.2f, BoatDrag = 0.5f;   // water propulsion / rudder yaw / extra horizontal drag. Thrust 6->15 + drag 0.9->0.5: the source voxel damping now adds its own per-voxel water drag, so the old values left the boat sluggish (~4 m/s); these hit a proper speedboat pace (strawberry)
@@ -5896,7 +6226,7 @@ namespace UnturnedGodot
             var xf = GlobalTransform;
             var comGlobal = ToGlobal(CenterOfMass);
             float volume = Mass / HullDensity;                                            // source: volume = mass / density
-            var archPerVoxel = new Vector3(0f, WaterDensity * _gravityMag * volume, 0f) / _buoys.Length;   // rho_water * |g| * V, split per voxel
+            var archPerVoxel = new Vector3(0f, WaterDensity * _gravityMag * volume * _buoyReserve, 0f) / _buoys.Length;   // rho_water * |g| * V * reserve, split per voxel
             // FLOATPLANE "on the step": as the floats plane forward, hydrodynamic planing keeps them UP but the
             // pontoons stop resisting PITCH (they skim the surface instead of displacing along their length). Model
             // that below by fading the fore-aft moment ARM of each buoy with speed -- full vertical float force (so
@@ -5920,7 +6250,13 @@ namespace UnturnedGodot
                 // raising the ship to 27 voxels would otherwise triple its water drag + halve its top speed). The 8f
                 // keeps every 2-slice hull (runabout/APC/pontoons) bit-identical to the source calibration.
                 float dampBase = _plane ? 0.035f : 0.1f;
-                float dampPerVox = dampBase * (8f / _buoys.Length);
+                // ...and multiplied by the RESERVE, which is not a fudge: raising displacement means FEWER voxels
+                // need to be under to balance the weight, and drag is applied per SUBMERGED voxel -- so reserve
+                // silently removes water drag. Measured: 4x reserve took the ship from 14.3 to 20.1 m/s and cut
+                // its 360 from 28 s to 13 s, i.e. a buoyancy knob quietly became a handling knob. Scaling the
+                // coefficient by the same factor keeps total drag where it was. Reserve is 1 for every other
+                // hull, so this term is exactly 1.0 there and the runabout/APC/pontoons stay bit-identical.
+                float dampPerVox = dampBase * (8f / _buoys.Length) * _buoyReserve;
                 var damping = -pv * dampPerVox * Mass;                                    // source: -velocity * 0.1 * mass (all-axis)
                 damping.Y += -pv.Y * dampPerVox * Mass * (_bdMul - 1f);                   // EXTRA vertical-only damping -> settles FAST (floatplane calm at rest / big hull settles) without horizontal drag
                 float subFactor = Mathf.Sqrt(Mathf.Clamp((surface - worldPoint.Y) / (2f * _voxelHalfHeight) + 0.5f, 0f, 1f));   // source sqrt depth curve
