@@ -587,7 +587,7 @@ namespace UnturnedGodot
                 Vector3 cnear = (Player?.GlobalPosition ?? at) + cfwd * 35f;
                 float cyaw = Player != null ? Player.RotationDegrees.Y : 0f;
                 var cr = HarborCrane.Spawn(Player?.GetParent() ?? GetTree().Root, cnear, cyaw);
-                Log(cr != null ? "spawned a harbor crane -- F to board, W/S drive, A/D gantry, Q/E hoist" : "crane spawn failed");
+                Log(cr != null ? "spawned a harbor crane -- F board, W/S drive, A/D gantry, Q/E hoist, Shift magnet (lift a magcontainer)" : "crane spawn failed");
             }
             else if (verb == "spawnmagnetablecontainer" || verb == "magcontainer")
             {

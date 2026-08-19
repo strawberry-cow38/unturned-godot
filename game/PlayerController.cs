@@ -185,6 +185,7 @@ namespace UnturnedGodot
         public Vector3 DebugViewmodelRecoilRot => _viewmodel?.DebugRecoilRot ?? Vector3.Zero;
         Train _ridingTrain;   // a boarded train (spline-follower, not a Vehicle) -- parallel low-risk ride path (master: "i cant get into the train")
         HarborCrane _ridingCrane;   // a boarded harbor crane (custom vehicle, same parallel ride path as the train)
+        bool _craneMagPrev;   // Shift edge-detect: energise/de-energise the hoist magnet
         Vehicle _driving; bool _fp = true;   // vehicle being driven + camera mode: true = 1st person (spawn default, strawberry), false = 3rd; H toggles (on foot + driving)
         float _driveCamYaw, _driveCamPitch = 15f;   // 3rd-person driving orbit: mouse yaws/pitches the chase cam around the car (master)
         // FP RIDE free-look (#37, MP only): mouse yaw/pitch of the view in VEHICLE-LOCAL space while seated on a
@@ -6393,6 +6394,9 @@ namespace UnturnedGodot
             float throttle = UiInputBlocked ? 0f : (Input.IsPhysicalKeyPressed(Key.W) ? 1f : 0f) - (Input.IsPhysicalKeyPressed(Key.S) ? 1f : 0f);
             float trolley  = UiInputBlocked ? 0f : (Input.IsPhysicalKeyPressed(Key.D) ? 1f : 0f) - (Input.IsPhysicalKeyPressed(Key.A) ? 1f : 0f);
             float hoist    = UiInputBlocked ? 0f : (Input.IsPhysicalKeyPressed(Key.E) ? 1f : 0f) - (Input.IsPhysicalKeyPressed(Key.Q) ? 1f : 0f);
+            bool mag = !UiInputBlocked && Input.IsPhysicalKeyPressed(Key.Shift);   // Shift toggles the hoist electromagnet (grab/release a container)
+            if (mag && !_craneMagPrev) _ridingCrane.ToggleMagnet();
+            _craneMagPrev = mag;
             _ridingCrane.Drive(throttle, trolley, hoist, delta);
             GlobalPosition = _ridingCrane.GlobalPosition;
         }

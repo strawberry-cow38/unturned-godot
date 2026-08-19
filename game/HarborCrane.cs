@@ -33,7 +33,7 @@ namespace UnturnedGodot
         const float MaxSpeed = 6f, Accel = 2f, Decel = 3f;
         const float TrolleySpeed = 12f, TrolleyMin = -52f, TrolleyMax = 30f;
         const float CarriageX = 11.5f;      // carriage centre along the beam (local X, before the slide offset)
-        const float HoistSpeed = 4f, HoistRestY = 13f, HoistMax = 11f, CarriageAttachY = 14.3f;
+        const float HoistSpeed = 6f, HoistRestY = 13f, HoistMax = 11.5f, CarriageAttachY = 14.3f;   // HoistMax lets the block reach ground level to bite a container
         static readonly Basis Upright = new Basis(Vector3.Right, Mathf.DegToRad(-90f));
         static readonly Vector2[] RopeCorner = { new Vector2(0.9f, 3.0f), new Vector2(0.9f, -3.0f), new Vector2(-0.9f, 3.0f), new Vector2(-0.9f, -3.0f) };
 
@@ -41,6 +41,8 @@ namespace UnturnedGodot
         readonly List<MeshInstance3D> _wheels = new();
         readonly List<MeshInstance3D> _ropes = new();
         MeshInstance3D _trolley, _hoist;
+        bool _magnetOn; RigidBody3D _held; Vector3 _heldOffset; OmniLight3D _coilGlow;   // hoist ELECTROMAGNET (steal the skycrane's magnet -> lift a MagnetableContainer)
+        const float GrabReach = 3f;
 
         static Mesh Lm(string n) => ObjMesh.Load(ProjectSettings.GlobalizePath($"res://content/objects/{n}.obj"));
         static Material MakeMat(string tex)
@@ -74,6 +76,8 @@ namespace UnturnedGodot
             // HOIST: a clone of the block on 4 corner ropes, hanging under the carriage
             _hoist = new MeshInstance3D { Mesh = Lm("Harbor_0_hoistblk"), MaterialOverride = MakeMat("Harbor_0") };
             AddChild(_hoist);
+            _coilGlow = new OmniLight3D { LightColor = new Color(0.5f, 0.72f, 1f), LightEnergy = 0f, OmniRange = 9f, ShadowEnabled = false, Position = new Vector3(0f, -0.4f, 0f) };
+            _hoist.AddChild(_coilGlow);
             var ropeMat = new StandardMaterial3D { AlbedoColor = new Color(0.12f, 0.10f, 0.08f), Roughness = 1f };
             for (int i = 0; i < 4; i++)
             {
@@ -99,6 +103,7 @@ namespace UnturnedGodot
             if (Mathf.Abs(hoistIn) > 0.05f)
                 _hoistDrop = Mathf.Clamp(_hoistDrop + Mathf.Clamp(hoistIn, -1f, 1f) * HoistSpeed * dt, 0f, HoistMax);
             UpdateHoist();
+            UpdateMagnet();
         }
 
         // Position the hoist block under the carriage at the current drop, and stretch the 4 ropes from the carriage
@@ -115,6 +120,47 @@ namespace UnturnedGodot
                 Vector3 bot = new Vector3(cx + RopeCorner[i].X, hy + 0.25f, RopeCorner[i].Y);   // attach at the (shorter) block top
                 PlaceRope(_ropes[i], top, bot);
             }
+        }
+
+        // ---- hoist electromagnet: energise (Shift) -> bite a MagnetableContainer at the block face -> lift it ----
+        public bool MagnetOn => _magnetOn;
+        public void ToggleMagnet()
+        {
+            _magnetOn = !_magnetOn;
+            if (_coilGlow != null) _coilGlow.LightEnergy = _magnetOn ? 2.4f : 0f;
+            if (!_magnetOn) ReleaseHeld();
+        }
+        void ReleaseHeld()
+        {
+            if (_held != null && IsInstanceValid(_held)) { _held.Freeze = false; _held.Sleeping = false; }
+            _held = null;
+        }
+        Vector3 HoistFace => _hoist != null && IsInstanceValid(_hoist) ? _hoist.GlobalPosition - GlobalTransform.Basis.Y * 0.35f : GlobalPosition;
+        void UpdateMagnet()
+        {
+            if (_hoist == null) return;
+            Vector3 face = HoistFace;
+            if (_magnetOn && (_held == null || !IsInstanceValid(_held)))
+            {
+                var space = GetWorld3D()?.DirectSpaceState;
+                if (space != null)
+                {
+                    var shape = new SphereShape3D { Radius = GrabReach };
+                    var q = new PhysicsShapeQueryParameters3D { ShapeRid = shape.GetRid(), Transform = new Transform3D(Basis.Identity, face), CollisionMask = 1u << 6, CollideWithBodies = true };
+                    foreach (var hit in space.IntersectShape(q, 8))
+                    {
+                        if (hit["collider"].Obj is MagnetableContainer mc && IsInstanceValid(mc))
+                        {
+                            mc.Freeze = false; mc.Sleeping = false;
+                            mc.GlobalPosition += face - mc.MagnetPointWorld;   // seat its roof magnet-point onto the coil face
+                            mc.FreezeMode = RigidBody3D.FreezeModeEnum.Kinematic; mc.Freeze = true;
+                            _held = mc; _heldOffset = mc.GlobalPosition - face;
+                            break;
+                        }
+                    }
+                }
+            }
+            if (_held != null && IsInstanceValid(_held)) _held.GlobalPosition = face + _heldOffset;   // ride the hoist (trolley + up/down)
         }
 
         static void PlaceRope(MeshInstance3D rope, Vector3 a, Vector3 b)
