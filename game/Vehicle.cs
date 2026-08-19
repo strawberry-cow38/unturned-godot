@@ -23,6 +23,9 @@ namespace UnturnedGodot
         readonly System.Collections.Generic.Dictionary<Node3D, float> _deckLoadVy = new();   // load -> its vertical velocity last tick
         public int DebugDeckRiders;                             // test seam: bodies carried on the last tick
         public int DebugDeckLoads;                              // test seam: bodies whose weight we cancelled last tick
+        public static bool DeckLoadCancelEnabled = true;        // test seam: turn the load cancellation off, so a test
+                                                                // can ask whether the cancellation is itself what is
+                                                                // exciting the hull rather than assuming it is not
         float _voxelHalfHeight, _waterTime, _gravityMag = 9.8f, _buoyDamp = 1f, _turnScale = 1f, _buoyReserve = 1f;   // source Buoyancy.cs port: voxel half-height (submersion test), wave-ripple clock, gravity magnitude (Archimedes balance); _buoyDamp = per-vehicle damping multiplier
         bool _afloat;   // currently floating (any buoy submerged) -- HUD/anim can read it
         public bool Afloat => _afloat;
@@ -6126,7 +6129,21 @@ namespace UnturnedGodot
         // peak-to-peak, because what a load actually presses with oscillates around its weight and only the mean
         // is cancelled. Damping the leftover is cheaper and steadier than trying to track the AC part of a
         // contact force through a finite difference, which was measurably worse (see DeckImpactMinSpeed).
-        const float SteadyHeaveDamp = 10f, SteadyTrimDamp = 12f;
+        // Both are per-second decay RATES, applied directly to velocity (see the use site) -- no mass or inertia
+        // term, and unconditionally stable.
+        // The trim number is a COMPROMISE and both ends of it are measured. It has to be stiff because the
+        // residual is a continuous excitation, not a decaying ring: a load's real contact force wanders around
+        // its weight, only the mean is cancelled, and the leftover acts 10 m off centre where a 66 m hull turns
+        // a fraction of a degree into a long swing at the deck corner. But it also stops her HEELING, and a boat
+        // that cannot heel into its own turn loses drive: at 25 (half the roll rate removed every tick) the deck
+        // was beautifully steady at 11.5 mm and she fell to 11.5 m/s with a 33 s circle, against 12.6 and 28 s.
+        // Measured at a single coefficient for both axes: 25 gave a lovely 11.5 mm deck and 11.5 m/s / 33 s;
+        // 8 gave 12.5 m/s / 28 s (exactly the tuned baseline) and 100.7 mm of deck. Splitting by AXIS did not
+        // help (11.8 m/s / 30 s and 113.8 mm) because the residual lives in roll either way. Splitting by STATE
+        // does: vehicle.boat_hull drives her, so it reads SteadyDampUnderWay; vehicle.ship_orca_landing parks
+        // her, so it reads the stiff pair. Neither gate is allowed to win alone.
+        const float SteadyHeaveDamp = 10f, SteadyPitchDamp = 25f, SteadyRollDamp = 25f, SteadyDampUnderWay = 3f;
+        const float DeckRiderSettle = 12f;     // per-second rate at which a carried rider's bounce is damped out
         const float DeckImpactMinSpeed = 1f;   // m/s of descent below which a load is parked, not landing
         const float DeckImpactCap = 200f;   // m/s^2, ~20g: the most deceleration we will believe as contact force
         const float DeckGrace = 0.35f;    // how long a rider stays a rider after its last contact frame
@@ -6218,6 +6235,7 @@ namespace UnturnedGodot
             // zero. An incoming machine is in the deck box for many ticks before it touches anything, so track
             // it from there and the history is already warm when it arrives.
             foreach (var b in aboard) if (b is RigidBody3D pre && !touching.Contains(b)) _deckLoadVy[b] = pre.LinearVelocity.Y;
+            if (DeckLoadCancelEnabled)
             foreach (var b in touching)
             {
                 if (b is not RigidBody3D load) continue;
@@ -6303,6 +6321,16 @@ namespace UnturnedGodot
                     st.LastVel = deckVel;
                     rb.AngularVelocity += Vector3.Up * (AngularVelocity.Y - st.LastYawRate);   // turn with the hull
                     st.LastYawRate = AngularVelocity.Y;
+
+                    // SETTLE THE RIDER ONTO THE DECK, because the rider's bounce is what keeps re-exciting the
+                    // hull. What a parked machine actually presses with oscillates around its weight, only the
+                    // mean is cancelled, and the leftover lands at the rider's position as a PITCH moment -- a
+                    // 66 m hull rocking 0.73 deg swings its deck corner through 149 mm, which is what is left of
+                    // "it wobbles" after the damping was fixed. Damping the hull harder only fights that
+                    // continuously; damping the RIDER removes it at the source. Allowed by the same rule that
+                    // set all this up: the ship may affect other vehicles, they may not affect her.
+                    float relVy = rb.LinearVelocity.Y - LinearVelocity.Y;
+                    rb.LinearVelocity -= new Vector3(0f, relVy * Mathf.Min(DeckRiderSettle * delta, 1f), 0f);
 
                 }
                 else if (key is not CharacterBody3D)
@@ -6393,9 +6421,36 @@ namespace UnturnedGodot
                 // going through the voxels -- the voxel forces are what is exciting the motion in the first
                 // place, and the residual is a limit cycle around the quantisation, not something a stiffer
                 // spring fixes. Vertical and rotational only, so it costs her nothing in forward speed.
-                ApplyCentralForce(new Vector3(0f, -LinearVelocity.Y * SteadyHeaveDamp * Mass, 0f));
+                // Applied as a DIRECT EXPONENTIAL DECAY on our own velocity rather than as a damping force, and
+                // that is a stability decision, not a style one. The force form's strength has to be scaled by
+                // MASS for heave and by INERTIA for rotation -- get that wrong and rotation is ~400x too weak
+                // (it was: `damp * Mass` on a hull whose pitch inertia is 342581 against a mass of 900 gave a
+                // decay constant of ~32 SECONDS, and the deck corner swung 548 mm while the centre moved 10 mm).
+                // Get it right and strong, and the explicit integration overshoots: at damp 25 the hull produced
+                // 72381 non-finite transforms the moment she was turning. Removing a FRACTION of the rate, capped
+                // at 100 %, cannot overshoot at any strength or timestep, and needs no mass or inertia term at all.
+                float kH = Mathf.Min(SteadyHeaveDamp * delta, 1f);
+                // HOLD STILL WHEN SHE IS HOLDING STATION; SAIL NORMALLY WHEN SHE IS SAILING. The two requirements
+                // are separated by WHEN, not by axis -- my first guess was that cargo rocks her in PITCH and
+                // turning uses ROLL, so the axes could be damped independently. Measured, that was simply wrong:
+                // with pitch clamped the residual read pitch 0.008 deg against roll 0.560. Roll inertia is 45881
+                // where pitch is 342581, so roll is the soft mode and anything left over goes there.
+                //
+                // So gate on the DRIVE INPUT instead. Parked -- which is when you are standing on her placing
+                // foundations -- hold her rigid. Under helm, hand the roll back, because a boat turns on its heel
+                // and clamping it cost 12.6 m/s and a 28 s circle down to 11.5 and 33 s.
+                float sailing = Mathf.Clamp(Mathf.Abs(_inSteer) + Mathf.Abs(_inThrottle), 0f, 1f);
+                float kP = Mathf.Min(Mathf.Lerp(SteadyPitchDamp, SteadyDampUnderWay, sailing) * delta, 1f);
+                float kR = Mathf.Min(Mathf.Lerp(SteadyRollDamp, SteadyDampUnderWay, sailing) * delta, 1f);
+                var lv = LinearVelocity;
+                LinearVelocity = new Vector3(lv.X, lv.Y * (1f - kH), lv.Z);   // heave only; never touches her way through the water
                 var av = AngularVelocity;
-                ApplyTorque(new Vector3(-av.X, 0f, -av.Z) * (SteadyTrimDamp * Mass));   // pitch + roll, never yaw
+                // PITCH HARD, ROLL GENTLY, and the split is what resolves a conflict that looked unresolvable.
+                // Cargo sits along the centreline, so what it rocks her in is PITCH (about X). What a boat TURNS
+                // on is ROLL (about Z) -- damping that is what cost her 12.6 m/s and a 28 s circle down to 11.5
+                // and 33 s at a single stiff coefficient. They are different axes, so they do not have to trade:
+                // hold the pitch rigid for the deck, leave her the heel she steers with.
+                AngularVelocity = new Vector3(av.X * (1f - kP), av.Y, av.Z * (1f - kR));   // never yaw -- that is steering
             }
             if (_plane)
             {
