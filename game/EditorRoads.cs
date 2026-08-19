@@ -33,16 +33,25 @@ namespace UnturnedGodot
         public bool Paving => _paving;
         public string ModeText => _paving
             ? (_selRoad >= 0
-                ? $"PAVING r{_selRoad}{(_roads.RoadIsLoop(_selRoad) ? "(loop)" : "")} {(_selTan >= 0 ? $"tan{_selTan}" : $"j{_selJoint}")} · E move · N {ModeNames[_roads.JointMode(_selRoad, _selJoint)]} · M {_roads.RoadMaterialName(_selRoad)} · L loop · [/] h={_roads.JointOffset(_selRoad, _selJoint):0} · I ign={(_roads.JointIgnoreTerrain(_selRoad, _selJoint) ? "on" : "off")} · Del · Esc"
+                ? $"LEGACY PAVE r{_selRoad}{(_roads.RoadIsLoop(_selRoad) ? "(loop)" : "")} {(_selTan >= 0 ? $"tan{_selTan}" : $"j{_selJoint}")} · E move · N {ModeNames[_roads.JointMode(_selRoad, _selJoint)]} · M {_roads.RoadMaterialName(_selRoad)} · L loop · [/] h={_roads.JointOffset(_selRoad, _selJoint):0} · I ign={(_roads.JointIgnoreTerrain(_selRoad, _selJoint) ? "on" : "off")} · Del · Esc"
                 : "PAVING · LMB marker=select · LMB ground=new road · R=off")
             : "R = roads paving";
 
         string SavePath => ProjectSettings.GlobalizePath("res://content/roads/") + $"editor_{_editor.MapName}_Paths.dat";
+        // The junction graph rides ALONGSIDE Paths.dat and is written by the same Save(), because its road
+        // links are positional against that file's road order -- write one without the other and the links
+        // point at the wrong rails. See RoadField.SaveGraph.
+        string GraphPath => ProjectSettings.GlobalizePath("res://content/roads/") + $"editor_{_editor.MapName}_{RoadField.GraphFileName}";
 
         public int Save()   // Editor.Save() fan-out: write Paths.dat back (only if there are roads)
         {
             if (_roads == null || _roads.RoadCount == 0) return 0;
-            if (_roads.SavePaths(SavePath)) { GD.Print($"[editor-roads] saved -> {SavePath}"); return 1; }
+            if (_roads.SavePaths(SavePath))
+            {
+                _roads.SaveGraph(GraphPath);   // together, always -- positional links
+                GD.Print($"[editor-roads] saved -> {SavePath} ({_roads.JunctionCount} junction nodes)");
+                return 1;
+            }
             return 0;
         }
 
@@ -51,7 +60,11 @@ namespace UnturnedGodot
         public EditorRoads(Editor editor, Camera3D cam, RoadField roads)
         {
             _editor = editor; _cam = cam; _flyCam = cam as EditorCamera; _roads = roads;
-            if (_roads != null && System.IO.File.Exists(SavePath) && _roads.ReloadPaths(SavePath)) GD.Print("[editor-roads] loaded saved road edits");
+            if (_roads != null && System.IO.File.Exists(SavePath) && _roads.ReloadPaths(SavePath))
+            {
+                _roads.LoadGraph(GraphPath);   // AFTER the roads: the links are positional against them
+                GD.Print("[editor-roads] loaded saved road edits");
+            }
             _editor.ModeChanged += _ => { if (_editor.Mode != EEditorMode.Environment && _paving) SetPaving(false); };
         }
 
@@ -129,7 +142,15 @@ namespace UnturnedGodot
         public override void _UnhandledInput(InputEvent ev)
         {
             if (_editor.Mode != EEditorMode.Environment || (_flyCam != null && _flyCam.Flying)) return;
-            if (ev is InputEventKey { Pressed: true, Echo: false, Keycode: Key.R }) { SetPaving(!_paving); return; }
+            // SHIFT+R, not R: the draw tool (EditorRoadDraw) took R when it became the primary way to lay a
+            // road (strawberry 2026-08-19). This one is now LEGACY PAVE and deliberately still reachable --
+            // placing/nudging ONE joint with real tangent handles is a thing the draw tool cannot do, so
+            // shelving it does not mean removing it.
+            if (ev is InputEventKey { Pressed: true, Echo: false, Keycode: Key.R })
+            {
+                if (!Input.IsKeyPressed(Key.Shift)) return;   // plain R belongs to the draw tool
+                SetPaving(!_paving); return;
+            }
             if (!_paving) return;
             if (ev is InputEventKey { Pressed: true, Echo: false, Keycode: Key.Z } && Input.IsKeyPressed(Key.Ctrl)) { _editor.Undo(); return; }   // Ctrl+Z undo
             if (ev is InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.Left } && !Editor.PointerOverUI(this))

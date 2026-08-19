@@ -171,7 +171,7 @@ namespace UnturnedGodot
             string build = bld && Editor.Buildings != null
                 ? $"   ·   {Editor.Buildings.ToolText} · 1-6 preset · drag an edge to resize · Del removes · Esc cancels · {Editor.Buildings.Walls.Count} walls" : "";
             string spawn = Editor.Mode == EEditorMode.Spawns && Editor.Spawns != null ? $"   ·   Tab category · 1=add 2=remove · {Editor.Spawns.ModeText} · ,/. rot · [/] radius · V alt · T type · {Editor.Spawns.Count} spawns" : "";
-            string envs = Editor.Mode == EEditorMode.Environment && Editor.Environment != null ? $"   ·   ,/. time · O overcast · {Editor.Environment.ModeText}{(Editor.RoadsEd != null ? $"   ·   {Editor.RoadsEd.ModeText}" : "")}" : "";
+            string envs = Editor.Mode == EEditorMode.Environment && Editor.Environment != null ? $"   ·   ,/. time · O overcast · {Editor.Environment.ModeText}{(Editor.RoadDrawEd != null ? $"   ·   {Editor.RoadDrawEd.ModeText}" : "")}{(Editor.RoadsEd is { Paving: true } ? $"   ·   {Editor.RoadsEd.ModeText}" : "")}" : "";
             string terr = Editor.Mode == EEditorMode.Terrain && Editor.TerrainEd != null ? $"   ·   LMB raise · Shift+LMB lower · [/] radius · ,/. strength · {Editor.TerrainEd.ModeText}" : "";
             _status.Text = $"{Editor.Mode}   ·   RMB fly · WASD · E/Q up-down · scroll = speed (×{spd:0}){obj}{build}{spawn}{envs}{terr}   ·   map: {Editor.MapName}";
         }

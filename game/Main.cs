@@ -3979,6 +3979,7 @@ namespace UnturnedGodot
             rf.LoadMaterialsOnly(_mapRoot + "/Environment");   // shared road materials so roads can be added on the blank map
             AddChild(rf);
             var roadsEd = new EditorRoads(editor, cam, rf); editor.AddChild(roadsEd); editor.RoadsEd = roadsEd;
+            var roadDrawEd = new EditorRoadDraw(editor, cam, rf); editor.AddChild(roadDrawEd); editor.RoadDrawEd = roadDrawEd;   // R = draw, Shift+R = legacy nodes
             editor.AddChild(new EditorDashboard { Editor = editor, OnExit = ReturnToMenu });
             var play = new EditorPlayMode();   // playtest button -- custom maps get it too, not just PEI
             editor.AddChild(play);
@@ -4664,7 +4665,8 @@ namespace UnturnedGodot
                 rf.LoadFromEnvironment(_mapRoot + "/Environment");
                 AddChild(rf);
             }
-            var roadsEd = new EditorRoads(editor, cam, rf);   // roads paving under the Environment tab (R to toggle)
+            var roadsEd = new EditorRoads(editor, cam, rf);   // LEGACY node paving under the Environment tab (Shift+R)
+            var roadDrawEd = new EditorRoadDraw(editor, cam, rf); editor.AddChild(roadDrawEd); editor.RoadDrawEd = roadDrawEd;   // draw-a-road/rail (R)
             editor.AddChild(roadsEd);
             editor.RoadsEd = roadsEd;
             editor.AddChild(new EditorDashboard { Editor = editor, OnExit = ReturnToMenu });

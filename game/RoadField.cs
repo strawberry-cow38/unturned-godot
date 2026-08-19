@@ -24,7 +24,19 @@ namespace UnturnedGodot
                 else if (Mode == 1) { float m = (i == 0 ? Tan1 : Tan0).Length(); var a = -t.Normalized() * m; if (i == 0) Tan1 = a; else Tan0 = a; }   // ALIGNED
             }
         }
-        class RoadData { public int Material; public bool IsLoop; public List<Joint> Joints = new(); public byte[] GuidBytes; public MeshInstance3D Mi; public StaticBody3D Body; }
+        class RoadData { public int Material; public bool IsLoop; public List<Joint> Joints = new(); public byte[] GuidBytes; public MeshInstance3D Mi; public StaticBody3D Body;
+            public int StartJunction = -1, EndJunction = -1; }   // junction NODE this road's first/last joint is bound to (-1 = free end)
+
+        // JUNCTION NODES (strawberry 2026-08-19: "we should invent a junction node. the existing maps are
+        // considered 'legacy' and simply use the old tool"). A junction OWNS its position; road ends reference
+        // it. That is the whole point of making it a node rather than deriving it from coincident endpoints:
+        // drag the junction and every rail bound to it follows, which cannot go out of sync. With the derived
+        // version you had to drag N ends to the same spot and hope they still matched to the millimetre.
+        //
+        // Stored in a SIDECAR file, never in Paths.dat -- that stays exactly retail-shaped, so legacy maps and
+        // the game's existing road system are untouched. A map with no sidecar simply has no junctions.
+        class Junction { public Vector3 Pos; }
+        readonly List<Junction> _junctions = new();
 
         // editor state: the parsed roads + materials kept live so a joint move can rebuild one road + save Paths.dat back
         readonly List<RoadData> _roads = new();
@@ -171,12 +183,193 @@ namespace UnturnedGodot
             return _roads.Count - 1;
         }
 
+        // ---- DRAW-TOOL SUPPORT (strawberry 2026-08-19: a draw-a-road/rail tool with branches + junctions,
+        // with the node tool kept as legacy). Everything below is additive: Paths.dat is retail's format and
+        // has no field for a branch, so junctions are NOT stored -- they are a GEOMETRIC fact, two road ends
+        // at the same point. Keeping it that way means the saved file stays exactly retail-shaped, the game's
+        // road system is untouched, and the train's spline query keeps working with no changes at all. The
+        // editor's job is therefore to make coincidence EXACT rather than approximate, which is what the
+        // snapping in EditorRoadDraw is for -- a junction you can see but that is 3 cm apart is not one.
+
+        /// <summary>Build a whole road from a drawn polyline, with Catmull-Rom tangents so the result is
+        /// smooth without the user placing a single handle. Joints are MIRROR mode (0) so the two tangents
+        /// stay opposite and the curve is C1 -- which is what makes a drawn rail look drawn rather than
+        /// hand-jointed. Returns the new road index, or -1 if there are too few points to be a road.</summary>
+        public int AddRoadFromPolyline(System.Collections.Generic.IReadOnlyList<Vector3> pts, int material = 0, bool loop = false)
+        {
+            if (pts == null || pts.Count < 2) return -1;
+            var r = new RoadData { Material = Mathf.Clamp(material, 0, Mathf.Max(0, _mats.Count - 1)), IsLoop = loop, GuidBytes = System.Array.Empty<byte>() };
+            for (int i = 0; i < pts.Count; i++) r.Joints.Add(new Joint { Vertex = pts[i], Mode = 0 });
+            RetangentRoad(r);
+            _roads.Add(r);
+            int idx = _roads.Count - 1;
+            if (r.Joints.Count >= 2 && r.Material >= 0 && r.Material < _mats.Count) BuildRoadNode(r);
+            return idx;
+        }
+
+        /// <summary>Catmull-Rom tangents across a whole road. The 1/6 is the standard Catmull-Rom to cubic-
+        /// Bezier conversion (the control point sits a third of the way along the neighbour chord, and the
+        /// chord here spans TWO segments), so a straight run of evenly spaced points comes out actually
+        /// straight instead of subtly wavy.</summary>
+        void RetangentRoad(RoadData r)
+        {
+            int n = r.Joints.Count;
+            for (int i = 0; i < n; i++)
+            {
+                Vector3 prev = i > 0 ? r.Joints[i - 1].Vertex : (r.IsLoop ? r.Joints[n - 1].Vertex : r.Joints[i].Vertex);
+                Vector3 next = i < n - 1 ? r.Joints[i + 1].Vertex : (r.IsLoop ? r.Joints[0].Vertex : r.Joints[i].Vertex);
+                var t = (next - prev) / 6f;
+                if (t.LengthSquared() < 1e-8f) t = new Vector3(0f, 0f, 2.5f);   // degenerate (duplicate points): keep a sane handle
+                r.Joints[i].Mode = 0;          // MIRROR, so SetTangent keeps Tan0 = -Tan1
+                r.Joints[i].SetTangent(1, t);
+            }
+        }
+
+        /// <summary>Nearest joint on any road to a world point, for snap-to-junction. Returns false if none is
+        /// within maxDist. <paramref name="skipRoad"/> excludes the road currently being drawn.</summary>
+        public bool NearestJoint(Vector3 p, float maxDist, out int road, out int joint, int skipRoad = -1)
+        {
+            road = -1; joint = -1;
+            float best = maxDist * maxDist;
+            for (int ri = 0; ri < _roads.Count; ri++)
+            {
+                if (ri == skipRoad) continue;
+                var js = _roads[ri].Joints;
+                for (int ji = 0; ji < js.Count; ji++)
+                {
+                    float d = (js[ji].Vertex - p).LengthSquared();
+                    if (d < best) { best = d; road = ri; joint = ji; }
+                }
+            }
+            return road >= 0;
+        }
+
+        /// <summary>Split a road at one of its joints into two roads meeting exactly at that point -- the
+        /// operation that turns "I drew across an existing road" into a real T-junction. The joint is
+        /// DUPLICATED rather than shared: both halves keep a copy at the identical position, so the junction
+        /// reads the same way as two independently drawn ends that snapped together. Returns the new road's
+        /// index, or -1 if the joint is an endpoint (nothing to split) or the road is a loop.</summary>
+        public int SplitRoadAt(int road, int joint)
+        {
+            if (road < 0 || road >= _roads.Count) return -1;
+            var r = _roads[road];
+            if (r.IsLoop || joint <= 0 || joint >= r.Joints.Count - 1) return -1;
+            var tail = new RoadData { Material = r.Material, IsLoop = false, GuidBytes = System.Array.Empty<byte>() };
+            for (int i = joint; i < r.Joints.Count; i++)
+                tail.Joints.Add(new Joint { Vertex = r.Joints[i].Vertex, Offset = r.Joints[i].Offset, IgnoreTerrain = r.Joints[i].IgnoreTerrain, Mode = r.Joints[i].Mode, Tan0 = r.Joints[i].Tan0, Tan1 = r.Joints[i].Tan1 });
+            r.Joints.RemoveRange(joint + 1, r.Joints.Count - joint - 1);
+            _roads.Add(tail);
+            RebuildRoad(road);
+            int ti = _roads.Count - 1;
+            if (tail.Joints.Count >= 2 && tail.Material >= 0 && tail.Material < _mats.Count) BuildRoadNode(tail);
+            return ti;
+        }
+
+        public int JunctionCount => _junctions.Count;
+        public Vector3 JunctionPos(int j) => j >= 0 && j < _junctions.Count ? _junctions[j].Pos : Vector3.Zero;
+
+        /// <summary>Create a junction node at a world position. Returns its index.</summary>
+        public int AddJunction(Vector3 pos) { _junctions.Add(new Junction { Pos = pos }); return _junctions.Count - 1; }
+
+        /// <summary>Nearest junction node to a point, for snapping. -1 if none within maxDist.</summary>
+        public int JunctionAt(Vector3 p, float maxDist)
+        {
+            int best = -1; float bd = maxDist * maxDist;
+            for (int i = 0; i < _junctions.Count; i++)
+            {
+                float d = (_junctions[i].Pos - p).LengthSquared();
+                if (d < bd) { bd = d; best = i; }
+            }
+            return best;
+        }
+
+        /// <summary>Bind a road END to a junction node, moving that end's joint onto the node. atEnd=false is
+        /// the road's first joint, true is its last. Binding is what makes the connection real -- the joint is
+        /// snapped to the NODE's coordinates, so the two can never disagree.</summary>
+        public void BindRoadEnd(int road, bool atEnd, int junction)
+        {
+            if (road < 0 || road >= _roads.Count || junction < 0 || junction >= _junctions.Count) return;
+            var r = _roads[road];
+            if (r.Joints.Count == 0) return;
+            if (atEnd) r.EndJunction = junction; else r.StartJunction = junction;
+            r.Joints[atEnd ? r.Joints.Count - 1 : 0].Vertex = _junctions[junction].Pos;
+            RetangentRoad(r);
+            RebuildRoad(road);
+        }
+
+        public void UnbindRoadEnd(int road, bool atEnd)
+        {
+            if (road < 0 || road >= _roads.Count) return;
+            if (atEnd) _roads[road].EndJunction = -1; else _roads[road].StartJunction = -1;
+        }
+
+        public int RoadEndJunction(int road, bool atEnd) =>
+            road >= 0 && road < _roads.Count ? (atEnd ? _roads[road].EndJunction : _roads[road].StartJunction) : -1;
+
+        /// <summary>Every road end bound to this junction. This is the routing query -- "arriving here, where
+        /// can I go" -- and it reads the BINDINGS, not the geometry.</summary>
+        public System.Collections.Generic.List<(int Road, bool AtEnd)> JunctionEdges(int junction)
+        {
+            var outp = new System.Collections.Generic.List<(int, bool)>();
+            for (int i = 0; i < _roads.Count; i++)
+            {
+                if (_roads[i].StartJunction == junction) outp.Add((i, false));
+                if (_roads[i].EndJunction == junction) outp.Add((i, true));
+            }
+            return outp;
+        }
+
+        /// <summary>Move a junction node -- and every road end bound to it. The reason the node exists.</summary>
+        public void MoveJunction(int junction, Vector3 to)
+        {
+            if (junction < 0 || junction >= _junctions.Count) return;
+            _junctions[junction].Pos = to;
+            for (int i = 0; i < _roads.Count; i++)
+            {
+                var r = _roads[i];
+                bool touched = false;
+                if (r.StartJunction == junction && r.Joints.Count > 0) { r.Joints[0].Vertex = to; touched = true; }
+                if (r.EndJunction == junction && r.Joints.Count > 0) { r.Joints[^1].Vertex = to; touched = true; }
+                if (touched) { RetangentRoad(r); RebuildRoad(i); }
+            }
+        }
+
+        /// <summary>Delete a junction node, freeing every end bound to it. Indices above it shift down, so the
+        /// bindings are renumbered here rather than left dangling.</summary>
+        public void RemoveJunction(int junction)
+        {
+            if (junction < 0 || junction >= _junctions.Count) return;
+            _junctions.RemoveAt(junction);
+            foreach (var r in _roads)
+            {
+                if (r.StartJunction == junction) r.StartJunction = -1; else if (r.StartJunction > junction) r.StartJunction--;
+                if (r.EndJunction == junction) r.EndJunction = -1; else if (r.EndJunction > junction) r.EndJunction--;
+            }
+        }
+
+        /// <summary>Junction nodes with 2+ roads bound -- what a router treats as a real decision point. A node
+        /// with one road is a loose end you have not connected yet, not a junction.</summary>
+        public System.Collections.Generic.List<(Vector3 Pos, System.Collections.Generic.List<(int Road, bool AtEnd)> Ends)> Junctions()
+        {
+            var outp = new System.Collections.Generic.List<(Vector3, System.Collections.Generic.List<(int, bool)>)>();
+            for (int i = 0; i < _junctions.Count; i++)
+            {
+                var e = JunctionEdges(i);
+                if (e.Count >= 2) outp.Add((_junctions[i].Pos, e));
+            }
+            return outp;
+        }
+
         public void RemoveRoad(int road)
         {
             if (road < 0 || road >= _roads.Count) return;
             var r = _roads[road];
             r.Mi?.QueueFree(); r.Body?.QueueFree();
             _roads.RemoveAt(road);
+            // Junction BINDINGS live on the road, so removing the road removes them with it -- nothing to fix
+            // up here. Junction nodes deliberately SURVIVE losing their last road: a node you placed is a
+            // thing you meant, and silently deleting it because you re-drew one of its rails would be worse
+            // than leaving a visible loose node behind.
         }
 
         // --- inc3: bezier tangent handles + per-road material ---
@@ -281,6 +474,57 @@ namespace UnturnedGodot
                     if (version > 3) bw.Write(jt.IgnoreTerrain);
                 }
             }
+            return true;
+        }
+
+        // ---- THE JUNCTION GRAPH SIDECAR ----------------------------------------------------------------
+        // Written NEXT TO Paths.dat, never inside it. Paths.dat is retail's format; a legacy map has no
+        // sidecar and therefore no junctions, which is exactly the "existing maps use the old tool" split.
+        //
+        // Road links are stored POSITIONALLY, in the same order Paths.dat writes its roads, because that file
+        // has no per-road identity to key on (the GUID is optional and not unique across hand-drawn roads).
+        // So the two files must be written together and read together -- SaveGraph is called from the same
+        // Save() that writes Paths.dat, and a count mismatch on load is treated as a stale sidecar and
+        // discarded rather than applied to the wrong roads.
+        public const string GraphFileName = "Junctions.dat";
+
+        public bool SaveGraph(string path)
+        {
+            if (_junctions.Count == 0 && _roads.TrueForAll(r => r.StartJunction < 0 && r.EndJunction < 0))
+            {
+                if (File.Exists(path)) File.Delete(path);   // nothing to say: leave no stale sidecar behind
+                return false;
+            }
+            System.IO.Directory.CreateDirectory(Path.GetDirectoryName(path));
+            using var bw = new BinaryWriter(File.Create(path));
+            bw.Write((byte)1);
+            bw.Write((ushort)_junctions.Count);
+            foreach (var j in _junctions) { bw.Write(j.Pos.X); bw.Write(j.Pos.Y); bw.Write(-j.Pos.Z); }   // same Unity-Z convention as Paths.dat
+            bw.Write((ushort)_roads.Count);
+            foreach (var r in _roads) { bw.Write((short)r.StartJunction); bw.Write((short)r.EndJunction); }
+            return true;
+        }
+
+        public bool LoadGraph(string path)
+        {
+            _junctions.Clear();
+            foreach (var r in _roads) { r.StartJunction = -1; r.EndJunction = -1; }
+            if (!File.Exists(path)) return false;
+            using var br = new BinaryReader(File.OpenRead(path));
+            byte version = br.ReadByte();
+            if (version != 1) { GD.PrintErr($"[roads] junction graph version {version} not understood -- ignoring"); return false; }
+            int jn = br.ReadUInt16();
+            for (int i = 0; i < jn; i++) _junctions.Add(new Junction { Pos = new Vector3(br.ReadSingle(), br.ReadSingle(), -br.ReadSingle()) });
+            int rn = br.ReadUInt16();
+            if (rn != _roads.Count)
+            {
+                // Positional links against a different road list would bind the wrong rails to the wrong
+                // nodes -- silently, and in a way that looks like a routing bug much later. Refuse instead.
+                GD.PrintErr($"[roads] junction sidecar lists {rn} roads but the field has {_roads.Count} -- stale, dropping the links (nodes kept)");
+                return false;
+            }
+            for (int i = 0; i < rn; i++) { _roads[i].StartJunction = br.ReadInt16(); _roads[i].EndJunction = br.ReadInt16(); }
+            GD.Print($"[roads] loaded {_junctions.Count} junction nodes, {Junctions().Count} of them connecting 2+ roads");
             return true;
         }
 
