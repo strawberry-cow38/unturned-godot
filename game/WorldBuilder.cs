@@ -320,6 +320,7 @@ namespace UnturnedGodot
 
             bool colliders = mode != WorldMode.Aerial;   // walkable collision for the player (Playable) and the server sim (Dedicated)
             string dir = ProjectSettings.GlobalizePath("res://content/objects/");
+            PropConnectors.ClearPlaced();   // per-build: never carry another map's snap points into this one
             var g2m = new System.Collections.Generic.Dictionary<string, string>();
             foreach (var line in System.IO.File.ReadLines(dir + "guid_mesh.txt"))
             {
@@ -1067,6 +1068,9 @@ namespace UnturnedGodot
                         foreach (var d in spawnedDoors) d.BodyOutline = bodyGlow;
                     }
                 }
+                // Road/rail connection points, if this prop has any (see PropConnectors). Registered from the
+                // SAME basis+position the mesh is placed with, so a rotated tile's snap points rotate with it.
+                PropConnectors.Register(name, new Transform3D(basis, gpos));
                 StaticBody3D destBody = null;
                 if (colliders && !IsWalkThrough(name))   // walkable collision: trimesh of the VISUAL mesh (trees collide on the trunk only; the separate leaf mesh has no collider, so you walk through foliage)
                 {

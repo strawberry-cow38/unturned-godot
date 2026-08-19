@@ -1,0 +1,36 @@
+# prop connection points, DERIVED by tools/extract_road_connectors.py -- do not hand-edit
+# <PropName> <x> <y> <z> <dx> <dy> <dz>   (mesh-local, outward normal)
+Bridge_Line_0 0.000 24.000 0.000 0 1 0
+Bridge_Line_0 -0.000 -24.000 0.000 0 -1 0
+Bridge_Line_2 0.000 16.000 0.000 0 1 0
+Bridge_Line_2 -0.000 -16.000 0.000 0 -1 0
+Bridge_Line_Broken_0 0.000 24.000 0.000 0 1 0
+Bridge_Line_Broken_0 -0.000 -24.000 0.000 0 -1 0
+Bridge_Line_Broken_1 0.000 24.000 0.000 0 1 0
+Bridge_Line_Broken_1 -0.000 -24.000 0.000 0 -1 0
+Bridge_Line_Cap_0 0.000 24.000 0.000 0 1 0
+Bridge_Line_Cap_0 -0.000 -24.000 0.000 0 -1 0
+Bridge_Line_Cap_2 0.000 16.000 0.000 0 1 0
+Bridge_Line_Cap_2 -0.000 -16.000 0.000 0 -1 0
+Bridge_Turn_1 -36.000 35.875 1.250 -1 0 0
+Bridge_Turn_1 -0.125 -0.000 1.250 0 -1 0
+Road_Line_0 0.000 12.000 0.400 0 1 0
+Road_Line_0 0.000 -12.000 0.400 0 -1 0
+Road_Line_Cap_0 0.000 12.000 0.400 0 1 0
+Road_Line_Cap_0 0.000 -12.000 0.400 0 -1 0
+Road_Quad_0 12.000 -0.000 0.400 1 0 0
+Road_Quad_0 -12.000 -0.000 0.400 -1 0 0
+Road_Quad_0 0.000 12.000 0.400 0 1 0
+Road_Quad_0 0.000 -12.000 0.400 0 -1 0
+Road_Quad_Cap_0 12.000 -0.000 0.400 1 0 0
+Road_Quad_Cap_0 -12.000 -0.000 0.400 -1 0 0
+Road_Quad_Cap_0 0.000 12.000 0.400 0 1 0
+Road_Quad_Cap_0 0.000 -12.000 0.400 0 -1 0
+Road_Tee_0 12.000 -0.000 0.400 1 0 0
+Road_Tee_0 -12.000 -0.000 0.400 -1 0 0
+Road_Tee_0 0.000 12.000 0.400 0 1 0
+Road_Tee_Cap_1 12.000 -0.000 0.400 1 0 0
+Road_Tee_Cap_1 -12.000 -0.000 0.400 -1 0 0
+Road_Tee_Cap_1 0.000 12.000 0.400 0 1 0
+Road_Turn_0 12.000 0.000 0.400 1 0 0
+Road_Turn_0 0.000 -12.000 0.400 0 -1 0

@@ -256,6 +256,65 @@ namespace UnturnedGodot.Testing
         }
     }
 
+    // PROP CONNECTION POINTS (strawberry 2026-08-19: "giving certain props road/rail connection points. for
+    // example all the road 'cap' props have snap points where roads will connect to").
+    //
+    // The catalogue is derived from the meshes, so the test that matters is not "does the file parse" but
+    // "does a road drawn NEAR a prop's connector land exactly ON it" -- and, as the control, that a road
+    // drawn far from one does not get dragged to it.
+    public class RoadPropConnectors : GameTest
+    {
+        public override string Name => "editor.road_prop_connectors";
+        public override double TimeoutSimSeconds => 20;
+
+        public override IEnumerable<Step> Run()
+        {
+            // The catalogue itself, off the real derived file.
+            var line = PropConnectors.For("Road_Line_0");
+            T.Check($"Road_Line_0 has 2 connectors ({line?.Count})", line != null && line.Count == 2);
+            var tee = PropConnectors.For("Road_Tee_0");
+            T.Check($"Road_Tee_0 has 3 ({tee?.Count})", tee != null && tee.Count == 3);
+            var quad = PropConnectors.For("Road_Quad_0");
+            T.Check($"Road_Quad_0 has 4 ({quad?.Count})", quad != null && quad.Count == 4);
+            T.Check("a non-road prop has none", PropConnectors.For("Ladder_Metal_0") == null);
+            // The two the extractor refused to guess at stay absent ON PURPOSE.
+            T.Check("Bridge_Line_Cap_1 is absent -- the extractor could not read it and did not guess",
+                    PropConnectors.For("Bridge_Line_Cap_1") == null);
+
+            // Placement: register a tile with a known transform and check a drawn road snaps to it.
+            PropConnectors.ClearPlaced();
+            var xf = new Transform3D(Basis.Identity, new Vector3(200f, 0f, 0f));
+            PropConnectors.Register("Road_Line_0", xf);
+            T.Check($"placing the tile registered its points ({PropConnectors.PlacedCount})", PropConnectors.PlacedCount == 2);
+
+            var ed = new Editor(); World.AddChild(ed);
+            var field = new RoadField(); World.AddChild(field);
+            var cam = new Camera3D(); World.AddChild(cam);
+            var tool = new EditorRoadDraw(ed, cam, field); World.AddChild(tool);
+            yield return Ticks(1);
+
+            // Where did the tile's connectors actually land? Ask, rather than assume the axis mapping.
+            T.Check("a connector is findable near the placed tile",
+                    PropConnectors.Nearest(new Vector3(200f, 0f, 0f), 40f, out var cp));
+            PropConnectors.Nearest(new Vector3(200f, 0f, 0f), 40f, out cp);
+
+            // Draw a road starting ~5 m off the connector: it must snap ONTO it exactly.
+            var off = cp + new Vector3(5f, 0f, 0f);
+            int r = tool.DebugDrawRoad(new List<Vector3> { off, off + new Vector3(0f, 0f, 60f), off + new Vector3(0f, 0f, 120f) });
+            T.Check($"a road drawn near a prop connector snaps exactly onto it ({field.JointPos(r, 0)} vs {cp})",
+                    field.JointPos(r, 0) == cp);
+
+            // CONTROL: far away, it must NOT be dragged to the prop.
+            var far = new Vector3(-600f, 0f, 0f);
+            int r2 = tool.DebugDrawRoad(new List<Vector3> { far, far + new Vector3(0f, 0f, 60f) });
+            T.Check($"CONTROL -- a road drawn far from the prop is NOT pulled to it ({field.JointPos(r2, 0)})",
+                    field.JointPos(r2, 0) == far);
+
+            PropConnectors.ClearPlaced();
+            tool.QueueFree(); field.QueueFree(); cam.QueueFree(); ed.QueueFree();
+        }
+    }
+
     // THE BUTTONS (strawberry: "add both road tools as actual ui buttons"). Two things are worth testing and
     // neither is "a button exists": that the tools are MUTUALLY EXCLUSIVE (they both bind LMB on the terrain,
     // so two live tools means one click doing two things), and that the buttons reflect the tools' REAL state

@@ -302,7 +302,19 @@ namespace UnturnedGodot
                 }
             }
 
-            // 3. ANYWHERE ALONG A SPLINE. The point of snapping to the curve rather than to its joints: the
+            // 3. A PROP'S CONNECTION POINT (road tile caps, bridge ends -- see PropConnectors). Ranked above
+            //    the spline because a prop connector is an authored, exact place a road is MEANT to meet; a
+            //    spline hit is wherever you happened to aim. Placed ahead of the spline case and behind
+            //    nodes/ends for the same reason the others are ordered: most specific intent first.
+            if (PropConnectors.Nearest(work[i], SnapRadius, out var cp))
+            {
+                work[i] = cp;
+                int existing = _roads.JunctionAt(cp, 0.5f);   // two roads meeting the same prop share its node
+                node = existing >= 0 ? existing : _roads.AddJunction(cp);
+                return node;
+            }
+
+            // 4. ANYWHERE ALONG A SPLINE. The point of snapping to the curve rather than to its joints: the
             //    junction lands where you aimed, not at the nearest joint several metres away. Insert a joint
             //    at that exact point, split there, and bind both halves.
             if (_roads.NearestPointOnSpline(work[i], SnapRadius, out int sr, out int seg, out _, out var sp))
@@ -323,7 +335,7 @@ namespace UnturnedGodot
                 return node;
             }
 
-            // 4. Nothing to snap to: a piece still gets a node at each end (strawberry: "nodes are just at
+            // 5. Nothing to snap to: a piece still gets a node at each end (strawberry: "nodes are just at
             //    the ends of each road piece"), so a later piece has something to snap to.
             node = _roads.AddJunction(work[i]);
             return node;
