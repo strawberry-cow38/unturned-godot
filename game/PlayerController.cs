@@ -4673,6 +4673,7 @@ namespace UnturnedGodot
             {
                 if (@event is InputEventKey { Pressed: true, Keycode: Key.H }) { _fp = !_fp; GetViewport().SetInputAsHandled(); return; }
                 if (@event is InputEventMouseButton { ButtonIndex: MouseButton.Left } mb) { if (mb.Pressed) _ridingTrain.Honk(); GetViewport().SetInputAsHandled(); return; }   // LMB = press-to-honk (one-shot, master)
+                if (@event is InputEventMouseButton { ButtonIndex: MouseButton.Right } rmbT) { if (rmbT.Pressed) _ridingTrain.ToggleHeadlights(); GetViewport().SetInputAsHandled(); return; }   // RMB = toggle headlights (master), like vehicles
                 if (@event is InputEventMouseMotion tmm && Input.MouseMode == Input.MouseModeEnum.Captured)
                 {
                     if (!_fp) { _driveCamYaw -= tmm.Relative.X * MouseSensitivity; _driveCamPitch = Mathf.Clamp(_driveCamPitch + tmm.Relative.Y * MouseSensitivity, -25f, 70f); }

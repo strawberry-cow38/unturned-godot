@@ -32,8 +32,9 @@ namespace UnturnedGodot
             public string Type; public Spec S;
             public StaticBody3D Body; public MeshInstance3D Bf, Bb;
             public readonly List<MeshInstance3D> Wheels = new();   // 8 per car (4 per bogie); each spins about its axle
-            public readonly List<(CpuParticles3D ps, float z)> Sparks = new();   // per-wheel brake-spark emitter + its bogie-local Z (axle tag)
+            public readonly List<(CpuParticles3D ps, OmniLight3D light, float z)> Sparks = new();   // per-wheel brake-spark emitter + its glow light + bogie-local Z (axle tag)
             public AudioStreamPlayer3D EngSnd, AddSnd, HornSnd;   // per-ENGINE-car audio (each engine sounds); null on non-engine cars
+            public MeshInstance3D HeadMesh; public readonly List<Light3D> HeadLights = new(); public StandardMaterial3D HeadMat;   // headlight housing mesh + spot/omni beams + emissive material (engine cars only)
             public float Off;    // centre offset BEHIND the consist lead (_s); recomputed on couple/uncouple
             public float AbsS;   // scratch: absolute rail distance, used when merging two consists
         }
@@ -55,6 +56,7 @@ namespace UnturnedGodot
         readonly List<Car> _cars = new();
         readonly List<MeshInstance3D> _ropes = new();   // short coupler rope per gap (also the look-at/F-uncouple target)
         bool _occupied;   // base engine loop + rev layer only run while someone is aboard (master)
+        bool _headlightsOn;   // engine headlights: RMB while riding toggles the beams + emissive housings (master)
 
         static Mesh Lm(string n) => ContentProvider.ParseObj($"res://content/{n}.txt");
 
@@ -69,6 +71,9 @@ namespace UnturnedGodot
             }
             return m;
         }
+
+        // flat colored material for interior props (seat/steer) + headlight housings, which have no texture of their own
+        static StandardMaterial3D FlatMat(Color c, float rough = 0.8f) => new StandardMaterial3D { AlbedoColor = c, Roughness = rough, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
 
         /// <summary>Spawn a single car of <paramref name="type"/> onto the nearest track spline. Null if the type is
         /// unknown or there is no track road (material 4) in the world (only Yukon has tracks).</summary>
@@ -123,12 +128,36 @@ namespace UnturnedGodot
             foreach (var bogie in new[] { bf, bb })
                 foreach (var off in WheelOff)
                 {
+                    var contact = new Vector3(off.X, off.Y - WheelRadius, off.Z);   // the wheel's rail-contact point
                     var ps = MakeBrakeSparks();
-                    ps.Position = new Vector3(off.X, off.Y - WheelRadius, off.Z);   // the wheel's rail-contact point
-                    bogie.AddChild(ps); car.Sparks.Add((ps, off.Z));
+                    ps.Position = contact;
+                    bogie.AddChild(ps);
+                    var glow = new OmniLight3D { Position = contact, OmniRange = 2.4f, LightEnergy = 2.6f, LightColor = new Color(1f, 0.6f, 0.2f), Visible = false, ShadowEnabled = false };   // small hot glow while THIS wheel sparks (master)
+                    bogie.AddChild(glow);
+                    car.Sparks.Add((ps, glow, off.Z));
                 }
-            if (s.Engine) SetupCarAudio(car);
+            if (s.Engine) { SetupCarAudio(car); BuildEngineInterior(car, sb); }
             _cars.Add(car);
+        }
+
+        // Cab furniture + nose headlights, ENGINE cars only. seat/steer/headlight meshes are authored in the body's
+        // own local frame (seat under the driver eye ~z-2, steer just ahead, headlight housings at the nose ~z-5.3),
+        // so they attach to the Body at identity. Two spot beams + an omni fill aim forward (-Z), dark until RMB. (master)
+        void BuildEngineInterior(Car car, StaticBody3D body)
+        {
+            body.AddChild(new MeshInstance3D { Mesh = Lm("train_seat"),  MaterialOverride = FlatMat(new Color(0.12f, 0.12f, 0.13f)) });
+            body.AddChild(new MeshInstance3D { Mesh = Lm("train_steer"), MaterialOverride = FlatMat(new Color(0.07f, 0.07f, 0.08f), 0.5f) });
+            var headMat = new StandardMaterial3D { AlbedoColor = new Color(0.18f, 0.18f, 0.19f), EmissionEnabled = true, Emission = new Color(1f, 0.95f, 0.8f), EmissionEnergyMultiplier = 0f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+            car.HeadMat = headMat;
+            car.HeadMesh = new MeshInstance3D { Mesh = Lm("train_headlights"), MaterialOverride = headMat };
+            body.AddChild(car.HeadMesh);
+            foreach (var x in new[] { -0.99f, 0.99f })
+            {
+                var sp = new SpotLight3D { Position = new Vector3(x, 0.45f, -5.2f), SpotRange = 44f, SpotAngle = 33f, SpotAngleAttenuation = 1.3f, LightEnergy = 4.5f, LightColor = new Color(1f, 0.96f, 0.85f), Visible = false, ShadowEnabled = false };
+                body.AddChild(sp); car.HeadLights.Add(sp);
+            }
+            var fill = new OmniLight3D { Position = new Vector3(0f, 0.6f, -5.3f), OmniRange = 6.5f, LightEnergy = 1.5f, LightColor = new Color(1f, 0.95f, 0.82f), Visible = false, ShadowEnabled = false };
+            body.AddChild(fill); car.HeadLights.Add(fill);
         }
 
         // Lead car has offset 0; each following car sits its own half + a coupler gap + the previous car's half behind.
@@ -203,12 +232,13 @@ namespace UnturnedGodot
             float fwdZ = speed >= 0f ? 1f : -1f;                  // leading axle + spark dir along travel (bogie orientation, matches the spin flip); flips on reverse
             var dir = new Vector3(0f, 1f, fwdZ).Normalized();    // launch UP at 45deg in the braking/travel direction (master)
             foreach (var c in _cars)
-                foreach (var (ps, z) in c.Sparks)
+                foreach (var (ps, light, z) in c.Sparks)
                     if (IsInstanceValid(ps))
                     {
                         bool lead = on && Mathf.Sign(z) == fwdZ;   // ONLY the leading axle's 2 wheels emit
                         if (lead) { ps.Direction = dir; ps.Visible = true; }
                         ps.Emitting = lead;
+                        if (IsInstanceValid(light)) light.Visible = lead;   // the small glow rides each sparking wheel (master)
                     }
         }
 
@@ -346,6 +376,7 @@ namespace UnturnedGodot
             RebuildRopes();
             Place();
             SetOccupied(_occupied);   // newly-joined engine cars keep their own audio through the reparent -> start their loops if occupied
+            ApplyHeadlights();   // a coupled-in engine matches the consist's current headlight state
             ResetPhysicsInterpolation();
             if (IsInstanceValid(o)) o.QueueFree();
         }
@@ -387,6 +418,19 @@ namespace UnturnedGodot
         }
         /// <summary>One honk per LMB press from EVERY engine car (one-shot, not a loop). (master)</summary>
         public void Honk() { foreach (var c in _cars) if (c.HornSnd != null) c.HornSnd.Play(); }
+
+        /// <summary>Engine headlights: RMB while riding toggles the spot/omni beams + emissive housings on every engine car. (master)</summary>
+        public bool HeadlightsOn => _headlightsOn;
+        public void ToggleHeadlights() { _headlightsOn = !_headlightsOn; ApplyHeadlights(); }
+        void ApplyHeadlights()
+        {
+            foreach (var c in _cars)
+            {
+                if (!c.S.Engine) continue;
+                foreach (var l in c.HeadLights) if (IsInstanceValid(l)) l.Visible = _headlightsOn;
+                if (c.HeadMat != null) c.HeadMat.EmissionEnergyMultiplier = _headlightsOn ? 3.5f : 0f;
+            }
+        }
 
         // ---- look-focus outline of the ENGINE car (only a drivable consist is boardable) ----
         bool _lookFocused;
