@@ -202,7 +202,12 @@ namespace UnturnedGodot
         Aabb HoistLoadAabb()
         {
             Aabb a = _hoist.GlobalTransform * _hoist.GetAabb();
-            if (_held != null && IsInstanceValid(_held)) { Aabb hb = _heldAabb; hb.Position += HoistFace - _faceAtGrab; a = a.Merge(hb); }
+            // ROPE CAGE: the 4 corner ropes run from the block top up to the carriage -- include that column so the
+            // hoist + ropes collide with the horizontal beams as one unit, not just the block (master).
+            float cx = CarriageX + _trolleyX, hy = HoistRestY - _hoistDrop;
+            var cage = new Aabb(new Vector3(cx - 0.9f, hy + 0.25f, -3f), new Vector3(1.8f, Mathf.Max(0.1f, CarriageAttachY - (hy + 0.25f)), 6f));
+            a = a.Merge(GlobalTransform * cage);
+            if (_held != null && IsInstanceValid(_held)) { Aabb hb = _heldAabb; hb.Position += HoistFace - _faceAtGrab; a = a.Merge(hb); }   // the attached container is PART of the hoist -> collides as one
             return a;
         }
         static Aabb WalkWorldAabb(Node n)
@@ -230,10 +235,16 @@ namespace UnturnedGodot
             if (size.X < 0.05f || size.Y < 0.05f || size.Z < 0.05f) return 1f;
             var space = GetWorld3D()?.DirectSpaceState;
             if (space == null) return 1f;
+            float len = motion.Length();
+            Vector3 dir = motion / len;
+            const float margin = 1f;   // START the sweep this far BEHIND: cast_motion reports "free" from a start already
+                                       // touching the obstacle, so holding the input TUNNELS through. Backing off keeps the
+                                       // start clear (per-frame move << margin), then we subtract the back-off distance.
             var shape = new BoxShape3D { Size = size };
-            var p = new PhysicsShapeQueryParameters3D { ShapeRid = shape.GetRid(), Transform = new Transform3D(basis, center), Motion = motion, CollisionMask = mask, CollideWithBodies = true, Exclude = exclude };
+            var p = new PhysicsShapeQueryParameters3D { ShapeRid = shape.GetRid(), Transform = new Transform3D(basis, center - dir * margin), Motion = dir * (len + margin), CollisionMask = mask, CollideWithBodies = true, Exclude = exclude };
             float[] r = space.CastMotion(p);
-            return (r != null && r.Length > 0) ? r[0] : 1f;
+            float safe = (r != null && r.Length > 0) ? r[0] : 1f;
+            return Mathf.Clamp((safe * (len + margin) - margin) / len, 0f, 1f);
         }
         float SafeFrac(Vector3 motion, uint mask, Godot.Collections.Array<Rid> exclude)   // the hoist(+load) box
         {
