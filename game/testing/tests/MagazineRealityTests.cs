@@ -63,9 +63,16 @@ namespace UnturnedGodot.Testing
             foreach (var g in guns)
             {
                 var def = Def(dir, g);
-                if (def.ShellReload) continue;            // shell guns feed loose rounds, not a mag item
+                if (def.ShellReload) continue;            // tube-fed: loose rounds one at a time, not a mag item
                 if (def.MagazineId <= 0) continue;        // declares no magazine at all -- a separate question
                 var mag = Assets.find((ushort)def.MagazineId);
+                // A GUN THAT FEEDS LOOSE AMMO IS NOT MAG-FED, whatever its .dat's Magazine key points at. The
+                // shotguns point theirs at the buckshot item, and master moved the ace onto loose .44 outright
+                // ("ace clip shouldnt exist"). Skipping on ShellReload alone was too narrow -- that only catches
+                // the one-at-a-time guns, and the ace/quadbarrel/sawed-off fill in a single reload. The honest
+                // condition is what the ITEM is: isAmmo means loose rounds, and PlayerController agrees -- it
+                // tests UsesShells BEFORE UsesMagItem, so these never reach the magazine path at all.
+                if (mag != null && mag.isAmmo) continue;
                 if (mag == null || !mag.IsMagazine) { inert.Add($"{g}(mag {def.MagazineId})"); continue; }
                 if (mag.magCaliber != def.Caliber) { mismatched.Add($"{g}(gun cal {def.Caliber} vs mag {mag.magCaliber})"); continue; }
                 ok.Add(g);
@@ -81,6 +88,36 @@ namespace UnturnedGodot.Testing
             T.Check($"every real magazine matches its gun's caliber group ({mismatched.Count} mismatched)"
                     + (mismatched.Count > 0 ? ": " + string.Join(", ", mismatched.Take(8)) : ""),
                     mismatched.Count == 0);
+
+            // THE TWO GUNS MOVED OFF MAGAZINES ENTIRELY. gun.magazine_reality passing says every mag-fed gun has a
+            // real magazine -- it says NOTHING about whether these two actually feed loose rounds, because they are
+            // SKIPPED above. Skipping a gun and verifying a gun look identical in a pass count, so the feed wiring
+            // is asserted here explicitly or it is not asserted at all.
+            //
+            // This is wiring, not behaviour: it checks that UsesShells CAN resolve (an isAmmo item exists at the
+            // gun's caliber, which is exactly what ShellAsset looks up) and that ShellReload reads the intended
+            // way. A full behavioural test would need a player, an inventory and a live reload; that is worth
+            // having and is not what this is.
+            var aceDef = Def(dir, "ace");
+            var aceAmmo = Assets.find((ushort)aceDef.MagazineId);
+            T.Check($"ace: its item is LOOSE AMMO, not a clip ({aceAmmo?.itemName}, isAmmo={aceAmmo?.isAmmo})",
+                    aceAmmo != null && aceAmmo.isAmmo);
+            T.Check($"ace: the ammo's caliber matches so ShellAsset can find it (ammo {aceAmmo?.magCaliber} vs gun {aceDef.Caliber})",
+                    aceAmmo != null && aceAmmo.magCaliber == aceDef.Caliber && aceDef.Caliber > 0);
+            T.Check($"ace: fills the whole cylinder in ONE reload, not round-by-round (ShellReload={aceDef.ShellReload}, Action={aceDef.Action})",
+                    !aceDef.ShellReload);
+
+            var mosinDef = Def(dir, "schofield");
+            var mosinAmmo = Assets.find((ushort)mosinDef.MagazineId);
+            T.Check($"mosin: its item is LOOSE AMMO ({mosinAmmo?.itemName}, isAmmo={mosinAmmo?.isAmmo})",
+                    mosinAmmo != null && mosinAmmo.isAmmo);
+            T.Check($"mosin: reloads ONE ROUND AT A TIME ({mosinDef.ShellReload}) -- and via the Shell_Reload key, since Action is {mosinDef.Action}, not Pump",
+                    mosinDef.ShellReload && mosinDef.Action != "Pump");
+
+            // ...and the opt-in must not have swept the other bolt guns in with it.
+            foreach (var bolt in new[] { "timberwolf", "snayperskya" })
+                T.Check($"control: {bolt} is still magazine-fed, not shell-fed (the Shell_Reload key is per-gun)",
+                        !Def(dir, bolt).ShellReload);
 
             // THE CONTROL. The six hard-coded guns must be in the OK set -- if they are not, the harness itself is
             // broken rather than the content, and every count above is meaningless.

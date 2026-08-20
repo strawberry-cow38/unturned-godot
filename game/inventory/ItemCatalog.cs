@@ -174,6 +174,16 @@ namespace SDG.Unturned
             // WIRED SEPARATE (own item ids 5002/5003) so their damage can be tuned independently later.
             Shell(5002, 8, 1, 20f);    // 12 Gauge Beanbag -> caliber 8  (12ga shotguns), 1 pellet
             Shell(5003, 16, 1, 12f);   // 20 Gauge Beanbag -> caliber 16 (20ga shotguns), 1 pellet
+            // LOOSE ROUNDS for the two guns master moved off magazines entirely.
+            // ace (master: "ace clip shouldnt exist. the ace should reload from loose ammo in the inventory, like
+            // shotguns, but not one round at a time") -- Action Trigger, so ShellReload is already false and
+            // UsesShells fills `max - Ammo` in ONE reload: all six chambers, from loose rounds, no clip item.
+            // schofield (master: "change the mosin to reload one round at a time") -- a Mosin tops up its internal
+            // 5-round magazine through the open action, so it takes the same loose rounds WITH Shell_Reload 1.
+            Shell(108, 6, 1);    // .44 Magnum  -> caliber 6 (ace)
+            Shell(103, 5, 1);    // 7.62x54mmR  -> caliber 5 (schofield)
+            { var a44 = Assets.find(108); if (a44 != null) a44.itemName = ".44 Magnum Rounds"; }
+            { var r54 = Assets.find(103); if (r54 != null) r54.itemName = "7.62x54mmR Rounds"; }
             // 5.56 FMJ loose round (strawberry: the chamber's rack output, stacks 120). Not loadable ammo yet -- just a stackable item.
             { var fmj = SDG.Unturned.Assets.find(5004); if (fmj != null) { fmj.stackSize = 120; fmj.ammoType = "FMJ"; fmj.magCaliber = 1; } }   // 5.56 FMJ: bullet type FMJ, caliber 1 (STANAG group) so the rack knows what it ejects (master)
             DeriveMagazinesFromGuns();
@@ -212,6 +222,7 @@ namespace SDG.Unturned
                 if (g == null || g.ShellReload || g.MagazineId <= 0) continue;   // shell guns feed loose rounds
                 var mag = SDG.Unturned.Assets.find((ushort)g.MagazineId);
                 if (mag == null || mag.magCapacity > 0) continue;                // absent, or already authored
+                if (mag.isAmmo) continue;                                        // a LOOSE ROUND is not a magazine (ace .44, mosin 7.62x54mmR)
                 mag.magCapacity = g.AmmoMax;
                 mag.magCaliber = g.Caliber;
                 if (string.IsNullOrEmpty(mag.magRound)) mag.magRound = g.CaliberName;

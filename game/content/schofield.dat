@@ -31,6 +31,7 @@ Real_Weapon "Mosin-Nagant"
 Range 200
 Firerate 50
 Action Bolt
+Shell_Reload 1
 
 Damage 38
 Player_Leg_Multiplier 0.6

@@ -55,7 +55,14 @@ namespace UnturnedGodot
         // loaded. master WANTS this (a pump-shotgun feel) -- the earlier "feels completely wrong" was the reload SOUND replaying
         // once per shell, now fixed (the sound plays once at the start). A BREAK-action (masterkey) is NOT shell-by-shell: it
         // cracks open and loads all barrels at once.
-        public bool ShellReload => Action == "Pump";
+        // Shell-by-shell (tube) reload. Defaults to Action == "Pump", which is where it came from, but a
+        // BOLT gun can want it too: master asked for the Mosin to "reload one round at a time", and a Mosin
+        // is a bolt-action with an internal 5-round magazine topped up through the open action. Keying it on
+        // Action alone could only be satisfied by lying about the Mosin being a pump, so it is an explicit
+        // per-gun key that falls back to the old rule when absent -- no existing gun changes behaviour.
+        public bool ShellReloadOverride;   // .dat Shell_Reload: 1 forces on, 0 forces off, absent = by Action
+        public bool ShellReloadSet;
+        public bool ShellReload => ShellReloadSet ? ShellReloadOverride : Action == "Pump";
         // THE canonical per-shot damage (strawberry 2026-08-15: "standardize player and zombie damage as one
         // DAMAGE field. and apply a multiplier later"). One number per cartridge; what a target actually takes is
         // this times a per-target multiplier -- humanoid zones (Humanoid.HeadMult/Torso/Leg) or zombie limbs
@@ -330,6 +337,8 @@ namespace UnturnedGodot
                 FalloffMin = d.ParseFloat("Damage_Falloff_Min", 1f),
                 Caliber = d.ParseInt32("Caliber", 0),       // which magazines fit: a mag's caliber must match (eaglefire caliber 1)
                 CaliberName = d.GetString("Caliber_Name"),  // real cartridge; null for anything not yet tagged
+                ShellReloadSet = d.ContainsKey("Shell_Reload"),
+                ShellReloadOverride = d.ParseInt32("Shell_Reload", 0) != 0,
                 RealWeapon = d.GetString("Real_Weapon"),
                 Pellets = d.ParseInt32("Pellets", 1),   // staged into the shotgun's .dat from its Shells_2 mag (8)
                 SpreadAngleDegrees = d.ParseFloat("Spread_Angle_Degrees"),
