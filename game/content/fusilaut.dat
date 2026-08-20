@@ -11,7 +11,7 @@ Size_Z 0.35
 Size2_Z 0.525
 
 Sight 1376
-Magazine 123
+Magazine 9144
 Magazine_Replacements 1
 Magazine_Replacement_0_Map Germany
 Magazine_Replacement_0_ID 6
@@ -118,6 +118,7 @@ Blueprints
 		Effect "84347b13028340b8976033c08675d458" // Wrench
 	}
 ]
+Caliber 204
 Caliber_Name "5.56x45mm NATO"
 Real_Weapon "FAMAS"
 Ballistic_Travel 18.8

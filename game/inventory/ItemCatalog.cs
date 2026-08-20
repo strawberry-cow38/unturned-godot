@@ -30,6 +30,15 @@ namespace SDG.Unturned
             // SCAR-H box: a CLONE of the M39's 20-round 7.62 mag that deliberately will not interchange with it
             // (master: "split scar and m39 mags into clones of eachother that arent compatible. realism."). Identical
             // capacity, round and mesh; different group, which is the only thing that decides fit.
+            // FAMAS F1 box: 25 rounds, and NOT STANAG. fusilaut carried no `Caliber` key at all, so it parsed to
+            // 0 and shared retail's mag 123 "Ranger Magazine" with the ZUBEKNAKOV -- a 5.56 bullpup and a 7.62x39
+            // AK feeding from one magazine, which is the "arbitrary Ranger ammo" master called out. Split per
+            // "split mags that arent compatible irl. create new magazine items for unique mags": the F1's
+            // proprietary 25-round box is its own item and its own group, same as the AUG/G36/SCAR-H above.
+            // (A FAMAS G2 would take STANAG -- this is the F1, and Ammo_Max 25 is what says so.)
+            Add(9144, "Fusilaut Magazine", 2, 1, EItemType.MAGAZINE, EItemRarity.UNCOMMON, 0, 0, "Proprietary FAMAS magazine. Does not interchange with STANAG.", magCap: 25, magCal: 204, magRound: "5.56x45mm NATO");
+            // ...which leaves 123 to the AK alone, so it stops being "Ranger" and says what it actually holds.
+            { var ak = Assets.find(123); if (ak != null) ak.itemName = "Zubeknakov Magazine"; }
             Add(9143, "Heartbreaker Magazine", 2, 1, EItemType.MAGAZINE, EItemRarity.UNCOMMON, 0, 0, "Proprietary SCAR-H magazine. Does not interchange with the M39's.", magCap: 20, magCal: 203, magRound: "7.62x51mm NATO");
             Add(253, "Alicepack",     2, 2, EItemType.BACKPACK, EItemRarity.EPIC,      8, 7, "Large sized military cargo backpack.");
             Add(209, "Cargo Pants",   2, 2, EItemType.PANTS,    EItemRarity.UNCOMMON,  6, 3, "High capacity synthetic pants for all weather.");
@@ -167,6 +176,48 @@ namespace SDG.Unturned
             Shell(5003, 16, 1, 12f);   // 20 Gauge Beanbag -> caliber 16 (20ga shotguns), 1 pellet
             // 5.56 FMJ loose round (strawberry: the chamber's rack output, stacks 120). Not loadable ammo yet -- just a stackable item.
             { var fmj = SDG.Unturned.Assets.find(5004); if (fmj != null) { fmj.stackSize = 120; fmj.ammoType = "FMJ"; fmj.magCaliber = 1; } }   // 5.56 FMJ: bullet type FMJ, caliber 1 (STANAG group) so the rack knows what it ejects (master)
+            DeriveMagazinesFromGuns();
+        }
+
+        /// <summary>
+        /// EVERY MAG-FED GUN'S MAGAZINE BECOMES A REAL MAGAZINE. LoadCatalogFile reads items_catalog.tsv for
+        /// id/name/type/size/rarity but sets no magCapacity and no magCaliber, and ItemAsset.IsMagazine is
+        /// `magCapacity > 0` -- so 41 of the ported guns had a magazine item that was silently not a magazine,
+        /// and their reloads fell through PlayerController's `else Ammo = max` to a free top-up with nothing
+        /// consumed. gun.avenger_usp_45 already documents the shape ("an inert TSV magazine has the right name,
+        /// the right icon, magCapacity 0, and is silently not a magazine"); it was fixed for two guns by
+        /// hand-writing them above and never swept. gun.magazine_reality measured the rest: 11 real, 41 inert.
+        ///
+        /// DERIVED FROM THE GUN, not a second hand-written table: a magazine's capacity is the gun's Ammo_Max,
+        /// its group is the gun's Caliber, its round is the gun's Caliber_Name. Verified before writing this --
+        /// every gun's .dat Caliber already agrees with the hand-written magCal above, the deliberate AUG (201),
+        /// G36 (202) and SCAR-H (203) splits included, so deriving PRESERVES those splits rather than flattening
+        /// them into one shared group.
+        ///
+        /// FILLS ONLY WHERE magCapacity == 0, so the hand-written magazines stay authoritative. A pass that
+        /// overwrote them would silently undo master's deliberate calls -- notably the Military Drum, whose
+        /// capacity is meant to OVERRIDE its gun's Ammo_Max rather than be derived from it.
+        /// </summary>
+        static void DeriveMagazinesFromGuns()
+        {
+            string dir = Godot.ProjectSettings.GlobalizePath("res://content/");
+            if (!System.IO.Directory.Exists(dir)) return;
+            int filled = 0;
+            foreach (var dat in System.IO.Directory.GetFiles(dir, "*.dat"))
+            {
+                string name = System.IO.Path.GetFileNameWithoutExtension(dat);
+                if (!System.IO.File.Exists(dir + name + "_gun.txt")) continue;   // the ported-gun gate
+                UnturnedGodot.GunDef g;   // ItemCatalog lives in SDG.Unturned; GunDef is in UnturnedGodot
+                try { g = UnturnedGodot.GunDef.FromDatText(System.IO.File.ReadAllText(dat)); } catch { continue; }
+                if (g == null || g.ShellReload || g.MagazineId <= 0) continue;   // shell guns feed loose rounds
+                var mag = SDG.Unturned.Assets.find((ushort)g.MagazineId);
+                if (mag == null || mag.magCapacity > 0) continue;                // absent, or already authored
+                mag.magCapacity = g.AmmoMax;
+                mag.magCaliber = g.Caliber;
+                if (string.IsNullOrEmpty(mag.magRound)) mag.magRound = g.CaliberName;
+                filled++;
+            }
+            Godot.GD.Print($"[items] derived magazine data for {filled} magazines from their guns");
         }
 
         // Load real ItemConsumeableAsset effects (content/consumable_stats.tsv: id health food water virus disinfectant
