@@ -45,17 +45,20 @@ namespace UnturnedGodot
         public partial class FlatbedDeck : Node3D
         {
             public MagnetableContainer Loaded;
-            bool _flip;   // the loaded container faces the car's -Z (false) or +Z (true) -- chosen at Load to keep its rough facing, persisted so RidePose doesn't flip it back
+            bool _flip;   // the loaded container faces the car's -Z (false) or +Z (true) -- chosen at Load to keep its rough facing
+            float _yOffset;   // container height above the deck at Load -- KEPT (master: snap is PURELY horizontal, no vertical snap)
             public bool Empty => Loaded == null || !IsInstanceValid(Loaded);
-            Transform3D Pose() => new Transform3D(_flip ? GlobalBasis.Rotated(Vector3.Up, Mathf.Pi) : GlobalBasis, GlobalPosition);   // container base on the deck top, aligned to the car in its chosen facing
+            Transform3D PoseFrom(Transform3D xf) { var o = xf.Origin; o.Y += _yOffset; return new Transform3D(_flip ? xf.Basis.Rotated(Vector3.Up, Mathf.Pi) : xf.Basis, o); }   // X/Z centre on the deck; Y = deck + kept offset (horizontal-only snap)
             public void Load(MagnetableContainer mc)
             {
                 if (mc == null || !IsInstanceValid(mc)) return;
                 mc.DetachFromCarrier?.Invoke();   // pull it off whatever held it before (another deck / the crane)
                 _flip = (-mc.GlobalBasis.Z).Dot(-GlobalBasis.Z) < 0f;   // snap to the NEARER aligned facing, don't force a 180 flip
+                _yOffset = mc.GlobalPosition.Y - GlobalPosition.Y;         // capture height above the deck BEFORE moving -- pure horizontal snap keeps it
+                if (Mathf.Abs(_yOffset) < 0.01f) _yOffset = 0f;            // master: "no vertical snap, or literally 1cm" -> only nudge flush within 1cm
                 mc.Freeze = false; mc.Sleeping = false;
-                mc.PhysicsInterpolationMode = Node.PhysicsInterpolationModeEnum.Off;   // driven each frame -> opt out of global interp so it renders exactly on the deck
-                mc.GlobalTransform = Pose();
+                mc.PhysicsInterpolationMode = Node.PhysicsInterpolationModeEnum.Off;   // WE drive it each render frame from the car's INTERPOLATED pose -> opt out of its own interp
+                mc.GlobalTransform = PoseFrom(GlobalTransform);
                 mc.ResetPhysicsInterpolation();
                 mc.FreezeMode = RigidBody3D.FreezeModeEnum.Kinematic; mc.Freeze = true;
                 mc.LinearVelocity = Vector3.Zero; mc.AngularVelocity = Vector3.Zero;
@@ -72,7 +75,9 @@ namespace UnturnedGodot
                 }
                 Loaded = null;
             }
-            public void RidePose() { if (Loaded != null && IsInstanceValid(Loaded)) Loaded.GlobalTransform = Pose(); }
+            // Follow the car's INTERPOLATED deck pose each RENDER frame. A bare per-tick GlobalPosition write renders at the
+            // raw physics pose while the car renders interpolated -> they diverge -> jitter (tinyclaw's ship deck-carry trap).
+            public override void _Process(double delta) { if (Loaded != null && IsInstanceValid(Loaded)) Loaded.GlobalTransform = PoseFrom(GetGlobalTransformInterpolated()); }
         }
 
         RoadField _roads;
@@ -93,6 +98,7 @@ namespace UnturnedGodot
         readonly List<MeshInstance3D> _ropes = new();   // short coupler rope per gap (also the look-at/F-uncouple target)
         bool _occupied;   // base engine loop + rev layer only run while someone is aboard (master)
         bool _headlightsOn;   // engine headlights: RMB while riding toggles the beams + emissive housings (master)
+        float _jogStartS, _jogTargetS, _jogT; bool _jogging;   // Ctrl+W/S: ease exactly N carriage-lengths forward/back (parametric smoothstep -> accel+decel, cannot overshoot)
 
         static Mesh Lm(string n) => ContentProvider.ParseObj($"res://content/{n}.txt");
 
@@ -149,7 +155,11 @@ namespace UnturnedGodot
             var mi = new MeshInstance3D { Mesh = Lm(s.Mesh), MaterialOverride = mat };
             if (s.FlipY) mi.RotationDegrees = new Vector3(0f, 0f, 180f);   // boxcar/tanker meshes are authored upside-down -> flip upright (master)
             sb.AddChild(mi);
-            sb.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = s.Box }, Position = s.BoxCtr });
+            // flatbed: cargo deck is at 0.25 local, but s.Box is the full mesh AABB (top 1.03 local) -> a container would descend onto the box top and FLOAT ~0.78 above the deck.
+            // Give the flatbed a collision topped at the deck surface so cargo/vehicles rest ON the deck (master: container's bottom must overlap the deck).
+            var colSize = type == "flatbed" ? new Vector3(s.Box.X, 1.0f, s.Box.Z) : s.Box;
+            var colPos  = type == "flatbed" ? new Vector3(s.BoxCtr.X, -0.25f, s.BoxCtr.Z) : s.BoxCtr;   // top = -0.25 + 0.5 = 0.25 local = deck surface
+            sb.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = colSize }, Position = colPos });
             var frameMesh = Lm("train_bogie_frame"); var wheelMesh = Lm("train_wheel");
             var bf = new MeshInstance3D { Mesh = frameMesh, MaterialOverride = bogieMat };
             var bb = new MeshInstance3D { Mesh = frameMesh, MaterialOverride = bogieMat };
@@ -176,7 +186,7 @@ namespace UnturnedGodot
             if (s.Engine) { SetupCarAudio(car); BuildEngineInterior(car, sb); }
             if (type == "flatbed")   // open flat deck -> can carry one container, snapped centred
             {
-                var deck = new FlatbedDeck { Position = new Vector3(s.BoxCtr.X, 0.6f, s.BoxCtr.Z) };   // deck cargo surface (train_car mesh side-beam top ~Y0.6 local); container base rests here, bottom overlapping the deck, not floating on the collision-box top
+                var deck = new FlatbedDeck { Position = new Vector3(s.BoxCtr.X, 0.25f, s.BoxCtr.Z) };   // MEASURED deck cargo surface: the train_car mesh's big up-facing face is at Y+0.25 (area 35.5); container base (its origin) rests flush here
                 sb.AddChild(deck);
                 deck.AddToGroup("flatbeds");
                 car.Deck = deck;
@@ -232,7 +242,7 @@ namespace UnturnedGodot
             Vector3 cb = pb + Vector3.Up * (RailY - 0.4f);
             c.Bb.GlobalTransform = new Transform3D(Basis.Identity, cb).LookingAt(cb + tb, Vector3.Up);
         }
-        void Place() { foreach (var c in _cars) { PlaceCar(c, _s - c.Off); c.Deck?.RidePose(); } PlaceRopes(); }
+        void Place() { foreach (var c in _cars) PlaceCar(c, _s - c.Off); PlaceRopes(); }
 
         // Roll every wheel by the distance travelled (roll without slip). Wheels are children of the bogies, so
         // PlaceCar re-seats the bogie each tick but leaves the wheel's LOCAL spin intact; each turns about its own
@@ -295,9 +305,32 @@ namespace UnturnedGodot
             get { var l = (_boardedCar != null && IsInstanceValid(_boardedCar.Body)) ? _boardedCar.Body : Loco; return l != null ? l.GetGlobalTransformInterpolated() * new Transform3D(Basis.Identity, new Vector3(0f, 2.3f, -2.6f)) : GlobalTransform; }
         }
 
+        const float JogDur = 2f;   // seconds to ease one carriage-length
+        public void Jog(int cars)   // Ctrl+W/S: ease exactly N carriage-lengths (centre-to-centre, so the next car takes this one's place)
+        {
+            if (!HasEngine || _cars.Count == 0) return;
+            float pitch = 2f * _cars[0].S.HalfLen + CoupleGap;
+            _jogTargetS = (_jogging ? _jogTargetS : _s) + cars * pitch;   // extend the target if a jog is already running
+            _jogStartS = _s; _jogT = 0f; _jogging = true;                 // restart the ease from here to the (possibly extended) target
+        }
+        void JogStep(float dt)   // parametric smoothstep from start->target: accel then decel, BOUNDED so it cannot overshoot/correct
+        {
+            _jogT += dt;
+            float u = Mathf.Clamp(_jogT / JogDur, 0f, 1f);
+            float e = u * u * (3f - 2f * u);   // smoothstep = ease-in + ease-out
+            float newS = Mathf.Lerp(_jogStartS, _jogTargetS, e);
+            float ds = newS - _s;
+            _speed = ds / Mathf.Max(dt, 1e-4f);   // implied speed, for wheel spin + audio
+            _s = newS;
+            if (u >= 1f) { _s = _jogTargetS; _speed = 0f; _jogging = false; }
+            ClampS();
+            Place(); SpinWheels(ds); SetBrakeSparks(false, _speed); UpdateAudio(0f, dt); ResolveContact();
+        }
         public void Drive(float throttle, float dt)
         {
             if (!HasEngine || _cars.Count == 0) return;
+            if (Mathf.Abs(throttle) > 0.05f) _jogging = false;   // any manual throttle cancels a jog
+            if (_jogging) { JogStep(dt); return; }
             float wf = (EngineCount * RefWeight) / Mathf.Max(1f, TotalWeight);   // COMBINED engine power / total weight -> more engines pull more (master)
             float target = Mathf.Clamp(throttle, -0.6f, 1f) * MaxSpeed;
             float rate; bool braking = false;

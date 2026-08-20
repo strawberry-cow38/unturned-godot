@@ -185,6 +185,7 @@ namespace UnturnedGodot
         public Vector3 DebugViewmodelRecoilRot => _viewmodel?.DebugRecoilRot ?? Vector3.Zero;
         Train _ridingTrain;   // a boarded train (spline-follower, not a Vehicle) -- parallel low-risk ride path (master: "i cant get into the train")
         HarborCrane _ridingCrane;   // a boarded harbor crane (custom vehicle, same parallel ride path as the train)
+        bool _jogWPrev, _jogSPrev;   // Ctrl+W/S edge-detect: jog the train exactly one carriage
         bool _craneMagPrev;   // Shift edge-detect: energise/de-energise the hoist magnet
         Vehicle _driving; bool _fp = true;   // vehicle being driven + camera mode: true = 1st person (spawn default, strawberry), false = 3rd; H toggles (on foot + driving)
         float _driveCamYaw, _driveCamPitch = 15f;   // 3rd-person driving orbit: mouse yaws/pitches the chase cam around the car (master)
@@ -6351,8 +6352,13 @@ namespace UnturnedGodot
         /// ride the loco so the exit spot + camera track it.</summary>
         void DriveTrain(float delta)
         {
-            float throttle = UiInputBlocked ? 0f
-                : (Input.IsPhysicalKeyPressed(Key.W) ? 1f : 0f) - (Input.IsPhysicalKeyPressed(Key.S) ? 1f : 0f);
+            bool ctrl = !UiInputBlocked && Input.IsKeyPressed(Key.Ctrl);
+            bool w = !UiInputBlocked && Input.IsPhysicalKeyPressed(Key.W);
+            bool sk = !UiInputBlocked && Input.IsPhysicalKeyPressed(Key.S);
+            if (ctrl && w && !_jogWPrev) _ridingTrain.Jog(+1);   // Ctrl+W: advance EXACTLY one carriage forward
+            if (ctrl && sk && !_jogSPrev) _ridingTrain.Jog(-1);  // Ctrl+S: back one carriage
+            _jogWPrev = ctrl && w; _jogSPrev = ctrl && sk;
+            float throttle = ctrl ? 0f : ((w ? 1f : 0f) - (sk ? 1f : 0f));   // plain W/S = continuous throttle; Ctrl held = jog only
             _ridingTrain.Drive(throttle, delta);
             if (_ridingTrain.Loco != null) GlobalPosition = _ridingTrain.Loco.GlobalPosition;
         }
