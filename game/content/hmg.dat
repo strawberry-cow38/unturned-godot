@@ -60,3 +60,10 @@ Muzzle 4
 
 Reload_Time 2
 Turret
+Caliber_Name ".50 BMG"
+Ballistic_Travel 17.06
+Ballistic_Steps 27
+Bullet_Gravity_Multiplier 1.4
+Damage_Falloff_Start 103
+Damage_Falloff_End 192
+Damage_Falloff_Min 0.5

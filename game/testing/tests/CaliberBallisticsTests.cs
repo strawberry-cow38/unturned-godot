@@ -51,6 +51,13 @@ namespace UnturnedGodot.Testing
             ("snayperskya", "SVD Dragunov",       830f),
             ("schofield",   "Mosin-Nagant",       865f),
             ("sabertooth",  "M39 EMR",            865f),
+            // THE FIVE THAT NEEDED A RULING, resolved by strawberry: "listen to the dat" -- where the wiki's
+            // real-weapon trivia and the .dat's own Caliber_Name disagree, the .dat wins.
+            ("heartbreaker","FN SCAR-H",          820f),   // dat says 7.62x51; the wiki's SCAR-L is 5.56
+            ("ace",         ".44 Magnum revolver",430f),   // dat says .44 + Ammo_Max 6; the wiki's Python is .357
+            ("fury",        "M134 Minigun",       850f),   // Action Minigun, Ammo_Max 250 -- no trivia line to find
+            ("honeybadger", "AAC Honey Badger",   305f),   // SUBSONIC .300 BLK; the dat's Range 125 is the shortest here
+            ("hmg",         "M2-class .50 BMG",   853f),   // had NO Caliber_Name at all -- outside the system entirely
         };
 
         // THE HEAVY SNIPER TIER GETS THE FALLOFF HALF ONLY. grizzly/timberwolf/ekho are gravity 1x with a ~307 m
@@ -102,6 +109,12 @@ namespace UnturnedGodot.Testing
                     Mathf.IsEqualApprox(d.GravityMultiplier, 1f)
                     && d.MuzzleVelocity * 0.02f * d.BallisticSteps is > 300f and < 320f);
             }
+
+            // THE HMG HAD NO CARTRIDGE AT ALL. It carried no Caliber_Name key, so it sat outside the whole caliber
+            // system silently -- gun.caliber_field counts coverage, and a gun that declares nothing is not a gun
+            // that declares something wrong, so nothing flagged it. Pinned here so it cannot fall back out.
+            T.Check($"the hmg declares a cartridge now ({Def(dir, "hmg").CaliberName})",
+                !string.IsNullOrEmpty(Def(dir, "hmg").CaliberName));
 
             // THE CONTROL, and it is deliberately NOT the zubeknakov. gun.ballistics_tuning uses the AK as its
             // untouched subject, but the AK is 7.62x39 and is IN this sweep -- it will be retuned, and that test's
