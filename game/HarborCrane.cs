@@ -204,7 +204,10 @@ namespace UnturnedGodot
                             mc.Freeze = false; mc.Sleeping = false;
                             // SNAP to perfect alignment: square the container to the gantry (upright, yaw-aligned) and seat its
                             // roof magnet-point dead-centre on the coil face, so it hangs straight + centred, not cocked at the grab angle.
-                            mc.GlobalBasis = GlobalBasis;
+                            Vector3 curFwd = -mc.GlobalBasis.Z;   // keep the container facing roughly as it was: snap to the NEARER of the two aligned yaws (0 or 180), never a forced flip
+                            Basis tgt = GlobalBasis;
+                            if (curFwd.Dot(-tgt.Z) < 0f) tgt = tgt.Rotated(Vector3.Up, Mathf.Pi);
+                            mc.GlobalBasis = tgt;
                             Vector3 seat = face - mc.MagnetPointWorld;
                             seat.Y = Mathf.Max(0f, seat.Y);   // centre X/Z + square, but NEVER push the container DOWN into the ground on connect (master); only lift it up to the coil
                             mc.GlobalPosition += seat;

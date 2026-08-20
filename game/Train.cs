@@ -45,12 +45,14 @@ namespace UnturnedGodot
         public partial class FlatbedDeck : Node3D
         {
             public MagnetableContainer Loaded;
+            bool _flip;   // the loaded container faces the car's -Z (false) or +Z (true) -- chosen at Load to keep its rough facing, persisted so RidePose doesn't flip it back
             public bool Empty => Loaded == null || !IsInstanceValid(Loaded);
-            Transform3D Pose() => new Transform3D(GlobalBasis, GlobalPosition);   // container base sits on the deck top, aligned to the car (its origin is its base)
+            Transform3D Pose() => new Transform3D(_flip ? GlobalBasis.Rotated(Vector3.Up, Mathf.Pi) : GlobalBasis, GlobalPosition);   // container base on the deck top, aligned to the car in its chosen facing
             public void Load(MagnetableContainer mc)
             {
                 if (mc == null || !IsInstanceValid(mc)) return;
                 mc.DetachFromCarrier?.Invoke();   // pull it off whatever held it before (another deck / the crane)
+                _flip = (-mc.GlobalBasis.Z).Dot(-GlobalBasis.Z) < 0f;   // snap to the NEARER aligned facing, don't force a 180 flip
                 mc.Freeze = false; mc.Sleeping = false;
                 mc.PhysicsInterpolationMode = Node.PhysicsInterpolationModeEnum.Off;   // driven each frame -> opt out of global interp so it renders exactly on the deck
                 mc.GlobalTransform = Pose();
@@ -174,7 +176,7 @@ namespace UnturnedGodot
             if (s.Engine) { SetupCarAudio(car); BuildEngineInterior(car, sb); }
             if (type == "flatbed")   // open flat deck -> can carry one container, snapped centred
             {
-                var deck = new FlatbedDeck { Position = new Vector3(s.BoxCtr.X, s.BoxCtr.Y + s.Box.Y * 0.5f, s.BoxCtr.Z) };   // deck top centre, in the car body's local frame
+                var deck = new FlatbedDeck { Position = new Vector3(s.BoxCtr.X, 0.6f, s.BoxCtr.Z) };   // deck cargo surface (train_car mesh side-beam top ~Y0.6 local); container base rests here, bottom overlapping the deck, not floating on the collision-box top
                 sb.AddChild(deck);
                 deck.AddToGroup("flatbeds");
                 car.Deck = deck;
