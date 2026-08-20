@@ -158,7 +158,7 @@ namespace UnturnedGodot
         {
             if (_held != null && IsInstanceValid(_held))
             {
-                var deck = NearestEmptyDeckUnder(_held.GlobalPosition, 4f);   // set it down on an EMPTY flatbed under the hoist -> snap centred; else drop
+                var deck = NearestEmptyDeckUnder(_held.GlobalPosition, 1.0f);   // snap ONLY when very close (<=1m XZ) to the deck centre, horizontal distance only; else drop
                 if (deck != null && _held is MagnetableContainer heldMc)
                 {
                     deck.Load(heldMc);   // Load re-centres + kinematically mounts it on the deck

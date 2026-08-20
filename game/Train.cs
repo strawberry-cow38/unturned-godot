@@ -45,17 +45,17 @@ namespace UnturnedGodot
         public partial class FlatbedDeck : Node3D
         {
             public MagnetableContainer Loaded;
-            bool _flip;   // the loaded container faces the car's -Z (false) or +Z (true) -- chosen at Load to keep its rough facing, persisted so RidePose doesn't flip it back
+            bool _flip;   // the loaded container faces the car's -Z (false) or +Z (true) -- chosen at Load to keep its rough facing
             public bool Empty => Loaded == null || !IsInstanceValid(Loaded);
-            Transform3D Pose() => new Transform3D(_flip ? GlobalBasis.Rotated(Vector3.Up, Mathf.Pi) : GlobalBasis, GlobalPosition);   // container base on the deck top, aligned to the car in its chosen facing
+            Transform3D PoseFrom(Transform3D xf) => new Transform3D(_flip ? xf.Basis.Rotated(Vector3.Up, Mathf.Pi) : xf.Basis, xf.Origin);
             public void Load(MagnetableContainer mc)
             {
                 if (mc == null || !IsInstanceValid(mc)) return;
                 mc.DetachFromCarrier?.Invoke();   // pull it off whatever held it before (another deck / the crane)
                 _flip = (-mc.GlobalBasis.Z).Dot(-GlobalBasis.Z) < 0f;   // snap to the NEARER aligned facing, don't force a 180 flip
                 mc.Freeze = false; mc.Sleeping = false;
-                mc.PhysicsInterpolationMode = Node.PhysicsInterpolationModeEnum.Off;   // driven each frame -> opt out of global interp so it renders exactly on the deck
-                mc.GlobalTransform = Pose();
+                mc.PhysicsInterpolationMode = Node.PhysicsInterpolationModeEnum.Off;   // WE drive it each render frame from the car's INTERPOLATED pose -> opt out of its own interp
+                mc.GlobalTransform = PoseFrom(GlobalTransform);
                 mc.ResetPhysicsInterpolation();
                 mc.FreezeMode = RigidBody3D.FreezeModeEnum.Kinematic; mc.Freeze = true;
                 mc.LinearVelocity = Vector3.Zero; mc.AngularVelocity = Vector3.Zero;
@@ -72,7 +72,9 @@ namespace UnturnedGodot
                 }
                 Loaded = null;
             }
-            public void RidePose() { if (Loaded != null && IsInstanceValid(Loaded)) Loaded.GlobalTransform = Pose(); }
+            // Follow the car's INTERPOLATED deck pose each RENDER frame. A bare per-tick GlobalPosition write renders at the
+            // raw physics pose while the car renders interpolated -> they diverge -> jitter (tinyclaw's ship deck-carry trap).
+            public override void _Process(double delta) { if (Loaded != null && IsInstanceValid(Loaded)) Loaded.GlobalTransform = PoseFrom(GetGlobalTransformInterpolated()); }
         }
 
         RoadField _roads;
@@ -176,7 +178,7 @@ namespace UnturnedGodot
             if (s.Engine) { SetupCarAudio(car); BuildEngineInterior(car, sb); }
             if (type == "flatbed")   // open flat deck -> can carry one container, snapped centred
             {
-                var deck = new FlatbedDeck { Position = new Vector3(s.BoxCtr.X, 0.6f, s.BoxCtr.Z) };   // deck cargo surface (train_car mesh side-beam top ~Y0.6 local); container base rests here, bottom overlapping the deck, not floating on the collision-box top
+                var deck = new FlatbedDeck { Position = new Vector3(s.BoxCtr.X, 0.25f, s.BoxCtr.Z) };   // MEASURED deck cargo surface: the train_car mesh's big up-facing face is at Y+0.25 (area 35.5); container base (its origin) rests flush here
                 sb.AddChild(deck);
                 deck.AddToGroup("flatbeds");
                 car.Deck = deck;
@@ -232,7 +234,7 @@ namespace UnturnedGodot
             Vector3 cb = pb + Vector3.Up * (RailY - 0.4f);
             c.Bb.GlobalTransform = new Transform3D(Basis.Identity, cb).LookingAt(cb + tb, Vector3.Up);
         }
-        void Place() { foreach (var c in _cars) { PlaceCar(c, _s - c.Off); c.Deck?.RidePose(); } PlaceRopes(); }
+        void Place() { foreach (var c in _cars) PlaceCar(c, _s - c.Off); PlaceRopes(); }
 
         // Roll every wheel by the distance travelled (roll without slip). Wheels are children of the bogies, so
         // PlaceCar re-seats the bogie each tick but leaves the wheel's LOCAL spin intact; each turns about its own
