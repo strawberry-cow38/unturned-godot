@@ -114,6 +114,16 @@ namespace UnturnedGodot.Testing
             T.Check($"mosin: reloads ONE ROUND AT A TIME ({mosinDef.ShellReload}) -- and via the Shell_Reload key, since Action is {mosinDef.Action}, not Pump",
                     mosinDef.ShellReload && mosinDef.Action != "Pump");
 
+            // the three homemade wood bolt rifles feed the SAME way -- their own 5.56 loose round (item 478),
+            // int-caliber group 17 which is theirs alone, so flipping it isAmmo never sweeps a STANAG mag gun in.
+            foreach (var wr in new[] { "rifle_birch", "rifle_pine", "rifle_maple" })
+            {
+                var wd = Def(dir, wr); var wa = Assets.find((ushort)wd.MagazineId);
+                T.Check($"{wr}: its item is LOOSE 5.56 AMMO ({wa?.itemName}, isAmmo={wa?.isAmmo})", wa != null && wa.isAmmo);
+                T.Check($"{wr}: ammo caliber matches so ShellAsset finds it ({wa?.magCaliber} vs {wd.Caliber})", wa != null && wa.magCaliber == wd.Caliber && wd.Caliber > 0);
+                T.Check($"{wr}: reloads one round at a time via Shell_Reload, Action {wd.Action}", wd.ShellReload && wd.Action == "Bolt");
+            }
+
             // ...and the opt-in must not have swept the other bolt guns in with it.
             foreach (var bolt in new[] { "timberwolf", "snayperskya" })
                 T.Check($"control: {bolt} is still magazine-fed, not shell-fed (the Shell_Reload key is per-gun)",
