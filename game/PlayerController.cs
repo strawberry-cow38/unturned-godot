@@ -3857,7 +3857,22 @@ namespace UnturnedGodot
 
         // Loose ammo (shotgun shells, master: real ammo types). A gun uses shells when a stackable isAmmo item matches its
         // caliber (12ga=113 -> caliber 8; 20ga=381 -> caliber 16). Reload CONSUMES shells from the stack (vs swapping a mag).
-        bool UsesShells => Gun != null && Gun.Caliber > 0 && ShellAsset != null;
+        // A GUN FEEDS LOOSE ROUNDS WHEN ITS OWN DECLARED MAGAZINE IS AMMO -- not merely when some item somewhere
+        // shares its caliber. ShellAsset scans every asset for `isAmmo && magCaliber == Caliber`, so without this
+        // gate, registering ANY loose round at a caliber silently converts every gun of that caliber to shell-fed
+        // and bypasses the magazine path entirely. cow tools hit exactly that flipping item 5004 (5.56, caliber 1)
+        // to isAmmo on my bad advice: the eaglefire, maplestrike and honeybadger all resolved it as their shell and
+        // gun.drum_mag_capacity / gun.swap_mid_reload / gun.caliber_field broke. They worked around it with a
+        // private caliber group; this removes the trap instead.
+        //
+        // NOT gated on ShellReload, which was the obvious-looking fix and is wrong: the ACE is deliberately
+        // UsesShells with ShellReload FALSE (master: "reload from loose ammo ... but not one round at a time"),
+        // so that gate would break the very feature this is here to serve.
+        //
+        // The caliber scan below still chooses WHICH loose round, so shotgun buckshot/slug/beanbag switching is
+        // untouched -- this only decides IF the gun feeds loose at all.
+        bool FeedsLooseRounds => Gun != null && SDG.Unturned.Assets.find((ushort)Gun.MagazineId)?.isAmmo == true;
+        bool UsesShells => Gun != null && Gun.Caliber > 0 && FeedsLooseRounds && ShellAsset != null;
         // Shotgun ammo-TYPE selection (buckshot vs slug). A gauge can carry several loose-shell types (12ga: buckshot
         // 113 + slug 5000, same caliber 8); the player picks one via the R-hold radial or the attachment menu's
         // Magazine slot. Keyed by caliber so all guns of that gauge share the choice. 0 = unset -> the default
