@@ -56,7 +56,8 @@ namespace UnturnedGodot
         Viewmodel _viewmodel;
         public PlayerInventory Inventory;   // the ported 9-page inventory model
         InventoryUI _invUI;                 // the dashboard (Tab to open)
-        CraftingUI _craftUI;                // the crafting menu (K to open)
+        CraftingUI _craftUI;                // the OLD supplies panel (K) -- kept, it is what the craft tests drive
+        CraftingMenu _craftMenu;            // the browsable recipe index (Y, or the inventory Craft tab)
         SkillsUI _skillsUI;                 // the skills menu (J to open) -- spend XP to level skills
         BuildTool _build;                   // B = build mode. C = construct, V = tier, LMB place, R salvage.
 
@@ -2626,6 +2627,13 @@ namespace UnturnedGodot
         public float DebugShotDamage => ShotDamage();   // test hook -- the SAME call the fire path makes, not a copy
 
         public int DebugPellets() => UsesShells && ShellAsset != null ? System.Math.Max(1, ShellAsset.pellets) : System.Math.Max(1, Gun?.Pellets ?? 1);   // test: rays per shot (shotgun = shell pellets)
+        /// <summary>Open the crafting index. Called by the inventory navbar's Craft tab and by Y.</summary>
+        public void OpenCrafting()
+        {
+            _craftMenu?.Open();
+            Input.MouseMode = Input.MouseModeEnum.Visible;
+        }
+
         public void DebugSetHeldItem(SDG.Unturned.Item it) => _heldItem = it;      // test: link a backing item to the held gun
         public void DebugSaveGunState() => SaveGunState();                          // test: mirror live gun state to the backing item
         public void DebugStartReload() => StartReload();                            // test: begin a real reload (timer + anim), so a swap can land MID-reload
@@ -4645,6 +4653,8 @@ namespace UnturnedGodot
             AddChild(_noteReader);
             _craftUI = new CraftingUI { Inv = Inventory, Player = this };
             AddChild(_craftUI);
+            _craftMenu = new CraftingMenu { Inv = Inventory, Player = this };
+            AddChild(_craftMenu);
             _skillsUI = new SkillsUI { Player = this };
             AddChild(_skillsUI);
             _build = new BuildTool { Cam = _cam };
@@ -4947,6 +4957,13 @@ namespace UnturnedGodot
                 if (_invUI != null && _invUI.IsOpen) CloseCrate();   // closing the dashboard saves an open crate
                 _invUI?.Toggle();   // open/close the inventory dashboard, freeing the mouse while it's open
                 Input.MouseMode = (_invUI != null && _invUI.IsOpen) ? Input.MouseModeEnum.Visible : Input.MouseModeEnum.Captured;
+            }
+            // Y opens the crafting index -- the inventory navbar has advertised "Craft [Y]" all along while
+            // nothing listened for it outside build mode. The build-mode Y handler above still wins when active.
+            else if (@event is InputEventKey { Pressed: true, Keycode: Key.Y } && !(_build?.Active ?? false))
+            {
+                _craftMenu?.Toggle();
+                Input.MouseMode = (_craftMenu != null && _craftMenu.IsOpen) ? Input.MouseModeEnum.Visible : Input.MouseModeEnum.Captured;
             }
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.K })
             {

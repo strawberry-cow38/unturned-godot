@@ -144,6 +144,13 @@ namespace UnturnedGodot
             _storageCol.AddChild(_areaCol);
         }
 
+        /// <summary>A navbar tab was clicked. Only Craft is wired so far -- Skills/Information have no page yet,
+        /// and silently doing nothing is better than pretending. Inventory is the page you are already on.</summary>
+        void OnTab(string label)
+        {
+            if (label == "Craft") { Close(); Player?.OpenCrafting(); }
+        }
+
         public void Toggle() { if (_open) Close(); else Open(); }
         // The Nearby/AREA refresh lives HERE, not at the call sites, because there are four ways to open the bag
         // (the G keybind via Toggle, OpenInventory, crate-open, and the replicated storage-open fact) and only
@@ -1118,6 +1125,18 @@ namespace UnturnedGodot
                 t.AddThemeColorOverride("font_color", i == 0 ? new Color(1f, 1f, 1f) : new Color(0.83f, 0.83f, 0.83f));   // neutral, was blue-leaning
                 t.AddThemeFontSizeOverride("font_size", 32);
                 _dash.AddChild(t);
+
+                // THESE TABS WERE DECORATION. A Panel and a Label with no click handling anywhere, and the "[Y]"
+                // in the Craft label promised a keybind whose only handler in the codebase fires in BUILD mode --
+                // so the crafting menu was reachable on K and nothing else, and "the inventory crafting button"
+                // did not exist. A transparent Button over each tab makes them real without disturbing the
+                // existing styling (the Panel underneath still draws the lit/unlit state).
+                var hit = new Button { Flat = true, Position = new Vector2(tx2, 8), Size = new Vector2(tabW, NAVH - 16) };
+                hit.MouseFilter = Control.MouseFilterEnum.Stop;
+                string tabLabel = tabs[i].label;
+                hit.Pressed += () => OnTab(tabLabel);
+                _dash.AddChild(hit);
+
                 tx2 += tabW + TABGAP;
             }
         }

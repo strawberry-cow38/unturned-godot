@@ -26,6 +26,65 @@ namespace UnturnedGodot
             return _all.Count;
         }
 
+        /// <summary>
+        /// THE BROWSABLE INDEX: every Craft recipe this port can actually express, regardless of what you are
+        /// carrying (strawberry: "indexed list of all available crafting recipes ... ONLY relevant items that are
+        /// accessible right now, none of the bullshit recipes from curated maps").
+        ///
+        /// Applicable() answers "what can I make with this bag", which is a different question and is why the menu
+        /// read as a supplies panel rather than an index. This one answers "what recipes exist for me at all".
+        ///
+        /// THE FILTER IS ITEM RESOLUTION, not a map whitelist, and that is deliberate. Measured against the
+        /// catalog: 1875 rows -> 1569 have no inputs at all (Salvage/Repair/Fill target-ops, already excluded)
+        /// -> 252 Craft recipes with inputs -> 195 whose owner AND every input resolve to an item this port ships.
+        /// The 57 dropped are exactly the curated-map recipes: they name ingredients that do not exist here, so
+        /// they could never be crafted and listing them is the "bullshit" being complained about. A recipe whose
+        /// items all resolve is reachable by construction; one whose items do not is unreachable by construction.
+        /// That is checkable, unlike a hand-kept list of which map an item spawns on.
+        /// </summary>
+        public static List<BlueprintDef> Index()
+        {
+            var r = new List<BlueprintDef>();
+            foreach (var bp in _all)
+            {
+                if (bp.Operation != "Craft" || bp.Inputs.Count == 0) continue;
+                if (!Resolves(bp)) continue;
+                r.Add(bp);
+            }
+            return r;
+        }
+
+        /// <summary>Owner item and every ingredient exist in this port's catalog.</summary>
+        public static bool Resolves(BlueprintDef bp)
+        {
+            if (!ushort.TryParse(bp.OwnerItemId, out var oid) || SDG.Unturned.Assets.find(oid) == null) return false;
+            foreach (var i in bp.Inputs)
+                if (SDG.Unturned.Assets.findByGuid(i.Guid) == null) return false;
+            foreach (var o in bp.Outputs)
+                if (SDG.Unturned.Assets.findByGuid(o.Guid) == null) return false;
+            return true;
+        }
+
+        // A PURE RECOLOUR -- one input, and the two names differ only by a colour word. 126 of the 195 usable
+        // recipes are these (Blue Daypack <- White Daypack, Green Beach Chair <- Beach Chair, ...). They are real
+        // and craftable, so they are NOT dropped, but they outnumber the 69 genuine crafts two to one and would
+        // bury them in a flat list. Grouped in the UI instead of deleted -- dropping a third of the recipe set is
+        // the player's call, not mine.
+        static readonly System.Text.RegularExpressions.Regex _colour = new(
+            @"\b(blue|green|orange|purple|red|yellow|white|black|pink|cyan|brown|grey|gray|tan|olive|khaki)\b",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        public static bool IsRecolour(BlueprintDef bp)
+        {
+            if (bp.Inputs.Count != 1) return false;
+            if (!ushort.TryParse(bp.OwnerItemId, out var oid)) return false;
+            var outItem = SDG.Unturned.Assets.find(oid);
+            var inItem = SDG.Unturned.Assets.findByGuid(bp.Inputs[0].Guid);
+            if (outItem == null || inItem == null) return false;
+            string a = _colour.Replace(outItem.itemName ?? "", "").Trim();
+            string b = _colour.Replace(inItem.itemName ?? "", "").Trim();
+            return a.Length > 0 && string.Equals(a, b, System.StringComparison.OrdinalIgnoreCase);
+        }
+
         // blueprints craftable right now from `inv` (item-satisfiability only; skill/station are the caller's gate)
         public static List<BlueprintDef> Applicable(Crafting.IInv inv)
         {
