@@ -47,6 +47,7 @@ namespace UnturnedGodot
         public Vector3 MagnetPointWorld => ToGlobal(new Vector3(0f, _localBounds.End.Y, 0f));
 
         public bool DoorsOpen => _swingTarget > 0.5f;
+        public System.Action DetachFromCarrier;   // set by whatever holds it (a flatbed deck); the crane invokes it before grabbing, so the carrier releases first
 
         public static MagnetableContainer Spawn(Node parent, Vector3 at)
         {

@@ -36,7 +36,43 @@ namespace UnturnedGodot
             public AudioStreamPlayer3D EngSnd, AddSnd, HornSnd;   // per-ENGINE-car audio (each engine sounds); null on non-engine cars
             public MeshInstance3D HeadMesh; public readonly List<Light3D> HeadLights = new(); public StandardMaterial3D HeadMat;   // headlight housing mesh + spot/omni beams + emissive material (engine cars only)
             public float Off;    // centre offset BEHIND the consist lead (_s); recomputed on couple/uncouple
+            public FlatbedDeck Deck;   // container mount (flatbed cars only; null elsewhere)
             public float AbsS;   // scratch: absolute rail distance, used when merging two consists
+        }
+
+        // A flatbed's container mount: a marker at the deck-top centre (child of the car body, so it rides the car).
+        // Holds one MagnetableContainer, snapped centred + aligned, driven kinematically each tick by the train.
+        public partial class FlatbedDeck : Node3D
+        {
+            public MagnetableContainer Loaded;
+            bool _flip;   // the loaded container faces the car's -Z (false) or +Z (true) -- chosen at Load to keep its rough facing, persisted so RidePose doesn't flip it back
+            public bool Empty => Loaded == null || !IsInstanceValid(Loaded);
+            Transform3D Pose() => new Transform3D(_flip ? GlobalBasis.Rotated(Vector3.Up, Mathf.Pi) : GlobalBasis, GlobalPosition);   // container base on the deck top, aligned to the car in its chosen facing
+            public void Load(MagnetableContainer mc)
+            {
+                if (mc == null || !IsInstanceValid(mc)) return;
+                mc.DetachFromCarrier?.Invoke();   // pull it off whatever held it before (another deck / the crane)
+                _flip = (-mc.GlobalBasis.Z).Dot(-GlobalBasis.Z) < 0f;   // snap to the NEARER aligned facing, don't force a 180 flip
+                mc.Freeze = false; mc.Sleeping = false;
+                mc.PhysicsInterpolationMode = Node.PhysicsInterpolationModeEnum.Off;   // driven each frame -> opt out of global interp so it renders exactly on the deck
+                mc.GlobalTransform = Pose();
+                mc.ResetPhysicsInterpolation();
+                mc.FreezeMode = RigidBody3D.FreezeModeEnum.Kinematic; mc.Freeze = true;
+                mc.LinearVelocity = Vector3.Zero; mc.AngularVelocity = Vector3.Zero;
+                Loaded = mc;
+                mc.DetachFromCarrier = Unload;
+            }
+            public void Unload()
+            {
+                if (Loaded != null && IsInstanceValid(Loaded))
+                {
+                    Loaded.DetachFromCarrier = null;
+                    Loaded.PhysicsInterpolationMode = Node.PhysicsInterpolationModeEnum.Inherit;
+                    Loaded.Freeze = false; Loaded.Sleeping = false;
+                }
+                Loaded = null;
+            }
+            public void RidePose() { if (Loaded != null && IsInstanceValid(Loaded)) Loaded.GlobalTransform = Pose(); }
         }
 
         RoadField _roads;
@@ -138,6 +174,13 @@ namespace UnturnedGodot
                     car.Sparks.Add((ps, glow, off.Z));
                 }
             if (s.Engine) { SetupCarAudio(car); BuildEngineInterior(car, sb); }
+            if (type == "flatbed")   // open flat deck -> can carry one container, snapped centred
+            {
+                var deck = new FlatbedDeck { Position = new Vector3(s.BoxCtr.X, 0.6f, s.BoxCtr.Z) };   // deck cargo surface (train_car mesh side-beam top ~Y0.6 local); container base rests here, bottom overlapping the deck, not floating on the collision-box top
+                sb.AddChild(deck);
+                deck.AddToGroup("flatbeds");
+                car.Deck = deck;
+            }
             _cars.Add(car);
         }
 
@@ -168,6 +211,7 @@ namespace UnturnedGodot
                 _cars[i].Off = i == 0 ? 0f : _cars[i - 1].Off + _cars[i - 1].S.HalfLen + CoupleGap + _cars[i].S.HalfLen;
         }
 
+        public FlatbedDeck FirstDeck() { foreach (var c in _cars) if (c.Deck != null) return c.Deck; return null; }
         bool HasEngine => _cars.Any(c => c.S.Engine);
         int EngineCount => _cars.Count(c => c.S.Engine);
         Car EngineCar => _cars.FirstOrDefault(c => c.S.Engine);
@@ -188,7 +232,7 @@ namespace UnturnedGodot
             Vector3 cb = pb + Vector3.Up * (RailY - 0.4f);
             c.Bb.GlobalTransform = new Transform3D(Basis.Identity, cb).LookingAt(cb + tb, Vector3.Up);
         }
-        void Place() { foreach (var c in _cars) PlaceCar(c, _s - c.Off); PlaceRopes(); }
+        void Place() { foreach (var c in _cars) { PlaceCar(c, _s - c.Off); c.Deck?.RidePose(); } PlaceRopes(); }
 
         // Roll every wheel by the distance travelled (roll without slip). Wheels are children of the bogies, so
         // PlaceCar re-seats the bogie each tick but leaves the wheel's LOCAL spin intact; each turns about its own
