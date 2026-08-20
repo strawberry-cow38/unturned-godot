@@ -66,7 +66,7 @@ namespace UnturnedGodot
 
         LineEdit _input;
         Label _log;
-        static readonly string[] Verbs = { "give", "vehicle", "spawnMagnetableContainer", "spawnheli", "spawntrain", "spawncrane", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "toggleGlobalPower", "toggleGlobalWater", "toggleBbat", "infFuel", "infAmmo", "wear", "unwear", "fluid", "date", "dateset", "whenBlackout", "triggerGlobalBrownout", "hurtmain", "killmain", "hurttail", "killtail", "profiler", "renderscale", "zshadows", "freezerigs", "vertexlight", "weather", "fridge", "fill", "empty", "units", "simspeed", "time", "timeset", "timeadd", "timespeed", "daylength", "hitbox", "heliphys" };
+        static readonly string[] Verbs = { "give", "vehicle", "spawnMagnetableContainer", "spawnheli", "spawntrain", "spawncrane", "spawncraneontrack", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "toggleGlobalPower", "toggleGlobalWater", "toggleBbat", "infFuel", "infAmmo", "wear", "unwear", "fluid", "date", "dateset", "whenBlackout", "triggerGlobalBrownout", "hurtmain", "killmain", "hurttail", "killtail", "profiler", "renderscale", "zshadows", "freezerigs", "vertexlight", "weather", "fridge", "fill", "empty", "units", "simspeed", "time", "timeset", "timeadd", "timespeed", "daylength", "hitbox", "heliphys" };
         static readonly EItemType[] ClothingTypes = { EItemType.SHIRT, EItemType.PANTS, EItemType.HAT, EItemType.VEST, EItemType.MASK, EItemType.GLASSES, EItemType.BACKPACK };
         readonly System.Collections.Generic.List<string> _history = new();
         int _histIdx;
@@ -588,6 +588,18 @@ namespace UnturnedGodot
                 float cyaw = Player != null ? Player.RotationDegrees.Y : 0f;
                 var cr = HarborCrane.Spawn(Player?.GetParent() ?? GetTree().Root, cnear, cyaw);
                 Log(cr != null ? "spawned a harbor crane -- F board, W/S drive, A/D gantry, Q/E hoist, Shift magnet (lift a magcontainer)" : "crane spawn failed");
+            }
+            else if (verb == "spawncraneontrack")
+            {
+                var roads = WorldRoads;
+                if (roads == null) { Log("no road network in this world"); return; }
+                Vector3 near = Player?.GlobalPosition ?? at;
+                if (!roads.NearestTrack(near, out int troad, out float ts)) { Log("no train track nearby -- only Yukon has rails (tracks = road material 4)"); return; }
+                roads.EvaluateAlong(troad, ts, out Vector3 tpos, out Vector3 ttan, snapTerrain: false);
+                ttan.Y = 0f; ttan = ttan.LengthSquared() > 1e-4f ? ttan.Normalized() : Vector3.Forward;
+                float ctyaw = Mathf.RadToDeg(Mathf.Atan2(-ttan.X, -ttan.Z));   // crane drive axis (local -Z) along the track tangent -> the gantry rolls ALONG the rails
+                var crt = HarborCrane.Spawn(Player?.GetParent() ?? GetTree().Root, tpos, ctyaw);
+                Log(crt != null ? "spawned a harbor crane aligned to the nearest track" : "crane spawn failed");
             }
             else if (verb == "spawnmagnetablecontainer" || verb == "magcontainer")
             {
