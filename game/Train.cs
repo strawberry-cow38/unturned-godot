@@ -95,6 +95,7 @@ namespace UnturnedGodot
         readonly List<MeshInstance3D> _ropes = new();   // short coupler rope per gap (also the look-at/F-uncouple target)
         bool _occupied;   // base engine loop + rev layer only run while someone is aboard (master)
         bool _headlightsOn;   // engine headlights: RMB while riding toggles the beams + emissive housings (master)
+        float _jogTarget; bool _jogging;   // Ctrl+W/S: seek exactly N carriage-lengths forward/back, accel then decel to a stop
 
         static Mesh Lm(string n) => ContentProvider.ParseObj($"res://content/{n}.txt");
 
@@ -297,9 +298,30 @@ namespace UnturnedGodot
             get { var l = (_boardedCar != null && IsInstanceValid(_boardedCar.Body)) ? _boardedCar.Body : Loco; return l != null ? l.GetGlobalTransformInterpolated() * new Transform3D(Basis.Identity, new Vector3(0f, 2.3f, -2.6f)) : GlobalTransform; }
         }
 
+        public void Jog(int cars)   // Ctrl+W/S: queue exactly N carriage-lengths of travel (centre-to-centre, so the next car takes this one's place)
+        {
+            if (!HasEngine || _cars.Count == 0) return;
+            float pitch = 2f * _cars[0].S.HalfLen + CoupleGap;
+            _jogTarget = (_jogging ? _jogTarget : _s) + cars * pitch;
+            _jogging = true;
+        }
+        void JogStep(float dt)   // trapezoidal seek: accelerate toward the target, decelerate to stop exactly on it
+        {
+            const float jogMax = 8f, jogAcc = 4f, jogDec = 4f;
+            float d = _jogTarget - _s, dist = Mathf.Abs(d);
+            float stopDist = (_speed * _speed) / (2f * jogDec);
+            if (dist <= stopDist || dist < 0.03f) _speed = Mathf.MoveToward(_speed, 0f, jogDec * dt);
+            else _speed = Mathf.MoveToward(_speed, Mathf.Sign(d) * jogMax, jogAcc * dt);
+            _s += _speed * dt;
+            ClampS();
+            if (Mathf.Abs(_jogTarget - _s) < 0.05f && Mathf.Abs(_speed) < 0.2f) { _s = _jogTarget; _speed = 0f; _jogging = false; }
+            Place(); SpinWheels(_speed * dt); SetBrakeSparks(false, _speed); UpdateAudio(0f, dt); ResolveContact();
+        }
         public void Drive(float throttle, float dt)
         {
             if (!HasEngine || _cars.Count == 0) return;
+            if (Mathf.Abs(throttle) > 0.05f) _jogging = false;   // any manual throttle cancels a jog
+            if (_jogging) { JogStep(dt); return; }
             float wf = (EngineCount * RefWeight) / Mathf.Max(1f, TotalWeight);   // COMBINED engine power / total weight -> more engines pull more (master)
             float target = Mathf.Clamp(throttle, -0.6f, 1f) * MaxSpeed;
             float rate; bool braking = false;
