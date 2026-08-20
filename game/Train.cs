@@ -95,7 +95,7 @@ namespace UnturnedGodot
         readonly List<MeshInstance3D> _ropes = new();   // short coupler rope per gap (also the look-at/F-uncouple target)
         bool _occupied;   // base engine loop + rev layer only run while someone is aboard (master)
         bool _headlightsOn;   // engine headlights: RMB while riding toggles the beams + emissive housings (master)
-        float _jogTarget; bool _jogging;   // Ctrl+W/S: seek exactly N carriage-lengths forward/back, accel then decel to a stop
+        float _jogStartS, _jogTargetS, _jogT; bool _jogging;   // Ctrl+W/S: ease exactly N carriage-lengths forward/back (parametric smoothstep -> accel+decel, cannot overshoot)
 
         static Mesh Lm(string n) => ContentProvider.ParseObj($"res://content/{n}.txt");
 
@@ -298,24 +298,26 @@ namespace UnturnedGodot
             get { var l = (_boardedCar != null && IsInstanceValid(_boardedCar.Body)) ? _boardedCar.Body : Loco; return l != null ? l.GetGlobalTransformInterpolated() * new Transform3D(Basis.Identity, new Vector3(0f, 2.3f, -2.6f)) : GlobalTransform; }
         }
 
-        public void Jog(int cars)   // Ctrl+W/S: queue exactly N carriage-lengths of travel (centre-to-centre, so the next car takes this one's place)
+        const float JogDur = 2f;   // seconds to ease one carriage-length
+        public void Jog(int cars)   // Ctrl+W/S: ease exactly N carriage-lengths (centre-to-centre, so the next car takes this one's place)
         {
             if (!HasEngine || _cars.Count == 0) return;
             float pitch = 2f * _cars[0].S.HalfLen + CoupleGap;
-            _jogTarget = (_jogging ? _jogTarget : _s) + cars * pitch;
-            _jogging = true;
+            _jogTargetS = (_jogging ? _jogTargetS : _s) + cars * pitch;   // extend the target if a jog is already running
+            _jogStartS = _s; _jogT = 0f; _jogging = true;                 // restart the ease from here to the (possibly extended) target
         }
-        void JogStep(float dt)   // trapezoidal seek: accelerate toward the target, decelerate to stop exactly on it
+        void JogStep(float dt)   // parametric smoothstep from start->target: accel then decel, BOUNDED so it cannot overshoot/correct
         {
-            const float jogMax = 8f, jogAcc = 4f, jogDec = 4f;
-            float d = _jogTarget - _s, dist = Mathf.Abs(d);
-            float stopDist = (_speed * _speed) / (2f * jogDec);
-            if (dist <= stopDist || dist < 0.03f) _speed = Mathf.MoveToward(_speed, 0f, jogDec * dt);
-            else _speed = Mathf.MoveToward(_speed, Mathf.Sign(d) * jogMax, jogAcc * dt);
-            _s += _speed * dt;
+            _jogT += dt;
+            float u = Mathf.Clamp(_jogT / JogDur, 0f, 1f);
+            float e = u * u * (3f - 2f * u);   // smoothstep = ease-in + ease-out
+            float newS = Mathf.Lerp(_jogStartS, _jogTargetS, e);
+            float ds = newS - _s;
+            _speed = ds / Mathf.Max(dt, 1e-4f);   // implied speed, for wheel spin + audio
+            _s = newS;
+            if (u >= 1f) { _s = _jogTargetS; _speed = 0f; _jogging = false; }
             ClampS();
-            if (Mathf.Abs(_jogTarget - _s) < 0.05f && Mathf.Abs(_speed) < 0.2f) { _s = _jogTarget; _speed = 0f; _jogging = false; }
-            Place(); SpinWheels(_speed * dt); SetBrakeSparks(false, _speed); UpdateAudio(0f, dt); ResolveContact();
+            Place(); SpinWheels(ds); SetBrakeSparks(false, _speed); UpdateAudio(0f, dt); ResolveContact();
         }
         public void Drive(float throttle, float dt)
         {
