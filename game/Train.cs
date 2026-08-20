@@ -46,13 +46,16 @@ namespace UnturnedGodot
         {
             public MagnetableContainer Loaded;
             bool _flip;   // the loaded container faces the car's -Z (false) or +Z (true) -- chosen at Load to keep its rough facing
+            float _yOffset;   // container height above the deck at Load -- KEPT (master: snap is PURELY horizontal, no vertical snap)
             public bool Empty => Loaded == null || !IsInstanceValid(Loaded);
-            Transform3D PoseFrom(Transform3D xf) => new Transform3D(_flip ? xf.Basis.Rotated(Vector3.Up, Mathf.Pi) : xf.Basis, xf.Origin);
+            Transform3D PoseFrom(Transform3D xf) { var o = xf.Origin; o.Y += _yOffset; return new Transform3D(_flip ? xf.Basis.Rotated(Vector3.Up, Mathf.Pi) : xf.Basis, o); }   // X/Z centre on the deck; Y = deck + kept offset (horizontal-only snap)
             public void Load(MagnetableContainer mc)
             {
                 if (mc == null || !IsInstanceValid(mc)) return;
                 mc.DetachFromCarrier?.Invoke();   // pull it off whatever held it before (another deck / the crane)
                 _flip = (-mc.GlobalBasis.Z).Dot(-GlobalBasis.Z) < 0f;   // snap to the NEARER aligned facing, don't force a 180 flip
+                _yOffset = mc.GlobalPosition.Y - GlobalPosition.Y;         // capture height above the deck BEFORE moving -- pure horizontal snap keeps it
+                if (Mathf.Abs(_yOffset) < 0.01f) _yOffset = 0f;            // master: "no vertical snap, or literally 1cm" -> only nudge flush within 1cm
                 mc.Freeze = false; mc.Sleeping = false;
                 mc.PhysicsInterpolationMode = Node.PhysicsInterpolationModeEnum.Off;   // WE drive it each render frame from the car's INTERPOLATED pose -> opt out of its own interp
                 mc.GlobalTransform = PoseFrom(GlobalTransform);
@@ -152,7 +155,11 @@ namespace UnturnedGodot
             var mi = new MeshInstance3D { Mesh = Lm(s.Mesh), MaterialOverride = mat };
             if (s.FlipY) mi.RotationDegrees = new Vector3(0f, 0f, 180f);   // boxcar/tanker meshes are authored upside-down -> flip upright (master)
             sb.AddChild(mi);
-            sb.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = s.Box }, Position = s.BoxCtr });
+            // flatbed: cargo deck is at 0.25 local, but s.Box is the full mesh AABB (top 1.03 local) -> a container would descend onto the box top and FLOAT ~0.78 above the deck.
+            // Give the flatbed a collision topped at the deck surface so cargo/vehicles rest ON the deck (master: container's bottom must overlap the deck).
+            var colSize = type == "flatbed" ? new Vector3(s.Box.X, 1.0f, s.Box.Z) : s.Box;
+            var colPos  = type == "flatbed" ? new Vector3(s.BoxCtr.X, -0.25f, s.BoxCtr.Z) : s.BoxCtr;   // top = -0.25 + 0.5 = 0.25 local = deck surface
+            sb.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = colSize }, Position = colPos });
             var frameMesh = Lm("train_bogie_frame"); var wheelMesh = Lm("train_wheel");
             var bf = new MeshInstance3D { Mesh = frameMesh, MaterialOverride = bogieMat };
             var bb = new MeshInstance3D { Mesh = frameMesh, MaterialOverride = bogieMat };
