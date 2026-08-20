@@ -36,7 +36,41 @@ namespace UnturnedGodot
             public AudioStreamPlayer3D EngSnd, AddSnd, HornSnd;   // per-ENGINE-car audio (each engine sounds); null on non-engine cars
             public MeshInstance3D HeadMesh; public readonly List<Light3D> HeadLights = new(); public StandardMaterial3D HeadMat;   // headlight housing mesh + spot/omni beams + emissive material (engine cars only)
             public float Off;    // centre offset BEHIND the consist lead (_s); recomputed on couple/uncouple
+            public FlatbedDeck Deck;   // container mount (flatbed cars only; null elsewhere)
             public float AbsS;   // scratch: absolute rail distance, used when merging two consists
+        }
+
+        // A flatbed's container mount: a marker at the deck-top centre (child of the car body, so it rides the car).
+        // Holds one MagnetableContainer, snapped centred + aligned, driven kinematically each tick by the train.
+        public partial class FlatbedDeck : Node3D
+        {
+            public MagnetableContainer Loaded;
+            public bool Empty => Loaded == null || !IsInstanceValid(Loaded);
+            Transform3D Pose() => new Transform3D(GlobalBasis, GlobalPosition);   // container base sits on the deck top, aligned to the car (its origin is its base)
+            public void Load(MagnetableContainer mc)
+            {
+                if (mc == null || !IsInstanceValid(mc)) return;
+                mc.DetachFromCarrier?.Invoke();   // pull it off whatever held it before (another deck / the crane)
+                mc.Freeze = false; mc.Sleeping = false;
+                mc.PhysicsInterpolationMode = Node.PhysicsInterpolationModeEnum.Off;   // driven each frame -> opt out of global interp so it renders exactly on the deck
+                mc.GlobalTransform = Pose();
+                mc.ResetPhysicsInterpolation();
+                mc.FreezeMode = RigidBody3D.FreezeModeEnum.Kinematic; mc.Freeze = true;
+                mc.LinearVelocity = Vector3.Zero; mc.AngularVelocity = Vector3.Zero;
+                Loaded = mc;
+                mc.DetachFromCarrier = Unload;
+            }
+            public void Unload()
+            {
+                if (Loaded != null && IsInstanceValid(Loaded))
+                {
+                    Loaded.DetachFromCarrier = null;
+                    Loaded.PhysicsInterpolationMode = Node.PhysicsInterpolationModeEnum.Inherit;
+                    Loaded.Freeze = false; Loaded.Sleeping = false;
+                }
+                Loaded = null;
+            }
+            public void RidePose() { if (Loaded != null && IsInstanceValid(Loaded)) Loaded.GlobalTransform = Pose(); }
         }
 
         RoadField _roads;
@@ -138,6 +172,13 @@ namespace UnturnedGodot
                     car.Sparks.Add((ps, glow, off.Z));
                 }
             if (s.Engine) { SetupCarAudio(car); BuildEngineInterior(car, sb); }
+            if (type == "flatbed")   // open flat deck -> can carry one container, snapped centred
+            {
+                var deck = new FlatbedDeck { Position = new Vector3(s.BoxCtr.X, s.BoxCtr.Y + s.Box.Y * 0.5f, s.BoxCtr.Z) };   // deck top centre, in the car body's local frame
+                sb.AddChild(deck);
+                deck.AddToGroup("flatbeds");
+                car.Deck = deck;
+            }
             _cars.Add(car);
         }
 
@@ -168,6 +209,7 @@ namespace UnturnedGodot
                 _cars[i].Off = i == 0 ? 0f : _cars[i - 1].Off + _cars[i - 1].S.HalfLen + CoupleGap + _cars[i].S.HalfLen;
         }
 
+        public FlatbedDeck FirstDeck() { foreach (var c in _cars) if (c.Deck != null) return c.Deck; return null; }
         bool HasEngine => _cars.Any(c => c.S.Engine);
         int EngineCount => _cars.Count(c => c.S.Engine);
         Car EngineCar => _cars.FirstOrDefault(c => c.S.Engine);
@@ -188,7 +230,7 @@ namespace UnturnedGodot
             Vector3 cb = pb + Vector3.Up * (RailY - 0.4f);
             c.Bb.GlobalTransform = new Transform3D(Basis.Identity, cb).LookingAt(cb + tb, Vector3.Up);
         }
-        void Place() { foreach (var c in _cars) PlaceCar(c, _s - c.Off); PlaceRopes(); }
+        void Place() { foreach (var c in _cars) { PlaceCar(c, _s - c.Off); c.Deck?.RidePose(); } PlaceRopes(); }
 
         // Roll every wheel by the distance travelled (roll without slip). Wheels are children of the bogies, so
         // PlaceCar re-seats the bogie each tick but leaves the wheel's LOCAL spin intact; each turns about its own

@@ -156,13 +156,32 @@ namespace UnturnedGodot
         {
             if (_held != null && IsInstanceValid(_held))
             {
-                _held.Freeze = false;
-                _held.LinearVelocity = Vector3.Zero; _held.AngularVelocity = Vector3.Zero;   // kill residual kinematic velocity so it doesn't flick up on drop
-                _held.Sleeping = false;
-                _held.PhysicsInterpolationMode = Node.PhysicsInterpolationModeEnum.Inherit;   // physics owns it again
-                _held.ResetPhysicsInterpolation();
+                var deck = NearestEmptyDeckUnder(_held.GlobalPosition, 4f);   // set it down on an EMPTY flatbed under the hoist -> snap centred; else drop
+                if (deck != null && _held is MagnetableContainer heldMc)
+                {
+                    deck.Load(heldMc);   // Load re-centres + kinematically mounts it on the deck
+                }
+                else
+                {
+                    _held.Freeze = false;
+                    _held.LinearVelocity = Vector3.Zero; _held.AngularVelocity = Vector3.Zero;   // kill residual kinematic velocity so it doesn't flick up on drop
+                    _held.Sleeping = false;
+                    _held.PhysicsInterpolationMode = Node.PhysicsInterpolationModeEnum.Inherit;   // physics owns it again
+                    _held.ResetPhysicsInterpolation();
+                }
             }
             _held = null;
+        }
+        Train.FlatbedDeck NearestEmptyDeckUnder(Vector3 world, float xzTol)
+        {
+            Train.FlatbedDeck best = null; float bestD = xzTol;
+            foreach (var n in GetTree().GetNodesInGroup("flatbeds"))
+                if (n is Train.FlatbedDeck d && d.Empty)
+                {
+                    float dxz = new Vector2(world.X - d.GlobalPosition.X, world.Z - d.GlobalPosition.Z).Length();
+                    if (dxz < bestD) { bestD = dxz; best = d; }
+                }
+            return best;
         }
         Vector3 HoistFace => _hoist != null && IsInstanceValid(_hoist) ? _hoist.GlobalPosition - GlobalTransform.Basis.Y * 0.35f : GlobalPosition;
         void UpdateMagnet()
@@ -181,6 +200,7 @@ namespace UnturnedGodot
                     {
                         if (hit["collider"].Obj is MagnetableContainer mc && IsInstanceValid(mc))
                         {
+                            mc.DetachFromCarrier?.Invoke();   // if it's sitting on a flatbed, take it off the deck first
                             mc.Freeze = false; mc.Sleeping = false;
                             // SNAP to perfect alignment: square the container to the gantry (upright, yaw-aligned) and seat its
                             // roof magnet-point dead-centre on the coil face, so it hangs straight + centred, not cocked at the grab angle.
