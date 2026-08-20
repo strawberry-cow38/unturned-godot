@@ -147,6 +147,8 @@ namespace UnturnedGodot
         // ---- hoist electromagnet: energise (Shift) -> bite a MagnetableContainer at the block face -> lift it ----
         public bool MagnetOn => _magnetOn;
         public float HoistDrop => _hoistDrop;   // (test/telemetry)
+        public float TrolleyX => _trolleyX;
+        public bool HasHeld => _held != null && IsInstanceValid(_held);
         public void ToggleMagnet()
         {
             _magnetOn = !_magnetOn;
