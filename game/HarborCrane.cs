@@ -184,7 +184,9 @@ namespace UnturnedGodot
                             // SNAP to perfect alignment: square the container to the gantry (upright, yaw-aligned) and seat its
                             // roof magnet-point dead-centre on the coil face, so it hangs straight + centred, not cocked at the grab angle.
                             mc.GlobalBasis = GlobalBasis;
-                            mc.GlobalPosition += face - mc.MagnetPointWorld;
+                            Vector3 seat = face - mc.MagnetPointWorld;
+                            seat.Y = Mathf.Max(0f, seat.Y);   // centre X/Z + square, but NEVER push the container DOWN into the ground on connect (master); only lift it up to the coil
+                            mc.GlobalPosition += seat;
                             mc.FreezeMode = RigidBody3D.FreezeModeEnum.Kinematic; mc.Freeze = true;
                             _heldOffset = mc.GlobalPosition - face; _heldAabb = WalkWorldAabb(mc); _faceAtGrab = face;
                             mc.PhysicsInterpolationMode = Node.PhysicsInterpolationModeEnum.Off;   // we drive its transform each frame -> opt OUT of global physics-interp so it renders EXACTLY under the hoist (kills the follow-lag)
@@ -199,16 +201,16 @@ namespace UnturnedGodot
         }
 
         // ---- kinematic collision: sweep the hoist(+load) box along a motion, return the safe fraction (0..1) ----
-        Aabb HoistLoadAabb()
+        // The hoist assembly as SEPARATE boxes: block, rope cage (block-top->carriage), held container. Cast each on
+        // its own and take the worst. A single MERGED AABB is huge (block high, container low) and shrinking it lifts
+        // the leading face off the real geometry -- so a descent would miss the floor and drive the load underground.
+        void AddHoistParts(List<Aabb> parts)
         {
-            Aabb a = _hoist.GlobalTransform * _hoist.GetAabb();
-            // ROPE CAGE: the 4 corner ropes run from the block top up to the carriage -- include that column so the
-            // hoist + ropes collide with the horizontal beams as one unit, not just the block (master).
+            parts.Add(_hoist.GlobalTransform * _hoist.GetAabb());
             float cx = CarriageX + _trolleyX, hy = HoistRestY - _hoistDrop;
             var cage = new Aabb(new Vector3(cx - 0.9f, hy + 0.25f, -3f), new Vector3(1.8f, Mathf.Max(0.1f, CarriageAttachY - (hy + 0.25f)), 6f));
-            a = a.Merge(GlobalTransform * cage);
-            if (_held != null && IsInstanceValid(_held)) { Aabb hb = _heldAabb; hb.Position += HoistFace - _faceAtGrab; a = a.Merge(hb); }   // the attached container is PART of the hoist -> collides as one
-            return a;
+            parts.Add(GlobalTransform * cage);   // hoist + ropes collide with the horizontal beams as one unit
+            if (_held != null && IsInstanceValid(_held)) { Aabb hb = _heldAabb; hb.Position += HoistFace - _faceAtGrab; parts.Add(hb); }   // the attached container is PART of the hoist
         }
         static Aabb WalkWorldAabb(Node n)
         {
@@ -246,10 +248,12 @@ namespace UnturnedGodot
             float safe = (r != null && r.Length > 0) ? r[0] : 1f;
             return Mathf.Clamp((safe * (len + margin) - margin) / len, 0f, 1f);
         }
-        float SafeFrac(Vector3 motion, uint mask, Godot.Collections.Array<Rid> exclude)   // the hoist(+load) box
+        float SafeFrac(Vector3 motion, uint mask, Godot.Collections.Array<Rid> exclude)   // min over the hoist parts (each leading face on its real surface)
         {
-            Aabb box = HoistLoadAabb();
-            return CastBox(box.GetCenter(), box.Size * 0.9f, Basis.Identity, motion, mask, exclude);
+            var parts = new List<Aabb>(); AddHoistParts(parts);
+            float sf = 1f;
+            foreach (var part in parts) sf = Mathf.Min(sf, CastBox(part.GetCenter(), part.Size * 0.97f, Basis.Identity, motion, mask, exclude));
+            return sf;
         }
         float SafeFracWithFrame(Vector3 motion, uint mask, Godot.Collections.Array<Rid> exclude)   // + the frame boxes: the DRIVE moves the whole gantry
         {
