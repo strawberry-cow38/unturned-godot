@@ -122,7 +122,7 @@ namespace UnturnedGodot
             {
                 float want = Mathf.Clamp(_hoistDrop + Mathf.Clamp(hoistIn, -1f, 1f) * HoistSpeed * dt, 0f, HoistMax);
                 float d = want - _hoistDrop;                       // + = drop (down)
-                _hoistDrop += d * SafeFrac(-GlobalTransform.Basis.Y * d, GroundMask, CastEx(false, false, true));   // frame + trolley left IN
+                _hoistDrop += d * SafeFrac(-GlobalTransform.Basis.Y * d, GroundMask, CastEx(true, true, true));   // exclude ALL of the crane's own colliders: the hoist travels vertically WITHIN its own structure by design (retracting up must not self-collide with the carriage). Still stops on external ground/props/containers (GroundMask, not a crane RID).
             }
             UpdateHoist();
             UpdateMagnet();
@@ -146,6 +146,7 @@ namespace UnturnedGodot
 
         // ---- hoist electromagnet: energise (Shift) -> bite a MagnetableContainer at the block face -> lift it ----
         public bool MagnetOn => _magnetOn;
+        public float HoistDrop => _hoistDrop;   // (test/telemetry)
         public void ToggleMagnet()
         {
             _magnetOn = !_magnetOn;
