@@ -111,3 +111,9 @@ Blueprints
 		Effect "84347b13028340b8976033c08675d458" // Wrench
 	}
 ]
+Ballistic_Travel 5.7
+Ballistic_Steps 80
+Bullet_Gravity_Multiplier 1.4
+Damage_Falloff_Start 34
+Damage_Falloff_End 64
+Damage_Falloff_Min 0.5

@@ -35,9 +35,15 @@ namespace UnturnedGodot.Testing
 
             // NOT everyone: a gun that declares nothing must behave exactly as before, or this change silently
             // re-balanced every weapon in the game rather than the seven 5.56s it was scoped to.
-            var colt = Def("colt");
-            T.Check($"an untouched gun has no falloff at all ({colt.FalloffAt(500f)})",
-                Mathf.IsZeroApprox(colt.FalloffStart) && Mathf.IsEqualApprox(colt.FalloffAt(500f), 1f));
+            //
+            // The subject WAS the colt, until the 2026-08-20 "balance the rest of the guns" pass gave the .45 ACP
+            // family real velocities and falloff. This control CAUGHT that, correctly and on purpose -- it is the
+            // whole reason it exists. It moved rather than being deleted, and it moved to the nailgun specifically
+            // because a nailgun is a TOOL, not a balance target: no future caliber pass will claim it, so this
+            // control cannot go stale the way the colt just did. If it ever fires, something swept the toys too.
+            var ctl = Def("nailgun");
+            T.Check($"an untouched gun has no falloff at all ({ctl.FalloffAt(500f)})",
+                Mathf.IsZeroApprox(ctl.FalloffStart) && Mathf.IsEqualApprox(ctl.FalloffAt(500f), 1f));
 
             // ---- 2. the bullet must NOT die at the old range any more
             T.Check($"the eaglefire's bullet reaches ~450 m ({ef.MuzzleVelocity * 0.02f * ef.BallisticSteps:0} m)",

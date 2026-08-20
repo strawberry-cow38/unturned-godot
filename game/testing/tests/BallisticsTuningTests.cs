@@ -93,12 +93,18 @@ namespace UnturnedGodot.Testing
             // 7.62x39, outside both the sniper pass this test guards and the 5.56 pass. When this fires, check
             // whether the AK was retuned on purpose before "fixing" it -- a stale control is a real signal that
             // the scope of a change grew, which is exactly what it caught here.
-            var ctl = Def(dir, "zubeknakov");
-            T.Check($"control: the zubeknakov was NOT retuned ({ctl.MuzzleVelocity:0} m/s, gravity {ctl.GravityMultiplier:0.##})",
-                Godot.Mathf.IsEqualApprox(ctl.MuzzleVelocity, 500f) && Godot.Mathf.IsEqualApprox(ctl.GravityMultiplier, 4f));
-            float? ctlDrop = DropAt(ctl, 200f);
-            T.Check($"...and still drops ~3 m over 200 m ({ctlDrop * 100f:0.#} cm), so gravity did not go global",
-                ctlDrop is > 2.5f and < 3.5f);
+            // ...and the subject moved AGAIN, exactly as the note above predicted it would. The zubeknakov was
+            // retuned by the 2026-08-20 "balance the rest of the guns" pass (7.62x39, AK-47, 715 m/s), so it is no
+            // longer untouched and cannot be the control. It moved to the nailgun for the same reason the
+            // gun.damage_falloff control did: a nailgun is a TOOL, not a balance target, so no caliber pass will
+            // ever claim it. This is the second time this control went stale from scope growth; the third would
+            // mean the toys got swept too, which is a real finding rather than a test to fix.
+            var ctl = Def(dir, "nailgun");
+            T.Check($"control: the nailgun was NOT retuned ({ctl.MuzzleVelocity:0} m/s, gravity {ctl.GravityMultiplier:0.##})",
+                Godot.Mathf.IsEqualApprox(ctl.GravityMultiplier, 4f) && ctl.FalloffStart <= 0f);
+            float? ctlDrop = DropAt(ctl, 20f);
+            T.Check($"...and still drops on the default gravity over 20 m ({ctlDrop * 100f:0.#} cm), so gravity did not go global",
+                ctlDrop is > 0.05f);
 
             yield break;
         }
