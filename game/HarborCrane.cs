@@ -31,9 +31,9 @@ namespace UnturnedGodot
         };
         const float WheelRadius = 0.4f;
         const float MaxSpeed = 6f, Accel = 2f, Decel = 3f;
-        const float TrolleySpeed = 12f, TrolleyMin = -52f, TrolleyMax = 30f;
+        const float TrolleySpeed = 5f, TrolleyMin = -52f, TrolleyMax = 30f;   // ~drive MaxSpeed so a/d matches w/s feel (master)
         const float CarriageX = 11.5f;      // carriage centre along the beam (local X, before the slide offset)
-        const float HoistSpeed = 6f, HoistRestY = 13f, HoistMax = 11.5f, CarriageAttachY = 14.3f;   // HoistMax lets the block reach ground level to bite a container
+        const float HoistSpeed = 5f, HoistRestY = 13f, HoistMax = 11.5f, CarriageAttachY = 14.3f;   // ~drive MaxSpeed so q/e matches w/s feel; HoistMax lets the block reach ground level
         static readonly Basis Upright = new Basis(Vector3.Right, Mathf.DegToRad(-90f));
         static readonly Vector2[] RopeCorner = { new Vector2(0.9f, 3.0f), new Vector2(0.9f, -3.0f), new Vector2(-0.9f, 3.0f), new Vector2(-0.9f, -3.0f) };
 
