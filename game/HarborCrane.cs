@@ -181,6 +181,10 @@ namespace UnturnedGodot
                         if (hit["collider"].Obj is MagnetableContainer mc && IsInstanceValid(mc))
                         {
                             mc.Freeze = false; mc.Sleeping = false;
+                            // SNAP to perfect alignment: square the container to the gantry (upright, yaw-aligned) and seat its
+                            // roof magnet-point dead-centre on the coil face, so it hangs straight + centred, not cocked at the grab angle.
+                            mc.GlobalBasis = GlobalBasis;
+                            mc.GlobalPosition += face - mc.MagnetPointWorld;
                             mc.FreezeMode = RigidBody3D.FreezeModeEnum.Kinematic; mc.Freeze = true;
                             _heldOffset = mc.GlobalPosition - face; _heldAabb = WalkWorldAabb(mc); _faceAtGrab = face;
                             mc.PhysicsInterpolationMode = Node.PhysicsInterpolationModeEnum.Off;   // we drive its transform each frame -> opt OUT of global physics-interp so it renders EXACTLY under the hoist (kills the follow-lag)
