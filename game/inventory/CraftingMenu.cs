@@ -123,7 +123,7 @@ namespace UnturnedGodot
 
             var all = BlueprintRegistry.Index();
             string q = (_search?.Text ?? "").Trim();
-            if (q.Length > 0) all = all.FindAll(bp => Title(bp).Contains(q, System.StringComparison.OrdinalIgnoreCase));
+            if (q.Length > 0) all = all.FindAll(bp => Matches(bp, q));
 
             var real = new List<BlueprintDef>();
             var dyes = new List<BlueprintDef>();
@@ -154,6 +154,24 @@ namespace UnturnedGodot
             if (_sel == null || !all.Contains(_sel)) _sel = real.Count > 0 ? real[0] : (dyes.Count > 0 ? dyes[0] : null);
             ShowDetail(inv);
         }
+
+        /// <summary>Search matches the OUTPUT name or any INGREDIENT name. Title-only search answers "where is
+        /// the recipe for X", which you can already find by scrolling; matching ingredients answers "what can I do
+        /// with the metal scrap I'm carrying", which is the question you actually have standing in front of a
+        /// workbench with a bag full of junk. Skill name too, so "Craftsman" pulls up the whole gated set.</summary>
+        static bool Matches(BlueprintDef bp, string q)
+        {
+            if (Title(bp).Contains(q, System.StringComparison.OrdinalIgnoreCase)) return true;
+            if (!string.IsNullOrEmpty(bp.Skill) && bp.Skill.Contains(q, System.StringComparison.OrdinalIgnoreCase)) return true;
+            foreach (var ing in bp.Inputs)
+            {
+                var a = Assets.findByGuid(ing.Guid);
+                if (a?.itemName != null && a.itemName.Contains(q, System.StringComparison.OrdinalIgnoreCase)) return true;
+            }
+            return false;
+        }
+
+        public static bool MatchesForTest(BlueprintDef bp, string q) => Matches(bp, q);   // test hook -- the SAME predicate the list filters on, not a copy
 
         Control Row(BlueprintDef bp, Crafting.IInv inv)
         {

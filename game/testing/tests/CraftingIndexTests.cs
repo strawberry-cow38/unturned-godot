@@ -91,6 +91,34 @@ namespace UnturnedGodot.Testing
             }
             T.Check($"every indexed recipe resolves a real name ({untitled} unnamed)", untitled == 0);
 
+            // SEARCH MATCHES INGREDIENTS, not just the output name. Asserted because the useful query at a
+            // workbench is "what can I do with this scrap", and a title-only search silently answers a different
+            // question -- it would still LOOK like a working search box.
+            var idx2 = BlueprintRegistry.Index();
+            BlueprintDef withNamedIngredient = null;
+            string ingName = null;
+            foreach (var bp in idx2)
+            {
+                foreach (var ing in bp.Inputs)
+                {
+                    var a = Assets.findByGuid(ing.Guid);
+                    // pick an ingredient whose name does NOT appear in the output name, or the check cannot tell
+                    // ingredient-matching from title-matching.
+                    if (a?.itemName is { Length: > 3 } n && !CraftingMenu.Title(bp).Contains(n, System.StringComparison.OrdinalIgnoreCase))
+                    { withNamedIngredient = bp; ingName = n; break; }
+                }
+                if (withNamedIngredient != null) break;
+            }
+            T.Check($"found a recipe whose ingredient name differs from its output ({CraftingMenu.Title(withNamedIngredient ?? idx2[0])} <- {ingName ?? "?"})",
+                withNamedIngredient != null);
+            if (withNamedIngredient != null)
+            {
+                T.Check($"searching an INGREDIENT name finds the recipe (\"{ingName}\" -> {CraftingMenu.Title(withNamedIngredient)})",
+                    CraftingMenu.MatchesForTest(withNamedIngredient, ingName));
+                T.Check($"...and a string in neither the output nor any ingredient does NOT match",
+                    !CraftingMenu.MatchesForTest(withNamedIngredient, "zzqqxx"));
+            }
+
             yield break;
         }
     }
