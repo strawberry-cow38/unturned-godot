@@ -69,14 +69,17 @@ def convert(cl):
     return {"fps": fps, "length": length, "tracks": tracks, "loop": False}
 
 rig = json.load(open(RIG))
-for gun in ("eaglefire", "maplestrike", "masterkey"):
+guns = [l.strip().split("\t")[0] for l in open(os.path.join(os.path.dirname(RIG), "guns_visual.tsv")) if l.strip()]
+got, missing = 0, []
+for gun in guns:
     cap = gun[0].upper() + gun[1:]
+    any_clip = False
     for clip, label in (("Attach_Start", cap + "_AttachStart"), ("Attach_Stop", cap + "_AttachStop")):
         cl = find_clip(gun, clip)
         if not cl:
-            print("NO", clip, "for", gun); continue
-        c = convert(cl)
-        rig["anims"][label] = c
-        print(f"{label}: len={c['length']:.3f}s tracks={len(c['tracks'])}")
+            continue
+        rig["anims"][label] = convert(cl); got += 1; any_clip = True
+    if not any_clip: missing.append(gun)
+print(f"Attach: {got} clips over {len(guns)} guns; no-attach: {missing}")
 json.dump(rig, open(RIG, "w"))
 print("rig.json updated bytes:", os.path.getsize(RIG))
