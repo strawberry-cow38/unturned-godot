@@ -14,6 +14,7 @@ namespace UnturnedGodot
         float _steerTarget, _steerAngle, _steerTurnSpeed = 70f;   // steering smoothing: MoveTowards target at deg/s. LOWERED for a weighty/laggy feel -- the wheels float behind the input, slow to turn AND slow to re-center (master)
         WaterMode _water; Vector3[] _buoys; float _inThrottle, _inSteer; int _waterFrame;   // BOAT/AMPHIBIOUS: water mode + hull buoyancy VOXELS + the last drive input (water propulsion runs in _PhysicsProcess)
         WakeTrail _wake;   // foam wake ribbon (lazy: created when the hull is first afloat)
+        float _bowLocalZ;   // MEASURED hull bow-tip Z in local space -> the wake triangle's apex
         float _waveAmp = 0.1f;                                  // sea-surface ripple amplitude for THIS hull
         bool _steadyHull;                                       // hold her still: extra heave damping (Spec.SteadyHull)
         Vector3 _deckVolume, _deckCenter;                       // MOVING DECK: the carry box (local space); Zero = not a carrier
@@ -3716,6 +3717,7 @@ namespace UnturnedGodot
                 v.MaxContactsReported = 32;
             }
             v._water = s.Water;   // BOAT/AMPHIBIOUS: voxelize the hull box for the source Buoyancy.cs voxel-Archimedes model
+            v._bowLocalZ = s.BoxCenter.Z - s.BoxSize.Z * 0.5f;   // bow tip = front of the measured hull box along local -Z (Godot forward)
             if (s.Water != WaterMode.Car)
             {
                 int slices = s.BuoySlices > 0 ? s.BuoySlices : 2;   // source Buoyancy.slicesPerAxis default -> 2x2x2 = 8 voxels; per-spec for hulls the source's 2 cannot resolve
@@ -6544,15 +6546,13 @@ namespace UnturnedGodot
             bool active = _afloat && _buoys != null;
             if (active && _wake == null)
             {
-                float hb = 2f, hl = 2f;
-                foreach (var bp in _buoys) { hb = Mathf.Max(hb, Mathf.Abs(bp.X)); hl = Mathf.Max(hl, Mathf.Abs(bp.Z)); }
-                _wake = new WakeTrail { HalfWidth = hb * 1.5f, BowOffset = hl * 1.15f };   // wider than the hull beam so the foam peeks out along her sides; anchor at the bow tip
+                _wake = new WakeTrail();
                 AddChild(_wake);   // TopLevel child -> world-space, but freed with the vehicle
             }
             if (_wake != null)
             {
                 float wspd = active ? new Vector3(LinearVelocity.X, 0f, LinearVelocity.Z).Length() : 0f;
-                _wake.Push(GetGlobalTransformInterpolated(), Terrain.SeaLevelY, wspd, (float)delta);   // speed 0 when not making way -> the trail just ages out
+                _wake.Push(GetGlobalTransformInterpolated(), _bowLocalZ, Terrain.SeaLevelY, wspd, (float)delta);   // apex at the MEASURED bow tip; speed 0 -> the trail just ages out
             }
         }
 
