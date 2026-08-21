@@ -20,6 +20,8 @@ namespace UnturnedGodot
         Vector3[] _swampBuoys; bool _swamped; float _swampTime;   // hull voxels (WHEELED vehicles only), in-water latch, seconds since it went in
         public bool Swamped => _swamped;                          // read by vehicle.water_swamp
         public float SwampTime => _swampTime;
+        WakeTrail _wake;   // foam wake ribbon (lazy: created when the hull is first afloat)
+        float _bowLocalZ;   // MEASURED hull bow-tip Z in local space -> the wake triangle's apex
         float _waveAmp = 0.1f;                                  // sea-surface ripple amplitude for THIS hull
         bool _steadyHull;                                       // hold her still: extra heave damping (Spec.SteadyHull)
         Vector3 _deckVolume, _deckCenter;                       // MOVING DECK: the carry box (local space); Zero = not a carrier
@@ -3722,6 +3724,7 @@ namespace UnturnedGodot
                 v.MaxContactsReported = 32;
             }
             v._water = s.Water;   // BOAT/AMPHIBIOUS: voxelize the hull box for the source Buoyancy.cs voxel-Archimedes model
+            v._bowLocalZ = s.BoxCenter.Z - s.BoxSize.Z * 0.5f;   // bow tip = front of the measured hull box along local -Z (Godot forward)
             if (s.Water != WaterMode.Car)
             {
                 int slices = s.BuoySlices > 0 ? s.BuoySlices : 2;   // source Buoyancy.slicesPerAxis default -> 2x2x2 = 8 voxels; per-spec for hulls the source's 2 cannot resolve
@@ -6610,6 +6613,25 @@ namespace UnturnedGodot
                 var damping = -pv * 0.1f * Mass;   // same coefficient as the hull model at 8 voxels
                 float subFactor = Mathf.Sqrt(Mathf.Clamp((seaY - worldPoint.Y) / (2f * _voxelHalfHeight) + 0.5f, 0f, 1f));
                 ApplyForce(damping + subFactor * archPerVoxel, worldPoint - GlobalPosition);
+            }
+        }
+
+        // foam wake on the RENDER frame: drive it from the INTERPOLATED hull pose so the leading
+        // foam stays glued to the visually-rendered ship. Building it off the raw 50Hz physics pose
+        // lags/jitters a step behind her -- the same interp trap as the flatbed container rider.
+        public override void _Process(double delta)
+        {
+            if (_water == WaterMode.Car) return;
+            bool active = _afloat && _buoys != null;
+            if (active && _wake == null)
+            {
+                _wake = new WakeTrail();
+                AddChild(_wake);   // TopLevel child -> world-space, but freed with the vehicle
+            }
+            if (_wake != null)
+            {
+                float wspd = active ? new Vector3(LinearVelocity.X, 0f, LinearVelocity.Z).Length() : 0f;
+                _wake.Push(GetGlobalTransformInterpolated(), _bowLocalZ, Terrain.SeaLevelY, wspd, (float)delta);   // apex at the MEASURED bow tip; speed 0 -> the trail just ages out
             }
         }
 
