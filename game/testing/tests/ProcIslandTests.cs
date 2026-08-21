@@ -146,6 +146,66 @@ namespace UnturnedGodot.Testing
             T.Check($"...and the ground under them is actually level (worst spread {worstSpread:0.##} m across a footprint)",
                 worstSpread < 3.5f);
 
+            // ---- MONUMENT NETWORK (strawberry: "monuments can have road/trail(dirt road)/rail connections
+            // between them. make em make sense").
+            var links = ProcIsland.BuildLinks(pois);
+            var cons = ProcIsland.BuildConnectors(pois, links);
+
+            // EVERY monument reachable. A link list that looks reasonable can still leave one stranded, and a
+            // stranded monument is a place with no way in -- which no count of links would show.
+            var seen = new System.Collections.Generic.HashSet<int> { 0 };
+            for (int pass = 0; pass < pois.Count; pass++)
+                foreach (var l in links)
+                {
+                    if (seen.Contains(l.A)) seen.Add(l.B);
+                    if (seen.Contains(l.B)) seen.Add(l.A);
+                }
+            var netDesc = new System.Text.StringBuilder();
+            foreach (var l in links) netDesc.Append($"{l.Kind} {pois[l.A].Kind}<->{pois[l.B].Kind} {l.Length:0}m; ");
+            // PRINTED, not just embedded in a check message. A T.Check's text is only shown when it FAILS, so
+            // putting the network description there made it readable exactly when the network was already known
+            // to be broken -- useless for the thing it was added for, which is reading a HEALTHY network to see
+            // whether the road/trail/rail choices make sense.
+            GD.Print($"[island] {pois.Count} monuments, {links.Count} links: {netDesc}");
+            foreach (var q in pois) GD.Print($"[island]   {q}");
+            T.Check($"the network reaches every monument ({seen.Count}/{pois.Count}) -- {netDesc}",
+                seen.Count == pois.Count);
+
+            T.Check($"...and each link has a gate at BOTH ends ({cons.Count} gates for {links.Count} links)",
+                cons.Count == links.Count * 2);
+
+            // GATES SIT ON THE EDGE. Chebyshev distance from the centre must equal HalfSize exactly -- a gate
+            // computed radially lands OUTSIDE the pad on the diagonals (a corner is 1.41x further out than an
+            // edge midpoint), leaving a gap between a monument and its own road that nothing else would catch.
+            float worstOff = 0f; bool allOutward = true;
+            foreach (var gate in cons)
+            {
+                var owner = pois[gate.Poi];
+                float cheb = Mathf.Max(Mathf.Abs(gate.X - owner.X), Mathf.Abs(gate.Z - owner.Z));
+                worstOff = Mathf.Max(worstOff, Mathf.Abs(cheb - owner.HalfSize));
+                // ...and facing OUT, or the path stage starts by driving into the monument it just left.
+                if ((gate.X - owner.X) * gate.DirX + (gate.Z - owner.Z) * gate.DirZ <= 0f) allOutward = false;
+            }
+            T.Check($"...every gate lies ON its monument's edge (worst off-edge {worstOff:0.###} m)", worstOff < 0.01f);
+            T.Check("...and every gate faces outward, away from its own monument", allOutward);
+
+            // THE RULES MAKE SENSE. Asserted as rules rather than as a tally: "3 trails" is true of a run that
+            // paved a route to a construction site and dirt-tracked one between two towns.
+            bool siteAlwaysTrail = true, railOnlyLongAndPermanent = true, railExists = false;
+            foreach (var l in links)
+            {
+                bool touchesSite = pois[l.A].Kind == ProcIsland.PoiKind.ConstructionSite
+                                || pois[l.B].Kind == ProcIsland.PoiKind.ConstructionSite;
+                if (touchesSite && l.Kind != ProcIsland.LinkKind.Trail) siteAlwaysTrail = false;
+                if (l.Kind == ProcIsland.LinkKind.Rail)
+                {
+                    railExists = true;
+                    if (touchesSite || l.Length <= 900f) railOnlyLongAndPermanent = false;
+                }
+            }
+            T.Check("a construction site is always reached by a dirt trail, never a paved road", siteAlwaysTrail);
+            T.Check($"rail only runs long hauls between permanent places (any rail: {railExists})", railOnlyLongAndPermanent);
+
             // UG_ISLAND_PNG=<path>: dump a preview so the shape can be LOOKED at. Every check above is a
             // statistic, and a plausible land fraction with a closed coast still describes shapes nobody wants
             // -- a ring, a starfish, four blobs. Gated, so a normal run pays nothing.
@@ -187,6 +247,36 @@ namespace UnturnedGodot.Testing
                     }
                     Box(rIn, tint);
                     Box(rOut, tint * 0.45f);
+                }
+                foreach (var gate in cons)
+                {
+                    int gx = Mathf.RoundToInt(gate.X / 4f), gy = Mathf.RoundToInt(gate.Z / 4f);
+                    for (int ox = -1; ox <= 1; ox++)
+                        for (int oy = -1; oy <= 1; oy++)
+                        {
+                            int px = gx + ox, py = gy + oy;
+                            if (px >= 0 && py >= 0 && px < gw && py < gh) img.SetPixel(px, py, new Color(1f, 0.1f, 0.9f));
+                        }
+                }
+                // Links drawn UNDER the monument boxes: road white-ish, trail brown, rail grey with sleepers,
+                // so the type is readable at a glance rather than needing the log alongside the picture.
+                foreach (var l in links)
+                {
+                    var pa = pois[l.A]; var pb = pois[l.B];
+                    var lc = l.Kind == ProcIsland.LinkKind.Road ? new Color(0.92f, 0.92f, 0.88f)
+                           : l.Kind == ProcIsland.LinkKind.Trail ? new Color(1f, 0.55f, 0.05f)   // brown-on-olive
+                                 // was unreadable against the terrain -- a preview I cannot read is not an
+                                 // instrument, and I could not tell whether the trails had been drawn at all.
+                           : new Color(0.20f, 0.20f, 0.24f);
+                    int steps = Mathf.CeilToInt(l.Length / 4f) * 2;
+                    for (int t = 0; t <= steps; t++)
+                    {
+                        float f = t / (float)steps;
+                        if (l.Kind == ProcIsland.LinkKind.Rail && (t / 3) % 2 == 0) continue;   // sleeper dashes
+                        int px = Mathf.RoundToInt(Mathf.Lerp(pa.X, pb.X, f) / 4f);
+                        int py = Mathf.RoundToInt(Mathf.Lerp(pa.Z, pb.Z, f) / 4f);
+                        if (px >= 0 && py >= 0 && px < gw && py < gh) img.SetPixel(px, py, lc);
+                    }
                 }
                 img.SavePng(png);
                 GD.Print($"[island] preview -> {png}  ({gw}x{gh})");

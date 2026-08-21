@@ -352,5 +352,160 @@ namespace UnturnedGodot
                     grid[x, y] = Mathf.Lerp(src[x, y], sum / n, strength);
                 }
         }
+
+        // ------------------------------------------------------- MONUMENT LINKS
+
+        /// <summary>What runs between two monuments. Paved road for permanent places, dirt trail whenever a
+        /// construction site is an end (a site is temporary -- nobody lays asphalt to one), rail only for long
+        /// hauls between towns and bases, which is where rail earns its keep over a road.</summary>
+        public enum LinkKind { Road, Trail, Rail }
+
+        public readonly struct Link
+        {
+            public readonly int A, B; public readonly LinkKind Kind; public readonly float Length;
+            public Link(int a, int b, LinkKind k, float len) { A = a; B = b; Kind = k; Length = len; }
+        }
+
+        /// <summary>A gate on a monument's perimeter: where a link meets it, and which way it faces. Position is
+        /// ON the square's edge and Dir points OUT of it, so the path stage has a start point and a heading
+        /// without having to re-derive either from the geometry.</summary>
+        public readonly struct Connector
+        {
+            public readonly int Poi, Link; public readonly float X, Z, DirX, DirZ; public readonly LinkKind Kind;
+            public Connector(int poi, int link, float x, float z, float dx, float dz, LinkKind k)
+            { Poi = poi; Link = link; X = x; Z = z; DirX = dx; DirZ = dz; Kind = k; }
+            public override string ToString() => $"{Kind} gate on #{Poi} at ({X:0},{Z:0}) facing ({DirX:0.##},{DirZ:0.##})";
+        }
+
+        static LinkKind KindFor(PoiKind a, PoiKind b, float length)
+        {
+            // A construction site is temporary, so whatever reaches it is a dirt trail regardless of what sits
+            // at the other end. Checked FIRST: a town-to-site link is a trail, not a road, and ordering this
+            // after the town rule would have quietly paved every one of them.
+            if (a == PoiKind.ConstructionSite || b == PoiKind.ConstructionSite) return LinkKind.Trail;
+            // Rail only between permanent places AND only when it is worth laying: a 300 m railway between two
+            // neighbouring towns is not a railway, it is a siding. Threshold in metres so it does not change
+            // meaning at another map size.
+            if (length > 900f) return LinkKind.Rail;
+            return LinkKind.Road;
+        }
+
+        /// <summary>Which monuments connect to which.
+        ///
+        /// TWO TIERS, because a purely distance-based spanning tree connects everything and still reads wrong.
+        /// Measured on the first run: the military base's only tree link was a 184 m DIRT TRAIL to a building
+        /// site, and its road to town existed only as the spare loop edge. Connected, but backwards -- so the
+        /// spine is built over the PERMANENT places (towns and bases) alone, and construction sites are then
+        /// hung off it as spurs. That is the order real infrastructure happens in: the road joins the
+        /// settlements, and the temporary site gets a track to the nearest one.
+        ///
+        /// Deterministic: the POI list is already in a seed-stable order and this only sorts and compares.</summary>
+        public static System.Collections.Generic.List<Link> BuildLinks(System.Collections.Generic.List<Poi> pois)
+        {
+            var links = new System.Collections.Generic.List<Link>();
+            int n = pois.Count;
+            if (n < 2) return links;
+
+            static float Dist(Poi a, Poi b)
+            {
+                float dx = a.X - b.X, dz = a.Z - b.Z;
+                return Mathf.Sqrt(dx * dx + dz * dz);
+            }
+
+            var permanent = new System.Collections.Generic.List<int>();
+            var temporary = new System.Collections.Generic.List<int>();
+            for (int i = 0; i < n; i++)
+                (pois[i].Kind == PoiKind.ConstructionSite ? temporary : permanent).Add(i);
+
+            // A map with no permanent places at all still has to join up, so the spine falls back to everything.
+            var spine = permanent.Count >= 2 ? permanent : new System.Collections.Generic.List<int>(temporary);
+
+            // --- tier 1: the spine, Prim's over the permanent places.
+            if (spine.Count >= 2)
+            {
+                var inTree = new System.Collections.Generic.HashSet<int> { spine[0] };
+                while (inTree.Count < spine.Count)
+                {
+                    float best = float.MaxValue; int bi = -1, bj = -1;
+                    foreach (int i in spine)
+                    {
+                        if (!inTree.Contains(i)) continue;
+                        foreach (int j in spine)
+                        {
+                            if (inTree.Contains(j)) continue;
+                            float d = Dist(pois[i], pois[j]);
+                            if (d < best) { best = d; bi = i; bj = j; }
+                        }
+                    }
+                    if (bj < 0) break;
+                    inTree.Add(bj);
+                    links.Add(new Link(bi, bj, KindFor(pois[bi].Kind, pois[bj].Kind, best), best));
+                }
+
+                // One extra spine edge so the road network has a loop -- a map where every journey has exactly
+                // one possible route reads as generated. Only worth it once there are 3+ places to loop between.
+                if (spine.Count >= 3)
+                {
+                    float xb = float.MaxValue; int xi = -1, xj = -1;
+                    foreach (int i in spine)
+                        foreach (int j in spine)
+                        {
+                            if (j <= i) continue;
+                            bool already = false;
+                            foreach (var l in links) if ((l.A == i && l.B == j) || (l.A == j && l.B == i)) { already = true; break; }
+                            if (already) continue;
+                            float d = Dist(pois[i], pois[j]);
+                            if (d < xb) { xb = d; xi = i; xj = j; }
+                        }
+                    if (xi >= 0) links.Add(new Link(xi, xj, KindFor(pois[xi].Kind, pois[xj].Kind, xb), xb));
+                }
+            }
+
+            // --- tier 2: every construction site gets ONE trail, to its nearest spine member. A spur, not part
+            // of the network -- nothing should route THROUGH a building site to get somewhere else.
+            foreach (int t in temporary)
+            {
+                if (spine.Contains(t)) continue;   // the no-permanent-places fallback already joined it
+                float best = float.MaxValue; int bj = -1;
+                foreach (int j in spine)
+                {
+                    float d = Dist(pois[t], pois[j]);
+                    if (d < best) { best = d; bj = j; }
+                }
+                if (bj >= 0) links.Add(new Link(t, bj, KindFor(pois[t].Kind, pois[bj].Kind, best), best));
+            }
+            return links;
+        }
+
+        /// <summary>Put a gate on each end of every link, on the perimeter, facing its partner.</summary>
+        public static System.Collections.Generic.List<Connector> BuildConnectors(
+            System.Collections.Generic.List<Poi> pois, System.Collections.Generic.List<Link> links)
+        {
+            var cons = new System.Collections.Generic.List<Connector>();
+            for (int li = 0; li < links.Count; li++)
+            {
+                var l = links[li];
+                cons.Add(Gate(pois, l.A, l.B, li, l.Kind));
+                cons.Add(Gate(pois, l.B, l.A, li, l.Kind));
+            }
+            return cons;
+        }
+
+        /// <summary>Where a ray from `from`'s centre toward `to`'s centre leaves `from`'s square.</summary>
+        static Connector Gate(System.Collections.Generic.List<Poi> pois, int from, int to, int link, LinkKind kind)
+        {
+            var a = pois[from]; var b = pois[to];
+            float dx = b.X - a.X, dz = b.Z - a.Z;
+            float len = Mathf.Sqrt(dx * dx + dz * dz);
+            if (len < 1e-3f) return new Connector(from, link, a.X + a.HalfSize, a.Z, 1f, 0f, kind);
+            dx /= len; dz /= len;
+            // Slab clip against the AXIS-ALIGNED square, not a circle at HalfSize: the gate must sit on the edge
+            // the road actually crosses. A radial offset would put it OUTSIDE the pad on the diagonals (a corner
+            // is 1.41x further out than an edge) and leave a gap between the monument and its own road.
+            float tx = Mathf.Abs(dx) > 1e-6f ? a.HalfSize / Mathf.Abs(dx) : float.MaxValue;
+            float tz = Mathf.Abs(dz) > 1e-6f ? a.HalfSize / Mathf.Abs(dz) : float.MaxValue;
+            float t = Mathf.Min(tx, tz);
+            return new Connector(from, link, a.X + dx * t, a.Z + dz * t, dx, dz, kind);
+        }
     }
 }

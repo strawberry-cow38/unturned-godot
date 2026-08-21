@@ -173,6 +173,14 @@ void fragment() {
         /// <summary>Replace this terrain's heights with a generated island and rebuild the meshes. Operates on
         /// the SAME grid the sculpt brushes edit, so the result is immediately hand-editable and saves through
         /// SaveHeightmap like any other map -- generation is a starting point, not a separate kind of map.</summary>
+        /// <summary>The last generated network: which monuments join to which, and the gates on their edges.
+        /// Held here rather than returned so the road/rail stages can pick them up without the caller having to
+        /// thread them through -- they are read-only outputs of the same generate.</summary>
+        public System.Collections.Generic.List<ProcIsland.Link> IslandLinks => _islandLinks;
+        public System.Collections.Generic.List<ProcIsland.Connector> IslandConnectors => _islandConnectors;
+        System.Collections.Generic.List<ProcIsland.Link> _islandLinks = new();
+        System.Collections.Generic.List<ProcIsland.Connector> _islandConnectors = new();
+
         public System.Collections.Generic.List<ProcIsland.Poi> GenerateIsland(int seed)
         {
             var none = new System.Collections.Generic.List<ProcIsland.Poi>();
@@ -183,6 +191,8 @@ void fragment() {
             // choose somewhere buildable, then rewrite them to flatten their pads. Returned rather than stored
             // because the caller is what knows where they need to go next (the road/building stages read these).
             var pois = ProcIsland.PlacePois(_grid, _gw, _gh, pars);
+            _islandLinks = ProcIsland.BuildLinks(pois);
+            _islandConnectors = ProcIsland.BuildConnectors(pois, _islandLinks);
             RebuildAll();
             return pois;
         }
