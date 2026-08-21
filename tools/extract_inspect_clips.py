@@ -71,13 +71,14 @@ def convert(cl):
     return {"fps": fps, "length": length, "tracks": tracks, "loop": False}
 
 rig = json.load(open(RIG))
-for gun, label in (("eaglefire", "Eaglefire_Inspect"), ("maplestrike", "Maplestrike_Inspect"), ("masterkey", "Masterkey_Inspect")):
+guns = [l.strip().split("\t")[0] for l in open(os.path.join(os.path.dirname(RIG), "guns_visual.tsv")) if l.strip()]
+got, missing = 0, []
+for gun in guns:
     cl = find_clip(gun, "Inspect")
     if not cl:
-        print("NO Inspect for", gun); continue
-    c = convert(cl)
-    rig["anims"][label] = c
-    nt = len(c["tracks"]); nr = sum(len(t.get("rot", [])) for t in c["tracks"].values())
-    print(f"{label}: len={c['length']:.3f}s fps={c['fps']:.0f} tracks={nt} rotkeys={nr} bones={sorted(c['tracks'])[:6]}")
+        missing.append(gun); continue
+    cap = gun[0].upper() + gun[1:]   # match Viewmodel capGun = char.ToUpper(GunName[0]) + rest
+    rig["anims"][cap + "_Inspect"] = convert(cl); got += 1
+print(f"Inspect: {got}/{len(guns)} guns; no-clip: {missing}")
 json.dump(rig, open(RIG, "w"))
 print("rig.json updated bytes:", os.path.getsize(RIG))
