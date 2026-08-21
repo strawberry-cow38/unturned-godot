@@ -56,6 +56,7 @@ namespace UnturnedGodot
         bool _vmAttach; AttachmentMenu _am; bool _vmSightSet;   // --attach : hold the T attachment menu open for the render; UG_SIGHT=<mesh.txt> mounts a specific sight/scope for a demo
         bool _vehTest; Vehicle _veh; Camera3D _vehCam; int _vehVariant; bool _night, _demo, _crash, _roadkill, _chain, _hitch, _backunder, _pivots; Vehicle _buTrailer; int _buCoupledFrame = 999999;   // --vehicle=DIR [--variant=N] [--night] [--demo] [--crash] [--roadkill] [--chain] [--hitch] [--backunder] [--pivots]
         bool _planeTest;   // UG_PLANETEST (with --boattest --gun=otter): scripted fixed-wing flight (throttle/pitch/roll injected) to verify the flight model in a render
+        bool _heliTest;    // UG_HELITEST (with --vehicle --gun=minicopter|huey): scripted ROTARY flight -- see the loop in _PhysicsProcess for why this exists
         System.Collections.Generic.List<Vector3> _trP; System.Collections.Generic.List<float> _trD;
         System.Collections.Generic.List<(MeshInstance3D body, MeshInstance3D bf, MeshInstance3D bb, float off)> _trUnits;
         float _trS, _trRailY = 1.4f; bool _trAnim;
@@ -1308,6 +1309,30 @@ namespace UnturnedGodot
             _vehCam = new Camera3D { Current = true, Fov = 60f };
             _vehCam.CullMask &= ~OutlineOverlay.OutlineLayer;   // the mask cam renders the vehicle silhouette, not this one
             AddChild(_vehCam);
+
+            // UG_HELITEST=1 (with --vehicle=DIR --gun=minicopter|scoutcopter|huey|hind|orca):
+            // SCRIPTED ROTARY FLIGHT. Every other render mode drives a ground vehicle or a boat, so until this
+            // existed NOTHING in the harness could fly a helicopter -- DriveHeli was reachable only from the L1
+            // tests and from a human at the stick. That is why the minicopter was flight-tested by hand for a
+            // whole night: there was no other way to SEE it move. A physics change could pass every test and
+            // still look wrong, and nobody would find out until someone flew it.
+            //
+            // Driven off the aircraft's own STATE rather than a frame count, same as UG_PLANETEST: altitude and
+            // speed decide the phase, so the flight is identical at any --fixed-fps and the clip does not
+            // desync from the physics when the capture rate changes.
+            if (System.Environment.GetEnvironmentVariable("UG_HELITEST") == "1" && _veh != null && _veh.IsHeli)
+            {
+                _heliTest = true; _vehTest = false;
+                GetWindow().Size = new Vector2I(1280, 720);
+                _veh.EngineOn = true; _veh.DebugInstantStart = true; _veh.SpawnRotorRunning();   // skip the spool-up: the clip is about FLIGHT
+                _veh.DebugNoTurbulence = System.Environment.GetEnvironmentVariable("UG_HELITURB") != "1";   // steady by default; UG_HELITURB=1 to show the turbulence model
+                _veh.Position = new Vector3(0f, 0.9f, 0f);
+                _veh.ResetPhysicsInterpolation();   // or frame 1 smears in from the origin
+                // Long enough to climb out, translate, and come round -- render at --fixed-fps 50 to match the
+                // 50 Hz physics tick so every movie frame is exactly one tick (no 30/50 sampling judder).
+                _rigCaptureFrames = new[] { 40, 150, 300, 450, 600, 750 };
+            }
+
             if (!string.IsNullOrEmpty(System.Environment.GetEnvironmentVariable("UG_VFOCUS")))   // preview the vehicle look-at outline + info panel
             {
                 AddChild(new OutlineOverlay());
@@ -6903,6 +6928,61 @@ namespace UnturnedGodot
                     }
                     foreach (var (mark, veh, local) in _pivotMarks)
                         if (IsInstanceValid(mark) && IsInstanceValid(veh)) mark.GlobalPosition = veh.ToGlobal(local);
+                }
+                else if (_heliTest && _veh != null)
+                {
+                    // SCRIPTED ROTARY FLIGHT, phased off the aircraft's own STATE (altitude / forward speed), not
+                    // off a frame count -- so the same script flies identically at any --fixed-fps and the clip
+                    // cannot desync from the physics when the capture rate changes.
+                    //
+                    //   climb   -> full collective until it is up at height
+                    //   cruise  -> trim collective toward hover, nose down to translate forward
+                    //   circle  -> hold a gentle right bank + yaw so it comes round in view of the camera
+                    //
+                    // The collective is a proportional hold on TARGET ALTITUDE rather than a fixed number,
+                    // because "the number that hovers" is exactly what a physics change moves -- hard-coding it
+                    // would make this render show a climb or a descent after any retune and look like a bug in
+                    // the flight model rather than in the script.
+                    var hb = _veh.GlobalTransform.Basis;
+                    float altH = _veh.GlobalPosition.Y;
+                    var velH = _veh.LinearVelocity;
+                    float fwdSpd = velH.Dot(-hb.Z);
+                    float targetAlt = 26f;
+                    float noseDeg = Mathf.RadToDeg(Mathf.Asin(Mathf.Clamp(-hb.Z.Y, -1f, 1f)));
+                    float rollDeg = Mathf.RadToDeg(Mathf.Asin(Mathf.Clamp(hb.X.Y, -1f, 1f)));
+
+                    // collective: proportional to the altitude error, damped by vertical speed so it settles
+                    // instead of porpoising (the same shape as the trim damping on the ship).
+                    float altErr = targetAlt - altH;
+                    float coll = Mathf.Clamp(altErr * 0.22f - velH.Y * 0.30f, -1f, 1f);
+
+                    float pitchIn = 0f, rollIn = 0f, yawIn = 0f;
+                    if (altH > targetAlt * 0.65f)
+                    {
+                        // nose down to about 12 deg to translate, holding it there rather than commanding a rate
+                        pitchIn = Mathf.Clamp((-12f - noseDeg) * 0.05f, -0.35f, 0.35f);
+                        if (fwdSpd > 12f)
+                        {   // up to speed -> bank right and feed yaw with it, so it CIRCLES in frame rather than
+                            // flying off to the horizon and leaving the camera looking at empty sky
+                            rollIn = Mathf.Clamp((18f - rollDeg) * 0.05f, -0.4f, 0.4f);
+                            yawIn = 0.25f;
+                        }
+                    }
+                    _veh.DriveHeli(coll, yawIn, pitchIn, rollIn, delta);
+
+                    if (_frame % 120 == 0)
+                        GD.Print($"[helitest] t={_frame} alt={altH:0.0}m fwd={fwdSpd:0.0}m/s vy={velH.Y:+0.0;-0.0;0.0} nose={noseDeg:+0.0;-0.0;0.0}deg roll={rollDeg:+0.0;-0.0;0.0}deg coll={coll:0.00}");   // 3rd section = ZERO: without it a -0.0 renders as "-+0.0"
+
+                    if (_vehCam != null)
+                    {   // chase cam with a WORLD-UP basis: it follows position and heading but never rolls with the
+                        // airframe, so a bank reads as the aircraft banking rather than the world tilting.
+                        var ht = _veh.GetGlobalTransformInterpolated();
+                        var fwdH = -ht.Basis.Z; fwdH.Y = 0f;
+                        fwdH = fwdH.LengthSquared() > 0.001f ? fwdH.Normalized() : Vector3.Forward;
+                        _vehCam.GlobalPosition = ht.Origin - fwdH * 11f + Vector3.Up * 4.5f;
+                        _vehCam.LookAt(ht.Origin + fwdH * 3f, Vector3.Up);
+                    }
+                    return;
                 }
                 else if (_planeTest && _veh != null)
                 {
