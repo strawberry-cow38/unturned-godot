@@ -51,10 +51,10 @@ Resource_Damage 15
 Object_Damage 25
 Ballistic_Travel 18.8
 Bullet_Gravity_Multiplier 1.4
-Ballistic_Steps 24
+Ballistic_Steps 112
 Damage_Falloff_Start 113
 Damage_Falloff_End 212
-Damage_Falloff_Min 0.5
+Damage_Falloff_Min 0.65
 
 Durability 1
 Wear 3
