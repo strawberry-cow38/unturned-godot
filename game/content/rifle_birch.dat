@@ -28,28 +28,33 @@ Firerate 50
 Action Bolt
 Shell_Reload 1
 
-Player_Damage 80
+Damage 20
 Player_Leg_Multiplier 0.6
 Player_Arm_Multiplier 0.6
 Player_Spine_Multiplier 0.8
 Player_Skull_Multiplier 1.1
 
-Zombie_Damage 99
 Zombie_Leg_Multiplier 0.3
 Zombie_Arm_Multiplier 0.3
 Zombie_Spine_Multiplier 0.6
 Zombie_Skull_Multiplier 1.1
 
-Animal_Damage 99
+Animal_Damage 40
 Animal_Leg_Multiplier 0.6
 Animal_Spine_Multiplier 0.8
 Animal_Skull_Multiplier 1.1
 
-Barricade_Damage 15
-Structure_Damage 10
-Vehicle_Damage 20
-Resource_Damage 10
-Object_Damage 20
+Barricade_Damage 20
+Structure_Damage 15
+Vehicle_Damage 35
+Resource_Damage 15
+Object_Damage 25
+Ballistic_Travel 18.8
+Bullet_Gravity_Multiplier 1.4
+Ballistic_Steps 24
+Damage_Falloff_Start 113
+Damage_Falloff_End 212
+Damage_Falloff_Min 0.5
 
 Durability 1
 Wear 5
