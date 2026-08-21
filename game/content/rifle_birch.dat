@@ -49,9 +49,9 @@ Structure_Damage 15
 Vehicle_Damage 35
 Resource_Damage 15
 Object_Damage 25
-Ballistic_Travel 18.8
+Ballistic_Travel 12.4
 Bullet_Gravity_Multiplier 1.4
-Ballistic_Steps 112
+Ballistic_Steps 169
 Damage_Falloff_Start 113
 Damage_Falloff_End 212
 Damage_Falloff_Min 0.65
