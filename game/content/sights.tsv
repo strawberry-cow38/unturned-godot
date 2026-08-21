@@ -34,3 +34,6 @@ scalar	scalar_sight.txt	0.0,0.0899,-0.089
 mp40	mp40_sight.txt	0.0,0.1481,-0.0791
 bane	bane_sight.txt	0.0,0.0236,-0.099
 swissgewehr	swissgewehr_sight.txt	0.0,0.146,-0.1264
+rifle_birch	rifle_birch_sight.txt	0.0,0.2409,-0.1332
+rifle_pine	rifle_pine_sight.txt	0.0,0.2409,-0.1332
+rifle_maple	rifle_maple_sight.txt	0.0,0.2409,-0.1332

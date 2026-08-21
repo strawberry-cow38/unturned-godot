@@ -188,13 +188,15 @@ namespace UnturnedGodot.Testing
             grp.TryGetValue(1, out var stanag);
             stanag ??= new List<string>();
             stanag.Sort();
-            // Group 1 is STANAG-and-only-STANAG: three 5.56 rifles (eaglefire, maplestrike, and the swissgewehr --
-            // SG 550 in 5.56, retail puts it AND its own mag 1490 in caliber 1) plus the .300 BLK that genuinely feeds
-            // from a STANAG mag. swissgewehr's real-life proprietary mags live in Caliber_Name/Real_Weapon, not here:
-            // Caliber is the retail gameplay axis and this is a 1:1 base (tinyclaw verified vs the bundles).
-            T.Check($"group 1 is real STANAG only ({string.Join(",", stanag)})",
-                stanag.Count == 4 && stanag.Contains("eaglefire") && stanag.Contains("maplestrike")
-                && stanag.Contains("honeybadger") && stanag.Contains("swissgewehr"));
+            // Group 1 is the 5.56 STANAG cartridge axis: three mag-fed 5.56 rifles (eaglefire, maplestrike, and the
+            // swissgewehr -- SG 550 in 5.56, retail puts it AND its own mag 1490 in caliber 1), the .300 BLK that
+            // genuinely feeds from a STANAG mag (honeybadger), PLUS the three homemade wood bolt rifles that take 5.56 as
+            // a LOOSE round (item 5004, caliber 1) one at a time -- same cartridge group, fed through the open action not
+            // a magazine (master: "make it take the real 5.56 item"). tinyclaw's gate keeps eaglefire etc. mag-fed anyway.
+            T.Check($"group 1 is the 5.56 cartridge group -- mag rifles + loose-fed wood rifles ({string.Join(",", stanag)})",
+                stanag.Count == 7 && stanag.Contains("eaglefire") && stanag.Contains("maplestrike")
+                && stanag.Contains("honeybadger") && stanag.Contains("swissgewehr")
+                && stanag.Contains("rifle_birch") && stanag.Contains("rifle_pine") && stanag.Contains("rifle_maple"));
             foreach (var g in new[] { "augewehr", "nightraider", "heartbreaker" })
                 T.Check($"{g} is out of the STANAG group (now {Def(dir, g).Caliber})", !stanag.Contains(g));
 

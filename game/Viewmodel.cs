@@ -859,6 +859,7 @@ namespace UnturnedGodot
             if (_hammerClip == null) return;
             _arms?.Play(_hammerClip, speed);
             if (_hammerSnd != null) { _hammerSnd.PitchScale = speed; _hammerSnd.Play(); }   // the real rack / bolt-cycle sound (was missing) -- master
+            _aiming = false;                                                // master: working the bolt/pump DROPS you out of ADS (SetAiming already blocks re-aim while _hammering; source canStartAim = !isHammering)
             _hammering = true; _hammerCapture = true;                       // follow the hand bone through the rack so the gun rotates with it
             _hammerViewTimer = HammerLength / Mathf.Max(0.01f, speed);      // for the clip's (dexterity-sped) duration
         }
