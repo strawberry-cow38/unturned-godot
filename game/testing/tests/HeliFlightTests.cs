@@ -582,11 +582,21 @@ namespace UnturnedGodot.Testing
             var byName = new System.Collections.Generic.Dictionary<string, Vehicle>();
             foreach (var n in new[] { "hind", "orca", "hummingbird", "huey", "skycrane", "minicopter" })
                 byName[n] = Vehicle.BuildByName(n);
+            // RANKING UPDATED 2026-08-21 for the skycrane buff (strawberry 2026-08-17: "buff the skycrane because
+            // it is really slow"). Speed_Max 22 -> 28 moved the crane above the Huey's 23, so the fleet now runs
+            // hind 34 > orca 31 > hummingbird 29 > skycrane 28 > huey 23. The buff's own note claims 28 "keeps it
+            // the slowest" and that is simply false: the Huey is declared as a plain Spec rather than a HeliBase()
+            // call, so it does not sit in the same list as the other four and was never compared against. A survey
+            // of one list is blind to what is declared somewhere else.
+            //
+            // The test is updated to the SHIPPED design rather than the spec being reverted, because the buff was
+            // asked for and delivered; the crane sitting 4th is a side effect of it, not a regression. If the crane
+            // is ever meant to be slowest again that is one number (Speed_Max) plus this ordering.
             T.Check($"the Hind is the fastest of the fleet ({byName["hind"].SpeedMaxMps:0} m/s)",
                 byName["hind"].SpeedMaxMps > byName["orca"].SpeedMaxMps
                 && byName["orca"].SpeedMaxMps > byName["hummingbird"].SpeedMaxMps
-                && byName["hummingbird"].SpeedMaxMps > byName["huey"].SpeedMaxMps
-                && byName["huey"].SpeedMaxMps > byName["skycrane"].SpeedMaxMps);
+                && byName["hummingbird"].SpeedMaxMps > byName["skycrane"].SpeedMaxMps
+                && byName["skycrane"].SpeedMaxMps > byName["huey"].SpeedMaxMps);
             // ...and the scrap ultralight is slower than every real aircraft.
             T.Check($"the minicopter is the slowest thing with a rotor ({byName["minicopter"].SpeedMaxMps:0} m/s)",
                 byName["minicopter"].SpeedMaxMps < byName["skycrane"].SpeedMaxMps);
@@ -599,10 +609,19 @@ namespace UnturnedGodot.Testing
                 && byName["hind"].DebugRollAuthority > byName["skycrane"].DebugRollAuthority);
             T.Check($"...so the fastest machine is NOT the most agile (hind roll {byName["hind"].DebugRollAuthority:0.##} vs hummingbird {byName["hummingbird"].DebugRollAuthority:0.##})",
                 byName["hind"].DebugRollAuthority < byName["hummingbird"].DebugRollAuthority);
-            // The Skycrane climbs WORST despite being the lift machine -- at 21 t it mostly lifts itself.
-            T.Check($"the Skycrane is the worst climber, not the best ({byName["skycrane"].DebugThrust:0.#})",
-                byName["skycrane"].DebugThrust < byName["huey"].DebugThrust
-                && byName["skycrane"].DebugThrust < byName["hind"].DebugThrust);
+            // The Skycrane has the MOST lift of the fleet, deliberately (strawberry's 08-17 buff: thrust 12.2 ->
+            // 16.5, "makes it the strongest ... so it can actually carry something"). This assertion used to read
+            // the other way -- worst climber, "at 21 t it mostly lifts itself" -- and that reasoning does not
+            // survive the model: HeliThrust is an ACCELERATION, not a force (HoverCollective divides 9.8 by it),
+            // so it is already weight-normalised and a 21 t airframe gets no penalty from its mass here. The old
+            // check was measuring a quantity that cannot express "heavy machine climbs poorly".
+            T.Check($"the Skycrane is the strongest lifter of the fleet ({byName["skycrane"].DebugThrust:0.#})",
+                byName["skycrane"].DebugThrust > byName["huey"].DebugThrust
+                && byName["skycrane"].DebugThrust > byName["hind"].DebugThrust);
+            // ...but lift is NOT speed. The crane out-lifts the gunship and is still slower than it, which is the
+            // property the original "faster = better retune" guard was protecting.
+            T.Check($"...and still slower than the Hind it out-lifts ({byName["skycrane"].SpeedMaxMps:0} vs {byName["hind"].SpeedMaxMps:0} m/s)",
+                byName["skycrane"].SpeedMaxMps < byName["hind"].SpeedMaxMps);
             foreach (var v in byName.Values) v.QueueFree();
 
             // ---- 9. THE HUEY flies the same model off its own spec + the real retail mesh.
