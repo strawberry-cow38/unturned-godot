@@ -33,6 +33,16 @@ namespace UnturnedGodot.Testing
 
         public override IEnumerable<Step> Run()
         {
+            // CLEAN UP WHAT THE CONSOLE SPAWNS. DevConsole parents its container to
+            // `Player?.GetParent() ?? GetTree().Root`, and this test deliberately has no player -- so both
+            // containers land in the SCENE ROOT, which outlives this test's World. Two 30 t boxes then sit
+            // ~4.5 m down -Z at eye height for the REST OF THE BOOT, and that is the exact line every later
+            // test shoots along: gun.damage_falloff, gun.playground_dummy and both destructible tests were
+            // all firing into a container instead of their target (fired + aimed fine, round never landed),
+            // and net.shell_drive could not walk past one. All five pass alone and failed in a full run.
+            // Found by bisecting the run order down to console.* and validating it in isolation.
+            try
+            {
             Rigs.Ground(World);
             var console = new DevConsole();
             World.AddChild(console);
@@ -55,6 +65,16 @@ namespace UnturnedGodot.Testing
             console.RunForTest("definitelynotarealverb");
             yield return Ticks(4);
             T.Check($"a nonsense verb spawns nothing ({CountIn(World.GetTree().Root)} still)", CountIn(World.GetTree().Root) == 2);
+            }
+            finally
+            {
+                // finally, not a tail call: a failed check above must not leave the containers behind, or one
+                // red test here turns into five red tests scattered across the rest of the suite.
+                var doomed = new List<MagnetableContainer>();
+                void Walk(Node k) { if (k is MagnetableContainer mc) doomed.Add(mc); foreach (var c in k.GetChildren()) Walk(c); }
+                Walk(World.GetTree().Root);
+                foreach (var c in doomed) c.QueueFree();
+            }
         }
     }
 }

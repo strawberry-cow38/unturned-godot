@@ -29,6 +29,12 @@ namespace UnturnedGodot.Testing
         public override IEnumerable<Step> Run()
         {
             bool hadWater = Terrain.HasWater; float oldSea = Terrain.SeaLevelY;
+            // try/finally, NOT a restore at the end of Run(). Terrain.SeaLevelY is a global static: if this
+            // iterator is abandoned early -- a failed check, a harness timeout -- a plain tail restore never runs
+            // and every LATER test in the boot inherits a sea at Y0. That reads as bullets doing no damage and
+            // props being untargetable, i.e. as a bug anywhere but here. vehicle.boat_hull_probe already does this.
+            try
+            {
             Terrain.HasWater = true;
             Terrain.SeaLevelY = 0f;   // flat test sea at Y0, same convention as vehicle.boat_hull_probe
 
@@ -82,7 +88,8 @@ namespace UnturnedGodot.Testing
             T.Check($"control: a jeep on dry land does not swamp (y {dry.GlobalPosition.Y:0.00}, sea {Terrain.SeaLevelY:0})", !dry.Swamped);
             T.Check("control: ...and keeps its engine", dry.EngineOn);
 
-            Terrain.HasWater = hadWater; Terrain.SeaLevelY = oldSea;
+            }
+            finally { Terrain.HasWater = hadWater; Terrain.SeaLevelY = oldSea; }
         }
     }
 }

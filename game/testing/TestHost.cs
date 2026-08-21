@@ -45,7 +45,12 @@ namespace UnturnedGodot.Testing
                 GameTest inst;
                 try { inst = (GameTest)Activator.CreateInstance(t); }
                 catch (Exception e) { GD.PrintErr($"[L1] cannot construct {t.Name}: {e.Message}"); continue; }
-                if (GlobMatch(Filter, inst.Name)) _tests.Add(inst);
+                if (!GlobMatchAny(Filter, inst.Name)) continue;
+                // UG_L1_SKIP: exclude tests matching a glob. Hunting order-dependence means asking "does X still
+                // fail if Y never ran", and there is no way to say that with an include-filter alone.
+                var _skip = System.Environment.GetEnvironmentVariable("UG_L1_SKIP");
+                if (!string.IsNullOrEmpty(_skip) && GlobMatchAny(_skip, inst.Name)) continue;
+                _tests.Add(inst);
             }
             _tests.Sort((a, b) => a.Tier != b.Tier ? a.Tier - b.Tier : string.CompareOrdinal(a.Name, b.Name));
         }
@@ -158,6 +163,19 @@ namespace UnturnedGodot.Testing
         }
 
         // minimal glob: '*' matches any run of chars; everything else literal (case-sensitive dotted names)
+        /// <summary>Filter accepting a COMMA-SEPARATED list of globs, matching if any does. test.sh's own header
+        /// warns that --only takes one glob and that an alternation like `player.lean|tv.*` silently matches
+        /// NOTHING -- which reads as a clean run. Finding an order-dependent failure needs "this whole family AND
+        /// that one test" in a single boot, which a single glob cannot express; the console-container leak below
+        /// was bisected with exactly this.</summary>
+        static bool GlobMatchAny(string pats, string s)
+        {
+            if (string.IsNullOrEmpty(pats) || pats == "*") return true;
+            foreach (var p in pats.Split(','))
+                if (GlobMatch(p.Trim(), s)) return true;
+            return false;
+        }
+
         static bool GlobMatch(string pat, string s)
         {
             if (string.IsNullOrEmpty(pat) || pat == "*") return true;
