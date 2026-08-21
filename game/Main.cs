@@ -56,6 +56,8 @@ namespace UnturnedGodot
         bool _vmAttach; AttachmentMenu _am; bool _vmSightSet;   // --attach : hold the T attachment menu open for the render; UG_SIGHT=<mesh.txt> mounts a specific sight/scope for a demo
         bool _vehTest; Vehicle _veh; Camera3D _vehCam; int _vehVariant; bool _night, _demo, _crash, _roadkill, _chain, _hitch, _backunder, _pivots; Vehicle _buTrailer; int _buCoupledFrame = 999999;   // --vehicle=DIR [--variant=N] [--night] [--demo] [--crash] [--roadkill] [--chain] [--hitch] [--backunder] [--pivots]
         bool _planeTest;   // UG_PLANETEST (with --boattest --gun=otter): scripted fixed-wing flight (throttle/pitch/roll injected) to verify the flight model in a render
+        int _heliPhase, _heliPhaseTick;   // UG_HELITEST maneuver sequence: 0 climb, 1 cruise, 2 turn, 3 slide, 4 recover
+        bool _heliTest;    // UG_HELITEST (with --vehicle --gun=minicopter|huey): scripted ROTARY flight -- see the loop in _PhysicsProcess for why this exists
         System.Collections.Generic.List<Vector3> _trP; System.Collections.Generic.List<float> _trD;
         System.Collections.Generic.List<(MeshInstance3D body, MeshInstance3D bf, MeshInstance3D bb, float off)> _trUnits;
         float _trS, _trRailY = 1.4f; bool _trAnim;
@@ -1308,6 +1310,30 @@ namespace UnturnedGodot
             _vehCam = new Camera3D { Current = true, Fov = 60f };
             _vehCam.CullMask &= ~OutlineOverlay.OutlineLayer;   // the mask cam renders the vehicle silhouette, not this one
             AddChild(_vehCam);
+
+            // UG_HELITEST=1 (with --vehicle=DIR --gun=minicopter|scoutcopter|huey|hind|orca):
+            // SCRIPTED ROTARY FLIGHT. Every other render mode drives a ground vehicle or a boat, so until this
+            // existed NOTHING in the harness could fly a helicopter -- DriveHeli was reachable only from the L1
+            // tests and from a human at the stick. That is why the minicopter was flight-tested by hand for a
+            // whole night: there was no other way to SEE it move. A physics change could pass every test and
+            // still look wrong, and nobody would find out until someone flew it.
+            //
+            // Driven off the aircraft's own STATE rather than a frame count, same as UG_PLANETEST: altitude and
+            // speed decide the phase, so the flight is identical at any --fixed-fps and the clip does not
+            // desync from the physics when the capture rate changes.
+            if (System.Environment.GetEnvironmentVariable("UG_HELITEST") == "1" && _veh != null && _veh.IsHeli)
+            {
+                _heliTest = true; _vehTest = false;
+                GetWindow().Size = new Vector2I(1280, 720);
+                _veh.EngineOn = true; _veh.DebugInstantStart = true; _veh.SpawnRotorRunning();   // skip the spool-up: the clip is about FLIGHT
+                _veh.DebugNoTurbulence = System.Environment.GetEnvironmentVariable("UG_HELITURB") != "1";   // steady by default; UG_HELITURB=1 to show the turbulence model
+                _veh.Position = new Vector3(0f, 0.9f, 0f);
+                _veh.ResetPhysicsInterpolation();   // or frame 1 smears in from the origin
+                // Long enough to climb out, translate, and come round -- render at --fixed-fps 50 to match the
+                // 50 Hz physics tick so every movie frame is exactly one tick (no 30/50 sampling judder).
+                _rigCaptureFrames = new[] { 40, 150, 300, 450, 600, 750 };
+            }
+
             if (!string.IsNullOrEmpty(System.Environment.GetEnvironmentVariable("UG_VFOCUS")))   // preview the vehicle look-at outline + info panel
             {
                 AddChild(new OutlineOverlay());
@@ -6904,6 +6930,86 @@ namespace UnturnedGodot
                     foreach (var (mark, veh, local) in _pivotMarks)
                         if (IsInstanceValid(mark) && IsInstanceValid(veh)) mark.GlobalPosition = veh.ToGlobal(local);
                 }
+                else if (_heliTest && _veh != null)
+                {
+                    // SCRIPTED MANEUVER SEQUENCE: climb -> cruise -> coordinated turn -> sideways slide -> level.
+                    //
+                    // WHY BOTH STATE AND TICKS. The CLIMB is state-driven (it ends when the aircraft is actually
+                    // up at height), because altitude is a physics outcome and a fixed tick count would cut the
+                    // climb short the moment anyone retunes the collective. The MANEUVERS are tick-budgeted,
+                    // because their point is screen time -- "bank for three seconds" is the actual requirement,
+                    // and there is no physical target that ending a turn corresponds to. Mixing the two is
+                    // deliberate rather than sloppy: each phase ends on whichever of the two it genuinely means.
+                    var hb = _veh.GlobalTransform.Basis;
+                    float altH = _veh.GlobalPosition.Y;
+                    var velH = _veh.LinearVelocity;
+                    float fwdSpd = velH.Dot(-hb.Z);
+                    float latSpd = velH.Dot(hb.X);            // + = sliding right
+                    const float TargetAlt = 26f;
+                    float noseDeg = Mathf.RadToDeg(Mathf.Asin(Mathf.Clamp(-hb.Z.Y, -1f, 1f)));
+                    // SIGN: NEGATED so that positive == bank RIGHT, matching DriveHeli's command convention
+                    // (roll +1 applies torque about -Z, which tips the body +X axis DOWN -> right wing down ->
+                    // hb.X.Y is NEGATIVE for a right bank). Without this negation the measurement and the command
+                    // disagree in sign, so `(target - measured) * gain` is POSITIVE FEEDBACK: it banks right, the
+                    // error grows, it commands harder right. That is not theoretical -- it rolled to 46 deg,
+                    // lost lift and flew itself into the ground from 26 m on the first run of this sequence.
+                    // Pitch does NOT need this: the nose is -Z, so `Asin(-hb.Z.Y)` is already positive for nose-up,
+                    // which is why the climb and cruise phases worked while the turn diverged.
+                    float rollDeg = -Mathf.RadToDeg(Mathf.Asin(Mathf.Clamp(hb.X.Y, -1f, 1f)));
+
+                    // Collective is a PROPORTIONAL HOLD on target altitude, never a hardcoded hover number --
+                    // "the number that hovers" is exactly what a physics retune moves, so a constant here would
+                    // make every future render show a phantom climb and read as a flight-model bug. Damped by
+                    // vertical speed so it settles instead of porpoising.
+                    float coll = Mathf.Clamp((TargetAlt - altH) * 0.22f - velH.Y * 0.30f, -1f, 1f);
+
+                    // Phase advance. CLIMB holds until it is genuinely up and no longer rising fast.
+                    if (_heliPhase == 0 && altH > TargetAlt * 0.92f && Mathf.Abs(velH.Y) < 1.5f) { _heliPhase = 1; _heliPhaseTick = 0; }
+                    else if (_heliPhase == 1 && (fwdSpd > 10f || _heliPhaseTick > 260)) { _heliPhase = 2; _heliPhaseTick = 0; }
+                    else if (_heliPhase == 2 && _heliPhaseTick > 220) { _heliPhase = 3; _heliPhaseTick = 0; }   // ~4.4s of turn
+                    else if (_heliPhase == 3 && _heliPhaseTick > 200) { _heliPhase = 4; _heliPhaseTick = 0; }   // ~4.0s of slide
+                    _heliPhaseTick++;
+
+                    float pitchIn = 0f, rollIn = 0f, yawIn = 0f;
+                    switch (_heliPhase)
+                    {
+                        case 1:   // CRUISE -- nose down to a held ~12 deg and let it accelerate
+                            pitchIn = Mathf.Clamp((-12f - noseDeg) * 0.05f, -0.35f, 0.35f);
+                            break;
+                        case 2:   // COORDINATED TURN -- bank right AND feed yaw, so the nose follows the turn
+                            pitchIn = Mathf.Clamp((-8f - noseDeg) * 0.05f, -0.3f, 0.3f);
+                            rollIn = Mathf.Clamp((22f - rollDeg) * 0.05f, -0.4f, 0.4f);
+                            yawIn = 0.35f;
+                            break;
+                        case 3:   // SIDEWAYS SLIDE -- roll LEFT with NO yaw. The lift vector tilts, so it
+                                  // translates laterally while the nose keeps pointing where it was. That is what
+                                  // makes this read as a slide rather than a turn, and it is why yaw is 0 here.
+                            pitchIn = Mathf.Clamp((0f - noseDeg) * 0.05f, -0.3f, 0.3f);
+                            rollIn = Mathf.Clamp((-18f - rollDeg) * 0.05f, -0.4f, 0.4f);
+                            break;
+                        case 4:   // RECOVER -- wings level, nose level, back to a hover
+                            pitchIn = Mathf.Clamp((0f - noseDeg) * 0.05f, -0.3f, 0.3f);
+                            rollIn = Mathf.Clamp((0f - rollDeg) * 0.06f, -0.4f, 0.4f);
+                            break;
+                    }
+                    _veh.DriveHeli(coll, yawIn, pitchIn, rollIn, delta);
+
+                    if (_frame % 60 == 0)
+                        GD.Print($"[helitest] t={_frame} phase={_heliPhase} alt={altH:0.0}m fwd={fwdSpd:0.0} lat={latSpd:+0.0;-0.0;0.0} vy={velH.Y:+0.0;-0.0;0.0} nose={noseDeg:+0.0;-0.0;0.0} roll={rollDeg:+0.0;-0.0;0.0} coll={coll:0.00}");
+
+                    if (_vehCam != null)
+                    {   // Chase cam on a WORLD-UP basis: follows position and heading, never rolls with the
+                        // airframe. A bank therefore reads as the aircraft banking rather than the world tilting,
+                        // and because the heading is unchanged during the slide, the lateral drift is visible
+                        // against the camera instead of being cancelled by it.
+                        var ht = _veh.GetGlobalTransformInterpolated();
+                        var fwdH = -ht.Basis.Z; fwdH.Y = 0f;
+                        fwdH = fwdH.LengthSquared() > 0.001f ? fwdH.Normalized() : Vector3.Forward;
+                        _vehCam.GlobalPosition = ht.Origin - fwdH * 12f + Vector3.Up * 4.5f;
+                        _vehCam.LookAt(ht.Origin + fwdH * 3f, Vector3.Up);
+                    }
+                    return;
+                }
                 else if (_planeTest && _veh != null)
                 {
                     // SCRIPTED FIXED-WING FLIGHT, driven off the plane's STATE (frame-rate-map independent):
@@ -7409,8 +7515,18 @@ namespace UnturnedGodot
             _shotTimedOut = true;
             GD.PrintErr($"[SHOT] TIMED OUT after {waited / 1000}s without capturing to {_shotRequested}");
             GD.PrintErr($"[SHOT] blocked on: {ShotBlockedOn()}");
-            GD.PrintErr("[SHOT] most common cause: UG_UNTURNED_DIR is unset, so the map never loads and the "
-                      + "world never reports Ready. Set it (e.g. /home/ec2-user/unturned) and re-run.");
+            // Name the state we can actually SEE rather than asserting a cause we never checked. The old line
+            // here said flatly "most common cause: UG_UNTURNED_DIR is unset" -- which sent me hunting a missing
+            // map for five minutes while UG_UNTURNED_DIR was set correctly the whole time and the real answer was
+            // that a showcase mode never arms a capture at all. A diagnostic that guesses in the voice of a
+            // finding is worse than one that says nothing.
+            string envHint = string.IsNullOrEmpty(System.Environment.GetEnvironmentVariable("UG_UNTURNED_DIR"))
+                ? "UG_UNTURNED_DIR is NOT set -- if this scene needs the real map, that is very likely why."
+                : "UG_UNTURNED_DIR IS set, so this is probably NOT a missing map.";
+            GD.PrintErr($"[SHOT] {envHint}");
+            GD.PrintErr("[SHOT] also note: the showcase modes (UG_HELITEST/UG_PLANETEST/UG_SHIPSHOW) return before "
+                      + "the capture hook and never arm one -- for those the MOVIE is the artifact and this timeout "
+                      + "is the normal end of the run. Set UG_SHOT_TIMEOUT=0 to opt out and bound the run yourself.");
             GetTree().Quit(1);
             return true;
         }
