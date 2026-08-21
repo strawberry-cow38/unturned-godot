@@ -35,6 +35,8 @@ namespace UnturnedGodot
             public float ShapeMetres;   // size of the biggest landform features, IN WORLD METRES
             public float WarpMetres;    // how far the coastline is dragged sideways, in metres
             public float WarpScale;     // the size of the warp's own swirls, in metres
+            public int Towns, Bases, Sites;   // POIs of each kind PER ~0.45 km2 of land -- see PlacePois
+            public float SmoothStrength;      // 0..1 of a box blur applied after flattening
 
             public static Params Default(int seed) => new()
             {
@@ -51,6 +53,8 @@ namespace UnturnedGodot
                 // and stretched into an oval instead of growing bays. Same failure as using one shared offset
                 // for both axes, one level up: a distortion coarser than its subject is a move, not a distortion.
                 WarpScale = 210f,
+                Towns = 1, Bases = 1, Sites = 2,
+                SmoothStrength = 0.55f,
             };
         }
 
@@ -161,6 +165,192 @@ namespace UnturnedGodot
                     grid[x, y] = ToGrid(world);
                 }
             }
+        }
+
+        // ---------------------------------------------------------------- POIs
+
+        public enum PoiKind { Town, MilitaryBase, ConstructionSite }
+
+        /// <summary>A place something will be BUILT. Position and radius are world metres, so this survives any
+        /// later change of grid resolution -- these are meant to be read by the road/building/loot stages, and a
+        /// marker expressed in grid cells would silently mean a different place at a different map size.</summary>
+        public readonly struct Poi
+        {
+            /// <summary>HALF-EXTENT of an axis-aligned square footprint, in world metres -- so the pad is
+            /// HalfSize*2 across. Square rather than round (strawberry 2026-08-21: "they should use squares
+            /// instead of circles and be much smaller"), which also suits what goes on them: a street grid, a
+            /// compound fence and a site hoarding are all rectangular, and a round pad would have to be
+            /// re-squared by every stage that builds on it.</summary>
+            public readonly PoiKind Kind; public readonly float X, Z, HalfSize, GroundY;
+            public Poi(PoiKind k, float x, float z, float half, float y) { Kind = k; X = x; Z = z; HalfSize = half; GroundY = y; }
+            public override string ToString() => $"{Kind} @ ({X:0},{Z:0}) {HalfSize * 2f:0}m sq y{GroundY:0.#}";
+        }
+
+        // Half-extents, so these are 110 m / 80 m / 50 m squares. Cut from 135/95/65 radii (270/190/130 m
+        // across) on the first look at a render: at that size a town pad covered a quarter of a small island and
+        // the map read as a set of discs rather than as terrain with places on it.
+        static float HalfSizeFor(PoiKind k) => k switch
+        {
+            PoiKind.Town => 55f,                 // the biggest footprint: a street grid needs room
+            PoiKind.MilitaryBase => 40f,
+            _ => 25f,                            // construction site: a couple of shells and a crane
+        };
+
+        /// <summary>World height at a grid cell, clamped to the grid.</summary>
+        static float HeightAt(float[,] g, int gw, int gh, int x, int y) =>
+            ToWorld(g[Mathf.Clamp(x, 0, gw - 1), Mathf.Clamp(y, 0, gh - 1)]);
+
+        /// <summary>Place POIs, flatten a pad under each, then smooth. Returns them in placement order, which is
+        /// deterministic for a given seed -- the later stages need a stable identity per POI, not just a set.</summary>
+        /// <summary>Why the last run's candidates were rejected, per kind. A POI that fails to place is silent
+        /// otherwise -- the list just comes back shorter -- so this is what turns "no base appeared" into which
+        /// constraint actually refused it.</summary>
+        public static string LastRejectReport = "";
+
+        public static System.Collections.Generic.List<Poi> PlacePois(float[,] grid, int gw, int gh, Params p)
+        {
+            const float Unit = 4f;
+
+            // COUNTS SCALE WITH LAND AREA, because POI sizes are real-world metres and a small island simply
+            // cannot hold a fixed number of them. Asking for 2 towns + a base + 2 sites on a 1024 m map placed
+            // 1 town, 0 bases and 2 sites -- the shortfall landed on whichever kind came later in the order,
+            // which is arbitrary and was invisible to a check that counted POIs instead of kinds. Densities
+            // keep a small map sparse and a large one populated without either being a special case.
+            // SAMPLE FROM LAND, NOT FROM THE MAP. Candidates were drawn uniformly over the whole grid, and an
+            // island covers roughly a quarter of it -- so ~9 in 10 attempts died in open water before any real
+            // constraint was tested (measured: 537 of a military base's 600 attempts rejected as wet/edge, with
+            // only 37 rejected for the reason that actually mattered). Drawing from the land list spends every
+            // attempt on a candidate that could plausibly work, and makes placement independent of how much of
+            // the map happens to be sea.
+            var land = new System.Collections.Generic.List<(int X, int Y)>();
+            for (int x = 0; x < gw; x++)
+                for (int y = 0; y < gh; y++)
+                    if (ToWorld(grid[x, y]) > p.SeaLevel) land.Add((x, y));
+            int landCells = land.Count;
+            if (landCells == 0) { LastRejectReport = "no land"; return new System.Collections.Generic.List<Poi>(); }
+            float km2 = landCells * Unit * Unit / 1_000_000f;
+            int mult = Mathf.Max(1, Mathf.RoundToInt(km2 / 0.45f));
+
+            // LARGEST FIRST, deliberately: a town needs the biggest clear area, so letting the small sites go
+            // first lets them take the only spot a town would have fitted in and the town then fails.
+            var want = new System.Collections.Generic.List<PoiKind>();
+            for (int i = 0; i < p.Towns * mult; i++) want.Add(PoiKind.Town);
+            for (int i = 0; i < p.Bases * mult; i++) want.Add(PoiKind.MilitaryBase);
+            for (int i = 0; i < p.Sites * mult; i++) want.Add(PoiKind.ConstructionSite);
+
+            var placed = new System.Collections.Generic.List<Poi>();
+            var report = new System.Text.StringBuilder();
+            int attempt = 0;
+            foreach (var kind in want)
+            {
+                float half = HalfSizeFor(kind);
+                bool got = false;
+                int rWet = 0, rCliff = 0, rClash = 0;
+                // Bounded attempts, and the bound is per-POI: a map with nowhere left to put a town should place
+                // fewer POIs, not spin. Reporting how many actually landed is the caller's job.
+                for (int tries = 0; tries < 600 && !got; tries++, attempt++)
+                {
+                    int pick = (int)(Hash01(attempt, 11, p.Seed + 5551) * (landCells - 1));
+                    var cell = land[Mathf.Clamp(pick, 0, landCells - 1)];
+                    int cxg = cell.X, cyg = cell.Y;
+                    float wx = cxg * Unit, wz = cyg * Unit;
+
+                    // INLAND BY THE FOOTPRINT, not by the whole skirt. Checked on a ring rather than at the
+                    // centre, because a centre well above sea level says nothing about a site half of which
+                    // hangs over water. But requiring the FULL skirt (radius*1.6) to be dry was too strict to
+                    // satisfy: on a 1024 m map it silently placed ZERO towns -- both were requested, both
+                    // failed, and `pois.Count >= 3` still passed on two construction sites and a base. The
+                    // skirt only tapers, so letting it reach the shore grades a slope into the beach rather
+                    // than cutting a shelf; the footprint itself still has to be solid ground.
+                    float pad = half * 1.15f;
+                    int ringCells = Mathf.CeilToInt(pad / Unit);
+                    bool dry = HeightAt(grid, gw, gh, cxg, cyg) > p.SeaLevel + 3f;
+                    float lo = float.MaxValue, hi = float.MinValue;
+                    // Walk the SQUARE's perimeter, not a circle's: the corners reach 1.41x further than the
+                    // edge midpoints, and they are exactly where a square pad hangs over water that a circular
+                    // probe would have declared clear.
+                    for (int a = 0; a < 16 && dry; a++)
+                    {
+                        float t = a / 16f * 4f;   // 0..4 around the perimeter
+                        int side = (int)t; float f = t - side;
+                        float ux = side switch { 0 => -1f + 2f * f, 1 => 1f, 2 => 1f - 2f * f, _ => -1f };
+                        float uy = side switch { 0 => -1f, 1 => -1f + 2f * f, 2 => 1f, _ => 1f - 2f * f };
+                        int rx = cxg + Mathf.RoundToInt(ux * ringCells);
+                        int ry = cyg + Mathf.RoundToInt(uy * ringCells);
+                        if (rx < 0 || ry < 0 || rx >= gw || ry >= gh) { dry = false; break; }
+                        float h = HeightAt(grid, gw, gh, rx, ry);
+                        if (h <= p.SeaLevel + 1.5f) dry = false;
+                        lo = Mathf.Min(lo, h); hi = Mathf.Max(hi, h);
+                    }
+                    if (!dry) { rWet++; continue; }
+
+                    // ...and not on a cliff. Flattening a 40 m spread produces a plateau with a sheer wall around
+                    // it, which reads far worse than the hill it replaced.
+                    if (hi - lo > 26f) { rCliff++; continue; }
+
+                    bool clash = false;
+                    foreach (var o in placed)
+                    {
+                        // CHEBYSHEV, to match square footprints: two squares overlap when they overlap on BOTH
+                        // axes, and a Euclidean test would call diagonal neighbours clear while their corners
+                        // sit inside each other. 30 m of clear ground between them.
+                        float gap = Mathf.Max(Mathf.Abs(o.X - wx), Mathf.Abs(o.Z - wz));
+                        if (gap < o.HalfSize + half + 30f) { clash = true; break; }
+                    }
+                    if (clash) { rClash++; continue; }
+
+                    placed.Add(new Poi(kind, wx, wz, half, HeightAt(grid, gw, gh, cxg, cyg)));
+                    got = true;
+                }
+                if (!got) report.Append($"{kind} FAILED (wet/edge {rWet}, cliff {rCliff}, too close {rClash}); ");
+            }
+            LastRejectReport = report.Length == 0 ? "all placed" : report.ToString();
+
+            foreach (var poi in placed) Flatten(grid, gw, gh, poi);
+            if (p.SmoothStrength > 0f) Smooth(grid, gw, gh, p.SmoothStrength);
+            return placed;
+        }
+
+        /// <summary>Level the ground under a POI, blending out over a skirt so it does not become a mesa.</summary>
+        static void Flatten(float[,] grid, int gw, int gh, Poi poi)
+        {
+            const float Unit = 4f;
+            float target = ToGrid(poi.GroundY);
+            float inner = poi.HalfSize, outer = poi.HalfSize * 1.6f;
+            int cx = Mathf.RoundToInt(poi.X / Unit), cy = Mathf.RoundToInt(poi.Z / Unit);
+            int rad = Mathf.CeilToInt(outer / Unit) + 1;
+            for (int x = Mathf.Max(0, cx - rad); x <= Mathf.Min(gw - 1, cx + rad); x++)
+                for (int y = Mathf.Max(0, cy - rad); y <= Mathf.Min(gh - 1, cy + rad); y++)
+                {
+                    // Chebyshev distance = the square's own metric, so the pad and its skirt are both squares.
+                    float d = Mathf.Max(Mathf.Abs(x * Unit - poi.X), Mathf.Abs(y * Unit - poi.Z));
+                    if (d > outer) continue;
+                    // 1 inside the footprint, easing to 0 at the skirt's edge. A hard cutoff at `inner` is what
+                    // makes a flattened site look stamped on; the skirt is what makes it look graded.
+                    float w = d <= inner ? 1f : 1f - Mathf.SmoothStep(inner, outer, d);
+                    grid[x, y] = Mathf.Lerp(grid[x, y], target, w);
+                }
+        }
+
+        /// <summary>Light box blur over the whole grid. Runs AFTER flattening, so it also softens the skirt seams
+        /// the pads leave behind -- doing it before would smooth the terrain and then stamp hard edges back into
+        /// it, which is the wrong order for the one job it has.</summary>
+        static void Smooth(float[,] grid, int gw, int gh, float strength)
+        {
+            var src = (float[,])grid.Clone();
+            for (int x = 0; x < gw; x++)
+                for (int y = 0; y < gh; y++)
+                {
+                    float sum = 0f; int n = 0;
+                    for (int ox = -1; ox <= 1; ox++)
+                        for (int oy = -1; oy <= 1; oy++)
+                        {
+                            int sx = x + ox, sy = y + oy;
+                            if (sx < 0 || sy < 0 || sx >= gw || sy >= gh) continue;
+                            sum += src[sx, sy]; n++;
+                        }
+                    grid[x, y] = Mathf.Lerp(src[x, y], sum / n, strength);
+                }
         }
     }
 }

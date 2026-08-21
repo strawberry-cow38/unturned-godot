@@ -173,11 +173,18 @@ void fragment() {
         /// <summary>Replace this terrain's heights with a generated island and rebuild the meshes. Operates on
         /// the SAME grid the sculpt brushes edit, so the result is immediately hand-editable and saves through
         /// SaveHeightmap like any other map -- generation is a starting point, not a separate kind of map.</summary>
-        public void GenerateIsland(int seed)
+        public System.Collections.Generic.List<ProcIsland.Poi> GenerateIsland(int seed)
         {
-            if (_grid == null) return;
-            ProcIsland.Fill(_grid, _gw, _gh, ProcIsland.Params.Default(seed));
+            var none = new System.Collections.Generic.List<ProcIsland.Poi>();
+            if (_grid == null) return none;
+            var pars = ProcIsland.Params.Default(seed);
+            ProcIsland.Fill(_grid, _gw, _gh, pars);
+            // POIs are placed AFTER the terrain exists and BEFORE the mesh is built: they read the heights to
+            // choose somewhere buildable, then rewrite them to flatten their pads. Returned rather than stored
+            // because the caller is what knows where they need to go next (the road/building stages read these).
+            var pois = ProcIsland.PlacePois(_grid, _gw, _gh, pars);
             RebuildAll();
+            return pois;
         }
 
         public void SaveHeightmap(string path)   // the edited merged grid (port translator; writing the retail .heightmap tiles would clobber the install)

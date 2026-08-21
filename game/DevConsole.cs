@@ -344,8 +344,9 @@ namespace UnturnedGodot
                 var terr = Terrain.Active;
                 if (terr == null) { Log("procisland: no terrain loaded (open or create a map first)"); return; }
                 int seed = int.TryParse(arg.Trim(), out var ps) ? ps : (int)(Time.GetTicksMsec() & 0x7FFFFFFF);
-                terr.GenerateIsland(seed);
-                Log($"procisland: generated seed {seed} -- same seed always gives the same island. Sculpt tools work on it; save as normal.");
+                var pois = terr.GenerateIsland(seed);
+                Log($"procisland: seed {seed}, {pois.Count} POIs -- same seed always gives the same island. Sculpt tools work on it; save as normal.");
+                foreach (var poi in pois) Log($"  {poi}");
                 return;
             }
 
