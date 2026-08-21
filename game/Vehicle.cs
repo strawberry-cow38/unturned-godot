@@ -13,6 +13,13 @@ namespace UnturnedGodot
         float _brakeForce = 32f;                     // Brake -- source .dat value
         float _steerTarget, _steerAngle, _steerTurnSpeed = 70f;   // steering smoothing: MoveTowards target at deg/s. LOWERED for a weighty/laggy feel -- the wheels float behind the input, slow to turn AND slow to re-center (master)
         WaterMode _water; Vector3[] _buoys; float _inThrottle, _inSteer; int _waterFrame;   // BOAT/AMPHIBIOUS: water mode + hull buoyancy VOXELS + the last drive input (water propulsion runs in _PhysicsProcess)
+        // SWAMPED -- a LAND vehicle driven into water. The source has no such behaviour (an Unturned car simply
+        // drives along the seabed, and so did this port: the ocean's only collider is bullets-only on bit 9, which
+        // player/vehicle masks deliberately exclude). strawberry's design: the engine drowns, the body rides on the
+        // air trapped in it for a few seconds, then that air escapes and it goes down.
+        Vector3[] _swampBuoys; bool _swamped; float _swampTime;   // hull voxels (WHEELED vehicles only), in-water latch, seconds since it went in
+        public bool Swamped => _swamped;                          // read by vehicle.water_swamp
+        public float SwampTime => _swampTime;
         float _waveAmp = 0.1f;                                  // sea-surface ripple amplitude for THIS hull
         bool _steadyHull;                                       // hold her still: extra heave damping (Spec.SteadyHull)
         Vector3 _deckVolume, _deckCenter;                       // MOVING DECK: the carry box (local space); Zero = not a carrier
@@ -3737,6 +3744,23 @@ namespace UnturnedGodot
                 if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_BOATTURN"), out var _bt) && _bt > 0f) v._turnScale = _bt;   // live sweep knob (probe)
                 v._gravityMag = Mathf.Abs(ProjectSettings.GetSetting("physics/3d/default_gravity", 9.8f).AsSingle());   // the g the body actually falls under -> Archimedes must balance it
             }
+            else if (!s.Heli && !s.Plane && s.BoxSize != Vector3.Zero)
+            {
+                // A WHEELED land vehicle gets the same 2x2x2 voxel grid, but it is inert until the hull is actually
+                // in water -- see ApplySwampedPhysics. Aircraft are excluded deliberately: they never reach the
+                // wheeled path in _PhysicsProcess (StepPlane/StepHeli return before it), so buoys built for them
+                // would be dead weight, and "driven into water" is not what a helicopter does.
+                Vector3 vsz = s.BoxSize / 2f, minExt = s.BoxCenter - s.BoxSize * 0.5f;
+                v._voxelHalfHeight = Mathf.Min(vsz.X, Mathf.Min(vsz.Y, vsz.Z)) * 0.5f;
+                var vox = new Vector3[8];
+                int vi = 0;
+                for (int sx = 0; sx < 2; sx++)
+                    for (int sy = 0; sy < 2; sy++)
+                        for (int sz = 0; sz < 2; sz++)
+                            vox[vi++] = new Vector3(minExt.X + vsz.X * (0.5f + sx), minExt.Y + vsz.Y * (0.5f + sy), minExt.Z + vsz.Z * (0.5f + sz));
+                v._swampBuoys = vox;
+                v._gravityMag = Mathf.Abs(ProjectSettings.GetSetting("physics/3d/default_gravity", 9.8f).AsSingle());
+            }
             v.FifthWheelLocal = s.FifthWheel; v.KingpinLocal = s.Kingpin;   // trailer-hitch coupling points (Zero = neither)
             v._steerTurnSpeed = s.SteerMax * 2f;   // master: ramp to full lock a LOT longer than source (source default = SteerMax*5 deg/s) -> slower turn-in
             v._gears = s.ForwardGears; v._reverseGear = s.ReverseGear; v._shiftUpRpm = s.ShiftUpRpm;
@@ -6153,6 +6177,7 @@ namespace UnturnedGodot
                                              // deliberately -- that returns early when the hull is not afloat, and a
                                              // grounded or beached vessel still has a deck.
             if (_water != WaterMode.Car) ApplyWaterPhysics((float)delta);   // BOAT/AMPHIBIOUS: buoyancy float + water propulsion (overrides wheel drive while afloat)
+            else ApplySwampedPhysics((float)delta);                          // CAR: drowned engine + a few seconds of trapped-air float, then it goes down
         }
 
         /// <summary>One convex collision hull built from the body mesh's OWN vertices inside an AABB slice of it.
@@ -6529,11 +6554,65 @@ namespace UnturnedGodot
 
         const float BoatThrust = 15f, BoatTurn = 2.2f, BoatDrag = 0.5f;   // water propulsion / rudder yaw / extra horizontal drag. Thrust 6->15 + drag 0.9->0.5: the source voxel damping now adds its own per-voxel water drag, so the old values left the boat sluggish (~4 m/s); these hit a proper speedboat pace (strawberry)
         const float WaterDensity = 1000f, HullDensity = 500f;            // source Buoyancy.cs: rho_water, and density=500 (a vehicle floats at ~half-submersion)
+        // SWAMP tuning. Density 800 (not the boat's 500) because a car is not a hull: at 500 it would ride at
+        // half-submersion like a runabout, which reads as a boat rather than as a car that has just gone in. 800
+        // balances weight at ~80 % submerged -- waterline around the windows, roof out -- which is what floats.
+        const float SwampHullDensity = 800f;
+        const float SwampFloatSeconds = 5f;   // how long the trapped air holds it at the surface
+        const float SwampSinkSeconds  = 4f;   // and how long that air then takes to bleed away
+        const float SwampSubmergeFrac = 0.25f;   // fraction of hull voxels under the surface before it counts as IN the water rather than fording
 
         // BOAT / AMPHIBIOUS water physics. Buoyancy is a faithful port of the source Buoyancy.cs voxel-Archimedes model:
         // the hull box is sliced 2x2x2; each SUBMERGED voxel gets an Archimedes up-force (rho_water*g*V, depth-scaled by a
         // sqrt curve) + point-velocity damping, applied AT the voxel -> the hull floats level, self-rights, and damps sway.
         // While afloat the drive input becomes forward thrust + rudder yaw (source propels boats via the engine; same feel).
+        /// <summary>A LAND vehicle in water: the engine drowns, trapped air floats it briefly, then it sinks.
+        /// Self-guards on _swampBuoys, so a boat, an aircraft or a trailer with no hull box never enters here.</summary>
+        void ApplySwampedPhysics(float delta)
+        {
+            if (!Terrain.HasWater || _swampBuoys == null || _exploded) return;
+            float seaY = Terrain.SeaLevelY;
+            var xf = GlobalTransform;
+
+            // FORDING IS NOT SWAMPING. A quarter of the hull has to be under before the engine drowns, so a car
+            // crossing a shallow ford or clipping a puddle keeps running and keeps its wheels on the bottom --
+            // which is exactly the behaviour that was here before this method existed.
+            int submerged = 0;
+            foreach (var lp in _swampBuoys) if ((xf * lp).Y < seaY) submerged++;
+            if (submerged < Mathf.CeilToInt(_swampBuoys.Length * SwampSubmergeFrac))
+            {
+                _swamped = false; _swampTime = 0f;   // drove back out -> the timer resets, but the engine stays off until restarted
+                return;
+            }
+            if (!_swamped) _swamped = true;
+            _swampTime += delta;
+
+            // The engine is cut EVERY tick it is under, not once on entry: otherwise the driver simply restarts it
+            // and drives on along the seabed, which is the behaviour this exists to remove.
+            EngineOn = false;
+
+            // Trapped air holds it up, then escapes. Linear bleed rather than a curve -- the interesting moment is
+            // WHEN it starts going down, and a curve only makes that harder to predict without looking different.
+            float lift = _swampTime <= SwampFloatSeconds
+                ? 1f
+                : 1f - Mathf.Clamp((_swampTime - SwampFloatSeconds) / SwampSinkSeconds, 0f, 1f);
+            // NOTE the lift term goes to zero but the DAMPING below does not: once the air is gone the hull still
+            // has to push water out of the way on the way down. Returning early here instead (which is what this
+            // did first) drops it at a clean 9.8 m/s^2 -- a car falling through air that happens to be drawn blue.
+            var comGlobal = ToGlobal(CenterOfMass);
+            float volume = Mass / SwampHullDensity;
+            var archPerVoxel = new Vector3(0f, WaterDensity * _gravityMag * volume * lift, 0f) / _swampBuoys.Length;
+            foreach (var localPoint in _swampBuoys)
+            {
+                var worldPoint = xf * localPoint;
+                if (worldPoint.Y >= seaY) continue;
+                var pv = LinearVelocity + AngularVelocity.Cross(worldPoint - comGlobal);
+                var damping = -pv * 0.1f * Mass;   // same coefficient as the hull model at 8 voxels
+                float subFactor = Mathf.Sqrt(Mathf.Clamp((seaY - worldPoint.Y) / (2f * _voxelHalfHeight) + 0.5f, 0f, 1f));
+                ApplyForce(damping + subFactor * archPerVoxel, worldPoint - GlobalPosition);
+            }
+        }
+
         void ApplyWaterPhysics(float delta)
         {
             _afloat = false;
