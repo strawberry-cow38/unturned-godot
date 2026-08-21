@@ -5380,6 +5380,7 @@ namespace UnturnedGodot
         sealed class Bullet { public bool Npc;   // fired by an AI, NOT by the local player: no viewmodel anchor, no hitmarker
             public Vector3 Pos, Vel, Origin; public int StepsLeft; public float Gravity, Damage, VehicleDamage, ObjectDamage, PlayerDamage;
             public float FalloffStart, FalloffEnd, FalloffMin = 1f;
+            public int Pierced;   // WALLBANG: surfaces this round has already punched through (capped at MaxPierce)
             /// <summary>Damage multiplier for THIS bullet at an impact point, from distance actually flown.</summary>
             public float FalloffAt(Vector3 impact)
             {
@@ -5628,7 +5629,18 @@ namespace UnturnedGodot
                 }
                 if (hit.Count > 0)
                 {
-                    if (b.Cosmetic) { RemoveBullet(i); continue; }   // MP: the tracer stops here, but damage AND impact fx are the server's (ImpactFx/HitConfirmed events render them)
+                    if (b.Cosmetic)
+                    {   // MP: damage AND impact fx are the server's (ImpactFx/HitConfirmed). But the tracer must still
+                        // FOLLOW the server's round through a pierceable surface -- stopping it at the waterline while
+                        // the authoritative bullet carries on is a visible desync of the one thing the client owns here.
+                        if (PierceCost(hit["collider"].As<GodotObject>(), b, out float _cvk, out float _cdk))
+                        {
+                            Pierce(b, hit["position"].AsVector3(), _cvk, _cdk);
+                            if (--b.StepsLeft <= 0) RemoveBullet(i);
+                            continue;
+                        }
+                        RemoveBullet(i); continue;
+                    }
                     Vector3 point = hit["position"].AsVector3();
                     Vector3 hdir = b.Vel.Normalized();
                     var collider = hit["collider"].As<GodotObject>();
@@ -5746,6 +5758,16 @@ namespace UnturnedGodot
                         Explode(point, b.BlastRadius, b.BlastZombieDamage, b.BlastPlayerDamage, b.BlastVehicleDamage);
                         GD.Print($"[blast] warhead detonated (r={b.BlastRadius})");
                     }
+                    // WALLBANG. Checked AFTER the impact fx and damage above, so a pierced surface still splashes,
+                    // sparks and takes its hit -- the round carries on behind it rather than the surface being
+                    // ignored. StepsLeft is still spent here: piercing costs the round a step like any other, or a
+                    // wallbang would hand it a free tick of extra range.
+                    if (PierceCost(collider, b, out float _vk, out float _dk))
+                    {
+                        Pierce(b, point, _vk, _dk);
+                        if (--b.StepsLeft <= 0) RemoveBullet(i);
+                        continue;
+                    }
                     RemoveBullet(i);
                     continue;
                 }
@@ -5776,6 +5798,42 @@ namespace UnturnedGodot
         // SetMeta("surf", (int)Surf) -- terrain = Grass, vehicles = Metal, untagged (buildings/props) = Concrete.
         public enum Surf { Concrete, Grass, Dirt, Metal, Wood, Sand, Water }
         public const string SurfMeta = "surf";
+
+        // WALLBANG (strawberry 2026-08-21: "projectile hits surface, loses x velocity and damage, hits behind").
+        // A round punches through the water surface and through any prop collider tagged ThinMeta, arriving behind
+        // it slower and weaker instead of stopping dead. Everything else still eats the round exactly as before --
+        // this is opt-IN per surface, so an untagged wall is unchanged and the marking pass can land separately.
+        public const string ThinMeta = "thin";   // set on a prop's collider body -> bullets wallbang through it
+        const int MaxPierce = 2;                 // stop a round tunnelling an entire building; two surfaces is a wallbang, five is a bug
+        const float WaterVelKeep = 0.45f, WaterDmgKeep = 0.50f;   // water is thick: a round entering the sea loses over half its speed
+        const float ThinVelKeep  = 0.75f, ThinDmgKeep  = 0.70f;   // sheet metal / plywood barely slows it
+        const float PierceExit   = 0.06f;        // metres past the hit point to resume from, so the same face cannot be re-hit next step
+
+        /// <summary>WALLBANG test: may this round punch through what it just hit, and at what cost? Opt-in per
+        /// surface via meta, so anything untagged returns false and behaves exactly as it did before.</summary>
+        static bool PierceCost(GodotObject collider, Bullet b, out float velKeep, out float dmgKeep)
+        {
+            velKeep = 1f; dmgKeep = 1f;
+            if (b.Pierced >= MaxPierce) return false;
+            if (b.BlastRadius > 0f) return false;            // a warhead DETONATES on contact; it does not wallbang
+            if (collider is not Node n) return false;
+            if (n.HasMeta(ThinMeta)) { velKeep = ThinVelKeep; dmgKeep = ThinDmgKeep; return true; }
+            if (n.HasMeta(SurfMeta) && (Surf)(int)n.GetMeta(SurfMeta) == Surf.Water) { velKeep = WaterVelKeep; dmgKeep = WaterDmgKeep; return true; }
+            return false;
+        }
+
+        /// <summary>Move the round just past the surface it pierced, slowed and weakened. Damage is scaled on ALL
+        /// four channels: scaling only Damage would leave a round that punched through a wall doing full damage to
+        /// a vehicle or a prop behind it, which is the same bug the per-bullet warhead fields were added to fix.</summary>
+        void Pierce(Bullet b, Vector3 point, float velKeep, float dmgKeep)
+        {
+            b.Pierced++;
+            Vector3 dir = b.Vel.Normalized();
+            b.Vel *= velKeep;
+            b.Damage *= dmgKeep; b.PlayerDamage *= dmgKeep; b.VehicleDamage *= dmgKeep; b.ObjectDamage *= dmgKeep;
+            b.Pos = point + dir * PierceExit;
+            UpdateTracer(b);
+        }
         public static Color SurfDust(Surf s) => s switch
         {
             Surf.Grass => new Color(0.40f, 0.50f, 0.28f),
