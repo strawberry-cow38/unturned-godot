@@ -146,6 +146,36 @@ namespace UnturnedGodot.Testing
             T.Check($"the hmg declares a cartridge now ({Def(dir, "hmg").CaliberName})",
                 !string.IsNullOrEmpty(Def(dir, "hmg").CaliberName));
 
+
+            // SHOTGUN PELLETS FLY (strawberry: "so slow buckshot down"). All 7 were Ballistic_Steps 1 with no
+            // Ballistic_Travel, so ComputeBallistics took the `travel = Range / steps` branch and the pellet
+            // crossed its ENTIRE range inside one 0.02 s tick -- a single hitscan ray, no flight time, and
+            // exactly zero drop, because BallisticsMath.StepVel applies gravity only AFTER the step position
+            // is computed and a 1-step round is dropped before that velocity is ever used. Each now declares
+            // BOTH keys, so the "both specified -> use as given" branch is taken and the pellet is stepped like
+            // every other round in the game.
+            //
+            // THE WALL IS DELIBERATELY UNCHANGED. This buys travel time and drop, not reach: steps were chosen
+            // so that steps * travel lands exactly on each gun's existing Range, with the resulting muzzle
+            // velocity nearest real buckshot (~330-420 m/s). The sawed-off being slowest falls out of its own
+            // short range rather than being hand-set. If a future edit reverts one of these to a single step it
+            // becomes a hitscan ray again SILENTLY -- nothing else in the suite would notice, which is why the
+            // step count is asserted here and not just the wall.
+            var buck = new (string Gun, float Wall, int Steps)[] {
+                ("determinator", 45f, 6), ("bluntforce", 35f, 5), ("masterkey", 30f, 4),
+                ("vonya", 25f, 3), ("bane", 20f, 3), ("sawed_off", 20f, 3), ("quadbarrel", 20f, 3),
+            };
+            foreach (var s in buck)
+            {
+                var d = Def(dir, s.Gun);
+                float flight = d.MuzzleVelocity * 0.02f * d.BallisticSteps;
+                T.Check($"{s.Gun} pellets FLY now, not hitscan ({d.BallisticSteps} steps @ {d.MuzzleVelocity:0} m/s = {d.BallisticSteps * 0.02f:0.00}s)",
+                    d.BallisticSteps > 1 && d.BallisticSteps == s.Steps
+                    && d.MuzzleVelocity > 300f && d.MuzzleVelocity < 450f);
+                T.Check($"...and it still stops at its old {s.Wall:0} m wall ({flight:0.0} m) -- travel time, not reach",
+                    Mathf.Abs(flight - s.Wall) < 0.5f);
+            }
+
             // THE CONTROL, and it is deliberately NOT the zubeknakov. gun.ballistics_tuning uses the AK as its
             // untouched subject, but the AK is 7.62x39 and is IN this sweep -- it will be retuned, and that test's
             // control must move when it is. The nailgun is a tool, not a balance target, so it stays on the

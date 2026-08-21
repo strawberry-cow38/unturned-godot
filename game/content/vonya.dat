@@ -58,7 +58,8 @@ Durability 0.13
 Spread_Aim 0.775
 Spread_Angle_Degrees 1.782
 
-Ballistic_Steps 1
+Ballistic_Steps 3
+Ballistic_Travel 8.33333
 
 Recoil_Min_X -2.43
 Recoil_Min_Y 5.34
