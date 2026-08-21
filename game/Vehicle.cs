@@ -12,8 +12,8 @@ namespace UnturnedGodot
         float _speedMax = 12.5f, _speedMin = -7f;    // Speed_Max fwd / Speed_Min reverse, m/s -- source .dat (directly usable)
         float _brakeForce = 32f;                     // Brake -- source .dat value
         float _steerTarget, _steerAngle, _steerTurnSpeed = 70f;   // steering smoothing: MoveTowards target at deg/s. LOWERED for a weighty/laggy feel -- the wheels float behind the input, slow to turn AND slow to re-center (master)
-        WaterMode _water; Vector3[] _buoys; float _inThrottle, _inSteer; int _waterFrame;
-        WakeTrail _wake;   // foam wake ribbon (lazy: created when the hull is first afloat)   // BOAT/AMPHIBIOUS: water mode + hull buoyancy VOXELS + the last drive input (water propulsion runs in _PhysicsProcess)
+        WaterMode _water; Vector3[] _buoys; float _inThrottle, _inSteer; int _waterFrame;   // BOAT/AMPHIBIOUS: water mode + hull buoyancy VOXELS + the last drive input (water propulsion runs in _PhysicsProcess)
+        WakeTrail _wake;   // foam wake ribbon (lazy: created when the hull is first afloat)
         float _waveAmp = 0.1f;                                  // sea-surface ripple amplitude for THIS hull
         bool _steadyHull;                                       // hold her still: extra heave damping (Spec.SteadyHull)
         Vector3 _deckVolume, _deckCenter;                       // MOVING DECK: the carry box (local space); Zero = not a carrier
@@ -6535,6 +6535,27 @@ namespace UnturnedGodot
         // the hull box is sliced 2x2x2; each SUBMERGED voxel gets an Archimedes up-force (rho_water*g*V, depth-scaled by a
         // sqrt curve) + point-velocity damping, applied AT the voxel -> the hull floats level, self-rights, and damps sway.
         // While afloat the drive input becomes forward thrust + rudder yaw (source propels boats via the engine; same feel).
+        // foam wake on the RENDER frame: drive it from the INTERPOLATED hull pose so the leading
+        // foam stays glued to the visually-rendered ship. Building it off the raw 50Hz physics pose
+        // lags/jitters a step behind her -- the same interp trap as the flatbed container rider.
+        public override void _Process(double delta)
+        {
+            if (_water == WaterMode.Car) return;
+            bool active = _afloat && _buoys != null;
+            if (active && _wake == null)
+            {
+                float hb = 2f, hl = 2f;
+                foreach (var bp in _buoys) { hb = Mathf.Max(hb, Mathf.Abs(bp.X)); hl = Mathf.Max(hl, Mathf.Abs(bp.Z)); }
+                _wake = new WakeTrail { HalfWidth = hb * 1.5f, BowOffset = hl * 1.15f };   // wider than the hull beam so the foam peeks out along her sides; anchor at the bow tip
+                AddChild(_wake);   // TopLevel child -> world-space, but freed with the vehicle
+            }
+            if (_wake != null)
+            {
+                float wspd = active ? new Vector3(LinearVelocity.X, 0f, LinearVelocity.Z).Length() : 0f;
+                _wake.Push(GetGlobalTransformInterpolated(), Terrain.SeaLevelY, wspd, (float)delta);   // speed 0 when not making way -> the trail just ages out
+            }
+        }
+
         void ApplyWaterPhysics(float delta)
         {
             _afloat = false;
@@ -6647,19 +6668,6 @@ namespace UnturnedGodot
                 if (_water == WaterMode.Boat) { EngineForce = 0f; Brake = 0f; }               // a pure boat has no useful wheels
             }
             if (++_waterFrame % 30 == 0 && System.Environment.GetEnvironmentVariable("UG_BOATDBG") == "1") GD.Print($"[boat] afloat={_afloat} sub={submerged}/{_buoys.Length} y={GlobalPosition.Y:F2} spd={LinearVelocity.Length():F1} thr={_inThrottle:F1} str={_inSteer:F1}");   // gated behind UG_BOATDBG -- was spamming the console every 30 frames afloat (master); counter still ticks
-            // foam wake: while afloat + making way, trail an ocean-foam ribbon behind the hull
-            if (_afloat && _water != WaterMode.Car)
-            {
-                if (_wake == null)
-                {
-                    float hb = 2f, hl = 2f;
-                    foreach (var bp in _buoys) { hb = Mathf.Max(hb, Mathf.Abs(bp.X)); hl = Mathf.Max(hl, Mathf.Abs(bp.Z)); }
-                    _wake = new WakeTrail { HalfWidth = hb, SternOffset = hl };
-                    AddChild(_wake);   // TopLevel child -> world-space, but freed with the vehicle
-                }
-                float wspd = new Vector3(LinearVelocity.X, 0f, LinearVelocity.Z).Length();
-                _wake.Push(GlobalPosition, seaY, wspd, delta);
-            }
         }
     }
 }

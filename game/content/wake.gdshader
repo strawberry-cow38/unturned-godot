@@ -37,7 +37,7 @@ void fragment(){
     float across = abs(v_uv.x * 2.0 - 1.0);   // 0 at the centreline, 1 at the ribbon edges
     float behind = v_uv.y;                     // 0 at the stern, 1 at the far tail
     float churn = smoothstep(body_lo, body_hi, n);                             // ocean-foam noise, same as the sea
-    float side  = smoothstep(1.0, 0.70, across);                              // feather the ribbon sides -> soft blend, no hard edge
+    float side  = smoothstep(1.0, 0.88, across);                              // feather ONLY the very outer edge -> foam still hugs the hull sides (peeks past the beam) but blends softly
     float tail  = 1.0 - smoothstep(0.45, 1.0, behind);                        // dissolve toward the tail -> no hard base
     float core  = (1.0 - smoothstep(0.0, 0.55, behind)) * (1.0 - across * 0.5); // brighter prop-wash just behind the stern
     float foam  = clamp(max(churn * 0.85, core * 0.7) * side * tail, 0.0, 1.0);

@@ -17,7 +17,7 @@ public partial class WakeTrail : MeshInstance3D
     bool _hasRaw;
 
     public float HalfWidth = 6f;     // base half-width at the stern (~ the hull's half-beam)
-    public float SternOffset = 0f;   // how far behind the hull origin the wake is born (~ half the hull length)
+    public float BowOffset = 0f;     // how far FORWARD of the hull origin the wake starts (~ half the hull length = the bow tip)
 
     const float Life = 7.5f;         // seconds a foam sample lives
     const float MinStep = 2.5f;      // min metres between samples
@@ -33,21 +33,23 @@ public partial class WakeTrail : MeshInstance3D
         MaterialOverride = new ShaderMaterial { Shader = GD.Load<Shader>("res://content/wake.gdshader") };
     }
 
-    // Hull calls this each physics tick while afloat. shipPos = hull origin (world), seaY = flat sea
-    // surface Y, speed = horizontal speed (m/s), dt = physics delta.
-    public void Push(Vector3 shipPos, float seaY, float speed, float dt)
+    // Hull calls this on the RENDER frame with its INTERPOLATED transform (so the leading foam stays
+    // glued to the visually-rendered ship, not the raw 50Hz physics pose). seaY = flat sea surface Y,
+    // speed = horizontal speed (m/s), dt = render delta. speed 0 -> age out only (no new foam).
+    public void Push(Transform3D shipXf, float seaY, float speed, float dt)
     {
         if (_im == null) return;
-        Vector3 vel = _hasRaw ? new Vector3(shipPos.X - _lastRaw.X, 0f, shipPos.Z - _lastRaw.Z) : Vector3.Zero;
-        _lastRaw = shipPos; _hasRaw = true;
-        Vector3 dir = vel.LengthSquared() > 1e-6f ? vel.Normalized() : Vector3.Zero;
+        Vector3 pos = shipXf.Origin;
+        Vector3 vel = _hasRaw ? new Vector3(pos.X - _lastRaw.X, 0f, pos.Z - _lastRaw.Z) : Vector3.Zero;
+        _lastRaw = pos; _hasRaw = true;
+        Vector3 dir = vel.LengthSquared() > 1e-8f ? vel.Normalized() : Vector3.Zero;
 
-        // the wake is born at the stern (behind the hull, opposite travel) on the flat sea surface
-        Vector3 stern = new Vector3(shipPos.X, seaY + 0.05f, shipPos.Z) - dir * SternOffset;
+        // the wake STARTS at the bow: the hull's leading tip, on the flat sea surface
+        Vector3 bow = new Vector3(pos.X, seaY + 0.05f, pos.Z) + dir * BowOffset;
 
         bool moving = speed > 1.2f && dir != Vector3.Zero;
-        if (moving && (_pts.Count == 0 || stern.DistanceTo(_pts[_pts.Count - 1].P) >= MinStep))
-            _pts.Add(new Sample { P = stern, Age = 0f, Dist = 0f });
+        if (moving && (_pts.Count == 0 || bow.DistanceTo(_pts[_pts.Count - 1].P) >= MinStep))
+            _pts.Add(new Sample { P = bow, Age = 0f, Dist = 0f });
 
         for (int i = _pts.Count - 1; i >= 0; i--)
         {
