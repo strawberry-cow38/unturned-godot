@@ -12,7 +12,8 @@ namespace UnturnedGodot
         float _speedMax = 12.5f, _speedMin = -7f;    // Speed_Max fwd / Speed_Min reverse, m/s -- source .dat (directly usable)
         float _brakeForce = 32f;                     // Brake -- source .dat value
         float _steerTarget, _steerAngle, _steerTurnSpeed = 70f;   // steering smoothing: MoveTowards target at deg/s. LOWERED for a weighty/laggy feel -- the wheels float behind the input, slow to turn AND slow to re-center (master)
-        WaterMode _water; Vector3[] _buoys; float _inThrottle, _inSteer; int _waterFrame;   // BOAT/AMPHIBIOUS: water mode + hull buoyancy VOXELS + the last drive input (water propulsion runs in _PhysicsProcess)
+        WaterMode _water; Vector3[] _buoys; float _inThrottle, _inSteer; int _waterFrame;
+        WakeTrail _wake;   // foam wake ribbon (lazy: created when the hull is first afloat)   // BOAT/AMPHIBIOUS: water mode + hull buoyancy VOXELS + the last drive input (water propulsion runs in _PhysicsProcess)
         float _waveAmp = 0.1f;                                  // sea-surface ripple amplitude for THIS hull
         bool _steadyHull;                                       // hold her still: extra heave damping (Spec.SteadyHull)
         Vector3 _deckVolume, _deckCenter;                       // MOVING DECK: the carry box (local space); Zero = not a carrier
@@ -6646,6 +6647,19 @@ namespace UnturnedGodot
                 if (_water == WaterMode.Boat) { EngineForce = 0f; Brake = 0f; }               // a pure boat has no useful wheels
             }
             if (++_waterFrame % 30 == 0 && System.Environment.GetEnvironmentVariable("UG_BOATDBG") == "1") GD.Print($"[boat] afloat={_afloat} sub={submerged}/{_buoys.Length} y={GlobalPosition.Y:F2} spd={LinearVelocity.Length():F1} thr={_inThrottle:F1} str={_inSteer:F1}");   // gated behind UG_BOATDBG -- was spamming the console every 30 frames afloat (master); counter still ticks
+            // foam wake: while afloat + making way, trail an ocean-foam ribbon behind the hull
+            if (_afloat && _water != WaterMode.Car)
+            {
+                if (_wake == null)
+                {
+                    float hb = 2f, hl = 2f;
+                    foreach (var bp in _buoys) { hb = Mathf.Max(hb, Mathf.Abs(bp.X)); hl = Mathf.Max(hl, Mathf.Abs(bp.Z)); }
+                    _wake = new WakeTrail { HalfWidth = hb, SternOffset = hl };
+                    AddChild(_wake);   // TopLevel child -> world-space, but freed with the vehicle
+                }
+                float wspd = new Vector3(LinearVelocity.X, 0f, LinearVelocity.Z).Length();
+                _wake.Push(GlobalPosition, seaY, wspd, delta);
+            }
         }
     }
 }
