@@ -187,7 +187,14 @@ namespace SDG.Unturned
             { var r54 = Assets.find(103); if (r54 != null) r54.itemName = "7.62x54mmR Rounds"; }
             { var r556 = SDG.Unturned.Assets.find(478); if (r556 != null) r556.itemName = "5.56mm Rifle Rounds"; }
             // 5.56 FMJ loose round (strawberry: the chamber's rack output, stacks 120). Not loadable ammo yet -- just a stackable item.
-            { var fmj = SDG.Unturned.Assets.find(5004); if (fmj != null) { fmj.stackSize = 120; fmj.ammoType = "FMJ"; fmj.magCaliber = 1; } }   // 5.56 FMJ: bullet type FMJ, caliber 1 (STANAG group) so the rack knows what it ejects (master)
+            // 5.56 FMJ is now REAL loose ammo. This was previously left inert ("Not loadable ammo yet") and could
+            // not safely be flipped: UsesShells resolved a shell by scanning every asset for a caliber match, so
+            // making a caliber-1 round isAmmo turned the eaglefire/maplestrike/honeybadger into shell-fed guns and
+            // broke gun.drum_mag_capacity, gun.swap_mid_reload and gun.caliber_field (cow tools hit this on my bad
+            // advice, 2026-08-20). Safe now that UsesShells is gated on the GUN'S OWN magazine being ammo -- and
+            // this line is the teeth check for that gate: if the gate ever regresses, the STANAG family breaks here.
+            Shell(5004, 1, 1);
+            { var fmj = SDG.Unturned.Assets.find(5004); if (fmj != null) { fmj.stackSize = 120; fmj.ammoType = "FMJ"; } }   // 5.56 FMJ: bullet type FMJ; caliber set by Shell() above
             DeriveMagazinesFromGuns();
         }
 
