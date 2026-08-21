@@ -9,7 +9,7 @@ Size_Y 2
 Size_Z 0.45
 
 Sight 475
-Magazine 478
+Magazine 5004
 
 Hook_Sight
 Hook_Barrel
@@ -20,7 +20,7 @@ Ammo_Max 4
 Safety
 Semi
 
-Caliber 17
+Caliber 1
 Caliber_Name "5.56x45mm NATO"
 
 Range 200

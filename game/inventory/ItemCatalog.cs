@@ -182,10 +182,8 @@ namespace SDG.Unturned
             // 5-round magazine through the open action, so it takes the same loose rounds WITH Shell_Reload 1.
             Shell(108, 6, 1);    // .44 Magnum  -> caliber 6 (ace)
             Shell(103, 5, 1);    // 7.62x54mmR  -> caliber 5 (schofield)
-            Shell(478, 17, 1);   // 5.56x45mm NATO -> caliber 17 (homemade wood bolt rifles birch/pine/maple share it; group 17 is theirs alone so it never turns a STANAG mag gun into a shell-user)
             { var a44 = Assets.find(108); if (a44 != null) a44.itemName = ".44 Magnum Rounds"; }
             { var r54 = Assets.find(103); if (r54 != null) r54.itemName = "7.62x54mmR Rounds"; }
-            { var r556 = SDG.Unturned.Assets.find(478); if (r556 != null) r556.itemName = "5.56mm Rifle Rounds"; }
             // 5.56 FMJ loose round (strawberry: the chamber's rack output, stacks 120). Not loadable ammo yet -- just a stackable item.
             // 5.56 FMJ is now REAL loose ammo. This was previously left inert ("Not loadable ammo yet") and could
             // not safely be flipped: UsesShells resolved a shell by scanning every asset for a caliber match, so
