@@ -25,6 +25,27 @@ namespace UnturnedGodot.Testing
 
         static GunDef Def(string dir, string gun) => GunDef.FromDatText(System.IO.File.ReadAllText(dir + gun + ".dat"));
 
+        // MASTER'S PER-CARTRIDGE TABLE (2026-08-21). One row per real cartridge: where full damage ends, where
+        // it floors, what fraction survives, and how far the round flies before it is dropped. Rifle walls sit
+        // past PEI's 1920 m playable width on purpose -- "technically infinite range, just the damage dropoff
+        // would limit it". This is the authority the .dats are checked against; changing a value here without
+        // changing the .dats (or the reverse) is exactly what these checks exist to catch.
+        readonly record struct Fall(float Start, float End, float Floor, float Wall);
+        static readonly System.Collections.Generic.Dictionary<string, Fall> Falloff = new()
+        {
+            ["5.56x45mm NATO"]    = new(113, 212, 0.65f, 2100), ["7.62x39mm"]         = new(120, 230, 0.68f, 2100),
+            ["7.62x51mm NATO"]    = new(160, 320, 0.72f, 2100), ["7.62x54mmR"]        = new(170, 340, 0.72f, 2100),
+            [".338 Lapua Magnum"] = new(250, 520, 0.80f, 2100), [".50 BMG"]           = new(280, 600, 0.82f, 2100),
+            [".300 AAC Blackout"] = new( 70, 150, 0.55f, 1100), ["9x39mm"]            = new( 70, 150, 0.55f, 1100),
+            ["5.7x28mm"]          = new( 90, 190, 0.60f, 1400), ["7.62x25mm Tokarev"] = new( 65, 150, 0.55f,  950),
+            [".44 Magnum"]        = new( 55, 130, 0.55f,  900), [".45 ACP"]           = new( 40,  95, 0.50f,  700),
+            ["9x19mm Parabellum"] = new( 45, 105, 0.52f,  750), ["9x18mm Makarov"]    = new( 40,  95, 0.50f,  700),
+            [".22 LR"]            = new( 35,  90, 0.45f,  500), ["Railgun Slug"]      = new(400, 900, 0.90f, 2100),
+            ["Arrow"]             = new( 40,  90, 0.60f,  260), ["Bolt"]              = new( 45, 100, 0.60f,  280),
+            ["Nail"]              = new( 15,  40, 0.40f,  120), ["Paintball"]         = new( 12,  30, 0.40f,   90),
+            ["12 Gauge"]          = new( 18,  45, 0.35f,    0), ["20 Gauge"]          = new( 15,  38, 0.35f,    0),
+        };
+
         // gun, real weapon, its real muzzle velocity at its real barrel length (wiki trivia named the weapon;
         // the velocity is the cartridge's published figure for that barrel).
         static readonly (string Gun, string Real, float V)[] Retuned =
@@ -82,32 +103,41 @@ namespace UnturnedGodot.Testing
                 T.Check($"...at the 5.56 pass's gravity 1.4, not the default 4 ({d.GravityMultiplier:0.##})",
                     Mathf.IsEqualApprox(d.GravityMultiplier, 1.4f));
 
-                // THE FORMULA, asserted as a relation to v so a later family cannot quietly drift off it.
-                T.Check($"...falloff starts at 0.1202*v ({d.FalloffStart:0} m, want {0.1202f * v:0.#})",
-                    Mathf.Abs(d.FalloffStart - 0.1202f * v) < 1.5f);
-                T.Check($"...and ends at 0.2256*v ({d.FalloffEnd:0} m, want {0.2256f * v:0.#})",
-                    Mathf.Abs(d.FalloffEnd - 0.2256f * v) < 1.5f);
-                T.Check($"...to half damage ({d.FalloffMin:0.##})", Mathf.IsEqualApprox(d.FalloffMin, 0.5f));
+                // FALLOFF IS PER CARTRIDGE SINCE 2026-08-21, not derived from velocity (master: "base the
+                // dropoff per round and hard wall too"). The old 0.1202*v / 0.2256*v relation was the 5.56 pass's
+                // shape applied to everyone; it fired when the table replaced it, which is what it was for.
+                // What has to stay true is that every gun of a cartridge agrees with its cartridge's row -- so
+                // the drift check moved from "matches the formula" to "matches the table", same teeth.
+                var row = Falloff[d.CaliberName];
+                T.Check($"...falloff window is its cartridge's ({d.FalloffStart:0}..{d.FalloffEnd:0} m, table says {row.Start}..{row.End})",
+                    Mathf.Abs(d.FalloffStart - row.Start) < 1.5f && Mathf.Abs(d.FalloffEnd - row.End) < 1.5f);
+                T.Check($"...and its cartridge's floor ({d.FalloffMin:0.##}, table says {row.Floor:0.##})",
+                    Mathf.Abs(d.FalloffMin - row.Floor) < 0.005f);
 
                 // FalloffStart > 0 is what ARMS the feature at all -- GunDef treats <=0 as disabled, which is
                 // exactly how the other 47 guns stayed on the old cliff while looking configured.
                 T.Check($"...and the falloff is actually ARMED, not start<=0 ({d.FalloffStart:0} > 0)", d.FalloffStart > 0f);
 
-                // ~455 m of flight, so Range stops being a wall the bullet is deleted at.
+                // FLIGHT IS THE PER-ROUND WALL now. 455 m was the old universal figure; master replaced it with
+                // a wall per cartridge, rifle rounds past the map's 1920 m so only dropoff limits them.
                 float flight = d.MuzzleVelocity * 0.02f * d.BallisticSteps;
-                T.Check($"...and flies ~455 m before expiring ({flight:0} m), so range is a slope not a cliff",
-                    flight > 430f && flight < 480f);
+                T.Check($"...and flies its cartridge's wall ({flight:0} m, table says {row.Wall})",
+                    Mathf.Abs(flight - row.Wall) < row.Wall * 0.05f);
             }
 
             foreach (var (gun, v) in FalloffOnly)
             {
                 var d = Def(dir, gun);
-                T.Check($"{gun} gets falloff ({d.FalloffStart:0}/{d.FalloffEnd:0} m, want {0.1202f * v:0}/{0.2256f * v:0})",
-                    Mathf.Abs(d.FalloffStart - 0.1202f * v) < 1.5f && Mathf.Abs(d.FalloffEnd - 0.2256f * v) < 1.5f);
+                var hrow = Falloff[d.CaliberName];
+                T.Check($"{gun} gets its cartridge's falloff ({d.FalloffStart:0}/{d.FalloffEnd:0} m, table says {hrow.Start}/{hrow.End})",
+                    Mathf.Abs(d.FalloffStart - hrow.Start) < 1.5f && Mathf.Abs(d.FalloffEnd - hrow.End) < 1.5f);
                 // ...and KEEPS its tier. If a later sweep hands these the 1.4/455 m treatment, this is what says so.
-                T.Check($"...but KEEPS the heavy-sniper tier: gravity 1x ({d.GravityMultiplier:0.##}) and ~307 m reach ({d.MuzzleVelocity * 0.02f * d.BallisticSteps:0} m)",
+                // The tier is GRAVITY, not reach -- reach became the per-round wall in master's balance pass, and
+                // for a .50/.338 that wall is past the map on purpose. Gravity 1x is what still makes these three
+                // shoot flatter than everything else, so that is the half worth pinning.
+                T.Check($"...but KEEPS the heavy-sniper tier: gravity 1x ({d.GravityMultiplier:0.##}), reach now the per-round wall ({d.MuzzleVelocity * 0.02f * d.BallisticSteps:0} m)",
                     Mathf.IsEqualApprox(d.GravityMultiplier, 1f)
-                    && d.MuzzleVelocity * 0.02f * d.BallisticSteps is > 300f and < 320f);
+                    && d.MuzzleVelocity * 0.02f * d.BallisticSteps >= 1920f);
             }
 
             // THE HMG HAD NO CARTRIDGE AT ALL. It carried no Caliber_Name key, so it sat outside the whole caliber
@@ -120,9 +150,12 @@ namespace UnturnedGodot.Testing
             // untouched subject, but the AK is 7.62x39 and is IN this sweep -- it will be retuned, and that test's
             // control must move when it is. The nailgun is a tool, not a balance target, so it stays on the
             // fallback by design and is a control that will not go stale mid-sweep.
+            // Same split as gun.ballistics_tuning: master's balance pass is global, so the nailgun HAS falloff now
+            // and the "untouched" premise is gone. Gravity is the half that still catches a global default being
+            // moved instead of per-gun values being set, so that is the half that stays.
             var ctl = Def(dir, "nailgun");
-            T.Check($"control: the nailgun is untouched ({ctl.MuzzleVelocity:0} m/s, gravity {ctl.GravityMultiplier:0.##}, falloff {ctl.FalloffStart:0})",
-                Mathf.IsEqualApprox(ctl.GravityMultiplier, 4f) && ctl.FalloffStart <= 0f);
+            T.Check($"control: gravity did NOT go global -- the nailgun is still on the default ({ctl.GravityMultiplier:0.##}, want 4)",
+                Mathf.IsEqualApprox(ctl.GravityMultiplier, 4f));
 
             yield break;
         }

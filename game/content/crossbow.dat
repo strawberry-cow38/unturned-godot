@@ -55,7 +55,7 @@ Wear 2
 Spread_Aim 0.001
 Spread_Angle_Degrees 2.828
 
-Ballistic_Steps 40
+Ballistic_Steps 56
 Ballistic_Travel 5
 
 Recoil_Min_X -0.12
@@ -104,3 +104,6 @@ Blueprints
 		Effect "84347b13028340b8976033c08675d458" // Wrench
 	}
 ]
+Damage_Falloff_Start 45
+Damage_Falloff_End 100
+Damage_Falloff_Min 0.6

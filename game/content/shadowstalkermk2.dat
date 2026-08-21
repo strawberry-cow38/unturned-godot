@@ -62,7 +62,7 @@ Aim_In_Duration 0.25
 Spread_Aim 0.001
 Spread_Angle_Degrees 1.427
 
-Ballistic_Steps 24
+Ballistic_Steps 168
 Ballistic_Travel 12.5
 Bullet_Gravity_Multiplier 0
 
@@ -85,3 +85,6 @@ Blueprints
 		Effect "84347b13028340b8976033c08675d458" // Wrench
 	}
 ]
+Damage_Falloff_Start 400
+Damage_Falloff_End 900
+Damage_Falloff_Min 0.9

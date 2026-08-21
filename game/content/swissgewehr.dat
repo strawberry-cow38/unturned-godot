@@ -59,7 +59,7 @@ Durability 0.22
 Spread_Aim 0.05
 Spread_Angle_Degrees 1.427
 
-Ballistic_Steps 22
+Ballistic_Steps 102
 Ballistic_Travel 20.68
 
 Recoil_Min_X -1.09
@@ -113,9 +113,9 @@ Blueprints
 	}
 ]
 Bullet_Gravity_Multiplier 1.4
-Damage_Falloff_Start 125
-Damage_Falloff_End 233
-Damage_Falloff_Min 0.5
+Damage_Falloff_Start 113
+Damage_Falloff_End 212
+Damage_Falloff_Min 0.65
 Recoil_Pattern_Climb 38.5
 Recoil_Pattern_Drift -2.4
 Recoil_Pattern_Drift_Exp 1.35

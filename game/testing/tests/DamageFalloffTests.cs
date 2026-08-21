@@ -26,24 +26,32 @@ namespace UnturnedGodot.Testing
         {
             // ---- 1. the curve is declared and parsed
             var ef = Def("eaglefire");
+            // FLOOR IS 0.65 SINCE 2026-08-21, and it is PER ROUND now (master: "id also like the damage dropoff
+            // effect to be reduced slightly, so its not useless at range"). At 20 damage a 0.5 floor meant ten
+            // shots to kill at distance; 0.65 makes it eight. The old assertion pinned 0.5 and fired when this
+            // changed -- correctly. Asserted as a RANGE rather than the exact number so a later per-round retune
+            // does not have to come back here, while a floor that collapses toward useless still trips it.
             T.Check($"the eaglefire declares a falloff window ({ef.FalloffStart}..{ef.FalloffEnd} m, floor {ef.FalloffMin})",
-                ef.FalloffStart > 50f && ef.FalloffEnd > ef.FalloffStart && Mathf.IsEqualApprox(ef.FalloffMin, 0.5f));
+                ef.FalloffStart > 50f && ef.FalloffEnd > ef.FalloffStart && ef.FalloffMin >= 0.6f && ef.FalloffMin <= 0.75f);
             T.Check($"full damage inside the window ({ef.FalloffAt(50f)})", Mathf.IsEqualApprox(ef.FalloffAt(50f), 1f));
             T.Check($"floored past the end ({ef.FalloffAt(400f)})", Mathf.IsEqualApprox(ef.FalloffAt(400f), ef.FalloffMin));
+            // Derived from the gun's OWN floor rather than a literal, or this pins the floor a second time in
+            // disguise and every future retune fails here for the wrong reason.
             float mid = ef.FalloffAt((ef.FalloffStart + ef.FalloffEnd) * 0.5f);
-            T.Check($"half way through the window is half way down ({mid:0.###})", Mathf.IsEqualApprox(mid, 0.75f, 0.01f));
+            float midWant = 1f + (ef.FalloffMin - 1f) * 0.5f;
+            T.Check($"half way through the window is half way down ({mid:0.###}, want {midWant:0.###} from floor {ef.FalloffMin:0.##})",
+                Mathf.IsEqualApprox(mid, midWant, 0.01f));
 
-            // NOT everyone: a gun that declares nothing must behave exactly as before, or this change silently
-            // re-balanced every weapon in the game rather than the seven 5.56s it was scoped to.
-            //
-            // The subject WAS the colt, until the 2026-08-20 "balance the rest of the guns" pass gave the .45 ACP
-            // family real velocities and falloff. This control CAUGHT that, correctly and on purpose -- it is the
-            // whole reason it exists. It moved rather than being deleted, and it moved to the nailgun specifically
-            // because a nailgun is a TOOL, not a balance target: no future caliber pass will claim it, so this
-            // control cannot go stale the way the colt just did. If it ever fires, something swept the toys too.
-            var ctl = Def("nailgun");
-            T.Check($"an untouched gun has no falloff at all ({ctl.FalloffAt(500f)})",
-                Mathf.IsZeroApprox(ctl.FalloffStart) && Mathf.IsEqualApprox(ctl.FalloffAt(500f), 1f));
+            // THE DISABLE PATH, tested on the MECHANISM rather than on a specimen. This used to pick a real gun
+            // that declared no falloff and assert it behaved as before -- first the colt, then the nailgun. Both
+            // got swept, because master's 2026-08-21 pass is deliberately global: every cartridge now has a
+            // dropoff, so "an untouched gun" is not a thing that exists any more and any control built on one is
+            // a control with a shelf life. What must still hold is that FalloffStart <= 0 DISABLES falloff, since
+            // that is the branch protecting anything added later that declares none. Built here rather than
+            // borrowed from content, so no future balance pass can invalidate it.
+            var none = GunDef.FromDatText("Useable Gun\nDamage 30\nRange 100\n");
+            T.Check($"a gun declaring no falloff is unaffected at any range ({none.FalloffAt(500f)} at 500 m)",
+                Mathf.IsZeroApprox(none.FalloffStart) && Mathf.IsEqualApprox(none.FalloffAt(500f), 1f));
 
             // ---- 2. the bullet must NOT die at the old range any more
             T.Check($"the eaglefire's bullet reaches ~450 m ({ef.MuzzleVelocity * 0.02f * ef.BallisticSteps:0} m)",

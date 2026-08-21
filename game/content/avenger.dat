@@ -105,8 +105,8 @@ Blueprints
 	}
 ]
 Ballistic_Travel 5.2
-Ballistic_Steps 88
+Ballistic_Steps 135
 Bullet_Gravity_Multiplier 1.4
-Damage_Falloff_Start 31
-Damage_Falloff_End 59
+Damage_Falloff_Start 40
+Damage_Falloff_End 95
 Damage_Falloff_Min 0.5

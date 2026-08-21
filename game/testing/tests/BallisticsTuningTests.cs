@@ -70,9 +70,16 @@ namespace UnturnedGodot.Testing
                 // stale hand-written value there is the quiet way this edit goes wrong, because raising travel
                 // without touching steps extends the gun's real reach well past its declared Range and nothing
                 // says so. A bullet that dies at 240 m on a 300 m rifle is the same bug in the other direction.
+                // REACH IS NOW THE PER-ROUND HARD WALL, not the declared Range. master 2026-08-21: "i want the
+                // 5.56 guns to have *technically* infinite range, just the damage dropoff would limit it ... base
+                // the dropoff per round and hard wall too". A .50 BMG / .338 wall is 2100 m, past PEI's 1920 m
+                // playable width, so the round crosses the whole map and only falloff limits it. The OLD assertion
+                // here (300-320 m) was the bullet-delete wall master asked to remove -- it fired correctly when
+                // that changed, which is the job. What it must still catch is a wall so short the round dies
+                // mid-flight over the map.
                 float reach = d.MuzzleVelocity * 0.02f * d.BallisticSteps;
-                T.Check($"...and still flies its full {gun} range ({reach:0} m of a declared 300 m)",
-                    reach >= 300f && reach < 320f);
+                T.Check($"...and its round crosses the whole map before expiring ({reach:0} m against PEI's 1920 m)",
+                    reach >= 1920f);
 
                 // THE ACTUAL CLAIM. "Barely noticeable" up close: under 10 cm at 100 m is inside a torso, so no
                 // holdover. "Not zero like the railguns" at range: the railgun target is ~10 cm at 300 m, so a
@@ -99,9 +106,15 @@ namespace UnturnedGodot.Testing
             // gun.damage_falloff control did: a nailgun is a TOOL, not a balance target, so no caliber pass will
             // ever claim it. This is the second time this control went stale from scope growth; the third would
             // mean the toys got swept too, which is a real finding rather than a test to fix.
+            // ...and the control moved a THIRD time, but only half of it: master's 2026-08-21 balance pass is
+            // deliberately GLOBAL (every cartridge gets a dropoff and a wall), so "an untouched gun" no longer
+            // exists and the falloff-absent half of this control is dead by design rather than by accident.
+            // The GRAVITY half is still exactly as load-bearing as when it was written: if someone produces the
+            // sniper numbers by moving GunDef's global Bullet_Gravity_Multiplier default instead of setting it
+            // per gun, every check above still passes and this one still fails. That is what it is here for.
             var ctl = Def(dir, "nailgun");
-            T.Check($"control: the nailgun was NOT retuned ({ctl.MuzzleVelocity:0} m/s, gravity {ctl.GravityMultiplier:0.##})",
-                Godot.Mathf.IsEqualApprox(ctl.GravityMultiplier, 4f) && ctl.FalloffStart <= 0f);
+            T.Check($"control: gravity did NOT go global -- the nailgun is still on the default ({ctl.GravityMultiplier:0.##}, want 4)",
+                Godot.Mathf.IsEqualApprox(ctl.GravityMultiplier, 4f));
             float? ctlDrop = DropAt(ctl, 20f);
             T.Check($"...and still drops on the default gravity over 20 m ({ctlDrop * 100f:0.#} cm), so gravity did not go global",
                 ctlDrop is > 0.05f);

@@ -123,10 +123,10 @@ Caliber_Name "5.56x45mm NATO"
 Real_Weapon "FAMAS"
 Ballistic_Travel 18.8
 Bullet_Gravity_Multiplier 1.4
-Ballistic_Steps 24
+Ballistic_Steps 112
 Damage_Falloff_Start 113
 Damage_Falloff_End 212
-Damage_Falloff_Min 0.5
+Damage_Falloff_Min 0.65
 Recoil_Pattern_Climb 46.0
 Recoil_Pattern_Drift -5.0
 Recoil_Pattern_Drift_Exp 1.15

@@ -19,6 +19,7 @@ Range 250
 Firerate 7
 Action Trigger
 
+Damage 75
 Player_Damage 35
 Player_Leg_Multiplier 0.6
 Player_Arm_Multiplier 0.6
@@ -62,8 +63,8 @@ Reload_Time 2
 Turret
 Caliber_Name ".50 BMG"
 Ballistic_Travel 17.06
-Ballistic_Steps 27
+Ballistic_Steps 123
 Bullet_Gravity_Multiplier 1.4
-Damage_Falloff_Start 103
-Damage_Falloff_End 192
-Damage_Falloff_Min 0.5
+Damage_Falloff_Start 280
+Damage_Falloff_End 600
+Damage_Falloff_Min 0.82

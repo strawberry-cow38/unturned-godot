@@ -118,6 +118,7 @@ Blueprints
 		Effect "84347b13028340b8976033c08675d458" // Wrench
 	}
 ]
-Damage_Falloff_Start 103
-Damage_Falloff_End 192
-Damage_Falloff_Min 0.5
+Damage_Falloff_Start 280
+Damage_Falloff_End 600
+Damage_Falloff_Min 0.82
+Ballistic_Steps 123
