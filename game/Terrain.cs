@@ -170,6 +170,16 @@ void fragment() {
         bool _dirty;
         public bool Dirty => _dirty;
 
+        /// <summary>Replace this terrain's heights with a generated island and rebuild the meshes. Operates on
+        /// the SAME grid the sculpt brushes edit, so the result is immediately hand-editable and saves through
+        /// SaveHeightmap like any other map -- generation is a starting point, not a separate kind of map.</summary>
+        public void GenerateIsland(int seed)
+        {
+            if (_grid == null) return;
+            ProcIsland.Fill(_grid, _gw, _gh, ProcIsland.Params.Default(seed));
+            RebuildAll();
+        }
+
         public void SaveHeightmap(string path)   // the edited merged grid (port translator; writing the retail .heightmap tiles would clobber the install)
         {
             if (_grid == null) return;
@@ -486,6 +496,11 @@ void fragment() {
             var splat1Img = Image.CreateFromData(GWs, GHs, false, Image.Format.Rgba8, sbuf1);
             var s0t = ImageTexture.CreateFromImage(splat0Img); var s1t = ImageTexture.CreateFromImage(splat1Img);
             var texMat = BuildTerrainMaterial(s0t, s1t);
+            // NOTE: deliberately does NOT touch the HasWater / SeaLevelY statics. CreateFlat is a library call
+            // the tests use directly, and mutating global water state here would leak a sea into every later
+            // test in the boot -- which is the exact failure that had five unrelated tests red earlier today
+            // (a leaked container, same shape of bug). The new-map flow sets water where it belongs, in
+            // Main.BuildEditorNew.
             terr._grid = g; terr._gw = GW; terr._gh = GH; terr._bx = 0f; terr._bz = 0f;
             terr._dom = dom; terr._dw = GWs; terr._dh = GHs;
             terr._s0Img = splat0Img; terr._s1Img = splat1Img; terr._s0Tex = s0t; terr._s1Tex = s1t;

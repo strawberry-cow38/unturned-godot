@@ -4098,6 +4098,11 @@ namespace UnturnedGodot
             mapName = EditorMaps.Sanitise(mapName) ?? "NewMap";
             _worldBuild = true;
             var terr = Terrain.CreateFlat(3, 3);
+            // A NEW MAP GETS A SEA. Nothing used to set this outside the retail-map load path, so a fresh editor
+            // map had HasWater at whatever the boot left it -- false. A generated island would then have rendered
+            // as a plateau in a void, with nothing about the heightmap itself looking wrong.
+            Terrain.HasWater = System.Environment.GetEnvironmentVariable("UG_NOWATER") != "1";
+            Terrain.SeaLevelY = 25.6f;   // the default a legacy-water retail map uses; ProcIsland builds its coast to match
             AddChild(terr);
             var sun = new DirectionalLight3D { RotationDegrees = new Vector3(-55f, -35f, 0f), LightEnergy = 1.2f, ShadowEnabled = true };
             AddChild(sun);

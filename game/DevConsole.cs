@@ -61,12 +61,12 @@ namespace UnturnedGodot
         static readonly string[] ServerGatedVerbs = { "give", "xp", "skill", "teleport", "tp", "toggleglobalpower", "globalpower", "grid" };
         // Verbs below the arg guard that are legal with NO argument. Keep this in step when adding one, or the
         // guard silently swallows it and the verb becomes unreachable from the console.
-        static readonly string[] NoArgVerbs = { "unarmed", "fridge", "fluid", "survival", "spawnmagnetablecontainer", "magcontainer", "heliphys" };
+        static readonly string[] NoArgVerbs = { "unarmed", "fridge", "fluid", "survival", "spawnmagnetablecontainer", "magcontainer", "heliphys", "procisland" };
         bool _resultHooked;
 
         LineEdit _input;
         Label _log;
-        static readonly string[] Verbs = { "give", "vehicle", "spawnMagnetableContainer", "spawnheli", "spawntrain", "spawncrane", "spawncraneontrack", "spawncontainerflatbed", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "toggleGlobalPower", "toggleGlobalWater", "toggleBbat", "infFuel", "infAmmo", "wear", "unwear", "fluid", "date", "dateset", "whenBlackout", "triggerGlobalBrownout", "hurtmain", "killmain", "hurttail", "killtail", "profiler", "renderscale", "zshadows", "freezerigs", "vertexlight", "weather", "fridge", "fill", "empty", "units", "simspeed", "time", "timeset", "timeadd", "timespeed", "daylength", "hitbox", "heliphys" };
+        static readonly string[] Verbs = { "give", "vehicle", "spawnMagnetableContainer", "spawnheli", "spawntrain", "spawncrane", "spawncraneontrack", "spawncontainerflatbed", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "toggleGlobalPower", "toggleGlobalWater", "toggleBbat", "infFuel", "infAmmo", "wear", "unwear", "fluid", "date", "dateset", "whenBlackout", "triggerGlobalBrownout", "hurtmain", "killmain", "hurttail", "killtail", "profiler", "renderscale", "zshadows", "freezerigs", "vertexlight", "weather", "fridge", "fill", "empty", "units", "simspeed", "time", "timeset", "timeadd", "timespeed", "daylength", "hitbox", "heliphys", "procisland" };
         static readonly EItemType[] ClothingTypes = { EItemType.SHIRT, EItemType.PANTS, EItemType.HAT, EItemType.VEST, EItemType.MASK, EItemType.GLASSES, EItemType.BACKPACK };
         readonly System.Collections.Generic.List<string> _history = new();
         int _histIdx;
@@ -335,6 +335,20 @@ namespace UnturnedGodot
             // consequence of each setting, not just the number set -- "heave x0.5" means nothing on its own,
             // "terminal fall 43.6 m/s" is the thing being decided. Defaults are the shipping calibration, so
             // `heliphys reset` always returns the fleet to how it flies in a build nobody has typed into.
+            // PROCEDURAL ISLAND (strawberry 2026-08-21: "proc maps ... island. yes deterministic."). Sculpts the
+            // CURRENT terrain in place, so it works on any new editor map and the result is saved, sculpted and
+            // played exactly like a hand-made one. `procisland` reseeds from the clock; `procisland 1234` is
+            // reproducible -- the seed is the shareable artifact, so it is echoed back either way.
+            if (verb == "procisland")
+            {
+                var terr = Terrain.Active;
+                if (terr == null) { Log("procisland: no terrain loaded (open or create a map first)"); return; }
+                int seed = int.TryParse(arg.Trim(), out var ps) ? ps : (int)(Time.GetTicksMsec() & 0x7FFFFFFF);
+                terr.GenerateIsland(seed);
+                Log($"procisland: generated seed {seed} -- same seed always gives the same island. Sculpt tools work on it; save as normal.");
+                return;
+            }
+
             if (verb == "heliphys")
             {
                 var hpArgs = arg.Split(' ', System.StringSplitOptions.RemoveEmptyEntries);
