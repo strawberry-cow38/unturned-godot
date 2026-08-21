@@ -15,7 +15,7 @@ def qrot(q, v):
     tx = 2*(y*vz-z*vy); ty = 2*(z*vx-x*vz); tz = 2*(x*vy-y*vx)
     return [vx+w*tx+(y*tz-z*ty), vy+w*ty+(z*tx-x*tz), vz+w*tz+(x*ty-y*tx)]
 
-def find_reload(gun):
+def find_reload(gun, name="Reload"):
     for path, obj in cont.items():
         if f"items/guns/{gun}/animations.prefab" in str(path).lower() and obj.type.name == "GameObject":
             go = obj.read()
@@ -29,7 +29,7 @@ def find_reload(gun):
                     continue
                 for cp in (getattr(comp, "m_Animations", None) or []):
                     cl = cp.read()
-                    if cl.m_Name == "Reload":
+                    if cl.m_Name == name:
                         return cl
     return None
 
@@ -83,5 +83,16 @@ for gun, label in (("eaglefire", "Eaglefire_Reload"), ("maplestrike", "Maplestri
     rig["anims"][label] = c
     nt = len(c["tracks"]); nr = sum(len(t.get("rot", [])) for t in c["tracks"].values())
     print(f"{label}: len={c['length']:.3f}s fps={c['fps']:.0f} tracks={nt} rotkeys={nr} bones={sorted(c['tracks'])[:6]}")
+# the homemade wood bolt rifles: Reload AND Hammer (the bolt-cycle rechamber) -- all 3 share the mesh + clips
+for gun in ("rifle_birch", "rifle_pine", "rifle_maple"):
+    prefix = gun[0].upper() + gun[1:]   # match Viewmodel.cs capGun = char.ToUpper(GunName[0]) + GunName[1:] -> "Rifle_birch"
+    for clip_name in ("Reload", "Hammer"):
+        cl = find_reload(gun, clip_name)
+        if not cl:
+            print(f"NO {clip_name} for {gun}"); continue
+        c = convert(cl)
+        rig["anims"][f"{prefix}_{clip_name}"] = c
+        nt = len(c["tracks"]); nr = sum(len(t.get("rot", [])) for t in c["tracks"].values())
+        print(f"{prefix}_{clip_name}: len={c['length']:.3f}s fps={c['fps']:.0f} tracks={nt} rotkeys={nr}")
 json.dump(rig, open(RIG, "w"))
 print("rig.json updated bytes:", os.path.getsize(RIG))
