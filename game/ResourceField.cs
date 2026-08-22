@@ -101,7 +101,12 @@ namespace UnturnedGodot
                 if (isTree)   // MultiMesh has no colliders -> add a trunk cylinder per tree so trees BLOCK bullets/movement (master), tagged Wood
                 {
                     int baseIdx = _instances.Count - xf.Count;   // recs[k] lives at _instances[baseIdx + k] -> the trunk carries its own index for SetAlive
-                    ushort logItem = name.StartsWith("Maple") ? (ushort)39 : name.StartsWith("Pine") ? (ushort)41 : (ushort)37;   // wood-type log: Birch 37 / Maple 39 / Pine 41
+                    bool isMaple = name.StartsWith("Maple"), isPine = name.StartsWith("Pine");
+                    ushort logItem = isMaple ? (ushort)39 : isPine ? (ushort)41 : (ushort)37;   // wood-type log: Birch 37 / Maple 39 / Pine 41
+                    // retail ResourceAsset values (unturned.gameinfo.io): Birch 800hp/450s/7-10, Maple 1000/600/6-9, Pine 1200/750/5-8
+                    float treeHp = isMaple ? 1000f : isPine ? 1200f : 800f;
+                    float treeReset = isMaple ? 600f : isPine ? 750f : 450f;
+                    int rMin = isMaple ? 6 : isPine ? 5 : 7, rMax = isMaple ? 9 : isPine ? 8 : 10;
                     for (int k = 0; k < xf.Count; k++)
                     {
                         var t = xf[k];
@@ -110,7 +115,7 @@ namespace UnturnedGodot
                         // the base, scaled by the instance scale, on an ORTHONORMAL body (Jolt drops non-uniform-scaled shapes).
                         Vector3 sc = t.Basis.Scale;
                         float sr = Mathf.Max(Mathf.Abs(sc.X), Mathf.Abs(sc.Z)), sh = Mathf.Abs(sc.Y);
-                        var body = new TreeTrunk { Field = this, Index = baseIdx + k, LogItem = logItem, CollisionLayer = 1u << 0, Transform = new Transform3D(t.Basis.Orthonormalized(), t.Origin) };
+                        var body = new TreeTrunk { Field = this, Index = baseIdx + k, LogItem = logItem, Health = treeHp, Reset = treeReset, RewardMin = rMin, RewardMax = rMax, CollisionLayer = 1u << 0, Transform = new Transform3D(t.Basis.Orthonormalized(), t.Origin) };
                         body.SetMeta(PlayerController.SurfMeta, (int)PlayerController.Surf.Wood);
                         body.AddToGroup("tree");   // for the UG_TREECHECK raycast self-test
                         body.AddChild(new CollisionShape3D { Shape = new CylinderShape3D { Radius = 0.5f * sr, Height = 8f * sh }, Position = new Vector3(0f, 2.5f * sh, 0f) });
@@ -457,10 +462,11 @@ namespace UnturnedGodot
         public int Index;
         public ushort LogItem;                          // Birch 37 / Maple 39 / Pine 41
         ushort StickItem => (ushort)(LogItem + 1);      // catalog pairs Log then Stick: 38 / 40 / 42
-        public float Health = 160f;                     // ⚠ default -- retail per-species health not on the box
+        public float Health = 800f;                     // retail ResourceAsset health (set per-species by ResourceField)
+        public float Reset = 450f;                       // retail asset.reset -- respawn seconds (per-species)
+        public int RewardMin = 7, RewardMax = 10;        // retail Reward_Min/Max -- total items dropped (60% log / 40% stick)
         public bool Felled { get; private set; }
         float _maxHealth;
-        const float ResetSeconds = 300f;                // ⚠ default respawn (retail asset.reset), tunable
 
         public override void _Ready() => _maxHealth = Health;
 
@@ -472,27 +478,27 @@ namespace UnturnedGodot
             if (Health > 0f) return;
             Felled = true;
             Field?.SetAlive(Index, false);   // zero-scale the tree out of its MultiMesh + drop the trunk collider to layer 0
-            DropRewards(dir);
-            GetTree().CreateTimer(ResetSeconds).Timeout += Regrow;   // source asset.reset: it grows back
+            DropRewards();
+            GetTree().CreateTimer(Reset).Timeout += Regrow;   // retail asset.reset: it grows back
             GD.Print($"[tree] felled #{Index}");
         }
 
-        // Retail ResourceManager.damage on death: log x reward then a stick, spread from the stump. Adapted to
-        // WorldItem.Spawn + master's 1-3 log count (deterministic per tree so peers agree without a wire).
-        void DropRewards(Vector3 dir)
+        // Retail ResourceManager.damage on death: Reward_Min..Reward_Max items rolled off the tree's spawn table
+        // (60% wood-type Log / 40% Stick), scattered round the stump. Deterministic per tree so peers agree without a
+        // wire; item spawning adapted to WorldItem.Spawn (master's flagged diff).
+        void DropRewards()
         {
             var parent = GetParent() ?? (Node)this;
             Vector3 basePos = GlobalTransform.Origin;
-            Vector3 d = new Vector3(dir.X, 0f, dir.Z);
-            d = d.LengthSquared() > 0.01f ? d.Normalized() : Vector3.Forward;
             uint h = (uint)Index * 2654435761u; h ^= h >> 15;
-            int logs = 1 + (int)(h % 3u);          // master: 1-3 logs of the wood type
-            int sticks = (int)((h >> 4) & 1u);     // source also drops sticks (0-1)
-            int step = 0;
-            for (int i = 0; i < logs; i++)
-                WorldItem.Spawn(parent, new SDG.Unturned.Item(LogItem), basePos + d * (2f + step++ * 1.2f) + Vector3.Up * 0.8f);
-            for (int i = 0; i < sticks; i++)
-                WorldItem.Spawn(parent, new SDG.Unturned.Item(StickItem), basePos + d * (2f + step++ * 1.2f) + Vector3.Up * 0.8f);
+            int n = RewardMin + (int)(h % (uint)Mathf.Max(1, RewardMax - RewardMin + 1));
+            for (int i = 0; i < n; i++)
+            {
+                uint hi = h + (uint)(i + 1) * 2246822519u; hi ^= hi >> 13;
+                ushort item = (hi % 100u) < 60u ? LogItem : StickItem;   // retail 60% log / 40% stick
+                float ang = (hi >> 7) % 628u / 100f, rad = 0.4f + ((hi >> 3) % 100u) / 100f;   // scatter ~0.4-1.4 m around the stump
+                WorldItem.Spawn(parent, new SDG.Unturned.Item(item), basePos + new Vector3(Mathf.Cos(ang) * rad, 0.8f, Mathf.Sin(ang) * rad));
+            }
         }
 
         void Regrow()
