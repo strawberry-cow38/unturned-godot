@@ -1023,6 +1023,82 @@ namespace UnturnedGodot
             return tiles;
         }
 
+        // ------------------------------------------------------- BUILDINGS
+
+        /// <summary>A placed building. Yaw follows the same convention as the road props -- the mesh's +Y axis
+        /// ends up along Facing -- so a building's FRONT is its local -Y and that is what faces the street.</summary>
+        public readonly struct MonumentBuilding
+        {
+            public readonly int Poi; public readonly string Prop;
+            public readonly float X, Z, YawDeg;
+            public MonumentBuilding(int poi, string prop, float x, float z, float yaw)
+            { Poi = poi; Prop = prop; X = x; Z = z; YawDeg = yaw; }
+            public override string ToString() => $"{Prop} @ ({X:0},{Z:0}) yaw {YawDeg:0}";
+        }
+
+        // Measured off the meshes: 12-35 m wide, 15-25 m deep, all of them sunk to about z -6 for foundations.
+        static readonly string[] Houses = { "House_00", "House_01", "House_02", "House_03", "House_04", "House_05", "House_06", "House_07", "House_08", "House_09" };
+        static readonly string[] Stores = { "Diner_0", "Diner_1", "Diner_2", "Gas_0", "Bank_0", "Office_0", "Office_1", "Office_2", "Office_3" };
+        static readonly string[] Services = { "Police_0", "Police_1", "Medic_0", "Medic_1", "Medic_2", "Fire_0", "Apartment_0", "Apartment_1", "Apartment_2", "Apartment_3" };
+
+        /// <summary>Metres from a street's CENTRELINE to the centre of the building fronting it. The carriageway
+        /// is 16 m wide, so its edge is 8 m out; a 20 m-deep building centred at 22 m has its front 12 m from the
+        /// centreline -- 4 m of verge -- and its back at 32 m, inside the 36 m the block tile reaches. Measured
+        /// from the ROAD rather than from the block's centre because that is what the setback actually is: a
+        /// building lines the street it fronts, whatever size the block behind it happens to be.</summary>
+        const float Setback = 22f;
+
+        /// <summary>Fill a monument's blocks with buildings fronting the streets.
+        ///
+        /// Every block cell that touches a street gets one building, placed at a fixed setback from THAT
+        /// street's centreline and turned to face it. A block cornered by two streets fronts the first one in
+        /// cardinal order, deterministically -- a building cannot face two ways and picking by seed would make
+        /// the same town render differently between runs.</summary>
+        public static System.Collections.Generic.List<MonumentBuilding> PlaceBuildings(
+            int poiIndex, Poi poi, System.Collections.Generic.List<MonumentTile> tiles, Params p)
+        {
+            var outp = new System.Collections.Generic.List<MonumentBuilding>();
+            if (!FillsGrid(poi.Kind)) return outp;   // a construction site is a compound, not a street of shops
+            int n = TilesFor(poi.Kind);
+
+            var street = new System.Collections.Generic.HashSet<(int, int)>();
+            foreach (var t in tiles)
+            {
+                if (t.Poi != poiIndex) continue;
+                int i = Mathf.RoundToInt((t.X - poi.X) / TileSize + (n - 1) * 0.5f);
+                int j = Mathf.RoundToInt((t.Z - poi.Z) / TileSize + (n - 1) * 0.5f);
+                street.Add((i, j));
+            }
+
+            int slot = 0;
+            for (int i = 0; i < n; i++)
+                for (int j = 0; j < n; j++)
+                {
+                    if (street.Contains((i, j))) continue;
+                    foreach (var d in Card)
+                    {
+                        if (!street.Contains((i - d.dx, j - d.dz))) continue;   // the street this block fronts
+                        // Position measured out from the STREET cell, not the block cell.
+                        float scx = poi.X + ((i - d.dx) - (n - 1) * 0.5f) * TileSize;
+                        float scz = poi.Z + ((j - d.dz) - (n - 1) * 0.5f) * TileSize;
+                        float bx = scx + d.dx * Setback, bz = scz + d.dz * Setback;
+
+                        // Front (-Y) toward the street means +Y points AWAY from it, i.e. along d.
+                        float yaw = YawFor(d.dx, d.dz);
+
+                        // Deterministic mix: mostly houses, with stores and services salted through. Keyed on
+                        // the cell and the seed so a town is the same town every time it is generated.
+                        float r = Hash01(i * 71 + poiIndex * 13, j * 37, p.Seed + 4021);
+                        var table = r < 0.60f ? Houses : r < 0.82f ? Stores : Services;
+                        string prop = table[(int)(Hash01(i, j * 91 + slot, p.Seed + 907) * (table.Length - 1) + 0.5f)];
+                        outp.Add(new MonumentBuilding(poiIndex, prop, bx, bz, yaw));
+                        slot++;
+                        break;   // one building per block cell, fronting the first street in cardinal order
+                    }
+                }
+            return outp;
+        }
+
         /// <summary>Snap every gate onto its face's lattice line, so a Cap's connector lands exactly on it.
         ///
         /// This is the "you may need to move the connection points to fit" half. The gates were placed by a ray

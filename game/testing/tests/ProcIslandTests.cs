@@ -369,6 +369,43 @@ namespace UnturnedGodot.Testing
             T.Check($"no two gates snapped onto the same point ({dupGates} collisions)", dupGates == 0);
             foreach (var t in tiles) GD.Print($"[island]   {t}");
 
+            // ---- BUILDINGS, set back from the streets they front.
+            var builds = new System.Collections.Generic.List<ProcIsland.MonumentBuilding>();
+            for (int i = 0; i < pois.Count; i++) builds.AddRange(ProcIsland.PlaceBuildings(i, pois[i], tiles, ProcIsland.Params.Default(1234)));
+            T.Check($"the town got buildings ({builds.Count})", builds.Count >= 4);
+
+            // EVERY BUILDING FRONTS A STREET AT THE SAME DISTANCE. "It got placed" is satisfied by a building
+            // dropped in the middle of a block, or one facing away from the road, and both look wrong in
+            // exactly the way a setback rule exists to prevent.
+            float minSet = float.MaxValue, maxSet = float.MinValue; bool allFace = true;
+            foreach (var bld in builds)
+            {
+                float nearest = float.MaxValue; float fx = 0f, fz = 0f;
+                foreach (var t in tiles)
+                {
+                    if (t.Poi != bld.Poi) continue;
+                    float dd = Mathf.Sqrt((t.X - bld.X) * (t.X - bld.X) + (t.Z - bld.Z) * (t.Z - bld.Z));
+                    if (dd < nearest) { nearest = dd; fx = bld.X - t.X; fz = bld.Z - t.Z; }
+                }
+                minSet = Mathf.Min(minSet, nearest); maxSet = Mathf.Max(maxSet, nearest);
+                // its +Y should point AWAY from that street, so the front (-Y) faces it
+                float yaw = Mathf.DegToRad(bld.YawDeg);
+                float ax = -Mathf.Sin(yaw), az = -Mathf.Cos(yaw);
+                float len = Mathf.Sqrt(fx * fx + fz * fz);
+                if (len > 0.01f && (ax * fx + az * fz) / len < 0.9f) allFace = false;
+            }
+            T.Check($"...every one at the same setback from its street ({minSet:0.#}..{maxSet:0.#} m)",
+                Mathf.Abs(maxSet - minSet) < 0.5f);
+            T.Check("...and every one turned to face the street it fronts", allFace);
+
+            // No building may sit ON a street tile -- they go in the blocks.
+            bool clearOfRoad = true;
+            foreach (var bld in builds)
+                foreach (var t in tiles)
+                    if (t.Poi == bld.Poi && Mathf.Abs(t.X - bld.X) < 8f && Mathf.Abs(t.Z - bld.Z) < 8f) clearOfRoad = false;
+            T.Check("...and none standing in the carriageway", clearOfRoad);
+            foreach (var bld in builds) GD.Print($"[island]   {b}");
+
             // ---- ROADS. Routed over the terrain, then carved into it.
             var routes = ProcIsland.CarveRoutes(a, a.GetLength(0), a.GetLength(1), pois, links, cons, ProcIsland.Params.Default(1234));
             T.Check($"every link got a route ({routes.Count}/{links.Count})", routes.Count == links.Count);
@@ -686,6 +723,23 @@ namespace UnturnedGodot.Testing
                             float rx = -Mathf.Sin(yaw), rz = -Mathf.Cos(yaw);
                             ZFill(t.X + rx * 8f, t.Z + rz * 8f, t.X + rx * ProcIsland.TileSize * 0.5f, t.Z + rz * ProcIsland.TileSize * 0.5f, RoadHalfW, new Color(0.95f, 0.72f, 0.15f));
                         }
+                    }
+                    // Buildings: footprint box turned to face the street, with a short bar on the FRONT edge so
+                    // a building facing the wrong way is visible rather than merely wrong in a number.
+                    foreach (var bb in builds)
+                    {
+                        if (bb.Poi != 0) continue;
+                        float byaw = Mathf.DegToRad(bb.YawDeg);
+                        float ux = Mathf.Cos(byaw), uz = -Mathf.Sin(byaw);      // mesh +X
+                        float vx = -Mathf.Sin(byaw), vz = -Mathf.Cos(byaw);     // mesh +Y (back)
+                        float hw = 9f, hd = 10f;
+                        Vector2 C(float a2, float b2) => new(bb.X + ux * a2 + vx * b2, bb.Z + uz * a2 + vz * b2);
+                        var c1 = C(-hw, -hd); var c2 = C(hw, -hd); var c3 = C(hw, hd); var c4 = C(-hw, hd);
+                        var bc = new Color(0.78f, 0.70f, 0.55f);
+                        ZLine(c1.X, c1.Y, c2.X, c2.Y, new Color(0.95f, 0.45f, 0.25f));   // FRONT edge (-Y)
+                        ZLine(c2.X, c2.Y, c3.X, c3.Y, bc);
+                        ZLine(c3.X, c3.Y, c4.X, c4.Y, bc);
+                        ZLine(c4.X, c4.Y, c1.X, c1.Y, bc);
                     }
                     foreach (var gate in cons)
                     {

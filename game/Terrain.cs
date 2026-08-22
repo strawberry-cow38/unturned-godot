@@ -184,6 +184,8 @@ void fragment() {
         System.Collections.Generic.List<ProcIsland.Route> _islandRoutes = new();
         public System.Collections.Generic.List<ProcIsland.MonumentTile> IslandTiles => _islandTiles;
         readonly System.Collections.Generic.List<ProcIsland.MonumentTile> _islandTiles = new();
+        public System.Collections.Generic.List<ProcIsland.MonumentBuilding> IslandBuildings => _islandBuildings;
+        readonly System.Collections.Generic.List<ProcIsland.MonumentBuilding> _islandBuildings = new();
 
         public System.Collections.Generic.List<ProcIsland.Poi> GenerateIsland(int seed)
         {
@@ -201,6 +203,8 @@ void fragment() {
             _islandConnectors = ProcIsland.SnapConnectorsToLattice(pois, ProcIsland.BuildConnectors(pois, _islandLinks));
             _islandTiles.Clear();
             for (int i = 0; i < pois.Count; i++) _islandTiles.AddRange(ProcIsland.BuildMonument(i, pois[i], _islandConnectors));
+            _islandBuildings.Clear();
+            for (int i = 0; i < pois.Count; i++) _islandBuildings.AddRange(ProcIsland.PlaceBuildings(i, pois[i], _islandTiles, pars));
             // Routed and carved BEFORE RebuildAll, because carving edits the same grid the meshes are built from.
             _islandRoutes = ProcIsland.CarveRoutes(_grid, _gw, _gh, pois, _islandLinks, _islandConnectors, pars);
             RebuildAll();
