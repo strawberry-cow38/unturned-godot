@@ -101,7 +101,7 @@ namespace UnturnedGodot
         // quick-craft bar (bottom-right): icons of recipes you can afford -- LMB queues 1, RMB queues 5 into the crafting queue
         Control _quickCraft;
         readonly List<(Control tile, BlueprintDef bp)> _quickTiles = new();
-        const int QUICK_MAX = 10;
+        const int QUICK_MAX = 15;   // 5-wide grid x 3 rows (master)
 
         // drag-drop: registered drop zones (a page + the Control whose global rect maps to its cells) and the live drag
         readonly List<(byte page, Control ctl, bool isSlot)> _drop = new();
