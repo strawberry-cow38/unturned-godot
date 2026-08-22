@@ -27,9 +27,10 @@ namespace UnturnedGodot
 
         Vector3 _target;
         bool _walking;
-        double _idleTimer, _fleeTimer;
+        double _idleTimer, _fleeTimer, _seeCheck;
         Vector3 _faceDir = Vector3.Forward;   // smoothed heading: the body turns toward travel instead of snapping to it
         const float Speed = 1.35f, FleeSpeed = 5.5f, HomeRange = 12f, Arrive = 0.8f, TurnLerp = 5f;
+        const float VisionRange = 26f, VisionCosHalf = 0.34f;   // flee if a player is within 26 m AND inside the ~70deg-half sight cone -> sneakable from behind/far
         static readonly string[] Ambient = { "Idle", "Eat", "Glance_0", "Idle", "Eat", "Glance_1" };
 
         uint R() { Seed = Seed * 1664525u + 1013904223u; return Seed >> 9; }
@@ -95,15 +96,55 @@ namespace UnturnedGodot
                 timer.Timeout += () => { if (IsInstanceValid(this)) QueueFree(); };
                 return;
             }
-            // survived -> bolt away from the threat for a few seconds
+            FleeFrom(point);   // survived -> bolt away from the impact
+        }
+
+        // Bolt away from a threat (an impact point or a spotted player) for a few seconds at FleeSpeed, at a run.
+        void FleeFrom(Vector3 threat)
+        {
             _fleeTimer = 3.5;
-            Vector3 away = GlobalPosition - point; away.Y = 0f;
-            if (away.LengthSquared() < 0.01f) { away = dir; away.Y = 0f; }
-            away = away.LengthSquared() > 0.01f ? away.Normalized() : Vector3.Forward;
-            _target = GlobalPosition + away * 10f;
+            Vector3 away = GlobalPosition - threat; away.Y = 0f;
+            away = away.LengthSquared() > 0.01f ? away.Normalized() : (_faceDir.LengthSquared() > 0.01f ? -_faceDir : Vector3.Forward);
+            _target = GlobalPosition + away * 12f;
             _walking = true;
-            NetAnim = (byte)AnimalNetAnim.Walk;
-            Rig?.Play("Walk");
+            NetAnim = (byte)AnimalNetAnim.Walk;   // the net enum has no Run; the replica shows Walk, the local rig runs
+            Rig?.Play("Run");
+        }
+
+        // Sight: a player inside the forward vision cone (range + half-angle off the heading) with clear line of sight
+        // sends it running. Outside the cone (behind) or beyond range it never notices -> you can stalk it. 5 Hz.
+        void CheckVision(double delta)
+        {
+            if (Dead) return;
+            _seeCheck -= delta;
+            if (_seeCheck > 0) return;
+            _seeCheck = 0.2;
+            var eye = NearestPlayerEye();
+            if (eye == null) return;
+            var head = GlobalPosition + Vector3.Up * Mathf.Max(Foot, 0.4f);
+            Vector3 to = eye.Value - head; to.Y = 0f;
+            float dist = to.Length();
+            if (dist > VisionRange || dist < 0.01f) return;
+            if (_faceDir.Dot(to / dist) < VisionCosHalf) return;   // outside the forward cone -> didn't see it (stalk from behind)
+            var space = GetWorld3D()?.DirectSpaceState;
+            if (space != null)
+            {
+                var q = PhysicsRayQueryParameters3D.Create(head, eye.Value);
+                q.CollisionMask = 1u << 0;   // world geometry only -> a wall/hill between us blocks the sight
+                q.Exclude = new Godot.Collections.Array<Rid> { GetRid() };
+                if (space.IntersectRay(q).Count > 0) return;
+            }
+            FleeFrom(eye.Value);
+        }
+
+        // Nearest player's body point (eye ~1 m up), from the SP field player or the MP registry -- or null if none.
+        Vector3? NearestPlayerEye()
+        {
+            Vector3? best = null; float bestD = float.MaxValue; var me = GlobalPosition;
+            void Consider(Node3D p) { if (p == null || !IsInstanceValid(p)) return; var e = p.GlobalPosition + Vector3.Up; float d = (e - me).LengthSquared(); if (d < bestD) { bestD = d; best = e; } }
+            if (GetParent() is AnimalField af) Consider(af.Player);
+            foreach (var p in PlayerRegistry.All) Consider(p);
+            return best;
         }
 
         public override void _Process(double delta)
@@ -111,6 +152,7 @@ namespace UnturnedGodot
             if (Dead) return;                                       // the ragdoll owns the body now
             if (Rig != null && !IsInstanceValid(Rig)) return;       // a FREED rig bails; a null rig (dedicated, rig-less) still wanders so AnimalNetSync has a moving transform to publish
             if (_fleeTimer > 0) _fleeTimer -= delta;
+            CheckVision(delta);
             var pos = GlobalPosition;
             float nx = pos.X, nz = pos.Z;
             bool moved = false;
