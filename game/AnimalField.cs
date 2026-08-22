@@ -24,11 +24,14 @@ namespace UnturnedGodot
 
         // animal id -> (rig json name, real _MainTex from the bundle, foot offset so the feet sit on the terrain).
         // Cow = a 32x32 B&W Holstein texture; deer/pig = small palettes -> the accurate animal colours (white tint = show as-is).
-        static readonly Dictionary<ushort, (string rig, string tex, float foot, float health)> Kinds = new()
+        // rigs are origin-AT-FEET (measured ortho, --animaltest UG_ANIMALFOOT=0) -> feet sit at the agent origin, so
+        // NO foot lift (the old 0.70/0.22/0.52 were the exact float amount, read off a lying skinned-mesh AABB).
+        // bodyH here sizes the hit capsule instead (feet-up), decoupled from the ground offset which is now 0.
+        static readonly Dictionary<ushort, (string rig, string tex, float bodyH, float health)> Kinds = new()
         {
-            { 1, ("deer", "Animal_Deer_tex.png", 0.70f, 100f) },
-            { 4, ("pig",  "Animal_Pig_tex.png",  0.22f,  80f) },
-            { 6, ("cow",  "Animal_Cow_tex.png",  0.52f, 150f) },
+            { 1, ("deer", "Animal_Deer_tex.png", 1.30f, 100f) },
+            { 4, ("pig",  "Animal_Pig_tex.png",  0.75f,  80f) },
+            { 6, ("cow",  "Animal_Cow_tex.png",  1.45f, 150f) },
         };
 
         public void LoadFromPei(string peiRoot)
@@ -123,9 +126,9 @@ namespace UnturnedGodot
                     rc = RiggedCharacter.Build($"res://content/{def.rig}_rig.json", Colors.White, false, $"res://content/objects/{def.tex}", null);
                     if (rc == null) continue;
                 }
-                var agent = new AnimalAgent { Terr = Terr, Foot = def.foot, Home = new Vector3(p.X, 0f, p.Z), Seed = h ^ 0xA53Cu, Species = AnimalCatalog.SpeciesForAnimalId(id), Health = def.health };
+                var agent = new AnimalAgent { Terr = Terr, Foot = 0f, BodyH = def.bodyH, Home = new Vector3(p.X, 0f, p.Z), Seed = h ^ 0xA53Cu, Species = AnimalCatalog.SpeciesForAnimalId(id), Health = def.health };
                 AddChild(agent);
-                agent.GlobalPosition = new Vector3(p.X, Terr.SampleHeight(p.X, p.Z) + def.foot, p.Z);
+                agent.GlobalPosition = new Vector3(p.X, Terr.SampleHeight(p.X, p.Z), p.Z);   // Foot 0: origin-at-feet rig sits on the terrain directly
                 if (rc != null) { agent.AddChild(rc); agent.Rig = rc; }
                 agent.Begin();                                       // idle -> wander loop (see AnimalAgent)
                 _live[idx] = agent;

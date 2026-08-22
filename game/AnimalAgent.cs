@@ -12,7 +12,8 @@ namespace UnturnedGodot
         public RiggedCharacter Rig;
         public Terrain Terr;
         public Vector3 Home;                                        // spawn point; targets stay within HomeRange of it
-        public float Foot;                                          // feet-on-terrain offset (also sizes the hit capsule)
+        public float Foot;                                          // ground-Y offset from the rig origin to the feet -- rigs are origin-AT-feet, so ~0
+        public float BodyH = 1.0f;                                  // body height (feet to back) -> sizes the hit capsule, decoupled from Foot
         public uint Seed;
         public byte Species;                                        // A5: AnimalCatalog index (deer/pig/cow), set by AnimalField -> published by AnimalNetSync
         public float Health = 100f;                                 // set per-species by AnimalField
@@ -51,9 +52,10 @@ namespace UnturnedGodot
         {
             CollisionLayer = 1u << 1;
             CollisionMask = 0;
-            float r = Mathf.Clamp(Foot * 0.9f, 0.30f, 0.70f);
-            float h = Mathf.Clamp(Foot * 2.6f + 0.5f, 0.9f, 2.0f);
-            AddChild(new CollisionShape3D { Shape = new CapsuleShape3D { Radius = r, Height = h }, Position = new Vector3(0f, h * 0.25f, 0f) });
+            // capsule spans the feet (origin, y=0) up to the back: height = body height, radius ~0.38 of it, centred
+            float h = Mathf.Max(BodyH, 0.6f);
+            float r = Mathf.Clamp(h * 0.38f, 0.25f, 0.7f);
+            AddChild(new CollisionShape3D { Shape = new CapsuleShape3D { Radius = r, Height = h }, Position = new Vector3(0f, h * 0.5f, 0f) });
         }
 
         void StartIdle()
@@ -121,7 +123,7 @@ namespace UnturnedGodot
             _seeCheck = 0.2;
             var eye = NearestPlayerEye();
             if (eye == null) return;
-            var head = GlobalPosition + Vector3.Up * Mathf.Max(Foot, 0.4f);
+            var head = GlobalPosition + Vector3.Up * (BodyH * 0.6f);
             Vector3 to = eye.Value - head; to.Y = 0f;
             float dist = to.Length();
             if (dist > VisionRange || dist < 0.01f) return;
