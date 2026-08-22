@@ -101,7 +101,7 @@ namespace UnturnedGodot
         // quick-craft bar (bottom-right): icons of recipes you can afford -- LMB queues 1, RMB queues 5 into the crafting queue
         Control _quickCraft;
         readonly List<(Control tile, BlueprintDef bp)> _quickTiles = new();
-        const int QUICK_MAX = 15;   // 5-wide grid x 3 rows (master)
+        const int QUICK_MAX = 18;   // 3-wide grid x 6 rows (master: "3x6")
 
         // drag-drop: registered drop zones (a page + the Control whose global rect maps to its cells) and the live drag
         readonly List<(byte page, Control ctl, bool isSlot)> _drop = new();
@@ -163,15 +163,16 @@ namespace UnturnedGodot
 
             var inv = new Crafting.PlayerInvAdapter(Inv);
             var show = new List<BlueprintDef>();
-            foreach (var bp in BlueprintRegistry.Applicable(inv))   // "have the ingredients for"
+            foreach (var bp in BlueprintRegistry.Applicable(inv))   // Applicable = every input present (consumables AND tools)
             {
                 if (BlueprintRegistry.IsRecolour(bp)) continue;     // skip the 126 dye repaints
+                if (bp.RequiresStation) continue;                   // master: only fully-satisfiable recipes -- a workbench/station req can't be met (no station system; the server even rejects station crafts)
                 if (!Crafting.MeetsSkill(bp, Player?.Skills)) continue;
                 show.Add(bp);
                 if (show.Count >= QUICK_MAX) break;
             }
 
-            const int TQ = 52, GAP = 6, PADX = 8, COLS = 5;   // a GRID, COLS wide (master: grid, not a row)
+            const int TQ = 52, GAP = 6, PADX = 8, COLS = 3;   // a GRID, COLS wide (master: "3x6" -> 3 wide x 6 rows)
             int cols = Mathf.Clamp(show.Count, 1, COLS), rows = Mathf.Max(1, (show.Count + COLS - 1) / COLS);
             float w = Mathf.Max(120, PADX * 2 + cols * (TQ + GAP) - GAP), h = 24 + rows * (TQ + GAP) - GAP + 6;
             var bg = new Panel { Position = Vector2.Zero, Size = new Vector2(w, h), MouseFilter = Control.MouseFilterEnum.Ignore };
