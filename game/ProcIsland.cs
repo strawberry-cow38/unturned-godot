@@ -246,9 +246,13 @@ namespace UnturnedGodot
                 float half = HalfSizeFor(kind);
                 bool got = false;
                 int rWet = 0, rCliff = 0, rClash = 0;
-                // Bounded attempts, and the bound is per-POI: a map with nowhere left to put a town should place
-                // fewer POIs, not spin. Reporting how many actually landed is the caller's job.
-                for (int tries = 0; tries < 600 && !got; tries++, attempt++)
+                // BEST-CANDIDATE, not first-fit. Taking the first valid spot clusters everything into whichever
+                // corner the hash happened to favour -- all four monuments landed in the upper-right quadrant and
+                // two thirds of the land had nothing on it (strawberry: "spread monuments across the whole
+                // island"). Instead: consider every valid candidate and keep the one FARTHEST from anything
+                // already placed. Note the loop no longer breaks on `got` -- it must see them all to choose.
+                float bestScore = -1f, bx = 0f, bz = 0f, by = 0f;
+                for (int tries = 0; tries < 600; tries++, attempt++)
                 {
                     int pick = (int)(Hash01(attempt, 11, p.Seed + 5551) * (landCells - 1));
                     var cell = land[Mathf.Clamp(pick, 0, landCells - 1)];
@@ -299,9 +303,24 @@ namespace UnturnedGodot
                     }
                     if (clash) { rClash++; continue; }
 
-                    placed.Add(new Poi(kind, wx, wz, half, HeightAt(grid, gw, gh, cxg, cyg)));
-                    got = true;
+                    // Score = distance to the nearest already-placed monument. The FIRST has nothing to be far
+                    // from, so it scores by how far inland it survived the ring test instead -- an anchor in the
+                    // body of the landmass rather than wherever the first valid hash landed, which tends to be a
+                    // shoreline because there is simply more coast than interior.
+                    float score;
+                    if (placed.Count == 0) score = ringCells;
+                    else
+                    {
+                        score = float.MaxValue;
+                        foreach (var o in placed)
+                        {
+                            float ddx = o.X - wx, ddz = o.Z - wz;
+                            score = Mathf.Min(score, Mathf.Sqrt(ddx * ddx + ddz * ddz));
+                        }
+                    }
+                    if (score > bestScore) { bestScore = score; bx = wx; bz = wz; by = HeightAt(grid, gw, gh, cxg, cyg); got = true; }
                 }
+                if (got) placed.Add(new Poi(kind, bx, bz, half, by));
                 if (!got) report.Append($"{kind} FAILED (wet/edge {rWet}, cliff {rCliff}, too close {rClash}); ");
             }
             LastRejectReport = report.Length == 0 ? "all placed" : report.ToString();
@@ -568,11 +587,76 @@ namespace UnturnedGodot
                     else { b = c; gb = true; }
                 }
                 if (!ga || !gb) continue;
-                var pts = Route2D(grid, gw, gh, a, b, links[li].Kind, p);
+                var pts = Relax(Route2D(grid, gw, gh, a, b, links[li].Kind, p));
                 if (pts.Count >= 2) routes.Add(new Route(links[li].Kind, pts));
             }
             foreach (var r in routes) Carve(grid, gw, gh, r, p);
             return routes;
+        }
+
+        /// <summary>Round off the corners. An 8-connected A* can only turn in 45-degree increments and
+        /// staircases along any bearing that is not one of its eight -- so the raw path is a run of hard bends,
+        /// the worst being the 90 the stub makes when it hands over to the search (strawberry: "avoid hard 90
+        /// degree bends"). Windowed average over the interior with the weight tapered to ZERO at both ends, so
+        /// the perpendicular departure survives: smoothing the whole polyline would round the stub off and
+        /// quietly undo the previous commit.</summary>
+        static System.Collections.Generic.List<Vector2> Relax(System.Collections.Generic.List<Vector2> pts)
+        {
+            const int Pin = 6;        // held exactly at each end -- the stub is StubCells+1 = 6 points
+            const int Win = 5, Passes = 4;
+            const int Blend = 14;   // free points spent easing off the stub's line
+            if (pts.Count < Pin * 2 + 3) return pts;
+            var cur = new System.Collections.Generic.List<Vector2>(pts);
+            for (int pass = 0; pass < Passes; pass++)
+            {
+                var next = new System.Collections.Generic.List<Vector2>(cur);
+                for (int i = Pin; i < cur.Count - Pin; i++)
+                {
+                    Vector2 sum = Vector2.Zero; int n = 0;
+                    for (int k = -Win; k <= Win; k++)
+                    {
+                        int j = i + k;
+                        if (j < 0 || j >= cur.Count) continue;
+                        sum += cur[j]; n++;
+                    }
+                    // Taper to zero over the first few free points, or the seam where the pinned stub meets the
+                    // smoothed interior is itself a hard bend -- trading one corner for another.
+                    // NO TAPER. It used to fade the pull to zero at the seam to "protect" the stub -- but the
+                    // stub is PINNED, so the taper protected nothing and left the join unsmoothed, which is the
+                    // exact corner that needed rounding. Full weight everywhere that is free to move.
+                    next[i] = sum / n;
+                }
+                cur = next;
+            }
+
+            // EASE OFF THE STUB'S LINE. Averaging alone cannot fix the join: the stub is pinned and the smoothed
+            // interior is nearly straight, so ALL of the turn between them lands on the first free point --
+            // measured 60 degrees, and smoothing HARDER made it 86 because a straighter free side meets the pin
+            // at a sharper angle. The corner is not too rough, it is in the wrong place.
+            //
+            // So blend the first free points between the stub's own CONTINUATION and the smoothed path, weight
+            // 0 -> 1. At the seam the route still travels exactly along the stub's heading; by the end of the
+            // blend it is fully on the smoothed line. The turn is then spread over Blend points by construction
+            // rather than by hoping the averaging spreads it.
+            void Ease(int from, int step)
+            {
+                int a0 = from - step, a1 = from - 2 * step;                 // the last two PINNED points
+                if (a1 < 0 || a1 >= cur.Count || a0 < 0 || a0 >= cur.Count) return;
+                Vector2 anchor = cur[a0], dir = (cur[a0] - cur[a1]);
+                if (dir.Length() < 1e-4f) return;
+                float spacing = dir.Length();
+                dir = dir.Normalized();
+                for (int k = 0; k < Blend; k++)
+                {
+                    int i = from + k * step;
+                    if (i < 0 || i >= cur.Count) return;
+                    Vector2 onRay = anchor + dir * (spacing * (k + 1));
+                    cur[i] = onRay.Lerp(cur[i], (k + 1) / (float)(Blend + 1));
+                }
+            }
+            Ease(Pin, +1);                    // leaving the head stub
+            Ease(cur.Count - 1 - Pin, -1);    // and the tail, walking backwards
+            return cur;
         }
 
         /// <summary>A* from one gate to the other over a slope-weighted grid.</summary>
@@ -585,13 +669,24 @@ namespace UnturnedGodot
             // get a straight STUB along the edge normal, and A* only routes between the stub ends -- so the road
             // meets the monument square-on and the terrain-following starts once it is clear of the wall.
             const int StubCells = 5;   // 20 m: long enough to read as perpendicular, short enough not to fight the terrain
+            // THE STUB IS BUILT IN GRID CELLS, not float world metres, and this is not tidiness. It used to walk
+            // out from the gate's exact float position while A* snapped to cell centres -- so the stub's last
+            // point and A*'s first differed by up to a metre BACKWARDS along the stub, and that one-metre
+            // backtrack reads as a ~164-degree reversal in the turn measurement. Every worst-turn on every route
+            // was at the seam index (pt 6, and count-6), which is what pointed at it. Snapping both to the same
+            // lattice makes the seam a continuation instead of a corner.
+            int fgx = Mathf.Clamp(Mathf.RoundToInt(from.X / Unit), 0, gw - 1);
+            int fgy = Mathf.Clamp(Mathf.RoundToInt(from.Z / Unit), 0, gh - 1);
+            int tgx = Mathf.Clamp(Mathf.RoundToInt(to.X / Unit), 0, gw - 1);
+            int tgy = Mathf.Clamp(Mathf.RoundToInt(to.Z / Unit), 0, gh - 1);
+            int fdx = Mathf.RoundToInt(from.DirX), fdy = Mathf.RoundToInt(from.DirZ);
+            int tdx = Mathf.RoundToInt(to.DirX), tdy = Mathf.RoundToInt(to.DirZ);
             var head = new System.Collections.Generic.List<Vector2>();
             var tail = new System.Collections.Generic.List<Vector2>();
-            float fx0 = from.X, fz0 = from.Z, tx0 = to.X, tz0 = to.Z;
             for (int i = 0; i <= StubCells; i++)
             {
-                head.Add(new Vector2(fx0 + from.DirX * i * Unit, fz0 + from.DirZ * i * Unit));
-                tail.Add(new Vector2(tx0 + to.DirX * i * Unit, tz0 + to.DirZ * i * Unit));
+                head.Add(new Vector2(Mathf.Clamp(fgx + fdx * i, 0, gw - 1) * Unit, Mathf.Clamp(fgy + fdy * i, 0, gh - 1) * Unit));
+                tail.Add(new Vector2(Mathf.Clamp(tgx + tdx * i, 0, gw - 1) * Unit, Mathf.Clamp(tgy + tdy * i, 0, gh - 1) * Unit));
             }
             int sx = Mathf.Clamp(Mathf.RoundToInt(head[head.Count - 1].X / Unit), 0, gw - 1);
             int sy = Mathf.Clamp(Mathf.RoundToInt(head[head.Count - 1].Y / Unit), 0, gh - 1);
@@ -651,8 +746,11 @@ namespace UnturnedGodot
             }
             mid.Reverse();
 
+            // mid[0] IS head's last cell and mid[^1] IS tail's last cell -- A* was seeded and targeted there.
+            // Appending both ends whole would repeat those points, and a zero-length segment is skipped by the
+            // turn measurement but still carves a doubled pass in the corridor.
             var pts = new System.Collections.Generic.List<Vector2>(head);
-            pts.AddRange(mid);
+            for (int i = 1; i < mid.Count - 1; i++) pts.Add(mid[i]);
             for (int i = tail.Count - 1; i >= 0; i--) pts.Add(tail[i]);
             return pts;
         }

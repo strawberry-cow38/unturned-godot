@@ -285,6 +285,45 @@ namespace UnturnedGodot.Testing
                     }
                 }
             }
+            // NO HARD BENDS. Measured as the turn angle between consecutive segments -- "the route is smooth"
+            // is not checkable, the sharpest corner on it is. An 8-connected A* turns in 45-degree steps, so
+            // anything at or near 90 means the relaxation is not reaching that part of the path.
+            float worstTurn = 0f; string turnOn = "";
+            foreach (var rt in routes)
+            {
+                for (int i = 2; i < rt.Points.Count; i++)
+                {
+                    var v1 = rt.Points[i - 1] - rt.Points[i - 2];
+                    var v2 = rt.Points[i] - rt.Points[i - 1];
+                    if (v1.Length() < 0.01f || v2.Length() < 0.01f) continue;
+                    float ang = Mathf.RadToDeg(Mathf.Acos(Mathf.Clamp(v1.Normalized().Dot(v2.Normalized()), -1f, 1f)));
+                    if (ang > worstTurn)
+                    {
+                        worstTurn = ang; turnOn = rt.Kind.ToString();
+                        // WHERE, not just how much. A hairpin at index 3 of 70 is the stub handing over; one in
+                        // the middle is the relaxation failing to reach it. Different bugs, same number.
+                        GD.Print($"[island]   turn {ang:0.#}deg at pt {i}/{rt.Points.Count} on {rt.Kind}: {rt.Points[i-2]} -> {rt.Points[i-1]} -> {rt.Points[i]}");
+                    }
+                }
+            }
+            T.Check($"no hard bends -- sharpest turn on any route is {worstTurn:0.#}deg (on a {turnOn})", worstTurn < 50f);
+            GD.Print($"[island] sharpest turn {worstTurn:0.#}deg on a {turnOn}");
+
+            // SPREAD ACROSS THE ISLAND. Clustering passes every other check here -- four monuments crammed into
+            // one quadrant are still placed, still dry, still unlinked-to-each-other-correctly. The measure is
+            // how much of the island's own extent the monument set actually spans.
+            float minX = float.MaxValue, maxX = float.MinValue, minZ = float.MaxValue, maxZ = float.MinValue;
+            foreach (var q in pois) { minX = Mathf.Min(minX, q.X); maxX = Mathf.Max(maxX, q.X); minZ = Mathf.Min(minZ, q.Z); maxZ = Mathf.Max(maxZ, q.Z); }
+            float lminX = float.MaxValue, lmaxX = float.MinValue, lminZ = float.MaxValue, lmaxZ = float.MinValue;
+            for (int x = 0; x < a.GetLength(0); x++)
+                for (int y = 0; y < a.GetLength(1); y++)
+                    if (ProcIsland.ToWorld(a[x, y]) > 25.6f)
+                    { lminX = Mathf.Min(lminX, x * 4f); lmaxX = Mathf.Max(lmaxX, x * 4f); lminZ = Mathf.Min(lminZ, y * 4f); lmaxZ = Mathf.Max(lmaxZ, y * 4f); }
+            float spanX = (maxX - minX) / Mathf.Max(1f, lmaxX - lminX), spanZ = (maxZ - minZ) / Mathf.Max(1f, lmaxZ - lminZ);
+            T.Check($"monuments span the island rather than clustering ({spanX * 100f:0}% of its width, {spanZ * 100f:0}% of its depth)",
+                spanX > 0.45f && spanZ > 0.45f);
+            GD.Print($"[island] monument spread: {spanX * 100f:0}% x {spanZ * 100f:0}% of the landmass extent");
+
             T.Check($"every route leaves its gate perpendicular to the wall (worst departure {worstExit:0.#}deg off the edge normal)",
                 worstExit < 1f);
             GD.Print($"[island] worst gate departure {worstExit:0.##}deg off normal");
