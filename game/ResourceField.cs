@@ -100,6 +100,8 @@ namespace UnturnedGodot
                 }
                 if (isTree)   // MultiMesh has no colliders -> add a trunk cylinder per tree so trees BLOCK bullets/movement (master), tagged Wood
                 {
+                    int baseIdx = _instances.Count - xf.Count;   // recs[k] lives at _instances[baseIdx + k] -> the trunk carries its own index for SetAlive
+                    ushort logItem = name.StartsWith("Maple") ? (ushort)39 : name.StartsWith("Pine") ? (ushort)41 : (ushort)37;   // wood-type log: Birch 37 / Maple 39 / Pine 41
                     for (int k = 0; k < xf.Count; k++)
                     {
                         var t = xf[k];
@@ -108,7 +110,7 @@ namespace UnturnedGodot
                         // the base, scaled by the instance scale, on an ORTHONORMAL body (Jolt drops non-uniform-scaled shapes).
                         Vector3 sc = t.Basis.Scale;
                         float sr = Mathf.Max(Mathf.Abs(sc.X), Mathf.Abs(sc.Z)), sh = Mathf.Abs(sc.Y);
-                        var body = new StaticBody3D { CollisionLayer = 1u << 0, Transform = new Transform3D(t.Basis.Orthonormalized(), t.Origin) };
+                        var body = new TreeTrunk { Field = this, Index = baseIdx + k, LogItem = logItem, CollisionLayer = 1u << 0, Transform = new Transform3D(t.Basis.Orthonormalized(), t.Origin) };
                         body.SetMeta(PlayerController.SurfMeta, (int)PlayerController.Surf.Wood);
                         body.AddToGroup("tree");   // for the UG_TREECHECK raycast self-test
                         body.AddChild(new CollisionShape3D { Shape = new CylinderShape3D { Radius = 0.5f * sr, Height = 8f * sh }, Position = new Vector3(0f, 2.5f * sh, 0f) });
@@ -441,6 +443,64 @@ namespace UnturnedGodot
             }
             else mat.AlbedoColor = new Color(0.35f, 0.45f, 0.28f);   // leafy-green fallback
             return mat;
+        }
+    }
+
+    // A choppable tree's trunk collider (harvesting). Gun/melee damage drains Health; when felled it despawns its tree
+    // instance (SetAlive false), drops 1-3 wood-type logs + a stick, and regrows after a reset. The felling STRUCTURE
+    // is the retail ResourceManager.damage path (drop log x reward + stick, then respawn); the damage ROUTING is ours
+    // (PlayerController gun/melee), and item spawning uses our WorldItem.Spawn (master's flagged diff). ⚠ Health/reset
+    // are tunable defaults -- the retail per-species ResourceAsset .dat values aren't in the tree data we have.
+    public partial class TreeTrunk : StaticBody3D
+    {
+        public ResourceField Field;
+        public int Index;
+        public ushort LogItem;                          // Birch 37 / Maple 39 / Pine 41
+        ushort StickItem => (ushort)(LogItem + 1);      // catalog pairs Log then Stick: 38 / 40 / 42
+        public float Health = 160f;                     // ⚠ default -- retail per-species health not on the box
+        public bool Felled { get; private set; }
+        float _maxHealth;
+        const float ResetSeconds = 300f;                // ⚠ default respawn (retail asset.reset), tunable
+
+        public override void _Ready() => _maxHealth = Health;
+
+        // Gun/melee damage; fells the tree once Health hits 0.
+        public void Chop(float amount, Vector3 point, Vector3 dir)
+        {
+            if (Felled) return;
+            Health -= amount;
+            if (Health > 0f) return;
+            Felled = true;
+            Field?.SetAlive(Index, false);   // zero-scale the tree out of its MultiMesh + drop the trunk collider to layer 0
+            DropRewards(dir);
+            GetTree().CreateTimer(ResetSeconds).Timeout += Regrow;   // source asset.reset: it grows back
+            GD.Print($"[tree] felled #{Index}");
+        }
+
+        // Retail ResourceManager.damage on death: log x reward then a stick, spread from the stump. Adapted to
+        // WorldItem.Spawn + master's 1-3 log count (deterministic per tree so peers agree without a wire).
+        void DropRewards(Vector3 dir)
+        {
+            var parent = GetParent() ?? (Node)this;
+            Vector3 basePos = GlobalTransform.Origin;
+            Vector3 d = new Vector3(dir.X, 0f, dir.Z);
+            d = d.LengthSquared() > 0.01f ? d.Normalized() : Vector3.Forward;
+            uint h = (uint)Index * 2654435761u; h ^= h >> 15;
+            int logs = 1 + (int)(h % 3u);          // master: 1-3 logs of the wood type
+            int sticks = (int)((h >> 4) & 1u);     // source also drops sticks (0-1)
+            int step = 0;
+            for (int i = 0; i < logs; i++)
+                WorldItem.Spawn(parent, new SDG.Unturned.Item(LogItem), basePos + d * (2f + step++ * 1.2f) + Vector3.Up * 0.8f);
+            for (int i = 0; i < sticks; i++)
+                WorldItem.Spawn(parent, new SDG.Unturned.Item(StickItem), basePos + d * (2f + step++ * 1.2f) + Vector3.Up * 0.8f);
+        }
+
+        void Regrow()
+        {
+            if (!IsInstanceValid(this)) return;
+            Health = _maxHealth;
+            Felled = false;
+            Field?.SetAlive(Index, true);   // restores the MultiMesh slot + the trunk's collision layer
         }
     }
 }

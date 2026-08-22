@@ -155,6 +155,29 @@ namespace UnturnedGodot
             return true;
         }
 
+        // Chopping a tree: an eye-ray to the aimed tree trunk (the world-layer cylinder ResourceField gives each tree).
+        // Called before the zombie/animal sweep so a swing fells the tree rather than an enemy standing behind it.
+        bool MeleeTree(float amount, float range)
+        {
+            if (_cam == null) return false;
+            var space = GetWorld3D().DirectSpaceState;
+            Vector3 from = _cam.GlobalPosition, fwd = -_cam.GlobalTransform.Basis.Z;
+            var rq = PhysicsRayQueryParameters3D.Create(from, from + fwd * (range + 1f));
+            rq.CollisionMask = 1u << 0;   // world layer -- tree trunks live here
+            rq.Exclude = new Godot.Collections.Array<Rid> { GetRid() };
+            var hit = space.IntersectRay(rq);
+            if (hit.Count == 0) return false;
+            if (hit["collider"].As<GodotObject>() is TreeTrunk tt && !tt.Felled)
+            {
+                var pt = (Vector3)hit["position"];
+                tt.Chop(amount, pt, fwd);
+                MeleeImpactFx(pt, false, Surf.Wood);
+                GD.Print($"[melee] chopped tree for {amount:0}");
+                return true;
+            }
+            return false;
+        }
+
         /// <summary>Salvage the structure piece under the crosshair. Uses the eye ray rather than the build
         /// ghost: the ghost sits at the slot you would BUILD into, which is next to the piece you are looking
         /// at, so salvaging off the ghost takes down the wrong thing (or nothing).</summary>
@@ -2839,6 +2862,7 @@ namespace UnturnedGodot
 
             float dmg = (_melee?.ZombieDamage ?? 45f) * mult * Skills.OverkillMeleeMultiplier();   // weapon .dat Zombie_Damage x OVERKILL skill
             Vector3 origin = GlobalPosition + Vector3.Up * 1.2f, fwd = -_cam.GlobalTransform.Basis.Z;
+            if (MeleeTree(dmg, range)) return;   // an axe swing at a tree fells it, before the swing reaches a zombie/animal behind it
             // The rewrite's zombies are sim ROWS, not nodes, so the group sweep below cannot see them --
             // which is why they were unkillable under --newzombies. Swing at the sim too.
             if (ZombieDirector.Instance is { } zdm && zdm.ShootRay(origin, fwd, range + 0.5f, dmg, out bool zdKilled)) { MeleeImpactFx(origin + fwd * Mathf.Min(range, 1.5f), true); if (zdKilled) Kills++; }   // sim zombie: FX at an estimated point along the swing
@@ -5665,6 +5689,7 @@ namespace UnturnedGodot
                     var collider = hit["collider"].As<GodotObject>();
                     if (collider is ZombieController z) { bool head = z.IsHeadshot(point); SpawnFleshImpact(point, hdir); bool wd = z.Dead; z.DamageHitLimb(b.Damage * b.FalloffAt(point), point, hdir); if (!wd && z.Dead) Kills++; Hitmark(b, head); }   // hitmarker: white body / red headshot (source EPlayerHit)
                     else if (collider is AnimalAgent a && !a.Dead) { SpawnFleshImpact(point, hdir); a.DamageHit(b.Damage * b.FalloffAt(point), point, hdir); Hitmark(b, false); }   // wildlife: flesh spray + body hitmarker (no limb zones)
+                    else if (collider is TreeTrunk tt && !tt.Felled) { tt.Chop(b.Damage * b.FalloffAt(point), point, hdir); SpawnSurfaceImpact(point, hit["normal"].AsVector3(), Surf.Wood, tt); }   // chop a tree with gunfire -> wood splinters
                     else if (collider is TargetDummy dummy)
                     {   // playground target: PLAYER damage through the humanoid zones, floating number, hitmarker
                         float dealt = dummy.TakeHit(b.PlayerDamage * b.FalloffAt(point), point);
