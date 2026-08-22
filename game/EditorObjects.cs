@@ -233,7 +233,11 @@ namespace UnturnedGodot
         // (the WorldBuilder convention). Placing yaw-only left every prop flat (master), hence the baked 270 pitch.
         public static Basis Upright(float yawDeg) => new Basis(Vector3.Up, Mathf.DegToRad(yawDeg)) * new Basis(Vector3.Right, Mathf.DegToRad(270f));
         // WorldBuilder placement basis from PEI euler (ex,ey,ez): Basis(Y,180-ey)*Basis(X,ex)*Basis(Z,-ez)
-        static Basis FromEuler(float ex, float ey, float ez) =>
+        /// <summary>A placement's retail euler -> the world basis. `ex` is almost always 270: the prop OBJs are
+        /// Z-UP (a street light is 7.7 m along its z), and 3602 of PEI's ~3900 placements carry ex=270 to stand
+        /// them up -- it is the mesh convention, not a per-prop tilt. Anything placing props from code needs it;
+        /// leaving it out lays every prop on its side, which on a boxy house still looks like a house.</summary>
+        public static Basis FromEuler(float ex, float ey, float ez) =>
             new Basis(new Vector3(0, 1, 0), Mathf.DegToRad(180f - ey)) * new Basis(new Vector3(1, 0, 0), Mathf.DegToRad(ex)) * new Basis(new Vector3(0, 0, 1), Mathf.DegToRad(-ez));
 
         // Build + add a prop at a world position with a rotation basis. Returns its root Node3D. The gizmo then rotates

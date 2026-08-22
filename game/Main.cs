@@ -331,7 +331,24 @@ namespace UnturnedGodot
             {
                 GetWindow().Size = new Vector2I(1280, 720);
                 _shotPath = shot;
-                if (System.Environment.GetEnvironmentVariable("UG_NEWMAP") == "1") BuildEditorNew(); else BuildEditor();
+                // UG_GENSEED=<n>: the menu's Generate Map, reachable from a flag so the generated world can be
+                // LOOKED at (tools/shot.py island). The suite can only ever check the generator's numbers; a
+                // road prop rotated 180 or a building sunk into a hillside is invisible to every one of them.
+                string genSeedEnv = System.Environment.GetEnvironmentVariable("UG_GENSEED");
+                // UG_GENPLAY=1 takes the whole menu path: generate, then drop into play exactly as pressing
+                // PLAY on the Generate Island entry does. Without it the shot only proves the EDITOR builds the
+                // world -- and "you can walk around in it" is the actual request.
+                if (!string.IsNullOrEmpty(genSeedEnv) && int.TryParse(genSeedEnv, out int genSeedArg))
+                    // A UNIQUE name, exactly as the menu does. Passing null meant every generated render opened
+                    // the map "NewMap" -- and EditorObjects' ctor calls LoadSaved(), which reads
+                    // editor_<map>.txt. So once a playtest had SAVED NewMap, every later render loaded those
+                    // props off disk AND generated a fresh set on top: two of everything, the old copy frozen at
+                    // whatever rotation it was saved with. It reads exactly like a generator bug -- strawberry
+                    // spotted a road turn "cloned inside the other", one at the correct yaw and one at the old.
+                    BuildEditorNew(EditorMaps.Unique($"Island {genSeedArg}"), genSeed: genSeedArg,
+                                   autoPlay: System.Environment.GetEnvironmentVariable("UG_GENPLAY") == "1");
+                else if (System.Environment.GetEnvironmentVariable("UG_NEWMAP") == "1") BuildEditorNew();
+                else BuildEditor();
                 return;
             }
 
@@ -787,7 +804,14 @@ namespace UnturnedGodot
                     // Play a custom map: open it exactly as the editor does, then enter play immediately. NOT a
                     // second world-building path -- a "play build" that assembles the map its own way is how the
                     // thing you test stops being the thing you edited.
-                    menu.OnPlayMap = name => { menu.QueueFree(); BuildEditorNew(name); _autoPlayMap = true; };
+                    // autoPlay is a PARAMETER, not a field set around the call. It used to be `BuildEditorNew(name);
+                    // _autoPlayMap = true;` -- assigned after the only line that reads it, so Workshop's Play
+                    // opened the editor and stayed there, and left the flag set for whichever map you opened
+                    // next. Passing it in makes that ordering impossible to get wrong again.
+                    menu.OnPlayMap = name => { menu.QueueFree(); BuildEditorNew(name, autoPlay: true); };
+                    // Generate Map -> a brand new map whose terrain is a generated island, played immediately.
+                    // The name carries the seed so two generated maps do not overwrite each other's save.
+                    menu.OnGenerateMap = seed => { menu.QueueFree(); BuildEditorNew(EditorMaps.Unique($"Island {seed}"), genSeed: seed, autoPlay: true); };
                     AddChild(menu);
                 });
                 return;
@@ -4091,9 +4115,12 @@ namespace UnturnedGodot
         /// There is no separate "load": every sub-editor reads `editor_&lt;MapName&gt;_*` when it starts, so
         /// naming the map IS opening it. A blank name would have been the old hardcoded "NewMap", which
         /// meant every new map silently opened on top of the previous one's files.</summary>
-        bool _autoPlayMap;   // Workshop 'Play' -> enter play as soon as the map finishes building
 
-        void BuildEditorNew(string mapName = null)
+        // genSeed != null -> the map starts as a GENERATED island instead of a flat plain (the menu's Generate
+        // Map). Same 3x3 CreateFlat either way, deliberately: the saved heightmap only reloads when its dims
+        // match the terrain the open path builds, so a generated map that chose its own size would come back
+        // flat the next time you opened it, with nothing about the save looking wrong.
+        void BuildEditorNew(string mapName = null, int? genSeed = null, bool autoPlay = false)
         {
             mapName = EditorMaps.Sanitise(mapName) ?? "NewMap";
             _worldBuild = true;
@@ -4104,6 +4131,9 @@ namespace UnturnedGodot
             Terrain.HasWater = System.Environment.GetEnvironmentVariable("UG_NOWATER") != "1";
             Terrain.SeaLevelY = 25.6f;   // the default a legacy-water retail map uses; ProcIsland builds its coast to match
             AddChild(terr);
+            // BEFORE the camera is placed and before any prop is spawned: generation rewrites every height, and
+            // both of those read the ground it produces.
+            var genPois = genSeed.HasValue ? terr.GenerateIsland(genSeed.Value) : null;
             var sun = new DirectionalLight3D { RotationDegrees = new Vector3(-55f, -35f, 0f), LightEnergy = 1.2f, ShadowEnabled = true };
             AddChild(sun);
             var env = new Godot.Environment
@@ -4116,11 +4146,38 @@ namespace UnturnedGodot
             AddChild(dayNight);
             var editor = new Editor();
             AddChild(editor);
-            var cam = new EditorCamera { Position = new Vector3(0f, 130f, 190f), RotationDegrees = new Vector3(-30f, 0f, 0f) };
+            // A generated island fills a 3072 m map whose ORIGIN IS A CORNER, and that corner is open sea. Open
+            // over the first town instead: the playtest spawn is a ray straight down from this camera, so where
+            // the editor looks is also where the player lands.
+            var camPos = new Vector3(0f, 130f, 190f);
+            bool camTop = false;
+            float camPitch = -30f;
+            if (genPois != null && genPois.Count > 0)
+            {
+                var focus = genPois[0];
+                foreach (var q in genPois) if (q.Kind == ProcIsland.PoiKind.Town) { focus = q; break; }
+                // Directly OVER the town centre, because the playtest spawn is a ray straight down from this
+                // camera -- the framing offset IS the spawn offset. The default 190 m put the player in an
+                // empty field with the town a smudge on the horizon; 55 m landed them face-first against a
+                // shopfront. The town's centre cell is a junction, so straight down is a street.
+                camPos = ProcIslandSpawn.PosFor(terr, focus.X, focus.Z) + new Vector3(0f, 90f, 0f);
+                camPitch = -35f;   // shallow enough that the town spreads out ahead rather than under the lens
+                // UG_GENTOP=1: straight down over the same town. A 3/4 view cannot show whether streets JOIN --
+                // one tile hides the gap behind the next -- and "the roads connect" is the claim the numbers in
+                // the suite are least able to settle, since they recompute the layout with the placing formula.
+                if (System.Environment.GetEnvironmentVariable("UG_GENTOP") == "1")
+                {
+                    camPos = ProcIslandSpawn.PosFor(terr, focus.X, focus.Z) + new Vector3(0f, 230f, 0f);
+                    camTop = true;
+                }
+            }
+            var cam = new EditorCamera { Position = camPos, RotationDegrees = new Vector3(camTop ? -90f : camPitch, 0f, 0f) };
             editor.AddChild(cam);
             editor.Setup(mapName, null, cam);
             LootTables.Load(_mapRoot + "/Spawns/Items.dat");   // new maps use PEI's loot tables as the pool (for loot crates)
             var objs = new EditorObjects(editor, this, cam, objectsPreloaded: false); editor.AddChild(objs); editor.Objects = objs;
+            // The monuments the generator laid out are only lists until something instantiates them.
+            if (genPois != null) ProcIslandSpawn.Spawn(terr, objs);
             var spawns = new EditorSpawns(editor, cam, MapDir(mapName)); editor.AddChild(spawns); editor.Spawns = spawns;   // dir doesn't exist -> starts empty
             var envEd = new EditorEnvironment(editor, dayNight); editor.AddChild(envEd); editor.Environment = envEd;
             var terrainEd = new EditorTerrain(editor, cam, terr); editor.AddChild(terrainEd); editor.TerrainEd = terrainEd;
@@ -4135,9 +4192,11 @@ namespace UnturnedGodot
             play.Setup(editor, null, cam);
             // Workshop's per-map Play opens the editor and goes straight in, so the map you play is the
             // map the editor built -- one world-building path, not two that can disagree.
-            if (_autoPlayMap) { _autoPlayMap = false; play.CallDeferred(nameof(EditorPlayMode.EnterPlay)); }
+            if (autoPlay) play.CallDeferred(nameof(EditorPlayMode.EnterPlay));
             _worldReady = true;
-            GD.Print($"[editor] custom map '{mapName}' (flat 3x3 base) up");
+            GD.Print(genSeed.HasValue
+                ? $"[editor] custom map '{mapName}' (GENERATED island, seed {genSeed.Value}) up"
+                : $"[editor] custom map '{mapName}' (flat 3x3 base) up");
         }
 
         // Workshop -> the map EDITOR (singleplayer, ported from SDG.Unturned Edit/). Phase 1: load PEI as the

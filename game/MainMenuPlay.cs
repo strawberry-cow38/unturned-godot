@@ -24,6 +24,18 @@ namespace UnturnedGodot
 
         string _selectedMap = "Prince Edward Island";
         bool _selectedPlayable = true;
+
+        // GENERATE MAP (strawberry 2026-08-22: "a 'generate map' option on the play tab of the main menu").
+        // A pseudo-entry in the map list rather than a button off to one side, because that is what it is from
+        // the player's side: another map you can pick and press PLAY on. The seed is exposed because it is the
+        // whole point of a deterministic generator -- an island you liked is a number you can write down.
+        bool _generateSelected;
+        int _genSeed = 1234;
+        Control _genRow;
+        LineEdit _genSeedEdit;
+        public System.Action<int> OnGenerateMap;
+        const string GenerateMapName = "Generate Island";
+        const string GenerateMapDesc = "A procedurally generated island: coastline, hills, and a network of towns, military bases and construction sites joined by roads, trails and rail. The same seed always builds the same island.";
         // the Steam Maps/<folder> name for the selected map -- Main reads this to point the world at the right map.
         // PEI's folder is "PEI" (its display name is "Prince Edward Island"); every other map's folder == its name.
         public string SelectedMapFolder = "PEI";
@@ -142,6 +154,20 @@ namespace UnturnedGodot
             var list = new VBoxContainer { CustomMinimumSize = new Vector2(342f, 0f) };
             list.AddThemeConstantOverride("separation", 3);
             scroll.AddChild(list);
+            // FIRST in the list, not appended after the official maps. Appended, it sat below Hawaii/Greece/
+            // A6 Polaris and therefore below the scroll fold -- present, and invisible to anyone who did not
+            // already know to look for it, which for a new feature is the same as absent.
+            var genBtn = new Button
+            {
+                Text = "  \u2699  " + GenerateMapName,
+                CustomMinimumSize = new Vector2(342f, 48f),
+                Alignment = HorizontalAlignment.Left,
+            };
+            genBtn.AddThemeFontSizeOverride("font_size", 16);
+            genBtn.AddThemeColorOverride("font_color", new Color(0.92f, 0.86f, 0.62f));
+            genBtn.Pressed += () => SelectGenerated();
+            list.AddChild(genBtn);
+            list.AddChild(new HSeparator());
             foreach (var m in OfficialMaps) list.AddChild(MapRow(m.name, m.key, m.playable, m.desc));
 
             // ---- right column: preview + name + desc + gameplay options + play
@@ -181,6 +207,7 @@ namespace UnturnedGodot
             _descLabel.AddThemeColorOverride("font_color", new Color(0.78f, 0.78f, 0.78f));
             _descLabel.AddThemeFontSizeOverride("font_size", 14);
             right.AddChild(_descLabel);
+            right.AddChild(BuildSeedRow());
 
             right.AddChild(new HSeparator());
             right.AddChild(Header("GAMEPLAY OPTIONS", 16));
@@ -231,8 +258,44 @@ namespace UnturnedGodot
             return b;
         }
 
+        // The seed field + a randomiser. Only shown while the generated entry is selected -- on a retail map it
+        // is a control that does nothing, which reads as broken rather than as inapplicable.
+        Control BuildSeedRow()
+        {
+            var row = new HBoxContainer { CustomMinimumSize = new Vector2(340f, 32f), Visible = false };
+            row.AddThemeConstantOverride("separation", 6);
+            var name = new Label { Text = "Seed", CustomMinimumSize = new Vector2(110f, 0f), VerticalAlignment = VerticalAlignment.Center };
+            name.AddThemeFontSizeOverride("font_size", 15);
+            row.AddChild(name);
+            _genSeedEdit = new LineEdit { Text = _genSeed.ToString(), CustomMinimumSize = new Vector2(160f, 30f), Alignment = HorizontalAlignment.Center };
+            _genSeedEdit.TextChanged += t => { if (int.TryParse(t, out int v)) _genSeed = v; };
+            row.AddChild(_genSeedEdit);
+            var roll = new Button { Text = "\U0001F3B2", CustomMinimumSize = new Vector2(36f, 30f), TooltipText = "Random seed" };
+            roll.Pressed += () =>
+            {
+                _genSeed = (int)(GD.Randi() & 0x7FFFFFFF);
+                if (_genSeedEdit != null) _genSeedEdit.Text = _genSeed.ToString();
+            };
+            row.AddChild(roll);
+            _genRow = row;
+            return row;
+        }
+
+        void SelectGenerated()
+        {
+            _generateSelected = true;
+            _selectedMap = GenerateMapName;
+            _selectedPlayable = true;
+            if (_previewName != null) _previewName.Text = GenerateMapName;
+            if (_descLabel != null) _descLabel.Text = GenerateMapDesc;
+            if (_previewImage != null) _previewImage.Texture = null;
+            if (_genRow != null) _genRow.Visible = true;
+        }
+
         void SelectMap(string name, string key, bool playable, string desc)
         {
+            _generateSelected = false;
+            if (_genRow != null) _genRow.Visible = false;
             _selectedMap = name;
             _selectedPlayable = playable;
             SelectedMapFolder = name == "Prince Edward Island" ? "PEI" : name;   // display name -> Steam Maps/ folder
@@ -287,6 +350,18 @@ namespace UnturnedGodot
         // permadeath are cosmetic for now -- the one wired option is Zombies.
         void PlaySelected()
         {
+            if (_generateSelected)
+            {
+                // Read the field rather than trusting _genSeed: TextChanged only fires on a parseable value, so
+                // a field left mid-edit ("12x") would otherwise silently launch the previous seed.
+                if (_genSeedEdit != null && !int.TryParse(_genSeedEdit.Text, out _genSeed))
+                {
+                    if (_descLabel != null) _descLabel.Text = "Seed must be a whole number.";
+                    return;
+                }
+                OnGenerateMap?.Invoke(_genSeed);
+                return;
+            }
             if (!_selectedPlayable)
             {
                 if (_descLabel != null) _descLabel.Text = _selectedMap + " isn't ported yet — only Prince Edward Island is playable right now.";

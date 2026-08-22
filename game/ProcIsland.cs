@@ -821,6 +821,21 @@ namespace UnturnedGodot
         /// a run; there is no Turn_Cap because a corner is never where a road leaves a monument.</summary>
         public enum RoadPiece { Line, Quad, Tee, Turn, LineCap, QuadCap, TeeCap }
 
+        /// <summary>The real prop each piece instantiates. Names verified against
+        /// content/objects/guid_mesh.txt -- the kit's Tee cap is `Road_Tee_Cap_1`, not `_0`, so a mapping
+        /// written from the pattern rather than from the file silently drops every T-junction gate.</summary>
+        public static string PropFor(RoadPiece p) => p switch
+        {
+            RoadPiece.Line    => "Road_Line_0",
+            RoadPiece.Quad    => "Road_Quad_0",
+            RoadPiece.Tee     => "Road_Tee_0",
+            RoadPiece.Turn    => "Road_Turn_0",
+            RoadPiece.LineCap => "Road_Line_Cap_0",
+            RoadPiece.QuadCap => "Road_Quad_Cap_0",
+            RoadPiece.TeeCap  => "Road_Tee_Cap_1",
+            _ => null,
+        };
+
         /// <summary>One placed road prop. YawDeg is a WORLD yaw about up such that the piece's MESH +Y axis ends
         /// up pointing along its facing. Mesh space is Z-up and yaw-only here (mesh x,y,z -> node x,z,-y), so
         /// mesh +Y is world -Z at yaw 0 -- hence atan2(-x, -z) rather than atan2(x, z).
@@ -983,7 +998,9 @@ namespace UnturnedGodot
                 // perpendicular, which a Tee's straight bar cannot express -- so one street opened onto solid
                 // kerb. Quad is the fallback whenever the shape does not fit something narrower; a spare
                 // connector is invisible, a missing one is a road into a wall.
-                static (int dx, int dz) Rot90((int dx, int dz) v) => (-v.dz, v.dx);
+                // The -Y arm is the +X arm turned by (x,z) -> (z,-x), NOT the other way. Getting the handedness
+                // backwards here picks the wrong neighbour as the +X arm, which is a 90 deg error on its own.
+                static (int dx, int dz) MinusYArmOf((int dx, int dz) plusX) => (plusX.dz, -plusX.dx);
 
                 RoadPiece piece; float yaw;
                 var need = new System.Collections.Generic.List<(int dx, int dz)>(nb);
@@ -1017,13 +1034,20 @@ namespace UnturnedGodot
                     }
                     else
                     {
-                        // TURN's connectors are local +X and -Y, NOT +/-Y. Solving mesh+X -> a and mesh-Y -> b
-                        // gives cos(yaw) = a.x, sin(yaw) = -a.z, and b must be Rot90(a) -- so pick whichever of
-                        // the two neighbours satisfies that and the other follows.
+                        // TURN's connectors are local +X and -Y (road_connectors.txt: "12 0" and "0 -12"), not
+                        // +/-Y like the Line. Under the placement transform mesh +X lands on (-cos y, sin y)
+                        // and mesh -Y on (sin y, cos y), so solving mesh+X -> a gives
+                        //     cos y = -a.dx,  sin y = a.dz  ->  y = atan2(a.dz, -a.dx).
+                        //
+                        // Both halves of this were wrong and each cost 90 deg -- the pairing picked the -Y arm
+                        // as `a`, and the formula was atan2(-a.dz, a.dx), a further 180 off. strawberry caught
+                        // it by LOOKING at a top-down render: "the 'turn' piece needs to be turned 90 degrees
+                        // yaw". No check in the suite could, because they all recompute arm directions with the
+                        // same formula that places the piece -- see the note on MonumentTile.
                         var a0 = nb[0]; var b0 = nb[1];
-                        if (Rot90(a0) != b0) { (a0, b0) = (b0, a0); }
+                        if (MinusYArmOf(a0) != b0) { (a0, b0) = (b0, a0); }
                         piece = RoadPiece.Turn;
-                        yaw = Mathf.RadToDeg(Mathf.Atan2(-a0.dz, a0.dx));
+                        yaw = Mathf.RadToDeg(Mathf.Atan2(a0.dz, -a0.dx));
                     }
                 }
                 else if (nb.Count == 1) { piece = RoadPiece.LineCap; yaw = YawFor(-nb[0].dx, -nb[0].dz); }
@@ -1049,17 +1073,100 @@ namespace UnturnedGodot
             public override string ToString() => $"{Prop} @ ({X:0},{Z:0}) yaw {YawDeg:0}";
         }
 
-        // Measured off the meshes: 12-35 m wide, 15-25 m deep, all of them sunk to about z -6 for foundations.
-        static readonly string[] Houses = { "House_00", "House_01", "House_02", "House_03", "House_04", "House_05", "House_06", "House_07", "House_08", "House_09" };
-        static readonly string[] Stores = { "Diner_0", "Diner_1", "Diner_2", "Gas_0", "Bank_0", "Office_0", "Office_1", "Office_2", "Office_3" };
-        static readonly string[] Services = { "Police_0", "Police_1", "Medic_0", "Medic_1", "Medic_2", "Fire_0", "Apartment_0", "Apartment_1", "Apartment_2", "Apartment_3" };
+        /// <summary>A building prop and the footprint that decides where it can fit.
+        ///
+        /// Width is ACROSS the street, doubled about the origin because several of these are not centred on it
+        /// (House_05 sits 4 m off its own origin). Front and Back are the distances from the origin to the near
+        /// and far faces along the facing axis -- separately, because they are not half the depth: House_00's
+        /// origin is 3 m behind its porch, House_09's is 3 m in front of its own.
+        ///
+        /// These were a COMMENT ("12-35 m wide, 15-25 m deep") sitting above a single 22 m constant, and the
+        /// range in the comment is exactly the problem: a 39 m-wide clinic and an 18 m-deep-from-origin police
+        /// station were being set back the same distance as a small house, so they stood in the carriageway.
+        /// Measured off the OBJs in content/objects.</summary>
+        public readonly struct BuildingProp
+        {
+            public readonly string Name; public readonly float Width, Front, Back;
+            public BuildingProp(string name, float width, float front, float back)
+            { Name = name; Width = width; Front = front; Back = back; }
+        }
 
-        /// <summary>Metres from a street's CENTRELINE to the centre of the building fronting it. The carriageway
-        /// is 16 m wide, so its edge is 8 m out; a 20 m-deep building centred at 22 m has its front 12 m from the
-        /// centreline -- 4 m of verge -- and its back at 32 m, inside the 36 m the block tile reaches. Measured
-        /// from the ROAD rather than from the block's centre because that is what the setback actually is: a
-        /// building lines the street it fronts, whatever size the block behind it happens to be.</summary>
-        const float Setback = 22f;
+        static readonly BuildingProp[] Houses =
+        {
+            new("House_00", 16.5f, 8.3f, 14.2f),
+            new("House_01", 13.0f, 12.5f, 12.5f),
+            new("House_02", 21.0f, 8.5f, 8.5f),
+            new("House_03", 37.0f, 6.5f, 8.5f),
+            new("House_04", 21.0f, 8.5f, 8.5f),
+            new("House_05", 35.0f, 10.5f, 8.5f),
+            new("House_06", 20.5f, 10.5f, 10.5f),
+            new("House_07", 17.0f, 10.5f, 10.5f),
+            new("House_08", 25.0f, 8.5f, 8.5f),
+            new("House_09", 17.0f, 15.0f, 8.5f),
+        };
+        static readonly BuildingProp[] Stores =
+        {
+            new("Diner_0", 25.0f, 9.5f, 11.1f),
+            new("Diner_1", 14.0f, 9.0f, 9.1f),
+            new("Diner_2", 21.7f, 9.1f, 9.1f),
+            new("Gas_0", 12.2f, 10.1f, 10.1f),
+            new("Bank_0", 22.2f, 11.0f, 11.1f),
+            new("Office_0", 28.2f, 9.0f, 9.1f),
+            new("Office_1", 25.7f, 12.5f, 12.6f),
+            new("Office_2", 18.2f, 9.0f, 9.1f),
+            new("Office_3", 21.7f, 8.0f, 8.1f),
+        };
+        static readonly BuildingProp[] Services =
+        {
+            new("Police_0", 16.2f, 8.0f, 8.1f),
+            new("Police_1", 24.7f, 18.1f, 18.1f),
+            new("Medic_0", 20.2f, 10.0f, 10.1f),
+            new("Medic_1", 39.0f, 10.0f, 10.1f),
+            new("Medic_2", 20.7f, 11.0f, 11.1f),
+            new("Fire_0", 16.2f, 12.3f, 12.2f),
+            new("Apartment_0", 21.2f, 10.0f, 10.1f),
+            new("Apartment_1", 20.2f, 11.0f, 11.1f),
+            new("Apartment_2", 18.2f, 11.8f, 11.8f),
+            new("Apartment_3", 16.7f, 8.0f, 8.1f),
+        };
+
+        const float HalfCarriageway = 8f;   // the road surface is 16 m wide
+        const float Verge = 4f;             // grass between the kerb and the front wall
+        /// <summary>How far past the street centreline a block reaches. The block cell spans 12..36 m out; the
+        /// facing street's opposite kerb is at 40, since streets sit on every SECOND lattice line.</summary>
+        const float BlockReach = 38f;
+
+        /// <summary>Metres from the street's CENTRELINE to this prop's ORIGIN, so that its front wall lands a
+        /// verge back from the kerb whatever its own depth is. The old flat 22 m was this number computed once,
+        /// for a 20 m-deep building, and then applied to all of them.</summary>
+        static float SetbackFor(in BuildingProp b) => HalfCarriageway + Verge + b.Front;
+
+        /// <summary>Whether a prop fits the block it would be put on: narrow enough not to spill into its
+        /// neighbours or the cross street, and short enough front-to-back to stay off the far street. Derived
+        /// from TileSize rather than hardcoded, so a bigger lattice re-admits the props it currently rules out
+        /// (House_03, Medic_1 and the rest) with no new table.</summary>
+        static bool Fits(in BuildingProp b) => b.Width <= TileSize - 1f && SetbackFor(b) + b.Back <= BlockReach;
+
+        static BuildingProp[] Fitting(BuildingProp[] all)
+        {
+            var keep = new System.Collections.Generic.List<BuildingProp>();
+            foreach (var b in all) if (Fits(b)) keep.Add(b);
+            return keep.ToArray();
+        }
+        static readonly BuildingProp[] FitHouses = Fitting(Houses), FitStores = Fitting(Stores), FitServices = Fitting(Services);
+
+        /// <summary>The measured footprint of a placed building, by name. Exposed so a check can ask where a
+        /// prop's WALL ends up rather than where its origin does -- the origin was never the thing standing in
+        /// the road.</summary>
+        public static BuildingProp? PropInfo(string name)
+        {
+            foreach (var set in new[] { Houses, Stores, Services })
+                foreach (var b in set) if (b.Name == name) return b;
+            return null;
+        }
+
+        /// <summary>Where a building's front wall should land: past the kerb by a verge, on every prop.</summary>
+        public static float FrontWallFromCentreline => HalfCarriageway + Verge;
 
         /// <summary>Fill a monument's blocks with buildings fronting the streets.
         ///
@@ -1094,7 +1201,6 @@ namespace UnturnedGodot
                         // Position measured out from the STREET cell, not the block cell.
                         float scx = poi.X + ((i - d.dx) - (n - 1) * 0.5f) * TileSize;
                         float scz = poi.Z + ((j - d.dz) - (n - 1) * 0.5f) * TileSize;
-                        float bx = scx + d.dx * Setback, bz = scz + d.dz * Setback;
 
                         // Front (-Y) toward the street means +Y points AWAY from it, i.e. along d.
                         float yaw = YawFor(d.dx, d.dz);
@@ -1102,9 +1208,12 @@ namespace UnturnedGodot
                         // Deterministic mix: mostly houses, with stores and services salted through. Keyed on
                         // the cell and the seed so a town is the same town every time it is generated.
                         float r = Hash01(i * 71 + poiIndex * 13, j * 37, p.Seed + 4021);
-                        var table = r < 0.60f ? Houses : r < 0.82f ? Stores : Services;
-                        string prop = table[(int)(Hash01(i, j * 91 + slot, p.Seed + 907) * (table.Length - 1) + 0.5f)];
-                        outp.Add(new MonumentBuilding(poiIndex, prop, bx, bz, yaw));
+                        var table = r < 0.60f ? FitHouses : r < 0.82f ? FitStores : FitServices;
+                        if (table.Length == 0) break;
+                        var b = table[(int)(Hash01(i, j * 91 + slot, p.Seed + 907) * (table.Length - 1) + 0.5f)];
+                        // Setback is per PROP, measured out from the street cell it fronts.
+                        float set = SetbackFor(b);
+                        outp.Add(new MonumentBuilding(poiIndex, b.Name, scx + d.dx * set, scz + d.dz * set, yaw));
                         slot++;
                         break;   // one building per block cell, fronting the first street in cardinal order
                     }

@@ -65,6 +65,15 @@ SCENES = {
                    {"UG_EDITTOOL": "buildings", "UG_EDITIMPORT": os.environ.get("IMPORT", "House_00")}, True, 400,
                    "a retail building ported into editable walls (set IMPORT=Name)"),
     "objects":  (["--objects", "--shot={OUT}"], {}, True, 400, "ripped prop showcase"),
+    # the procedural island, in the engine rather than as a preview PNG: terrain, road props and
+    # buildings as the player meets them. SEED=<n> picks the island. The camera opens over the
+    # first town, which is also where a playtest drops you.
+    "island":   (["--editor", "--shot={OUT}"], {"UG_GENSEED": os.environ.get("SEED", "1234")}, True, 400,
+                 "a GENERATED island: monuments, roads and buildings (set SEED=n)"),
+    "islandtop":(["--editor", "--shot={OUT}"], {"UG_GENSEED": os.environ.get("SEED", "1234"), "UG_GENTOP": "1"}, True, 400,
+                 "the same island's first town from straight above -- shows whether streets JOIN"),
+    "islandplay":(["--editor", "--shot={OUT}"], {"UG_GENSEED": os.environ.get("SEED", "1234"), "UG_GENPLAY": "1"}, True, 400,
+                 "the menu's Generate Map end to end: generated island, standing in it on foot"),
     # one named prop at identity + RGB axes -- the diagnostic view for a model that looks wrong.
     # `PROP=Street_Light_0 tools/shot.py prop`
     "prop":     (["--proptest=" + os.environ.get("PROP", "Street_Light_0"), "--shot={OUT}"], {}, False, 200,

@@ -271,7 +271,6 @@ namespace UnturnedGodot.Testing
             foreach (var t in tiles)
             {
                 var owner2 = pois[t.Poi];
-                float yaw2 = Mathf.DegToRad(t.YawDeg);
                 (int, int)[] localDirs = t.Piece switch
                 {
                     ProcIsland.RoadPiece.Line or ProcIsland.RoadPiece.LineCap => new[] { (0, 1), (0, -1) },
@@ -279,11 +278,14 @@ namespace UnturnedGodot.Testing
                     ProcIsland.RoadPiece.Tee or ProcIsland.RoadPiece.TeeCap    => new[] { (1, 0), (-1, 0), (0, 1) },
                     _                                                          => new[] { (1, 0), (-1, 0), (0, 1), (0, -1) },
                 };
+                // Through the REAL placement basis (ProcIslandSpawn.ArmDir), not an open-coded matrix. The
+                // matrix that used to be here had determinant -1 -- it reflected instead of rotating, which is
+                // invisible on every piece whose X arms are a symmetric +/- pair and wrong on the Turn, the
+                // one piece with a lone +X. See ArmDir's note.
                 var arms = new System.Collections.Generic.HashSet<(int, int)>();
                 foreach (var (lx, ly) in localDirs)
                 {
-                    float wxd = lx * Mathf.Cos(yaw2) + ly * -Mathf.Sin(yaw2);
-                    float wzd = lx * -Mathf.Sin(yaw2) + ly * -Mathf.Cos(yaw2);
+                    var (wxd, wzd) = ProcIslandSpawn.ArmDir(t.YawDeg, lx, ly);
                     arms.Add((Mathf.RoundToInt(wxd), Mathf.RoundToInt(wzd)));
                 }
                 // what this tile MUST serve: a neighbouring tile of the same monument, or its own gate
@@ -320,7 +322,6 @@ namespace UnturnedGodot.Testing
             int spareArms = 0; string firstSpare = "";
             foreach (var t in tiles)
             {
-                float yaw3 = Mathf.DegToRad(t.YawDeg);
                 (int, int)[] localDirs2 = t.Piece switch
                 {
                     ProcIsland.RoadPiece.Line or ProcIsland.RoadPiece.LineCap => new[] { (0, 1), (0, -1) },
@@ -336,8 +337,7 @@ namespace UnturnedGodot.Testing
                 if (t.Piece is ProcIsland.RoadPiece.Line or ProcIsland.RoadPiece.LineCap) continue;
                 foreach (var (lx, ly) in localDirs2)
                 {
-                    float wxd = lx * Mathf.Cos(yaw3) + ly * -Mathf.Sin(yaw3);
-                    float wzd = lx * -Mathf.Sin(yaw3) + ly * -Mathf.Cos(yaw3);
+                    var (wxd, wzd) = ProcIslandSpawn.ArmDir(t.YawDeg, lx, ly);   // the real placement basis
                     int adx = Mathf.RoundToInt(wxd), adz = Mathf.RoundToInt(wzd);
                     bool lands = false;
                     foreach (var u in tiles)
@@ -374,29 +374,43 @@ namespace UnturnedGodot.Testing
             for (int i = 0; i < pois.Count; i++) builds.AddRange(ProcIsland.PlaceBuildings(i, pois[i], tiles, ProcIsland.Params.Default(1234)));
             T.Check($"the town got buildings ({builds.Count})", builds.Count >= 4);
 
-            // EVERY BUILDING FRONTS A STREET AT THE SAME DISTANCE. "It got placed" is satisfied by a building
-            // dropped in the middle of a block, or one facing away from the road, and both look wrong in
-            // exactly the way a setback rule exists to prevent.
-            float minSet = float.MaxValue, maxSet = float.MinValue; bool allFace = true;
+            // WHERE THE FRONT WALL LANDS, not where the origin does. The old check asserted every building sat
+            // at the SAME distance from its street, which is only the right property if every prop is the same
+            // size -- they are 12 to 39 m wide and 15 to 36 m deep, so one shared setback put the deep ones
+            // (House_09's origin is 15 m behind its own front) INSIDE the 16 m carriageway while this check
+            // stayed green, because they were all equally wrong. What has to hold is that the WALL clears the
+            // kerb by a verge, which for a varying prop means a varying setback.
+            //
+            // The fronted street is found ALONG THE FACING AXIS, not by nearest tile: once setbacks vary, a
+            // deep building can end up closer to the cross street than to the one it faces, and a
+            // nearest-neighbour search silently starts measuring the wrong road.
+            float minGap = float.MaxValue, maxGap = float.MinValue;
+            int unfronted = 0, unknownProp = 0;
             foreach (var bld in builds)
             {
-                float nearest = float.MaxValue; float fx = 0f, fz = 0f;
+                var info = ProcIsland.PropInfo(bld.Prop);
+                if (info == null) { unknownProp++; continue; }
+                float yaw = Mathf.DegToRad(bld.YawDeg);
+                float ax = -Mathf.Sin(yaw), az = -Mathf.Cos(yaw);   // +Y: away from the street it fronts
+                float best = float.MaxValue;
                 foreach (var t in tiles)
                 {
                     if (t.Poi != bld.Poi) continue;
-                    float dd = Mathf.Sqrt((t.X - bld.X) * (t.X - bld.X) + (t.Z - bld.Z) * (t.Z - bld.Z));
-                    if (dd < nearest) { nearest = dd; fx = bld.X - t.X; fz = bld.Z - t.Z; }
+                    float dx = t.X - bld.X, dz = t.Z - bld.Z;
+                    float along = -(dx * ax + dz * az);                 // toward the street is -away
+                    float perp = Mathf.Abs(dx * az - dz * ax);
+                    if (along > 0.5f && perp < 1f && along < best) best = along;
                 }
-                minSet = Mathf.Min(minSet, nearest); maxSet = Mathf.Max(maxSet, nearest);
-                // its +Y should point AWAY from that street, so the front (-Y) faces it
-                float yaw = Mathf.DegToRad(bld.YawDeg);
-                float ax = -Mathf.Sin(yaw), az = -Mathf.Cos(yaw);
-                float len = Mathf.Sqrt(fx * fx + fz * fz);
-                if (len > 0.01f && (ax * fx + az * fz) / len < 0.9f) allFace = false;
+                if (best == float.MaxValue) { unfronted++; continue; }
+                float gap = best - info.Value.Front;   // front wall -> street centreline
+                minGap = Mathf.Min(minGap, gap); maxGap = Mathf.Max(maxGap, gap);
             }
-            T.Check($"...every one at the same setback from its street ({minSet:0.#}..{maxSet:0.#} m)",
-                Mathf.Abs(maxSet - minSet) < 0.5f);
-            T.Check("...and every one turned to face the street it fronts", allFace);
+            T.Check($"every building actually fronts a street on its facing axis ({unfronted} facing nothing, {unknownProp} unmeasured)",
+                unfronted == 0 && unknownProp == 0);
+            T.Check($"...with its FRONT WALL a verge clear of the kerb ({minGap:0.##}..{maxGap:0.##} m from the centreline, carriageway edge is 8 m)",
+                minGap > 8.5f && Mathf.Abs(maxGap - minGap) < 0.5f
+                    && Mathf.Abs(minGap - ProcIsland.FrontWallFromCentreline) < 0.5f);
+            GD.Print($"[island] building front walls {minGap:0.##}..{maxGap:0.##} m from their street centreline");
 
             // No building may sit ON a street tile -- they go in the blocks.
             bool clearOfRoad = true;
@@ -404,7 +418,7 @@ namespace UnturnedGodot.Testing
                 foreach (var t in tiles)
                     if (t.Poi == bld.Poi && Mathf.Abs(t.X - bld.X) < 8f && Mathf.Abs(t.Z - bld.Z) < 8f) clearOfRoad = false;
             T.Check("...and none standing in the carriageway", clearOfRoad);
-            foreach (var bld in builds) GD.Print($"[island]   {b}");
+            foreach (var bld in builds) GD.Print($"[island]   {bld}");
 
             // ---- ROADS. Routed over the terrain, then carved into it.
             var routes = ProcIsland.CarveRoutes(a, a.GetLength(0), a.GetLength(1), pois, links, cons, ProcIsland.Params.Default(1234));

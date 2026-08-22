@@ -54,3 +54,9 @@ launcher/bin/
 # python bytecode from tools/
 __pycache__/
 *.pyc
+
+# editor maps are user data, not content. The proc-island shot scenes (tools/shot.py island*) enter
+# play, which SAVES the map, so a render would otherwise leave a NewMap in the working tree.
+game/content/objects/editor_*.txt
+game/content/terrain/editor_*_heightmap.bin
+game/content/spawns/
