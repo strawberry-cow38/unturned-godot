@@ -1,4 +1,4 @@
-import UnityPy, os, struct, uuid, collections, sys
+import UnityPy, os, struct, uuid, collections, sys, glob
 import numpy as np
 # MAP-AWARE harvestable RESOURCES bake (Maps/<map>/Terrain/Trees.dat): trees, bushes, ore rocks, mushrooms...
 # version-8 flat format: GUID + point + EulerXYZ + scale + isGenerated. Bakes each ResourceAsset's `Resource`
@@ -155,6 +155,22 @@ for name in buckets:
             try: tex.read().image.save(os.path.join(OUT, f"{name}_{i}_tex.png"))
             except Exception as e: print(f"   {name}_{i} tex err {e}")
         np_ += 1
+    # STUMP + DEBRIS (retail felling visuals): bake ONLY Model_0 (LOD0) -> <name>_stump_<j>.obj / <name>_debris_<j>.obj
+    # (grabbing the whole prefab pulls LOD1/LOD2 too -> they stack + the LOD2 billboard shows as a flat dark quad)
+    # Only TREES fell (TreeTrunk); bushes/clay/ore have stump/debris prefabs too but nothing harvests them yet -> skip.
+    for kind in ("stump", "debris") if name.startswith(("Birch", "Maple", "Pine")) else ():
+        kgo = cont.get(f"assets/coremasterbundle/trees/{name.lower()}/{kind}.prefab")
+        if not kgo: continue
+        for old in glob.glob(os.path.join(OUT, f"{name}_{kind}_*.obj")) + glob.glob(os.path.join(OUT, f"{name}_{kind}_*_tex.png")):
+            os.remove(old)   # drop stale LOD parts from a prior all-LODs bake
+        kroot = get_transform(tt(kgo)); km0 = find_child(tt(kroot), "Model_0")
+        kparts = []; collect(km0 if km0 else kroot, np.eye(4), kparts)
+        for j, (mesh, M, tex) in enumerate(kparts):
+            bake_one(mesh, M, os.path.join(OUT, f"{name}_{kind}_{j}.obj"))
+            if tex is not None:
+                try: tex.read().image.save(os.path.join(OUT, f"{name}_{kind}_{j}_tex.png"))
+                except Exception as e: print(f"   {name}_{kind}_{j} tex err {e}")
+        if kparts: print(f"   {name} {kind}: {len(kparts)} part(s) (Model_0)")
     manifest.append((name, np_))
     print(f"{name}: {np_} parts, {len(buckets[name])} spawns")
 

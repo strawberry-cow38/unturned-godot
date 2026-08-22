@@ -1026,13 +1026,10 @@ namespace UnturnedGodot
             ushort log = species == "pine" ? (ushort)41 : species == "maple" ? (ushort)39 : (ushort)37;
 
             AddChild(LoadTreeVisual(dir, name, new Vector3(-8f, 0f, 0f)));   // LEFT: standing
-            var felled = LoadTreeVisual(dir, name, new Vector3(8f, 0f, 0f));
-            felled.Visible = false;   // RIGHT: felled -> the tree is gone
-            AddChild(felled);
-            var trunk = new TreeTrunk { Field = null, Index = 11, LogItem = log, Health = 10f, RewardMin = 6, RewardMax = 8 };
+            var trunk = new TreeTrunk { Field = null, Index = 11, LogItem = log, Health = 10f, RewardMin = 6, RewardMax = 8, TreeName = name, ResDir = dir, TreeXf = new Transform3D(Basis.Identity, new Vector3(8f, 0f, 0f)) };
             AddChild(trunk); trunk.Position = new Vector3(8f, 0f, 0f);
-            trunk.Chop(999f, new Vector3(8f, 1f, 0f), Vector3.Forward);   // fell it -> the logs drop around (8,0,0) + fall to the ground
-            GD.Print($"[treetest] {name}: left standing, right felled (log item {log})");
+            trunk.Chop(999f, new Vector3(8f, 1f, 0f), new Vector3(0.6f, 0f, -0.8f).Normalized());   // fell it -> stump stays + debris topples back-right (keeps the near logs visible) + logs drop
+            GD.Print($"[treetest] {name}: left standing, right felled -> stump + debris + logs (log item {log})");
 
             var cam = new Camera3D { Fov = 36f, Far = 800f };
             AddChild(cam);
