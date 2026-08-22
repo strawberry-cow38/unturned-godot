@@ -17,9 +17,27 @@ namespace UnturnedGodot.Testing
     public class CarHandlingProbe : GameTest
     {
         public override string Name => "vehicle.car_handling";
-        public override double TimeoutSimSeconds => 220;
+        public override double TimeoutSimSeconds => 420;   // top speed is ~20 m/s now and takes ~50 s of sim to reach
 
         const float Dt = 0.02f;
+        // THE BRAKE AND TURN PHASES RUN AT A FIXED REFERENCE SPEED, not at a fraction of top speed.
+        // They used to re-accelerate to 95% of measured top before each test, which was fine when top speed
+        // was hard-capped at 12.5 m/s and arrived in 7 s. With a real drivetrain the jeep pulls to 20 m/s over
+        // ~50 s, so three re-accelerations blew the sim timeout and every later phase ran on a car that never
+        // got moving -- the handbrake "stopped" it in 0.00 m because it was already stationary.
+        // A fixed reference also keeps these numbers comparable across drivetrain changes, which is the whole
+        // point of a probe: it is the same manoeuvre at the same speed before and after.
+        const float RefSpeed = 12f;
+
+        static IEnumerable<Step> AccelTo(Vehicle v, float target, int maxTicks = 2500)
+        {
+            for (int i = 0; i < maxTicks; i++)
+            {
+                v.Drive(1f, 0f, false);
+                yield return Step.Ticks(1);
+                if (Mathf.Abs(v.LinearVelocity.Dot(-v.GlobalTransform.Basis.Z)) >= target) break;
+            }
+        }
 
         static Vehicle Spawn(Node w, string name, Vector3 at)
         {
@@ -58,6 +76,11 @@ namespace UnturnedGodot.Testing
             GD.Print($"[car] {car}: TOP SPEED {top:0.00} m/s ({top * 3.6f:0.0} km/h), reached in {tTop:0.0} s");
             T.Check($"the car actually accelerates (top {top:0.00} m/s)", top > 3f);
 
+            // Everything below runs at RefSpeed (or the car's own top, if it is slower than that).
+            float refSpeed = Mathf.Min(RefSpeed, top * 0.9f);
+            for (int i = 0; i < 400 && v.LinearVelocity.Length() > refSpeed; i++) { v.Drive(-1f, 0f, false); yield return Ticks(1); }
+            foreach (var st in AccelTo(v, refSpeed)) yield return st;
+
             // ---- FOOTBRAKE: distance from top speed to a stop.
             // Through Drive(), not by poking Brake: negative throttle while rolling forward IS the foot brake
             // (see Drive's footBrake), so the probe exercises the pedal a player actually presses.
@@ -65,18 +88,13 @@ namespace UnturnedGodot.Testing
             for (int i = 0; i < 1500 && v.LinearVelocity.Length() > 0.5f; i++)
             { v.Drive(-1f, 0f, false); yield return Ticks(1); tb += Dt; }
             float footDist = v.GlobalPosition.DistanceTo(p0);
-            GD.Print($"[car] {car}: FOOTBRAKE from {top:0.00} m/s -> {footDist:0.0} m in {tb:0.0} s");
+            GD.Print($"[car] {car}: FOOTBRAKE from {refSpeed:0.00} m/s -> {footDist:0.0} m in {tb:0.0} s");
             T.Check($"the footbrake stops the car ({footDist:0.0} m)", footDist > 0.05f && footDist < 400f);
 
             // ---- HANDBRAKE, measured the same way from the same entry speed, so the two are comparable.
             // strawberry: "the handbrake SUCKS". A handbrake that only differs by a scale factor stops in
             // roughly the proportion of that factor and slides not at all; the yaw it produces is the tell.
-            for (int i = 0; i < 3000; i++)
-            {
-                v.Drive(1f, 0f, false);
-                yield return Ticks(1);
-                if (Mathf.Abs(v.LinearVelocity.Dot(-v.GlobalTransform.Basis.Z)) >= top * 0.95f) break;
-            }
+            foreach (var st in AccelTo(v, refSpeed)) yield return st;
             float entry = Mathf.Abs(v.LinearVelocity.Dot(-v.GlobalTransform.Basis.Z));
             // WITH STEERING HELD. A handbrake pull in a straight line cannot rotate anything, however the
             // brakes are wired -- locking the rears symmetrically produces no yaw moment at all. The rotation
@@ -97,12 +115,7 @@ namespace UnturnedGodot.Testing
             // CONTROL: the same manoeuvre on the FOOTBRAKE. The handbrake is only doing its job if it rotates
             // the car MORE than this -- an absolute yaw number on its own would pass on any car that merely
             // turns while slowing down.
-            for (int i = 0; i < 3000; i++)
-            {
-                v.Drive(1f, 0f, false);
-                yield return Ticks(1);
-                if (Mathf.Abs(v.LinearVelocity.Dot(-v.GlobalTransform.Basis.Z)) >= top * 0.95f) break;
-            }
+            foreach (var st in AccelTo(v, refSpeed)) yield return st;
             float footYaw = 0f;
             for (int i = 0; i < 1500 && v.LinearVelocity.Length() > 0.5f; i++)
             {

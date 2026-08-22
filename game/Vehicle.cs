@@ -785,13 +785,154 @@ namespace UnturnedGodot
         Mesh _wheelMeshRef; Material _wheelMatRef; float _wheelR;   // kept so the wheels can fly off as debris on explode
         public static float GlobalMass = 900f;   // all vehicles share one mass (the source does: Rigidbody mass = 2.0 for every vehicle)
         float[] _gears; float _reverseGear, _shiftUpRpm; float _engineRpm = 1000f; int _gear = 1;   // engine RPM + gear sim
+        float _specSpeedMax;   // spec SpeedMax before TopSpeedBuff (L1 reference only)
+        float _peakTorque, _dragK, _rollK, _driveR, _shiftCd; int _nTraction;   // drivetrain: peak engine torque (Nm), aero drag coeff (N per (m/s)^2), rolling resistance (N), driven wheel radius, shift lockout, traction wheel count
         AudioStreamPlayer3D _engineAudio, _ignitionAudio; bool _ignitionFired; float _idlePitch = 1f, _maxPitch = 2f, _idleVol = 0.75f, _maxVol = 1f;   // EngineRPMSimple sound
         const float EngineVolumeBoost = 1.5f;   // every engine loop +50% louder (strawberry 2026-07-15) -- amplitude x1.5 = +3.5 dB
         const float IdleRpm = 1000f, MaxRpm = 6000f;   // source EngineIdleRPM / EngineMaxRPM
+        // ---- DRIVETRAIN. A real one: an engine that makes TORQUE as a function of its own RPM, a gearbox
+        // that MULTIPLIES that torque, and a top speed that falls out of DRAG instead of out of an
+        // if-statement. strawberry: "engine rpm = speed rn, there arent mechanics for torque. it feels like
+        // a video game car."
+        const float RedlineFrac  = 0.90f;    // upshift + rev-limit point, as a fraction of MaxRpm
+        const float TorquePeakN  = 0.60f;    // where peak torque sits in the usable rpm band
+        const float TorqueFallLo = 1.25f;    // quadratic falloff BELOW the peak (gentle)
+        const float TorqueFallHi = 1.875f;   // ...and ABOVE it (steeper -- holding a gear past peak costs you)
+        const float TorqueFloor  = 0.35f;    // an engine still pulls off-peak; it does not stop
+        const float TopSpeedBuff = 1.6f;     // strawberry: "a big thing is buffing top speeds"
+        const float GearStep     = 1.35f;    // rpm drop per shift -> the gear COUNT falls out of the spread
+        const float LaunchBoost  = 1.5f;     // first-gear peak force vs the old flat force
+        const float StallRpm     = 2600f;    // torque-converter stall: what the engine revs to against a stopped car
+        const float RollingCrr   = 0.015f;   // rolling resistance, as a fraction of weight
+        const float ShiftTime    = 0.30f;    // lockout between shifts
+        const float EngineBrakeScale = 0.03f; // lift-off engine braking, as a fraction of the FOOT brake, AT REDLINE (measured: 0.10 still gave 0.37 g of decel for letting go of the key)
+        const float SpeedBackstop = 1.15f;   // hard cut this far past the drag equilibrium (runaway guard only)
         public float EngineRpm => _engineRpm;
         public string GearLabel => LinearVelocity.LengthSquared() < 0.25f ? "N" : (LinearVelocity.Dot(-GlobalTransform.Basis.Z) < -0.5f ? "R" : $"G{_gear}");   // N stopped / R reversing / G<n>
         public float EngineRpmNorm => Mathf.Clamp((_engineRpm - IdleRpm) / (MaxRpm - IdleRpm), 0f, 1f);
         public int Gear => _gear;
+        public int GearCount => _gears != null ? _gears.Length : 0;
+        public float PeakTorque => _peakTorque;
+        public float SpecSpeedMaxForTest => _specSpeedMax;   // L1: the un-buffed spec top speed the OLD model capped at
+        public float RedlineRpmForTest => RedlineFrac * MaxRpm;                                   // L1: the shift/limit point, so a probe doesn't re-derive it
+        public float TorqueAtRpmForTest(float rpm) =>                                             // L1: sample the torque CURVE directly -- a flat-force model returns the same number at every rpm
+            _peakTorque * TorqueFrac(Mathf.Clamp((rpm - IdleRpm) / (MaxRpm - IdleRpm), 0f, 1f)) * RevLimit(rpm);
+        float CurrentGearRatio => (_gears != null && _gear >= 1 && _gear <= _gears.Length) ? _gears[_gear - 1] : 20f;
+
+        /// <summary>Normalised engine torque at a normalised RPM. A real engine does NOT make a constant
+        /// force: torque climbs off idle, peaks around 60% of the usable band and falls away toward the
+        /// redline -- which is the entire reason a gearbox exists. Asymmetric on purpose, because the drop
+        /// past peak is steeper than the climb to it, so short-shifting costs you a little and hanging on
+        /// past peak costs you more. The old model had no curve at all: drive force was a flat constant at
+        /// every speed in every gear, and the gear ratio never multiplied anything.</summary>
+        static float TorqueFrac(float n)
+        {
+            n = Mathf.Clamp(n, 0f, 1f);
+            float d = n - TorquePeakN;
+            return Mathf.Max(TorqueFloor, 1f - (d < 0f ? TorqueFallLo : TorqueFallHi) * d * d);
+        }
+
+        /// <summary>Rev limiter, faded rather than cut. A hard cut to zero at the redline makes the engine
+        /// hunt -- force dies, the car slows, rpm drops, force returns -- so it is ramped out over the last
+        /// slice of the band instead.</summary>
+        static float RevLimit(float rpm)
+        {
+            float red = RedlineFrac * MaxRpm;
+            return rpm <= red ? 1f : Mathf.Max(0f, 1f - (rpm - red) / (MaxRpm - red));
+        }
+
+        /// <summary>The RPM at which gear g should drop to g-1. This is HYSTERESIS and it has to be computed
+        /// from the ratios rather than picked by hand: a downshift multiplies rpm by ratio[g-2]/ratio[g-1],
+        /// so a downshift point set too high lands the engine straight back above the UPSHIFT point and the
+        /// box hunts between two gears forever. 0.85 is the margin that survives the round trip.</summary>
+        float DownshiftRpm(int g)
+        {
+            if (_gears == null || g < 2 || g > _gears.Length) return 0f;
+            return RedlineFrac * MaxRpm * (_gears[g - 1] / _gears[g - 2]) * 0.85f;
+        }
+
+        /// <summary>Tractive force PER TRACTION WHEEL, from the torque curve through the current gear.
+        /// Godot's VehicleBody3D.EngineForce setter writes its value to EVERY traction wheel, so what this
+        /// returns is one wheel's share of the drivetrain's total output. That distinction is not cosmetic:
+        /// it is a factor of four on a car, and I had it backwards in the first model of this change, which
+        /// made the whole drivetrain feel like there was no engine in it.</summary>
+        float ThrottleForcePerWheel(float throttle)
+        {
+            if (_peakTorque <= 0f || _driveR <= 0f || _nTraction <= 0) return throttle * _engineForce;   // no drivetrain (trailer, unset spec): the old flat force stands
+            float ratio = throttle < 0f ? _reverseGear : CurrentGearRatio;
+            float total = _peakTorque * TorqueFrac(EngineRpmNorm) * RevLimit(_engineRpm) * ratio / _driveR;
+            return throttle * total / _nTraction;
+        }
+
+        /// <summary>Derive this hull's drivetrain from its own spec, so 22 vehicles self-calibrate instead of
+        /// being hand-tuned. Everything here is solved for, not chosen:
+        ///
+        ///   top gear   - the ratio that puts the engine at the redline exactly at the target top speed
+        ///   spread     - how much ratio the vehicle needs, from its mass (a heavy hull needs more)
+        ///   gear COUNT - falls out of the spread at a fixed rpm-drop per shift. The jeep gets 5 where it had
+        ///                2, the semi 6 where it had 3. strawberry asked to change the number of gears; this
+        ///                derives it rather than picking it.
+        ///   ratios     - geometric between first and top, which is what a real gearbox is
+        ///   peak torque- calibrated so first-gear peak force is LaunchBoost x the old flat force
+        ///   drag       - solved so tractive force meets drag exactly AT the target top speed
+        ///
+        /// THE BUFF GOES INTO _speedMax ITSELF rather than being layered on top of it, and that is a
+        /// correctness requirement, not a style choice: VehicleReplication caps a driving client's motion at
+        /// SpeedMaxMps * EnvelopeSlack(1.25), so a car that really does 1.6x its reported SpeedMax would be
+        /// rejected by the server's anti-cheat envelope on every tick. Steering fade, the tank's yaw fade and
+        /// ForwardSpeedPct all read the same field and stay consistent for free.</summary>
+        static void SetupDrivetrain(Vehicle v, Spec s)
+        {
+            v._nTraction = s.Kingpin == Vector3.Zero ? s.Wheels.Length : 0;   // a trailer's wheels are passive rollers
+            if (s.Heli || s.Plane || v._nTraction <= 0 || s.Engine <= 0f || s.SpeedMax <= 0f || s.WheelRadius <= 0f) return;
+            v._speedMax = s.SpeedMax * TopSpeedBuff;
+            v._speedMin = s.SpeedMin * TopSpeedBuff;
+            // EVERY CAR HAS BEEN DRIVING THROUGH A HIDDEN VELOCITY DAMP, and it is the single biggest force in
+            // the old model after the engine. LinearDampMode defaults to COMBINE, which ADDS the body's value
+            // to ProjectSettings physics/3d/default_linear_damp -- Godot's default 0.1, never overridden here.
+            // So setting LinearDamp = 0 (which _PhysicsProcess does every tick) did NOT mean zero: it meant
+            // 0.1 s^-1 on the whole body, forever. MEASURED off a full-throttle trace, resistance minus the
+            // modelled drag came to 170, 168 and 171 N per m/s at three speeds -- dead flat, i.e. viscous, not
+            // aerodynamic -- and m*0.1*v predicts 770/1346/1926 N against 769/1332/1940 measured. Within 1%.
+            //
+            // That is 1940 N on the jeep at 11 m/s, three quarters of the total resistance, and it is why the
+            // first cut of this drivetrain LOST top speed: a real torque curve puts less force at the top of
+            // the rev range than a flat constant did, and the flat constant had been quietly paying this tax.
+            // The heli hit the identical trap and the note at the top of this file spells it out; nobody had
+            // ever checked the car. Drag is now the explicit v^2 force below, so the implicit one goes.
+            //
+            // NOT A TRUE BOAT. A pure Boat keeps the combined damping -- its hull drag was tuned against it and
+            // boat_hull / boat_turn_sweep hold it to tight tolerances. An AMPHIBIAN is a land vehicle that can
+            // also swim, and leaving the hidden damp on it cost the APC a third of its top speed (12.7 against
+            // a 19.2 target) while nothing in the suite asserts its behaviour in water.
+            if (s.Water != WaterMode.Boat) { v.LinearDampMode = DampMode.Replace; v.LinearDamp = 0f; }
+            // THE RADIUS THAT TURNS, not the one the spec happens to declare. Three specs give a
+            // WheelRadius that their own WheelRadii then override -- the semi says 0.55 and fits six 0.65 s,
+            // the tractor says 0.90 and fits two 0.90 s and two 1.05 s. Gearing is rpm-per-metre, so an 18%
+            // radius error is an 18% gearing error: the semi hit its redline well short of top gear and
+            // topped out at 9.5 m/s against a 22.4 target. Averaging the real radii fixes it at the source.
+            float r = s.WheelRadius;
+            if (s.WheelRadii != null && s.WheelRadii.Length > 0)
+            {
+                float rs = 0f; foreach (var rr in s.WheelRadii) rs += rr;
+                r = rs / s.WheelRadii.Length;
+            }
+            v._driveR = r;
+            float wheelRpmTop = v._speedMax / (2f * Mathf.Pi * r) * 60f;        // wheel rev/min at the target top speed
+            float ratioTop = RedlineFrac * MaxRpm / wheelRpmTop;                 // ...geared to sit at the redline there
+            float spread = Mathf.Clamp(3f + v.Mass / 4000f, 3f, 9f);
+            int n = Mathf.Clamp(Mathf.RoundToInt(Mathf.Log(spread) / Mathf.Log(GearStep)) + 1, 2, 8);
+            float ratio1 = ratioTop * spread;
+            var g = new float[n];
+            for (int i = 0; i < n; i++) g[i] = ratio1 * Mathf.Pow(ratioTop / ratio1, i / (float)(n - 1));
+            v._gears = g;
+            v._reverseGear = ratio1 * 0.9f;
+            v._peakTorque = v._engineForce * v._nTraction * LaunchBoost * r / ratio1;
+            float rpmTop = wheelRpmTop * ratioTop;
+            float fTop = v._peakTorque * TorqueFrac((rpmTop - IdleRpm) / (MaxRpm - IdleRpm)) * RevLimit(rpmTop) * ratioTop / r;
+            v._rollK = RollingCrr * v.Mass * 9.8f;
+            v._dragK = Mathf.Max(0f, fTop - v._rollK) / (v._speedMax * v._speedMax);
+        }
         // vehicle status for the HUD (source InteractableVehicle): fuel drains while the engine's on; health = damage; battery = accessories
         public float Fuel, FuelMax, Health, HealthMax, Battery;
         public float FuelBurn;   // fuel drained per second while driving (PZ-scale, per vehicle CLASS -- master); set from FuelClassOf at build
@@ -3549,6 +3690,7 @@ namespace UnturnedGodot
             float massScale = v.Mass / GlobalMass;
             v._engineForce = s.Engine * massScale; v._steerMax = s.SteerMax; v._steerMin = s.SteerMin;
             v._speedMax = s.SpeedMax; v._speedMin = s.SpeedMin; v._brakeForce = s.Brake * massScale;
+            v._specSpeedMax = s.SpeedMax;   // the PRE-BUFF spec value, kept for L1: what the old model hard-capped at
             // The THIRD constant that has to ride the mass, and the one the per-vehicle-mass commit missed.
             // TankYawGain is a TORQUE, so what it buys is torque/inertia -- and the pinned hull inertia is
             // m/12*(a^2+b^2), exactly proportional to mass at a fixed box. The tank went 900 kg -> 40000 kg,
@@ -3823,6 +3965,7 @@ namespace UnturnedGodot
             v.FifthWheelLocal = s.FifthWheel; v.KingpinLocal = s.Kingpin;   // trailer-hitch coupling points (Zero = neither)
             v._steerTurnSpeed = s.SteerMax * 2f;   // master: ramp to full lock a LOT longer than source (source default = SteerMax*5 deg/s) -> slower turn-in
             v._gears = s.ForwardGears; v._reverseGear = s.ReverseGear; v._shiftUpRpm = s.ShiftUpRpm;
+            SetupDrivetrain(v, s);   // MUST run after the line above: it REPLACES _gears/_speedMax/_speedMin for a driven hull, and a trailer keeps the spec's
             v._idlePitch = s.IdlePitch; v._maxPitch = s.MaxPitch; v._idleVol = s.IdleVolume; v._maxVol = s.MaxVolume;
             v.FuelMax = v.Fuel = s.Fuel; v.FuelBurn = FuelBurnClassOf(s.Name);   // TANK = per-vehicle metric Spec.Fuel (1u=1mL) so cans<->vehicles share units; burn = per-class (PZ-scale, infFuel-masked)
             v.HealthMax = v.Health = s.Health; v.Battery = BatteryMax; v.DisplayName = s.Name; v.SeatOffset = SeatOf(s.Name);
@@ -4060,18 +4203,17 @@ namespace UnturnedGodot
             if (s.RetractGear) { v._gearPivots = new Node3D[nw]; v._gearAxis = new Vector3[nw]; v._gearAng = new float[nw]; v._wheelSuspF = new float[nw]; v._wheelFricF = new float[nw]; }
             // SUSPENSION IS SIZED BY WHAT EACH WHEEL ACTUALLY CARRIES, not by the hull's mass.
             //
-            // I scaled both of these by massScale in dbb873ae and it was the wrong LAW, because massScale is
-            // blind to how many wheels share the load. Bisected on the semi: 0% of ticks with most wheels off
-            // the ground at ce7e5f4a, 75% at dbb873ae. A 7800 kg six-wheeler was given 8.67x the spring of a
-            // 900 kg four-wheeler while each of its wheels carries only 5.78x the load, so it BOUNCED -- and a
-            // truck that is airborne cannot put its power down, which cost it more than half its top speed.
+            // I scaled both of these by massScale in dbb873ae and it was the wrong law, because massScale is
+            // blind to how many wheels share the load. Bisected on the semi: 0% airborne at ce7e5f4a, 75% at
+            // dbb873ae. A 7800 kg six-wheeler got 8.67x the spring of a 900 kg four-wheeler while each of its
+            // wheels carries only 5.8x the load, so it bounced -- majority of wheels OFF THE GROUND for 77% of
+            // a full-throttle run, which is why it could not put its power down and topped out at 11 m/s.
             //
-            //   stiffness -> per-WHEEL static load, against the 900kg-on-4-wheels point these were tuned at
-            //   max force -> that wheel's share of the vehicle's weight, x3 headroom for bumps and landings
+            //   stiffness -> per-WHEEL static load against the 900kg-on-4-wheels point the constants were tuned at
+            //   max force -> the wheel's share of the vehicle's weight, x3 headroom for bumps and landings
             //
-            // The headroom factor REPRODUCES the original hand-tuned 12000 at the jeep (3*1700*9.8/4 = 12495),
-            // which is the check that this is a generalisation of the tuned value and not a replacement for
-            // it. If a derived law does not reproduce the constant at the point it was tuned, the law is wrong.
+            // The headroom factor reproduces the original 12000 for a jeep (3 * 1700 * 9.8 / 4 = 12495), which
+            // is the check that this is a generalisation of the tuned value rather than a replacement for it.
             float loadScale = (v.Mass / Mathf.Max(1, nw)) / (GlobalMass / 4f);
             float suspMaxF = SuspensionHeadroom * v.Mass * 9.8f / Mathf.Max(1, nw);
             for (int i = 0; i < nw; i++)
@@ -5147,20 +5289,26 @@ namespace UnturnedGodot
                 if (fwd >= _speedMax) { leftT = Mathf.Min(leftT, 0f); rightT = Mathf.Min(rightT, 0f); }  // at the forward speed cap: no more forward torque (a turn/reverse is still allowed)
                 if (fwd <= _speedMin) { leftT = Mathf.Max(leftT, 0f); rightT = Mathf.Max(rightT, 0f); }  // at the reverse cap: no more reverse torque
                 EngineForce = 0f; Steering = 0f; _steerTarget = 0f;                                      // clear the GLOBAL traction (its setter overwrites every traction wheel) + the wheel-angle steer, THEN set per-wheel below
+                float tTrack = Mathf.Abs(ThrottleForcePerWheel(1f));                                     // a tank has a gearbox too: per-wheel force from the torque curve at the current gear
                 for (int i = 0; i < _wNodes.Length; i++)                                                 // negate like the car path: this rig drives +Z for +force
-                    _wNodes[i].EngineForce = -(_wNodes[i].Position.X < 0f ? leftT : rightT) * _engineForce;
+                    _wNodes[i].EngineForce = -(_wNodes[i].Position.X < 0f ? leftT : rightT) * tTrack;
                 _tankYawInput = -steer;   // [-1,1] turn request, throttle-INDEPENDENT -> the REAL yaw torque in _PhysicsProcess. A on its own pivots; W+A arcs at the same rate + forward speed (both tracks still driving)
                 _handbraking = handbrake;
                 bool tCoast = Mathf.Abs(throttle) < 0.05f && Mathf.Abs(steer) < 0.05f && !footBrake;     // no throttle AND no steer input -> engine-brake it down (a steer-only pivot must NOT coast-brake, or it can't spin)
-                Brake = handbrake ? _brakeForce * HandbrakeScale : (footBrake ? _brakeForce * FootBrakeScale : (tCoast ? _brakeForce * FootBrakeScale * 0.35f : 0f));
+                Brake = handbrake ? _brakeForce * HandbrakeScale : (footBrake ? _brakeForce * FootBrakeScale : (tCoast ? _brakeForce * FootBrakeScale * EngineBrakeScale * EngineRpmNorm : 0f));   // engine braking scales with revs, same as the car
                 _braking = handbrake || footBrake;
                 if (_taillightMat != null && _taillightsOn) _taillightMat.EmissionEnergyMultiplier = _braking ? 6f : 2f;
                 return;
             }
-            float eng = (footBrake || neutral) ? 0f : throttle * _engineForce;
+            float eng = (footBrake || neutral) ? 0f : ThrottleForcePerWheel(throttle);
             if (CoupledTrailer != null) eng *= 0.5f;   // towing a loaded trailer halves the pull -> even slower accel while hooked up (strawberry 2026-07-15)
             if (Towing != null) eng *= 0.9f;   // towing a car on a rope: only a touch sluggish now -> the tower keeps most of its power to actually haul the load (0.7->0.9, master "WAYYY too weak" 2026-07-20)
-            if (throttle > 0f && speed >= _speedMax) eng = 0f;    // cap forward at Speed_Max (12.5)
+            // NO HARD TOP-SPEED CUTOFF ANY MORE. `speed >= _speedMax -> eng = 0` is what made this feel like a
+            // video game car: full power right up to an invisible wall, then nothing. Top speed is now where
+            // tractive force meets drag, so the car eases up to it the way a real one does and a heavy load,
+            // a hill or a headwind change the answer. What is left here is a RUNAWAY GUARD, not a speed model:
+            // it sits above the drag equilibrium and below the MP envelope, and in normal driving never fires.
+            if (throttle > 0f && speed >= _speedMax * SpeedBackstop) eng = 0f;
             if (throttle < 0f && speed >= -_speedMin) eng = 0f;   // cap reverse at -Speed_Min (7)
             EngineForce = -eng;   // NEGATE: Godot drives this rig +Z for positive force, so W(throttle+1) was going backward
             float t = _speedMax > 0f ? Mathf.Clamp(speed / _speedMax, 0f, 1f) : 0f;   // guard div-by-0 for a towed body (_speedMax=0) -> NaN steer target; matches ForwardSpeedPct's _speedMax<=0 guard
@@ -5176,7 +5324,13 @@ namespace UnturnedGodot
             // strawberry: "the handbrake SUCKS".
             //
             // Rear is +Z: the car faces -Z, so a wheel behind the centre has a positive local Z.
-            float footB = footBrake ? _brakeForce * FootBrakeScale : (coasting ? _brakeForce * FootBrakeScale * 0.35f : 0f);
+            // ENGINE BRAKING IS NOT A BRAKE PEDAL. Lifting off used to apply 35% of full braking force --
+            // measured, that stopped the jeep from 72 km/h in about two seconds, roughly 1 g, purely for
+            // taking your finger off the key. It is now proportional to ENGINE SPEED, which is what actually
+            // produces engine braking: strong when you lift off at high revs in a low gear, nothing at all at
+            // idle. A coasting car should roll.
+            float footB = footBrake ? _brakeForce * FootBrakeScale
+                        : (coasting ? _brakeForce * FootBrakeScale * EngineBrakeScale * EngineRpmNorm : 0f);
             if (handbrake && _wNodes != null && _wNodes.Length > 0)
             {
                 Brake = 0f;   // nothing body-wide: the rear wheels carry it
@@ -6170,6 +6324,18 @@ namespace UnturnedGodot
             // ANGULAR term does that honestly without touching where the car ends up.
             bool settling = !towed && (unattended || _handbraking) && !Freeze && !Sleeping && LinearVelocity.LengthSquared() < 2.0f;
             LinearDamp = 0f; AngularDamp = settling ? 3f : 0f;
+            // AERODYNAMIC DRAG + ROLLING RESISTANCE. This is what sets top speed now, and it is the honest
+            // version of the LinearDamp that was deleted above: drag is a real force that grows with v^2 and
+            // opposes motion, where the damping was an exponential decay applied to the body regardless of
+            // whether anything was touching the road. _dragK is SOLVED per hull so equilibrium lands exactly
+            // at _speedMax (see SetupDrivetrain) rather than being a number somebody guessed.
+            // Horizontal only: gravity and the suspension own the vertical axis.
+            if (!Freeze && !Sleeping && !_husk && _dragK > 0f)
+            {
+                var hvel = new Vector3(LinearVelocity.X, 0f, LinearVelocity.Z);
+                float hsp = hvel.Length();
+                if (hsp > 0.15f) ApplyCentralForce(-hvel / hsp * (_dragK * hsp * hsp + _rollK));
+            }
             if (unattended && !Freeze && !Sleeping && !towed) Brake = _brakeForce * HandbrakeScale;   // parking brake: hold a rolling unattended car down until it settles (never brake a towed trailer). Also on `unattended` rather than `_parked`, so a car that has been rammed keeps its brake instead of free-rolling away forever
             // NO manual wheel spin: Godot's VehicleWheel3D already bakes the ROLL (+ suspension + steering) into its own
             // node transform every physics tick, and the wheel MESH is a child that inherits it. An old manual
@@ -6179,22 +6345,42 @@ namespace UnturnedGodot
             // engine RPM + gears (source InteractableVehicle): rpm = |avg wheel rpm| * gear ratio, idle-floored, then auto-shift
             float sum = 0f; foreach (var w in _wNodes) sum += Mathf.Abs(w.GetRpm());
             float avgWheelRpm = _wNodes.Length > 0 ? sum / _wNodes.Length : 0f;
-            float ratio = (_gears != null && _gear >= 1 && _gear <= _gears.Length) ? _gears[_gear - 1] : 20f;
-            float target = Mathf.Clamp(avgWheelRpm * ratio, IdleRpm, MaxRpm);
+            float ratio = CurrentGearRatio;
+            // CLUTCH / TORQUE CONVERTER. Without one, engine rpm is a pure function of road speed -- which is
+            // exactly what strawberry meant by "engine rpm = speed rn": a stopped car sits at idle making idle
+            // torque and cannot launch, and the rev counter is a speedometer with a different dial on it.
+            // Below the stall speed the engine is partly decoupled and revs toward StallRpm on throttle, which
+            // is what actually gets a standing car moving; as the wheels catch up it locks to the road.
+            float drivenRpm = avgWheelRpm * ratio;
+            float engage = Mathf.Clamp(drivenRpm / StallRpm, 0f, 1f);
+            float launch = IdleRpm + Mathf.Abs(_inThrottle) * (StallRpm - IdleRpm);
+            float target = Mathf.Clamp(Mathf.Lerp(launch, drivenRpm, engage), IdleRpm, MaxRpm);
             _engineRpm = Mathf.Lerp(_engineRpm, target, Mathf.Min(1f, 8f * (float)delta));
-            if (_gears != null && _gears.Length > 0)   // gear from SPEED band -> guaranteed clean shifts (master: never left 1st; src RPM model never redlines in gear 1 so it never shifted). RPM still sawtooths per gear via the ratio.
+            // SHIFT ON RPM, which is what a gearbox does. The old selector picked the gear from a SPEED BAND
+            // -- gear = f(speed) -- so the ratio could never influence anything and the rev counter sawtoothed
+            // decoratively over the top. It was written that way because the RPM model it replaced genuinely
+            // could not shift: at the spec ratios the engine reached only ~2700 rpm at top speed against a 6000
+            // redline, so it never hit a shift point in ANY gear. The gearing was the bug; SetupDrivetrain now
+            // derives ratios that actually reach the redline, so shifting on rpm works.
+            if (_gears != null && _gears.Length > 0)
             {
                 float fwd = Mathf.Abs(LinearVelocity.Dot(-GlobalTransform.Basis.Z));
-                int newGear = Mathf.Clamp(1 + (int)(Mathf.Clamp(fwd / _speedMax, 0f, 0.999f) * _gears.Length), 1, _gears.Length);
-                if (newGear != _gear && !_exploded && !_husk && fwd > 1.5f)   // gear change while moving -> a brief CLUTCH JOLT.
+                if (_shiftCd > 0f) _shiftCd -= (float)delta;
+                if (fwd < 1.0f) _gear = 1;   // rolled to a stop -> back into first, ready to launch
+                else if (_shiftCd <= 0f && !_exploded && !_husk)
                 {
-                    // A fore-aft impulse dipped the speed under the shift point -> instant re-downshift -> STUCK shifting
-                    // (master caught the loop). So the jolt is a VERTICAL hitch + pitch nod you FEEL but that doesn't
-                    // touch the gear-selecting fore-aft speed.
-                    ApplyCentralImpulse(Vector3.Up * Mass * 0.22f);
-                    ApplyTorqueImpulse(GlobalTransform.Basis.X * Mass * 0.5f);
+                    if (_engineRpm >= RedlineFrac * MaxRpm && _gear < _gears.Length)
+                    {
+                        _gear++; _shiftCd = ShiftTime;
+                        // The jolt is a VERTICAL hitch + pitch nod you FEEL but that does NOT touch the fore-aft
+                        // speed: a fore-aft impulse used to dip the speed back under the old band's shift point
+                        // and re-downshift instantly, sticking the box in a shift loop (master caught it). That
+                        // trap is gone with rpm hysteresis, but the vertical jolt is the better effect anyway.
+                        ApplyCentralImpulse(Vector3.Up * Mass * 0.22f);
+                        ApplyTorqueImpulse(GlobalTransform.Basis.X * Mass * 0.5f);
+                    }
+                    else if (_gear > 1 && _engineRpm <= DownshiftRpm(_gear)) { _gear--; _shiftCd = ShiftTime; }
                 }
-                _gear = newGear;
             }
             if (_engineAudio != null)   // EngineRPMSimple: pitch + volume by RPM while running; silent when off (exited)
             {
