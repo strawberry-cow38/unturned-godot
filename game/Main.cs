@@ -979,9 +979,13 @@ namespace UnturnedGodot
             arrow.Position = new Vector3(1.5f, 0.06f, -0.7f);
             AddChild(arrow);
 
-            var cam = new Camera3D { Fov = 46f };   // 3/4 aerial from +X/+Z; the red bar reads as travel(-Z)
+            var xref = new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(1.4f, 0.12f, 0.12f) } };   // blue = +X reference
+            xref.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.2f, 0.4f, 0.95f) };
+            xref.Position = new Vector3(0.7f, 0.06f, 1.5f);
+            AddChild(xref);
+            var cam = new Camera3D { Fov = 38f };   // TOP-DOWN, unambiguous: -Z (travel, RED bar) points to the TOP of frame, +X (BLUE) to the right
             AddChild(cam);
-            cam.LookAtFromPosition(new Vector3(4.6f, 3.4f, 4.6f), new Vector3(0f, 0.4f, 0f), Vector3.Up);
+            cam.LookAtFromPosition(new Vector3(0f, 9f, 0f), Vector3.Zero, new Vector3(0f, 0f, -1f));
         }
 
         // --clothtest=<shirtId>,<pantsId> : the P3a render gate. Spawn a 3P RiggedCharacter (clothes-shader body +

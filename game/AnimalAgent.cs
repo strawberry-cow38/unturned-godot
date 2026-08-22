@@ -19,10 +19,11 @@ namespace UnturnedGodot
         public byte NetAnim { get; private set; }                   // A5: current anim byte for the replica (idle/eat/glance/walk)
         public bool Dead { get; private set; }
 
-        // The animal rigs (deer/pig/cow) import facing +Z (Unity forward); Godot's LookAt aligns -Z to the target, so
-        // the visual walked backwards. A local yaw on the RIG (not the body) turns the model to match travel. MEASURED
-        // via --animaltest (UG_ANIMALYAW), the capsule is ~symmetric so it needs no fix. 0 until the render nails it.
-        const float RigYawFix = 180f;
+        // The animal rigs (deer/pig/cow) import facing local -X, NOT Godot's -Z. The LookAt aligns the body's -Z to
+        // travel, so the model walked SIDEWAYS. A +270 yaw on the RIG child (only the visual needs it -- the capsule is
+        // rotationally symmetric) turns -X round to -Z = travel. MEASURED top-down via --animaltest (UG_ANIMALYAW sweep:
+        // 0=-X, 90=+Z, 180=+X, 270=-Z), so 270 is the one that faces travel. (180 was my first, wrong-by-90 guess.)
+        const float RigYawFix = 270f;
 
         Vector3 _target;
         bool _walking;
