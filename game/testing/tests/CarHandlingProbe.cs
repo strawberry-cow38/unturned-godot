@@ -78,16 +78,41 @@ namespace UnturnedGodot.Testing
                 if (Mathf.Abs(v.LinearVelocity.Dot(-v.GlobalTransform.Basis.Z)) >= top * 0.95f) break;
             }
             float entry = Mathf.Abs(v.LinearVelocity.Dot(-v.GlobalTransform.Basis.Z));
+            // WITH STEERING HELD. A handbrake pull in a straight line cannot rotate anything, however the
+            // brakes are wired -- locking the rears symmetrically produces no yaw moment at all. The rotation
+            // in a handbrake turn comes from the FRONTS still gripping and steering while the rears let go, so
+            // the input has to include lock or the probe measures 0.00 rad/s no matter what the code does. It
+            // did exactly that, twice, and the second time it was measuring a working handbrake.
             var h0 = v.GlobalPosition; float th = 0f, maxYaw = 0f;
             for (int i = 0; i < 1500 && v.LinearVelocity.Length() > 0.5f; i++)
             {
-                v.Drive(0f, 0f, true);
+                v.Drive(0f, 1f, true);
                 yield return Ticks(1); th += Dt;
                 maxYaw = Mathf.Max(maxYaw, Mathf.Abs(v.AngularVelocity.Y));
             }
             float handDist = v.GlobalPosition.DistanceTo(h0);
-            GD.Print($"[car] {car}: HANDBRAKE from {entry:0.00} m/s -> {handDist:0.0} m in {th:0.0} s, peak yaw {maxYaw:0.00} rad/s");
+            GD.Print($"[car] {car}: HANDBRAKE+lock from {entry:0.00} m/s -> {handDist:0.0} m in {th:0.0} s, peak yaw {maxYaw:0.00} rad/s");
             T.Check($"the handbrake stops the car ({handDist:0.0} m)", handDist > 0.05f && handDist < 400f);
+
+            // CONTROL: the same manoeuvre on the FOOTBRAKE. The handbrake is only doing its job if it rotates
+            // the car MORE than this -- an absolute yaw number on its own would pass on any car that merely
+            // turns while slowing down.
+            for (int i = 0; i < 3000; i++)
+            {
+                v.Drive(1f, 0f, false);
+                yield return Ticks(1);
+                if (Mathf.Abs(v.LinearVelocity.Dot(-v.GlobalTransform.Basis.Z)) >= top * 0.95f) break;
+            }
+            float footYaw = 0f;
+            for (int i = 0; i < 1500 && v.LinearVelocity.Length() > 0.5f; i++)
+            {
+                v.Drive(-1f, 1f, false);
+                yield return Ticks(1);
+                footYaw = Mathf.Max(footYaw, Mathf.Abs(v.AngularVelocity.Y));
+            }
+            GD.Print($"[car] {car}: FOOTBRAKE+lock peak yaw {footYaw:0.00} rad/s  (handbrake {maxYaw:0.00})");
+            T.Check($"the handbrake rotates the car MORE than the footbrake ({maxYaw:0.00} vs {footYaw:0.00} rad/s)",
+                maxYaw > footYaw);
 
             // ---- TURN RADIUS: hold full lock at a steady throttle and measure the circle from the yaw rate,
             // r = v / omega. Taken from the RATE rather than by fitting a path, so a drifting car still

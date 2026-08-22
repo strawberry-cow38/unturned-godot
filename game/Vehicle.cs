@@ -5140,7 +5140,24 @@ namespace UnturnedGodot
             // SPACE = handbrake (locks hard); S-into-forward-motion = foot brake. Both far stronger than the old raw .dat Brake.
             _handbraking = handbrake;   // remembered so the car freezes (no jitter) when stopped with the handbrake held
             bool coasting = Mathf.Abs(throttle) < 0.05f && !footBrake;   // no throttle + no brake input -> engine braking drags it down FASTER than pure friction (master: slow faster on its own)
-            Brake = handbrake ? _brakeForce * HandbrakeScale : (footBrake ? _brakeForce * FootBrakeScale : (coasting ? _brakeForce * FootBrakeScale * 0.35f : 0f));
+            // THE HANDBRAKE LOCKS THE REAR AXLE ONLY. That is the entire point of one: killing rear grip lets
+            // the back step out, which is what a handbrake turn IS. It used to be the footbrake with a bigger
+            // number applied to all four wheels evenly, and the probe measured the consequence exactly --
+            // peak yaw 0.00 rad/s through a full handbrake stop from 12 m/s. No rotation at all, ever.
+            // strawberry: "the handbrake SUCKS".
+            //
+            // Rear is +Z: the car faces -Z, so a wheel behind the centre has a positive local Z.
+            float footB = footBrake ? _brakeForce * FootBrakeScale : (coasting ? _brakeForce * FootBrakeScale * 0.35f : 0f);
+            if (handbrake && _wNodes != null && _wNodes.Length > 0)
+            {
+                Brake = 0f;   // nothing body-wide: the rear wheels carry it
+                foreach (var w in _wNodes) w.Brake = w.Position.Z > 0f ? _brakeForce * HandbrakeScale : footB;
+            }
+            else
+            {
+                if (_wNodes != null) foreach (var w in _wNodes) w.Brake = 0f;   // hand back to the body-wide value
+                Brake = footB;
+            }
             _braking = handbrake || footBrake;   // remembered for the trailer brake-light pass-through (UpdateCoupled)
             if (_taillightMat != null && _taillightsOn) _taillightMat.EmissionEnergyMultiplier = _braking ? 6f : 2f;   // brake lights flare brighter while braking (master); running taillights sit at 2x
         }
