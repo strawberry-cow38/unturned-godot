@@ -191,6 +191,13 @@ namespace UnturnedGodot
         // tile edge lands 5 m inside the footprint and every gate sits on nothing. 5, 3 and 2 tiles across.
         public const float TileSize = 24f;
         public static int TilesFor(PoiKind k) => k switch { PoiKind.Town => 5, PoiKind.MilitaryBase => 3, _ => 2 };
+
+        /// <summary>Does this monument get a full street grid, or just an access road?
+        ///
+        /// A town is streets; a construction site is a track in to a compound and nothing else, which is what it
+        /// looks like in life. It is also the only answer that WORKS at 2 tiles: on a 2x2 every cell is a corner,
+        /// and a corner exit needs {ramp, inward, lateral} -- the one shape no piece in the kit expresses.</summary>
+        public static bool FillsGrid(PoiKind k) => k is PoiKind.Town or PoiKind.MilitaryBase;
         static float HalfSizeFor(PoiKind k) => TilesFor(k) * TileSize * 0.5f;   // 60 / 36 / 24 m
 
         /// <summary>World height at a grid cell, clamped to the grid.</summary>
@@ -911,6 +918,18 @@ namespace UnturnedGodot
                 skel.Add((inner.i, inner.j));
                 skel.Add((hub.i, hub.j));
             }
+            // FILL THE GRID (strawberry: "yes fill the grid"). Every lattice cell becomes a street, so a town
+            // reads as a town rather than as the one L-shaped route its links happened to need.
+            //
+            // This also makes the edge exits EXACT rather than a fallback: a boundary cell in a full grid has
+            // three neighbours, and with its ramp that is four directions -- precisely a QuadCap's connectors,
+            // all four used. Corners are the exception (two neighbours plus a ramp opposite one of them, which
+            // nothing expresses), which is why the gate search below refuses corner lattice lines.
+            if (FillsGrid(poi.Kind))
+                for (int i2 = 0; i2 < n; i2++)
+                    for (int j2 = 0; j2 < n; j2++)
+                        skel.Add((i2, j2));
+
             foreach (var kv in exitCells) skel.Add(kv.Key);
 
             // PRUNE DEAD-END STUBS. Every street is a path from the centre out to a gate, so on a monument with
@@ -1068,8 +1087,12 @@ namespace UnturnedGodot
                                 var cy = CellsFor(y, cur[y]);
                                 if ((cx.ei, cx.ej) == (cy.ei, cy.ej)) return;
                                 if ((cx.ei, cx.ej) == (cy.ii, cy.ij)) return;
-                                foreach (var d in Card)
-                                    if ((cx.ei + d.dx, cx.ej + d.dz) == (cy.ei, cy.ej) || (cx.ei + d.dx, cx.ej + d.dz) == (cy.ii, cy.ij)) return;
+                                // Adjacency between two gates' cells only matters when the monument is NOT
+                                // grid-filled. In a full grid every cell is already a street, so a neighbouring
+                                // exit is just another junction -- and QuadCap serves all four directions.
+                                if (!FillsGrid(poi.Kind))
+                                    foreach (var d in Card)
+                                        if ((cx.ei + d.dx, cx.ej + d.dz) == (cy.ei, cy.ej) || (cx.ei + d.dx, cx.ej + d.dz) == (cy.ii, cy.ij)) return;
                             }
                         }
                         int cost = 0;
@@ -1077,7 +1100,11 @@ namespace UnturnedGodot
                         if (cost < bestCost) { bestCost = cost; best = (int[])cur.Clone(); }
                         return;
                     }
-                    for (int k = 0; k < n; k++) { cur[a] = k; Recurse(a + 1); }
+                    // On a grid-filled monument the corner lattice lines are unusable: a corner exit has two
+                    // grid neighbours plus a ramp opposite one of them, and no piece serves that set.
+                    int lo = FillsGrid(poi.Kind) && n >= 3 ? 1 : 0;
+                    int hi = FillsGrid(poi.Kind) && n >= 3 ? n - 2 : n - 1;
+                    for (int k = lo; k <= hi; k++) { cur[a] = k; Recurse(a + 1); }
                 }
                 Recurse(0);
                 for (int a = 0; a < idxs.Count; a++) snapped[idxs[a]] = best[a];
