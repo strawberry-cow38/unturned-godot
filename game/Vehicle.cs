@@ -72,6 +72,7 @@ namespace UnturnedGodot
         const float TankWheelSlip = 1.0f;   // TANK: lateral wheel friction. Too LOW (0.5) and the yaw torque spins it in place instead of arcing forward (low grip = no forward bite either); too HIGH and turning drags to a crawl. Paired with the speed-faded yaw below. Tunable.
         const float TankComY = 0.1f;   // TANK: low centre of mass (anti-flip -- master "easily flipped"). Tunable.
         const float TankTrackDiff = 0.3f;   // TANK: how much steer biases the two tracks' SPEED (both still drive -- fully stopping a track halves the power = crawl, master). The yaw torque does the turning; this is just feel. Tunable.
+        const float SuspensionHeadroom = 3f;   // suspension max force, as a multiple of the static load ONE wheel carries
         const float TankMaxYawRate = 0.6f, TankYawGain = 60000f, TankYawSpeedFade = 0.7f;   // TANK skid-steer: a REAL torque (ApplyTorque -- integrated into owned momentum, MP-safe + survives slopes/walls, per VoX) GOVERNED toward TankMaxYawRate*input. A plain constant torque is bang-bang here (the wheels' yaw resistance is ~constant -> stalls or runs away), so this feedback torque holds a stable rate. TankYawSpeedFade FADES the target as forward speed rises: a tight pivot at rest, a WIDE arc at speed, so a turn doesn't drag to a crawl (master). Tunable.
         float _tankYawInput;   // TANK: yaw request [-1,1] from the track difference (set in Drive, applied as a real torque in _PhysicsProcess)
         float _inCollective, _inYaw, _inPitch, _inRoll, _rawThrottle;   // the pilot's held axes (W/S, A/D, mouse Y, mouse X); _rawThrottle = last raw W/S axis (for ground reverse)
@@ -4057,6 +4058,22 @@ namespace UnturnedGodot
             v._wheelMeshRef = wheelMesh; v._wheelMatRef = wheelMat; v._wheelR = s.WheelRadius;   // for explosion debris
             v._wNodes = new VehicleWheel3D[nw]; v._wMeshes = new MeshInstance3D[nw];
             if (s.RetractGear) { v._gearPivots = new Node3D[nw]; v._gearAxis = new Vector3[nw]; v._gearAng = new float[nw]; v._wheelSuspF = new float[nw]; v._wheelFricF = new float[nw]; }
+            // SUSPENSION IS SIZED BY WHAT EACH WHEEL ACTUALLY CARRIES, not by the hull's mass.
+            //
+            // I scaled both of these by massScale in dbb873ae and it was the wrong LAW, because massScale is
+            // blind to how many wheels share the load. Bisected on the semi: 0% of ticks with most wheels off
+            // the ground at ce7e5f4a, 75% at dbb873ae. A 7800 kg six-wheeler was given 8.67x the spring of a
+            // 900 kg four-wheeler while each of its wheels carries only 5.78x the load, so it BOUNCED -- and a
+            // truck that is airborne cannot put its power down, which cost it more than half its top speed.
+            //
+            //   stiffness -> per-WHEEL static load, against the 900kg-on-4-wheels point these were tuned at
+            //   max force -> that wheel's share of the vehicle's weight, x3 headroom for bumps and landings
+            //
+            // The headroom factor REPRODUCES the original hand-tuned 12000 at the jeep (3*1700*9.8/4 = 12495),
+            // which is the check that this is a generalisation of the tuned value and not a replacement for
+            // it. If a derived law does not reproduce the constant at the point it was tuned, the law is wrong.
+            float loadScale = (v.Mass / Mathf.Max(1, nw)) / (GlobalMass / 4f);
+            float suspMaxF = SuspensionHeadroom * v.Mass * 9.8f / Mathf.Max(1, nw);
             for (int i = 0; i < nw; i++)
             {
                 var (x, y, z, steer) = s.Wheels[i];
@@ -4069,7 +4086,7 @@ namespace UnturnedGodot
                     // stiffer + higher max force so 900kg doesn't compress the suspension into a permanent SQUAT; more
                     // damping to settle without bounce; higher friction slip = more TRACTION (was sliding/understeering).
                     // Trailer = low friction so the wheels free-roll behind the cab instead of gripping/dragging.
-                    SuspensionStiffness = (s.Plane ? 30f : 55f) * massScale, SuspensionMaxForce = 12000f * massScale, DampingCompression = s.Plane ? 7f : 3.5f, DampingRelaxation = s.Plane ? 8f : 4.2f, WheelFrictionSlip = s.Tracked ? TankWheelSlip : (s.Kingpin != Vector3.Zero ? 1.5f : s.Plane ? 2.0f : 6.0f),   // PLANE: softer + heavily-damped gear + lower friction slip so the narrow fuselage wheels do not CHATTER into a yaw wobble on rough terrain (master 2026-08-18)
+                    SuspensionStiffness = (s.Plane ? 30f : 55f) * loadScale, SuspensionMaxForce = suspMaxF, DampingCompression = s.Plane ? 7f : 3.5f, DampingRelaxation = s.Plane ? 8f : 4.2f, WheelFrictionSlip = s.Tracked ? TankWheelSlip : (s.Kingpin != Vector3.Zero ? 1.5f : s.Plane ? 2.0f : 6.0f),   // PLANE: softer + heavily-damped gear + lower friction slip so the narrow fuselage wheels do not CHATTER into a yaw wobble on rough terrain (master 2026-08-18)
                 };
                 // left wheels: flip the mesh so the tread faces outward
                 var mi = new MeshInstance3D { Mesh = wheelMesh, MaterialOverride = wheelMat, Scale = new Vector3((x < 0 ? -1f : 1f) * wscale, wscale, wscale) };

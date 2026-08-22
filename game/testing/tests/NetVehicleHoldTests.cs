@@ -104,15 +104,25 @@ namespace UnturnedGodot.Testing
             float firstVx = jeep.LinearVelocity.X;
             T.Check($"the seeded velocity TOOK -- first live tick moved {firstTick:0.###} m at vx {firstVx:0.0} m/s",
                     firstTick > 0.15f && firstVx > 8f);
-            yield return Ticks(24);   // 0.5 s total
+            // WAIT FOR THE SETTLE, don't assume a window. The verified handoff shape (spike run 2026-07-18)
+            // was "skids to rest in ~0.2 s, 0.74 m travelled", and this check used to sample at a flat 0.5 s
+            // and assert it had already stopped -- which quietly pinned it to how hard the car was being
+            // slowed by things that have nothing to do with the hold. Two of those have now changed: the
+            // jeep's SuspensionMaxForce is sized off per-wheel load rather than mass (45% lower), and the
+            // hidden default linear damp is gone. The same release now runs ~1.0-1.4 m instead of 0.74.
+            //
+            // What the hold must guarantee is unchanged and is what is asserted: the body INTEGRATES and
+            // SETTLES, never sticks frozen, sleeps mid-air or launches. So measure the time to settle rather
+            // than pinning the distance a since-removed damping term happened to produce.
+            float settleT = -1f;
+            for (int i = 0; i < 150 && settleT < 0f; i++)   // up to 3 s
+            {
+                yield return Ticks(1);
+                if (Mathf.Abs(jeep.LinearVelocity.X) < 0.5f) settleT = (i + 2) * 0.02f;
+            }
             float coasted = jeep.GlobalPosition.X - relPos.X;
-            // The verified handoff shape (spike run 2026-07-18): the freed body is fully dynamic, but its
-            // wheels resume at rotation speed 0, so a 10 m/s release SKIDS on locked-wheel tire friction to
-            // rest in ~0.2 s (t0 vx 9.98 -> t8 vx 0.05, 0.74 m traveled). That matches the SP exit feel
-            // (the exit effects Park the car anyway) -- what the hold must guarantee is that the body
-            // INTEGRATES and SETTLES, never sticks frozen, sleeps mid-air, or launches.
-            T.Check($"released body skid-settled under live physics ({coasted:0.00} m, vx now {jeep.LinearVelocity.X:0.00})",
-                    coasted > 0.5f && Mathf.Abs(jeep.LinearVelocity.X) < 0.5f);
+            T.Check($"released body skid-settled under live physics ({coasted:0.00} m in {settleT:0.00} s, vx now {jeep.LinearVelocity.X:0.00})",
+                    coasted > 0.5f && settleT > 0f);
             T.Check($"grounded through the handoff (dY {jeep.GlobalPosition.Y - restY:0.00} m -- no vanish, no launch)",
                     Mathf.Abs(jeep.GlobalPosition.Y - restY) < 1.5f);
             yield return Ticks(150);
