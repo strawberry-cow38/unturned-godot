@@ -4056,7 +4056,16 @@ namespace UnturnedGodot
             // is a 1:1 HITBOX change quietly re-tuning a boat whose feel strawberry drove and signed off on.
             // BoxSize is the authored hull volume and is what TurnScale was calibrated against, so it stays the
             // authority for the mass distribution and the collider is free to describe the SHAPE instead.
-            if (s.HullBands != null || s.HullBoxes != null)
+            // EVERY vehicle that has not already authored one, not just the hull-decomposed ones (strawberry
+            // 2026-08-22: "rebalance vehicles to use the same real physics inertia principal helis use").
+            // The heli and the plane set an isotropic tensor of their own a few hundred lines up, and the gate
+            // used to be `HullBands != null || HullBoxes != null` -- which exactly ONE spec satisfies, the ship.
+            // So cars, tanks and the runabout were the case this whole comment warns about: authored centre of
+            // mass, collider-derived inertia, half the mass model chosen and half of it whatever the collision
+            // shape happened to be.
+            // UG_CARINERTIA=0 restores the old collider-derived tensor, so the change can be measured A/B in
+            // ONE build rather than argued from two. Same seam as the ship's UG_SHIPBOX knob above.
+            if (!s.Heli && !s.Plane && System.Environment.GetEnvironmentVariable("UG_CARINERTIA") != "0")
             {
                 var e = s.BoxSize;
                 float dy = s.BoxCenter.Y - comY;                     // parallel-axis shift onto the real CoM
