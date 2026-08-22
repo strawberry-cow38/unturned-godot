@@ -918,17 +918,21 @@ namespace UnturnedGodot
                 skel.Add((inner.i, inner.j));
                 skel.Add((hub.i, hub.j));
             }
-            // FILL THE GRID (strawberry: "yes fill the grid"). Every lattice cell becomes a street, so a town
-            // reads as a town rather than as the one L-shaped route its links happened to need.
+            // STREETS, NOT PAVEMENT. Filling every lattice cell was the wrong read of "fill the grid": the kit's
+            // carriageway is 16 m inside a 24 m tile, so a fully-gridded town came out as one continuous apron
+            // with 8 m gaps -- strawberry, on seeing it: "okay not FILL the grid".
             //
-            // This also makes the edge exits EXACT rather than a fallback: a boundary cell in a full grid has
-            // three neighbours, and with its ramp that is four directions -- precisely a QuadCap's connectors,
-            // all four used. Corners are the exception (two neighbours plus a ramp opposite one of them, which
-            // nothing expresses), which is why the gate search below refuses corner lattice lines.
+            // Streets run along alternating INTERIOR lattice lines instead, which leaves whole 24 m tiles
+            // between them as blocks. n=5 gives lines {1,3}: two avenues each way, nine blocks. n=3 gives {1}:
+            // a single crossroads with four corner blocks. Interior only, because a street on line 0 or n-1
+            // would run along the footprint edge, and the gates have to be non-corner anyway.
+            var streetLines = new System.Collections.Generic.List<int>();
+            for (int k2 = 1; k2 <= n - 2; k2 += 2) streetLines.Add(k2);
             if (FillsGrid(poi.Kind))
                 for (int i2 = 0; i2 < n; i2++)
                     for (int j2 = 0; j2 < n; j2++)
-                        skel.Add((i2, j2));
+                        if (streetLines.Contains(i2) || streetLines.Contains(j2))
+                            skel.Add((i2, j2));
 
             foreach (var kv in exitCells) skel.Add(kv.Key);
 
@@ -1102,9 +1106,16 @@ namespace UnturnedGodot
                     }
                     // On a grid-filled monument the corner lattice lines are unusable: a corner exit has two
                     // grid neighbours plus a ramp opposite one of them, and no piece serves that set.
-                    int lo = FillsGrid(poi.Kind) && n >= 3 ? 1 : 0;
-                    int hi = FillsGrid(poi.Kind) && n >= 3 ? n - 2 : n - 1;
-                    for (int k = lo; k <= hi; k++) { cur[a] = k; Recurse(a + 1); }
+                    // A gate must land ON a street line, or its inner cell is a block and the access road runs
+                    // into the back of one. Same alternating set the streets use.
+                    if (FillsGrid(poi.Kind) && n >= 3)
+                    {
+                        for (int k = 1; k <= n - 2; k += 2) { cur[a] = k; Recurse(a + 1); }
+                    }
+                    else
+                    {
+                        for (int k = 0; k < n; k++) { cur[a] = k; Recurse(a + 1); }
+                    }
                 }
                 Recurse(0);
                 for (int a = 0; a < idxs.Count; a++) snapped[idxs[a]] = best[a];
