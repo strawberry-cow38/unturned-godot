@@ -1234,6 +1234,17 @@ namespace UnturnedGodot
             public string[] DefaultPaints;   // source .dat DefaultPaintColors (random on spawn); null + !RandomHueGray = unpainted white
             public bool RandomHueGray;       // source RandomHueOrGrayscale mode (quad/sedan/hatchback)
             public float WheelRadius, Engine, SteerMax, SteerMin, SpeedMax, SpeedMin, Brake;
+            /// <summary>Kerb mass in kg. 0 = fall back to GlobalMass, so a spec that has not been given a
+            /// number behaves exactly as before. Retail ports one Rigidbody mass (2.0) onto every vehicle, which
+            /// is why they all massed 900 -- faithful, but it means a loaded semi carries the momentum of a
+            /// hatchback, and momentum is what ramming, braking distance and hill-climbing are made of
+            /// (strawberry 2026-08-22: "yes do per vehicle weight").
+            ///
+            /// Buoyancy does NOT need re-deriving for this: the buoyant force is rho_water * g * (Mass /
+            /// HullDensity) * reserve = 2 * Mass * g * reserve against a weight of Mass * g, so mass CANCELS and
+            /// draft is set by HullDensity and BuoyReserve alone. Checked before changing anything, because the
+            /// standing assumption -- mine and cow tools' both -- was that it would sink the ship.</summary>
+            public float Mass;
             public float[] WheelRadii;   // optional per-wheel radius (tractor: small front, big rear); null = uniform WheelRadius
             public Vector3 BoxSize, BoxCenter;   // source BoxCollider (Godot space: center Z negated)
             public float[] ForwardGears;   // .dat ForwardGearRatios (engine RPM = wheelRPM * ratio)
@@ -1717,6 +1728,7 @@ namespace UnturnedGodot
         // Jeep.dat: Speed 12.5, steer 28, front-steered, torque 2.8. Godot space (front = -Z): X +-1.30, front Z -1.40.
         static readonly Spec _jeep = new()
         {
+            Mass = 1700f,   // kerb mass, kg
             Body = "jeep_body.txt", Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "jeep_palette.png",
             DefaultPaints = new[] { "#475e83", "#a69884", "#437c44", "#495631" },   // src .dat DefaultPaintColors = the 4 faction paints (#475e83 Coalition / #a69884 Desert / #437c44 Forest / #495631 Russia), random pick per spawn
             WheelRadius = 0.6f, Engine = 600f, SteerMax = 28f, SteerMin = 14f, SpeedMax = 12.5f, SpeedMin = -7f, Brake = 32f,
@@ -1742,6 +1754,7 @@ namespace UnturnedGodot
         // steer, low top speed, big engine, tandem rear drive axles. Colours from the prop's own 4x2 palette (blue cab).
         static readonly Spec _semi = new()
         {
+            Mass = 7800f,   // kerb mass, kg
             Body = "semi_0.txt", Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "semi_palette.png",   // semi_palette = semi_0_albedo with texel0 (the blue body) flagged PAINTABLE (alpha 0) so the cab recolours like every other vehicle -- only the blue panels; metal/red/cream/exhaust stay fixed (strawberry)
             RandomHueGray = true,   // paintable cab -> random civilian colours per spawn (like sedan/quad/hatchback)
             WheelRadius = 0.55f, Engine = 550f, SteerMax = 22f, SteerMin = 10f, SpeedMax = 14f, SpeedMin = -4f, Brake = 34f,   // Engine 950->550: a semi accelerates SLOW + heavy (nerfed further while towing, see Drive) (strawberry 2026-07-15)
@@ -1781,6 +1794,7 @@ namespace UnturnedGodot
         // behind the cab; if inverted, roll the mesh 180 deg about Z (x->-x, y->(minY+maxY)-y) and re-ground.
         static readonly Spec _trailer = new()
         {
+            Mass = 6000f,   // kerb mass, kg
             Body = "trailer_0.txt", Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "semi_0_albedo.png",
             DefaultPaints = new[] { "#3a5a78" },   // shares the cab's blue palette
             WheelRadius = 0.55f, Engine = 0f, SteerMax = 0f, SteerMin = 0f, SpeedMax = 0f, SpeedMin = 0f, Brake = 0f,   // towed: no drive/steer/brake of its own
@@ -1824,6 +1838,7 @@ namespace UnturnedGodot
         // Quad.dat: Speed 13.5, steer 32, front-steered, torque 4.8. X +-0.50, front Z -0.39 / rear 1.44, Y 0.20.
         static readonly Spec _quad = new()
         {
+            Mass = 300f,   // kerb mass, kg
             Body = "quad_body.txt", Wheel = "quad_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "quad_palette.png",
             RandomHueGray = true,   // source RandomHueOrGrayscale -> our curated CarColors list
             WheelRadius = 0.45f, Engine = 520f, SteerMax = 32f, SteerMin = 16f, SpeedMax = 13.5f, SpeedMin = -5f, Brake = 24f,
@@ -1845,6 +1860,7 @@ namespace UnturnedGodot
         // Bus.dat: Speed 12, steer 24->12, front-steered, torque 2.5. Long 4-wheeler, 10 seats.
         static readonly Spec _bus = new()
         {
+            Mass = 12000f,   // kerb mass, kg
             Body = "bus_body.txt", Wheel = "bus_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "bus_palette.png",
             DefaultPaints = new[] { "#d4d4d4" },   // source .dat: single near-white default
             WheelRadius = 0.6f, Engine = 780f, SteerMax = 24f, SteerMin = 12f, SpeedMax = 12f, SpeedMin = -6f, Brake = 24f,
@@ -1866,6 +1882,7 @@ namespace UnturnedGodot
         // Sedan.dat: Speed 16.5 (fastest so far), steer 28->14, front-steered, RandomHueOrGrayscale. 4-seat road car, ~6m long.
         static readonly Spec _sedan = new()
         {
+            Mass = 1500f,   // kerb mass, kg
             Body = "sedan_body.txt", Wheel = "sedan_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "sedan_palette.png",
             RandomHueGray = true,   // source RandomHueOrGrayscale -> our curated CarColors
             WheelRadius = 0.6f, Engine = 700f, SteerMax = 28f, SteerMin = 14f, SpeedMax = 16.5f, SpeedMin = -6f, Brake = 32f,
@@ -1890,6 +1907,7 @@ namespace UnturnedGodot
         // Hatchback.dat: Speed 15, steer 24->12, front-steered, RandomHueOrGrayscale. Compact 4-seat car (~5.5m).
         static readonly Spec _hatchback = new()
         {
+            Mass = 1100f,   // kerb mass, kg
             Body = "hatchback_body.txt", Wheel = "hatchback_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "hatchback_palette.png",
             RandomHueGray = true,
             WheelRadius = 0.6f, Engine = 680f, SteerMax = 24f, SteerMin = 12f, SpeedMax = 15f, SpeedMin = -5f, Brake = 24f,
@@ -1914,6 +1932,7 @@ namespace UnturnedGodot
         // Humvee.dat: Speed 14, steer 24->12, front-steered, faction DefaultPaints (military, like the jeep). Heavy 4x4, brake 40.
         static readonly Spec _humvee = new()
         {
+            Mass = 2400f,   // kerb mass, kg
             Body = "humvee_body.txt", Wheel = "humvee_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "humvee_palette.png",
             DefaultPaints = new[] { "#475e83", "#a69884", "#437c44", "#495631" },   // src .dat DefaultPaintColors = the 4 faction paints (#475e83 Coalition / #a69884 Desert / #437c44 Forest / #495631 Russia), random pick per spawn
             WheelRadius = 0.6f, Engine = 680f, SteerMax = 24f, SteerMin = 12f, SpeedMax = 14f, SpeedMin = -6f, Brake = 40f,
@@ -1938,6 +1957,7 @@ namespace UnturnedGodot
         // Roadster.dat: Speed 19 (fastest!), steer 28->14, RandomHueOrGrayscale, its OWN horn. Fragile 2-seat sports car (Health 500).
         static readonly Spec _roadster = new()
         {
+            Mass = 1400f,   // kerb mass, kg
             Body = "roadster_body.txt", Wheel = "roadster_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "roadster_palette.png",
             RandomHueGray = true,
             WheelRadius = 0.6f, Engine = 760f, SteerMax = 28f, SteerMin = 14f, SpeedMax = 19f, SpeedMin = -5f, Brake = 32f,
@@ -1962,6 +1982,7 @@ namespace UnturnedGodot
         // Ambulance.dat: Speed 15.5, steer 28->14, front-steered 4-wheel van, white DefaultPaint, Health 600, CarHorn_03.
         static readonly Spec _ambulance = new()
         {
+            Mass = 3600f,   // kerb mass, kg
             Body = "ambulance_body.txt", Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "ambulance_palette.png",
             DefaultPaints = new[] { "#e8e8e8" },   // white ambulance
             WheelRadius = 0.6f, Engine = 700f, SteerMax = 28f, SteerMin = 14f, SpeedMax = 15.5f, SpeedMin = -6.5f, Brake = 32f,
@@ -1988,6 +2009,7 @@ namespace UnturnedGodot
         // Firetruck.dat: Speed 14.5, steer 48->24 (big), 6-wheel, red DefaultPaint, Health 700, CarHorn_03.
         static readonly Spec _firetruck = new()
         {
+            Mass = 12000f,   // kerb mass, kg
             Body = "firetruck_body.txt", Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "firetruck_palette.png",
             DefaultPaints = new[] { "#b81c1c" },   // red firetruck
             WheelRadius = 0.6f, Engine = 800f, SteerMax = 48f, SteerMin = 24f, SpeedMax = 14.5f, SpeedMin = -6f, Brake = 32f,
@@ -2018,6 +2040,7 @@ namespace UnturnedGodot
         // Tractor_0.dat: Speed 10 (slow), steer 24->12, front-steered, big-rear/small-front wheels, green, Health 700, CarHorn_03.
         static readonly Spec _tractor = new()
         {
+            Mass = 4000f,   // kerb mass, kg
             Body = "tractor_body.txt", Wheel = "tractor_wheel_front.txt", WheelTex = "tractor_wheel_albedo.png", Palette = "tractor_palette.png",
             DefaultPaints = new[] { "#3f7d2f" },   // green tractor
             WheelRadius = 0.90f, WheelRadii = new[] { 0.90f, 0.90f, 1.05f, 1.05f },   // src Tractor_0 Tire WheelCollider radii: 0.90 front / 1.05 rear (the real yellow tractor wheel model)
@@ -2042,6 +2065,7 @@ namespace UnturnedGodot
         // Ural.dat: Speed 14.5, steer 48->24, 6-wheel military truck, forest DefaultPaint, Health 700, CarHorn_03.
         static readonly Spec _ural = new()
         {
+            Mass = 8000f,   // kerb mass, kg
             Body = "ural_body.txt", Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "ural_palette.png",
             DefaultPaints = new[] { "#475e83", "#a69884", "#437c44", "#495631" },   // src 4 faction paints (Coalition/Desert/Forest/Russia)
             WheelRadius = 0.6f, Engine = 800f, SteerMax = 48f, SteerMin = 24f, SpeedMax = 14.5f, SpeedMin = -6f, Brake = 32f,
@@ -2069,6 +2093,7 @@ namespace UnturnedGodot
         // Police.dat: Speed 17, steer 28->14, front-steered cruiser, paintable livery, Health 600, CarHorn_02.
         static readonly Spec _police = new()
         {
+            Mass = 1800f,   // kerb mass, kg
             Body = "police_body.txt", Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "police_palette.png",
             DefaultPaints = new[] { "#d4d4d4" },   // source Police.dat DefaultPaintColors = #d4d4d4 (white body; the palette's black livery = a black/white cruiser)
             WheelRadius = 0.6f, Engine = 720f, SteerMax = 28f, SteerMin = 14f, SpeedMax = 17f, SpeedMin = -6f, Brake = 32f,
@@ -2096,6 +2121,7 @@ namespace UnturnedGodot
         // Shares the jeep chassis: identical wheel/headlight/taillight/steer layout (source vehicle.prefab positions match).
         static readonly Spec _offroader = new()
         {
+            Mass = 2000f,   // kerb mass, kg
             Body = "offroad_body.txt", Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "offroad_palette.png",
             RandomHueGray = true,   // source DefaultPaintColor_Mode RandomHueOrGrayscale -> random civilian colour per spawn
             WheelRadius = 0.6f, Engine = 600f, SteerMax = 24f, SteerMin = 12f, SpeedMax = 12.5f, SpeedMin = -7f, Brake = 32f,
@@ -2120,6 +2146,7 @@ namespace UnturnedGodot
         // Truck.dat: Speed -6..13.5, steer 12->24, AWD 4-wheel pickup, RandomHueOrGrayscale, Health 550, CarHorn_01. Jeep chassis; round headlights.
         static readonly Spec _truck = new()
         {
+            Mass = 2300f,   // kerb mass, kg
             Body = "truck_body.txt", Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "truck_palette.png",
             RandomHueGray = true,
             WheelRadius = 0.6f, Engine = 600f, SteerMax = 24f, SteerMin = 12f, SpeedMax = 13.5f, SpeedMin = -6f, Brake = 40f,
@@ -2144,6 +2171,7 @@ namespace UnturnedGodot
         // Van.dat: Speed -5..14.5, steer 12->24, AWD 4-wheel van, RandomHueOrGrayscale, Health 600, CarHorn_01. Jeep chassis; round headlights.
         static readonly Spec _van = new()
         {
+            Mass = 2100f,   // kerb mass, kg
             Body = "van_body.txt", Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "van_palette.png",
             RandomHueGray = true,
             WheelRadius = 0.6f, Engine = 600f, SteerMax = 24f, SteerMin = 12f, SpeedMax = 14.5f, SpeedMin = -5f, Brake = 35f,
@@ -2168,6 +2196,7 @@ namespace UnturnedGodot
         // VW_Golf.dat: Speed -6..16.5 (fast), steer 14->28, FWD 4-wheel hatch, RandomHueOrGrayscale, Health 600, CarHorn_02. Rect headlights. Curated vehicle: 256x256 Albedo_Base (alpha-0 body regions paint via the shared shader). COMMAND-ONLY (no natural PEI spawn).
         static readonly Spec _golf = new()
         {
+            Mass = 400f,   // kerb mass, kg
             Body = "golf_body.txt", Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "golf_palette.png",
             RandomHueGray = true,
             WheelRadius = 0.6f, Engine = 600f, SteerMax = 28f, SteerMin = 14f, SpeedMax = 16.5f, SpeedMin = -6f, Brake = 32f,
@@ -2211,6 +2240,7 @@ namespace UnturnedGodot
         // -> floats on the sea + drives via water thrust/rudder (the wheel drive is inert). First aquatic vehicle.
         static readonly Spec _runabout = new()
         {
+            Mass = 900f,   // kerb mass, kg
             Body = "runabout_body.txt", Water = WaterMode.Boat,
             Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", WheelRadius = 0.3f,   // unused (no wheels) but non-null for safety
             Palette = "runabout_palette.png", DefaultPaints = new[] { "#e8e8ea" },   // paintable hull (Texture_Paintable) + its fixed detail texels via PaintMat
@@ -2235,6 +2265,7 @@ namespace UnturnedGodot
         // The BOTTOM HULL is the random-colorable part (paintable palette + random paint per spawn -- next pass).
         static readonly Spec _ship = new()
         {
+            Mass = 60000f,   // kerb mass, kg
             Body = "ship_body.txt", Water = WaterMode.Boat,
             Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", WheelRadius = 0.3f,   // unused (no wheels), non-null for safety
             Palette = "ship_palette.png", RandomHueGray = true,   // orange hull-BOTTOM texel (3,1) flagged paintable (alpha 0) -> random colour per spawn (master); the other texels keep the ship's own albedo
@@ -2338,6 +2369,7 @@ namespace UnturnedGodot
         // wheels AND floats + water-drives when its hull is in the sea. Wheels approximated (4/side) from the hull box.
         static readonly Spec _apc = new()
         {
+            Mass = 13000f,   // kerb mass, kg
             Body = "apc_body.txt", Water = WaterMode.Amphibious,
             Wheel = "apc_wheel.txt", WheelTex = "jeep_wheel_albedo.png", WheelRadius = 0.74f,   // REAL APC wheel (Wheel_LOD0 ripped): radius 0.74 (was a too-small 0.55 jeep wheel); tire albedo reused
             Palette = "apc_palette.png", DefaultPaints = new[] { "#5a6650" },   // Texture_MilitaryPaintable: olive paintable hull. NO grille (strawberry) -- headlights/taillights are the real separate Parts meshes below, not palette texels
@@ -2371,6 +2403,7 @@ namespace UnturnedGodot
         // tracked-drive pass. Rig values are tools/tank_manifest.json (already Z-negated to Godot).
         static readonly Spec _tank = new()
         {
+            Mass = 40000f,   // kerb mass, kg
             Body = "tank_hull.txt", Palette = "tank_palette.png", DefaultPaints = new[] { "#5a6650" },   // Texture_MilitaryPaintable olive (same texel as the APC)
             Tracked = true,
             Treads = "tank_treads.txt",
@@ -3490,7 +3523,7 @@ namespace UnturnedGodot
 
         static Vehicle Build(Spec s, int variant, string specKey)
         {
-            var v = new Vehicle { Mass = GlobalMass };   // source uses one constant mass (2.0) for ALL vehicles -> one global Godot mass
+            var v = new Vehicle { Mass = s.Mass > 0f ? s.Mass : GlobalMass };   // per-spec kerb mass; GlobalMass is the fallback for specs with no number yet
             v.SpecKey = specKey; v.SpawnVariant = variant;   // MP §3.6: replicated so puppets rebuild the same spec + paint
             v.CollisionLayer |= 1u << 5;   // bit 5 = "vehicle" so player bullets can raycast-hit it (see PlayerController.StepBullets)
             v.CollisionMask |= 1u << 8;    // bit 8 = "solid small prop" -> a car collides with fences/hydrants/barrels instead of phasing through (NOT bit6, so trailer ghosting is unaffected) (strawberry)
@@ -3498,8 +3531,20 @@ namespace UnturnedGodot
             v._baseCollisionMask = v.CollisionMask;      // and the un-ghosted mask (now incl. bit8), so a ghosted trailer can add bit6 (to hit the cab's sleeper hull) and restore it
             v.AddToGroup("vehicles");      // so NearestVehicle + explosion damage (grenades) find every vehicle, not just harness-grouped ones
             v.ContactMonitor = true; v.MaxContactsReported = 6; v.BodyEntered += v.OnVehicleContact;   // wake a frozen parked car when another vehicle rams it (master)
-            v._engineForce = s.Engine; v._steerMax = s.SteerMax; v._steerMin = s.SteerMin;
-            v._speedMax = s.SpeedMax; v._speedMin = s.SpeedMin; v._brakeForce = s.Brake;
+            // ENGINE AND BRAKE SCALE WITH MASS, for now. Both are FORCES applied through the wheels, and both
+            // were authored against the one-size-fits-all 900 kg. Give a semi its real 7800 kg and leave the
+            // force alone and it simply does not move: a = F/m = 600/7800 = 0.077 m/s^2, less than rolling
+            // resistance. Measured -- the 7800 kg semi could not reach 0.5 m/s, and its turn probe collected
+            // zero samples.
+            //
+            // So the ratio is held: a heavier vehicle gets proportionally more engine and more brake, which
+            // leaves acceleration and braking-g exactly where strawberry last signed off on them while making
+            // mass REAL everywhere it should be -- momentum in a collision, what shunts what, tow loads, and the
+            // inertia tensor. This is scaffolding, not the destination: once the drivetrain has a real torque
+            // curve, power stops being a mass-proportional constant and starts being an engine.
+            float massScale = v.Mass / GlobalMass;
+            v._engineForce = s.Engine * massScale; v._steerMax = s.SteerMax; v._steerMin = s.SteerMin;
+            v._speedMax = s.SpeedMax; v._speedMin = s.SpeedMin; v._brakeForce = s.Brake * massScale;
             v._heli = s.Heli; v._tracked = s.Tracked;
             v._plane = s.Plane; v._planeThrust = s.PlaneThrust; v._planeLift = s.PlaneLift; v._planeTargetSpeed = s.PlaneTargetSpeed;
             v._planePitchTq = s.PlanePitchTorque; v._planeRollTq = s.PlaneRollTorque; v._planeYawTq = s.PlaneYawTorque;
@@ -3614,7 +3659,7 @@ namespace UnturnedGodot
                 // torque = alpha * I holds exactly in world space at any attitude, with no basis juggling.
                 // The per-axis feel differences live in the spec's pitch/roll/yaw numbers instead, where they
                 // are readable.
-                v.Inertia = Vector3.One * (GlobalMass * HeliInertiaPerKg);
+                v.Inertia = Vector3.One * (v.Mass * HeliInertiaPerKg);   // the BODY's mass, not the shared constant -- an airframe given its own weight must take its inertia with it
 
                 // ---- ROTOR HEALTH + HITBOXES
                 v._mainRotorHpMax = v._mainRotorHp = s.MainRotorHp > 0f ? s.MainRotorHp : s.Health * 0.45f;
@@ -3682,7 +3727,7 @@ namespace UnturnedGodot
                 // airflow drag in StepPlane, and a plane should carry its speed.
                 v.LinearDamp = 0.05f; v.AngularDamp = 1.1f;   // firmer angular damp than the heli: it damps the pitch short-period so a step of elevator SETTLES to the trimmed climb angle instead of over-rotating past it (the tail's pitch-rate damping). Roll needs held aileron in a turn as a result -- which is how a real plane flies
                 v.ContinuousCd = true;
-                v.Inertia = Vector3.One * (GlobalMass * HeliInertiaPerKg);
+                v.Inertia = Vector3.One * (v.Mass * HeliInertiaPerKg);   // the BODY's mass, not the shared constant -- an airframe given its own weight must take its inertia with it
             }
             if (s.Ladders != null)
                 foreach (var (centre, height, yawDeg) in s.Ladders)
