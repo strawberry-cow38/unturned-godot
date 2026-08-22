@@ -50,6 +50,22 @@ namespace UnturnedGodot.Testing
             T.Check("cancel emptied the queue", menu2.DebugQueueCount == 0);
             menu2.Free();
 
+            // RMB "move to start": the promoted job becomes the active (rightmost) one, crafted next
+            var bpB = new BlueprintDef { Operation = "Craft", Name = "queue-synthetic-B" };
+            bpB.Inputs.Add(new BlueprintDef.Ingredient { Guid = scrap.guid, Amount = 2, Consume = true });
+            bpB.Outputs.Add(new BlueprintDef.Ingredient { Guid = torch.guid, Amount = 1, Consume = true });
+
+            var pinv3 = new PlayerInventory();
+            pinv3.tryAddItem(new Item(67, 8));
+            var menu3 = new CraftingMenu { Inv = pinv3 };
+            menu3.DebugEnqueue(bp, 1);     // A queued first -> rightmost/active
+            menu3.DebugEnqueue(bpB, 1);    // B queued second -> index 0 (leftmost/newest)
+            T.Check("first-queued job is the active one", ReferenceEquals(menu3.DebugActiveBp, bp));
+            menu3.DebugMoveToStart(0);     // promote B (index 0) to the front
+            T.Check("promoted job is now active", ReferenceEquals(menu3.DebugActiveBp, bpB));
+            T.Check("still two jobs queued", menu3.DebugQueueCount == 2);
+            menu3.Free();
+
             yield break;
         }
     }

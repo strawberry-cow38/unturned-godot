@@ -44,6 +44,9 @@ namespace UnturnedGodot
         Control _queueRow;
         Label _qEmpty;
         ColorRect _activeBar;
+        float _qScroll, _qDragStartX, _qScroll0;   // drag-to-scroll state
+        bool _qDragging;
+        QueueJob _qPressJob;
         const float BASE_CRAFT_SECONDS = 1f;   // master 2026-08-22: every recipe 1 s for now (per-recipe knob later)
         const int TILEQ = 52;
         sealed class QueueJob { public BlueprintDef Bp; public ItemAsset Out; public int Qty; public float TimeLeft; public List<(ushort id, int amt)> PerUnit; }
@@ -155,6 +158,8 @@ namespace UnturnedGodot
             queue.AddChild(_qEmpty);
             _queueRow = new Control { Position = new Vector2(150, 4), Size = new Vector2(CATW + 12 + GRIDW - 158, bottomPad - 32) };
             _queueRow.ClipContents = true;
+            _queueRow.MouseFilter = Control.MouseFilterEnum.Stop;   // handles drag-scroll / click-remove / rmb-promote (tiles are mouse-transparent)
+            _queueRow.GuiInput += OnQueueGuiInput;
             queue.AddChild(_queueRow);
 
             // RIGHT: detail
@@ -200,6 +205,8 @@ namespace UnturnedGodot
         public void DebugTick(float dt) => TickQueue(dt);
         public int DebugQueueCount => _queue.Count;
         public void DebugCancelActive() { if (_queue.Count > 0) Cancel(_queue[_queue.Count - 1]); }
+        public void DebugMoveToStart(int index) { if (index >= 0 && index < _queue.Count) MoveToStart(_queue[index]); }
+        public BlueprintDef DebugActiveBp => _queue.Count > 0 ? _queue[_queue.Count - 1].Bp : null;
 
         public void Toggle() { if (_open) Close(); else Open(); }
         public void Close() { _open = false; Visible = false; }
@@ -207,6 +214,7 @@ namespace UnturnedGodot
         public void Open()
         {
             _open = true; Visible = true;
+            _qScroll = 0f;   // start showing the active (rightmost) side
             ComputeData();
             if (System.Array.IndexOf(CatOrder, _cat) < 0 || CountFor(_cat) == 0) _cat = "All";
             Rebuild();
@@ -518,6 +526,7 @@ namespace UnturnedGodot
             foreach (Node c in _queueRow.GetChildren()) c.QueueFree();
             _activeBar = null;
             if (_qEmpty != null) _qEmpty.Visible = _queue.Count == 0;
+            ClampScroll();
             int n = _queue.Count, step = TILEQ + 8;
             for (int i = 0; i < n; i++)
             {
@@ -556,14 +565,69 @@ namespace UnturnedGodot
                     _activeBar.MouseFilter = Control.MouseFilterEnum.Ignore;
                     tile.AddChild(_activeBar);
                 }
-                var btn = new Button { Flat = true, TooltipText = $"{Title(job.Bp)}\nclick to cancel (returns items)" };
-                btn.SetAnchorsPreset(Control.LayoutPreset.FullRect);
-                var captured = job;
-                btn.Pressed += () => Cancel(captured);
-                tile.AddChild(btn);
-                tile.Position = new Vector2(_queueRow.Size.X - (n - i) * step, (_queueRow.Size.Y - TILEQ) / 2f);
+                tile.MouseFilter = Control.MouseFilterEnum.Ignore;   // _queueRow owns the mouse (drag / click / rmb)
+                tile.Position = new Vector2(_queueRow.Size.X - (n - i) * step + _qScroll, (_queueRow.Size.Y - TILEQ) / 2f);
                 _queueRow.AddChild(tile);
             }
+        }
+
+        // queue interaction (master's spec): DRAG the icons to scroll; LMB CLICK an icon to remove it (refund);
+        // RMB an icon to move it to the START (rightmost = active). A drag past a few px suppresses the click.
+        void OnQueueGuiInput(InputEvent e)
+        {
+            if (e is InputEventMouseButton mb)
+            {
+                if (mb.ButtonIndex == MouseButton.Left)
+                {
+                    if (mb.Pressed) { _qDragStartX = mb.Position.X; _qScroll0 = _qScroll; _qDragging = false; _qPressJob = JobAt(mb.Position.X); }
+                    else { if (!_qDragging && _qPressJob != null) Cancel(_qPressJob); _qPressJob = null; _qDragging = false; }
+                }
+                else if (mb.ButtonIndex == MouseButton.Right && mb.Pressed)
+                {
+                    var j = JobAt(mb.Position.X); if (j != null) MoveToStart(j);
+                }
+            }
+            else if (e is InputEventMouseMotion mm && mm.ButtonMask.HasFlag(MouseButtonMask.Left))
+            {
+                float dx = mm.Position.X - _qDragStartX;
+                if (Mathf.Abs(dx) > 6f) _qDragging = true;
+                if (_qDragging) { _qScroll = _qScroll0 + dx; ClampScroll(); LayoutQueue(); }
+            }
+        }
+
+        QueueJob JobAt(float mouseX)
+        {
+            int n = _queue.Count, step = TILEQ + 8;
+            for (int i = 0; i < n; i++)
+            {
+                float x = _queueRow.Size.X - (n - i) * step + _qScroll;
+                if (mouseX >= x && mouseX <= x + TILEQ) return _queue[i];
+            }
+            return null;
+        }
+
+        void LayoutQueue()   // reposition existing tiles for a smooth drag (no free/rebuild)
+        {
+            var kids = _queueRow.GetChildren();
+            int n = kids.Count, step = TILEQ + 8;
+            for (int i = 0; i < n; i++)
+                if (kids[i] is Control c) c.Position = new Vector2(_queueRow.Size.X - (n - i) * step + _qScroll, (_queueRow.Size.Y - TILEQ) / 2f);
+        }
+
+        void ClampScroll()
+        {
+            int step = TILEQ + 8;
+            float max = Mathf.Max(0f, _queue.Count * step - (_queueRow?.Size.X ?? 0f));
+            _qScroll = Mathf.Clamp(_qScroll, 0f, max);
+        }
+
+        // RMB: promote a job to the START (rightmost = active) so it crafts next; give it a fresh timer.
+        void MoveToStart(QueueJob job)
+        {
+            if (!_queue.Remove(job)) return;
+            job.TimeLeft = CraftTimeFor(job.Bp);
+            _queue.Add(job);
+            if (_open) RebuildQueue();
         }
 
         // test/render hook (UG_CRAFTQUEUE): queue the first `jobs` craftable recipes so a --craftmenu shot shows the queue.
