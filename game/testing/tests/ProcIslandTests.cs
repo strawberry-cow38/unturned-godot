@@ -266,6 +266,29 @@ namespace UnturnedGodot.Testing
                     if (ratio > worstDetour) { worstDetour = ratio; detourOn = rt.Kind.ToString(); }
                 }
             }
+            // PERPENDICULAR DEPARTURE, measured. "It leaves the gate" is true of a road that exits diagonally;
+            // the check is the ANGLE between the first segment and the gate's edge normal, which is 0 only if
+            // the road actually goes straight out of the wall.
+            float worstExit = 0f;
+            foreach (var rt in routes)
+            {
+                if (rt.Points.Count < 2) continue;
+                foreach (var end in new[] { (a: rt.Points[0], b: rt.Points[1]), (a: rt.Points[rt.Points.Count - 1], b: rt.Points[rt.Points.Count - 2]) })
+                {
+                    var seg = (end.b - end.a).Normalized();
+                    // find the gate at this end
+                    foreach (var gate in cons)
+                    {
+                        if (Mathf.Abs(gate.X - end.a.X) > 0.5f || Mathf.Abs(gate.Z - end.a.Y) > 0.5f) continue;
+                        float dot = seg.X * gate.DirX + seg.Y * gate.DirZ;
+                        worstExit = Mathf.Max(worstExit, Mathf.RadToDeg(Mathf.Acos(Mathf.Clamp(dot, -1f, 1f))));
+                    }
+                }
+            }
+            T.Check($"every route leaves its gate perpendicular to the wall (worst departure {worstExit:0.#}deg off the edge normal)",
+                worstExit < 1f);
+            GD.Print($"[island] worst gate departure {worstExit:0.##}deg off normal");
+
             T.Check($"at least one route BENDS around the terrain rather than running straight (worst detour {worstDetour:0.00}x on a {detourOn})",
                 worstDetour > 1.02f);
             GD.Print($"[island] {routes.Count} routes carved, worst grade {worstGrade * 100f:0.#}% ({worstOn}), worst detour {worstDetour:0.00}x");

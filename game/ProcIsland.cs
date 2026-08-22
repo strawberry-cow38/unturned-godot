@@ -505,7 +505,14 @@ namespace UnturnedGodot
             float tx = Mathf.Abs(dx) > 1e-6f ? a.HalfSize / Mathf.Abs(dx) : float.MaxValue;
             float tz = Mathf.Abs(dz) > 1e-6f ? a.HalfSize / Mathf.Abs(dz) : float.MaxValue;
             float t = Mathf.Min(tx, tz);
-            return new Connector(from, link, a.X + dx * t, a.Z + dz * t, dx, dz, kind);
+            // DIR IS THE EDGE NORMAL, not the bearing to the partner. It used to be the bearing, which meant a
+            // road left the gate at whatever angle its target happened to sit at -- so it met the monument's
+            // wall obliquely, which is wrong for anything with a gate, a fence line or a street grid behind it
+            // (strawberry: "make sure that roads leave the connection points completely perpendicular").
+            // Whichever slab the ray exited is the side it is on, so the normal is that axis.
+            float nx = tx <= tz ? Mathf.Sign(dx) : 0f;
+            float nz = tx <= tz ? 0f : Mathf.Sign(dz);
+            return new Connector(from, link, a.X + dx * t, a.Z + dz * t, nx, nz, kind);
         }
 
         // ------------------------------------------------------------- ROADS
@@ -573,10 +580,23 @@ namespace UnturnedGodot
             float[,] grid, int gw, int gh, Connector from, Connector to, LinkKind kind, Params p)
         {
             const float Unit = 4f;
-            int sx = Mathf.Clamp(Mathf.RoundToInt(from.X / Unit), 0, gw - 1);
-            int sy = Mathf.Clamp(Mathf.RoundToInt(from.Z / Unit), 0, gh - 1);
-            int tx = Mathf.Clamp(Mathf.RoundToInt(to.X / Unit), 0, gw - 1);
-            int ty = Mathf.Clamp(Mathf.RoundToInt(to.Z / Unit), 0, gh - 1);
+            // PERPENDICULAR DEPARTURE. A* is free to pick any of eight directions out of the first cell, so left
+            // to itself a route leaves the gate diagonally whenever that is a metre cheaper. Both ends therefore
+            // get a straight STUB along the edge normal, and A* only routes between the stub ends -- so the road
+            // meets the monument square-on and the terrain-following starts once it is clear of the wall.
+            const int StubCells = 5;   // 20 m: long enough to read as perpendicular, short enough not to fight the terrain
+            var head = new System.Collections.Generic.List<Vector2>();
+            var tail = new System.Collections.Generic.List<Vector2>();
+            float fx0 = from.X, fz0 = from.Z, tx0 = to.X, tz0 = to.Z;
+            for (int i = 0; i <= StubCells; i++)
+            {
+                head.Add(new Vector2(fx0 + from.DirX * i * Unit, fz0 + from.DirZ * i * Unit));
+                tail.Add(new Vector2(tx0 + to.DirX * i * Unit, tz0 + to.DirZ * i * Unit));
+            }
+            int sx = Mathf.Clamp(Mathf.RoundToInt(head[head.Count - 1].X / Unit), 0, gw - 1);
+            int sy = Mathf.Clamp(Mathf.RoundToInt(head[head.Count - 1].Y / Unit), 0, gh - 1);
+            int tx = Mathf.Clamp(Mathf.RoundToInt(tail[tail.Count - 1].X / Unit), 0, gw - 1);
+            int ty = Mathf.Clamp(Mathf.RoundToInt(tail[tail.Count - 1].Y / Unit), 0, gh - 1);
 
             float slopeCost = SlopeCostFor(kind);
             int n = gw * gh;
@@ -622,14 +642,18 @@ namespace UnturnedGodot
                     }
             }
 
-            var pts = new System.Collections.Generic.List<Vector2>();
-            if (prev[goal] < 0 && goal != Idx(sx, sy)) return pts;   // unreachable: caller drops the route
+            var mid = new System.Collections.Generic.List<Vector2>();
+            if (prev[goal] < 0 && goal != Idx(sx, sy)) return mid;   // unreachable: caller drops the route
             for (int at = goal; at >= 0; at = prev[at])
             {
-                pts.Add(new Vector2((at % gw) * Unit, (at / gw) * Unit));
+                mid.Add(new Vector2((at % gw) * Unit, (at / gw) * Unit));
                 if (at == Idx(sx, sy)) break;
             }
-            pts.Reverse();
+            mid.Reverse();
+
+            var pts = new System.Collections.Generic.List<Vector2>(head);
+            pts.AddRange(mid);
+            for (int i = tail.Count - 1; i >= 0; i--) pts.Add(tail[i]);
             return pts;
         }
 
@@ -650,7 +674,11 @@ namespace UnturnedGodot
             }
             // Box-smooth the profile. Rail gets a much wider window: real track cannot follow ground undulation,
             // it needs cut and fill, and a 3-point smooth on a railway still reads as a rollercoaster.
-            int win = r.Kind == LinkKind.Rail ? 24 : r.Kind == LinkKind.Road ? 10 : 4;
+            // Widened after the perpendicular stubs went in. Forcing a route straight out of a gate means it
+            // takes whatever slope sits outside that wall, and the worst trail grade jumped 17.5% -> 33% on the
+            // stub alone. Smoothing further along the path grades that out -- it costs more cut-and-fill, which
+            // is exactly what a real road does at a junction rather than rearing up at the gate.
+            int win = r.Kind == LinkKind.Rail ? 24 : r.Kind == LinkKind.Road ? 14 : 9;
             var sm = new float[m];
             for (int i = 0; i < m; i++)
             {
