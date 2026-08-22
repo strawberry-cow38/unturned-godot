@@ -37,6 +37,19 @@ namespace UnturnedGodot
         bool _open;
         public bool IsOpen => _open;
 
+        // crafting queue: index 0 = LEFTMOST (newest); last = RIGHTMOST (active, counting its timer down).
+        // ingredients are consumed into "limbo" (PerUnit) when a job is queued and returned if it's cancelled;
+        // each craft-time tick produces one output and drops the qty, so a xN job pops one item per second.
+        readonly List<QueueJob> _queue = new();
+        Control _queueRow;
+        Label _qEmpty;
+        ColorRect _activeBar;
+        const float BASE_CRAFT_SECONDS = 1f;   // master 2026-08-22: every recipe 1 s for now (per-recipe knob later)
+        const int TILEQ = 52;
+        sealed class QueueJob { public BlueprintDef Bp; public ItemAsset Out; public int Qty; public float TimeLeft; public List<(ushort id, int amt)> PerUnit; }
+
+        static float CraftTimeFor(BlueprintDef bp) => BASE_CRAFT_SECONDS;   // the per-recipe "crafting time variable" (all 1 s)
+
         // resolved once per Open(): every indexed recipe, its output asset, and its category bucket
         readonly List<BlueprintDef> _all = new();
         readonly Dictionary<BlueprintDef, ItemAsset> _out = new();
@@ -128,18 +141,21 @@ namespace UnturnedGodot
             _search.TextChanged += _ => { _sel = null; Rebuild(); };
             _panel.AddChild(_search);
 
-            // BOTTOM: crafting queue -- STUB (space reserved)
+            // BOTTOM: crafting queue -- jobs fill RIGHTWARD (rightmost = active/counting; new jobs prepend on the left)
             var queue = new Panel { Position = new Vector2(16, PANELH - bottomPad + 8), Size = new Vector2(CATW + 12 + GRIDW, bottomPad - 24) };
             Box(queue, new Color(0.10f, 0.12f, 0.15f, 0.95f));
             _panel.AddChild(queue);
-            var qLabel = new Label { Text = "CRAFTING QUEUE", Position = new Vector2(14, 8), Size = new Vector2(300, 24) };
-            qLabel.AddThemeFontSizeOverride("font_size", 15);
+            var qLabel = new Label { Text = "CRAFTING QUEUE", Position = new Vector2(14, 6), Size = new Vector2(200, 22) };
+            qLabel.AddThemeFontSizeOverride("font_size", 14);
             qLabel.AddThemeColorOverride("font_color", new Color(0.5f, 0.5f, 0.54f));
             queue.AddChild(qLabel);
-            var qStub = new Label { Text = "(empty)", Position = new Vector2(14, 30), Size = new Vector2(300, 20) };
-            qStub.AddThemeFontSizeOverride("font_size", 12);
-            qStub.AddThemeColorOverride("font_color", new Color(0.38f, 0.38f, 0.42f));
-            queue.AddChild(qStub);
+            _qEmpty = new Label { Text = "(empty)", Position = new Vector2(14, 28), Size = new Vector2(200, 20) };
+            _qEmpty.AddThemeFontSizeOverride("font_size", 12);
+            _qEmpty.AddThemeColorOverride("font_color", new Color(0.38f, 0.38f, 0.42f));
+            queue.AddChild(_qEmpty);
+            _queueRow = new Control { Position = new Vector2(150, 4), Size = new Vector2(CATW + 12 + GRIDW - 158, bottomPad - 32) };
+            _queueRow.ClipContents = true;
+            queue.AddChild(_queueRow);
 
             // RIGHT: detail
             int detX = gridX + GRIDW + 14;
@@ -155,7 +171,35 @@ namespace UnturnedGodot
         {
             if (_open && _panel != null)
                 _panel.Position = new Vector2((_root.Size.X - PANELW) / 2f, (_root.Size.Y - PANELH) / 2f);
+            TickQueue((float)delta);
         }
+
+        // the queue runs even while the menu is closed (a job you started keeps cooking in the background).
+        void TickQueue(float dt)
+        {
+            if (_queue.Count == 0 || Inv == null) return;
+            var job = _queue[_queue.Count - 1];   // RIGHTMOST = active
+            job.TimeLeft -= dt;
+            if (job.TimeLeft <= 0f)
+            {
+                Produce(job);
+                job.Qty--;
+                if (job.Qty > 0) job.TimeLeft += CraftTimeFor(job.Bp);   // next unit of a xN job
+                else _queue.RemoveAt(_queue.Count - 1);
+                if (_open) { RebuildQueue(); ShowDetail(new Crafting.PlayerInvAdapter(Inv)); }   // HAVE counts + queue changed
+            }
+            else if (_open && _activeBar != null)
+            {
+                float p = 1f - job.TimeLeft / Mathf.Max(0.01f, CraftTimeFor(job.Bp));
+                _activeBar.Size = new Vector2((TILEQ - 4) * Mathf.Clamp(p, 0f, 1f), 3);
+            }
+        }
+
+        // test hooks (craft.queue) -- drive the queue headless without a scene tree.
+        public void DebugEnqueue(BlueprintDef bp, int n) => Enqueue(bp, n);
+        public void DebugTick(float dt) => TickQueue(dt);
+        public int DebugQueueCount => _queue.Count;
+        public void DebugCancelActive() { if (_queue.Count > 0) Cancel(_queue[_queue.Count - 1]); }
 
         public void Toggle() { if (_open) Close(); else Open(); }
         public void Close() { _open = false; Visible = false; }
@@ -255,6 +299,7 @@ namespace UnturnedGodot
 
             if (_sel == null || !_out.ContainsKey(_sel)) _sel = view.Count > 0 ? view[0] : null;
             ShowDetail(inv);
+            RebuildQueue();
         }
 
         Control Tile(BlueprintDef bp, Crafting.IInv inv)
@@ -415,30 +460,128 @@ namespace UnturnedGodot
             g.AddChild(l);
         }
 
+        // CRAFT: single-player -> escrow the ingredients into a queue job (produced on the timer). Multiplayer keeps
+        // the server-authoritative immediate craft (there's no client-side limbo to reconcile there yet).
         void OnCraft()
         {
             if (_sel == null || !Crafting.MeetsSkill(_sel, Player?.Skills)) return;
-            int n = Mathf.Max(1, _qty);
-            for (int k = 0; k < n; k++)
+            var inv = new Crafting.PlayerInvAdapter(Inv);
+            int n = Mathf.Clamp(_qty, 1, Mathf.Max(1, MaxCraftable(inv)));
+            if (Player?.NetCraft != null)
             {
-                if (Player?.NetCraft != null)
+                int idx = -1;
+                for (int i = 0; i < BlueprintRegistry.All.Count; i++)
+                    if (ReferenceEquals(BlueprintRegistry.All[i], _sel)) { idx = i; break; }
+                if (idx >= 0) for (int k = 0; k < n; k++) Player.NetCraft((ushort)idx);
+            }
+            else Enqueue(_sel, n);
+            _qty = 1;
+            Rebuild();
+        }
+
+        // queue a job: resolve + consume its per-unit ingredients x n into limbo, then prepend it on the LEFT.
+        void Enqueue(BlueprintDef bp, int n)
+        {
+            var inv = new Crafting.PlayerInvAdapter(Inv);
+            var perUnit = new List<(ushort id, int amt)>();
+            foreach (var ing in bp.Inputs)
+            {
+                if (!ing.Consume) continue;   // tools stay in the bag
+                var a = Assets.findByGuid(ing.Guid);
+                if (a != null) perUnit.Add(((ushort)a.id, ing.Amount));
+            }
+            foreach (var (id, amt) in perUnit) inv.Remove(id, amt * n);   // ingredients -> limbo
+            _queue.Insert(0, new QueueJob { Bp = bp, Out = OutAsset(bp), Qty = n, TimeLeft = CraftTimeFor(bp), PerUnit = perUnit });
+        }
+
+        void Produce(QueueJob job)
+        {
+            var inv = new Crafting.PlayerInvAdapter(Inv);
+            int outAmt = job.Bp.Outputs.Count > 0 ? job.Bp.Outputs[0].Amount : 1;
+            if (job.Out != null) inv.Add((ushort)job.Out.id, outAmt);
+            GD.Print($"[craft] produced {Title(job.Bp)}");
+        }
+
+        // cancel: hand the escrowed ingredients for the REMAINING units back to the bag, drop the job.
+        void Cancel(QueueJob job)
+        {
+            var inv = new Crafting.PlayerInvAdapter(Inv);
+            foreach (var (id, amt) in job.PerUnit) inv.Add(id, amt * job.Qty);
+            _queue.Remove(job);
+            if (_open) { RebuildQueue(); ShowDetail(new Crafting.PlayerInvAdapter(Inv)); }
+        }
+
+        // draw the queue tiles RIGHT-aligned (rightmost = active); click a tile to cancel it.
+        void RebuildQueue()
+        {
+            if (_queueRow == null) return;
+            foreach (Node c in _queueRow.GetChildren()) c.QueueFree();
+            _activeBar = null;
+            if (_qEmpty != null) _qEmpty.Visible = _queue.Count == 0;
+            int n = _queue.Count, step = TILEQ + 8;
+            for (int i = 0; i < n; i++)
+            {
+                var job = _queue[i];
+                bool active = i == n - 1;
+                var tile = new Panel { Size = new Vector2(TILEQ, TILEQ), CustomMinimumSize = new Vector2(TILEQ, TILEQ) };
+                Box(tile, active ? SelC : TileC);
+                var tex = job.Out != null ? InventoryUI.IconFor(job.Out.id) : null;
+                if (tex != null)
                 {
-                    int idx = -1;
-                    for (int i = 0; i < BlueprintRegistry.All.Count; i++)
-                        if (ReferenceEquals(BlueprintRegistry.All[i], _sel)) { idx = i; break; }
-                    if (idx < 0) break;
-                    Player.NetCraft((ushort)idx);
+                    var ico = new TextureRect { Texture = tex, ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize, StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered };
+                    ico.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+                    ico.OffsetLeft = 4; ico.OffsetTop = 4; ico.OffsetRight = -4; ico.OffsetBottom = -6;
+                    ico.MouseFilter = Control.MouseFilterEnum.Ignore;
+                    tile.AddChild(ico);
                 }
                 else
                 {
-                    var inv = new Crafting.PlayerInvAdapter(Inv);
-                    if (!Crafting.CanCraft(_sel, inv, out _)) break;
-                    if (!Crafting.DoCraft(_sel, inv)) break;
+                    var lbl = new Label { Text = Title(job.Bp), AutowrapMode = TextServer.AutowrapMode.WordSmart, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+                    lbl.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+                    lbl.AddThemeFontSizeOverride("font_size", 9);
+                    lbl.MouseFilter = Control.MouseFilterEnum.Ignore;
+                    tile.AddChild(lbl);
+                }
+                if (job.Qty > 1)
+                {
+                    var badge = new Label { Text = $"x{job.Qty}", Position = new Vector2(TILEQ - 26, TILEQ - 20), Size = new Vector2(24, 16), HorizontalAlignment = HorizontalAlignment.Right };
+                    badge.AddThemeFontSizeOverride("font_size", 12);
+                    badge.AddThemeColorOverride("font_color", new Color(1f, 1f, 1f));
+                    badge.MouseFilter = Control.MouseFilterEnum.Ignore;
+                    tile.AddChild(badge);
+                }
+                if (active)
+                {
+                    _activeBar = new ColorRect { Color = Good, Position = new Vector2(2, TILEQ - 5), Size = new Vector2(0, 3) };
+                    _activeBar.MouseFilter = Control.MouseFilterEnum.Ignore;
+                    tile.AddChild(_activeBar);
+                }
+                var btn = new Button { Flat = true, TooltipText = $"{Title(job.Bp)}\nclick to cancel (returns items)" };
+                btn.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+                var captured = job;
+                btn.Pressed += () => Cancel(captured);
+                tile.AddChild(btn);
+                tile.Position = new Vector2(_queueRow.Size.X - (n - i) * step, (_queueRow.Size.Y - TILEQ) / 2f);
+                _queueRow.AddChild(tile);
+            }
+        }
+
+        // test/render hook (UG_CRAFTQUEUE): queue the first `jobs` craftable recipes so a --craftmenu shot shows the queue.
+        public void DebugQueueCraftable(int jobs, int qtyEach)
+        {
+            int done = 0;
+            foreach (var bp in _all)
+            {
+                if (done >= jobs) break;
+                var inv = new Crafting.PlayerInvAdapter(Inv);
+                if (Crafting.CanCraft(bp, inv, out _) && Crafting.MeetsSkill(bp, Player?.Skills))
+                {
+                    _sel = bp;
+                    Enqueue(bp, Mathf.Clamp(qtyEach, 1, Mathf.Max(1, MaxCraftable(inv))));
+                    done++;
                 }
             }
-            GD.Print($"[craft] made {Title(_sel)} x{n}");
-            _qty = 1;
-            Rebuild();
+            if (_open) Rebuild();
         }
 
         /// <summary>Search matches the OUTPUT name, any INGREDIENT name, or the skill name -- so "metal scrap"

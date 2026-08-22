@@ -1841,6 +1841,7 @@ namespace UnturnedGodot
             var menu = new CraftingMenu { Inv = inv };
             AddChild(menu);
             menu.Open();
+            if (System.Environment.GetEnvironmentVariable("UG_CRAFTQUEUE") == "1") menu.DebugQueueCraftable(3, 3);   // populate the queue for the shot
             GD.Print("[CRAFTMENU] opened the newer CraftingMenu over a stocked inventory");
         }
 
