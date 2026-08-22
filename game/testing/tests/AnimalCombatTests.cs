@@ -53,7 +53,7 @@ namespace UnturnedGodot.Testing
             var b = Spawn(World, 100f);
             b.DamageHit(1f, new Vector3(0f, 0f, 6f), Vector3.Back);   // graze from +Z -> it bolts toward -Z, so it's walking + re-grounding
             yield return Ticks(6);
-            T.Check("a walking animal runs the ground raycast each frame without dying/erroring", !b.Dead && IsInstanceValid(b));
+            T.Check("a walking animal runs the ground raycast each frame without dying/erroring", !b.Dead && GodotObject.IsInstanceValid(b));
             b.QueueFree();
         }
 
