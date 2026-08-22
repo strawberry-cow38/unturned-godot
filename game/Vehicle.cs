@@ -765,6 +765,7 @@ namespace UnturnedGodot
         public float ClimbMaxMps => _heliClimbMax;
         public float FallMaxMps => _heliFallMax;
         bool _parked, _handbraking; float _spawnGrace = 2.5f; Vector3 _velAvg, _angAvg;   // -> STATIC freeze once majority-grounded + the LOW-PASSED velocity/spin are low (jitter-immune, d9588d3); _spawnGrace lets a fresh car DROP to terrain first
+        float _tankYawGain;   // TankYawGain scaled to THIS hull's mass (0 = unset -> fall back to the constant); see BuildByName
         float _prevSpeed;   // last frame's speed, to detect a sudden drop = a crash (collision/ram damage)
         float _deadTimer = -1f; bool _exploded, _husk; CpuParticles3D _smoke, _smoke0, _fire; OmniLight3D _fireLight;
         float _burnTime = -1f;   // seconds since the wreck caught fire (master lifecycle): <40 full, 40-60 dying down, 60 out+light killed, 360 despawn
@@ -3545,6 +3546,12 @@ namespace UnturnedGodot
             float massScale = v.Mass / GlobalMass;
             v._engineForce = s.Engine * massScale; v._steerMax = s.SteerMax; v._steerMin = s.SteerMin;
             v._speedMax = s.SpeedMax; v._speedMin = s.SpeedMin; v._brakeForce = s.Brake * massScale;
+            // The THIRD constant that has to ride the mass, and the one the per-vehicle-mass commit missed.
+            // TankYawGain is a TORQUE, so what it buys is torque/inertia -- and the pinned hull inertia is
+            // m/12*(a^2+b^2), exactly proportional to mass at a fixed box. The tank went 900 kg -> 40000 kg,
+            // so its yaw authority fell by the same 44x and skid-steer simply stopped: tank.differential_steer
+            // measured a pivot of 0.0 deg and a turn of 1.1 deg.
+            v._tankYawGain = TankYawGain * massScale;
             v._heli = s.Heli; v._tracked = s.Tracked;
             v._plane = s.Plane; v._planeThrust = s.PlaneThrust; v._planeLift = s.PlaneLift; v._planeTargetSpeed = s.PlaneTargetSpeed;
             v._planePitchTq = s.PlanePitchTorque; v._planeRollTq = s.PlaneRollTorque; v._planeYawTq = s.PlaneYawTorque;
@@ -4059,7 +4066,7 @@ namespace UnturnedGodot
                     // stiffer + higher max force so 900kg doesn't compress the suspension into a permanent SQUAT; more
                     // damping to settle without bounce; higher friction slip = more TRACTION (was sliding/understeering).
                     // Trailer = low friction so the wheels free-roll behind the cab instead of gripping/dragging.
-                    SuspensionStiffness = s.Plane ? 30f : 55f, SuspensionMaxForce = 12000f, DampingCompression = s.Plane ? 7f : 3.5f, DampingRelaxation = s.Plane ? 8f : 4.2f, WheelFrictionSlip = s.Tracked ? TankWheelSlip : (s.Kingpin != Vector3.Zero ? 1.5f : s.Plane ? 2.0f : 6.0f),   // PLANE: softer + heavily-damped gear + lower friction slip so the narrow fuselage wheels do not CHATTER into a yaw wobble on rough terrain (master 2026-08-18)
+                    SuspensionStiffness = (s.Plane ? 30f : 55f) * massScale, SuspensionMaxForce = 12000f * massScale, DampingCompression = s.Plane ? 7f : 3.5f, DampingRelaxation = s.Plane ? 8f : 4.2f, WheelFrictionSlip = s.Tracked ? TankWheelSlip : (s.Kingpin != Vector3.Zero ? 1.5f : s.Plane ? 2.0f : 6.0f),   // PLANE: softer + heavily-damped gear + lower friction slip so the narrow fuselage wheels do not CHATTER into a yaw wobble on rough terrain (master 2026-08-18)
                 };
                 // left wheels: flip the mesh so the tread faces outward
                 var mi = new MeshInstance3D { Mesh = wheelMesh, MaterialOverride = wheelMat, Scale = new Vector3((x < 0 ? -1f : 1f) * wscale, wscale, wscale) };
@@ -6065,7 +6072,14 @@ namespace UnturnedGodot
             {
                 float tfwd = LinearVelocity.Dot(-GlobalTransform.Basis.Z);
                 float tTarget = _tankYawInput * TankMaxYawRate * (1f - TankYawSpeedFade * Mathf.Clamp(Mathf.Abs(tfwd) / _speedMax, 0f, 1f));
-                ApplyTorque(new Vector3(0f, (tTarget - AngularVelocity.Y) * TankYawGain, 0f));
+                // STABILITY CEILING, measured. This is a proportional velocity governor: with a = k*dt/I the
+                // yaw error updates as (1-a), so it is stable only for 0 < a < 2 and diverges above it. That is
+                // not theory here -- while hunting this bug a gain of a=2.5 threw the tank 41 km across the map
+                // in 1.8 s and a=10 sent it 4.6e10 m. At the shipped gain a is 0.16, exactly where the 900 kg
+                // tank sat, but the clamp means no future mass or hull edit can walk off that cliff silently.
+                float yawK = _tankYawGain > 0f ? _tankYawGain : TankYawGain;
+                yawK = Mathf.Min(yawK, 1.2f * Inertia.Y / Mathf.Max((float)delta, 0.0001f));
+                ApplyTorque(new Vector3(0f, (tTarget - AngularVelocity.Y) * yawK, 0f));
             }
             if (CanTow && CoupledTrailer != null) UpdateCoupled(CoupledTrailer, (float)delta);   // coupled: rollover/clip disconnect + jackknife clamp
             else if (CanTow) UpdateTrailerApproach();     // ghost this cab vs a trailer it's backing under (exception + layer swap) so it phases the low deck+legs; solid vs the player throughout
