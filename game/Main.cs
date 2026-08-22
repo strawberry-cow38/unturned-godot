@@ -92,7 +92,7 @@ namespace UnturnedGodot
                 DisplayServer.WindowSetVsyncMode(DisplayServer.VSyncMode.Disabled);
                 GD.Print($"[display] vsync -> {DisplayServer.WindowGetVsyncMode()}");
             }
-            string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null, drivetest = null, proptest = null, magnettest = null, animrig = null, rottest = null, itemtest = null, navShot = null, croptest = null, menuShot = null, clothtest = null, boattest = null, slingtest = null, trainshow = null, traintrack = null, ammoRadial = null, animaltest = null;
+            string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null, drivetest = null, proptest = null, magnettest = null, animrig = null, rottest = null, itemtest = null, navShot = null, croptest = null, menuShot = null, clothtest = null, boattest = null, slingtest = null, trainshow = null, traintrack = null, ammoRadial = null, animaltest = null, treetest = null;
             bool zperf = false;
             bool zbody = false;
             bool deployTest = false, barricadeTest = false, barricadePlay = false;
@@ -124,6 +124,7 @@ namespace UnturnedGodot
                 else if (arg == "--zdirtest") zdirTest = true;       // OFFLINE verify: boot the REWRITE on PEI -> do rows tier, query paths and actually MOVE? (implies --newzombies)
                 else if (arg.StartsWith("--proptest=")) { proptest = arg["--proptest=".Length..]; _shotRequested = proptest; }
                 else if (arg.StartsWith("--animaltest=")) { animaltest = arg["--animaltest=".Length..]; _shotRequested = animaltest; }   // one animal rig posed as if walking -Z, to measure the RigYawFix (UG_ANIMALYAW spins it)
+                else if (arg.StartsWith("--treetest=")) { treetest = arg["--treetest=".Length..]; _shotRequested = treetest; }   // standing tree beside a felled one (its dropped logs) -> render the harvest
                 else if (arg == "--trainshow") trainshow = "1";   // assemble train_cargo_0 from its extracted pieces for a 3/4 shot
                 else if (arg == "--traintrack") traintrack = "1";   // ride the train along a curved test track
                 else if (arg.StartsWith("--slingtest=")) { slingtest = arg["--slingtest=".Length..]; _shotRequested = slingtest; }
@@ -423,6 +424,7 @@ namespace UnturnedGodot
                 return;
             }
             if (animaltest != null) { GetWindow().Size = new Vector2I(1000, 720); _shotPath = shot; BuildAnimalTest(animaltest); return; }
+            if (treetest != null) { GetWindow().Size = new Vector2I(1280, 800); _shotPath = shot; BuildTreeTest(treetest); return; }
             if (trainshow != null) { GetWindow().Size = new Vector2I(1600, 720); BuildTrainShow(); return; }
             if (traintrack != null) { GetWindow().Size = new Vector2I(1600, 900); BuildTrainTrack(); return; }
 
@@ -1000,6 +1002,57 @@ namespace UnturnedGodot
             }
             else
                 cam.LookAtFromPosition(new Vector3(0f, 9f, 0f), Vector3.Zero, new Vector3(0f, 0f, -1f));   // TOP-DOWN, unambiguous: -Z(travel, RED) to top, +X(BLUE) right
+        }
+
+        // --treetest=<birch|maple|pine>: a standing tree on the LEFT, a felled one on the RIGHT (visual hidden + a real
+        // TreeTrunk.Chop dropping the wood-type logs onto a collidable ground) -> renders the harvest before -> after.
+        void BuildTreeTest(string species)
+        {
+            var env = new Godot.Environment
+            {
+                BackgroundMode = Godot.Environment.BGMode.Color, BackgroundColor = new Color(0.5f, 0.62f, 0.78f),
+                AmbientLightSource = Godot.Environment.AmbientSource.Color, AmbientLightColor = new Color(0.6f, 0.62f, 0.6f), AmbientLightEnergy = 0.85f,
+            };
+            AddChild(new WorldEnvironment { Environment = env });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-48f, -40f, 0f), LightEnergy = 1.2f, ShadowEnabled = true });
+            AddChild(new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(80f, 80f) }, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.32f, 0.4f, 0.26f), Roughness = 1f } });
+            var groundBody = new StaticBody3D { CollisionLayer = 1u << 0 };   // the dropped logs land on this
+            groundBody.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
+            AddChild(groundBody);
+
+            SDG.Unturned.ItemCatalog.RegisterAll();   // WorldItem.Spawn resolves the log's model
+            string dir = ProjectSettings.GlobalizePath("res://content/resources/");
+            string name = species == "pine" ? "Pine_0" : species == "maple" ? "Maple_0" : "Birch_0";
+            ushort log = species == "pine" ? (ushort)41 : species == "maple" ? (ushort)39 : (ushort)37;
+
+            AddChild(LoadTreeVisual(dir, name, new Vector3(-8f, 0f, 0f)));   // LEFT: standing
+            var felled = LoadTreeVisual(dir, name, new Vector3(8f, 0f, 0f));
+            felled.Visible = false;   // RIGHT: felled -> the tree is gone
+            AddChild(felled);
+            var trunk = new TreeTrunk { Field = null, Index = 11, LogItem = log, Health = 10f, RewardMin = 6, RewardMax = 8 };
+            AddChild(trunk); trunk.Position = new Vector3(8f, 0f, 0f);
+            trunk.Chop(999f, new Vector3(8f, 1f, 0f), Vector3.Forward);   // fell it -> the logs drop around (8,0,0) + fall to the ground
+            GD.Print($"[treetest] {name}: left standing, right felled (log item {log})");
+
+            var cam = new Camera3D { Fov = 36f, Far = 800f };
+            AddChild(cam);
+            cam.LookAtFromPosition(new Vector3(0f, 15f, 62f), new Vector3(0f, 10f, 0f), Vector3.Up);
+        }
+
+        // Load a tree's parts (bark + leaves) from content/resources/<name>_<i>.obj as an upright Node3D at pos.
+        Node3D LoadTreeVisual(string dir, string name, Vector3 pos)
+        {
+            var root = new Node3D { Position = pos };   // resource-tree objs are already Y-up (ResourceField applies no stand-up) -> identity
+            for (int i = 0; i < 2; i++)
+            {
+                var m = ObjMesh.Load(dir + name + "_" + i + ".obj");
+                if (m == null) continue;
+                var mat = new StandardMaterial3D { CullMode = BaseMaterial3D.CullModeEnum.Disabled, Roughness = 0.9f };
+                var img = new Image();
+                if (img.Load(dir + name + "_" + i + "_tex.png") == Error.Ok) { img.GenerateMipmaps(); mat.AlbedoTexture = ImageTexture.CreateFromImage(img); mat.TextureFilter = BaseMaterial3D.TextureFilterEnum.LinearWithMipmaps; }
+                root.AddChild(new MeshInstance3D { Mesh = m, MaterialOverride = mat });
+            }
+            return root;
         }
 
         // --clothtest=<shirtId>,<pantsId> : the P3a render gate. Spawn a 3P RiggedCharacter (clothes-shader body +
