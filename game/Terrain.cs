@@ -180,6 +180,8 @@ void fragment() {
         public System.Collections.Generic.List<ProcIsland.Connector> IslandConnectors => _islandConnectors;
         System.Collections.Generic.List<ProcIsland.Link> _islandLinks = new();
         System.Collections.Generic.List<ProcIsland.Connector> _islandConnectors = new();
+        public System.Collections.Generic.List<ProcIsland.Route> IslandRoutes => _islandRoutes;
+        System.Collections.Generic.List<ProcIsland.Route> _islandRoutes = new();
 
         public System.Collections.Generic.List<ProcIsland.Poi> GenerateIsland(int seed)
         {
@@ -193,6 +195,8 @@ void fragment() {
             var pois = ProcIsland.PlacePois(_grid, _gw, _gh, pars);
             _islandLinks = ProcIsland.BuildLinks(pois);
             _islandConnectors = ProcIsland.BuildConnectors(pois, _islandLinks);
+            // Routed and carved BEFORE RebuildAll, because carving edits the same grid the meshes are built from.
+            _islandRoutes = ProcIsland.CarveRoutes(_grid, _gw, _gh, pois, _islandLinks, _islandConnectors, pars);
             RebuildAll();
             return pois;
         }

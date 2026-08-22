@@ -206,6 +206,70 @@ namespace UnturnedGodot.Testing
             T.Check("a construction site is always reached by a dirt trail, never a paved road", siteAlwaysTrail);
             T.Check($"rail only runs long hauls between permanent places (any rail: {railExists})", railOnlyLongAndPermanent);
 
+            // ---- ROADS. Routed over the terrain, then carved into it.
+            var routes = ProcIsland.CarveRoutes(a, a.GetLength(0), a.GetLength(1), pois, links, cons, ProcIsland.Params.Default(1234));
+            T.Check($"every link got a route ({routes.Count}/{links.Count})", routes.Count == links.Count);
+
+            // THE ROUTE FOLLOWS THE GROUND. This is the check the obvious ones cannot make: a dead-straight path
+            // between two gates connects them perfectly and drives through a hillside, and "it reaches the other
+            // end" is equally true of both. Measured as the worst per-step gradient along each route.
+            float worstGrade = 0f; string worstOn = "";
+            bool routesDry = true;
+            foreach (var rt in routes)
+            {
+                for (int i = 1; i < rt.Points.Count; i++)
+                {
+                    var pa = rt.Points[i - 1]; var pb = rt.Points[i];
+                    int ax = Mathf.RoundToInt(pa.X / 4f), ay = Mathf.RoundToInt(pa.Y / 4f);
+                    int bx = Mathf.RoundToInt(pb.X / 4f), by = Mathf.RoundToInt(pb.Y / 4f);
+                    float ha = ProcIsland.ToWorld(a[ax, ay]), hb = ProcIsland.ToWorld(a[bx, by]);
+                    float run = pa.DistanceTo(pb);
+                    if (run > 0.01f) { float g = Mathf.Abs(hb - ha) / run; if (g > worstGrade) { worstGrade = g; worstOn = rt.Kind.ToString(); } }
+                    if (hb <= 25.6f) routesDry = false;
+                }
+            }
+            T.Check($"...and no route runs through water ({routes.Count} routes)", routesDry);
+            T.Check($"...at a gradient something could actually drive (worst {worstGrade * 100f:0.#}% on a {worstOn})",
+                worstGrade < 0.35f);
+
+            // Rail is the strict one: real track tops out around 2-3%, so a railway that shrugs at a hillside is
+            // the most obviously-wrong thing this could produce. Asserted separately from the fleet-wide bound.
+            float worstRail = 0f; int railRoutes = 0;
+            foreach (var rt in routes)
+            {
+                if (rt.Kind != ProcIsland.LinkKind.Rail) continue;
+                railRoutes++;
+                for (int i = 1; i < rt.Points.Count; i++)
+                {
+                    int ax = Mathf.RoundToInt(rt.Points[i - 1].X / 4f), ay = Mathf.RoundToInt(rt.Points[i - 1].Y / 4f);
+                    int bx = Mathf.RoundToInt(rt.Points[i].X / 4f), by = Mathf.RoundToInt(rt.Points[i].Y / 4f);
+                    float g = Mathf.Abs(ProcIsland.ToWorld(a[bx, by]) - ProcIsland.ToWorld(a[ax, ay])) / rt.Points[i - 1].DistanceTo(rt.Points[i]);
+                    worstRail = Mathf.Max(worstRail, g);
+                }
+            }
+            T.Check($"rail is graded harder than road ({railRoutes} rail routes, worst {worstRail * 100f:0.#}%)",
+                railRoutes == 0 || worstRail < 0.12f);
+            // DOES IT ACTUALLY BEND? A route that ignores the terrain is exactly as long as the straight line
+            // between its gates, and every check above still passes on it -- "reaches the other end", "no water",
+            // even the gradient one if the ground happens to be gentle. The detour ratio is the only number here
+            // that separates "routed over the terrain" from "drew a line and carved it".
+            float worstDetour = 1f; string detourOn = "";
+            foreach (var rt in routes)
+            {
+                float walked = 0f;
+                for (int i = 1; i < rt.Points.Count; i++) walked += rt.Points[i - 1].DistanceTo(rt.Points[i]);
+                float direct = rt.Points[0].DistanceTo(rt.Points[rt.Points.Count - 1]);
+                if (direct > 1f)
+                {
+                    float ratio = walked / direct;
+                    GD.Print($"[island]   {rt.Kind}: {rt.Points.Count} pts, {walked:0} m walked vs {direct:0} m direct = {ratio:0.00}x");
+                    if (ratio > worstDetour) { worstDetour = ratio; detourOn = rt.Kind.ToString(); }
+                }
+            }
+            T.Check($"at least one route BENDS around the terrain rather than running straight (worst detour {worstDetour:0.00}x on a {detourOn})",
+                worstDetour > 1.02f);
+            GD.Print($"[island] {routes.Count} routes carved, worst grade {worstGrade * 100f:0.#}% ({worstOn}), worst detour {worstDetour:0.00}x");
+
             // UG_ISLAND_PNG=<path>: dump a preview so the shape can be LOOKED at. Every check above is a
             // statistic, and a plausible land fraction with a closed coast still describes shapes nobody wants
             // -- a ring, a starfish, four blobs. Gated, so a normal run pays nothing.
@@ -260,8 +324,20 @@ namespace UnturnedGodot.Testing
                 }
                 // Links drawn UNDER the monument boxes: road white-ish, trail brown, rail grey with sleepers,
                 // so the type is readable at a glance rather than needing the log alongside the picture.
+                foreach (var rt in routes)
+                {
+                    var lc2 = rt.Kind == ProcIsland.LinkKind.Road ? new Color(0.95f, 0.95f, 0.9f)
+                            : rt.Kind == ProcIsland.LinkKind.Trail ? new Color(1f, 0.55f, 0.05f)
+                            : new Color(0.15f, 0.15f, 0.18f);
+                    foreach (var pt in rt.Points)
+                    {
+                        int px = Mathf.RoundToInt(pt.X / 4f), py = Mathf.RoundToInt(pt.Y / 4f);
+                        if (px >= 0 && py >= 0 && px < gw && py < gh) img.SetPixel(px, py, lc2);
+                    }
+                }
                 foreach (var l in links)
                 {
+                    if (true) continue;   // straight-line debug draw, superseded by the routed path above
                     var pa = pois[l.A]; var pb = pois[l.B];
                     var lc = l.Kind == ProcIsland.LinkKind.Road ? new Color(0.92f, 0.92f, 0.88f)
                            : l.Kind == ProcIsland.LinkKind.Trail ? new Color(1f, 0.55f, 0.05f)   // brown-on-olive

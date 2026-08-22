@@ -507,5 +507,182 @@ namespace UnturnedGodot
             float t = Mathf.Min(tx, tz);
             return new Connector(from, link, a.X + dx * t, a.Z + dz * t, dx, dz, kind);
         }
+
+        // ------------------------------------------------------------- ROADS
+
+        /// <summary>A routed path between two gates, in world metres, plus what runs along it.</summary>
+        public readonly struct Route
+        {
+            public readonly LinkKind Kind;
+            public readonly System.Collections.Generic.List<Vector2> Points;
+            public Route(LinkKind k, System.Collections.Generic.List<Vector2> pts) { Kind = k; Points = pts; }
+        }
+
+        static float HalfWidthFor(LinkKind k) => k switch
+        {
+            LinkKind.Road => 4.0f,    // 8 m carriageway
+            LinkKind.Rail => 3.0f,    // single track + ballast shoulder
+            _ => 2.5f,                // dirt trail
+        };
+
+        /// <summary>How much a route hates climbing. Rail hates it most -- real track tops out around 2-3 %, so
+        /// a railway that shrugs at a hillside is the single most obviously-wrong thing this could produce.</summary>
+        static float SlopeCostFor(LinkKind k) => k switch
+        {
+            LinkKind.Rail => 14f,
+            LinkKind.Road => 6f,
+            _ => 2.5f,                // a trail is allowed to be steep; that is what makes it a trail
+        };
+
+        /// <summary>Route every link over the terrain and carve it into the heightmap.
+        ///
+        /// ROUTES FOLLOW THE GROUND. A straight line between two gates satisfies every connectivity check I would
+        /// write and drives through hillsides, so the path is an A* over a cost field where climbing is expensive
+        /// and water is nearly impassable -- the route bends around a hill instead of tunnelling it, and the
+        /// carve then only has to fix what is left. Cost is per-STEP height change, not absolute height: a road
+        /// contouring along a hillside at constant altitude is cheap, which is exactly what a real one does.</summary>
+        public static System.Collections.Generic.List<Route> CarveRoutes(
+            float[,] grid, int gw, int gh,
+            System.Collections.Generic.List<Poi> pois,
+            System.Collections.Generic.List<Link> links,
+            System.Collections.Generic.List<Connector> cons,
+            Params p)
+        {
+            const float Unit = 4f;
+            var routes = new System.Collections.Generic.List<Route>();
+            for (int li = 0; li < links.Count; li++)
+            {
+                Connector a = default, b = default;
+                bool ga = false, gb = false;
+                foreach (var c in cons)
+                {
+                    if (c.Link != li) continue;
+                    if (!ga) { a = c; ga = true; }
+                    else { b = c; gb = true; }
+                }
+                if (!ga || !gb) continue;
+                var pts = Route2D(grid, gw, gh, a, b, links[li].Kind, p);
+                if (pts.Count >= 2) routes.Add(new Route(links[li].Kind, pts));
+            }
+            foreach (var r in routes) Carve(grid, gw, gh, r, p);
+            return routes;
+        }
+
+        /// <summary>A* from one gate to the other over a slope-weighted grid.</summary>
+        static System.Collections.Generic.List<Vector2> Route2D(
+            float[,] grid, int gw, int gh, Connector from, Connector to, LinkKind kind, Params p)
+        {
+            const float Unit = 4f;
+            int sx = Mathf.Clamp(Mathf.RoundToInt(from.X / Unit), 0, gw - 1);
+            int sy = Mathf.Clamp(Mathf.RoundToInt(from.Z / Unit), 0, gh - 1);
+            int tx = Mathf.Clamp(Mathf.RoundToInt(to.X / Unit), 0, gw - 1);
+            int ty = Mathf.Clamp(Mathf.RoundToInt(to.Z / Unit), 0, gh - 1);
+
+            float slopeCost = SlopeCostFor(kind);
+            int n = gw * gh;
+            var best = new float[n];
+            var prev = new int[n];
+            for (int i = 0; i < n; i++) { best[i] = float.MaxValue; prev[i] = -1; }
+
+            int Idx(int x, int y) => y * gw + x;
+            float H(int x, int y) => Mathf.Abs(x - tx) + Mathf.Abs(y - ty);   // Manhattan, admissible at step cost >= 1
+
+            var open = new System.Collections.Generic.PriorityQueue<int, float>();
+            best[Idx(sx, sy)] = 0f;
+            open.Enqueue(Idx(sx, sy), H(sx, sy));
+            int goal = Idx(tx, ty);
+            var seen = new bool[n];
+
+            while (open.Count > 0)
+            {
+                int cur = open.Dequeue();
+                if (seen[cur]) continue;
+                seen[cur] = true;
+                if (cur == goal) break;
+                int cx = cur % gw, cy = cur / gw;
+                float ch = ToWorld(grid[cx, cy]);
+                for (int ox = -1; ox <= 1; ox++)
+                    for (int oy = -1; oy <= 1; oy++)
+                    {
+                        if (ox == 0 && oy == 0) continue;
+                        int nx = cx + ox, ny = cy + oy;
+                        if (nx < 0 || ny < 0 || nx >= gw || ny >= gh) continue;
+                        int ni = Idx(nx, ny);
+                        if (seen[ni]) continue;
+                        float nh = ToWorld(grid[nx, ny]);
+                        // Water is not impassable-by-rule but is priced out of reach, so a route only crosses it
+                        // if there is genuinely no land path -- which on one island there never is. A hard ban
+                        // would make A* fail outright on a gate that sits a cell into the shallows.
+                        float step = (ox != 0 && oy != 0) ? 1.4142f : 1f;
+                        float climb = Mathf.Abs(nh - ch) / Unit;              // gradient of THIS step
+                        float cost = step * (1f + slopeCost * climb);
+                        if (nh <= p.SeaLevel) cost += 400f;
+                        float cand = best[cur] + cost;
+                        if (cand < best[ni]) { best[ni] = cand; prev[ni] = cur; open.Enqueue(ni, cand + H(nx, ny)); }
+                    }
+            }
+
+            var pts = new System.Collections.Generic.List<Vector2>();
+            if (prev[goal] < 0 && goal != Idx(sx, sy)) return pts;   // unreachable: caller drops the route
+            for (int at = goal; at >= 0; at = prev[at])
+            {
+                pts.Add(new Vector2((at % gw) * Unit, (at / gw) * Unit));
+                if (at == Idx(sx, sy)) break;
+            }
+            pts.Reverse();
+            return pts;
+        }
+
+        /// <summary>Cut the route into the terrain: level a corridor to a SMOOTHED elevation profile along the
+        /// path. The profile is smoothed first, so the road gets a steady gradient instead of inheriting every
+        /// bump the ground had -- levelling each point to its own local height would carve a road that is
+        /// perfectly flat crosswise and still a staircase lengthwise.</summary>
+        static void Carve(float[,] grid, int gw, int gh, Route r, Params p)
+        {
+            const float Unit = 4f;
+            int m = r.Points.Count;
+            var prof = new float[m];
+            for (int i = 0; i < m; i++)
+            {
+                int gx = Mathf.Clamp(Mathf.RoundToInt(r.Points[i].X / Unit), 0, gw - 1);
+                int gy = Mathf.Clamp(Mathf.RoundToInt(r.Points[i].Y / Unit), 0, gh - 1);
+                prof[i] = ToWorld(grid[gx, gy]);
+            }
+            // Box-smooth the profile. Rail gets a much wider window: real track cannot follow ground undulation,
+            // it needs cut and fill, and a 3-point smooth on a railway still reads as a rollercoaster.
+            int win = r.Kind == LinkKind.Rail ? 24 : r.Kind == LinkKind.Road ? 10 : 4;
+            var sm = new float[m];
+            for (int i = 0; i < m; i++)
+            {
+                float sum = 0f; int cnt = 0;
+                for (int k = -win; k <= win; k++)
+                {
+                    int j = i + k;
+                    if (j < 0 || j >= m) continue;
+                    sum += prof[j]; cnt++;
+                }
+                sm[i] = sum / cnt;
+            }
+
+            float half = HalfWidthFor(r.Kind), shoulder = half * 2.2f;
+            int rad = Mathf.CeilToInt(shoulder / Unit) + 1;
+            for (int i = 0; i < m; i++)
+            {
+                int cx = Mathf.RoundToInt(r.Points[i].X / Unit), cy = Mathf.RoundToInt(r.Points[i].Y / Unit);
+                for (int x = Mathf.Max(0, cx - rad); x <= Mathf.Min(gw - 1, cx + rad); x++)
+                    for (int y = Mathf.Max(0, cy - rad); y <= Mathf.Min(gh - 1, cy + rad); y++)
+                    {
+                        float dx = x * Unit - r.Points[i].X, dy = y * Unit - r.Points[i].Y;
+                        float d = Mathf.Sqrt(dx * dx + dy * dy);
+                        if (d > shoulder) continue;
+                        float w = d <= half ? 1f : 1f - Mathf.SmoothStep(half, shoulder, d);
+                        float want = ToGrid(sm[i]);
+                        // MAX, not assign: consecutive path points overlap, and a plain lerp lets a later point
+                        // undo an earlier one's cut. Taking the strongest pull toward the profile keeps the
+                        // corridor continuous instead of scalloped.
+                        grid[x, y] = Mathf.Lerp(grid[x, y], want, w);
+                    }
+            }
+        }
     }
 }
