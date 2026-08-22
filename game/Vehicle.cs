@@ -3828,8 +3828,13 @@ namespace UnturnedGodot
             // U3-SDK is close enough to re-skin, so the airframe is built here out of primitives instead of
             // parsed from an .obj. Everything below the model -- collision, seats, fuel, damage -- is the
             // ordinary Vehicle path; only the geometry source differs.
+            // ONE chain. `if (s.Heli) ...` used to be a DETACHED statement, so a helicopter ran the heli
+            // builder and then fell straight through the plane/trailer/headlight tests into the final
+            // `else`, asking ContentProvider for `res://content/` + a null Body. It returned null, which is
+            // exactly what the code below expects for a heli, so nothing broke and nobody noticed -- it just
+            // pushed an error per heli build, 131 of them across one suite run.
             if (s.Heli) BuildHeliModel(v, s, bodyMat);
-            if (s.Plane) BuildPlaneModel(v, s, bodyMat);
+            else if (s.Plane) BuildPlaneModel(v, s, bodyMat);
             else if (s.LandingLegZoneMin != s.LandingLegZoneMax && tlZones != null)   // trailer: peel BOTH the landing legs AND the baked taillights in one pass
                 (bodyMesh, legMesh, tlMesh) = ContentProvider.ParseObjSplit2($"res://content/{s.Body}", new[] { (s.LandingLegZoneMin, s.LandingLegZoneMax) }, tlZones);
             else if (s.LandingLegZoneMin != s.LandingLegZoneMax)   // split the baked-in landing legs into their own mesh so they can vanish on couple
