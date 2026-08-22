@@ -2856,6 +2856,17 @@ namespace UnturnedGodot
                         break;   // one target per swing
                     }
                 }
+            foreach (var n in GetTree().GetNodesInGroup("animals"))   // wildlife takes melee too (one target per swing)
+                if (n is AnimalAgent a && !a.Dead)
+                {
+                    Vector3 to = a.GlobalPosition + Vector3.Up * 0.5f - origin;
+                    if (to.Length() < range + 0.5f && to.Normalized().Dot(fwd) > 0.3f)   // in front, in reach
+                    {
+                        a.DamageHit(dmg, a.GlobalPosition + Vector3.Up * 0.5f, fwd);
+                        MeleeImpactFx(a.GlobalPosition + Vector3.Up * 0.5f, true);
+                        break;
+                    }
+                }
         }
 
         // Melee HIT feedback (master: "wire up melee swing/hit sounds + unarmed damage"). The swing already DEALS damage
@@ -2905,6 +2916,14 @@ namespace UnturnedGodot
                     bool wd = z.Dead;
                     z.DamageHit(ExplosionMath.Linear(zombieDamage, range, radius), z.GlobalPosition, (z.GlobalPosition - point).Normalized());
                     if (!wd && z.Dead) Kills++;
+                }
+            foreach (var n in GetTree().GetNodesInGroup("animals"))   // wildlife caught in the blast: same linear falloff + wall rule
+                if (n is AnimalAgent a && !a.Dead)
+                {
+                    float range = a.GlobalPosition.DistanceTo(point);
+                    if (range > radius) continue;
+                    if (ExplosionBlocked(point, a.GlobalPosition)) continue;
+                    a.DamageHit(ExplosionMath.Linear(zombieDamage, range, radius), a.GlobalPosition, (a.GlobalPosition - point).Normalized());
                 }
             foreach (var n in GetTree().GetNodesInGroup("vehicles"))   // source DamageTool.explode also damages vehicles (Grenade.dat Vehicle_Damage 100)
                 if (n is Vehicle v && !v.Exploded)
@@ -5645,6 +5664,7 @@ namespace UnturnedGodot
                     Vector3 hdir = b.Vel.Normalized();
                     var collider = hit["collider"].As<GodotObject>();
                     if (collider is ZombieController z) { bool head = z.IsHeadshot(point); SpawnFleshImpact(point, hdir); bool wd = z.Dead; z.DamageHitLimb(b.Damage * b.FalloffAt(point), point, hdir); if (!wd && z.Dead) Kills++; Hitmark(b, head); }   // hitmarker: white body / red headshot (source EPlayerHit)
+                    else if (collider is AnimalAgent a && !a.Dead) { SpawnFleshImpact(point, hdir); a.DamageHit(b.Damage * b.FalloffAt(point), point, hdir); Hitmark(b, false); }   // wildlife: flesh spray + body hitmarker (no limb zones)
                     else if (collider is TargetDummy dummy)
                     {   // playground target: PLAYER damage through the humanoid zones, floating number, hitmarker
                         float dealt = dummy.TakeHit(b.PlayerDamage * b.FalloffAt(point), point);

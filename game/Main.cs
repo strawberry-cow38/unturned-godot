@@ -92,7 +92,7 @@ namespace UnturnedGodot
                 DisplayServer.WindowSetVsyncMode(DisplayServer.VSyncMode.Disabled);
                 GD.Print($"[display] vsync -> {DisplayServer.WindowGetVsyncMode()}");
             }
-            string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null, drivetest = null, proptest = null, magnettest = null, animrig = null, rottest = null, itemtest = null, navShot = null, croptest = null, menuShot = null, clothtest = null, boattest = null, slingtest = null, trainshow = null, traintrack = null, ammoRadial = null;
+            string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null, drivetest = null, proptest = null, magnettest = null, animrig = null, rottest = null, itemtest = null, navShot = null, croptest = null, menuShot = null, clothtest = null, boattest = null, slingtest = null, trainshow = null, traintrack = null, ammoRadial = null, animaltest = null;
             bool zperf = false;
             bool zbody = false;
             bool deployTest = false, barricadeTest = false, barricadePlay = false;
@@ -123,6 +123,7 @@ namespace UnturnedGodot
                 else if (arg == "--zombietest") zombieTest = true;   // OFFLINE verify: sync world -> bucket Animals.dat into pockets -> check planned spawns land ON the baked navmesh
                 else if (arg == "--zdirtest") zdirTest = true;       // OFFLINE verify: boot the REWRITE on PEI -> do rows tier, query paths and actually MOVE? (implies --newzombies)
                 else if (arg.StartsWith("--proptest=")) { proptest = arg["--proptest=".Length..]; _shotRequested = proptest; }
+                else if (arg.StartsWith("--animaltest=")) { animaltest = arg["--animaltest=".Length..]; _shotRequested = animaltest; }   // one animal rig posed as if walking -Z, to measure the RigYawFix (UG_ANIMALYAW spins it)
                 else if (arg == "--trainshow") trainshow = "1";   // assemble train_cargo_0 from its extracted pieces for a 3/4 shot
                 else if (arg == "--traintrack") traintrack = "1";   // ride the train along a curved test track
                 else if (arg.StartsWith("--slingtest=")) { slingtest = arg["--slingtest=".Length..]; _shotRequested = slingtest; }
@@ -421,6 +422,7 @@ namespace UnturnedGodot
                 BuildPropTest(proptest);
                 return;
             }
+            if (animaltest != null) { GetWindow().Size = new Vector2I(1000, 720); _shotPath = shot; BuildAnimalTest(animaltest); return; }
             if (trainshow != null) { GetWindow().Size = new Vector2I(1600, 720); BuildTrainShow(); return; }
             if (traintrack != null) { GetWindow().Size = new Vector2I(1600, 900); BuildTrainTrack(); return; }
 
@@ -934,6 +936,52 @@ namespace UnturnedGodot
             AddChild(cam);
             if (string.IsNullOrEmpty(gun)) cam.LookAtFromPosition(new Vector3(-2.5f, 1.2f, -3.4f), new Vector3(0f, 0.92f, 0f), Vector3.Up);
             else cam.LookAtFromPosition(new Vector3(4.5f, 1.7f, -6.5f), new Vector3(0f, 1.0f, 0f), Vector3.Up);
+        }
+
+        // --animaltest=<deer|pig|cow>: one animal rig posed as if walking toward -Z (Godot forward, the way AnimalAgent's
+        // LookAt aligns it). The red bar points -Z = travel; compare the model's head to it. UG_ANIMALYAW=<deg> spins the
+        // rig on the spot to find AnimalAgent.RigYawFix. 3/4 aerial so head/tail + left/right both read.
+        void BuildAnimalTest(string species)
+        {
+            var env = new Godot.Environment
+            {
+                BackgroundMode = Godot.Environment.BGMode.Color,
+                BackgroundColor = new Color(0.42f, 0.55f, 0.72f),
+                AmbientLightSource = Godot.Environment.AmbientSource.Color,
+                AmbientLightColor = new Color(0.6f, 0.6f, 0.62f),
+                AmbientLightEnergy = 0.9f,
+            };
+            AddChild(new WorldEnvironment { Environment = env });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-55f, -35f, 0f), LightEnergy = 1.2f, ShadowEnabled = true });
+            var ground = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(20f, 20f) } };
+            ground.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.30f, 0.34f, 0.28f) };
+            AddChild(ground);
+
+            (string rig, string tex, float foot) def = species switch
+            {
+                "pig" => ("pig", "Animal_Pig_tex.png", 0.22f),
+                "cow" => ("cow", "Animal_Cow_tex.png", 0.52f),
+                _     => ("deer", "Animal_Deer_tex.png", 0.70f),
+            };
+            var rc = RiggedCharacter.Build($"res://content/{def.rig}_rig.json", Colors.White, false, $"res://content/objects/{def.tex}", null);
+            if (rc == null) { GD.PrintErr("[animaltest] rig build failed"); GetTree().Quit(); return; }
+            var holder = new Node3D();   // identity: holder -Z is world -Z = the travel direction AnimalAgent's LookAt produces
+            AddChild(holder);
+            holder.Position = new Vector3(0f, def.foot, 0f);
+            holder.AddChild(rc);
+            float yaw = float.TryParse(System.Environment.GetEnvironmentVariable("UG_ANIMALYAW"), out var y) ? y : 0f;
+            rc.RotationDegrees = new Vector3(0f, yaw, 0f);
+            rc.Play("Walk");
+            GD.Print($"[animaltest] {def.rig}: holder faces -Z (travel), rig yaw {yaw:0}. clips: {string.Join(",", rc.ClipNames)}");
+
+            var arrow = new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(0.12f, 0.12f, 1.4f) } };   // points -Z = travel
+            arrow.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.95f, 0.2f, 0.2f) };
+            arrow.Position = new Vector3(1.5f, 0.06f, -0.7f);
+            AddChild(arrow);
+
+            var cam = new Camera3D { Fov = 46f };   // 3/4 aerial from +X/+Z; the red bar reads as travel(-Z)
+            AddChild(cam);
+            cam.LookAtFromPosition(new Vector3(4.6f, 3.4f, 4.6f), new Vector3(0f, 0.4f, 0f), Vector3.Up);
         }
 
         // --clothtest=<shirtId>,<pantsId> : the P3a render gate. Spawn a 3P RiggedCharacter (clothes-shader body +

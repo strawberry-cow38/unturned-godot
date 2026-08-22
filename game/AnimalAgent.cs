@@ -3,28 +3,55 @@ using UnturnedGodot.Net;
 
 namespace UnturnedGodot
 {
-    // A wandering animal: wraps a RiggedCharacter and roams a small home range. Ambles (Walk clip) to a random nearby
-    // point facing the way it moves, then grazes/idles in place (Idle/Eat/Glance) for a few seconds, repeat. Terrain-
-    // following, water-avoiding. AnimalField spawns these (rig added as a child) instead of bare RiggedCharacters.
-    public partial class AnimalAgent : Node3D
+    // A wandering animal: a CharacterBody3D (so bullets/melee hit it and the player can't walk through it) wrapping a
+    // RiggedCharacter and roaming a small home range. Ambles (Walk clip) to a random nearby point facing the way it
+    // moves, then grazes/idles in place (Idle/Eat/Glance) for a few seconds, repeat. Terrain-following, water-avoiding.
+    // Shooting/hitting it drains Health -> ragdolls a corpse; a non-fatal hit makes it bolt. AnimalField spawns these.
+    public partial class AnimalAgent : CharacterBody3D
     {
         public RiggedCharacter Rig;
         public Terrain Terr;
         public Vector3 Home;                                        // spawn point; targets stay within HomeRange of it
-        public float Foot;                                          // feet-on-terrain offset
+        public float Foot;                                          // feet-on-terrain offset (also sizes the hit capsule)
         public uint Seed;
         public byte Species;                                        // A5: AnimalCatalog index (deer/pig/cow), set by AnimalField -> published by AnimalNetSync
+        public float Health = 100f;                                 // set per-species by AnimalField
         public byte NetAnim { get; private set; }                   // A5: current anim byte for the replica (idle/eat/glance/walk)
+        public bool Dead { get; private set; }
+
+        // The animal rigs (deer/pig/cow) import facing +Z (Unity forward); Godot's LookAt aligns -Z to the target, so
+        // the visual walked backwards. A local yaw on the RIG (not the body) turns the model to match travel. MEASURED
+        // via --animaltest (UG_ANIMALYAW), the capsule is ~symmetric so it needs no fix. 0 until the render nails it.
+        const float RigYawFix = 180f;
 
         Vector3 _target;
         bool _walking;
-        double _idleTimer;
-        const float Speed = 1.35f, HomeRange = 12f, Arrive = 0.8f;
+        double _idleTimer, _fleeTimer;
+        const float Speed = 1.35f, FleeSpeed = 5.5f, HomeRange = 12f, Arrive = 0.8f;
         static readonly string[] Ambient = { "Idle", "Eat", "Glance_0", "Idle", "Eat", "Glance_1" };
 
         uint R() { Seed = Seed * 1664525u + 1013904223u; return Seed >> 9; }
 
-        public void Begin() { AddToGroup("animals"); StartIdle(); }   // A5: join the group AnimalNetSync publishes from (host only -- puppets aren't AnimalAgents)
+        public void Begin()
+        {
+            AddToGroup("animals");                                  // A5: the group AnimalNetSync publishes from + melee/blast sweep
+            BuildHitBody();
+            if (Rig != null) Rig.RotationDegrees = new Vector3(0f, RigYawFix, 0f);   // face-fix, rig-local so the body's -Z still leads
+            StartIdle();
+        }
+
+        // A capsule on the enemy bit (1<<1) that the gun ray masks and the player body collides with -- the same layer
+        // ZombieController uses, so both "can't shoot it" and "walk through it" fall out of one shape. Sized off Foot
+        // (the leg height) as a size proxy; the wander drives GlobalPosition directly (terrain-followed), so the body
+        // needs no mask of its own -- it is a thing to be hit, not a thing that resolves collisions.
+        void BuildHitBody()
+        {
+            CollisionLayer = 1u << 1;
+            CollisionMask = 0;
+            float r = Mathf.Clamp(Foot * 0.9f, 0.30f, 0.70f);
+            float h = Mathf.Clamp(Foot * 2.6f + 0.5f, 0.9f, 2.0f);
+            AddChild(new CollisionShape3D { Shape = new CapsuleShape3D { Radius = r, Height = h }, Position = new Vector3(0f, h * 0.25f, 0f) });
+        }
 
         void StartIdle()
         {
@@ -47,20 +74,53 @@ namespace UnturnedGodot
             Rig?.Play("Walk");
         }
 
+        // Gun/melee/blast damage. A non-fatal hit makes it bolt away from the impact; a fatal one ragdolls a corpse in
+        // the shot direction and despawns it after it settles. Mirrors ZombieController.ApplyDamage (corpse layer 0 so
+        // rounds pass the capsule to the ragdoll bones). Returns nothing -- callers read Dead to score the kill.
+        public void DamageHit(float amount, Vector3 point, Vector3 dir)
+        {
+            if (Dead) return;
+            Health -= amount;
+            if (Health <= 0f)
+            {
+                Dead = true;
+                CollisionLayer = 0;                                 // corpse: bullets pass through to the ragdoll bones
+                RemoveFromGroup("animals");
+                NetAnim = (byte)AnimalNetAnim.Idle;
+                Vector3 f = dir.LengthSquared() > 0.01f ? dir.Normalized() : -GlobalTransform.Basis.Z;
+                Rig?.RagdollStart((f + Vector3.Up * 0.5f).Normalized() * 6f);   // flop in the shot direction (zombie spine-pop scale)
+                var timer = GetTree().CreateTimer(12.0);            // let the corpse settle, then clean up
+                timer.Timeout += () => { if (IsInstanceValid(this)) QueueFree(); };
+                return;
+            }
+            // survived -> bolt away from the threat for a few seconds
+            _fleeTimer = 3.5;
+            Vector3 away = GlobalPosition - point; away.Y = 0f;
+            if (away.LengthSquared() < 0.01f) { away = dir; away.Y = 0f; }
+            away = away.LengthSquared() > 0.01f ? away.Normalized() : Vector3.Forward;
+            _target = GlobalPosition + away * 10f;
+            _walking = true;
+            NetAnim = (byte)AnimalNetAnim.Walk;
+            Rig?.Play("Walk");
+        }
+
         public override void _Process(double delta)
         {
-            if (Rig != null && !IsInstanceValid(Rig)) return;   // a FREED rig bails; a null rig (dedicated, rig-less) still wanders (Rig?.Play is null-safe) so AnimalNetSync has a moving transform to publish
+            if (Dead) return;                                       // the ragdoll owns the body now
+            if (Rig != null && !IsInstanceValid(Rig)) return;       // a FREED rig bails; a null rig (dedicated, rig-less) still wanders so AnimalNetSync has a moving transform to publish
+            if (_fleeTimer > 0) _fleeTimer -= delta;
             if (_walking)
             {
                 var pos = GlobalPosition;
                 float dx = _target.X - pos.X, dz = _target.Z - pos.Z;
                 float d = Mathf.Sqrt(dx * dx + dz * dz);
                 if (d < Arrive) { StartIdle(); return; }
-                float inv = 1f / d, step = Mathf.Min(Speed * (float)delta, d);
+                float speed = _fleeTimer > 0 ? FleeSpeed : Speed;
+                float inv = 1f / d, step = Mathf.Min(speed * (float)delta, d);
                 float nx = pos.X + dx * inv * step, nz = pos.Z + dz * inv * step;
                 float gy = (Terr != null ? Terr.SampleHeight(nx, nz) : pos.Y - Foot) + Foot;
                 GlobalPosition = new Vector3(nx, gy, nz);
-                LookAt(new Vector3(nx + dx, gy, nz + dz), Vector3.Up);   // face the way we're moving (-Z toward target)
+                LookAt(new Vector3(nx + dx, gy, nz + dz), Vector3.Up);   // face travel: the body's -Z leads, the rig's RigYawFix turns the model to match
             }
             else
             {
