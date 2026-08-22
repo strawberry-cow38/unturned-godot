@@ -821,9 +821,20 @@ namespace UnturnedGodot
         /// a run; there is no Turn_Cap because a corner is never where a road leaves a monument.</summary>
         public enum RoadPiece { Line, Quad, Tee, Turn, LineCap, QuadCap, TeeCap }
 
-        /// <summary>One placed road prop. Yaw is about world up; the piece's MESH +Y axis ends up pointing along
-        /// Facing. Mesh space is Z-up and yaw-only here (mesh x,y,z -> node x,z,-y), so mesh +Y is world -Z at
-        /// yaw 0 -- which is why the yaw below is atan2(-x, -z) and not atan2(x, z).</summary>
+        /// <summary>One placed road prop. YawDeg is a WORLD yaw about up such that the piece's MESH +Y axis ends
+        /// up pointing along its facing. Mesh space is Z-up and yaw-only here (mesh x,y,z -> node x,z,-y), so
+        /// mesh +Y is world -Z at yaw 0 -- hence atan2(-x, -z) rather than atan2(x, z).
+        ///
+        /// RECONCILE THIS BEFORE INSTANTIATING ANYTHING. WorldBuilder places retail props with
+        /// `Basis(Y, 180 - ey)` -- a 180 correction its own comment describes as "only visible on asymmetric
+        /// props like town buildings, hidden on the symmetric lighthouse". Nothing consumes YawDeg yet, so there
+        /// is no bug in the world today, but a placer that passes this value straight through as `ey` will get
+        /// every piece 180 out. Pass `180 - YawDeg`.
+        ///
+        /// And note why the test suite cannot settle this: the alignment checks recompute arm directions with
+        /// the SAME formula used to place the pieces, so a wrong convention is wrong identically on both sides
+        /// and every check still passes. A Line or a Quad is symmetric and would not show it either. The only
+        /// things that could are an asymmetric piece rendered in the world, or this note.</summary>
         public readonly struct MonumentTile
         {
             public readonly int Poi; public readonly RoadPiece Piece;
@@ -1025,8 +1036,10 @@ namespace UnturnedGodot
 
         // ------------------------------------------------------- BUILDINGS
 
-        /// <summary>A placed building. Yaw follows the same convention as the road props -- the mesh's +Y axis
-        /// ends up along Facing -- so a building's FRONT is its local -Y and that is what faces the street.</summary>
+        /// <summary>A placed building. Same yaw convention as the road props, and the same caveat about
+        /// WorldBuilder's `180 - ey` -- see MonumentTile. Buildings are where it would actually SHOW: they are
+        /// the asymmetric props that comment names, so a 180 error puts every front door facing the back garden
+        /// while every number in the suite stays green.</summary>
         public readonly struct MonumentBuilding
         {
             public readonly int Poi; public readonly string Prop;
