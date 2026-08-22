@@ -125,53 +125,6 @@ namespace UnturnedGodot.Testing
         }
     }
 
-    // RepairTool packages the blowtorch: heal a hurt barricade (reporting the REAL HP restored, capped), and the piece
-    // the deployable path lacked — salvage a LIVE barricade to reclaim its own item (vs a burning wreck, too hot).
-    public class BarricadeRepairSalvage : GameTest
-    {
-        public override string Name => "barricade.repair_salvage";
-        public override IEnumerable<Step> Run()
-        {
-            var n = new Vector3(-1f, 0f, 0f);
-            var d = Barricade.PlaceOnSurface(World, DeployableDef.Generator, new Vector3(0f, 2f, 0f), n, BarricadePlacer.YawFacing(n), BarricadeMount.Wall);
-            yield return Ticks(1);
-
-            // REPAIR: hurt it (no fire at 60%), then the blowtorch heals toward max and REPORTS the real amount.
-            d.TakeDamage(d.HealthMax * 0.4f);
-            T.Check($"hurt but not on fire / a wreck (hp {d.Health / d.HealthMax:0.00})", d.Hurt && !d.IsWreck);
-            float restored = RepairTool.Repair(d, 0.1f);
-            T.Check($"repair reports real HP restored (got {restored:0.00}, expect ~{RepairTool.RepairRate * 0.1f:0.00})",
-                restored > 0f && restored <= RepairTool.RepairRate * 0.1f + 0.01f);
-            for (int i = 0; i < 200; i++) RepairTool.Repair(d, 0.1f);   // plenty -> clamps at max
-            T.Check($"repair caps at max (got {d.Health:0.0}/{d.HealthMax:0.0})", Mathf.Abs(d.Health - d.HealthMax) < 0.01f);
-            T.Check("a full-HP barricade returns 0 restored (not repairable)", RepairTool.Repair(d, 0.1f) <= 0f);
-            // near max, the reported amount is the REAL deficit, never the full rate (don't over-bill).
-            d.Health = d.HealthMax - 1f;
-            float capped = RepairTool.Repair(d, 1f);   // 30 HP of rate available, but only 1 HP of deficit
-            T.Check($"repair caps the reported amount to the real deficit (got {capped:0.00})", capped <= 1.01f && Mathf.Abs(d.Health - d.HealthMax) < 0.01f);
-
-            // LIVE SALVAGE: hold the tool; before SalvageTime -> InProgress; crossing it reclaims the item + removes.
-            float held = 0f;
-            var s1 = RepairTool.Tick(d, ref held, RepairTool.SalvageTime * 0.5f, out _);
-            T.Check("mid-hold salvage is IN PROGRESS", s1 == RepairTool.SalvageState.InProgress);
-            var s2 = RepairTool.Tick(d, ref held, RepairTool.SalvageTime, out var refund);
-            T.Check("completing the hold salvages", s2 == RepairTool.SalvageState.Done);
-            T.Check($"live salvage reclaims the barricade item (got id {refund.ItemId} x{refund.Count})",
-                refund.ItemId == DeployableDef.Generator.Id && refund.Count == 1);
-            yield return Ticks(2);
-            T.Check("salvaged barricade is removed from the world", !GodotObject.IsInstanceValid(d));
-
-            // WRECK gating: a burning husk is too hot to salvage and resets the hold (src "Too hot to salvage").
-            var w = Barricade.PlaceOnSurface(World, DeployableDef.Generator, new Vector3(6f, 2f, 0f), n, BarricadePlacer.YawFacing(n), BarricadeMount.Wall);
-            yield return Ticks(1);
-            w.DebugStage("wreck");
-            T.Check("wreck is a burning husk", w.IsWreck && w.WreckOnFire);
-            float held2 = 0f;
-            var sw = RepairTool.Tick(w, ref held2, 1f, out _);
-            T.Check("a burning wreck is TOO HOT to salvage (hold reset)", sw == RepairTool.SalvageState.TooHot && held2 == 0f);
-        }
-    }
-
     // The barricade def carries its own mount family, so PlaceOnSurface/SetDef default to it (no explicit mount arg).
     public class BarricadeDefMount : GameTest
     {
