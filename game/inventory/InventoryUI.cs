@@ -98,6 +98,11 @@ namespace UnturnedGodot
         bool _open;
         float _storageW, _storageH;
 
+        // quick-craft bar (bottom-right): icons of recipes you can afford -- LMB queues 1, RMB queues 5 into the crafting queue
+        Control _quickCraft;
+        readonly List<(Control tile, BlueprintDef bp)> _quickTiles = new();
+        const int QUICK_MAX = 10;
+
         // drag-drop: registered drop zones (a page + the Control whose global rect maps to its cells) and the live drag
         readonly List<(byte page, Control ctl, bool isSlot)> _drop = new();
         bool _dragging;
@@ -142,6 +147,89 @@ namespace UnturnedGodot
             _areaCol = new Control();                     // right half; hidden when the screen is too narrow to split
             _storageCol.AddChild(_clothingCol);
             _storageCol.AddChild(_areaCol);
+
+            _quickCraft = new Control { MouseFilter = Control.MouseFilterEnum.Ignore };   // bottom-right quick-craft bar (tiles hit-tested in _Input, positioned in RefreshQuickCraft)
+            _dash.AddChild(_quickCraft);
+        }
+
+        // quick-craft: rebuild the bottom-right bar with the recipes you can afford right now (icon per recipe).
+        // LMB a tile = queue 1, RMB = queue 5 -- handled in _Input (which consumes every click before gui) via QuickCraftHit.
+        void RefreshQuickCraft()
+        {
+            _quickTiles.Clear();
+            if (_quickCraft == null) return;
+            foreach (Node c in _quickCraft.GetChildren()) c.QueueFree();
+            if (Inv == null) return;
+
+            var inv = new Crafting.PlayerInvAdapter(Inv);
+            var show = new List<BlueprintDef>();
+            foreach (var bp in BlueprintRegistry.Applicable(inv))   // "have the ingredients for"
+            {
+                if (BlueprintRegistry.IsRecolour(bp)) continue;     // skip the 126 dye repaints
+                if (!Crafting.MeetsSkill(bp, Player?.Skills)) continue;
+                show.Add(bp);
+                if (show.Count >= QUICK_MAX) break;
+            }
+
+            const int TQ = 52, GAP = 6, PADX = 8;
+            float w = PADX * 2 + Mathf.Max(1, show.Count) * (TQ + GAP) - GAP, h = TQ + 30;
+            var bg = new Panel { Position = Vector2.Zero, Size = new Vector2(w, h), MouseFilter = Control.MouseFilterEnum.Ignore };
+            var sb = new StyleBoxFlat { BgColor = new Color(0.10f, 0.12f, 0.15f, 0.93f), CornerRadiusTopLeft = 6, CornerRadiusTopRight = 6, CornerRadiusBottomLeft = 6, CornerRadiusBottomRight = 6 };
+            bg.AddThemeStyleboxOverride("panel", sb);
+            _quickCraft.AddChild(bg);
+            var hdr = new Label { Text = "QUICK CRAFT", Position = new Vector2(PADX, 4), Size = new Vector2(160, 16), MouseFilter = Control.MouseFilterEnum.Ignore };
+            hdr.AddThemeFontSizeOverride("font_size", 11);
+            hdr.AddThemeColorOverride("font_color", new Color(0.55f, 0.56f, 0.6f));
+            bg.AddChild(hdr);
+            if (show.Count == 0)
+            {
+                var none = new Label { Text = "nothing craftable", Position = new Vector2(PADX, 26), MouseFilter = Control.MouseFilterEnum.Ignore };
+                none.AddThemeFontSizeOverride("font_size", 12);
+                none.AddThemeColorOverride("font_color", new Color(0.4f, 0.4f, 0.44f));
+                bg.AddChild(none);
+            }
+            for (int i = 0; i < show.Count; i++)
+            {
+                var bp = show[i];
+                var a = CraftingMenu.OutAsset(bp);
+                var tile = new Panel { Position = new Vector2(PADX + i * (TQ + GAP), 24), Size = new Vector2(TQ, TQ), TooltipText = $"{CraftingMenu.Title(bp)}\nLMB +1   RMB +5" };
+                var tsb = new StyleBoxFlat { BgColor = new Color(0.16f, 0.19f, 0.23f, 0.96f), CornerRadiusTopLeft = 4, CornerRadiusTopRight = 4, CornerRadiusBottomLeft = 4, CornerRadiusBottomRight = 4 };
+                tile.AddThemeStyleboxOverride("panel", tsb);   // MouseFilter left Stop so the tooltip shows on hover; the click is caught in _Input
+                var tex = a != null ? IconFor(a.id) : null;
+                if (tex != null)
+                {
+                    var ico = new TextureRect { Texture = tex, ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize, StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered, MouseFilter = Control.MouseFilterEnum.Ignore };
+                    ico.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+                    ico.OffsetLeft = 4; ico.OffsetTop = 4; ico.OffsetRight = -4; ico.OffsetBottom = -4;
+                    tile.AddChild(ico);
+                }
+                else
+                {
+                    var lbl = new Label { Text = CraftingMenu.Title(bp), AutowrapMode = TextServer.AutowrapMode.WordSmart, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, MouseFilter = Control.MouseFilterEnum.Ignore };
+                    lbl.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+                    lbl.AddThemeFontSizeOverride("font_size", 9);
+                    tile.AddChild(lbl);
+                }
+                _quickCraft.AddChild(tile);
+                _quickTiles.Add((tile, bp));
+            }
+
+            Vector2 vp = GetViewport().GetVisibleRect().Size;
+            _quickCraft.Position = new Vector2(vp.X - w - MARGIN, vp.Y - h - MARGIN);   // bottom-right corner
+        }
+
+        // a press over a quick-craft tile queues a craft (qty 1 on LMB, 5 on RMB). Returns true if it hit one.
+        bool QuickCraftHit(Vector2 global, int qty)
+        {
+            if (_quickTiles == null) return false;
+            foreach (var (tile, bp) in _quickTiles)
+                if (GodotObject.IsInstanceValid(tile) && new Rect2(tile.GlobalPosition, tile.Size).HasPoint(global))
+                {
+                    Player?.QuickCraft(bp, qty);
+                    Refresh();   // ingredients consumed -> the craftable set + counts changed
+                    return true;
+                }
+            return false;
         }
 
         /// <summary>A navbar tab was clicked. Only Craft is wired so far -- Skills/Information have no page yet,
@@ -244,6 +332,7 @@ namespace UnturnedGodot
                         if (new Rect2(_selPanel.GlobalPosition, _selPanel.Size).HasPoint(mb.GlobalPosition)) return;
                         CloseSelection();   // clicked outside -> dismiss, then fall through to grab
                     }
+                    if (QuickCraftHit(mb.GlobalPosition, 1)) { GetViewport().SetInputAsHandled(); return; }   // LMB a quick-craft tile -> queue 1
                     // #9: MODIFIER + LMB is the source's onGrabbedItem modifier branch -- DROP to the ground from any of
                     // your own pages, TAKE from the nearby/AREA page. It is NOT the quick transfer; that's Ctrl+RMB
                     // (onSelectedItem) below. Checked BEFORE StartDrag so the modifier click never begins a drag it
@@ -271,6 +360,7 @@ namespace UnturnedGodot
             else if (e is InputEventMouseButton rmb && rmb.ButtonIndex == MouseButton.Right && rmb.Pressed)
             {
                 if (_dragging) { CancelDrag(); GetViewport().SetInputAsHandled(); return; }   // #3: RMB during a drag CANCELS it (source onRightClickedDuringDrag -> stopDrag)
+                if (QuickCraftHit(rmb.GlobalPosition, 5)) { GetViewport().SetInputAsHandled(); return; }   // RMB a quick-craft tile -> queue 5
                 // #9: MODIFIER + RMB is the source's onSelectedItem modifier branch -- the storage-aware quick
                 // transfer (AREA -> STORAGE, STORAGE -> tryFindSpace in your pages, your page -> STORAGE). Checked
                 // before the action menu so the modifier click transfers instead of opening a panel.
@@ -1338,6 +1428,7 @@ namespace UnturnedGodot
         {
             if (Inv == null || _storageCol == null) return;
             CloseSelection();   // the panel points at a specific item; drop it when the layout rebuilds
+            RefreshQuickCraft();   // repopulate the bottom-right quick-craft bar (craftable set changes with the bag)
 
             // repaint the paperdoll's worn clothing off the current slots (any inventory change can wear/unwear)
             if (_pdClothing == null && _pdBody != null) _pdClothing = new PlayerClothingController(_pdBody, Inv);   // Inv wasn't ready at build time

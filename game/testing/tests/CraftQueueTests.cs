@@ -66,6 +66,14 @@ namespace UnturnedGodot.Testing
             T.Check("still two jobs queued", menu3.DebugQueueCount == 2);
             menu3.Free();
 
+            // QueueCraft (the inventory quick-craft entry point) escrows + queues like the CRAFT button
+            var pinv4 = new PlayerInventory(); pinv4.tryAddItem(new Item(67, 4));
+            var menu4 = new CraftingMenu { Inv = pinv4 };
+            menu4.QueueCraft(bp, 2);
+            T.Check("QueueCraft consumed ingredients into limbo", pinv4.getItemCount(67) == 0);
+            T.Check("QueueCraft queued one job", menu4.DebugQueueCount == 1);
+            menu4.Free();
+
             yield break;
         }
     }

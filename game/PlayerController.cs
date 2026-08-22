@@ -2659,6 +2659,9 @@ namespace UnturnedGodot
             Input.MouseMode = Input.MouseModeEnum.Visible;
         }
 
+        // the inventory's quick-craft bar queues a craft into the SAME crafting queue (LMB = 1, RMB = 5).
+        public void QuickCraft(BlueprintDef bp, int n) => _craftMenu?.QueueCraft(bp, n);
+
         public void DebugSetHeldItem(SDG.Unturned.Item it) => _heldItem = it;      // test: link a backing item to the held gun
         public void DebugSaveGunState() => SaveGunState();                          // test: mirror live gun state to the backing item
         public void DebugStartReload() => StartReload();                            // test: begin a real reload (timer + anim), so a swap can land MID-reload

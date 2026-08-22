@@ -5307,6 +5307,13 @@ namespace UnturnedGodot
             AddChild(player);                    // _Ready builds + populates the inventory and its dashboard
             player.GlobalPosition = new Vector3(0, 1.0f, 0);
             { var hud = new HUD { Player = player }; AddChild(hud); player.Hud = hud; }
+            if (System.Environment.GetEnvironmentVariable("UG_QUICKCRAFT") == "1")   // stock craftable mats + load blueprints so the quick-craft bar shows
+            {
+                SDG.Unturned.ItemCatalog.RegisterAll();
+                BlueprintRegistry.Load();
+                player.Inventory.tryAddItem(new SDG.Unturned.Item(67, 200));   // Metal Scrap
+                player.Inventory.tryAddItem(new SDG.Unturned.Item(76, 1));     // Blowtorch (tool)
+            }
             if (equipDemo) { player.OpenInventory(); player.DemoEquip(1, 0, 0); }   // equip the SECONDARY Maplestrike -> held
             else if (selectDemo) player.DemoSelect(2, 0, 0);   // pop the selection panel for the Medkit in pockets
             else player.OpenInventory();

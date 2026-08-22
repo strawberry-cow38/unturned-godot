@@ -233,7 +233,7 @@ namespace UnturnedGodot
             }
         }
 
-        static ItemAsset OutAsset(BlueprintDef bp)
+        public static ItemAsset OutAsset(BlueprintDef bp)
         {
             if (bp.Outputs.Count > 0) { var o = Assets.findByGuid(bp.Outputs[0].Guid); if (o != null) return o; }
             if (ushort.TryParse(bp.OwnerItemId, out var oid)) return Assets.find(oid);
@@ -438,11 +438,12 @@ namespace UnturnedGodot
         }
 
         // how many times this recipe can be crafted from the current bag (min over consumed inputs).
-        int MaxCraftable(Crafting.IInv inv)
+        int MaxCraftable(Crafting.IInv inv, BlueprintDef bp = null)
         {
-            if (_sel == null) return 0;
+            bp ??= _sel;
+            if (bp == null) return 0;
             int max = int.MaxValue;
-            foreach (var ing in _sel.Inputs)
+            foreach (var ing in bp.Inputs)
             {
                 if (!ing.Consume || ing.Amount <= 0) continue;
                 var ia = Assets.findByGuid(ing.Guid);
@@ -485,6 +486,25 @@ namespace UnturnedGodot
             else Enqueue(_sel, n);
             _qty = 1;
             Rebuild();
+        }
+
+        // the quick-craft entry point (InventoryUI's bottom-right bar): queue a specific recipe. SP escrows into the
+        // queue like the CRAFT button; MP sends the immediate NetCraft. Clamps to what the bag can actually make.
+        public void QueueCraft(BlueprintDef bp, int qty)
+        {
+            if (Inv == null || bp == null || !Crafting.MeetsSkill(bp, Player?.Skills)) return;
+            var inv = new Crafting.PlayerInvAdapter(Inv);
+            if (!Crafting.CanCraft(bp, inv, out _)) return;
+            int n = Mathf.Clamp(qty, 1, Mathf.Max(1, MaxCraftable(inv, bp)));
+            if (Player?.NetCraft != null)
+            {
+                int idx = -1;
+                for (int i = 0; i < BlueprintRegistry.All.Count; i++)
+                    if (ReferenceEquals(BlueprintRegistry.All[i], bp)) { idx = i; break; }
+                if (idx >= 0) for (int k = 0; k < n; k++) Player.NetCraft((ushort)idx);
+            }
+            else Enqueue(bp, n);
+            if (_open) Rebuild();
         }
 
         // queue a job: resolve + consume its per-unit ingredients x n into limbo, then prepend it on the LEFT.
