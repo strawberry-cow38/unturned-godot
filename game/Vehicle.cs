@@ -764,7 +764,9 @@ namespace UnturnedGodot
         /// instead of by what a car falling off a hill does.</summary>
         public float ClimbMaxMps => _heliClimbMax;
         public float FallMaxMps => _heliFallMax;
-        bool _parked, _handbraking; float _spawnGrace = 2.5f; Vector3 _velAvg, _angAvg;   // -> STATIC freeze once majority-grounded + the LOW-PASSED velocity/spin are low (jitter-immune, d9588d3); _spawnGrace lets a fresh car DROP to terrain first
+        bool _parked, _handbraking; float _spawnGrace = 2.5f; Vector3 _velAvg, _angAvg;   // -> SLEEPS once majority-grounded + the LOW-PASSED velocity/spin are low (jitter-immune, d9588d3); _spawnGrace lets a fresh car DROP to terrain first
+        bool _asleep; float _wakeGrace;   // _asleep: WE put it to sleep (vs the engine, or never). _wakeGrace: seconds of guaranteed live physics after something woke it -- see the settle block
+        float _driveIdle = 999f;   // seconds since anything last called Drive() on this car. UNATTENDED is a fact about the present, not about how the car was spawned -- see the settle block
         float _tankYawGain;   // TankYawGain scaled to THIS hull's mass (0 = unset -> fall back to the constant); see BuildByName
         float _prevSpeed;   // last frame's speed, to detect a sudden drop = a crash (collision/ram damage)
         float _deadTimer = -1f; bool _exploded, _husk; CpuParticles3D _smoke, _smoke0, _fire; OmniLight3D _fireLight;
@@ -1029,7 +1031,7 @@ namespace UnturnedGodot
         public void NetEndHold(Vector3 lin, Vector3 ang)
         {
             NetHeld = false;
-            Freeze = false; _parked = false;
+            Freeze = false; Sleeping = false; _asleep = false; _parked = false;
             LinearVelocity = lin; AngularVelocity = ang;
             _velAvg = lin; _angAvg = ang;
             _prevSpeed = lin.Length();
@@ -1461,7 +1463,7 @@ namespace UnturnedGodot
 
         // source Bumper.OnTriggerEnter: the front bumper roadkills a character it drives into. Damage scales with impact
         // speed (clamped at 10) x the base BumperZombieDamage; the vehicle takes a little self-damage per hit too.
-        public void Wake() { Freeze = false; _parked = false; }   // resume dynamic physics (rammed or re-driven)
+        public void Wake() { Freeze = false; Sleeping = false; _asleep = false; _parked = false; }   // resume dynamic physics (rammed or re-driven)
         // vehicle crash -> authoritative destructible break, through the SAME seam the heli rotors already use
         // (Vehicle.NetDamageObject, declared once above -- main had added it for rotors while this branch was adding
         // it for crashes, and the merge brought in a second copy of the field). Null in --direct SP / on an MP
@@ -1536,7 +1538,7 @@ namespace UnturnedGodot
             if (CoupledTrailer != null || CoupledCab != null) Uncouple();   // a blown-up cab or trailer drops its partner so the wreck doesn't fling the whole rig (strawberry)
             if (Towing != null || TowedBy != null) DetachTow();   // a wrecked car also drops its rope tow (both ends) so the wreck doesn't drag or get dragged
             _exploded = true;
-            Freeze = false;   // unfreeze the parked/kinematic car so the wreck flies + tumbles
+            Freeze = false; Sleeping = false; _asleep = false;   // un-hold the parked car (frozen or asleep) so the wreck flies + tumbles
             foreach (var w in _wNodes) { w.SuspensionStiffness = 0.5f; w.SuspensionMaxForce = 0f; }   // KILL the suspension -> the hulk collapses flush onto its body instead of perching on ghost-wheels (master "kill it completely")
             ApplyCentralImpulse(Vector3.Up * 18000f);         // source min/maxExplosionForce straight up; boosted for a dramatic chassis fling against the 3x gravity (master: much higher)
             ApplyTorqueImpulse(new Vector3(2800f, 0f, 0f));   // source AddTorque(16,0,0)
@@ -3550,7 +3552,8 @@ namespace UnturnedGodot
             // TankYawGain is a TORQUE, so what it buys is torque/inertia -- and the pinned hull inertia is
             // m/12*(a^2+b^2), exactly proportional to mass at a fixed box. The tank went 900 kg -> 40000 kg,
             // so its yaw authority fell by the same 44x and skid-steer simply stopped: tank.differential_steer
-            // measured a pivot of 0.0 deg and a turn of 1.1 deg.
+            // measured a pivot of 0.0 deg and a turn of 1.1 deg. Scaling by massScale is exact rather than
+            // approximate here, because inertia and mass move together.
             v._tankYawGain = TankYawGain * massScale;
             v._heli = s.Heli; v._tracked = s.Tracked;
             v._plane = s.Plane; v._planeThrust = s.PlaneThrust; v._planeLift = s.PlaneLift; v._planeTargetSpeed = s.PlaneTargetSpeed;
@@ -5103,8 +5106,10 @@ namespace UnturnedGodot
             // from a predicting client, not as input (see DriveHeli).
             if (_heli) { DriveHeli(throttle, steer, 0f, 0f, GetPhysicsProcessDeltaTime()); return; }
             _inThrottle = throttle; _inSteer = steer;   // remembered for boat/amphibious water propulsion (applied as forces in _PhysicsProcess)
+            _driveIdle = 0f;   // somebody is at the wheel THIS tick
             if (_exploded) { EngineForce = 0f; Steering = 0f; Brake = 0f; return; }   // a wrecked vehicle can't be driven
             _parked = false;
+            if (Sleeping) { Sleeping = false; _asleep = false; }   // a settled car SLEEPS now, and a sleeping body integrates nothing -- EngineForce on it would do exactly nothing until something else nudged it
             if (!EngineOn) throttle = 0f;   // dead/off engine (e.g. 0 HP): no drive power, but the car keeps its momentum and can still steer + brake -> coasts to a stop instead of freezing (master)
             float speed = LinearVelocity.Length();   // m/s (horizontal-ish while driving)
             float fwd = LinearVelocity.Dot(-GlobalTransform.Basis.Z);   // signed forward speed (front = -Z)
@@ -6068,7 +6073,7 @@ namespace UnturnedGodot
             }
             if (_plane) { StepPlane((float)delta); return; }   // fixed wing: prop thrust + airspeed lift replace the wheel/tow/settle sim (buoyancy still runs for a floatplane)
             if (_heli) { if (_slingHook) UpdateSling((float)delta); StepHeli((float)delta); return; }   // rotary wing: rotor thrust replaces the wheel/tow/settle sim entirely
-            if (_tracked && !_exploded && !_parked && EngineOn && !Freeze)   // TANK skid-steer turn authority: a REAL yaw torque (integrated -> owned momentum, survives slopes/walls + the MP transform-adopt path). FADED by forward speed -- a tight pivot at rest but a WIDE arc at speed, so a full-rate yaw while driving doesn't fight the wheels' grip and crawl (master). The per-track EngineForces carry the fwd/back drive.
+            if (_tracked && !_exploded && !_parked && EngineOn && !Freeze && !Sleeping)   // TANK skid-steer turn authority: a REAL yaw torque (integrated -> owned momentum, survives slopes/walls + the MP transform-adopt path). FADED by forward speed -- a tight pivot at rest but a WIDE arc at speed, so a full-rate yaw while driving doesn't fight the wheels' grip and crawl (master). The per-track EngineForces carry the fwd/back drive.
             {
                 float tfwd = LinearVelocity.Dot(-GlobalTransform.Basis.Z);
                 float tTarget = _tankYawInput * TankMaxYawRate * (1f - TankYawSpeedFade * Mathf.Clamp(Mathf.Abs(tfwd) / _speedMax, 0f, 1f));
@@ -6084,12 +6089,13 @@ namespace UnturnedGodot
             if (CanTow && CoupledTrailer != null) UpdateCoupled(CoupledTrailer, (float)delta);   // coupled: rollover/clip disconnect + jackknife clamp
             else if (CanTow) UpdateTrailerApproach();     // ghost this cab vs a trailer it's backing under (exception + layer swap) so it phases the low deck+legs; solid vs the player throughout
             if (Towing != null) UpdateTow((float)delta);   // rope tower: spring-tension pull on both bodies + redraw the rope (SP)
-            if (Freeze && _deadTimer < 0f && !_alarmed)   // a frozen parked car off-screen -> skip the settle sim (but NOT an alarmed one -- its alarm keeps watching/looping); particles render on their own (master, perf)
+            if ((Freeze || Sleeping) && _deadTimer < 0f && !_alarmed)   // a held (frozen wreck / sleeping car) off-screen -> skip the settle sim (but NOT an alarmed one -- its alarm keeps watching/looping); particles render on their own (master, perf)
             {
                 var cam = GetViewport().GetCamera3D();
                 if (cam != null && (cam.IsPositionBehind(GlobalPosition) || cam.GlobalPosition.DistanceSquaredTo(GlobalPosition) > 90000f)) return;
             }
             if (_spawnGrace > 0f) _spawnGrace -= (float)delta;   // spawn/world-init: stay DYNAMIC ~2.5s so a fresh car drops to fit terrain first
+            _driveIdle += (float)delta;   // Drive() zeroes this; a car nobody is steering climbs away from zero
             // Freeze a settled car (source isKinematic) -- but ONLY once it's GROUNDED + fully stopped. No fixed exit-timer (that kept the
             // car dynamic ~1s -> braking jitter) and full velocity incl. vertical (so a falling/braking car never freezes mid-air). (master)
             int groundedCount = 0; foreach (var w in _wNodes) if (w.IsInContact()) groundedCount++;
@@ -6099,19 +6105,55 @@ namespace UnturnedGodot
             _angAvg = _angAvg.Lerp(AngularVelocity, 0.12f);   // cancels to ~0 in the running average, but a real roll / handbrake nose-dive REBOUND (sustained,
             // directional) survives the filter -- so we wait for the suspension to normalize yet never deadlock on the jitter. Reverted to the CLEAN
             // d9588d3 low-pass (no dwell, no raised thresholds) per master. The wreck branch keeps the no-wheel-contact check (killed suspension).
-            bool towed = CoupledCab != null || TowedBy != null || Towing != null;   // a trailer PULLED by a cab, OR either end of a rope tow: never let the settle/park logic freeze-static or damp it -- that would anchor the link (the 2mph stall)
-            bool wantHold = !towed && _angAvg.LengthSquared() < 0.03f && (_exploded ? (anyGrounded && _velAvg.LengthSquared() < 1.0f)
-                                                                          : mostlyGrounded && (_parked ? (_spawnGrace <= 0f && _velAvg.LengthSquared() < 1.0f)
-                                                                                                       : (_handbraking && _velAvg.LengthSquared() < 0.06f)));
-            if (wantHold && !Freeze)
+            bool towed = CoupledCab != null || TowedBy != null || Towing != null;   // a trailer PULLED by a cab, OR either end of a rope tow: never let the settle/park logic hold or damp it -- that would anchor the link (the 2mph stall)
+            // WOKEN BY SOMETHING ELSE, and the whole fix turns on catching it. A car we put to sleep integrates
+            // nothing, so its velocity stays exactly where we left it -- zero. Any velocity at all therefore
+            // means the physics engine ACTIVATED it (a collision, a shove, ground giving way) and has already
+            // stepped it. Without this the settle test below is STILL satisfied on that tick (the low-passed
+            // velocity has barely moved) and would put it straight back to sleep, which is a wall wearing a
+            // different hat. The grace window buys the impulse enough live ticks to register in _velAvg.
+            //
+            // Deliberately NOT `if (_asleep && !Sleeping)`: that reads the flag back out of the physics server
+            // to detect the wake, and if the readback ever lags or the wheels re-activate the body on their own,
+            // the false positive re-arms the grace every time we sleep it -- a car that can never settle,
+            // jittering forever, which is the exact failure the static freeze was papering over. Velocity is
+            // the physical signal and it cannot loop.
+            if (_asleep && (LinearVelocity.LengthSquared() > 0.02f || AngularVelocity.LengthSquared() > 0.02f)) { _wakeGrace = 1.5f; _asleep = false; }
+            if (_wakeGrace > 0f) _wakeGrace -= (float)delta;
+            // UNATTENDED, not "spawned parked". The hold used to be gated on _parked, and the bumper handler
+            // ("ram a frozen parked car -> wake it") calls Wake(), which CLEARS _parked -- so a car that had
+            // ever been nudged fell through to the `_handbraking` branch, which is false when nobody is aboard,
+            // and could never settle again for the rest of its life, running the full wheel sim forever.
+            // That bug predates this change and the static freeze HID it: you cannot shove a piece of terrain,
+            // so the case never arose. Making parked cars real is what made it arise, and the new probe caught
+            // it on the first run -- the rammed jeep was still awake 10 s later with the rammer 130 m away.
+            // Time since anyone last touched the controls is the honest test of "nobody is driving this".
+            bool unattended = _parked || _driveIdle > 1.0f;
+            bool wantHold = !towed && _wakeGrace <= 0f && _angAvg.LengthSquared() < 0.03f && (_exploded ? (anyGrounded && _velAvg.LengthSquared() < 1.0f)
+                                                                          : mostlyGrounded && (unattended ? (_spawnGrace <= 0f && _velAvg.LengthSquared() < 1.0f)
+                                                                                                          : (_handbraking && _velAvg.LengthSquared() < 0.06f)));
+            if (wantHold && !Freeze && !Sleeping)
             {
-                LinearVelocity = Vector3.Zero; AngularVelocity = Vector3.Zero; FreezeMode = RigidBody3D.FreezeModeEnum.Static; Freeze = true;   // STATIC not kinematic (kinematic vanished the car)
-                if (_exploded) { _husk = true; foreach (var w in _wNodes) w.QueueFree(); }   // a settled wreck becomes a pure static HUSK: drop the wheels + kill the whole sim (master, perf -- lots of wrecks)
+                LinearVelocity = Vector3.Zero; AngularVelocity = Vector3.Zero;
+                // A WRECK still freezes STATIC (kinematic vanished the car): its wheels get deleted below, so
+                // it is scenery, and PEI leaves a lot of it lying about. A LIVE car SLEEPS instead. Sleep costs
+                // the same as a freeze while nothing touches it -- no solver, no wheel raycasts -- but the body
+                // is still DYNAMIC and still in the world, so it can be rammed, shunted and rolled downhill.
+                // Freeze-Static made a parked car a piece of the terrain, which is what strawberry meant by
+                // "no physics unless driving SUCKS": you could drive into a jeep at 45 km/h and bounce off it.
+                if (_exploded) { FreezeMode = RigidBody3D.FreezeModeEnum.Static; Freeze = true; _husk = true; foreach (var w in _wNodes) w.QueueFree(); }
+                else { Sleeping = true; _asleep = true; }
             }
-            else if (!wantHold && Freeze) Freeze = false;
-            bool damping = !towed && (_parked || _handbraking) && !Freeze && LinearVelocity.LengthSquared() < 2.0f;   // slowing to a stop -> DAMP the residual jitter OUT (spring + brake oscillation) instead of just waiting it out (master's "other idea"). A towed trailer never damps -- it'd anchor the tow.
-            LinearDamp = damping ? 6f : 0f; AngularDamp = damping ? 6f : 0f;
-            if (_parked && !Freeze && !towed) Brake = _brakeForce * HandbrakeScale;   // brake a rolling parked car down until it freezes (never brake a towed trailer)
+            else if (!wantHold && (Freeze || Sleeping)) { Freeze = false; Sleeping = false; _asleep = false; }
+            // NO LINEAR DAMPING. `LinearDamp = 6` while slowing was not braking, it was a velocity DELETE: an
+            // exponential decay on the whole body that owes nothing to the wheels, the tyres or the road, worth
+            // ~2.4 g on the jeep and applied whether or not anything was gripping. It is the other half of
+            // "no physics unless driving". Brake torque already stops the car -- the footbrake alone does it in
+            // 3.2 m -- so all the damping ever added was hiding the last of the suspension wobble, and a modest
+            // ANGULAR term does that honestly without touching where the car ends up.
+            bool settling = !towed && (unattended || _handbraking) && !Freeze && !Sleeping && LinearVelocity.LengthSquared() < 2.0f;
+            LinearDamp = 0f; AngularDamp = settling ? 3f : 0f;
+            if (unattended && !Freeze && !Sleeping && !towed) Brake = _brakeForce * HandbrakeScale;   // parking brake: hold a rolling unattended car down until it settles (never brake a towed trailer). Also on `unattended` rather than `_parked`, so a car that has been rammed keeps its brake instead of free-rolling away forever
             // NO manual wheel spin: Godot's VehicleWheel3D already bakes the ROLL (+ suspension + steering) into its own
             // node transform every physics tick, and the wheel MESH is a child that inherits it. An old manual
             // _wMeshes[i].Rotation added an equal+opposite roll that CANCELLED the node's auto-roll in world space -> the
