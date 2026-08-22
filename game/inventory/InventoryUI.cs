@@ -171,8 +171,9 @@ namespace UnturnedGodot
                 if (show.Count >= QUICK_MAX) break;
             }
 
-            const int TQ = 52, GAP = 6, PADX = 8;
-            float w = PADX * 2 + Mathf.Max(1, show.Count) * (TQ + GAP) - GAP, h = TQ + 30;
+            const int TQ = 52, GAP = 6, PADX = 8, COLS = 5;   // a GRID, COLS wide (master: grid, not a row)
+            int cols = Mathf.Clamp(show.Count, 1, COLS), rows = Mathf.Max(1, (show.Count + COLS - 1) / COLS);
+            float w = Mathf.Max(120, PADX * 2 + cols * (TQ + GAP) - GAP), h = 24 + rows * (TQ + GAP) - GAP + 6;
             var bg = new Panel { Position = Vector2.Zero, Size = new Vector2(w, h), MouseFilter = Control.MouseFilterEnum.Ignore };
             var sb = new StyleBoxFlat { BgColor = new Color(0.10f, 0.12f, 0.15f, 0.93f), CornerRadiusTopLeft = 6, CornerRadiusTopRight = 6, CornerRadiusBottomLeft = 6, CornerRadiusBottomRight = 6 };
             bg.AddThemeStyleboxOverride("panel", sb);
@@ -192,7 +193,7 @@ namespace UnturnedGodot
             {
                 var bp = show[i];
                 var a = CraftingMenu.OutAsset(bp);
-                var tile = new Panel { Position = new Vector2(PADX + i * (TQ + GAP), 24), Size = new Vector2(TQ, TQ), TooltipText = $"{CraftingMenu.Title(bp)}\nLMB +1   RMB +5" };
+                var tile = new Panel { Position = new Vector2(PADX + (i % COLS) * (TQ + GAP), 24 + (i / COLS) * (TQ + GAP)), Size = new Vector2(TQ, TQ), TooltipText = $"{CraftingMenu.Title(bp)}\nLMB +1   RMB +5" };
                 var tsb = new StyleBoxFlat { BgColor = new Color(0.16f, 0.19f, 0.23f, 0.96f), CornerRadiusTopLeft = 4, CornerRadiusTopRight = 4, CornerRadiusBottomLeft = 4, CornerRadiusBottomRight = 4 };
                 tile.AddThemeStyleboxOverride("panel", tsb);   // MouseFilter left Stop so the tooltip shows on hover; the click is caught in _Input
                 var tex = a != null ? IconFor(a.id) : null;
