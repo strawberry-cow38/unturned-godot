@@ -28,7 +28,8 @@ namespace UnturnedGodot
         Vector3 _target;
         bool _walking;
         double _idleTimer, _fleeTimer;
-        const float Speed = 1.35f, FleeSpeed = 5.5f, HomeRange = 12f, Arrive = 0.8f;
+        Vector3 _faceDir = Vector3.Forward;   // smoothed heading: the body turns toward travel instead of snapping to it
+        const float Speed = 1.35f, FleeSpeed = 5.5f, HomeRange = 12f, Arrive = 0.8f, TurnLerp = 5f;
         static readonly string[] Ambient = { "Idle", "Eat", "Glance_0", "Idle", "Eat", "Glance_1" };
 
         uint R() { Seed = Seed * 1664525u + 1013904223u; return Seed >> 9; }
@@ -110,24 +111,48 @@ namespace UnturnedGodot
             if (Dead) return;                                       // the ragdoll owns the body now
             if (Rig != null && !IsInstanceValid(Rig)) return;       // a FREED rig bails; a null rig (dedicated, rig-less) still wanders so AnimalNetSync has a moving transform to publish
             if (_fleeTimer > 0) _fleeTimer -= delta;
+            var pos = GlobalPosition;
+            float nx = pos.X, nz = pos.Z;
+            bool moved = false;
             if (_walking)
             {
-                var pos = GlobalPosition;
                 float dx = _target.X - pos.X, dz = _target.Z - pos.Z;
                 float d = Mathf.Sqrt(dx * dx + dz * dz);
-                if (d < Arrive) { StartIdle(); return; }
-                float speed = _fleeTimer > 0 ? FleeSpeed : Speed;
-                float inv = 1f / d, step = Mathf.Min(speed * (float)delta, d);
-                float nx = pos.X + dx * inv * step, nz = pos.Z + dz * inv * step;
-                float gy = (Terr != null ? Terr.SampleHeight(nx, nz) : pos.Y - Foot) + Foot;
-                GlobalPosition = new Vector3(nx, gy, nz);
-                LookAt(new Vector3(nx + dx, gy, nz + dz), Vector3.Up);   // face travel: the body's -Z leads, the rig's RigYawFix turns the model to match
+                if (d < Arrive) StartIdle();
+                else
+                {
+                    float speed = _fleeTimer > 0 ? FleeSpeed : Speed;
+                    float inv = 1f / d, step = Mathf.Min(speed * (float)delta, d);
+                    nx = pos.X + dx * inv * step; nz = pos.Z + dz * inv * step;
+                    var want = new Vector3(dx, 0f, dz).Normalized();
+                    _faceDir = _faceDir.LengthSquared() < 1e-4f ? want : _faceDir.Slerp(want, Mathf.Min(1f, TurnLerp * (float)delta));   // SLERP the heading -> a smooth turn, never a snap on a new target
+                    moved = true;
+                }
             }
             else
             {
                 _idleTimer -= delta;
                 if (_idleTimer <= 0) PickTarget();
             }
+            // GROUND the feet EVERY frame on the real collision surface (what the player/zombies stand on), NOT the
+            // heightmap guess -- that SampleHeight-vs-collision gap is what left them hovering above the ground.
+            float gy = GroundY(nx, nz) + Foot;
+            GlobalPosition = new Vector3(nx, gy, nz);
+            if (moved) LookAt(new Vector3(nx + _faceDir.X, gy, nz + _faceDir.Z), Vector3.Up);   // body -Z leads the smoothed heading (level); the rig's RigYawFix turns the model to match
+        }
+
+        // True ground height under (x,z): raycast the world collision (layer 1<<0, what physics bodies rest on),
+        // starting from the heightmap guess; fall back to SampleHeight where there's no collider / no space state.
+        float GroundY(float x, float z)
+        {
+            float sampled = Terr != null ? Terr.SampleHeight(x, z) : GlobalPosition.Y - Foot;
+            var space = GetWorld3D()?.DirectSpaceState;
+            if (space == null) return sampled;
+            var q = PhysicsRayQueryParameters3D.Create(new Vector3(x, sampled + 4f, z), new Vector3(x, sampled - 4f, z));
+            q.CollisionMask = 1u << 0;
+            q.Exclude = new Godot.Collections.Array<Rid> { GetRid() };
+            var hit = space.IntersectRay(q);
+            return hit.Count > 0 ? ((Vector3)hit["position"]).Y : sampled;
         }
     }
 }

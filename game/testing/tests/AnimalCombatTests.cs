@@ -47,6 +47,14 @@ namespace UnturnedGodot.Testing
             T.Check("...a hit on the corpse is a no-op (health does not go further negative)", NoOpOnCorpse(a));
             a.QueueFree();
             yield return Ticks(1);
+
+            // 4. GROUNDING: a live agent walks and re-grounds every frame off the collision raycast (GroundY) --
+            //    verify that path runs each _Process tick without dying or erroring (Terr-less here -> falls back).
+            var b = Spawn(World, 100f);
+            b.DamageHit(1f, new Vector3(0f, 0f, 6f), Vector3.Back);   // graze from +Z -> it bolts toward -Z, so it's walking + re-grounding
+            yield return Ticks(6);
+            T.Check("a walking animal runs the ground raycast each frame without dying/erroring", !b.Dead && IsInstanceValid(b));
+            b.QueueFree();
         }
 
         static bool NoOpOnCorpse(AnimalAgent a)
