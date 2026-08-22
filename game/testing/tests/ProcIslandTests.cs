@@ -206,6 +206,72 @@ namespace UnturnedGodot.Testing
             T.Check("a construction site is always reached by a dirt trail, never a paved road", siteAlwaysTrail);
             T.Check($"rail only runs long hauls between permanent places (any rail: {railExists})", railOnlyLongAndPermanent);
 
+            // ---- MONUMENTS BUILT FROM THE ROAD KIT.
+            cons = ProcIsland.SnapConnectorsToLattice(pois, cons);
+            var tiles = new System.Collections.Generic.List<ProcIsland.MonumentTile>();
+            for (int i = 0; i < pois.Count; i++) tiles.AddRange(ProcIsland.BuildMonument(i, pois[i], cons));
+            T.Check($"every monument got streets ({tiles.Count} props across {pois.Count} monuments)",
+                tiles.Count >= pois.Count);
+
+            // ONLY CAPS CARRY CONNECTIONS, AND EVERY CONNECTION IS ON A CAP. Two directions, because each is
+            // satisfiable while the other fails: an interior crossroads wearing a Cap is as wrong as a gate
+            // opening onto a plain Line.
+            bool capsOnlyAtGates = true, everyGateOnACap = true;
+            foreach (var gate in cons)
+            {
+                var owner = pois[gate.Poi];
+                bool found = false;
+                foreach (var t in tiles)
+                {
+                    if (t.Poi != gate.Poi) continue;
+                    bool isCap = t.Piece is ProcIsland.RoadPiece.LineCap or ProcIsland.RoadPiece.TeeCap or ProcIsland.RoadPiece.QuadCap;
+                    // The cap's own connector: tile centre, out along its ramp, half a tile.
+                    float yaw = Mathf.DegToRad(t.YawDeg);
+                    float rx = -Mathf.Sin(yaw), rz = -Mathf.Cos(yaw);   // mesh +Y after yaw -- the ramp
+                    float px = t.X + rx * ProcIsland.TileSize * 0.5f, pz = t.Z + rz * ProcIsland.TileSize * 0.5f;
+                    if (isCap && Mathf.Abs(px - gate.X) < 0.6f && Mathf.Abs(pz - gate.Z) < 0.6f) { found = true; break; }
+                }
+                if (!found) everyGateOnACap = false;
+            }
+            // ...and no Cap anywhere that is not serving a gate.
+            foreach (var t in tiles)
+            {
+                bool isCap = t.Piece is ProcIsland.RoadPiece.LineCap or ProcIsland.RoadPiece.TeeCap or ProcIsland.RoadPiece.QuadCap;
+                if (!isCap) continue;
+                float yaw = Mathf.DegToRad(t.YawDeg);
+                float px = t.X - Mathf.Sin(yaw) * ProcIsland.TileSize * 0.5f, pz = t.Z - Mathf.Cos(yaw) * ProcIsland.TileSize * 0.5f;
+                bool serves = false;
+                foreach (var gate in cons)
+                    if (gate.Poi == t.Poi && Mathf.Abs(px - gate.X) < 0.6f && Mathf.Abs(pz - gate.Z) < 0.6f) { serves = true; break; }
+                if (!serves) capsOnlyAtGates = false;
+            }
+            T.Check("every gate opens onto a Cap prop, at its ramp", everyGateOnACap);
+            T.Check("...and no Cap exists that is not serving a gate", capsOnlyAtGates);
+
+            // THE LATTICE ACTUALLY LINES UP. A gate off the lattice means the road meets the monument up to 12 m
+            // past the end of the very road piece it is supposed to join -- and every check above still passes,
+            // because they all measure the cap against the gate rather than either against the grid.
+            float worstOffLattice = 0f;
+            foreach (var gate in cons)
+            {
+                var owner = pois[gate.Poi];
+                float along = Mathf.Abs(gate.DirX) > 0.5f ? gate.Z - owner.Z : gate.X - owner.X;
+                int n2 = ProcIsland.TilesFor(owner.Kind);
+                float k = along / ProcIsland.TileSize + (n2 - 1) * 0.5f;
+                worstOffLattice = Mathf.Max(worstOffLattice, Mathf.Abs(k - Mathf.Round(k)) * ProcIsland.TileSize);
+            }
+            T.Check($"every gate sits on a lattice line (worst {worstOffLattice:0.###} m off)", worstOffLattice < 0.01f);
+            GD.Print($"[island] {tiles.Count} road props placed; worst gate off-lattice {worstOffLattice:0.###} m");
+            foreach (var gate in cons) GD.Print($"[island]   GATE poi#{gate.Poi} at ({gate.X:0},{gate.Z:0}) normal ({gate.DirX:0},{gate.DirZ:0}) {gate.Kind}");
+            // Two gates that snap to the SAME point both "find a Cap" -- the same one -- so the coverage check
+            // passes while one of them has quietly ceased to exist as a distinct connection.
+            int dupGates = 0;
+            for (int i = 0; i < cons.Count; i++)
+                for (int j = i + 1; j < cons.Count; j++)
+                    if (cons[i].Poi == cons[j].Poi && Mathf.Abs(cons[i].X - cons[j].X) < 0.5f && Mathf.Abs(cons[i].Z - cons[j].Z) < 0.5f) dupGates++;
+            T.Check($"no two gates snapped onto the same point ({dupGates} collisions)", dupGates == 0);
+            foreach (var t in tiles) GD.Print($"[island]   {t}");
+
             // ---- ROADS. Routed over the terrain, then carved into it.
             var routes = ProcIsland.CarveRoutes(a, a.GetLength(0), a.GetLength(1), pois, links, cons, ProcIsland.Params.Default(1234));
             T.Check($"every link got a route ({routes.Count}/{links.Count})", routes.Count == links.Count);
@@ -374,6 +440,32 @@ namespace UnturnedGodot.Testing
                     Box(rIn, tint);
                     Box(rOut, tint * 0.45f);
                 }
+                // The road props themselves: each tile as a filled block, caps lit brighter with a spur drawn
+                // along their ramp. Colour by family so a wrong ROTATION is visible as a spur pointing the wrong
+                // way -- the numbers say "every gate is on a cap", they cannot say the cap faces the road.
+                foreach (var t in tiles)
+                {
+                    bool cap = t.Piece is ProcIsland.RoadPiece.LineCap or ProcIsland.RoadPiece.TeeCap or ProcIsland.RoadPiece.QuadCap;
+                    var tc = cap ? new Color(1f, 0.95f, 0.55f) : new Color(0.62f, 0.62f, 0.66f);
+                    int tcx = Mathf.RoundToInt(t.X / 4f), tcy = Mathf.RoundToInt(t.Z / 4f);
+                    int half = Mathf.RoundToInt(ProcIsland.TileSize * 0.5f / 4f) - 1;   // 24m tile -> 6 cells, inset
+                    for (int ox = -half; ox <= half; ox++)
+                        for (int oy = -half; oy <= half; oy++)
+                        {
+                            int px = tcx + ox, py = tcy + oy;
+                            if (px >= 0 && py >= 0 && px < gw && py < gh) img.SetPixel(px, py, tc);
+                        }
+                    if (cap)
+                    {
+                        float yaw = Mathf.DegToRad(t.YawDeg);
+                        float rx = -Mathf.Sin(yaw), rz = -Mathf.Cos(yaw);
+                        for (int k = 0; k <= half + 2; k++)
+                        {
+                            int px = tcx + Mathf.RoundToInt(rx * k), py = tcy + Mathf.RoundToInt(rz * k);
+                            if (px >= 0 && py >= 0 && px < gw && py < gh) img.SetPixel(px, py, new Color(1f, 0.35f, 0f));
+                        }
+                    }
+                }
                 foreach (var gate in cons)
                 {
                     int gx = Mathf.RoundToInt(gate.X / 4f), gy = Mathf.RoundToInt(gate.Z / 4f);
@@ -417,6 +509,72 @@ namespace UnturnedGodot.Testing
                     }
                 }
                 img.SavePng(png);
+
+                // A ZOOMED monument, because the island view is 4 m per pixel and the thing being checked here
+                // is a 24 m prop's ROTATION. At that scale a cap facing the wrong way is two pixels.
+                {
+                    var hub = pois[0];
+                    int span = ProcIsland.TilesFor(hub.Kind) * 24 + 48;    // footprint plus a margin
+                    const int Px = 6;                                       // pixels per metre-ish
+                    int side = span * Px / 4;
+                    var zi = Image.CreateEmpty(side, side, false, Image.Format.Rgb8);
+                    float ox0 = hub.X - span * 0.5f, oz0 = hub.Z - span * 0.5f;
+                    for (int px = 0; px < side; px++)
+                        for (int py = 0; py < side; py++)
+                        {
+                            float wx = ox0 + px * 4f / Px, wz = oz0 + py * 4f / Px;
+                            int gx2 = Mathf.Clamp(Mathf.RoundToInt(wx / 4f), 0, gw - 1), gy2 = Mathf.Clamp(Mathf.RoundToInt(wz / 4f), 0, gh - 1);
+                            float h = ProcIsland.ToWorld(a[gx2, gy2]);
+                            zi.SetPixel(px, py, h <= 25.6f ? new Color(0.05f, 0.25f, 0.45f)
+                                                           : new Color(0.30f + 0.004f * (h - 25.6f), 0.38f + 0.003f * (h - 25.6f), 0.24f));
+                        }
+                    void ZLine(float x1, float z1, float x2, float z2, Color c)
+                    {
+                        int n2 = 260;
+                        for (int k = 0; k <= n2; k++)
+                        {
+                            float f = k / (float)n2;
+                            int px = Mathf.RoundToInt((Mathf.Lerp(x1, x2, f) - ox0) * Px / 4f);
+                            int py = Mathf.RoundToInt((Mathf.Lerp(z1, z2, f) - oz0) * Px / 4f);
+                            if (px >= 0 && py >= 0 && px < side && py < side) zi.SetPixel(px, py, c);
+                        }
+                    }
+                    // footprint
+                    ZLine(hub.X - hub.HalfSize, hub.Z - hub.HalfSize, hub.X + hub.HalfSize, hub.Z - hub.HalfSize, new Color(1f, 1f, 1f));
+                    ZLine(hub.X + hub.HalfSize, hub.Z - hub.HalfSize, hub.X + hub.HalfSize, hub.Z + hub.HalfSize, new Color(1f, 1f, 1f));
+                    ZLine(hub.X + hub.HalfSize, hub.Z + hub.HalfSize, hub.X - hub.HalfSize, hub.Z + hub.HalfSize, new Color(1f, 1f, 1f));
+                    ZLine(hub.X - hub.HalfSize, hub.Z + hub.HalfSize, hub.X - hub.HalfSize, hub.Z - hub.HalfSize, new Color(1f, 1f, 1f));
+                    foreach (var t in tiles)
+                    {
+                        if (t.Poi != 0) continue;
+                        float h2 = ProcIsland.TileSize * 0.5f;
+                        bool cap = t.Piece is ProcIsland.RoadPiece.LineCap or ProcIsland.RoadPiece.TeeCap or ProcIsland.RoadPiece.QuadCap;
+                        var tc = cap ? new Color(1f, 0.9f, 0.4f) : new Color(0.72f, 0.72f, 0.76f);
+                        ZLine(t.X - h2, t.Z - h2, t.X + h2, t.Z - h2, tc);
+                        ZLine(t.X + h2, t.Z - h2, t.X + h2, t.Z + h2, tc);
+                        ZLine(t.X + h2, t.Z + h2, t.X - h2, t.Z + h2, tc);
+                        ZLine(t.X - h2, t.Z + h2, t.X - h2, t.Z - h2, tc);
+                        // the piece's LOCAL AXES: mesh +Y (its "forward"/ramp) in orange, mesh +X in cyan.
+                        float yaw = Mathf.DegToRad(t.YawDeg);
+                        float fy_x = -Mathf.Sin(yaw), fy_z = -Mathf.Cos(yaw);
+                        float fx_x = Mathf.Cos(yaw), fx_z = -Mathf.Sin(yaw);
+                        ZLine(t.X, t.Z, t.X + fy_x * h2 * 1.35f, t.Z + fy_z * h2 * 1.35f, new Color(1f, 0.4f, 0f));
+                        ZLine(t.X, t.Z, t.X + fx_x * h2 * 0.7f, t.Z + fx_z * h2 * 0.7f, new Color(0.2f, 0.9f, 1f));
+                    }
+                    foreach (var gate in cons)
+                    {
+                        if (gate.Poi != 0) continue;
+                        int px = Mathf.RoundToInt((gate.X - ox0) * Px / 4f), py = Mathf.RoundToInt((gate.Z - oz0) * Px / 4f);
+                        for (int oxx = -2; oxx <= 2; oxx++)
+                            for (int oyy = -2; oyy <= 2; oyy++)
+                            {
+                                int qx = px + oxx, qy = py + oyy;
+                                if (qx >= 0 && qy >= 0 && qx < side && qy < side) zi.SetPixel(qx, qy, new Color(1f, 0.1f, 0.9f));
+                            }
+                    }
+                    zi.SavePng(png.Replace(".png", "_zoom.png"));
+                    GD.Print($"[island] zoom -> {png.Replace(".png", "_zoom.png")} ({side}x{side})");
+                }
                 GD.Print($"[island] preview -> {png}  ({gw}x{gh})");
             }
 

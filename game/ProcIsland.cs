@@ -186,15 +186,12 @@ namespace UnturnedGodot
             public override string ToString() => $"{Kind} @ ({X:0},{Z:0}) {HalfSize * 2f:0}m sq y{GroundY:0.#}";
         }
 
-        // Half-extents, so these are 110 m / 80 m / 50 m squares. Cut from 135/95/65 radii (270/190/130 m
-        // across) on the first look at a render: at that size a town pad covered a quarter of a small island and
-        // the map read as a set of discs rather than as terrain with places on it.
-        static float HalfSizeFor(PoiKind k) => k switch
-        {
-            PoiKind.Town => 55f,                 // the biggest footprint: a street grid needs room
-            PoiKind.MilitaryBase => 40f,
-            _ => 25f,                            // construction site: a couple of shells and a crane
-        };
+        // The road kit is a 24 m lattice (every piece has its connectors at +/-12, carriageway at z 0.4), so a
+        // monument's half-extent is 12 * tiles EXACTLY. Snapped from 55/40/25 for that reason: at 55 the outer
+        // tile edge lands 5 m inside the footprint and every gate sits on nothing. 5, 3 and 2 tiles across.
+        public const float TileSize = 24f;
+        public static int TilesFor(PoiKind k) => k switch { PoiKind.Town => 5, PoiKind.MilitaryBase => 3, _ => 2 };
+        static float HalfSizeFor(PoiKind k) => TilesFor(k) * TileSize * 0.5f;   // 60 / 36 / 24 m
 
         /// <summary>World height at a grid cell, clamped to the grid.</summary>
         static float HeightAt(float[,] g, int gw, int gh, int x, int y) =>
@@ -809,6 +806,189 @@ namespace UnturnedGodot
                         grid[x, y] = Mathf.Lerp(grid[x, y], want, w);
                     }
             }
+        }
+
+        // -------------------------------------------------------- MONUMENTS
+
+        /// <summary>Which piece of the road kit a tile is. Cap variants exist only for the shapes that terminate
+        /// a run; there is no Turn_Cap because a corner is never where a road leaves a monument.</summary>
+        public enum RoadPiece { Line, Quad, Tee, Turn, LineCap, QuadCap, TeeCap }
+
+        /// <summary>One placed road prop. Yaw is about world up; the piece's MESH +Y axis ends up pointing along
+        /// Facing. Mesh space is Z-up and yaw-only here (mesh x,y,z -> node x,z,-y), so mesh +Y is world -Z at
+        /// yaw 0 -- which is why the yaw below is atan2(-x, -z) and not atan2(x, z).</summary>
+        public readonly struct MonumentTile
+        {
+            public readonly int Poi; public readonly RoadPiece Piece;
+            public readonly float X, Z, YawDeg;
+            public MonumentTile(int poi, RoadPiece piece, float x, float z, float yaw)
+            { Poi = poi; Piece = piece; X = x; Z = z; YawDeg = yaw; }
+            public override string ToString() => $"{Piece} @ ({X:0},{Z:0}) yaw {YawDeg:0}";
+        }
+
+        static readonly (int dx, int dz)[] Card = { (0, -1), (1, 0), (0, 1), (-1, 0) };
+
+        static float YawFor(int dx, int dz) => Mathf.RadToDeg(Mathf.Atan2(-dx, -dz));
+
+        /// <summary>Lay a monument's streets on the 24 m lattice and return the placed props.
+        ///
+        /// The skeleton is the union of straight-then-turn runs from the centre tile out to each gate's tile, so
+        /// every street exists BECAUSE something connects through it -- the same principle as the gates
+        /// themselves. Piece choice is then read off the shape: a cell's four lattice neighbours decide whether
+        /// it is a crossroads, a T, a straight, a corner or a dead end, and the dead ends are exactly the cells
+        /// where a link leaves. Those get the Cap, ramp outward (strawberry: only Cap props should have
+        /// connections, on the ramp side).</summary>
+        public static System.Collections.Generic.List<MonumentTile> BuildMonument(
+            int poiIndex, Poi poi, System.Collections.Generic.List<Connector> cons)
+        {
+            int n = TilesFor(poi.Kind);
+            var tiles = new System.Collections.Generic.List<MonumentTile>();
+            // lattice cell (i,j) centre, i/j in 0..n-1
+            Vector2 CellPos(int i, int j) => new(
+                poi.X + (i - (n - 1) * 0.5f) * TileSize,
+                poi.Z + (j - (n - 1) * 0.5f) * TileSize);
+
+            int mid = n / 2;
+            var skel = new System.Collections.Generic.HashSet<(int, int)> { (mid, mid) };
+            var exits = new System.Collections.Generic.Dictionary<(int, int), (int dx, int dz)>();   // cell -> outward dir
+
+            foreach (var c in cons)
+            {
+                if (c.Poi != poiIndex) continue;
+                int dx = Mathf.RoundToInt(c.DirX), dz = Mathf.RoundToInt(c.DirZ);
+                // The gate is on the face whose normal is (dx,dz); its tile is the edge cell on that face
+                // nearest the gate's position ALONG the face.
+                int ei, ej;
+                if (dx != 0)
+                {
+                    ei = dx > 0 ? n - 1 : 0;
+                    ej = Mathf.Clamp(Mathf.RoundToInt((c.Z - poi.Z) / TileSize + (n - 1) * 0.5f), 0, n - 1);
+                }
+                else
+                {
+                    ej = dz > 0 ? n - 1 : 0;
+                    ei = Mathf.Clamp(Mathf.RoundToInt((c.X - poi.X) / TileSize + (n - 1) * 0.5f), 0, n - 1);
+                }
+                // L-route from the centre: along one axis then the other. Deterministic and always inside the
+                // lattice, which a diagonal would not be.
+                int ci = mid, cj = mid;
+                while (ci != ei) { ci += System.Math.Sign(ei - ci); skel.Add((ci, cj)); }
+                while (cj != ej) { cj += System.Math.Sign(ej - cj); skel.Add((ci, cj)); }
+                exits[(ei, ej)] = (dx, dz);
+            }
+
+            // PRUNE DEAD-END STUBS. Every street is a path from the centre out to a gate, so on a monument with
+            // ONE gate the centre tile is left hanging with a single neighbour -- and a dead end has to terminate
+            // in a Cap, whose ramp then points out of the footprint at nothing. On a 2x2 site every cell is a
+            // boundary cell, so there is nowhere for such a stub to face that is not outward. Trimming any
+            // non-exit cell with fewer than two neighbours, repeatedly, leaves exactly the cells that lie on a
+            // route between gates -- which is the same rule the streets were built on in the first place.
+            bool trimmed = true;
+            while (trimmed)
+            {
+                trimmed = false;
+                foreach (var cell in new System.Collections.Generic.List<(int, int)>(skel))
+                {
+                    if (exits.ContainsKey(cell)) continue;
+                    int deg = 0;
+                    foreach (var d in Card) if (skel.Contains((cell.Item1 + d.dx, cell.Item2 + d.dz))) deg++;
+                    if (deg <= 1) { skel.Remove(cell); trimmed = true; }
+                }
+            }
+
+            foreach (var cell in skel)
+            {
+                var nb = new System.Collections.Generic.List<(int dx, int dz)>();
+                foreach (var d in Card)
+                    if (skel.Contains((cell.Item1 + d.dx, cell.Item2 + d.dz))) nb.Add(d);
+
+                var pos = CellPos(cell.Item1, cell.Item2);
+                bool isExit = exits.TryGetValue(cell, out var outDir);
+
+                // PIECE CHOICE IS THE ARRANGEMENT, NOT THE COUNT. Each prop has its connectors on FIXED local
+                // axes, so a piece is only usable if its axes can be rotated onto the directions this cell
+                // actually needs:
+                //     Line  +Y,-Y      Turn  +X,-Y      Tee  +X,-X,+Y      Quad  all four
+                // Choosing by neighbour count alone put a TeeCap on a cell whose two streets ran +X and +Z --
+                // perpendicular, which a Tee's straight bar cannot express -- so one street opened onto solid
+                // kerb. Quad is the fallback whenever the shape does not fit something narrower; a spare
+                // connector is invisible, a missing one is a road into a wall.
+                static (int dx, int dz) Rot90((int dx, int dz) v) => (-v.dz, v.dx);
+
+                RoadPiece piece; float yaw;
+                var need = new System.Collections.Generic.List<(int dx, int dz)>(nb);
+                if (isExit) need.Add(outDir);
+
+                if (isExit)
+                {
+                    // The ramp is the piece's +Y, always -- that is the whole point of a Cap.
+                    yaw = YawFor(outDir.dx, outDir.dz);
+                    var streets = nb;
+                    bool oppositeOnly = streets.Count == 1 && streets[0].dx == -outDir.dx && streets[0].dz == -outDir.dz;
+                    bool barAcross = streets.Count == 2
+                                     && streets[0].dx == -streets[1].dx && streets[0].dz == -streets[1].dz
+                                     && streets[0].dx * outDir.dx + streets[0].dz * outDir.dz == 0;
+                    piece = streets.Count == 0 || oppositeOnly ? RoadPiece.LineCap
+                          : barAcross ? RoadPiece.TeeCap
+                          : RoadPiece.QuadCap;
+                }
+                else if (nb.Count >= 4) { piece = RoadPiece.Quad; yaw = 0f; }
+                else if (nb.Count == 3)
+                {
+                    var missing = (dx: 0, dz: 0);
+                    foreach (var d in Card) if (!nb.Contains(d)) { missing = d; break; }
+                    piece = RoadPiece.Tee; yaw = YawFor(-missing.dx, -missing.dz);   // stem opposite the gap
+                }
+                else if (nb.Count == 2)
+                {
+                    if (nb[0].dx == -nb[1].dx && nb[0].dz == -nb[1].dz)
+                    {
+                        piece = RoadPiece.Line; yaw = YawFor(nb[0].dx, nb[0].dz);
+                    }
+                    else
+                    {
+                        // TURN's connectors are local +X and -Y, NOT +/-Y. Solving mesh+X -> a and mesh-Y -> b
+                        // gives cos(yaw) = a.x, sin(yaw) = -a.z, and b must be Rot90(a) -- so pick whichever of
+                        // the two neighbours satisfies that and the other follows.
+                        var a0 = nb[0]; var b0 = nb[1];
+                        if (Rot90(a0) != b0) { (a0, b0) = (b0, a0); }
+                        piece = RoadPiece.Turn;
+                        yaw = Mathf.RadToDeg(Mathf.Atan2(-a0.dz, a0.dx));
+                    }
+                }
+                else if (nb.Count == 1) { piece = RoadPiece.LineCap; yaw = YawFor(-nb[0].dx, -nb[0].dz); }
+                else { piece = RoadPiece.Quad; yaw = 0f; }
+
+                tiles.Add(new MonumentTile(poiIndex, piece, pos.X, pos.Y, yaw));
+            }
+            return tiles;
+        }
+
+        /// <summary>Snap every gate onto its face's lattice line, so a Cap's connector lands exactly on it.
+        ///
+        /// This is the "you may need to move the connection points to fit" half. The gates were placed by a ray
+        /// clip against the footprint, which puts them anywhere along a face; a Cap's connector sits at the tile
+        /// centre +/-12, i.e. only ever on a lattice line. Without this the road meets the monument up to 12 m
+        /// off the end of the road piece it is supposed to join.</summary>
+        public static System.Collections.Generic.List<Connector> SnapConnectorsToLattice(
+            System.Collections.Generic.List<Poi> pois, System.Collections.Generic.List<Connector> cons)
+        {
+            var outp = new System.Collections.Generic.List<Connector>(cons.Count);
+            foreach (var c in cons)
+            {
+                var poi = pois[c.Poi];
+                int n = TilesFor(poi.Kind);
+                float Snap(float rel)
+                {
+                    int k = Mathf.Clamp(Mathf.RoundToInt(rel / TileSize + (n - 1) * 0.5f), 0, n - 1);
+                    return (k - (n - 1) * 0.5f) * TileSize;
+                }
+                float x = c.X, z = c.Z;
+                if (Mathf.Abs(c.DirX) > 0.5f) z = poi.Z + Snap(c.Z - poi.Z);
+                else x = poi.X + Snap(c.X - poi.X);
+                outp.Add(new Connector(c.Poi, c.Link, x, z, c.DirX, c.DirZ, c.Kind));
+            }
+            return outp;
         }
     }
 }

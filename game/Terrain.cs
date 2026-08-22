@@ -182,6 +182,8 @@ void fragment() {
         System.Collections.Generic.List<ProcIsland.Connector> _islandConnectors = new();
         public System.Collections.Generic.List<ProcIsland.Route> IslandRoutes => _islandRoutes;
         System.Collections.Generic.List<ProcIsland.Route> _islandRoutes = new();
+        public System.Collections.Generic.List<ProcIsland.MonumentTile> IslandTiles => _islandTiles;
+        readonly System.Collections.Generic.List<ProcIsland.MonumentTile> _islandTiles = new();
 
         public System.Collections.Generic.List<ProcIsland.Poi> GenerateIsland(int seed)
         {
@@ -194,7 +196,11 @@ void fragment() {
             // because the caller is what knows where they need to go next (the road/building stages read these).
             var pois = ProcIsland.PlacePois(_grid, _gw, _gh, pars);
             _islandLinks = ProcIsland.BuildLinks(pois);
-            _islandConnectors = ProcIsland.BuildConnectors(pois, _islandLinks);
+            // Snap BEFORE routing: the routes start at the gates, so moving a gate afterwards would leave the
+            // road pointing at where the gate used to be.
+            _islandConnectors = ProcIsland.SnapConnectorsToLattice(pois, ProcIsland.BuildConnectors(pois, _islandLinks));
+            _islandTiles.Clear();
+            for (int i = 0; i < pois.Count; i++) _islandTiles.AddRange(ProcIsland.BuildMonument(i, pois[i], _islandConnectors));
             // Routed and carved BEFORE RebuildAll, because carving edits the same grid the meshes are built from.
             _islandRoutes = ProcIsland.CarveRoutes(_grid, _gw, _gh, pois, _islandLinks, _islandConnectors, pars);
             RebuildAll();
