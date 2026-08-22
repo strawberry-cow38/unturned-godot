@@ -849,15 +849,24 @@ namespace UnturnedGodot
                 poi.Z + (j - (n - 1) * 0.5f) * TileSize);
 
             int mid = n / 2;
-            var skel = new System.Collections.Generic.HashSet<(int, int)> { (mid, mid) };
+            // NOT seeded with the centre tile. Seeding it unconditionally put a cell in the skeleton that
+            // nothing routes through on a one-gate monument -- and on a 2x2 site the centre is laterally
+            // adjacent to the exit, which hands the cap a third direction and forces a Quad with a spare arm.
+            // The streets are the routes BETWEEN gates; a monument with one gate has no route, just its access.
+            var skel = new System.Collections.Generic.HashSet<(int, int)>();
             var exits = new System.Collections.Generic.Dictionary<(int, int), (int dx, int dz)>();   // cell -> outward dir
 
+            // TWO PASSES. The exit cells must be known BEFORE any routing, because a route that happens to
+            // pass through one gives it a lateral neighbour -- and {ramp, inward, lateral} is a direction set no
+            // piece in the kit can express: the ramp has to be a Cap's stem, and a Tee cannot also serve the
+            // direction opposite its stem. The fallback was Quad, whose fourth arm is laid as carriageway into
+            // empty ground. So: find every exit first, then route around them.
+            var exitCells = new System.Collections.Generic.Dictionary<(int, int), (int dx, int dz)>();
+            var inners = new System.Collections.Generic.List<(int i, int j)>();
             foreach (var c in cons)
             {
                 if (c.Poi != poiIndex) continue;
                 int dx = Mathf.RoundToInt(c.DirX), dz = Mathf.RoundToInt(c.DirZ);
-                // The gate is on the face whose normal is (dx,dz); its tile is the edge cell on that face
-                // nearest the gate's position ALONG the face.
                 int ei, ej;
                 if (dx != 0)
                 {
@@ -869,13 +878,40 @@ namespace UnturnedGodot
                     ej = dz > 0 ? n - 1 : 0;
                     ei = Mathf.Clamp(Mathf.RoundToInt((c.X - poi.X) / TileSize + (n - 1) * 0.5f), 0, n - 1);
                 }
-                // L-route from the centre: along one axis then the other. Deterministic and always inside the
-                // lattice, which a diagonal would not be.
-                int ci = mid, cj = mid;
-                while (ci != ei) { ci += System.Math.Sign(ei - ci); skel.Add((ci, cj)); }
-                while (cj != ej) { cj += System.Math.Sign(ej - cj); skel.Add((ci, cj)); }
-                exits[(ei, ej)] = (dx, dz);
+                exitCells[(ei, ej)] = (dx, dz);
+                inners.Add((Mathf.Clamp(ei - dx, 0, n - 1), Mathf.Clamp(ej - dz, 0, n - 1)));
             }
+            foreach (var kv in exitCells) exits[kv.Key] = kv.Value;
+
+            // Route the centre to each exit's INNER cell, trying both L orders and taking whichever avoids the
+            // exit cells entirely. On this lattice one of the two always does unless the inner cell is itself an
+            // exit, which only happens if two gates sit back to back on a 2-wide monument.
+            // Route between the INNER cells, hub-and-spoke off the first one, rather than out from the centre.
+            var hub = inners.Count > 0 ? inners[0] : (i: mid, j: mid);
+            foreach (var inner in inners)
+            {
+                var pathA = new System.Collections.Generic.List<(int, int)>();
+                int ci = hub.i, cj = hub.j;
+                while (ci != inner.i) { ci += System.Math.Sign(inner.i - ci); pathA.Add((ci, cj)); }
+                while (cj != inner.j) { cj += System.Math.Sign(inner.j - cj); pathA.Add((ci, cj)); }
+
+                var pathB = new System.Collections.Generic.List<(int, int)>();
+                ci = hub.i; cj = hub.j;
+                while (cj != inner.j) { cj += System.Math.Sign(inner.j - cj); pathB.Add((ci, cj)); }
+                while (ci != inner.i) { ci += System.Math.Sign(inner.i - ci); pathB.Add((ci, cj)); }
+
+                bool CleanOf(System.Collections.Generic.List<(int, int)> path)
+                {
+                    foreach (var cell in path)
+                        if (exitCells.ContainsKey(cell) && cell != (inner.i, inner.j)) return false;
+                    return true;
+                }
+                var chosen = CleanOf(pathA) ? pathA : CleanOf(pathB) ? pathB : pathA;
+                foreach (var cell in chosen) skel.Add(cell);
+                skel.Add((inner.i, inner.j));
+                skel.Add((hub.i, hub.j));
+            }
+            foreach (var kv in exitCells) skel.Add(kv.Key);
 
             // PRUNE DEAD-END STUBS. Every street is a path from the centre out to a gate, so on a monument with
             // ONE gate the centre tile is left hanging with a single neighbour -- and a dead end has to terminate
@@ -974,18 +1010,87 @@ namespace UnturnedGodot
             System.Collections.Generic.List<Poi> pois, System.Collections.Generic.List<Connector> cons)
         {
             var outp = new System.Collections.Generic.List<Connector>(cons.Count);
-            foreach (var c in cons)
+            // Group by monument: the placements interact, so they cannot be decided one at a time.
+            var byPoi = new System.Collections.Generic.Dictionary<int, System.Collections.Generic.List<int>>();
+            for (int i = 0; i < cons.Count; i++)
             {
+                if (!byPoi.TryGetValue(cons[i].Poi, out var l)) { l = new System.Collections.Generic.List<int>(); byPoi[cons[i].Poi] = l; }
+                l.Add(i);
+            }
+
+            var snapped = new int[cons.Count];
+            foreach (var kv in byPoi)
+            {
+                var poi = pois[kv.Key];
+                int n = TilesFor(poi.Kind);
+                var idxs = kv.Value;
+
+                // EXHAUSTIVE, not greedy. A gate's lattice line has to avoid every OTHER gate's exit cell and
+                // the inner cell behind it, and be non-adjacent to both -- otherwise the exit needs {ramp,
+                // inward, lateral}, which no piece expresses: a Cap's ramp must be its stem and a Tee cannot
+                // serve the direction opposite its stem. Quad was the fallback and its fourth arm gets laid as
+                // carriageway into empty ground.
+                //
+                // Greedy placement could not solve it: with the first gate pinned at its preferred line, the
+                // second sometimes has no legal line at all, and there is nothing to do but emit the stub. The
+                // search space is tiny -- at most 5 lines per gate and 3 gates -- so try every combination and
+                // score by total displacement from where each gate wanted to be. Deterministic by construction.
+                var want = new int[idxs.Count];
+                for (int a = 0; a < idxs.Count; a++)
+                {
+                    var c = cons[idxs[a]];
+                    float along = Mathf.Abs(c.DirX) > 0.5f ? c.Z - poi.Z : c.X - poi.X;
+                    want[a] = Mathf.Clamp(Mathf.RoundToInt(along / TileSize + (n - 1) * 0.5f), 0, n - 1);
+                }
+
+                (int ei, int ej, int ii, int ij) CellsFor(int a, int k)
+                {
+                    var c = cons[idxs[a]];
+                    int dx = Mathf.RoundToInt(c.DirX), dz = Mathf.RoundToInt(c.DirZ);
+                    int ei = dx != 0 ? (dx > 0 ? n - 1 : 0) : k;
+                    int ej = dx != 0 ? k : (dz > 0 ? n - 1 : 0);
+                    return (ei, ej, Mathf.Clamp(ei - dx, 0, n - 1), Mathf.Clamp(ej - dz, 0, n - 1));
+                }
+
+                var cur = new int[idxs.Count];
+                var best = (int[])want.Clone(); int bestCost = int.MaxValue;
+                void Recurse(int a)
+                {
+                    if (a == idxs.Count)
+                    {
+                        // legal?
+                        for (int x = 0; x < idxs.Count; x++)
+                        {
+                            var cx = CellsFor(x, cur[x]);
+                            for (int y = 0; y < idxs.Count; y++)
+                            {
+                                if (x == y) continue;
+                                var cy = CellsFor(y, cur[y]);
+                                if ((cx.ei, cx.ej) == (cy.ei, cy.ej)) return;
+                                if ((cx.ei, cx.ej) == (cy.ii, cy.ij)) return;
+                                foreach (var d in Card)
+                                    if ((cx.ei + d.dx, cx.ej + d.dz) == (cy.ei, cy.ej) || (cx.ei + d.dx, cx.ej + d.dz) == (cy.ii, cy.ij)) return;
+                            }
+                        }
+                        int cost = 0;
+                        for (int x = 0; x < idxs.Count; x++) cost += System.Math.Abs(cur[x] - want[x]);
+                        if (cost < bestCost) { bestCost = cost; best = (int[])cur.Clone(); }
+                        return;
+                    }
+                    for (int k = 0; k < n; k++) { cur[a] = k; Recurse(a + 1); }
+                }
+                Recurse(0);
+                for (int a = 0; a < idxs.Count; a++) snapped[idxs[a]] = best[a];
+            }
+
+            for (int i = 0; i < cons.Count; i++)
+            {
+                var c = cons[i];
                 var poi = pois[c.Poi];
                 int n = TilesFor(poi.Kind);
-                float Snap(float rel)
-                {
-                    int k = Mathf.Clamp(Mathf.RoundToInt(rel / TileSize + (n - 1) * 0.5f), 0, n - 1);
-                    return (k - (n - 1) * 0.5f) * TileSize;
-                }
+                float rel = (snapped[i] - (n - 1) * 0.5f) * TileSize;
                 float x = c.X, z = c.Z;
-                if (Mathf.Abs(c.DirX) > 0.5f) z = poi.Z + Snap(c.Z - poi.Z);
-                else x = poi.X + Snap(c.X - poi.X);
+                if (Mathf.Abs(c.DirX) > 0.5f) z = poi.Z + rel; else x = poi.X + rel;
                 outp.Add(new Connector(c.Poi, c.Link, x, z, c.DirX, c.DirZ, c.Kind));
             }
             return outp;

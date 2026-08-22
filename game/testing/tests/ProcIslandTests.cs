@@ -261,6 +261,103 @@ namespace UnturnedGodot.Testing
                 worstOffLattice = Mathf.Max(worstOffLattice, Mathf.Abs(k - Mathf.Round(k)) * ProcIsland.TileSize);
             }
             T.Check($"every gate sits on a lattice line (worst {worstOffLattice:0.###} m off)", worstOffLattice < 0.01f);
+
+            // DOES IT LINE UP. This is the property the other checks do NOT cover: each prop's connector arms
+            // must point at exactly the neighbouring tiles it is supposed to join, plus its ramp if it is a cap.
+            // "Every gate is on a cap" and "everything is on the lattice" are both satisfied by a grid of
+            // correctly-placed pieces rotated wrongly -- the arms then open onto empty ground and the neighbour
+            // they should meet presents solid kerb. That reads as a road that does not connect.
+            int mismatched = 0; string firstBad = "";
+            foreach (var t in tiles)
+            {
+                var owner2 = pois[t.Poi];
+                float yaw2 = Mathf.DegToRad(t.YawDeg);
+                (int, int)[] localDirs = t.Piece switch
+                {
+                    ProcIsland.RoadPiece.Line or ProcIsland.RoadPiece.LineCap => new[] { (0, 1), (0, -1) },
+                    ProcIsland.RoadPiece.Turn                                  => new[] { (1, 0), (0, -1) },
+                    ProcIsland.RoadPiece.Tee or ProcIsland.RoadPiece.TeeCap    => new[] { (1, 0), (-1, 0), (0, 1) },
+                    _                                                          => new[] { (1, 0), (-1, 0), (0, 1), (0, -1) },
+                };
+                var arms = new System.Collections.Generic.HashSet<(int, int)>();
+                foreach (var (lx, ly) in localDirs)
+                {
+                    float wxd = lx * Mathf.Cos(yaw2) + ly * -Mathf.Sin(yaw2);
+                    float wzd = lx * -Mathf.Sin(yaw2) + ly * -Mathf.Cos(yaw2);
+                    arms.Add((Mathf.RoundToInt(wxd), Mathf.RoundToInt(wzd)));
+                }
+                // what this tile MUST serve: a neighbouring tile of the same monument, or its own gate
+                var must = new System.Collections.Generic.HashSet<(int, int)>();
+                foreach (var u in tiles)
+                {
+                    if (u.Poi != t.Poi) continue;
+                    float ddx = u.X - t.X, ddz = u.Z - t.Z;
+                    if (Mathf.Abs(Mathf.Abs(ddx) - ProcIsland.TileSize) < 0.5f && Mathf.Abs(ddz) < 0.5f) must.Add((System.Math.Sign(ddx), 0));
+                    if (Mathf.Abs(Mathf.Abs(ddz) - ProcIsland.TileSize) < 0.5f && Mathf.Abs(ddx) < 0.5f) must.Add((0, System.Math.Sign(ddz)));
+                }
+                foreach (var gate in cons)
+                {
+                    if (gate.Poi != t.Poi) continue;
+                    if (Mathf.Abs(gate.X - (t.X + gate.DirX * 12f)) < 0.6f && Mathf.Abs(gate.Z - (t.Z + gate.DirZ * 12f)) < 0.6f)
+                        must.Add((Mathf.RoundToInt(gate.DirX), Mathf.RoundToInt(gate.DirZ)));
+                }
+                foreach (var m in must)
+                    if (!arms.Contains(m))
+                    {
+                        mismatched++;
+                        if (firstBad == "") firstBad = $"{t} needs an arm toward ({m.Item1},{m.Item2}) and has none";
+                        break;
+                    }
+            }
+            T.Check($"every prop's arms reach its neighbours ({mismatched} pieces mis-rotated{(firstBad == "" ? "" : " -- " + firstBad)})",
+                mismatched == 0);
+
+            // ...AND NO ARM REACHES NOTHING. The converse, and the one that was missing: a piece may serve every
+            // neighbour it has and still have a SPARE connector, which is laid as carriageway into empty ground.
+            // A Quad used as a fallback on a 3-way cell does exactly that, and it reads as a road stub crossing
+            // out of the street for no reason. Both directions are needed -- "reaches its neighbours" and
+            // "reaches nothing else" are independent, and the kit only has an exact piece for some shapes.
+            int spareArms = 0; string firstSpare = "";
+            foreach (var t in tiles)
+            {
+                float yaw3 = Mathf.DegToRad(t.YawDeg);
+                (int, int)[] localDirs2 = t.Piece switch
+                {
+                    ProcIsland.RoadPiece.Line or ProcIsland.RoadPiece.LineCap => new[] { (0, 1), (0, -1) },
+                    ProcIsland.RoadPiece.Turn                                  => new[] { (1, 0), (0, -1) },
+                    ProcIsland.RoadPiece.Tee or ProcIsland.RoadPiece.TeeCap    => new[] { (1, 0), (-1, 0), (0, 1) },
+                    _                                                          => new[] { (1, 0), (-1, 0), (0, 1), (0, -1) },
+                };
+                // ONLY JUNCTIONS. A Line/LineCap's two ends are its own body -- 12 m of carriageway that simply
+                // stops -- and a road ending at the edge of a construction site is a road ending, not a defect.
+                // A junction is different: a Quad or Tee with an unused arm draws a spur crossing out of the
+                // street into open ground, which is what strawberry saw as "a random cross". So the rule is
+                // about junction pieces, not about every connector.
+                if (t.Piece is ProcIsland.RoadPiece.Line or ProcIsland.RoadPiece.LineCap) continue;
+                foreach (var (lx, ly) in localDirs2)
+                {
+                    float wxd = lx * Mathf.Cos(yaw3) + ly * -Mathf.Sin(yaw3);
+                    float wzd = lx * -Mathf.Sin(yaw3) + ly * -Mathf.Cos(yaw3);
+                    int adx = Mathf.RoundToInt(wxd), adz = Mathf.RoundToInt(wzd);
+                    bool lands = false;
+                    foreach (var u in tiles)
+                    {
+                        if (u.Poi != t.Poi) continue;
+                        if (Mathf.Abs(u.X - (t.X + adx * ProcIsland.TileSize)) < 0.5f && Mathf.Abs(u.Z - (t.Z + adz * ProcIsland.TileSize)) < 0.5f) { lands = true; break; }
+                    }
+                    if (!lands)
+                        foreach (var gate in cons)
+                            if (gate.Poi == t.Poi && Mathf.RoundToInt(gate.DirX) == adx && Mathf.RoundToInt(gate.DirZ) == adz
+                                && Mathf.Abs(gate.X - (t.X + adx * 12f)) < 0.6f && Mathf.Abs(gate.Z - (t.Z + adz * 12f)) < 0.6f) { lands = true; break; }
+                    if (!lands)
+                    {
+                        spareArms++;
+                        if (firstSpare == "") firstSpare = $"{t} lays an arm toward ({adx},{adz}) with nothing there";
+                    }
+                }
+            }
+            T.Check($"no JUNCTION piece lays an arm into empty ground ({spareArms} stubs{(firstSpare == "" ? "" : " -- " + firstSpare)})",
+                spareArms == 0);
             GD.Print($"[island] {tiles.Count} road props placed; worst gate off-lattice {worstOffLattice:0.###} m");
             foreach (var gate in cons) GD.Print($"[island]   GATE poi#{gate.Poi} at ({gate.X:0},{gate.Z:0}) normal ({gate.DirX:0},{gate.DirZ:0}) {gate.Kind}");
             // Two gates that snap to the SAME point both "find a Cap" -- the same one -- so the coverage check
@@ -544,22 +641,51 @@ namespace UnturnedGodot.Testing
                     ZLine(hub.X + hub.HalfSize, hub.Z - hub.HalfSize, hub.X + hub.HalfSize, hub.Z + hub.HalfSize, new Color(1f, 1f, 1f));
                     ZLine(hub.X + hub.HalfSize, hub.Z + hub.HalfSize, hub.X - hub.HalfSize, hub.Z + hub.HalfSize, new Color(1f, 1f, 1f));
                     ZLine(hub.X - hub.HalfSize, hub.Z + hub.HalfSize, hub.X - hub.HalfSize, hub.Z - hub.HalfSize, new Color(1f, 1f, 1f));
+                    // DRAW THE CARRIAGEWAY, not the debug axes. The first version of this drew each prop's
+                    // local +X/+Y as little lines, which is unreadable as a road -- strawberry, immediately:
+                    // "those lines go in random directions? theres no path". Correct: they were axis markers,
+                    // not surface. Each piece lays an ARM from its centre out to every connector it has, so
+                    // drawing those arms at carriageway width is drawing the road itself, and a connected path
+                    // then either appears or does not.
+                    void ZFill(float cx0, float cz0, float cx1, float cz1, float halfW, Color c)
+                    {
+                        float lo_x = Mathf.Min(cx0, cx1) - halfW, hi_x = Mathf.Max(cx0, cx1) + halfW;
+                        float lo_z = Mathf.Min(cz0, cz1) - halfW, hi_z = Mathf.Max(cz0, cz1) + halfW;
+                        for (float wx = lo_x; wx <= hi_x; wx += 4f / Px)
+                            for (float wz = lo_z; wz <= hi_z; wz += 4f / Px)
+                            {
+                                int qx = Mathf.RoundToInt((wx - ox0) * Px / 4f), qy = Mathf.RoundToInt((wz - oz0) * Px / 4f);
+                                if (qx >= 0 && qy >= 0 && qx < side && qy < side) zi.SetPixel(qx, qy, c);
+                            }
+                    }
+                    const float RoadHalfW = 8f;    // 16 m carriageway inside the 24 m tile
                     foreach (var t in tiles)
                     {
                         if (t.Poi != 0) continue;
-                        float h2 = ProcIsland.TileSize * 0.5f;
                         bool cap = t.Piece is ProcIsland.RoadPiece.LineCap or ProcIsland.RoadPiece.TeeCap or ProcIsland.RoadPiece.QuadCap;
-                        var tc = cap ? new Color(1f, 0.9f, 0.4f) : new Color(0.72f, 0.72f, 0.76f);
-                        ZLine(t.X - h2, t.Z - h2, t.X + h2, t.Z - h2, tc);
-                        ZLine(t.X + h2, t.Z - h2, t.X + h2, t.Z + h2, tc);
-                        ZLine(t.X + h2, t.Z + h2, t.X - h2, t.Z + h2, tc);
-                        ZLine(t.X - h2, t.Z + h2, t.X - h2, t.Z - h2, tc);
-                        // the piece's LOCAL AXES: mesh +Y (its "forward"/ramp) in orange, mesh +X in cyan.
+                        var surf = new Color(0.30f, 0.30f, 0.33f);
                         float yaw = Mathf.DegToRad(t.YawDeg);
-                        float fy_x = -Mathf.Sin(yaw), fy_z = -Mathf.Cos(yaw);
-                        float fx_x = Mathf.Cos(yaw), fx_z = -Mathf.Sin(yaw);
-                        ZLine(t.X, t.Z, t.X + fy_x * h2 * 1.35f, t.Z + fy_z * h2 * 1.35f, new Color(1f, 0.4f, 0f));
-                        ZLine(t.X, t.Z, t.X + fx_x * h2 * 0.7f, t.Z + fx_z * h2 * 0.7f, new Color(0.2f, 0.9f, 1f));
+                        // the piece's own connector directions, in LOCAL axes, then rotated
+                        var local = t.Piece switch
+                        {
+                            ProcIsland.RoadPiece.Line or ProcIsland.RoadPiece.LineCap => new[] { (0, 1), (0, -1) },
+                            ProcIsland.RoadPiece.Turn                                  => new[] { (1, 0), (0, -1) },
+                            ProcIsland.RoadPiece.Tee or ProcIsland.RoadPiece.TeeCap    => new[] { (1, 0), (-1, 0), (0, 1) },
+                            _                                                          => new[] { (1, 0), (-1, 0), (0, 1), (0, -1) },
+                        };
+                        foreach (var (lx, ly) in local)
+                        {
+                            // mesh +X -> (cos, -sin); mesh +Y -> (-sin, -cos)
+                            float wxd = lx * Mathf.Cos(yaw) + ly * -Mathf.Sin(yaw);
+                            float wzd = lx * -Mathf.Sin(yaw) + ly * -Mathf.Cos(yaw);
+                            ZFill(t.X, t.Z, t.X + wxd * ProcIsland.TileSize * 0.5f, t.Z + wzd * ProcIsland.TileSize * 0.5f, RoadHalfW, surf);
+                        }
+                        // the ramp end of a cap, brighter, so its direction is unmistakable
+                        if (cap)
+                        {
+                            float rx = -Mathf.Sin(yaw), rz = -Mathf.Cos(yaw);
+                            ZFill(t.X + rx * 8f, t.Z + rz * 8f, t.X + rx * ProcIsland.TileSize * 0.5f, t.Z + rz * ProcIsland.TileSize * 0.5f, RoadHalfW, new Color(0.95f, 0.72f, 0.15f));
+                        }
                     }
                     foreach (var gate in cons)
                     {
