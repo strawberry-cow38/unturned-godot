@@ -105,7 +105,7 @@ namespace UnturnedGodot
             bool containerTest = false; string containerTestName = null;
             bool wallDemo = false;
             bool clockTest = false;
-            bool play = false, demo = false, netdemo = false, server = false, dedicated = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, lightTest = false, trafficTest = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, playground = false, objects = false, peidrive = false, craftui = false, bakenav = false, navPathTest = false, zombieTest = false, zdirTest = false, editorMode = false, impactTest = false, doorGallery = false, lampTest = false, beamTest = false, impTest = false, treeSweep = false, bakeLods = false, bakeLodsDry = false, netobserve = false;
+            bool play = false, demo = false, netdemo = false, server = false, dedicated = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, lightTest = false, trafficTest = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, playground = false, objects = false, peidrive = false, craftui = false, craftmenu = false, bakenav = false, navPathTest = false, zombieTest = false, zdirTest = false, editorMode = false, impactTest = false, doorGallery = false, lampTest = false, beamTest = false, impTest = false, treeSweep = false, bakeLods = false, bakeLodsDry = false, netobserve = false;
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
                 if (arg.StartsWith("--catalog=")) catalog = arg["--catalog=".Length..];
@@ -195,7 +195,8 @@ namespace UnturnedGodot
                 else if (arg == "--firetest") firetest = true;   // player fires near a distant zombie: verify the gunshot alert (+ --supp = suppressed -> no alert)
                 else if (arg == "--supp") supp = true;           // with --firetest: attach the suppressor
                 else if (arg == "--terrain") terrain = true;     // load a real map's Landscape heightmap terrain (PEI Tile_0_0)
-                else if (arg == "--craftui") craftui = true;     // open the crafting menu over a stocked inventory (UI verify)
+                else if (arg == "--craftui") craftui = true;     // open the OLD CraftingUI over a stocked inventory (UI verify)
+                else if (arg == "--craftmenu") craftmenu = true; // open the NEWER CraftingMenu (browsable recipe index) over a stocked bag
                 else if (arg == "--objects") objects = true;     // place PEI's real Level/Objects.dat objects (fences/props/rocks) on the terrain
                 else if (arg == "--peidrive") peidrive = true;    // playable PEI: terrain + all objects/trees + player+jeep with real controls (same as the menu's "Drive PEI")
                 else if (arg.StartsWith("--map="))                // load a DIFFERENT map (e.g. --map="cow tools"): terrain + objects + spawns all follow _mapRoot
@@ -274,6 +275,14 @@ namespace UnturnedGodot
                 GetWindow().Size = new Vector2I(1280, 720);
                 _shotPath = shot;
                 BuildCraftUI();
+                return;
+            }
+
+            if (craftmenu)   // open the NEWER CraftingMenu (the current in-game one) over a stocked bag -> render it
+            {
+                GetWindow().Size = new Vector2I(1280, 720);
+                _shotPath = shot;
+                BuildCraftMenu();
                 return;
             }
 
@@ -1838,6 +1847,24 @@ namespace UnturnedGodot
             AddChild(ui);
             ui.Open();
             GD.Print("[CRAFTUI] opened crafting menu over a stocked inventory");
+        }
+
+        // --craftmenu: open the NEWER CraftingMenu (the browsable recipe index wired to the player as _craftMenu / Y)
+        // over a bag stocked with metal scrap + a blowtorch + our tree logs, so the recipe list + craftability render.
+        void BuildCraftMenu()
+        {
+            SDG.Unturned.ItemCatalog.RegisterAll();
+            BlueprintRegistry.Load();
+            var inv = new SDG.Unturned.PlayerInventory();
+            inv.tryAddItem(new SDG.Unturned.Item(67, 200));   // Metal Scrap x200
+            inv.tryAddItem(new SDG.Unturned.Item(76, 1));     // Blowtorch (tool, not consumed)
+            inv.tryAddItem(new SDG.Unturned.Item(37, 40));    // Birch Log (our tree drops)
+            inv.tryAddItem(new SDG.Unturned.Item(39, 40));    // Maple Log
+            inv.tryAddItem(new SDG.Unturned.Item(41, 40));    // Pine Log
+            var menu = new CraftingMenu { Inv = inv };
+            AddChild(menu);
+            menu.Open();
+            GD.Print("[CRAFTMENU] opened the newer CraftingMenu over a stocked inventory");
         }
 
         // --terrain: load PEI's Landscape Tile_0_0 heightmap into a Godot terrain mesh (the first real WORLD step; replaces
