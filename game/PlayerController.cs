@@ -56,7 +56,6 @@ namespace UnturnedGodot
         Viewmodel _viewmodel;
         public PlayerInventory Inventory;   // the ported 9-page inventory model
         InventoryUI _invUI;                 // the dashboard (Tab to open)
-        CraftingUI _craftUI;                // the OLD supplies panel (K) -- kept, it is what the craft tests drive
         CraftingMenu _craftMenu;            // the browsable recipe index (Y, or the inventory Craft tab)
         SkillsUI _skillsUI;                 // the skills menu (J to open) -- spend XP to level skills
         BuildTool _build;                   // B = build mode. C = construct, V = tier, LMB place, R salvage.
@@ -3158,7 +3157,7 @@ namespace UnturnedGodot
         }
 
         /// <summary>MP (wired only by ClientWorldSession): copy the replicated owner-block grid INTO the
-        /// shell's EXISTING Inventory instance -- never swap the reference (InventoryUI/CraftingUI, the
+        /// shell's EXISTING Inventory instance -- never swap the reference (InventoryUI/CraftingMenu, the
         /// reload mag hunt, and the armor math all hold it). Worn refs first (direct field writes -- the
         /// wearX helpers would RESIZE and wipe the pages), then every page cell-for-cell; the page sizes
         /// come off the wire, so worn-bag grids stay right even before asset resolution. The replica entry
@@ -4712,8 +4711,6 @@ namespace UnturnedGodot
             AddChild(_invUI);
             _noteReader = new NoteReader();   // F reads a looked-at lore note into this panel
             AddChild(_noteReader);
-            _craftUI = new CraftingUI { Inv = Inventory, Player = this };
-            AddChild(_craftUI);
             _craftMenu = new CraftingMenu { Inv = Inventory, Player = this };
             AddChild(_craftMenu);
             _skillsUI = new SkillsUI { Player = this };
@@ -5036,12 +5033,6 @@ namespace UnturnedGodot
                 _craftMenu?.Toggle();
                 Input.MouseMode = (_craftMenu != null && _craftMenu.IsOpen) ? Input.MouseModeEnum.Visible : Input.MouseModeEnum.Captured;
             }
-            else if (@event is InputEventKey { Pressed: true, Keycode: Key.K })
-            {
-                if (_viewmodel != null && _viewmodel.InAttachView) return;   // no crafting while the T attachment menu is up
-                _craftUI?.Toggle();   // K: open/close the crafting menu (lists what you can make from your supplies)
-                Input.MouseMode = (_craftUI != null && _craftUI.IsOpen) ? Input.MouseModeEnum.Visible : Input.MouseModeEnum.Captured;
-            }
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.J })
             {
                 _skillsUI?.Toggle();   // J: open/close the skills menu (spend XP to level skills)
@@ -5056,9 +5047,9 @@ namespace UnturnedGodot
                     SaveGunState(); CloseCrate(); _invUI.Close();
                     Input.MouseMode = Input.MouseModeEnum.Captured;
                 }
-                else if (_craftUI != null && _craftUI.IsOpen)
+                else if (_craftMenu != null && _craftMenu.IsOpen)
                 {
-                    _craftUI.Close(); Input.MouseMode = Input.MouseModeEnum.Captured;
+                    _craftMenu.Close(); Input.MouseMode = Input.MouseModeEnum.Captured;
                 }
                 else if (_skillsUI != null && _skillsUI.IsOpen)
                 {
