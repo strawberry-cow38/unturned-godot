@@ -11,6 +11,27 @@ namespace UnturnedGodot
         static readonly List<BlueprintDef> _all = new();
         public static IReadOnlyList<BlueprintDef> All => _all;
 
+        /// <summary>Load the catalog if nobody has yet.
+        ///
+        /// THIS IS THE FIX FOR A BUG THAT SHIPPED, and the shape of it matters. Load() was called from
+        /// exactly two places: the --craftmenu render harness, and a UG_QUICKCRAFT=1 env-gated demo. Neither
+        /// runs in an actual game. So in a real session the catalog was never read, Index() returned
+        /// nothing, and the crafting menu showed "0 shown - 0 craftable now" with "nothing here" -- while my
+        /// headless render of the very same menu showed 69 recipes, because the harness loads it and the
+        /// game does not. A test that supplies its own precondition cannot see a missing one.
+        ///
+        /// So the guard lives HERE rather than as a third call site to remember. Every entry point that can
+        /// ask for recipes goes through it, which means the failure cannot come back by someone adding a
+        /// fourth path and forgetting. It is idempotent and costs one int comparison after the first call.</summary>
+        /// <summary>Empty the catalog so a test can prove the self-load actually fires. Without this a test
+        /// cannot distinguish "Index() loaded it" from "some earlier test in the same boot already had".</summary>
+        public static void ResetForTests() => _all.Clear();
+
+        public static void EnsureLoaded()
+        {
+            if (_all.Count == 0) Load();
+        }
+
         public static int Load(string resPath = "res://content/blueprints.tsv")
         {
             _all.Clear();
@@ -44,6 +65,7 @@ namespace UnturnedGodot
         /// </summary>
         public static List<BlueprintDef> Index()
         {
+            EnsureLoaded();
             var r = new List<BlueprintDef>();
             foreach (var bp in _all)
             {
@@ -88,6 +110,7 @@ namespace UnturnedGodot
         // blueprints craftable right now from `inv` (item-satisfiability only; skill/station are the caller's gate)
         public static List<BlueprintDef> Applicable(Crafting.IInv inv)
         {
+            EnsureLoaded();
             var r = new List<BlueprintDef>();
             foreach (var bp in _all)
             {

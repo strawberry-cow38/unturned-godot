@@ -1606,6 +1606,11 @@ namespace UnturnedGodot
                 {
                     await Phase("Loot");
                     SDG.Unturned.ItemCatalog.RegisterAll();
+                    // Load the recipe catalog on the REAL game path. It used to be loaded only by the
+                    // --craftmenu harness and a UG_QUICKCRAFT demo, so a real session opened the crafting
+                    // menu to "0 shown". BlueprintRegistry.EnsureLoaded() now covers any path that forgets;
+                    // this keeps the disk read in the loading screen rather than on the first menu open.
+                    BlueprintRegistry.Load();
                     var loot = new LootField { Terr = terr };
                     loot.LoadFromPei(mapRoot);
                     root.AddChild(loot);
