@@ -59,19 +59,19 @@ namespace UnturnedGodot
         readonly Dictionary<BlueprintDef, ItemAsset> _out = new();
         readonly Dictionary<BlueprintDef, string> _catOf = new();
 
-        static Color Bg => new(0.08f, 0.10f, 0.13f, 0.97f);
-        static Color Bar => new(0.17f, 0.24f, 0.32f, 0.95f);
-        static Color SelC => new(0.30f, 0.42f, 0.54f, 0.95f);
-        static Color TileC => new(0.14f, 0.17f, 0.21f, 0.95f);
-        static Color Dim => new(0.60f, 0.60f, 0.64f);
-        static Color Good => new(0.62f, 0.82f, 0.60f);
-        static Color Bad => new(0.86f, 0.52f, 0.46f);
+        // Every one of these used to be a near-miss of the inventory's value -- Bg was 0.08/0.10/0.13 against
+        // its 0.10/0.12/0.15, Dim 0.60 against its 0.55. Nobody chose that; it is what two screens written
+        // months apart look like. They now forward to UITheme so there is one place to change them.
+        static Color Bg => UITheme.BgSolid;
+        static Color Bar => UITheme.BarSolid;
+        static Color SelC => new(0.34f, 0.36f, 0.38f, 0.98f);
+        static Color TileC => new(0.22f, 0.22f, 0.23f, 0.98f);
+        static Color Dim => UITheme.TextDim;
+        static Color Good => UITheme.Good;
+        static Color Bad => UITheme.Bad;
 
-        static void Box(Control p, Color c, int r = 4)
-        {
-            var sb = new StyleBoxFlat { BgColor = c, CornerRadiusTopLeft = r, CornerRadiusTopRight = r, CornerRadiusBottomLeft = r, CornerRadiusBottomRight = r };
-            p.AddThemeStyleboxOverride("panel", sb);
-        }
+        static void Box(Control p, Color c, int r = UITheme.RadiusCell)
+            => p.AddThemeStyleboxOverride("panel", UITheme.Box(c, r));
 
         static readonly string[] CatOrder = { "All", "Weapons", "Attachments", "Ammo", "Clothing", "Medical", "Food", "Building", "Resources", "Tools", "Other", "Dyes" };
 
@@ -103,7 +103,7 @@ namespace UnturnedGodot
             _root.MouseFilter = Control.MouseFilterEnum.Stop;
             AddChild(_root);
 
-            var dim = new ColorRect { Color = new Color(0f, 0f, 0f, 0.72f) };
+            var dim = new ColorRect { Color = UITheme.Scrim };
             dim.SetAnchorsPreset(Control.LayoutPreset.FullRect);
             dim.MouseFilter = Control.MouseFilterEnum.Ignore;
             _root.AddChild(dim);
@@ -116,7 +116,7 @@ namespace UnturnedGodot
             Box(bar, Bar);
             _panel.AddChild(bar);
             _header = new Label { Text = "CRAFTING", Position = new Vector2(18, 8), Size = new Vector2(PANELW - 140, 28) };
-            _header.AddThemeFontSizeOverride("font_size", 20);
+            _header.AddThemeFontSizeOverride("font_size", UITheme.FontTitle);
             _panel.AddChild(_header);
             var close = new Button { Text = "X", Position = new Vector2(PANELW - 42, 8), Size = new Vector2(28, 28) };
             close.Pressed += Close;
@@ -141,21 +141,22 @@ namespace UnturnedGodot
             _grid.AddThemeConstantOverride("v_separation", 6);
             gridScroll.AddChild(_grid);
             _search = new LineEdit { Position = new Vector2(gridX, PANELH - bottomPad - 34), Size = new Vector2(GRIDW, 30), PlaceholderText = "search recipes..." };
-            _search.AddThemeFontSizeOverride("font_size", 14);
+            UITheme.Field(_search);
+            _search.AddThemeFontSizeOverride("font_size", UITheme.FontBody);
             _search.TextChanged += _ => { _sel = null; Rebuild(); };
             _panel.AddChild(_search);
 
             // BOTTOM: crafting queue -- jobs fill RIGHTWARD (rightmost = active/counting; new jobs prepend on the left)
             var queue = new Panel { Position = new Vector2(16, PANELH - bottomPad + 8), Size = new Vector2(CATW + 12 + GRIDW, bottomPad - 24) };
-            Box(queue, new Color(0.10f, 0.12f, 0.15f, 0.95f));
+            Box(queue, UITheme.BgSolid);
             _panel.AddChild(queue);
             var qLabel = new Label { Text = "CRAFTING QUEUE", Position = new Vector2(14, 6), Size = new Vector2(200, 22) };
-            qLabel.AddThemeFontSizeOverride("font_size", 14);
-            qLabel.AddThemeColorOverride("font_color", new Color(0.5f, 0.5f, 0.54f));
+            qLabel.AddThemeFontSizeOverride("font_size", UITheme.FontBody);
+            qLabel.AddThemeColorOverride("font_color", UITheme.TextDim);
             queue.AddChild(qLabel);
             _qEmpty = new Label { Text = "(empty)", Position = new Vector2(14, 28), Size = new Vector2(200, 20) };
-            _qEmpty.AddThemeFontSizeOverride("font_size", 12);
-            _qEmpty.AddThemeColorOverride("font_color", new Color(0.38f, 0.38f, 0.42f));
+            _qEmpty.AddThemeFontSizeOverride("font_size", UITheme.FontLabel);
+            _qEmpty.AddThemeColorOverride("font_color", UITheme.TextDisabled);
             queue.AddChild(_qEmpty);
             _queueRow = new Control { Position = new Vector2(150, 4), Size = new Vector2(CATW + 12 + GRIDW - 158, bottomPad - 32) };
             _queueRow.ClipContents = true;
@@ -166,7 +167,7 @@ namespace UnturnedGodot
             // RIGHT: detail
             int detX = gridX + GRIDW + 14;
             _detail = new Panel { Position = new Vector2(detX, top), Size = new Vector2(DETW, PANELH - top - 16) };
-            Box(_detail, new Color(0.11f, 0.14f, 0.18f, 0.96f));
+            Box(_detail, UITheme.BgSolid);
             _panel.AddChild(_detail);
             _detailBox = new VBoxContainer { Position = new Vector2(16, 14), CustomMinimumSize = new Vector2(DETW - 32, PANELH - top - 44) };
             _detailBox.AddThemeConstantOverride("separation", 6);
@@ -284,12 +285,12 @@ namespace UnturnedGodot
                 var row = new Panel { CustomMinimumSize = new Vector2(CATW, 30) };
                 if (cat == _cat) Box(row, SelC);
                 var b = new Button { Text = $"  {cat}", Flat = true, Alignment = HorizontalAlignment.Left, Size = new Vector2(CATW, 30), CustomMinimumSize = new Vector2(CATW, 30) };
-                b.AddThemeFontSizeOverride("font_size", 14);
+                b.AddThemeFontSizeOverride("font_size", UITheme.FontBody);
                 string capture = cat;
                 b.Pressed += () => { _cat = capture; _search.Text = ""; _sel = null; Rebuild(); };
                 row.AddChild(b);
                 var cnt = new Label { Text = n.ToString(), Position = new Vector2(CATW - 40, 5), Size = new Vector2(32, 20), HorizontalAlignment = HorizontalAlignment.Right };
-                cnt.AddThemeFontSizeOverride("font_size", 13);
+                cnt.AddThemeFontSizeOverride("font_size", UITheme.FontBody);
                 cnt.AddThemeColorOverride("font_color", Dim);
                 cnt.MouseFilter = Control.MouseFilterEnum.Ignore;
                 row.AddChild(cnt);
@@ -334,7 +335,7 @@ namespace UnturnedGodot
                 var lbl = new Label { Text = Title(bp), AutowrapMode = TextServer.AutowrapMode.WordSmart, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
                 lbl.SetAnchorsPreset(Control.LayoutPreset.FullRect);
                 lbl.OffsetLeft = 4; lbl.OffsetTop = 4; lbl.OffsetRight = -4; lbl.OffsetBottom = -4;
-                lbl.AddThemeFontSizeOverride("font_size", 11);
+                lbl.AddThemeFontSizeOverride("font_size", UITheme.FontSmall);
                 lbl.MouseFilter = Control.MouseFilterEnum.Ignore;
                 if (!can) lbl.AddThemeColorOverride("font_color", Dim);
                 tile.AddChild(lbl);
@@ -360,13 +361,13 @@ namespace UnturnedGodot
                 head.AddChild(new TextureRect { Texture = tex, CustomMinimumSize = new Vector2(56, 56), ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize, StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered });
             var nameBox = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
             var t = new Label { Text = Title(_sel), AutowrapMode = TextServer.AutowrapMode.WordSmart };
-            t.AddThemeFontSizeOverride("font_size", 18);
+            t.AddThemeFontSizeOverride("font_size", UITheme.FontHeading);
             nameBox.AddChild(t);
             int outCount = _sel.Outputs.Count > 0 ? _sel.Outputs[0].Amount : 1;
             if (outCount > 1)
             {
                 var oc = new Label { Text = $"makes x{outCount}" };
-                oc.AddThemeFontSizeOverride("font_size", 12); oc.AddThemeColorOverride("font_color", Dim);
+                oc.AddThemeFontSizeOverride("font_size", UITheme.FontLabel); oc.AddThemeColorOverride("font_color", Dim);
                 nameBox.AddChild(oc);
             }
             head.AddChild(nameBox);
@@ -377,14 +378,14 @@ namespace UnturnedGodot
             {
                 bool meets = Crafting.MeetsSkill(_sel, Player?.Skills);
                 var sk = new Label { Text = $"requires {_sel.Skill} {_sel.SkillLevel}" };
-                sk.AddThemeFontSizeOverride("font_size", 13);
+                sk.AddThemeFontSizeOverride("font_size", UITheme.FontBody);
                 sk.AddThemeColorOverride("font_color", meets ? Dim : Bad);
                 _detailBox.AddChild(sk);
             }
             if (_sel.RequiresStation)
             {
                 var st = new Label { Text = "requires a crafting station" };
-                st.AddThemeFontSizeOverride("font_size", 13);
+                st.AddThemeFontSizeOverride("font_size", UITheme.FontBody);
                 st.AddThemeColorOverride("font_color", Dim);
                 _detailBox.AddChild(st);
             }
@@ -393,8 +394,8 @@ namespace UnturnedGodot
             if (a != null && !string.IsNullOrEmpty(a.description))
             {
                 var d = new Label { Text = a.description, AutowrapMode = TextServer.AutowrapMode.WordSmart };
-                d.AddThemeFontSizeOverride("font_size", 13);
-                d.AddThemeColorOverride("font_color", new Color(0.78f, 0.79f, 0.82f));
+                d.AddThemeFontSizeOverride("font_size", UITheme.FontBody);
+                d.AddThemeColorOverride("font_color", UITheme.TextBody);
                 _detailBox.AddChild(d);
             }
 
@@ -458,7 +459,7 @@ namespace UnturnedGodot
         static void AddHead(GridContainer g, string s)
         {
             var l = new Label { Text = s };
-            l.AddThemeFontSizeOverride("font_size", 11);
+            l.AddThemeFontSizeOverride("font_size", UITheme.FontSmall);
             l.AddThemeColorOverride("font_color", Dim);
             g.AddChild(l);
         }
@@ -466,7 +467,7 @@ namespace UnturnedGodot
         static void AddCell(GridContainer g, string s, Color c)
         {
             var l = new Label { Text = s };
-            l.AddThemeFontSizeOverride("font_size", 13);
+            l.AddThemeFontSizeOverride("font_size", UITheme.FontBody);
             l.AddThemeColorOverride("font_color", c);
             g.AddChild(l);
         }
@@ -577,7 +578,7 @@ namespace UnturnedGodot
                 if (job.Qty > 1)
                 {
                     var badge = new Label { Text = $"x{job.Qty}", Position = new Vector2(TILEQ - 26, TILEQ - 20), Size = new Vector2(24, 16), HorizontalAlignment = HorizontalAlignment.Right };
-                    badge.AddThemeFontSizeOverride("font_size", 12);
+                    badge.AddThemeFontSizeOverride("font_size", UITheme.FontLabel);
                     badge.AddThemeColorOverride("font_color", new Color(1f, 1f, 1f));
                     badge.MouseFilter = Control.MouseFilterEnum.Ignore;
                     tile.AddChild(badge);

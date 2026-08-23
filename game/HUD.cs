@@ -133,7 +133,7 @@ namespace UnturnedGodot
 
             // fire mode, just ABOVE the ammo count
             _fireMode = new Label();
-            _fireMode.AddThemeFontSizeOverride("font_size", 18);
+            _fireMode.AddThemeFontSizeOverride("font_size", UITheme.FontHeading);
             _fireMode.AnchorLeft = 1; _fireMode.AnchorRight = 1; _fireMode.AnchorTop = 1; _fireMode.AnchorBottom = 1;
             _fireMode.OffsetLeft = -190; _fireMode.OffsetRight = -22; _fireMode.OffsetTop = -120; _fireMode.OffsetBottom = -94;
             _fireMode.HorizontalAlignment = HorizontalAlignment.Right;
@@ -145,7 +145,7 @@ namespace UnturnedGodot
             // tile and the ground look-at rim use (ItemTool.RarityColorUI) rather than a second one -- a HUD that
             // disagreed with the bag about an item's rarity would be worse than showing no colour at all.
             _weaponName = new Label();
-            _weaponName.AddThemeFontSizeOverride("font_size", 20);
+            _weaponName.AddThemeFontSizeOverride("font_size", UITheme.FontTitle);
             _weaponName.AddThemeFontOverride("font", new FontVariation { VariationEmbolden = 0.5f });
             _weaponName.AddThemeColorOverride("font_outline_color", Colors.Black);
             _weaponName.AddThemeConstantOverride("outline_size", 4);   // rarity colours run dark (common grey); the outline keeps it readable on pale terrain
@@ -198,7 +198,7 @@ namespace UnturnedGodot
             _vehBox.AddChild(vbg);
 
             _vehTitle = new Label();
-            _vehTitle.AddThemeFontSizeOverride("font_size", 18);
+            _vehTitle.AddThemeFontSizeOverride("font_size", UITheme.FontHeading);
             _vehTitle.AnchorRight = 1f; _vehTitle.OffsetLeft = 5; _vehTitle.OffsetRight = -5; _vehTitle.OffsetTop = 5; _vehTitle.OffsetBottom = 45;
             _vehTitle.MouseFilter = Control.MouseFilterEnum.Ignore;
             _vehBox.AddChild(_vehTitle);
@@ -345,7 +345,7 @@ namespace UnturnedGodot
             foreach (var (key, id) in entries)
             {
                 var cell = new PanelContainer { CustomMinimumSize = new Vector2(58, 58) };
-                var sb = new StyleBoxFlat { BgColor = new Color(0f, 0f, 0f, 0.45f), BorderColor = new Color(1f, 1f, 1f, 0.25f) };
+                var sb = new StyleBoxFlat { BgColor = UITheme.Chip, BorderColor = new Color(1f, 1f, 1f, 0.25f) };
                 sb.SetBorderWidthAll(1); sb.SetCornerRadiusAll(3);
                 cell.AddThemeStyleboxOverride("panel", sb);
                 cell.MouseFilter = Control.MouseFilterEnum.Ignore;
@@ -362,7 +362,7 @@ namespace UnturnedGodot
                 // The number, so the row tells you which key rather than making you count boxes -- the entries
                 // are sparse (bind 3 and 7 and nothing else) so position does not imply the key.
                 var num = new Label { Text = key.ToString() };
-                num.AddThemeFontSizeOverride("font_size", 13);
+                num.AddThemeFontSizeOverride("font_size", UITheme.FontBody);
                 num.AddThemeColorOverride("font_outline_color", Colors.Black);
                 num.AddThemeConstantOverride("outline_size", 3);
                 num.MouseFilter = Control.MouseFilterEnum.Ignore;

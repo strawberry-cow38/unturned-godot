@@ -15,40 +15,24 @@ namespace UnturnedGodot
         public PlayerController Player;   // for Use -> apply consumable effects to the vitals
         public PlayerClothingController Clothing;   // P5: equip/unequip drives BOTH worn-slot state AND the on-body visual (RiggedCharacter) through this controller
 
-
         // --- retail palette: the dashboard is a translucent overlay, NOT an opaque dark panel ---
         //
-        // NEUTRAL AND LIGHTER (master: "increase the transparency of the entire inventory ui, nd remove the blue tint
-        // and tint it more white-ish/ very light gray"). Every swatch used to be blue-dominant -- the panel was
-        // (0.10, 0.13, 0.18), blue nearly double red -- which is what read as a blue UI.
-        //
-        // DERIVED from the original colours rather than hand-picked, so the palette keeps its internal relationships:
-        // the nav strip still reads darker than a header bar, a lit tab still reads brighter than an unlit one.
-        // Writing seven fresh constants by hand loses that ordering, and it surfaces as "the tabs are hard to tell
-        // apart now" -- which reads as a different bug entirely.
-        //
-        // TWO KNOBS, and they are the whole tuning surface -- nudge these, not the swatches:
-        //   UiLighten     0 = original brightness, 1 = pure white.
-        //   UiAlphaScale  multiplies every alpha; below 1 is more see-through.
-        const float UiLighten = 0.45f, UiAlphaScale = 0.72f;
+        // NEUTRAL AND LIGHTER (strawberry: "increase the transparency of the entire inventory ui, nd remove the
+        // blue tint and tint it more white-ish/ very light gray"). The desaturation and the two tuning knobs that
+        // implement it now live in UITheme, because this panel's look is the reference every OTHER screen is
+        // standardising onto -- keeping a second copy of UiLighten here would be the exact drift being removed.
+        // See UITheme for why the treatment is derived rather than hand-picked.
+        // Neutral() and the two knobs now live in UITheme so every screen gets the same treatment -- this
+        // panel's look IS the reference (strawberry: "standardize ... based off the inventory ui"), so the
+        // definition belongs where the other screens can reach it, not here.
+        static readonly Color UI_PANEL = UITheme.Bg;
+        static readonly Color UI_BAR   = UITheme.Bar;
+        static readonly Color UI_NAV   = UITheme.Nav;
+        static readonly Color UI_CELL  = UITheme.SlotEmpty;
+        static readonly Color UI_TAB_ON  = UITheme.Selected;
+        static readonly Color UI_TAB_OFF = UITheme.Slot;
+        static readonly Color UI_STAGE = UITheme.Stage;
 
-        /// <summary>Strip the hue and lighten, preserving relative brightness. Rec.709 luma rather than an RGB
-        /// average: averaging shifts how light each swatch reads against its neighbours -- blue-heavy colours come
-        /// out too bright -- and the palette's ordering scrambles.</summary>
-        static Color Neutral(float r, float g, float b, float a)
-        {
-            float y = r * 0.2126f + g * 0.7152f + b * 0.0722f;
-            float v = Mathf.Lerp(y, 1f, UiLighten);
-            return new Color(v, v, v, Mathf.Clamp(a * UiAlphaScale, 0f, 1f));
-        }
-
-        static readonly Color UI_PANEL = Neutral(0.10f, 0.13f, 0.18f, 0.42f);   // char panel / backdrop: world shows through
-        static readonly Color UI_BAR   = Neutral(0.17f, 0.24f, 0.32f, 0.78f);   // page header bars
-        static readonly Color UI_NAV   = Neutral(0.13f, 0.18f, 0.24f, 0.80f);   // navbar strip
-        static readonly Color UI_CELL  = Neutral(0.62f, 0.72f, 0.84f, 0.30f);   // empty grid cell: LIGHT + see-through
-        static readonly Color UI_TAB_ON  = Neutral(0.55f, 0.62f, 0.70f, 0.72f);   // lit/open tab
-        static readonly Color UI_TAB_OFF = Neutral(0.22f, 0.29f, 0.37f, 0.62f);   // the other tabs + icon buttons
-        static readonly Color UI_STAGE = Neutral(0.08f, 0.11f, 0.15f, 0.30f);   // paperdoll backing
         const int CELL = 72;         // SleekItems cell size
         const int HEADER = 30;       // legacy per-page strip (kept for the char-panel slots)
         // --- the source's ACTUAL page-stacking metrics (PlayerDashboardInventoryUI.updateBoxAreas) ---
@@ -129,7 +113,7 @@ namespace UnturnedGodot
             _root.MouseFilter = Control.MouseFilterEnum.Stop;
             AddChild(_root);
 
-            var dim = new ColorRect { Color = new Color(0f, 0f, 0f, 0.72f) };
+            var dim = new ColorRect { Color = UITheme.Chip };
             dim.SetAnchorsPreset(Control.LayoutPreset.FullRect);
             dim.MouseFilter = Control.MouseFilterEnum.Ignore;
             _root.AddChild(dim);
@@ -176,18 +160,18 @@ namespace UnturnedGodot
             const int TQ = 52, GAP = 6, PADX = 8, COLS = 6, ROWS = 3;   // ALWAYS a fixed 6x3 grid (master: even when cells are empty)
             float w = PADX * 2 + COLS * (TQ + GAP) - GAP, h = 24 + ROWS * (TQ + GAP) - GAP + 6;
             var bg = new Panel { Position = Vector2.Zero, Size = new Vector2(w, h), MouseFilter = Control.MouseFilterEnum.Ignore };
-            var sb = new StyleBoxFlat { BgColor = new Color(0.10f, 0.12f, 0.15f, 0.93f), CornerRadiusTopLeft = 6, CornerRadiusTopRight = 6, CornerRadiusBottomLeft = 6, CornerRadiusBottomRight = 6 };
+            var sb = new StyleBoxFlat { BgColor = UITheme.Bar, CornerRadiusTopLeft = 6, CornerRadiusTopRight = 6, CornerRadiusBottomLeft = 6, CornerRadiusBottomRight = 6 };
             bg.AddThemeStyleboxOverride("panel", sb);
             _quickCraft.AddChild(bg);
             var hdr = new Label { Text = "QUICK CRAFT", Position = new Vector2(PADX, 4), Size = new Vector2(160, 16), MouseFilter = Control.MouseFilterEnum.Ignore };
-            hdr.AddThemeFontSizeOverride("font_size", 11);
-            hdr.AddThemeColorOverride("font_color", new Color(0.55f, 0.56f, 0.6f));
+            hdr.AddThemeFontSizeOverride("font_size", UITheme.FontSmall);
+            hdr.AddThemeColorOverride("font_color", UITheme.TextDim);
             bg.AddChild(hdr);
             for (int i = 0; i < COLS * ROWS; i++)   // ALWAYS 18 cells; slots past the recipe count are dim empty placeholders
             {
                 var tile = new Panel { Position = new Vector2(PADX + (i % COLS) * (TQ + GAP), 24 + (i / COLS) * (TQ + GAP)), Size = new Vector2(TQ, TQ) };
                 bool filled = i < show.Count;
-                var tsb = new StyleBoxFlat { BgColor = filled ? new Color(0.16f, 0.19f, 0.23f, 0.96f) : new Color(0.12f, 0.14f, 0.17f, 0.55f), CornerRadiusTopLeft = 4, CornerRadiusTopRight = 4, CornerRadiusBottomLeft = 4, CornerRadiusBottomRight = 4 };
+                var tsb = new StyleBoxFlat { BgColor = filled ? UITheme.Slot : UITheme.SlotEmpty, CornerRadiusTopLeft = 4, CornerRadiusTopRight = 4, CornerRadiusBottomLeft = 4, CornerRadiusBottomRight = 4 };
                 tile.AddThemeStyleboxOverride("panel", tsb);   // MouseFilter left Stop so a filled tile's tooltip shows on hover; the click is caught in _Input
                 if (!filled) { tile.MouseFilter = Control.MouseFilterEnum.Ignore; _quickCraft.AddChild(tile); continue; }   // empty slot: no icon, not clickable
                 var bp = show[i];
@@ -205,7 +189,7 @@ namespace UnturnedGodot
                 {
                     var lbl = new Label { Text = CraftingMenu.Title(bp), AutowrapMode = TextServer.AutowrapMode.WordSmart, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, MouseFilter = Control.MouseFilterEnum.Ignore };
                     lbl.SetAnchorsPreset(Control.LayoutPreset.FullRect);
-                    lbl.AddThemeFontSizeOverride("font_size", 9);
+                    lbl.AddThemeFontSizeOverride("font_size", UITheme.FontTiny);
                     tile.AddChild(lbl);
                 }
                 _quickCraft.AddChild(tile);
@@ -862,18 +846,18 @@ namespace UnturnedGodot
             Color rar = ItemTool.RarityColorUI(asset.rarity);
             var name = new Label { Text = asset.itemName, Position = new Vector2(228, 14), Size = new Vector2(258, 28) };
             name.AddThemeColorOverride("font_color", rar);
-            name.AddThemeFontSizeOverride("font_size", 19);
+            name.AddThemeFontSizeOverride("font_size", UITheme.FontTitle);
             panel.AddChild(name);
             var info = new Label { Text = $"{asset.rarity}  ·  {asset.type}  ·  {asset.size_x}x{asset.size_y}",
                                    Position = new Vector2(228, 46), Size = new Vector2(258, 20) };
-            info.AddThemeColorOverride("font_color", rar.Lerp(new Color(0.6f, 0.6f, 0.62f), 0.5f));
-            info.AddThemeFontSizeOverride("font_size", 12);
+            info.AddThemeColorOverride("font_color", rar.Lerp(UITheme.TextDim, 0.5f));
+            info.AddThemeFontSizeOverride("font_size", UITheme.FontLabel);
             panel.AddChild(info);
             // the real localized Description (from the item's English.dat)
             var desc = new Label { Text = asset.description, Position = new Vector2(228, 72), Size = new Vector2(258, 70) };
             desc.AutowrapMode = TextServer.AutowrapMode.WordSmart;
-            desc.AddThemeColorOverride("font_color", new Color(0.79f, 0.79f, 0.79f));
-            desc.AddThemeFontSizeOverride("font_size", 13);
+            desc.AddThemeColorOverride("font_color", UITheme.TextBody);
+            desc.AddThemeFontSizeOverride("font_size", UITheme.FontBody);
             panel.AddChild(desc);
             // a fluid CONTAINER shows its live contents (the "tooltip" strawberry wanted back): type + amount + capacity
             if (asset.IsFluidContainer && jar.item != null)
@@ -885,7 +869,7 @@ namespace UnturnedGodot
                 var ccol = ct == FluidType.None ? new Color(0.75f, 0.75f, 0.75f) : FluidDef.WaterColor(ct, cq).Lerp(Colors.White, 0.3f);
                 var cl = new Label { Text = contents, Position = new Vector2(228, 120), Size = new Vector2(258, 22) };
                 cl.AddThemeColorOverride("font_color", ccol);
-                cl.AddThemeFontSizeOverride("font_size", 13);
+                cl.AddThemeFontSizeOverride("font_size", UITheme.FontBody);
                 panel.AddChild(cl);
             }
             // a FOOD item shows its CONDITION (freshness) as a % coloured red->yellow->green (source getQualityColor);
@@ -896,7 +880,7 @@ namespace UnturnedGodot
                 string tag = q < FoodSpoil.SickThreshold ? "  ·  spoiled" : q >= 90 ? "  ·  fresh" : "";
                 var fl = new Label { Text = $"Condition: {q}%{tag}", Position = new Vector2(228, 120), Size = new Vector2(258, 22) };
                 fl.AddThemeColorOverride("font_color", ItemTool.QualityColor(q / 100f).Lerp(Colors.White, 0.3f));   // brighten so the spoiled (dark-red) end stays legible on the dark panel
-                fl.AddThemeFontSizeOverride("font_size", 13);
+                fl.AddThemeFontSizeOverride("font_size", UITheme.FontBody);
                 panel.AddChild(fl);
             }
 
@@ -1210,7 +1194,7 @@ namespace UnturnedGodot
                                     Size = new Vector2(tabW, NAVH - 16),
                                     HorizontalAlignment = HorizontalAlignment.Center,
                                     VerticalAlignment = VerticalAlignment.Center };
-                t.AddThemeColorOverride("font_color", i == 0 ? new Color(1f, 1f, 1f) : new Color(0.83f, 0.83f, 0.83f));   // neutral, was blue-leaning
+                t.AddThemeColorOverride("font_color", i == 0 ? new Color(1f, 1f, 1f) : UITheme.TextBody);   // neutral, was blue-leaning
                 t.AddThemeFontSizeOverride("font_size", 32);
                 _dash.AddChild(t);
 
@@ -1240,13 +1224,13 @@ namespace UnturnedGodot
             StyleBox(av, UI_TAB_OFF);
             badge.AddChild(av);
             var uname = new Label { Text = "Survivor", Position = new Vector2(78, 13) };
-            uname.AddThemeColorOverride("font_color", new Color(1f, 0.84f, 0.22f)); uname.AddThemeFontSizeOverride("font_size", 28);   // yellow username
+            uname.AddThemeColorOverride("font_color", UITheme.Accent); uname.AddThemeFontSizeOverride("font_size", 28);   // yellow username
             badge.AddChild(uname);
             var fac = new Label { Text = "Neutral [0]", Position = new Vector2(78, 45) };
-            fac.AddThemeColorOverride("font_color", new Color(0.78f, 0.78f, 0.78f)); fac.AddThemeFontSizeOverride("font_size", 18);
+            fac.AddThemeColorOverride("font_color", UITheme.TextBody); fac.AddThemeFontSizeOverride("font_size", 18);
             badge.AddChild(fac);
             var plus = new Label { Text = "+", Position = new Vector2(CHARW - 56, 20) };
-            plus.AddThemeColorOverride("font_color", new Color(1f, 0.84f, 0.22f)); plus.AddThemeFontSizeOverride("font_size", 30);
+            plus.AddThemeColorOverride("font_color", UITheme.Accent); plus.AddThemeFontSizeOverride("font_size", 30);
             badge.AddChild(plus);
         }
 
@@ -1278,7 +1262,7 @@ namespace UnturnedGodot
                 StyleBox(slot, new Color(0f, 0f, 0f, 0.5f));
                 _charBox.AddChild(slot);
                 var lbl = new Label { Text = name, Position = new Vector2(CELL + 20, y + 15), Visible = false };
-                lbl.AddThemeColorOverride("font_color", new Color(0.73f, 0.73f, 0.73f));
+                lbl.AddThemeColorOverride("font_color", UITheme.TextBody);
                 _charBox.AddChild(lbl);
                 _clothing.Add((slot, lbl, worn, type));
                 y += CELL + 8;
@@ -1346,7 +1330,7 @@ namespace UnturnedGodot
             _pdVp.AddChild(_pdCam);
 
             _pdVp.AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-25f, 155f, 0f), LightEnergy = 1.2f });                                          // key
-            _pdVp.AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-8f, -35f, 0f), LightEnergy = 0.55f, LightColor = new Color(0.90f, 0.90f, 0.90f) }); // NEUTRAL fill (master: no blue tint). The world env does not reach an isolated SubViewport, so this is the ONLY light on the paperdoll -- a cool one tinted the character too, not just the panels.
+            _pdVp.AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-8f, -35f, 0f), LightEnergy = 0.55f, LightColor = UITheme.Text }); // NEUTRAL fill (master: no blue tint). The world env does not reach an isolated SubViewport, so this is the ONLY light on the paperdoll -- a cool one tinted the character too, not just the panels.
             _pdVp.AddChild(new WorldEnvironment
             {
                 Environment = new Godot.Environment
@@ -1701,7 +1685,7 @@ namespace UnturnedGodot
                 amt.AddThemeColorOverride("font_color", Colors.White);
                 amt.AddThemeColorOverride("font_outline_color", Colors.Black);
                 amt.AddThemeConstantOverride("outline_size", 3);
-                amt.AddThemeFontSizeOverride("font_size", 13);
+                amt.AddThemeFontSizeOverride("font_size", UITheme.FontBody);
                 amt.MouseFilter = Control.MouseFilterEnum.Ignore;
                 tile.AddChild(amt);
             }
@@ -1709,7 +1693,7 @@ namespace UnturnedGodot
             if (asset?.IsFuelContainer == true && jar.item != null)   // a gas can ALWAYS shows a fuel-level bar on its icon, even at 0 (master)
             {
                 float frac = asset.fuelCapacity > 0f ? Mathf.Clamp(Mathf.Max(0f, jar.item.fuelLevel) / asset.fuelCapacity, 0f, 1f) : 0f;
-                tile.AddChild(new ColorRect { Color = new Color(0f, 0f, 0f, 0.85f), Position = new Vector2(2, h - 10), Size = new Vector2(w - 4, 8), MouseFilter = Control.MouseFilterEnum.Ignore });   // black outline -> visible on any icon
+                tile.AddChild(new ColorRect { Color = UITheme.Border, Position = new Vector2(2, h - 10), Size = new Vector2(w - 4, 8), MouseFilter = Control.MouseFilterEnum.Ignore });   // black outline -> visible on any icon
                 tile.AddChild(new ColorRect { Color = new Color(0.32f, 0.32f, 0.35f, 1f), Position = new Vector2(3, h - 9), Size = new Vector2(w - 6, 6), MouseFilter = Control.MouseFilterEnum.Ignore });   // empty track (grey) -> the bar reads even at 0
                 if (frac > 0f) tile.AddChild(new ColorRect { Color = new Color(0.95f, 0.78f, 0.2f), Position = new Vector2(3, h - 9), Size = new Vector2((w - 6) * frac, 6), MouseFilter = Control.MouseFilterEnum.Ignore });   // fuel fill (yellow)
             }
@@ -1719,7 +1703,7 @@ namespace UnturnedGodot
                 FluidItem.Read(jar.item, asset, out var ftype, out var famt, out var fq);
                 float frac = asset.fluidCapacity > 0f ? Mathf.Clamp(famt / asset.fluidCapacity, 0f, 1f) : 0f;
                 var fcol = ftype == FluidType.None ? new Color(0.49f, 0.49f, 0.49f) : FluidDef.WaterColor(ftype, fq);   // neutral empty-state grey. The FILLED colours stay -- those are the fluid, not chrome.   // water folds its quality into the colour
-                tile.AddChild(new ColorRect { Color = new Color(0f, 0f, 0f, 0.85f), Position = new Vector2(2, h - 10), Size = new Vector2(w - 4, 8), MouseFilter = Control.MouseFilterEnum.Ignore });   // black outline
+                tile.AddChild(new ColorRect { Color = UITheme.Border, Position = new Vector2(2, h - 10), Size = new Vector2(w - 4, 8), MouseFilter = Control.MouseFilterEnum.Ignore });   // black outline
                 tile.AddChild(new ColorRect { Color = new Color(0.30f, 0.31f, 0.34f, 1f), Position = new Vector2(3, h - 9), Size = new Vector2(w - 6, 6), MouseFilter = Control.MouseFilterEnum.Ignore });   // empty track (grey) -> reads even at 0
                 if (frac > 0f) tile.AddChild(new ColorRect { Color = fcol, Position = new Vector2(3, h - 9), Size = new Vector2((w - 6) * frac, 6), MouseFilter = Control.MouseFilterEnum.Ignore });   // fluid fill, tinted by type
                 // "autodrink ON" badge (strawberry): a cyan droplet-dot in the top-left — shown ONLY on the one ACTIVE
@@ -1728,7 +1712,7 @@ namespace UnturnedGodot
                 {
                     var badge = new Panel { Position = new Vector2(2, 2), Size = new Vector2(21, 21), MouseFilter = Control.MouseFilterEnum.Ignore };
                     var bs = new StyleBoxFlat { BgColor = new Color(0.25f, 0.72f, 0.95f) };
-                    bs.BorderColor = new Color(0f, 0f, 0f, 0.85f); bs.SetBorderWidthAll(2); bs.SetCornerRadiusAll(7);   // ~circular droplet-dot
+                    bs.BorderColor = UITheme.Border; bs.SetBorderWidthAll(2); bs.SetCornerRadiusAll(7);   // ~circular droplet-dot
                     badge.AddThemeStyleboxOverride("panel", bs);
                     badge.AddChild(new ColorRect { Color = new Color(0.92f, 0.98f, 1f, 0.95f), Position = new Vector2(4, 3), Size = new Vector2(4, 4), MouseFilter = Control.MouseFilterEnum.Ignore });   // a little highlight so it reads as a drop
                     tile.AddChild(badge);
@@ -1739,7 +1723,7 @@ namespace UnturnedGodot
             {
                 int q = jar.item.quality;
                 var qcol = ItemTool.QualityColor(q / 100f);
-                var bs = new StyleBoxFlat { BgColor = new Color(0f, 0f, 0f, 0.72f) };
+                var bs = new StyleBoxFlat { BgColor = UITheme.Chip };
                 bs.SetCornerRadiusAll(3); bs.BorderColor = qcol; bs.SetBorderWidthAll(1);   // dark chip, outlined in the condition colour so it reads on any icon
                 bs.ContentMarginLeft = 4; bs.ContentMarginRight = 4; bs.ContentMarginTop = 0; bs.ContentMarginBottom = 0;   // even breathing room L/R so the text sits centred in the card
                 // A PanelContainer SIZES ITSELF to the label, so the chip always wraps "{q}%" exactly (5% / 85% / 100%) and
@@ -1747,7 +1731,7 @@ namespace UnturnedGodot
                 // the card's edges no matter the width I picked (master: "the %s werent centered in their mini card").
                 var lbl = new Label { Text = $"{q}%", HorizontalAlignment = HorizontalAlignment.Center, MouseFilter = Control.MouseFilterEnum.Ignore };
                 lbl.AddThemeColorOverride("font_color", qcol.Lerp(Colors.White, 0.45f));   // brighten the text so even the dark-red (spoiled) end reads on the chip; the border keeps the pure hue
-                lbl.AddThemeFontSizeOverride("font_size", 11);
+                lbl.AddThemeFontSizeOverride("font_size", UITheme.FontSmall);
                 var card = new PanelContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
                 card.AddThemeStyleboxOverride("panel", bs);
                 card.AddChild(lbl);
@@ -1767,7 +1751,7 @@ namespace UnturnedGodot
                 var snow = new TextureRect { Texture = SnowflakeTex(), StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered, ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize, MouseFilter = Control.MouseFilterEnum.Ignore };
                 snow.SetAnchorsPreset(Control.LayoutPreset.FullRect);
                 snow.AddThemeColorOverride("font_color", new Color(0.97f, 0.99f, 1f));
-                snow.AddThemeFontSizeOverride("font_size", 13);
+                snow.AddThemeFontSizeOverride("font_size", UITheme.FontBody);
                 badge.AddChild(snow);
                 tile.AddChild(badge);
             }
@@ -1796,7 +1780,7 @@ namespace UnturnedGodot
                                    HorizontalAlignment = HorizontalAlignment.Center,
                                    VerticalAlignment = VerticalAlignment.Center,
                                    MouseFilter = Control.MouseFilterEnum.Ignore };
-            name.AddThemeColorOverride("font_color", new Color(0.88f, 0.88f, 0.91f));
+            name.AddThemeColorOverride("font_color", UITheme.Text);
             name.AddThemeFontSizeOverride("font_size", 34);
             bar.AddChild(name);
 
@@ -1815,8 +1799,8 @@ namespace UnturnedGodot
         static Label Header(string text, Vector2 pos, float width)
         {
             var l = new Label { Text = text, Position = pos, Size = new Vector2(width, HEADER - 8) };
-            l.AddThemeColorOverride("font_color", new Color(0.85f, 0.85f, 0.88f));
-            l.AddThemeFontSizeOverride("font_size", 13);
+            l.AddThemeColorOverride("font_color", UITheme.Text);
+            l.AddThemeFontSizeOverride("font_size", UITheme.FontBody);
             l.MouseFilter = Control.MouseFilterEnum.Ignore;
             return l;
         }

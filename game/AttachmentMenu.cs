@@ -31,7 +31,7 @@ namespace UnturnedGodot
             Layer = 58;
             Visible = false;
 
-            var dim = new ColorRect { Color = new Color(0f, 0f, 0f, 0.30f) };
+            var dim = new ColorRect { Color = UITheme.ScrimLight };
             dim.SetAnchorsPreset(Control.LayoutPreset.FullRect);
             dim.MouseFilter = Control.MouseFilterEnum.Ignore;   // clicks pass through the dim to the slot buttons
             AddChild(dim);
@@ -83,10 +83,10 @@ namespace UnturnedGodot
                         var a = asset; ushort aid = (ushort)a.id;
                         shells.Add(AddOption(slot, count > 0 ? $"{PlayerController.PluralAmmo(a.itemName, count)} — {count}" : $"{a.itemName} — none", aid,
                             count > 0 ? () => { Player.ChooseShellType(aid); Refresh(); } : (System.Action)null,
-                            tint: selected ? new Color(0.72f, 1f, 0.75f) : (Color?)null, rounds: count > 0 ? count : -1, vertical: true));
+                            tint: selected ? UITheme.Good : (Color?)null, rounds: count > 0 ? count : -1, vertical: true));
                     }
                     if (Player.HasLoadedShells)   // unload option, matching the radial's eject segment
-                        shells.Add(AddOption(slot, "Unload", null, () => { Player.UnloadShells(); Refresh(); }, tint: new Color(1f, 0.62f, 0.56f)));
+                        shells.Add(AddOption(slot, "Unload", null, () => { Player.UnloadShells(); Refresh(); }, tint: UITheme.Bad));
                     if (shells.Count > 0) _rings[slot] = shells;
                     continue;
                 }
@@ -379,7 +379,7 @@ namespace UnturnedGodot
             var sb = new StyleBoxFlat { BgColor = new Color(r, g, b, a) };
             sb.SetCornerRadiusAll(4);
             sb.SetBorderWidthAll(1);
-            sb.BorderColor = new Color(0f, 0f, 0f, 0.6f);
+            sb.BorderColor = UITheme.Border;
             return sb;
         }
 

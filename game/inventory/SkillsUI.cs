@@ -35,7 +35,7 @@ namespace UnturnedGodot
             _root.SetAnchorsPreset(Control.LayoutPreset.FullRect);
             _root.MouseFilter = Control.MouseFilterEnum.Stop;
             AddChild(_root);
-            var dim = new ColorRect { Color = new Color(0f, 0f, 0f, 0.72f) };
+            var dim = new ColorRect { Color = UITheme.Scrim };
             dim.SetAnchorsPreset(Control.LayoutPreset.FullRect);
             dim.MouseFilter = Control.MouseFilterEnum.Ignore;
             _root.AddChild(dim);

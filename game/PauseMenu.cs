@@ -17,7 +17,7 @@ namespace UnturnedGodot
             Visible = false;
             ProcessMode = Node.ProcessModeEnum.Always;   // keep the menu alive + its input flowing while the tree is paused
 
-            var dim = new ColorRect { Color = new Color(0f, 0f, 0f, 0.6f), MouseFilter = Control.MouseFilterEnum.Stop };
+            var dim = new ColorRect { Color = UITheme.Scrim, MouseFilter = Control.MouseFilterEnum.Stop };
             dim.SetAnchorsPreset(Control.LayoutPreset.FullRect);
             AddChild(dim);
 

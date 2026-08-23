@@ -39,7 +39,7 @@ namespace UnturnedGodot
             _root.SetAnchorsPreset(Control.LayoutPreset.FullRect);
             AddChild(_root);
 
-            var dim = new ColorRect { Color = new Color(0f, 0f, 0f, 0.82f), MouseFilter = Control.MouseFilterEnum.Stop };
+            var dim = new ColorRect { Color = UITheme.Scrim, MouseFilter = Control.MouseFilterEnum.Stop };
             dim.SetAnchorsPreset(Control.LayoutPreset.FullRect);
             _root.AddChild(dim);
 
@@ -50,10 +50,10 @@ namespace UnturnedGodot
 
             foreach (var (name, pos) in MapNodes.Locations)
             {
-                var dot = new ColorRect { Color = new Color(1f, 0.92f, 0.35f), Size = new Vector2(5, 5), MouseFilter = Control.MouseFilterEnum.Ignore };
+                var dot = new ColorRect { Color = UITheme.Accent, Size = new Vector2(5, 5), MouseFilter = Control.MouseFilterEnum.Ignore };
                 _map.AddChild(dot);
                 var lbl = new Label { Text = name, MouseFilter = Control.MouseFilterEnum.Ignore };
-                lbl.AddThemeFontSizeOverride("font_size", 11);
+                lbl.AddThemeFontSizeOverride("font_size", UITheme.FontSmall);
                 lbl.AddThemeColorOverride("font_color", new Color(1f, 1f, 1f));
                 lbl.AddThemeColorOverride("font_outline_color", new Color(0f, 0f, 0f));
                 lbl.AddThemeConstantOverride("outline_size", 4);
@@ -66,7 +66,7 @@ namespace UnturnedGodot
             _map.AddChild(_arrow);
 
             _coord = new Label();
-            _coord.AddThemeFontSizeOverride("font_size", 13);
+            _coord.AddThemeFontSizeOverride("font_size", UITheme.FontBody);
             _coord.AddThemeColorOverride("font_color", new Color(0.82f, 1f, 0.82f));
             _coord.AddThemeColorOverride("font_outline_color", new Color(0f, 0f, 0f));
             _coord.AddThemeConstantOverride("outline_size", 4);
