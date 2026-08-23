@@ -2662,6 +2662,32 @@ namespace UnturnedGodot
         // the inventory's quick-craft bar queues a craft into the SAME crafting queue (LMB = 1, RMB = 5).
         public void QuickCraft(BlueprintDef bp, int n) => _craftMenu?.QueueCraft(bp, n);
 
+        // The crafting-station tags the player currently has access to (strawberry's mechanic): for each placed
+        // deployable that PROVIDES crafting tags, grant them if the player is within its CraftingRange AND a single
+        // line-of-sight raycast to it is clear. Empty set = no station nearby -> only craft-anywhere recipes.
+        public System.Collections.Generic.HashSet<string> CraftingStationTags()
+        {
+            var tags = new System.Collections.Generic.HashSet<string>();
+            var tree = GetTree();
+            if (tree == null) return tags;
+            Vector3 eye = _cam != null ? _cam.GlobalPosition : GlobalPosition + Vector3.Up * 1.5f;
+            var space = GetWorld3D()?.DirectSpaceState;
+            foreach (var n in tree.GetNodesInGroup("deployables"))
+            {
+                if (n is not Deployable d || d.Def?.CraftingTags == null || d.Def.CraftingTags.Length == 0) continue;
+                Vector3 sp = d.GlobalPosition;
+                if (eye.DistanceSquaredTo(sp) > d.Def.CraftingRange * d.Def.CraftingRange) continue;   // outside the radius
+                if (space != null)   // ONE line-of-sight raycast eye -> station, ignoring the player + the station body
+                {
+                    var q = PhysicsRayQueryParameters3D.Create(eye, sp, 1u << 0);
+                    q.Exclude = new Godot.Collections.Array<Rid> { GetRid(), d.GetRid() };
+                    if (space.IntersectRay(q).Count > 0) continue;   // a wall between -> access denied
+                }
+                foreach (var t in d.Def.CraftingTags) tags.Add(t);
+            }
+            return tags;
+        }
+
         public void DebugSetHeldItem(SDG.Unturned.Item it) => _heldItem = it;      // test: link a backing item to the held gun
         public void DebugSaveGunState() => SaveGunState();                          // test: mirror live gun state to the backing item
         public void DebugStartReload() => StartReload();                            // test: begin a real reload (timer + anim), so a swap can land MID-reload

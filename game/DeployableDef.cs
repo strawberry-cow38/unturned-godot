@@ -34,6 +34,12 @@ namespace UnturnedGodot
         /// plain Deployable body, mirroring IsStorage -> FridgeDeploy and Fluid -> FluidDeploy.</summary>
         public string DoorProp;
 
+        // CRAFTING STATION (strawberry 2026-08-22): a placed deployable GRANTS these crafting tag GUIDs to any player
+        // within CraftingRange + line-of-sight -> recipes needing those tags unlock. From the src barricade's
+        // PlaceableProvidesCraftingTags + Range (e.g. Workbench provides the Workbench tag at 4 m).
+        public string[] CraftingTags;
+        public float CraftingRange = 4f;
+
         public bool ProcBox;          // true -> a plain gray BoxMesh of Size (no .obj/palette); the custom splitters use it
         public bool ExplosionProof;   // src Proof_Explosion: immune to OTHER explosions' damage (the Charge) so a stack doesn't chain-detonate -- you blow them on the Detonator's command, not from one stray blast
 
@@ -388,10 +394,20 @@ namespace UnturnedGodot
             PlaceSound = "metalplacement",
         };
 
+        // CRAFTING STATION: the Simple Workbench (item 1916). Grants the Workbench crafting tag within 4 m + LOS.
+        // ProcBox placeholder mesh for now (real station model is a follow-up); Size ~ a workbench table.
+        public static readonly DeployableDef Workbench = new()
+        {
+            Id = 1916, Name = "Workbench", ProcBox = true, PlaceSound = "metalplacement",
+            Size = new Vector3(1.6f, 0.9f, 0.7f), Offset = 0f, Radius = 0.9f, Range = 6f, Health = 400f,
+            CraftingTags = new[] { "7b82c125a5a54984b8bb26576b59e977" },   // Workbench tag (269 recipes)
+            CraftingRange = 4f,
+        };
+
         public static readonly DeployableDef[] All = { Generator, Spotlight, Splitter2, Splitter3, Splitter4, Combiner2, Battery, Switch, WindTurbine, GridSource, GasPump,
             FluidTank, WaterSource, FluidSplitter, FluidCombiner, FluidPumpDef, FluidValve, Refinery, Sluice, WaterInlet, WaterOutlet, Purifier, Refrigerator, Landmine, Spike, Charge, Barbedwire,
             DoorBirch, DoorMaple, DoorPine, GateBirch, GateMaple, GatePine, HatchBirch, HatchMaple, HatchPine,
-            DoorMetal, GateMetal, HatchMetal };
+            DoorMetal, GateMetal, HatchMetal, Workbench };
         public static DeployableDef ById(ushort id) => id switch
         {
             1101 => Landmine,
@@ -400,6 +416,7 @@ namespace UnturnedGodot
             386 => Barbedwire,
             458 => Generator,
             459 => Spotlight,
+            1916 => Workbench,
             9169 => DoorMetal,
             9170 => GateMetal,
             9171 => HatchMetal,

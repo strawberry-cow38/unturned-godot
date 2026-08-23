@@ -34,6 +34,7 @@ namespace UnturnedGodot
         BlueprintDef _sel;
         string _cat = "All";
         int _qty = 1;
+        System.Collections.Generic.HashSet<string> _stationTags = new();   // crafting-station tags the player currently has (recomputed each Rebuild)
         bool _open;
         public bool IsOpen => _open;
 
@@ -272,6 +273,7 @@ namespace UnturnedGodot
         {
             if (Inv == null) return;
             var inv = new Crafting.PlayerInvAdapter(Inv);
+            _stationTags = Player?.CraftingStationTags() ?? new System.Collections.Generic.HashSet<string>();   // nearby workbench/station access
 
             // categories (only non-empty ones)
             foreach (Node c in _catList.GetChildren()) c.QueueFree();
@@ -298,7 +300,7 @@ namespace UnturnedGodot
             foreach (Node c in _grid.GetChildren()) c.QueueFree();
             var view = View();
             int canNow = 0;
-            foreach (var bp in _all) if (Crafting.CanCraft(bp, inv, out _) && Crafting.MeetsSkill(bp, Player?.Skills)) canNow++;
+            foreach (var bp in _all) if (Crafting.CanCraft(bp, inv, out _) && Crafting.MeetsSkill(bp, Player?.Skills) && Crafting.HasStations(bp, _stationTags)) canNow++;
             _header.Text = $"CRAFTING   ·   {view.Count} shown   ·   {canNow} craftable now";
             if (view.Count == 0)
                 _grid.AddChild(new Label { Text = "  nothing here" });
@@ -313,7 +315,7 @@ namespace UnturnedGodot
         Control Tile(BlueprintDef bp, Crafting.IInv inv)
         {
             var a = _out.TryGetValue(bp, out var av) ? av : null;
-            bool can = Crafting.CanCraft(bp, inv, out _) && Crafting.MeetsSkill(bp, Player?.Skills);
+            bool can = Crafting.CanCraft(bp, inv, out _) && Crafting.MeetsSkill(bp, Player?.Skills) && Crafting.HasStations(bp, _stationTags);
             var tile = new Panel { CustomMinimumSize = new Vector2(TILE, TILE) };
             Box(tile, ReferenceEquals(bp, _sel) ? SelC : TileC);
 
@@ -420,7 +422,7 @@ namespace UnturnedGodot
             _detailBox.AddChild(tbl);
 
             // amount stepper + CRAFT
-            bool canMake = Crafting.CanCraft(_sel, inv, out string why) && Crafting.MeetsSkill(_sel, Player?.Skills);
+            bool canMake = Crafting.CanCraft(_sel, inv, out string why) && Crafting.MeetsSkill(_sel, Player?.Skills) && Crafting.HasStations(_sel, _stationTags);
             var row = new HBoxContainer(); row.AddThemeConstantOverride("separation", 6);
             var minus = new Button { Text = "−", CustomMinimumSize = new Vector2(40, 40) };
             minus.Pressed += () => { _qty = Mathf.Max(1, _qty - 1); ShowDetail(new Crafting.PlayerInvAdapter(Inv)); };
@@ -493,6 +495,7 @@ namespace UnturnedGodot
         public void QueueCraft(BlueprintDef bp, int qty)
         {
             if (Inv == null || bp == null || !Crafting.MeetsSkill(bp, Player?.Skills)) return;
+            if (!Crafting.HasStations(bp, Player?.CraftingStationTags())) return;   // require the recipe's workbench/station
             var inv = new Crafting.PlayerInvAdapter(Inv);
             if (!Crafting.CanCraft(bp, inv, out _)) return;
             int n = Mathf.Clamp(qty, 1, Mathf.Max(1, MaxCraftable(inv, bp)));

@@ -162,11 +162,12 @@ namespace UnturnedGodot
             if (Inv == null) return;
 
             var inv = new Crafting.PlayerInvAdapter(Inv);
+            var stations = Player?.CraftingStationTags() ?? new System.Collections.Generic.HashSet<string>();
             var show = new List<BlueprintDef>();
             foreach (var bp in BlueprintRegistry.Applicable(inv))   // Applicable = every input present (consumables AND tools)
             {
-                if (BlueprintRegistry.IsRecolour(bp)) continue;     // skip the 126 dye repaints
-                if (bp.RequiresStation) continue;                   // master: only fully-satisfiable recipes -- a workbench/station req can't be met (no station system; the server even rejects station crafts)
+                if (BlueprintRegistry.IsRecolour(bp)) continue;         // skip the 126 dye repaints
+                if (!Crafting.HasStations(bp, stations)) continue;      // master: only if the recipe's workbench/station is satisfied (nearby station in range + LOS)
                 if (!Crafting.MeetsSkill(bp, Player?.Skills)) continue;
                 show.Add(bp);
                 if (show.Count >= QUICK_MAX) break;

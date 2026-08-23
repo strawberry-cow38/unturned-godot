@@ -60,6 +60,16 @@ namespace UnturnedGodot
             return true;
         }
 
+        // Does the player have the crafting STATIONS this blueprint needs? `available` = the crafting tags granted by
+        // nearby placed stations (workbench/campfire/...) within Range + line-of-sight, computed by the caller.
+        // A recipe with no station tags is craftable anywhere.
+        public static bool HasStations(BlueprintDef bp, System.Collections.Generic.ICollection<string> available)
+        {
+            foreach (var tag in bp.StationTags)
+                if (available == null || !available.Contains(tag)) return false;
+            return true;
+        }
+
         // Execute: consume consumable inputs (Consume=true), leave tools (Consume=false), add outputs.
         // Returns false (no change) if not craftable. Note: RepairTargetItem/Ammo/Salvage operations that act on a
         // TARGET item (rather than producing outputs) are handled by the caller via bp.Operation after DoCraft
