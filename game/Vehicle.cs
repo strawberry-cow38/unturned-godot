@@ -72,6 +72,8 @@ namespace UnturnedGodot
         const float TankWheelSlip = 1.0f;   // TANK: lateral wheel friction. Too LOW (0.5) and the yaw torque spins it in place instead of arcing forward (low grip = no forward bite either); too HIGH and turning drags to a crawl. Paired with the speed-faded yaw below. Tunable.
         const float TankComY = 0.1f;   // TANK: low centre of mass (anti-flip -- master "easily flipped"). Tunable.
         const float TankTrackDiff = 0.3f;   // TANK: how much steer biases the two tracks' SPEED (both still drive -- fully stopping a track halves the power = crawl, master). The yaw torque does the turning; this is just feel. Tunable.
+        static float MaxLatAccel => float.TryParse(System.Environment.GetEnvironmentVariable("UG_LATG"), out var _g) ? _g * 9.8f : 8.3f;   // ~0.85 g of cornering a car may ASK for; the steer angle is capped to it
+        const float MinSteerDeg = 3.5f;   // never fade lock away entirely, however fast it is going
         const float SuspensionHeadroom = 3f;   // suspension max force, as a multiple of the static load ONE wheel carries
         const float TankMaxYawRate = 0.6f, TankYawGain = 60000f, TankYawSpeedFade = 0.7f;   // TANK skid-steer: a REAL torque (ApplyTorque -- integrated into owned momentum, MP-safe + survives slopes/walls, per VoX) GOVERNED toward TankMaxYawRate*input. A plain constant torque is bang-bang here (the wheels' yaw resistance is ~constant -> stalls or runs away), so this feedback torque holds a stable rate. TankYawSpeedFade FADES the target as forward speed rises: a tight pivot at rest, a WIDE arc at speed, so a turn doesn't drag to a crawl (master). Tunable.
         float _tankYawInput;   // TANK: yaw request [-1,1] from the track difference (set in Drive, applied as a real torque in _PhysicsProcess)
@@ -785,7 +787,8 @@ namespace UnturnedGodot
         Mesh _wheelMeshRef; Material _wheelMatRef; float _wheelR;   // kept so the wheels can fly off as debris on explode
         public static float GlobalMass = 900f;   // all vehicles share one mass (the source does: Rigidbody mass = 2.0 for every vehicle)
         float[] _gears; float _reverseGear, _shiftUpRpm; float _engineRpm = 1000f; int _gear = 1;   // engine RPM + gear sim
-        float _specSpeedMax;   // spec SpeedMax before TopSpeedBuff (L1 reference only)
+        float _wheelbase;   // front-to-rear axle span from the spec wheels -- the steering cap needs the real geometry
+        float _specSpeedMax;   // spec SpeedMax before TopSpeedBuff -- the reference the STEERING fade uses (and an L1 baseline)
         float _peakTorque, _dragK, _rollK, _driveR, _shiftCd; int _nTraction;   // drivetrain: peak engine torque (Nm), aero drag coeff (N per (m/s)^2), rolling resistance (N), driven wheel radius, shift lockout, traction wheel count
         AudioStreamPlayer3D _engineAudio, _ignitionAudio; bool _ignitionFired; float _idlePitch = 1f, _maxPitch = 2f, _idleVol = 0.75f, _maxVol = 1f;   // EngineRPMSimple sound
         const float EngineVolumeBoost = 1.5f;   // every engine loop +50% louder (strawberry 2026-07-15) -- amplitude x1.5 = +3.5 dB
@@ -3690,7 +3693,13 @@ namespace UnturnedGodot
             float massScale = v.Mass / GlobalMass;
             v._engineForce = s.Engine * massScale; v._steerMax = s.SteerMax; v._steerMin = s.SteerMin;
             v._speedMax = s.SpeedMax; v._speedMin = s.SpeedMin; v._brakeForce = s.Brake * massScale;
-            v._specSpeedMax = s.SpeedMax;   // the PRE-BUFF spec value, kept for L1: what the old model hard-capped at
+if (s.Wheels != null && s.Wheels.Length > 1)
+            {
+                float zmin = float.MaxValue, zmax = float.MinValue;
+                foreach (var wl in s.Wheels) { zmin = Mathf.Min(zmin, wl.Item3); zmax = Mathf.Max(zmax, wl.Item3); }
+                v._wheelbase = zmax - zmin;
+            }
+                        v._specSpeedMax = s.SpeedMax;   // the PRE-BUFF spec value: the steering fade keys off this, so the buff cannot stretch the steering curve
             // The THIRD constant that has to ride the mass, and the one the per-vehicle-mass commit missed.
             // TankYawGain is a TORQUE, so what it buys is torque/inertia -- and the pinned hull inertia is
             // m/12*(a^2+b^2), exactly proportional to mass at a fixed box. The tank went 900 kg -> 40000 kg,
@@ -5311,9 +5320,33 @@ namespace UnturnedGodot
             if (throttle > 0f && speed >= _speedMax * SpeedBackstop) eng = 0f;
             if (throttle < 0f && speed >= -_speedMin) eng = 0f;   // cap reverse at -Speed_Min (7)
             EngineForce = -eng;   // NEGATE: Godot drives this rig +Z for positive force, so W(throttle+1) was going backward
-            float t = _speedMax > 0f ? Mathf.Clamp(speed / _speedMax, 0f, 1f) : 0f;   // guard div-by-0 for a towed body (_speedMax=0) -> NaN steer target; matches ForwardSpeedPct's _speedMax<=0 guard
+            // STEERING FADES AGAINST THE SPEC TOP SPEED, NOT THE BUFFED ONE. This fade is a function of ROAD
+            // SPEED -- how much lock you get at 12 m/s should not depend on how fast the car can eventually
+            // go -- but it was written as a fraction of _speedMax, and the drivetrain raised _speedMax from
+            // 12.5 to 20. So the same 12 m/s went from t=0.96 (14.6 deg of lock) to t=0.60 (19.6 deg): 34%
+            // more steering at every real speed in the usable range. strawberry, after driving it: "turning
+            // is wayy too sensitive". Keying it to the pre-buff spec value restores the exact original curve
+            // at every road speed and pins full fade at _steerMin from the old top speed upward.
+            float steerRef = _specSpeedMax > 0f ? _specSpeedMax : _speedMax;
+            float t = steerRef > 0f ? Mathf.Clamp(speed / steerRef, 0f, 1f) : 0f;   // guard div-by-0 for a towed body (=0) -> NaN steer target
             // target steer angle (deg); NEGATE because Godot VehicleBody3D steers LEFT for positive (D(+1)=right). 28deg at rest -> 14 at full speed.
-            _steerTarget = -steer * Mathf.Lerp(_steerMax, _steerMin, t);   // smoothed toward in _PhysicsProcess (not snapped) via the AnimatedSteeringAngle-style ramp -- master confirmed the raw angle is fine
+            // ...AND CAPPED BY LATERAL ACCELERATION, which is what makes it feel like it has mass.
+            // strawberry: "turning is wayy too sensitive, this is the area i wanted real simulated intertia."
+            //
+            // MEASURED first, because the obvious suspect was wrong. Dropping WheelFrictionSlip from 6.0 to
+            // 1.5 moved cornering only from 2.08 g to 1.39 g -- the car is not sliding at all. At 14 deg of
+            // lock it carved an 11.6 m radius, which is exactly the Ackermann radius wheelbase/tan(delta) for
+            // its own 2.89 m wheelbase, so it TRACKS the steering angle and grip was never the limit. The
+            // steering angle is the whole story: 14 deg at 15 m/s asks for a 2 g corner and the tyres took it.
+            //
+            // A real car cannot do that -- the front tyres let go first. Rather than model breakaway, cap the
+            // angle to the one that would ASK for MaxLatAccel: tan(delta) = wheelbase * a / v^2. That
+            // self-limits at any speed, leaves low-speed manoeuvring untouched (below ~10 m/s the cap sits
+            // above _steerMax), and makes the limit a physical quantity rather than another tuned lerp.
+            float angle = Mathf.Lerp(_steerMax, _steerMin, t);
+            if (_wheelbase > 0f && speed > 2f)
+                angle = Mathf.Min(angle, Mathf.Max(MinSteerDeg, Mathf.RadToDeg(Mathf.Atan(_wheelbase * MaxLatAccel / (speed * speed)))));
+            _steerTarget = -steer * angle;   // smoothed toward in _PhysicsProcess (not snapped) via the AnimatedSteeringAngle-style ramp
             // SPACE = handbrake (locks hard); S-into-forward-motion = foot brake. Both far stronger than the old raw .dat Brake.
             _handbraking = handbrake;   // remembered so the car freezes (no jitter) when stopped with the handbrake held
             bool coasting = Mathf.Abs(throttle) < 0.05f && !footBrake;   // no throttle + no brake input -> engine braking drags it down FASTER than pure friction (master: slow faster on its own)
