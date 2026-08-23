@@ -778,7 +778,22 @@ namespace UnturnedGodot
         PlayerController.Surf[] _wheelSurf; float _dustCheckT, _dustLogT;   // cached ground material per wheel (raycast, throttled); _dustLogT throttles UG_DUSTDEBUG
         MeshInstance3D _bodyMesh; AudioStreamPlayer3D _explosionAudio; Vector3 _firePos;   // damage/explosion (source askDamage/explode); _husk = settled wreck, sim killed; _firePos = engine-bay local offset
         const float ExplodeDelay = 4f, SmokeHealth = 200f, HeavySmokeHealth = 100f;   // source EXPLODE=4s, SMOKE_1<200, SMOKE_0<100
-        const float FootBrakeScale = 6f, HandbrakeScale = 13f;   // Godot Brake calibration (raw .dat Brake too weak, but 15/35 flipped the car onto its nose -- master); S foot-brake vs Space handbrake bite
+        // FOOT BRAKE. 1.5, not the 6 that shipped, because 6 stands the car on its nose. strawberry, after
+        // driving it: "on braking/direction changes the car kicks up the front/back wheels." Measured on the
+        // jeep braking from 12 m/s -- peak deceleration, peak pitch, fewest wheels touching, and the stop:
+        //
+        //   6.0   4.43 g   52.1 deg   0/4 wheels   3.3 m   <- pole-vaults, fully airborne for ~1 s
+        //   3.0   2.24 g    3.8 deg   2/4          5.5 m
+        //   2.0   1.50 g    1.8 deg   2/4          5.6 m
+        //   1.5   1.13 g    1.4 deg   4/4          6.7 m   <- all four planted, and a real car's 1 g
+        //   1.0   0.77 g    0.9 deg   4/4          9.9 m
+        //
+        // 4.4 g is more retardation than an F1 car and the jeep was leaving the ground under it, which is the
+        // whole of the reported symptom. The line this replaces already knew: "raw .dat Brake too weak, but
+        // 15/35 flipped the car onto its nose". 15 was reduced to 6 to stop that -- and 6 still flipped it,
+        // just less often than a full lap of the probe would show. This is PRE-EXISTING, not from the mass or
+        // suspension work: f9ef9b0c measures 4.49 g and 48.2 deg with the same wheels off the ground.
+        const float FootBrakeScale = 1.5f, HandbrakeScale = 13f;   // Godot Brake calibration (raw .dat Brake too weak, but 15/35 flipped the car onto its nose -- master); S foot-brake vs Space handbrake bite
         public bool Exploded => _exploded;
         public bool OnFire => _deadTimer >= 0f || _exploded;   // caught fire at 0 HP (burning toward explosion) or a wreck -> engine is DEAD + unfixable (master)
         VehicleWheel3D[] _wNodes; MeshInstance3D[] _wMeshes;   // wheels: VehicleWheel3D auto-rolls its node (mesh child inherits it), so no manual spin. _wMeshes kept for debris/hide.
@@ -808,7 +823,7 @@ namespace UnturnedGodot
         const float StallRpm     = 2600f;    // torque-converter stall: what the engine revs to against a stopped car
         const float RollingCrr   = 0.015f;   // rolling resistance, as a fraction of weight
         const float ShiftTime    = 0.30f;    // lockout between shifts
-        const float EngineBrakeScale = 0.03f; // lift-off engine braking, as a fraction of the FOOT brake, AT REDLINE (measured: 0.10 still gave 0.37 g of decel for letting go of the key)
+        const float EngineBrakeScale = 0.12f; // lift-off engine braking, as a fraction of the FOOT brake, AT REDLINE. Raised 0.03 -> 0.12 when FootBrakeScale went 6 -> 1.5, because engine braking is derived from it: the PRODUCT is what sets the coastdown, and it was signed off at 1.83 m/s2
         const float SpeedBackstop = 1.15f;   // hard cut this far past the drag equilibrium (runaway guard only)
         public float EngineRpm => _engineRpm;
         public string GearLabel => LinearVelocity.LengthSquared() < 0.25f ? "N" : (LinearVelocity.Dot(-GlobalTransform.Basis.Z) < -0.5f ? "R" : $"G{_gear}");   // N stopped / R reversing / G<n>
@@ -816,6 +831,7 @@ namespace UnturnedGodot
         public int Gear => _gear;
         public int GearCount => _gears != null ? _gears.Length : 0;
         public float PeakTorque => _peakTorque;
+        public float WheelbaseForTest => _wheelbase;   // L1: needed to compute the Ackermann yaw a steer angle COMMANDS, so a probe can see oversteer
         public float SpecSpeedMaxForTest => _specSpeedMax;   // L1: the un-buffed spec top speed the OLD model capped at
         public float RedlineRpmForTest => RedlineFrac * MaxRpm;                                   // L1: the shift/limit point, so a probe doesn't re-derive it
         public float TorqueAtRpmForTest(float rpm) =>                                             // L1: sample the torque CURVE directly -- a flat-force model returns the same number at every rpm

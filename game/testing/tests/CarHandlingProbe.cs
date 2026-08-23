@@ -29,6 +29,19 @@ namespace UnturnedGodot.Testing
         // point of a probe: it is the same manoeuvre at the same speed before and after.
         const float RefSpeed = 12f;
 
+        /// <summary>How much faster the car is rotating than its steering angle COMMANDS. Ackermann says a
+        /// steer angle d at speed v yields yaw = v*tan(d)/wheelbase; a gripping car tracks that (<=1x, and
+        /// under 1 is understeer), while a car whose rear has let go pivots past it. That is the signature of
+        /// a handbrake turn, and unlike a raw yaw rate it does not depend on how long the manoeuvre ran.</summary>
+        static float Oversteer(Vehicle v)
+        {
+            float wb = v.WheelbaseForTest;
+            if (wb <= 0.1f) return 0f;
+            float sp = Mathf.Abs(v.LinearVelocity.Dot(-v.GlobalTransform.Basis.Z));
+            float geo = sp * Mathf.Tan(Mathf.DegToRad(Mathf.Abs(v.SteerAngleDegrees))) / wb;
+            return geo > 0.05f ? Mathf.Abs(v.AngularVelocity.Y) / geo : 0f;   // ignore near-straight moments, where the ratio is noise
+        }
+
         static IEnumerable<Step> AccelTo(Vehicle v, float target, int maxTicks = 2500)
         {
             for (int i = 0; i < maxTicks; i++)
@@ -101,12 +114,13 @@ namespace UnturnedGodot.Testing
             // in a handbrake turn comes from the FRONTS still gripping and steering while the rears let go, so
             // the input has to include lock or the probe measures 0.00 rad/s no matter what the code does. It
             // did exactly that, twice, and the second time it was measuring a working handbrake.
-            var h0 = v.GlobalPosition; float th = 0f, maxYaw = 0f;
+            var h0 = v.GlobalPosition; float th = 0f, maxYaw = 0f, handOver = 0f;
             for (int i = 0; i < 1500 && v.LinearVelocity.Length() > 0.5f; i++)
             {
                 v.Drive(0f, 1f, true);
                 yield return Ticks(1); th += Dt;
                 maxYaw = Mathf.Max(maxYaw, Mathf.Abs(v.AngularVelocity.Y));
+                handOver = Mathf.Max(handOver, Oversteer(v));
             }
             float handDist = v.GlobalPosition.DistanceTo(h0);
             GD.Print($"[car] {car}: HANDBRAKE+lock from {entry:0.00} m/s -> {handDist:0.0} m in {th:0.0} s, peak yaw {maxYaw:0.00} rad/s");
@@ -116,16 +130,23 @@ namespace UnturnedGodot.Testing
             // the car MORE than this -- an absolute yaw number on its own would pass on any car that merely
             // turns while slowing down.
             foreach (var st in AccelTo(v, refSpeed)) yield return st;
-            float footYaw = 0f;
+            float footYaw = 0f, footOver = 0f;
             for (int i = 0; i < 1500 && v.LinearVelocity.Length() > 0.5f; i++)
             {
                 v.Drive(-1f, 1f, false);
                 yield return Ticks(1);
                 footYaw = Mathf.Max(footYaw, Mathf.Abs(v.AngularVelocity.Y));
+                footOver = Mathf.Max(footOver, Oversteer(v));
             }
-            GD.Print($"[car] {car}: FOOTBRAKE+lock peak yaw {footYaw:0.00} rad/s  (handbrake {maxYaw:0.00})");
-            T.Check($"the handbrake rotates the car MORE than the footbrake ({maxYaw:0.00} vs {footYaw:0.00} rad/s)",
-                maxYaw > footYaw);
+            GD.Print($"[car] {car}: FOOTBRAKE+lock peak yaw {footYaw:0.00} rad/s (handbrake {maxYaw:0.00}) | OVERSTEER foot {footOver:0.00}x hand {handOver:0.00}x");
+            // COMPARED AS OVERSTEER, not as raw yaw rate. A raw-yaw comparison is a comparison of two
+            // manoeuvres whose DURATIONS differ, so it moves whenever brake strength moves: dropping
+            // FootBrakeScale 6 -> 1.5 let the control leg corner for longer and its peak yaw rose 0.68 -> 0.87
+            // purely from spending more time at full lock, failing a check about the handbrake. What actually
+            // defines a handbrake turn is the car rotating FASTER than its steering geometry commands -- the
+            // rears let go and it pivots past Ackermann. That ratio is immune to how long either leg lasts.
+            T.Check($"the handbrake breaks the rear away more than braking does ({handOver:0.00}x vs {footOver:0.00}x Ackermann)",
+                handOver > footOver);
 
             // ---- TURN RADIUS: hold full lock at a steady throttle and measure the circle from the yaw rate,
             // r = v / omega. Taken from the RATE rather than by fitting a path, so a drifting car still
