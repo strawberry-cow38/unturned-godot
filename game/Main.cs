@@ -92,7 +92,7 @@ namespace UnturnedGodot
                 DisplayServer.WindowSetVsyncMode(DisplayServer.VSyncMode.Disabled);
                 GD.Print($"[display] vsync -> {DisplayServer.WindowGetVsyncMode()}");
             }
-            string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null, drivetest = null, proptest = null, magnettest = null, animrig = null, rottest = null, itemtest = null, navShot = null, croptest = null, menuShot = null, clothtest = null, boattest = null, slingtest = null, trainshow = null, traintrack = null, ammoRadial = null;
+            string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null, drivetest = null, proptest = null, magnettest = null, animrig = null, rottest = null, itemtest = null, navShot = null, croptest = null, menuShot = null, clothtest = null, boattest = null, slingtest = null, trainshow = null, traintrack = null, ammoRadial = null, animaltest = null, treetest = null;
             bool zperf = false;
             bool zbody = false;
             bool deployTest = false, barricadeTest = false, barricadePlay = false;
@@ -105,7 +105,7 @@ namespace UnturnedGodot
             bool containerTest = false; string containerTestName = null;
             bool wallDemo = false;
             bool clockTest = false;
-            bool play = false, demo = false, netdemo = false, server = false, dedicated = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, lightTest = false, trafficTest = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, playground = false, objects = false, peidrive = false, craftui = false, bakenav = false, navPathTest = false, zombieTest = false, zdirTest = false, editorMode = false, impactTest = false, doorGallery = false, lampTest = false, beamTest = false, impTest = false, treeSweep = false, bakeLods = false, bakeLodsDry = false, netobserve = false;
+            bool play = false, demo = false, netdemo = false, server = false, dedicated = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, lightTest = false, trafficTest = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, playground = false, objects = false, peidrive = false, craftmenu = false, stationtest = false, bakenav = false, navPathTest = false, zombieTest = false, zdirTest = false, editorMode = false, impactTest = false, doorGallery = false, lampTest = false, beamTest = false, impTest = false, treeSweep = false, bakeLods = false, bakeLodsDry = false, netobserve = false;
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
                 if (arg.StartsWith("--catalog=")) catalog = arg["--catalog=".Length..];
@@ -123,6 +123,8 @@ namespace UnturnedGodot
                 else if (arg == "--zombietest") zombieTest = true;   // OFFLINE verify: sync world -> bucket Animals.dat into pockets -> check planned spawns land ON the baked navmesh
                 else if (arg == "--zdirtest") zdirTest = true;       // OFFLINE verify: boot the REWRITE on PEI -> do rows tier, query paths and actually MOVE? (implies --newzombies)
                 else if (arg.StartsWith("--proptest=")) { proptest = arg["--proptest=".Length..]; _shotRequested = proptest; }
+                else if (arg.StartsWith("--animaltest=")) { animaltest = arg["--animaltest=".Length..]; _shotRequested = animaltest; }   // one animal rig posed as if walking -Z, to measure the RigYawFix (UG_ANIMALYAW spins it)
+                else if (arg.StartsWith("--treetest=")) { treetest = arg["--treetest=".Length..]; _shotRequested = treetest; }   // standing tree beside a felled one (its dropped logs) -> render the harvest
                 else if (arg == "--trainshow") trainshow = "1";   // assemble train_cargo_0 from its extracted pieces for a 3/4 shot
                 else if (arg == "--traintrack") traintrack = "1";   // ride the train along a curved test track
                 else if (arg.StartsWith("--slingtest=")) { slingtest = arg["--slingtest=".Length..]; _shotRequested = slingtest; }
@@ -193,7 +195,8 @@ namespace UnturnedGodot
                 else if (arg == "--firetest") firetest = true;   // player fires near a distant zombie: verify the gunshot alert (+ --supp = suppressed -> no alert)
                 else if (arg == "--supp") supp = true;           // with --firetest: attach the suppressor
                 else if (arg == "--terrain") terrain = true;     // load a real map's Landscape heightmap terrain (PEI Tile_0_0)
-                else if (arg == "--craftui") craftui = true;     // open the crafting menu over a stocked inventory (UI verify)
+                else if (arg == "--craftmenu") craftmenu = true; // open the CraftingMenu (browsable recipe index) over a stocked bag
+                else if (arg == "--stationtest") { stationtest = true; _shotRequested = shot; }   // line up all 9 crafting-station deployables to eyeball the extracted models
                 else if (arg == "--objects") objects = true;     // place PEI's real Level/Objects.dat objects (fences/props/rocks) on the terrain
                 else if (arg == "--peidrive") peidrive = true;    // playable PEI: terrain + all objects/trees + player+jeep with real controls (same as the menu's "Drive PEI")
                 else if (arg.StartsWith("--map="))                // load a DIFFERENT map (e.g. --map="cow tools"): terrain + objects + spawns all follow _mapRoot
@@ -267,11 +270,19 @@ namespace UnturnedGodot
                 return;
             }
 
-            if (craftui)   // open the crafting menu over a stocked inventory -> render the recipe list
+            if (craftmenu)   // open the CraftingMenu (the current in-game one) over a stocked bag -> render it
             {
                 GetWindow().Size = new Vector2I(1280, 720);
                 _shotPath = shot;
-                BuildCraftUI();
+                BuildCraftMenu();
+                return;
+            }
+
+            if (stationtest)   // line up all 9 crafting stations -> eyeball the extracted models
+            {
+                GetWindow().Size = new Vector2I(1600, 720);
+                _shotPath = shot;
+                BuildStationTest();
                 return;
             }
 
@@ -438,6 +449,8 @@ namespace UnturnedGodot
                 BuildPropTest(proptest);
                 return;
             }
+            if (animaltest != null) { GetWindow().Size = new Vector2I(1000, 720); _shotPath = shot; BuildAnimalTest(animaltest); return; }
+            if (treetest != null) { GetWindow().Size = new Vector2I(1280, 800); _shotPath = shot; BuildTreeTest(treetest); return; }
             if (trainshow != null) { GetWindow().Size = new Vector2I(1600, 720); BuildTrainShow(); return; }
             if (traintrack != null) { GetWindow().Size = new Vector2I(1600, 900); BuildTrainTrack(); return; }
 
@@ -958,6 +971,118 @@ namespace UnturnedGodot
             AddChild(cam);
             if (string.IsNullOrEmpty(gun)) cam.LookAtFromPosition(new Vector3(-2.5f, 1.2f, -3.4f), new Vector3(0f, 0.92f, 0f), Vector3.Up);
             else cam.LookAtFromPosition(new Vector3(4.5f, 1.7f, -6.5f), new Vector3(0f, 1.0f, 0f), Vector3.Up);
+        }
+
+        // --animaltest=<deer|pig|cow>: one animal rig posed as if walking toward -Z (Godot forward, the way AnimalAgent's
+        // LookAt aligns it). The red bar points -Z = travel; compare the model's head to it. UG_ANIMALYAW=<deg> spins the
+        // rig on the spot to find AnimalAgent.RigYawFix. 3/4 aerial so head/tail + left/right both read.
+        void BuildAnimalTest(string species)
+        {
+            var env = new Godot.Environment
+            {
+                BackgroundMode = Godot.Environment.BGMode.Color,
+                BackgroundColor = new Color(0.42f, 0.55f, 0.72f),
+                AmbientLightSource = Godot.Environment.AmbientSource.Color,
+                AmbientLightColor = new Color(0.6f, 0.6f, 0.62f),
+                AmbientLightEnergy = 0.9f,
+            };
+            AddChild(new WorldEnvironment { Environment = env });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-55f, -35f, 0f), LightEnergy = 1.2f, ShadowEnabled = true });
+            var ground = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(20f, 20f) } };
+            ground.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.30f, 0.34f, 0.28f) };
+            AddChild(ground);
+
+            (string rig, string tex, float foot) def = species switch
+            {
+                "pig" => ("pig", "Animal_Pig_tex.png", 0.22f),
+                "cow" => ("cow", "Animal_Cow_tex.png", 0.52f),
+                _     => ("deer", "Animal_Deer_tex.png", 0.70f),
+            };
+            var rc = RiggedCharacter.Build($"res://content/{def.rig}_rig.json", Colors.White, false, $"res://content/objects/{def.tex}", null);
+            if (rc == null) { GD.PrintErr("[animaltest] rig build failed"); GetTree().Quit(); return; }
+            var holder = new Node3D();   // identity: holder -Z is world -Z = the travel direction AnimalAgent's LookAt produces
+            AddChild(holder);
+            float holderY = float.TryParse(System.Environment.GetEnvironmentVariable("UG_ANIMALFOOT"), out var _hf) ? _hf : def.foot;   // UG_ANIMALFOOT=0 -> rig origin ON the ground, so the render shows the feet's TRUE local offset
+            holder.Position = new Vector3(0f, holderY, 0f);
+            holder.AddChild(rc);
+            float yaw = float.TryParse(System.Environment.GetEnvironmentVariable("UG_ANIMALYAW"), out var y) ? y : 0f;
+            rc.RotationDegrees = new Vector3(0f, yaw, 0f);
+            rc.Play("Idle");
+            GD.Print($"[animaltest] {def.rig}: holder faces -Z (travel), rig yaw {yaw:0}. clips: {string.Join(",", rc.ClipNames)}");
+            // FEET measurement: lowest world-Y of any rig mesh box vs the Y=0 ground. holder is at foot, so >0 = floats.
+            float _minY = 1e9f;
+            var _st = new System.Collections.Generic.Stack<Node>(); _st.Push(rc);
+            while (_st.Count > 0) { var _n = _st.Pop(); foreach (var _c in _n.GetChildren()) _st.Push(_c);
+                if (_n is VisualInstance3D _vi) { var _bb = _vi.GetAabb(); var _gt = _vi.GlobalTransform;
+                    for (int _i = 0; _i < 8; _i++) { var _cor = _bb.Position + _bb.Size * new Vector3(_i & 1, (_i >> 1) & 1, (_i >> 2) & 1); _minY = Mathf.Min(_minY, (_gt * _cor).Y); } } }
+            GD.Print($"[animalfeet] {def.rig}: feet world Y={_minY:0.000} (float above Y=0; foot={def.foot}) -> ground it with foot={(def.foot - _minY):0.000}");
+
+            var arrow = new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(0.12f, 0.12f, 1.4f) } };   // points -Z = travel
+            arrow.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.95f, 0.2f, 0.2f) };
+            arrow.Position = new Vector3(1.5f, 0.06f, -0.7f);
+            AddChild(arrow);
+
+            var xref = new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(1.4f, 0.12f, 0.12f) } };   // blue = +X reference
+            xref.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.2f, 0.4f, 0.95f) };
+            xref.Position = new Vector3(0.7f, 0.06f, 1.5f);
+            AddChild(xref);
+            var cam = new Camera3D { Fov = 38f };
+            AddChild(cam);
+            if (System.Environment.GetEnvironmentVariable("UG_ANIMALCAM") == "side")
+            {
+                cam.Projection = Camera3D.ProjectionType.Orthogonal; cam.Size = 3.4f;   // ORTHO: heights map EXACTLY to screen (no perspective) -> read the feet vs the Y=0 ground line precisely
+                cam.LookAtFromPosition(new Vector3(8f, 1.0f, 0f), new Vector3(0f, 1.0f, 0f), Vector3.Up);
+            }
+            else
+                cam.LookAtFromPosition(new Vector3(0f, 9f, 0f), Vector3.Zero, new Vector3(0f, 0f, -1f));   // TOP-DOWN, unambiguous: -Z(travel, RED) to top, +X(BLUE) right
+        }
+
+        // --treetest=<birch|maple|pine>: a standing tree on the LEFT, a felled one on the RIGHT (visual hidden + a real
+        // TreeTrunk.Chop dropping the wood-type logs onto a collidable ground) -> renders the harvest before -> after.
+        void BuildTreeTest(string species)
+        {
+            var env = new Godot.Environment
+            {
+                BackgroundMode = Godot.Environment.BGMode.Color, BackgroundColor = new Color(0.5f, 0.62f, 0.78f),
+                AmbientLightSource = Godot.Environment.AmbientSource.Color, AmbientLightColor = new Color(0.6f, 0.62f, 0.6f), AmbientLightEnergy = 0.85f,
+            };
+            AddChild(new WorldEnvironment { Environment = env });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-48f, -40f, 0f), LightEnergy = 1.2f, ShadowEnabled = true });
+            AddChild(new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(80f, 80f) }, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.32f, 0.4f, 0.26f), Roughness = 1f } });
+            var groundBody = new StaticBody3D { CollisionLayer = 1u << 0 };   // the dropped logs land on this
+            groundBody.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
+            AddChild(groundBody);
+
+            SDG.Unturned.ItemCatalog.RegisterAll();   // WorldItem.Spawn resolves the log's model
+            string dir = ProjectSettings.GlobalizePath("res://content/resources/");
+            string name = species == "pine" ? "Pine_0" : species == "maple" ? "Maple_0" : "Birch_0";
+            ushort log = species == "pine" ? (ushort)41 : species == "maple" ? (ushort)39 : (ushort)37;
+
+            AddChild(LoadTreeVisual(dir, name, new Vector3(-8f, 0f, 0f)));   // LEFT: standing
+            var trunk = new TreeTrunk { Field = null, Index = 11, LogItem = log, Health = 10f, RewardMin = 6, RewardMax = 8, TreeName = name, ResDir = dir, TreeXf = new Transform3D(Basis.Identity, new Vector3(8f, 0f, 0f)) };
+            AddChild(trunk); trunk.Position = new Vector3(8f, 0f, 0f);
+            trunk.Chop(999f, new Vector3(8f, 1f, 0f), new Vector3(0.6f, 0f, -0.8f).Normalized());   // fell it -> stump stays + debris topples back-right (keeps the near logs visible) + logs drop
+            GD.Print($"[treetest] {name}: left standing, right felled -> stump + debris + logs (log item {log})");
+
+            var cam = new Camera3D { Fov = 36f, Far = 800f };
+            AddChild(cam);
+            cam.LookAtFromPosition(new Vector3(0f, 15f, 62f), new Vector3(0f, 10f, 0f), Vector3.Up);
+        }
+
+        // Load a tree's parts (bark + leaves) from content/resources/<name>_<i>.obj as an upright Node3D at pos.
+        Node3D LoadTreeVisual(string dir, string name, Vector3 pos)
+        {
+            var root = new Node3D { Position = pos };   // resource-tree objs are already Y-up (ResourceField applies no stand-up) -> identity
+            for (int i = 0; i < 2; i++)
+            {
+                var m = ObjMesh.Load(dir + name + "_" + i + ".obj");
+                if (m == null) continue;
+                var mat = new StandardMaterial3D { CullMode = BaseMaterial3D.CullModeEnum.Disabled, Roughness = 0.9f };
+                var img = new Image();
+                if (img.Load(dir + name + "_" + i + "_tex.png") == Error.Ok) { img.GenerateMipmaps(); mat.AlbedoTexture = ImageTexture.CreateFromImage(img); mat.TextureFilter = BaseMaterial3D.TextureFilterEnum.LinearWithMipmaps; }
+                root.AddChild(new MeshInstance3D { Mesh = m, MaterialOverride = mat });
+            }
+            return root;
         }
 
         // --clothtest=<shirtId>,<pantsId> : the P3a render gate. Spawn a 3P RiggedCharacter (clothes-shader body +
@@ -1734,18 +1859,44 @@ namespace UnturnedGodot
             GD.Print($"[FIRETEST] suppressed={suppressed} -- firing away from a zombie 25 m off; expect [ALERT] ONLY when unsuppressed");
         }
 
-        // --craftui: open the crafting menu over a player with a stocked inventory so the recipe list renders.
-        void BuildCraftUI()
+        // --craftmenu: open the NEWER CraftingMenu (the browsable recipe index wired to the player as _craftMenu / Y)
+        // over a bag stocked with metal scrap + a blowtorch + our tree logs, so the recipe list + craftability render.
+        void BuildCraftMenu()
         {
             SDG.Unturned.ItemCatalog.RegisterAll();
             BlueprintRegistry.Load();
             var inv = new SDG.Unturned.PlayerInventory();
             inv.tryAddItem(new SDG.Unturned.Item(67, 200));   // Metal Scrap x200
-            inv.tryAddItem(new SDG.Unturned.Item(76, 1));     // Blowtorch (tool)
-            var ui = new CraftingUI { Inv = inv };
-            AddChild(ui);
-            ui.Open();
-            GD.Print("[CRAFTUI] opened crafting menu over a stocked inventory");
+            inv.tryAddItem(new SDG.Unturned.Item(76, 1));     // Blowtorch (tool, not consumed)
+            inv.tryAddItem(new SDG.Unturned.Item(37, 40));    // Birch Log (our tree drops)
+            inv.tryAddItem(new SDG.Unturned.Item(39, 40));    // Maple Log
+            inv.tryAddItem(new SDG.Unturned.Item(41, 40));    // Pine Log
+            var menu = new CraftingMenu { Inv = inv };
+            AddChild(menu);
+            menu.Open();
+            if (System.Environment.GetEnvironmentVariable("UG_CRAFTQUEUE") == "1") menu.DebugQueueCraftable(3, 3);   // populate the queue for the shot
+            GD.Print("[CRAFTMENU] opened the newer CraftingMenu over a stocked inventory");
+        }
+
+        // --stationtest: place all 9 crafting-station deployables in a row on a lit ground -> verify the ripped models.
+        void BuildStationTest()
+        {
+            var env = new Godot.Environment
+            {
+                BackgroundMode = Godot.Environment.BGMode.Color, BackgroundColor = new Color(0.5f, 0.62f, 0.78f),
+                AmbientLightSource = Godot.Environment.AmbientSource.Color, AmbientLightColor = new Color(0.62f, 0.63f, 0.6f), AmbientLightEnergy = 0.9f,
+            };
+            AddChild(new WorldEnvironment { Environment = env });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-48f, -40f, 0f), LightEnergy = 1.2f, ShadowEnabled = true });
+            AddChild(new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(60f, 60f) }, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.32f, 0.4f, 0.26f), Roughness = 1f } });
+            SDG.Unturned.ItemCatalog.RegisterAll();
+            var stations = new[] { DeployableDef.Workbench, DeployableDef.Campfire, DeployableDef.ChemistryLab, DeployableDef.Kiln, DeployableDef.Loom, DeployableDef.OvenBrick, DeployableDef.OvenElectric, DeployableDef.SewingTable, DeployableDef.SpinningWheel };
+            for (int i = 0; i < stations.Length; i++)
+                Deployable.Spawn(this, stations[i], new Vector3((i - 4) * 3f, 0f, 0f), 0f);
+            var cam = new Camera3D { Fov = 46f, Far = 400f };
+            AddChild(cam);
+            cam.LookAtFromPosition(new Vector3(0f, 7f, 17f), new Vector3(0f, 0.8f, 0f), Vector3.Up);
+            GD.Print("[stationtest] 9 crafting stations placed");
         }
 
         // --terrain: load PEI's Landscape Tile_0_0 heightmap into a Godot terrain mesh (the first real WORLD step; replaces
@@ -5250,6 +5401,15 @@ namespace UnturnedGodot
             AddChild(player);                    // _Ready builds + populates the inventory and its dashboard
             player.GlobalPosition = new Vector3(0, 1.0f, 0);
             { var hud = new HUD { Player = player }; AddChild(hud); player.Hud = hud; }
+            if (System.Environment.GetEnvironmentVariable("UG_QUICKCRAFT") == "1")   // stock craftable mats + load blueprints so the quick-craft bar shows
+            {
+                SDG.Unturned.ItemCatalog.RegisterAll();
+                BlueprintRegistry.Load();
+                player.Inventory.tryAddItem(new SDG.Unturned.Item(67, 200));   // Metal Scrap
+                player.Inventory.tryAddItem(new SDG.Unturned.Item(76, 1));     // Blowtorch (tool)
+                if (System.Environment.GetEnvironmentVariable("UG_WORKBENCH") == "1")   // place a Workbench 2m from the player -> its recipes unlock in the quick-craft
+                    Deployable.Spawn(this, DeployableDef.Workbench, new Vector3(2f, 0f, 0f), 0f);
+            }
             if (equipDemo) { player.OpenInventory(); player.DemoEquip(1, 0, 0); }   // equip the SECONDARY Maplestrike -> held
             else if (selectDemo) player.DemoSelect(2, 0, 0);   // pop the selection panel for the Medkit in pockets
             else player.OpenInventory();

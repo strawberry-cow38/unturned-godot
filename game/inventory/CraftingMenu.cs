@@ -4,54 +4,93 @@ using System.Collections.Generic;
 
 namespace UnturnedGodot
 {
-    // THE CRAFTING MENU (strawberry: "lets get a crafting menu. accessible via the inventory crafting button.
-    // indexed list of all available crafting recipes ... ONLY relevant items that are accessible right now, none
-    // of the bullshit recipes from curated maps", then "forget the current ui").
+    // THE CRAFTING MENU — categorised icon-grid layout (strawberry 2026-08-22, from a ref screenshot).
+    //   LEFT   : category list stacked vertically, each with a recipe count; click to filter.
+    //   MIDDLE : a scrollable GRID of item icons (hover a tile -> the item name tooltip) + a search box.
+    //   BOTTOM : the crafting queue -- a STUB for now, its space reserved under the grid/categories.
+    //   RIGHT  : the selected recipe -- icon, name, station/skill gate, description, an INGREDIENTS table
+    //            (AMOUNT / ITEM TYPE / TOTAL / HAVE) and an amount stepper + CRAFT button.
     //
-    // A BROWSABLE INDEX, not a supplies panel. The old CraftingUI listed BlueprintRegistry.Applicable() -- what the
-    // current bag can make -- so an empty bag showed an empty menu, which reads as broken rather than as "you have
-    // no materials". This lists every recipe the port can express and shows craftability per row, so a recipe you
-    // cannot afford is visible and greyed with the shortfall on its button, not absent.
-    //
-    // WHAT "AVAILABLE" MEANS HERE, measured rather than assumed: blueprints.tsv is 1875 rows; 1569 carry no inputs
-    // (Salvage/Repair/Fill target-ops, excluded by design); 252 are Craft recipes with inputs; 195 have an owner
-    // item AND every ingredient present in this port's catalog. The 57 dropped are precisely the curated-map
-    // recipes -- they name ingredients that do not exist here, so they were never craftable and listing them is the
-    // noise being complained about. Item resolution is the filter because it is CHECKABLE; a hand-kept list of
-    // which map each item spawns on is not, and Washington/Yukon are not even installed on this box to check
-    // against (only PEI's Spawns/ tables are local).
-    //
-    // 126 of the 195 are pure recolours (Blue Daypack <- White Daypack). They are real recipes so they are listed,
-    // but they outnumber the 69 genuine crafts two to one, so they sit in their own section at the bottom rather
-    // than burying metal bars, planks, sentries and generators.
+    // Recipes come from BlueprintRegistry.Index() (the 195 that resolve every ingredient in this port -- see the
+    // registry for the 1875->195 filter). Icons are InventoryUI.IconFor(id) (the SAME textures the bag/hotbar draw;
+    // no icon -> a name-label tile). Categories are the output item's EItemType, grouped; recolours get their own
+    // "Dyes" bucket so 126 daypack repaints don't bury the 69 real crafts.
     public partial class CraftingMenu : CanvasLayer
     {
         public PlayerInventory Inv;
         public PlayerController Player;
 
-        const int PANELW = 900, PANELH = 620;
-        const int LISTW = 400;
+        const int PANELW = 1100, PANELH = 680;
+        const int CATW = 180, GRIDW = 470, DETW = 390, GRIDCOLS = 5, TILE = 84;
 
         Control _root;
         Panel _panel;
         Label _header;
+        VBoxContainer _catList;
         LineEdit _search;
-        VBoxContainer _list;
+        GridContainer _grid;
         Panel _detail;
         VBoxContainer _detailBox;
         BlueprintDef _sel;
+        string _cat = "All";
+        int _qty = 1;
+        System.Collections.Generic.HashSet<string> _stationTags = new();   // crafting-station tags the player currently has (recomputed each Rebuild)
         bool _open;
         public bool IsOpen => _open;
 
-        static Color Bg => new(0.08f, 0.10f, 0.13f, 0.96f);
-        static Color Bar => new(0.17f, 0.24f, 0.32f, 0.90f);
-        static Color RowOn => new(0.30f, 0.40f, 0.50f, 0.85f);
-        static Color Dim => new(0.58f, 0.58f, 0.62f);
+        // crafting queue: index 0 = LEFTMOST (newest); last = RIGHTMOST (active, counting its timer down).
+        // ingredients are consumed into "limbo" (PerUnit) when a job is queued and returned if it's cancelled;
+        // each craft-time tick produces one output and drops the qty, so a xN job pops one item per second.
+        readonly List<QueueJob> _queue = new();
+        Control _queueRow;
+        Label _qEmpty;
+        ColorRect _activeBar;
+        float _qScroll, _qDragStartX, _qScroll0;   // drag-to-scroll state
+        bool _qDragging;
+        QueueJob _qPressJob;
+        const float BASE_CRAFT_SECONDS = 1f;   // master 2026-08-22: every recipe 1 s for now (per-recipe knob later)
+        const int TILEQ = 52;
+        sealed class QueueJob { public BlueprintDef Bp; public ItemAsset Out; public int Qty; public float TimeLeft; public List<(ushort id, int amt)> PerUnit; }
 
-        static void Box(Panel p, Color c)
+        static float CraftTimeFor(BlueprintDef bp) => BASE_CRAFT_SECONDS;   // the per-recipe "crafting time variable" (all 1 s)
+
+        // resolved once per Open(): every indexed recipe, its output asset, and its category bucket
+        readonly List<BlueprintDef> _all = new();
+        readonly Dictionary<BlueprintDef, ItemAsset> _out = new();
+        readonly Dictionary<BlueprintDef, string> _catOf = new();
+
+        static Color Bg => new(0.08f, 0.10f, 0.13f, 0.97f);
+        static Color Bar => new(0.17f, 0.24f, 0.32f, 0.95f);
+        static Color SelC => new(0.30f, 0.42f, 0.54f, 0.95f);
+        static Color TileC => new(0.14f, 0.17f, 0.21f, 0.95f);
+        static Color Dim => new(0.60f, 0.60f, 0.64f);
+        static Color Good => new(0.62f, 0.82f, 0.60f);
+        static Color Bad => new(0.86f, 0.52f, 0.46f);
+
+        static void Box(Control p, Color c, int r = 4)
         {
-            var sb = new StyleBoxFlat { BgColor = c, CornerRadiusTopLeft = 4, CornerRadiusTopRight = 4, CornerRadiusBottomLeft = 4, CornerRadiusBottomRight = 4 };
+            var sb = new StyleBoxFlat { BgColor = c, CornerRadiusTopLeft = r, CornerRadiusTopRight = r, CornerRadiusBottomLeft = r, CornerRadiusBottomRight = r };
             p.AddThemeStyleboxOverride("panel", sb);
+        }
+
+        static readonly string[] CatOrder = { "All", "Weapons", "Attachments", "Ammo", "Clothing", "Medical", "Food", "Building", "Resources", "Tools", "Other", "Dyes" };
+
+        // group the output item's EItemType (by name, so a type this build doesn't know just falls to Other).
+        static string CategoryOf(ItemAsset a)
+        {
+            switch ((a?.type.ToString() ?? "").ToUpperInvariant())
+            {
+                case "GUN": case "MELEE": case "THROWABLE": return "Weapons";
+                case "SIGHT": case "TACTICAL": case "GRIP": case "BARREL": case "OPTIC": return "Attachments";
+                case "MAGAZINE": case "CHARGE": case "DETONATOR": return "Ammo";
+                case "SHIRT": case "PANTS": case "HAT": case "VEST": case "MASK": case "GLASSES": case "BACKPACK": return "Clothing";
+                case "MEDICAL": return "Medical";
+                case "FOOD": case "WATER": return "Food";
+                case "BARRICADE": case "STRUCTURE": case "STORAGE": case "BOX": case "TRAP": case "SENTRY": case "BEACON": case "FARM": case "GROWER": case "TANK": return "Building";
+                case "SUPPLY": case "FUEL": case "REFILL": case "TIRE": return "Resources";
+                case "TOOL": case "FISHER": case "MAP": case "COMPASS": case "GENERATOR": case "OIL_PUMP": case "FILTER": case "KEY": return "Tools";
+                default: return "Other";
+            }
         }
 
         public override void _Ready()
@@ -70,37 +109,66 @@ namespace UnturnedGodot
             _root.AddChild(dim);
 
             _panel = new Panel { CustomMinimumSize = new Vector2(PANELW, PANELH), Size = new Vector2(PANELW, PANELH) };
-            Box(_panel, Bg);
+            Box(_panel, Bg, 6);
             _root.AddChild(_panel);
 
             var bar = new Panel { Position = new Vector2(0, 0), Size = new Vector2(PANELW, 44) };
             Box(bar, Bar);
             _panel.AddChild(bar);
-
-            _header = new Label { Text = "CRAFTING", Position = new Vector2(16, 8), Size = new Vector2(PANELW - 120, 28) };
+            _header = new Label { Text = "CRAFTING", Position = new Vector2(18, 8), Size = new Vector2(PANELW - 140, 28) };
             _header.AddThemeFontSizeOverride("font_size", 20);
             _panel.AddChild(_header);
-
-            var close = new Button { Text = "X", Position = new Vector2(PANELW - 44, 8), Size = new Vector2(30, 28) };
+            var close = new Button { Text = "X", Position = new Vector2(PANELW - 42, 8), Size = new Vector2(28, 28) };
             close.Pressed += Close;
             _panel.AddChild(close);
 
-            _search = new LineEdit { Position = new Vector2(14, 54), Size = new Vector2(LISTW, 30), PlaceholderText = "search recipes..." };
+            int top = 54, bottomPad = 96;
+            // LEFT: category list
+            var catScroll = new ScrollContainer { Position = new Vector2(16, top), Size = new Vector2(CATW, PANELH - top - bottomPad) };
+            catScroll.HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled;
+            _panel.AddChild(catScroll);
+            _catList = new VBoxContainer { CustomMinimumSize = new Vector2(CATW, 0) };
+            _catList.AddThemeConstantOverride("separation", 2);
+            catScroll.AddChild(_catList);
+
+            // MIDDLE: icon grid + search
+            int gridX = 16 + CATW + 12;
+            var gridScroll = new ScrollContainer { Position = new Vector2(gridX, top), Size = new Vector2(GRIDW, PANELH - top - bottomPad - 40) };
+            gridScroll.HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled;
+            _panel.AddChild(gridScroll);
+            _grid = new GridContainer { Columns = GRIDCOLS, CustomMinimumSize = new Vector2(GRIDW - 16, 0) };
+            _grid.AddThemeConstantOverride("h_separation", 6);
+            _grid.AddThemeConstantOverride("v_separation", 6);
+            gridScroll.AddChild(_grid);
+            _search = new LineEdit { Position = new Vector2(gridX, PANELH - bottomPad - 34), Size = new Vector2(GRIDW, 30), PlaceholderText = "search recipes..." };
             _search.AddThemeFontSizeOverride("font_size", 14);
-            _search.TextChanged += _ => Rebuild();
+            _search.TextChanged += _ => { _sel = null; Rebuild(); };
             _panel.AddChild(_search);
 
-            var scroll = new ScrollContainer { Position = new Vector2(14, 92), Size = new Vector2(LISTW, PANELH - 106) };
-            scroll.CustomMinimumSize = scroll.Size;
-            _panel.AddChild(scroll);
-            _list = new VBoxContainer { CustomMinimumSize = new Vector2(LISTW - 16, 0) };
-            _list.AddThemeConstantOverride("separation", 2);
-            scroll.AddChild(_list);
+            // BOTTOM: crafting queue -- jobs fill RIGHTWARD (rightmost = active/counting; new jobs prepend on the left)
+            var queue = new Panel { Position = new Vector2(16, PANELH - bottomPad + 8), Size = new Vector2(CATW + 12 + GRIDW, bottomPad - 24) };
+            Box(queue, new Color(0.10f, 0.12f, 0.15f, 0.95f));
+            _panel.AddChild(queue);
+            var qLabel = new Label { Text = "CRAFTING QUEUE", Position = new Vector2(14, 6), Size = new Vector2(200, 22) };
+            qLabel.AddThemeFontSizeOverride("font_size", 14);
+            qLabel.AddThemeColorOverride("font_color", new Color(0.5f, 0.5f, 0.54f));
+            queue.AddChild(qLabel);
+            _qEmpty = new Label { Text = "(empty)", Position = new Vector2(14, 28), Size = new Vector2(200, 20) };
+            _qEmpty.AddThemeFontSizeOverride("font_size", 12);
+            _qEmpty.AddThemeColorOverride("font_color", new Color(0.38f, 0.38f, 0.42f));
+            queue.AddChild(_qEmpty);
+            _queueRow = new Control { Position = new Vector2(150, 4), Size = new Vector2(CATW + 12 + GRIDW - 158, bottomPad - 32) };
+            _queueRow.ClipContents = true;
+            _queueRow.MouseFilter = Control.MouseFilterEnum.Stop;   // handles drag-scroll / click-remove / rmb-promote (tiles are mouse-transparent)
+            _queueRow.GuiInput += OnQueueGuiInput;
+            queue.AddChild(_queueRow);
 
-            _detail = new Panel { Position = new Vector2(LISTW + 26, 54), Size = new Vector2(PANELW - LISTW - 40, PANELH - 68) };
-            Box(_detail, new Color(0.11f, 0.14f, 0.18f, 0.95f));
+            // RIGHT: detail
+            int detX = gridX + GRIDW + 14;
+            _detail = new Panel { Position = new Vector2(detX, top), Size = new Vector2(DETW, PANELH - top - 16) };
+            Box(_detail, new Color(0.11f, 0.14f, 0.18f, 0.96f));
             _panel.AddChild(_detail);
-            _detailBox = new VBoxContainer { Position = new Vector2(14, 12), CustomMinimumSize = new Vector2(PANELW - LISTW - 68, 0) };
+            _detailBox = new VBoxContainer { Position = new Vector2(16, 14), CustomMinimumSize = new Vector2(DETW - 32, PANELH - top - 44) };
             _detailBox.AddThemeConstantOverride("separation", 6);
             _detail.AddChild(_detailBox);
         }
@@ -109,56 +177,502 @@ namespace UnturnedGodot
         {
             if (_open && _panel != null)
                 _panel.Position = new Vector2((_root.Size.X - PANELW) / 2f, (_root.Size.Y - PANELH) / 2f);
+            TickQueue((float)delta);
         }
 
+        // the queue runs even while the menu is closed (a job you started keeps cooking in the background).
+        void TickQueue(float dt)
+        {
+            if (_queue.Count == 0 || Inv == null) return;
+            var job = _queue[_queue.Count - 1];   // RIGHTMOST = active
+            job.TimeLeft -= dt;
+            if (job.TimeLeft <= 0f)
+            {
+                Produce(job);
+                job.Qty--;
+                if (job.Qty > 0) job.TimeLeft += CraftTimeFor(job.Bp);   // next unit of a xN job
+                else _queue.RemoveAt(_queue.Count - 1);
+                if (_open) { RebuildQueue(); ShowDetail(new Crafting.PlayerInvAdapter(Inv)); }   // HAVE counts + queue changed
+            }
+            else if (_open && _activeBar != null)
+            {
+                float p = 1f - job.TimeLeft / Mathf.Max(0.01f, CraftTimeFor(job.Bp));
+                _activeBar.Size = new Vector2((TILEQ - 4) * Mathf.Clamp(p, 0f, 1f), 3);
+            }
+        }
+
+        // test hooks (craft.queue) -- drive the queue headless without a scene tree.
+        public void DebugEnqueue(BlueprintDef bp, int n) => Enqueue(bp, n);
+        public void DebugTick(float dt) => TickQueue(dt);
+        public int DebugQueueCount => _queue.Count;
+        public void DebugCancelActive() { if (_queue.Count > 0) Cancel(_queue[_queue.Count - 1]); }
+        public void DebugMoveToStart(int index) { if (index >= 0 && index < _queue.Count) MoveToStart(_queue[index]); }
+        public BlueprintDef DebugActiveBp => _queue.Count > 0 ? _queue[_queue.Count - 1].Bp : null;
+
         public void Toggle() { if (_open) Close(); else Open(); }
-        public void Open() { _open = true; Visible = true; Rebuild(); }
         public void Close() { _open = false; Visible = false; }
+
+        public void Open()
+        {
+            _open = true; Visible = true;
+            _qScroll = 0f;   // start showing the active (rightmost) side
+            ComputeData();
+            if (System.Array.IndexOf(CatOrder, _cat) < 0 || CountFor(_cat) == 0) _cat = "All";
+            Rebuild();
+        }
+
+        void ComputeData()
+        {
+            _all.Clear(); _out.Clear(); _catOf.Clear();
+            if (Inv == null) return;
+            foreach (var bp in BlueprintRegistry.Index())
+            {
+                _all.Add(bp);
+                var a = OutAsset(bp);
+                _out[bp] = a;
+                _catOf[bp] = BlueprintRegistry.IsRecolour(bp) ? "Dyes" : CategoryOf(a);
+            }
+        }
+
+        public static ItemAsset OutAsset(BlueprintDef bp)
+        {
+            if (bp.Outputs.Count > 0) { var o = Assets.findByGuid(bp.Outputs[0].Guid); if (o != null) return o; }
+            if (ushort.TryParse(bp.OwnerItemId, out var oid)) return Assets.find(oid);
+            return null;
+        }
+
+        int CountFor(string cat)
+        {
+            int n = 0;
+            foreach (var bp in _all)
+            {
+                if (cat == "All") { if (_catOf[bp] != "Dyes") n++; }
+                else if (_catOf[bp] == cat) n++;
+            }
+            return n;
+        }
+
+        // recipes for the current view: a search query overrides the category (matches across everything); otherwise
+        // the selected category ("All" = everything except Dyes).
+        List<BlueprintDef> View()
+        {
+            string q = (_search?.Text ?? "").Trim();
+            var res = new List<BlueprintDef>();
+            foreach (var bp in _all)
+            {
+                if (q.Length > 0) { if (!Matches(bp, q)) continue; }
+                else if (_cat == "All") { if (_catOf[bp] == "Dyes") continue; }
+                else if (_catOf[bp] != _cat) continue;
+                res.Add(bp);
+            }
+            res.Sort((a, b) => string.Compare(Title(a), Title(b), System.StringComparison.OrdinalIgnoreCase));
+            return res;
+        }
 
         void Rebuild()
         {
-            foreach (Node c in _list.GetChildren()) c.QueueFree();
             if (Inv == null) return;
             var inv = new Crafting.PlayerInvAdapter(Inv);
+            _stationTags = Player?.CraftingStationTags() ?? new System.Collections.Generic.HashSet<string>();   // nearby workbench/station access
 
-            var all = BlueprintRegistry.Index();
-            string q = (_search?.Text ?? "").Trim();
-            if (q.Length > 0) all = all.FindAll(bp => Matches(bp, q));
-
-            var real = new List<BlueprintDef>();
-            var dyes = new List<BlueprintDef>();
-            foreach (var bp in all) (BlueprintRegistry.IsRecolour(bp) ? dyes : real).Add(bp);
-            real.Sort((a, b) => string.Compare(Title(a), Title(b), System.StringComparison.OrdinalIgnoreCase));
-            dyes.Sort((a, b) => string.Compare(Title(a), Title(b), System.StringComparison.OrdinalIgnoreCase));
-
-            int can = 0;
-            foreach (var bp in all) if (Crafting.CanCraft(bp, inv, out _)) can++;
-            _header.Text = $"CRAFTING   ·   {all.Count} recipes   ·   {can} craftable now";
-
-            if (all.Count == 0)
+            // categories (only non-empty ones)
+            foreach (Node c in _catList.GetChildren()) c.QueueFree();
+            foreach (var cat in CatOrder)
             {
-                _list.AddChild(new Label { Text = q.Length > 0 ? $"nothing matches \"{q}\"" : "no recipes available" });
-                return;
+                int n = CountFor(cat);
+                if (n == 0) continue;
+                var row = new Panel { CustomMinimumSize = new Vector2(CATW, 30) };
+                if (cat == _cat) Box(row, SelC);
+                var b = new Button { Text = $"  {cat}", Flat = true, Alignment = HorizontalAlignment.Left, Size = new Vector2(CATW, 30), CustomMinimumSize = new Vector2(CATW, 30) };
+                b.AddThemeFontSizeOverride("font_size", 14);
+                string capture = cat;
+                b.Pressed += () => { _cat = capture; _search.Text = ""; _sel = null; Rebuild(); };
+                row.AddChild(b);
+                var cnt = new Label { Text = n.ToString(), Position = new Vector2(CATW - 40, 5), Size = new Vector2(32, 20), HorizontalAlignment = HorizontalAlignment.Right };
+                cnt.AddThemeFontSizeOverride("font_size", 13);
+                cnt.AddThemeColorOverride("font_color", Dim);
+                cnt.MouseFilter = Control.MouseFilterEnum.Ignore;
+                row.AddChild(cnt);
+                _catList.AddChild(row);
             }
 
-            foreach (var bp in real) _list.AddChild(Row(bp, inv));
-            if (dyes.Count > 0)
-            {
-                var h = new Label { Text = $"—  DYES & RECOLOURS  ({dyes.Count})" };
-                h.AddThemeFontSizeOverride("font_size", 12);
-                h.AddThemeColorOverride("font_color", Dim);
-                _list.AddChild(h);
-                foreach (var bp in dyes) _list.AddChild(Row(bp, inv));
-            }
+            // grid
+            foreach (Node c in _grid.GetChildren()) c.QueueFree();
+            var view = View();
+            int canNow = 0;
+            foreach (var bp in _all) if (Crafting.CanCraft(bp, inv, out _) && Crafting.MeetsSkill(bp, Player?.Skills) && Crafting.HasStations(bp, _stationTags)) canNow++;
+            _header.Text = $"CRAFTING   ·   {view.Count} shown   ·   {canNow} craftable now";
+            if (view.Count == 0)
+                _grid.AddChild(new Label { Text = "  nothing here" });
+            else
+                foreach (var bp in view) _grid.AddChild(Tile(bp, inv));
 
-            if (_sel == null || !all.Contains(_sel)) _sel = real.Count > 0 ? real[0] : (dyes.Count > 0 ? dyes[0] : null);
+            if (_sel == null || !_out.ContainsKey(_sel)) _sel = view.Count > 0 ? view[0] : null;
             ShowDetail(inv);
+            RebuildQueue();
         }
 
-        /// <summary>Search matches the OUTPUT name or any INGREDIENT name. Title-only search answers "where is
-        /// the recipe for X", which you can already find by scrolling; matching ingredients answers "what can I do
-        /// with the metal scrap I'm carrying", which is the question you actually have standing in front of a
-        /// workbench with a bag full of junk. Skill name too, so "Craftsman" pulls up the whole gated set.</summary>
+        Control Tile(BlueprintDef bp, Crafting.IInv inv)
+        {
+            var a = _out.TryGetValue(bp, out var av) ? av : null;
+            bool can = Crafting.CanCraft(bp, inv, out _) && Crafting.MeetsSkill(bp, Player?.Skills) && Crafting.HasStations(bp, _stationTags);
+            var tile = new Panel { CustomMinimumSize = new Vector2(TILE, TILE) };
+            Box(tile, ReferenceEquals(bp, _sel) ? SelC : TileC);
+
+            var tex = a != null ? InventoryUI.IconFor(a.id) : null;
+            if (tex != null)
+            {
+                var ico = new TextureRect { Texture = tex, ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize, StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered };
+                ico.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+                ico.OffsetLeft = 6; ico.OffsetTop = 6; ico.OffsetRight = -6; ico.OffsetBottom = -6;
+                ico.MouseFilter = Control.MouseFilterEnum.Ignore;
+                if (!can) ico.Modulate = new Color(1f, 1f, 1f, 0.4f);
+                tile.AddChild(ico);
+            }
+            else
+            {
+                var lbl = new Label { Text = Title(bp), AutowrapMode = TextServer.AutowrapMode.WordSmart, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+                lbl.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+                lbl.OffsetLeft = 4; lbl.OffsetTop = 4; lbl.OffsetRight = -4; lbl.OffsetBottom = -4;
+                lbl.AddThemeFontSizeOverride("font_size", 11);
+                lbl.MouseFilter = Control.MouseFilterEnum.Ignore;
+                if (!can) lbl.AddThemeColorOverride("font_color", Dim);
+                tile.AddChild(lbl);
+            }
+
+            var btn = new Button { Flat = true, TooltipText = Title(bp) };   // hover -> the item name
+            btn.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+            btn.Pressed += () => { _sel = bp; _qty = 1; Rebuild(); };
+            tile.AddChild(btn);
+            return tile;
+        }
+
+        void ShowDetail(Crafting.IInv inv)
+        {
+            foreach (Node c in _detailBox.GetChildren()) c.QueueFree();
+            if (_sel == null) { _detailBox.AddChild(new Label { Text = "select a recipe" }); return; }
+            var a = _out.TryGetValue(_sel, out var av) ? av : null;
+
+            // header: icon + name (+ output count)
+            var head = new HBoxContainer(); head.AddThemeConstantOverride("separation", 10);
+            var tex = a != null ? InventoryUI.IconFor(a.id) : null;
+            if (tex != null)
+                head.AddChild(new TextureRect { Texture = tex, CustomMinimumSize = new Vector2(56, 56), ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize, StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered });
+            var nameBox = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+            var t = new Label { Text = Title(_sel), AutowrapMode = TextServer.AutowrapMode.WordSmart };
+            t.AddThemeFontSizeOverride("font_size", 18);
+            nameBox.AddChild(t);
+            int outCount = _sel.Outputs.Count > 0 ? _sel.Outputs[0].Amount : 1;
+            if (outCount > 1)
+            {
+                var oc = new Label { Text = $"makes x{outCount}" };
+                oc.AddThemeFontSizeOverride("font_size", 12); oc.AddThemeColorOverride("font_color", Dim);
+                nameBox.AddChild(oc);
+            }
+            head.AddChild(nameBox);
+            _detailBox.AddChild(head);
+
+            // gates
+            if (_sel.RequiresSkill)
+            {
+                bool meets = Crafting.MeetsSkill(_sel, Player?.Skills);
+                var sk = new Label { Text = $"requires {_sel.Skill} {_sel.SkillLevel}" };
+                sk.AddThemeFontSizeOverride("font_size", 13);
+                sk.AddThemeColorOverride("font_color", meets ? Dim : Bad);
+                _detailBox.AddChild(sk);
+            }
+            if (_sel.RequiresStation)
+            {
+                var st = new Label { Text = "requires a crafting station" };
+                st.AddThemeFontSizeOverride("font_size", 13);
+                st.AddThemeColorOverride("font_color", Dim);
+                _detailBox.AddChild(st);
+            }
+
+            // description
+            if (a != null && !string.IsNullOrEmpty(a.description))
+            {
+                var d = new Label { Text = a.description, AutowrapMode = TextServer.AutowrapMode.WordSmart };
+                d.AddThemeFontSizeOverride("font_size", 13);
+                d.AddThemeColorOverride("font_color", new Color(0.78f, 0.79f, 0.82f));
+                _detailBox.AddChild(d);
+            }
+
+            _detailBox.AddChild(new Control { SizeFlagsVertical = Control.SizeFlags.ExpandFill });   // push the table + craft to the bottom
+
+            // clamp qty to what's craftable, so the CRAFT button stays honest
+            int max = MaxCraftable(inv);
+            _qty = Mathf.Clamp(_qty, 1, Mathf.Max(1, max));
+
+            // ingredients table: AMOUNT | ITEM TYPE | TOTAL | HAVE
+            var tbl = new GridContainer { Columns = 4, CustomMinimumSize = new Vector2(DETW - 32, 0) };
+            tbl.AddThemeConstantOverride("h_separation", 10); tbl.AddThemeConstantOverride("v_separation", 3);
+            AddHead(tbl, "AMOUNT"); AddHead(tbl, "ITEM TYPE"); AddHead(tbl, "TOTAL"); AddHead(tbl, "HAVE");
+            foreach (var ing in _sel.Inputs)
+            {
+                var ia = Assets.findByGuid(ing.Guid);
+                int total = ing.Amount * _qty;
+                int have = ia != null ? inv.Count(ia.id) : 0;
+                bool ok = have >= total;
+                AddCell(tbl, ing.Amount.ToString(), ok ? Good : Bad);
+                AddCell(tbl, (ia?.itemName ?? "?") + (ing.Consume ? "" : "  (tool)"), ok ? Good : Bad);
+                AddCell(tbl, ing.Consume ? total.ToString() : "-", ok ? Good : Bad);
+                AddCell(tbl, have.ToString("N0"), ok ? Good : Bad);
+            }
+            _detailBox.AddChild(tbl);
+
+            // amount stepper + CRAFT
+            bool canMake = Crafting.CanCraft(_sel, inv, out string why) && Crafting.MeetsSkill(_sel, Player?.Skills) && Crafting.HasStations(_sel, _stationTags);
+            var row = new HBoxContainer(); row.AddThemeConstantOverride("separation", 6);
+            var minus = new Button { Text = "−", CustomMinimumSize = new Vector2(40, 40) };
+            minus.Pressed += () => { _qty = Mathf.Max(1, _qty - 1); ShowDetail(new Crafting.PlayerInvAdapter(Inv)); };
+            var qty = new Label { Text = _qty.ToString(), CustomMinimumSize = new Vector2(56, 40), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+            qty.AddThemeFontSizeOverride("font_size", 16);
+            var plus = new Button { Text = "+", CustomMinimumSize = new Vector2(40, 40) };
+            plus.Pressed += () => { _qty = Mathf.Clamp(_qty + 1, 1, Mathf.Max(1, MaxCraftable(new Crafting.PlayerInvAdapter(Inv)))); ShowDetail(new Crafting.PlayerInvAdapter(Inv)); };
+            row.AddChild(minus); row.AddChild(qty); row.AddChild(plus);
+            var craft = new Button { Text = "CRAFT", CustomMinimumSize = new Vector2(180, 40), SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+            craft.Disabled = !canMake;
+            if (!canMake) craft.TooltipText = Crafting.MeetsSkill(_sel, Player?.Skills) ? why : $"needs {_sel.Skill} skill {_sel.SkillLevel}";
+            craft.Pressed += OnCraft;
+            row.AddChild(craft);
+            _detailBox.AddChild(row);
+        }
+
+        // how many times this recipe can be crafted from the current bag (min over consumed inputs).
+        int MaxCraftable(Crafting.IInv inv, BlueprintDef bp = null)
+        {
+            bp ??= _sel;
+            if (bp == null) return 0;
+            int max = int.MaxValue;
+            foreach (var ing in bp.Inputs)
+            {
+                if (!ing.Consume || ing.Amount <= 0) continue;
+                var ia = Assets.findByGuid(ing.Guid);
+                int have = ia != null ? inv.Count(ia.id) : 0;
+                max = Mathf.Min(max, have / ing.Amount);
+            }
+            return max == int.MaxValue ? 1 : max;
+        }
+
+        static void AddHead(GridContainer g, string s)
+        {
+            var l = new Label { Text = s };
+            l.AddThemeFontSizeOverride("font_size", 11);
+            l.AddThemeColorOverride("font_color", Dim);
+            g.AddChild(l);
+        }
+
+        static void AddCell(GridContainer g, string s, Color c)
+        {
+            var l = new Label { Text = s };
+            l.AddThemeFontSizeOverride("font_size", 13);
+            l.AddThemeColorOverride("font_color", c);
+            g.AddChild(l);
+        }
+
+        // CRAFT: single-player -> escrow the ingredients into a queue job (produced on the timer). Multiplayer keeps
+        // the server-authoritative immediate craft (there's no client-side limbo to reconcile there yet).
+        void OnCraft()
+        {
+            if (_sel == null || !Crafting.MeetsSkill(_sel, Player?.Skills)) return;
+            var inv = new Crafting.PlayerInvAdapter(Inv);
+            int n = Mathf.Clamp(_qty, 1, Mathf.Max(1, MaxCraftable(inv)));
+            if (Player?.NetCraft != null)
+            {
+                int idx = -1;
+                for (int i = 0; i < BlueprintRegistry.All.Count; i++)
+                    if (ReferenceEquals(BlueprintRegistry.All[i], _sel)) { idx = i; break; }
+                if (idx >= 0) for (int k = 0; k < n; k++) Player.NetCraft((ushort)idx);
+            }
+            else Enqueue(_sel, n);
+            _qty = 1;
+            Rebuild();
+        }
+
+        // the quick-craft entry point (InventoryUI's bottom-right bar): queue a specific recipe. SP escrows into the
+        // queue like the CRAFT button; MP sends the immediate NetCraft. Clamps to what the bag can actually make.
+        public void QueueCraft(BlueprintDef bp, int qty)
+        {
+            if (Inv == null || bp == null || !Crafting.MeetsSkill(bp, Player?.Skills)) return;
+            if (!Crafting.HasStations(bp, Player?.CraftingStationTags())) return;   // require the recipe's workbench/station
+            var inv = new Crafting.PlayerInvAdapter(Inv);
+            if (!Crafting.CanCraft(bp, inv, out _)) return;
+            int n = Mathf.Clamp(qty, 1, Mathf.Max(1, MaxCraftable(inv, bp)));
+            if (Player?.NetCraft != null)
+            {
+                int idx = -1;
+                for (int i = 0; i < BlueprintRegistry.All.Count; i++)
+                    if (ReferenceEquals(BlueprintRegistry.All[i], bp)) { idx = i; break; }
+                if (idx >= 0) for (int k = 0; k < n; k++) Player.NetCraft((ushort)idx);
+            }
+            else Enqueue(bp, n);
+            if (_open) Rebuild();
+        }
+
+        // queue a job: resolve + consume its per-unit ingredients x n into limbo, then prepend it on the LEFT.
+        void Enqueue(BlueprintDef bp, int n)
+        {
+            var inv = new Crafting.PlayerInvAdapter(Inv);
+            var perUnit = new List<(ushort id, int amt)>();
+            foreach (var ing in bp.Inputs)
+            {
+                if (!ing.Consume) continue;   // tools stay in the bag
+                var a = Assets.findByGuid(ing.Guid);
+                if (a != null) perUnit.Add(((ushort)a.id, ing.Amount));
+            }
+            foreach (var (id, amt) in perUnit) inv.Remove(id, amt * n);   // ingredients -> limbo
+            _queue.Insert(0, new QueueJob { Bp = bp, Out = OutAsset(bp), Qty = n, TimeLeft = CraftTimeFor(bp), PerUnit = perUnit });
+        }
+
+        void Produce(QueueJob job)
+        {
+            var inv = new Crafting.PlayerInvAdapter(Inv);
+            int outAmt = job.Bp.Outputs.Count > 0 ? job.Bp.Outputs[0].Amount : 1;
+            if (job.Out != null) inv.Add((ushort)job.Out.id, outAmt);
+            GD.Print($"[craft] produced {Title(job.Bp)}");
+        }
+
+        // cancel: hand the escrowed ingredients for the REMAINING units back to the bag, drop the job.
+        void Cancel(QueueJob job)
+        {
+            var inv = new Crafting.PlayerInvAdapter(Inv);
+            foreach (var (id, amt) in job.PerUnit) inv.Add(id, amt * job.Qty);
+            _queue.Remove(job);
+            if (_open) { RebuildQueue(); ShowDetail(new Crafting.PlayerInvAdapter(Inv)); }
+        }
+
+        // draw the queue tiles RIGHT-aligned (rightmost = active); click a tile to cancel it.
+        void RebuildQueue()
+        {
+            if (_queueRow == null) return;
+            foreach (Node c in _queueRow.GetChildren()) c.QueueFree();
+            _activeBar = null;
+            if (_qEmpty != null) _qEmpty.Visible = _queue.Count == 0;
+            ClampScroll();
+            int n = _queue.Count, step = TILEQ + 8;
+            for (int i = 0; i < n; i++)
+            {
+                var job = _queue[i];
+                bool active = i == n - 1;
+                var tile = new Panel { Size = new Vector2(TILEQ, TILEQ), CustomMinimumSize = new Vector2(TILEQ, TILEQ) };
+                Box(tile, active ? SelC : TileC);
+                var tex = job.Out != null ? InventoryUI.IconFor(job.Out.id) : null;
+                if (tex != null)
+                {
+                    var ico = new TextureRect { Texture = tex, ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize, StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered };
+                    ico.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+                    ico.OffsetLeft = 4; ico.OffsetTop = 4; ico.OffsetRight = -4; ico.OffsetBottom = -6;
+                    ico.MouseFilter = Control.MouseFilterEnum.Ignore;
+                    tile.AddChild(ico);
+                }
+                else
+                {
+                    var lbl = new Label { Text = Title(job.Bp), AutowrapMode = TextServer.AutowrapMode.WordSmart, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+                    lbl.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+                    lbl.AddThemeFontSizeOverride("font_size", 9);
+                    lbl.MouseFilter = Control.MouseFilterEnum.Ignore;
+                    tile.AddChild(lbl);
+                }
+                if (job.Qty > 1)
+                {
+                    var badge = new Label { Text = $"x{job.Qty}", Position = new Vector2(TILEQ - 26, TILEQ - 20), Size = new Vector2(24, 16), HorizontalAlignment = HorizontalAlignment.Right };
+                    badge.AddThemeFontSizeOverride("font_size", 12);
+                    badge.AddThemeColorOverride("font_color", new Color(1f, 1f, 1f));
+                    badge.MouseFilter = Control.MouseFilterEnum.Ignore;
+                    tile.AddChild(badge);
+                }
+                if (active)
+                {
+                    _activeBar = new ColorRect { Color = Good, Position = new Vector2(2, TILEQ - 5), Size = new Vector2(0, 3) };
+                    _activeBar.MouseFilter = Control.MouseFilterEnum.Ignore;
+                    tile.AddChild(_activeBar);
+                }
+                tile.MouseFilter = Control.MouseFilterEnum.Ignore;   // _queueRow owns the mouse (drag / click / rmb)
+                tile.Position = new Vector2(_queueRow.Size.X - (n - i) * step + _qScroll, (_queueRow.Size.Y - TILEQ) / 2f);
+                _queueRow.AddChild(tile);
+            }
+        }
+
+        // queue interaction (master's spec): DRAG the icons to scroll; LMB CLICK an icon to remove it (refund);
+        // RMB an icon to move it to the START (rightmost = active). A drag past a few px suppresses the click.
+        void OnQueueGuiInput(InputEvent e)
+        {
+            if (e is InputEventMouseButton mb)
+            {
+                if (mb.ButtonIndex == MouseButton.Left)
+                {
+                    if (mb.Pressed) { _qDragStartX = mb.Position.X; _qScroll0 = _qScroll; _qDragging = false; _qPressJob = JobAt(mb.Position.X); }
+                    else { if (!_qDragging && _qPressJob != null) Cancel(_qPressJob); _qPressJob = null; _qDragging = false; }
+                }
+                else if (mb.ButtonIndex == MouseButton.Right && mb.Pressed)
+                {
+                    var j = JobAt(mb.Position.X); if (j != null) MoveToStart(j);
+                }
+            }
+            else if (e is InputEventMouseMotion mm && mm.ButtonMask.HasFlag(MouseButtonMask.Left))
+            {
+                float dx = mm.Position.X - _qDragStartX;
+                if (Mathf.Abs(dx) > 6f) _qDragging = true;
+                if (_qDragging) { _qScroll = _qScroll0 + dx; ClampScroll(); LayoutQueue(); }
+            }
+        }
+
+        QueueJob JobAt(float mouseX)
+        {
+            int n = _queue.Count, step = TILEQ + 8;
+            for (int i = 0; i < n; i++)
+            {
+                float x = _queueRow.Size.X - (n - i) * step + _qScroll;
+                if (mouseX >= x && mouseX <= x + TILEQ) return _queue[i];
+            }
+            return null;
+        }
+
+        void LayoutQueue()   // reposition existing tiles for a smooth drag (no free/rebuild)
+        {
+            var kids = _queueRow.GetChildren();
+            int n = kids.Count, step = TILEQ + 8;
+            for (int i = 0; i < n; i++)
+                if (kids[i] is Control c) c.Position = new Vector2(_queueRow.Size.X - (n - i) * step + _qScroll, (_queueRow.Size.Y - TILEQ) / 2f);
+        }
+
+        void ClampScroll()
+        {
+            int step = TILEQ + 8;
+            float max = Mathf.Max(0f, _queue.Count * step - (_queueRow?.Size.X ?? 0f));
+            _qScroll = Mathf.Clamp(_qScroll, 0f, max);
+        }
+
+        // RMB: promote a job to the START (rightmost = active) so it crafts next; give it a fresh timer.
+        void MoveToStart(QueueJob job)
+        {
+            if (!_queue.Remove(job)) return;
+            job.TimeLeft = CraftTimeFor(job.Bp);
+            _queue.Add(job);
+            if (_open) RebuildQueue();
+        }
+
+        // test/render hook (UG_CRAFTQUEUE): queue the first `jobs` craftable recipes so a --craftmenu shot shows the queue.
+        public void DebugQueueCraftable(int jobs, int qtyEach)
+        {
+            int done = 0;
+            foreach (var bp in _all)
+            {
+                if (done >= jobs) break;
+                var inv = new Crafting.PlayerInvAdapter(Inv);
+                if (Crafting.CanCraft(bp, inv, out _) && Crafting.MeetsSkill(bp, Player?.Skills))
+                {
+                    _sel = bp;
+                    Enqueue(bp, Mathf.Clamp(qtyEach, 1, Mathf.Max(1, MaxCraftable(inv))));
+                    done++;
+                }
+            }
+            if (_open) Rebuild();
+        }
+
+        /// <summary>Search matches the OUTPUT name, any INGREDIENT name, or the skill name -- so "metal scrap"
+        /// finds what it feeds, not just a recipe called that.</summary>
         static bool Matches(BlueprintDef bp, string q)
         {
             if (Title(bp).Contains(q, System.StringComparison.OrdinalIgnoreCase)) return true;
@@ -171,90 +685,10 @@ namespace UnturnedGodot
             return false;
         }
 
-        public static bool MatchesForTest(BlueprintDef bp, string q) => Matches(bp, q);   // test hook -- the SAME predicate the list filters on, not a copy
-
-        Control Row(BlueprintDef bp, Crafting.IInv inv)
-        {
-            bool can = Crafting.CanCraft(bp, inv, out _) && Crafting.MeetsSkill(bp, Player?.Skills);
-            var p = new Panel { CustomMinimumSize = new Vector2(0, 30) };
-            if (ReferenceEquals(bp, _sel)) Box(p, RowOn);
-            var b = new Button { Text = Title(bp), Flat = true, Size = new Vector2(LISTW - 20, 30),
-                                 Alignment = HorizontalAlignment.Left };
-            b.AddThemeFontSizeOverride("font_size", 14);
-            if (!can) b.AddThemeColorOverride("font_color", Dim);
-            b.Pressed += () => { _sel = bp; Rebuild(); };
-            p.AddChild(b);
-            return p;
-        }
-
-        void ShowDetail(Crafting.IInv inv)
-        {
-            foreach (Node c in _detailBox.GetChildren()) c.QueueFree();
-            if (_sel == null) return;
-
-            var t = new Label { Text = Title(_sel) };
-            t.AddThemeFontSizeOverride("font_size", 19);
-            _detailBox.AddChild(t);
-
-            if (_sel.RequiresSkill)
-            {
-                var sk = new Label { Text = $"requires {_sel.Skill} {_sel.SkillLevel}" };
-                sk.AddThemeFontSizeOverride("font_size", 13);
-                sk.AddThemeColorOverride("font_color", Crafting.MeetsSkill(_sel, Player?.Skills) ? Dim : new Color(0.85f, 0.45f, 0.40f));
-                _detailBox.AddChild(sk);
-            }
-            if (_sel.RequiresStation)
-            {
-                var st = new Label { Text = "requires a crafting station" };
-                st.AddThemeFontSizeOverride("font_size", 13);
-                st.AddThemeColorOverride("font_color", Dim);
-                _detailBox.AddChild(st);
-            }
-
-            var ih = new Label { Text = "INGREDIENTS" };
-            ih.AddThemeFontSizeOverride("font_size", 12);
-            ih.AddThemeColorOverride("font_color", Dim);
-            _detailBox.AddChild(ih);
-
-            // PER-INGREDIENT HAVE/NEED. The whole reason to show a recipe you cannot make is to say what is short.
-            foreach (var ing in _sel.Inputs)
-            {
-                var a = Assets.findByGuid(ing.Guid);
-                int have = a != null ? inv.Count(a.id) : 0;
-                bool ok = have >= ing.Amount;
-                var l = new Label { Text = $"   {have}/{ing.Amount}   {a?.itemName ?? "?"}{(ing.Consume ? "" : "   (tool, not consumed)")}" };
-                l.AddThemeFontSizeOverride("font_size", 14);
-                l.AddThemeColorOverride("font_color", ok ? new Color(0.62f, 0.82f, 0.60f) : new Color(0.85f, 0.50f, 0.45f));
-                _detailBox.AddChild(l);
-            }
-
-            bool canMake = Crafting.CanCraft(_sel, inv, out string why) && Crafting.MeetsSkill(_sel, Player?.Skills);
-            var btn = new Button { Text = "CRAFT", CustomMinimumSize = new Vector2(160, 40) };
-            btn.Disabled = !canMake;
-            if (!canMake) btn.TooltipText = Crafting.MeetsSkill(_sel, Player?.Skills) ? why : $"needs {_sel.Skill} skill {_sel.SkillLevel}";
-            btn.Pressed += OnCraft;
-            _detailBox.AddChild(btn);
-        }
-
-        void OnCraft()
-        {
-            if (_sel == null) return;
-            if (!Crafting.MeetsSkill(_sel, Player?.Skills)) return;
-            if (Player?.NetCraft != null)
-            {
-                for (int i = 0; i < BlueprintRegistry.All.Count; i++)
-                    if (ReferenceEquals(BlueprintRegistry.All[i], _sel)) { Player.NetCraft((ushort)i); break; }
-                return;
-            }
-            var inv = new Crafting.PlayerInvAdapter(Inv);
-            if (!Crafting.DoCraft(_sel, inv)) return;
-            GD.Print($"[craft] made {Title(_sel)}");
-            Rebuild();
-        }
+        public static bool MatchesForTest(BlueprintDef bp, string q) => Matches(bp, q);   // the SAME predicate the list filters on
 
         /// <summary>The crafted item's name. A Craft blueprint's OUTPUT IS ITS OWNER ITEM -- the outputs column is
-        /// empty on every row in the catalog (measured: 0 of 1875), so reading Outputs first and falling back is
-        /// what keeps this from printing "item" for everything.</summary>
+        /// empty on every catalog row, so read Outputs first then fall back to the owner item.</summary>
         public static string Title(BlueprintDef bp)
         {
             if (bp.Outputs.Count > 0)

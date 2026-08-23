@@ -34,6 +34,12 @@ namespace UnturnedGodot
         /// plain Deployable body, mirroring IsStorage -> FridgeDeploy and Fluid -> FluidDeploy.</summary>
         public string DoorProp;
 
+        // CRAFTING STATION (strawberry 2026-08-22): a placed deployable GRANTS these crafting tag GUIDs to any player
+        // within CraftingRange + line-of-sight -> recipes needing those tags unlock. From the src barricade's
+        // PlaceableProvidesCraftingTags + Range (e.g. Workbench provides the Workbench tag at 4 m).
+        public string[] CraftingTags;
+        public float CraftingRange = 4f;
+
         public bool ProcBox;          // true -> a plain gray BoxMesh of Size (no .obj/palette); the custom splitters use it
         public bool ExplosionProof;   // src Proof_Explosion: immune to OTHER explosions' damage (the Charge) so a stack doesn't chain-detonate -- you blow them on the Detonator's command, not from one stray blast
 
@@ -388,10 +394,38 @@ namespace UnturnedGodot
             PlaceSound = "metalplacement",
         };
 
+        // CRAFTING STATIONS (strawberry): placed barricades that grant crafting tags within CraftingRange + LOS.
+        // Real world meshes ripped by tools/extract_station_meshes.py (LOD0, like Generator_0); the tag GUIDs +
+        // ranges are from the src barricade .dat (PlaceableProvidesCraftingTags + Range). Campfire has no explicit
+        // tag field (src "Build Campfire" is hardcoded) -> mapped to the Heat tag the ovens/kiln also grant.
+        static DeployableDef Station(ushort id, string name, string model, float craftRange, params string[] tags) => new()
+        {
+            Id = id, Name = name, Model = model, PlaceSound = "metalplacement",
+            Offset = 0f, Radius = 1.0f, Range = 6f, Health = 400f,
+            MeshEuler = new Vector3(180f, 0f, 180f),   // ripped like the Battery: stands up upside-down + 180 off -> same fixup
+            CraftingTags = tags, CraftingRange = craftRange,
+        };
+        public static readonly DeployableDef Workbench     = Station(1916, "Workbench",      "Workbench_0",     4f, "7b82c125a5a54984b8bb26576b59e977");   // Workbench (269 recipes)
+        // Campfire is a ground FIRE PIT, not a stand-up barricade: skip StandRotX (Upright) + lay the mesh flat.
+        public static readonly DeployableDef Campfire = new()
+        {
+            Id = 362, Name = "Campfire", Model = "Campfire_0", PlaceSound = "metalplacement",
+            Offset = 0f, Radius = 1.0f, Range = 6f, Health = 400f, Upright = true,
+            MeshEuler = new Vector3(-90f, 0f, 0f),   // the barricade.prefab mesh stands vertical the OTHER way -> tip flat (was +90 for the old item mesh; that pointed it DOWN)
+            CraftingTags = new[] { "20f30322bbcc4b01a4f116d22b24c21a" }, CraftingRange = 4f,   // Heat (src has no explicit tag)
+        };
+        public static readonly DeployableDef ChemistryLab  = Station(1920, "Chemistry Lab",  "ChemistryLab_0",  4f, "99896da563a748148460c67b9962874f");   // ChemicalMixing (13)
+        public static readonly DeployableDef Kiln          = Station(1927, "Kiln",           "Kiln_0",          5f, "20f30322bbcc4b01a4f116d22b24c21a", "192e071c94d1419b991a430d42fe2be3");
+        public static readonly DeployableDef Loom          = Station(1923, "Loom",           "Loom_0",          4f, "2ac5ddc545a848008c0308d21f5d2e6b");   // Sewing (270)
+        public static readonly DeployableDef OvenBrick     = Station(1919, "Brick Oven",     "Oven_Brick_0",    4f, "20f30322bbcc4b01a4f116d22b24c21a", "d2cc65b749e5477f95103601df89cdbc");
+        public static readonly DeployableDef OvenElectric  = Station(1250, "Electric Oven",  "Oven_Electric_0", 4f, "20f30322bbcc4b01a4f116d22b24c21a", "d2cc65b749e5477f95103601df89cdbc");
+        public static readonly DeployableDef SewingTable   = Station(1924, "Sewing Table",   "SewingTable_0",   4f, "2ac5ddc545a848008c0308d21f5d2e6b");   // Sewing
+        public static readonly DeployableDef SpinningWheel = Station(1922, "Spinning Wheel", "SpinningWheel_0", 4f, "2ac5ddc545a848008c0308d21f5d2e6b");   // Sewing
+
         public static readonly DeployableDef[] All = { Generator, Spotlight, Splitter2, Splitter3, Splitter4, Combiner2, Battery, Switch, WindTurbine, GridSource, GasPump,
             FluidTank, WaterSource, FluidSplitter, FluidCombiner, FluidPumpDef, FluidValve, Refinery, Sluice, WaterInlet, WaterOutlet, Purifier, Refrigerator, Landmine, Spike, Charge, Barbedwire,
             DoorBirch, DoorMaple, DoorPine, GateBirch, GateMaple, GatePine, HatchBirch, HatchMaple, HatchPine,
-            DoorMetal, GateMetal, HatchMetal };
+            DoorMetal, GateMetal, HatchMetal, Workbench, Campfire, ChemistryLab, Kiln, Loom, OvenBrick, OvenElectric, SewingTable, SpinningWheel };
         public static DeployableDef ById(ushort id) => id switch
         {
             1101 => Landmine,
@@ -400,6 +434,15 @@ namespace UnturnedGodot
             386 => Barbedwire,
             458 => Generator,
             459 => Spotlight,
+            1916 => Workbench,
+            362 => Campfire,
+            1250 => OvenElectric,
+            1919 => OvenBrick,
+            1920 => ChemistryLab,
+            1922 => SpinningWheel,
+            1923 => Loom,
+            1924 => SewingTable,
+            1927 => Kiln,
             9169 => DoorMetal,
             9170 => GateMetal,
             9171 => HatchMetal,

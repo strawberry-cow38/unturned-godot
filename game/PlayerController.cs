@@ -56,7 +56,6 @@ namespace UnturnedGodot
         Viewmodel _viewmodel;
         public PlayerInventory Inventory;   // the ported 9-page inventory model
         InventoryUI _invUI;                 // the dashboard (Tab to open)
-        CraftingUI _craftUI;                // the OLD supplies panel (K) -- kept, it is what the craft tests drive
         CraftingMenu _craftMenu;            // the browsable recipe index (Y, or the inventory Craft tab)
         SkillsUI _skillsUI;                 // the skills menu (J to open) -- spend XP to level skills
         BuildTool _build;                   // B = build mode. C = construct, V = tier, LMB place, R salvage.
@@ -153,6 +152,29 @@ namespace UnturnedGodot
                 ? $"[build] destroyed {StructureCatalog.TierAt(tier).Name} {c}"
                 : $"[build] hit {c} for {amount:0} ({piece.Health}/{piece.MaxHealth})");
             return true;
+        }
+
+        // Chopping a tree: an eye-ray to the aimed tree trunk (the world-layer cylinder ResourceField gives each tree).
+        // Called before the zombie/animal sweep so a swing fells the tree rather than an enemy standing behind it.
+        bool MeleeTree(float amount, float range)
+        {
+            if (_cam == null) return false;
+            var space = GetWorld3D().DirectSpaceState;
+            Vector3 from = _cam.GlobalPosition, fwd = -_cam.GlobalTransform.Basis.Z;
+            var rq = PhysicsRayQueryParameters3D.Create(from, from + fwd * (range + 1f));
+            rq.CollisionMask = 1u << 0;   // world layer -- tree trunks live here
+            rq.Exclude = new Godot.Collections.Array<Rid> { GetRid() };
+            var hit = space.IntersectRay(rq);
+            if (hit.Count == 0) return false;
+            if (hit["collider"].As<GodotObject>() is TreeTrunk tt && !tt.Felled)
+            {
+                var pt = (Vector3)hit["position"];
+                tt.Chop(amount, pt, fwd);
+                MeleeImpactFx(pt, false, Surf.Wood);
+                GD.Print($"[melee] chopped tree for {amount:0}");
+                return true;
+            }
+            return false;
         }
 
         /// <summary>Salvage the structure piece under the crosshair. Uses the eye ray rather than the build
@@ -2652,6 +2674,35 @@ namespace UnturnedGodot
             Input.MouseMode = Input.MouseModeEnum.Visible;
         }
 
+        // the inventory's quick-craft bar queues a craft into the SAME crafting queue (LMB = 1, RMB = 5).
+        public void QuickCraft(BlueprintDef bp, int n) => _craftMenu?.QueueCraft(bp, n);
+
+        // The crafting-station tags the player currently has access to (strawberry's mechanic): for each placed
+        // deployable that PROVIDES crafting tags, grant them if the player is within its CraftingRange AND a single
+        // line-of-sight raycast to it is clear. Empty set = no station nearby -> only craft-anywhere recipes.
+        public System.Collections.Generic.HashSet<string> CraftingStationTags()
+        {
+            var tags = new System.Collections.Generic.HashSet<string>();
+            var tree = GetTree();
+            if (tree == null) return tags;
+            Vector3 eye = _cam != null ? _cam.GlobalPosition : GlobalPosition + Vector3.Up * 1.5f;
+            var space = GetWorld3D()?.DirectSpaceState;
+            foreach (var n in tree.GetNodesInGroup("deployables"))
+            {
+                if (n is not Deployable d || d.Def?.CraftingTags == null || d.Def.CraftingTags.Length == 0) continue;
+                Vector3 sp = d.GlobalPosition;
+                if (eye.DistanceSquaredTo(sp) > d.Def.CraftingRange * d.Def.CraftingRange) continue;   // outside the radius
+                if (space != null)   // ONE line-of-sight raycast eye -> station, ignoring the player + the station body
+                {
+                    var q = PhysicsRayQueryParameters3D.Create(eye, sp, 1u << 0);
+                    q.Exclude = new Godot.Collections.Array<Rid> { GetRid(), d.GetRid() };
+                    if (space.IntersectRay(q).Count > 0) continue;   // a wall between -> access denied
+                }
+                foreach (var t in d.Def.CraftingTags) tags.Add(t);
+            }
+            return tags;
+        }
+
         public void DebugSetHeldItem(SDG.Unturned.Item it) => _heldItem = it;      // test: link a backing item to the held gun
         public void DebugSaveGunState() => SaveGunState();                          // test: mirror live gun state to the backing item
         public void DebugStartReload() => StartReload();                            // test: begin a real reload (timer + anim), so a swap can land MID-reload
@@ -2854,6 +2905,7 @@ namespace UnturnedGodot
 
             float dmg = (_melee?.ZombieDamage ?? 45f) * mult * Skills.OverkillMeleeMultiplier();   // weapon .dat Zombie_Damage x OVERKILL skill
             Vector3 origin = GlobalPosition + Vector3.Up * 1.2f, fwd = -_cam.GlobalTransform.Basis.Z;
+            if (MeleeTree(dmg, range)) return;   // an axe swing at a tree fells it, before the swing reaches a zombie/animal behind it
             // The rewrite's zombies are sim ROWS, not nodes, so the group sweep below cannot see them --
             // which is why they were unkillable under --newzombies. Swing at the sim too.
             if (ZombieDirector.Instance is { } zdm && zdm.ShootRay(origin, fwd, range + 0.5f, dmg, out bool zdKilled)) { MeleeImpactFx(origin + fwd * Mathf.Min(range, 1.5f), true); if (zdKilled) Kills++; }   // sim zombie: FX at an estimated point along the swing
@@ -2869,6 +2921,17 @@ namespace UnturnedGodot
                         if (!wd && z.Dead) Kills++;
                         GD.Print($"[melee] {(strong ? "STRONG" : "weak")} hit ({_melee?.Name ?? "fists"} {dmg:0} dmg)");
                         break;   // one target per swing
+                    }
+                }
+            foreach (var n in GetTree().GetNodesInGroup("animals"))   // wildlife takes melee too (one target per swing)
+                if (n is AnimalAgent a && !a.Dead)
+                {
+                    Vector3 to = a.GlobalPosition + Vector3.Up * 0.5f - origin;
+                    if (to.Length() < range + 0.5f && to.Normalized().Dot(fwd) > 0.3f)   // in front, in reach
+                    {
+                        a.DamageHit(dmg, a.GlobalPosition + Vector3.Up * 0.5f, fwd);
+                        MeleeImpactFx(a.GlobalPosition + Vector3.Up * 0.5f, true);
+                        break;
                     }
                 }
         }
@@ -2920,6 +2983,14 @@ namespace UnturnedGodot
                     bool wd = z.Dead;
                     z.DamageHit(ExplosionMath.Linear(zombieDamage, range, radius), z.GlobalPosition, (z.GlobalPosition - point).Normalized());
                     if (!wd && z.Dead) Kills++;
+                }
+            foreach (var n in GetTree().GetNodesInGroup("animals"))   // wildlife caught in the blast: same linear falloff + wall rule
+                if (n is AnimalAgent a && !a.Dead)
+                {
+                    float range = a.GlobalPosition.DistanceTo(point);
+                    if (range > radius) continue;
+                    if (ExplosionBlocked(point, a.GlobalPosition)) continue;
+                    a.DamageHit(ExplosionMath.Linear(zombieDamage, range, radius), a.GlobalPosition, (a.GlobalPosition - point).Normalized());
                 }
             foreach (var n in GetTree().GetNodesInGroup("vehicles"))   // source DamageTool.explode also damages vehicles (Grenade.dat Vehicle_Damage 100)
                 if (n is Vehicle v && !v.Exploded)
@@ -3130,7 +3201,7 @@ namespace UnturnedGodot
         }
 
         /// <summary>MP (wired only by ClientWorldSession): copy the replicated owner-block grid INTO the
-        /// shell's EXISTING Inventory instance -- never swap the reference (InventoryUI/CraftingUI, the
+        /// shell's EXISTING Inventory instance -- never swap the reference (InventoryUI/CraftingMenu, the
         /// reload mag hunt, and the armor math all hold it). Worn refs first (direct field writes -- the
         /// wearX helpers would RESIZE and wipe the pages), then every page cell-for-cell; the page sizes
         /// come off the wire, so worn-bag grids stay right even before asset resolution. The replica entry
@@ -3256,6 +3327,24 @@ namespace UnturnedGodot
         }
 
         public Vector3 Spawn = new Vector3(0, 1f, 0);
+        // The map's full regular-spawn set (pre-sampled to ground + facing yaw), handed in by WorldBuilder.
+        // Death re-rolls a RANDOM one of these (source LevelPlayers.getSpawn runs on every respawn, not just the
+        // first spawn); null/empty on fallback/no-map worlds -> respawn falls back to the single Spawn point.
+        public System.Collections.Generic.List<(Vector3 pos, float yaw)> RespawnPoints;
+
+        // A random regular spawn from RespawnPoints (facing its angle), or the single Spawn fallback if the map
+        // had no spawn file. Used by Respawn(); the bed claim still overrides this when the player has one.
+        Vector3 PickRandomSpawn()
+        {
+            if (RespawnPoints != null && RespawnPoints.Count > 0)
+            {
+                var rng = new RandomNumberGenerator(); rng.Randomize();
+                var s = RespawnPoints[rng.RandiRange(0, RespawnPoints.Count - 1)];
+                RotationDegrees = new Vector3(0f, s.yaw, 0f);   // face the spawn's angle, same as the initial spawn
+                return s.pos;
+            }
+            return Spawn;
+        }
 
         // Zombie sensing (AlertTool/PlayerStance): Agro increments once per zombie that starts hunting this
         // player -- it drives their approach path (every 3rd zombie RUSHes, the rest split left/right, so a
@@ -4338,7 +4427,7 @@ namespace UnturnedGodot
             {
                 // P3a: the client-auth MP shell skips this -- the server's recov teleport owns the move to
                 // SpawnPos (a GlobalPosition write would be overwritten by the next state claim).
-                Vector3 target = Bed.TryGetSpawn(PlayerId, out var bedSpawn, out _) ? bedSpawn + Vector3.Up * 0.5f : Spawn;
+                Vector3 target = Bed.TryGetSpawn(PlayerId, out var bedSpawn, out _) ? bedSpawn + Vector3.Up * 0.5f : PickRandomSpawn();   // no claimed bed -> a fresh RANDOM map spawn (strawberry 2026-08-23), not the fixed initial point
                 GlobalPosition = target;
                 // ...and reset the render-interp snapshots, for the reason TeleportTo documents: the next
                 // 50 Hz tick restores GlobalPosition from _interpCurr, which still holds the pre-death spot,
@@ -4684,8 +4773,6 @@ namespace UnturnedGodot
             AddChild(_invUI);
             _noteReader = new NoteReader();   // F reads a looked-at lore note into this panel
             AddChild(_noteReader);
-            _craftUI = new CraftingUI { Inv = Inventory, Player = this };
-            AddChild(_craftUI);
             _craftMenu = new CraftingMenu { Inv = Inventory, Player = this };
             AddChild(_craftMenu);
             _skillsUI = new SkillsUI { Player = this };
@@ -5008,12 +5095,6 @@ namespace UnturnedGodot
                 _craftMenu?.Toggle();
                 Input.MouseMode = (_craftMenu != null && _craftMenu.IsOpen) ? Input.MouseModeEnum.Visible : Input.MouseModeEnum.Captured;
             }
-            else if (@event is InputEventKey { Pressed: true, Keycode: Key.K })
-            {
-                if (_viewmodel != null && _viewmodel.InAttachView) return;   // no crafting while the T attachment menu is up
-                _craftUI?.Toggle();   // K: open/close the crafting menu (lists what you can make from your supplies)
-                Input.MouseMode = (_craftUI != null && _craftUI.IsOpen) ? Input.MouseModeEnum.Visible : Input.MouseModeEnum.Captured;
-            }
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.J })
             {
                 _skillsUI?.Toggle();   // J: open/close the skills menu (spend XP to level skills)
@@ -5028,9 +5109,9 @@ namespace UnturnedGodot
                     SaveGunState(); CloseCrate(); _invUI.Close();
                     Input.MouseMode = Input.MouseModeEnum.Captured;
                 }
-                else if (_craftUI != null && _craftUI.IsOpen)
+                else if (_craftMenu != null && _craftMenu.IsOpen)
                 {
-                    _craftUI.Close(); Input.MouseMode = Input.MouseModeEnum.Captured;
+                    _craftMenu.Close(); Input.MouseMode = Input.MouseModeEnum.Captured;
                 }
                 else if (_skillsUI != null && _skillsUI.IsOpen)
                 {
@@ -5660,6 +5741,8 @@ namespace UnturnedGodot
                     Vector3 hdir = b.Vel.Normalized();
                     var collider = hit["collider"].As<GodotObject>();
                     if (collider is ZombieController z) { bool head = z.IsHeadshot(point); SpawnFleshImpact(point, hdir); bool wd = z.Dead; z.DamageHitLimb(b.Damage * b.FalloffAt(point), point, hdir); if (!wd && z.Dead) Kills++; Hitmark(b, head); }   // hitmarker: white body / red headshot (source EPlayerHit)
+                    else if (collider is AnimalAgent a && !a.Dead) { SpawnFleshImpact(point, hdir); a.DamageHit(b.Damage * b.FalloffAt(point), point, hdir); Hitmark(b, false); }   // wildlife: flesh spray + body hitmarker (no limb zones)
+                    else if (collider is TreeTrunk tt && !tt.Felled) { tt.Chop(b.Damage * b.FalloffAt(point), point, hdir); SpawnSurfaceImpact(point, hit["normal"].AsVector3(), Surf.Wood, tt); }   // chop a tree with gunfire -> wood splinters
                     else if (collider is TargetDummy dummy)
                     {   // playground target: PLAYER damage through the humanoid zones, floating number, hitmarker
                         float dealt = dummy.TakeHit(b.PlayerDamage * b.FalloffAt(point), point);
