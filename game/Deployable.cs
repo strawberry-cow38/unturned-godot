@@ -549,6 +549,65 @@ namespace UnturnedGodot
             PowerNet.MarkDirty();
         }
 
+        // POWER SIM at the FIXED physics tick (50 Hz): switch/gen remote triggers, generator fuel burn, battery
+        // charge/discharge, wind-factor sampling, and the output ramp -- everything that mutates power state or calls
+        // PowerNet.MarkDirty(). This USED to run in _Process (render rate), but the L1 TestHost clocks its coroutines
+        // off _PhysicsProcess, so a test's `Ticks(N)` guaranteed N physics ticks but an UNSPECIFIED number of _Process
+        // calls (sometimes 0) -> it read power state that was never updated -> intermittent power.* failures
+        // (tinyclaw's diagnosis 2026-08-23). Render-rate sim is also just wrong: frame-pacing-dependent + MP-unsafe.
+        // The VISUALS that read this state (blade spin, engine audio, shake, lamp flicker, billboard) stay in _Process
+        // reading the settled values.
+        public override void _PhysicsProcess(double delta)
+        {
+            using var _prof = Prof.Scope("DeployablePhys");
+            if (Def == null) return;
+
+            if (Def.IsSwitch || (Def.Fuel > 0f && !Def.IsBattery))   // remote control: a side trigger fed >=1w SETS on/off (master); triggers draw 0w. A switch flips its gate; a generator flips _powered -> its startup/cooldown ramp.
+            {
+                foreach (var port in Ports)
+                {
+                    if (port == null || !GodotObject.IsInstanceValid(port) || port.Role == DeployableDef.SwitchRole.None || port.Live < 1f) continue;
+                    bool wantOn = port.Role == DeployableDef.SwitchRole.TurnOn;
+                    if (Def.IsSwitch) { if (_switchOn != wantOn) { _switchOn = wantOn; UpdateSwitchLight(); PowerNet.MarkDirty(); } }
+                    else if (wantOn && !_powered && Fuel > 0f) { _powered = true; PowerNet.MarkDirty(); }   // remote START -> engine spins UP (needs fuel)
+                    else if (!wantOn && _powered) { _powered = false; PowerNet.MarkDirty(); }               // remote STOP -> engine spins DOWN (cooldown ramp)
+                }
+            }
+
+            float pTarget = RunTarget;   // an on-fire / fuel-dry generator's engine is dead regardless of the _powered toggle
+            if (FuelMax > 0f && pTarget > 0.5f && Fuel > 0f)   // a RUNNING generator burns fuel, scaled by LOAD (master): idle sips ~20%, a fully-loaded base guzzles.
+            {
+                Fuel = Mathf.Max(0f, Fuel - DeployableDef.GenFuelBurnPerSec * (0.2f + 0.8f * LoadFraction) * (float)delta);
+                if (Fuel <= 0f && _powered) { _powered = false; PowerNet.MarkDirty(); }   // ran DRY -> flip the toggle OFF (RunTarget was already 0 from the Fuel gate); needs a refuel + a manual [F] restart, NOT auto-resume (master)
+            }
+            if (Def.IsBattery)   // battery: the OUT discharges the stored Energy, the IN charges it (no engine/ramp/audio -- FuelMax 0 keeps RunTarget 0)
+            {
+                bool wasProducing = Energy > 0f;
+                float outDraw = (_outputPort != null && IsInstanceValid(_outputPort)) ? _outputPort.Draw : 0f;
+                if (outDraw > 0f) Energy = Mathf.Max(0f, Energy - outDraw * (float)delta);   // discharge to whatever's wired to the OUT
+                if (_consumerPort != null && IsInstanceValid(_consumerPort) && _consumerPort.Powered && Energy < Def.EnergyMax)
+                    Energy = Mathf.Min(Def.EnergyMax, Energy + Def.ChargeWatts * (float)delta);   // charge while the IN is fed by a source
+                if ((Energy > 0f) != wasProducing) PowerNet.MarkDirty();   // crossed empty <-> charged -> the OUT starts/stops producing
+            }
+            if (Def.IsWindTurbine)   // wind turbine: output CAP follows the local wind x a height-above-sea multiplier (master); the blade SPIN is a _Process visual
+            {
+                float heightMult = 1f + Mathf.Clamp((GlobalPosition.Y - WindSeaLevel) / 40f, 0f, 1f);   // higher above sea = more wind (up to ~2x)
+                _windFactor = Mathf.Min(2f, WindField.SampleWind(GlobalPosition) * heightMult);
+                if (Mathf.Abs(_windFactor - _lastWindDirty) > 0.04f) { _lastWindDirty = _windFactor; PowerNet.MarkDirty(); }   // wind moved enough -> re-solve the net
+            }
+            float prevLevel = _powerLevel;
+            if (InstantRampForTests) _powerLevel = pTarget;   // L1: no ramp -> instant settle for power-flow tests
+            else if (_powerLevel < pTarget) _powerLevel = Mathf.Min(pTarget, _powerLevel + (float)delta / WarmupTime);
+            else if (_powerLevel > pTarget) _powerLevel = Mathf.Max(pTarget, _powerLevel - (float)delta / CooldownTime);
+            // Re-solve the net while the output ramps (a fuel gen's whole output CAP scales with _powerLevel via
+            // PowerScale): the net only recomputes on MarkDirty, and the toggle fires ONE mark at the toggle instant --
+            // when _powerLevel hasn't moved yet -- so a gen toggled OFF stays "producing" through the whole cooldown
+            // unless we keep marking. Mark on EVERY frame the level actually moved (incl the final snap-to-target: the
+            // old !PowerSettled gate skipped that frame, freezing a 4kW gen at ~3984W -- strawberry). Costs nothing at
+            // steady state (prevLevel == _powerLevel -> no mark).
+            if (Def.Fuel > 0f && !Def.IsBattery && _powerLevel != prevLevel) PowerNet.MarkDirty();
+        }
+
         public override void _Process(double delta)
         {
             using var _prof = Prof.Scope("Deployable");
@@ -593,60 +652,11 @@ namespace UnturnedGodot
             if (_smoke != null) _smoke.Emitting = _burnTime < 60f && (_exploded || Health < HealthMax * SmokeFrac);
             if (_smoke0 != null) _smoke0.Emitting = _burnTime < 60f && (_exploded || Health < HealthMax * HeavyFrac);
 
-            if (Def != null && (Def.IsSwitch || (Def.Fuel > 0f && !Def.IsBattery)))   // remote control: a side trigger fed >=1w SETS on/off (master); triggers draw 0w. A switch flips its gate; a generator flips _powered -> its startup/cooldown ramp.
-            {
-                foreach (var port in Ports)
-                {
-                    if (port == null || !GodotObject.IsInstanceValid(port) || port.Role == DeployableDef.SwitchRole.None || port.Live < 1f) continue;
-                    bool wantOn = port.Role == DeployableDef.SwitchRole.TurnOn;
-                    if (Def.IsSwitch) { if (_switchOn != wantOn) { _switchOn = wantOn; UpdateSwitchLight(); PowerNet.MarkDirty(); } }
-                    else if (wantOn && !_powered && Fuel > 0f) { _powered = true; PowerNet.MarkDirty(); }   // remote START -> engine spins UP (needs fuel); the ramp forces the startup
-                    else if (!wantOn && _powered) { _powered = false; PowerNet.MarkDirty(); }               // remote STOP -> engine spins DOWN (cooldown ramp)
-                }
-            }
-
-            // power ramp: warmup toward on / cooldown toward off. The engine spin (pitch + volume fade) and the body
-            // shake amplitude both follow _powerLevel, so turning on builds up and turning off winds down.
-            float pTarget = RunTarget;   // an on-fire / fuel-dry generator's engine is dead regardless of the _powered toggle
-            if (FuelMax > 0f && pTarget > 0.5f && Fuel > 0f)   // a RUNNING generator burns fuel, scaled by LOAD (master): idle sips ~20%, a fully-loaded base guzzles.
-            {
-                Fuel = Mathf.Max(0f, Fuel - DeployableDef.GenFuelBurnPerSec * (0.2f + 0.8f * LoadFraction) * (float)delta);
-                if (Fuel <= 0f && _powered) { _powered = false; PowerNet.MarkDirty(); }   // ran DRY -> flip the toggle OFF (RunTarget was already 0 from the Fuel gate, so the cooldown ramp plays); needs a refuel + a manual [F] restart, NOT an auto-resume (master)
-            }
-            if (Def != null && Def.IsBattery)   // battery: the OUT discharges the stored Energy, the IN charges it (no engine/ramp/audio -- FuelMax 0 keeps RunTarget 0)
-            {
-                bool wasProducing = Energy > 0f;
-                float outDraw = (_outputPort != null && IsInstanceValid(_outputPort)) ? _outputPort.Draw : 0f;
-                if (outDraw > 0f) Energy = Mathf.Max(0f, Energy - outDraw * (float)delta);   // discharge to whatever's wired to the OUT
-                if (_consumerPort != null && IsInstanceValid(_consumerPort) && _consumerPort.Powered && Energy < Def.EnergyMax)
-                    Energy = Mathf.Min(Def.EnergyMax, Energy + Def.ChargeWatts * (float)delta);   // charge while the IN is fed by a source
-                if ((Energy > 0f) != wasProducing) PowerNet.MarkDirty();   // crossed empty <-> charged -> the OUT starts/stops producing
-            }
-            if (Def != null && Def.IsWindTurbine)   // wind turbine: output CAP + blade spin follow the local wind x a height-above-sea multiplier (master)
-            {
-                float heightMult = 1f + Mathf.Clamp((GlobalPosition.Y - WindSeaLevel) / 40f, 0f, 1f);   // higher above sea = more wind (up to ~2x)
-                _windFactor = Mathf.Min(2f, WindField.SampleWind(GlobalPosition) * heightMult);
-                if (_bladeHub != null && IsInstanceValid(_bladeHub)) _bladeHub.RotateZ((float)delta * (0.25f + 5.5f * _windFactor));   // spin ~ wind (+ a slow idle turn)
-                if (Mathf.Abs(_windFactor - _lastWindDirty) > 0.04f) { _lastWindDirty = _windFactor; PowerNet.MarkDirty(); }   // wind moved enough -> re-solve the net
-            }
-            float prevLevel = _powerLevel;
-            if (InstantRampForTests) _powerLevel = pTarget;   // L1: no ramp -> instant settle for power-flow tests
-            else if (_powerLevel < pTarget) _powerLevel = Mathf.Min(pTarget, _powerLevel + (float)delta / WarmupTime);
-            else if (_powerLevel > pTarget) _powerLevel = Mathf.Max(pTarget, _powerLevel - (float)delta / CooldownTime);
-            // RE-SOLVE THE NET WHILE THE OUTPUT RAMPS: a fuel generator's whole output CAP scales with _powerLevel
-            // (PowerScale), so a wired consumer must be re-evaluated each frame the level moves. The power net only
-            // recomputes on MarkDirty (PowerNet.RecomputeIfDirty), and the toggle fires just ONE mark -- solved at the
-            // toggle instant, when _powerLevel hasn't moved yet. So a gen toggled OFF is still at full _powerLevel when
-            // that lone solve runs and stays "producing" through the entire 1.1s cooldown -> consumers freeze POWERED
-            // (master: "turn genny off, pump STILL reads powered"; same for the spotlight lamp, it just reads less
-            // obviously). The battery (energy-crossing @488) + wind turbine (wind-move @495) already re-solve on their
-            // output change; the fuel generator's entire output IS this ramp, so mark dirty until it settles. Cheap --
-            // only fires the ~1s a gen is actively spinning up/down, never at steady state (PowerSettled) or idle.
-            // re-solve on EVERY frame the level actually moved -- including the final frame it SNAPS to the target (Min/Max
-            // clamp). The old `!PowerSettled` gate stopped one frame too early: the snap-to-1.0 frame was already "settled"
-            // so it skipped the mark, freezing the net's last solve at ~0.996 -> a 4kW gen read ~3984W (strawberry). Marking
-            // on movement fixes that and still costs nothing at steady state (prevLevel == _powerLevel -> no mark).
-            if (Def != null && Def.Fuel > 0f && !Def.IsBattery && _powerLevel != prevLevel) PowerNet.MarkDirty();
+            // POWER SIM (switch/gen trigger, fuel burn, battery, wind factor, ramp + every MarkDirty) moved to
+            // _PhysicsProcess so it's tick-synced -- see that method. Only the blade-spin VISUAL stays here at render
+            // rate, reading the tick-updated _windFactor (so a turbine still spins smoothly between physics ticks).
+            if (Def != null && Def.IsWindTurbine && _bladeHub != null && IsInstanceValid(_bladeHub))
+                _bladeHub.RotateZ((float)delta * (0.25f + 5.5f * _windFactor));   // spin ~ wind (+ a slow idle turn)
             float load = LoadFraction;   // 0..1 of capacity drawn -> louder/deeper engine + harder shake under load (strawberry)
             if (_engineAudio != null)
             {
