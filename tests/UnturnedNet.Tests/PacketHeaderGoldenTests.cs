@@ -71,7 +71,15 @@ namespace UnturnedNet.Tests
             session.SendControl(NetControlType.KeepAlive);
             Assert.That(captured, Is.Not.Null);
             Assert.That(capturedLen, Is.EqualTo(12));
-            Assert.That(ToHex(captured, capturedLen), Is.EqualTo("750E08000000000000002800"));   // v14: sp-mp-interactables (SystemInteractables 17 + commands 32-34 + events 34/35) -- only the version byte (0D->0E) moves
+            // v15: wire-catchup -- only the version byte (0E->0F) moves, per the re-golden-with-bump discipline.
+            //
+            // WORTH KNOWING WHAT THIS GOLDEN CANNOT SEE. It caught the version byte the instant it changed,
+            // which is what it is for. It did NOT catch commands 35-38 being added to the wire on 2026-08-16
+            // under an unchanged Version=14, because a keepalive datagram does not carry a command id --
+            // nothing in these twelve bytes moves when the command table grows. So this golden guards the
+            // FRAMING, and the command table has no equivalent guard; the four unbumped ids were found by
+            // reading git dates, not by a test. See CommandTableGoldenTests for the one that would have.
+            Assert.That(ToHex(captured, capturedLen), Is.EqualTo("750F08000000000000002800"));
         }
 
         [Test]

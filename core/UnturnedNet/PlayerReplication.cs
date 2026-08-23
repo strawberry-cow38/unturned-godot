@@ -91,7 +91,14 @@ namespace UnturnedGodot.Net
                                                           // reload -- CommandReload=5 is the combat rate gate and carries
                                                           // only a Seq, so the two are deliberately separate intents)
         public const byte CommandWearClothing = 37;       // grid -> a worn slot (and the displaced garment back)
-        public const byte CommandUnwearClothing = 38;     // a worn slot -> the grid
+        public const byte CommandUnwearClothing = 38;
+        /// <summary>RESERVED (v15) for the magazine load/unload intent -- cow tools writes both sides.
+        /// Client sends the intent; the server applies it to its authoritative inventory and the existing
+        /// owner-inventory echo carries the result back, which is the shape NetCraft already uses. Without
+        /// it the client mutates only its own copy, and the next inventory move round-trips through the
+        /// loopback server and echoes the stale magazine back -- "unload a mag, move anything, the rounds
+        /// go back in".</summary>
+        public const byte CommandMagLoad = 39;     // a worn slot -> the grid
 
         // EventRegistry id space (server -> client, ReliableOrdered)
         public const byte EventJoinSnapshot = 1;   // the join-time FULL snapshot rides the reliable channel (§2.2: fragmentation is safe there)
