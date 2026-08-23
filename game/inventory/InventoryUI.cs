@@ -113,6 +113,18 @@ namespace UnturnedGodot
         Vector2 _grab;          // cursor offset within the grabbed item's top-left cell
         Control _dragTile;      // the floating tile that follows the cursor
 
+        // --- drag-load rounds into a magazine (strawberry): drop a loose round onto a compatible mag -> a fill wheel
+        //     (one segment per capacity) fills a round every LOAD_INTERVAL, pulling a bullet from the stack into the
+        //     mag; the RMB "Unload" menu action reverses it. Both items keep their inventory slots -- it's a LOAD, not
+        //     a move/swap. A mag LOCKS to the first cartridge loaded (no mixing) until it's emptied.
+        Control _magFx;                       // overlay: draws the fill wheel(s) + the drag-over compat hint
+        readonly List<MagOp> _magOps = new();
+        bool _magDemoFired;                   // UG_MAGLOAD render harness: fire the demo load once
+        Vector2 _dragMouse;                   // last cursor pos during a drag (for the over-a-mag hint in _Draw)
+        const float LOAD_INTERVAL = 0.10f;    // seconds per round -- one wheel segment per tick
+        enum MagLoad { Ok, Full, WrongCaliber, WouldMix }
+        class MagOp { public byte page, x, y; public Item mag; public int bulletId; public bool unloading; public float t; public int cap; }
+
         // selection: clicking an item (press+release on its own cell, no drag) opens a description/actions panel
         Control _selPanel;
         byte _selPage, _selX, _selY;
@@ -150,6 +162,10 @@ namespace UnturnedGodot
 
             _quickCraft = new Control { MouseFilter = Control.MouseFilterEnum.Ignore };   // bottom-right quick-craft bar (tiles hit-tested in _Input, positioned in RefreshQuickCraft)
             _dash.AddChild(_quickCraft);
+            _magFx = new Control { MouseFilter = Control.MouseFilterEnum.Ignore };   // mag load/unload fill wheel + the drag-over compat hint, drawn ON TOP of the grid
+            _magFx.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+            _magFx.Draw += DrawMagFx;
+            _root.AddChild(_magFx);
         }
 
         // quick-craft: rebuild the bottom-right bar with the recipes you can afford right now (icon per recipe).
@@ -294,6 +310,10 @@ namespace UnturnedGodot
                 long sig = InventorySignature();
                 if (sig != _lastSig) { _lastSig = sig; Refresh(); }
             }
+            if (!_magDemoFired && System.Environment.GetEnvironmentVariable("UG_MAGLOAD") == "1") { _magDemoFired = true; DebugStartLoadFirstMag(5004); }   // render harness: auto-load the first mag with 5.56
+            else if (!_magDemoFired && System.Environment.GetEnvironmentVariable("UG_MAGUNLOAD") == "1") { _magDemoFired = true; DebugStartUnloadFirstMag(); }   // render harness: auto-unload the first loaded mag
+            TickMagOps((float)delta);   // advance any active mag load/unload (one round every LOAD_INTERVAL)
+            if (_magOps.Count > 0 || (_dragging && _dragJar != null && _dragJar.GetAsset()?.isAmmo == true)) _magFx?.QueueRedraw();
         }
 
         // Cheap rolling hash of every jar (id/amount/pos) + the page dims (an MP crate open/close resizes
@@ -384,7 +404,7 @@ namespace UnturnedGodot
                     if (_pdBody != null) _pdBody.Rotation = new Vector3(0f, Mathf.Pi + _pdYaw, 0f);   // _pdYaw stays authoritative even pre-rig
                     GetViewport().SetInputAsHandled();
                 }
-                else if (_dragging) { _dragTile.GlobalPosition = mm.GlobalPosition - _grab; }
+                else if (_dragging) { _dragTile.GlobalPosition = mm.GlobalPosition - _grab; _dragMouse = mm.GlobalPosition; }
             }
             else if (e is InputEventKey { Pressed: true, Keycode: Key.R } && _dragging)
             {
@@ -513,6 +533,7 @@ namespace UnturnedGodot
             }
 
             if (!PointToCell(topLeft, out byte page, out byte x1, out byte y1, out _, out _)) return;
+            if (TryStartLoad(sp, sx, sy, page, x1, y1)) { CloseSelection(); Refresh(); return; }   // a loose round dropped onto a mag -> LOAD it (timed wheel), never a move/swap; both keep their slots (strawberry)
             if (page == sp && x1 == sx && y1 == sy) return;   // released in place -> no-op (the item menu is RMB now)
             // MP: the move is a REQUEST -- the server's TryDrag validates+applies and the owner echo
             // repaints (the item snaps home until it lands). SP: the direct local drag, unchanged.
@@ -539,6 +560,246 @@ namespace UnturnedGodot
                 }
             }
             page = cx = cy = 0; ctl = null; isSlot = false; return false;
+        }
+
+        // ===================== drag-load loose rounds into a magazine (strawberry) =====================
+        // Drop a loose round onto a compatible mag -> a fill wheel adds a round every LOAD_INTERVAL until the mag is
+        // full or the stack runs out. Compatibility is by the mag BODY (magCaliber): a STANAG body feeds 5.56 AND .300
+        // BLK, an AUG body only 5.56, etc. A mag LOCKS to its first-loaded cartridge (no mixing) until it is emptied.
+
+        static int MagCap(ItemAsset ma) => ma != null ? System.Math.Max(1, ma.magCapacity) : 1;
+        // the CARTRIDGE a mag currently holds: its per-instance locked round if set, else the asset default; null when empty.
+        static string MagEffRound(Item mag, ItemAsset ma) => (mag == null || mag.amount <= 0) ? null
+            : (!string.IsNullOrEmpty(mag.magLoadedRound) ? mag.magLoadedRound : ma?.magRound);
+        static MagLoad CheckLoad(Item mag, ItemAsset ma, ItemAsset bullet)
+        {
+            if (ma == null || !ma.IsMagazine || bullet == null || !bullet.isAmmo || string.IsNullOrEmpty(bullet.magRound)) return MagLoad.WrongCaliber;
+            if (!SDG.Unturned.Assets.MagAcceptedRounds(ma).Contains(bullet.magRound)) return MagLoad.WrongCaliber;   // this body doesn't feed that cartridge
+            if (mag.amount >= MagCap(ma)) return MagLoad.Full;
+            string cur = MagEffRound(mag, ma);
+            if (cur != null && cur != bullet.magRound) return MagLoad.WouldMix;   // part-loaded with a different round -> unload first (no mixing)
+            return MagLoad.Ok;
+        }
+        static string MagLoadMsg(MagLoad r) => r == MagLoad.Full ? "Magazine full" : r == MagLoad.WouldMix ? "Unload first" : r == MagLoad.WrongCaliber ? "Incompatible" : null;
+
+        ItemJar JarAt(byte page, byte x, byte y)
+        {
+            if (Inv?.items == null || page >= Inv.items.Length) return null;
+            byte idx = Inv.items[page].getIndex(x, y);
+            return idx == byte.MaxValue ? null : Inv.items[page].getItem(idx);
+        }
+        (ItemJar jar, Items page) FindStack(ushort id)
+        {
+            if (Inv?.items != null)
+                foreach (var pg in Inv.items)
+                {
+                    byte cnt = pg.getItemCount();
+                    for (byte i = 0; i < cnt; i++)
+                    {
+                        var j = pg.getItem(i);
+                        if (j?.item != null && j.item.id == id && j.item.amount > 0) return (j, pg);
+                    }
+                }
+            return (null, null);
+        }
+
+        // a loose round dropped on a cell -> if it holds a compatible mag, START a timed load (so the drop is CONSUMED,
+        // not moved/swapped). Returns true for ANY bullet-onto-mag drop (even a refused one), so the caller skips the move.
+        bool TryStartLoad(byte bp, byte bx, byte by, byte mp, byte mx, byte my)
+        {
+            var bJar = JarAt(bp, bx, by);
+            var mJar = JarAt(mp, mx, my);
+            if (bJar == null || mJar == null) return false;
+            var bA = bJar.GetAsset(); var mA = mJar.GetAsset();
+            if (bA == null || mA == null || !bA.isAmmo || !mA.IsMagazine) return false;   // only a loose-round-onto-magazine drop loads
+            if (CheckLoad(mJar.item, mA, bA) == MagLoad.Ok)
+            {
+                _magOps.RemoveAll(o => o.page == mp && o.x == mJar.x && o.y == mJar.y);
+                _magOps.Add(new MagOp { page = mp, x = mJar.x, y = mJar.y, mag = mJar.item, bulletId = bA.id, unloading = false, t = 0f, cap = MagCap(mA) });
+            }
+            return true;   // consume the drop either way -- a refused load just snaps home, never swaps
+        }
+
+        void TickMagOps(float delta)
+        {
+            for (int i = _magOps.Count - 1; i >= 0; i--)
+            {
+                var op = _magOps[i];
+                op.t += delta;
+                int guard = 0;
+                while (op.t >= LOAD_INTERVAL && guard++ < 64)
+                {
+                    op.t -= LOAD_INTERVAL;
+                    if (!StepMagOp(op)) { _magOps.RemoveAt(i); break; }
+                }
+            }
+        }
+        // move ONE round; false when the op finishes (mag full/empty / out of rounds / bag full / no longer compatible).
+        bool StepMagOp(MagOp op)
+        {
+            var mA = op.mag?.GetAsset();
+            if (mA == null) return false;
+            if (op.unloading)   // eject a round back to the bag; stop cleanly if there's nowhere for it (never lose one)
+            {
+                if (op.mag.amount <= 0) return false;
+                int bid = BulletIdForRound(MagEffRound(op.mag, mA) ?? mA.magRound);
+                if (bid <= 0 || Inv == null || !Inv.tryAddItem(new SDG.Unturned.Item((ushort)bid, 1))) return false;
+                op.mag.amount = (byte)(op.mag.amount - 1);
+                if (op.mag.amount <= 0) op.mag.magLoadedRound = null;   // emptied -> unlock the cartridge
+                return op.mag.amount > 0;
+            }
+            // LOAD: pull a round from the stack into the mag
+            if (op.mag.amount >= op.cap) return false;
+            var bA = SDG.Unturned.Assets.find((ushort)op.bulletId);
+            if (bA == null || CheckLoad(op.mag, mA, bA) != MagLoad.Ok) return false;
+            var (jar, page) = FindStack((ushort)op.bulletId);
+            if (jar == null) return false;   // out of that round
+            if (op.mag.amount <= 0) op.mag.magLoadedRound = bA.magRound;   // empty -> LOCK to this cartridge
+            op.mag.amount = (byte)(op.mag.amount + 1);
+            jar.item.amount = (byte)(jar.item.amount - 1);
+            if (jar.item.amount <= 0) { byte ri = page.getIndex(jar.x, jar.y); if (ri != byte.MaxValue) page.removeItem(ri); }
+            return op.mag.amount < op.cap;
+        }
+        int BulletIdForRound(string round)   // the loose-round item id for a cartridge (reverse of bullet.magRound)
+        {
+            if (string.IsNullOrEmpty(round)) return 0;
+            foreach (var a in SDG.Unturned.Assets.all())
+                if (a.isAmmo && a.magRound == round) return a.id;
+            return 0;
+        }
+
+        // ---- the fill wheel + drag-over compat hint, drawn on _magFx ----
+        bool MagRect(byte page, byte x, byte y, ItemAsset ma, out Rect2 r)
+        {
+            r = default;
+            if (page >= (Inv?.items?.Length ?? 0)) return false;
+            foreach (var (p, c, slot) in _drop)
+                if (p == page && IsInstanceValid(c))
+                {
+                    Vector2 tl = c.GlobalPosition + (slot ? Vector2.Zero : new Vector2(x * CELL, y * CELL));
+                    int sxc = ma != null ? System.Math.Max(1, (int)ma.size_x) : 1;
+                    int syc = ma != null ? System.Math.Max(1, (int)ma.size_y) : 1;
+                    r = new Rect2(tl, new Vector2(sxc * CELL, syc * CELL));
+                    return true;
+                }
+            return false;
+        }
+        void DrawMagFx()
+        {
+            foreach (var op in _magOps)
+            {
+                var jar = JarAt(op.page, op.x, op.y);
+                if (jar == null || jar.GetAsset()?.IsMagazine != true) continue;
+                if (MagRect(op.page, op.x, op.y, jar.GetAsset(), out Rect2 r)) DrawWheel(r, op.mag.amount, op.cap, op.unloading);
+            }
+            if (_dragging && _dragJar != null)
+            {
+                var bA = _dragJar.GetAsset();
+                if (bA != null && bA.isAmmo && PointToCell(_dragMouse, out byte hp, out byte hx, out byte hy, out _, out _))
+                {
+                    var mJar = JarAt(hp, hx, hy);
+                    var mA = mJar?.GetAsset();
+                    if (mJar != null && mA != null && mA.IsMagazine && MagRect(hp, mJar.x, mJar.y, mA, out Rect2 hr))
+                        DrawLoadHint(hr, CheckLoad(mJar.item, mA, bA));
+                }
+            }
+        }
+        void DrawWheel(Rect2 area, int filled, int cap, bool unloading)
+        {
+            if (cap <= 0) return;
+            Vector2 c = area.Position + area.Size / 2f;
+            float rOut = Mathf.Min(area.Size.X, area.Size.Y) * 0.40f;   // 10% smaller (master); no centre counter
+            float rIn = rOut * 0.58f;
+            float top = -Mathf.Pi / 2f;
+            _magFx.DrawCircle(c, rOut + 3f, new Color(0f, 0f, 0f, 0.55f));   // dim backing so it reads over the icon
+            DrawAnnularSector(c, rIn, rOut, top, top + Mathf.Tau, new Color(1f, 1f, 1f, 0.16f));   // the empty ring (full, dim)
+            float frac = Mathf.Clamp(filled / (float)cap, 0f, 1f);   // a CONTINUOUS filled arc that grows one round-step (1/cap) at a time (master)
+            if (frac > 0f)
+                DrawAnnularSector(c, rIn, rOut, top, top + Mathf.Tau * frac, unloading ? new Color(0.95f, 0.45f, 0.2f) : new Color(0.35f, 0.9f, 0.45f));
+        }
+        void DrawAnnularSector(Vector2 c, float rIn, float rOut, float a0, float a1, Color col)
+        {
+            int steps = System.Math.Max(2, (int)((a1 - a0) / 0.12f) + 1);
+            var pts = new Vector2[(steps + 1) * 2];
+            for (int i = 0; i <= steps; i++)
+            {
+                float a = Mathf.Lerp(a0, a1, i / (float)steps);
+                var dir = new Vector2(Mathf.Cos(a), Mathf.Sin(a));
+                pts[i] = c + dir * rOut;
+                pts[(steps + 1) * 2 - 1 - i] = c + dir * rIn;
+            }
+            _magFx.DrawColoredPolygon(pts, col);
+        }
+        void DrawLoadHint(Rect2 area, MagLoad res)
+        {
+            bool ok = res == MagLoad.Ok;
+            _magFx.DrawRect(area, ok ? new Color(0.3f, 0.85f, 0.4f, 0.30f) : new Color(0.9f, 0.25f, 0.22f, 0.34f), true);
+            _magFx.DrawRect(area, ok ? new Color(0.45f, 1f, 0.55f, 0.9f) : new Color(1f, 0.42f, 0.36f, 0.95f), false, 2f);
+            string msg = ok ? "Load" : MagLoadMsg(res);
+            var font = _magFx.GetThemeDefaultFont();
+            if (font == null || string.IsNullOrEmpty(msg)) return;
+            int fs = 15;
+            Vector2 sz = font.GetStringSize(msg, HorizontalAlignment.Center, -1, fs);
+            Vector2 p = area.Position + new Vector2((area.Size.X - sz.X) / 2f, area.Size.Y / 2f + sz.Y / 2f);
+            _magFx.DrawString(font, p + new Vector2(1, 1), msg, HorizontalAlignment.Left, -1, fs, new Color(0f, 0f, 0f, 0.85f));
+            _magFx.DrawString(font, p, msg, HorizontalAlignment.Left, -1, fs, ok ? new Color(0.72f, 1f, 0.78f) : new Color(1f, 0.72f, 0.68f));
+        }
+
+        // seam: start a load on the mag at a cell (render harness + tests -- headless can't drag-drop).
+        public bool DebugStartLoad(byte page, byte x, byte y, ushort bulletId)
+        {
+            var mJar = JarAt(page, x, y);
+            var mA = mJar?.GetAsset();
+            if (mJar == null || mA == null || !mA.IsMagazine) return false;
+            _magOps.RemoveAll(o => o.page == page && o.x == mJar.x && o.y == mJar.y);
+            _magOps.Add(new MagOp { page = page, x = mJar.x, y = mJar.y, mag = mJar.item, bulletId = bulletId, unloading = false, t = 0f, cap = MagCap(mA) });
+            return true;
+        }
+        public int DebugMagRounds(byte page, byte x, byte y) => JarAt(page, x, y)?.item.amount ?? -1;
+        public bool DebugLoadActive => _magOps.Count > 0;
+        // RMB "Unload": start an unload op on the selected mag -> the wheel empties, rounds return to the bag.
+        void UnloadSelected()
+        {
+            var jar = JarAt(_selPage, _selX, _selY);
+            var ma = jar?.GetAsset();
+            if (jar != null && ma != null && ma.IsMagazine && jar.item.amount > 0)
+            {
+                _magOps.RemoveAll(o => o.page == _selPage && o.x == jar.x && o.y == jar.y);
+                _magOps.Add(new MagOp { page = _selPage, x = jar.x, y = jar.y, mag = jar.item, bulletId = 0, unloading = true, t = 0f, cap = MagCap(ma) });
+            }
+            CloseSelection();
+        }
+        public bool DebugStartLoadFirstMag(ushort bulletId)   // scan for the first magazine + start loading it
+        {
+            if (Inv?.items == null) return false;
+            for (byte p = 0; p < Inv.items.Length; p++)
+            {
+                byte cnt = Inv.items[p].getItemCount();
+                for (byte i = 0; i < cnt; i++)
+                {
+                    var j = Inv.items[p].getItem(i);
+                    if (j?.GetAsset()?.IsMagazine == true) return DebugStartLoad(p, j.x, j.y, bulletId);
+                }
+            }
+            return false;
+        }
+        public bool DebugStartUnloadFirstMag()   // scan for the first LOADED mag + start unloading it (render harness)
+        {
+            if (Inv?.items == null) return false;
+            for (byte p = 0; p < Inv.items.Length; p++)
+            {
+                byte cnt = Inv.items[p].getItemCount();
+                for (byte i = 0; i < cnt; i++)
+                {
+                    var j = Inv.items[p].getItem(i);
+                    if (j?.GetAsset()?.IsMagazine == true && j.item.amount > 0)
+                    {
+                        _magOps.Add(new MagOp { page = p, x = j.x, y = j.y, mag = j.item, bulletId = 0, unloading = true, t = 0f, cap = MagCap(j.GetAsset()) });
+                        return true;
+                    }
+                }
+            }
+            return false;
         }
 
         // Hit-test a clothing equip target under a screen point. Retail has NO slot list -- you drag a garment onto
@@ -934,6 +1195,8 @@ namespace UnturnedGodot
                 string smove = _selPage == PlayerInventory.STORAGE ? "Take" : "Store";
                 AddActionButton(panel, smove, new Vector2(228, by), () => { QuickAction(_selPage, _selX, _selY); CloseSelection(); }); by += 44;
             }
+            if (asset.IsMagazine && jar.item != null && jar.item.amount > 0)   // a loaded mag: RMB Unload -> eject its rounds back to the bag, the wheel emptying (strawberry: rmb menu, not drag)
+            { AddActionButton(panel, "Unload", new Vector2(228, by), UnloadSelected); by += 44; }
             AddActionButton(panel, "Drop", new Vector2(228, by), DropSelected); by += 44;
             AddActionButton(panel, "Close", new Vector2(228, by), CloseSelection);
         }
@@ -1694,7 +1957,7 @@ namespace UnturnedGodot
                 tile.AddChild(lbl);
             }
 
-            if (jar.item != null && (jar.item.amount > 1 || asset?.IsMagazine == true))   // stacks show >1; a magazine ALWAYS shows its round count, incl. x0 when empty (master)
+            if (jar.item != null && (jar.item.amount > 1 || asset?.IsMagazine == true) && !_magOps.Exists(o => o.mag == jar.item))   // stacks show >1; a magazine ALWAYS shows its round count, incl. x0 when empty (master) -- but not while its fill WHEEL is up (the wheel shows N/cap)
             {
                 var amt = new Label { Text = "x" + jar.item.amount, Position = new Vector2(0, h - 20), Size = new Vector2(w - 4, 18) };
                 amt.HorizontalAlignment = HorizontalAlignment.Right;
