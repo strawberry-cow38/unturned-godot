@@ -837,6 +837,17 @@ namespace UnturnedGodot.Net
         public bool SendCraft(ushort blueprintIndex)
             => SendCommand(ReplicationIds.CommandCraft, new CraftCommand { BlueprintIndex = blueprintIndex }.Write);
 
+        /// <summary>One round into or out of a magazine. Sent per round, matching the client's own pacing,
+        /// so an abandoned drag simply stops rather than needing a cancel message to unwind.</summary>
+        public bool SendMagLoad(byte magPage, byte magX, byte magY, ushort magId,
+                                byte roundPage, byte roundX, byte roundY, ushort roundId, bool unloading)
+            => SendCommand(ReplicationIds.CommandMagLoad, new MagLoadCommand
+            {
+                MagPage = magPage, MagX = magX, MagY = magY, MagId = magId,
+                RoundPage = roundPage, RoundX = roundX, RoundY = roundY, RoundId = roundId,
+                Unloading = unloading,
+            }.Write);
+
         public bool SendFitAttachment(byte page, byte x, byte y, ushort id)
             => SendCommand(ReplicationIds.CommandFitAttachment, new FitAttachmentCommand { Page = page, X = x, Y = y, Id = id }.Write);
 

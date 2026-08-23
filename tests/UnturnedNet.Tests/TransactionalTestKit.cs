@@ -121,6 +121,15 @@ namespace UnturnedNet.Tests
         public const ushort RifleId = 4;
         public const ushort LogId = 900;
         public const ushort PlankId = 901;
+        // v15 magazine fixtures. Two BODIES sharing caliber group 1 (a STANAG feeds both 5.56 and .300 BLK,
+        // which is the whole reason compatibility is by body rather than by item), plus a third body on its
+        // own group so "incompatible" has something real to refuse.
+        public const ushort StanagId = 910;      // caliber 1, default round "556"
+        public const ushort Stanag300Id = 911;   // caliber 1, round "300" -- makes group 1 accept both
+        public const ushort ScarMagId = 912;     // caliber 2, round "762" -- a different body entirely
+        public const ushort Round556Id = 920;
+        public const ushort Round300Id = 921;
+        public const ushort Round762Id = 922;
 
         /// <summary>Reset + register the item table (the STATIC Assets registry is process-wide -- every
         /// test fixture re-seeds it in SetUp so no test depends on another's leftovers).</summary>
@@ -142,6 +151,12 @@ namespace UnturnedNet.Tests
             // fluid containers -- fluidDefaultType 2 = Water (matches the UnturnedGodot.FluidType enum's int value)
             Assets.add(new ItemAsset { id = WaterBottleId, itemName = "Bottled Water", size_x = 1, size_y = 1, fluidCapacity = 1000f, fluidDefaultType = 2, fluidDefaultQuality = 0 });
             Assets.add(new ItemAsset { id = CanteenId, itemName = "Canteen", size_x = 1, size_y = 1, fluidCapacity = 500f, fluidDefaultType = 0, fluidDefaultQuality = 0 });
+            Assets.add(new ItemAsset { id = StanagId, itemName = "STANAG Magazine", size_x = 1, size_y = 2, magCapacity = 30, magCaliber = 1, magRound = "556" });
+            Assets.add(new ItemAsset { id = Stanag300Id, itemName = "STANAG .300 Magazine", size_x = 1, size_y = 2, magCapacity = 30, magCaliber = 1, magRound = "300" });
+            Assets.add(new ItemAsset { id = ScarMagId, itemName = "SCAR-H Magazine", size_x = 1, size_y = 2, magCapacity = 20, magCaliber = 2, magRound = "762" });
+            Assets.add(new ItemAsset { id = Round556Id, itemName = "5.56 Round", size_x = 1, size_y = 1, isAmmo = true, magRound = "556" });
+            Assets.add(new ItemAsset { id = Round300Id, itemName = ".300 BLK Round", size_x = 1, size_y = 1, isAmmo = true, magRound = "300" });
+            Assets.add(new ItemAsset { id = Round762Id, itemName = "7.62 Round", size_x = 1, size_y = 1, isAmmo = true, magRound = "762" });
         }
 
         /// <summary>The PowerSolverTests devices as net defs: a 4000 W generator (one Output) and a 250 W

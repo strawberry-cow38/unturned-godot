@@ -190,6 +190,8 @@ namespace UnturnedGodot
                 Player.NetWearClothing = (page, x, y, slot) => Client.SendWearClothing(page, x, y, slot);
                 Player.NetUnwearClothing = slot => Client.SendUnwearClothing(slot);
                 Player.NetCraft = index => Client.SendCraft(index);
+                Player.NetMagLoad = (mp, mx, my, mid, rp, rx, ry, rid, un) =>
+                    Client.SendMagLoad(mp, mx, my, mid, rp, rx, ry, rid, un);
                 // ADOPT (mirror ClientWorldSession:190-194): every owner-block echo re-adopts the SERVER grid
                 //     into the local Player's EXISTING Inventory instance (copy-in-place -- the InventoryUI /
                 //     hotbar / reload-mag hunt all hold that reference; the UI's signature poll repaints). The

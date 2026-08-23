@@ -118,6 +118,49 @@ namespace UnturnedGodot.Net
         }
     }
 
+    /// <summary>Loading or unloading ONE round of a magazine, as an intent (v15, id 39).
+    ///
+    /// One command per round rather than one per operation, deliberately. The client paces the fill wheel
+    /// at half a second a round and the player can drop the drag or close the bag mid-fill, so an
+    /// all-or-nothing "load N" would either overshoot what they meant or need a cancel message to unwind.
+    /// Per-round means an abandoned operation simply stops, and the server's inventory is correct at every
+    /// intermediate point rather than only at the end.
+    ///
+    /// The magazine is addressed by GRID SLOT plus its item id, not by object reference: the two sides do
+    /// not share objects, and the id check is what stops a stale slot from loading rounds into whatever
+    /// happens to be sitting there now.</summary>
+    public struct MagLoadCommand
+    {
+        public byte MagPage, MagX, MagY;
+        public byte RoundPage, RoundX, RoundY;   // ignored when unloading -- the server picks the destination
+        public ushort MagId, RoundId;
+        public bool Unloading;
+
+        public void Write(NetPakWriter w)
+        {
+            w.WriteUInt8(MagPage); w.WriteUInt8(MagX); w.WriteUInt8(MagY);
+            w.WriteUInt8(RoundPage); w.WriteUInt8(RoundX); w.WriteUInt8(RoundY);
+            w.WriteUInt16(MagId); w.WriteUInt16(RoundId);
+            w.WriteBit(Unloading);
+        }
+
+        public static bool TryRead(NetPakReader r, out MagLoadCommand cmd)
+        {
+            cmd = default;
+            if (!r.ReadUInt8(out byte mp) || !r.ReadUInt8(out byte mx) || !r.ReadUInt8(out byte my)) return false;
+            if (!r.ReadUInt8(out byte rp) || !r.ReadUInt8(out byte rx) || !r.ReadUInt8(out byte ry)) return false;
+            if (!r.ReadUInt16(out ushort mid) || !r.ReadUInt16(out ushort rid)) return false;
+            if (!r.ReadBit(out bool un)) return false;
+            cmd = new MagLoadCommand
+            {
+                MagPage = mp, MagX = mx, MagY = my,
+                RoundPage = rp, RoundX = rx, RoundY = ry,
+                MagId = mid, RoundId = rid, Unloading = un,
+            };
+            return true;
+        }
+    }
+
     /// <summary>Reloading, as an intent. The client picked a magazine and knows how many rounds came out of the
     /// gun; the server owns whether that magazine is really there.
     ///
@@ -495,6 +538,13 @@ namespace UnturnedGodot.Net
             w.WriteClampedFloat(j.item?.fluidAmount ?? -1f, 20, 1);
             w.WriteUInt8(j.item?.fluidQuality ?? 0);
             w.WriteBit(j.item?.autoDrink ?? true);   // autodrink toggle (default on)
+            // MAGAZINE CARTRIDGE LOCK. Item.magLoadedRound was added for the magazine load/unload and never
+            // joined this schema -- the identical mistake the per-slot attachment block above documents,
+            // repeated on a new field. Without it every owner echo rebuilds the jar with no lock, so a
+            // part-loaded magazine forgets which cartridge it holds and will happily accept a mix on the
+            // next drag. One byte, unconditional: gating it behind a bit would cost 9 bits for magazines to
+            // save 8 for everything else, which is the wrong trade at one byte.
+            w.WriteUInt8(Assets.MagRoundToId(j.item?.magLoadedRound));
         }
 
         static bool ReadJar(NetPakReader r, out byte x, out byte y, out byte rot, out Item item)
@@ -527,10 +577,12 @@ namespace UnturnedGodot.Net
             if (!r.ReadClampedFloat(20, 1, out float fluidAmount)) return false;
             if (!r.ReadUInt8(out byte fluidQuality)) return false;
             if (!r.ReadBit(out bool autoDrink)) return false;                    // autodrink toggle
+            if (!r.ReadUInt8(out byte magRoundId)) return false;                 // magazine cartridge lock
             item = new Item(id, amount, quality) { gunAmmo = gunAmmo, gunFiremode = gunFiremode, gunMagId = gunMagId, gunAttach = gunAttach, fuelLevel = fuelLevel,
                                                    fluidType = fluidType, fluidAmount = fluidAmount, fluidQuality = fluidQuality, autoDrink = autoDrink,
                                                    gunSightId = sight, gunBarrelId = barrel, gunGripId = grip, gunTacticalId = tactical,
-                                                   gunChambered = chambered, gunAttachSeeded = attachSeeded };
+                                                   gunChambered = chambered, gunAttachSeeded = attachSeeded,
+                                                   magLoadedRound = Assets.MagRoundFromId(magRoundId) };
             // The chambered round's AMMO TYPE is re-derived from the loaded magazine rather than sent: it is a
             // string, this stack has no string primitive, and the mag id it comes from is already on the wire.
             // One case loses fidelity by doing it this way and it is worth naming: after a TACTICAL swap the

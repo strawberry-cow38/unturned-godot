@@ -19,6 +19,8 @@ namespace UnturnedGodot.Net
         public long ConsumesRejected;
         public long AttachFitsApplied;
         public long AttachFitsRejected;     // empty cell / wrong item at that address (a stale client grid)
+        public long MagLoadsApplied;        // one round moved into or out of a magazine
+        public long MagLoadsRejected;       // stale slot, wrong item id, rule refused, or a full bag on unload
         public long PickupsDenied;          // legal pickup, full grid -> ItemPickupDenied went back
         public long ReloadsApplied;
         public long ReloadsRejected;        // no magazine at that address / not a magazine
@@ -288,6 +290,12 @@ namespace UnturnedGodot.Net
             commands.Register<ConsumeCommand>(ReplicationIds.CommandConsume, ConsumeCommand.TryRead,
                 OnConsume,
                 validate: (sender, cmd) => _inventories.TryGet(sender, out _) && cmd.Page < PlayerInventory.PAGES);
+
+            commands.Register<MagLoadCommand>(ReplicationIds.CommandMagLoad, MagLoadCommand.TryRead,
+                OnMagLoad,
+                validate: (sender, cmd) => _inventories.TryGet(sender, out _)
+                                           && cmd.MagPage < PlayerInventory.PAGES
+                                           && cmd.RoundPage < PlayerInventory.PAGES);
 
             commands.Register<FitAttachmentCommand>(ReplicationIds.CommandFitAttachment, FitAttachmentCommand.TryRead,
                 OnFitAttachment,
@@ -603,6 +611,64 @@ namespace UnturnedGodot.Net
         /// The ID is checked against the cell before removing anything. The client's grid can shift between the
         /// click and the packet arriving, and deleting whatever now occupies that address would turn a stale
         /// click into "the server ate my medkit".</summary>
+        /// <summary>MAGAZINE LOAD/UNLOAD, server side. THE HALF THAT WAS MISSING.
+        ///
+        /// The client had this working entirely locally: it moved rounds between the loose stack and the
+        /// magazine in its OWN inventory and never told anyone. In the unified SP/MP path every inventory
+        /// move round-trips through the authoritative server, so the next time the player nudged anything
+        /// the owner-inventory echo arrived carrying the server's untouched magazine and put the rounds
+        /// straight back. "Unload a mag, move anything, the rounds go back in."
+        ///
+        /// The gate is SDG.Unturned.MagRules.CheckLoad -- the same function the client draws its drag-over
+        /// hint from, not a re-implementation of it. A second copy would let the two sides disagree about
+        /// the RULE rather than the state, which is the same bug wearing a better disguise.</summary>
+        void OnMagLoad(ushort sender, MagLoadCommand cmd)
+        {
+            var inv = SenderInventory(sender);
+            var magPage = inv.items[cmd.MagPage];
+            byte magIndex = magPage.getIndex(cmd.MagX, cmd.MagY);
+            var magJar = magIndex == byte.MaxValue ? null : magPage.getItem(magIndex);
+            // Identity, not just position: a slot the client believed held this magazine may hold something
+            // else by the time the command lands, and loading rounds into whatever moved there is worse
+            // than refusing.
+            if (magJar?.item == null || magJar.item.id != cmd.MagId) { Diag.MagLoadsRejected++; return; }
+            var magAsset = Assets.find(magJar.item.id);
+            if (magAsset == null || !magAsset.IsMagazine) { Diag.MagLoadsRejected++; return; }
+
+            if (cmd.Unloading)
+            {
+                var roundAsset = Assets.find(cmd.RoundId);
+                string held = MagRules.EffectiveRound(magJar.item, magAsset);
+                // The client names the cartridge it expects out; if the server's magazine holds a different
+                // one the two have diverged and guessing would hand the player the wrong ammunition.
+                if (magJar.item.amount <= 0 || roundAsset == null || held == null || held != roundAsset.magRound)
+                { Diag.MagLoadsRejected++; return; }
+
+                // ADD FIRST, DECREMENT ONLY IF IT LANDED. A full bag must abort before the magazine loses a
+                // round, or unloading into a full inventory destroys ammunition -- silently, since nothing
+                // reports a failed tryAddItem.
+                if (!inv.tryAddItem(new Item(cmd.RoundId, 1))) { Diag.MagLoadsRejected++; return; }
+                MagRules.ApplyUnload(magJar.item, magAsset);
+                Diag.MagLoadsApplied++;
+                return;
+            }
+
+            var roundPage = inv.items[cmd.RoundPage];
+            byte roundIndex = roundPage.getIndex(cmd.RoundX, cmd.RoundY);
+            var roundJar = roundIndex == byte.MaxValue ? null : roundPage.getItem(roundIndex);
+            if (roundJar?.item == null || roundJar.item.id != cmd.RoundId || roundJar.item.amount <= 0)
+            { Diag.MagLoadsRejected++; return; }
+
+            var bullet = Assets.find(roundJar.item.id);
+            if (!MagRules.ApplyLoad(magJar.item, magAsset, bullet)) { Diag.MagLoadsRejected++; return; }
+
+            // Spend the round only after the load is committed, and free the slot at zero so an emptied
+            // stack does not linger as a ghost the client cannot pick up.
+            roundJar.item.amount--;
+            if (roundJar.item.amount <= 0) roundPage.removeItem(roundIndex);
+            Diag.MagLoadsApplied++;
+        }
+
         void OnFitAttachment(ushort sender, FitAttachmentCommand cmd)
         {
             var inv = SenderInventory(sender);
@@ -1006,6 +1072,11 @@ namespace UnturnedGodot.Net
         }
 
         PlayerInventory SenderInventory(ushort sender) => _inventories.TryGet(sender, out var e) ? e.Inventory : null;
+
+        /// <summary>The AUTHORITATIVE inventory, for tests. Exposed deliberately: the magazine bug was that
+        /// every client-side assertion passed while this object never changed, so a test that cannot read
+        /// it cannot tell a working command from a no-op.</summary>
+        public PlayerInventory InventoryForTest(ushort playerId) => SenderInventory(playerId);
 
         bool TryGetSenderPos(ushort sender, out Vector3 pos)
         {

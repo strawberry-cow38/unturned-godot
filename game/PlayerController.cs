@@ -3481,6 +3481,11 @@ namespace UnturnedGodot
         public System.Action<byte, byte, byte, byte> NetEquipItem;   // (fromPage,x,y, slot) -> Client.SendEquipItem (the holster-to-hand-slot TryDrag; the viewmodel equip stays local)
         public System.Action<byte, byte, byte> NetDropItem;          // (page,x,y) -> Client.SendDropItem (server removes + tosses the world item)
         public System.Action<byte, byte, byte, ushort> NetFitAttachment;   // (page,x,y,id) -> Client.SendFitAttachment (server spends the fitted item)
+        // (magPage,magX,magY,magId, roundPage,roundX,roundY,roundId, unloading) -> Client.SendMagLoad.
+        // Null in pure-direct singleplayer, where the client IS the authority and the local mutation is the
+        // whole story. Non-null on a joined client and on the SP/MP loopback, which is where the local-only
+        // version broke: the next inventory move echoed the server's untouched magazine back.
+        public System.Action<byte, byte, byte, ushort, byte, byte, byte, ushort, bool> NetMagLoad;
         public System.Action<byte, byte, byte> NetConsume;           // (page,x,y) -> Client.SendConsume (server deletes the item; vitals stay client-led until the vitals split)
         public System.Action<byte, byte, byte, ushort, byte> NetReloadSwap;   // (page,x,y, spentId,spentAmount) -> Client.SendReload (server spends the fresh mag + returns the spent one)
         public System.Action<byte, byte, byte, byte> NetWearClothing;     // (page,x,y, EItemType slot) -> Client.SendWearClothing (server does the whole swap)

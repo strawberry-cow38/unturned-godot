@@ -220,9 +220,44 @@ namespace SDG.Unturned
                     set.Add(a.magRound);
             return set;
         }
+        // ---- cartridge ids, for the wire -------------------------------------------------------------
+        // A magazine's per-instance cartridge lock (Item.magLoadedRound) is a STRING, and NetPak has no
+        // string primitive -- so it travels as a 1-byte index into the sorted set of distinct magRound
+        // values. Sorted, so both sides derive the same order from the same item table; that they HAVE the
+        // same table is the content-hash handshake's guarantee, which is exactly what CraftCommand's
+        // blueprint index already leans on. 0 means "no lock".
+        static List<string> _magRounds;
+        static List<string> MagRoundTable()
+        {
+            if (_magRounds != null) return _magRounds;
+            var set = new HashSet<string>();
+            foreach (var a in _byId.Values)
+                if (!string.IsNullOrEmpty(a.magRound)) set.Add(a.magRound);
+            var list = new List<string>(set);
+            list.Sort(System.StringComparer.Ordinal);
+            _magRounds = list;
+            return list;
+        }
+
+        public static byte MagRoundToId(string round)
+        {
+            if (string.IsNullOrEmpty(round)) return 0;
+            int i = MagRoundTable().IndexOf(round);
+            return i < 0 ? (byte)0 : (byte)System.Math.Min(255, i + 1);
+        }
+
+        public static string MagRoundFromId(byte id)
+        {
+            if (id == 0) return null;
+            var t = MagRoundTable();
+            return id - 1 < t.Count ? t[id - 1] : null;
+        }
+
         public static ItemAsset find(ushort id) => _byId.TryGetValue(id, out var a) ? a : null;
         public static ItemAsset findByGuid(string guid) => !string.IsNullOrEmpty(guid) && _byGuid.TryGetValue(guid, out var a) ? a : null;
         public static IEnumerable<ItemAsset> all() => _byId.Values;
-        public static void clear() { _byId.Clear(); _byGuid.Clear(); }
+        // _magRounds is DERIVED from the item table, so it has to die with it -- a stale cartridge table
+        // would silently remap every lock the moment a test (or a mod reload) re-seeds the registry.
+        public static void clear() { _byId.Clear(); _byGuid.Clear(); _magRounds = null; }
     }
 }

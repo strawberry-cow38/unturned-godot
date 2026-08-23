@@ -106,6 +106,9 @@ namespace UnturnedGodot
         bool _magDemoFired;                   // UG_MAGLOAD render harness: fire the demo load once
         Vector2 _dragMouse;                   // last cursor pos during a drag (for the over-a-mag hint in _Draw)
         const float LOAD_INTERVAL = 0.10f;    // seconds per round -- one wheel segment per tick
+        // Same ORDER as SDG.Unturned.MagLoadResult -- the casts above are ordinal. Kept as a local alias
+        // rather than using the core enum directly only because the drawing code below reads better with the
+        // short name; if you reorder either one, reorder both.
         enum MagLoad { Ok, Full, WrongCaliber, WouldMix }
         class MagOp { public byte page, x, y; public Item mag; public int bulletId; public bool unloading; public float t; public int cap; }
 
@@ -563,20 +566,17 @@ namespace UnturnedGodot
         // full or the stack runs out. Compatibility is by the mag BODY (magCaliber): a STANAG body feeds 5.56 AND .300
         // BLK, an AUG body only 5.56, etc. A mag LOCKS to its first-loaded cartridge (no mixing) until it is emptied.
 
-        static int MagCap(ItemAsset ma) => ma != null ? System.Math.Max(1, ma.magCapacity) : 1;
-        // the CARTRIDGE a mag currently holds: its per-instance locked round if set, else the asset default; null when empty.
-        static string MagEffRound(Item mag, ItemAsset ma) => (mag == null || mag.amount <= 0) ? null
-            : (!string.IsNullOrEmpty(mag.magLoadedRound) ? mag.magLoadedRound : ma?.magRound);
-        static MagLoad CheckLoad(Item mag, ItemAsset ma, ItemAsset bullet)
-        {
-            if (ma == null || !ma.IsMagazine || bullet == null || !bullet.isAmmo || string.IsNullOrEmpty(bullet.magRound)) return MagLoad.WrongCaliber;
-            if (!SDG.Unturned.Assets.MagAcceptedRounds(ma).Contains(bullet.magRound)) return MagLoad.WrongCaliber;   // this body doesn't feed that cartridge
-            if (mag.amount >= MagCap(ma)) return MagLoad.Full;
-            string cur = MagEffRound(mag, ma);
-            if (cur != null && cur != bullet.magRound) return MagLoad.WouldMix;   // part-loaded with a different round -> unload first (no mixing)
-            return MagLoad.Ok;
-        }
-        static string MagLoadMsg(MagLoad r) => r == MagLoad.Full ? "Magazine full" : r == MagLoad.WouldMix ? "Unload first" : r == MagLoad.WrongCaliber ? "Incompatible" : null;
+        // The RULE lives in core (SDG.Unturned.MagRules) so the server applies the identical gate. It used
+        // to live here, and the server physically could not reach it -- core/UnturnedNet references
+        // core/UnturnedSim and nothing references the game layer -- so giving the server the same check
+        // would have meant writing it twice. Two copies of a validation rule is a worse version of the bug
+        // this command exists to fix: instead of disagreeing about the magazine's STATE, the two sides
+        // would disagree about the RULE, and the owner-inventory echo would silently revert whichever one
+        // was wrong. These forward so the call sites below read unchanged.
+        static int MagCap(ItemAsset ma) => MagRules.Capacity(ma);
+        static string MagEffRound(Item mag, ItemAsset ma) => MagRules.EffectiveRound(mag, ma);
+        static MagLoad CheckLoad(Item mag, ItemAsset ma, ItemAsset bullet) => (MagLoad)MagRules.CheckLoad(mag, ma, bullet);
+        static string MagLoadMsg(MagLoad r) => MagRules.Message((MagLoadResult)r);
 
         ItemJar JarAt(byte page, byte x, byte y)
         {
@@ -584,19 +584,22 @@ namespace UnturnedGodot
             byte idx = Inv.items[page].getIndex(x, y);
             return idx == byte.MaxValue ? null : Inv.items[page].getItem(idx);
         }
-        (ItemJar jar, Items page) FindStack(ushort id)
+        // Returns the page INDEX alongside the page object: the server addresses a slot by (page,x,y), and
+        // recovering the index afterwards would mean a second search that can disagree with this one.
+        (ItemJar jar, Items page, byte pageIndex) FindStack(ushort id)
         {
             if (Inv?.items != null)
-                foreach (var pg in Inv.items)
+                for (byte p = 0; p < Inv.items.Length; p++)
                 {
+                    var pg = Inv.items[p];
                     byte cnt = pg.getItemCount();
                     for (byte i = 0; i < cnt; i++)
                     {
                         var j = pg.getItem(i);
-                        if (j?.item != null && j.item.id == id && j.item.amount > 0) return (j, pg);
+                        if (j?.item != null && j.item.id == id && j.item.amount > 0) return (j, pg, p);
                     }
                 }
-            return (null, null);
+            return (null, null, byte.MaxValue);
         }
 
         // a loose round dropped on a cell -> if it holds a compatible mag, START a timed load (so the drop is CONSUMED,
@@ -642,16 +645,25 @@ namespace UnturnedGodot
                 if (bid <= 0 || Inv == null || !Inv.tryAddItem(new SDG.Unturned.Item((ushort)bid, 1))) return false;
                 op.mag.amount = (byte)(op.mag.amount - 1);
                 if (op.mag.amount <= 0) op.mag.magLoadedRound = null;   // emptied -> unlock the cartridge
+                // TELL THE SERVER. Without this the mutation above is local-only: the authoritative
+                // inventory still holds a full magazine, and the next move of ANY item echoes it back and
+                // undoes the unload in front of the player.
+                Player?.NetMagLoad?.Invoke(op.page, op.x, op.y, op.mag.id,
+                                           0, 0, 0, (ushort)bid, true);
                 return op.mag.amount > 0;
             }
             // LOAD: pull a round from the stack into the mag
             if (op.mag.amount >= op.cap) return false;
             var bA = SDG.Unturned.Assets.find((ushort)op.bulletId);
             if (bA == null || CheckLoad(op.mag, mA, bA) != MagLoad.Ok) return false;
-            var (jar, page) = FindStack((ushort)op.bulletId);
+            var (jar, page, pageIdx) = FindStack((ushort)op.bulletId);
             if (jar == null) return false;   // out of that round
             if (op.mag.amount <= 0) op.mag.magLoadedRound = bA.magRound;   // empty -> LOCK to this cartridge
             op.mag.amount = (byte)(op.mag.amount + 1);
+            // Sent BEFORE the stack is decremented, while jar still names the slot the round came from --
+            // the server addresses the source by grid position, and removeItem below can free it.
+            Player?.NetMagLoad?.Invoke(op.page, op.x, op.y, op.mag.id,
+                                       pageIdx, jar.x, jar.y, (ushort)op.bulletId, false);
             jar.item.amount = (byte)(jar.item.amount - 1);
             if (jar.item.amount <= 0) { byte ri = page.getIndex(jar.x, jar.y); if (ri != byte.MaxValue) page.removeItem(ri); }
             return op.mag.amount < op.cap;
