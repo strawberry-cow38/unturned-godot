@@ -1944,18 +1944,23 @@ namespace UnturnedGodot
             sb.SetBorderWidthAll(2);
             tile.AddThemeStyleboxOverride("panel", sb);
 
-            var tex = asset != null ? Icon(asset.id) : null;
+            // A rotated MAGAZINE uses the SHARED stand-up transform (AttachmentMenu.LoadItemIcon: Rotate90 CCW + FlipX,
+            // with a DrawnWiderThanTall guard) so it stands feed-lips-UP and UN-mirrored -- a plain -90 rotate leaves it
+            // mirrored, and a mag is symmetric enough that the reflection reads as fine by eye (tinyclaw). Reuse the
+            // transform, don't copy it (same as CheckLoad -> MagRules).
+            bool magStandUp = rotated && asset != null && asset.IsMagazine;
+            var tex = magStandUp ? AttachmentMenu.LoadItemIcon(asset.id, standUp: true) : (asset != null ? Icon(asset.id) : null);
             if (tex != null)   // the real item icon fills the tile (like SleekItem's rendered item image)
             {
                 var ic = new TextureRect { Texture = tex, ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize, StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered };
                 ic.MouseFilter = Control.MouseFilterEnum.Ignore;
                 int pad = (int)(CELL * 0.12f);   // breathing room around every icon inside its cell(s) (master: pad the icons)
-                if (rotated)   // SleekItemIcon.rot spins the icon with the jar (internalImage.RotationAngle = rot*90). Draw it at its
+                if (rotated && !magStandUp)   // non-mag rotated item: spin the raw icon 90 CW to follow the jar
                 {              // NATURAL un-rotated (h-2pad) x (w-2pad) box (KeepAspect), then turn 90 clockwise and re-centre in the w x h tile.
                     float a = h - 2 * pad, b = w - 2 * pad;
                     ic.Size = new Vector2(a, b);
                     ic.PivotOffset = new Vector2(a / 2f, b / 2f);
-                    ic.RotationDegrees = (asset != null && asset.IsMagazine) ? -90f : 90f;   // a MAG stands feed-lips UP when vertical -- its raw icon turns the OTHER way, so +90 left it upside-down (strawberry)
+                    ic.RotationDegrees = 90f;
                     ic.Position = new Vector2((w - a) / 2f, (h - b) / 2f);
                 }
                 else
