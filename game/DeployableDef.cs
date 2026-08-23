@@ -411,7 +411,7 @@ namespace UnturnedGodot
         {
             Id = 362, Name = "Campfire", Model = "Campfire_0", PlaceSound = "metalplacement",
             Offset = 0f, Radius = 1.0f, Range = 6f, Health = 400f, Upright = true,
-            MeshEuler = new Vector3(90f, 0f, 0f),   // the ripped mesh stands vertical -> tip it flat onto the ground
+            MeshEuler = new Vector3(-90f, 0f, 0f),   // the barricade.prefab mesh stands vertical the OTHER way -> tip flat (was +90 for the old item mesh; that pointed it DOWN)
             CraftingTags = new[] { "20f30322bbcc4b01a4f116d22b24c21a" }, CraftingRange = 4f,   // Heat (src has no explicit tag)
         };
         public static readonly DeployableDef ChemistryLab  = Station(1920, "Chemistry Lab",  "ChemistryLab_0",  4f, "99896da563a748148460c67b9962874f");   // ChemicalMixing (13)
