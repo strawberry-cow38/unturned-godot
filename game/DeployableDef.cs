@@ -402,6 +402,7 @@ namespace UnturnedGodot
         {
             Id = id, Name = name, Model = model, PlaceSound = "metalplacement",
             Offset = 0f, Radius = 1.0f, Range = 6f, Health = 400f,
+            MeshEuler = new Vector3(180f, 0f, 180f),   // ripped like the Battery: stands up upside-down + 180 off -> same fixup
             CraftingTags = tags, CraftingRange = craftRange,
         };
         public static readonly DeployableDef Workbench     = Station(1916, "Workbench",      "Workbench_0",     4f, "7b82c125a5a54984b8bb26576b59e977");   // Workbench (269 recipes)
