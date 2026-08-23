@@ -173,9 +173,8 @@ namespace UnturnedGodot
                 if (show.Count >= QUICK_MAX) break;
             }
 
-            const int TQ = 52, GAP = 6, PADX = 8, COLS = 6;   // a GRID, COLS wide (master clarified 3x6 = 6x3 -> 6 wide x 3 rows)
-            int cols = Mathf.Clamp(show.Count, 1, COLS), rows = Mathf.Max(1, (show.Count + COLS - 1) / COLS);
-            float w = Mathf.Max(120, PADX * 2 + cols * (TQ + GAP) - GAP), h = 24 + rows * (TQ + GAP) - GAP + 6;
+            const int TQ = 52, GAP = 6, PADX = 8, COLS = 6, ROWS = 3;   // ALWAYS a fixed 6x3 grid (master: even when cells are empty)
+            float w = PADX * 2 + COLS * (TQ + GAP) - GAP, h = 24 + ROWS * (TQ + GAP) - GAP + 6;
             var bg = new Panel { Position = Vector2.Zero, Size = new Vector2(w, h), MouseFilter = Control.MouseFilterEnum.Ignore };
             var sb = new StyleBoxFlat { BgColor = new Color(0.10f, 0.12f, 0.15f, 0.93f), CornerRadiusTopLeft = 6, CornerRadiusTopRight = 6, CornerRadiusBottomLeft = 6, CornerRadiusBottomRight = 6 };
             bg.AddThemeStyleboxOverride("panel", sb);
@@ -184,20 +183,16 @@ namespace UnturnedGodot
             hdr.AddThemeFontSizeOverride("font_size", 11);
             hdr.AddThemeColorOverride("font_color", new Color(0.55f, 0.56f, 0.6f));
             bg.AddChild(hdr);
-            if (show.Count == 0)
+            for (int i = 0; i < COLS * ROWS; i++)   // ALWAYS 18 cells; slots past the recipe count are dim empty placeholders
             {
-                var none = new Label { Text = "nothing craftable", Position = new Vector2(PADX, 26), MouseFilter = Control.MouseFilterEnum.Ignore };
-                none.AddThemeFontSizeOverride("font_size", 12);
-                none.AddThemeColorOverride("font_color", new Color(0.4f, 0.4f, 0.44f));
-                bg.AddChild(none);
-            }
-            for (int i = 0; i < show.Count; i++)
-            {
+                var tile = new Panel { Position = new Vector2(PADX + (i % COLS) * (TQ + GAP), 24 + (i / COLS) * (TQ + GAP)), Size = new Vector2(TQ, TQ) };
+                bool filled = i < show.Count;
+                var tsb = new StyleBoxFlat { BgColor = filled ? new Color(0.16f, 0.19f, 0.23f, 0.96f) : new Color(0.12f, 0.14f, 0.17f, 0.55f), CornerRadiusTopLeft = 4, CornerRadiusTopRight = 4, CornerRadiusBottomLeft = 4, CornerRadiusBottomRight = 4 };
+                tile.AddThemeStyleboxOverride("panel", tsb);   // MouseFilter left Stop so a filled tile's tooltip shows on hover; the click is caught in _Input
+                if (!filled) { tile.MouseFilter = Control.MouseFilterEnum.Ignore; _quickCraft.AddChild(tile); continue; }   // empty slot: no icon, not clickable
                 var bp = show[i];
                 var a = CraftingMenu.OutAsset(bp);
-                var tile = new Panel { Position = new Vector2(PADX + (i % COLS) * (TQ + GAP), 24 + (i / COLS) * (TQ + GAP)), Size = new Vector2(TQ, TQ), TooltipText = $"{CraftingMenu.Title(bp)}\nLMB +1   RMB +5" };
-                var tsb = new StyleBoxFlat { BgColor = new Color(0.16f, 0.19f, 0.23f, 0.96f), CornerRadiusTopLeft = 4, CornerRadiusTopRight = 4, CornerRadiusBottomLeft = 4, CornerRadiusBottomRight = 4 };
-                tile.AddThemeStyleboxOverride("panel", tsb);   // MouseFilter left Stop so the tooltip shows on hover; the click is caught in _Input
+                tile.TooltipText = $"{CraftingMenu.Title(bp)}\nLMB +1   RMB +5";
                 var tex = a != null ? IconFor(a.id) : null;
                 if (tex != null)
                 {
