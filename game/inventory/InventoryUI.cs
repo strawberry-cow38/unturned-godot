@@ -173,7 +173,7 @@ namespace UnturnedGodot
                 if (show.Count >= QUICK_MAX) break;
             }
 
-            const int TQ = 52, GAP = 6, PADX = 8, COLS = 3;   // a GRID, COLS wide (master: "3x6" -> 3 wide x 6 rows)
+            const int TQ = 52, GAP = 6, PADX = 8, COLS = 6;   // a GRID, COLS wide (master clarified 3x6 = 6x3 -> 6 wide x 3 rows)
             int cols = Mathf.Clamp(show.Count, 1, COLS), rows = Mathf.Max(1, (show.Count + COLS - 1) / COLS);
             float w = Mathf.Max(120, PADX * 2 + cols * (TQ + GAP) - GAP), h = 24 + rows * (TQ + GAP) - GAP + 6;
             var bg = new Panel { Position = Vector2.Zero, Size = new Vector2(w, h), MouseFilter = Control.MouseFilterEnum.Ignore };
