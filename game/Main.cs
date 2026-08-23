@@ -5313,6 +5313,8 @@ namespace UnturnedGodot
                 BlueprintRegistry.Load();
                 player.Inventory.tryAddItem(new SDG.Unturned.Item(67, 200));   // Metal Scrap
                 player.Inventory.tryAddItem(new SDG.Unturned.Item(76, 1));     // Blowtorch (tool)
+                if (System.Environment.GetEnvironmentVariable("UG_WORKBENCH") == "1")   // place a Workbench 2m from the player -> its recipes unlock in the quick-craft
+                    Deployable.Spawn(this, DeployableDef.Workbench, new Vector3(2f, 0f, 0f), 0f);
             }
             if (equipDemo) { player.OpenInventory(); player.DemoEquip(1, 0, 0); }   // equip the SECONDARY Maplestrike -> held
             else if (selectDemo) player.DemoSelect(2, 0, 0);   // pop the selection panel for the Medkit in pockets
