@@ -105,12 +105,13 @@ namespace UnturnedGodot
         readonly List<MagOp> _magOps = new();
         bool _magDemoFired;                   // UG_MAGLOAD render harness: fire the demo load once
         Vector2 _dragMouse;                   // last cursor pos during a drag (for the over-a-mag hint in _Draw)
-        const float LOAD_INTERVAL = 0.10f;    // seconds per round -- one wheel segment per tick
-        // Same ORDER as SDG.Unturned.MagLoadResult -- the casts above are ordinal. Kept as a local alias
-        // rather than using the core enum directly only because the drawing code below reads better with the
+        const float LOAD_INTERVAL = 0.5f;     // seconds per round -- a 0.5s cooldown between each round (master)
+        bool _magFxWasActive;                 // so the overlay gets ONE final clear-redraw when the wheel finishes (else the last frame lingers)
+        // Same ORDER as SDG.Unturned.MagLoadResult -- the casts below are ordinal. Kept as a local alias
+        // rather than using the core enum directly only because the drawing code reads better with the
         // short name; if you reorder either one, reorder both.
         enum MagLoad { Ok, Full, WrongCaliber, WouldMix }
-        class MagOp { public byte page, x, y; public Item mag; public int bulletId; public bool unloading; public float t; public int cap; }
+        class MagOp { public byte page, x, y; public Item mag; public int bulletId; public bool unloading; public float t; public int batch; public int done; }   // batch = rounds THIS op moves (the amount dragged / to eject); done = moved so far. The wheel is done/batch, not amount/cap (master)
 
         // selection: clicking an item (press+release on its own cell, no drag) opens a description/actions panel
         Control _selPanel;
@@ -311,8 +312,11 @@ namespace UnturnedGodot
             }
             if (!_magDemoFired && System.Environment.GetEnvironmentVariable("UG_MAGLOAD") == "1") { _magDemoFired = true; DebugStartLoadFirstMag(5004); }   // render harness: auto-load the first mag with 5.56
             else if (!_magDemoFired && System.Environment.GetEnvironmentVariable("UG_MAGUNLOAD") == "1") { _magDemoFired = true; DebugStartUnloadFirstMag(); }   // render harness: auto-unload the first loaded mag
+            else if (!_magDemoFired && System.Environment.GetEnvironmentVariable("UG_MAGVERT") == "1") { _magDemoFired = true; DebugRotateFirstMag(); DebugStartLoadFirstMag(5004); }   // render harness: rotate the mag vertical + load it
             TickMagOps((float)delta);   // advance any active mag load/unload (one round every LOAD_INTERVAL)
-            if (_magOps.Count > 0 || (_dragging && _dragJar != null && _dragJar.GetAsset()?.isAmmo == true)) _magFx?.QueueRedraw();
+            bool magFxActive = _magOps.Count > 0 || (_dragging && _dragJar != null && _dragJar.GetAsset()?.isAmmo == true);
+            if (magFxActive || _magFxWasActive) _magFx?.QueueRedraw();   // one extra redraw on the falling edge -> the wheel CLEARS when the op finishes (full/empty/out), not lingers (master)
+            _magFxWasActive = magFxActive;
         }
 
         // Cheap rolling hash of every jar (id/amount/pos) + the page dims (an MP crate open/close resizes
@@ -614,7 +618,8 @@ namespace UnturnedGodot
             if (CheckLoad(mJar.item, mA, bA) == MagLoad.Ok)
             {
                 _magOps.RemoveAll(o => o.page == mp && o.x == mJar.x && o.y == mJar.y);
-                _magOps.Add(new MagOp { page = mp, x = mJar.x, y = mJar.y, mag = mJar.item, bulletId = bA.id, unloading = false, t = 0f, cap = MagCap(mA) });
+                int batch = System.Math.Min((int)bJar.item.amount, MagCap(mA) - mJar.item.amount);   // load what we DRAGGED, capped by the mag's free space -> the wheel total is the dragged amount, not the capacity (master)
+                _magOps.Add(new MagOp { page = mp, x = mJar.x, y = mJar.y, mag = mJar.item, bulletId = bA.id, unloading = false, t = 0f, batch = batch, done = 0 });
             }
             return true;   // consume the drop either way -- a refused load just snaps home, never swaps
         }
@@ -637,7 +642,7 @@ namespace UnturnedGodot
         bool StepMagOp(MagOp op)
         {
             var mA = op.mag?.GetAsset();
-            if (mA == null) return false;
+            if (mA == null || op.done >= op.batch) return false;   // whole batch moved -> done
             if (op.unloading)   // eject a round back to the bag; stop cleanly if there's nowhere for it (never lose one)
             {
                 if (op.mag.amount <= 0) return false;
@@ -650,10 +655,11 @@ namespace UnturnedGodot
                 // undoes the unload in front of the player.
                 Player?.NetMagLoad?.Invoke(op.page, op.x, op.y, op.mag.id,
                                            0, 0, 0, (ushort)bid, true);
-                return op.mag.amount > 0;
+                op.done++;
+                return op.done < op.batch && op.mag.amount > 0;
             }
             // LOAD: pull a round from the stack into the mag
-            if (op.mag.amount >= op.cap) return false;
+            if (op.mag.amount >= MagCap(mA)) return false;   // mag full (safety; batch is already capped to the free space)
             var bA = SDG.Unturned.Assets.find((ushort)op.bulletId);
             if (bA == null || CheckLoad(op.mag, mA, bA) != MagLoad.Ok) return false;
             var (jar, page, pageIdx) = FindStack((ushort)op.bulletId);
@@ -666,7 +672,8 @@ namespace UnturnedGodot
                                        pageIdx, jar.x, jar.y, (ushort)op.bulletId, false);
             jar.item.amount = (byte)(jar.item.amount - 1);
             if (jar.item.amount <= 0) { byte ri = page.getIndex(jar.x, jar.y); if (ri != byte.MaxValue) page.removeItem(ri); }
-            return op.mag.amount < op.cap;
+            op.done++;
+            return op.done < op.batch;
         }
         int BulletIdForRound(string round)   // the loose-round item id for a cartridge (reverse of bullet.magRound)
         {
@@ -677,7 +684,7 @@ namespace UnturnedGodot
         }
 
         // ---- the fill wheel + drag-over compat hint, drawn on _magFx ----
-        bool MagRect(byte page, byte x, byte y, ItemAsset ma, out Rect2 r)
+        bool MagRect(byte page, byte x, byte y, ItemAsset ma, int rot, out Rect2 r)
         {
             r = default;
             if (page >= (Inv?.items?.Length ?? 0)) return false;
@@ -687,6 +694,7 @@ namespace UnturnedGodot
                     Vector2 tl = c.GlobalPosition + (slot ? Vector2.Zero : new Vector2(x * CELL, y * CELL));
                     int sxc = ma != null ? System.Math.Max(1, (int)ma.size_x) : 1;
                     int syc = ma != null ? System.Math.Max(1, (int)ma.size_y) : 1;
+                    if (rot % 2 == 1) { int t = sxc; sxc = syc; syc = t; }   // rotated mag -> swapped footprint (2x1 becomes 1x2) so the wheel centres on the real cells
                     r = new Rect2(tl, new Vector2(sxc * CELL, syc * CELL));
                     return true;
                 }
@@ -698,7 +706,8 @@ namespace UnturnedGodot
             {
                 var jar = JarAt(op.page, op.x, op.y);
                 if (jar == null || jar.GetAsset()?.IsMagazine != true) continue;
-                if (MagRect(op.page, op.x, op.y, jar.GetAsset(), out Rect2 r)) DrawWheel(r, op.mag.amount, op.cap, op.unloading);
+                if (MagRect(op.page, op.x, op.y, jar.GetAsset(), jar.rot, out Rect2 r))
+                    DrawWheel(r, op.unloading ? op.batch - op.done : op.done, op.batch, op.unloading);   // load fills done/batch; unload empties (remaining = batch-done)/batch
             }
             if (_dragging && _dragJar != null)
             {
@@ -707,21 +716,21 @@ namespace UnturnedGodot
                 {
                     var mJar = JarAt(hp, hx, hy);
                     var mA = mJar?.GetAsset();
-                    if (mJar != null && mA != null && mA.IsMagazine && MagRect(hp, mJar.x, mJar.y, mA, out Rect2 hr))
+                    if (mJar != null && mA != null && mA.IsMagazine && MagRect(hp, mJar.x, mJar.y, mA, mJar.rot, out Rect2 hr))
                         DrawLoadHint(hr, CheckLoad(mJar.item, mA, bA));
                 }
             }
         }
-        void DrawWheel(Rect2 area, int filled, int cap, bool unloading)
+        void DrawWheel(Rect2 area, int filled, int total, bool unloading)
         {
-            if (cap <= 0) return;
+            if (total <= 0) return;
             Vector2 c = area.Position + area.Size / 2f;
             float rOut = Mathf.Min(area.Size.X, area.Size.Y) * 0.40f;   // 10% smaller (master); no centre counter
             float rIn = rOut * 0.58f;
-            float top = -Mathf.Pi / 2f;
+            float top = -Mathf.Pi / 2f;   // ALWAYS start at 12 o'clock (master); the wheel is POSITIONED on the rotated mag (MagRect), but the fill start itself doesn't rotate
             _magFx.DrawCircle(c, rOut + 3f, new Color(0f, 0f, 0f, 0.55f));   // dim backing so it reads over the icon
             DrawAnnularSector(c, rIn, rOut, top, top + Mathf.Tau, new Color(1f, 1f, 1f, 0.16f));   // the empty ring (full, dim)
-            float frac = Mathf.Clamp(filled / (float)cap, 0f, 1f);   // a CONTINUOUS filled arc that grows one round-step (1/cap) at a time (master)
+            float frac = Mathf.Clamp(filled / (float)total, 0f, 1f);   // a CONTINUOUS filled arc that grows one round-step (1/total) at a time (master)
             if (frac > 0f)
                 DrawAnnularSector(c, rIn, rOut, top, top + Mathf.Tau * frac, unloading ? UITheme.WheelUnload : UITheme.WheelLoad);
         }
@@ -760,7 +769,9 @@ namespace UnturnedGodot
             var mA = mJar?.GetAsset();
             if (mJar == null || mA == null || !mA.IsMagazine) return false;
             _magOps.RemoveAll(o => o.page == page && o.x == mJar.x && o.y == mJar.y);
-            _magOps.Add(new MagOp { page = page, x = mJar.x, y = mJar.y, mag = mJar.item, bulletId = bulletId, unloading = false, t = 0f, cap = MagCap(mA) });
+            var (bjar, _, _) = FindStack(bulletId);   // FindStack also returns the page INDEX now (the server addresses slots by it)
+            int batch = System.Math.Min(bjar != null ? (int)bjar.item.amount : int.MaxValue, MagCap(mA) - mJar.item.amount);
+            _magOps.Add(new MagOp { page = page, x = mJar.x, y = mJar.y, mag = mJar.item, bulletId = bulletId, unloading = false, t = 0f, batch = batch, done = 0 });
             return true;
         }
         public int DebugMagRounds(byte page, byte x, byte y) => JarAt(page, x, y)?.item.amount ?? -1;
@@ -773,7 +784,7 @@ namespace UnturnedGodot
             if (jar != null && ma != null && ma.IsMagazine && jar.item.amount > 0)
             {
                 _magOps.RemoveAll(o => o.page == _selPage && o.x == jar.x && o.y == jar.y);
-                _magOps.Add(new MagOp { page = _selPage, x = jar.x, y = jar.y, mag = jar.item, bulletId = 0, unloading = true, t = 0f, cap = MagCap(ma) });
+                _magOps.Add(new MagOp { page = _selPage, x = jar.x, y = jar.y, mag = jar.item, bulletId = 0, unloading = true, t = 0f, batch = jar.item.amount, done = 0 });   // eject the WHOLE mag
             }
             CloseSelection();
         }
@@ -791,6 +802,20 @@ namespace UnturnedGodot
             }
             return false;
         }
+        public bool DebugRotateFirstMag()   // render harness: rotate the first mag to vertical to eyeball its icon + the wheel
+        {
+            if (Inv?.items == null) return false;
+            for (byte p = 0; p < Inv.items.Length; p++)
+            {
+                byte cnt = Inv.items[p].getItemCount();
+                for (byte i = 0; i < cnt; i++)
+                {
+                    var j = Inv.items[p].getItem(i);
+                    if (j?.GetAsset()?.IsMagazine == true) { j.rot = 1; Refresh(); return true; }
+                }
+            }
+            return false;
+        }
         public bool DebugStartUnloadFirstMag()   // scan for the first LOADED mag + start unloading it (render harness)
         {
             if (Inv?.items == null) return false;
@@ -802,7 +827,7 @@ namespace UnturnedGodot
                     var j = Inv.items[p].getItem(i);
                     if (j?.GetAsset()?.IsMagazine == true && j.item.amount > 0)
                     {
-                        _magOps.Add(new MagOp { page = p, x = j.x, y = j.y, mag = j.item, bulletId = 0, unloading = true, t = 0f, cap = MagCap(j.GetAsset()) });
+                        _magOps.Add(new MagOp { page = p, x = j.x, y = j.y, mag = j.item, bulletId = 0, unloading = true, t = 0f, batch = j.item.amount, done = 0 });
                         return true;
                     }
                 }
@@ -1931,13 +1956,18 @@ namespace UnturnedGodot
             sb.SetBorderWidthAll(2);
             tile.AddThemeStyleboxOverride("panel", sb);
 
-            var tex = asset != null ? Icon(asset.id) : null;
+            // A rotated MAGAZINE uses the SHARED stand-up transform (AttachmentMenu.LoadItemIcon: Rotate90 CCW + FlipX,
+            // with a DrawnWiderThanTall guard) so it stands feed-lips-UP and UN-mirrored -- a plain -90 rotate leaves it
+            // mirrored, and a mag is symmetric enough that the reflection reads as fine by eye (tinyclaw). Reuse the
+            // transform, don't copy it (same as CheckLoad -> MagRules).
+            bool magStandUp = rotated && asset != null && asset.IsMagazine;
+            var tex = magStandUp ? AttachmentMenu.LoadItemIcon(asset.id, standUp: true) : (asset != null ? Icon(asset.id) : null);
             if (tex != null)   // the real item icon fills the tile (like SleekItem's rendered item image)
             {
                 var ic = new TextureRect { Texture = tex, ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize, StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered };
                 ic.MouseFilter = Control.MouseFilterEnum.Ignore;
                 int pad = (int)(CELL * 0.12f);   // breathing room around every icon inside its cell(s) (master: pad the icons)
-                if (rotated)   // SleekItemIcon.rot spins the icon with the jar (internalImage.RotationAngle = rot*90). Draw it at its
+                if (rotated && !magStandUp)   // non-mag rotated item: spin the raw icon 90 CW to follow the jar
                 {              // NATURAL un-rotated (h-2pad) x (w-2pad) box (KeepAspect), then turn 90 clockwise and re-centre in the w x h tile.
                     float a = h - 2 * pad, b = w - 2 * pad;
                     ic.Size = new Vector2(a, b);
