@@ -130,18 +130,34 @@ namespace UnturnedGodot
         // "Unload first" are all "this drop will not happen" — the player reads the reason from the text,
         // and giving each its own shade would spend three colours teaching a distinction the words already
         // make, while making none of them mean "blocked" reliably.
-        /// <summary>A drop that will succeed. The green a valid target glows.</summary>
-        public static Color DropOk => Good;
-        /// <summary>Any refused drop: full, incompatible, would-mix. Pair with text that says which.</summary>
-        public static Color DropBlocked => Bad;
-        /// <summary>A filled segment of a progress wheel while LOADING.</summary>
-        public static Color WheelLoad => Good;
-        /// <summary>A segment while UNLOADING. Amber rather than green because the two directions look
-        /// identical in motion otherwise, and "am I filling or emptying this?" is the one thing the wheel
-        /// has to answer at a glance.</summary>
-        public static Color WheelUnload => Warn;
-        /// <summary>An unfilled segment. Dim rather than invisible, so the wheel shows its CAPACITY even
-        /// when nearly empty — a 30-round mag and a 10-round mag should be distinguishable at 2/x.</summary>
+        /// <summary>A drop that will succeed — the tint filling a valid target.
+        ///
+        /// These are MORE SATURATED than the chrome colours above, deliberately. Good/Bad up there are for
+        /// text and borders sitting inside a panel, where a vivid colour shouts. These are a transient
+        /// signal painted over an item icon during a drag, competing with the icon's own colours, and they
+        /// have to read in the quarter-second the player is looking. Values came from cow tools tuning them
+        /// against a live drag (2026-08-23) rather than from me picking them off a palette — they were
+        /// right and my muted versions were not, so the tokens took theirs.</summary>
+        public static Color DropOkFill => new(0.30f, 0.85f, 0.40f, 0.30f);
+        /// <summary>The outline on a valid drop target.</summary>
+        public static Color DropOkEdge => new(0.45f, 1f, 0.55f, 0.90f);
+        /// <summary>Any refused drop: full, incompatible, would-mix.
+        ///
+        /// One colour for all three on purpose. "Magazine full", "Incompatible" and "Unload first" are all
+        /// "this drop will not happen"; the player reads WHICH from the text. Giving each its own shade
+        /// spends three colours teaching a distinction the words already make, and leaves none of them
+        /// reliably meaning "blocked".</summary>
+        public static Color DropBlockedFill => new(0.90f, 0.25f, 0.22f, 0.34f);
+        /// <summary>The outline on a refused drop target.</summary>
+        public static Color DropBlockedEdge => new(1f, 0.42f, 0.36f, 0.95f);
+        /// <summary>The filled arc of a progress ring while LOADING.</summary>
+        public static Color WheelLoad => new(0.35f, 0.90f, 0.45f);
+        /// <summary>The arc while UNLOADING. Amber, not green, because the two directions look identical in
+        /// motion otherwise — and "am I filling or emptying this?" is the one thing the ring must answer at
+        /// a glance.</summary>
+        public static Color WheelUnload => new(0.95f, 0.45f, 0.20f);
+        /// <summary>The unfilled remainder of a ring. Dim rather than absent, so the ring shows CAPACITY
+        /// even when nearly empty — a 30-round mag and a 10-round mag should differ at 2/x.</summary>
         public static Color WheelEmpty => new(1f, 1f, 1f, 0.18f);
 
         // ---- shape + scale -----------------------------------------------------------------------------

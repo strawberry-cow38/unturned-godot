@@ -213,7 +213,19 @@ namespace UnturnedGodot
             }
 
             Vector2 vp = GetViewport().GetVisibleRect().Size;
-            _quickCraft.Position = new Vector2(vp.X - w - MARGIN, vp.Y - h - MARGIN);   // bottom-right corner
+            // ABOVE the HUD ammo counter, not on top of it. Both wanted the bottom-right corner, so the
+            // magazine readout ("29 + 1 / 30", HUD.cs anchors it to the last 92 px) was rendering straight
+            // through the quick-craft grid. It went unnoticed because the panel used to be nearly black --
+            // lighting it in the theme pass is what made the collision visible, which is its own small
+            // argument for the theme.
+            //
+            // Quick-craft is the one that yields: it only exists while the bag is open, whereas the ammo
+            // counter is permanent HUD furniture with a fixed home. AMMO_BAND is that home's height plus a
+            // gap; it is duplicated from HUD rather than shared because a Control in the dashboard cannot
+            // see the HUD's node, and the alternative -- a lookup across two CanvasLayers on every refresh --
+            // buys nothing for one constant.
+            const int AMMO_BAND = 92 + MARGIN;
+            _quickCraft.Position = new Vector2(vp.X - w - MARGIN, vp.Y - h - AMMO_BAND);
         }
 
         // a press over a quick-craft tile queues a craft (qty 1 on LMB, 5 on RMB). Returns true if it hit one.
@@ -699,7 +711,7 @@ namespace UnturnedGodot
             DrawAnnularSector(c, rIn, rOut, top, top + Mathf.Tau, new Color(1f, 1f, 1f, 0.16f));   // the empty ring (full, dim)
             float frac = Mathf.Clamp(filled / (float)cap, 0f, 1f);   // a CONTINUOUS filled arc that grows one round-step (1/cap) at a time (master)
             if (frac > 0f)
-                DrawAnnularSector(c, rIn, rOut, top, top + Mathf.Tau * frac, unloading ? new Color(0.95f, 0.45f, 0.2f) : new Color(0.35f, 0.9f, 0.45f));
+                DrawAnnularSector(c, rIn, rOut, top, top + Mathf.Tau * frac, unloading ? UITheme.WheelUnload : UITheme.WheelLoad);
         }
         void DrawAnnularSector(Vector2 c, float rIn, float rOut, float a0, float a1, Color col)
         {
@@ -717,8 +729,8 @@ namespace UnturnedGodot
         void DrawLoadHint(Rect2 area, MagLoad res)
         {
             bool ok = res == MagLoad.Ok;
-            _magFx.DrawRect(area, ok ? new Color(0.3f, 0.85f, 0.4f, 0.30f) : new Color(0.9f, 0.25f, 0.22f, 0.34f), true);
-            _magFx.DrawRect(area, ok ? new Color(0.45f, 1f, 0.55f, 0.9f) : new Color(1f, 0.42f, 0.36f, 0.95f), false, 2f);
+            _magFx.DrawRect(area, ok ? UITheme.DropOkFill : UITheme.DropBlockedFill, true);
+            _magFx.DrawRect(area, ok ? UITheme.DropOkEdge : UITheme.DropBlockedEdge, false, 2f);
             string msg = ok ? "Load" : MagLoadMsg(res);
             var font = _magFx.GetThemeDefaultFont();
             if (font == null || string.IsNullOrEmpty(msg)) return;
