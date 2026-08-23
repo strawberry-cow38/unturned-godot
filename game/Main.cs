@@ -5410,6 +5410,17 @@ namespace UnturnedGodot
                 if (System.Environment.GetEnvironmentVariable("UG_WORKBENCH") == "1")   // place a Workbench 2m from the player -> its recipes unlock in the quick-craft
                     Deployable.Spawn(this, DeployableDef.Workbench, new Vector3(2f, 0f, 0f), 0f);
             }
+            if (System.Environment.GetEnvironmentVariable("UG_MAGLOAD") == "1")   // stock an EMPTY mag + a 5.56 stack; InventoryUI auto-starts the fill wheel (headless can't drag-drop)
+            {
+                SDG.Unturned.ItemCatalog.RegisterAll();
+                player.Inventory.tryAddItem(new SDG.Unturned.Item(6, 0));      // empty STANAG magazine (cap 30)
+                player.Inventory.tryAddItem(new SDG.Unturned.Item(5004, 120)); // 5.56 FMJ loose rounds
+            }
+            if (System.Environment.GetEnvironmentVariable("UG_MAGUNLOAD") == "1")   // stock a FULL mag; InventoryUI auto-starts the UNLOAD wheel (rounds return to the bag)
+            {
+                SDG.Unturned.ItemCatalog.RegisterAll();
+                player.Inventory.tryAddItem(new SDG.Unturned.Item(6, 30));   // full STANAG magazine (30 rounds)
+            }
             if (equipDemo) { player.OpenInventory(); player.DemoEquip(1, 0, 0); }   // equip the SECONDARY Maplestrike -> held
             else if (selectDemo) player.DemoSelect(2, 0, 0);   // pop the selection panel for the Medkit in pockets
             else player.OpenInventory();

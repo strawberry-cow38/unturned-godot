@@ -166,6 +166,11 @@ namespace SDG.Unturned
         // once per in-game day at a per-food-type rate (FoodSpoil). `preserved` HALTS spoilage (a fridge sets it; the fridge
         // itself is stubbed, but the flag + skip path are wired). Non-food items ignore both.
         public bool preserved;
+        // The CARTRIDGE this magazine is currently loaded with (strawberry: drag-load loose rounds into a mag). Set
+        // when the FIRST round enters an empty mag, cleared when it empties. Distinct from the ASSET's default
+        // magRound -- a STANAG body physically feeds 5.56 OR .300 BLK, so an empty STANAG mag takes either, then LOCKS
+        // to whatever went in (no mixing until it's unloaded). null = empty / follow the asset default.
+        public string magLoadedRound;
 
         public Item(ushort newID, byte newAmount = 1, byte newQuality = 100)
         {
@@ -201,6 +206,19 @@ namespace SDG.Unturned
                 it.fluidQuality = a.fluidDefaultQuality;
             }
             return it;
+        }
+        // The set of CARTRIDGES a magazine BODY accepts = the union of magRound across every magazine sharing its
+        // magCaliber (the mechanical body group). Data-driven: a STANAG body (caliber 1) has both a 5.56 mag (6) and a
+        // .300 BLK mag (9142) defined, so it accepts {5.56, .300}; an AUG body (caliber 201) has only 5.56 mags -> {5.56}.
+        // Called only while a bullet is dragged over a mag, so scanning the table is fine.
+        public static HashSet<string> MagAcceptedRounds(ItemAsset mag)
+        {
+            var set = new HashSet<string>();
+            if (mag == null || !mag.IsMagazine) return set;
+            foreach (var a in _byId.Values)
+                if (a.IsMagazine && a.magCaliber == mag.magCaliber && !string.IsNullOrEmpty(a.magRound))
+                    set.Add(a.magRound);
+            return set;
         }
         public static ItemAsset find(ushort id) => _byId.TryGetValue(id, out var a) ? a : null;
         public static ItemAsset findByGuid(string guid) => !string.IsNullOrEmpty(guid) && _byGuid.TryGetValue(guid, out var a) ? a : null;

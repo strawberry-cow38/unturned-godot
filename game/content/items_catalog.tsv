@@ -1940,3 +1940,5 @@
 5002	12 Gauge Beanbag	Magazine	Rare	1	1	A less-lethal beanbag round chambered in 12 Gauge.	e7fbf7676018439aa0723f9a30be0401
 5003	20 Gauge Beanbag	Magazine	Uncommon	1	1	A less-lethal beanbag round chambered in 20 Gauge.	7913739685f4407a87ecbd3d8fc9568a
 5004	5.56mm FMJ	Supply	Common	1	1	A loose 5.56x45mm full-metal-jacket round. Ejected when you rack the chamber.	959d361bcb4840328ffae0d47e2da9b7
+5005	.300 Blackout	Supply	Uncommon	1	1	A loose .300 AAC Blackout subsonic round. Feeds STANAG-pattern magazines.	c1d2e3f405a6b7c8d9e0f1a2b3c40300
+5006	7.62mm NATO	Supply	Uncommon	1	1	A loose 7.62x51mm NATO rifle round.	b7a6c5d4e3f201a0b9c8d7e6f5040762

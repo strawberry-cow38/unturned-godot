@@ -192,7 +192,14 @@ namespace SDG.Unturned
             // advice, 2026-08-20). Safe now that UsesShells is gated on the GUN'S OWN magazine being ammo -- and
             // this line is the teeth check for that gate: if the gate ever regresses, the STANAG family breaks here.
             Shell(5004, 1, 1);
-            { var fmj = SDG.Unturned.Assets.find(5004); if (fmj != null) { fmj.stackSize = 120; fmj.ammoType = "FMJ"; } }   // 5.56 FMJ: bullet type FMJ; caliber set by Shell() above
+            { var fmj = SDG.Unturned.Assets.find(5004); if (fmj != null) { fmj.stackSize = 120; fmj.ammoType = "FMJ"; fmj.magRound = "5.56x45mm NATO"; } }   // 5.56 FMJ: bullet type FMJ + CARTRIDGE (matched against a mag's accepted rounds when drag-loading); caliber set by Shell() above
+            // More loose rounds so the other mags are fillable (strawberry: "add more single bullet items"). Cartridge
+            // (magRound) is what a mag matches on; magCaliber is the mechanical body group. .300 BLK shares the STANAG
+            // body (group 1) with 5.56 -- so a STANAG mag drag-loads EITHER, but locks to whichever went in first.
+            Shell(5005, 1, 1);   // .300 AAC Blackout -> STANAG body (group 1)
+            { var b = SDG.Unturned.Assets.find(5005); if (b != null) { b.stackSize = 90; b.ammoType = "FMJ"; b.magRound = ".300 AAC Blackout"; } }
+            Shell(5006, 203, 1);   // 7.62x51mm NATO -> SCAR-H body (group 203)
+            { var b = SDG.Unturned.Assets.find(5006); if (b != null) { b.stackSize = 80; b.ammoType = "FMJ"; b.magRound = "7.62x51mm NATO"; } }
             DeriveMagazinesFromGuns();
         }
 
