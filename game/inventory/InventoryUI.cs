@@ -121,7 +121,8 @@ namespace UnturnedGodot
         readonly List<MagOp> _magOps = new();
         bool _magDemoFired;                   // UG_MAGLOAD render harness: fire the demo load once
         Vector2 _dragMouse;                   // last cursor pos during a drag (for the over-a-mag hint in _Draw)
-        const float LOAD_INTERVAL = 0.10f;    // seconds per round -- one wheel segment per tick
+        const float LOAD_INTERVAL = 0.5f;     // seconds per round -- a 0.5s cooldown between each round (master)
+        bool _magFxWasActive;                 // so the overlay gets ONE final clear-redraw when the wheel finishes (else the last frame lingers)
         enum MagLoad { Ok, Full, WrongCaliber, WouldMix }
         class MagOp { public byte page, x, y; public Item mag; public int bulletId; public bool unloading; public float t; public int cap; }
 
@@ -313,7 +314,9 @@ namespace UnturnedGodot
             if (!_magDemoFired && System.Environment.GetEnvironmentVariable("UG_MAGLOAD") == "1") { _magDemoFired = true; DebugStartLoadFirstMag(5004); }   // render harness: auto-load the first mag with 5.56
             else if (!_magDemoFired && System.Environment.GetEnvironmentVariable("UG_MAGUNLOAD") == "1") { _magDemoFired = true; DebugStartUnloadFirstMag(); }   // render harness: auto-unload the first loaded mag
             TickMagOps((float)delta);   // advance any active mag load/unload (one round every LOAD_INTERVAL)
-            if (_magOps.Count > 0 || (_dragging && _dragJar != null && _dragJar.GetAsset()?.isAmmo == true)) _magFx?.QueueRedraw();
+            bool magFxActive = _magOps.Count > 0 || (_dragging && _dragJar != null && _dragJar.GetAsset()?.isAmmo == true);
+            if (magFxActive || _magFxWasActive) _magFx?.QueueRedraw();   // one extra redraw on the falling edge -> the wheel CLEARS when the op finishes (full/empty/out), not lingers (master)
+            _magFxWasActive = magFxActive;
         }
 
         // Cheap rolling hash of every jar (id/amount/pos) + the page dims (an MP crate open/close resizes
