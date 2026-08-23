@@ -405,7 +405,14 @@ namespace UnturnedGodot
             CraftingTags = tags, CraftingRange = craftRange,
         };
         public static readonly DeployableDef Workbench     = Station(1916, "Workbench",      "Workbench_0",     4f, "7b82c125a5a54984b8bb26576b59e977");   // Workbench (269 recipes)
-        public static readonly DeployableDef Campfire      = Station(362,  "Campfire",       "Campfire_0",      4f, "20f30322bbcc4b01a4f116d22b24c21a");   // Heat (src has no explicit tag)
+        // Campfire is a ground FIRE PIT, not a stand-up barricade: skip StandRotX (Upright) + lay the mesh flat.
+        public static readonly DeployableDef Campfire = new()
+        {
+            Id = 362, Name = "Campfire", Model = "Campfire_0", PlaceSound = "metalplacement",
+            Offset = 0f, Radius = 1.0f, Range = 6f, Health = 400f, Upright = true,
+            MeshEuler = new Vector3(90f, 0f, 0f),   // the ripped mesh stands vertical -> tip it flat onto the ground
+            CraftingTags = new[] { "20f30322bbcc4b01a4f116d22b24c21a" }, CraftingRange = 4f,   // Heat (src has no explicit tag)
+        };
         public static readonly DeployableDef ChemistryLab  = Station(1920, "Chemistry Lab",  "ChemistryLab_0",  4f, "99896da563a748148460c67b9962874f");   // ChemicalMixing (13)
         public static readonly DeployableDef Kiln          = Station(1927, "Kiln",           "Kiln_0",          5f, "20f30322bbcc4b01a4f116d22b24c21a", "192e071c94d1419b991a430d42fe2be3");
         public static readonly DeployableDef Loom          = Station(1923, "Loom",           "Loom_0",          4f, "2ac5ddc545a848008c0308d21f5d2e6b");   // Sewing (270)
