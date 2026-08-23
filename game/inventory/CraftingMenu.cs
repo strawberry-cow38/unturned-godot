@@ -317,8 +317,23 @@ namespace UnturnedGodot
         {
             var a = _out.TryGetValue(bp, out var av) ? av : null;
             bool can = Crafting.CanCraft(bp, inv, out _) && Crafting.MeetsSkill(bp, Player?.Skills) && Crafting.HasStations(bp, _stationTags);
+            // GREY OUT WHAT YOU CANNOT MAKE, AND MARK WHAT YOU CAN.
+            //
+            // Only the icon used to dim, to 40% alpha, while the tile behind it stayed identical to a
+            // craftable one. That reads fine when most things are craftable and not at all when one recipe
+            // in sixty-nine is -- which is the actual state of a fresh character, and the state in which
+            // someone opens this menu and asks why everything looks the same.
+            //
+            // So the emphasis is inverted: rather than trying to make sixty-eight tiles look "off", the one
+            // you CAN craft gets a green edge and pops out of the grid. Dimming alone cannot do that job,
+            // because at that ratio the dim IS the background.
             var tile = new Panel { CustomMinimumSize = new Vector2(TILE, TILE) };
-            Box(tile, ReferenceEquals(bp, _sel) ? SelC : TileC);
+            bool sel = ReferenceEquals(bp, _sel);
+            tile.AddThemeStyleboxOverride("panel", UITheme.Box(
+                sel ? SelC : can ? TileC : new Color(0.15f, 0.15f, 0.16f, 0.96f),
+                UITheme.RadiusCell,
+                can ? UITheme.Good : (Color?)null,
+                can ? 2 : 0));
 
             var tex = a != null ? InventoryUI.IconFor(a.id) : null;
             if (tex != null)
@@ -327,7 +342,10 @@ namespace UnturnedGodot
                 ico.SetAnchorsPreset(Control.LayoutPreset.FullRect);
                 ico.OffsetLeft = 6; ico.OffsetTop = 6; ico.OffsetRight = -6; ico.OffsetBottom = -6;
                 ico.MouseFilter = Control.MouseFilterEnum.Ignore;
-                if (!can) ico.Modulate = new Color(1f, 1f, 1f, 0.4f);
+                // Grey AND dim, not just dim. Modulate multiplies, so pulling the RGB down desaturates the
+                // icon toward the panel as well as fading it -- a half-transparent full-colour icon still
+                // reads as "an item", which is exactly the thing being distinguished against.
+                if (!can) ico.Modulate = new Color(0.55f, 0.55f, 0.58f, 0.55f);
                 tile.AddChild(ico);
             }
             else
@@ -337,7 +355,7 @@ namespace UnturnedGodot
                 lbl.OffsetLeft = 4; lbl.OffsetTop = 4; lbl.OffsetRight = -4; lbl.OffsetBottom = -4;
                 lbl.AddThemeFontSizeOverride("font_size", UITheme.FontSmall);
                 lbl.MouseFilter = Control.MouseFilterEnum.Ignore;
-                if (!can) lbl.AddThemeColorOverride("font_color", Dim);
+                if (!can) lbl.AddThemeColorOverride("font_color", UITheme.TextDisabled);
                 tile.AddChild(lbl);
             }
 
