@@ -5410,7 +5410,7 @@ namespace UnturnedGodot
                 if (System.Environment.GetEnvironmentVariable("UG_WORKBENCH") == "1")   // place a Workbench 2m from the player -> its recipes unlock in the quick-craft
                     Deployable.Spawn(this, DeployableDef.Workbench, new Vector3(2f, 0f, 0f), 0f);
             }
-            if (System.Environment.GetEnvironmentVariable("UG_MAGLOAD") == "1")   // stock an EMPTY mag + a 5.56 stack; InventoryUI auto-starts the fill wheel (headless can't drag-drop)
+            if (System.Environment.GetEnvironmentVariable("UG_MAGLOAD") == "1" || System.Environment.GetEnvironmentVariable("UG_MAGVERT") == "1")   // stock an EMPTY mag + a 5.56 stack; InventoryUI auto-starts the fill wheel (headless can't drag-drop)
             {
                 SDG.Unturned.ItemCatalog.RegisterAll();
                 player.Inventory.tryAddItem(new SDG.Unturned.Item(6, 0));      // empty STANAG magazine (cap 30)

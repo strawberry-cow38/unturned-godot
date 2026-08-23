@@ -313,6 +313,7 @@ namespace UnturnedGodot
             }
             if (!_magDemoFired && System.Environment.GetEnvironmentVariable("UG_MAGLOAD") == "1") { _magDemoFired = true; DebugStartLoadFirstMag(5004); }   // render harness: auto-load the first mag with 5.56
             else if (!_magDemoFired && System.Environment.GetEnvironmentVariable("UG_MAGUNLOAD") == "1") { _magDemoFired = true; DebugStartUnloadFirstMag(); }   // render harness: auto-unload the first loaded mag
+            else if (!_magDemoFired && System.Environment.GetEnvironmentVariable("UG_MAGVERT") == "1") { _magDemoFired = true; DebugRotateFirstMag(); DebugStartLoadFirstMag(5004); }   // render harness: rotate the mag vertical + load it
             TickMagOps((float)delta);   // advance any active mag load/unload (one round every LOAD_INTERVAL)
             bool magFxActive = _magOps.Count > 0 || (_dragging && _dragJar != null && _dragJar.GetAsset()?.isAmmo == true);
             if (magFxActive || _magFxWasActive) _magFx?.QueueRedraw();   // one extra redraw on the falling edge -> the wheel CLEARS when the op finishes (full/empty/out), not lingers (master)
@@ -672,7 +673,7 @@ namespace UnturnedGodot
         }
 
         // ---- the fill wheel + drag-over compat hint, drawn on _magFx ----
-        bool MagRect(byte page, byte x, byte y, ItemAsset ma, out Rect2 r)
+        bool MagRect(byte page, byte x, byte y, ItemAsset ma, int rot, out Rect2 r)
         {
             r = default;
             if (page >= (Inv?.items?.Length ?? 0)) return false;
@@ -682,6 +683,7 @@ namespace UnturnedGodot
                     Vector2 tl = c.GlobalPosition + (slot ? Vector2.Zero : new Vector2(x * CELL, y * CELL));
                     int sxc = ma != null ? System.Math.Max(1, (int)ma.size_x) : 1;
                     int syc = ma != null ? System.Math.Max(1, (int)ma.size_y) : 1;
+                    if (rot % 2 == 1) { int t = sxc; sxc = syc; syc = t; }   // rotated mag -> swapped footprint (2x1 becomes 1x2) so the wheel centres on the real cells
                     r = new Rect2(tl, new Vector2(sxc * CELL, syc * CELL));
                     return true;
                 }
@@ -693,7 +695,7 @@ namespace UnturnedGodot
             {
                 var jar = JarAt(op.page, op.x, op.y);
                 if (jar == null || jar.GetAsset()?.IsMagazine != true) continue;
-                if (MagRect(op.page, op.x, op.y, jar.GetAsset(), out Rect2 r)) DrawWheel(r, op.mag.amount, op.cap, op.unloading);
+                if (MagRect(op.page, op.x, op.y, jar.GetAsset(), jar.rot, out Rect2 r)) DrawWheel(r, op.mag.amount, op.cap, op.unloading, jar.rot);
             }
             if (_dragging && _dragJar != null)
             {
@@ -702,18 +704,20 @@ namespace UnturnedGodot
                 {
                     var mJar = JarAt(hp, hx, hy);
                     var mA = mJar?.GetAsset();
-                    if (mJar != null && mA != null && mA.IsMagazine && MagRect(hp, mJar.x, mJar.y, mA, out Rect2 hr))
+                    if (mJar != null && mA != null && mA.IsMagazine && MagRect(hp, mJar.x, mJar.y, mA, mJar.rot, out Rect2 hr))
                         DrawLoadHint(hr, CheckLoad(mJar.item, mA, bA));
                 }
             }
         }
-        void DrawWheel(Rect2 area, int filled, int cap, bool unloading)
+        void DrawWheel(Rect2 area, int filled, int cap, bool unloading, int rot)
         {
             if (cap <= 0) return;
             Vector2 c = area.Position + area.Size / 2f;
             float rOut = Mathf.Min(area.Size.X, area.Size.Y) * 0.40f;   // 10% smaller (master); no centre counter
             float rIn = rOut * 0.58f;
-            float top = -Mathf.Pi / 2f;
+            // the fill start FOLLOWS the mag's rotation (master) -- the icon spins 90deg CW when the mag is on its side
+            // (MakeTile rot%2), so the wheel matches: +90deg for an odd rotation, 0 otherwise.
+            float top = -Mathf.Pi / 2f + ((rot % 2 == 1) ? Mathf.Pi / 2f : 0f);
             _magFx.DrawCircle(c, rOut + 3f, new Color(0f, 0f, 0f, 0.55f));   // dim backing so it reads over the icon
             DrawAnnularSector(c, rIn, rOut, top, top + Mathf.Tau, new Color(1f, 1f, 1f, 0.16f));   // the empty ring (full, dim)
             float frac = Mathf.Clamp(filled / (float)cap, 0f, 1f);   // a CONTINUOUS filled arc that grows one round-step (1/cap) at a time (master)
@@ -782,6 +786,20 @@ namespace UnturnedGodot
                 {
                     var j = Inv.items[p].getItem(i);
                     if (j?.GetAsset()?.IsMagazine == true) return DebugStartLoad(p, j.x, j.y, bulletId);
+                }
+            }
+            return false;
+        }
+        public bool DebugRotateFirstMag()   // render harness: rotate the first mag to vertical to eyeball its icon + the wheel
+        {
+            if (Inv?.items == null) return false;
+            for (byte p = 0; p < Inv.items.Length; p++)
+            {
+                byte cnt = Inv.items[p].getItemCount();
+                for (byte i = 0; i < cnt; i++)
+                {
+                    var j = Inv.items[p].getItem(i);
+                    if (j?.GetAsset()?.IsMagazine == true) { j.rot = 1; Refresh(); return true; }
                 }
             }
             return false;
@@ -1937,7 +1955,7 @@ namespace UnturnedGodot
                     float a = h - 2 * pad, b = w - 2 * pad;
                     ic.Size = new Vector2(a, b);
                     ic.PivotOffset = new Vector2(a / 2f, b / 2f);
-                    ic.RotationDegrees = 90f;
+                    ic.RotationDegrees = (asset != null && asset.IsMagazine) ? -90f : 90f;   // a MAG stands feed-lips UP when vertical -- its raw icon turns the OTHER way, so +90 left it upside-down (strawberry)
                     ic.Position = new Vector2((w - a) / 2f, (h - b) / 2f);
                 }
                 else
