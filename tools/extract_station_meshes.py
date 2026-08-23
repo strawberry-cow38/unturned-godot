@@ -44,13 +44,16 @@ def walk(go_pid, parentM, gomap):
     if not go: return
     tt = go.read_typetree()
     nm = (tt.get("m_Name", "") or "")
-    if nm.lower() in {"dead", "ragdoll", "effect", "nav", "block", "trap"}: return
+    if nm.lower() in {"dead", "ragdoll", "effect", "nav", "block", "trap", "fire"}: return
     tr = comp_of(tt, ("Transform", "RectTransform"))
     if not tr: return
     trt = tr.read_typetree()
     M = parentM @ trs(trt["m_LocalPosition"], trt["m_LocalRotation"], trt["m_LocalScale"])
     mf = comp_of(tt, ("MeshFilter",))
     mp = mf.read_typetree().get("m_Mesh", {}).get("m_PathID") if mf else None
+    if not mp:   # Model_0 is often a SkinnedMeshRenderer (loom/spinning-wheel rigs) -> take its bind-pose m_Mesh
+        smr = comp_of(tt, ("SkinnedMeshRenderer",))
+        mp = smr.read_typetree().get("m_Mesh", {}).get("m_PathID") if smr else None
     gomap[go_pid] = (M, mp, nm)
     for ch in trt.get("m_Children", []):
         ct = by_id.get(ch.get("m_PathID"))
@@ -58,7 +61,7 @@ def walk(go_pid, parentM, gomap):
 
 def extract_one(path_sub, target):
     cands = [(p, o) for p, o in env.container.items()
-             if o.type.name == "GameObject" and path_sub in p.lower() and p.lower().endswith("item.prefab")]
+             if o.type.name == "GameObject" and path_sub in p.lower() and p.lower().endswith("barricade.prefab")]   # the PLACED barricade mesh, NOT item.prefab (the in-hand viewmodel is a different Model_0)
     if not cands:
         print(f"[{target}] NO prefab for '{path_sub}'"); return
     prefab = cands[0][1]
@@ -67,8 +70,12 @@ def extract_one(path_sub, target):
     gomap = {}; walk(prefab.path_id, np.linalg.inv(root_local), gomap)
     meshes = [(nm, mp) for gp, (M, mp, nm) in gomap.items() if mp]
     print(f"[{target}] meshes in prefab: {meshes}")
-    model0 = [gp for gp, (M, mp, nm) in gomap.items() if mp and nm.lower() == "model_0"]
-    pick = model0 if model0 else [gp for gp, (M, mp, nm) in gomap.items() if mp and "model_1" not in nm.lower()]
+    pick = None   # highest-detail LOD available: Model_0 > Model_1 > Model_2
+    for lod in ("model_0", "model_1", "model_2"):
+        cand = [gp for gp, (M, mp, nm) in gomap.items() if mp and nm.lower() == lod]
+        if cand: pick = cand; break
+    if not pick:
+        pick = [gp for gp, (M, mp, nm) in gomap.items() if mp and "model_1" not in nm.lower() and "model_2" not in nm.lower()]
     print(f"[{target}] picked: {[gomap[gp][2] for gp in pick]}")
 
     Vs, Ns, Ts, Fs, used = [], [], [], [], []
@@ -110,7 +117,7 @@ def extract_one(path_sub, target):
     open(os.path.join(OUT, target + ".obj"), "w").write("\n".join(L) + "\n")
     print(f"[{target}] wrote {target}.obj parts={len(used)} {used} verts={len(Vs)}")
 
-    best = None
+    main_best, any_best = None, None   # PREFER _MainTex (the albedo); _EmissionMap etc. is a dark fallback only
     for gp in pick:
         go = by_id.get(gp)
         if not go: continue
@@ -128,8 +135,10 @@ def extract_one(path_sub, target):
                 if tex and tex.type.name == "Texture2D":
                     try:
                         img = tex.read().image; area = img.width * img.height
-                        if not best or area > best[0]: best = (area, img, name)
+                        if name == "_MainTex" and (not main_best or area > main_best[0]): main_best = (area, img, name)
+                        if not any_best or area > any_best[0]: any_best = (area, img, name)
                     except Exception: pass
+    best = main_best or any_best
     if best:
         best[1].save(os.path.join(OUT, target + "_tex.png"))
         print(f"[{target}] wrote {target}_tex.png {best[1].width}x{best[1].height} prop {best[2]}")
