@@ -1775,6 +1775,7 @@ namespace UnturnedGodot
         public static void AttachPlayerShell(Node root, PlayerController player, bool withCropManager)
         {
             root.AddChild(new DevConsole { Player = player });   // dev console (`): give <item> / vehicle <name> / plant <crop> spawns at the look-orb (master)
+            root.AddChild(new BugReporter());   // push-to-report (backslash key): screenshot + held-key voice note -> the ingest endpoint
             if (withCropManager) root.AddChild(new CropManager());   // farm crop growth ticking + plant/harvest (console `plant`, F to harvest)
             root.AddChild(new MapUI { Player = player });         // M: full-screen PEI map (town nodes + player pos/facing)
             { var hud = new HUD { Player = player }; root.AddChild(hud); player.Hud = hud; }
@@ -1956,6 +1957,7 @@ namespace UnturnedGodot
             { var hud = new HUD { Player = player }; root.AddChild(hud); player.Hud = hud; }
             result.Player = player;
             root.AddChild(new DevConsole { Player = player });   // dev console (`): give <item> / vehicle <name> spawns at the look-orb (master)
+            root.AddChild(new BugReporter());   // push-to-report (backslash key): screenshot + held-key voice note -> the ingest endpoint
             root.AddChild(new MapUI { Player = player });         // M: full-screen PEI map (town nodes + player pos/facing)
 
             // a jeep right beside the player, dropped onto the terrain -> hop in + drive PEI

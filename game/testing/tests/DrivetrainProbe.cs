@@ -60,19 +60,43 @@ namespace UnturnedGodot.Testing
 
             // ---- FULL-THROTTLE RUN. Sampled every tick so the gear/rpm trace is a measurement of the
             // drivetrain rather than a readback of the fields I just wrote.
+            // TERMINATION IS A MEASUREMENT DECISION, AND THE OLD ONE ANSWERED THE WRONG QUESTION.
+            //
+            // This used to stop after 200 consecutive ticks without a new record (`flat < 200`). For a hull
+            // that accelerates smoothly that is a plateau. For one whose speed OSCILLATES it is not: the
+            // semi spends part of a full-throttle run with wheels off the ground, so it loses traction, dips,
+            // and takes more than four seconds to beat its own previous peak -- at which point the loop gave
+            // up and reported the speed where acceleration had stalled, calling it "top speed". It bailed at
+            // 19.2 s with 16.30 m/s while the coastdown phase, running later, found the same truck doing
+            // 17.72. A real number, from a real run, answering a different question than the one asked.
+            //
+            // The replacement compares the best speed in this 2 s window against the best in the previous
+            // one, so oscillation inside a window cannot end the run; only a genuine failure to improve
+            // across two whole windows does.
             float top = 0f, peakRpm = 0f, t = 0f;
-            int flat = 0, shifts = 0, downshifts = 0, prevGear = v.Gear;
+            int shifts = 0, downshifts = 0, prevGear = v.Gear;
             float rpmAtLastUpshift = 0f, minRpmSeenMoving = 99999f;
             float lastShiftT = -99f, minShiftGap = 99f;
+            float winBest = 0f, prevWinBest = -1f; int winTicks = 0, stalledWindows = 0;
+            int airborneTicks = 0, movingTicks = 0;
             var gearTops = new Dictionary<int, float>();
-            for (int i = 0; i < 6000 && flat < 200; i++)
+            for (int i = 0; i < 9000; i++)
             {
                 v.Drive(1f, 0f, false);
                 yield return Ticks(1);
                 t += Dt;
                 float sp = Mathf.Abs(v.LinearVelocity.Dot(-v.GlobalTransform.Basis.Z));
                 float rpm = v.EngineRpm;
-                if (sp > top + 0.01f) { top = sp; flat = 0; } else flat++;
+                if (sp > top) top = sp;
+
+                if (sp > 1f) { movingTicks++; if (v.WheelsOnGroundForTest * 2 < v.WheelCountForTest) airborneTicks++; }
+                winBest = Mathf.Max(winBest, sp);
+                if (++winTicks >= 100)              // 2 s window
+                {
+                    stalledWindows = winBest <= prevWinBest * 1.01f ? stalledWindows + 1 : 0;
+                    prevWinBest = winBest; winBest = 0f; winTicks = 0;
+                    if (stalledWindows >= 2) break; // two full windows with no real gain = actually plateaued
+                }
                 if (sp > 1f) { peakRpm = Mathf.Max(peakRpm, rpm); minRpmSeenMoving = Mathf.Min(minRpmSeenMoving, rpm); }
                 gearTops[v.Gear] = sp;
                 if (v.Gear != prevGear)
@@ -84,7 +108,12 @@ namespace UnturnedGodot.Testing
                     prevGear = v.Gear;
                 }
             }
+            float airborneFrac = movingTicks > 0 ? airborneTicks / (float)movingTicks : 0f;
             GD.Print($"[drv] {car}: TOP {top:0.00} m/s ({top * 3.6f:0.0} km/h) in {t:0.0} s | {shifts} upshifts, {downshifts} downshifts, closest pair {minShiftGap:0.00} s");
+            // Printed for every hull, because it is the number that explains a shortfall. A truck that
+            // cannot put its wheels down cannot put its newtons down, and without this the failure reads as
+            // "not enough power" and sends you to tune the wrong constant.
+            GD.Print($"[drv] {car}: majority-airborne for {airborneFrac * 100f:0.0}% of the moving run");
             GD.Print($"[drv] {car}: rpm swept {minRpmSeenMoving:0}..{peakRpm:0} of a {redline:0} redline ({peakRpm / redline * 100f:0}% used)");
             foreach (var kv in gearTops) GD.Print($"[drv]   gear {kv.Key} reached {kv.Value:0.0} m/s ({kv.Value * 3.6f:0.0} km/h)");
 
@@ -116,8 +145,11 @@ namespace UnturnedGodot.Testing
             // Read the un-buffed spec value from the vehicle rather than dividing SpeedMaxMps by the buff:
             // inverting the buff assumes the buff was applied, so on a build where it was NOT the reference
             // shrinks along with the car and the check passes on a slower car. It did exactly that.
-            float oldCap = v.SpecSpeedMaxForTest;
-            T.Check($"top speed clears the old hard cap ({top:0.00} vs {oldCap:0.00} m/s)", top > oldCap * 1.25f);
+            float oldCap = v.SpecSpeedMaxForTest, needed = oldCap * 1.25f;
+            // Print the THRESHOLD, not the raw cap. The old message read "16.30 vs 14.00" on a check that
+            // actually required 17.50, so the failure looked like a passing comparison.
+            T.Check($"top speed clears the old hard cap ({top:0.00} m/s, needs > {needed:0.00}, cap was {oldCap:0.00})",
+                    top > needed);
             // 0.80, not 0.85, because the heaviest multi-axle hulls legitimately land a little under their
             // solved equilibrium: the semi still spends ~7% of a full-throttle run with most of its six wheels
             // off the ground, so it cannot put every newton down. It reaches 18.98 of a 22.40 target, which is

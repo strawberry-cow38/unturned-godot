@@ -13,5 +13,6 @@
     <ProjectReference Include="..\core\UnturnedSim\UnturnedSim.csproj" />
     <ProjectReference Include="..\core\SDG.NetTransport\SDG.NetTransport.csproj" />
     <ProjectReference Include="..\core\UnturnedNet\UnturnedNet.csproj" />
+    <ProjectReference Include="..\core\BugReportCore\BugReportCore.csproj" />
   </ItemGroup>
 </Project>

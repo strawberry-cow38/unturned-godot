@@ -147,6 +147,19 @@ namespace UnturnedGodot
             string verb = parts[0].ToLowerInvariant();
             string arg = parts.Length > 1 ? parts[1].Trim() : "";
 
+            // report <text>  -- file a bug report with typed text instead of a held-key voice note. This is the
+            // fallback path when a player has no working microphone, and the entry point an automated test can
+            // drive without any audio hardware at all. Handled above the arg-length guard for the same reason
+            // toggleGlobalPower is: the guard below turns a no-arg command into a usage line.
+            if (verb == "report")
+            {
+                if (arg.Length == 0) { Log("usage: report <what went wrong>"); return; }
+                var br = BugReporter.Instance;
+                if (br == null || !IsInstanceValid(br)) { Log("bug reporter is not running"); return; }
+                Log(br.SubmitTyped(arg) != null ? "report queued" : "could not write the report");
+                return;
+            }
+
             // toggleGlobalPower [on|off]  -- SP grid mains switch (OFF by default); bare form FLIPS it. Mirrors
             // `survival`, but handled ABOVE the arg-length guard so the natural no-arg toggle works (the guard below
             // would otherwise short-circuit any no-arg command to a usage line). Not server-gated -- SP-only feature.

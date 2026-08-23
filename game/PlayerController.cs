@@ -2303,6 +2303,21 @@ namespace UnturnedGodot
         public float CurrentAimAlpha => _viewmodel?.AimAlpha ?? 0f;
         public float ScopeMag => HasGunOut ? (_viewmodel?.ScopeZoom ?? 0f) : 0f;   // the MOUNTED scope's real zoom (aug 4x, 8x, 16x...); 0 = iron/red-dot -> ADS sens drops as 1/zoom
 
+        // --- bug reporter -------------------------------------------------------------------------------
+        // The arms and the held item render in the viewmodel's OWN SubViewport, which GetViewport() on the
+        // main tree cannot see -- a screenshot taken without compositing it comes out background-only, and a
+        // background-only PNG is a VALID png, so that failure is indistinguishable from success. BugReporter
+        // needs the live viewmodel to composite it in.
+        public Viewmodel VM => _viewmodel;
+
+        /// <summary>What is in the player's hands, in one string, for a bug report's context. Never null.</summary>
+        public string EquippedNameForReport =>
+            _deployable != null ? $"deployable:{_deployable.Name}" :
+            _heldConsumable != null ? $"consumable:{_heldConsumableMesh ?? _heldConsumable.itemName}" :
+            _melee != null ? $"melee:{_heldMeleeName ?? _melee.Name}" :
+            Gun != null ? $"gun:{_gunName}" :
+            "empty";
+
         // Equip a consumable to the hands from the inventory: hold its model; LMB to eat/drink.
         // captureRevert=false only for the auto-re-equip of the NEXT of the same stack (keeps the original revert target).
         public void EquipHeldConsumable(ItemAsset asset, string meshName, bool captureRevert = true)

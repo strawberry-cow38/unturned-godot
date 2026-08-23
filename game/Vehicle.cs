@@ -832,6 +832,12 @@ namespace UnturnedGodot
         public int GearCount => _gears != null ? _gears.Length : 0;
         public float PeakTorque => _peakTorque;
         public float WheelbaseForTest => _wheelbase;   // L1: needed to compute the Ackermann yaw a steer angle COMMANDS, so a probe can see oversteer
+        // L1: how many wheels are actually touching the ground, and how many there are. A heavy multi-axle
+        // hull that falls short of its drag equilibrium is usually not short of POWER -- it is airborne and
+        // cannot put the newtons down. Without this the shortfall reads as a torque problem and sends you
+        // to tune the wrong constant.
+        public int WheelsOnGroundForTest { get { int n = 0; if (_wNodes != null) foreach (var w in _wNodes) if (w.IsInContact()) n++; return n; } }
+        public int WheelCountForTest => _wNodes?.Length ?? 0;
         public float SpecSpeedMaxForTest => _specSpeedMax;   // L1: the un-buffed spec top speed the OLD model capped at
         public float RedlineRpmForTest => RedlineFrac * MaxRpm;                                   // L1: the shift/limit point, so a probe doesn't re-derive it
         public float TorqueAtRpmForTest(float rpm) =>                                             // L1: sample the torque CURVE directly -- a flat-force model returns the same number at every rpm

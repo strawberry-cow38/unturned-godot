@@ -8,6 +8,16 @@ run/main_scene="res://Main.tscn"
 boot_splash/show_image=false
 boot_splash/bg_color=Color(0, 0, 0, 1)
 
+[audio]
+
+; Required for AudioStreamMicrophone to receive anything: with this false the capture effect still runs and
+; still delivers frames, they are just always silence. NOTE the honest limit -- this box has no microphone
+; and runs the Dummy driver, where capture yields exactly-silent frames WITH OR WITHOUT this line, so the
+; setting cannot be proven here. It is proven on a desktop with real hardware (BugReporter tags the report
+; audio_status=nomic when the amplitude says nothing was heard, so a broken setting reports itself rather
+; than shipping a silent report labelled ok).
+driver/enable_input=true
+
 [display]
 window/size/viewport_width=2560
 window/size/viewport_height=1440

@@ -29,6 +29,7 @@ namespace UnturnedGodot.Testing
             ProcessMode = Node.ProcessModeEnum.Always;
 
             StructureManager.PersistenceEnabled = false;   // L1 must never touch the real user://structures.json -- see that field
+            BugReporter.EnterTestMode();   // L1 must never upload the developer's REAL queued bug reports to production -- see that method
             Deployable.InstantRampForTests = true;   // L1: generators settle their spin-up/cooldown instantly so power-flow checks see steady state (the gradual ramp is gameplay-verified in-render)
             Discover();
             _t0 = Time.GetTicksMsec();
@@ -140,6 +141,8 @@ namespace UnturnedGodot.Testing
             LootTables.ResetForTests();       // a loot-injection test must not leak its table into the next test's rolls
             WorldItem.NoDropRotation = false;
             WorldItem.SuppressLocalVisual = false;   // P2b: leaked global under --spconsume tests -> reset between tests
+            BugReporter.EnterTestMode();   // re-assert every test: bugreport.* deliberately toggles MicEnabled, and if it
+                                           // dies on a failed check or a watchdog timeout its own restore never runs
             Engine.TimeScale = 1.0;
         }
 
