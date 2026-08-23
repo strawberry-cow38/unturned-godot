@@ -394,20 +394,30 @@ namespace UnturnedGodot
             PlaceSound = "metalplacement",
         };
 
-        // CRAFTING STATION: the Simple Workbench (item 1916). Grants the Workbench crafting tag within 4 m + LOS.
-        // ProcBox placeholder mesh for now (real station model is a follow-up); Size ~ a workbench table.
-        public static readonly DeployableDef Workbench = new()
+        // CRAFTING STATIONS (strawberry): placed barricades that grant crafting tags within CraftingRange + LOS.
+        // Real world meshes ripped by tools/extract_station_meshes.py (LOD0, like Generator_0); the tag GUIDs +
+        // ranges are from the src barricade .dat (PlaceableProvidesCraftingTags + Range). Campfire has no explicit
+        // tag field (src "Build Campfire" is hardcoded) -> mapped to the Heat tag the ovens/kiln also grant.
+        static DeployableDef Station(ushort id, string name, string model, float craftRange, params string[] tags) => new()
         {
-            Id = 1916, Name = "Workbench", ProcBox = true, PlaceSound = "metalplacement",
-            Size = new Vector3(1.6f, 0.9f, 0.7f), Offset = 0f, Radius = 0.9f, Range = 6f, Health = 400f,
-            CraftingTags = new[] { "7b82c125a5a54984b8bb26576b59e977" },   // Workbench tag (269 recipes)
-            CraftingRange = 4f,
+            Id = id, Name = name, Model = model, PlaceSound = "metalplacement",
+            Offset = 0f, Radius = 1.0f, Range = 6f, Health = 400f,
+            CraftingTags = tags, CraftingRange = craftRange,
         };
+        public static readonly DeployableDef Workbench     = Station(1916, "Workbench",      "Workbench_0",     4f, "7b82c125a5a54984b8bb26576b59e977");   // Workbench (269 recipes)
+        public static readonly DeployableDef Campfire      = Station(362,  "Campfire",       "Campfire_0",      4f, "20f30322bbcc4b01a4f116d22b24c21a");   // Heat (src has no explicit tag)
+        public static readonly DeployableDef ChemistryLab  = Station(1920, "Chemistry Lab",  "ChemistryLab_0",  4f, "99896da563a748148460c67b9962874f");   // ChemicalMixing (13)
+        public static readonly DeployableDef Kiln          = Station(1927, "Kiln",           "Kiln_0",          5f, "20f30322bbcc4b01a4f116d22b24c21a", "192e071c94d1419b991a430d42fe2be3");
+        public static readonly DeployableDef Loom          = Station(1923, "Loom",           "Loom_0",          4f, "2ac5ddc545a848008c0308d21f5d2e6b");   // Sewing (270)
+        public static readonly DeployableDef OvenBrick     = Station(1919, "Brick Oven",     "Oven_Brick_0",    4f, "20f30322bbcc4b01a4f116d22b24c21a", "d2cc65b749e5477f95103601df89cdbc");
+        public static readonly DeployableDef OvenElectric  = Station(1250, "Electric Oven",  "Oven_Electric_0", 4f, "20f30322bbcc4b01a4f116d22b24c21a", "d2cc65b749e5477f95103601df89cdbc");
+        public static readonly DeployableDef SewingTable   = Station(1924, "Sewing Table",   "SewingTable_0",   4f, "2ac5ddc545a848008c0308d21f5d2e6b");   // Sewing
+        public static readonly DeployableDef SpinningWheel = Station(1922, "Spinning Wheel", "SpinningWheel_0", 4f, "2ac5ddc545a848008c0308d21f5d2e6b");   // Sewing
 
         public static readonly DeployableDef[] All = { Generator, Spotlight, Splitter2, Splitter3, Splitter4, Combiner2, Battery, Switch, WindTurbine, GridSource, GasPump,
             FluidTank, WaterSource, FluidSplitter, FluidCombiner, FluidPumpDef, FluidValve, Refinery, Sluice, WaterInlet, WaterOutlet, Purifier, Refrigerator, Landmine, Spike, Charge, Barbedwire,
             DoorBirch, DoorMaple, DoorPine, GateBirch, GateMaple, GatePine, HatchBirch, HatchMaple, HatchPine,
-            DoorMetal, GateMetal, HatchMetal, Workbench };
+            DoorMetal, GateMetal, HatchMetal, Workbench, Campfire, ChemistryLab, Kiln, Loom, OvenBrick, OvenElectric, SewingTable, SpinningWheel };
         public static DeployableDef ById(ushort id) => id switch
         {
             1101 => Landmine,
@@ -417,6 +427,14 @@ namespace UnturnedGodot
             458 => Generator,
             459 => Spotlight,
             1916 => Workbench,
+            362 => Campfire,
+            1250 => OvenElectric,
+            1919 => OvenBrick,
+            1920 => ChemistryLab,
+            1922 => SpinningWheel,
+            1923 => Loom,
+            1924 => SewingTable,
+            1927 => Kiln,
             9169 => DoorMetal,
             9170 => GateMetal,
             9171 => HatchMetal,
