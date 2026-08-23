@@ -188,14 +188,25 @@ namespace UnturnedGodot
         ArrayMesh MeshFor(string name)
         {
             if (_meshCache.TryGetValue(name, out var m)) return m;
-            m = ObjMesh.Load(Dir + name + ".obj"); _meshCache[name] = m; return m;
+            // EXISTENCE-CHECKED, because not every catalog entry is a mesh prop. ObjMesh.Load goes straight to
+            // File.ReadLines, which THROWS on a missing path -- and the catalog pins "★ Loot Crate" at index 0,
+            // so the object browser armed it on open, asked for "★ Loot Crate.obj", and threw on boot every
+            // time. MatFor two methods down already guards its texture load exactly this way; the mesh load
+            // just never did. The null is cached, so a synthetic entry costs one stat, not one per frame.
+            string path = Dir + name + ".obj";
+            m = System.IO.File.Exists(path) ? ObjMesh.Load(path) : null;
+            _meshCache[name] = m; return m;
         }
 
         /// <summary>The palette's preview renderer loads props through THESE, not through its own copy of the
         /// loader, so a thumbnail is drawn from the same mesh and material the editor will actually place. A
         /// second loading path would eventually disagree with this one, and the failure -- a picture of
         /// something subtly other than what you get -- is worse than no picture.</summary>
-        public ArrayMesh PreviewMesh(string name) => name == null ? null : MeshFor(name);
+        // The store shelf is a REAL prop wearing a container's name -- PlaceStoreShelf builds it from Shelf_1 --
+        // so the palette should show Shelf_1 rather than nothing. The loot crate genuinely has no mesh (the
+        // placer builds a procedural BoxMesh), so it previews empty, which the stage handles.
+        public ArrayMesh PreviewMesh(string name) =>
+            name == null ? null : MeshFor(name == StoreShelfName ? "Shelf_1" : name);
         public StandardMaterial3D PreviewMaterial(string name) => name == null ? null : MatFor(name);
 
         // mirrors WorldBuilder.MatFor (the common textured path): VertexColorUseAsAlbedo, nearest-filtered albedo,
