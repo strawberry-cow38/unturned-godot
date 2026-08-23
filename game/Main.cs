@@ -5414,7 +5414,7 @@ namespace UnturnedGodot
             {
                 SDG.Unturned.ItemCatalog.RegisterAll();
                 player.Inventory.tryAddItem(new SDG.Unturned.Item(6, 0));      // empty STANAG magazine (cap 30)
-                player.Inventory.tryAddItem(new SDG.Unturned.Item(5004, 120)); // 5.56 FMJ loose rounds
+                player.Inventory.tryAddItem(new SDG.Unturned.Item(5004, 20)); // 5.56 FMJ loose rounds (a 20-batch < the 30 cap -> wheel total shows /20, the dragged amount)
             }
             if (System.Environment.GetEnvironmentVariable("UG_MAGUNLOAD") == "1")   // stock a FULL mag; InventoryUI auto-starts the UNLOAD wheel (rounds return to the bag)
             {

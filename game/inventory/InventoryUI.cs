@@ -124,7 +124,7 @@ namespace UnturnedGodot
         const float LOAD_INTERVAL = 0.5f;     // seconds per round -- a 0.5s cooldown between each round (master)
         bool _magFxWasActive;                 // so the overlay gets ONE final clear-redraw when the wheel finishes (else the last frame lingers)
         enum MagLoad { Ok, Full, WrongCaliber, WouldMix }
-        class MagOp { public byte page, x, y; public Item mag; public int bulletId; public bool unloading; public float t; public int cap; }
+        class MagOp { public byte page, x, y; public Item mag; public int bulletId; public bool unloading; public float t; public int batch; public int done; }   // batch = rounds THIS op moves (the amount dragged / to eject); done = moved so far. The wheel is done/batch, not amount/cap (master)
 
         // selection: clicking an item (press+release on its own cell, no drag) opens a description/actions panel
         Control _selPanel;
@@ -619,7 +619,8 @@ namespace UnturnedGodot
             if (CheckLoad(mJar.item, mA, bA) == MagLoad.Ok)
             {
                 _magOps.RemoveAll(o => o.page == mp && o.x == mJar.x && o.y == mJar.y);
-                _magOps.Add(new MagOp { page = mp, x = mJar.x, y = mJar.y, mag = mJar.item, bulletId = bA.id, unloading = false, t = 0f, cap = MagCap(mA) });
+                int batch = System.Math.Min((int)bJar.item.amount, MagCap(mA) - mJar.item.amount);   // load what we DRAGGED, capped by the mag's free space -> the wheel total is the dragged amount, not the capacity (master)
+                _magOps.Add(new MagOp { page = mp, x = mJar.x, y = mJar.y, mag = mJar.item, bulletId = bA.id, unloading = false, t = 0f, batch = batch, done = 0 });
             }
             return true;   // consume the drop either way -- a refused load just snaps home, never swaps
         }
@@ -642,7 +643,7 @@ namespace UnturnedGodot
         bool StepMagOp(MagOp op)
         {
             var mA = op.mag?.GetAsset();
-            if (mA == null) return false;
+            if (mA == null || op.done >= op.batch) return false;   // whole batch moved -> done
             if (op.unloading)   // eject a round back to the bag; stop cleanly if there's nowhere for it (never lose one)
             {
                 if (op.mag.amount <= 0) return false;
@@ -650,10 +651,11 @@ namespace UnturnedGodot
                 if (bid <= 0 || Inv == null || !Inv.tryAddItem(new SDG.Unturned.Item((ushort)bid, 1))) return false;
                 op.mag.amount = (byte)(op.mag.amount - 1);
                 if (op.mag.amount <= 0) op.mag.magLoadedRound = null;   // emptied -> unlock the cartridge
-                return op.mag.amount > 0;
+                op.done++;
+                return op.done < op.batch && op.mag.amount > 0;
             }
             // LOAD: pull a round from the stack into the mag
-            if (op.mag.amount >= op.cap) return false;
+            if (op.mag.amount >= MagCap(mA)) return false;   // mag full (safety; batch is already capped to the free space)
             var bA = SDG.Unturned.Assets.find((ushort)op.bulletId);
             if (bA == null || CheckLoad(op.mag, mA, bA) != MagLoad.Ok) return false;
             var (jar, page) = FindStack((ushort)op.bulletId);
@@ -662,7 +664,8 @@ namespace UnturnedGodot
             op.mag.amount = (byte)(op.mag.amount + 1);
             jar.item.amount = (byte)(jar.item.amount - 1);
             if (jar.item.amount <= 0) { byte ri = page.getIndex(jar.x, jar.y); if (ri != byte.MaxValue) page.removeItem(ri); }
-            return op.mag.amount < op.cap;
+            op.done++;
+            return op.done < op.batch;
         }
         int BulletIdForRound(string round)   // the loose-round item id for a cartridge (reverse of bullet.magRound)
         {
@@ -695,7 +698,8 @@ namespace UnturnedGodot
             {
                 var jar = JarAt(op.page, op.x, op.y);
                 if (jar == null || jar.GetAsset()?.IsMagazine != true) continue;
-                if (MagRect(op.page, op.x, op.y, jar.GetAsset(), jar.rot, out Rect2 r)) DrawWheel(r, op.mag.amount, op.cap, op.unloading, jar.rot);
+                if (MagRect(op.page, op.x, op.y, jar.GetAsset(), jar.rot, out Rect2 r))
+                    DrawWheel(r, op.unloading ? op.batch - op.done : op.done, op.batch, op.unloading);   // load fills done/batch; unload empties (remaining = batch-done)/batch
             }
             if (_dragging && _dragJar != null)
             {
@@ -709,18 +713,16 @@ namespace UnturnedGodot
                 }
             }
         }
-        void DrawWheel(Rect2 area, int filled, int cap, bool unloading, int rot)
+        void DrawWheel(Rect2 area, int filled, int total, bool unloading)
         {
-            if (cap <= 0) return;
+            if (total <= 0) return;
             Vector2 c = area.Position + area.Size / 2f;
             float rOut = Mathf.Min(area.Size.X, area.Size.Y) * 0.40f;   // 10% smaller (master); no centre counter
             float rIn = rOut * 0.58f;
-            // the fill start FOLLOWS the mag's rotation (master) -- the icon spins 90deg CW when the mag is on its side
-            // (MakeTile rot%2), so the wheel matches: +90deg for an odd rotation, 0 otherwise.
-            float top = -Mathf.Pi / 2f + ((rot % 2 == 1) ? Mathf.Pi / 2f : 0f);
+            float top = -Mathf.Pi / 2f;   // ALWAYS start at 12 o'clock (master); the wheel is POSITIONED on the rotated mag (MagRect), but the fill start itself doesn't rotate
             _magFx.DrawCircle(c, rOut + 3f, new Color(0f, 0f, 0f, 0.55f));   // dim backing so it reads over the icon
             DrawAnnularSector(c, rIn, rOut, top, top + Mathf.Tau, new Color(1f, 1f, 1f, 0.16f));   // the empty ring (full, dim)
-            float frac = Mathf.Clamp(filled / (float)cap, 0f, 1f);   // a CONTINUOUS filled arc that grows one round-step (1/cap) at a time (master)
+            float frac = Mathf.Clamp(filled / (float)total, 0f, 1f);   // a CONTINUOUS filled arc that grows one round-step (1/total) at a time (master)
             if (frac > 0f)
                 DrawAnnularSector(c, rIn, rOut, top, top + Mathf.Tau * frac, unloading ? new Color(0.95f, 0.45f, 0.2f) : new Color(0.35f, 0.9f, 0.45f));
         }
@@ -759,7 +761,9 @@ namespace UnturnedGodot
             var mA = mJar?.GetAsset();
             if (mJar == null || mA == null || !mA.IsMagazine) return false;
             _magOps.RemoveAll(o => o.page == page && o.x == mJar.x && o.y == mJar.y);
-            _magOps.Add(new MagOp { page = page, x = mJar.x, y = mJar.y, mag = mJar.item, bulletId = bulletId, unloading = false, t = 0f, cap = MagCap(mA) });
+            var (bjar, _) = FindStack(bulletId);
+            int batch = System.Math.Min(bjar != null ? (int)bjar.item.amount : int.MaxValue, MagCap(mA) - mJar.item.amount);
+            _magOps.Add(new MagOp { page = page, x = mJar.x, y = mJar.y, mag = mJar.item, bulletId = bulletId, unloading = false, t = 0f, batch = batch, done = 0 });
             return true;
         }
         public int DebugMagRounds(byte page, byte x, byte y) => JarAt(page, x, y)?.item.amount ?? -1;
@@ -772,7 +776,7 @@ namespace UnturnedGodot
             if (jar != null && ma != null && ma.IsMagazine && jar.item.amount > 0)
             {
                 _magOps.RemoveAll(o => o.page == _selPage && o.x == jar.x && o.y == jar.y);
-                _magOps.Add(new MagOp { page = _selPage, x = jar.x, y = jar.y, mag = jar.item, bulletId = 0, unloading = true, t = 0f, cap = MagCap(ma) });
+                _magOps.Add(new MagOp { page = _selPage, x = jar.x, y = jar.y, mag = jar.item, bulletId = 0, unloading = true, t = 0f, batch = jar.item.amount, done = 0 });   // eject the WHOLE mag
             }
             CloseSelection();
         }
@@ -815,7 +819,7 @@ namespace UnturnedGodot
                     var j = Inv.items[p].getItem(i);
                     if (j?.GetAsset()?.IsMagazine == true && j.item.amount > 0)
                     {
-                        _magOps.Add(new MagOp { page = p, x = j.x, y = j.y, mag = j.item, bulletId = 0, unloading = true, t = 0f, cap = MagCap(j.GetAsset()) });
+                        _magOps.Add(new MagOp { page = p, x = j.x, y = j.y, mag = j.item, bulletId = 0, unloading = true, t = 0f, batch = j.item.amount, done = 0 });
                         return true;
                     }
                 }
