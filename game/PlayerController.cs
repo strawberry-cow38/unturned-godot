@@ -3312,6 +3312,24 @@ namespace UnturnedGodot
         }
 
         public Vector3 Spawn = new Vector3(0, 1f, 0);
+        // The map's full regular-spawn set (pre-sampled to ground + facing yaw), handed in by WorldBuilder.
+        // Death re-rolls a RANDOM one of these (source LevelPlayers.getSpawn runs on every respawn, not just the
+        // first spawn); null/empty on fallback/no-map worlds -> respawn falls back to the single Spawn point.
+        public System.Collections.Generic.List<(Vector3 pos, float yaw)> RespawnPoints;
+
+        // A random regular spawn from RespawnPoints (facing its angle), or the single Spawn fallback if the map
+        // had no spawn file. Used by Respawn(); the bed claim still overrides this when the player has one.
+        Vector3 PickRandomSpawn()
+        {
+            if (RespawnPoints != null && RespawnPoints.Count > 0)
+            {
+                var rng = new RandomNumberGenerator(); rng.Randomize();
+                var s = RespawnPoints[rng.RandiRange(0, RespawnPoints.Count - 1)];
+                RotationDegrees = new Vector3(0f, s.yaw, 0f);   // face the spawn's angle, same as the initial spawn
+                return s.pos;
+            }
+            return Spawn;
+        }
 
         // Zombie sensing (AlertTool/PlayerStance): Agro increments once per zombie that starts hunting this
         // player -- it drives their approach path (every 3rd zombie RUSHes, the rest split left/right, so a
@@ -4394,7 +4412,7 @@ namespace UnturnedGodot
             {
                 // P3a: the client-auth MP shell skips this -- the server's recov teleport owns the move to
                 // SpawnPos (a GlobalPosition write would be overwritten by the next state claim).
-                Vector3 target = Bed.TryGetSpawn(PlayerId, out var bedSpawn, out _) ? bedSpawn + Vector3.Up * 0.5f : Spawn;
+                Vector3 target = Bed.TryGetSpawn(PlayerId, out var bedSpawn, out _) ? bedSpawn + Vector3.Up * 0.5f : PickRandomSpawn();   // no claimed bed -> a fresh RANDOM map spawn (strawberry 2026-08-23), not the fixed initial point
                 GlobalPosition = target;
                 // ...and reset the render-interp snapshots, for the reason TeleportTo documents: the next
                 // 50 Hz tick restores GlobalPosition from _interpCurr, which still holds the pre-death spot,

@@ -1434,7 +1434,7 @@ namespace UnturnedGodot
             // invisible in the mode it had just been made to work in. Every peer runs this identically, which
             // is also what lets the ids be world-build order rather than something minted and transmitted.
             if (mode == WorldMode.Playable || mode == WorldMode.Dedicated || mode == WorldMode.Client)
-                SpawnInteractables(root, terr, mapRoot, result);
+                SpawnInteractables(root, terr, mapRoot, result, demoFurniture: false);   // no starter door/bed at the spawn (strawberry 2026-08-23); the no-map dedicated fallback below keeps them for CI door-test coverage
 
             if (mode == WorldMode.Playable)
             {
@@ -1444,9 +1444,16 @@ namespace UnturnedGodot
                 // player spawn: a random regular Spawns/Players.dat point (shared parse, source LevelPlayers.getSpawn).
                 // Falls back to the inland-grass scan if the file's missing/empty.
                 bool gotSpawn = false;
+                System.Collections.Generic.List<(Vector3 pos, float yaw)> respawnPoints = null;   // the FULL regular-spawn list, pre-sampled to ground -> handed to the player so DEATH re-rolls a fresh random spawn (source LevelPlayers.getSpawn on every respawn)
                 {
                     var regs = LevelSpawns.PlayerSpawns(mapRoot);
-                    if (regs.Count > 0) { var pick = regs[new RandomNumberGenerator { Seed = 7 }.RandiRange(0, regs.Count - 1)]; sx = pick.x; sz = pick.z; spawnYaw = pick.yaw; gotSpawn = true; }
+                    if (regs.Count > 0)
+                    {
+                        var rng = new RandomNumberGenerator(); rng.Randomize();   // TRUE random spawn each launch -- was a fixed Seed = 7 (same point every load)
+                        var pick = regs[rng.RandiRange(0, regs.Count - 1)]; sx = pick.x; sz = pick.z; spawnYaw = pick.yaw; gotSpawn = true;
+                        respawnPoints = new System.Collections.Generic.List<(Vector3 pos, float yaw)>(regs.Count);
+                        foreach (var r in regs) respawnPoints.Add((new Vector3(r.x, terr.SampleHeight(r.x, r.z) + 0.5f, r.z), r.yaw));
+                    }
                 }
                 // UG_SPAWNAT=x,z[,yaw] puts the player somewhere specific instead of a random spawn point.
                 // The default spawn is a grass hillside with almost no props in frame, which is the WORST case
@@ -1501,12 +1508,11 @@ namespace UnturnedGodot
                 player.LinkWorldLighting(sun, env);   // FP gun takes the world day/night sun + ambient -- was NEVER called in Drive PEI, so the gun ignored time-of-day (master saw "not applying at all")
                 player.GlobalPosition = new Vector3(sx, terr.SampleHeight(sx, sz) + 3f, sz);
                 player.RotationDegrees = new Vector3(0f, spawnYaw, 0f);   // face the spawn point's angle
-                player.Spawn = player.GlobalPosition;   // respawn on this above-ground point, NOT the default (0,1,0) which is underground on PEI
+                player.Spawn = player.GlobalPosition;   // fallback single spawn (no-map worlds); the real random-spawn set is RespawnPoints below
+                player.RespawnPoints = respawnPoints;   // death re-rolls a random one of these (Unturned respawn behavior); null on fallback worlds -> Respawn uses Spawn
                 if (System.Environment.GetEnvironmentVariable("UG_OOBTEST") == "1") player.GlobalPosition = new Vector3(sx, -2000f, sz);   // test hook: drop below the map -> should trip the OOB kill
                 AttachPlayerShell(root, player, withCropManager: true);   // console/map/HUD/hitmarkers/pause/profiler/attachments -- the C3 shared shell block (same nodes, same order)
-                var jeep = Vehicle.BuildByName("jeep");
-                root.AddChild(jeep);
-                jeep.GlobalPosition = new Vector3(sx + 2.2f, terr.SampleHeight(sx + 2.2f, sz) + 1.5f, sz);
+                // (starter jeep removed 2026-08-23 -- master: no jeep at spawn. The map's OWN Spawns/Vehicles.dat vehicles still spawn via SpawnPeiVehicles below.)
 
                 // ZOMBIE SPAWNS: PEI's REAL zombie spawn points (Spawns/Animals.dat = 1456 points; legacy filename that
                 // LevelZombies reads), region-streamed around the player like Unturned's region loader -- see ZombieField.
@@ -1717,15 +1723,18 @@ namespace UnturnedGodot
         ///
         /// A null <paramref name="terr"/> is the no-map-data fallback world: everything sits on y = 0, which
         /// is where that world's ground plane is.</summary>
-        public static void SpawnInteractables(Node root, Terrain terr, string mapRoot, WorldBuildResult result)
+        public static void SpawnInteractables(Node root, Terrain terr, string mapRoot, WorldBuildResult result, bool demoFurniture = true)
         {
             Bed.ResetForNewWorld();   // a map reload must not inherit the previous level's claims
             var anchor = InteractableAnchor(mapRoot);
             float ax = anchor.X, az = anchor.Z;
             float H(float x, float z) => terr != null ? terr.SampleHeight(x, z) : 0f;
 
-            Door.Spawn(root, new Vector3(ax - 3.0f, H(ax - 3.0f, az + 2.0f), az + 2.0f), 0f, owner: 1UL);
-            Bed.Spawn(root, new Vector3(ax - 5.0f, H(ax - 5.0f, az + 2.0f), az + 2.0f), 90f);
+            if (demoFurniture)   // the standalone starter door + bed at the spawn anchor -- OFF in the real game (strawberry 2026-08-23); kept only for the no-map dedicated/CI fallback so door tests see one
+            {
+                Door.Spawn(root, new Vector3(ax - 3.0f, H(ax - 3.0f, az + 2.0f), az + 2.0f), 0f, owner: 1UL);
+                Bed.Spawn(root, new Vector3(ax - 5.0f, H(ax - 5.0f, az + 2.0f), az + 2.0f), 90f);
+            }
 
             // NO DEMO DEADZONE. There used to be a 60 x 50 x 60 m contaminated volume placed here at
             // anchor + (120, 120) -- added so the radiation-proof clothing already sitting in the item data
@@ -1745,7 +1754,7 @@ namespace UnturnedGodot
             var deadzones = new DeadzoneField();
             root.AddChild(deadzones);
             if (result != null) result.Deadzones = deadzones;
-            GD.Print($"[interactables] door + bed at ({ax:0},{az:0}), {deadzones.VolumeCount} deadzone volumes (demo hazard removed 2026-08-19)");
+            GD.Print($"[interactables] {(demoFurniture ? "door + bed" : "no furniture")} at ({ax:0},{az:0}), {deadzones.VolumeCount} deadzone volumes (demo hazard removed 2026-08-19)");
         }
 
         /// <summary>Where the ported interactables stand, from MAP DATA alone.
