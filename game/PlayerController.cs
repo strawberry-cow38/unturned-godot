@@ -6133,7 +6133,12 @@ namespace UnturnedGodot
         /// `_Grass_Displacement_Point` so the two are recognisably the same thing.</summary>
         static readonly StringName GrassPointParam = "grass_displacement_point";
         static readonly StringName WindParam = "wind_vec";   // xy = wind direction, z = 0..1 strength -- read by the foliage sway shaders (grass/leaves/bushes)
+        static readonly StringName GrassDispTexParam = "grass_displacers";       // data texture: nearest extended displacers, one texel each (xyz = world pos, w = radius)
+        static readonly StringName GrassDispCountParam = "grass_displacer_count"; // how many texels are live this frame (bounds the shader loop)
         static bool _grassPointReady;
+        static Image _dispImg;
+        static ImageTexture _dispTex;
+        static System.Collections.Generic.List<(float d2, Vector3 pos, float r)> _dispScratch;
 
         /// <summary>Push the local player's position to the grass shader, EXACTLY as retail's GrassDisplacement.cs
         /// does: one global vector per frame at (x, y + 0.5, z), w unused.
@@ -6144,20 +6149,52 @@ namespace UnturnedGodot
         /// does not accumulate a list.</summary>
         void UpdateGrassDisplacement()
         {
-            if (!_grassPointReady)
+            if (_dispTex == null)   // first frame in the process -> register the globals + build the data texture, once
             {
-                // Registered at runtime rather than in project settings so the shader works from a fresh clone with
-                // no editor step. Adding an existing global is a no-op, but the guard keeps it off the hot path.
-                if (RenderingServer.GlobalShaderParameterGetList().Contains(GrassPointParam) == false)
-                    RenderingServer.GlobalShaderParameterAdd(GrassPointParam, RenderingServer.GlobalShaderParameterType.Vec4, Variant.From(Vector4.Zero));
-                if (RenderingServer.GlobalShaderParameterGetList().Contains(WindParam) == false)
-                    RenderingServer.GlobalShaderParameterAdd(WindParam, RenderingServer.GlobalShaderParameterType.Vec4, Variant.From(Vector4.Zero));
+                // These globals aren't in project settings (so a fresh clone needs no editor step) -- register them at
+                // runtime. GlobalShaderParameterGetList is EDITOR-ONLY (it prints a runtime perf warning), so DON'T
+                // probe with it: this block runs exactly once (guarded by _dispTex, which is static + survives a scene
+                // reload, and RenderingServer globals persist across reloads too), and nothing else defines these four
+                // names, so a plain Add is clean + warning-free.
+                RenderingServer.GlobalShaderParameterAdd(GrassPointParam, RenderingServer.GlobalShaderParameterType.Vec4, Variant.From(Vector4.Zero));
+                RenderingServer.GlobalShaderParameterAdd(WindParam, RenderingServer.GlobalShaderParameterType.Vec4, Variant.From(Vector4.Zero));
+                RenderingServer.GlobalShaderParameterAdd(GrassDispCountParam, RenderingServer.GlobalShaderParameterType.Int, Variant.From(0));
+                _dispImg = Image.CreateEmpty(GrassDisplacers.Max, 1, false, Image.Format.Rgbaf);   // one texel per displacer; RGBAF holds raw world coords + radius UNCLAMPED
+                _dispTex = ImageTexture.CreateFromImage(_dispImg);
+                RenderingServer.GlobalShaderParameterAdd(GrassDispTexParam, RenderingServer.GlobalShaderParameterType.Sampler2D, Variant.From(_dispTex));
                 _grassPointReady = true;
             }
             var p = GlobalPosition;
+            // RETAIL: the local player, one point at (x, y+0.5, z), w unused -- exactly GrassDisplacement.cs.
             RenderingServer.GlobalShaderParameterSet(GrassPointParam, new Vector4(p.X, p.Y + 0.5f, p.Z, 0f));
             var wd = WindField.WindXZ(p);   // FOLIAGE WIND SWAY: xy = direction, z = strength at the player (a representative gust for the whole view)
             RenderingServer.GlobalShaderParameterSet(WindParam, new Vector4(wd.X, wd.Y, WindField.SampleWind(p), 0f));
+
+            // EXTENDED DISPLACERS (master): gather the grass_displacer group (vehicles, dropped items, remote players)
+            // within grass render range, keep the nearest Max to the camera, and pack (world pos + radius) into the
+            // data texture. Grass renders only within ~160m (FoliageField CullRange), so anything past it is skipped.
+            _dispScratch ??= new System.Collections.Generic.List<(float, Vector3, float)>();
+            _dispScratch.Clear();
+            const float range = 5f * 32f;                 // = FoliageField CullRange (retail's ULTRA foliage draw distance)
+            float range2 = range * range;
+            foreach (var node in GetTree().GetNodesInGroup(GrassDisplacers.Group))
+            {
+                if (node is not Node3D n3 || !n3.IsInsideTree()) continue;
+                var gp = n3.GlobalPosition;
+                float dx = gp.X - p.X, dz = gp.Z - p.Z;
+                float d2 = dx * dx + dz * dz;
+                if (d2 > range2) continue;                // out of grass render range -> displaces nothing visible
+                _dispScratch.Add((d2, gp, GrassDisplacers.RadiusOf(n3)));
+            }
+            _dispScratch.Sort(static (a, b) => a.d2.CompareTo(b.d2));   // nearest first -> the Max that survive are the ones the player can actually see
+            int cnt = System.Math.Min(_dispScratch.Count, GrassDisplacers.Max);
+            for (int i = 0; i < cnt; i++)
+            {
+                var e = _dispScratch[i];
+                _dispImg.SetPixel(i, 0, new Color(e.pos.X, e.pos.Y, e.pos.Z, e.r));   // stale tail texels beyond cnt are never read (loop is count-bounded)
+            }
+            _dispTex.Update(_dispImg);   // re-upload the mutated texels; the global sampler still points at this same RID
+            RenderingServer.GlobalShaderParameterSet(GrassDispCountParam, cnt);
         }
 
         public override void _Process(double delta)

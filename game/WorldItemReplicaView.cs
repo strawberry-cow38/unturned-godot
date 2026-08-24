@@ -51,6 +51,7 @@ namespace UnturnedGodot
                     node.GlobalPosition = target;
                     node.ResetPhysicsInterpolation();   // don't smear from (0,0,0) to the spawn point (the WorldItem.Spawn lesson)
                     _nodes[e.NetIdValue] = node;
+                    GrassDisplacers.Register(node, GrassDisplacers.ItemRadius);   // master: a dropped item dimples the grass it rests in (this puppet is the visible copy on a client/host)
                 }
                 if (node.GlobalPosition != target) node.GlobalPosition = target;   // the settle event moves it once; snapshots correct it
             }

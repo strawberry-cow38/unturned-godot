@@ -6660,6 +6660,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
         public override void _Ready()
         {
             base._Ready();
+            GrassDisplacers.Register(this, GrassDisplacers.VehicleRadius);   // master: a driven vehicle flattens grass in a wide swath under + around it
             if (_decomposeMesh == null || ForceBoxHull) return;
             if (!_decomposeCache.TryGetValue(_decomposeKey, out var shapes))
             {

@@ -62,7 +62,7 @@ namespace UnturnedGodot
         System.Collections.Generic.List<(MeshInstance3D body, MeshInstance3D bf, MeshInstance3D bb, float off)> _trUnits;
         float _trS, _trRailY = 1.4f; bool _trAnim;
         readonly System.Collections.Generic.List<(Node3D mark, Vehicle veh, Vector3 local)> _pivotMarks = new();   // --pivots: arrow markers pinned to each coupling point
-        bool _driveTest, _swarm, _drivethru, _nade; PlayerController _dtPlayer;      // --drivetest=DIR [--swarm|--drivethru|--nade] : enter/drive a jeep; swarm = mob it; drivethru = loud drive wakes zombies; nade = grenade the parked car
+        bool _driveTest, _swarm, _drivethru, _nade, _grassTest; PlayerController _dtPlayer;      // --drivetest=DIR [--swarm|--drivethru|--nade] : enter/drive a jeep; swarm = mob it; drivethru = loud drive wakes zombies; nade = grenade the parked car. _grassTest (UG_GRASSTEST=1): a lawn + overhead cam, jeep stays parked -> verify grass displacement
         bool _fireTest; PlayerController _ftPlayer; int _ftFrame;   // --firetest [--supp] : player fires near a distant zombie -> gunshot alert (suppressed = none)
         bool _peiPlay; PlayerController _peiPlayer; int _peiFrame; bool _peiHorde;   // --peiplay [--horde] : drive a jeep on real PEI (--horde = a zombie horde swarms it, vehicle<->zombie loop on real ground)
         int _tpFrame; double _tpPrims, _tpDraws, _tpMs; int _tpN;   // --- UG_TERRPERF terrain cost probe
@@ -1543,6 +1543,37 @@ namespace UnturnedGodot
             ground.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
             AddChild(ground);
 
+            // GRASS-DISPLACEMENT VERIFICATION (master, opt-in UG_GRASSTEST=1): carpet the drive lane with the REAL grass
+            // billboard on the grass_displace material, so the auto-driving jeep + the on-foot player visibly flatten it
+            // -- the chase cam frames the swath. Proves the whole pipeline at once: shader parse, the C# displacer
+            // texture, retail's player point, AND the vehicle texture path. No collider (visual only), so it can't
+            // affect the physics this harness exists to check. Off by default -> a normal --drivetest is unchanged.
+            if (System.Environment.GetEnvironmentVariable("UG_GRASSTEST") == "1")
+            {
+                _grassTest = true;
+                string fdir = ProjectSettings.GlobalizePath("res://content/foliage/");
+                var gblade = ObjMesh.Load(fdir + "grass_00.obj");
+                if (gblade != null)
+                {
+                    var gsMat = new ShaderMaterial { Shader = GD.Load<Shader>("res://content/grass_displace.gdshader") };
+                    var gimg = new Image();
+                    if (gimg.Load(fdir + "grass_00_tex.png") == Error.Ok) { gimg.GenerateMipmaps(); gsMat.SetShaderParameter("albedo_tex", ImageTexture.CreateFromImage(gimg)); }
+                    const int side = 110; const float spacing = 0.6f;   // 110x110 blades ~0.6m apart -> a dense ~66m lawn over the whole drive path
+                    var gmm = new MultiMesh { Mesh = gblade, TransformFormat = MultiMesh.TransformFormatEnum.Transform3D, InstanceCount = side * side };
+                    int gi = 0;
+                    for (int gx = 0; gx < side; gx++)
+                        for (int gz = 0; gz < side; gz++)
+                        {
+                            // deterministic jitter + yaw from the indices (no Math.random in a harness -> repeatable frames)
+                            float jx = ((gx * 7 + gz * 13) % 11) * 0.03f, jz = ((gx * 11 + gz * 5) % 11) * 0.03f;
+                            float yaw = ((gx * 37 + gz * 101) % 360) * Mathf.Pi / 180f;
+                            var t = new Transform3D(new Basis(Vector3.Up, yaw).Scaled(Vector3.One * 1.4f), new Vector3((gx - side / 2) * spacing + jx, 0f, (gz - side / 2) * spacing + jz));   // slightly taller tufts so a flattened patch reads at a low angle without occluding
+                            gmm.SetInstanceTransform(gi++, t);
+                        }
+                    AddChild(new MultiMeshInstance3D { Multimesh = gmm, MaterialOverride = gsMat, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off });
+                }
+            }
+
             var jeep = Vehicle.BuildByName("jeep");
             jeep.GlobalPosition = new Vector3(3f, 1.2f, 0f);
             jeep.AddToGroup("vehicles");
@@ -1552,6 +1583,15 @@ namespace UnturnedGodot
             _dtPlayer.LoadGun("res://content/eaglefire.dat");
             AddChild(_dtPlayer);
             _dtPlayer.GlobalPosition = new Vector3(0.8f, 1.0f, 0f);   // right beside the jeep (within enter range)
+
+            if (_grassTest)   // park the player well clear of the jeep so BOTH flattened patches show separately: the player's
+            {                 // retail point (small) AND the jeep's texture-path ring (wide). Frame both from a 3/4 overhead cam,
+                _dtPlayer.GlobalPosition = new Vector3(-5.5f, 1f, 0f);   // created AFTER the player so its Current wins (player cam is made Current once at build, never re-asserted).
+                var gcam = new Camera3D { Fov = 60f, Current = true };   // LOW 3/4 sweep across the lawn (not overhead -- tall grass occludes from above; a low angle shows the parting against the blade silhouette)
+                AddChild(gcam);
+                gcam.GlobalPosition = new Vector3(-9f, 4f, 5.5f);
+                gcam.LookAt(new Vector3(-1f, 0.4f, 0f), Vector3.Up);
+            }
 
             if (_swarm)   // zombies lock onto the on-foot player, then keep hunting as he enters the car + swipe it (source targetPassengerVehicle) -> health drops -> smoke -> explode
             {
@@ -7545,8 +7585,8 @@ namespace UnturnedGodot
                 }
                 if (_driveTest && _dtPlayer != null)
                 {
-                    if (_frame == 25 && !_nade) _dtPlayer.EnterNearestVehicle();                          // hop in (skip for --nade: keep the jeep parked to grenade it)
-                    if (_frame >= 30) _dtPlayer.ScriptedDrive = _swarm ? Vector2.Zero : _drivethru ? new Vector2(0f, 1f) : new Vector2(_frame > 130 ? 0.5f : 0f, 1f);  // swarm: sit still; drivethru: straight full-throttle; else forward then curve
+                    if (_frame == 25 && !_nade && !_grassTest) _dtPlayer.EnterNearestVehicle();             // hop in (skip for --nade: keep the jeep parked to grenade it; grasstest: keep it parked on the lawn)
+                    if (_frame >= 30 && !_grassTest) _dtPlayer.ScriptedDrive = _swarm ? Vector2.Zero : _drivethru ? new Vector2(0f, 1f) : new Vector2(_frame > 130 ? 0.5f : 0f, 1f);  // swarm: sit still; drivethru: straight full-throttle; else forward then curve
                 }
                 if (_rigList.Length > 1)   // montage: switch clip every window
                 {
