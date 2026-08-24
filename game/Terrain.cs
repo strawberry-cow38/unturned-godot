@@ -542,10 +542,21 @@ void fragment() {
         /// circle -- so geometry stopping at the cut radius would still leave a ragged gap. Overshooting into
         /// intact terrain is free because the rim sits ON the terrain surface.</summary>
         const float RiverRimOvershoot = 2f * QuadHalfDiag;
-        /// <summary>The rim is dropped this far below the sampled terrain height. Where the terrain is gone
-        /// the apron IS the surface; where it survives, the apron tucks just underneath instead of sitting
-        /// coplanar with it, which would z-fight along the whole length of every river.</summary>
-        const float RiverRimSink = 0.02f;
+        /// <summary>The shelf's outer rim is dropped this far below terrain, so the very edge tucks under
+        /// intact ground rather than z-fighting it.</summary>
+        const float RiverRimSink = 0.005f;
+        /// <summary>...and the INBOARD end of the shelf is lifted this far ABOVE it.
+        ///
+        /// strawberry: "the terrain edges are really rough around the apron." The shelf and the surviving
+        /// terrain overlap in a band, because the hole boundary is stair-stepped at cell resolution while the
+        /// shelf is a smooth offset strip. With the whole shelf sunk below terrain, the TERRAIN won the depth
+        /// test everywhere they overlapped -- so the visible edge was its zigzag, cell by cell, which is
+        /// exactly the roughness. Lifting the inboard end makes the shelf win across the ragged band and hides
+        /// it, while the rim still tucks under: the visible boundary becomes the shelf's own smooth curve.
+        ///
+        /// The crossover lands around 92% of the way out, beyond the farthest stair-step (measured 12.65 m
+        /// against a 13.66 m rim at half-width 8), so the ragged edge is always on the covered side of it.</summary>
+        const float RiverShelfLift = 0.06f;
 
         /// <summary>Cut and bed a river along a whole polyline in ONE pass.
         ///
@@ -719,6 +730,10 @@ void fragment() {
                 float orx = c.X + r.X * outer, orz = c.Z + r.Z * outer;
                 ol[i] = new Vector3(olx, SampleHeight(olx, olz) - RiverRimSink, olz);
                 or[i] = new Vector3(orx, SampleHeight(orx, orz) - RiverRimSink, orz);
+                // Lift the shelf where it meets the BANK so it wins the depth test across the stair-stepped
+                // band; the rim above stays sunk, so the two ends blend rather than fight. See RiverShelfLift.
+                wl[i].Y += RiverShelfLift;
+                wr[i].Y += RiverShelfLift;
             }
 
             void Quad(Vector3 a, Vector3 b, Vector3 c2, Vector3 e)
