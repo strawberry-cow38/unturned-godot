@@ -81,6 +81,7 @@ namespace UnturnedGodot
                 string holiday = sp.Length >= 3 ? sp[2] : "NONE";   // Cane_00(candy cane)/Snow_Pile_00/Ornament_XMAS are CHRISTMAS-only
                 if (holiday != "NONE" && holiday != activeHoliday) continue;   // out-of-season resource (same gate as the objects)
                 bool isTree = name.StartsWith("Birch") || name.StartsWith("Maple") || name.StartsWith("Pine");   // only trees cast shadows
+                bool isOre = name.StartsWith("Metal");   // metal ore rocks -> pickaxe-harvestable (master)
                 string binPath = dir + name + ".bin";
                 if (!File.Exists(binPath)) continue;
                 var xf = ReadInstances(binPath);
@@ -128,6 +129,27 @@ namespace UnturnedGodot
                         recs[k].Trunk = body;
                         recs[k].TrunkLayer = body.CollisionLayer;
                         treeCols++;
+                    }
+                }
+                else if (isOre)   // metal ore rocks: a solid collider + OreRock harvest body (pickaxe -> Metal Scrap), master
+                {
+                    int baseIdx = _instances.Count - xf.Count;
+                    for (int k = 0; k < xf.Count; k++)
+                    {
+                        var t = xf[k];
+                        Vector3 sc = t.Basis.Scale;
+                        float sr = Mathf.Max(Mathf.Abs(sc.X), Mathf.Abs(sc.Z)), sh = Mathf.Abs(sc.Y);
+                        var body = new OreRock { Field = this, Index = baseIdx + k, CollisionLayer = 1u << 0, Transform = new Transform3D(t.Basis.Orthonormalized(), t.Origin) };
+                        body.SetMeta(PlayerController.SurfMeta, (int)PlayerController.Surf.Metal);   // pickaxe/bullet hits read as metal
+                        body.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = new Vector3(2.6f * sr, 2.4f * sh, 2.6f * sr) }, Position = new Vector3(0f, 1.1f * sh, 0f) });
+                        AddChild(body);
+                        body.AddToGroup(ColliderBudget.Group);   // stream the collider like the tree trunks + props
+                        {
+                            float ocull = LodTable.ResourceCull(name, LodTable.SourceFov);
+                            body.SetMeta(ColliderBudget.RadiusMeta, ocull > 0f ? ocull : 180f);
+                        }
+                        recs[k].Trunk = body;         // reuse the instance's collider slot -> SetAlive toggles it on deplete/regrow
+                        recs[k].TrunkLayer = body.CollisionLayer;
                     }
                 }
                 if (VisualInstances)
@@ -574,6 +596,61 @@ namespace UnturnedGodot
             Health = _maxHealth;
             Felled = false;
             Field?.SetAlive(Index, true);   // restores the MultiMesh slot + the trunk's collision layer
+        }
+    }
+
+    // A metal-ore ROCK's harvest collider (master 2026-08-24: "break em w a pickaxe, drops scrap"). Mirrors TreeTrunk
+    // but for the Metal_* resources: a PICKAXE swing (PlayerController gates the tool) drains Health; at 0 the node
+    // depletes (SetAlive false), drops Metal Scrap, and regrows after a reset -- retail ResourceManager.damage path.
+    // ⚠ Health/reward/reset are tunable defaults; the retail Metal ResourceAsset .dat isn't on the box (same as trees).
+    public partial class OreRock : StaticBody3D
+    {
+        public ResourceField Field;
+        public int Index;
+        public float Health = 500f;         // ~5 pickaxe hits at Resource_Damage 100 (tunable -- no retail Metal .dat on hand)
+        public float Reset = 600f;          // respawn seconds
+        public int RewardMin = 2, RewardMax = 4;
+        const ushort ScrapItem = 67;        // Metal Scrap
+        public bool Mined { get; private set; }
+        float _maxHealth;
+
+        public override void _Ready() => _maxHealth = Health;
+
+        // Pickaxe damage (PlayerController gates the tool); depletes the node at 0 -> drops scrap + regrows.
+        public void Mine(float amount, Vector3 point, Vector3 dir)
+        {
+            if (Mined) return;
+            Health -= amount;
+            if (Health > 0f) return;
+            Mined = true;
+            Field?.SetAlive(Index, false);   // zero-scale the rock out of its MultiMesh + drop the collider to layer 0
+            DropScrap();
+            GetTree().CreateTimer(Reset).Timeout += Regrow;
+            GD.Print($"[ore] mined #{Index}");
+        }
+
+        // Reward_Min..Max Metal Scrap scattered round the node, deterministic per node so peers agree without a wire
+        // (SP is MP); item spawning adapted to WorldItem.Spawn (as the trees do).
+        void DropScrap()
+        {
+            var parent = GetParent() ?? (Node)this;
+            Vector3 basePos = GlobalTransform.Origin;
+            uint h = (uint)Index * 2654435761u; h ^= h >> 15;
+            int n = RewardMin + (int)(h % (uint)Mathf.Max(1, RewardMax - RewardMin + 1));
+            for (int i = 0; i < n; i++)
+            {
+                uint hi = h + (uint)(i + 1) * 2246822519u; hi ^= hi >> 13;
+                float ang = (hi >> 7) % 628u / 100f, rad = 0.4f + ((hi >> 3) % 100u) / 100f;   // scatter ~0.4-1.4 m
+                WorldItem.Spawn(parent, new SDG.Unturned.Item(ScrapItem), basePos + new Vector3(Mathf.Cos(ang) * rad, 0.8f, Mathf.Sin(ang) * rad));
+            }
+        }
+
+        void Regrow()
+        {
+            if (!IsInstanceValid(this)) return;
+            Health = _maxHealth;
+            Mined = false;
+            Field?.SetAlive(Index, true);   // restores the MultiMesh slot + the collider's layer
         }
     }
 }

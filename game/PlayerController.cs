@@ -166,12 +166,20 @@ namespace UnturnedGodot
             rq.Exclude = new Godot.Collections.Array<Rid> { GetRid() };
             var hit = space.IntersectRay(rq);
             if (hit.Count == 0) return false;
-            if (hit["collider"].As<GodotObject>() is TreeTrunk tt && !tt.Felled)
+            var col = hit["collider"].As<GodotObject>();
+            if (col is TreeTrunk tt && !tt.Felled)
             {
                 var pt = (Vector3)hit["position"];
                 tt.Chop(amount, pt, fwd);
                 MeleeImpactFx(pt, false, Surf.Wood);
                 GD.Print($"[melee] chopped tree for {amount:0}");
+                return true;
+            }
+            if (col is OreRock ore && !ore.Mined)   // metal ore: only a PICKAXE (axe_pick) mines it -> Metal Scrap; other tools just clink
+            {
+                var pt = (Vector3)hit["position"];
+                if (_heldMeleeName == "axe_pick") { float md = _melee?.ResourceDamage ?? amount; ore.Mine(md, pt, fwd); GD.Print($"[melee] mined ore for {md:0}"); }   // _heldItem is null for a melee; resources take Resource_Damage (pickaxe=100), not Zombie_Damage(34)
+                MeleeImpactFx(pt, false, Surf.Metal);   // metal clink either way (feedback that you need a pickaxe)
                 return true;
             }
             return false;
