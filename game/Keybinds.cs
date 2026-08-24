@@ -222,7 +222,17 @@ namespace UnturnedGodot
                 var cfg = new ConfigFile();
                 foreach (var kv in Current)
                     cfg.SetValue("binds", kv.Key.ToString(), kv.Value.Serialize());
-                cfg.Save(ConfigPath);
+
+                // Temp-and-rename, matching StructureManager's save (game/StructureManager.cs:569-575). A plain
+                // cfg.Save(ConfigPath) truncates the file in place before a byte lands; a crash or power loss
+                // mid-write leaves ConfigFile a partial document, and Load() (below) treats ANY parse error as
+                // "no valid config" and falls back to pure defaults -- so a torn write costs the player all 36
+                // customised bindings, not just the one they were making when the machine went down.
+                string tmp = ConfigPath + ".tmp";
+                var err = cfg.Save(tmp);
+                if (err != Error.Ok) { GD.PushWarning($"[keybinds] save (tmp) failed: {err}"); return; }
+                err = DirAccess.RenameAbsolute(ProjectSettings.GlobalizePath(tmp), ProjectSettings.GlobalizePath(ConfigPath));
+                if (err != Error.Ok) GD.PushWarning($"[keybinds] save rename failed: {err}");
             }
             catch (System.Exception e) { GD.PushWarning($"[keybinds] could not save: {e.Message}"); }
         }
