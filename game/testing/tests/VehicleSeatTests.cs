@@ -164,6 +164,14 @@ namespace UnturnedGodot.Testing
             // Third person, or there is no seated body to place -- the placement branch early-returns in FP,
             // which had this check reading a body still parked at the world origin.
             p.DriveFP = false;
+            // STOP THE CAR before reading a seat position. The throttle set at the top of this test is never
+            // cleared, so by here the car has had 130 ticks of it -- and this used to be hidden because
+            // switching out of the driver's seat called Park(), which braked. Exit and seat-change keep momentum
+            // now (strawberry_cow 2026-08-24), so the car coasts and the body's local position reads offset
+            // against the interpolated transform. The test was depending on a brake it never asked for; it now
+            // stops the car itself, the same way it already does twice above.
+            p.ScriptedDrive = null;
+            car.LinearVelocity = Vector3.Zero; car.AngularVelocity = Vector3.Zero;
             T.Check("F2 again for the body check", p.TrySwitchSeat(1) && p.SeatIndex == 1);
             yield return Ticks(6);
             var seated1 = p.DebugSeatedBodyLocal;

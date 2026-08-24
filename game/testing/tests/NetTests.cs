@@ -884,8 +884,16 @@ namespace UnturnedGodot.Testing
             float frozenToCar = serverCarPos.DistanceTo(new Vector3(frozenRepPos.x, frozenRepPos.y, frozenRepPos.z));
             T.Check($"the frozen replica really is far from the server car at exit time ({frozenToCar:0.0} m) -- the assert below discriminates",
                     frozenToCar > 10f);
+            // RELATIVE, not an absolute 3.5 m. This callback fires when the exited fact clears the blackout
+            // wall, which is deliberately LATE -- and exit keeps the car's momentum now (strawberry_cow
+            // 2026-08-24), so the car has coasted between the teleport and this sample. The old absolute
+            // threshold was therefore measuring the exit park, not the thing named in the check.
+            //
+            // What this test is actually about is WHICH reference the server teleported the player to: the real
+            // car or the stale frozen replica. That is a comparison, and it survives the car moving. The
+            // frozenToCar > 10 m precondition above is what makes it discriminate.
             T.Check($"EXIT LANDS BESIDE THE SERVER CAR, not the frozen replica (to car {exitToCar:0.00} m, to frozen replica {exitToFrozen:0.0} m, evt spot ({evtPos.x:0.0},{evtPos.y:0.0},{evtPos.z:0.0}))",
-                    exitToCar < 3.5f);
+                    exitToCar < exitToFrozen * 0.5f);
 
             // stream recovery intact: the resumed walk/reconcile loop re-converges the shell onto its
             // server entity. (Deliberately NOT asserting WHERE they converge: the entity is written back
@@ -3237,8 +3245,26 @@ namespace UnturnedGodot.Testing
             T.Check($"...seeded with the last adopted velocity (peak freed v {maxFreedV:0.0} m/s -- not a dead stop)", maxFreedV > 2f);
             var exitSpot = jeep.GlobalPosition;
             yield return Ticks(200);
-            T.Check($"...then SETTLED under real physics + the SP exit park (v {jeep.LinearVelocity.Length():0.00} m/s)",
-                    jeep.LinearVelocity.Length() < 1f);
+            // Exit KEEPS MOMENTUM now (strawberry_cow 2026-08-24), so this can no longer expect a dead stop --
+            // the old assertion said "the SP exit park" in its own text, i.e. it was measuring the brake rather
+            // than the handoff this test is named for. Assert the real subject instead: authority came back and
+            // physics owns the car, so it is slowing under drag rather than still being driven.
+            T.Check($"...then coasting under real physics, no longer driven (v {jeep.LinearVelocity.Length():0.00} m/s, handed off at {maxFreedV:0.0})",
+                    jeep.LinearVelocity.Length() < maxFreedV);
+            // Park the CAR for the re-enter phase below, which needs it in walk-up range -- a coasting jeep
+            // leaves. Stopping the car rather than teleporting the shell on purpose: this test's own comments
+            // note the reconcile loop re-converges the shell onto its server entity, so a client-side shell
+            // teleport gets undone and the walk-up never comes back into range.
+            // Bring the car BACK to the shell for the re-enter phase. Stopping it was not enough: it coasted
+            // for the whole 200-tick settle above before I stopped it, so it halts tens of metres away and
+            // RequestEnterNearestPuppet (walk-up range) never succeeds -- that Until timing out IS this test's
+            // failure. Moving the CAR rather than the shell on purpose: this test's own comments note the
+            // reconcile loop re-converges the shell onto its server entity, so a client-side shell teleport is
+            // undone within a few ticks.
+            jeep.LinearVelocity = Vector3.Zero; jeep.AngularVelocity = Vector3.Zero;
+            jeep.GlobalPosition = sess.Shell.GlobalPosition + new Vector3(2.5f, 0.6f, 0f);
+            jeep.Park();
+            yield return Ticks(20);
             T.Check("the shell stands beside the car, back on the walk plane", sess.Shell.Visible && !sess.Shell.IsDriving
                     && sess.Shell.GlobalPosition.DistanceTo(exitSpot) < 12f);
 
@@ -3254,9 +3280,18 @@ namespace UnturnedGodot.Testing
             bool freed = ded.Server.Vehicles.TryGet(netId, out var fe) && fe.DriverPlayerId == 0;
             T.Check("DISCONNECT freed the seat (OnPeerDisconnected -> ServerExit)", freed);
             T.Check("...and released the hold -- the node is the server's again", !jeep.NetHeld && !jeep.Freeze);
-            yield return Until(() => jeep.LinearVelocity.Length() < 0.8f, 8);
-            T.Check($"the abandoned car settled under server physics (v {jeep.LinearVelocity.Length():0.00} m/s)",
-                    jeep.LinearVelocity.Length() < 0.8f);
+            // An abandoned car no longer brakes itself (strawberry_cow 2026-08-24: exit keeps momentum), so
+            // waiting for a dead stop hangs -- a coasting jeep does not reach 0.8 m/s inside 8 s, and that Until
+            // timing out was this test's failure. It was measuring the exit park; the subject here is that the
+            // SERVER took the car back after a disconnect.
+            //
+            // So measure that instead: sample, let physics run, sample again. Decelerating means server-side
+            // drag owns it. A car still being driven by a departed client would hold or gain speed.
+            float abandonedV0 = jeep.LinearVelocity.Length();
+            yield return Ticks(120);
+            float abandonedV1 = jeep.LinearVelocity.Length();
+            T.Check($"the abandoned car is slowing under server physics, not still driven ({abandonedV0:0.00} -> {abandonedV1:0.00} m/s)",
+                    abandonedV1 < abandonedV0 || abandonedV1 < 0.8f);
 
             world.Sim.Sim.Remove(pump);
         }
