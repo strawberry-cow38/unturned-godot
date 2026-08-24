@@ -480,7 +480,22 @@ namespace UnturnedGodot.Testing
             // the observer's world converged through all the churn -- exact parity, never a tolerance (§6)
             yield return Ticks(30);
             T.Check("observer players replica == server (StateHash parity)", observer.Players.StateHash() == ded.Server.Players.StateHash());
-            T.Check("observer vehicles replica == server (StateHash parity)", observer.Vehicles.StateHash() == ded.Server.Vehicles.StateHash());
+
+            // WAIT FOR CONVERGENCE rather than sampling at an arbitrary instant.
+            //
+            // This asserted equality immediately after Ticks(30) and started failing when vehicles stopped
+            // being auto-braked on exit (strawberry: "when exiting a vehicle, keep its momentum, dont apply any
+            // brakes"). Diagnosed by dumping both sides: EVERY field matched except pos.z, by 0.0039 -- exactly
+            // one quantisation step -- with lin.z still -0.2031. The jeep is simply still rolling, so the
+            // replica trails the server by the one snapshot it has not received yet.
+            //
+            // That is the replication working, sampled at the wrong moment. The invariant worth asserting was
+            // never "equal at tick N" -- a moving object makes that a coin flip -- it is "the replica CONVERGES
+            // on the server". Waiting for it is also not a weaker check: it is still exact equality, never a
+            // tolerance, and if replication is actually broken they never converge and this times out and fails.
+            yield return Until(() => observer.Vehicles.StateHash() == ded.Server.Vehicles.StateHash(), 5);
+            T.Check("observer vehicles replica converges on the server (exact StateHash parity)",
+                    observer.Vehicles.StateHash() == ded.Server.Vehicles.StateHash());
 
             // Phase 8 world clock (§3.7): synced through the churn, same tick -> same derived time-of-day
             T.Check("world clock synced to the observer", observer.Clock.HasClock);

@@ -332,6 +332,24 @@ namespace UnturnedGodot.Net
             }
         }
 
+        /// <summary>Per-entity field dump, so a StateHash mismatch can name the field that actually differs
+        /// instead of only saying "not equal". Written as a throwaway while chasing net.dropin_dropout and kept
+        /// because it earned it: the whole diagnosis was one line of this output (a 0.0039 position delta --
+        /// exactly one quantisation step -- against every other field matching).</summary>
+        public string DebugDump()
+        {
+            var sb = new System.Text.StringBuilder();
+            foreach (uint id in SortedIds())
+            {
+                _vehicles.TryGet(new NetId(id), out var e);
+                sb.Append($"id={id} type={e.TypeId} var={e.Variant} drv={e.DriverPlayerId} ")
+                  .Append($"pos=({e.Pos.x:F4},{e.Pos.y:F4},{e.Pos.z:F4}) yaw={e.YawDegrees:F4} pit={e.PitchDegrees:F4} rol={e.RollDegrees:F4} ")
+                  .Append($"lin=({e.LinVel.x:F4},{e.LinVel.y:F4},{e.LinVel.z:F4}) ang=({e.AngVel.x:F4},{e.AngVel.y:F4},{e.AngVel.z:F4}) ")
+                  .Append($"steer={e.SteerDegrees:F4} fuel={e.Fuel:F4} hp={e.Health:F4} bat={e.Battery:F4} flags={e.Flags}\n");
+            }
+            return sb.ToString();
+        }
+
         public ulong StateHash()
         {
             ulong h = NetHash.FnvOffset;
