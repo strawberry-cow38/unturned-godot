@@ -27,5 +27,20 @@ namespace UnturnedGodot
             float n = Noise().GetNoise2D(worldPos.X + t * DriftX, worldPos.Z + t * DriftZ);   // -1..1
             return Mathf.Clamp(0.5f + 0.65f * n, 0f, 1f);                                      // -> 0..1, slightly gusty
         }
+
+        public static float? TestAngle;   // L1: force a fixed wind bearing (null = live)
+        // Which way the wind BLOWS, as a bearing in radians in the world XZ plane. The prevailing direction is the
+        // gust-drift bearing; a per-region noise offset (so distant flags differ) + a slow global swing make it shift.
+        public static float WindAngle(Vector3 worldPos)
+        {
+            if (TestAngle.HasValue) return TestAngle.Value;
+            float t = (float)(Time.GetTicksMsec() / 1000.0);
+            float baseAng = Mathf.Atan2(DriftZ, DriftX);                                        // prevailing bearing
+            float region = Noise().GetNoise2D(worldPos.X * 0.5f + 5000f, worldPos.Z * 0.5f + 5000f);   // -1..1, decorrelated from strength
+            return baseAng + region * 0.8f + 0.3f * Mathf.Sin(t * 0.06f);                       // ±~46 deg region swing + a slow global drift
+        }
+
+        // Unit XZ vector the wind blows TOWARD (a flag streams this way from its pole).
+        public static Vector2 WindXZ(Vector3 worldPos) { float a = WindAngle(worldPos); return new Vector2(Mathf.Cos(a), Mathf.Sin(a)); }
     }
 }

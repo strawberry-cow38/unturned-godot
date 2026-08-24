@@ -675,6 +675,18 @@ namespace UnturnedGodot
                         root.AddChild(lensMi);
                     }
                 }
+                // FLAG (master 2026-08-24): split the cloth off the pole -> the pole stays the main mesh, the cloth
+                // becomes a FlagCloth that ripples with the wind + swivels round the pole to face it. Cloth = every
+                // triangle reaching above the pole beam (local Y > 0.5); the pole beam sits at Y +/-0.1.
+                if (name.StartsWith("Flag_") && mode != WorldMode.Dedicated)
+                {
+                    var (poleMesh, clothMesh) = ObjMesh.SplitByFaceVerts(visMesh, (a, b, c) => a.Y > 0.5f || b.Y > 0.5f || c.Y > 0.5f);
+                    if (poleMesh != null && clothMesh != null)
+                    {
+                        visMesh = poleMesh;   // the pole stays as the prop's main (rendered + destructible) mesh
+                        FlagCloth.Attach(root, clothMesh, (MatFor(matName) as StandardMaterial3D)?.AlbedoTexture, basis, gpos, cull);
+                    }
+                }
                 // THE STUMP (strawberry): "fully destroying a streetlight should leave the base piece where it
                 // once stood". Breaking a prop hides every mesh in `mis`, so the whole fixture used to vanish off
                 // the pavement. The plinth is a closed box in the model (local Z -1.0..+1.0, half of it buried),

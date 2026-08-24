@@ -79,7 +79,7 @@ namespace UnturnedGodot
             (new Vector3(150f, 72f, -700f),  new Vector3(247f, 88f, -793f), "lighthouse_sw"),     // ~135m from the SW
             (new Vector3(247f, 160f, -380f), new Vector3(247f, 82f, -793f), "lighthouse_420"),    // ~420m -- carries with the fix
             (new Vector3(247f, 220f, -30f),  new Vector3(247f, 78f, -793f), "lighthouse_780"),    // ~780m across the map
-            (new Vector3(-242f, 110f, -200f),new Vector3(-242f, 45f, -313f), "fernwood_roads"),    // Fernwood Farm WORLD (-242,-313): check road thickness + the bald patch
+            (new Vector3(-439f, 47f, -621f), new Vector3(-449f, 46f, -631f), "flag_canadian"),      // Flag_Canadian WORLD (-449,36,-630): CLOSE on the cloth (~15m) -- split/ripple/facing
         };
         bool _navShot;   // --navshot: nav-debug verify screenshot (waits for load + navmesh overlay + zombie cones)
         bool _navPathTest;   // --navpathtest: after a few frames (nav synced), query the navmesh + report routing
