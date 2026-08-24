@@ -132,6 +132,24 @@ namespace UnturnedGodot.Testing
             terr.LoadHoles(path);
             T.Check("loading a missing holes file is not an error, just no holes", terr.HoleCount == 0);
 
+            // THE PATH A MAP ACTUALLY TAKES. Nothing calls SaveHoles/LoadHoles directly -- the editor saves a
+            // heightmap and the game loads one, and holes ride along. Testing only the pair above would leave
+            // the wiring untested, which is exactly how a dug map comes back filled in with every direct test
+            // still green.
+            string hm = "/tmp/ug_holetest/heights.bin";
+            foreach (var (x, y) in dug) terr.SetHole(x, y, true);
+            terr.SaveHeightmap(hm);
+            T.Check("SaveHeightmap wrote the holes beside it", System.IO.File.Exists(hm + ".holes"));
+
+            foreach (var (x, y) in dug) terr.SetHole(x, y, false);   // wipe them in memory ...
+            T.Check("holes cleared in memory before the reload", terr.HoleCount == 0);
+            T.Check("LoadHeightmap brings the holes back", terr.LoadHeightmap(hm) && terr.HoleCount == dug.Count);
+
+            // And the reverse: a heightmap with NO holes file must not leave the previous map's holes standing.
+            System.IO.File.Delete(hm + ".holes");
+            T.Check("a heightmap with no holes file loads as solid",
+                    terr.LoadHeightmap(hm) && terr.HoleCount == 0);
+
             yield break;
         }
     }

@@ -16,7 +16,10 @@ namespace UnturnedGodot
         const uint TerrainLayer = 1u << 0;
         Node3D _ring, _rampMarker;
         float _radius = 28f, _strength = 20f;
-        public enum EBrush { Raise, Lower, Flatten, Smooth, Ramp }   // source Devkit heightmap modes (ADJUST±/FLATTEN/SMOOTH/RAMP)
+        // Dig/Fill are ours, not Devkit's: retail cuts holes with placed hole VOLUMES rather than a brush, but a
+        // volume needs a gizmo, a transform and a persisted object list, and the brush is the same interaction the
+        // rest of this editor already uses. The stored result is identical either way -- a per-quad mask.
+        public enum EBrush { Raise, Lower, Flatten, Smooth, Ramp, Dig, Fill }   // source Devkit heightmap modes (ADJUST±/FLATTEN/SMOOTH/RAMP) + hole brushes
         EBrush _brush = EBrush.Raise;
         bool _paint;   // false = height sculpt, true = Materials splat-paint
         int _layer;    // 0-7 splat layer to paint
@@ -38,7 +41,7 @@ namespace UnturnedGodot
             }
             return DefaultLayerNames;
         }
-        public static readonly string[] BrushNames = { "Raise", "Lower", "Flatten", "Smooth", "Ramp" };
+        public static readonly string[] BrushNames = { "Raise", "Lower", "Flatten", "Smooth", "Ramp", "Dig hole", "Fill hole" };
 
         // --- accessors for the EditorTerrainPanel buttons/sliders ---
         public bool Painting => _paint;
@@ -54,7 +57,9 @@ namespace UnturnedGodot
 
         public string ModeText => _paint
             ? $"PAINT {LayerNames[_layer]} · radius {_radius:0}m"
-            : $"{BrushNames[(int)_brush]}{(_brush == EBrush.Ramp ? " (click begin, click end)" : "")} · radius {_radius:0}m · strength {_strength:0}";
+            : _brush == EBrush.Dig || _brush == EBrush.Fill
+                ? $"{BrushNames[(int)_brush]} · radius {_radius:0}m"   // strength is meaningless for a boolean mask; showing it invites fiddling with a number that does nothing
+                : $"{BrushNames[(int)_brush]}{(_brush == EBrush.Ramp ? " (click begin, click end)" : "")} · radius {_radius:0}m · strength {_strength:0}";
         string SavePath => ProjectSettings.GlobalizePath("res://content/terrain/") + $"editor_{_editor.MapName}_heightmap.bin";
 
         public int Save()
@@ -111,6 +116,9 @@ namespace UnturnedGodot
                 case EBrush.Lower: _terr.EditHeight(pt.X, pt.Z, _radius, -_strength * dt); break;
                 case EBrush.Flatten: _terr.EditFlatten(pt.X, pt.Z, _radius, Mathf.Clamp(_strength * dt * 0.15f, 0.01f, 1f)); break;
                 case EBrush.Smooth: _terr.EditSmooth(pt.X, pt.Z, _radius, Mathf.Clamp(_strength * dt * 0.15f, 0.01f, 1f)); break;
+                // No dt: a quad is dug or it is not. Strength has no meaning here either, hence the ModeText split.
+                case EBrush.Dig: _terr.EditHoles(pt.X, pt.Z, _radius, true); break;
+                case EBrush.Fill: _terr.EditHoles(pt.X, pt.Z, _radius, false); break;
             }
         }
 
@@ -132,7 +140,9 @@ namespace UnturnedGodot
                 {
                     case Key.P: _paint = !_paint; _rampArmed = false; break;
                     case Key.L: if (_paint) _layer = (_layer + 1) % 8; break;
-                    case Key.M: if (!_paint) { _brush = (EBrush)(((int)_brush + 1) % 5); _rampArmed = false; } break;
+                    // BrushNames.Length, not a literal: this was `% 5` and adding Dig/Fill left them reachable
+                    // from the panel but not from the key, which reads as "the hole brush is broken".
+                    case Key.M: if (!_paint) { _brush = (EBrush)(((int)_brush + 1) % BrushNames.Length); _rampArmed = false; } break;
                     case Key.Bracketleft: _radius = Mathf.Max(6f, _radius - 4f); break;
                     case Key.Bracketright: _radius = Mathf.Min(140f, _radius + 4f); break;
                     case Key.Comma: _strength = Mathf.Max(1f, _strength - 2f); break;

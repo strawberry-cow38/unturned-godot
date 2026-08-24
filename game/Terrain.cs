@@ -337,8 +337,43 @@ void fragment() {
             using var r = new System.IO.BinaryReader(System.IO.File.OpenRead(path));
             if (r.ReadInt32() != _gw || r.ReadInt32() != _gh) return false;
             for (int x = 0; x < _gw; x++) for (int y = 0; y < _gh; y++) _grid[x, y] = r.ReadSingle();
+            // Holes load HERE rather than at each call site, so a caller cannot load a sculpt and silently get
+            // its holes filled in -- which would look like the dug map simply lost them. Same pairing as
+            // SaveHeightmap -> SaveHoles. Must run BEFORE RebuildAll, since the rebuild is what decides each
+            // chunk's collider from the mask.
+            LoadHoles(HolesPathFor(path));
             RebuildAll();
             return true;
+        }
+
+        /// <summary>Dig or fill every quad under the brush. Unlike the height brushes this is NOT dt-scaled --
+        /// a quad is dug or it is not, there is no partial hole, so holding the mouse over one re-applies the
+        /// same state instead of deepening it.
+        ///
+        /// Rebuilds WITH colliders rather than deferring them to mouse-up like the sculpt brushes do. A sculpt
+        /// leaves stale collision that is merely the wrong HEIGHT for a moment; a hole leaves collision where
+        /// the player can now see a gap, so they walk on invisible ground until they release the button.</summary>
+        public void EditHoles(float worldX, float worldZ, float radiusWorld, bool dig)
+        {
+            if (_grid == null) return;
+            float cx = (worldX - _bx) / UNIT, cy = (-worldZ - _bz) / UNIT;
+            int cgx = Mathf.RoundToInt(cx), cgy = Mathf.RoundToInt(cy);
+            int rg = Mathf.CeilToInt(radiusWorld / UNIT) + 1;
+            int gx0 = Mathf.Max(0, cgx - rg), gx1 = Mathf.Min(_gw - 2, cgx + rg);
+            int gy0 = Mathf.Max(0, cgy - rg), gy1 = Mathf.Min(_gh - 2, cgy + rg);
+            bool changed = false;
+            for (int gx = gx0; gx <= gx1; gx++)
+                for (int gy = gy0; gy <= gy1; gy++)
+                {
+                    // Measure to the quad's CENTRE (+0.5), because the flag covers the cell, not the corner.
+                    // Using the corner makes the dug region sit half a cell off from the ring the player aimed with.
+                    float dx = (gx + 0.5f - cx) * UNIT, dy = (gy + 0.5f - cy) * UNIT;
+                    if (dx * dx + dy * dy > radiusWorld * radiusWorld) continue;
+                    if (SetHole(gx, gy, dig)) changed = true;
+                }
+            if (!changed) return;
+            _dirty = true;
+            RebuildChunksIn(gx0, gx1, gy0, gy1, withCollider: true);
         }
 
         public void EditFlatten(float worldX, float worldZ, float radiusWorld, float strength)   // pull heights toward the brush centre's height (Devkit FLATTEN)
