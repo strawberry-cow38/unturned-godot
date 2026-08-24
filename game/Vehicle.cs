@@ -819,9 +819,22 @@ namespace UnturnedGodot
         const float TorqueFallLo = 1.25f;    // quadratic falloff BELOW the peak (gentle)
         const float TorqueFallHi = 1.875f;   // ...and ABOVE it (steeper -- holding a gear past peak costs you)
         const float TorqueFloor  = 0.35f;    // an engine still pulls off-peak; it does not stop
-        const float TopSpeedBuff = 1.6f;     // strawberry: "a big thing is buffing top speeds"
+        const float TopSpeedBuff = 2.0f;     // strawberry: "a big thing is buffing top speeds", then 2026-08-24 "increase the cap for vehicle top speeds across the board" -- 1.6 -> 2.0
         const float GearStep     = 1.35f;    // rpm drop per shift -> the gear COUNT falls out of the spread
-        const float LaunchBoost  = 1.5f;     // first-gear peak force vs the old flat force
+        // FIRST-GEAR PEAK FORCE vs the old flat force. Raised 1.5 -> 4.0 alongside the top-speed cap
+        // (strawberry 2026-08-24: "rebalance gears and engine power to fit"), and it is the ACCELERATION knob
+        // specifically: raising TopSpeedBuff alone moves the ceiling but not the pull, because _dragK is solved
+        // so tractive force meets drag exactly AT _speedMax -- the car still gets there, just as slowly.
+        //
+        // The two knobs stay independent BY CONSTRUCTION: peakTorque scales with this, fTop scales with
+        // peakTorque, and _dragK is solved from fTop, so top speed lands on _speedMax whatever this is.
+        //
+        // MEASURED against grip, because this is also what makes wheelspin reachable at all. Launch force is
+        // engineForce * wheels * LaunchBoost * TorqueFrac(idle) = 0.55, against a limit of mu * m * g. At 1.5
+        // the whole fleet sat at 3-58% of a mu=1.0 limit -- the jeep would not have broken traction ON ICE, so
+        // any traction model layered on top was inert. At 4.0 the quad reaches ~156% and the golf ~134% (they
+        // spin), the jeep 32% and the semi 10% (they do not). That split falls out of mass, not taste.
+        const float LaunchBoost  = 4.0f;
         const float StallRpm     = 2600f;    // torque-converter stall: what the engine revs to against a stopped car
         const float RollingCrr   = 0.015f;   // rolling resistance, as a fraction of weight
         // RETAIL SPLITS THESE and we had collapsed them into one number. Jeep.dat carries BOTH
@@ -831,6 +844,10 @@ namespace UnturnedGodot
         const float ShiftClutchTime = 0.20f;   // GearShift_Duration: drive is DISCONNECTED for this long
         const float ShiftTime       = 0.50f;   // GearShift_Interval: earliest the box will shift again
         const float EngineBrakeScale = 0.12f; // lift-off engine braking, as a fraction of the FOOT brake, AT REDLINE. Raised 0.03 -> 0.12 when FootBrakeScale went 6 -> 1.5, because engine braking is derived from it: the PRODUCT is what sets the coastdown, and it was signed off at 1.83 m/s2
+        /// <summary>Steering RATE at the reference speed, as a fraction of the at-rest rate. This is the
+        /// weight in "real simulated weight/inertia on steering" -- see the steer integration in
+        /// _PhysicsProcess.</summary>
+        const float SteerRateAtSpeed = 0.35f;
         const float SpeedBackstop = 1.15f;   // hard cut this far past the drag equilibrium (runaway guard only)
         public float EngineRpm => _engineRpm;
         public string GearLabel => LinearVelocity.LengthSquared() < 0.25f ? "N" : (LinearVelocity.Dot(-GlobalTransform.Basis.Z) < -0.5f ? "R" : $"G{_gear}");   // N stopped / R reversing / G<n>
@@ -6791,7 +6808,24 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             if (_deadTimer > 0f) { _deadTimer -= (float)delta; if (_deadTimer <= 0f) Explode(); }   // source EXPLODE: 4s after health 0
 
             // steering smoothing (source: AnimatedSteeringAngle = MoveTowards(target, SteeringAngleTurnSpeed*dt)) -- no instant snap
-            _steerAngle = Mathf.MoveToward(_steerAngle, _steerTarget, _steerTurnSpeed * (float)delta);
+            //
+            // ...AND THE RATE FALLS WITH ROAD SPEED. strawberry, 2026-08-24: "steering is way too sensitive
+            // now", after the lateral-acceleration cap came out. The cap is NOT going back in -- they rejected
+            // it twice ("real simulated weight/intertia on steering, not a hard clamp"), and removing it is the
+            // measured reason the jeep's full-lock circle went 27.9 m -> 11.7 m, which was the other complaint.
+            //
+            // So the lever is the RATE, not the limit: quick at rest (parking), heavy at speed. That is inertia
+            // rather than a clamp -- full lock stays reachable at any speed, it just costs time to wind on,
+            // which is what a loaded steering system actually feels like. Max angle, turning circle and the
+            // existing ANGLE fade are all untouched.
+            //
+            // Keyed to _specSpeedMax, the PRE-buff top speed, for the same reason the angle fade is: how heavy
+            // the wheel feels at 12 m/s must not depend on how fast the car can eventually go -- and
+            // TopSpeedBuff has now moved twice.
+            float steerRef2 = _specSpeedMax > 0f ? _specSpeedMax : _speedMax;
+            float steerLoad = steerRef2 > 0f ? Mathf.Clamp(LinearVelocity.Length() / steerRef2, 0f, 1f) : 0f;
+            float steerRate = _steerTurnSpeed * Mathf.Lerp(1f, SteerRateAtSpeed, steerLoad);
+            _steerAngle = Mathf.MoveToward(_steerAngle, _steerTarget, steerRate * (float)delta);
             Steering = Mathf.DegToRad(_steerAngle);
             if (_steerPivot != null) _steerPivot.Basis = new Basis(_steerAxis, Mathf.DegToRad(_steerAngle));   // steering wheel model turns 1:1 with the steer angle (source line 4020, AnimatedSteeringAngle)
             CarryDeckRiders((float)delta);   // MOVING DECK: carry anything standing on us. Outside ApplyWaterPhysics

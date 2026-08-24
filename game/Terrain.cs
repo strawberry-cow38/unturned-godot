@@ -527,12 +527,21 @@ void fragment() {
         /// need, and then re-install terrain tris to fill the gaps perfectly." So the mask is cut WIDER than
         /// the river and the bed's own geometry is extended back out to meet intact terrain -- the apron IS
         /// the re-installed tris.</summary>
-        const float RiverCutMargin = UNIT;
+        // ZERO now that the cut tests for OVERLAP rather than centre-inside: expanding the test by
+        // QuadHalfDiag already removes every quad that could hang over the channel, so an extra flat margin on
+        // top only widens the apron. That matters visually -- the apron is drawn in the BED material, so every
+        // metre of it is a metre of dirt collar around the river. Kept as a named constant rather than deleted
+        // because "how much wider than the bank do we cut" is a real dial someone will want.
+        const float RiverCutMargin = 0f;
+        /// <summary>Half a quad's diagonal. A quad is a UNIT square, so this is how far its corner reaches
+        /// past its own centre -- the number that decides whether a centre-based test can leave geometry
+        /// hanging over the channel.</summary>
+        const float QuadHalfDiag = 0.70711f * UNIT;
         /// <summary>How far past the CUT radius the apron reaches. A quad is holed when its CENTRE falls
         /// inside the cut radius, and such a quad extends up to half its diagonal (0.71 * UNIT) beyond that
         /// circle -- so geometry stopping at the cut radius would still leave a ragged gap. Overshooting into
         /// intact terrain is free because the rim sits ON the terrain surface.</summary>
-        const float RiverRimOvershoot = 0.75f * UNIT;
+        const float RiverRimOvershoot = 2f * QuadHalfDiag;
         /// <summary>The rim is dropped this far below the sampled terrain height. Where the terrain is gone
         /// the apron IS the surface; where it survives, the apron tucks just underneath instead of sitting
         /// coplanar with it, which would z-fight along the whole length of every river.</summary>
@@ -563,13 +572,21 @@ void fragment() {
                 {
                     float wx = a.X + d.X * t, wz = a.Z + d.Y * t;
                     float cx = (wx - _bx) / UNIT, cy = (-wz - _bz) / UNIT;
-                    int rg = Mathf.CeilToInt(cutR / UNIT) + 1;
+                    // CUT ANY QUAD THAT OVERLAPS THE CHANNEL, not just those whose CENTRE is inside it.
+                    // strawberry, 2026-08-24: "we arent carving away enough of the terrain. there are terrain
+                    // quads overhanging at the river edges". A centre test keeps every quad whose middle sits
+                    // outside the radius -- and such a quad still reaches QuadHalfDiag inward, so it hangs out
+                    // over the water. Testing centre-distance against cutR + QuadHalfDiag removes anything that
+                    // could possibly intrude, which is the "carve slightly more than we need" half of the ask;
+                    // the apron below is the "re-install tris" half that closes the wider gap.
+                    float holeR = cutR + QuadHalfDiag;
+                    int rg = Mathf.CeilToInt(holeR / UNIT) + 1;
                     for (int ix = -rg; ix <= rg; ix++)
                         for (int iy = -rg; iy <= rg; iy++)
                         {
                             int gx = Mathf.RoundToInt(cx) + ix, gy = Mathf.RoundToInt(cy) + iy;
                             float ddx = (gx + 0.5f - cx) * UNIT, ddy = (gy + 0.5f - cy) * UNIT;
-                            if (ddx * ddx + ddy * ddy > cutR * cutR) continue;
+                            if (ddx * ddx + ddy * ddy > holeR * holeR) continue;
                             if (!SetHole(gx, gy, true)) continue;
                             gx0 = System.Math.Min(gx0, gx); gx1 = System.Math.Max(gx1, gx);
                             gy0 = System.Math.Min(gy0, gy); gy1 = System.Math.Max(gy1, gy);
