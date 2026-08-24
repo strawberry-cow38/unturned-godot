@@ -5143,6 +5143,12 @@ namespace UnturnedGodot
         void ReturnToMenu()
         {
             Input.MouseMode = Input.MouseModeEnum.Visible;
+            // Static caches are NOT in the node tree, so ReloadCurrentScene does not touch them and the next
+            // map gets served resources built during the editor session -- the "every texture is purple/black/
+            // white after leaving the editor" report. Clear BEFORE the reload, while this scene still owns them.
+            // The warmup that this drops re-runs by itself: the reload re-enters the default boot above, which
+            // calls Warmup.Begin. Clear on the way out, warm on the way in.
+            ResourceCaches.ClearAll();
             GetTree().ReloadCurrentScene();
         }
 

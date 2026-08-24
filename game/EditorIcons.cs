@@ -12,7 +12,7 @@ namespace UnturnedGodot
     //
     // Everything is drawn into a square Image at the requested size and handed back as an ImageTexture, so
     // the caller can just set Button.Icon.
-    public static class EditorIcons
+    public static partial class EditorIcons
     {
         public enum Glyph
         {

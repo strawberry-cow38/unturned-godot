@@ -14,7 +14,7 @@ namespace UnturnedGodot
     //
     // Surf -> source impact effect: concrete/metal/wood same-named; grass=foliage, dirt/sand=gravel; water = the lit
     // droplet splash; flesh (a player/zombie hit) = the Flesh_Dynamic blood sheet via Blood().
-    public static class ImpactFx
+    public static partial class ImpactFx
     {
         // A burst big enough that a fast particle never leaves it -> the auto-AABB frustum cull can't hide the effect.
         // (This single missing line is why hard-surface + blood impacts "didn't exist" on screen.)

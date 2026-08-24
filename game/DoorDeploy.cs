@@ -22,7 +22,7 @@ namespace UnturnedGodot
     // A standalone door needs no extra collision work: ObjectDoor's leaf collider already blocks movement
     // (StoreShelf: "the player can't walk through the doorway anymore"), which is the one thing a container
     // door was expected to borrow from its parent prop and turns out to own itself.
-    public static class DoorDeploy
+    public static partial class DoorDeploy
     {
         static Dictionary<string, List<WorldBuilder.DoorCatalogEntry>> _cat;
         static readonly Dictionary<string, Material> _mats = new();

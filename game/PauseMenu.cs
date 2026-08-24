@@ -105,6 +105,9 @@ namespace UnturnedGodot
         {
             GetTree().Paused = false;
             Input.MouseMode = Input.MouseModeEnum.Visible;
+            // Same reason as Main.ReturnToMenu: static caches survive ReloadCurrentScene. This is the OTHER way
+            // out of a session, and leaving it out would make the bug reproduce on exactly one of the two exits.
+            ResourceCaches.ClearAll();
             GetTree().ReloadCurrentScene();
         }
     }
