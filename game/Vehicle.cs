@@ -1633,6 +1633,7 @@ namespace UnturnedGodot
 
         // source Bumper.OnTriggerEnter: the front bumper roadkills a character it drives into. Damage scales with impact
         // speed (clamped at 10) x the base BumperZombieDamage; the vehicle takes a little self-damage per hit too.
+        public bool Parked => _parked;   // exposed for the net tests: "exit parked the car" is now the assertion, since exit no longer touches the engine
         public void Wake() { Freeze = false; Sleeping = false; _asleep = false; _parked = false; }   // resume dynamic physics (rammed or re-driven)
         // vehicle crash -> authoritative destructible break, through the SAME seam the heli rotors already use
         // (Vehicle.NetDamageObject, declared once above -- main had added it for rotors while this branch was adding

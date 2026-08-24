@@ -572,7 +572,9 @@ namespace UnturnedGodot.Testing
             yield return Until(() => ded.Server.Vehicles.TryGet(netId, out var e) && e.DriverPlayerId == driver.PlayerId, 5);
             bool seated = ded.Server.Vehicles.TryGet(netId, out var seatE) && seatE.DriverPlayerId == driver.PlayerId;
             T.Check("the Enter command took the seat server-side (occupancy + reach validated)", seated);
-            T.Check("the node's engine started (SP enter side effects through the sync)", jeep.EngineOn);
+            // Entering no longer starts it either; what the sync must still do is WAKE the body so a frozen
+            // parked car simulates once someone is aboard.
+            T.Check("the node woke on enter (engine no longer a side effect of the seat)", !jeep.Sleeping);
             yield return Until(() => entered > 0, 5);
             T.Check($"the VehicleEntered fact reached the driver ({entered})", entered > 0);
 
@@ -621,7 +623,11 @@ namespace UnturnedGodot.Testing
             yield return Until(() => ded.Server.Vehicles.TryGet(netId, out var e) && e.DriverPlayerId == 0, 5);
             T.Check("Exit freed the seat", ded.Server.Vehicles.TryGet(netId, out var freedE) && freedE.DriverPlayerId == 0);
             yield return Ticks(5);
-            T.Check("the node parked (engine off) after exit", !jeep.EngineOn);
+            // The engine is NOT tied to the seat any more (strawberry_cow 2026-08-24: the car stays off when
+            // you get in and keeps running when you get out), so this asserts the NEW rule: exiting parks the
+            // car without touching the ignition. Checking Parked rather than !EngineOn keeps the thing the test
+            // actually cares about -- that the freed car cannot roll away.
+            T.Check("the node parked after exit, engine left as the driver had it", jeep.Parked);
 
             // teardown: unhook the pump so nothing touches the dying MemNetwork after QueueFree
             world.Sim.Sim.Remove(pump);

@@ -6781,12 +6781,16 @@ namespace UnturnedGodot
             bool handbrake = !UiInputBlocked && Input.IsPhysicalKeyPressed(Key.Space);
 
             // THROTTLE STARTS IT (strawberry_cow 2026-08-24): reaching for the gas on a dead car turns the key.
-            // Driver only, and only a real throttle press -- ScriptedDrive is excluded because a test rig or the
-            // MP input path feeding axes must not silently hot-wire a car nobody started.
+            //
+            // ScriptedDrive counts. The first version of this excluded it, reasoning that a test rig or the MP
+            // input path "must not silently hot-wire a car nobody started" -- which sounded careful and was
+            // wrong: on those paths ScriptedDrive IS the player holding W, relayed from a client or a harness,
+            // not a synthetic bypass. Excluding it meant the shell held full throttle against a dead engine and
+            // five MP driving tests failed with "the car didn't move".
             //
             // TryStartEngine self-gates on EngineOn, the flat battery and OnFire, so this runs every physics tick
-            // while the player holds W and is a no-op on all but the first.
-            if (_seatIndex == 0 && !ScriptedDrive.HasValue && Mathf.Abs(throttle) > 0.01f) _driving.TryStartEngine();
+            // while the throttle is held and is a no-op on all but the first.
+            if (_seatIndex == 0 && Mathf.Abs(throttle) > 0.01f) _driving.TryStartEngine();
 
             // FIXED WING (master 2026-08-17): W/S throttle, A/D tail rudder, mouse L/R = roll, mouse up/down =
             // pitch (the SAME virtual stick the heli uses, captured in _Input with the plane's own invert-Y
