@@ -227,6 +227,68 @@ void fragment() {
         /// break every existing reader for a feature most maps do not use. Retail keeps them separate too
         /// (Landscape/Holes/ per tile).</summary>
         static string HolesPathFor(string heightmapPath) => heightmapPath + ".holes";
+        static string RiversPathFor(string heightmapPath) => heightmapPath + ".rivers";
+
+        /// <summary>Persist the carved river segments.
+        ///
+        /// The CUT already survives on its own -- it lives in the hole mask, which has its own sidecar. What
+        /// does not is the BED: it is generated geometry, not grid data, so a reloaded map came back with the
+        /// channel correctly cut and nothing underneath it. You could see through the world.
+        ///
+        /// Segments rather than meshes: the bed is a pure function of (a, b, halfWidth, depth) and the terrain
+        /// heights, so storing four numbers per segment and rebuilding beats serialising vertices, and it stays
+        /// correct if the bed geometry is ever improved. Same reasoning as not saving the collider.</summary>
+        public void SaveRivers(string path)
+        {
+            if (_riverSegs.Count == 0)
+            {
+                if (System.IO.File.Exists(path)) System.IO.File.Delete(path);   // carved then undone -> no stale file
+                return;
+            }
+            System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(path));
+            using var w = new System.IO.BinaryWriter(System.IO.File.Create(path));
+            w.Write(_riverSegs.Count);
+            foreach (var (a, b, half, depth) in _riverSegs)
+            {
+                w.Write(a.X); w.Write(a.Y); w.Write(a.Z);
+                w.Write(b.X); w.Write(b.Y); w.Write(b.Z);
+                w.Write(half); w.Write(depth);
+            }
+        }
+
+        /// <summary>Rebuild the beds for saved segments. Does NOT re-cut: the holes came back from their own
+        /// sidecar already, and re-cutting would be a second pass over quads that are already gone.</summary>
+        public void LoadRivers(string path)
+        {
+            _riverSegs.Clear();
+            if (_riverBeds != null) { _riverBeds.QueueFree(); _riverBeds = null; }   // drop the previous map's beds
+            if (!System.IO.File.Exists(path)) return;
+            try
+            {
+                using var r = new System.IO.BinaryReader(System.IO.File.OpenRead(path));
+                int n = r.ReadInt32();
+                if (n < 0 || n > 200000) { GD.PushWarning($"[terrain] implausible river count {n}; ignoring"); return; }
+                for (int i = 0; i < n; i++)
+                {
+                    var a = new Vector3(r.ReadSingle(), r.ReadSingle(), r.ReadSingle());
+                    var b = new Vector3(r.ReadSingle(), r.ReadSingle(), r.ReadSingle());
+                    float half = r.ReadSingle(), depth = r.ReadSingle();
+                    var d = new Vector2(b.X - a.X, b.Z - a.Z);
+                    float len = d.Length();
+                    if (len < 0.01f) continue;
+                    d /= len;
+                    // Floor keys off the LOWEST bank along the segment, recomputed rather than stored -- the
+                    // same rule the carve used. Storing the floor instead would freeze it against a heightmap
+                    // that can be sculpted afterwards, and the bed would end up hanging in the air.
+                    float lowest = float.MaxValue;
+                    for (float t = 0f; t <= len; t += UNIT * 0.5f)
+                        lowest = Mathf.Min(lowest, SampleHeight(a.X + d.X * t, a.Z + d.Y * t));
+                    _riverSegs.Add((a, b, half, depth));
+                    BuildRiverBed(a, b, d, len, half, lowest - depth);
+                }
+            }
+            catch (System.Exception e) { GD.PushWarning($"[terrain] bad rivers file, ignoring: {e.Message}"); }
+        }
 
         /// <summary>Write the hole mask, bit-packed 8 quads per byte (retail packs the same way). Writes
         /// NOTHING and deletes any stale file when the map has no holes, so an untouched map costs zero bytes
@@ -329,6 +391,7 @@ void fragment() {
             w.Write(_gw); w.Write(_gh);
             for (int x = 0; x < _gw; x++) for (int y = 0; y < _gh; y++) w.Write(_grid[x, y]);
             SaveHoles(HolesPathFor(path));
+            SaveRivers(RiversPathFor(path));
         }
 
         public bool LoadHeightmap(string path)   // apply a saved sculpt over the freshly-built retail terrain (dims must match)
@@ -343,6 +406,7 @@ void fragment() {
             // chunk's collider from the mask.
             LoadHoles(HolesPathFor(path));
             RebuildAll();
+            LoadRivers(RiversPathFor(path));   // AFTER RebuildAll: the beds read SampleHeight for their banks
             return true;
         }
 
