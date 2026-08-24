@@ -601,10 +601,55 @@ void fragment() {
             if (gx1 < 0) return;   // the whole path was off-map -> no bed, no rebuild
 
             for (int e = 0; e < path.Count - 1; e++) _riverSegs.Add((path[e], path[e + 1], half, depth));
-            BuildRiverBedPolyline(path, half, depth);
+            BuildRiverBedPolyline(BedStations(path, holeRForEnds: cutR + QuadHalfDiag), half, depth);
             CommitRiverBed();
             _dirty = true;
             RebuildChunksIn(gx0, gx1, gy0, gy1, withCollider: true);
+        }
+
+        /// <summary>Turn a carve path into the stations the BED is actually built from.
+        ///
+        /// Two things the raw path cannot do, both of which strawberry saw as "still overhangs" on rivers that
+        /// were NEW -- so my first answer, that the fix could not reach already-saved rivers, was wrong:
+        ///
+        ///   DENSITY. A Straight river is TWO anchors, so RiverPathPoints hands back two stations and the bed
+        ///   becomes a single quad -- a PLANE between the endpoint heights. It cannot follow the contour it was
+        ///   just asked to follow, and anywhere the ground rises in between, that plane sits BELOW the surface
+        ///   and terrain pokes up through the bed. Which looks exactly like an overhanging quad. Resampling to
+        ///   the grid pitch makes the floor track the ground for a straight river the same way it already did
+        ///   for a curved one.
+        ///
+        ///   ENDS. The cut is a union of DISCS walked along the path, so the hole reaches a full radius PAST
+        ///   each endpoint, while the bed stopped exactly AT it -- leaving an uncovered round hole at both ends
+        ///   of every river. The path is extended by that radius along the end tangents so the bed covers what
+        ///   the cut actually removed.</summary>
+        static System.Collections.Generic.List<Vector3> BedStations(System.Collections.Generic.IReadOnlyList<Vector3> path, float holeRForEnds)
+        {
+            var pts = new System.Collections.Generic.List<Vector3>();
+            if (path == null || path.Count < 2) return pts;
+
+            // Extend both ends along their own tangent so the bed reaches as far as the cut did.
+            Vector3 d0 = path[1] - path[0]; d0.Y = 0f;
+            Vector3 d1 = path[^1] - path[^2]; d1.Y = 0f;
+            Vector3 start = d0.LengthSquared() > 1e-8f ? path[0] - d0.Normalized() * holeRForEnds : path[0];
+            Vector3 end = d1.LengthSquared() > 1e-8f ? path[^1] + d1.Normalized() * holeRForEnds : path[^1];
+
+            var work = new System.Collections.Generic.List<Vector3> { start };
+            work.AddRange(path);
+            work.Add(end);
+
+            // Resample to the grid pitch. Finer than a cell buys nothing -- the cut is a per-quad mask, so the
+            // floor cannot express detail below UNIT anyway -- and coarser is what let the plane happen.
+            pts.Add(work[0]);
+            for (int i = 0; i < work.Count - 1; i++)
+            {
+                Vector3 a = work[i], b = work[i + 1];
+                var flat = new Vector2(b.X - a.X, b.Z - a.Z);
+                float len = flat.Length();
+                int steps = Mathf.Max(1, Mathf.CeilToInt(len / UNIT));
+                for (int k = 1; k <= steps; k++) pts.Add(a.Lerp(b, (float)k / steps));
+            }
+            return pts;
         }
 
         /// <summary>One continuous bed for the whole path: mitred joins, contour-following floor, and an apron
@@ -629,7 +674,12 @@ void fragment() {
                 Vector3 bis = din.Normalized() + dout.Normalized();
                 // A near-180 degree reversal makes the bisector vanish; fall back to the outgoing normal.
                 Vector3 f = bis.LengthSquared() < 1e-6f ? dout.Normalized() : bis.Normalized();
-                right[i] = new Vector3(-f.Z, 0f, f.X);
+                // MITRE LENGTH. An offset of d along the bisector sits d from the VERTEX but only
+                // d*cos(theta/2) from each adjoining segment -- while the cut is a constant radius from the
+                // centreline everywhere. Past a sharp bend the apron would therefore stop short of the hole it
+                // is meant to cover. Clamped: at a hairpin the exact correction goes to infinity.
+                float cosHalf = Mathf.Max(0.25f, f.Dot(dout.Normalized()));
+                right[i] = new Vector3(-f.Z, 0f, f.X) / cosHalf;
             }
 
             var fl = new Vector3[n]; var fr = new Vector3[n];

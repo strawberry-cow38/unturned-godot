@@ -2806,19 +2806,27 @@ namespace UnturnedGodot.Testing
             Vector3 up45 = pup.GlobalBasis * new Vector3(0f, Mathf.Sin(Mathf.DegToRad(45f)), -Mathf.Cos(Mathf.DegToRad(45f)));
             T.Check("FP free-look pitch 45 tilts the view up", (-cam.GlobalBasis.Z).Dot(up45.Normalized()) > 0.999f);
 
-            // ToggleFirstPerson (default K, moved off H) through the real input path -- allowed while riding -> 3P chase; the orbit must consume the vars
-            p._UnhandledInput(new InputEventKey { Pressed = true, PhysicalKeycode = Key.K });
+            // ToggleFirstPerson through the real input path -- allowed while riding -> 3P chase; the orbit must
+            // consume the vars.
+            //
+            // The KEY IS READ FROM THE BIND, not written as a literal. This said Key.K, which was correct on the
+            // day the action moved off H and wrong the day it moved back (strawberry, 2026-08-24) -- and the
+            // failure was silent in the useful sense: the synthetic keypress simply matched nothing, the camera
+            // never toggled, and the test reported the CAMERA as broken. A test that hardcodes a default is
+            // testing the default, not the behaviour, and it accuses the wrong component when the default moves.
+            var fpKey = Keybinds.Default(GameAction.ToggleFirstPerson).Key;
+            p._UnhandledInput(new InputEventKey { Pressed = true, PhysicalKeycode = fpKey });
             p.DebugSetDriveOrbit(0f, 15f);
             p._Process(0.016);
             Vector3 chase0 = cam.GlobalPosition;
-            T.Check("H toggles to the 3P chase cam (behind the car, not at the eye)",
+            T.Check($"{fpKey} toggles to the 3P chase cam (behind the car, not at the eye)",
                 chase0.DistanceTo(pup.GlobalTransform * pup.DriverEyeLocal) > 3f);
             p.DebugSetDriveOrbit(120f, 15f);
             p._Process(0.016);
             T.Check("3P orbit yaw moves the chase cam around the riding puppet",
                 cam.GlobalPosition.DistanceTo(chase0) > 2f);
 
-            p._UnhandledInput(new InputEventKey { Pressed = true, PhysicalKeycode = Key.K });   // back to FP for teardown parity
+            p._UnhandledInput(new InputEventKey { Pressed = true, PhysicalKeycode = fpKey });   // back to FP for teardown parity
             p.ExitPuppet(new Vector3(0f, 0.1f, 0f));
             yield return Ticks(1);
         }
