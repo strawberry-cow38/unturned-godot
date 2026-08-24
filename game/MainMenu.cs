@@ -197,9 +197,10 @@ namespace UnturnedGodot
             MenuButton(layer, "play",          "Play",          170f, false, 1, () => TogglePlayPanel());
             MenuButton(layer, "multiplayer",   "Multiplayer",   230f, false, 1, () => ToggleServersPanel());   // -> the server browser (MainMenuServers.cs)
             MenuButton(layer, "survivors",     "Survivors",     290f, false, 2, () => ShowStub("Survivors"));
-            // Configuration -> the GRAPHICS panel (master asked for it here and in the pause menu). Retail's
-            // Configuration menu is where graphics live, so this replaces the stub rather than adding a sixth button.
-            MenuButton(layer, "configuration", "Configuration", 350f, false, 3, () => ToggleGraphicsPanel());
+            // Configuration -> the SAME tabbed Settings screen the pause menu opens (VoX 2026-08-24). It used to
+            // open a graphics-only panel, which meant the key binds tab existed but was reachable ONLY from a
+            // paused game -- you could not rebind anything before pressing Play.
+            MenuButton(layer, "configuration", "Configuration", 350f, false, 3, () => ToggleSettingsPanel());
             MenuButton(layer, "workshop",      "Workshop",      410f, false, 4, () => ToggleWorkshopPanel());
             MenuButton(layer, "playground",    "Playground",    470f, false, 1, () => OnPlayground?.Invoke());   // gun range; no icon file yet -> MenuButton just skips the icon
             MenuButton(layer, "exit",          "Exit",          -70f, true,  0, () => GetTree().Quit());
@@ -208,25 +209,31 @@ namespace UnturnedGodot
             BuildServersPanel(layer);  // Multiplayer -> the server browser (MainMenuServers.cs)
             BuildWorkshopPanel(layer);
             BuildStubPanel(layer);
-            BuildGraphicsPanel(layer);
+            BuildSettingsPanel(layer);
         }
 
-        Control _graphicsPanel;
+        Control _settingsPanel;
 
-        void BuildGraphicsPanel(CanvasLayer layer)
+        void BuildSettingsPanel(CanvasLayer layer)
         {
-            // Same screen position as the other side panels, and the SAME GraphicsPanel builder the pause menu uses
-            // -- the settings themselves live in GraphicsOptions, so the two views cannot drift apart.
-            _graphicsPanel = new PanelContainer { Position = new Vector2(240f, 150f), Visible = false };
-            ((PanelContainer)_graphicsPanel).AddChild(GraphicsPanel.Build(this, () => _graphicsPanel.Visible = false));
-            layer.AddChild(_graphicsPanel);
+            // The SAME SettingsScreen node the pause menu builds -- graphics, controls and key binds as tabs. Sharing
+            // the screen (rather than rebuilding a menu-flavoured copy) is the whole point: the settings themselves
+            // live in GraphicsOptions and Keybinds, so the two entry points cannot drift apart.
+            //
+            // Built ONCE and hidden, never rebuilt on open: KeybindMenu is a live input-capturing node, and a fresh
+            // one per open would drop a half-finished rebind on the floor. It is inert while hidden -- its _Input
+            // early-returns unless a row was clicked to start a capture.
+            var settings = new SettingsScreen { Position = new Vector2(240f, 150f), Visible = false };
+            settings.Setup(this, () => settings.Visible = false);
+            _settingsPanel = settings;
+            layer.AddChild(_settingsPanel);
         }
 
-        void ToggleGraphicsPanel()
+        void ToggleSettingsPanel()
         {
-            bool show = !_graphicsPanel.Visible;
+            bool show = !_settingsPanel.Visible;
             HideAllPanels();
-            _graphicsPanel.Visible = show;
+            _settingsPanel.Visible = show;
         }
 
         /// <summary>Close every side panel. Added when Configuration stopped being a stub: each Toggle* already hid
@@ -237,7 +244,7 @@ namespace UnturnedGodot
             if (_playPanel != null) _playPanel.Visible = false;
             if (_stubPanel != null) _stubPanel.Visible = false;
             if (_advancedPanel != null) _advancedPanel.Visible = false;
-            if (_graphicsPanel != null) _graphicsPanel.Visible = false;
+            if (_settingsPanel != null) _settingsPanel.Visible = false;
             if (_workshopPanel != null) _workshopPanel.Visible = false;
             if (_serversPanel != null) _serversPanel.Visible = false;
         }
