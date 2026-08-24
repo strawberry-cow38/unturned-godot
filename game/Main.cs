@@ -75,11 +75,11 @@ namespace UnturnedGodot
         string _lmShotDir; Camera3D _lmCam; int _lmIdx, _lmFrame;
         static readonly (Vector3 Eye, Vector3 Look, string Tag)[] _lmTour =
         {
-            (new Vector3(247f, 74f, 553f),   new Vector3(247f, 76f, 793f), "lighthouse_close"),   // Lighthouse_0 @ (247,58,793): ~240m due south, near-level, sea behind
-            (new Vector3(70f, 100f, 600f),   new Vector3(247f, 74f, 793f), "lighthouse_sw"),      // ~260m from the SW, different bearing
-            (new Vector3(247f, 150f, 300f),  new Vector3(247f, 66f, 793f), "lighthouse_500"),     // ~500m elevated (fog territory)
-            (new Vector3(-470f, 110f, 560f), new Vector3(-470f, 40f, 140f), "dock_harbor_450"),   // Dock_1/Harbor_0 @ (~-470,32,140)
-            (new Vector3(-470f, 180f, 900f), new Vector3(-470f, 40f, 140f), "dock_harbor_800"),
+            (new Vector3(247f, 68f, -650f),  new Vector3(247f, 90f, -793f), "lighthouse_close"),  // Lighthouse_0 WORLD (247,58,-793) -- port NEGATES Z: ~145m, the 51m tower vs the sea
+            (new Vector3(150f, 72f, -700f),  new Vector3(247f, 88f, -793f), "lighthouse_sw"),     // ~135m from the SW
+            (new Vector3(247f, 160f, -380f), new Vector3(247f, 82f, -793f), "lighthouse_420"),    // ~420m -- carries with the fix
+            (new Vector3(247f, 220f, -30f),  new Vector3(247f, 78f, -793f), "lighthouse_780"),    // ~780m across the map
+            (new Vector3(-470f, 100f, -430f),new Vector3(-470f, 40f, -140f), "dock_harbor"),      // Alberton dock/harbor WORLD (~-470,-140)
         };
         bool _navShot;   // --navshot: nav-debug verify screenshot (waits for load + navmesh overlay + zombie cones)
         bool _navPathTest;   // --navpathtest: after a few frames (nav synced), query the navmesh + report routing
