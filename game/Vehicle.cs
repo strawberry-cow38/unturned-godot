@@ -1691,22 +1691,107 @@ namespace UnturnedGodot
             return EngineOn;
         }
 
+        // IMPACT DAMAGE MASS SCALE (strawberry_cow 2026-08-24: "speed + vehicle weight based").
+        //
+        // Normalised against the JEEP so the existing, tuned roadkill numbers stay exactly where they were: the
+        // jeep scales by 1.0 and everything else is relative to it. Picking an absolute kg->damage constant
+        // instead would have silently re-tuned every zombie hit that is already correct.
+        //
+        // sqrt, not linear. Momentum is linear in mass, but a 40 t semi is ~44x the jeep and a linear term makes
+        // it one-shot a building from walking pace, which is not a difficulty knob so much as a different game.
+        // sqrt(44) ~ 6.6x is heavy enough that a truck plainly outweighs a hatchback without the number running
+        // away. Capped anyway, because the cap is what stops a future 200 t vehicle from being a bug report.
+        const float ImpactRefMass = 900f;      // the jeep, the vehicle every existing bumper constant was tuned on
+        const float ImpactMassCapX = 4f;       // heaviest thing hits 4x the jeep, not 6.6x
+        const float ImpactVehicleDmg = 9f;     // per (m/s * massScale) into another vehicle
+        const float ImpactPropDmg = 22f;       // into a deployable/prop -- higher, because props are meant to lose to a car
+        const float ImpactSelfProp = 0.35f;    // share of the dealt damage the CAR takes back off a prop
+
+        /// <summary>How much heavier-than-a-jeep this vehicle hits. See ImpactRefMass for why it is sqrt+capped.</summary>
+        float ImpactMassScale => Mathf.Min(ImpactMassCapX, Mathf.Sqrt(Mathf.Max(1f, Mass) / ImpactRefMass));
+
+        /// <summary>Closing speed against a thing we hit, in m/s, along our forward axis.
+        ///
+        /// RELATIVE, not absolute: two cars going the same way at 30 m/s that touch have barely collided, and
+        /// using our own speed there would total both of them. A static prop has zero velocity, so this reduces
+        /// to our own speed for everything that cannot move.</summary>
+        float ClosingSpeed(Node3D other)
+        {
+            // Live velocities on BOTH sides, deliberately -- _recentTopSpeed is an absolute own-speed peak and
+            // has no relative equivalent, so substituting it here would overstate two cars travelling together.
+            // The honest cost: a very fast car-on-car hit that ContinuousCd resolves over several ticks reads
+            // low, the same way aircraft impacts did before the peak existed. Under-reading is the safe
+            // direction for a damage number; over-reading would total cars that merely brushed.
+            var theirs = other is RigidBody3D rb ? rb.LinearVelocity : Vector3.Zero;
+            return (LinearVelocity - theirs).Dot(-GlobalTransform.Basis.Z);
+        }
+
         void OnBumperHit(Node3D body)
         {
             if (_exploded || _parked) return;
+
+            // Peak, not instantaneous: BodyEntered can arrive a tick or two after ContinuousCd started
+            // resolving the contact, by which point LinearVelocity has already been bled down and the hit reads
+            // as a gentle nudge. Sign comes from the live velocity, magnitude from the peak.
+            float fwdNow = LinearVelocity.Dot(-GlobalTransform.Basis.Z);
+            float fwd = Mathf.Sign(fwdNow) * Mathf.Max(Mathf.Abs(fwdNow), _recentTopSpeed);
+            float massScale = ImpactMassScale;
+
             if (body is ZombieController z && !z.Dead)
             {
-                float fwd = LinearVelocity.Dot(-GlobalTransform.Basis.Z);       // signed forward speed (front = -Z)
                 float speed = Mathf.Clamp(fwd * BumperMult, -10f, 10f);
                 if (speed < BumperThreshold) return;                            // too slow to hurt (source threshold gate)
-                float dmg = Mathf.Floor(BumperZombieDmg * speed);               // source DamageTool: floor(damage * times)
+                float dmg = Mathf.Floor(BumperZombieDmg * speed * massScale);   // source DamageTool: floor(damage * times), now weight-scaled
                 z.DamageHit(dmg, z.GlobalPosition, -GlobalTransform.Basis.Z);   // knock the ragdoll forward
                 TakeDamage(2f * BumperSelfMult);                                // source takeCrashDamage(2)
-                GD.Print($"[ROADKILL] speed={speed:0.0} dmg={dmg} -> zombie HP {z.Health:0}");
+                GD.Print($"[ROADKILL] speed={speed:0.0} mass x{massScale:0.00} dmg={dmg} -> zombie HP {z.Health:0}");
+                return;
             }
-            // NOTE: source Bumper also roadkills Players ("Player" tag -> BumperPlayerDamage) and Animals (Animal on the
-            // "Agent" tag -> BumperAnimalDamage) the same way. No player/animal targets share a scene in the port yet,
-            // so only the zombie path is wired + tested here; add those branches when those entities co-exist.
+
+            // PLAYERS and ANIMALS. The old comment here said these were unwired because no such target shared a
+            // scene with a vehicle yet -- that stopped being true, and source Bumper hits both.
+            if (body is PlayerController p)
+            {
+                float speed = Mathf.Clamp(fwd * BumperMult, -10f, 10f);
+                if (speed < BumperThreshold) return;
+                p.TakeDamage(Mathf.Floor(BumperPlayerDmg * speed * massScale), GlobalPosition);
+                TakeDamage(2f * BumperSelfMult);
+                return;
+            }
+            if (body is AnimalAgent a)
+            {
+                float speed = Mathf.Clamp(fwd * BumperMult, -10f, 10f);
+                if (speed < BumperThreshold) return;
+                a.DamageHit(Mathf.Floor(BumperZombieDmg * speed * massScale), a.GlobalPosition, -GlobalTransform.Basis.Z);
+                TakeDamage(2f * BumperSelfMult);
+                return;
+            }
+
+            // VEHICLE vs VEHICLE. Damage BOTH, each by the OTHER's mass -- a jeep hitting a parked semi should
+            // come off worse than the semi does. Only the mover applies it (the closing-speed gate below is
+            // signed), so a symmetric head-on still resolves once per car rather than four times.
+            if (body is Vehicle other && !other._exploded)
+            {
+                float closing = ClosingSpeed(other);
+                if (closing < BumperThreshold) return;
+                float ours = ImpactVehicleDmg * closing * massScale;
+                float theirs = ImpactVehicleDmg * closing * other.ImpactMassScale;
+                other.TakeDamage(Mathf.Floor(ours));    // we hit them with OUR weight
+                TakeDamage(Mathf.Floor(theirs));        // they resist with THEIRS
+                GD.Print($"[RAM] {DisplayName} -> {other.DisplayName} closing={closing:0.0} dealt={ours:0} taken={theirs:0}");
+                return;
+            }
+
+            // DESTRUCTIBLES. Deployables and glass both expose TakeDamage; walk up from the collider because the
+            // body that reports the contact is usually a child StaticBody of the thing that owns the health.
+            for (Node n = body; n != null; n = n.GetParent())
+            {
+                float closing = ClosingSpeed(body);
+                if (closing < BumperThreshold) break;
+                float dmg = Mathf.Floor(ImpactPropDmg * closing * massScale);
+                if (n is Deployable dep) { dep.TakeDamage(dmg); TakeDamage(dmg * ImpactSelfProp); return; }
+                if (n is GlassPane gp)   { gp.TakeDamage(dmg);  TakeDamage(dmg * ImpactSelfProp * 0.25f); return; }   // glass barely scratches the car
+            }
         }
 
         /// <summary>Where this vehicle was last shot FROM, in world space, and when. Recorded for every vehicle
@@ -3806,6 +3891,12 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             // keeps a margin so the cap binds before the envelope does.
             v._heliLiftCap = s.Heli && s.HeliThrust > 0.01f
                 ? Mathf.Max(1f, (9.8f + HeliHeaveDamp * s.HeliClimbMax * 0.9f) / s.HeliThrust) : 1f;
+            // TUNNELLING (strawberry_cow 2026-08-24: "cars arent colliding with some smaller props").
+            // Only helis and planes had ContinuousCd; a car did not. At 30 m/s on the 50 Hz tick a car advances
+            // 0.6 m PER STEP, so any prop thinner than that -- a fence post, a sign, a bollard -- can sit
+            // entirely between two positions and never generate a contact. That matches the symptom exactly:
+            // it is the SMALL props that go through, because small props are the thin ones.
+            v.ContinuousCd = true;
             if (s.Heli)
             {
                 // A helicopter is flown, not suspended. Damping here is AERODYNAMIC, not friction, and the
@@ -6575,7 +6666,15 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             // collision/ram damage (source isVulnerableToBumper): a sudden horizontal deceleration = a crash. Horizontal only, so the spawn drop doesn't count.
             float curSpeed = new Vector2(LinearVelocity.X, LinearVelocity.Z).Length();
             float decel = _prevSpeed - curSpeed;
-            if (!_parked && !_exploded && _prevSpeed > 5f && decel > 200f * (float)delta) TakeDamage(decel * 20f);   // >200 m/s^2 = a crash (braking is ~8); full-speed hit ~250 dmg
+            // The DECAYING PEAK, not last tick's speed -- carried over from the aircraft path, which learned it
+            // the hard way (see StepHeli): with ContinuousCd the solver bleeds a fast impact off across several
+            // ticks, so by the tick the deceleration is big enough to trip the gate, _prevSpeed has already
+            // fallen well below the real approach speed. Cars were exempt from that only because they had no
+            // ContinuousCd. Turning it on above without this would have quietly HALVED crash damage -- a fix
+            // for one bug paying for itself by breaking a neighbour.
+            _recentTopSpeed = Mathf.Max(curSpeed, _recentTopSpeed - (float)delta * 6f);
+            if (!_parked && !_exploded && _recentTopSpeed > 5f && decel > 200f * (float)delta)
+                TakeDamage(_recentTopSpeed * 20f);   // >200 m/s^2 = a crash (braking is ~8); full-speed hit ~250 dmg
             _prevSpeed = curSpeed;
             if (_smoke != null) _smoke.Emitting = _burnTime < 60f && (_exploded || Health < SmokeHealth);   // source updateFires: smoke_1 at health < 200 (or exploded); OFF once the wreck fire is out at 60s (master)
             if (_smoke0 != null) _smoke0.Emitting = _exploded || Health < HeavySmokeHealth;   // source updateFires: smoke_0 (heavy) at health < 100 (or exploded)
