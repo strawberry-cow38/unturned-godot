@@ -918,7 +918,16 @@ namespace UnturnedGodot
             v._nTraction = s.Kingpin == Vector3.Zero ? s.Wheels.Length : 0;   // a trailer's wheels are passive rollers
             if (s.Heli || s.Plane || v._nTraction <= 0 || s.Engine <= 0f || s.SpeedMax <= 0f || s.WheelRadius <= 0f) return;
             v._speedMax = s.SpeedMax * TopSpeedBuff;
-            v._speedMin = s.SpeedMin * TopSpeedBuff;
+            // NEGATIVE ALWAYS. Reverse speed is stored as a negative number and BOTH readers compare against
+            // it directly -- the tracked path as `fwd <= _speedMin`, the wheeled path as `speed >= -_speedMin`.
+            // A spec that wrote it POSITIVE therefore did not get a smaller reverse, it got NO reverse: the
+            // wheeled test degenerates to `speed >= negative`, true at every speed including standing still, so
+            // reverse force was zeroed on every tick. Three specs had the sign wrong (apc, ship, runabout) and
+            // the APC is the one somebody drove -- strawberry, 2026-08-24, "apc has no reverse gear".
+            // Normalising here rather than only fixing the data, because the failure is silent, total, and
+            // looks like a missing feature rather than a typo. Zero stays zero: a trailer and a heli have no
+            // reverse and must keep having none.
+            v._speedMin = -Mathf.Abs(s.SpeedMin) * TopSpeedBuff;
             // EVERY CAR HAS BEEN DRIVING THROUGH A HIDDEN VELOCITY DAMP, and it is the single biggest force in
             // the old model after the engine. LinearDampMode defaults to COMBINE, which ADDS the body's value
             // to ProjectSettings physics/3d/default_linear_damp -- Godot's default 0.1, never overridden here.
@@ -2547,7 +2556,7 @@ namespace UnturnedGodot
             Body = "runabout_body.txt", Water = WaterMode.Boat,
             Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", WheelRadius = 0.3f,   // unused (no wheels) but non-null for safety
             Palette = "runabout_palette.png", DefaultPaints = new[] { "#e8e8ea" },   // paintable hull (Texture_Paintable) + its fixed detail texels via PaintMat
-            Engine = 600f, SteerMax = 0f, SteerMin = 0f, SpeedMax = 16f, SpeedMin = 8f, Brake = 0f,   // boat: propulsion is BoatThrust, not wheel EngineForce
+            Engine = 600f, SteerMax = 0f, SteerMin = 0f, SpeedMax = 16f, SpeedMin = -8f, Brake = 0f,   // boat: propulsion is BoatThrust, not wheel EngineForce
             BoxSize = new Vector3(2.8f, 1.6f, 9.0f), BoxCenter = new Vector3(0f, 0.1f, -0.3f),   // hull box (mesh x±1.5, y-0.85..2.1, z-4.94..4.37)
             ForwardGears = new[] { 1f }, ReverseGear = 1f, ShiftUpRpm = 5000f,
             Sound = "engine_medium.ogg", IdlePitch = 1.0f, MaxPitch = 2.0f, IdleVolume = 0.7f, MaxVolume = 1.0f,   // outboard motor loop
@@ -2572,7 +2581,7 @@ namespace UnturnedGodot
             Body = "ship_body.txt", Water = WaterMode.Boat,
             Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", WheelRadius = 0.3f,   // unused (no wheels), non-null for safety
             Palette = "ship_palette.png", RandomHueGray = true,   // orange hull-BOTTOM texel (3,1) flagged paintable (alpha 0) -> random colour per spawn (master); the other texels keep the ship's own albedo
-            Engine = 600f, SteerMax = 0f, SteerMin = 0f, SpeedMax = 12f, SpeedMin = 6f, Brake = 0f,   // boat: BoatThrust propels + rudder-yaws; a touch slower than the runabout (it's a SHIP)
+            Engine = 600f, SteerMax = 0f, SteerMin = 0f, SpeedMax = 12f, SpeedMin = -6f, Brake = 0f,   // boat: BoatThrust propels + rudder-yaws; a touch slower than the runabout (it's a SHIP)
             BoxSize = new Vector3(20f, 11f, 66f), BoxCenter = new Vector3(0f, 5.5f, 0f),   // hull collision box (mesh x±11, z±33.75, keel y0); covers the lower hull -> 4 corner buoys at the keel, COM low
             // 1:1 HULL, cut into pieces that are each genuinely convex. Every bound below is MEASURED off
             // ship_body.txt's own vertex planes, not eyeballed: the hull reaches full beam (x +-12) at y=8 and
@@ -2676,7 +2685,7 @@ namespace UnturnedGodot
             Body = "apc_body.txt", Water = WaterMode.Amphibious,
             Wheel = "apc_wheel.txt", WheelTex = "jeep_wheel_albedo.png", WheelRadius = 0.74f,   // REAL APC wheel (Wheel_LOD0 ripped): radius 0.74 (was a too-small 0.55 jeep wheel); tire albedo reused
             Palette = "apc_palette.png", DefaultPaints = new[] { "#5a6650" },   // Texture_MilitaryPaintable: olive paintable hull. NO grille (strawberry) -- headlights/taillights are the real separate Parts meshes below, not palette texels
-            Engine = 700f, SteerMax = 24f, SteerMin = 12f, SpeedMax = 12f, SpeedMin = 6f, Brake = 35f,
+            Engine = 700f, SteerMax = 24f, SteerMin = 12f, SpeedMax = 12f, SpeedMin = -6f, Brake = 35f,
             BoxSize = new Vector3(3.6f, 1.8f, 7.7f), BoxCenter = new Vector3(0f, 0.6f, 0f),   // hull (mesh x±1.83 y-0.27..2.31 z-4..3.72)
             ForwardGears = new[] { 18f, 10f }, ReverseGear = 8f, ShiftUpRpm = 4000f,
             Sound = "engine_medium.ogg", IdlePitch = 0.9f, MaxPitch = 1.8f, IdleVolume = 0.8f, MaxVolume = 1.0f,
@@ -3847,7 +3856,7 @@ namespace UnturnedGodot
             // curve, power stops being a mass-proportional constant and starts being an engine.
             float massScale = v.Mass / GlobalMass;
             v._engineForce = s.Engine * massScale; v._steerMax = s.SteerMax; v._steerMin = s.SteerMin;
-            v._speedMax = s.SpeedMax; v._speedMin = s.SpeedMin; v._brakeForce = s.Brake * massScale;
+            v._speedMax = s.SpeedMax; v._speedMin = -Mathf.Abs(s.SpeedMin); v._brakeForce = s.Brake * massScale;   // negative always -- see SetupDrivetrain
 if (s.Wheels != null && s.Wheels.Length > 1)
             {
                 float zmin = float.MaxValue, zmax = float.MinValue;
