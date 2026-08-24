@@ -240,19 +240,37 @@ void fragment() {
         /// correct if the bed geometry is ever improved. Same reasoning as not saving the collider.</summary>
         public void SaveRivers(string path)
         {
-            if (_riverSegs.Count == 0)
+            if (_riverSegs.Count == 0 && _bedMeshes.Count == 0)
             {
                 if (System.IO.File.Exists(path)) System.IO.File.Delete(path);   // carved then undone -> no stale file
                 return;
             }
             System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(path));
             using var w = new System.IO.BinaryWriter(System.IO.File.Create(path));
+            w.Write(2);   // format version: 2 stores the baked geometry as well as the recipe
             w.Write(_riverSegs.Count);
             foreach (var (a, b, half, depth) in _riverSegs)
             {
                 w.Write(a.X); w.Write(a.Y); w.Write(a.Z);
                 w.Write(b.X); w.Write(b.Y); w.Write(b.Z);
                 w.Write(half); w.Write(depth);
+            }
+            // THE BAKED VERTICES TOO (strawberry_cow: "disk space isnt a concern, ever... if we can save a
+            // single cpu cycle / ms of frame time / ms of loading by shoving stuff on the disk, thats a win").
+            //
+            // Storing only the segments made load rebuild every bed: a bezier walk, a SampleHeight scan per
+            // segment for the bank height, SurfaceTool, and GenerateNormals. All of that is now done once at
+            // carve time and read straight back. The segments are still written because the EDITOR needs the
+            // recipe to re-carve or extend a river -- geometry for the runtime, recipe for the tool.
+            //
+            // It also fixes a real inconsistency in the v1 format, which strawberry_cow caught: the CUT
+            // persists as a grid mask (fixed to the grid) while the bed was recomputed from live bank heights,
+            // so sculpting near a river made the two drift apart. Baked geometry is what you authored.
+            w.Write(_bedMeshes.Count);
+            foreach (var verts in _bedMeshes)
+            {
+                w.Write(verts.Length);
+                foreach (var v in verts) { w.Write(v.X); w.Write(v.Y); w.Write(v.Z); }
             }
         }
 
@@ -266,25 +284,27 @@ void fragment() {
             try
             {
                 using var r = new System.IO.BinaryReader(System.IO.File.OpenRead(path));
+                int ver = r.ReadInt32();
+                if (ver != 2) { GD.PushWarning($"[terrain] rivers format v{ver} not understood; ignoring"); return; }
                 int n = r.ReadInt32();
                 if (n < 0 || n > 200000) { GD.PushWarning($"[terrain] implausible river count {n}; ignoring"); return; }
                 for (int i = 0; i < n; i++)
                 {
                     var a = new Vector3(r.ReadSingle(), r.ReadSingle(), r.ReadSingle());
                     var b = new Vector3(r.ReadSingle(), r.ReadSingle(), r.ReadSingle());
-                    float half = r.ReadSingle(), depth = r.ReadSingle();
-                    var d = new Vector2(b.X - a.X, b.Z - a.Z);
-                    float len = d.Length();
-                    if (len < 0.01f) continue;
-                    d /= len;
-                    // Floor keys off the LOWEST bank along the segment, recomputed rather than stored -- the
-                    // same rule the carve used. Storing the floor instead would freeze it against a heightmap
-                    // that can be sculpted afterwards, and the bed would end up hanging in the air.
-                    float lowest = float.MaxValue;
-                    for (float t = 0f; t <= len; t += UNIT * 0.5f)
-                        lowest = Mathf.Min(lowest, SampleHeight(a.X + d.X * t, a.Z + d.Y * t));
-                    _riverSegs.Add((a, b, half, depth));
-                    BuildRiverBed(a, b, d, len, half, lowest - depth);
+                    _riverSegs.Add((a, b, r.ReadSingle(), r.ReadSingle()));   // recipe only: the editor's, not the runtime's
+                }
+                // Geometry read straight back -- no bezier walk, no SampleHeight scan, no GenerateNormals.
+                int meshes = r.ReadInt32();
+                if (meshes < 0 || meshes > 100000) { GD.PushWarning($"[terrain] implausible bed count {meshes}; ignoring"); return; }
+                for (int m = 0; m < meshes; m++)
+                {
+                    int vc = r.ReadInt32();
+                    if (vc < 0 || vc > 20_000_000) { GD.PushWarning("[terrain] implausible bed vertex count; ignoring"); return; }
+                    var verts = new Vector3[vc];
+                    for (int v = 0; v < vc; v++) verts[v] = new Vector3(r.ReadSingle(), r.ReadSingle(), r.ReadSingle());
+                    _bedVerts.AddRange(verts);
+                    CommitRiverBed();
                 }
             }
             catch (System.Exception e) { GD.PushWarning($"[terrain] bad rivers file, ignoring: {e.Message}"); }
@@ -532,6 +552,7 @@ void fragment() {
 
             _riverSegs.Add((begin, end, halfWidth, depth));
             BuildRiverBed(begin, end, d, len, halfWidth, lowestBank - depth);
+            if (!_carvingPath) CommitRiverBed();   // a path commits ONCE at the end, not per segment
             _dirty = true;
             RebuildChunksIn(gx0, gx1, gy0, gy1, withCollider: true);
         }
@@ -552,6 +573,7 @@ void fragment() {
         {
             if (_grid == null || anchors == null || anchors.Count < 2) return;
             if (anchors.Count == 2) { CarveRiver(anchors[0], anchors[1], halfWidth, depth); return; }
+            _carvingPath = true;
 
             for (int i = 0; i < anchors.Count - 1; i++)
             {
@@ -574,15 +596,24 @@ void fragment() {
                     prevPt = pt;
                 }
             }
+            _carvingPath = false;
+            CommitRiverBed();   // one mesh + one collider for the whole curve
         }
+        bool _carvingPath;
 
-        /// <summary>A U-shaped bed under one carved segment: floor, two banks, collidable.</summary>
+        readonly System.Collections.Generic.List<Vector3> _bedVerts = new();   // accumulated across a whole carve
+
+        /// <summary>Append one segment's U-shaped bed to the pending buffer.
+        ///
+        /// APPEND, not build. This used to create a MeshInstance3D AND a StaticBody3D with its own trimesh per
+        /// segment -- and a curved river is dozens of segments, so a single river cost dozens of draw calls and
+        /// dozens of separate collider BVHs. They are now merged into one mesh and one body per carve
+        /// (strawberry_cow 2026-08-24: "if we can save a single cpu cycle / ms of frame time / ms of loading by
+        /// shoving stuff on the disk, thats a win" -- the same principle applies to not making the runtime pay
+        /// for geometry that could have been merged once).</summary>
         void BuildRiverBed(Vector3 begin, Vector3 end, Vector2 dir, float len, float half, float floorY)
         {
-            _riverBeds ??= AddOwned(new Node3D { Name = "RiverBeds" });
             var right = new Vector3(-dir.Y, 0f, dir.X);   // world-space lateral, Z already in world terms
-            var st = new SurfaceTool();
-            st.Begin(Mesh.PrimitiveType.Triangles);
             const int Steps = 8;
             for (int i = 0; i < Steps; i++)
             {
@@ -593,13 +624,24 @@ void fragment() {
                 // Floor quad, then a bank up to the terrain on each side. The banks are what stop you seeing
                 // out through the gap the hole left in the surface.
                 void Quad(Vector3 a, Vector3 b, Vector3 c, Vector3 e)
-                { st.AddVertex(a); st.AddVertex(b); st.AddVertex(c); st.AddVertex(c); st.AddVertex(b); st.AddVertex(e); }
+                { _bedVerts.Add(a); _bedVerts.Add(b); _bedVerts.Add(c); _bedVerts.Add(c); _bedVerts.Add(b); _bedVerts.Add(e); }
                 Vector3 fl0 = c0 - right * half + Vector3.Up * floorY, fr0 = c0 + right * half + Vector3.Up * floorY;
                 Vector3 fl1 = c1 - right * half + Vector3.Up * floorY, fr1 = c1 + right * half + Vector3.Up * floorY;
                 Quad(fl0, fr0, fl1, fr1);                                                    // floor
                 Quad(fl0 + Vector3.Up * (bank0 - floorY), fl0, fl1 + Vector3.Up * (bank1 - floorY), fl1);   // left bank
                 Quad(fr0, fr0 + Vector3.Up * (bank0 - floorY), fr1, fr1 + Vector3.Up * (bank1 - floorY));   // right bank
             }
+        }
+
+        /// <summary>Turn the accumulated bed triangles into ONE mesh and ONE collider. Called once per carve,
+        /// not once per segment -- see BuildRiverBed.</summary>
+        void CommitRiverBed()
+        {
+            if (_bedVerts.Count < 3) { _bedVerts.Clear(); return; }
+            _riverBeds ??= AddOwned(new Node3D { Name = "RiverBeds" });
+            var st = new SurfaceTool();
+            st.Begin(Mesh.PrimitiveType.Triangles);
+            foreach (var v in _bedVerts) st.AddVertex(v);
             st.GenerateNormals();
             var mesh = st.Commit();
             var mi = new MeshInstance3D { Mesh = mesh, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.30f, 0.26f, 0.20f), Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled } };
@@ -608,7 +650,10 @@ void fragment() {
             body.SetMeta(PlayerController.SurfMeta, (int)PlayerController.Surf.Dirt);
             body.AddChild(new CollisionShape3D { Shape = mesh.CreateTrimeshShape() });
             _riverBeds.AddChild(body);
+            _bedMeshes.Add(_bedVerts.ToArray());   // kept for saving: the exact geometry, not a recipe for it
+            _bedVerts.Clear();
         }
+        readonly System.Collections.Generic.List<Vector3[]> _bedMeshes = new();
 
         Node3D AddOwned(Node3D n) { AddChild(n); return n; }
 
