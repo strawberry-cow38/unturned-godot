@@ -5523,13 +5523,20 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             // its own 2.89 m wheelbase, so it TRACKS the steering angle and grip was never the limit. The
             // steering angle is the whole story: 14 deg at 15 m/s asks for a 2 g corner and the tyres took it.
             //
-            // A real car cannot do that -- the front tyres let go first. Rather than model breakaway, cap the
-            // angle to the one that would ASK for MaxLatAccel: tan(delta) = wheelbase * a / v^2. That
-            // self-limits at any speed, leaves low-speed manoeuvring untouched (below ~10 m/s the cap sits
-            // above _steerMax), and makes the limit a physical quantity rather than another tuned lerp.
+            // THE CAP IS GONE (strawberry_cow 2026-08-24: "the turning circle for cars right now is massive",
+            // and before that, twice: "i want real simulated weight/inertia on steering, not a hard clamp").
+            //
+            // It capped the steer angle to whatever would ask for MaxLatAccel -- tan(delta) = wheelbase*a/v^2 --
+            // which is cheap and self-limiting and was an invisible hand on the player's steering wheel. It is
+            // also, measured, the entire cause of the wide circle: removing it and changing NOTHING else takes
+            // the jeep's full-lock radius from 27.9 m to 11.7 m. 11.7 is the Ackermann radius for its 2.89 m
+            // wheelbase at the 14 deg it has faded to by then, i.e. the car now tracks its own steering angle
+            // instead of being held off it.
+            //
+            // What the cap bought was stopping a 2 g corner. That is a real thing to want and this gives it
+            // back -- but the way to buy it is tyres that run out of grip, not a limiter on the input, and that
+            // is what was asked for twice. Steer_Max/Steer_Min stay exactly retail's (Jeep.dat: 28 and 14).
             float angle = Mathf.Lerp(_steerMax, _steerMin, t);
-            if (_wheelbase > 0f && speed > 2f)
-                angle = Mathf.Min(angle, Mathf.Max(MinSteerDeg, Mathf.RadToDeg(Mathf.Atan(_wheelbase * MaxLatAccel / (speed * speed)))));
             _steerTarget = -steer * angle;   // smoothed toward in _PhysicsProcess (not snapped) via the AnimatedSteeringAngle-style ramp
             // SPACE = handbrake (locks hard); S-into-forward-motion = foot brake. Both far stronger than the old raw .dat Brake.
             _handbraking = handbrake;   // remembered so the car freezes (no jitter) when stopped with the handbrake held
