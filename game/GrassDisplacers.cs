@@ -20,15 +20,16 @@ namespace UnturnedGodot
     public static class GrassDisplacers
     {
         public const string Group = "grass_displacer";
-        // Data-texture width = the most displacers that can bend grass at once. The nearest Max to the player win;
-        // grass only renders within ~160m, so anything past the cull range never mattered. 24 is plenty and keeps the
-        // per-blade shader loop short.
-        public const int Max = 24;
+        // Data-texture width = the most displacers (current footprints + wake breadcrumbs) that can bend grass at once.
+        // The nearest Max to the player win; grass only renders within ~160m, so anything past the cull range never
+        // mattered. Bumped to 32 to leave room for the wake trail behind a mover.
+        public const int Max = 32;
 
         // Typical footprints, in metres of flattened radius. Tunable per call site.
-        public const float VehicleRadius = 3.5f;   // a car/truck presses a wide swath
-        public const float PlayerRadius = 0.6f;     // a person's stance (remote players; the LOCAL player is the retail point)
+        public const float VehicleRadius = 4.2f;   // a car/truck presses a wide swath
+        public const float PlayerRadius = 0.6f;     // a remote player's stance (the LOCAL player uses the retail point)
         public const float ItemRadius = 0.4f;       // a dropped item dimples a small patch
+        public const float PlayerWakeRadius = 3.3f; // the local player's WAKE breadcrumb footprint -- matches the shader `radius` uniform so the trail is as wide as the live flatten
 
         static readonly StringName RadiusMeta = "grass_disp_radius";
 
@@ -67,5 +68,48 @@ namespace UnturnedGodot
         }
 
         public static float RadiusOf(Node node) => node != null && node.HasMeta(RadiusMeta) ? (float)node.GetMeta(RadiusMeta) : PlayerRadius;
+
+        // ---- WAKE (master 2026-08-24: "leave a short wake in the grass") --------------------------------------------
+        // A moving displacer drops a breadcrumb every WakeSpacing metres; each fades over WakeSeconds, so the flattened
+        // patch trails behind the mover and springs back up. Breadcrumbs are just extra (fading) displacer texels -- the
+        // shader loop already handles them -- so the wake needs NO shader change, only more slots (Max).
+        public const float WakeSeconds = 1.6f;   // how long a flattened wake takes to stand back up
+        public const float WakeSpacing = 0.9f;   // drop a breadcrumb every this many metres of movement (radius > spacing => a continuous trail)
+
+        struct Bread { public Vector3 Pos; public ulong Ms; public float R; }
+        static readonly System.Collections.Generic.List<Bread> _wake = new();
+        static readonly System.Collections.Generic.Dictionary<ulong, Vector3> _lastWake = new();   // per-source (instance id) last breadcrumb pos
+
+        /// <summary>Age the wake trail, dropping breadcrumbs that have fully sprung back. Call once per frame.</summary>
+        public static void AgeWake(ulong nowMs)
+        {
+            for (int i = _wake.Count - 1; i >= 0; i--)
+                if ((nowMs - _wake[i].Ms) * 0.001f >= WakeSeconds) _wake.RemoveAt(i);
+        }
+
+        /// <summary>Drop a breadcrumb for a moving source (keyed by instance id) if it has moved >= WakeSpacing since its
+        /// last one. Gate the CALL on a mover (player / vehicle): a stationary source would drop one then never again,
+        /// but its id would linger in _lastWake, so items + remote players (small radius) are deliberately not called.</summary>
+        public static void DropWake(ulong id, Vector3 pos, float radius, ulong nowMs)
+        {
+            if (_lastWake.TryGetValue(id, out var last) && pos.DistanceTo(last) < WakeSpacing) return;
+            _lastWake[id] = pos;
+            _wake.Add(new Bread { Pos = pos, Ms = nowMs, R = radius });
+        }
+
+        /// <summary>Add each live wake breadcrumb within range of the camera to the packing scratch, with a radius that
+        /// FADES to 0 over WakeSeconds -- so the flatten weakens + narrows as the grass stands back up behind the mover.</summary>
+        public static void GatherWake(System.Collections.Generic.List<(float d2, Vector3 pos, float r)> scratch, Vector3 cam, float range2, ulong nowMs)
+        {
+            foreach (var b in _wake)
+            {
+                float fade = 1f - (nowMs - b.Ms) * 0.001f / WakeSeconds;
+                if (fade <= 0f) continue;
+                float dx = b.Pos.X - cam.X, dz = b.Pos.Z - cam.Z;
+                float d2 = dx * dx + dz * dz;
+                if (d2 > range2) continue;
+                scratch.Add((d2, b.Pos, b.R * fade));
+            }
+        }
     }
 }

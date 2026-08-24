@@ -6147,6 +6147,12 @@ namespace UnturnedGodot
             var wd = WindField.WindXZ(p);   // FOLIAGE WIND SWAY: xy = direction, z = strength at the player (a representative gust for the whole view)
             RenderingServer.GlobalShaderParameterSet(GrassDisplacers.WindParam, new Vector4(wd.X, wd.Y, WindField.SampleWind(p), 0f));
 
+            // WAKE (master): the local player + moving vehicles leave a fading flattened trail. Age the trail + drop the
+            // player's breadcrumb here; the gather below drops vehicle breadcrumbs + adds the whole fading trail as texels.
+            ulong nowMs = Time.GetTicksMsec();
+            GrassDisplacers.AgeWake(nowMs);
+            GrassDisplacers.DropWake(GetInstanceId(), p, GrassDisplacers.PlayerWakeRadius, nowMs);
+
             // EXTENDED DISPLACERS (master): gather the grass_displacer group (vehicles, dropped items, remote players)
             // within grass render range, keep the nearest Max to the camera, and pack (world pos + radius) into the
             // data texture. Grass renders only within ~160m (FoliageField CullRange), so anything past it is skipped.
@@ -6161,8 +6167,11 @@ namespace UnturnedGodot
                 float dx = gp.X - p.X, dz = gp.Z - p.Z;
                 float d2 = dx * dx + dz * dz;
                 if (d2 > range2) continue;                // out of grass render range -> displaces nothing visible
-                _dispScratch.Add((d2, gp, GrassDisplacers.RadiusOf(n3)));
+                float r = GrassDisplacers.RadiusOf(n3);
+                _dispScratch.Add((d2, gp, r));
+                if (r > 1.0f) GrassDisplacers.DropWake(n3.GetInstanceId(), gp, r, nowMs);   // vehicles (big r) leave a wake; items + remote players (small r) don't
             }
+            GrassDisplacers.GatherWake(_dispScratch, p, range2, nowMs);   // add the fading wake breadcrumbs as extra (weaker, shrinking) texels behind the movers
             _dispScratch.Sort(static (a, b) => a.d2.CompareTo(b.d2));   // nearest first -> the Max that survive are the ones the player can actually see
             int cnt = System.Math.Min(_dispScratch.Count, GrassDisplacers.Max);
             for (int i = 0; i < cnt; i++)

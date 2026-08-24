@@ -30,7 +30,7 @@ global uniform int grass_displacer_count;
 
 uniform sampler2D albedo_tex : source_color, filter_linear_mipmap;
 uniform float alpha_scissor : hint_range(0.0, 1.0) = 0.4;
-uniform float radius : hint_range(0.1, 8.0) = 2.6;        // how far out blades feel you
+uniform float radius : hint_range(0.1, 8.0) = 3.3;        // how far out blades feel you (master: slightly bigger; matches GrassDisplacers.PlayerWakeRadius so the wake trail is the same width)
 uniform float strength : hint_range(0.0, 5.0) = 1.4;     // how far the tip is pushed aside, in metres
 uniform float vertical_reach : hint_range(0.1, 8.0) = 3.5; // ...and how far up/down, so a roof overhead flattens nothing
 
