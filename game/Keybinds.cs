@@ -47,7 +47,12 @@ namespace UnturnedGodot
         /// would double-fire across a frame.</summary>
         public bool Matches(InputEvent e) => IsMouse
             ? e is InputEventMouseButton mb && mb.ButtonIndex == Mouse
-            : e is InputEventKey k && k.PhysicalKeycode == Key;
+            // `Key != Key.None` is load-bearing, not defensive. Without it an UNBOUND bind degenerates to
+            // `k.PhysicalKeycode == Key.None`, i.e. == 0 -- and a synthetic or IME-sourced InputEventKey that
+            // sets only Keycode leaves PhysicalKeycode at 0, so the unbound action would swallow it. That makes
+            // an unbound control a WILDCARD rather than inert. `Pressed` above already guards this; Matches
+            // did not, and the two must agree about what "unbound" means.
+            : Key != Key.None && e is InputEventKey k && k.PhysicalKeycode == Key;
 
         public string Label
         {
@@ -80,8 +85,17 @@ namespace UnturnedGodot
         public static Bind Parse(string s)
         {
             if (string.IsNullOrEmpty(s) || s.Length < 3) return default;
-            if (!int.TryParse(s[2..], out int v)) return default;
-            return s[0] == 'm' ? new Bind((MouseButton)v) : new Bind((Key)v);
+            // Check the SEPARATOR and the tag, not just the number. Without this any first char that is not
+            // 'm' fell through to the key branch, so a corrupt "x:65" silently became Key.A -- a plausible
+            // binding rather than the fallback-to-default the caller in Load() promises.
+            if (s[1] != ':' || (s[0] != 'k' && s[0] != 'm')) return default;
+            // long, not int: Godot's Key and MouseButton are long-backed, and Enum.IsDefined throws rather
+            // than returning false when the boxed value's type does not match the enum's underlying type.
+            if (!long.TryParse(s[2..], out long v) || v <= 0) return default;   // v<=0: 0 is None, negatives are unreachable
+            if (s[0] == 'm') return System.Enum.IsDefined(typeof(MouseButton), (long)(MouseButton)v) ? new Bind((MouseButton)v) : default;
+            // An undefined Key value passes `IsBound` (it only tests != None) and would be STORED, giving a row
+            // that reads as bound and an action that can never fire, with nothing offering a way out.
+            return System.Enum.IsDefined(typeof(Key), (long)(Key)v) ? new Bind((Key)v) : default;
         }
     }
 
@@ -199,6 +213,10 @@ namespace UnturnedGodot
 
         public static void Save()
         {
+            // A test that rebinds anything must not reach the developer's real user://keybinds.cfg. This was
+            // not hypothetical: Set() calls Save() unconditionally, so a single rebind assertion permanently
+            // overwrote the config of whoever ran the suite.
+            if (_testMode) return;
             try
             {
                 var cfg = new ConfigFile();
@@ -223,11 +241,23 @@ namespace UnturnedGodot
             return sb.ToString();
         }
 
-        // Test hook: point the table at a known state without touching the developer's real config.
+        static bool _testMode;
+
+        /// <summary>Test hook: put the table in a KNOWN state and stop it touching the developer's real config.
+        ///
+        /// The previous version cleared Current and set `_loaded = false`, which did the OPPOSITE of what its
+        /// comment claimed: the next Get() saw !_loaded and called Load(), which read the real
+        /// user://keybinds.cfg off disk. So a developer with a customised Jump key ran a different suite from
+        /// CI, and the failure would look like a product bug rather than a harness one.
+        ///
+        /// Now: load the defaults directly, mark loaded so nothing re-reads disk, and latch _testMode so Save()
+        /// is a no-op for the rest of the process.</summary>
         public static void ResetForTests()
         {
+            _testMode = true;
             Current.Clear();
-            _loaded = false;
+            foreach (var kv in Defaults) Current[kv.Key] = kv.Value;
+            _loaded = true;
         }
     }
 }
