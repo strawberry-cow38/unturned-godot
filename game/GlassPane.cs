@@ -82,8 +82,7 @@ namespace UnturnedGodot
                     AlbedoColor = ShardTint(_hue), AlbedoTexture = fx.Tex,   // shards COLOURED OFF THE PROP (the pane's glass hue, lightened) via AlbedoColor -- a reliable multiply, NOT the fragile per-particle vertex-colour buffer (master + tc)
                 };
                 Vector3 halfExt = new Vector3(Mathf.Max(_half.X, 0.2f), Mathf.Max(_half.Y, 0.2f), 0.2f);   // emit across the pane's whole face
-                var ps = new CpuParticles3D
-                {
+                var ps = new CpuParticles3D { CastShadow = GeometryInstance3D.ShadowCastingSetting.Off, 
                     Emitting = false, OneShot = true,   // fired below AFTER positioning. GlassPane.Shatter runs from TakeDamage INSIDE StepBullets (a 50Hz physics tick); Emitting=true in the ctor arms the one-shot at construction and it burns its cycle before the first _process -> fires EMPTY -> shards never appear (the pane still vanishes + marks broken, so it looks deliberate). Same bug + fix as ImpactFx.
                     Amount = Mathf.Clamp(Mathf.RoundToInt(fx.Count * 2f), 16, 40),   // a pane throws more glass than a fragment
                     Lifetime = Mathf.Max(1.2f, fx.LifeMax * 1.2f), Explosiveness = 0.9f, Randomness = 0.5f,

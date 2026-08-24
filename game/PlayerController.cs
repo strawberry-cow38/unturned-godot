@@ -4436,7 +4436,11 @@ namespace UnturnedGodot
             // TrySwitchSeat(0) was refused: a jeep nobody can steer. The vehicle-explosion path never showed it
             // because DriveVehicle calls ExitVehicle() (which frees the seat) BEFORE applying the damage.
             // Review 2026-08-16.
-            if (v != null) { v.OccupiedSeats.Remove(_seatIndex); v.Park(); GlobalPosition = ClampExitSpot(v.GlobalPosition + v.GlobalTransform.Basis.X * 2.4f + Vector3.Up * 1.0f); }   // engine KEEPS RUNNING when you get out; Park still holds it so it can't roll off
+            // NO Park (strawberry_cow 2026-08-24: "when exiting a vehicle, keep its momentum, dont apply any
+            // brakes"). Leaving a moving car now leaves it MOVING -- it coasts, rolls downhill, and keeps
+            // whatever the driver gave it. The engine is likewise untouched. Bailing out of a rolling truck is a
+            // thing you can do to yourself on purpose now.
+            if (v != null) { v.OccupiedSeats.Remove(_seatIndex); GlobalPosition = ClampExitSpot(v.GlobalPosition + v.GlobalTransform.Basis.X * 2.4f + Vector3.Up * 1.0f); }
             _seatIndex = 0;
             if (Hud != null) Hud.Vehicle = null;
             foreach (var c in FindChildren("*", "CollisionShape3D", true, false))
@@ -6681,7 +6685,8 @@ namespace UnturnedGodot
             // Vacating the driver's seat shuts it down and brakes, exactly as stepping out does: nobody is
             // holding the wheel, and a car that keeps its throttle while the driver climbs into the back is a
             // runaway rather than a feature. Taking the seat starts it again.
-            if (wasDriver && want != 0) v.Park();   // left the driver's seat: brake it, but leave the engine as the driver set it
+            // moving to a passenger seat no longer brakes it either -- same rule, and a car that stopped dead
+            // because you climbed into the back would be stranger than one that keeps rolling.
             // Deliberately does NOT Wake() the vehicle. I added that here and on entry, reasoning that a settled
             // car would be frozen solid -- it is not: Drive/DriveHeli clear the parked flag on any input and the
             // settle rule releases the freeze the next physics frame, so waking here bought nothing. It cost
@@ -6703,7 +6708,7 @@ namespace UnturnedGodot
             if (v != null) v.OccupiedSeats.Remove(_seatIndex);
             // Only the driver leaving shuts it down. A passenger hopping out of a moving car must not kill the
             // engine and park it underneath the person still driving.
-            if (v != null && _seatIndex == 0) v.Park();   // brake so it doesn't roll away. The engine stays as it was -- leaving it running and burning fuel is now the player's choice to make
+            // no Park here either: momentum is the driver's to leave behind (see ExitVehicle)
             _seatIndex = 0;
             if (Hud != null) Hud.Vehicle = null;               // hide the vehicle status box
             if (v != null) GlobalPosition = ClampExitSpot(v.GlobalPosition + v.GlobalTransform.Basis.X * 2.4f + Vector3.Up * 1.0f);

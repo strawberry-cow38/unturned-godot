@@ -322,8 +322,7 @@ namespace UnturnedGodot
                 CullMode = BaseMaterial3D.CullModeEnum.Disabled,
             };
             var fade = new Curve(); fade.AddPoint(new Vector2(0f, 1f)); fade.AddPoint(new Vector2(1f, 0f));
-            return new CpuParticles3D
-            {
+            return new CpuParticles3D { CastShadow = GeometryInstance3D.ShadowCastingSetting.Off, 
                 Emitting = false, Visible = false, OneShot = false, Amount = 22, Lifetime = 0.4f, Randomness = 0.5f,
                 Direction = new Vector3(0f, 1f, -1f).Normalized(), Spread = 18f,
                 InitialVelocityMin = 4f, InitialVelocityMax = 9f,

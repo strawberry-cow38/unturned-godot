@@ -751,7 +751,25 @@ namespace UnturnedGodot
                 // getting a node each (PropBatcher). Everything below that needs a real `mainMi` belongs to a
                 // prop Batchable() already excludes, so mainMi stays null only on paths that never read it.
                 bool batched = batchOpen && Batchable(name);
+                // DECAL PROPS CAST NO SHADOW (strawberry_cow 2026-08-24: "decal props (line parking etc)").
+                //
+                // Decided by SHAPE, not by a name list. The obvious implementation is a list of prefixes --
+                // Line_, Road_Line_, Crosswalk_ -- and it is wrong on its first outing: `Power_Line_0` matches
+                // every one of those patterns and is an overhead cable that SHOULD cast. A flat painted marking
+                // lying on tarmac is geometrically flat, so ask the mesh: near-zero vertical extent against a
+                // real footprint. That also catches the decals nobody thought to add to the list, and stays
+                // right when someone adds a new one.
+                //
+                // A shadow from a flat ground quad is z-fighting noise at best -- there is nothing for it to
+                // fall on but the surface it is painted onto.
+                // Z is UP in mesh space. These .obj rips are Z-up and the placement basis rotates them, so the
+                // MESH's local AABB has its vertical extent on Z, not Y -- the same frame gotcha the placement
+                // code carries (mesh(x,y,z) = node(x,z,-y)). Written with Size.Y first, which made this whole
+                // test inert: Line_Parking_0 is 12.5 x 5.0 x 0.00, so Y is 5 m and nothing was ever a decal.
+                var vaabb = visMesh.GetAabb();
+                bool isDecal = vaabb.Size.Z < 0.06f && Mathf.Max(vaabb.Size.X, vaabb.Size.Y) > 0.5f;
                 var mainMi = batched ? null : new MeshInstance3D { Mesh = visMesh, MaterialOverride = MatFor(matName), Transform = new Transform3D(basis, gpos),
+                    CastShadow = isDecal ? GeometryInstance3D.ShadowCastingSetting.Off : GeometryInstance3D.ShadowCastingSetting.On,
                     VisibilityRangeEnd = cull, VisibilityRangeFadeMode = GeometryInstance3D.VisibilityRangeFadeModeEnum.Disabled };   // individual props already frustum-cull behind the player; add a distance cutoff (master)
                 if (mainMi != null) root.AddChild(mainMi);
                 // MESH LOD: retail ships lower-detail meshes (mean 55% fewer triangles, some 98%) that the port

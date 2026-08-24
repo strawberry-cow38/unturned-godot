@@ -249,7 +249,9 @@ namespace UnturnedGodot
                                      fe != null ? new Vector3(fe.AngVel.x, fe.AngVel.y, fe.AngVel.z) : Vector3.Zero);
                     }
                     v.NetGhost(false);
-                    if (!v.Exploded) v.Park();   // never Park a wreck -- it would kill the explosion tumble
+                    // Park removed here too, so a remote driver leaving behaves like a local one: the car keeps
+                    // its momentum. One rule on both paths -- the same reason the engine stopped being a seat
+                    // side effect. (The old wreck guard is moot now that nothing parks.)
                 }
 
                 if (t.Held)

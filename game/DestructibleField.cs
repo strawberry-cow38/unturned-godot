@@ -225,8 +225,7 @@ namespace UnturnedGodot
                 // Visibility tuning over the raw retail params: retail's 8-16 chips fly up at 5-10 m/s + vanish in ~1s, so
                 // they zip out of view before you notice (retail leans on the mesh-debris + finale we don't model). Keep the
                 // real sprite/shape but ~3x the count, slower, a gentle arc + a longer life so the chips linger near the break.
-                var ps = new CpuParticles3D
-                {
+                var ps = new CpuParticles3D { CastShadow = GeometryInstance3D.ShadowCastingSetting.Off, 
                     Emitting = false, OneShot = true, Amount = Mathf.Clamp(Mathf.RoundToInt(fx.Count * 1.5f), 8, 28), Lifetime = Mathf.Max(1.1f, fx.LifeMax * 1.2f),   // Emitting fired AFTER positioning (below) -- true-in-ctor fires empty when a BULLET break routes here via NetDamageObject (a physics tick); same fix as ImpactFx
                     Explosiveness = 0.9f, Randomness = 0.5f, Direction = Vector3.Up,
                     Spread = fx.Shape == "cone" ? Mathf.Clamp(fx.ConeAngle * 1.4f, 35f, 90f) : (fx.Shape == "sphere" ? 180f : 60f),
@@ -255,8 +254,7 @@ namespace UnturnedGodot
             // (no dust anymore -- master removed the break smoke). Falls under gravity, ~1.6 s.
             Material debrisMat = propMat ?? new StandardMaterial3D { AlbedoColor = new Color(0.55f, 0.5f, 0.44f) };
             int n = Mathf.Clamp(Mathf.RoundToInt(radius * 14f), 12, 48);
-            var debris = new CpuParticles3D
-            {
+            var debris = new CpuParticles3D { CastShadow = GeometryInstance3D.ShadowCastingSetting.Off, 
                 Emitting = false, OneShot = true, Amount = n, Lifetime = 1.6f, Explosiveness = 1f, Randomness = 0.4f,   // fired AFTER positioning (below) -- physics-tick-safe (see the chip burst above)
                 Direction = Vector3.Up, Spread = 90f, InitialVelocityMin = 1.5f, InitialVelocityMax = 4.5f,
                 Gravity = new Vector3(0f, -9.8f, 0f),

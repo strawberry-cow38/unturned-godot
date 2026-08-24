@@ -1606,8 +1606,7 @@ namespace UnturnedGodot
                 mat.EmissionEnabled = true; mat.Emission = new Color(1f, 0.4f, 0.05f); mat.EmissionEnergyMultiplier = 2.5f;
                 mat.ParticlesAnimHFrames = 4; mat.ParticlesAnimVFrames = 1; mat.ParticlesAnimLoop = true;
             }
-            var ps = new CpuParticles3D
-            {
+            var ps = new CpuParticles3D { 
                 Emitting = false, Amount = amount, Lifetime = life, Direction = Vector3.Up, Spread = 25f,
                 InitialVelocityMin = vel * 0.6f, InitialVelocityMax = vel, Gravity = new Vector3(0f, 1.5f, 0f),
                 ScaleAmountMin = sizeMin, ScaleAmountMax = sizeMax, Color = c, Mesh = new QuadMesh { Size = Vector2.One, Material = mat },   // Size 1 -> ScaleAmount = the particle diameter in metres (src startSize)
@@ -6095,8 +6094,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                     DisableReceiveShadows = true,
                 };
                 var ab = mesh.GetAabb();
-                _headlightMotes = new CpuParticles3D
-                {
+                _headlightMotes = new CpuParticles3D { 
                     Position = new Vector3(0f, 0f, frontZ),
                     Amount = StreetLight.MoteCount, Lifetime = 7f, Preprocess = 7f,   // start at steady state
                     Randomness = 1f, Emitting = false, Visible = false,

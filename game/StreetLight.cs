@@ -363,8 +363,7 @@ namespace UnturnedGodot
                     BillboardMode = BaseMaterial3D.BillboardModeEnum.Particles,
                     DisableReceiveShadows = true,
                 };
-                _motes = new CpuParticles3D
-                {
+                _motes = new CpuParticles3D { 
                     Position = under,
                     Amount = MoteCount,
                     Lifetime = 7f,

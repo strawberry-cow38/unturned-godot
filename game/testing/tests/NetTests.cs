@@ -623,11 +623,12 @@ namespace UnturnedGodot.Testing
             yield return Until(() => ded.Server.Vehicles.TryGet(netId, out var e) && e.DriverPlayerId == 0, 5);
             T.Check("Exit freed the seat", ded.Server.Vehicles.TryGet(netId, out var freedE) && freedE.DriverPlayerId == 0);
             yield return Ticks(5);
-            // The engine is NOT tied to the seat any more (strawberry_cow 2026-08-24: the car stays off when
-            // you get in and keeps running when you get out), so this asserts the NEW rule: exiting parks the
-            // car without touching the ignition. Checking Parked rather than !EngineOn keeps the thing the test
-            // actually cares about -- that the freed car cannot roll away.
-            T.Check("the node parked after exit, engine left as the driver had it", jeep.Parked);
+            // Exit now touches NEITHER the engine nor the brakes (strawberry_cow 2026-08-24: "keep its
+            // momentum, dont apply any brakes"). So the only thing exit is still responsible for is freeing the
+            // seat, which the check above already covers. Asserting NOT-parked is the real content here: this
+            // test previously asserted the opposite twice over, and a rule that reverses twice in an hour is
+            // exactly the one worth pinning down.
+            T.Check("exit left the car unparked -- momentum is the driver's to leave behind", !jeep.Parked);
 
             // teardown: unhook the pump so nothing touches the dying MemNetwork after QueueFree
             world.Sim.Sim.Remove(pump);

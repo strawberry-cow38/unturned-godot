@@ -436,8 +436,7 @@ namespace UnturnedGodot
         {
             var parent = GetParent();
             if (parent == null) return;
-            var chunks = new CpuParticles3D
-            {
+            var chunks = new CpuParticles3D { CastShadow = GeometryInstance3D.ShadowCastingSetting.Off, 
                 Emitting = false, OneShot = true, Amount = 20, Lifetime = 2.6f, Explosiveness = 1f, TopLevel = true,   // fired AFTER positioning (below) -- true-in-ctor fires empty when a BULLET destroys the deployable (a physics tick); same fix as ImpactFx
                 Mesh = new BoxMesh { Size = Vector3.One * 0.12f },
                 EmissionShape = CpuParticles3D.EmissionShapeEnum.Box, EmissionBoxExtents = new Vector3(0.4f, 0.7f, 0.4f),   // pieces originate ACROSS the body, then fall
