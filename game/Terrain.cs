@@ -308,6 +308,7 @@ void fragment() {
                 }
             }
             catch (System.Exception e) { GD.PushWarning($"[terrain] bad rivers file, ignoring: {e.Message}"); }
+            RebuildRiverField();   // the field is derived, so it has to be rebuilt from the recipe on load
         }
 
         /// <summary>Write the hole mask, bit-packed 8 quads per byte (retail packs the same way). Writes
@@ -542,21 +543,14 @@ void fragment() {
         /// circle -- so geometry stopping at the cut radius would still leave a ragged gap. Overshooting into
         /// intact terrain is free because the rim sits ON the terrain surface.</summary>
         const float RiverRimOvershoot = 2f * QuadHalfDiag;
-        /// <summary>The shelf's outer rim is dropped this far below terrain, so the very edge tucks under
-        /// intact ground rather than z-fighting it.</summary>
-        const float RiverRimSink = 0.005f;
-        /// <summary>...and the INBOARD end of the shelf is lifted this far ABOVE it.
+        /// <summary>How far the bed's wall top sits ABOVE the sampled terrain height.
         ///
-        /// strawberry: "the terrain edges are really rough around the apron." The shelf and the surviving
-        /// terrain overlap in a band, because the hole boundary is stair-stepped at cell resolution while the
-        /// shelf is a smooth offset strip. With the whole shelf sunk below terrain, the TERRAIN won the depth
-        /// test everywhere they overlapped -- so the visible edge was its zigzag, cell by cell, which is
-        /// exactly the roughness. Lifting the inboard end makes the shelf win across the ragged band and hides
-        /// it, while the rim still tucks under: the visible boundary becomes the shelf's own smooth curve.
-        ///
-        /// The crossover lands around 92% of the way out, beyond the farthest stair-step (measured 12.65 m
-        /// against a 13.66 m rim at half-width 8), so the ragged edge is always on the covered side of it.</summary>
-        const float RiverShelfLift = 0.06f;
+        /// The shelf this replaces is gone: the terrain clips itself to the bank now, so there is no overlap
+        /// band to hide and no depth-order contest to lose -- which is what four previous constants here were
+        /// all trying and failing to manage. What is left is a sub-cell mismatch, because the terrain's clipped
+        /// edge runs through quad-edge crossings while the wall runs through bed stations. Millimetres of
+        /// overlap close that; a gap would show.</summary>
+        const float RiverBankOverlap = 0.03f;
 
         /// <summary>Cut and bed a river along a whole polyline in ONE pass.
         ///
@@ -568,51 +562,27 @@ void fragment() {
         void CarveRiverPolyline(System.Collections.Generic.IReadOnlyList<Vector3> path, float half, float depth)
         {
             if (_grid == null || path == null || path.Count < 2) return;
-            float cutR = half + RiverCutMargin;
 
-            // 1. CUT, over-wide. Half-cell steps so a diagonal cannot skip a column.
+            // NO HOLE MASK ANY MORE. The cut used to punch whole quads out and lay a shelf over the ragged
+            // boundary that left; the terrain now CLIPS ITSELF to the bank from the river field instead, so
+            // what a quad contributes is decided per VERTEX and the edge lands exactly on the channel line.
+            // See _riverField. The dug-hole mask still exists and is untouched -- that is a different feature.
+            float reach = half + RiverShelfOuterFor(half);
             int gx0 = _gw, gx1 = -1, gy0 = _gh, gy1 = -1;
-            for (int e = 0; e < path.Count - 1; e++)
+            foreach (var pt in path)
             {
-                Vector3 a = path[e], b = path[e + 1];
-                var d = new Vector2(b.X - a.X, b.Z - a.Z);
-                float len = d.Length();
-                if (len < 0.001f) continue;
-                d /= len;
-                for (float t = 0f; t <= len; t += UNIT * 0.5f)
-                {
-                    float wx = a.X + d.X * t, wz = a.Z + d.Y * t;
-                    float cx = (wx - _bx) / UNIT, cy = (-wz - _bz) / UNIT;
-                    // CUT ANY QUAD THAT OVERLAPS THE CHANNEL, not just those whose CENTRE is inside it.
-                    // strawberry, 2026-08-24: "we arent carving away enough of the terrain. there are terrain
-                    // quads overhanging at the river edges". A centre test keeps every quad whose middle sits
-                    // outside the radius -- and such a quad still reaches QuadHalfDiag inward, so it hangs out
-                    // over the water. Testing centre-distance against cutR + QuadHalfDiag removes anything that
-                    // could possibly intrude, which is the "carve slightly more than we need" half of the ask;
-                    // the apron below is the "re-install tris" half that closes the wider gap.
-                    float holeR = cutR + QuadHalfDiag;
-                    int rg = Mathf.CeilToInt(holeR / UNIT) + 1;
-                    for (int ix = -rg; ix <= rg; ix++)
-                        for (int iy = -rg; iy <= rg; iy++)
-                        {
-                            int gx = Mathf.RoundToInt(cx) + ix, gy = Mathf.RoundToInt(cy) + iy;
-                            float ddx = (gx + 0.5f - cx) * UNIT, ddy = (gy + 0.5f - cy) * UNIT;
-                            if (ddx * ddx + ddy * ddy > holeR * holeR) continue;
-                            if (gx < 0 || gy < 0 || gx >= _gw - 1 || gy >= _gh - 1) continue;   // off-map: not ours to bound
-                            SetHole(gx, gy, true);
-                            // Bounds track EVERY quad in range, not just the ones this call changed. Gating on
-                            // SetHole's "did it change" return meant re-carving an existing river found nothing
-                            // new to cut, bailed at the guard below, and silently deleted the bed instead of
-                            // rebuilding it -- which is exactly what a migration pass does.
-                            gx0 = System.Math.Min(gx0, gx); gx1 = System.Math.Max(gx1, gx);
-                            gy0 = System.Math.Min(gy0, gy); gy1 = System.Math.Max(gy1, gy);
-                        }
-                }
+                int a0 = Mathf.FloorToInt((pt.X - reach - _bx) / UNIT), a1 = Mathf.CeilToInt((pt.X + reach - _bx) / UNIT);
+                int b0 = Mathf.FloorToInt((-pt.Z - reach - _bz) / UNIT), b1 = Mathf.CeilToInt((-pt.Z + reach - _bz) / UNIT);
+                gx0 = System.Math.Min(gx0, a0); gx1 = System.Math.Max(gx1, a1);
+                gy0 = System.Math.Min(gy0, b0); gy1 = System.Math.Max(gy1, b1);
             }
-            if (gx1 < 0) return;   // the whole path was off-map -> no bed, no rebuild
+            gx0 = Mathf.Clamp(gx0, 0, _gw - 2); gx1 = Mathf.Clamp(gx1, 0, _gw - 2);
+            gy0 = Mathf.Clamp(gy0, 0, _gh - 2); gy1 = Mathf.Clamp(gy1, 0, _gh - 2);
+            if (gx1 < gx0 || gy1 < gy0) return;   // wholly off-map
 
             for (int e = 0; e < path.Count - 1; e++) _riverSegs.Add((path[e], path[e + 1], half, depth));
-            BuildRiverBedPolyline(BedStations(path, holeRForEnds: cutR + QuadHalfDiag), half, depth);
+            RebuildRiverField();
+            BuildRiverBedPolyline(BedStations(path, holeRForEnds: half), half, depth);
             CommitRiverBed();
             _dirty = true;
             RebuildChunksIn(gx0, gx1, gy0, gy1, withCollider: true);
@@ -709,7 +679,6 @@ void fragment() {
             // cannot express and is the whole reason the bed is separate geometry.
             var fl = new Vector3[n]; var fr = new Vector3[n];   // floor edges
             var wl = new Vector3[n]; var wr = new Vector3[n];   // wall tops, at terrain height ON the bank line
-            var ol = new Vector3[n]; var or = new Vector3[n];   // shelf outer edge, at terrain height
             for (int i = 0; i < n; i++)
             {
                 Vector3 c = path[i], r = right[i];
@@ -726,14 +695,12 @@ void fragment() {
                 wl[i] = new Vector3(lx, hL, lz);
                 wr[i] = new Vector3(rx, hR, rz);
 
-                float olx = c.X - r.X * outer, olz = c.Z - r.Z * outer;
-                float orx = c.X + r.X * outer, orz = c.Z + r.Z * outer;
-                ol[i] = new Vector3(olx, SampleHeight(olx, olz) - RiverRimSink, olz);
-                or[i] = new Vector3(orx, SampleHeight(orx, orz) - RiverRimSink, orz);
-                // Lift the shelf where it meets the BANK so it wins the depth test across the stair-stepped
-                // band; the rim above stays sunk, so the two ends blend rather than fight. See RiverShelfLift.
-                wl[i].Y += RiverShelfLift;
-                wr[i].Y += RiverShelfLift;
+                // The wall top is lifted a hair above terrain. The terrain's clipped edge is a polyline through
+                // the quad-edge crossings while the wall is a polyline through the bed stations, so the two
+                // agree to well under a cell but not exactly; a few millimetres of overlap closes the slivers
+                // and is invisible, where a gap would not be.
+                wl[i].Y += RiverBankOverlap;
+                wr[i].Y += RiverBankOverlap;
             }
 
             void Quad(Vector3 a, Vector3 b, Vector3 c2, Vector3 e)
@@ -742,10 +709,8 @@ void fragment() {
             for (int i = 0; i < n - 1; i++)
             {
                 Quad(fl[i], fr[i], fl[i + 1], fr[i + 1]);      // floor
-                Quad(wl[i], fl[i], wl[i + 1], fl[i + 1]);      // left wall: vertical, floor -> terrain height
+                Quad(wl[i], fl[i], wl[i + 1], fl[i + 1]);      // left wall: vertical, floor -> the terrain's own edge
                 Quad(fr[i], wr[i], fr[i + 1], wr[i + 1]);      // right wall
-                Quad(ol[i], wl[i], ol[i + 1], wl[i + 1]);      // left shelf: flat, bank -> the cut edge
-                Quad(wr[i], or[i], wr[i + 1], or[i + 1]);      // right shelf
             }
         }
 
@@ -830,7 +795,21 @@ void fragment() {
             _riverBeds.AddChild(mi);
             var body = new StaticBody3D { CollisionLayer = 1u << 0 };
             body.SetMeta(PlayerController.SurfMeta, (int)PlayerController.Surf.Dirt);
-            body.AddChild(new CollisionShape3D { Shape = mesh.CreateTrimeshShape() });
+            // Shape built straight from the TRIANGLE LIST, not from the mesh. CreateTrimeshShape() round-trips
+            // through the committed surface and produced a shape that registered in the tree and collided with
+            // nothing -- measured: rays through the channel hit NOTHING while the terrain either side answered
+            // normally. The vertices are already a flat triangle soup, which is exactly what
+            // ConcavePolygonShape3D wants, so the round trip was never buying anything.
+            // BACKFACE COLLISION ON. A trimesh is ONE-SIDED to the physics engine, and the bed's quads are
+            // emitted in whatever winding the cross-section walk produces -- which the RENDER hides, because
+            // the bed material sets CullMode.Disabled. So the mesh looked correct and collided with nothing:
+            // measured, rays down the middle of the channel hit NOTHING while the terrain either side answered
+            // normally. You would have fallen through every river.
+            //
+            // Fixed by making the shape two-sided rather than by chasing the winding, because the winding is
+            // not knowable per-quad here (a river bends both ways) and a one-sided floor is not something the
+            // feature ever wants.
+            body.AddChild(new CollisionShape3D { Shape = new ConcavePolygonShape3D { Data = _bedVerts.ToArray(), BackfaceCollision = true } });
             _riverBeds.AddChild(body);
             _bedMeshes.Add(_bedVerts.ToArray());   // kept for saving: the exact geometry, not a recipe for it
             _bedVerts.Clear();
@@ -838,6 +817,99 @@ void fragment() {
         readonly System.Collections.Generic.List<Vector3[]> _bedMeshes = new();
 
         Node3D AddOwned(Node3D n) { AddChild(n); return n; }
+
+        // RIVER FIELD: signed distance from the channel, per GRID VERTEX. >0 outside, <0 inside, metres.
+        //
+        // strawberry, after four attempts at hiding the seam: "why arent you modify-blending the terrain tris
+        // INTO the apron or something". Right, and it is the whole approach that was wrong. Cutting a hole and
+        // laying separate geometry over it can only ever produce an overlap band, and every fix I shipped was a
+        // way of making that band less visible -- sink it 2 cm, lift it 6 cm, widen it, make it vertical.
+        //
+        // With a field the terrain mesh CLIPS ITSELF to the bank: boundary quads emit the polygon outside the
+        // channel with their edge vertices moved onto the f=0 curve. No overlap, no depth-order to lose, the
+        // terrain's own material and splat colours right up to the water, and the visible edge is the smooth
+        // bank instead of a 4 m staircase.
+        //
+        // Derived from _riverSegs rather than saved: the recipe already persists, so a load rebuilds this and
+        // there is no third file to keep in step with the other two.
+        float[,] _riverField;
+
+        void RebuildRiverField()
+        {
+            _riverField = null;
+            if (_grid == null || _riverSegs.Count == 0) return;
+            var f = new float[_gw, _gh];
+            for (int x = 0; x < _gw; x++) for (int y = 0; y < _gh; y++) f[x, y] = float.MaxValue;
+
+            foreach (var (a, b, half, _) in _riverSegs)
+            {
+                // Only the vertices this segment could possibly reach -- the whole grid per segment would be
+                // O(segments * grid) and a drawn river is hundreds of segments.
+                float reach = half + RiverShelfOuterFor(half);
+                float minX = Mathf.Min(a.X, b.X) - reach, maxX = Mathf.Max(a.X, b.X) + reach;
+                float minZ = Mathf.Min(a.Z, b.Z) - reach, maxZ = Mathf.Max(a.Z, b.Z) + reach;
+                int gx0 = Mathf.Max(0, Mathf.FloorToInt((minX - _bx) / UNIT));
+                int gx1 = Mathf.Min(_gw - 1, Mathf.CeilToInt((maxX - _bx) / UNIT));
+                int gy0 = Mathf.Max(0, Mathf.FloorToInt((-maxZ - _bz) / UNIT));
+                int gy1 = Mathf.Min(_gh - 1, Mathf.CeilToInt((-minZ - _bz) / UNIT));
+                var A = new Vector2(a.X, a.Z); var B = new Vector2(b.X, b.Z);
+                var ab = B - A; float abLen2 = Mathf.Max(1e-6f, ab.LengthSquared());
+                for (int gx = gx0; gx <= gx1; gx++)
+                    for (int gy = gy0; gy <= gy1; gy++)
+                    {
+                        var p = new Vector2(_bx + gx * UNIT, -(_bz + gy * UNIT));
+                        float t = Mathf.Clamp((p - A).Dot(ab) / abLen2, 0f, 1f);
+                        float d = (p - (A + ab * t)).Length() - half;
+                        if (d < f[gx, gy]) f[gx, gy] = d;
+                    }
+            }
+            _riverField = f;
+        }
+
+        bool ChunkHasRiver(int cxi, int cyi)
+        {
+            if (_riverField == null) return false;
+            int x0 = cxi * CHUNK, y0 = cyi * CHUNK;
+            int x1 = System.Math.Min(x0 + CHUNK, _gw - 1), y1 = System.Math.Min(y0 + CHUNK, _gh - 1);
+            for (int gx = x0; gx < x1; gx++)
+                for (int gy = y0; gy < y1; gy++)
+                    if (QuadTouchesRiver(gx, gy)) return true;
+            return false;
+        }
+
+        float RiverAt(int gx, int gy) =>
+            _riverField == null ? float.MaxValue
+            : _riverField[Mathf.Clamp(gx, 0, _gw - 1), Mathf.Clamp(gy, 0, _gh - 1)];
+
+        /// <summary>Is any corner of this quad inside a channel? Decides whether the quad needs clipping.</summary>
+        bool QuadTouchesRiver(int gx, int gy) =>
+            _riverField != null &&
+            (RiverAt(gx, gy) < 0f || RiverAt(gx + 1, gy) < 0f || RiverAt(gx, gy + 1) < 0f || RiverAt(gx + 1, gy + 1) < 0f);
+
+        /// <summary>Clip a quad to the OUTSIDE of the channel (Sutherland-Hodgman against f >= 0) and return the
+        /// resulting polygon's corner weights. Each entry is (cornerIndex, cornerIndex2, t): t=0 means the plain
+        /// corner, otherwise the point t of the way from corner to corner2 along a quad EDGE.
+        ///
+        /// Returned as weights rather than positions so the caller can interpolate whatever it holds -- the mesh
+        /// needs position, normal, uv and splat colour; the collider needs position only -- without this having
+        /// to know about either.</summary>
+        static int ClipQuad(float f0, float f1, float f2, float f3, System.Span<(int a, int b, float t)> outPoly)
+        {
+            System.Span<float> fv = stackalloc float[4] { f0, f1, f2, f3 };
+            int n = 0;
+            for (int i = 0; i < 4; i++)
+            {
+                int j = (i + 1) & 3;
+                bool inI = fv[i] >= 0f, inJ = fv[j] >= 0f;
+                if (inI) outPoly[n++] = (i, i, 0f);
+                if (inI != inJ)
+                {
+                    float t = fv[i] / (fv[i] - fv[j]);   // the crossing, exactly on f = 0
+                    outPoly[n++] = (i, j, Mathf.Clamp(t, 0f, 1f));
+                }
+            }
+            return n;
+        }
 
         public int RiverSegmentCount => _riverSegs.Count;
 
@@ -883,6 +955,7 @@ void fragment() {
             if (_riverBeds != null) { _riverBeds.QueueFree(); _riverBeds = null; }
             _bedMeshes.Clear();
             _bedVerts.Clear();
+            _riverField = null;
 
             int rebuilt = 0;
             int i = 0;
@@ -959,18 +1032,56 @@ void fragment() {
                     float hd = _grid[gx, System.Math.Max(0, gy - 1)], hu = _grid[gx, System.Math.Min(_gh - 1, gy + 1)];
                     norms[i] = new Vector3(-(hr - hl) * TILE_HEIGHT, 2f * UNIT, (hu - hd) * TILE_HEIGHT).Normalized();
                 }
-            var idx = new int[(nx - 1) * (ny - 1) * 6]; int t = 0;
+            // Clipped quads need NEW vertices on the bank line, so the buffers grow past the grid corners.
+            var vList = new System.Collections.Generic.List<Vector3>(verts);
+            var nList = new System.Collections.Generic.List<Vector3>(norms);
+            var uList = new System.Collections.Generic.List<Vector2>(uvs);
+            var cList = new System.Collections.Generic.List<Color>(cols);
+            var iList = new System.Collections.Generic.List<int>((nx - 1) * (ny - 1) * 6);
+
             for (int lx = 0; lx < nx - 1; lx++)
                 for (int ly = 0; ly < ny - 1; ly++)
                 {
-                    // A hole is a quad that emits no triangles. The VERTS stay in the buffer -- dropping them
-                    // would renumber every index after them, and the neighbouring quads still reference these
-                    // corners. Unreferenced verts cost a few bytes and nothing else.
-                    if (_anyHoles && IsHole(x0 + lx, y0 + ly)) continue;
+                    int qgx = x0 + lx, qgy = y0 + ly;
+                    // A dug hole is a quad that emits no triangles. The VERTS stay in the buffer -- dropping
+                    // them would renumber every index after them, and the neighbouring quads still reference
+                    // these corners. Unreferenced verts cost a few bytes and nothing else.
+                    if (_anyHoles && IsHole(qgx, qgy)) continue;
                     int i00 = lx * ny + ly, i10 = (lx + 1) * ny + ly, i01 = lx * ny + (ly + 1), i11 = (lx + 1) * ny + (ly + 1);
-                    idx[t++] = i00; idx[t++] = i01; idx[t++] = i10; idx[t++] = i10; idx[t++] = i01; idx[t++] = i11;
+
+                    if (!QuadTouchesRiver(qgx, qgy))
+                    {
+                        iList.Add(i00); iList.Add(i01); iList.Add(i10);
+                        iList.Add(i10); iList.Add(i01); iList.Add(i11);
+                        continue;
+                    }
+
+                    // Ring order matches the untouched traversal, so a clipped quad keeps the same facing.
+                    System.Span<int> ring = stackalloc int[4] { i00, i01, i11, i10 };
+                    float f0 = RiverAt(qgx, qgy), f1 = RiverAt(qgx, qgy + 1);
+                    float f2 = RiverAt(qgx + 1, qgy + 1), f3 = RiverAt(qgx + 1, qgy);
+                    System.Span<(int a, int b, float t)> poly = stackalloc (int, int, float)[8];
+                    int pn = ClipQuad(f0, f1, f2, f3, poly);
+                    if (pn < 3) continue;   // wholly inside the channel
+
+                    System.Span<int> vi = stackalloc int[8];
+                    for (int k = 0; k < pn; k++)
+                    {
+                        var (ai, bi, tt) = poly[k];
+                        if (ai == bi) { vi[k] = ring[ai]; continue; }
+                        int va = ring[ai], vb = ring[bi];
+                        vList.Add(vList[va].Lerp(vList[vb], tt));
+                        nList.Add(nList[va].Lerp(nList[vb], tt).Normalized());
+                        uList.Add(uList[va].Lerp(uList[vb], tt));
+                        cList.Add(cList[va].Lerp(cList[vb], tt));
+                        vi[k] = vList.Count - 1;
+                    }
+                    for (int k = 1; k < pn - 1; k++)
+                    { iList.Add(vi[0]); iList.Add(vi[k]); iList.Add(vi[k + 1]); }
                 }
-            if (t != idx.Length) System.Array.Resize(ref idx, t);   // holes shortened it; a trailing run of 0s would draw degenerate tris at vert 0
+
+            verts = vList.ToArray(); norms = nList.ToArray(); uvs = uList.ToArray(); cols = cList.ToArray();
+            var idx = iList.ToArray(); int t = idx.Length;
             if (t == 0)   // every quad in this chunk is dug: no surface at all
             {
                 var empty = _chunkMi[cxi, cyi];
@@ -1029,7 +1140,9 @@ void fragment() {
             // So a blanket switch to trimesh would hand back a 45x regression to buy a feature most chunks do
             // not use. Per-chunk keeps that: a chunk with a hole pays trimesh, every other chunk keeps the fast
             // path, and holes are rare and local by nature.
-            if (ChunkHasHole(cxi, cyi)) { ApplyChunkTrimesh(cs, cxi, cyi, x0, y0, x1, y1); return; }
+            // A heightfield cannot express a hole OR a clipped bank -- one height per column, no absent
+            // samples, no partial quads -- so any chunk carrying either swaps to a trimesh.
+            if (ChunkHasHole(cxi, cyi) || ChunkHasRiver(cxi, cyi)) { ApplyChunkTrimesh(cs, cxi, cyi, x0, y0, x1, y1); return; }
 
             var data = new float[nx * ny];
             for (int hz = 0; hz < ny; hz++)
@@ -1062,6 +1175,27 @@ void fragment() {
                         _grid[ax, ay] * TILE_HEIGHT - TILE_HEIGHT / 2f,   // identical to the mesh vert expression
                         -(_bz + ay * UNIT));
                     Vector3 v00 = V(gx, gy), v10 = V(gx + 1, gy), v01 = V(gx, gy + 1), v11 = V(gx + 1, gy + 1);
+                    if (QuadTouchesRiver(gx, gy))
+                    {
+                        // CLIPPED EXACTLY LIKE THE RENDER MESH. Same ring, same ClipQuad, same fan -- because
+                        // the failure of getting this wrong is invisible ground you fall through, or invisible
+                        // ground you stand on, and neither shows up in a screenshot.
+                        System.Span<Vector3> ring = stackalloc Vector3[4] { v00, v01, v11, v10 };
+                        float f0 = RiverAt(gx, gy), f1 = RiverAt(gx, gy + 1);
+                        float f2 = RiverAt(gx + 1, gy + 1), f3 = RiverAt(gx + 1, gy);
+                        System.Span<(int a, int b, float t)> poly = stackalloc (int, int, float)[8];
+                        int pn = ClipQuad(f0, f1, f2, f3, poly);
+                        if (pn < 3) continue;
+                        System.Span<Vector3> pv = stackalloc Vector3[8];
+                        for (int k = 0; k < pn; k++)
+                        {
+                            var (ai, bi, tt) = poly[k];
+                            pv[k] = ai == bi ? ring[ai] : ring[ai].Lerp(ring[bi], tt);
+                        }
+                        for (int k = 1; k < pn - 1; k++)
+                        { tris.Add(pv[0]); tris.Add(pv[k]); tris.Add(pv[k + 1]); }
+                        continue;
+                    }
                     // Same winding + same diagonal as the render mesh (i00,i01,i10 / i10,i01,i11), so the
                     // collision surface matches the visible one on the split too, not just at the corners.
                     tris.Add(v00); tris.Add(v01); tris.Add(v10);
