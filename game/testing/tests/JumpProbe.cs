@@ -79,6 +79,30 @@ namespace UnturnedGodot.Testing
             GD.Print($"[jump] mid-air reversal in ONE tick: forward {fwdBefore:0.00} -> {fwdAfter:0.00} m/s (speed {vBefore:0.00})");
             p.ScriptedStance = null; p.ScriptedInput = null;
 
+            // TRAJECTORY SHAPE, not just its endpoints. VoX's follow-up: "when sprinting I seemed to
+            // INSTANTLY go to the jump height". My first measurement compared peak height and airtime and
+            // found them identical -- which it would, because a snap to the right height and a smooth arc
+            // to the right height END in the same place. Sample the rise instead.
+            foreach (var (label, sprint) in new[] { ("walk ", false), ("sprint", true) })
+            {
+                p.GlobalPosition = new Vector3(0f, 1.2f, 0f);
+                p.Velocity = Vector3.Zero;
+                p.Stamina = 1f;
+                p.ScriptedStance = sprint ? EPlayerStance.SPRINT : EPlayerStance.STAND;
+                p.ScriptedInput = new UnityEngine.Vector2(0f, 1f);
+                yield return Ticks(50);
+                float y0 = p.GlobalPosition.Y;
+                p.ScriptedJump = true;
+                yield return Ticks(1);
+                p.ScriptedJump = false;
+
+                var rise = new List<float>();
+                for (int i = 0; i < 12; i++) { rise.Add(p.GlobalPosition.Y - y0); yield return Ticks(1); }
+                GD.Print($"[jump] {label} rise per tick: {string.Join(" ", rise.ConvertAll(v => v.ToString("0.000")))}");
+                p.ScriptedStance = null; p.ScriptedInput = null;
+                yield return Ticks(25);
+            }
+
             T.Check("probe ran", true);
         }
     }
