@@ -5801,6 +5801,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
         {
             if (Towing != null || TowedBy != null) DetachTow();
             if (_magnet != null) StowSling();   // a despawned/wrecked crane must not leave an orphan magnet hanging in the sky
+            if (_heli) WindField.ClearDownwash(GetInstanceId());   // stop the rotor downwash when the heli despawns/unloads
         }
 
         // Swap this trailer's body layer bit0->bit6 while a cab is coupled/backing under. This is ONLY for the cab's
@@ -7030,6 +7031,12 @@ if (s.Wheels != null && s.Wheels.Length > 1)
         // lags/jitters a step behind her -- the same interp trap as the flatbed container rider.
         public override void _Process(double delta)
         {
+            if (_heli)   // ROTOR DOWNWASH (master): a spinning rotor blows a high-wind circle below the heli that the foliage/flags feel (WindField, not baked into the map)
+            {
+                ulong id = GetInstanceId();
+                if (_rotorRpm > 0.4f) WindField.SetDownwash(id, GlobalPosition, _rotorRadius * 1.8f, 0.95f * _rotorRpm);
+                else WindField.ClearDownwash(id);
+            }
             if (_water == WaterMode.Car) return;
             bool active = _afloat && _buoys != null;
             if (active && _wake == null)

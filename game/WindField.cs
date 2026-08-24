@@ -27,7 +27,33 @@ namespace UnturnedGodot
             if (TestWind.HasValue) return TestWind.Value;
             float t = (float)(Time.GetTicksMsec() / 1000.0);
             float n = Noise().GetNoise2D(worldPos.X + t * DriftX, worldPos.Z + t * DriftZ);   // -1..1
-            return Mathf.Clamp(0.5f + 0.65f * n, 0f, 1f);                                      // -> 0..1, slightly gusty
+            float ws = Mathf.Clamp(0.5f + 0.65f * n, 0f, MaxAmbient);                          // -> 0..MaxAmbient, slightly gusty
+            return DownwashBoost(worldPos, ws);                                                // + heli rotor downwash (local, not baked into the map)
+        }
+
+        public const float MaxAmbient = 0.8f;      // master: cap the windmap's upper end so flags don't flap like crazy
+        const float DownwashHeight = 30f;          // how far below a heli its rotor downwash reaches
+
+        // HELI ROTOR DOWNWASH (master): a flying heli registers a local high-wind source that the foliage/flag sway feels,
+        // WITHOUT baking anything into the windmap noise. Keyed by the heli instance id; the heli clears it on landing.
+        static readonly System.Collections.Generic.Dictionary<ulong, (Vector3 Pos, float R, float S)> _downwash = new();
+        public static void SetDownwash(ulong id, Vector3 pos, float radius, float strength) => _downwash[id] = (pos, radius, strength);
+        public static void ClearDownwash(ulong id) => _downwash.Remove(id);
+
+        // The max of the ambient wind and any heli downwash reaching `pos` (strongest right under the rotor, fading out + down).
+        static float DownwashBoost(Vector3 pos, float baseW)
+        {
+            if (_downwash.Count == 0) return baseW;
+            float w = baseW;
+            foreach (var d in _downwash.Values)
+            {
+                float dy = d.Pos.Y - pos.Y;
+                if (dy < 0f || dy > DownwashHeight) continue;       // only in the column BELOW the heli
+                float horiz = new Vector2(pos.X - d.Pos.X, pos.Z - d.Pos.Z).Length();
+                if (horiz > d.R) continue;
+                w = Mathf.Max(w, d.S * (1f - horiz / d.R) * (1f - dy / DownwashHeight));
+            }
+            return w;
         }
 
         public static float? TestAngle;   // L1: force a fixed wind bearing (null = live)
@@ -42,7 +68,25 @@ namespace UnturnedGodot
             return baseAng + region * 0.8f + 0.3f * Mathf.Sin(t * 0.06f);                       // ±~46 deg region swing + a slow global drift
         }
 
-        // Unit XZ vector the wind blows TOWARD (a flag streams this way from its pole).
-        public static Vector2 WindXZ(Vector3 worldPos) { float a = WindAngle(worldPos); return new Vector2(Mathf.Cos(a), Mathf.Sin(a)); }
+        // Unit XZ vector the wind blows TOWARD (a flag streams this way from its pole). Under a heli, the rotor downwash
+        // blows RADIALLY OUTWARD from the rotor axis; blend the ambient bearing toward that as the downwash dominates.
+        public static Vector2 WindXZ(Vector3 worldPos)
+        {
+            float a = WindAngle(worldPos);
+            Vector2 amb = new Vector2(Mathf.Cos(a), Mathf.Sin(a));
+            if (_downwash.Count == 0) return amb;
+            float bestW = 0f; Vector2 bestDir = amb;
+            foreach (var d in _downwash.Values)
+            {
+                float dy = d.Pos.Y - worldPos.Y;
+                if (dy < 0f || dy > DownwashHeight) continue;
+                Vector2 radial = new Vector2(worldPos.X - d.Pos.X, worldPos.Z - d.Pos.Z);
+                float horiz = radial.Length();
+                if (horiz > d.R || horiz < 0.05f) continue;
+                float w = d.S * (1f - horiz / d.R) * (1f - dy / DownwashHeight);
+                if (w > bestW) { bestW = w; bestDir = radial / horiz; }   // outward from the rotor
+            }
+            return bestW <= 0f ? amb : amb.Lerp(bestDir, Mathf.Clamp(bestW / 0.6f, 0f, 1f)).Normalized();
+        }
     }
 }
