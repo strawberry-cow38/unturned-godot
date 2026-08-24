@@ -6129,46 +6129,23 @@ namespace UnturnedGodot
             timer.Timeout += () => { if (IsInstanceValid(light)) light.QueueFree(); };
         }
 
-        /// <summary>Global shader parameter the grass-displacement shader reads. Named to match retail's
-        /// `_Grass_Displacement_Point` so the two are recognisably the same thing.</summary>
-        static readonly StringName GrassPointParam = "grass_displacement_point";
-        static readonly StringName WindParam = "wind_vec";   // xy = wind direction, z = 0..1 strength -- read by the foliage sway shaders (grass/leaves/bushes)
-        static readonly StringName GrassDispTexParam = "grass_displacers";       // data texture: nearest extended displacers, one texel each (xyz = world pos, w = radius)
-        static readonly StringName GrassDispCountParam = "grass_displacer_count"; // how many texels are live this frame (bounds the shader loop)
-        static bool _grassPointReady;
-        static Image _dispImg;
-        static ImageTexture _dispTex;
+        // The grass-shader globals + their data texture live in GrassDisplacers (registered there BEFORE any grass
+        // material is built -- see GrassDisplacers.EnsureGlobals; registering them AFTER a material links them invalid
+        // ("removed at some point"), which silently kills ALL grass displacement). This just keeps the gather buffer.
         static System.Collections.Generic.List<(float d2, Vector3 pos, float r)> _dispScratch;
 
-        /// <summary>Push the local player's position to the grass shader, EXACTLY as retail's GrassDisplacement.cs
-        /// does: one global vector per frame at (x, y + 0.5, z), w unused.
-        ///
-        /// The +0.5 is not a fudge -- it is the source's own offset, and it is what makes the bend read as a shin
-        /// pushing through the blades instead of the ground shoving them aside from below. A SINGLE point, also from
-        /// the source: only the local player displaces grass, never zombies or remote players, so this deliberately
-        /// does not accumulate a list.</summary>
+        /// <summary>Drive the grass-displacement shader each frame: retail's local-player point at (x, y+0.5, z) exactly
+        /// as GrassDisplacement.cs, plus the master extension -- the nearest extended displacers (vehicles, dropped
+        /// items, remote players) packed into the data texture. The +0.5 is the source's own offset (reads as a shin
+        /// pushing through the blades, not the ground shoving them from below).</summary>
         void UpdateGrassDisplacement()
         {
-            if (_dispTex == null)   // first frame in the process -> register the globals + build the data texture, once
-            {
-                // These globals aren't in project settings (so a fresh clone needs no editor step) -- register them at
-                // runtime. GlobalShaderParameterGetList is EDITOR-ONLY (it prints a runtime perf warning), so DON'T
-                // probe with it: this block runs exactly once (guarded by _dispTex, which is static + survives a scene
-                // reload, and RenderingServer globals persist across reloads too), and nothing else defines these four
-                // names, so a plain Add is clean + warning-free.
-                RenderingServer.GlobalShaderParameterAdd(GrassPointParam, RenderingServer.GlobalShaderParameterType.Vec4, Variant.From(Vector4.Zero));
-                RenderingServer.GlobalShaderParameterAdd(WindParam, RenderingServer.GlobalShaderParameterType.Vec4, Variant.From(Vector4.Zero));
-                RenderingServer.GlobalShaderParameterAdd(GrassDispCountParam, RenderingServer.GlobalShaderParameterType.Int, Variant.From(0));
-                _dispImg = Image.CreateEmpty(GrassDisplacers.Max, 1, false, Image.Format.Rgbaf);   // one texel per displacer; RGBAF holds raw world coords + radius UNCLAMPED
-                _dispTex = ImageTexture.CreateFromImage(_dispImg);
-                RenderingServer.GlobalShaderParameterAdd(GrassDispTexParam, RenderingServer.GlobalShaderParameterType.Sampler2D, Variant.From(_dispTex));
-                _grassPointReady = true;
-            }
+            GrassDisplacers.EnsureGlobals();   // idempotent; grass materials already did this at build -- belt-and-suspenders (+ owns DispImg/DispTex)
             var p = GlobalPosition;
             // RETAIL: the local player, one point at (x, y+0.5, z), w unused -- exactly GrassDisplacement.cs.
-            RenderingServer.GlobalShaderParameterSet(GrassPointParam, new Vector4(p.X, p.Y + 0.5f, p.Z, 0f));
+            RenderingServer.GlobalShaderParameterSet(GrassDisplacers.PointParam, new Vector4(p.X, p.Y + 0.5f, p.Z, 0f));
             var wd = WindField.WindXZ(p);   // FOLIAGE WIND SWAY: xy = direction, z = strength at the player (a representative gust for the whole view)
-            RenderingServer.GlobalShaderParameterSet(WindParam, new Vector4(wd.X, wd.Y, WindField.SampleWind(p), 0f));
+            RenderingServer.GlobalShaderParameterSet(GrassDisplacers.WindParam, new Vector4(wd.X, wd.Y, WindField.SampleWind(p), 0f));
 
             // EXTENDED DISPLACERS (master): gather the grass_displacer group (vehicles, dropped items, remote players)
             // within grass render range, keep the nearest Max to the camera, and pack (world pos + radius) into the
@@ -6191,10 +6168,10 @@ namespace UnturnedGodot
             for (int i = 0; i < cnt; i++)
             {
                 var e = _dispScratch[i];
-                _dispImg.SetPixel(i, 0, new Color(e.pos.X, e.pos.Y, e.pos.Z, e.r));   // stale tail texels beyond cnt are never read (loop is count-bounded)
+                GrassDisplacers.DispImg.SetPixel(i, 0, new Color(e.pos.X, e.pos.Y, e.pos.Z, e.r));   // stale tail texels beyond cnt are never read (loop is count-bounded)
             }
-            _dispTex.Update(_dispImg);   // re-upload the mutated texels; the global sampler still points at this same RID
-            RenderingServer.GlobalShaderParameterSet(GrassDispCountParam, cnt);
+            GrassDisplacers.DispTex.Update(GrassDisplacers.DispImg);   // re-upload the mutated texels; the global sampler still points at this same RID
+            RenderingServer.GlobalShaderParameterSet(GrassDisplacers.CountParam, cnt);
         }
 
         public override void _Process(double delta)

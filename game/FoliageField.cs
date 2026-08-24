@@ -21,6 +21,7 @@ namespace UnturnedGodot
         {
             var sh = GD.Load<Shader>("res://content/grass_displace.gdshader");
             if (sh == null) { GD.PrintErr("[foliage] grass_displace.gdshader missing -- grass will not displace"); return null; }
+            GrassDisplacers.EnsureGlobals();   // the grass shader's globals MUST exist BEFORE this material is built, or it links them invalid ("removed at some point") + renders with NO displacement at all
             return new ShaderMaterial { Shader = sh };
         }
 

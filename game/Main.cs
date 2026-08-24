@@ -1555,6 +1555,7 @@ namespace UnturnedGodot
                 var gblade = ObjMesh.Load(fdir + "grass_00.obj");
                 if (gblade != null)
                 {
+                    GrassDisplacers.EnsureGlobals();   // globals before the grass material (same rule as FoliageField -- else it links them invalid + no displacement)
                     var gsMat = new ShaderMaterial { Shader = GD.Load<Shader>("res://content/grass_displace.gdshader") };
                     var gimg = new Image();
                     if (gimg.Load(fdir + "grass_00_tex.png") == Error.Ok) { gimg.GenerateMipmaps(); gsMat.SetShaderParameter("albedo_tex", ImageTexture.CreateFromImage(gimg)); }

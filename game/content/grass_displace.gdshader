@@ -30,9 +30,9 @@ global uniform int grass_displacer_count;
 
 uniform sampler2D albedo_tex : source_color, filter_linear_mipmap;
 uniform float alpha_scissor : hint_range(0.0, 1.0) = 0.4;
-uniform float radius : hint_range(0.1, 6.0) = 1.5;        // how far out blades feel you
-uniform float strength : hint_range(0.0, 2.0) = 0.55;     // how far the tip is pushed, in metres
-uniform float vertical_reach : hint_range(0.1, 6.0) = 1.6; // ...and how far up/down, so a roof overhead flattens nothing
+uniform float radius : hint_range(0.1, 8.0) = 2.2;        // how far out blades feel you (bumped from retail-ish 1.5 so it actually reads)
+uniform float strength : hint_range(0.0, 3.0) = 0.7;     // how far the tip is pushed aside, in metres
+uniform float vertical_reach : hint_range(0.1, 8.0) = 2.5; // ...and how far up/down, so a roof overhead flattens nothing
 
 // One displacer's offset on this blade: bend the tip away in XZ + press it down, scaled by INFLUENCE (radial +
 // vertical falloff, squared for a soft edge) and the HEIGHT WEIGHT h (base fixed, tip bends most -- a blade hinging
@@ -65,7 +65,7 @@ void vertex() {
 	vec3 off = vec3(0.0);
 	// LOCAL PLAYER -- retail's single point at (x, y+0.5, z); radius/strength/vertical_reach + the 0.35 flatten
 	// exactly as before, so this path is behaviourally unchanged.
-	off += grass_push(VERTEX, UV.y, grass_displacement_point.xyz, radius, strength, vertical_reach, 0.35);
+	off += grass_push(VERTEX, UV.y, grass_displacement_point.xyz, radius, strength, vertical_reach, 0.8);   // strong flatten so the trampled patch reads, not just a sideways shuffle of dense blades
 	// EXTENDED DISPLACERS (master): vehicles, dropped items, remote players. Each texel's w is its footprint radius;
 	// strength / vertical gate / flatten scale UP with radius, so a truck presses a wide hard swath while a dropped
 	// can only dimples. The loop is bounded by the live count, so quiet frames cost nothing.
@@ -73,9 +73,9 @@ void vertex() {
 		vec4 d = texelFetch(grass_displacers, ivec2(i, 0), 0);
 		float pr = d.w;
 		if (pr <= 0.0) continue;
-		float ps = clamp(pr * 0.35, 0.25, 1.3);       // bigger footprint -> stronger bend
-		float pv = max(pr, 1.5);                        // ...reaches higher up/down
-		float pd = clamp(0.35 + pr * 0.1, 0.35, 0.8);  // ...and flattens harder (a car mats the grass, not just parts it)
+		float ps = clamp(pr * 0.4, 0.35, 1.6);        // bigger footprint -> stronger bend
+		float pv = max(pr, 2.0);                        // ...reaches higher up/down
+		float pd = clamp(0.6 + pr * 0.12, 0.6, 1.0);   // ...and flattens HARD (a car mats the grass flat, not just parts it)
 		off += grass_push(VERTEX, UV.y, d.xyz, pr, ps, pv, pd);
 	}
 	VERTEX += off;
