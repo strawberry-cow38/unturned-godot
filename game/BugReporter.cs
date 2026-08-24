@@ -108,6 +108,9 @@ namespace UnturnedGodot
             ProcessMode = ProcessModeEnum.Always;
             Instance = this;
             // BuildStamp is engine-free, so the host has to hand it the paths Godot owns.
+            // Env var read BEFORE LoadConfig so the file cannot override what the launcher just handed us.
+            string envKey = System.Environment.GetEnvironmentVariable("UG_BUGREPORT_KEY");
+            if (!string.IsNullOrWhiteSpace(envKey)) ReportKey = envKey.Trim();
             BuildStamp.ProjectDir ??= ProjectSettings.GlobalizePath("res://");
             BuildStamp.ConfiguredVersion ??= (string)ProjectSettings.GetSetting("application/config/version", "");
             BuildOverlay();
@@ -137,6 +140,16 @@ namespace UnturnedGodot
             _overlay.Visible = false;
         }
 
+        /// <summary>The report key, or "" for none.
+        ///
+        /// Env var FIRST, config file second. The launcher passes UG_BUGREPORT_KEY in the game's CHILD
+        /// PROCESS environment, which is the better home of the two: it exists for the life of this process,
+        /// is not readable from another user's session, and does not persist into a shell someone later
+        /// screenshots. The cfg file stays supported because the launcher is not the only way to start the
+        /// game. "None" is a working state -- reports still file, unauthenticated, exactly as they did
+        /// before keys existed.</summary>
+        public static string ReportKey = "";
+
         void LoadConfig()
         {
             // Wrapped and type-checked: this runs inside _Ready, so a bugreport.cfg whose `endpoint` is not
@@ -148,6 +161,9 @@ namespace UnturnedGodot
                 if (cfg.Load("user://bugreport.cfg") != Error.Ok) return;
                 var ep = cfg.GetValue("report", "endpoint", Endpoint);
                 if (ep.VariantType == Variant.Type.String) Endpoint = (string)ep;
+                var k = cfg.GetValue("report", "key", "");
+                if (k.VariantType == Variant.Type.String && !string.IsNullOrWhiteSpace((string)k)
+                    && string.IsNullOrEmpty(ReportKey)) ReportKey = ((string)k).Trim();
             }
             catch (System.Exception e) { GD.PushWarning($"[bugreport] bad config, using defaults: {e.Message}"); }
         }
@@ -531,14 +547,22 @@ namespace UnturnedGodot
                 AddFile(form, dir + "/screenshot_after.png", "screenshot_after", "image/png");
                 AddFile(form, dir + "/audio.wav", "audio", "audio/wav");
 
-                var resp = await Http.PostAsync(Endpoint, form);
+                using var req = new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Post, Endpoint)
+                {
+                    Content = form,
+                };
+                // Header, never a query parameter: those land in the proxy's access log and in shell history.
+                if (!string.IsNullOrEmpty(ReportKey))
+                    req.Headers.Authorization =
+                        new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", ReportKey);
+                var resp = await Http.SendAsync(req);
                 int code = (int)resp.StatusCode;
                 if (resp.IsSuccessStatusCode)
                 {
                     DeleteDir(dir);
                     SafeToast("report sent ✓");
                 }
-                else if (code >= 400 && code < 500 && code != 408 && code != 429)
+                else if (code >= 400 && code < 500 && code != 401 && code != 408 && code != 429)
                 {
                     // A 4xx is the server saying THIS REPORT will never be accepted -- a malformed context,
                     // an oversized screenshot, a WAV it rejects. Retrying it forever re-POSTs it on every
@@ -549,6 +573,10 @@ namespace UnturnedGodot
                     Park(dir, code);
                     SafeToast($"report rejected ({code}) — kept locally");
                 }
+                else if (code == 401)
+                    // NOT parked. A 401 means the key is stale, not that this report is unacceptable --
+                    // update the build, paste a current key, and everything queued should then file.
+                    SafeToast("report key rejected — update it in the launcher; report kept");
                 else SafeToast($"upload failed ({code}) — will retry");
             }
             catch (System.Exception e)

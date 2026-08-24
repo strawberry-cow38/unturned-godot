@@ -41,6 +41,8 @@ public class MainWindow : Window
     readonly TextBlock _latestLabel = new() { TextWrapping = TextWrapping.Wrap };
     readonly TextBlock _status = new() { Foreground = Brushes.Gray };
     readonly TextBox _log;
+    readonly TextBox _keyBox = new() { Width = 260, Watermark = "paste key, then Save", FontSize = 13 };
+    readonly TextBlock _keyStatus = new() { VerticalAlignment = VerticalAlignment.Center, FontSize = 12 };
     readonly Button _action = new() { MinWidth = 150, MinHeight = 44, HorizontalAlignment = HorizontalAlignment.Right, FontSize = 16, IsEnabled = false };
     readonly ComboBox _branchBox = new() { MinWidth = 220, FontSize = 13, VerticalAlignment = VerticalAlignment.Center };   // branch selector (populated from the remote after clone)
     // (The old "Multiplayer test" checkbox was removed -- MP is now a top-level "Multiplayer" button on the
@@ -109,9 +111,32 @@ public class MainWindow : Window
             },
         };
 
-        var grid = new Grid { RowDefinitions = new RowDefinitions("Auto,Auto,Auto,Auto,Auto,*,Auto"), Margin = new Avalonia.Thickness(16) };
+        // ---- report key: paste once, never again ----------------------------------------------------
+        // Same shape as Branch and the Unturned folder above -- a small file beside the launcher plus one
+        // control -- because a third bespoke mechanism for "remember this string" is how a settings screen
+        // starts to rot.
+        _keyBox.PasswordChar = '\u2022';   // not security (the file it writes is plaintext) -- a key you
+                                            // paste is a key someone screen-sharing can otherwise read back
+        _keyStatus.Foreground = new SolidColorBrush(Color.Parse("#7a828c"));
+        var saveKey = new Button { Content = "Save", MinWidth = 70 };
+        saveKey.Click += (_, _) => SaveReportKey(_keyBox.Text ?? "");
+        var keyRow = new StackPanel
+        {
+            Orientation = Avalonia.Layout.Orientation.Horizontal, Spacing = 8,
+            Margin = new Avalonia.Thickness(0, 8, 0, 0),
+            Children =
+            {
+                new TextBlock { Text = "Report key:", Foreground = new SolidColorBrush(Color.Parse("#7a828c")), VerticalAlignment = VerticalAlignment.Center, FontSize = 13 },
+                _keyBox,
+                saveKey,
+                _keyStatus,
+            },
+        };
+        RefreshKeyStatus();
+
+        var grid = new Grid { RowDefinitions = new RowDefinitions("Auto,Auto,Auto,Auto,Auto,Auto,*,Auto"), Margin = new Avalonia.Thickness(16) };
         void Row(Control c, int r) { Grid.SetRow(c, r); grid.Children.Add(c); }
-        Row(header, 0); Row(sub, 1); Row(branchRow, 2); Row(buildBox, 3); Row(logHeader, 4); Row(_log, 5); Row(footer, 6);
+        Row(header, 0); Row(sub, 1); Row(branchRow, 2); Row(keyRow, 3); Row(buildBox, 4); Row(logHeader, 5); Row(_log, 6); Row(footer, 7);
         return grid;
     }
 
@@ -358,6 +383,13 @@ public class MainWindow : Window
             }
             else Log("(no Unturned install selected — the real map won't load; install Unturned or pick its folder next launch)");
 
+            // The game reads this from its CHILD PROCESS environment -- it lives for the life of the game
+            // and does not persist into a shell someone later screenshots. Empty is a working state: the
+            // report still files, unauthenticated.
+            string reportKey = LoadReportKey();
+            Environment.SetEnvironmentVariable("UG_BUGREPORT_KEY", reportKey.Length > 0 ? reportKey : null);
+            if (reportKey.Length == 0) Log("(no report key set — bug reports will file anonymously)");
+
             string exe = _godot;
             if (OperatingSystem.IsWindows())   // Godot mono ships a *_console.exe that pops a debug console window
             {
@@ -501,6 +533,45 @@ public class MainWindow : Window
 
     // ---- branch selection persistence (remembers the dropdown choice across launches) ----
     string BranchConfig => Path.Combine(_baseDir, "branch.txt");
+
+    // ---- report key ---------------------------------------------------------------------------------
+    string ReportKeyConfig => Path.Combine(_baseDir, "bugreport_key.txt");
+
+    string LoadReportKey()
+    {
+        try { return File.Exists(ReportKeyConfig) ? File.ReadAllText(ReportKeyConfig).Trim() : ""; }
+        catch { return ""; }
+    }
+
+    /// <summary>Show the key's SHAPE, never the key. Enough to tell "I pasted something" from "I pasted
+    /// the wrong thing" without putting the secret back on screen, where the whole point of the masked box
+    /// was to keep it off.</summary>
+    void RefreshKeyStatus()
+    {
+        string k = LoadReportKey();
+        _keyStatus.Text = k.Length == 0
+            ? "no key — reports file anonymously"
+            : $"key set (…{k[^Math.Min(6, k.Length)..]})";
+    }
+
+    void SaveReportKey(string key)
+    {
+        key = key.Trim();
+        try
+        {
+            if (key.Length == 0) { if (File.Exists(ReportKeyConfig)) File.Delete(ReportKeyConfig); Log("report key cleared"); }
+            else
+            {
+                File.WriteAllText(ReportKeyConfig, key);
+                if (!OperatingSystem.IsWindows())
+                    File.SetUnixFileMode(ReportKeyConfig, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+                Log("report key saved");
+            }
+            _keyBox.Text = "";   // never leave it on screen after a save
+            RefreshKeyStatus();
+        }
+        catch (Exception ex) { Log("!! couldn't save the report key: " + ex.Message); }
+    }
     string LoadBranch()
     {
         try { if (File.Exists(BranchConfig)) { var b = File.ReadAllText(BranchConfig).Trim(); if (!string.IsNullOrWhiteSpace(b)) return b; } } catch { }
