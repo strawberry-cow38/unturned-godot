@@ -4485,7 +4485,26 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             v.AddChild(v._explosionAudio);
             v.Brake = s.Brake * HandbrakeScale; v._parked = true;   // spawns parked: brake on + freezes once settled so it holds ride height without jitter (released once driven)
             v._alarmed = GD.Randf() < 0.05f;   // 5% of spawned cars are "alarmed" -- proximity/damage sets off the alarm loop (master)
+            ApplyVehicleCull(v);   // driveable vehicles had NO distance cull -> rendered full-detail at every range (master); cap them like props
             return v;
+        }
+
+        // Driveable vehicles build full-detail MeshInstance3Ds with NO VisibilityRange, so a parked truck on the far
+        // side of PEI drew every triangle at full quality (master: "all vehicles render full quality"). Props cull via
+        // LodTable; a vehicle has no LodTable entry, so apply retail's RegularObjectMaxDistance (min(defaultCull, 447))
+        // as a flat distance cull to every mesh under it. The DRIVEN vehicle sits at ~0 distance so it always renders;
+        // parked/other vehicles stop drawing past the cap. (FOLLOW-UP: a low-poly LOD SWAP via ImporterMesh.GenerateLods
+        // -- decimate + keep visible instead of hard-culling -- and a size-scaled cap so the 67m ship isn't capped like
+        // a hatchback.)
+        static void ApplyVehicleCull(Node root)
+        {
+            float cull = Mathf.Min(LodTable.DefaultCullDistance, 447f);
+            foreach (var n in root.FindChildren("*", "MeshInstance3D", true, false))
+                if (n is MeshInstance3D m)
+                {
+                    m.VisibilityRangeEnd = cull;
+                    m.VisibilityRangeFadeMode = GeometryInstance3D.VisibilityRangeFadeModeEnum.Disabled;
+                }
         }
 
         // throttle/brake/steer in [-1,1]; applies the source .dat handling: hard Speed_Max/Min caps + speed-dependent
