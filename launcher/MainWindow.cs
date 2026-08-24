@@ -22,7 +22,12 @@ public class MainWindow : Window
     // Self-update: this launcher's own version. Bump on every launcher change + upload the matching launcher.version
     // (a bare integer) + the new exe to the GitHub release. On startup we fetch launcher.version; if it's higher, we
     // download the new exe, hand off to a swap-helper, and relaunch -- so the launcher updates itself, no manual grab.
-    const int LauncherVersion = 10;   // v10: on branch-list refresh, prune local refs (remote-tracking + local branches) for branches deleted on the remote -- guarded so an unreachable remote never wipes refs
+    // BUMP THIS WITH EVERY LAUNCHER CHANGE, and publish the release -- self-update only fires when the
+    // published launcher.version is GREATER than this. I shipped the report-key field without bumping it,
+    // so nobody's launcher updated and the field simply did not exist for them. The code change is only
+    // half of a launcher change; the other half is this number plus the release.
+    const int LauncherVersion = 11;   // v11: Report key row (paste once) -> bugreport_key.txt -> UG_BUGREPORT_KEY for the game
+    // v10: on branch-list refresh, prune local refs (remote-tracking + local branches) for branches deleted on the remote -- guarded so an unreachable remote never wipes refs
     const string VersionUrl = "https://github.com/strawberry-cow38/unturned-godot/releases/download/launcher/launcher.version";
     const string ExeUrl = "https://github.com/strawberry-cow38/unturned-godot/releases/download/launcher/UnturnedGodotLauncher-win-x64.exe";
     // Godot 4.6 mono (win64) — matches the project's Godot.NET.Sdk/4.6.2; auto-downloaded if Godot isn't found.
