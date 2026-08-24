@@ -520,41 +520,132 @@ void fragment() {
         /// a river carved across sloping ground must stay below the surface for its whole length, and keying
         /// off one end leaves the other end floating above the hillside.</summary>
         public void CarveRiver(Vector3 begin, Vector3 end, float halfWidth, float depth)
-        {
-            if (_grid == null) return;
-            var d = new Vector2(end.X - begin.X, end.Z - begin.Z);
-            float len = d.Length();
-            if (len < 1f) return;
-            d /= len;
+            => CarveRiverPolyline(new System.Collections.Generic.List<Vector3> { begin, end }, halfWidth, depth);
 
-            // 1. CUT. Walk the centreline and hole every quad within halfWidth of it. Stepping by half a cell
-            //    rather than by cell guarantees no gaps on a diagonal, where a cell-sized step can skip a column.
+        /// <summary>Over-carve margin. The cut is a per-quad MASK, so its boundary is stair-stepped at cell
+        /// resolution and never lands on the true bank circle. strawberry_cow: "carve slightly more than we
+        /// need, and then re-install terrain tris to fill the gaps perfectly." So the mask is cut WIDER than
+        /// the river and the bed's own geometry is extended back out to meet intact terrain -- the apron IS
+        /// the re-installed tris.</summary>
+        const float RiverCutMargin = UNIT;
+        /// <summary>How far past the CUT radius the apron reaches. A quad is holed when its CENTRE falls
+        /// inside the cut radius, and such a quad extends up to half its diagonal (0.71 * UNIT) beyond that
+        /// circle -- so geometry stopping at the cut radius would still leave a ragged gap. Overshooting into
+        /// intact terrain is free because the rim sits ON the terrain surface.</summary>
+        const float RiverRimOvershoot = 0.75f * UNIT;
+        /// <summary>The rim is dropped this far below the sampled terrain height. Where the terrain is gone
+        /// the apron IS the surface; where it survives, the apron tucks just underneath instead of sitting
+        /// coplanar with it, which would z-fight along the whole length of every river.</summary>
+        const float RiverRimSink = 0.02f;
+
+        /// <summary>Cut and bed a river along a whole polyline in ONE pass.
+        ///
+        /// Per-SEGMENT was the old shape and it could not satisfy any of strawberry's three asks at once: each
+        /// segment computed its own lateral direction, so at a bend the two cross-sections met at an angle and
+        /// left a notch; each measured depth from its own lowest bank, so a run downhill stepped; and each
+        /// stopped at the stair-stepped mask boundary. Walking the whole path once fixes all three, because a
+        /// station can see its NEIGHBOURS.</summary>
+        void CarveRiverPolyline(System.Collections.Generic.IReadOnlyList<Vector3> path, float half, float depth)
+        {
+            if (_grid == null || path == null || path.Count < 2) return;
+            float cutR = half + RiverCutMargin;
+
+            // 1. CUT, over-wide. Half-cell steps so a diagonal cannot skip a column.
             int gx0 = _gw, gx1 = -1, gy0 = _gh, gy1 = -1;
-            float lowestBank = float.MaxValue;
-            for (float t = 0f; t <= len; t += UNIT * 0.5f)
+            for (int e = 0; e < path.Count - 1; e++)
             {
-                float wx = begin.X + d.X * t, wz = begin.Z + d.Y * t;
-                lowestBank = Mathf.Min(lowestBank, SampleHeight(wx, wz));
-                float cx = (wx - _bx) / UNIT, cy = (-wz - _bz) / UNIT;
-                int rg = Mathf.CeilToInt(halfWidth / UNIT) + 1;
-                for (int ix = -rg; ix <= rg; ix++)
-                    for (int iy = -rg; iy <= rg; iy++)
-                    {
-                        int gx = Mathf.RoundToInt(cx) + ix, gy = Mathf.RoundToInt(cy) + iy;
-                        float dx = (gx + 0.5f - cx) * UNIT, dy = (gy + 0.5f - cy) * UNIT;
-                        if (dx * dx + dy * dy > halfWidth * halfWidth) continue;
-                        if (!SetHole(gx, gy, true)) continue;
-                        gx0 = System.Math.Min(gx0, gx); gx1 = System.Math.Max(gx1, gx);
-                        gy0 = System.Math.Min(gy0, gy); gy1 = System.Math.Max(gy1, gy);
-                    }
+                Vector3 a = path[e], b = path[e + 1];
+                var d = new Vector2(b.X - a.X, b.Z - a.Z);
+                float len = d.Length();
+                if (len < 0.001f) continue;
+                d /= len;
+                for (float t = 0f; t <= len; t += UNIT * 0.5f)
+                {
+                    float wx = a.X + d.X * t, wz = a.Z + d.Y * t;
+                    float cx = (wx - _bx) / UNIT, cy = (-wz - _bz) / UNIT;
+                    int rg = Mathf.CeilToInt(cutR / UNIT) + 1;
+                    for (int ix = -rg; ix <= rg; ix++)
+                        for (int iy = -rg; iy <= rg; iy++)
+                        {
+                            int gx = Mathf.RoundToInt(cx) + ix, gy = Mathf.RoundToInt(cy) + iy;
+                            float ddx = (gx + 0.5f - cx) * UNIT, ddy = (gy + 0.5f - cy) * UNIT;
+                            if (ddx * ddx + ddy * ddy > cutR * cutR) continue;
+                            if (!SetHole(gx, gy, true)) continue;
+                            gx0 = System.Math.Min(gx0, gx); gx1 = System.Math.Max(gx1, gx);
+                            gy0 = System.Math.Min(gy0, gy); gy1 = System.Math.Max(gy1, gy);
+                        }
+                }
             }
             if (gx1 < 0) return;   // nothing was cut (off-map, or already carved) -> no bed, no rebuild
 
-            _riverSegs.Add((begin, end, halfWidth, depth));
-            BuildRiverBed(begin, end, d, len, halfWidth, lowestBank - depth);
-            if (!_carvingPath) CommitRiverBed();   // a path commits ONCE at the end, not per segment
+            for (int e = 0; e < path.Count - 1; e++) _riverSegs.Add((path[e], path[e + 1], half, depth));
+            BuildRiverBedPolyline(path, half, depth);
+            CommitRiverBed();
             _dirty = true;
             RebuildChunksIn(gx0, gx1, gy0, gy1, withCollider: true);
+        }
+
+        /// <summary>One continuous bed for the whole path: mitred joins, contour-following floor, and an apron
+        /// that lands on intact terrain.</summary>
+        void BuildRiverBedPolyline(System.Collections.Generic.IReadOnlyList<Vector3> path, float half, float depth)
+        {
+            int n = path.Count;
+            float outer = half + RiverCutMargin + RiverRimOvershoot;
+            var right = new Vector3[n];
+
+            // MITRE. A station's lateral is the bisector of the segments meeting there, not either one's own
+            // normal -- that is what makes consecutive cross-sections share an edge instead of crossing at a
+            // bend. strawberry: "modify each segment to smoothly connect to eachother".
+            for (int i = 0; i < n; i++)
+            {
+                Vector3 din = i > 0 ? path[i] - path[i - 1] : path[1] - path[0];
+                Vector3 dout = i < n - 1 ? path[i + 1] - path[i] : path[n - 1] - path[n - 2];
+                din.Y = 0f; dout.Y = 0f;
+                if (din.LengthSquared() < 1e-8f) din = dout;
+                if (dout.LengthSquared() < 1e-8f) dout = din;
+                if (din.LengthSquared() < 1e-8f) { right[i] = Vector3.Right; continue; }
+                Vector3 bis = din.Normalized() + dout.Normalized();
+                // A near-180 degree reversal makes the bisector vanish; fall back to the outgoing normal.
+                Vector3 f = bis.LengthSquared() < 1e-6f ? dout.Normalized() : bis.Normalized();
+                right[i] = new Vector3(-f.Z, 0f, f.X);
+            }
+
+            var fl = new Vector3[n]; var fr = new Vector3[n];
+            var ol = new Vector3[n]; var or = new Vector3[n];
+            for (int i = 0; i < n; i++)
+            {
+                Vector3 c = path[i], r = right[i];
+                // FLOOR AT A FIXED DEPTH BELOW THE LOCAL TERRAIN (strawberry: "make the bottom of the riverbed
+                // be a fixed depth from the terrain height"), so the channel keeps its depth down a slope
+                // instead of the old rule's single lowest-bank plane per segment, which dug absurdly deep at
+                // the high end of any gradient.
+                //
+                // Sampled ACROSS the section, not just at the centreline, and the MINIMUM taken: on ground
+                // that also falls away sideways, a centre-only reading leaves the floor above the low bank and
+                // the bed pokes out of the hillside.
+                float hC = SampleHeight(c.X, c.Z);
+                float hL = SampleHeight(c.X - r.X * half, c.Z - r.Z * half);
+                float hR = SampleHeight(c.X + r.X * half, c.Z + r.Z * half);
+                float floorY = Mathf.Min(hC, Mathf.Min(hL, hR)) - depth;
+
+                fl[i] = new Vector3(c.X - r.X * half, floorY, c.Z - r.Z * half);
+                fr[i] = new Vector3(c.X + r.X * half, floorY, c.Z + r.Z * half);
+
+                float olx = c.X - r.X * outer, olz = c.Z - r.Z * outer;
+                float orx = c.X + r.X * outer, orz = c.Z + r.Z * outer;
+                ol[i] = new Vector3(olx, SampleHeight(olx, olz) - RiverRimSink, olz);
+                or[i] = new Vector3(orx, SampleHeight(orx, orz) - RiverRimSink, orz);
+            }
+
+            void Quad(Vector3 a, Vector3 b, Vector3 c2, Vector3 e)
+            { _bedVerts.Add(a); _bedVerts.Add(b); _bedVerts.Add(c2); _bedVerts.Add(c2); _bedVerts.Add(b); _bedVerts.Add(e); }
+
+            for (int i = 0; i < n - 1; i++)
+            {
+                Quad(fl[i], fr[i], fl[i + 1], fr[i + 1]);      // floor
+                Quad(ol[i], fl[i], ol[i + 1], fl[i + 1]);      // left bank + apron, in one run to the terrain
+                Quad(fr[i], or[i], fr[i + 1], or[i + 1]);      // right bank + apron
+            }
         }
 
         /// <summary>Carve a river along a CURVE through the given anchors.
@@ -572,14 +663,10 @@ void fragment() {
         public void CarveRiverPath(System.Collections.Generic.IReadOnlyList<Vector3> anchors, float halfWidth, float depth)
         {
             if (_grid == null || anchors == null || anchors.Count < 2) return;
-            if (anchors.Count == 2) { CarveRiver(anchors[0], anchors[1], halfWidth, depth); return; }
-            _carvingPath = true;
-
-            var path = RiverPathPoints(anchors);
-            for (int i = 1; i < path.Count; i++) CarveRiver(path[i - 1], path[i], halfWidth, depth);
-
-            _carvingPath = false;
-            CommitRiverBed();   // one mesh + one collider for the whole curve
+            // ONE polyline for the whole curve, cut and bedded in a single pass. It used to carve each bezier
+            // step as an independent CarveRiver call, which is what produced the notched joins and the stepped
+            // floor -- a segment that cannot see its neighbours cannot line up with them.
+            CarveRiverPolyline(RiverPathPoints(anchors), halfWidth, depth);
         }
 
         /// <summary>The curve itself, as a polyline -- the exact points CarveRiverPath cuts between.
@@ -616,7 +703,6 @@ void fragment() {
             }
             return outPts;
         }
-        bool _carvingPath;
 
         readonly System.Collections.Generic.List<Vector3> _bedVerts = new();   // accumulated across a whole carve
 
@@ -628,28 +714,6 @@ void fragment() {
         /// (strawberry_cow 2026-08-24: "if we can save a single cpu cycle / ms of frame time / ms of loading by
         /// shoving stuff on the disk, thats a win" -- the same principle applies to not making the runtime pay
         /// for geometry that could have been merged once).</summary>
-        void BuildRiverBed(Vector3 begin, Vector3 end, Vector2 dir, float len, float half, float floorY)
-        {
-            var right = new Vector3(-dir.Y, 0f, dir.X);   // world-space lateral, Z already in world terms
-            const int Steps = 8;
-            for (int i = 0; i < Steps; i++)
-            {
-                float t0 = len * i / Steps, t1 = len * (i + 1) / Steps;
-                Vector3 c0 = new Vector3(begin.X + dir.X * t0, 0f, begin.Z + dir.Y * t0);
-                Vector3 c1 = new Vector3(begin.X + dir.X * t1, 0f, begin.Z + dir.Y * t1);
-                float bank0 = SampleHeight(c0.X, c0.Z), bank1 = SampleHeight(c1.X, c1.Z);
-                // Floor quad, then a bank up to the terrain on each side. The banks are what stop you seeing
-                // out through the gap the hole left in the surface.
-                void Quad(Vector3 a, Vector3 b, Vector3 c, Vector3 e)
-                { _bedVerts.Add(a); _bedVerts.Add(b); _bedVerts.Add(c); _bedVerts.Add(c); _bedVerts.Add(b); _bedVerts.Add(e); }
-                Vector3 fl0 = c0 - right * half + Vector3.Up * floorY, fr0 = c0 + right * half + Vector3.Up * floorY;
-                Vector3 fl1 = c1 - right * half + Vector3.Up * floorY, fr1 = c1 + right * half + Vector3.Up * floorY;
-                Quad(fl0, fr0, fl1, fr1);                                                    // floor
-                Quad(fl0 + Vector3.Up * (bank0 - floorY), fl0, fl1 + Vector3.Up * (bank1 - floorY), fl1);   // left bank
-                Quad(fr0, fr0 + Vector3.Up * (bank0 - floorY), fr1, fr1 + Vector3.Up * (bank1 - floorY));   // right bank
-            }
-        }
-
         /// <summary>Turn the accumulated bed triangles into ONE mesh and ONE collider. Called once per carve,
         /// not once per segment -- see BuildRiverBed.</summary>
         void CommitRiverBed()
