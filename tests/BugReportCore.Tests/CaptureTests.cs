@@ -39,6 +39,38 @@ namespace UnturnedGodot.BugReport.Tests
         }
 
         [Test]
+        public void HighRateHardwareIsDownsampledRatherThanRefused()
+        {
+            // VoX's FIRST REAL REPORT died here: an 88200 Hz output device, Encode threw, and the report
+            // was lost. The test that "covered" this asserted the throw and framed it as protective --
+            // which is the inverse of the usual gap. The code was already wrong and the test read as
+            // evidence it was right.
+            foreach (var (inRate, want) in new[] { (88200, 44100), (96000, 48000), (176400, 44100), (192000, 48000) })
+            {
+                var (pcm, rate) = Wav.FitRate(Tone(inRate, rate: inRate), inRate);
+                Assert.That(rate, Is.EqualTo(want), $"{inRate} Hz must come down to something the wire takes");
+                Assert.That(pcm.Length, Is.EqualTo(inRate / (inRate / want)), "one second stays one second");
+                Assert.DoesNotThrow(() => Wav.Encode(pcm, rate), $"{inRate} Hz must still produce a file");
+            }
+
+            // CONTROL: a rate already in range is untouched -- FitRate must not resample everything.
+            var (same, r2) = Wav.FitRate(Tone(1000), 44100);
+            Assert.That(r2, Is.EqualTo(44100));
+            Assert.That(same.Length, Is.EqualTo(1000));
+        }
+
+        [Test]
+        public void DownsamplingAveragesRatherThanDroppingSamples()
+        {
+            // Plain decimation aliases everything above the new Nyquist down into the speech band. A 2-tap
+            // mean is the cheap low-pass that keeps it out, and the difference is audible on a tone.
+            var (pcm, _) = Wav.FitRate(new[] { 1f, -1f, 1f, -1f }, 88200);
+            Assert.That(pcm.Length, Is.EqualTo(2));
+            Assert.That(pcm[0], Is.EqualTo(0f).Within(1e-6), "averaged, not sampled");
+            Assert.That(pcm[1], Is.EqualTo(0f).Within(1e-6));
+        }
+
+        [Test]
         public void RejectsAnImpossibleRateRatherThanEmittingAFileNothingCanPlay()
         {
             Assert.Throws<ArgumentOutOfRangeException>(() => Wav.Encode(Tone(10), 0));

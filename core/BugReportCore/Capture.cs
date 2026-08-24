@@ -57,6 +57,34 @@ namespace UnturnedGodot.BugReport
     {
         public const int HeaderBytes = 44;
 
+        /// <summary>Highest rate the wire accepts. The server validates 8000..48000 and Gemini wants a
+        /// normal speech rate, so anything above this has to come DOWN rather than be rejected.</summary>
+        public const int MaxRate = 48000;
+
+        /// <summary>Halve the rate until it fits, averaging adjacent samples.
+        ///
+        /// VoX's first real report died on this: his output device runs at 88200 Hz, Encode threw
+        /// ArgumentOutOfRangeException, and the whole report was lost. Rejecting the rate was the wrong
+        /// call from the start -- 88.2k and 96k are ordinary settings on decent audio hardware, not
+        /// corruption, and "your sound card is too good for the bug reporter" is not a defensible failure.
+        ///
+        /// Averaging pairs rather than dropping every other sample: plain decimation aliases anything above
+        /// the new Nyquist straight down into the speech band, and a 2-tap mean is a cheap low-pass that
+        /// keeps that out. Halving is exact for every rate that actually occurs -- 88200 -> 44100,
+        /// 96000 -> 48000, 176400 -> 44100, 192000 -> 48000 -- so no resampling arithmetic and no drift.</summary>
+        public static (float[] samples, int rate) FitRate(float[] mono, int sampleRate)
+        {
+            if (mono == null) mono = Array.Empty<float>();
+            while (sampleRate > MaxRate)
+            {
+                var half = new float[mono.Length / 2];
+                for (int i = 0; i < half.Length; i++) half[i] = 0.5f * (mono[2 * i] + mono[2 * i + 1]);
+                mono = half;
+                sampleRate /= 2;
+            }
+            return (mono, sampleRate);
+        }
+
         public static byte[] Encode(float[] mono, int sampleRate)
         {
             if (mono == null) mono = Array.Empty<float>();

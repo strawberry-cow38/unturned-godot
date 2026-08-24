@@ -338,7 +338,13 @@ namespace UnturnedGodot
             if (_audioStatus == AudioStatus.Ok && _audio != null) _audioStatus = _audio.Classify();
             byte[] wav = null;
             if (_audio != null && _audio.Count > 0 && !_session.WasTap)
-                wav = Wav.Encode(_audio.ToArray(), (int)AudioServer.GetMixRate());
+            {
+                // FitRate first: a 88.2k or 96k output device is an ordinary setting on decent audio
+                // hardware, and Encode rejects anything above 48k because that is what the wire accepts.
+                // Rejecting was the wrong call -- it lost VoX's first real report outright.
+                var (pcm, rate) = Wav.FitRate(_audio.ToArray(), (int)AudioServer.GetMixRate());
+                wav = Wav.Encode(pcm, rate);
+            }
 
             string msg = _session.HitTimeout ? "60s max — sending" :
                          _session.WasTap ? "screenshot only" :
