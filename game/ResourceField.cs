@@ -181,7 +181,9 @@ namespace UnturnedGodot
                         if (!File.Exists(objP)) continue;
                         var mesh = ObjMesh.Load(objP);
                         if (mesh == null) continue;
-                        var mat = MakeMat(dir + name + "_" + i + "_tex.png", !isTree);
+                        bool sways = (isTree && i == 1) || name.StartsWith("Bush");   // tree LEAVES (part 1) + bushes sway with the wind; trunk (part 0)/clay/mushroom/ore stay stiff
+                        Material mat = sways ? MakeSwayMat(dir + name + "_" + i + "_tex.png")
+                                             : MakeMat(dir + name + "_" + i + "_tex.png", !isTree);
                         foreach (var kv in byCell)
                         {
                             var lst = kv.Value;
@@ -470,6 +472,21 @@ namespace UnturnedGodot
             }
             else mat.AlbedoColor = new Color(0.35f, 0.45f, 0.28f);   // leafy-green fallback
             return mat;
+        }
+
+        // WIND-SWAY material (master 2026-08-24): wind_sway.gdshader (world-direction, height-weighted sway) with the
+        // foliage's albedo. For tree LEAVES + bushes so they sway with WindField; the trunk keeps MakeMat (stiff).
+        static Shader _swayShader;
+        static ShaderMaterial MakeSwayMat(string texPath)
+        {
+            _swayShader ??= GD.Load<Shader>("res://content/wind_sway.gdshader");
+            var m = new ShaderMaterial { Shader = _swayShader };
+            if (File.Exists(texPath))
+            {
+                var img = new Image();
+                if (img.Load(texPath) == Error.Ok) { img.GenerateMipmaps(); m.SetShaderParameter("albedo_tex", ImageTexture.CreateFromImage(img)); }
+            }
+            return m;
         }
     }
 

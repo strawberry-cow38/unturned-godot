@@ -19,6 +19,8 @@ render_mode world_vertex_coords, cull_disabled, depth_prepass_alpha, diffuse_lam
 // Set by PlayerController via RenderingServer.GlobalShaderParameterSet. xyz = the point, w unused (matches retail's
 // Vector4, whose w is likewise 0).
 global uniform vec4 grass_displacement_point;
+// FOLIAGE WIND (master 2026-08-24): set per-frame by PlayerController from WindField. xy = wind direction, z = 0..1 strength.
+global uniform vec4 wind_vec;
 
 uniform sampler2D albedo_tex : source_color, filter_linear_mipmap;
 uniform float alpha_scissor : hint_range(0.0, 1.0) = 0.4;
@@ -49,6 +51,12 @@ void vertex() {
 		VERTEX.xz += (away / dist) * push;
 		VERTEX.y -= push * 0.35;   // pressed down as well as aside -- a blade bent over is shorter
 	}
+	// WIND SWAY (master 2026-08-24): bend the tips in the wind direction with a gust wave crawling over the map.
+	float wh = 1.0 - UV.y;   // 1 at the tip, 0 at the root (same weight as the player push)
+	float gust = sin(TIME * 1.5 + VERTEX.x * 0.25 + VERTEX.z * 0.2);
+	float wbend = wh * (0.10 + 0.35 * wind_vec.z) * (0.65 + 0.35 * gust);
+	VERTEX.xz += wind_vec.xy * wbend;
+	VERTEX.y -= abs(wbend) * 0.15;   // a bent blade sits a touch lower
 }
 
 void fragment() {

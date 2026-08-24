@@ -6132,6 +6132,7 @@ namespace UnturnedGodot
         /// <summary>Global shader parameter the grass-displacement shader reads. Named to match retail's
         /// `_Grass_Displacement_Point` so the two are recognisably the same thing.</summary>
         static readonly StringName GrassPointParam = "grass_displacement_point";
+        static readonly StringName WindParam = "wind_vec";   // xy = wind direction, z = 0..1 strength -- read by the foliage sway shaders (grass/leaves/bushes)
         static bool _grassPointReady;
 
         /// <summary>Push the local player's position to the grass shader, EXACTLY as retail's GrassDisplacement.cs
@@ -6149,10 +6150,14 @@ namespace UnturnedGodot
                 // no editor step. Adding an existing global is a no-op, but the guard keeps it off the hot path.
                 if (RenderingServer.GlobalShaderParameterGetList().Contains(GrassPointParam) == false)
                     RenderingServer.GlobalShaderParameterAdd(GrassPointParam, RenderingServer.GlobalShaderParameterType.Vec4, Variant.From(Vector4.Zero));
+                if (RenderingServer.GlobalShaderParameterGetList().Contains(WindParam) == false)
+                    RenderingServer.GlobalShaderParameterAdd(WindParam, RenderingServer.GlobalShaderParameterType.Vec4, Variant.From(Vector4.Zero));
                 _grassPointReady = true;
             }
             var p = GlobalPosition;
             RenderingServer.GlobalShaderParameterSet(GrassPointParam, new Vector4(p.X, p.Y + 0.5f, p.Z, 0f));
+            var wd = WindField.WindXZ(p);   // FOLIAGE WIND SWAY: xy = direction, z = strength at the player (a representative gust for the whole view)
+            RenderingServer.GlobalShaderParameterSet(WindParam, new Vector4(wd.X, wd.Y, WindField.SampleWind(p), 0f));
         }
 
         public override void _Process(double delta)
