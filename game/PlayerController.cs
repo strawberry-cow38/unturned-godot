@@ -3820,6 +3820,17 @@ namespace UnturnedGodot
         const float StepHeight = 0.5f;   // curbs/thresholds up to this high are stepped over (master: stop snagging on sidewalks; bumped 0.4->0.5)
         // If the horizontal motion is blocked at foot level but clear a step higher, raise onto the step; FloorSnapLength then
         // pulls us back down onto it. Reused by both the player and zombies (source has stair/ledge handling in PlayerMovement).
+        // Camera-only smoothing for the step (strawberry_cow 2026-08-24: "reads as a slope instead of a
+        // teleport"). The BODY still moves instantly -- it has to, because the whole point of the step is to be
+        // un-blocked before MoveAndSlide runs this tick, and easing the collider upward over several frames
+        // would leave it clipped into the curb for those frames. What the player actually complains about is the
+        // VIEW jumping, so the view is what gets eased: the camera keeps the old eye height and catches up.
+        //
+        // This is the standard stair-smoothing trick for exactly that reason. Physics is unchanged and
+        // authoritative; only the thing looking at it lags.
+        float _stepSmooth;                 // metres the camera is still BELOW the body after a step
+        const float StepSmoothDecay = 8f;  // per second. 0.5 m clears in ~0.13 s -- fast enough not to feel like lag, slow enough to read as a rise
+
         void StepUp(float delta, bool grounded)
         {
             if (!grounded) return;
@@ -3828,7 +3839,20 @@ namespace UnturnedGodot
             if (!TestMove(GlobalTransform, motion)) return;   // not blocked at foot level
             var raised = new Transform3D(GlobalTransform.Basis, GlobalPosition + Vector3.Up * StepHeight);
             if (TestMove(raised, motion)) return;             // blocked even raised: a wall, not a step
-            GlobalPosition += Vector3.Up * StepHeight;
+
+            // Rise by what the step ACTUALLY needs, not always the 0.5 m maximum. The old code lifted the full
+            // StepHeight for a 3 cm threshold and let FloorSnapLength drag it back down, so every curb cost a
+            // half-metre pop up followed by a settle -- half the jolt was the snap-back, not the step. Four
+            // samples is enough resolution at this scale and costs at most four TestMove calls for one player.
+            float need = StepHeight;
+            for (int i = 1; i <= 4; i++)
+            {
+                float h = StepHeight * i / 4f;
+                var probe = new Transform3D(GlobalTransform.Basis, GlobalPosition + Vector3.Up * h);
+                if (!TestMove(probe, motion)) { need = h; break; }   // smallest sampled rise that clears
+            }
+            GlobalPosition += Vector3.Up * need;
+            _stepSmooth = Mathf.Min(StepHeight, _stepSmooth + need);   // clamped: a stair RUN must not stack into the camera sinking through the floor
         }
 
 
@@ -6305,13 +6329,17 @@ namespace UnturnedGodot
             // The eye height is lerped whether or not the first-person camera is the one being drawn: in third person
             // nothing reads _cam.Position any more, but the BULLETS still come out of the eyes, so it has to keep up.
             _eyeHeight = Mathf.Lerp(_eyeHeight, EyeHeight, Mathf.Min(1f, 4f * (float)delta));
+            // Exponential decay, not MoveToward: a linear catch-up arrives with a visible corner where it stops,
+            // which is the same abruptness in a different place. This eases out.
+            _stepSmooth *= Mathf.Exp(-StepSmoothDecay * (float)delta);
+            if (_stepSmooth < 0.001f) _stepSmooth = 0f;
             if (_cam != null && !_dead && _driving == null && _riding == null && _ridingTrain == null && _ridingCrane == null)   // while driving/riding, the drive cam above owns the view
             {
                 if (_ugFp) _fp = true;   // render harness (UG_FP=1): force 1st-person so the FP viewmodel is captured
                 if (_fp)
                 {
                     // FP: the camera SITS at the eyes (PlayerLook.heightLook 1.75/1.2/0.35, lerped 4/s), pitched by the mouse
-                    _cam.Position = new Vector3(0f, _eyeHeight, 0f);
+                    _cam.Position = new Vector3(0f, _eyeHeight - _stepSmooth, 0f);   // sit where the eyes WERE, catching up over ~0.13 s
                     var look = Basis.FromEuler(new Vector3(Mathf.DegToRad(_pitchDeg), 0f, 0f), EulerOrder.Yxz);   // flinch left-multiplies the look
                     _cam.Basis = new Basis(_flinch) * look;
                 }
