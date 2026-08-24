@@ -87,6 +87,65 @@ namespace UnturnedGodot
             return margin;
         }
 
+        /// <summary>Graphics-only rows, for the pause Settings screen's Graphics tab. The main menu still uses the
+        /// combined Build() above; the pause screen splits graphics and controls into separate tabs (strawberry).
+        /// Pass onBack:null when embedding as a tab -- the Settings screen owns the single Back button.</summary>
+        public static Control BuildGraphics(Node ctx, System.Action onBack)
+        {
+            var (margin, vbox) = Frame();
+            Row(vbox, "Anti-aliasing", () => GraphicsOptions.Label(GraphicsOptions.AA),
+                () => { GraphicsOptions.AA = GraphicsOptions.Next(GraphicsOptions.AAOrder, GraphicsOptions.AA); GraphicsOptions.ApplyAA(ctx); });
+            Row(vbox, "Anisotropic filtering", () => GraphicsOptions.Aniso + "x",
+                () => { GraphicsOptions.Aniso = GraphicsOptions.Next(GraphicsOptions.AnisoOrder, GraphicsOptions.Aniso); GraphicsOptions.ApplyAniso(); });
+            Row(vbox, "Resolution", () => GraphicsOptions.ResLabel(GraphicsOptions.Resolution),
+                () => { GraphicsOptions.Resolution = GraphicsOptions.Next(GraphicsOptions.ResOrder, GraphicsOptions.Resolution); GraphicsOptions.ApplyResolution(); });
+            Row(vbox, "Shadow quality", () => GraphicsOptions.Shadows.ToString(),
+                () => { GraphicsOptions.Shadows = GraphicsOptions.Next(GraphicsOptions.ShadowOrder, GraphicsOptions.Shadows); GraphicsOptions.ApplyShadows(); });
+            Row(vbox, "Render distance", () => GraphicsOptions.DrawLabel(GraphicsOptions.DrawDistance),
+                () => { GraphicsOptions.DrawDistance = GraphicsOptions.Next(GraphicsOptions.DrawOrder, GraphicsOptions.DrawDistance);
+                        GraphicsOptions.ApplyRenderDistance(ctx?.GetTree()?.Root); });
+            var note = new Label { Text = "Anisotropic filtering has no effect yet — no material requests it.",
+                HorizontalAlignment = HorizontalAlignment.Center, AutowrapMode = TextServer.AutowrapMode.WordSmart,
+                Modulate = new Color(1f, 1f, 1f, 0.45f) };
+            note.AddThemeFontSizeOverride("font_size", 12);
+            vbox.AddChild(note);
+            AddBack(vbox, onBack);
+            return margin;
+        }
+
+        /// <summary>Controls-only rows for the Settings screen's Controls tab: on-foot look, then the flight axes.</summary>
+        public static Control BuildControls(Node ctx, System.Action onBack)
+        {
+            var (margin, vbox) = Frame();
+            SliderRow(vbox, "Look sensitivity", ControlsOptions.MouseSensMin, ControlsOptions.MouseSensMax, 0.01f,
+                () => ControlsOptions.MouseSensitivity, v => ControlsOptions.MouseSensitivity = v, () => ControlsOptions.MouseSensitivityLabel);
+            Row(vbox, "Invert look Y", () => ControlsOptions.InvertLookYLabel, () => ControlsOptions.InvertLookY = !ControlsOptions.InvertLookY);
+            Row(vbox, "Helicopter pitch", () => ControlsOptions.InvertHeliPitchLabel, () => ControlsOptions.InvertHeliPitch = !ControlsOptions.InvertHeliPitch);
+            Row(vbox, "Plane pitch", () => ControlsOptions.InvertPlanePitchLabel, () => ControlsOptions.InvertPlanePitch = !ControlsOptions.InvertPlanePitch);
+            SliderRow(vbox, "Helicopter sensitivity", ControlsOptions.HeliSensMin, ControlsOptions.HeliSensMax, 0.05f,
+                () => ControlsOptions.HeliSensitivity, v => ControlsOptions.HeliSensitivity = v, () => ControlsOptions.HeliSensitivityLabel);
+            AddBack(vbox, onBack);
+            return margin;
+        }
+
+        static (MarginContainer, VBoxContainer) Frame()
+        {
+            var margin = new MarginContainer();
+            foreach (var s in new[] { "margin_left", "margin_right", "margin_top", "margin_bottom" }) margin.AddThemeConstantOverride(s, 24);
+            var vbox = new VBoxContainer { CustomMinimumSize = new Vector2(420, 0) };
+            vbox.AddThemeConstantOverride("separation", 10);
+            margin.AddChild(vbox);
+            return (margin, vbox);
+        }
+
+        static void AddBack(VBoxContainer vbox, System.Action onBack)
+        {
+            if (onBack == null) return;
+            var back = new Button { Text = "Back", CustomMinimumSize = new Vector2(0, 40) };
+            back.Pressed += () => onBack();
+            vbox.AddChild(back);
+        }
+
         /// <summary>Label + slider + live readout, for a setting that is genuinely continuous. Cycling through
         /// fixed steps is right for AA modes and resolutions, where the options are a real list; it is wrong for
         /// mouse sensitivity, where the value someone wants is the one between two of your steps.

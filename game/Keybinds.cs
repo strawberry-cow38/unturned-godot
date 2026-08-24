@@ -12,10 +12,11 @@ namespace UnturnedGodot
     public enum GameAction
     {
         MoveForward, MoveBack, MoveLeft, MoveRight,
-        Jump, Sprint, Crouch, Prone, LeanLeft, LeanRight,
-        Fire, Aim, Reload, Melee, Grenade, Interact, Inspect,
+        Jump, Sprint, Crouch, CrouchToggle, Prone, LeanLeft, LeanRight,
+        Fire, Aim, Reload, Firemode, Melee, Grenade, Interact, AttachMenu, ToggleFirstPerson,
         Inventory, Map, Craft, Skills, Console,
-        Hotbar1, Hotbar2, Hotbar3, Hotbar4, Hotbar5,
+        Hotbar1, Hotbar2, Hotbar3, Hotbar4, Hotbar5, Hotbar6, Hotbar7, Hotbar8, Hotbar9,
+        VehicleHandbrake,
         BugReport,
     }
 
@@ -103,27 +104,35 @@ namespace UnturnedGodot
             [GameAction.MoveRight] = new Bind(Key.D),
             [GameAction.Jump] = new Bind(Key.Space),
             [GameAction.Sprint] = new Bind(Key.Shift),
-            [GameAction.Crouch] = new Bind(Key.C),
+            [GameAction.Crouch] = new Bind(Key.C),              // hold-to-crouch (master); the stand<->crouch toggle is CrouchToggle
+            [GameAction.CrouchToggle] = new Bind(Key.X),        // stand<->crouch TOGGLE (master) -- a separate control from hold-crouch, both bindable
             [GameAction.Prone] = new Bind(Key.Z),
             [GameAction.LeanLeft] = new Bind(Key.Q),
             [GameAction.LeanRight] = new Bind(Key.E),
             [GameAction.Fire] = new Bind(MouseButton.Left),
             [GameAction.Aim] = new Bind(MouseButton.Right),
             [GameAction.Reload] = new Bind(Key.R),
+            [GameAction.Firemode] = new Bind(Key.V),
             [GameAction.Melee] = new Bind(Key.G),
             [GameAction.Grenade] = new Bind(Key.H),
             [GameAction.Interact] = new Bind(Key.F),
-            [GameAction.Inspect] = new Bind(Key.T),
+            [GameAction.AttachMenu] = new Bind(Key.T),          // hold to open the weapon-attachment menu (code reality; supersedes the guessed Inspect)
+            [GameAction.ToggleFirstPerson] = new Bind(Key.K),   // moved off H so Grenade(H) stops being dead code (fp-toggle + grenade were both H)
             [GameAction.Inventory] = new Bind(Key.Tab),
             [GameAction.Map] = new Bind(Key.M),
             [GameAction.Craft] = new Bind(Key.Y),
-            [GameAction.Skills] = new Bind(Key.U),
+            [GameAction.Skills] = new Bind(Key.J),              // code opens the skills menu on J, not U
             [GameAction.Console] = new Bind(Key.Quoteleft),
             [GameAction.Hotbar1] = new Bind(Key.Key1),
             [GameAction.Hotbar2] = new Bind(Key.Key2),
             [GameAction.Hotbar3] = new Bind(Key.Key3),
             [GameAction.Hotbar4] = new Bind(Key.Key4),
             [GameAction.Hotbar5] = new Bind(Key.Key5),
+            [GameAction.Hotbar6] = new Bind(Key.Key6),
+            [GameAction.Hotbar7] = new Bind(Key.Key7),
+            [GameAction.Hotbar8] = new Bind(Key.Key8),
+            [GameAction.Hotbar9] = new Bind(Key.Key9),
+            [GameAction.VehicleHandbrake] = new Bind(Key.Space), // defaults to Space like Jump but its OWN action -- rebinding Jump must not strand the handbrake
             [GameAction.BugReport] = new Bind(Key.Backslash),
         };
 

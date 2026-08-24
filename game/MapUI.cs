@@ -107,13 +107,13 @@ namespace UnturnedGodot
             var pos = Player.GlobalPosition;
             _arrow.Position = WorldToNorm(pos) * _map.Size;
             _arrow.Rotation = Player.MapFacingAngle();
-            _coord.Text = $"{Info().label}    X {pos.X:0}  Z {pos.Z:0}    (M / Esc to close)";
+            _coord.Text = $"{Info().label}    X {pos.X:0}  Z {pos.Z:0}    ({Keybinds.Get(GameAction.Map).Label} / Esc to close)";
         }
 
         public override void _Input(InputEvent e)
         {
             if (e is not InputEventKey { Pressed: true } k) return;
-            if (k.Keycode == Key.M)
+            if (Keybinds.Matches(GameAction.Map, k))
             {
                 if (GetViewport().GuiGetFocusOwner() is LineEdit) return;   // don't hijack typing in the F1 console
                 Toggle();

@@ -11,7 +11,7 @@ namespace UnturnedGodot
     ///
     /// While capturing, this node takes input at the highest priority and marks it handled, so binding a key
     /// cannot also trigger whatever that key currently does -- rebinding Jump should not make you jump.</summary>
-    public partial class KeybindMenu : PanelContainer
+    public partial class KeybindMenu : MarginContainer
     {
         readonly Dictionary<GameAction, Button> _rows = new();
         Label _hint;
@@ -19,7 +19,9 @@ namespace UnturnedGodot
 
         public override void _Ready()
         {
-            UITheme.Panel(this, solid: true);
+            // No own panel/Back button: this is embedded as the "Key Binds" TAB of the Settings screen, which
+            // provides the frame and the single Back (strawberry). Nesting a panel inside a panel would double the
+            // border; the standalone Back would be a second way out of one tab.
             ProcessMode = ProcessModeEnum.Always;   // reachable from the pause menu, which pauses the tree
 
             var outer = new VBoxContainer { CustomMinimumSize = new Vector2(560, 0) };
@@ -30,6 +32,11 @@ namespace UnturnedGodot
             _hint = UITheme.Label(new Label { Text = "click a binding, then press any key or mouse button  ·  Esc cancels" },
                                   UITheme.FontLabel, UITheme.TextDim);
             outer.AddChild(_hint);
+
+            var vehNote = UITheme.Label(new Label { Text = "Vehicles use your Move Forward/Back/Left/Right binds for throttle & steering — rebinding movement moves them too. Handbrake is bindable on its own, below." },
+                                        UITheme.FontLabel, UITheme.TextDim);
+            vehNote.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+            outer.AddChild(vehNote);
 
             var scroll = new ScrollContainer { CustomMinimumSize = new Vector2(0, 420), SizeFlagsVertical = SizeFlags.ExpandFill };
             outer.AddChild(scroll);
@@ -60,14 +67,8 @@ namespace UnturnedGodot
             UITheme.Button(reset);
             reset.Pressed += () => { Keybinds.ResetAll(); RefreshAll(); };
             footer.AddChild(reset);
-            var back = new Button { Text = "Back", CustomMinimumSize = new Vector2(120, 36) };
-            UITheme.Button(back, primary: true);
-            back.Pressed += () => { Visible = false; Closed?.Invoke(); };
-            footer.AddChild(back);
             outer.AddChild(footer);
         }
-
-        public System.Action Closed;
 
         void BeginCapture(GameAction a)
         {

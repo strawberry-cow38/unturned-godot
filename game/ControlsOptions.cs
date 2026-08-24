@@ -37,5 +37,17 @@ namespace UnturnedGodot
         public static float HeliSensitivity = 1.0f;
         public const float HeliSensMin = 0.25f, HeliSensMax = 2.5f;
         public static string HeliSensitivityLabel => $"{HeliSensitivity:0.00}x";
+
+        /// <summary>On-foot look sensitivity -- the multiplier the mouse-look pitch/yaw reads. Default 0.12 is the
+        /// value the camera shipped with (was a PlayerController [Export]); lifted here so the Controls tab can
+        /// tune it and every look path shares one number.</summary>
+        public static float MouseSensitivity = 0.12f;
+        public const float MouseSensMin = 0.02f, MouseSensMax = 0.5f;
+        public static string MouseSensitivityLabel => $"{MouseSensitivity:0.00}";
+
+        /// <summary>Invert the on-foot vertical look (mouse up -> look DOWN). Off by default -- "Regular" is
+        /// mouse up -> look up, what a new player expects.</summary>
+        public static bool InvertLookY;
+        public static string InvertLookYLabel => InvertLookY ? "Inverted" : "Regular";
     }
 }
