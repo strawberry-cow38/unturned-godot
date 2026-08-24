@@ -74,6 +74,15 @@ namespace UnturnedGodot
         // modelled, and does not need to be at retail defaults: LandmarkQuality defaults to OFF and
         // LandmarkDistance to 0.0, so SkyboxTreeMaxDistance/SkyboxObjectMaxDistance both evaluate to 0 and
         // landmarkExtraDistance to 0. The billboards are opt-in, not the default experience.
+        //
+        // ...EXCEPT (master 2026-08-24: "i should see the lighthouse across the map even as an imposter"): the 447m
+        // region cap culls big LARGE landmarks that must carry across PEI. We approximate retail's landmarkExtraDistance
+        // by LIFTING the region cap for a LARGE prop whose bounding size marks it a landmark, so its own (size-scaled)
+        // LODGroup cull binds instead -- it draws at its LOWEST LOD (the low-poly "imposter") out to that distance.
+        public const float LandmarkMinSize = 30f;      // bounding-sphere diameter marking a "landmark": catches ~13 of PEI's 122 LARGE props -- Lighthouse_0 (51), Dock_1 (41), Harbor_0 (100), Ship_0/1 (67), Bridge (48-50), Bunker_0 (45), Hangar_0 (40), Tower_Airport_0 (31) -- not normal big buildings (median LARGE ~19)
+        public static float LandmarkMaxDistance => Mathf.Max(RegionMaxDistance, 1400f);   // ~PEI-diagonal cap; the LODGroup usually binds first
+        static float EffLayerCull(Entry e)
+            => (e.Layer == "LARGE" && e.Size >= LandmarkMinSize) ? LandmarkMaxDistance : LayerCull(e.Layer);
 
         public static void Load(string path)
         {
@@ -117,7 +126,7 @@ namespace UnturnedGodot
         public static float CullDistance(string guid, float fovDeg)
         {
             if (!_byGuid.TryGetValue(guid.ToLowerInvariant(), out var e)) return 0f;
-            float layer = LayerCull(e.Layer);
+            float layer = EffLayerCull(e);
             if (e.Heights == null || e.Heights.Length == 0 || e.Size <= 0f) return layer;
             return Mathf.Min(layer, DistanceForHeight(e.Size, e.Heights[e.Heights.Length - 1], fovDeg));
         }
@@ -192,9 +201,10 @@ namespace UnturnedGodot
 
         static (float Begin, float End)[] RangesFor(Entry e, float fovDeg)
         {
-            float layer = LayerCull(e.Layer);
+            float layer = LayerCull(e.Layer);   // region-capped (447 for LARGE): the HIGHER LODs stay near
+            bool landmark = e.Layer == "LARGE" && e.Size >= LandmarkMinSize;
             if (e.Heights == null || e.Heights.Length == 0 || e.Size <= 0f)
-                return new[] { (0f, layer) };
+                return new[] { (0f, landmark ? LandmarkMaxDistance : layer) };
             var r = new (float, float)[e.Heights.Length];
             float prev = 0f;
             for (int i = 0; i < e.Heights.Length; i++)
@@ -205,6 +215,9 @@ namespace UnturnedGodot
                 r[i] = (prev, d);
                 prev = d;
             }
+            // Landmark: carry the LOWEST LOD (the low-poly imposter) out to LandmarkMax so it stays visible across the
+            // map, while the higher LODs stay region-capped -- full detail doesn't draw far, the prop just doesn't vanish.
+            if (landmark) r[r.Length - 1] = (r[r.Length - 1].Item1, LandmarkMaxDistance);
             return r;
         }
 
