@@ -70,6 +70,11 @@ namespace UnturnedGodot
         /// disagree about which tool owns the mouse.</summary>
         public void SetActive(bool on) { if (_carving != on) SetCarving(on); }
 
+        /// <summary>Re-cut every existing river with the CURRENT carve code. A saved river replays its baked
+        /// geometry verbatim on load -- deliberately, it is what makes loading cheap -- so a fix to the carve
+        /// never reaches a river that already exists. This is the migration button for exactly that.</summary>
+        public int RebuildExisting() => _terr?.RebuildRiversFromRecipe() ?? 0;
+
         public string ModeText => !_carving
             ? "V carve river"
             : $"RIVER[{ToolNames[(int)_tool]}] · half-width {_halfWidth:0.#}m ([/]) · depth {_depth:0.#}m (-/=) · {_anchors.Count} placed · T tool · LMB place · Enter carve · Del undo point · Esc";

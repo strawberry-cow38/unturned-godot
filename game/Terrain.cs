@@ -587,13 +587,18 @@ void fragment() {
                             int gx = Mathf.RoundToInt(cx) + ix, gy = Mathf.RoundToInt(cy) + iy;
                             float ddx = (gx + 0.5f - cx) * UNIT, ddy = (gy + 0.5f - cy) * UNIT;
                             if (ddx * ddx + ddy * ddy > holeR * holeR) continue;
-                            if (!SetHole(gx, gy, true)) continue;
+                            if (gx < 0 || gy < 0 || gx >= _gw - 1 || gy >= _gh - 1) continue;   // off-map: not ours to bound
+                            SetHole(gx, gy, true);
+                            // Bounds track EVERY quad in range, not just the ones this call changed. Gating on
+                            // SetHole's "did it change" return meant re-carving an existing river found nothing
+                            // new to cut, bailed at the guard below, and silently deleted the bed instead of
+                            // rebuilding it -- which is exactly what a migration pass does.
                             gx0 = System.Math.Min(gx0, gx); gx1 = System.Math.Max(gx1, gx);
                             gy0 = System.Math.Min(gy0, gy); gy1 = System.Math.Max(gy1, gy);
                         }
                 }
             }
-            if (gx1 < 0) return;   // nothing was cut (off-map, or already carved) -> no bed, no rebuild
+            if (gx1 < 0) return;   // the whole path was off-map -> no bed, no rebuild
 
             for (int e = 0; e < path.Count - 1; e++) _riverSegs.Add((path[e], path[e + 1], half, depth));
             BuildRiverBedPolyline(path, half, depth);
@@ -756,6 +761,45 @@ void fragment() {
         Node3D AddOwned(Node3D n) { AddChild(n); return n; }
 
         public int RiverSegmentCount => _riverSegs.Count;
+
+        /// <summary>Re-cut and re-bed every river from its stored RECIPE, discarding the baked geometry.
+        ///
+        /// Needed because the save format bakes the bed verts and the hole mask rides in its own file, so
+        /// LoadRivers replays a river EXACTLY as it was carved -- which is the point (no bezier walk, no
+        /// SampleHeight scan on load) and also means a fix to the carve cannot reach a river that already
+        /// exists. strawberry hit this immediately: "still overhangs", on a river carved before the fix.
+        ///
+        /// Consecutive segments that chain end-to-end with the same width and depth are regrouped into one
+        /// polyline first, because that is what the carve needs to re-mitre the joins -- feeding the segments
+        /// back in one at a time would rebuild the notches the polyline pass exists to remove.
+        ///
+        /// Returns the number of rivers (polylines) rebuilt.</summary>
+        public int RebuildRiversFromRecipe()
+        {
+            if (_grid == null || _riverSegs.Count == 0) return 0;
+            var recipe = new System.Collections.Generic.List<(Vector3 a, Vector3 b, float half, float depth)>(_riverSegs);
+            _riverSegs.Clear();
+            if (_riverBeds != null) { _riverBeds.QueueFree(); _riverBeds = null; }
+            _bedMeshes.Clear();
+            _bedVerts.Clear();
+
+            int rebuilt = 0;
+            int i = 0;
+            while (i < recipe.Count)
+            {
+                var poly = new System.Collections.Generic.List<Vector3> { recipe[i].a, recipe[i].b };
+                float half = recipe[i].half, depth = recipe[i].depth;
+                int j = i + 1;
+                while (j < recipe.Count && recipe[j].half == half && recipe[j].depth == depth
+                       && recipe[j].a.DistanceSquaredTo(poly[^1]) < 0.0001f)
+                { poly.Add(recipe[j].b); j++; }
+                CarveRiverPolyline(poly, half, depth);
+                rebuilt++;
+                i = j;
+            }
+            GD.Print($"[river] rebuilt {rebuilt} river(s) from {recipe.Count} stored segments");
+            return rebuilt;
+        }
 
         public void EditRamp(Vector3 begin, Vector3 end, float radiusWorld)
         {

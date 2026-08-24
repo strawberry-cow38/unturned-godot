@@ -104,6 +104,13 @@ namespace UnturnedGodot
             _depthSlider = NumRow(box, "Depth", EditorRiver.MinDepth, EditorRiver.MaxDepth, 0.25f,
                                   _river.Depth, v => _river.SetDepth((float)v));
 
+            // Re-cut existing rivers with today's carve code. A saved river replays BAKED geometry on load, so
+            // a carve fix cannot reach one that already exists -- without this button the only way to pick up a
+            // fix is to delete the river and draw it again.
+            var rebuild = new Button { Text = "Rebuild existing rivers" };
+            rebuild.Pressed += () => { int n = _river?.RebuildExisting() ?? 0; if (_riverStats != null) _riverStats.Text = $"rebuilt {n} river(s)"; };
+            box.AddChild(rebuild);
+
             box.AddChild(Dim("Straight: click both ends.\nCurve: click each bend, Enter to carve.\nFreehand: drag along the ground.\nDel drops the last point · Esc cancels.\nPreview shows the centreline AND both banks.\nCarving cuts the terrain -- there is no undo."));
             _riverStats = Dim("");
             box.AddChild(_riverStats);
