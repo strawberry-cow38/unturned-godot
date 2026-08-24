@@ -804,6 +804,8 @@ namespace UnturnedGodot
         float[] _gears; float _reverseGear, _shiftUpRpm; float _engineRpm = 1000f; int _gear = 1;   // engine RPM + gear sim
         float _wheelbase;   // front-to-rear axle span from the spec wheels -- the steering cap needs the real geometry
         float _specSpeedMax;   // spec SpeedMax before TopSpeedBuff -- the reference the STEERING fade uses (and an L1 baseline)
+        float _clutchT;   // >0 while drive is disconnected mid-shift
+        public bool Declutched => _clutchT > 0f;   // test/HUD seam
         float _peakTorque, _dragK, _rollK, _driveR, _shiftCd; int _nTraction;   // drivetrain: peak engine torque (Nm), aero drag coeff (N per (m/s)^2), rolling resistance (N), driven wheel radius, shift lockout, traction wheel count
         AudioStreamPlayer3D _engineAudio, _ignitionAudio; bool _ignitionFired; float _idlePitch = 1f, _maxPitch = 2f, _idleVol = 0.75f, _maxVol = 1f;   // EngineRPMSimple sound
         const float EngineVolumeBoost = 1.5f;   // every engine loop +50% louder (strawberry 2026-07-15) -- amplitude x1.5 = +3.5 dB
@@ -822,7 +824,12 @@ namespace UnturnedGodot
         const float LaunchBoost  = 1.5f;     // first-gear peak force vs the old flat force
         const float StallRpm     = 2600f;    // torque-converter stall: what the engine revs to against a stopped car
         const float RollingCrr   = 0.015f;   // rolling resistance, as a fraction of weight
-        const float ShiftTime    = 0.30f;    // lockout between shifts
+        // RETAIL SPLITS THESE and we had collapsed them into one number. Jeep.dat carries BOTH
+        // GearShift_Duration 0.2 (how long the shift itself takes) and GearShift_Interval 0.5 (the minimum gap
+        // between shifts). One constant cannot be both, and conflating them is why the shift read as a flat
+        // lockout rather than a gearchange.
+        const float ShiftClutchTime = 0.20f;   // GearShift_Duration: drive is DISCONNECTED for this long
+        const float ShiftTime       = 0.50f;   // GearShift_Interval: earliest the box will shift again
         const float EngineBrakeScale = 0.12f; // lift-off engine braking, as a fraction of the FOOT brake, AT REDLINE. Raised 0.03 -> 0.12 when FootBrakeScale went 6 -> 1.5, because engine braking is derived from it: the PRODUCT is what sets the coastdown, and it was signed off at 1.83 m/s2
         const float SpeedBackstop = 1.15f;   // hard cut this far past the drag equilibrium (runaway guard only)
         public float EngineRpm => _engineRpm;
@@ -5503,6 +5510,24 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             // it sits above the drag equilibrium and below the MP envelope, and in normal driving never fires.
             if (throttle > 0f && speed >= _speedMax * SpeedBackstop) eng = 0f;
             if (throttle < 0f && speed >= -_speedMin) eng = 0f;   // cap reverse at -Speed_Min (7)
+            // THE CLUTCH (strawberry_cow 2026-08-24: "a somewhat real clutch engine power disconnect when
+            // shifting up/down"). While the shift is in progress the drive is DISCONNECTED, so the car coasts
+            // through the gearchange and picks up again in the new ratio.
+            //
+            // This is what makes a shift felt rather than merely logged: previously _shiftCd was purely a
+            // lockout on shifting AGAIN and power was never interrupted, so the only cue was a cosmetic jolt.
+            // Momentum carries the car, drag still acts, and on an upshift at redline the loss of thrust is
+            // exactly the pause a real box has.
+            //
+            // Eased in and out rather than a hard gate: a step to zero force and back is an impulse the
+            // suspension answers with a nod, which reads as a bug rather than a gearchange.
+            // Read only -- Drive() has no delta; the timer ticks in _PhysicsProcess beside _shiftCd, which is
+            // the one place that already owns the shift clock.
+            if (_clutchT > 0f)
+            {
+                float k = Mathf.Clamp(_clutchT / ShiftClutchTime, 0f, 1f);
+                eng *= 1f - Mathf.Sin(k * Mathf.Pi);   // 1 -> 0 -> 1 across the shift, zero drive at its midpoint
+            }
             EngineForce = -eng;   // NEGATE: Godot drives this rig +Z for positive force, so W(throttle+1) was going backward
             // STEERING FADES AGAINST THE SPEC TOP SPEED, NOT THE BUFFED ONE. This fade is a function of ROAD
             // SPEED -- how much lock you get at 12 m/s should not depend on how fast the car can eventually
@@ -6589,12 +6614,13 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             {
                 float fwd = Mathf.Abs(LinearVelocity.Dot(-GlobalTransform.Basis.Z));
                 if (_shiftCd > 0f) _shiftCd -= (float)delta;
+                if (_clutchT > 0f) _clutchT = Mathf.Max(0f, _clutchT - (float)delta);   // the clutch re-engages on its own clock, shorter than the shift interval
                 if (fwd < 1.0f) _gear = 1;   // rolled to a stop -> back into first, ready to launch
                 else if (_shiftCd <= 0f && !_exploded && !_husk)
                 {
                     if (_engineRpm >= RedlineFrac * MaxRpm && _gear < _gears.Length)
                     {
-                        _gear++; _shiftCd = ShiftTime;
+                        _gear++; _shiftCd = ShiftTime; _clutchT = ShiftClutchTime;
                         // The jolt is a VERTICAL hitch + pitch nod you FEEL but that does NOT touch the fore-aft
                         // speed: a fore-aft impulse used to dip the speed back under the old band's shift point
                         // and re-downshift instantly, sticking the box in a shift loop (master caught it). That
@@ -6602,7 +6628,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                         ApplyCentralImpulse(Vector3.Up * Mass * 0.22f);
                         ApplyTorqueImpulse(GlobalTransform.Basis.X * Mass * 0.5f);
                     }
-                    else if (_gear > 1 && _engineRpm <= DownshiftRpm(_gear)) { _gear--; _shiftCd = ShiftTime; }
+                    else if (_gear > 1 && _engineRpm <= DownshiftRpm(_gear)) { _gear--; _shiftCd = ShiftTime; _clutchT = ShiftClutchTime; }   // downshifts declutch too: the box does not care which way it went
                 }
             }
             if (_engineAudio != null)   // EngineRPMSimple: pitch + volume by RPM while running; silent when off (exited)
