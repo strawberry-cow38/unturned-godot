@@ -6984,6 +6984,27 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             // and drives on along the seabed, which is the behaviour this exists to remove.
             EngineOn = false;
 
+            // The ELECTRICS drown with it (strawberry_cow 2026-08-24). Same every-tick reasoning as the engine:
+            // clearing these once on entry lets the driver flick the headlights back on while submerged, and the
+            // alarm re-arms itself on its own timer regardless of anyone touching it.
+            //
+            // The alarm matters most of the three. Its blip loop re-lights the lamps and honks every 0.5s on its
+            // own clock, so a car alarm going off underwater keeps flashing and sounding forever -- exactly the
+            // failure the explode path documents at the _alarmed reset above, arrived at from a different
+            // direction. Kill the state, not just the output, or the loop simply re-creates it.
+            // SetHeadlights, not `_headlightsOn = false`. The flag is not what lights the lamps -- SetHeadlights
+            // is the only thing that touches _headlights.Visible, the beam mesh and the lens emission, so
+            // clearing the field alone leaves a submerged car glowing with its headlight shafts still drawn and
+            // only the boolean saying otherwise.
+            if (_headlightsOn) SetHeadlights(false);   // guarded: this runs EVERY physics tick while under, and SetHeadlights re-touches materials + the mote emitter
+            _sirenOn = false;                     // polled per-frame by the lightbar block (:6499), so the flag IS the switch here
+            if (_sirenAudio != null && _sirenAudio.Playing) _sirenAudio.Stop();
+            _alarmed = false; _alarmTimer = 0f; _alarmBlip = 0f; _alarmLit = false;
+            // Taillights are deliberately NOT set here: :6513 recomputes them every frame from EngineOn and
+            // _headlightsOn, both of which are now false, so they follow on their own. Forcing the field would be
+            // overwritten next frame anyway, and writing code that the next tick undoes is how a fix gets
+            // credited for something it is not doing.
+
             // Trapped air holds it up, then escapes. Linear bleed rather than a curve -- the interesting moment is
             // WHEN it starts going down, and a curve only makes that harder to predict without looking different.
             float lift = _swampTime <= SwampFloatSeconds
