@@ -472,6 +472,46 @@ void fragment() {
             RebuildChunksIn(gx0, gx1, gy0, gy1, withCollider: true);
         }
 
+        /// <summary>Carve a river along a CURVE through the given anchors.
+        ///
+        /// strawberry_cow: "give it real curves. should mirror road tools, the new road tools." So it uses the
+        /// same curve RoadField does -- Catmull-Rom tangents converted to cubic Bezier with the /6 factor
+        /// (RoadField.RetangentRoad) -- rather than inventing a second spline convention that would drift from
+        /// the roads' as either is tuned. A straight run of evenly spaced anchors comes out actually straight
+        /// under this, which a naive tangent does not.
+        ///
+        /// The curve is then carved as many SHORT straight segments. That is not an approximation of the
+        /// feature, it is how the carve works at all: the cut is a per-quad mask on a grid, so the finest
+        /// channel expressible is one cell wide however smooth the source curve is. Sampling finer than the
+        /// grid buys nothing but time.</summary>
+        public void CarveRiverPath(System.Collections.Generic.IReadOnlyList<Vector3> anchors, float halfWidth, float depth)
+        {
+            if (_grid == null || anchors == null || anchors.Count < 2) return;
+            if (anchors.Count == 2) { CarveRiver(anchors[0], anchors[1], halfWidth, depth); return; }
+
+            for (int i = 0; i < anchors.Count - 1; i++)
+            {
+                Vector3 p0 = anchors[i], p1 = anchors[i + 1];
+                Vector3 prev = i > 0 ? anchors[i - 1] : p0;
+                Vector3 next = i < anchors.Count - 2 ? anchors[i + 2] : p1;
+                Vector3 t0 = (p1 - prev) / 6f, t1 = (next - p0) / 6f;   // same /6 as RoadField.RetangentRoad
+                // Step count from the chord, so a long span is not carved coarser than a short one.
+                int steps = Mathf.Max(2, Mathf.CeilToInt(p0.DistanceTo(p1) / Mathf.Max(2f, UNIT)));
+                Vector3 prevPt = p0;
+                for (int k = 1; k <= steps; k++)
+                {
+                    float t = (float)k / steps;
+                    float u = 1f - t;
+                    Vector3 pt = u * u * u * p0
+                               + 3f * u * u * t * (p0 + t0)
+                               + 3f * u * t * t * (p1 - t1)
+                               + t * t * t * p1;
+                    CarveRiver(prevPt, pt, halfWidth, depth);
+                    prevPt = pt;
+                }
+            }
+        }
+
         /// <summary>A U-shaped bed under one carved segment: floor, two banks, collidable.</summary>
         void BuildRiverBed(Vector3 begin, Vector3 end, Vector2 dir, float len, float half, float floorY)
         {
