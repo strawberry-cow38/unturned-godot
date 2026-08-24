@@ -416,6 +416,100 @@ void fragment() {
 
         // Devkit RAMP (source handleHeightmapWriteRamp): a linear height grade between two clicked world points, in a
         // corridor of half-width radiusWorld (falloff on the cross axis). One-shot -- begin.Y..end.Y are the target heights.
+        readonly System.Collections.Generic.List<(Vector3 a, Vector3 b, float half, float depth)> _riverSegs = new();
+        Node3D _riverBeds;
+
+        /// <summary>Carve a river along a path: CUT the terrain surface out and build a riverbed under it.
+        ///
+        /// strawberry_cow: "cuts the terrain surface out, and creates a riverbed below the surface... actual
+        /// CUT the terrain, dont morph it." So this does NOT lower the heightmap -- a morph leaves a smooth
+        /// valley whose floor is still the terrain surface, which is a ditch, not a river. It marks the quads
+        /// inside the channel as HOLES (the mask added for terrain holes: gone from the render mesh AND from
+        /// the collider), then lays a separate bed mesh below the gap. You can fall in.
+        ///
+        /// The bed is its own geometry rather than more terrain because the terrain grid cannot express it:
+        /// a heightmap has exactly one height per column, so a channel with banks steeper than the grid spacing
+        /// is not representable at all. Cutting a hole and putting real geometry underneath is the only way to
+        /// get a bank you cannot walk up.
+        ///
+        /// Depth is measured DOWN FROM THE LOWEST bank height along each segment, not from either endpoint --
+        /// a river carved across sloping ground must stay below the surface for its whole length, and keying
+        /// off one end leaves the other end floating above the hillside.</summary>
+        public void CarveRiver(Vector3 begin, Vector3 end, float halfWidth, float depth)
+        {
+            if (_grid == null) return;
+            var d = new Vector2(end.X - begin.X, end.Z - begin.Z);
+            float len = d.Length();
+            if (len < 1f) return;
+            d /= len;
+
+            // 1. CUT. Walk the centreline and hole every quad within halfWidth of it. Stepping by half a cell
+            //    rather than by cell guarantees no gaps on a diagonal, where a cell-sized step can skip a column.
+            int gx0 = _gw, gx1 = -1, gy0 = _gh, gy1 = -1;
+            float lowestBank = float.MaxValue;
+            for (float t = 0f; t <= len; t += UNIT * 0.5f)
+            {
+                float wx = begin.X + d.X * t, wz = begin.Z + d.Y * t;
+                lowestBank = Mathf.Min(lowestBank, SampleHeight(wx, wz));
+                float cx = (wx - _bx) / UNIT, cy = (-wz - _bz) / UNIT;
+                int rg = Mathf.CeilToInt(halfWidth / UNIT) + 1;
+                for (int ix = -rg; ix <= rg; ix++)
+                    for (int iy = -rg; iy <= rg; iy++)
+                    {
+                        int gx = Mathf.RoundToInt(cx) + ix, gy = Mathf.RoundToInt(cy) + iy;
+                        float dx = (gx + 0.5f - cx) * UNIT, dy = (gy + 0.5f - cy) * UNIT;
+                        if (dx * dx + dy * dy > halfWidth * halfWidth) continue;
+                        if (!SetHole(gx, gy, true)) continue;
+                        gx0 = System.Math.Min(gx0, gx); gx1 = System.Math.Max(gx1, gx);
+                        gy0 = System.Math.Min(gy0, gy); gy1 = System.Math.Max(gy1, gy);
+                    }
+            }
+            if (gx1 < 0) return;   // nothing was cut (off-map, or already carved) -> no bed, no rebuild
+
+            _riverSegs.Add((begin, end, halfWidth, depth));
+            BuildRiverBed(begin, end, d, len, halfWidth, lowestBank - depth);
+            _dirty = true;
+            RebuildChunksIn(gx0, gx1, gy0, gy1, withCollider: true);
+        }
+
+        /// <summary>A U-shaped bed under one carved segment: floor, two banks, collidable.</summary>
+        void BuildRiverBed(Vector3 begin, Vector3 end, Vector2 dir, float len, float half, float floorY)
+        {
+            _riverBeds ??= AddOwned(new Node3D { Name = "RiverBeds" });
+            var right = new Vector3(-dir.Y, 0f, dir.X);   // world-space lateral, Z already in world terms
+            var st = new SurfaceTool();
+            st.Begin(Mesh.PrimitiveType.Triangles);
+            const int Steps = 8;
+            for (int i = 0; i < Steps; i++)
+            {
+                float t0 = len * i / Steps, t1 = len * (i + 1) / Steps;
+                Vector3 c0 = new Vector3(begin.X + dir.X * t0, 0f, begin.Z + dir.Y * t0);
+                Vector3 c1 = new Vector3(begin.X + dir.X * t1, 0f, begin.Z + dir.Y * t1);
+                float bank0 = SampleHeight(c0.X, c0.Z), bank1 = SampleHeight(c1.X, c1.Z);
+                // Floor quad, then a bank up to the terrain on each side. The banks are what stop you seeing
+                // out through the gap the hole left in the surface.
+                void Quad(Vector3 a, Vector3 b, Vector3 c, Vector3 e)
+                { st.AddVertex(a); st.AddVertex(b); st.AddVertex(c); st.AddVertex(c); st.AddVertex(b); st.AddVertex(e); }
+                Vector3 fl0 = c0 - right * half + Vector3.Up * floorY, fr0 = c0 + right * half + Vector3.Up * floorY;
+                Vector3 fl1 = c1 - right * half + Vector3.Up * floorY, fr1 = c1 + right * half + Vector3.Up * floorY;
+                Quad(fl0, fr0, fl1, fr1);                                                    // floor
+                Quad(fl0 + Vector3.Up * (bank0 - floorY), fl0, fl1 + Vector3.Up * (bank1 - floorY), fl1);   // left bank
+                Quad(fr0, fr0 + Vector3.Up * (bank0 - floorY), fr1, fr1 + Vector3.Up * (bank1 - floorY));   // right bank
+            }
+            st.GenerateNormals();
+            var mesh = st.Commit();
+            var mi = new MeshInstance3D { Mesh = mesh, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.30f, 0.26f, 0.20f), Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled } };
+            _riverBeds.AddChild(mi);
+            var body = new StaticBody3D { CollisionLayer = 1u << 0 };
+            body.SetMeta(PlayerController.SurfMeta, (int)PlayerController.Surf.Dirt);
+            body.AddChild(new CollisionShape3D { Shape = mesh.CreateTrimeshShape() });
+            _riverBeds.AddChild(body);
+        }
+
+        Node3D AddOwned(Node3D n) { AddChild(n); return n; }
+
+        public int RiverSegmentCount => _riverSegs.Count;
+
         public void EditRamp(Vector3 begin, Vector3 end, float radiusWorld)
         {
             if (_grid == null) return;

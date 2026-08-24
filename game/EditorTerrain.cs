@@ -19,7 +19,7 @@ namespace UnturnedGodot
         // Dig/Fill are ours, not Devkit's: retail cuts holes with placed hole VOLUMES rather than a brush, but a
         // volume needs a gizmo, a transform and a persisted object list, and the brush is the same interaction the
         // rest of this editor already uses. The stored result is identical either way -- a per-quad mask.
-        public enum EBrush { Raise, Lower, Flatten, Smooth, Ramp, Dig, Fill }   // source Devkit heightmap modes (ADJUST±/FLATTEN/SMOOTH/RAMP) + hole brushes
+        public enum EBrush { Raise, Lower, Flatten, Smooth, Ramp, Dig, Fill, River }   // source Devkit heightmap modes (ADJUST±/FLATTEN/SMOOTH/RAMP) + hole brushes
         EBrush _brush = EBrush.Raise;
         bool _paint;   // false = height sculpt, true = Materials splat-paint
         int _layer;    // 0-7 splat layer to paint
@@ -41,7 +41,7 @@ namespace UnturnedGodot
             }
             return DefaultLayerNames;
         }
-        public static readonly string[] BrushNames = { "Raise", "Lower", "Flatten", "Smooth", "Ramp", "Dig hole", "Fill hole" };
+        public static readonly string[] BrushNames = { "Raise", "Lower", "Flatten", "Smooth", "Ramp", "Dig hole", "Fill hole", "River" };
 
         // --- accessors for the EditorTerrainPanel buttons/sliders ---
         public bool Painting => _paint;
@@ -57,6 +57,8 @@ namespace UnturnedGodot
 
         public string ModeText => _paint
             ? $"PAINT {LayerNames[_layer]} · radius {_radius:0}m"
+            : _brush == EBrush.River
+                ? $"River · half-width {_radius:0}m · depth {Mathf.Max(1.5f, _strength * 0.05f):0.0}m · click start, click end"
             : _brush == EBrush.Dig || _brush == EBrush.Fill
                 ? $"{BrushNames[(int)_brush]} · radius {_radius:0}m"   // strength is meaningless for a boolean mask; showing it invites fiddling with a number that does nothing
                 : $"{BrushNames[(int)_brush]}{(_brush == EBrush.Ramp ? " (click begin, click end)" : "")} · radius {_radius:0}m · strength {_strength:0}";
@@ -107,7 +109,7 @@ namespace UnturnedGodot
             _ring.Position = pt + Vector3.Up * 0.5f;
             _ring.Scale = new Vector3(_radius, 1f, _radius);
             _ring.Visible = true;
-            if (_terr == null || _brush == EBrush.Ramp || !Input.IsMouseButtonPressed(MouseButton.Left)) return;   // ramp is click-based (below), not held
+            if (_terr == null || _brush == EBrush.Ramp || _brush == EBrush.River || !Input.IsMouseButtonPressed(MouseButton.Left)) return;   // ramp + river are click-begin/click-end (below), not held
             float dt = (float)d;
             if (_paint) { _terr.PaintSplat(pt.X, pt.Z, _radius, _layer); return; }
             switch (_brush)   // source-accurate held-drag: applies every frame, dt-scaled
@@ -127,6 +129,15 @@ namespace UnturnedGodot
             if (_editor.Mode != EEditorMode.Terrain || (_flyCam != null && _flyCam.Flying) || _terr == null) return;
             if (ev is InputEventMouseButton mb && mb.ButtonIndex == MouseButton.Left)
             {
+                if (mb.Pressed && _brush == EBrush.River && !_paint && !Editor.PointerOverUI(this) && RaycastTerrain(GetViewport().GetMousePosition(), out var vp))
+                {
+                    // Same two-click interaction as Ramp, and it reuses the ramp's armed marker so there is one
+                    // "you have placed a start point" affordance rather than two that can disagree.
+                    if (!_rampArmed) { _rampBegin = vp; _rampArmed = true; _rampMarker.Position = vp + Vector3.Up * 0.5f; _rampMarker.Visible = true; }
+                    else { _terr.CarveRiver(_rampBegin, vp, _radius, Mathf.Max(1.5f, _strength * 0.05f)); _rampArmed = false; _rampMarker.Visible = false; }
+                    GetViewport().SetInputAsHandled();
+                    return;
+                }
                 if (mb.Pressed && _brush == EBrush.Ramp && !_paint && !Editor.PointerOverUI(this) && RaycastTerrain(GetViewport().GetMousePosition(), out var rp))
                 {
                     if (!_rampArmed) { _rampBegin = rp; _rampArmed = true; _rampMarker.Position = rp + Vector3.Up * 0.5f; _rampMarker.Visible = true; }   // first click: begin
