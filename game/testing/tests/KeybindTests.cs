@@ -17,13 +17,28 @@ namespace UnturnedGodot.Testing.Tests
 
         public override IEnumerable<Step> Run()
         {
+            // DELIBERATELY UNBOUND actions. An action can ship with no key on purpose -- Grenade was unbound on
+            // 2026-08-24 (strawberry) to give H back to the camera toggle -- and it must stay REACHABLE in the
+            // rebind menu, which is why the action still exists rather than being deleted.
+            //
+            // This list is the point of the exercise: the original rule was "every action is bound", which is a
+            // fine rule right up until an intentional unbind, at which point it fails for a correct change and
+            // says nothing about the case it was written to catch (an action somebody forgot to give a key).
+            // Naming the exceptions keeps the real check -- a NEW action with no default still fails here --
+            // while letting a deliberate one through. An entry that stops being unbound also fails, so this
+            // cannot rot into a blanket exemption.
+            var intentionallyUnbound = new HashSet<GameAction> { GameAction.Grenade };
+
             var missing = new List<string>();
             var unbound = new List<string>();
+            var wronglyListed = new List<string>();
             foreach (GameAction a in System.Enum.GetValues(typeof(GameAction)))
             {
+                bool exempt = intentionallyUnbound.Contains(a);
                 var d = Keybinds.Default(a);
-                if (!d.IsBound) missing.Add(a.ToString());
-                if (!Keybinds.Get(a).IsBound) unbound.Add(a.ToString());
+                if (!d.IsBound && !exempt) missing.Add(a.ToString());
+                if (!Keybinds.Get(a).IsBound && !exempt) unbound.Add(a.ToString());
+                if (exempt && d.IsBound) wronglyListed.Add(a.ToString());
             }
             T.Check($"every GameAction has a default (missing: {(missing.Count == 0 ? "none" : string.Join(", ", missing))})",
                     missing.Count == 0);
@@ -31,6 +46,10 @@ namespace UnturnedGodot.Testing.Tests
             // can have a default and still come back unbound if Load mis-restores it.
             T.Check($"every GameAction resolves to a BOUND control (unbound: {(unbound.Count == 0 ? "none" : string.Join(", ", unbound))})",
                     unbound.Count == 0);
+            // The exemption list has to stay honest in BOTH directions, or it quietly becomes a place where
+            // actions go to stop being checked.
+            T.Check($"the intentionally-unbound list still matches reality (now bound: {(wronglyListed.Count == 0 ? "none" : string.Join(", ", wronglyListed))})",
+                    wronglyListed.Count == 0);
 
             // A default the rebind UI would REFUSE is a shipped conflict: the player cannot reproduce it, and
             // cannot restore it once they move off it.
