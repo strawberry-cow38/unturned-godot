@@ -612,7 +612,7 @@ namespace UnturnedGodot
             if (on)
             {
                 _outlinedEngine = _lookEngine ?? EngineCar; OutlineEngine(_outlinedEngine, true); WorldItem.FocusColor = col;
-                if (_info != null) { _info.SetActive(true); _info.SetName(DisplayName, col); _info.SetPrompt("[F] Drive", col); _info.SetBar(0, 0f, InfoBillboard.HealthColor, false); _info.SetBar(1, FuelNorm, InfoBillboard.FuelColor, true); _info.SetBar(2, BatteryNorm, InfoBillboard.FuelColor, true); }   // fuel + battery are real now; bar 0 (health) stays hidden -- a consist has no single hull HP
+                if (_info != null) { _info.SetActive(true); _info.SetName(DisplayName, col); _info.SetPrompt($"[{Keybinds.Get(GameAction.Interact).Label}] Drive", col); _info.SetBar(0, 0f, InfoBillboard.HealthColor, false); _info.SetBar(1, FuelNorm, InfoBillboard.FuelColor, true); _info.SetBar(2, BatteryNorm, InfoBillboard.FuelColor, true); }   // fuel + battery are real now; bar 0 (health) stays hidden -- a consist has no single hull HP
             }
             else { OutlineEngine(_outlinedEngine, false); _outlinedEngine = null; _info?.SetActive(false); }
         }

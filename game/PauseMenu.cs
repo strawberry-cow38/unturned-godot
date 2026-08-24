@@ -7,7 +7,7 @@ namespace UnturnedGodot
     // old viewmodel-tuning "offset" slider menu, which wasn't needed.
     public partial class PauseMenu : CanvasLayer
     {
-        Control _root, _gfx;
+        Control _root, _settings;
         public FreezeMode Freeze;      // set by BuildPlayable; null in demos
         public Node WorldRoot;         // where the freecam is parented
 
@@ -29,12 +29,12 @@ namespace UnturnedGodot
             _root = panel;
             center.AddChild(panel);
 
-            // The graphics panel is a SIBLING that starts hidden, not a separate screen: the pause menu already
+            // The Settings screen is a SIBLING that starts hidden, not a separate scene: the pause menu already
             // freezes the tree, and pushing/popping scenes from a paused tree is how you end up unable to unpause.
-            var gfxPanel = new PanelContainer { Visible = false };
-            _gfx = gfxPanel;
-            center.AddChild(gfxPanel);
-            gfxPanel.AddChild(GraphicsPanel.Build(this, () => { gfxPanel.Visible = false; panel.Visible = true; }));
+            var settings = new SettingsScreen { Visible = false };
+            _settings = settings;
+            center.AddChild(settings);
+            settings.Setup(this, () => { settings.Visible = false; panel.Visible = true; });
             var margin = new MarginContainer();
             foreach (var s in new[] { "margin_left", "margin_right", "margin_top", "margin_bottom" }) margin.AddThemeConstantOverride(s, 30);
             panel.AddChild(margin);
@@ -50,9 +50,9 @@ namespace UnturnedGodot
             resume.Pressed += Close;
             vbox.AddChild(resume);
 
-            var gfx = new Button { Text = "Graphics", CustomMinimumSize = new Vector2(0, 46) };
-            gfx.Pressed += () => { _root.Visible = false; _gfx.Visible = true; };
-            vbox.AddChild(gfx);
+            var settingsBtn = new Button { Text = "Settings", CustomMinimumSize = new Vector2(0, 46) };
+            settingsBtn.Pressed += () => { _root.Visible = false; _settings.Visible = true; };
+            vbox.AddChild(settingsBtn);
 
             // FREEZE MODE: hand the paused world over to a freecam instead of resuming. The tree is ALREADY paused
             // here, so this hides the menu and lets FreezeMode keep it that way -- it never unpauses in between.
@@ -77,9 +77,9 @@ namespace UnturnedGodot
         public override void _UnhandledInput(InputEvent e)
         {
             if (!Visible || e is not InputEventKey { Pressed: true, Keycode: Key.Escape }) return;
-            // ESC inside the graphics sub-panel steps BACK to the pause menu rather than closing everything. Closing
+            // ESC inside the Settings screen steps BACK to the pause menu rather than closing everything. Closing
             // straight to the game from a sub-panel loses the level you were on and is the classic escape-key bug.
-            if (_gfx != null && _gfx.Visible) { _gfx.Visible = false; _root.Visible = true; }
+            if (_settings != null && _settings.Visible) { _settings.Visible = false; _root.Visible = true; }
             else Close();
             GetViewport().SetInputAsHandled();
         }

@@ -170,15 +170,15 @@ namespace UnturnedGodot
 
         public override void _Input(InputEvent ev)
         {
-            if (ev is not InputEventKey k || k.Echo) return;             // auto-repeat must not restart it
-            if (k.PhysicalKeycode != HoldKey) return;                    // PHYSICAL: `\` moves on non-US layouts
-            // Repo precedent is `is LineEdit` rather than `!= null` (MapUI.cs:118) -- a plain null check
-            // over-suppresses against any focused Control.
-            if (k.Pressed && GetViewport().GuiGetFocusOwner() is LineEdit) return;
-            if (k.CtrlPressed || k.AltPressed || k.MetaPressed) return;   // Ctrl+\ etc. are not a report
+            if (ev is InputEventKey { Echo: true }) return;              // auto-repeat must not restart it
+            if (!Keybinds.Matches(GameAction.BugReport, ev)) return;     // the BOUND control (default `\`, PHYSICAL), key OR mouse -- this is the rebind the task existed for (e.g. Mouse 5)
+            if (ev is InputEventKey mk && (mk.CtrlPressed || mk.AltPressed || mk.MetaPressed)) return;   // Ctrl+\ etc. are not a report
+            bool down = Keybinds.IsDown(ev);
+            // Repo precedent is `is LineEdit` rather than `!= null` (MapUI.cs:118) -- a plain null check over-suppresses.
+            if (down && GetViewport().GuiGetFocusOwner() is LineEdit) return;
 
             bool acted;
-            if (k.Pressed) { acted = _session.Press(); if (acted) StartRecording(); }
+            if (down) { acted = _session.Press(); if (acted) StartRecording(); }
             else { acted = _session.Release(); if (acted) FinishRecording(); }
             // Only when we ACTED. Marking an event handled that we ignored swallows it from everything
             // downstream -- including the release half of a `\` typed into the dev console, whose press half

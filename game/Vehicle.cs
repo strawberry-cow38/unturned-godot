@@ -5607,7 +5607,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
         public Vector3 FifthWheelWorld => ToGlobal(FifthWheelLocal);
         public Vector3 KingpinWorld => ToGlobal(KingpinLocal);
 
-        // an uncoupled cab whose fifth wheel is within CoupleReach of THIS trailer's kingpin -> it's backed under, ready to hitch (drives the "[F] connect trailer" billboard prompt)
+        // an uncoupled cab whose fifth wheel is within CoupleReach of THIS trailer's kingpin -> it's backed under, ready to hitch (drives the $"[{Keybinds.Get(GameAction.Interact).Label}] connect trailer" billboard prompt)
         bool CabBackedUnder()
         {
             var kp = KingpinWorld;
@@ -6436,8 +6436,8 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                         bool inHitchRange = hitchPlayer != null
                             && hitchPlayer.GlobalPosition.DistanceTo(KingpinWorld) <= HitchReach;
                         string hint = !inHitchRange ? ""
-                            : CoupledCab != null ? "[F] disconnect trailer"
-                            : (CabBackedUnder() ? "[F] connect trailer" : "can't connect - back a cab under");   // explicit can/can't feedback
+                            : CoupledCab != null ? $"[{Keybinds.Get(GameAction.Interact).Label}] disconnect trailer"
+                            : (CabBackedUnder() ? $"[{Keybinds.Get(GameAction.Interact).Label}] connect trailer" : "can't connect - back a cab under");   // explicit can/can't feedback
                         _info.SetPrompt(hint, _outlineColor);
                     }
                     else
