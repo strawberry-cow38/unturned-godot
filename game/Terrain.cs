@@ -575,6 +575,27 @@ void fragment() {
             if (anchors.Count == 2) { CarveRiver(anchors[0], anchors[1], halfWidth, depth); return; }
             _carvingPath = true;
 
+            var path = RiverPathPoints(anchors);
+            for (int i = 1; i < path.Count; i++) CarveRiver(path[i - 1], path[i], halfWidth, depth);
+
+            _carvingPath = false;
+            CommitRiverBed();   // one mesh + one collider for the whole curve
+        }
+
+        /// <summary>The curve itself, as a polyline -- the exact points CarveRiverPath cuts between.
+        ///
+        /// Public and shared with the editor's live preview ON PURPOSE. The preview's whole job is to promise
+        /// where the cut will land, so it must not own a second copy of this arithmetic: two copies of a spline
+        /// convention drift the moment either is tuned, and the failure mode is a preview that quietly lies.
+        /// Same reason the curve is Catmull-Rom-to-Bezier with the /6 factor rather than a new convention --
+        /// it matches RoadField.RetangentRoad.</summary>
+        public System.Collections.Generic.List<Vector3> RiverPathPoints(System.Collections.Generic.IReadOnlyList<Vector3> anchors)
+        {
+            var outPts = new System.Collections.Generic.List<Vector3>();
+            if (anchors == null || anchors.Count < 2) return outPts;
+            outPts.Add(anchors[0]);
+            if (anchors.Count == 2) { outPts.Add(anchors[1]); return outPts; }
+
             for (int i = 0; i < anchors.Count - 1; i++)
             {
                 Vector3 p0 = anchors[i], p1 = anchors[i + 1];
@@ -583,21 +604,17 @@ void fragment() {
                 Vector3 t0 = (p1 - prev) / 6f, t1 = (next - p0) / 6f;   // same /6 as RoadField.RetangentRoad
                 // Step count from the chord, so a long span is not carved coarser than a short one.
                 int steps = Mathf.Max(2, Mathf.CeilToInt(p0.DistanceTo(p1) / Mathf.Max(2f, UNIT)));
-                Vector3 prevPt = p0;
                 for (int k = 1; k <= steps; k++)
                 {
                     float t = (float)k / steps;
                     float u = 1f - t;
-                    Vector3 pt = u * u * u * p0
-                               + 3f * u * u * t * (p0 + t0)
-                               + 3f * u * t * t * (p1 - t1)
-                               + t * t * t * p1;
-                    CarveRiver(prevPt, pt, halfWidth, depth);
-                    prevPt = pt;
+                    outPts.Add(u * u * u * p0
+                             + 3f * u * u * t * (p0 + t0)
+                             + 3f * u * t * t * (p1 - t1)
+                             + t * t * t * p1);
                 }
             }
-            _carvingPath = false;
-            CommitRiverBed();   // one mesh + one collider for the whole curve
+            return outPts;
         }
         bool _carvingPath;
 

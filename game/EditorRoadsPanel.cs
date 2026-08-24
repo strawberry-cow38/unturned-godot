@@ -6,19 +6,28 @@ namespace UnturnedGodot
     // ui buttons"). Same shape as EditorTerrainPanel -- real buttons rather than dev keybinds, with the keys
     // still working because they drive the identical seam (EditorRoadDraw.SetActive / EditorRoads.SetActive).
     //
-    // The two tools are MUTUALLY EXCLUSIVE and the panel enforces it. They both bind LMB on the terrain and
-    // both keep their own marker set, so having both live means clicking does two different things at once and
-    // the viewport shows two overlapping sets of handles. Turning one on therefore turns the other off, and
-    // the button pressed-state shows which one owns the mouse -- the question a user actually has.
+    // The tools are MUTUALLY EXCLUSIVE and the panel enforces it. They all bind LMB on the terrain and each
+    // keeps its own marker set, so having two live means clicking does two different things at once and the
+    // viewport shows two overlapping sets of handles. Turning one on therefore turns the others off, and the
+    // button pressed-state shows which one owns the mouse -- the question a user actually has.
+    //
+    // RIVER joined this panel on 2026-08-24 (strawberry_cow: "why isnt the river tool under the same area as
+    // the road spline tools"). It was a terrain BRUSH, which was right about the implementation and wrong
+    // about the tool -- you drive it by pulling a curve through anchors, same as a road. It is a third
+    // claimant on LMB, so it goes through the same exclusion rather than beside it.
     public partial class EditorRoadsPanel : Control
     {
         readonly EditorRoadDraw _draw;
         readonly EditorRoads _legacy;
-        Button _drawBtn, _legacyBtn;
+        readonly EditorRiver _river;
+        Button _drawBtn, _legacyBtn, _riverBtn;
         readonly Button[] _toolBtns = new Button[EditorRoadDraw.ToolNames.Length];
-        Label _stats;
+        readonly Button[] _riverToolBtns = new Button[EditorRiver.ToolNames.Length];
+        Label _stats, _riverStats;
+        HSlider _widthSlider, _depthSlider;
 
-        public EditorRoadsPanel(EditorRoadDraw draw, EditorRoads legacy) { _draw = draw; _legacy = legacy; }
+        public EditorRoadsPanel(EditorRoadDraw draw, EditorRoads legacy, EditorRiver river = null)
+        { _draw = draw; _legacy = legacy; _river = river; }
 
         public override void _Ready()
         {
@@ -60,14 +69,67 @@ namespace UnturnedGodot
             box.AddChild(new HSeparator());
             _stats = Dim("");
             box.AddChild(_stats);
+
+            if (_river != null) BuildRiverSection(box);
         }
 
-        void Activate(bool draw, bool legacy = false)
+        void BuildRiverSection(VBoxContainer box)
         {
-            // One owner of the mouse at a time -- see the class comment.
-            if (draw) legacy = false;
+            box.AddChild(new HSeparator());
+            var head = new Label { Text = "RIVER" };
+            head.AddThemeFontSizeOverride("font_size", 18);
+            box.AddChild(head);
+
+            _riverBtn = new Button { Text = "Carve river  (V)", ToggleMode = true };
+            _riverBtn.Pressed += () => Activate(draw: false, legacy: false, river: _riverBtn.ButtonPressed);
+            box.AddChild(_riverBtn);
+
+            box.AddChild(Dim("Shape"));
+            var shapes = new HBoxContainer();
+            for (int i = 0; i < EditorRiver.ToolNames.Length; i++)
+            {
+                int ti = i;
+                var tb = new Button { Text = EditorRiver.ToolNames[i], ToggleMode = true, CustomMinimumSize = new Vector2(68, 0) };
+                tb.Pressed += () => { _river?.SetTool((EditorRiver.ETool)ti); Activate(draw: false, legacy: false, river: true); };
+                shapes.AddChild(tb);
+                _riverToolBtns[i] = tb;
+            }
+            box.AddChild(shapes);
+
+            // Sliders rather than only keys: width and depth are the two numbers you actually tune per river,
+            // and reaching for a remembered bracket key mid-draw is the thing that made this feel like a
+            // debug brush rather than a tool.
+            _widthSlider = NumRow(box, "Half-width", EditorRiver.MinHalfWidth, EditorRiver.MaxHalfWidth, 0.5f,
+                                  _river.HalfWidth, v => _river.SetHalfWidth((float)v));
+            _depthSlider = NumRow(box, "Depth", EditorRiver.MinDepth, EditorRiver.MaxDepth, 0.25f,
+                                  _river.Depth, v => _river.SetDepth((float)v));
+
+            box.AddChild(Dim("Straight: click both ends.\nCurve: click each bend, Enter to carve.\nFreehand: drag along the ground.\nDel drops the last point · Esc cancels.\nPreview shows the centreline AND both banks.\nCarving cuts the terrain -- there is no undo."));
+            _riverStats = Dim("");
+            box.AddChild(_riverStats);
+        }
+
+        HSlider NumRow(VBoxContainer box, string label, float min, float max, float step, float val, System.Action<double> onSet)
+        {
+            var lab = Dim($"{label}  {val:0.#}m");
+            box.AddChild(lab);
+            var sl = new HSlider { MinValue = min, MaxValue = max, Step = step, Value = val, CustomMinimumSize = new Vector2(0, 18) };
+            sl.ValueChanged += v => { onSet(v); lab.Text = $"{label}  {v:0.#}m"; };
+            box.AddChild(sl);
+            sl.SetMeta("label", lab);
+            sl.SetMeta("prefix", label);
+            return sl;
+        }
+
+        void Activate(bool draw, bool legacy = false, bool river = false)
+        {
+            // One owner of the mouse at a time -- see the class comment. Ordered draw > legacy > river so a
+            // single call can never leave two on, whatever combination the caller passed.
+            if (draw) { legacy = false; river = false; }
+            else if (legacy) river = false;
             _draw?.SetActive(draw);
             _legacy?.SetActive(legacy);
+            _river?.SetActive(river);
             Sync();
         }
 
@@ -83,6 +145,23 @@ namespace UnturnedGodot
             if (_draw != null)
                 for (int i = 0; i < _toolBtns.Length; i++)
                     if (_toolBtns[i] != null) _toolBtns[i].ButtonPressed = _draw.Drawing && (int)_draw.Tool == i;
+
+            if (_riverBtn != null && _river != null) _riverBtn.ButtonPressed = _river.Carving;
+            if (_river != null)
+                for (int i = 0; i < _riverToolBtns.Length; i++)
+                    if (_riverToolBtns[i] != null) _riverToolBtns[i].ButtonPressed = _river.Carving && (int)_river.Tool == i;
+            // The keys move width/depth too, so the sliders read the tool rather than trusting their own last
+            // drag -- same reason the tool buttons do.
+            SyncSlider(_widthSlider, _river?.HalfWidth);
+            SyncSlider(_depthSlider, _river?.Depth);
+        }
+
+        static void SyncSlider(HSlider sl, float? v)
+        {
+            if (sl == null || v == null) return;
+            if (Mathf.Abs((float)sl.Value - v.Value) < 0.001f) return;
+            sl.SetValueNoSignal(v.Value);   // NoSignal: writing the tool's value back must not call SetX again
+            if (sl.GetMeta("label").Obj is Label lab) lab.Text = $"{sl.GetMeta("prefix")}  {v.Value:0.#}m";
         }
 
         public override void _Process(double delta)
@@ -91,6 +170,8 @@ namespace UnturnedGodot
             Sync();
             if (_stats != null && _draw != null)
                 _stats.Text = $"{_draw.JunctionNodeCount} nodes · {_draw.RealJunctionCount} junctions";
+            if (_riverStats != null && _river != null)
+                _riverStats.Text = $"{_river.AnchorCount} placed · {_river.RiverSegmentCount} river segments";
         }
 
         // --- test seams: the panel's logic without a mouse ---
@@ -108,6 +189,14 @@ namespace UnturnedGodot
         }
         public bool DebugDrawButtonOn => _drawBtn?.ButtonPressed ?? false;
         public bool DebugLegacyButtonOn => _legacyBtn?.ButtonPressed ?? false;
+        public bool DebugRiverButtonOn => _riverBtn?.ButtonPressed ?? false;
+        /// <summary>Click the river button through its real handler, same contract as DebugClick.</summary>
+        public void DebugClickRiver()
+        {
+            if (_riverBtn == null) return;
+            _riverBtn.ButtonPressed = !_riverBtn.ButtonPressed;
+            _riverBtn.EmitSignal(BaseButton.SignalName.Pressed);
+        }
         public void DebugSync() => Sync();
 
         static Label Dim(string t)

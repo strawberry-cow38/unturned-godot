@@ -4337,6 +4337,7 @@ namespace UnturnedGodot
             AddChild(rf);
             var roadsEd = new EditorRoads(editor, cam, rf); editor.AddChild(roadsEd); editor.RoadsEd = roadsEd;
             var roadDrawEd = new EditorRoadDraw(editor, cam, rf); editor.AddChild(roadDrawEd); editor.RoadDrawEd = roadDrawEd;   // R = draw, Shift+R = legacy nodes
+            var riverEd = new EditorRiver(editor, cam, terr); editor.AddChild(riverEd); editor.RiverEd = riverEd;   // V = carve river (spline tool, sits with the road tools)
             editor.AddChild(new EditorDashboard { Editor = editor, OnExit = ReturnToMenu });
             var play = new EditorPlayMode();   // playtest button -- custom maps get it too, not just PEI
             editor.AddChild(play);
@@ -5012,6 +5013,7 @@ namespace UnturnedGodot
             }
             var roadsEd = new EditorRoads(editor, cam, rf);   // LEGACY node paving under the Environment tab (Shift+R)
             var roadDrawEd = new EditorRoadDraw(editor, cam, rf); editor.AddChild(roadDrawEd); editor.RoadDrawEd = roadDrawEd;   // draw-a-road/rail (R)
+            var riverEd = new EditorRiver(editor, cam, res.Terr); editor.AddChild(riverEd); editor.RiverEd = riverEd;   // V = carve river (spline tool, sits with the road tools)
             editor.AddChild(roadsEd);
             editor.RoadsEd = roadsEd;
             editor.AddChild(new EditorDashboard { Editor = editor, OnExit = ReturnToMenu });

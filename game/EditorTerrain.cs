@@ -19,50 +19,15 @@ namespace UnturnedGodot
         // Dig/Fill are ours, not Devkit's: retail cuts holes with placed hole VOLUMES rather than a brush, but a
         // volume needs a gizmo, a transform and a persisted object list, and the brush is the same interaction the
         // rest of this editor already uses. The stored result is identical either way -- a per-quad mask.
-        public enum EBrush { Raise, Lower, Flatten, Smooth, Ramp, Dig, Fill, River }   // source Devkit heightmap modes (ADJUST±/FLATTEN/SMOOTH/RAMP) + hole brushes
+        // RIVER used to be a brush here. It moved to EditorRiver under the Environment tab on 2026-08-24
+        // (strawberry_cow: "why isnt the river tool under the same area as the road spline tools. why does it
+        // use the terrain brush circle? it just places single nodes") -- carving is a terrain operation, but
+        // the TOOL is a spline tool, and parking it here gave it a brush radius ring and no curve preview.
+        public enum EBrush { Raise, Lower, Flatten, Smooth, Ramp, Dig, Fill }   // source Devkit heightmap modes (ADJUST±/FLATTEN/SMOOTH/RAMP) + hole brushes
         EBrush _brush = EBrush.Raise;
         bool _paint;   // false = height sculpt, true = Materials splat-paint
         int _layer;    // 0-7 splat layer to paint
         Vector3 _rampBegin; bool _rampArmed;   // RAMP: first click sets begin, second applies
-        // RIVER anchors, mirroring EditorRoadDraw's click-to-place model (strawberry_cow: "should mirror road
-        // tools, the new road tools"). Straight is two anchors; Curve keeps taking them until you commit, and
-        // the carve runs a Catmull-Rom through the lot -- the same curve the roads use.
-        readonly System.Collections.Generic.List<Vector3> _riverPts = new();
-        readonly System.Collections.Generic.List<MeshInstance3D> _riverMarks = new();
-        public enum ERiverTool { Straight, Curve }
-        public static readonly string[] RiverToolNames = { "Straight", "Curve" };
-        ERiverTool _riverTool = ERiverTool.Curve;
-        public int RiverTool => (int)_riverTool;
-        public void SetRiverTool(int t) { _riverTool = (ERiverTool)t; CancelRiver(); }
-        public int RiverAnchorCount => _riverPts.Count;
-
-        void CancelRiver()
-        {
-            _riverPts.Clear();
-            foreach (var m in _riverMarks) if (IsInstanceValid(m)) m.QueueFree();
-            _riverMarks.Clear();
-        }
-
-        void MarkRiverAnchor(Vector3 p)
-        {
-            var m = new MeshInstance3D
-            {
-                Mesh = new SphereMesh { Radius = 1.6f, Height = 3.2f },
-                Position = p + Vector3.Up * 0.5f,
-                MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.25f, 0.6f, 1f), ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, NoDepthTest = true },
-            };
-            AddChild(m); _riverMarks.Add(m);
-        }
-
-        /// <summary>Commit the anchors as one carved river. Separate from placing them so Curve can take as
-        /// many as you like -- the road tool's Curve works the same way, and a tool that committed on the
-        /// second click could only ever draw one bend.</summary>
-        public void CommitRiver()
-        {
-            if (_terr != null && _riverPts.Count >= 2)
-                _terr.CarveRiverPath(_riverPts, _radius, Mathf.Max(1.5f, _strength * 0.05f));
-            CancelRiver();
-        }
         // PEI's layer semantics -- the FALLBACK. Per map the real labels come from content/<Terrain.MapDir>/layers.txt
         // (tools/terrain_map.py writes it from the actual materials), so e.g. Washington's layer6 reads "Grass 01" (a
         // second grass) instead of PEI's hardcoded "Snow", its layer1 "Corn" not "Wheat", layer5 "Gravel Shore" not "Sand".
@@ -80,7 +45,7 @@ namespace UnturnedGodot
             }
             return DefaultLayerNames;
         }
-        public static readonly string[] BrushNames = { "Raise", "Lower", "Flatten", "Smooth", "Ramp", "Dig hole", "Fill hole", "River" };
+        public static readonly string[] BrushNames = { "Raise", "Lower", "Flatten", "Smooth", "Ramp", "Dig hole", "Fill hole" };
 
         // --- accessors for the EditorTerrainPanel buttons/sliders ---
         public bool Painting => _paint;
@@ -96,8 +61,6 @@ namespace UnturnedGodot
 
         public string ModeText => _paint
             ? $"PAINT {LayerNames[_layer]} · radius {_radius:0}m"
-            : _brush == EBrush.River
-                ? $"River[{RiverToolNames[(int)_riverTool]}] · half-width {_radius:0}m · depth {Mathf.Max(1.5f, _strength * 0.05f):0.0}m · {_riverPts.Count} placed · T tool · LMB place · Enter carve · Esc"
             : _brush == EBrush.Dig || _brush == EBrush.Fill
                 ? $"{BrushNames[(int)_brush]} · radius {_radius:0}m"   // strength is meaningless for a boolean mask; showing it invites fiddling with a number that does nothing
                 : $"{BrushNames[(int)_brush]}{(_brush == EBrush.Ramp ? " (click begin, click end)" : "")} · radius {_radius:0}m · strength {_strength:0}";
@@ -148,7 +111,7 @@ namespace UnturnedGodot
             _ring.Position = pt + Vector3.Up * 0.5f;
             _ring.Scale = new Vector3(_radius, 1f, _radius);
             _ring.Visible = true;
-            if (_terr == null || _brush == EBrush.Ramp || _brush == EBrush.River || !Input.IsMouseButtonPressed(MouseButton.Left)) return;   // ramp + river are click-begin/click-end (below), not held
+            if (_terr == null || _brush == EBrush.Ramp || !Input.IsMouseButtonPressed(MouseButton.Left)) return;   // ramp is click-begin/click-end (below), not held
             float dt = (float)d;
             if (_paint) { _terr.PaintSplat(pt.X, pt.Z, _radius, _layer); return; }
             switch (_brush)   // source-accurate held-drag: applies every frame, dt-scaled
@@ -168,15 +131,6 @@ namespace UnturnedGodot
             if (_editor.Mode != EEditorMode.Terrain || (_flyCam != null && _flyCam.Flying) || _terr == null) return;
             if (ev is InputEventMouseButton mb && mb.ButtonIndex == MouseButton.Left)
             {
-                if (mb.Pressed && _brush == EBrush.River && !_paint && !Editor.PointerOverUI(this) && RaycastTerrain(GetViewport().GetMousePosition(), out var vp))
-                {
-                    _riverPts.Add(vp); MarkRiverAnchor(vp);
-                    // Straight is exactly two anchors and commits itself; Curve keeps collecting until Enter,
-                    // which is what lets one river have several bends. Same split as the road tool.
-                    if (_riverTool == ERiverTool.Straight && _riverPts.Count >= 2) CommitRiver();
-                    GetViewport().SetInputAsHandled();
-                    return;
-                }
                 if (mb.Pressed && _brush == EBrush.Ramp && !_paint && !Editor.PointerOverUI(this) && RaycastTerrain(GetViewport().GetMousePosition(), out var rp))
                 {
                     if (!_rampArmed) { _rampBegin = rp; _rampArmed = true; _rampMarker.Position = rp + Vector3.Up * 0.5f; _rampMarker.Visible = true; }   // first click: begin
@@ -192,12 +146,7 @@ namespace UnturnedGodot
                     case Key.L: if (_paint) _layer = (_layer + 1) % 8; break;
                     // BrushNames.Length, not a literal: this was `% 5` and adding Dig/Fill left them reachable
                     // from the panel but not from the key, which reads as "the hole brush is broken".
-                    case Key.M: if (!_paint) { _brush = (EBrush)(((int)_brush + 1) % BrushNames.Length); _rampArmed = false; CancelRiver(); } break;
-                    // Enter commits a curved river, Escape abandons it. Only while the River brush is live, so
-                    // neither key is stolen from the other tools.
-                    case Key.Enter when _brush == EBrush.River: CommitRiver(); break;
-                    case Key.Escape when _brush == EBrush.River && _riverPts.Count > 0: CancelRiver(); break;
-                    case Key.T when _brush == EBrush.River: SetRiverTool((RiverTool + 1) % RiverToolNames.Length); break;
+                    case Key.M: if (!_paint) { _brush = (EBrush)(((int)_brush + 1) % BrushNames.Length); _rampArmed = false; } break;
                     case Key.Bracketleft: _radius = Mathf.Max(6f, _radius - 4f); break;
                     case Key.Bracketright: _radius = Mathf.Min(140f, _radius + 4f); break;
                     case Key.Comma: _strength = Mathf.Max(1f, _strength - 2f); break;

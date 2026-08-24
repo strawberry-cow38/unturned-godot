@@ -24,6 +24,7 @@ namespace UnturnedGodot
         public EditorTerrain TerrainEd;                   // Phase 5 terrain sub-editor (set by BuildEditor)
         public EditorRoads RoadsEd;                       // Phase 6 roads sub-editor (Environment tab, LEGACY paving mode -- Shift+R)
         public EditorRoadDraw RoadDrawEd;                 // draw-a-road/rail tool (Environment tab, R) -- the primary one
+        public EditorRiver RiverEd;                       // river carving tool (Environment tab, V) -- a spline tool, not a terrain brush
         public EditorFoliage FoliageEd;                   // foliage painting sub-editor (Environment tab)
         public EditorBuildings Buildings;                 // building tool: its own mode -- draw walls, bake a prop
 
