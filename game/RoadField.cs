@@ -14,6 +14,7 @@ namespace UnturnedGodot
         public Terrain Terr;
 
         struct RoadMat { public float Width, Height, Depth, Offset; public bool Concrete; }
+        const float WidthScale = 1.15f;   // master 2026-08-24: roads slightly thicker (fills the bald patch next to Fernwood Farm); the collider shares this width
         class Joint   // class so the editor can move a vertex/tangent in place
         {
             public Vector3 Vertex, Tan0, Tan1; public float Offset; public bool IgnoreTerrain; public byte Mode;
@@ -107,6 +108,8 @@ namespace UnturnedGodot
             if (mesh == null) return;
             if (r.Mi == null) { r.Mi = new MeshInstance3D(); AddChild(r.Mi); }
             r.Mi.Mesh = mesh;
+            r.Mi.VisibilityRangeEnd = LodTable.ImposterMaxDistance;   // master: roads render out to the landmark distance (~1400m), not uncapped
+            r.Mi.VisibilityRangeFadeMode = GeometryInstance3D.VisibilityRangeFadeModeEnum.Disabled;
             r.Mi.MaterialOverride = RoadMaterial3D(r.Material, _mats[r.Material].Concrete);
             if (collShape != null)
             {
@@ -734,7 +737,7 @@ namespace UnturnedGodot
             // VerticalOffset=offset. Keep position.y AT terrain height (+ per-joint offset); the SURFACE verts go UP by
             // halfVerticalSize while the outer TAPER verts go DOWN by halfVerticalSize -> the taper sinks BELOW the
             // ground so there's never a gap to see under. verticalOffset is applied per-vert along the normal, NOT as a lift.
-            float halfWidth = mat.Width;
+            float halfWidth = mat.Width * WidthScale;   // master: slightly thicker (fills bald patches)
             float halfVerticalSize = mat.Depth;
             float verticalSize = halfVerticalSize * 2f;
             float verticalOffset = mat.Offset;
@@ -832,9 +835,19 @@ namespace UnturnedGodot
             // collision = the FULL road shell (top + side bevels + end ramps), double-sided so the player never falls
             // through or gets pushed the wrong way. matches src (MeshCollider of the whole road mesh). the earlier
             // "stuck" was the INVERTED winding facing collision downward, not the geometry -> fixed by the winding above.
-            var soup = new Vector3[idx.Count];
-            for (int i = 0; i < idx.Count; i++) soup[i] = verts[idx[i]];
-            collision = idx.Count >= 3 ? new ConcavePolygonShape3D { Data = soup, BackfaceCollision = true } : null;
+            // COMPLETELY SOLID collider (master): the visual mesh is an open-bottom shell (top + two side tapers), so a
+            // fast/edge case can slip UNDER it. The collider adds a bottom quad per ring pair joining the two taper-bottom
+            // verts (indices 0 and 3) -> a CLOSED solid tube under BackfaceCollision. Visual mesh stays untouched.
+            var cidx = new List<int>(idx);
+            for (int i = 0; i + 1 < rings.Count; i++)
+            {
+                int a = i * 4, b = (i + 1) * 4;
+                cidx.Add(a + 0); cidx.Add(a + 3); cidx.Add(b + 3);   // taper-bottom quad, sealing the underside
+                cidx.Add(a + 0); cidx.Add(b + 3); cidx.Add(b + 0);
+            }
+            var soup = new Vector3[cidx.Count];
+            for (int i = 0; i < cidx.Count; i++) soup[i] = verts[cidx[i]];
+            collision = cidx.Count >= 3 ? new ConcavePolygonShape3D { Data = soup, BackfaceCollision = true } : null;
 
             var arr = new Godot.Collections.Array();
             arr.Resize((int)Mesh.ArrayType.Max);
