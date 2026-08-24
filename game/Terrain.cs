@@ -682,26 +682,38 @@ void fragment() {
                 right[i] = new Vector3(-f.Z, 0f, f.X) / cosHalf;
             }
 
-            var fl = new Vector3[n]; var fr = new Vector3[n];
-            var ol = new Vector3[n]; var or = new Vector3[n];
+            // CROSS-SECTION: floor, a VERTICAL wall at the bank, then a flat shelf out to the cut edge.
+            //
+            // It used to be floor + a single sloped apron running from the bank up to terrain height at the
+            // OUTER rim. Measured (river.overhang_probe) that is exactly the bug strawberry kept reporting:
+            // the mask is correct -- no terrain survives inside the channel, closest surviving corner 8.94 m
+            // against an 8 m half-width -- but terrain survives from 8.94 m OUTWARD at full height, while the
+            // ramp was still climbing toward terrain height at 13.66 m. Every quad in between sat above the
+            // ramp with nothing beneath it. The overhang was never uncut terrain; it was terrain my own apron
+            // passed underneath.
+            //
+            // A vertical wall plus a flat shelf cannot reproduce that, because everything outside the bank is
+            // AT terrain height -- shelf and surviving quads alike -- so there is no band for terrain to hang
+            // over. It also gives the bank the original design wanted: one you cannot walk up, which a heightmap
+            // cannot express and is the whole reason the bed is separate geometry.
+            var fl = new Vector3[n]; var fr = new Vector3[n];   // floor edges
+            var wl = new Vector3[n]; var wr = new Vector3[n];   // wall tops, at terrain height ON the bank line
+            var ol = new Vector3[n]; var or = new Vector3[n];   // shelf outer edge, at terrain height
             for (int i = 0; i < n; i++)
             {
                 Vector3 c = path[i], r = right[i];
-                // FLOOR AT A FIXED DEPTH BELOW THE LOCAL TERRAIN (strawberry: "make the bottom of the riverbed
-                // be a fixed depth from the terrain height"), so the channel keeps its depth down a slope
-                // instead of the old rule's single lowest-bank plane per segment, which dug absurdly deep at
-                // the high end of any gradient.
-                //
-                // Sampled ACROSS the section, not just at the centreline, and the MINIMUM taken: on ground
-                // that also falls away sideways, a centre-only reading leaves the floor above the low bank and
-                // the bed pokes out of the hillside.
                 float hC = SampleHeight(c.X, c.Z);
-                float hL = SampleHeight(c.X - r.X * half, c.Z - r.Z * half);
-                float hR = SampleHeight(c.X + r.X * half, c.Z + r.Z * half);
+                float lx = c.X - r.X * half, lz = c.Z - r.Z * half;
+                float rx = c.X + r.X * half, rz = c.Z + r.Z * half;
+                float hL = SampleHeight(lx, lz), hR = SampleHeight(rx, rz);
+                // Floor a FIXED depth below the local terrain, minimum across the section so a sideways slope
+                // cannot leave it above the low bank.
                 float floorY = Mathf.Min(hC, Mathf.Min(hL, hR)) - depth;
 
-                fl[i] = new Vector3(c.X - r.X * half, floorY, c.Z - r.Z * half);
-                fr[i] = new Vector3(c.X + r.X * half, floorY, c.Z + r.Z * half);
+                fl[i] = new Vector3(lx, floorY, lz);
+                fr[i] = new Vector3(rx, floorY, rz);
+                wl[i] = new Vector3(lx, hL, lz);
+                wr[i] = new Vector3(rx, hR, rz);
 
                 float olx = c.X - r.X * outer, olz = c.Z - r.Z * outer;
                 float orx = c.X + r.X * outer, orz = c.Z + r.Z * outer;
@@ -715,8 +727,10 @@ void fragment() {
             for (int i = 0; i < n - 1; i++)
             {
                 Quad(fl[i], fr[i], fl[i + 1], fr[i + 1]);      // floor
-                Quad(ol[i], fl[i], ol[i + 1], fl[i + 1]);      // left bank + apron, in one run to the terrain
-                Quad(fr[i], or[i], fr[i + 1], or[i + 1]);      // right bank + apron
+                Quad(wl[i], fl[i], wl[i + 1], fl[i + 1]);      // left wall: vertical, floor -> terrain height
+                Quad(fr[i], wr[i], fr[i + 1], wr[i + 1]);      // right wall
+                Quad(ol[i], wl[i], ol[i + 1], wl[i + 1]);      // left shelf: flat, bank -> the cut edge
+                Quad(wr[i], or[i], wr[i + 1], or[i + 1]);      // right shelf
             }
         }
 
@@ -811,6 +825,28 @@ void fragment() {
         Node3D AddOwned(Node3D n) { AddChild(n); return n; }
 
         public int RiverSegmentCount => _riverSegs.Count;
+
+        /// <summary>How far the bed's flat shelf reaches from the centreline for a given half-width. Exposed so
+        /// a probe can compare it against the cut it is meant to cover rather than re-deriving the constants
+        /// and agreeing with itself.</summary>
+        public static float RiverShelfOuterFor(float half) => half + RiverCutMargin + RiverRimOvershoot;
+
+        /// <summary>Highest bed vertex within `radius` of a world XZ point, or float.MinValue if the bed has
+        /// none there. Exposed for the overhang probe: "does the cut reach far enough" and "is the bed AT
+        /// terrain height out here" are different questions, and only the second one catches a bed that passes
+        /// UNDERNEATH surviving terrain -- which is the bug that shipped twice.</summary>
+        public float BedTopNear(float worldX, float worldZ, float radius)
+        {
+            float best = float.MinValue;
+            float r2 = radius * radius;
+            foreach (var verts in _bedMeshes)
+                foreach (var v in verts)
+                {
+                    float dx = v.X - worldX, dz = v.Z - worldZ;
+                    if (dx * dx + dz * dz <= r2 && v.Y > best) best = v.Y;
+                }
+            return best;
+        }
 
         /// <summary>Re-cut and re-bed every river from its stored RECIPE, discarding the baked geometry.
         ///
