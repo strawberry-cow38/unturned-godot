@@ -453,6 +453,47 @@ void fragment() {
         /// water.gdshader). Buoyancy / bobbing samples THIS so floaters ride the same waves the shader draws. Gameplay
         /// submersion still keys off the flat SeaLevelY above (a wave slopping over your head shouldn't drown you).</summary>
         public static float WaterSurfaceY(Vector3 p) => SeaLevelY + (HasWater ? WaveField.Height(p.X, p.Z) : 0f);
+
+        // Ocean surface as a subdivided grid that OMITS cells buried under land (master 2026-08-24: "kill the water plane
+        // effects under the terrain"). A cell is kept only if a corner sits below sea level, so the swell VERTEX shader
+        // runs on visible water instead of ~half its verts on hidden seabed. Local space (centered, Y=0; the MeshInstance
+        // lifts it to sea level). Matches PlaneMesh's UV [0,1] + up normal + density so water.gdshader is unchanged.
+        static ArrayMesh BuildOceanMesh(Terrain terr, float wsx, float wsz, int subX, int subZ, float cx, float cz, float seaY)
+        {
+            int nx = subX + 1, nz = subZ + 1;
+            var verts = new Vector3[nx * nz];
+            var uvs = new Vector2[nx * nz];
+            var norms = new Vector3[nx * nz];
+            var wet = new bool[nx * nz];
+            for (int j = 0; j < nz; j++)
+                for (int i = 0; i < nx; i++)
+                {
+                    float lx = -wsx * 0.5f + i * (wsx / subX);
+                    float lz = -wsz * 0.5f + j * (wsz / subZ);
+                    int vi = j * nx + i;
+                    verts[vi] = new Vector3(lx, 0f, lz);
+                    uvs[vi] = new Vector2((float)i / subX, (float)j / subZ);
+                    norms[vi] = Vector3.Up;
+                    wet[vi] = terr.SampleHeight(cx + lx, cz + lz) < seaY;   // corner below sea level = water/shore here
+                }
+            var idx = new System.Collections.Generic.List<int>();
+            for (int j = 0; j < subZ; j++)
+                for (int i = 0; i < subX; i++)
+                {
+                    int a = j * nx + i, b = a + 1, c = a + nx, d = c + 1;
+                    if (wet[a] || wet[b] || wet[c] || wet[d])   // ANY corner wet -> keep the cell (covers the shoreline)
+                    { idx.Add(a); idx.Add(c); idx.Add(b); idx.Add(b); idx.Add(c); idx.Add(d); }
+                }
+            var arr = new Godot.Collections.Array(); arr.Resize((int)Mesh.ArrayType.Max);
+            arr[(int)Mesh.ArrayType.Vertex] = verts;
+            arr[(int)Mesh.ArrayType.Normal] = norms;
+            arr[(int)Mesh.ArrayType.TexUV] = uvs;
+            arr[(int)Mesh.ArrayType.Index] = idx.ToArray();
+            var m = new ArrayMesh();
+            if (idx.Count >= 3) m.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, arr);
+            GD.Print($"[terrain] ocean masked: {idx.Count / 3}/{subX * subZ * 2} tris kept (buried-under-land cells dropped)");
+            return m;
+        }
         public const float MinFishDepth = 4f;   // retail UseableFisher minimumDepth: a bobber needs >=4m of water below the surface
         // The bullet-impact surface material at a world point, from the dominant splat layer (so shooting sand kicks up sand,
         // road/rock = concrete chips, dirt = dirt, grass/forest = foliage -- instead of one flat guess for the whole island).
@@ -698,8 +739,11 @@ void fragment() {
                 float wsx = (maxX - minX + 1) * TILE_SIZE + 400f, wsdz = (maxY - minY + 1) * TILE_SIZE + 400f;
                 // subdivide so the vertex-displaced waves have geometry to move (~5 m quads); capped for perf on huge maps
                 int subX = Mathf.Clamp((int)(wsx / 4f), 64, 600), subZ = Mathf.Clamp((int)(wsdz / 4f), 64, 600);   // ~4 m quads; per-pixel normal in the shader hides the rest of the facets
-                var water = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(wsx, wsdz), SubdivideWidth = subX, SubdivideDepth = subZ } };
-                water.Position = new Vector3(baseX + GW * UNIT * 0.5f, waterY, -(baseZ + GH * UNIT * 0.5f));
+                float wcx = baseX + GW * UNIT * 0.5f, wcz = -(baseZ + GH * UNIT * 0.5f);
+                // Mask the plane to WET cells only (master): the full grid spanned the whole map incl UNDER the land,
+                // displacing swell on ~half its verts for buried water. One mesh still = one draw call.
+                var water = new MeshInstance3D { Mesh = BuildOceanMesh(terr, wsx, wsdz, subX, subZ, wcx, wcz, waterY) };
+                water.Position = new Vector3(wcx, waterY, wcz);
                 // waves + crest foam (on the peaks) + depth-based shore foam at every coastline (master 2026-08-16)
                 water.MaterialOverride = new ShaderMaterial { Shader = GD.Load<Shader>("res://content/water.gdshader") };
                 terr.AddChild(water);
@@ -707,7 +751,7 @@ void fragment() {
                 // vehicles don't mask bit9 so it never blocks movement/swimming. Shooting the ocean -> Water_Static splash.
                 var wbody = new StaticBody3D { CollisionLayer = 1u << 9, Position = water.Position };
                 wbody.SetMeta(PlayerController.SurfMeta, (int)PlayerController.Surf.Water);
-                var wsize = ((PlaneMesh)water.Mesh).Size;
+                var wsize = new Vector2(wsx, wsdz);   // plane dims (the visual mesh is now a masked ArrayMesh, not a PlaneMesh); splash box stays the full flat sea
                 wbody.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = new Vector3(wsize.X, 0.2f, wsize.Y) } });
                 terr.AddChild(wbody);
                 }
