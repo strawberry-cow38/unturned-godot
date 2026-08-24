@@ -29,17 +29,49 @@ namespace SDG.Unturned
                 float inv = 1f / Mathf.Sqrt(m2);
                 dir.x *= inv; dir.y *= inv;
             }
-            Velocity.x = dir.x * speed;
-            Velocity.z = dir.y * speed;
+            float wantX = dir.x * speed, wantZ = dir.y * speed;
 
-            // Vertical: rest on ground, jump off it, otherwise integrate gravity to terminal velocity.
             if (grounded)
             {
+                // On the ground the controller still assigns outright. Retail accelerates here too, but
+                // that governs the whole feel of walking and is not what was reported; changing it is a
+                // separate decision from fixing the air.
+                Velocity.x = wantX;
+                Velocity.z = wantZ;
                 if (Velocity.y < 0f) Velocity.y = 0f;
                 if (wantJump) Velocity.y = PlayerMovementDef.JUMP;
             }
             else
             {
+                // AIRBORNE: accelerate toward the desired velocity, do not assign it (PlayerMovement.cs
+                // :1283-1301). Assigning gave the capsule no inertia at all -- measured before this fix, a
+                // full mid-air reversal completed in ONE 50 Hz tick, -7.00 to +7.00 m/s, and a sprint jump
+                // took off at the full 7 m/s instantly rather than carrying momentum. VoX reported the
+                // second symptom ("I jump super fast"); the first is the same defect seen from the side.
+                //
+                // Note what does NOT change: the jump impulse. Measured walk vs sprint jumps at identical
+                // height (0.903 m vs 0.902) and identical airtime (0.44 s both) -- the impulse never had a
+                // stance term, so the difference was always horizontal carry.
+                float wantSpeed = Mathf.Sqrt(wantX * wantX + wantZ * wantZ);
+                float curSpeed = Mathf.Sqrt(Velocity.x * Velocity.x + Velocity.z * Velocity.z);
+
+                // Already faster than you are asking for (a sprint takeoff, a rocket jump): bleed off
+                // gradually rather than snapping down, so momentum survives letting go of the stick.
+                float maxSpeed = curSpeed > wantSpeed
+                    ? Mathf.Max(wantSpeed, curSpeed - PlayerMovementDef.AIR_DECELERATION * dt)
+                    : wantSpeed;
+
+                float nx = Velocity.x + wantX * PlayerMovementDef.AIR_ACCELERATION * dt;
+                float nz = Velocity.z + wantZ * PlayerMovementDef.AIR_ACCELERATION * dt;
+                float nSpeed = Mathf.Sqrt(nx * nx + nz * nz);
+                if (nSpeed > maxSpeed && nSpeed > 0f)
+                {
+                    float k = maxSpeed / nSpeed;
+                    nx *= k; nz *= k;
+                }
+                Velocity.x = nx;
+                Velocity.z = nz;
+
                 Velocity.y -= PlayerMovementDef.GRAVITY * dt;
                 if (Velocity.y < PlayerMovementDef.TERMINAL_VELOCITY)
                     Velocity.y = PlayerMovementDef.TERMINAL_VELOCITY;

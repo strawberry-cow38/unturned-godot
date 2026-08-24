@@ -26,6 +26,14 @@ namespace SDG.Unturned
         public const float SPEED_CLIMB = 4.5f;
         public const float SPEED_SWIM = 3f;
         public const float SPEED_SPRINT = 7f;
+
+        // AIR STRAFING (PlayerMovement.cs:1283-1301). Airborne horizontal velocity ACCELERATES toward the
+        // desired velocity and is clamped; it is not assigned. Ours assigned it, which is why a mid-air
+        // reversal was instant (measured: -7.00 -> +7.00 m/s in a single 50 Hz tick) and why a sprint jump
+        // read as "super fast" -- takeoff speed was applied whole on the jump tick with no ramp.
+        // Both multipliers are modeConfigData knobs that default to 1.0.
+        public const float AIR_ACCELERATION = 8f;    // * desired velocity, per second
+        public const float AIR_DECELERATION = 2f;    // m/s^2 bleed when already faster than desired
         public const float SPEED_STAND = 4.5f;   // base walk/run
         public const float SPEED_CROUCH = 2.5f;
         public const float SPEED_PRONE = 1.5f;
