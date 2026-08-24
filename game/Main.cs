@@ -75,11 +75,11 @@ namespace UnturnedGodot
         string _lmShotDir; Camera3D _lmCam; int _lmIdx, _lmFrame;
         static readonly (Vector3 Eye, Vector3 Look, string Tag)[] _lmTour =
         {
-            (new Vector3(247f, 150f, 293f),  new Vector3(247f, 60f, 793f), "lighthouse_500"),   // Lighthouse_0 @ (247,58,793)
-            (new Vector3(247f, 190f, -7f),   new Vector3(247f, 60f, 793f), "lighthouse_800"),
-            (new Vector3(247f, 240f, -307f), new Vector3(247f, 60f, 793f), "lighthouse_1100"),
-            (new Vector3(-470f, 150f, 640f), new Vector3(-470f, 36f, 140f), "dock_500"),         // Dock_1/Harbor_0 @ (~-470,32,140)
-            (new Vector3(-470f, 190f, 940f), new Vector3(-470f, 36f, 140f), "dock_800"),
+            (new Vector3(247f, 74f, 553f),   new Vector3(247f, 76f, 793f), "lighthouse_close"),   // Lighthouse_0 @ (247,58,793): ~240m due south, near-level, sea behind
+            (new Vector3(70f, 100f, 600f),   new Vector3(247f, 74f, 793f), "lighthouse_sw"),      // ~260m from the SW, different bearing
+            (new Vector3(247f, 150f, 300f),  new Vector3(247f, 66f, 793f), "lighthouse_500"),     // ~500m elevated (fog territory)
+            (new Vector3(-470f, 110f, 560f), new Vector3(-470f, 40f, 140f), "dock_harbor_450"),   // Dock_1/Harbor_0 @ (~-470,32,140)
+            (new Vector3(-470f, 180f, 900f), new Vector3(-470f, 40f, 140f), "dock_harbor_800"),
         };
         bool _navShot;   // --navshot: nav-debug verify screenshot (waits for load + navmesh overlay + zombie cones)
         bool _navPathTest;   // --navpathtest: after a few frames (nav synced), query the navmesh + report routing
