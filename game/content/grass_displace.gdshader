@@ -27,6 +27,7 @@ global uniform vec4 wind_vec;
 // the per-blade loop only touches active slots. texelFetch (not texture()) so the packed floats read back exact.
 global uniform sampler2D grass_displacers : filter_nearest;
 global uniform int grass_displacer_count;
+varying vec2 wxz;   // TEMP LIVE DIAGNOSTIC: original world XZ for the red proximity tint (revert after)
 
 uniform sampler2D albedo_tex : source_color, filter_linear_mipmap;
 uniform float alpha_scissor : hint_range(0.0, 1.0) = 0.4;
@@ -62,6 +63,7 @@ void vertex() {
 	// world_vertex_coords: VERTEX arrives in WORLD space, so pushes compute directly. UV is a vertex attribute,
 	// unaffected by that mode, so the height weight stays available. Accumulate every displacer's offset from the
 	// REST position (each measured against the unmodified VERTEX, so they add rather than compound), apply once.
+	wxz = VERTEX.xz;   // TEMP LIVE DIAGNOSTIC
 	vec3 off = vec3(0.0);
 	// LOCAL PLAYER -- retail's single point at (x, y+0.5, z); radius/strength/vertical_reach + the 0.35 flatten
 	// exactly as before, so this path is behaviourally unchanged.
@@ -99,4 +101,8 @@ void fragment() {
 	// (strawberry). Leaving NORMAL untouched only preserved the up-normal on the FRONT face. So force world-up in the
 	// fragment regardless of facing (NORMAL lives in VIEW space here). Shadows are positional, so this keeps them intact.
 	NORMAL = normalize((VIEW_MATRIX * vec4(0.0, 1.0, 0.0, 0.0)).xyz);
+	// TEMP LIVE DIAGNOSTIC (revert after): grass within 8m of the player POINT glows RED. If it lights up in-game, the
+	// shader is reading the live player position (plumbing works); if nothing glows, the shader isn't getting the point.
+	float pt = 1.0 - clamp(distance(wxz, grass_displacement_point.xz) / 8.0, 0.0, 1.0);
+	if (pt > 0.001) ALBEDO = mix(ALBEDO, vec3(1.0, 0.0, 0.0), pt);
 }
