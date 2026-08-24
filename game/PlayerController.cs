@@ -4815,6 +4815,9 @@ namespace UnturnedGodot
             if (_ridingTrain != null)   // RIDING A TRAIN: self-contained input (H = 1P/3P cam, mouse orbits the 3P chase). F-exit + rest use the normal chain below; no vehicle/MP paths touched.
             {
                 if (@event is InputEventKey { Pressed: true, Keycode: Key.H }) { _fp = !_fp; GetViewport().SetInputAsHandled(); return; }
+                // N = ignition, the SAME key as a car. Echo:false for the same reason: holding it must not flap
+                // the engine. A train has one seat, so there is no driver check to make here.
+                if (@event is InputEventKey { Pressed: true, Echo: false, Keycode: Key.N }) { _ridingTrain.ToggleEngine(); GetViewport().SetInputAsHandled(); return; }
                 if (@event is InputEventMouseButton { ButtonIndex: MouseButton.Left } mb) { if (mb.Pressed) _ridingTrain.Honk(); GetViewport().SetInputAsHandled(); return; }   // LMB = press-to-honk (one-shot, master)
                 if (@event is InputEventMouseButton { ButtonIndex: MouseButton.Right } rmbT) { if (rmbT.Pressed) _ridingTrain.ToggleHeadlights(); GetViewport().SetInputAsHandled(); return; }   // RMB = toggle headlights (master), like vehicles
                 if (@event is InputEventMouseMotion tmm && Input.MouseMode == Input.MouseModeEnum.Captured)
@@ -6558,6 +6561,7 @@ namespace UnturnedGodot
             if (ctrl && sk && !_jogSPrev) _ridingTrain.Jog(-1);  // Ctrl+S: back one carriage
             _jogWPrev = ctrl && w; _jogSPrev = ctrl && sk;
             float throttle = ctrl ? 0f : ((w ? 1f : 0f) - (sk ? 1f : 0f));   // plain W/S = continuous throttle; Ctrl held = jog only
+            if (Mathf.Abs(throttle) > 0.01f) _ridingTrain.TryStartEngine();   // reaching for the throttle starts it, same as a car; self-gates so this is a no-op once running
             _ridingTrain.Drive(throttle, delta);
             if (_ridingTrain.Loco != null) GlobalPosition = _ridingTrain.Loco.GlobalPosition;
         }

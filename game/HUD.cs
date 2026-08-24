@@ -429,8 +429,11 @@ namespace UnturnedGodot
             bool inVeh = Vehicle != null;
             bool inRail = !inVeh && Train != null && IsInstanceValid(Train);   // riding a train: same box, no fuel/health/battery rows
             _vehBox.Visible = inVeh || inRail;
-            foreach (var (ic, bg) in _vehRows) { ic.Visible = inVeh; bg.Visible = inVeh; }   // trains have none of the three gauges
-            _vehBox.OffsetTop = inRail ? -140f : -210f;                                       // shrink the box to just title + speed for a train
+            // Trains carry fuel/battery/engine now, so they get the gauge rows too -- only HEALTH stays hidden,
+            // because a consist has no single hull HP to show.
+            foreach (var (ic, bg) in _vehRows) { ic.Visible = inVeh || inRail; bg.Visible = inVeh || inRail; }
+            if (inRail && _vehRows.Count >= 2) { _vehRows[1].icon.Visible = false; _vehRows[1].bg.Visible = false; }   // row 1 = health
+            _vehBox.OffsetTop = -210f;   // full-height box either way now that a train has gauges to show
             if (inVeh)
             {
                 _vehFuel.AnchorRight = Mathf.Clamp(Vehicle.FuelNorm, 0f, 1f);
@@ -446,7 +449,11 @@ namespace UnturnedGodot
             else if (inRail)
             {
                 _vehTitle.Text = Train.DisplayName;
-                _vehRpmGear.Text = $"{Train.SpeedMps * 2.23694f:0} mph";   // trains: just the speedo (no gears/rpm)
+                _vehFuel.AnchorRight = Mathf.Clamp(Train.FuelNorm, 0f, 1f);
+                _vehBattery.AnchorRight = Mathf.Clamp(Train.BatteryNorm, 0f, 1f);
+                _vehRpmGear.Text = Train.EngineOn
+                    ? $"{Train.SpeedMps * 2.23694f:0} mph"   // trains: just the speedo (no gears/rpm)
+                    : (Train.CanStartEngine ? "engine off · N or throttle to start" : "engine off · no fuel or flat battery");
             }
         }
 

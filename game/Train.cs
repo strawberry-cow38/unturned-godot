@@ -226,6 +226,57 @@ namespace UnturnedGodot
         int EngineCount => _cars.Count(c => c.S.Engine);
         Car EngineCar => _cars.FirstOrDefault(c => c.S.Engine);
         float TotalWeight => _cars.Sum(c => c.S.Weight);
+        // FUEL / BATTERY / ENGINE (strawberry_cow 2026-08-24). Deliberately the SAME shape and the same rules as
+        // Vehicle's, because a player who has learned that a car needs the key turned and dies with a flat
+        // battery should not have to learn a second set of rules for a train.
+        //
+        // PER LOCOMOTIVE, not per consist: capacity and burn both scale with EngineCount, so coupling a second
+        // engine gives twice the range AND burns twice the diesel. A flat per-consist tank would make a double
+        // header mysteriously run dry at the same time as a single -- and this consist can gain or lose engines
+        // at runtime, which a fixed tank cannot express at all.
+        const float FuelPerEngine = 400_000f;   // diesel-electric: a big tank, ~5x the semi's 300 L, and it hauls a train with it
+        const float BatteryPerEngine = 10_000f; // same full-charge scale as Vehicle.BatteryMax, so the gauge reads the same
+        const float FuelBurnPerEngine = 22f;    // per second per engine at full throttle
+        const float TrainBatteryBurn = 20f;     // headlights, matching Vehicle.BatteryBurnRate
+        const float TrainBatteryCharge = 40f;   // alternator, matching Vehicle.BatteryChargeRate
+        const float TrainStartMin = 400f;       // 4% -- same "cannot crank forever on the last drop" threshold as a car
+
+        public float FuelMax => Mathf.Max(1f, EngineCount) * FuelPerEngine;
+        public float BatteryMax => Mathf.Max(1f, EngineCount) * BatteryPerEngine;
+        float _fuel = -1f, _battery = -1f;   // -1 = not yet initialised; filled on first read so EngineCount is known
+        public float Fuel { get { if (_fuel < 0f) _fuel = FuelMax; return _fuel; } }
+        public float Battery { get { if (_battery < 0f) _battery = BatteryMax; return _battery; } }
+        public float FuelNorm => Fuel / FuelMax;
+        public float BatteryNorm => Battery / BatteryMax;
+        public bool EngineOn { get; private set; }
+
+        /// <summary>Static-only fuel is a locomotive nobody can move. InfiniteFuel mirrors Vehicle's dev toggle
+        /// so `infFuel` covers trains too rather than being a car-only cheat.</summary>
+        public bool CanStartEngine => HasEngine && Battery >= TrainStartMin && (Vehicle.InfiniteFuel || Fuel > 0f);
+
+        public bool TryStartEngine()
+        {
+            if (EngineOn || !CanStartEngine) return false;
+            EngineOn = true;
+            return true;
+        }
+        public void StopEngine() => EngineOn = false;
+        public bool ToggleEngine() { if (EngineOn) StopEngine(); else TryStartEngine(); return EngineOn; }
+
+        /// <summary>Per-tick fuel burn, battery drain/charge, and the cutouts. Mirrors the block in Vehicle:
+        /// a running engine charges and stops draining, a flat battery kills the lights, an empty tank kills
+        /// the engine.</summary>
+        void StepPower(float dt)
+        {
+            if (EngineOn && !Vehicle.InfiniteFuel)
+                _fuel = Mathf.Max(0f, Fuel - FuelBurnPerEngine * Mathf.Max(1, EngineCount) * dt);
+            if (EngineOn && Fuel <= 0f && !Vehicle.InfiniteFuel) EngineOn = false;   // ran dry -> coasts to a stop, Drive gates on EngineOn
+
+            if (EngineOn) _battery = Mathf.Min(BatteryMax, Battery + TrainBatteryCharge * dt);
+            else if (_headlightsOn) _battery = Mathf.Max(0f, Battery - TrainBatteryBurn * dt);
+            if (Battery <= 0f && _headlightsOn) { _headlightsOn = false; ApplyHeadlights(); }   // ApplyHeadlights, not just the flag -- it owns the actual lamp visibility
+        }
+
         public bool Drivable => HasEngine;
         public string DisplayName => EngineCount > 1 ? $"Locomotive x{EngineCount}" : "Locomotive";
         public float SpeedMps => _speed;
@@ -329,6 +380,11 @@ namespace UnturnedGodot
         public void Drive(float throttle, float dt)
         {
             if (!HasEngine || _cars.Count == 0) return;
+            StepPower(dt);
+            // Engine off -> no tractive effort, but the consist still ROLLS: it keeps its speed and decelerates,
+            // rather than stopping dead the instant the key turns. A stopped train is momentum, not a parking
+            // brake, and killing the engine at 20 m/s should coast for a long way.
+            if (!EngineOn) throttle = 0f;
             if (Mathf.Abs(throttle) > 0.05f) _jogging = false;   // any manual throttle cancels a jog
             if (_jogging) { JogStep(dt); return; }
             float wf = (EngineCount * RefWeight) / Mathf.Max(1f, TotalWeight);   // COMBINED engine power / total weight -> more engines pull more (master)
@@ -501,7 +557,7 @@ namespace UnturnedGodot
 
         /// <summary>Engine headlights: RMB while riding toggles the spot/omni beams + emissive housings on every engine car. (master)</summary>
         public bool HeadlightsOn => _headlightsOn;
-        public void ToggleHeadlights() { _headlightsOn = !_headlightsOn; ApplyHeadlights(); }
+        public void ToggleHeadlights() { if (!_headlightsOn && Battery <= 0f) return; _headlightsOn = !_headlightsOn; ApplyHeadlights(); }   // a flat battery cannot light them; switching OFF always works
         void ApplyHeadlights()
         {
             foreach (var c in _cars)
@@ -557,7 +613,7 @@ namespace UnturnedGodot
             if (on)
             {
                 _outlinedEngine = _lookEngine ?? EngineCar; OutlineEngine(_outlinedEngine, true); WorldItem.FocusColor = col;
-                if (_info != null) { _info.SetActive(true); _info.SetName(DisplayName, col); _info.SetPrompt("[F] Drive", col); _info.SetBar(0, 0f, InfoBillboard.HealthColor, false); _info.SetBar(1, 0f, InfoBillboard.FuelColor, false); _info.SetBar(2, 0f, InfoBillboard.FuelColor, false); }
+                if (_info != null) { _info.SetActive(true); _info.SetName(DisplayName, col); _info.SetPrompt("[F] Drive", col); _info.SetBar(0, 0f, InfoBillboard.HealthColor, false); _info.SetBar(1, FuelNorm, InfoBillboard.FuelColor, true); _info.SetBar(2, BatteryNorm, InfoBillboard.FuelColor, true); }   // fuel + battery are real now; bar 0 (health) stays hidden -- a consist has no single hull HP
             }
             else { OutlineEngine(_outlinedEngine, false); _outlinedEngine = null; _info?.SetActive(false); }
         }
