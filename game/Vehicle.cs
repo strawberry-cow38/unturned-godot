@@ -4294,6 +4294,36 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                 // silent hole you drive through the world in.
                 if (made == 0) v.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = s.BoxSize }, Position = s.BoxCenter });
             }
+            else if (bodyMesh != null && !ForceBoxHull
+                     && System.Environment.GetEnvironmentVariable("UG_BOXHULL") != "1")
+            {
+                // 1:1 HULL FOR EVERY VEHICLE (strawberry_cow 2026-08-24: "give all vehicles the 1:1 hitbox vs
+                // model visual treatment that the ship got"). Same machinery the ship uses -- decompose the body
+                // mesh into convex hulls -- just no longer opt-in per spec. It runs on _Ready and is cached by
+                // key, so VHACD runs once per vehicle TYPE, not per spawn.
+                //
+                // LOOSER SETTINGS THAN THE SHIP, deliberately. Hers are 48 hulls at 0.02 concavity because the
+                // thing being captured is a deckhouse full of steps and voids that a box filled in. A car body
+                // is nearly convex; asking for the same fidelity would spend a lot of VHACD time and a lot of
+                // shapes to describe a wedge. Those numbers live on the spec key below, so the cache cannot
+                // serve a ship's hulls to a hatchback or the reverse.
+                //
+                // The WHEELS are safe: Spec.Body and Spec.Wheel are separate meshes, so the chassis mesh being
+                // decomposed contains no wheel geometry to collide with the ground.
+                //
+                // UG_BOXHULL=1 reverts every vehicle to the old single box, matching the UG_SHIPBOX seam. This
+                // is a handling change, not a visual one -- a 1:1 hull follows the real underside where a box
+                // was clamped clear of it -- so there needs to be one switch that puts it back.
+                v._decomposeMesh = bodyMesh;
+                v._decomposeKey = $"body|{s.Body}|{s.Name}";
+                v._decomposeCars = true;
+                // Keep the box as well: it is the belly-pan. A decomposition of a chassis with a hollow
+                // underside gives hulls that hug the floorpan and leave the gap between the axles open, and a
+                // car that drops into its own wheel arch on a kerb is worse than one whose hitbox is slightly
+                // generous. The convex hulls ADD fidelity to the sides and roofline; they do not replace the
+                // floor.
+                v.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = s.BoxSize }, Position = s.BoxCenter });
+            }
             else v.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = s.BoxSize }, Position = s.BoxCenter });
             var roof = RoofBox(s.Name);   // source 2nd body box (roof slab): the port only had the main box, so the roof had no collision (master); jeep/quad/tractor are open, no roof
             if (roof.HasValue)
@@ -6786,6 +6816,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
         public static bool ForceBoxHull;
 
         Mesh _decomposeMesh;   // set at build; turned into collision shapes on _Ready (VHACD needs a scene tree)
+        bool _decomposeCars;   // this is an ordinary vehicle body, not the ship's deckhouse -> cheaper VHACD settings
         static readonly System.Collections.Generic.Dictionary<string, Godot.Collections.Array<Shape3D>> _decomposeCache = new();
         string _decomposeKey;
         public int DebugDecomposedHulls;   // test seam: how many convex hulls the decomposition produced
@@ -6805,13 +6836,21 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                 // Tight, because the whole point is not to fill in the deckhouse's steps and voids. At the
                 // defaults (24 hulls / 0.15 concavity) VHACD merged it down to 8 hulls and only got the
                 // invisible-wall count from 633 to 527 -- barely better than the hand-cut bands it replaced.
-                var settings = new MeshConvexDecompositionSettings
-                {
-                    MaxConvexHulls = 48,
-                    MaxConcavity = 0.02f,
-                    MaxNumVerticesPerConvexHull = 24,
-                    Resolution = 50000,
-                };
+                var settings = _decomposeCars
+                    ? new MeshConvexDecompositionSettings   // ordinary vehicle: a near-convex shell, cheap to describe
+                    {
+                        MaxConvexHulls = 12,
+                        MaxConcavity = 0.08f,
+                        MaxNumVerticesPerConvexHull = 16,
+                        Resolution = 10000,
+                    }
+                    : new MeshConvexDecompositionSettings
+                    {
+                        MaxConvexHulls = 48,
+                        MaxConcavity = 0.02f,
+                        MaxNumVerticesPerConvexHull = 24,
+                        Resolution = 50000,
+                    };
                 mi.CreateMultipleConvexCollisions(settings);
                 // The generated StaticBody3D is a child of the MESH INSTANCE, not a sibling of it -- harvesting
                 // from the vehicle's own children found nothing and reported "hulls harvested: 0" while the
