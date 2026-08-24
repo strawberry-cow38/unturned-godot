@@ -69,6 +69,18 @@ namespace UnturnedGodot
         PlayerController _pdPlayer; int _pdFireT;   // --peidrive on-foot player -> UG_AUTOFIRE terrain-impact verification
         bool _peiPlayable;   // menu "Drive PEI": BuildObjectsTest spawns a player+jeep with REAL controls instead of the aerial cam
         bool _worldBuild, _worldReady;   // BuildObjectsTest (objects/peidrive) async load -> the --shot harness waits for _worldReady before capturing
+        // --landmarkshot=DIR: after the PEI world loads, fly a camera to a few points at rising distance from the big
+        // landmarks (Lighthouse_0, the Alberton Dock/Harbor) and capture each -> verify the landmark cull extension
+        // (LodTable) actually draws them across the map, past the old 447m region cap.
+        string _lmShotDir; Camera3D _lmCam; int _lmIdx, _lmFrame;
+        static readonly (Vector3 Eye, Vector3 Look, string Tag)[] _lmTour =
+        {
+            (new Vector3(247f, 150f, 293f),  new Vector3(247f, 60f, 793f), "lighthouse_500"),   // Lighthouse_0 @ (247,58,793)
+            (new Vector3(247f, 190f, -7f),   new Vector3(247f, 60f, 793f), "lighthouse_800"),
+            (new Vector3(247f, 240f, -307f), new Vector3(247f, 60f, 793f), "lighthouse_1100"),
+            (new Vector3(-470f, 150f, 640f), new Vector3(-470f, 36f, 140f), "dock_500"),         // Dock_1/Harbor_0 @ (~-470,32,140)
+            (new Vector3(-470f, 190f, 940f), new Vector3(-470f, 36f, 140f), "dock_800"),
+        };
         bool _navShot;   // --navshot: nav-debug verify screenshot (waits for load + navmesh overlay + zombie cones)
         bool _navPathTest;   // --navpathtest: after a few frames (nav synced), query the navmesh + report routing
         bool _zombieTest; ZombieField _ztField;   // --zombietest: after a few frames, verify planned pocket spawns land ON the baked navmesh
@@ -198,6 +210,7 @@ namespace UnturnedGodot
                 else if (arg == "--craftmenu") craftmenu = true; // open the CraftingMenu (browsable recipe index) over a stocked bag
                 else if (arg == "--stationtest") { stationtest = true; _shotRequested = shot; }   // line up all 9 crafting-station deployables to eyeball the extracted models
                 else if (arg == "--objects") objects = true;     // place PEI's real Level/Objects.dat objects (fences/props/rocks) on the terrain
+                else if (arg.StartsWith("--landmarkshot=")) _lmShotDir = arg["--landmarkshot=".Length..];   // fly a camera past the big landmarks at range -> verify they render across the map
                 else if (arg == "--peidrive") peidrive = true;    // playable PEI: terrain + all objects/trees + player+jeep with real controls (same as the menu's "Drive PEI")
                 else if (arg.StartsWith("--map="))                // load a DIFFERENT map (e.g. --map="cow tools"): terrain + objects + spawns all follow _mapRoot
                 {
@@ -334,6 +347,14 @@ namespace UnturnedGodot
                 GetWindow().Size = new Vector2I(1280, 720);
                 _shotPath = shot;
                 _peiPlayable = true;
+                BuildObjectsTest();
+                return;
+            }
+
+            if (_lmShotDir != null)   // --landmarkshot: build the real PEI world (no player/zombies), then run the camera tour in _Process
+            {
+                GetWindow().Size = new Vector2I(1280, 720);
+                _noZombies = true;
                 BuildObjectsTest();
                 return;
             }
@@ -7557,6 +7578,23 @@ namespace UnturnedGodot
                 return;
             }
             if (_worldReady && !_treeChecked && System.Environment.GetEnvironmentVariable("UG_TREECHECK") == "1" && ++_treeCheckFrame > 15) { _treeChecked = true; DoTreeCheck(); }
+            // --landmarkshot camera tour: independent of the single-shot _shotPath harness below. One point per settle
+            // window: position the cam, wait ShotSettleFrames for VisibilityRange to recompute at the new pos, capture.
+            if (_lmShotDir != null)
+            {
+                if (!_worldReady) return;
+                if (_lmCam == null) { _lmCam = new Camera3D { Fov = 55f, Far = 3000f, Current = true }; AddChild(_lmCam); }
+                if (_lmIdx >= _lmTour.Length) { GD.Print("[LMSHOT] done"); GetTree().Quit(); return; }
+                var lt = _lmTour[_lmIdx];
+                if (_lmFrame == 0) { _lmCam.GlobalPosition = lt.Eye; _lmCam.LookAt(lt.Look, Vector3.Up); }
+                if (++_lmFrame < ShotSettleFrames) return;
+                var lmimg = GetViewport().GetTexture()?.GetImage();
+                if (lmimg == null) { GD.PrintErr("[LMSHOT] null image -- need --rendering-driver vulkan"); GetTree().Quit(1); return; }
+                lmimg.SavePng($"{_lmShotDir}/{_lmIdx:D2}_{lt.Tag}.png");
+                GD.Print($"[LMSHOT] {lt.Tag} dist~{lt.Eye.DistanceTo(lt.Look):0}m draws={RenderingServer.GetRenderingInfo(RenderingServer.RenderingInfo.TotalDrawCallsInFrame)} objs={RenderingServer.GetRenderingInfo(RenderingServer.RenderingInfo.TotalObjectsInFrame)}");
+                _lmIdx++; _lmFrame = 0;
+                return;
+            }
             if (_shotPath == null) return;
             float _shotTimeTarget = 0f; { var _ste = System.Environment.GetEnvironmentVariable("UG_SHOTTIME"); if (!string.IsNullOrEmpty(_ste)) float.TryParse(_ste, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out _shotTimeTarget); }
             if (_shotTimeTarget > 0f) { _shotElapsed += (float)delta; if (_shotElapsed < _shotTimeTarget) return; }   // UG_SHOTTIME: capture at an ELAPSED-TIME target (real-time frame counts drift off fixed-fps)
