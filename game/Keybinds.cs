@@ -141,10 +141,16 @@ namespace UnturnedGodot
             [GameAction.Reload] = new Bind(Key.R),
             [GameAction.Firemode] = new Bind(Key.V),
             [GameAction.Melee] = new Bind(Key.G),
-            [GameAction.Grenade] = new Bind(Key.H),
+            [GameAction.Grenade] = new Bind(Key.None),   // UNBOUND (strawberry 2026-08-24). Not deleted: the action still
+                                                        // exists, so it appears in the rebind menu as "—" and anyone who
+                                                        // wants it can put it back. Deleting the action would remove the
+                                                        // ability to bind it at all, which is a different request.
             [GameAction.Interact] = new Bind(Key.F),
             [GameAction.AttachMenu] = new Bind(Key.T),          // hold to open the weapon-attachment menu (code reality; supersedes the guessed Inspect)
-            [GameAction.ToggleFirstPerson] = new Bind(Key.K),   // moved off H so Grenade(H) stops being dead code (fp-toggle + grenade were both H)
+            [GameAction.ToggleFirstPerson] = new Bind(Key.H),   // BACK ON H (strawberry 2026-08-24: "H should be 3p by default").
+                                                                // It had been moved to K precisely because H was double-booked with
+                                                                // Grenade; unbinding Grenade above is what frees H to come back, so
+                                                                // these two changes are one change and neither works alone.
             [GameAction.Flashlight] = new Bind(Key.B),          // held tactical light (source TACTICAL key) -- a GameAction so ConflictWith can SEE B, not a hidden literal in the chain
             [GameAction.Inventory] = new Bind(Key.Tab),
             [GameAction.Map] = new Bind(Key.M),

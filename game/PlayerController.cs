@@ -3820,6 +3820,7 @@ namespace UnturnedGodot
         }
 
         const float StepHeight = 0.5f;   // curbs/thresholds up to this high are stepped over (master: stop snagging on sidewalks; bumped 0.4->0.5)
+        const float MinStepHeight = 0.07f;   // below this it is ground noise, not a threshold -- see StepUp
         // If the horizontal motion is blocked at foot level but clear a step higher, raise onto the step; FloorSnapLength then
         // pulls us back down onto it. Reused by both the player and zombies (source has stair/ledge handling in PlayerMovement).
         // Camera-only smoothing for the step (strawberry_cow 2026-08-24: "reads as a slope instead of a
@@ -3838,7 +3839,24 @@ namespace UnturnedGodot
             if (!grounded) return;
             Vector3 motion = new Vector3(Velocity.X, 0f, Velocity.Z) * delta;
             if (motion.LengthSquared() < 1e-6f) return;
-            if (!TestMove(GlobalTransform, motion)) return;   // not blocked at foot level
+            var hit = new KinematicCollision3D();
+            if (!TestMove(GlobalTransform, motion, hit)) return;   // not blocked at foot level
+
+            // A WALKABLE SLOPE IS NOT A STEP (strawberry 2026-08-24: "the step-up keeps getting erroneously
+            // triggered on somewhat flat ground").
+            //
+            // TestMove reports blocked for ANY contact, and on undulating terrain the capsule touches the
+            // ground ahead constantly -- so "blocked at foot level, clear when raised" is true across a whole
+            // hillside, not just at curbs. Every one of those became a step: a teleport up, then the smoothing
+            // easing the camera back down, on flat-looking ground.
+            //
+            // move_and_slide already walks anything up to FloorMaxAngle. So the test that matters is not "is
+            // something there" but "is it too steep to walk up" -- and only then is it a step. Compared against
+            // the body's OWN FloorMaxAngle rather than a second hardcoded angle, so the two cannot disagree
+            // about what counts as ground.
+            float cosUp = Mathf.Clamp(hit.GetNormal().Dot(Vector3.Up), -1f, 1f);
+            if (Mathf.Acos(cosUp) <= FloorMaxAngle) return;   // walkable: let the normal floor logic have it
+
             var raised = new Transform3D(GlobalTransform.Basis, GlobalPosition + Vector3.Up * StepHeight);
             if (TestMove(raised, motion)) return;             // blocked even raised: a wall, not a step
 
@@ -3853,6 +3871,10 @@ namespace UnturnedGodot
                 var probe = new Transform3D(GlobalTransform.Basis, GlobalPosition + Vector3.Up * h);
                 if (!TestMove(probe, motion)) { need = h; break; }   // smallest sampled rise that clears
             }
+            // Below this, it is ground noise rather than a threshold, and move_and_slide handles it without a
+            // reposition. The slope guard above catches most of it; this catches the rest -- a near-vertical
+            // 2 cm lip is steep enough to pass that test and still not worth teleporting the player over.
+            if (need < MinStepHeight) return;
             GlobalPosition += Vector3.Up * need;
             _stepSmooth = Mathf.Min(StepHeight, _stepSmooth + need);   // clamped: a stair RUN must not stack into the camera sinking through the floor
         }
@@ -5096,7 +5118,8 @@ namespace UnturnedGodot
             else if (Keybinds.JustPressed(GameAction.Melee, @event))
                 MeleeAttack();        // dedicated melee swing (default G) at a zombie in reach
             else if (Keybinds.JustPressed(GameAction.Grenade, @event))
-                ThrowGrenade();       // throw a grenade (default H) -- reachable now that fp-toggle moved to ToggleFirstPerson
+                ThrowGrenade();       // UNBOUND by default (strawberry 2026-08-24) -- JustPressed is false for an unbound
+                                      // action, so this is dormant rather than deleted, and binding it in the menu revives it
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.P, Echo: false })
             {
                 WorldItem.ShowLabels = !WorldItem.ShowLabels;                       // P: toggle ALL item ESP name tags
