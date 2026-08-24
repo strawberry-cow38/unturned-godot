@@ -855,6 +855,16 @@ namespace UnturnedGodot
         public int Gear => _gear;
         public int GearCount => _gears != null ? _gears.Length : 0;
         public float PeakTorque => _peakTorque;
+        /// <summary>How much of the commanded drive force the tyres could NOT put down, 0..1. 0 = full grip;
+        /// climbing toward 1 = the wheels are spinning. Read by the HUD/audio/effects and by L1.</summary>
+        public float WheelSlip => _wheelSlip;
+        float _wheelSlip;
+        /// <summary>Tyre-to-ground friction coefficient. Physical values: ~1.0 dry tarmac, ~0.6-0.7 loose dirt,
+        /// tracks bite harder than tyres. Per-vehicle so a truck on knobblies is not a roadster, which is the
+        /// "per-vehicle traction" half of the ask; the per-GEAR half needs no data at all because the force
+        /// through the current ratio already differs.</summary>
+        float _tyreMu = 1.0f;
+        bool _water0Boat;   // pure boat -> no wheels worth limiting
         public float WheelbaseForTest => _wheelbase;   // L1: needed to compute the Ackermann yaw a steer angle COMMANDS, so a probe can see oversteer
         // L1: how many wheels are actually touching the ground, and how many there are. A heavy multi-axle
         // hull that falls short of its drag equilibrium is usually not short of POWER -- it is airborne and
@@ -986,6 +996,11 @@ namespace UnturnedGodot
             v._gears = g;
             v._reverseGear = ratio1 * 0.9f;
             v._peakTorque = v._engineForce * v._nTraction * LaunchBoost * r / ratio1;
+            v._water0Boat = s.Water == WaterMode.Boat;
+            // Tracks lay down a far larger contact patch than tyres, so they hook up where a wheel would spin.
+            // Everything else takes the tyre default; a per-spec override is the obvious next dial if one
+            // vehicle needs to feel different, but inventing 20 hand-picked numbers now would be taste, not data.
+            v._tyreMu = s.Tracked ? 1.6f : 1.0f;
             float rpmTop = wheelRpmTop * ratioTop;
             float fTop = v._peakTorque * TorqueFrac((rpmTop - IdleRpm) / (MaxRpm - IdleRpm)) * RevLimit(rpmTop) * ratioTop / r;
             v._rollK = RollingCrr * v.Mass * 9.8f;
@@ -5553,6 +5568,44 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             {
                 float k = Mathf.Clamp(_clutchT / ShiftClutchTime, 0f, 1f);
                 eng *= 1f - Mathf.Sin(k * Mathf.Pi);   // 1 -> 0 -> 1 across the shift, zero drive at its midpoint
+            }
+            // TRACTION LIMIT -- the tyre can only pass so much force to the ground, and past that it spins.
+            //
+            // strawberry asked for grip/wheelspin and per-vehicle-per-gear traction. It could not be built
+            // until now: measured against mu * m * g the whole fleet was using 3-58% of available grip at
+            // launch, so a limit would have been a no-op on every vehicle (the jeep would not have spun ON
+            // ICE). Raising LaunchBoost to 4.0 is what put the light vehicles over the line.
+            //
+            // CLAMPS THE FORCE, does not touch WheelFrictionSlip. That parameter is Godot's COMBINED lateral +
+            // longitudinal grip, so using it to limit wheelspin would tax cornering by exactly as much -- which
+            // is the trap that made this look impossible the first time I costed it. Clamping the drive force
+            // leaves the cornering model completely alone.
+            //
+            // PER-GEAR FALLS OUT, no per-gear table needed: the force arriving here is already the torque curve
+            // through the current ratio, so first gear asks for several times what fifth does against the same
+            // limit. Spins in 1st, grips in 5th, because that is what the arithmetic says.
+            //
+            // Load is weight / wheels ON THE GROUND. No longitudinal-transfer term, deliberately: every wheel
+            // on these vehicles is a drive wheel (UseAsTraction is set for all of them unless it is a trailer),
+            // so transfer moves load BETWEEN driven wheels and the total available traction does not change.
+            // Adding a transfer term here would be arithmetic that changes nothing.
+            _wheelSlip = 0f;
+            if (_peakTorque > 0f && _nTraction > 0 && !_water0Boat)
+            {
+                int onGround = 0;
+                if (_wNodes != null) foreach (var w in _wNodes) if (w != null && w.IsInContact()) onGround++;
+                if (onGround > 0)
+                {
+                    // Both sides are NEWTONS. Writing this against Mass alone (kg) is the unit slip I already
+                    // made once today on this same model, and it read as a plausible 3.5x grip figure.
+                    float gripPerWheel = _tyreMu * (Mass * _gravityMag / onGround);
+                    float demanded = Mathf.Abs(eng);
+                    if (demanded > gripPerWheel && demanded > 0.01f)
+                    {
+                        _wheelSlip = (demanded - gripPerWheel) / demanded;   // 0 = gripping, ->1 = all slip
+                        eng = Mathf.Sign(eng) * gripPerWheel;
+                    }
+                }
             }
             EngineForce = -eng;   // NEGATE: Godot drives this rig +Z for positive force, so W(throttle+1) was going backward
             // STEERING FADES AGAINST THE SPEC TOP SPEED, NOT THE BUFFED ONE. This fade is a function of ROAD
