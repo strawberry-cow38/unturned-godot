@@ -119,6 +119,58 @@ void fragment() {
         // Merged-map height grid + placement, stashed so gameplay can sample the ground height at a world XZ (spawns etc.).
         float[,] _grid; int _gw, _gh; float _bx, _bz;
         byte[,] _dom; int _dw, _dh;   // dominant splatmap layer per texel -> SampleDominantLayer (grassy-spawn picking)
+
+        // TERRAIN HOLES. One flag per QUAD (not per vertex): a hole is a missing face, and faces are what both the
+        // render mesh and the collider are made of. Retail stores bool[256,256] per 1024-unit tile at
+        // HOLES_RESOLUTION = heightmap resolution minus one, which is the same "one per cell, not per corner"
+        // choice -- Landscape.cs:35.
+        //
+        // Null until something actually digs. A map with no holes allocates nothing, rebuilds nothing, and keeps
+        // the fast collider path everywhere; `_anyHoles` is the cheap test the hot paths ask (retail carries the
+        // same idea as `hasAnyHolesData`, and for the same reason).
+        bool[,] _holes; bool _anyHoles;
+
+        /// <summary>Is the quad whose low corner is grid (gx,gy) dug out? Out-of-range is solid, so callers can
+        /// probe edges without bounds-checking first.</summary>
+        public bool IsHole(int gx, int gy) =>
+            _anyHoles && _holes != null && gx >= 0 && gy >= 0 && gx < _gw - 1 && gy < _gh - 1 && _holes[gx, gy];
+
+        /// <summary>Dig or fill one quad. Returns true if it changed, so a brush can skip a no-op rebuild.</summary>
+        public bool SetHole(int gx, int gy, bool dug)
+        {
+            if (_grid == null || gx < 0 || gy < 0 || gx >= _gw - 1 || gy >= _gh - 1) return false;
+            if (!dug && !_anyHoles) return false;              // filling a map with no holes: nothing to do
+            _holes ??= new bool[_gw - 1, _gh - 1];
+            if (_holes[gx, gy] == dug) return false;
+            _holes[gx, gy] = dug;
+            if (dug) _anyHoles = true;
+            return true;
+        }
+
+        /// <summary>Does this chunk contain any dug quad? Decides which COLLIDER this chunk gets, so it is asked
+        /// on every chunk rebuild -- see ApplyChunkShape for why that choice is expensive to get wrong.</summary>
+        bool ChunkHasHole(int cxi, int cyi)
+        {
+            if (!_anyHoles || _holes == null) return false;
+            int x0 = cxi * CHUNK, y0 = cyi * CHUNK;
+            int x1 = System.Math.Min(x0 + CHUNK, _gw - 1), y1 = System.Math.Min(y0 + CHUNK, _gh - 1);
+            for (int gx = x0; gx < x1; gx++)
+                for (int gy = y0; gy < y1; gy++)
+                    if (_holes[gx, gy]) return true;
+            return false;
+        }
+
+        /// <summary>Total dug quads. For tests and the editor's status line.</summary>
+        public int HoleCount
+        {
+            get
+            {
+                if (!_anyHoles || _holes == null) return 0;
+                int n = 0;
+                for (int x = 0; x < _gw - 1; x++) for (int y = 0; y < _gh - 1; y++) if (_holes[x, y]) n++;
+                return n;
+            }
+        }
         MeshInstance3D[,] _chunkMi; StaticBody3D[,] _chunkBody; int _chunksX, _chunksY; Material _terrMat; bool _withCollider;   // editor sculpt: per-chunk meshes so a stroke rebuilds ONLY the touched chunks
         const int CHUNK = 48;   // grid cells per chunk side (chunks share edge verts, so no seams)
         Image _s0Img, _s1Img; ImageTexture _s0Tex, _s1Tex;   // editor splat paint: the live 8-layer weight textures (splat0=layers 0-3, splat1=4-7)
@@ -170,6 +222,64 @@ void fragment() {
         bool _dirty;
         public bool Dirty => _dirty;
 
+        /// <summary>Holes live BESIDE the heightmap, not inside it. The heightmap file is read by the port
+        /// translator and by anything else expecting `gw, gh, floats`; appending a second section to it would
+        /// break every existing reader for a feature most maps do not use. Retail keeps them separate too
+        /// (Landscape/Holes/ per tile).</summary>
+        static string HolesPathFor(string heightmapPath) => heightmapPath + ".holes";
+
+        /// <summary>Write the hole mask, bit-packed 8 quads per byte (retail packs the same way). Writes
+        /// NOTHING and deletes any stale file when the map has no holes, so an untouched map costs zero bytes
+        /// and cannot resurrect holes from a previous save -- retail's `hasAnyHolesData` guard, same reasoning.</summary>
+        public void SaveHoles(string path)
+        {
+            if (!_anyHoles || _holes == null || HoleCount == 0)
+            {
+                if (System.IO.File.Exists(path)) System.IO.File.Delete(path);
+                return;
+            }
+            System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(path));
+            using var w = new System.IO.BinaryWriter(System.IO.File.Create(path));
+            int hw = _gw - 1, hh = _gh - 1;
+            w.Write(hw); w.Write(hh);
+            byte acc = 0; int bit = 0;
+            for (int x = 0; x < hw; x++)
+                for (int y = 0; y < hh; y++)
+                {
+                    if (_holes[x, y]) acc |= (byte)(1 << bit);
+                    if (++bit == 8) { w.Write(acc); acc = 0; bit = 0; }
+                }
+            if (bit != 0) w.Write(acc);   // the tail: hw*hh is not a multiple of 8 in general
+        }
+
+        /// <summary>Read the hole mask. A MISSING file means "no holes", not an error -- that is the normal
+        /// state for every map nobody has dug in.</summary>
+        public void LoadHoles(string path)
+        {
+            _holes = null; _anyHoles = false;
+            if (!System.IO.File.Exists(path)) return;
+            try
+            {
+                using var r = new System.IO.BinaryReader(System.IO.File.OpenRead(path));
+                int hw = r.ReadInt32(), hh = r.ReadInt32();
+                // Refuse a mask that does not match this grid rather than indexing off the end of it: a
+                // heightmap and its holes file can drift apart if one is regenerated without the other.
+                if (hw != _gw - 1 || hh != _gh - 1)
+                { GD.PushWarning($"[terrain] holes {hw}x{hh} do not match grid {_gw - 1}x{_gh - 1}; ignoring"); return; }
+                var m = new bool[hw, hh];
+                byte acc = 0; int bit = 8; bool any = false;
+                for (int x = 0; x < hw; x++)
+                    for (int y = 0; y < hh; y++)
+                    {
+                        if (bit == 8) { acc = r.ReadByte(); bit = 0; }
+                        if ((acc & (1 << bit)) != 0) { m[x, y] = true; any = true; }
+                        bit++;
+                    }
+                _holes = m; _anyHoles = any;
+            }
+            catch (System.Exception e) { GD.PushWarning($"[terrain] bad holes file, ignoring: {e.Message}"); _holes = null; _anyHoles = false; }
+        }
+
         /// <summary>Replace this terrain's heights with a generated island and rebuild the meshes. Operates on
         /// the SAME grid the sculpt brushes edit, so the result is immediately hand-editable and saves through
         /// SaveHeightmap like any other map -- generation is a starting point, not a separate kind of map.</summary>
@@ -218,6 +328,7 @@ void fragment() {
             using var w = new System.IO.BinaryWriter(System.IO.File.Create(path));
             w.Write(_gw); w.Write(_gh);
             for (int x = 0; x < _gw; x++) for (int y = 0; y < _gh; y++) w.Write(_grid[x, y]);
+            SaveHoles(HolesPathFor(path));
         }
 
         public bool LoadHeightmap(string path)   // apply a saved sculpt over the freshly-built retail terrain (dims must match)
@@ -331,9 +442,22 @@ void fragment() {
             for (int lx = 0; lx < nx - 1; lx++)
                 for (int ly = 0; ly < ny - 1; ly++)
                 {
+                    // A hole is a quad that emits no triangles. The VERTS stay in the buffer -- dropping them
+                    // would renumber every index after them, and the neighbouring quads still reference these
+                    // corners. Unreferenced verts cost a few bytes and nothing else.
+                    if (_anyHoles && IsHole(x0 + lx, y0 + ly)) continue;
                     int i00 = lx * ny + ly, i10 = (lx + 1) * ny + ly, i01 = lx * ny + (ly + 1), i11 = (lx + 1) * ny + (ly + 1);
                     idx[t++] = i00; idx[t++] = i01; idx[t++] = i10; idx[t++] = i10; idx[t++] = i01; idx[t++] = i11;
                 }
+            if (t != idx.Length) System.Array.Resize(ref idx, t);   // holes shortened it; a trailing run of 0s would draw degenerate tris at vert 0
+            if (t == 0)   // every quad in this chunk is dug: no surface at all
+            {
+                var empty = _chunkMi[cxi, cyi];
+                if (empty != null) empty.Mesh = null;
+                if (_withCollider && withCollider && _chunkBody != null && _chunkBody[cxi, cyi] != null)
+                    foreach (var c in _chunkBody[cxi, cyi].GetChildren()) if (c is CollisionShape3D ecs) ecs.Shape = null;
+                return;
+            }
             var arr = new Godot.Collections.Array(); arr.Resize((int)Mesh.ArrayType.Max);
             arr[(int)Mesh.ArrayType.Vertex] = verts; arr[(int)Mesh.ArrayType.Normal] = norms;
             arr[(int)Mesh.ArrayType.TexUV] = uvs; arr[(int)Mesh.ArrayType.Color] = cols; arr[(int)Mesh.ArrayType.Index] = idx;
@@ -372,6 +496,20 @@ void fragment() {
             int x1 = System.Math.Min(x0 + CHUNK, _gw - 1), y1 = System.Math.Min(y0 + CHUNK, _gh - 1);
             int nx = x1 - x0 + 1, ny = y1 - y0 + 1;
             if (nx < 2 || ny < 2) return;
+
+            // HOLES FORCE A TRIMESH, AND ONLY FOR THE CHUNKS THAT HAVE THEM.
+            //
+            // Godot's HeightMapShape3D is a dense field of heights -- there is no "absent" sample, so a hole
+            // cannot be expressed in it at all. Unity's TerrainData supports holes natively, which is why retail
+            // gets this for free and we do not.
+            //
+            // The heightfield is here for a measured reason (see the comment below): on PEI the collider build
+            // was ~5340ms as trimesh vs ~117ms as heightfield, and 78 MB of triangle soup vs 4.6 MB of floats.
+            // So a blanket switch to trimesh would hand back a 45x regression to buy a feature most chunks do
+            // not use. Per-chunk keeps that: a chunk with a hole pays trimesh, every other chunk keeps the fast
+            // path, and holes are rare and local by nature.
+            if (ChunkHasHole(cxi, cyi)) { ApplyChunkTrimesh(cs, cxi, cyi, x0, y0, x1, y1); return; }
+
             var data = new float[nx * ny];
             for (int hz = 0; hz < ny; hz++)
             {
@@ -382,6 +520,37 @@ void fragment() {
             cs.Shape = new HeightMapShape3D { MapWidth = nx, MapDepth = ny, MapData = data };
             cs.Scale = new Vector3(UNIT, 1f, UNIT);
             cs.Position = new Vector3(_bx + x0 * UNIT + UNIT * (nx - 1) / 2f, 0f, -_bz - y1 * UNIT + UNIT * (ny - 1) / 2f);
+        }
+
+        /// <summary>The holed-chunk collider: the same surface as the render mesh, minus the dug quads.
+        ///
+        /// This MUST be built from the same height expression and the same quad set the mesh uses, or the player
+        /// collides with something they cannot see. The two indexing traps that apply to the heightfield path do
+        /// NOT apply here -- a trimesh carries absolute vertex positions, so there is no row-major-vs-x-major
+        /// order to transpose and no negated-Z walk to invert. That is worth stating because the natural instinct
+        /// is to copy the `gy = y1 - hz` line across, and doing so here would mirror the collider.</summary>
+        void ApplyChunkTrimesh(CollisionShape3D cs, int cxi, int cyi, int x0, int y0, int x1, int y1)
+        {
+            var tris = new System.Collections.Generic.List<Vector3>();
+            for (int gx = x0; gx < x1; gx++)
+                for (int gy = y0; gy < y1; gy++)
+                {
+                    if (IsHole(gx, gy)) continue;
+                    Vector3 V(int ax, int ay) => new Vector3(
+                        _bx + ax * UNIT,
+                        _grid[ax, ay] * TILE_HEIGHT - TILE_HEIGHT / 2f,   // identical to the mesh vert expression
+                        -(_bz + ay * UNIT));
+                    Vector3 v00 = V(gx, gy), v10 = V(gx + 1, gy), v01 = V(gx, gy + 1), v11 = V(gx + 1, gy + 1);
+                    // Same winding + same diagonal as the render mesh (i00,i01,i10 / i10,i01,i11), so the
+                    // collision surface matches the visible one on the split too, not just at the corners.
+                    tris.Add(v00); tris.Add(v01); tris.Add(v10);
+                    tris.Add(v10); tris.Add(v01); tris.Add(v11);
+                }
+            if (tris.Count == 0) { cs.Shape = null; return; }
+            cs.Shape = new ConcavePolygonShape3D { Data = tris.ToArray() };
+            // Absolute world positions above -> the shape must NOT carry the heightfield path's scale/offset.
+            cs.Scale = Vector3.One;
+            cs.Position = Vector3.Zero;
         }
 
         // Rebuild every chunk overlapping a grid cell range (a brush edit) -- 1-chunk margin so shared edges/normals update.
