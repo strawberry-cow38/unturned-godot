@@ -32,18 +32,21 @@ namespace UnturnedGodot.Testing.Tests
             T.Check($"every GameAction resolves to a BOUND control (unbound: {(unbound.Count == 0 ? "none" : string.Join(", ", unbound))})",
                     unbound.Count == 0);
 
-            // A default that is a duplicate is a shipped conflict the rebind UI would have refused.
-            var seen = new Dictionary<string, GameAction>();
+            // A default the rebind UI would REFUSE is a shipped conflict: the player cannot reproduce it, and
+            // cannot restore it once they move off it.
+            //
+            // Ask ConflictWith rather than comparing Serialize() strings. Those two are not the same question,
+            // and this test learned it the hard way -- a raw string compare flagged VehicleHandbrake and Jump
+            // both on Space, which is DELIBERATE and legal: they live in different BindContexts and can never
+            // fire in the same frame (the on-foot poll sits behind the `_driving != null` early return). The
+            // check has to mirror the rule the product actually enforces, not restate a stricter one I assumed.
             var dupes = new List<string>();
             foreach (GameAction a in System.Enum.GetValues(typeof(GameAction)))
             {
-                var d = Keybinds.Default(a);
-                string k = d.Serialize();
-                if (string.IsNullOrEmpty(k)) continue;
-                if (seen.TryGetValue(k, out var other)) dupes.Add($"{a}=={other} on {d.Label}");
-                else seen[k] = a;
+                var clash = Keybinds.ConflictWith(Keybinds.Default(a), a);
+                if (clash.HasValue) dupes.Add($"{a} vs {clash.Value} on {Keybinds.Default(a).Label}");
             }
-            T.Check($"no two actions ship the same default ({(dupes.Count == 0 ? "none" : string.Join("; ", dupes))})",
+            T.Check($"no shipped default is one the rebind UI would refuse ({(dupes.Count == 0 ? "none" : string.Join("; ", dupes))})",
                     dupes.Count == 0);
             yield break;
         }
