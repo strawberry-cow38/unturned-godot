@@ -20,6 +20,13 @@ namespace UnturnedGodot
         BugReport,
     }
 
+    /// <summary>When an action's control is live. Two actions in DIFFERENT non-Anywhere contexts never fire in the
+    /// same frame (the on-foot movement poll is skipped while driving), so they may legally share a control -- Jump
+    /// and VehicleHandbrake both default to Space. Anywhere (default for anything unlisted) is the SAFE default: a
+    /// wrongly-exclusive action lets a real double-bind through silently, a wrongly-Anywhere one only over-reports a
+    /// conflict the player can see and clear.</summary>
+    public enum BindContext { OnFoot, Driving, Anywhere }
+
     /// <summary>One physical control: a keyboard key OR a mouse button.
     ///
     /// Mouse buttons are first-class rather than bolted on, because the request that prompted this was
@@ -136,6 +143,29 @@ namespace UnturnedGodot
             [GameAction.BugReport] = new Bind(Key.Backslash),
         };
 
+        // Only the context-EXCLUSIVE actions are listed; everything unlisted is Anywhere. The on-foot-only actions are
+        // OnFoot (their poll is skipped while seated); the handbrake is Driving (only read while driving). Movement
+        // (MoveForward/etc) is deliberately Anywhere -- vehicles reuse it for throttle/steer, so it IS live in both.
+        static readonly Dictionary<GameAction, BindContext> Contexts = new()
+        {
+            [GameAction.Jump] = BindContext.OnFoot, [GameAction.Sprint] = BindContext.OnFoot,
+            [GameAction.Crouch] = BindContext.OnFoot, [GameAction.CrouchToggle] = BindContext.OnFoot,
+            [GameAction.Prone] = BindContext.OnFoot, [GameAction.LeanLeft] = BindContext.OnFoot,
+            [GameAction.LeanRight] = BindContext.OnFoot,
+            [GameAction.VehicleHandbrake] = BindContext.Driving,
+        };
+
+        public static BindContext Context(GameAction a) => Contexts.TryGetValue(a, out var c) ? c : BindContext.Anywhere;
+
+        /// <summary>Short row suffix so a control shared across contexts (Space on Jump AND Handbrake) reads as
+        /// intentional in the rebind list. Empty for Anywhere actions.</summary>
+        public static string ContextLabel(GameAction a) => Context(a) switch
+        {
+            BindContext.OnFoot => "on foot",
+            BindContext.Driving => "in vehicle",
+            _ => "",
+        };
+
         static readonly Dictionary<GameAction, Bind> Current = new();
         static bool _loaded;
 
@@ -159,9 +189,14 @@ namespace UnturnedGodot
         public static GameAction? ConflictWith(Bind b, GameAction ignoring)
         {
             if (!b.IsBound) return null;
+            var ignCtx = Context(ignoring);
             foreach (GameAction a in System.Enum.GetValues(typeof(GameAction)))
             {
                 if (a == ignoring) continue;
+                // Two actions in DIFFERENT non-Anywhere contexts (on-foot Jump vs in-vehicle Handbrake) never fire in
+                // the same frame, so sharing a control is not a conflict. Anywhere on either side means it might.
+                var aCtx = Context(a);
+                if (aCtx != BindContext.Anywhere && ignCtx != BindContext.Anywhere && aCtx != ignCtx) continue;
                 var cur = Get(a);
                 if (cur.Key == b.Key && cur.Mouse == b.Mouse) return a;
             }

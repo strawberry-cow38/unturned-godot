@@ -48,7 +48,8 @@ namespace UnturnedGodot
             {
                 var row = new HBoxContainer();
                 row.AddThemeConstantOverride("separation", UITheme.Gap);
-                var name = UITheme.Label(new Label { Text = Keybinds.DisplayName(a) }, UITheme.FontBody);
+                var ctx = Keybinds.ContextLabel(a);
+                var name = UITheme.Label(new Label { Text = ctx == "" ? Keybinds.DisplayName(a) : $"{Keybinds.DisplayName(a)}  ·  {ctx}" }, UITheme.FontBody);
                 name.CustomMinimumSize = new Vector2(240, 30);
                 row.AddChild(name);
 
