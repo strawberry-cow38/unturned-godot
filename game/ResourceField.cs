@@ -181,7 +181,7 @@ namespace UnturnedGodot
                         if (!File.Exists(objP)) continue;
                         var mesh = ObjMesh.Load(objP);
                         if (mesh == null) continue;
-                        bool sways = (isTree && i == 1) || name.StartsWith("Bush");   // tree LEAVES (part 1) + bushes sway with the wind; trunk (part 0)/clay/mushroom/ore stay stiff
+                        bool sways = (isTree && i == 0) || name.StartsWith("Bush");   // tree CANOPY (part 0 = the WIDE leaf mesh) + bushes sway; the THIN trunk (part 1)/clay/mushroom/ore stay stiff
                         Material mat = sways ? MakeSwayMat(dir + name + "_" + i + "_tex.png")
                                              : MakeMat(dir + name + "_" + i + "_tex.png", !isTree);
                         foreach (var kv in byCell)
