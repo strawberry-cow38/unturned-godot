@@ -2776,8 +2776,8 @@ namespace UnturnedGodot.Testing
             Vector3 up45 = pup.GlobalBasis * new Vector3(0f, Mathf.Sin(Mathf.DegToRad(45f)), -Mathf.Cos(Mathf.DegToRad(45f)));
             T.Check("FP free-look pitch 45 tilts the view up", (-cam.GlobalBasis.Z).Dot(up45.Normalized()) > 0.999f);
 
-            // H (through the real input path -- allowed while riding) -> 3P chase; the orbit must consume the vars
-            p._UnhandledInput(new InputEventKey { Pressed = true, Keycode = Key.H });
+            // ToggleFirstPerson (default K, moved off H) through the real input path -- allowed while riding -> 3P chase; the orbit must consume the vars
+            p._UnhandledInput(new InputEventKey { Pressed = true, PhysicalKeycode = Key.K });
             p.DebugSetDriveOrbit(0f, 15f);
             p._Process(0.016);
             Vector3 chase0 = cam.GlobalPosition;
@@ -2788,7 +2788,7 @@ namespace UnturnedGodot.Testing
             T.Check("3P orbit yaw moves the chase cam around the riding puppet",
                 cam.GlobalPosition.DistanceTo(chase0) > 2f);
 
-            p._UnhandledInput(new InputEventKey { Pressed = true, Keycode = Key.H });   // back to FP for teardown parity
+            p._UnhandledInput(new InputEventKey { Pressed = true, PhysicalKeycode = Key.K });   // back to FP for teardown parity
             p.ExitPuppet(new Vector3(0f, 0.1f, 0f));
             yield return Ticks(1);
         }

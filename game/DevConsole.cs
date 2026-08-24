@@ -95,7 +95,7 @@ namespace UnturnedGodot
             // "move the dev tools to be console commands instead"). The console cannot be a console
             // command that opens itself, so it is the one dev tool that still needs a key -- and ` is
             // where every other game puts it.
-            if (k.Keycode == Key.Quoteleft) { Toggle(); GetViewport().SetInputAsHandled(); }
+            if (Keybinds.Matches(GameAction.Console, k)) { Toggle(); GetViewport().SetInputAsHandled(); }   // the BOUND console control (default `)
             else if (_input.Visible && k.Keycode == Key.Tab) { Autocomplete(); GetViewport().SetInputAsHandled(); }
             else if (_input.Visible && k.Keycode == Key.Escape) { Toggle(); GetViewport().SetInputAsHandled(); }
             else if (_input.Visible && k.Keycode == Key.Up) { HistoryNav(-1); GetViewport().SetInputAsHandled(); }     // up = older command

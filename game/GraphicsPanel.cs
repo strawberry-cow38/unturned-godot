@@ -157,8 +157,8 @@ namespace UnturnedGodot
         {
             var h = new HBoxContainer();
             h.AddThemeConstantOverride("separation", 12);
-            h.AddChild(new Label { Text = name, SizeFlagsHorizontal = Control.SizeFlags.ExpandFill });
-            var readout = new Label { Text = label(), CustomMinimumSize = new Vector2(56, 0), HorizontalAlignment = HorizontalAlignment.Right };
+            h.AddChild(UITheme.Label(new Label { Text = name, SizeFlagsHorizontal = Control.SizeFlags.ExpandFill }, UITheme.FontBody));
+            var readout = UITheme.Label(new Label { Text = label(), CustomMinimumSize = new Vector2(56, 0), HorizontalAlignment = HorizontalAlignment.Right }, UITheme.FontBody);
             var slider = new HSlider
             {
                 MinValue = min, MaxValue = max, Step = step, Value = get(),
@@ -178,9 +178,10 @@ namespace UnturnedGodot
         {
             var h = new HBoxContainer();
             h.AddThemeConstantOverride("separation", 12);
-            var lbl = new Label { Text = name, SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+            var lbl = UITheme.Label(new Label { Text = name, SizeFlagsHorizontal = Control.SizeFlags.ExpandFill }, UITheme.FontBody);
             h.AddChild(lbl);
             var btn = new Button { Text = value(), CustomMinimumSize = new Vector2(150, 34) };
+            UITheme.Button(btn);
             btn.Pressed += () => { advance(); btn.Text = value(); };
             h.AddChild(btn);
             parent.AddChild(h);

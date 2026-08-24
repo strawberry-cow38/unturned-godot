@@ -112,14 +112,13 @@ namespace UnturnedGodot
 
         public override void _Input(InputEvent e)
         {
-            if (e is not InputEventKey { Pressed: true } k) return;
-            if (Keybinds.Matches(GameAction.Map, k))
+            if (Keybinds.JustPressed(GameAction.Map, e))
             {
-                if (GetViewport().GuiGetFocusOwner() is LineEdit) return;   // don't hijack typing in the F1 console
+                if (GetViewport().GuiGetFocusOwner() is LineEdit) return;   // don't hijack typing in the console
                 Toggle();
                 GetViewport().SetInputAsHandled();
             }
-            else if (_root.Visible && k.Keycode == Key.Escape) { Close(); GetViewport().SetInputAsHandled(); }
+            else if (e is InputEventKey { Pressed: true, Keycode: Key.Escape } && _root.Visible) { Close(); GetViewport().SetInputAsHandled(); }
         }
 
         void Toggle() { if (_root.Visible) Close(); else Open(); }

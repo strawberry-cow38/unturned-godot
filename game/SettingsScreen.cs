@@ -27,10 +27,13 @@ namespace UnturnedGodot
 
             root.AddChild(UITheme.Label(new Label { Text = "SETTINGS", HorizontalAlignment = HorizontalAlignment.Center }, UITheme.FontTitle));
 
+            // Strip needs a control WITH a "panel" theme item; an HBox has none, so wrap it in a PanelContainer.
+            var stripBg = new PanelContainer();
+            UITheme.Strip(stripBg);
+            root.AddChild(stripBg);
             var strip = new HBoxContainer();
             strip.AddThemeConstantOverride("separation", UITheme.Gap);
-            UITheme.Strip(strip);
-            root.AddChild(strip);
+            stripBg.AddChild(strip);
 
             var content = new MarginContainer();
             content.AddThemeConstantOverride("margin_top", UITheme.Gap);

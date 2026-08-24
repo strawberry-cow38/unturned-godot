@@ -2147,7 +2147,7 @@ namespace UnturnedGodot.Testing
             // drive the REAL F-interact chain headlessly (NetTests p._UnhandledInput(Key) pattern). No focusable
             // item/deployable/vehicle in the rig + the crop is to the SIDE (not in the look ray), so the chain falls
             // through to the harvest branches -> RequestHarvestNearestCrop wins -> the direct branch is skipped.
-            player._UnhandledInput(new InputEventKey { Pressed = true, Keycode = Key.F });
+            player._UnhandledInput(new InputEventKey { Pressed = true, PhysicalKeycode = Key.F });
 
             // the seam routed with the crop's NetId ...
             T.Check($"F-interact routed the harvest over the seam (fired={fired}, id={captured}, expected {cropNode.NetId})",

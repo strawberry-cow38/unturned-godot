@@ -28,8 +28,8 @@ namespace UnturnedGodot
             outer.AddThemeConstantOverride("separation", UITheme.Gap);
             AddChild(outer);
 
-            outer.AddChild(UITheme.Label(new Label { Text = "CONTROLS" }, UITheme.FontTitle));
-            _hint = UITheme.Label(new Label { Text = "click a binding, then press any key or mouse button  ·  Esc cancels" },
+            outer.AddChild(UITheme.Label(new Label { Text = "KEY BINDS" }, UITheme.FontTitle));
+            _hint = UITheme.Label(new Label { Text = "click a binding, then press any key or mouse button  ·  Del unbinds  ·  Esc cancels" },
                                   UITheme.FontLabel, UITheme.TextDim);
             outer.AddChild(_hint);
 
@@ -94,10 +94,24 @@ namespace UnturnedGodot
                 // Esc cancels rather than binding. Binding Esc would be legal and is a trap: it is the only
                 // way out of most menus, so a player who bound it would have no way to unbind it.
                 if (k.PhysicalKeycode == Key.Escape) { Cancel(); GetViewport().SetInputAsHandled(); return; }
+                // Delete/Backspace UNBINDS -- the "free it first" refusal needs a way to actually free a control, and
+                // swapping two binds otherwise means parking one on a scratch key. Load tolerates an empty entry.
+                if (k.PhysicalKeycode is Key.Delete or Key.Backspace)
+                {
+                    Keybinds.Set(target, default);
+                    _capturing = null; RefreshAll();
+                    UITheme.Label(_hint, UITheme.FontLabel, UITheme.TextDim);
+                    _hint.Text = $"{Keybinds.DisplayName(target)} unbound";
+                    GetViewport().SetInputAsHandled();
+                    return;
+                }
                 bind = new Bind(k.PhysicalKeycode);
             }
             else if (e is InputEventMouseButton mb && mb.Pressed)
             {
+                // The wheel is not a stable bind (scrolling to a lower row fires it), so blocklist it like Esc.
+                if (mb.ButtonIndex is MouseButton.WheelUp or MouseButton.WheelDown or MouseButton.WheelLeft or MouseButton.WheelRight)
+                { GetViewport().SetInputAsHandled(); return; }
                 bind = new Bind(mb.ButtonIndex);
             }
             else return;

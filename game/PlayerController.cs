@@ -1647,7 +1647,7 @@ namespace UnturnedGodot
         void UpdateSalvage(float delta)
         {
             var v = (_focusVehicle != null && IsInstanceValid(_focusVehicle)) ? _focusVehicle : null;
-            bool lmb = Input.MouseMode == Input.MouseModeEnum.Captured && Input.IsMouseButtonPressed(MouseButton.Left) && !_dead && _driving == null && !(_invUI?.IsOpen ?? false);
+            bool lmb = Input.MouseMode == Input.MouseModeEnum.Captured && Keybinds.Pressed(GameAction.Fire) && !_dead && _driving == null && !(_invUI?.IsOpen ?? false);
             bool sparks = HasBlowtorch && lmb;   // the torch is LIT whenever the trigger's held (source: Repeated Start_Swing continuous use); it repairs a hurt car / salvages a cold wreck when aimed at one
             if (v != null && HasBlowtorch && !v.IsWreck && v.Hurt)   // blowtorch REPAIR: full-auto healing of a hurt alive car while LMB is held (master), with torch sparks
             {
@@ -1841,14 +1841,7 @@ namespace UnturnedGodot
         // Hotbar (master): 1 = primary slot, 2 = secondary slot; RMB an item + 3-9 binds that key to it, then the key equips it.
         public readonly System.Collections.Generic.Dictionary<int, (byte page, byte x, byte y)> HotbarBinds = new();
         public void BindHotbar(int key, byte page, byte x, byte y) { HotbarBinds[key] = (page, x, y); GD.Print($"[hotbar] key {key} -> item at page {page} ({x},{y})"); }
-        // Which hotbar slot (1..9) this event's control maps to, or null. Lets Hotbar1..Hotbar9 be rebindable
-        // without a raw keycode range check (Hotbar1..Hotbar9 are consecutive in the GameAction enum).
-        static int? HotbarSlot(InputEvent e)
-        {
-            for (int h = 0; h < 9; h++)
-                if (Keybinds.Matches(GameAction.Hotbar1 + h, e)) return h + 1;
-            return null;
-        }
+        static int? HotbarSlot(InputEvent e) => Keybinds.HotbarSlot(e);   // shared logic lives in Keybinds so equip + bind-item read one key space
 
         public void EquipHotbar(int n)
         {
@@ -4823,7 +4816,7 @@ namespace UnturnedGodot
             }
             if (_ridingTrain != null)   // RIDING A TRAIN: self-contained input (H = 1P/3P cam, mouse orbits the 3P chase). F-exit + rest use the normal chain below; no vehicle/MP paths touched.
             {
-                if (@event is InputEventKey { Pressed: true } && Keybinds.Matches(GameAction.ToggleFirstPerson, @event)) { _fp = !_fp; GetViewport().SetInputAsHandled(); return; }
+                if (Keybinds.JustPressed(GameAction.ToggleFirstPerson, @event)) { _fp = !_fp; GetViewport().SetInputAsHandled(); return; }
                 if (@event is InputEventMouseButton { ButtonIndex: MouseButton.Left } mb) { if (mb.Pressed) _ridingTrain.Honk(); GetViewport().SetInputAsHandled(); return; }   // LMB = press-to-honk (one-shot, master)
                 if (@event is InputEventMouseButton { ButtonIndex: MouseButton.Right } rmbT) { if (rmbT.Pressed) _ridingTrain.ToggleHeadlights(); GetViewport().SetInputAsHandled(); return; }   // RMB = toggle headlights (master), like vehicles
                 if (@event is InputEventMouseMotion tmm && Input.MouseMode == Input.MouseModeEnum.Captured)
@@ -4905,7 +4898,7 @@ namespace UnturnedGodot
                     _viewmodel?.AddLookDelta(mm.Relative.Y * sens, mm.Relative.X * sens);
                 }
             }
-            else if (@event is InputEventMouseButton { Pressed: true } && Keybinds.Matches(GameAction.Fire, @event))
+            else if (Keybinds.JustPressed(GameAction.Fire, @event))
             {
                 // A GUNNER fires the mount; only the DRIVER honks. This used to be an unconditional
                 // `if (_driving != null) _driving.Honk();` with no seat check, which made FireTurret unreachable
@@ -4929,30 +4922,30 @@ namespace UnturnedGodot
                 else if (_melee != null) MeleeAttack(false);            // LMB with a normal melee = WEAK swing (source UseableMelee)
                 else StartFire();
             }
-            else if (@event is InputEventMouseButton { Pressed: false } && Keybinds.Matches(GameAction.Fire, @event))
+            else if (Keybinds.JustReleased(GameAction.Fire, @event))
             {
                 if (HoldingFisher) FisherRelease();   // LMB release with a rod: lock in the charge and fling the bobber (UseableFisher.stopPrimary)
             }
-            else if (@event is InputEventMouseButton rmb && Keybinds.Matches(GameAction.Aim, @event))
+            else if (Keybinds.Matches(GameAction.Aim, @event) && @event is not InputEventKey { Echo: true })
             {
-                if (_driving != null) { if (rmb.Pressed) _driving.ToggleHeadlights(); }   // RMB while driving: toggle lights
+                if (_driving != null) { if (Keybinds.IsDown(@event)) _driving.ToggleHeadlights(); }   // RMB while driving: toggle lights
                 else if (_riding != null) { }                                             // riding: no net light toggle in v1
-                else if (HoldingWireTool) { if (rmb.Pressed) { if (_wiring) WireRmb(); else WireManageArm(); } }   // routing: undo/cancel; else: arm a completed-wire clear/unplug (phase 5)
-                else if (HoldingHoseTool) { if (rmb.Pressed) { if (_hosing) HoseRmb(); else if (IsInstanceValid(_hosePort) && _hosePort.Owner != null && _hosePort.Owner.Role == FluidRole.Valve) _hosePort.Owner.ToggleValve(); else HoseManageArm(); } }   // routing: undo/cancel node; else: RMB a valve port toggles it, else arm a hosed-port clear/unplug (mirror the wire tool)
-                else if (HoldingRopeTool) { if (rmb.Pressed) { if (_roping) CancelRope(); else RopeManageArm(); } }   // rope tool: cancel a pending tie; else arm a clear/disconnect (hold RMB clears the rope, tap disconnects that side) -- mirrors the wire tool
+                else if (HoldingWireTool) { if (Keybinds.IsDown(@event)) { if (_wiring) WireRmb(); else WireManageArm(); } }   // routing: undo/cancel; else: arm a completed-wire clear/unplug (phase 5)
+                else if (HoldingHoseTool) { if (Keybinds.IsDown(@event)) { if (_hosing) HoseRmb(); else if (IsInstanceValid(_hosePort) && _hosePort.Owner != null && _hosePort.Owner.Role == FluidRole.Valve) _hosePort.Owner.ToggleValve(); else HoseManageArm(); } }   // routing: undo/cancel node; else: RMB a valve port toggles it, else arm a hosed-port clear/unplug (mirror the wire tool)
+                else if (HoldingRopeTool) { if (Keybinds.IsDown(@event)) { if (_roping) CancelRope(); else RopeManageArm(); } }   // rope tool: cancel a pending tie; else arm a clear/disconnect (hold RMB clears the rope, tap disconnects that side) -- mirrors the wire tool
                 else if (HoldingDetonatorTool) { }   // detonator has no RMB action (LMB plunges) -- swallow so it doesn't fall through to ADS
-                else if (HoldingDeployable) { if (rmb.Pressed) Dequip(); }   // RMB cancels placement entirely -> empty hands (strawberry)
-                else if (_heldFluidItem != null) { if (rmb.Pressed) TryFillContainer(); }   // fluid container in hand: RMB a placed tank/source to fill it (LMB sips) (strawberry)
-                else if (_heldFuelItem != null) { if (rmb.Pressed) TryExtractFuel(); }   // gas can in hand: RMB a powered PUMP to SUCK fuel into the can (LMB pours it out into a gen/vehicle) (master)
-                else if (_melee != null) { if (rmb.Pressed && !IsRepeatedMelee) MeleeAttack(true); }   // RMB = STRONG swing on a normal melee; a Repeated tool (blowtorch/chainsaw) has NO strong attack (source startSecondary: if(!isRepeated)) and no ADS
-                else _viewmodel?.SetAiming(rmb.Pressed);   // hold RMB to ADS -- GUNS only (a melee weapon has no sights)
+                else if (HoldingDeployable) { if (Keybinds.IsDown(@event)) Dequip(); }   // RMB cancels placement entirely -> empty hands (strawberry)
+                else if (_heldFluidItem != null) { if (Keybinds.IsDown(@event)) TryFillContainer(); }   // fluid container in hand: RMB a placed tank/source to fill it (LMB sips) (strawberry)
+                else if (_heldFuelItem != null) { if (Keybinds.IsDown(@event)) TryExtractFuel(); }   // gas can in hand: RMB a powered PUMP to SUCK fuel into the can (LMB pours it out into a gen/vehicle) (master)
+                else if (_melee != null) { if (Keybinds.IsDown(@event) && !IsRepeatedMelee) MeleeAttack(true); }   // RMB = STRONG swing on a normal melee; a Repeated tool (blowtorch/chainsaw) has NO strong attack (source startSecondary: if(!isRepeated)) and no ADS
+                else _viewmodel?.SetAiming(Keybinds.IsDown(@event));   // hold RMB to ADS -- GUNS only (a melee weapon has no sights)
             }
-            else if (@event is InputEventKey { Echo: false } rKey && Keybinds.Matches(GameAction.Reload, @event))
+            else if (Keybinds.Matches(GameAction.Reload, @event) && @event is not InputEventKey { Echo: true })
             {
-                if (HoldingDeployable && _placer != null) { if (rKey.Pressed) _placer.YawOffset += 90f; }   // R rotates the deployable ghost 90 deg (strawberry)
+                if (HoldingDeployable && _placer != null) { if (Keybinds.IsDown(@event)) _placer.YawOffset += 90f; }   // R rotates the deployable ghost 90 deg (strawberry)
                 else if (HasGunOut && CanOpenAmmoPie)   // shotgun / mag gun: quick TAP = reload, HOLD = ammo radial (master)
                 {
-                    if (rKey.Pressed) { if (!_rHolding) { _rHolding = true; _rHeldSince = Time.GetTicksMsec(); } }
+                    if (Keybinds.IsDown(@event)) { if (!_rHolding) { _rHolding = true; _rHeldSince = Time.GetTicksMsec(); } }
                     else   // release
                     {
                         _rHolding = false;
@@ -4960,33 +4953,33 @@ namespace UnturnedGodot
                         else StartReload();   // quick tap -> normal reload
                     }
                 }
-                else if (rKey.Pressed && HasGunOut) StartReload();   // any other gun: instant reload on press (unchanged)
+                else if (Keybinds.IsDown(@event) && HasGunOut) StartReload();   // any other gun: instant reload on press (unchanged)
             }
             // Echo: false, like R and F above. The hotbar keys were the only equip input without it, so HOLDING a
             // number key ran the equip/de-equip toggle at the OS key-repeat rate -- each pass frees the viewmodel
             // and builds a new one, so the weapon strobed and ~30 Viewmodel nodes a second were constructed and
             // thrown away while the key was down. Review 2026-08-16.
-            else if (@event is InputEventKey { Pressed: true, Echo: false } && HotbarSlot(@event) is int hbSlot)
+            else if (Keybinds.IsDown(@event) && @event is not InputEventKey { Echo: true } && HotbarSlot(@event) is int hbSlot)
                 EquipHotbar(hbSlot);   // hotbar keys (bag CLOSED): 1/2 = primary/secondary, 3-9 = bound item. Bindable Hotbar1..Hotbar9 (default 1..9). Binding (RMB item + 3-9) is handled in InventoryUI while the bag's open.
-            else if (@event is InputEventKey { Pressed: true } && Keybinds.Matches(GameAction.Firemode, @event))
+            else if (Keybinds.JustPressed(GameAction.Firemode, @event))
             {
                 // Gated on build mode the same way C already splits crouch-vs-cycle-structure: while the build
                 // ghost is up, firemode is meaningless and the tier selector is what you want.
                 if (_build != null && _build.Active) _build.CycleTier();
                 else if (_driving == null && HasGunOut) CycleFiremode();   // V on foot: cycle firemode (only with a gun out)
             }
-            else if (@event is InputEventKey { Pressed: true } && Keybinds.Matches(GameAction.ToggleFirstPerson, @event))
+            else if (Keybinds.JustPressed(GameAction.ToggleFirstPerson, @event))
                 _fp = !_fp;   // ToggleFirstPerson (default K): 3rd/1st person camera. Moved off H so Grenade(H) is no longer dead code.
             // (Q weapon-switch removed -- master: we have the inventory + spawn commands to test weapons now)
-            else if (@event is InputEventKey { Pressed: true, Keycode: Key.L })
+            else if (@event is InputEventKey { Pressed: true, Keycode: Key.L } && _driving != null)
             {
                 if (_driving != null) _driving.ToggleHeadlights();         // L while driving: toggle headlights
             }
-            else if (@event is InputEventKey { Pressed: true, Keycode: Key.Ctrl })
+            else if (@event is InputEventKey { Pressed: true, Keycode: Key.Ctrl } && _driving != null)
             {
                 if (_driving != null && _driving.HasSiren) _driving.ToggleSiren();   // Ctrl while driving an emergency vehicle: toggle siren/lightbar (master)
             }
-            else if (@event is InputEventKey { Pressed: true, Echo: false } && Keybinds.Matches(GameAction.Interact, @event))   // Interact (default F, moved off E): exit/hitch/pickup/enter/harvest/open-crate; nothing to interact -> inspect the held weapon. Echo:false so HOLDING it can't double-fire the hitch toggle.
+            else if (Keybinds.JustPressed(GameAction.Interact, @event))   // Interact (default F, moved off E): exit/hitch/pickup/enter/harvest/open-crate; nothing to interact -> inspect the held weapon. Echo:false so HOLDING it can't double-fire the hitch toggle.
             {
                 if (_noteReader != null && _noteReader.IsOpen) _noteReader.Close();   // F while a note is open -> close it first (same as Esc)
                 else if (_invUI != null && _invUI.IsOpen) { SaveGunState(); CloseCrate(); _invUI.Close(); Input.MouseMode = Input.MouseModeEnum.Captured; }   // F while a container inventory is open -> CLOSE it (CloseCrate swings the door shut too), same as Escape (master)
@@ -5023,7 +5016,7 @@ namespace UnturnedGodot
                 else if (_melee != null) _viewmodel?.PlayMeleeInspect();   // nothing to interact with -> inspect (melee plays its own Inspect clip)
                 else _viewmodel?.PlayInspect();                            // ...or the gun's own inspect
             }
-            else if (@event is InputEventKey { Pressed: false } && Keybinds.Matches(GameAction.Interact, @event) && _fHeldDeploy != null)
+            else if (Keybinds.JustReleased(GameAction.Interact, @event) && _fHeldDeploy != null)
             {   // released F over a deployable: a quick TAP toggles a generator (a long hold already picked it up in UpdateDeployPickup)
                 if (IsInstanceValid(_fHeldDeploy) && _deployPickupTimer < DeployPickupTime && _fHeldDeploy.CanTogglePower)
                 {
@@ -5032,7 +5025,7 @@ namespace UnturnedGodot
                 if (IsInstanceValid(_fHeldDeploy)) _fHeldDeploy.PickupProgress = 0f;
                 _fHeldDeploy = null; _deployPickupTimer = 0f;
             }
-            else if (@event is InputEventKey { Pressed: false } && Keybinds.Matches(GameAction.Interact, @event) && _fHeldFluid != null)
+            else if (Keybinds.JustReleased(GameAction.Interact, @event) && _fHeldFluid != null)
             {   // released F over a fluid device: a quick TAP on a VALVE opens/closes it (a long hold already picked it up in
                 // UpdateFluidPickup) -- mirrors the generator tap-toggle, so a valve is toggled the SAME way as a power switch
                 // (strawberry: "valve cannot be interacted with?" -- the hose-tool-port RMB still works too).
@@ -5040,21 +5033,21 @@ namespace UnturnedGodot
                     _fHeldFluid.ToggleValve();
                 _fHeldFluid = null; _fluidPickupTimer = 0f;
             }
-            else if (@event is InputEventKey { Pressed: false } && Keybinds.Matches(GameAction.Interact, @event) && _fHeldDoor != null)
+            else if (Keybinds.JustReleased(GameAction.Interact, @event) && _fHeldDoor != null)
             {   // released F over a door: a quick TAP opens/closes it (a long hold already flipped the lock
                 // in UpdateDoorLockHold) -- the same tap/hold split the generator and the valve use
                 if (IsInstanceValid(_fHeldDoor) && _doorLockTimer < DeployPickupTime) RequestToggleDoor(_fHeldDoor);
                 _fHeldDoor = null; _doorLockTimer = 0f;
             }
-            else if (@event is InputEventKey { Pressed: true, Keycode: Key.B })
-                ToggleHeldLight();    // B is the source TACTICAL key: the held flashlight. Self-guards on actually holding one.
+            else if (Keybinds.JustPressed(GameAction.Flashlight, @event))
+                ToggleHeldLight();    // Flashlight (default B, source TACTICAL key): the held flashlight. Self-guards on actually holding one.
             // BUILD MODE HAS NO KEY (strawberry 2026-08-12: "remove build mode toggle for now. just the hotkey").
             // B used to toggle it and now belongs to the torch, which is the source binding. BuildTool itself is
             // untouched and intact -- Toggle/CycleType/Place/Spawn all still work -- but nothing calls Toggle(),
             // so `Active` can never become true and the tool is UNREACHABLE in game, not merely unbound. Say that
             // plainly rather than leaving a dead C-cycles-structure branch reading like a live feature.
             // Restoring it is one line here, on whichever key it should have.
-            else if (@event is InputEventKey { Pressed: true, Keycode: Key.C })
+            else if (@event is InputEventKey { Pressed: true, Keycode: Key.C } && (_build?.Active ?? false))
                 _build?.CycleType();  // cycle the structure type (floor/wall/pillar/rampart/roof)
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.R } && (_build?.Active ?? false))
                 SalvageAimedStructure();   // R while building: take the aimed piece back down (reload is meaningless here)
@@ -5062,9 +5055,9 @@ namespace UnturnedGodot
                 UpgradeAimedStructure();   // Y while building: wood -> brick -> metal in place
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.G } && _driving != null && _driving.HasRetractGear)
                 { GD.Print("[GEAR] G-input -> retract branch"); _driving.ToggleGear(); }   // G while flying a retract-gear plane: toggle the landing gear (debounced in Vehicle) (master 2026-08-18)
-            else if (@event is InputEventKey { Pressed: true } && Keybinds.Matches(GameAction.Melee, @event))
+            else if (Keybinds.JustPressed(GameAction.Melee, @event))
                 MeleeAttack();        // dedicated melee swing (default G) at a zombie in reach
-            else if (@event is InputEventKey { Pressed: true } && Keybinds.Matches(GameAction.Grenade, @event))
+            else if (Keybinds.JustPressed(GameAction.Grenade, @event))
                 ThrowGrenade();       // throw a grenade (default H) -- reachable now that fp-toggle moved to ToggleFirstPerson
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.P, Echo: false })
             {
@@ -5075,26 +5068,26 @@ namespace UnturnedGodot
                 WorldItem.ShowLookSphere = !WorldItem.ShowLookSphere;               // O: toggle the look-END sphere visualizer (master)
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.I, Echo: false })
             { _showLookHulls = !_showLookHulls; if (_lookHullViz != null) _lookHullViz.Visible = _showLookHulls; }   // I: toggle the look-focus HULL wireframes for every vehicle (strawberry)
-            else if (@event is InputEventKey { Echo: false } tKey && Keybinds.Matches(GameAction.AttachMenu, @event))
+            else if (Keybinds.Matches(GameAction.AttachMenu, @event) && @event is not InputEventKey { Echo: true })
             {
                 if (AttachMenu != null)   // AttachMenu (default T, hold): show the weapon-attachment menu while held, release to close
                 {
                     // attachments are gun-only: no menu for melee/fists/consumable/deployable (strawberry)
-                    if (tKey.Pressed && !AttachMenu.IsOpen && _viewmodel != null && _viewmodel.IsGunViewmodel)
+                    if (Keybinds.IsDown(@event) && !AttachMenu.IsOpen && _viewmodel != null && _viewmodel.IsGunViewmodel)
                     {
                         AttachMenu.VM = _viewmodel;
                         AttachMenu.Player = this;   // the menu draws its quick-attach options from THIS bag; bound here beside VM so a new call site can't wire one and forget the other
                         AttachMenu.Open();
                         Input.MouseMode = Input.MouseModeEnum.Visible;
                     }
-                    else if (!tKey.Pressed && AttachMenu.IsOpen)
+                    else if (!Keybinds.IsDown(@event) && AttachMenu.IsOpen)
                     {
                         AttachMenu.Close();
                         Input.MouseMode = Input.MouseModeEnum.Captured;
                     }
                 }
             }
-            else if (@event is InputEventKey { Pressed: true } && Keybinds.Matches(GameAction.Inventory, @event))
+            else if (Keybinds.JustPressed(GameAction.Inventory, @event))
             {
                 if (_viewmodel != null && _viewmodel.InAttachView) return;   // no inventory while the attachment menu is up
                 SaveGunState();   // capture the held gun's live state (ammo/mag/firemode/attachments) so dropping/moving it in the inventory keeps it (master)
@@ -5104,12 +5097,12 @@ namespace UnturnedGodot
             }
             // Y opens the crafting index -- the inventory navbar has advertised "Craft [Y]" all along while
             // nothing listened for it outside build mode. The build-mode Y handler above still wins when active.
-            else if (@event is InputEventKey { Pressed: true } && Keybinds.Matches(GameAction.Craft, @event) && !(_build?.Active ?? false))
+            else if (Keybinds.JustPressed(GameAction.Craft, @event) && !(_build?.Active ?? false))
             {
                 _craftMenu?.Toggle();
                 Input.MouseMode = (_craftMenu != null && _craftMenu.IsOpen) ? Input.MouseModeEnum.Visible : Input.MouseModeEnum.Captured;
             }
-            else if (@event is InputEventKey { Pressed: true } && Keybinds.Matches(GameAction.Skills, @event))
+            else if (Keybinds.JustPressed(GameAction.Skills, @event))
             {
                 _skillsUI?.Toggle();   // Skills (default J): open/close the skills menu (spend XP to level skills)
                 Input.MouseMode = (_skillsUI != null && _skillsUI.IsOpen) ? Input.MouseModeEnum.Visible : Input.MouseModeEnum.Captured;
@@ -6175,7 +6168,7 @@ namespace UnturnedGodot
                         _magSwapAutoRack = false;
                         _viewmodel?.PlayHammer(Skills.DexterityReloadSpeed());
                     }
-                    else if (Input.MouseMode == Input.MouseModeEnum.Captured && Input.IsMouseButtonPressed(MouseButton.Right) && HasGunOut && _melee == null)
+                    else if (Input.MouseMode == Input.MouseModeEnum.Captured && Keybinds.Pressed(GameAction.Aim) && HasGunOut && _melee == null)
                         _viewmodel?.SetAiming(true);   // resume ADS if RMB is still held when the anim finishes
                 }
             }
@@ -6996,11 +6989,11 @@ namespace UnturnedGodot
             // to the airframe, and _firemode (Semi by default, and unreachable while seated) must not gate it
             // either. Without this, a gunner got one shot per click at best. Review 2026-08-16.
             if (_driving != null && _seatIndex != 0 && _driving.HasTurret(_seatIndex)
-                && !NetAvatar && !UiInputBlocked && Input.IsMouseButtonPressed(MouseButton.Left)) Fire();
+                && !NetAvatar && !UiInputBlocked && Keybinds.Pressed(GameAction.Fire)) Fire();
             if (_fireCd <= 0f && !_reloading)
             {
                 if (_burstLeft > 0) { if (Fire()) { _burstLeft--; if (_burstLeft == 0) _burstCd = 0.2f; } else _burstLeft = 0; }
-                else if (_firemode == FireMode.Auto && !NetAvatar && !UiInputBlocked && Input.IsMouseButtonPressed(MouseButton.Left)) Fire();   // NetAvatar: never poll global input (a windowed L1 host's held mouse must not fire server avatars)
+                else if (_firemode == FireMode.Auto && !NetAvatar && !UiInputBlocked && Keybinds.Pressed(GameAction.Fire)) Fire();   // NetAvatar: never poll global input (a windowed L1 host's held mouse must not fire server avatars)
             }
 
             // Stance FSM: the shell polls the keys, the engine-free PlayerStanceSim owns the state machine
@@ -7210,7 +7203,7 @@ namespace UnturnedGodot
 
         void StepLean(float delta)
         {
-            bool blocked = NetAvatar || UiInputBlocked || _dead || _driving != null || _riding != null;
+            bool blocked = NetAvatar || UiInputBlocked || _dead || _driving != null || _riding != null || _ridingTrain != null || _ridingCrane != null;   // train/crane too -- StepLean runs BEFORE their _PhysicsProcess returns, so Lean (an OnFoot action) must not stay live while seated on them
             bool q = !blocked && Keybinds.Pressed(GameAction.LeanLeft);
             bool e = !blocked && Keybinds.Pressed(GameAction.LeanRight);
             if (ScriptedLean.HasValue) { q = ScriptedLean.Value > 0; e = ScriptedLean.Value < 0; }

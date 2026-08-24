@@ -724,7 +724,7 @@ namespace UnturnedGodot
                 string prompt;
                 if (PickupProgress > 0.01f) prompt = $"Picking up... {Mathf.Clamp((int)(PickupProgress * 100f), 0, 99)}%";
                 else if (OnFire) prompt = "";
-                else prompt = ((Def != null && (Def.Fuel > 0f || Def.IsSwitch)) ? $"[F] Turn {((Def.IsSwitch ? _switchOn : _powered) ? "Off" : "On")} · " : "") + "Hold [F]: pick up";
+                else prompt = ((Def != null && (Def.Fuel > 0f || Def.IsSwitch)) ? $"[{Keybinds.Get(GameAction.Interact).Label}] Turn {((Def.IsSwitch ? _switchOn : _powered) ? "Off" : "On")} · " : "") + $"Hold [{Keybinds.Get(GameAction.Interact).Label}]: pick up";
                 _info.SetPrompt(prompt, OutlineColor);
             }
         }
