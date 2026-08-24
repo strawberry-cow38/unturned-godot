@@ -20,8 +20,10 @@ namespace UnturnedGodot
         // 0..1 wind strength at a world position, drifting over time. Remapped so there's usually a light breeze with
         // occasional calms + gusts (the raw Perlin is centred on 0.5).
         public static float? TestWind;   // L1: force a fixed wind (null = live noise). Set + cleared by power.wind_turbine.
+        static bool _envRead;
         public static float SampleWind(Vector3 worldPos)
         {
+            if (!_envRead) { _envRead = true; var e = System.Environment.GetEnvironmentVariable("UG_WIND"); if (float.TryParse(e, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var w)) TestWind = w; }   // UG_WIND=0..1 forces a fixed strength (flag droop / turbine tests)
             if (TestWind.HasValue) return TestWind.Value;
             float t = (float)(Time.GetTicksMsec() / 1000.0);
             float n = Noise().GetNoise2D(worldPos.X + t * DriftX, worldPos.Z + t * DriftZ);   // -1..1
