@@ -4412,7 +4412,7 @@ namespace UnturnedGodot
             // TrySwitchSeat(0) was refused: a jeep nobody can steer. The vehicle-explosion path never showed it
             // because DriveVehicle calls ExitVehicle() (which frees the seat) BEFORE applying the damage.
             // Review 2026-08-16.
-            if (v != null) { v.OccupiedSeats.Remove(_seatIndex); v.EngineOn = false; v.Park(); GlobalPosition = ClampExitSpot(v.GlobalPosition + v.GlobalTransform.Basis.X * 2.4f + Vector3.Up * 1.0f); }
+            if (v != null) { v.OccupiedSeats.Remove(_seatIndex); v.Park(); GlobalPosition = ClampExitSpot(v.GlobalPosition + v.GlobalTransform.Basis.X * 2.4f + Vector3.Up * 1.0f); }   // engine KEEPS RUNNING when you get out; Park still holds it so it can't roll off
             _seatIndex = 0;
             if (Hud != null) Hud.Vehicle = null;
             foreach (var c in FindChildren("*", "CollisionShape3D", true, false))
@@ -4836,7 +4836,7 @@ namespace UnturnedGodot
                     GetViewport().SetInputAsHandled();
                     return;
                 }
-                bool allowedKey = @event is InputEventKey { Pressed: true } dk && (dk.Keycode == Key.F || dk.Keycode == Key.G || dk.Keycode == Key.H || dk.Keycode == Key.L || dk.Keycode == Key.Ctrl || dk.Keycode == Key.Escape);   // F = exit (interact key moved off E); G = landing gear (retract-gear planes); H cam, L lights, Ctrl siren, Esc pause. ROOT CAUSE of "G does nothing while flying": this allow-list gated G out before the gear handler ever saw it (master 2026-08-18)
+                bool allowedKey = @event is InputEventKey { Pressed: true } dk && (dk.Keycode == Key.F || dk.Keycode == Key.G || dk.Keycode == Key.H || dk.Keycode == Key.L || dk.Keycode == Key.Ctrl || dk.Keycode == Key.N || dk.Keycode == Key.Escape);   // F = exit (interact key moved off E); G = landing gear (retract-gear planes); H cam, L lights, Ctrl siren, Esc pause. ROOT CAUSE of "G does nothing while flying": this allow-list gated G out before the gear handler ever saw it (master 2026-08-18)
                 bool allowedMouse = @event is InputEventMouseButton { ButtonIndex: MouseButton.Left or MouseButton.Right };
                 bool camOrbit = @event is InputEventMouseMotion;   // mouse MOTION must pass through -> it orbits the 3rd-person chase cam (this guard was silently eating it, so the cam sat fixed) (strawberry 2026-07-15)
                 if (!allowedKey && !allowedMouse && !camOrbit) return;
@@ -4976,6 +4976,12 @@ namespace UnturnedGodot
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.Ctrl })
             {
                 if (_driving != null && _driving.HasSiren) _driving.ToggleSiren();   // Ctrl while driving an emergency vehicle: toggle siren/lightbar (master)
+            }
+            // N = IGNITION (strawberry_cow 2026-08-24). DRIVER ONLY: a passenger reaching over and killing the
+            // engine is not a feature. Echo:false so holding N cannot flap the engine on and off at key-repeat.
+            else if (@event is InputEventKey { Pressed: true, Echo: false, Keycode: Key.N })
+            {
+                if (_driving != null && _seatIndex == 0) _driving.ToggleEngine();
             }
             else if (@event is InputEventKey { Pressed: true, Echo: false, Keycode: Key.F })   // F = INTERACT (moved off E, strawberry): exit/hitch/pickup/enter/harvest/open-crate; nothing to interact with -> inspect the held weapon. Echo:false so HOLDING F can't double-fire the hitch toggle (uncouple then instantly re-couple).
             {
@@ -6613,7 +6619,8 @@ namespace UnturnedGodot
             if (_seatIndex >= v.SeatCount) { _driving = null; return; }   // every seat taken
             v.OccupiedSeats.Add(_seatIndex);
             _burstLeft = 0;                                    // entering a vehicle cancels an in-progress burst (no resume on exit)
-            if (_seatIndex == 0) v.EngineOn = !v.OnFire;       // only the driver starts it (source) -- a burnt/on-fire car stays dead (master)
+            // ENTERING NO LONGER STARTS IT (strawberry_cow 2026-08-24): the engine is its own state now, so a
+            // car you climb into is however you left it. N / throttle / the speedo click are the ignition.
             if (Hud != null) Hud.Vehicle = v;                  // show the vehicle status box (fuel/health/battery)
             // Passengers KEEP their weapon (strawberry 2026-08-16: "passengers can hold weapons") -- only the
             // driver has their hands full.
@@ -6642,7 +6649,7 @@ namespace UnturnedGodot
             // Vacating the driver's seat shuts it down and brakes, exactly as stepping out does: nobody is
             // holding the wheel, and a car that keeps its throttle while the driver climbs into the back is a
             // runaway rather than a feature. Taking the seat starts it again.
-            if (wasDriver && want != 0) { v.EngineOn = false; v.Park(); }
+            if (wasDriver && want != 0) v.Park();   // left the driver's seat: brake it, but leave the engine as the driver set it
             // Deliberately does NOT Wake() the vehicle. I added that here and on entry, reasoning that a settled
             // car would be frozen solid -- it is not: Drive/DriveHeli clear the parked flag on any input and the
             // settle rule releases the freeze the next physics frame, so waking here bought nothing. It cost
@@ -6650,7 +6657,7 @@ namespace UnturnedGodot
             // threshold, so clearing it the instant someone sits down leaves an occupied, stationary vehicle
             // permanently live -- floaty and bouncing, worst on something heavy. strawberry reported exactly
             // that on the tank within the hour.
-            else if (!wasDriver && want == 0) v.EngineOn = !v.OnFire;
+            // (sliding into the driver's seat does not start it either -- same reason as entering)
 
             // Hands full in the driver's seat; a passenger gets their weapon back (strawberry: "passengers can
             // hold weapons").
@@ -6664,7 +6671,7 @@ namespace UnturnedGodot
             if (v != null) v.OccupiedSeats.Remove(_seatIndex);
             // Only the driver leaving shuts it down. A passenger hopping out of a moving car must not kill the
             // engine and park it underneath the person still driving.
-            if (v != null && _seatIndex == 0) { v.EngineOn = false; v.Park(); }   // stop burning fuel + brake so it doesn't roll away
+            if (v != null && _seatIndex == 0) v.Park();   // brake so it doesn't roll away. The engine stays as it was -- leaving it running and burning fuel is now the player's choice to make
             _seatIndex = 0;
             if (Hud != null) Hud.Vehicle = null;               // hide the vehicle status box
             if (v != null) GlobalPosition = ClampExitSpot(v.GlobalPosition + v.GlobalTransform.Basis.X * 2.4f + Vector3.Up * 1.0f);
@@ -6683,7 +6690,7 @@ namespace UnturnedGodot
         public void ExitVehicleAt(Vector3 exitPos)
         {
             var v = _driving; _driving = null;
-            if (v != null) { v.OccupiedSeats.Remove(_seatIndex); v.EngineOn = false; }   // free the seat -- see EjectFromVehicleOnDeath
+            if (v != null) v.OccupiedSeats.Remove(_seatIndex);   // free the seat -- see EjectFromVehicleOnDeath. Dying does not reach over and turn the key either
             _seatIndex = 0;
             if (Hud != null) Hud.Vehicle = null;               // hide the vehicle status box
             GlobalPosition = exitPos;
@@ -6740,6 +6747,15 @@ namespace UnturnedGodot
                 steer = (Input.IsPhysicalKeyPressed(Key.D) ? 1f : 0f) - (Input.IsPhysicalKeyPressed(Key.A) ? 1f : 0f);
             }
             bool handbrake = !UiInputBlocked && Input.IsPhysicalKeyPressed(Key.Space);
+
+            // THROTTLE STARTS IT (strawberry_cow 2026-08-24): reaching for the gas on a dead car turns the key.
+            // Driver only, and only a real throttle press -- ScriptedDrive is excluded because a test rig or the
+            // MP input path feeding axes must not silently hot-wire a car nobody started.
+            //
+            // TryStartEngine self-gates on EngineOn, the flat battery and OnFire, so this runs every physics tick
+            // while the player holds W and is a no-op on all but the first.
+            if (_seatIndex == 0 && !ScriptedDrive.HasValue && Mathf.Abs(throttle) > 0.01f) _driving.TryStartEngine();
+
             // FIXED WING (master 2026-08-17): W/S throttle, A/D tail rudder, mouse L/R = roll, mouse up/down =
             // pitch (the SAME virtual stick the heli uses, captured in _Input with the plane's own invert-Y
             // toggle). Hold Ctrl -> ground/taxi mode: lift is cut so it drops onto its floats/wheels and drives

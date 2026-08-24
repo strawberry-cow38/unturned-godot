@@ -1283,6 +1283,9 @@ namespace UnturnedGodot
         AudioStreamPlayer3D _sirenAudio;   // looping siren clip while the emergency lightbar's on (master)
         Node3D _steerPivot; Vector3 _steerAxis;   // steering wheel model (source Objects/Steer): rotates by the steer angle around the disc normal
         const float BatteryBurnRate = 20f;   // source batteryBurnRate default (headlights drain while on, EBatteryMode.Burn)
+        const float SirenBurnRate = 35f;     // the lightbar is a heavier draw than the headlamps: two flashing omnis + the siren loop
+        const float BatteryChargeRate = 40f; // alternator. 40/s = a flat battery back to full in ~250s of running -- "somewhat slowly" (strawberry_cow 2026-08-24)
+        const float BatteryStartMin = 400f;  // 4% -- below this the starter only clicks. Non-zero on purpose: a battery that dies at exactly 0 lets you crank it forever on the last drop
         // Bumper roadkill (source Bumper.OnTriggerEnter + VehicleAsset ParseFloat defaults): a moving vehicle damages a
         // character its front bumper touches. dmg = floor(baseDamage * speed); speed = clamp(fwdVel * mult, -10, 10),
         // ignored below the threshold. None of the stock vehicles override these in their .dat, so the defaults hold.
@@ -1648,7 +1651,45 @@ namespace UnturnedGodot
             }
         }
         public bool HasSiren => _sirenMat0 != null;   // only emergency vehicles (police/fire/ambulance) have a lightbar
-        public void ToggleSiren() { if (HasSiren) _sirenOn = !_sirenOn; }   // master: ctrl toggles the siren/lightbar while driving
+        public void ToggleSiren() { if (HasSiren && (Battery > 0f || _sirenOn)) _sirenOn = !_sirenOn; }   // master: ctrl toggles the siren/lightbar while driving. A flat battery can't power it -- but you can always switch it OFF
+
+        /// <summary>Can the starter turn it over? A flat battery clicks and nothing happens.
+        ///
+        /// The threshold is above zero deliberately: at exactly 0 the player can keep cranking on the last drop
+        /// forever, which reads as the starter being broken rather than the battery being flat.</summary>
+        public bool CanStartEngine => !OnFire && Battery >= BatteryStartMin;
+
+        /// <summary>Start it if the battery can. Returns whether it caught.
+        ///
+        /// Here rather than at the call sites because there are already two of them (driver enters, passenger
+        /// moves to the driver seat) and a third would silently skip the rule -- the gate belongs with the
+        /// battery it reads, not with each person who asks.</summary>
+        public bool TryStartEngine()
+        {
+            if (EngineOn || !CanStartEngine) return false;
+            EngineOn = true;
+            // Ground vehicles fire the ignition one-shot here. Aircraft do NOT: StepHeli/StepPlane drive
+            // _ignitionAudio off the rotor spin-up, where the clip's LENGTH is the spin-up gate, and firing it
+            // from here as well would play it twice and desync that gate from the sound it is derived from.
+            if (!_heli && _ignitionAudio != null && !_ignitionAudio.Playing) _ignitionAudio.Play();
+            return true;
+        }
+
+        /// <summary>Kill the engine. Separate from TryStartEngine so the caller says which it means -- a single
+        /// Toggle() at the call site turns a mis-read state into the opposite action.</summary>
+        public void StopEngine() => EngineOn = false;
+
+        /// <summary>Driver's ignition switch. Returns the state it ended in.
+        ///
+        /// The engine is NOT tied to occupancy any more (strawberry_cow 2026-08-24): a car you get into is off
+        /// until you start it, and stays running when you get out. So this is the only thing that starts or
+        /// stops one, and every caller has to be a driver -- the seat check lives at the call site because only
+        /// the caller knows who is asking.</summary>
+        public bool ToggleEngine()
+        {
+            if (EngineOn) StopEngine(); else TryStartEngine();
+            return EngineOn;
+        }
 
         void OnBumperHit(Node3D body)
         {
@@ -6465,10 +6506,27 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             if (EngineOn && Fuel > 0f && !InfiniteFuel)   // source simulateBurnFuel: burn fuelBurnRate/sec while the engine runs (dev infFuel skips the drain)
                 Fuel = Mathf.Max(0f, Fuel - FuelBurn * (float)delta);
             if (EngineOn && FuelMax > 0f && Fuel <= 0f) EngineOn = false;   // ran DRY (or entered an empty car) -> cut the engine; Drive gates on EngineOn so it coasts to a stop. Refuel (gas can / pump) + re-enter to restart (master)
-            if (_headlightsOn)   // source: headlights burn the battery (EBatteryMode.Burn); die when it's empty
+            // BATTERY (strawberry_cow 2026-08-24). Running engine = alternator: the drain stops and the battery
+            // recharges slowly. Engine off = the electrics eat it, and at flat everything electrical dies.
+            if (EngineOn)
             {
-                Battery = Mathf.Max(0f, Battery - BatteryBurnRate * (float)delta);
-                if (Battery <= 0f) SetHeadlights(false);
+                // Charge even with the lights on. A real alternator outruns the lamps, and the alternative --
+                // netting the two -- means a car idling with its headlights on never recovers, which is the
+                // opposite of what a running engine should do for you.
+                Battery = Mathf.Min(BatteryMax, Battery + BatteryChargeRate * (float)delta);
+            }
+            else
+            {
+                if (_headlightsOn) Battery = Mathf.Max(0f, Battery - BatteryBurnRate * (float)delta);   // source: headlights burn the battery (EBatteryMode.Burn)
+                if (_sirenOn) Battery = Mathf.Max(0f, Battery - SirenBurnRate * (float)delta);
+            }
+            if (Battery <= 0f)
+            {
+                // Everything electrical goes with it, the same way the headlights already did. SetHeadlights is
+                // guarded because it re-touches materials and the mote emitter, and this runs every tick once a
+                // battery is flat -- which for a parked wreck is the rest of the session.
+                if (_headlightsOn) SetHeadlights(false);
+                _sirenOn = false;
             }
             if (_alarmed && !_exploded)   // "alarmed" car (master): proximity (player/zombie) or damage sets off a ~30s honk+lights blip loop that lures zombies. NOT on a wreck -- Explode clears the state, and this guard means even a re-arm can't relight a corpse
             {

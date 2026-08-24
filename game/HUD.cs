@@ -209,6 +209,7 @@ namespace UnturnedGodot
             _vehRpmGear.HorizontalAlignment = HorizontalAlignment.Right; _vehRpmGear.MouseFilter = Control.MouseFilterEnum.Ignore;
             _vehBox.AddChild(_vehRpmGear);
 
+
             _vehFuel = AddVehBar(45, "icon_fuel.png", CY);        // fuel = COLOR_Y (yellow)
             _vehHealth = AddVehBar(75, "icon_health.png", CR);    // health = COLOR_R (red)
             _vehBattery = AddVehBar(105, "icon_stamina.png", CY); // battery = COLOR_Y, "Stamina" icon (source)
@@ -436,7 +437,11 @@ namespace UnturnedGodot
                 _vehHealth.AnchorRight = Mathf.Clamp(Vehicle.HealthNorm, 0f, 1f);
                 _vehBattery.AnchorRight = Mathf.Clamp(Vehicle.BatteryNorm, 0f, 1f);
                 _vehTitle.Text = Vehicle.DisplayName;
-                _vehRpmGear.Text = $"{Vehicle.LinearVelocity.Length() * 2.23694f:0} mph · {Vehicle.EngineRpm:0} rpm · {Vehicle.GearLabel}";   // MPH speedometer + rpm + gear (master)
+                _vehRpmGear.Text = Vehicle.EngineOn
+                    ? $"{Vehicle.LinearVelocity.Length() * 2.23694f:0} mph · {Vehicle.EngineRpm:0} rpm · {Vehicle.GearLabel}"   // MPH speedometer + rpm + gear (master)
+                    // Engine off is now a state you can sit in, so the cluster has to SAY so -- otherwise a
+                    // stopped car reads as "0 mph, 0 rpm" and looks broken rather than switched off.
+                    : (Vehicle.CanStartEngine ? "engine off · N or gas to start" : "engine off · battery flat");
             }
             else if (inRail)
             {
