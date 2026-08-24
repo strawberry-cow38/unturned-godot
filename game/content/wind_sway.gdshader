@@ -3,7 +3,10 @@
 // height (the base stays put, the top sways most), a gust wave crawling over the map, driven by the global `wind_vec`
 // (xy = direction, z = 0..1 strength) that PlayerController pushes from WindField.
 shader_type spatial;
-render_mode cull_disabled, depth_prepass_alpha, diffuse_lambert, specular_disabled;
+// Shading matches ResourceField.MakeMat / the felled-debris StandardMaterial3D (default burley diffuse + specular,
+// roughness 1) so a SWAYING canopy still reads the same colour as the tree's own fallen debris (master: the felled
+// leaf colour must be consistent with the standing tree). The sway is a VERTEX effect; only the fragment must match.
+render_mode cull_disabled, depth_prepass_alpha;
 
 global uniform vec4 wind_vec;   // xy = wind direction, z = 0..1 strength
 
@@ -26,5 +29,5 @@ void fragment() {
     vec4 c = texture(albedo_tex, UV);
     ALBEDO = c.rgb;
     if (use_alpha) { ALPHA = c.a; ALPHA_SCISSOR_THRESHOLD = alpha_scissor; }
-    ROUGHNESS = 0.95;
+    ROUGHNESS = 1.0;   // match MakeMat / the felled debris
 }

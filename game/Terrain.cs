@@ -42,7 +42,7 @@ namespace UnturnedGodot
         // Layer 5 (sand seabed) -> ocean blue until a real water plane exists.
         const string TERRAIN_SHADER = @"
 shader_type spatial;
-uniform sampler2DArray albedos : source_color, filter_nearest_mipmap, repeat_enable;
+uniform sampler2DArray albedos : source_color, filter_linear_mipmap, repeat_enable;
 uniform sampler2D splat0 : filter_linear;
 uniform sampler2D splat1 : filter_linear;
 uniform float tileWorld = 16.0;
