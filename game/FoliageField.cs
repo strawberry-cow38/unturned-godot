@@ -81,6 +81,7 @@ namespace UnturnedGodot
             // FLOWERS + PEBBLES get the same up-normal fix via their own shader (see MakeFoliageUpMaterial) --
             // no displacement, just the cull_disabled backface-darkness correction that grass already has.
             ShaderMaterial foliageUpMat = isGrass ? null : MakeFoliageUpMaterial();
+            foliageUpMat?.SetShaderParameter("do_sway", nm.StartsWith("flowers"));   // master: flowers sway in the wind, pebbles stay put
 
             string tp = dir + nm + "_tex.png";
             if (File.Exists(tp))
