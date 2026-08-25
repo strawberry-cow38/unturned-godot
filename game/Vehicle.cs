@@ -988,8 +988,46 @@ namespace UnturnedGodot
             v._driveR = r;
             float wheelRpmTop = v._speedMax / (2f * Mathf.Pi * r) * 60f;        // wheel rev/min at the target top speed
             float ratioTop = RedlineFrac * MaxRpm / wheelRpmTop;                 // ...geared to sit at the redline there
-            float spread = Mathf.Clamp(3f + v.Mass / 4000f, 3f, 9f);
-            int n = Mathf.Clamp(Mathf.RoundToInt(Mathf.Log(spread) / Mathf.Log(GearStep)) + 1, 2, 8);
+            // GEAR SPREAD, and it is the lever that keeps coastdown sane after a power raise.
+            //
+            // Launch force is engineForce * nTraction * LaunchBoost -- ratio1 CANCELS out of it, because
+            // peakTorque is defined relative to ratio1 two lines below. Force at the TOP of the box is
+            // proportional to LaunchBoost / spread, and _dragK is solved from that force. So raising
+            // LaunchBoost to 4.0 quadrupled the drag needed to cap top speed, and vehicle.drivetrain caught
+            // the consequence immediately: lift-off deceleration hit 5.36 m/s2, which is 0.55 g of "coasting"
+            // -- a brake pedal, exactly what that check exists to refuse.
+            //
+            // Widening the spread cuts top-end force WITHOUT touching launch force, which is precisely what a
+            // wide-ratio gearbox is for: launch torque without a bigger engine. Solved, not guessed --
+            // dragK is proportional to LaunchBoost / (spread * speedMax^3), so holding it at its old value
+            // through LaunchBoost 1.5 -> 4.0 and TopSpeedBuff 1.6 -> 2.0 needs spread * (4.0/1.5) * (1.6/2.0)^3
+            // = 1.366x. The ceiling goes to 12 so the heaviest hulls are not clamped back into the problem.
+            const float SpreadForPower = 1.366f;
+            // CEILING RAISED 12 -> 18, because the clamp itself was the bug. Spread is what keeps top-end force
+            // (and therefore the solved drag, and therefore coastdown) in proportion to launch force. The tank
+            // wants 17.76 by the mass formula and was being clamped to 12, so it alone carried ~1.5x the drag
+            // the formula intended -- and it was the only hull failing the coasting-is-not-a-brake check, at
+            // 4.93 m/s2 against jeep 2.55, semi 2.02, apc 3.74. Nothing else is near the ceiling, so this moves
+            // exactly one vehicle, which is the one that was wrong.
+            // REVERTED from /3600 + ceiling 20. That was aimed at the tank's coastdown and derived from
+            // fTop ~ LaunchBoost/spread -- predicted 4.39 -> 4.05 m/s2, measured 4.29, and it cost the SEMI its
+            // top speed (21.2 against a 28.0 target). Three times tonight this drivetrain has moved less than
+            // my algebra said it would, which is the signal to stop turning the knob rather than turn it again:
+            // the model I am predicting with does not match the one that runs.
+            //
+            // Left where only the TANK misses, at 4.29-4.39 against a 4.0 limit, and reported as a known
+            // deviation instead of chased at 1am. See the comment on the ceiling below.
+            float spread = Mathf.Clamp((3f + v.Mass / 4000f) * SpreadForPower, 3f * SpreadForPower, 18f);
+            // CEIL, and a cap of 10. GearStep is the largest rpm drop a shift may take, so the gear count has
+            // to be the SMALLEST n whose step fits inside it -- rounding can land on an n whose actual step
+            // (spread^(1/(n-1))) is WIDER than GearStep, and a cap of 8 forced exactly that on the heaviest
+            // hulls once the spread was widened for the power raise.
+            //
+            // Measured: the tank came out at spread 12 over 8 gears = step 1.426 against a 1.35 design step,
+            // which drops rpm far enough on each upshift that DownshiftRpm catches it, and vehicle.drivetrain
+            // reported it as 2 downshifts on a steady pull. It was the ONLY vehicle over the step, and the only
+            // one hunting. Ceiling makes the constant an actual bound rather than a target it can overshoot.
+            int n = Mathf.Clamp(Mathf.CeilToInt(Mathf.Log(spread) / Mathf.Log(GearStep)) + 1, 2, 11);
             float ratio1 = ratioTop * spread;
             var g = new float[n];
             for (int i = 0; i < n; i++) g[i] = ratio1 * Mathf.Pow(ratioTop / ratio1, i / (float)(n - 1));
