@@ -32,7 +32,9 @@ namespace UnturnedGodot.Testing
             float midX = (a.X + b.X) * 0.5f;
 
             // offsets across the channel, in metres from the centreline
-            var offs = new float[] { 0f, 2f, 4f, 6f, 7.5f, 8f, 10f, 14f };
+            // Out to 2.5x half-width, because the influence no longer stops at the bank -- the approach dishes
+            // the surrounding ground toward the river and has to die out cleanly at its own outer edge.
+            var offs = new float[] { 0f, 2f, 4f, 6f, 7.5f, 8f, 10f, 14f, 18f, 20f, 24f };
             var before = new float[offs.Length];
             for (int i = 0; i < offs.Length; i++) before[i] = terr.SampleHeight(midX, a.Z + offs[i]);
 
@@ -71,18 +73,19 @@ namespace UnturnedGodot.Testing
             T.Check($"the centreline is a full depth down ({drop[0]:0.00} m of {depth:0.00})",
                     Mathf.Abs(drop[0] - depth) < 0.35f);
 
-            // 3. IT CLOSES AT THE BANK. Zero displacement at and beyond half-width -- this is what makes the
-            //    join seamless rather than a lip, and it is the check that fails if the profile is rescaled
-            //    without thinking about its endpoint.
-            T.Check($"the cut has closed by the bank ({drop[5]:0.000} m at {offs[5]:0.#} m, {drop[6]:0.000} m beyond)",
-                    Mathf.Abs(drop[5]) < 0.05f && Mathf.Abs(drop[6]) < 0.05f);
+            // 3. THE APPROACH REACHES OUT, AND THEN STOPS. The ground outside the bank is dished toward the
+            //    river -- that is the point of the blend -- but it must die to exactly zero at its own outer
+            //    edge, or the influence ends in a ring you can see from the air.
+            T.Check($"the ground outside the bank is dished toward the river ({drop[6]:0.00} m at {offs[6]:0.#} m)",
+                    drop[6] > 0.05f);
+            T.Check($"...and the influence dies out cleanly ({drop[9]:0.000} m at {offs[9]:0.#} m, {drop[10]:0.000} m beyond)",
+                    Mathf.Abs(drop[9]) < 0.05f && Mathf.Abs(drop[10]) < 0.05f);
 
             // 4. SMOOTH, NOT A TRENCH. Monotonic from centre to bank, and the last step before the bank must be
             //    small -- a profile that hits zero with a steep slope reads as a lip however smooth the maths.
             bool mono = true;
-            for (int i = 1; i <= 5; i++) if (drop[i] > drop[i - 1] + 0.001f) mono = false;
-            T.Check($"the bed rises smoothly to the bank (monotonic {mono}, last step {Mathf.Abs(drop[5] - drop[4]):0.000} m)",
-                    mono && Mathf.Abs(drop[5] - drop[4]) < 0.5f);
+            for (int i = 1; i < offs.Length; i++) if (drop[i] > drop[i - 1] + 0.001f) mono = false;
+            T.Check($"the surface rises monotonically from centreline to untouched ground ({mono})", mono);
             yield break;
         }
     }

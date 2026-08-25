@@ -862,6 +862,28 @@ void fragment() {
             return k * k;
         }
 
+        /// <summary>How far past the bank the river keeps affecting the ground, as a multiple of half-width.
+        /// strawberry: "i just want it to have an effect on the surrounding terrain as WELL". Without this the
+        /// ground is untouched right up to the bank and then drops, so a river reads as something dropped ONTO
+        /// the landscape rather than something the landscape grew around.</summary>
+        const float RiverBlendFactor = 2.5f;
+        /// <summary>How deep the dish is where it meets the bank, as a fraction of the channel depth. The
+        /// approach slopes gently down toward the water and the channel proper does the rest.</summary>
+        const float RiverBlendDrop = 0.35f;
+
+        /// <summary>The APPROACH, outside the bank: a shallow dish easing the surrounding ground toward the
+        /// river. u runs 0 at the bank to 1 at the outer edge of the influence.
+        ///
+        /// Same (1-u^2)^2 shape and for the same reason as the channel: zero value AND zero slope at its outer
+        /// end, so the influence dies out into untouched terrain with no ring or crease marking where it
+        /// stopped. Inverted here -- deepest at the bank, nothing at the rim.</summary>
+        static float RiverBlendProfile(float u)
+        {
+            if (u >= 1f) return 0f;
+            float k = 1f - u * u;
+            return k * k;
+        }
+
         void RebuildRiverField()
         {
             _riverCut = null;
@@ -870,7 +892,8 @@ void fragment() {
 
             foreach (var (a, b, half, depth) in _riverSegs)
             {
-                float reach = half;
+                float blend = half * RiverBlendFactor;
+                float reach = blend;
                 float minX = Mathf.Min(a.X, b.X) - reach, maxX = Mathf.Max(a.X, b.X) + reach;
                 float minZ = Mathf.Min(a.Z, b.Z) - reach, maxZ = Mathf.Max(a.Z, b.Z) + reach;
                 int gx0 = Mathf.Max(0, Mathf.FloorToInt((minX - _bx) / UNIT));
@@ -885,7 +908,24 @@ void fragment() {
                         var p = new Vector2(_bx + gx * UNIT, -(_bz + gy * UNIT));
                         float t = Mathf.Clamp((p - A).Dot(ab) / abLen2, 0f, 1f);
                         float d = (p - (A + ab * t)).Length();
-                        float cut = depth * RiverProfile(d / Mathf.Max(0.001f, half));
+                        // Two zones. INSIDE the bank it is the channel itself; OUTSIDE it is the approach,
+                        // starting exactly where the channel ends so the two meet at one height with no step.
+                        float cut;
+                        float rim = depth * RiverBlendDrop;   // how far the ground has already dropped by the bank
+                        if (d <= half)
+                        {
+                            // The channel is dug from the DISHED surface, and `depth` stays the total depth of
+                            // the river rather than becoming depth-plus-dish. Interpolating between rim at the
+                            // bank and depth at the centreline is what keeps the number the user typed meaning
+                            // what they typed -- the first cut of this added the two and a depth-4 river came
+                            // out 5.40 deep, which the probe caught immediately.
+                            cut = rim + (depth - rim) * RiverProfile(d / Mathf.Max(0.001f, half));
+                        }
+                        else
+                        {
+                            float v = (d - half) / Mathf.Max(0.001f, blend - half);
+                            cut = rim * RiverBlendProfile(v);
+                        }
                         if (cut > f[gx, gy]) f[gx, gy] = cut;   // overlapping rivers: the deepest wins
                     }
             }
