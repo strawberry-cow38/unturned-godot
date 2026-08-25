@@ -38,6 +38,15 @@ namespace UnturnedGodot
             return fc;
         }
 
+        /// <summary>The pole broke (or respawned on a rubble reset): kill the flapping cloth with it -- hide it + stop
+        /// the ripple/swivel -- so a destroyed flag doesn't leave a flag waving over the rubble (master 2026-08-25:
+        /// "kill the flappy flags when flag dies"). Restored on respawn. Driven by the prop's destructible OnAliveChanged.</summary>
+        public void SetBroken(bool broken)
+        {
+            Visible = !broken;
+            SetProcess(!broken);   // no point rippling/swivelling a hidden cloth
+        }
+
         public override void _Process(double delta)
         {
             if (_mat == null || _pivot == null) return;

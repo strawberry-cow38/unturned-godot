@@ -678,13 +678,14 @@ namespace UnturnedGodot
                 // FLAG (master 2026-08-24): split the cloth off the pole -> the pole stays the main mesh, the cloth
                 // becomes a FlagCloth that ripples with the wind + swivels round the pole to face it. Cloth = every
                 // triangle reaching above the pole beam (local Y > 0.5); the pole beam sits at Y +/-0.1.
+                FlagCloth flagCloth = null;   // captured so a destructible break kills the flapping cloth with the pole (master 2026-08-25)
                 if (name.StartsWith("Flag_") && mode != WorldMode.Dedicated)
                 {
                     var (poleMesh, clothMesh) = ObjMesh.SplitByFaceVerts(visMesh, (a, b, c) => a.Y > 0.5f || b.Y > 0.5f || c.Y > 0.5f);
                     if (poleMesh != null && clothMesh != null)
                     {
                         visMesh = poleMesh;   // the pole stays as the prop's main (rendered + destructible) mesh
-                        FlagCloth.Attach(root, clothMesh, (MatFor(matName) as StandardMaterial3D)?.AlbedoTexture, basis, gpos, cull);
+                        flagCloth = FlagCloth.Attach(root, clothMesh, (MatFor(matName) as StandardMaterial3D)?.AlbedoTexture, basis, gpos, cull);
                     }
                 }
                 // THE STUMP (strawberry): "fully destroying a streetlight should leave the base piece where it
@@ -1193,9 +1194,10 @@ namespace UnturnedGodot
                     var toast = placedToaster;
                     var indoorLamp = placedIndoorLamp;   // indoor ceiling/standing/desk light darkens on break like the streetlight above
                     System.Action<bool> onAlive = null;
-                    if (lamp != null || sigs != null || tap != null || tv != null || mns != null || toast != null || indoorLamp != null)
+                    if (lamp != null || sigs != null || tap != null || tv != null || mns != null || toast != null || indoorLamp != null || flagCloth != null)
                         onAlive = alive =>
                         {
+                            if (flagCloth != null && GodotObject.IsInstanceValid(flagCloth)) flagCloth.SetBroken(!alive);   // kill the flapping cloth with the pole; restore on a rubble reset (master)
                             if (toast != null && GodotObject.IsInstanceValid(toast)) toast.SetBroken(!alive);
                             if (tap != null && GodotObject.IsInstanceValid(tap)) tap.SetBroken(!alive);
                             if (lamp != null && GodotObject.IsInstanceValid(lamp)) lamp.SetBroken(!alive);
