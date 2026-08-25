@@ -16,6 +16,7 @@ namespace UnturnedGodot
     public class ZombieFlowField
     {
         public const float Cell = 4f;      // metres per field cell -- routes around buildings; fine enough for drift
+        const float WallPush = 0.9f;       // after baking, deflect the flow AWAY from walls within ~2 cells so a horde routes around obstacles with a BERTH instead of hugging/pressing the face (master: "they bunch on the wall")
 
         int _ox, _oz;                       // world cell coords (floor(world/Cell)) of the grid's min corner
         int _w, _h;                         // grid size in cells
@@ -101,6 +102,27 @@ namespace UnturnedGodot
                     if (c < bestCost) { bestCost = c; bdx = Dx[d]; bdz = Dz[d]; }
                 }
                 if (bdx != 0 || bdz != 0) _flow[i] = new Vector2(bdx, bdz).Normalized();
+            }
+
+            // CLEARANCE PASS: blend an away-from-wall vector into the flow so a horde gives obstacles a BERTH instead of
+            // funnelling onto the face and sliding along it (master: "they STILL bunch on the wall"). Soft -- WallPush<1 and
+            // it never touches walkability, so it can't seal a gap; agents still round every corner, just a bit wider.
+            for (int i = 0; i < n; i++)
+            {
+                if (_cost[i] >= Blocked - 1 || _flow[i] == Vector2.Zero) continue;
+                int cx = i % _w, cz = i / _w;
+                Vector2 push = Vector2.Zero;
+                for (int oz = -2; oz <= 2; oz++)
+                    for (int ox = -2; ox <= 2; ox++)
+                    {
+                        if (ox == 0 && oz == 0) continue;
+                        int nx = cx + ox, nz = cz + oz;
+                        if (nx < 0 || nx >= _w || nz < 0 || nz >= _h) continue;
+                        if (_cost[nz * _w + nx] != Blocked) continue;
+                        push += new Vector2(-ox, -oz) / (ox * ox + oz * oz);   // away from the wall cell, weighted by 1/dist^2
+                    }
+                if (push != Vector2.Zero)
+                    _flow[i] = (_flow[i] + push.Normalized() * WallPush).Normalized();
             }
         }
 
