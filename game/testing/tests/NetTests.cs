@@ -1508,8 +1508,15 @@ namespace UnturnedGodot.Testing
             T.Check($"(d) the shell reached the flat ground (y {bottomY:0.00} m)", bottomY < 0.3f);
 
             // ---- climb again, then descend over a mild adverse link ----
+            //
+            // 180 -> 300 ticks. The ramp is 18 degrees, which is WALKABLE, and step-up used to fire on it --
+            // TestMove reports blocked for any contact, so a walkable slope looked like a kerb and the player
+            // got teleported up it a step at a time. That was the bug strawberry reported as step-up
+            // triggering on flat ground; fixing it means a slope is now climbed at walking pace instead of
+            // being hopped up, so the same climb takes longer in ticks. The shell still climbs -- it reached
+            // 0.93 m in 180 -- it is just no longer getting free altitude.
             sess.Shell.ScriptedInput = new UnityEngine.Vector2(0f, 1f);
-            yield return Ticks(180);
+            yield return Ticks(300);
             T.Check($"re-climbed for the jittery descent (shell y {sess.Shell.TruePhysicsPosition.Y:0.00} m)", sess.Shell.TruePhysicsPosition.Y > 1.2f);
             net.ClientToServer.LatencyTicks = 3; net.ClientToServer.ReorderJitterTicks = 2; net.ClientToServer.LossProbability = 0.02;
             net.ServerToClient.LatencyTicks = 3; net.ServerToClient.ReorderJitterTicks = 2; net.ServerToClient.LossProbability = 0.02;
