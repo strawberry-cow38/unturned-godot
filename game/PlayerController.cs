@@ -347,6 +347,12 @@ namespace UnturnedGodot
         ShelfItemBody _focusShelfItem;   // the SHELF display item being looked at (glowing, F to grab straight off the shelf)
         StoreShelf _focusShelf;          // the shelf being looked at (whole-shelf outline) -- the shelf of the focused item
         Vehicle _focusVehicle;  // the vehicle the player is LOOKING AT (outlined + info panel), enter target for E
+        /// <summary>WHICH PART of it -- the door (and so which seat), the hood, or the trunk. strawberry:
+        /// "kill the lookat for the whole car, change it for a collider on each 'door'... pressing f gets you
+        /// in at that seat." Invalid means the ray hit the HULL but no zone, which is how a boat/heli/tank
+        /// keeps the whole-vehicle behaviour it has always had.</summary>
+        Vehicle.AccessZone _focusAccess;
+        bool _focusAccessValid;
         Train _focusTrain;      // the train the player is LOOKING AT (loco outlined; F boards it) -- not a Vehicle, own scan
         Train _focusCouplerTrain; int _focusCouplerIdx = -1;   // the coupler the player is looking at (rope outlined; F uncouples there)
         Deployable _focusDeployable;  // the placed deployable (generator) the player is LOOKING AT (outlined + HP/fuel billboard)
@@ -470,6 +476,8 @@ namespace UnturnedGodot
         void UpdateLookFocus()
         {
             WorldItem hitItem = null; Vehicle hitVeh = null; Deployable hitDeploy = null; GasPump hitGasPump = null; GridPowerSource hitGrid = null; FluidContainer hitFluid = null;
+            // which door/hood/trunk of the focused vehicle the ray found
+            Vehicle.AccessZone hitAccess = default; bool hitAccessValid = false;
             Door hitDoor = null; Bed hitBed = null; ObjectDoor hitObjectDoor = null; TVDevice hitTV = null; NoteBody hitNote = null;
             HeartMonitor hitMonitor = null;   // patient monitor under the ray -> F toggles it
             LampLight hitLamp = null;         // standing/desk lamp under the ray -> F on/off + outline
@@ -585,7 +593,13 @@ namespace UnturnedGodot
                         if (node is Vehicle vv && IsInstanceValid(vv))
                         {
                             float d = vv.GlobalPosition.DistanceSquaredTo(from);
-                            if (d < maxD && d < bestV && vv.LookRayHitsHull(from, _lookEnd)) { bestV = d; hitVeh = vv; }   // cheap distance gate before the tight per-hull (oriented-box) test -- no world-AABB bloat / cross-vehicle overlap (strawberry)
+                            if (d >= maxD || d >= bestV) continue;   // cheap distance gate before the tight oriented-box tests
+                            // ZONES FIRST. A door/hood/trunk volume sits strictly INSIDE the hull, so testing
+                            // it first cannot widen the focus region -- it only makes the focus SPECIFIC.
+                            // Falling through to the hull keeps a vehicle with no zones (boat, heli, tank,
+                            // trailer) focusing exactly as it always has.
+                            if (vv.LookRayHitsAccess(from, _lookEnd, out var az)) { bestV = d; hitVeh = vv; hitAccess = az; hitAccessValid = true; }
+                            else if (vv.LookRayHitsHull(from, _lookEnd)) { bestV = d; hitVeh = vv; hitAccessValid = false; }
                         }
                 }
                 // TRAIN look-focus (not in ResolveFocus -- a train is a lone rail vehicle): when nothing else won,
@@ -625,12 +639,16 @@ namespace UnturnedGodot
                 _focusItem = hitItem;
                 _focusItem?.SetFocused(true);
             }
+            _focusAccess = hitAccess; _focusAccessValid = hitAccessValid;   // updated every frame: same car, different door
             if (hitVeh != _focusVehicle)
             {
-                if (IsInstanceValid(_focusVehicle)) _focusVehicle.SetLookFocused(false);
+                if (IsInstanceValid(_focusVehicle)) { _focusVehicle.AccessHint = ""; _focusVehicle.SetLookFocused(false); }
                 _focusVehicle = hitVeh;
                 _focusVehicle?.SetLookFocused(true);
             }
+            // Zone prompt. The whole point of splitting the hull into door/hood/trunk volumes is that the player
+            // can tell which one they have BEFORE pressing the key, so the billboard names it every frame.
+            if (_focusVehicle != null && IsInstanceValid(_focusVehicle)) _focusVehicle.AccessHint = AccessPrompt(_focusVehicle);
             if (hitDeploy != _focusDeployable)
             {
                 if (IsInstanceValid(_focusDeployable)) _focusDeployable.SetLookFocused(false);
@@ -5075,7 +5093,13 @@ namespace UnturnedGodot
                 else if (TryToggleHitch()) { }                             // on foot at a trailer hitch: couple / uncouple
                 else if (_focusShelfItem != null || _focusItem != null) TryPickup();   // looking at a SHELF item or a dropped item: grab it (shelf item takes priority in TryPickup)
                 else if (RequestPickupFocusedPuppet()) { }                 // MP: looking at a REPLICATED dropped item -> ask the server for it (like SP, a focused item wins over a nearby vehicle)
-                else if (_focusVehicle != null && IsInstanceValid(_focusVehicle) && !_focusVehicle.IsWreck && !_focusVehicle.IsTrailer) EnterVehicle(_focusVehicle); // looking at a LIVE, drivable vehicle: get in (a wreck is salvaged with LMB; a trailer is towed, not driven)
+                else if (_focusVehicle != null && IsInstanceValid(_focusVehicle) && !_focusVehicle.IsWreck && !_focusVehicle.IsTrailer)
+                {
+                    // WHAT you are aiming at now decides what F does, instead of one action for the whole car.
+                    if (_focusAccessValid && _focusAccess.Kind == Vehicle.AccessKind.Trunk) OpenVehicleTrunk(_focusVehicle);
+                    else if (_focusAccessValid && _focusAccess.Kind == Vehicle.AccessKind.Hood) OpenVehicleHood(_focusVehicle);
+                    else EnterVehicle(_focusVehicle, _focusAccessValid ? _focusAccess.Seat : -1);   // a door -> THAT seat; no zone -> the old first-free behaviour
+                }
                 else if (RequestEnterNearestPuppet()) { }                  // MP shell near a REPLICATED vehicle: ask the server for the seat (C6; false in SP -- no puppets)
                 else if (_focusCouplerTrain != null && IsInstanceValid(_focusCouplerTrain)) _focusCouplerTrain.Uncouple(_focusCouplerIdx);   // LOOKING at a coupler: F splits the train there (master)
                 else if (_focusTrain != null && IsInstanceValid(_focusTrain)) BoardTrain(_focusTrain);   // LOOKING at a train loco: board it (outlined affordance, master)
@@ -6703,7 +6727,47 @@ namespace UnturnedGodot
             GlobalPosition = _ridingCrane.GlobalPosition;
         }
 
-        public void EnterVehicle(Vehicle v)
+        /// <summary>Open the boot. Its grid is created on first open and lives on the vehicle, so what you
+        /// leave in a car is still there when you come back to it.</summary>
+        void OpenVehicleTrunk(Vehicle v)
+        {
+            var trunk = v.EnsureTrunk();
+            if (trunk == null) return;   // no boot on this hull -- the zone would not exist, but belt and braces
+            OpenCrate(trunk);
+        }
+
+        /// <summary>Open the bonnet. A DUMMY mechanics panel for now (strawberry: "hood opens a dummy
+        /// 'mechanics' ui") -- it reads the vehicle's real state rather than inventing numbers, so when it
+        /// grows into repair/parts it is already pointed at the right data.</summary>
+        void OpenVehicleHood(Vehicle v)
+        {
+            _mechanicsUI ??= new MechanicsPanel();
+            if (_mechanicsUI.GetParent() == null) AddChild(_mechanicsUI);
+            _mechanicsUI.Show(v);
+            Input.MouseMode = Input.MouseModeEnum.Visible;
+        }
+        MechanicsPanel _mechanicsUI;
+
+        // Prompt line for the access zone currently under the crosshair. Mirrors the F dispatch exactly --
+        // if this says "open trunk", F opens the trunk. A hull hit with no zone falls back to the plain enter
+        // prompt, which is what boats/helis/tanks/trailers (no zones built) always show.
+        string AccessPrompt(Vehicle v)
+        {
+            if (_driving != null || _riding != null) return "";
+            string key = Keybinds.Get(GameAction.Interact).Label;
+            if (!_focusAccessValid) return v.SeatCount > 0 ? $"[{key}] enter" : "";
+            switch (_focusAccess.Kind)
+            {
+                case Vehicle.AccessKind.Trunk: return $"[{key}] open trunk";
+                case Vehicle.AccessKind.Hood:  return $"[{key}] open hood";
+                default:
+                    int seat = _focusAccess.Seat;
+                    string who = seat == 0 ? "driver" : $"seat {seat + 1}";
+                    return v.SeatFree(seat) ? $"[{key}] enter ({who})" : $"{who} occupied";
+            }
+        }
+
+        public void EnterVehicle(Vehicle v, int seat = -1)
         {
             if (v.NetDriverId != 0) return;   // MP §3.6: a remote player holds the seat (single driver) -- never set in pure SP, so the direct path is unchanged
             if (v.NetClientPredicted) { _rideLookYaw = 0f; _rideLookPitch = FpRideGazePitchDeg; }   // Part A free-look starts at the classic forward gaze, like EnterPuppet (#37)
@@ -6711,7 +6775,10 @@ namespace UnturnedGodot
             // Take the driver's seat when it is free, otherwise the first seat that is. Entering a full vehicle
             // is refused above; this only picks WHICH seat, so walking up to a car someone is already driving
             // puts you beside them rather than bouncing you off it.
-            _seatIndex = 0;
+            // AIMED AT A DOOR -> THAT SEAT, if it is free and real. Otherwise the old rule: the driver's seat
+            // when it is free, else the first that is. The fallback matters -- aiming at an occupied door
+            // should still put you in the car rather than bouncing you off it.
+            _seatIndex = (seat >= 0 && seat < v.SeatCount && v.SeatFree(seat)) ? seat : 0;
             while (_seatIndex < v.SeatCount && !v.SeatFree(_seatIndex)) _seatIndex++;
             if (_seatIndex >= v.SeatCount) { _driving = null; return; }   // every seat taken
             v.OccupiedSeats.Add(_seatIndex);

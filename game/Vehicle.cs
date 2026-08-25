@@ -1238,6 +1238,121 @@ namespace UnturnedGodot
         /// mid-frame on a vehicle whose seat count shrank under a stale index.</summary>
         public Vector3 SeatLocal(int i) => SeatLocals[Mathf.Clamp(i, 0, SeatCount - 1)];
 
+        // ACCESS ZONES: per-door, hood and trunk volumes you aim at, instead of one lookat for the whole car.
+        //
+        // strawberry: "kill the lookat for the whole car, change it for a collider on each 'door'... pressing f
+        // gets you in at that seat. add volumes for the hood and trunk too". The car's overall hull is kept --
+        // it still owns collision and damage; this is only about what the LOOK RAY resolves to.
+        public enum AccessKind { Door, Hood, Trunk }
+        public readonly record struct AccessZone(AccessKind Kind, int Seat, Vector3 Center, Vector3 Size);
+        public AccessZone[] AccessZones = System.Array.Empty<AccessZone>();
+        // What the focused player's look ray is currently pointing at on this hull, as a ready-made prompt line.
+        // PlayerController owns the ray, so it writes this; the billboard below just draws it. Empty = no prompt.
+        public string AccessHint = "";
+
+        /// <summary>The trunk's contents, created on FIRST OPEN rather than at spawn -- a map holds hundreds of
+        /// vehicles and an inventory grid each, allocated up front, is a cost paid for cars nobody ever opens.
+        /// Parented to the vehicle so it rides along and dies with it.</summary>
+        public StorageCrate Trunk;
+        public bool HasTrunk { get { foreach (var z in AccessZones) if (z.Kind == AccessKind.Trunk) return true; return false; } }
+        public bool HasHood { get { foreach (var z in AccessZones) if (z.Kind == AccessKind.Hood) return true; return false; } }
+
+        public StorageCrate EnsureTrunk()
+        {
+            if (!HasTrunk) return null;
+            if (Trunk != null && IsInstanceValid(Trunk)) return Trunk;
+            Trunk = new VehicleTrunk { Width = TrunkWidth, Height = TrunkHeight };
+            AddChild(Trunk);
+            return Trunk;
+        }
+        const byte TrunkWidth = 6, TrunkHeight = 4;
+
+        /// <summary>A StorageCrate with no crate. The base class builds a visible box mesh and culls it by
+        /// distance; a car boot is already drawn by the car, so the visual is suppressed rather than parked
+        /// inside the bodywork where it would z-fight the panel it is behind.</summary>
+        public partial class VehicleTrunk : StorageCrate
+        {
+            protected override void BuildVisual() { }
+        }
+
+        /// <summary>Build the zones from the seat table and the hull box.
+        ///
+        /// DERIVED, not hand-listed. A door is its seat pushed outboard to the hull side, so the doors follow
+        /// the prefab seats and a vehicle whose seats are right cannot have doors that are wrong.
+        ///
+        /// HOOD AND TRUNK ARE GEOMETRIC TESTS, which is how "some vehicles may not have trunks" (strawberry)
+        /// answers itself instead of becoming a list I would have to keep in step: a vehicle has a hood if the
+        /// hull extends far enough IN FRONT of its frontmost seat, and a trunk if it extends far enough BEHIND
+        /// the rearmost one. That gives the sedan both, the bus a hood and no boot (its seats run to the back
+        /// panel), and the quad neither -- without anyone deciding it per vehicle.
+        ///
+        /// Only wheeled land vehicles get either. A boat, a heli, a plane and a tank have neither in any sense
+        /// worth aiming at.</summary>
+        static AccessZone[] BuildAccessZones(Spec s, Vector3[] seats, Vector3 boxCenter, Vector3 boxSize)
+        {
+            var zones = new System.Collections.Generic.List<AccessZone>();
+            float halfW = boxSize.X * 0.5f, halfL = boxSize.Z * 0.5f;
+
+            for (int i = 0; i < seats.Length; i++)
+            {
+                var st = seats[i];
+                // Outboard along the side the seat sits on; a centreline seat (quad, tractor) gets a zone
+                // straddling it rather than being pushed to an arbitrary side.
+                float side = Mathf.Abs(st.X) < 0.15f ? 0f : Mathf.Sign(st.X);
+                float x = side == 0f ? st.X : Mathf.Sign(st.X) * Mathf.Max(Mathf.Abs(st.X), halfW * 0.82f);
+                zones.Add(new AccessZone(AccessKind.Door, i,
+                    new Vector3(x, st.Y + DoorZoneRise, st.Z),
+                    new Vector3(side == 0f ? boxSize.X * 0.9f : DoorZoneWidth, DoorZoneHeight, DoorZoneLength)));
+            }
+
+            bool wheeled = !s.Heli && !s.Plane && !s.Tracked && s.Water != WaterMode.Boat && s.Kingpin == Vector3.Zero;
+            if (wheeled && seats.Length > 0)
+            {
+                float front = boxCenter.Z - halfL, rear = boxCenter.Z + halfL;   // front is -Z in this port
+                float frontSeat = float.MaxValue, rearSeat = float.MinValue;
+                foreach (var st in seats) { frontSeat = Mathf.Min(frontSeat, st.Z); rearSeat = Mathf.Max(rearSeat, st.Z); }
+
+                float hoodRun = frontSeat - front;
+                if (hoodRun > MinCompartmentRun)
+                    zones.Add(new AccessZone(AccessKind.Hood, -1,
+                        new Vector3(boxCenter.X, boxCenter.Y + boxSize.Y * 0.25f, front + hoodRun * 0.5f),
+                        new Vector3(boxSize.X * 0.85f, CompartmentHeight, hoodRun * 0.8f)));
+
+                float trunkRun = rear - rearSeat;
+                if (trunkRun > MinCompartmentRun)
+                    zones.Add(new AccessZone(AccessKind.Trunk, -1,
+                        new Vector3(boxCenter.X, boxCenter.Y + boxSize.Y * 0.25f, rear - trunkRun * 0.5f),
+                        new Vector3(boxSize.X * 0.85f, CompartmentHeight, trunkRun * 0.8f)));
+            }
+            return zones.ToArray();
+        }
+        const float DoorZoneWidth = 0.55f, DoorZoneHeight = 1.5f, DoorZoneLength = 1.15f, DoorZoneRise = 0.45f;
+        /// <summary>How much hull has to stick out past the end seat before there is a compartment worth
+        /// aiming at. Below this it is a bumper, not a boot.</summary>
+        const float MinCompartmentRun = 0.85f;
+        const float CompartmentHeight = 0.9f;
+
+        /// <summary>Nearest access zone the look ray passes through, in the SAME oriented-box style as
+        /// LookRayHitsHull. Returns false when the ray misses every zone -- the caller then falls back to the
+        /// whole-hull test, so a vehicle without zones (boat, heli) still focuses the way it always did.</summary>
+        public bool LookRayHitsAccess(Vector3 from, Vector3 to, out AccessZone hit)
+        {
+            hit = default;
+            if (AccessZones.Length == 0) return false;
+            var inv = GlobalTransform.AffineInverse();
+            Vector3 lf = inv * from, lt = inv * to;
+            float best = float.MaxValue;
+            bool found = false;
+            foreach (var z in AccessZones)
+            {
+                var aabb = new Aabb(z.Center - z.Size * 0.5f, z.Size);
+                if (!aabb.IntersectsSegment(lf, lt)) continue;
+                float d = lf.DistanceSquaredTo(z.Center);
+                if (d < best) { best = d; hit = z; found = true; }
+            }
+            return found;
+        }
+
         /// <summary>Where the 3rd-person BODY sits for a given seat.
         ///
         /// Seat 0 keeps SeatOffset, which is the prefab's Seat_0 plus a hand-tuned rise that puts the driver in
@@ -4231,6 +4346,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             // hand-tuned driver spot. The fallback matters -- semi and trailer have no bundle prefab to extract
             // from, and a null here would crash every seat lookup rather than degrading to one seat.
             v.SeatLocals = s.Seats ?? (SeatTable.TryGetValue(specKey, out var st) ? st : new[] { v.SeatOffset });
+            v.AccessZones = BuildAccessZones(s, v.SeatLocals, s.BoxCenter, s.BoxSize);
 
             // TURRETS. Two nested pivots per mount -- yaw about the vehicle's up, pitch inside it -- with each
             // mesh baked at its own origin, so rotating a node swings only its own geometry. Built even when no
@@ -6576,7 +6692,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                         // car would read as a car with broken parts it does not own.
                         _info.SetBar(3, MainRotorNorm, RotorBarColor(MainRotorNorm), _heli);
                         _info.SetBar(4, TailRotorNorm, RotorBarColor(TailRotorNorm), _heli);
-                        _info.SetPrompt("", _outlineColor);
+                        _info.SetPrompt(AccessHint, _outlineColor);
                     }
                 }
             }
