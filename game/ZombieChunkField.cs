@@ -50,11 +50,19 @@ namespace UnturnedGodot
         public bool HasField => _hasField;
         public ZombieFlowField Field => _field;   // --zflow verify render reads the baked arrows
 
+        // ---- phase 3: HOT (visible body) promotion + separation ----
+        const float HotBodyDist = 45f;    // a zombie within this of a player gets a visible ZombieBody...
+        const float HotBodyDrop = 60f;    // ...and loses it past this (hysteresis, so the edge doesn't flicker)
+        const float SepR = 1.7f;          // separation radius -- HOT bodies steer apart (boids), so a horde spreads
+        const float SepStrength = 1.3f;
+        readonly List<Zombie> _hotList = new();
+
         public enum Tier { Frozen = 0, Cold = 1, Warm = 2, Hot = 3 }
 
-        // A zombie. PHASE 1: just where it stands (Home == Pos, no movement). Later phases add velocity/target + a node
-        // when HOT. Kept a struct so a FROZEN chunk's would-be zombies cost nothing but the count.
-        public struct Zombie { public Vector3 Home; public Vector3 Pos; }
+        // A zombie. Home = spawn point; Pos = current position. Body != null once it's HOT (within ~45 m of a player):
+        // the visible/collidable/killable node, which then owns its transform (Pos syncs from it). A class (not a struct)
+        // so it can hold the Body ref and be mutated in place. FROZEN chunks allocate none of these -- they stay a count.
+        public class Zombie { public Vector3 Home; public Vector3 Pos; public Vector2 Vel; public ZombieBody Body; }
 
         public class Chunk
         {
@@ -303,8 +311,9 @@ namespace UnturnedGodot
             return walk;
         }
 
-        // Drift live zombies down the field toward the anchor. HOT+WARM every frame; COLD one coarse step every
-        // ColdStep s; FROZEN doesn't move (no Live list). Phase 2 has no mesh/collision/separation yet.
+        // PHASE 3: promote zombies within ~45 m of a player to a visible ZombieBody (mesh + collision), demote past 60 m,
+        // retire dead ones. HOT bodies steer by the field + separation (their own MoveAndSlide moves them); WARM/COLD
+        // zombies keep drifting as pure DATA (COLD on the coarse step). FROZEN chunks aren't touched.
         void Move(double delta)
         {
             if (!_hasField) return;
@@ -312,24 +321,59 @@ namespace UnturnedGodot
             _coldAcc += delta;
             bool coldStep = _coldAcc >= ColdStep;
             if (coldStep) _coldAcc = 0;
+
+            _hotList.Clear();
+            // pass 1: body promote/demote + death cleanup; drift the data-only (WARM/COLD) ones; gather the HOT ones
             foreach (var c in _chunks.Values)
             {
                 if (c.Live == null) continue;                       // FROZEN
                 bool cold = c.Tier == Tier.Cold;
-                if (cold && !coldStep) continue;
-                float step = cold ? ZombieSpeed * ColdStep : ZombieSpeed * dt;
-                for (int i = 0; i < c.Live.Count; i++)
+                for (int i = c.Live.Count - 1; i >= 0; i--)
                 {
                     var z = c.Live[i];
-                    float dx = _fieldAnchor.X - z.Pos.X, dz = _fieldAnchor.Z - z.Pos.Z;
-                    if (dx * dx + dz * dz <= StopDist * StopDist) continue;   // arrived -> pile at the player
-                    var dir = _field.Sample(z.Pos);
-                    if (dir == Vector2.Zero) continue;
-                    float nx = z.Pos.X + dir.X * step, nz = z.Pos.Z + dir.Y * step;
-                    float ny = Terr != null ? Terr.SampleHeight(nx, nz) : z.Pos.Y;
-                    z.Pos = new Vector3(nx, ny, nz);
-                    c.Live[i] = z;
+                    if (z.Body != null && (!GodotObject.IsInstanceValid(z.Body) || z.Body.Dead)) { z.Body = null; c.Live.RemoveAt(i); continue; }   // killed -> gone
+                    float d = NearestAnchorDist(z.Pos);             // XZ distance to the nearest player
+                    if (z.Body == null && d < HotBodyDist)          // close enough -> spawn the visible body
+                    {
+                        z.Body = new ZombieBody();
+                        AddChild(z.Body);
+                        z.Body.GlobalPosition = z.Pos;
+                    }
+                    else if (z.Body != null && d > HotBodyDrop)     // walked off -> drop back to data
+                    {
+                        z.Body.QueueFree(); z.Body = null;
+                    }
+
+                    if (z.Body != null) { z.Pos = z.Body.GlobalPosition; _hotList.Add(z); continue; }   // HOT -> steered in pass 2
+
+                    // WARM/COLD data drift (phase 2 behaviour)
+                    if (cold && !coldStep) continue;
+                    float step = cold ? ZombieSpeed * ColdStep : ZombieSpeed * dt;
+                    float ddx = _fieldAnchor.X - z.Pos.X, ddz = _fieldAnchor.Z - z.Pos.Z;
+                    if (ddx * ddx + ddz * ddz <= StopDist * StopDist) continue;
+                    var wdir = _field.Sample(z.Pos);
+                    if (wdir == Vector2.Zero) continue;
+                    float nx = z.Pos.X + wdir.X * step, nz = z.Pos.Z + wdir.Y * step;
+                    z.Pos = new Vector3(nx, Terr != null ? Terr.SampleHeight(nx, nz) : z.Pos.Y, nz);
                 }
+            }
+
+            // pass 2: steer the HOT bodies -- flow field + boids separation from nearby HOT zombies, stop at the player
+            for (int i = 0; i < _hotList.Count; i++)
+            {
+                var z = _hotList[i];
+                if (z.Body == null || !GodotObject.IsInstanceValid(z.Body)) continue;
+                Vector2 sep = Vector2.Zero;
+                for (int j = 0; j < _hotList.Count; j++)
+                {
+                    if (j == i) continue;
+                    var o = _hotList[j];
+                    float ax = z.Pos.X - o.Pos.X, az = z.Pos.Z - o.Pos.Z, d2 = ax * ax + az * az;
+                    if (d2 > 1e-4f && d2 < SepR * SepR) { float dd = Mathf.Sqrt(d2); sep += new Vector2(ax / dd, az / dd) * (1f - dd / SepR); }
+                }
+                float dx = _fieldAnchor.X - z.Pos.X, dz = _fieldAnchor.Z - z.Pos.Z;
+                Vector2 want = (dx * dx + dz * dz <= StopDist * StopDist) ? Vector2.Zero : _field.Sample(z.Pos);
+                z.Body.DesiredVel = (want + sep * SepStrength).LimitLength(1f) * ZombieSpeed;
             }
         }
     }

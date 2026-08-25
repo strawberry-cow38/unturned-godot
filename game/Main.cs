@@ -109,7 +109,7 @@ namespace UnturnedGodot
             bool containerTest = false; string containerTestName = null;
             bool wallDemo = false;
             bool clockTest = false;
-            bool play = false, demo = false, netdemo = false, server = false, dedicated = false, client = false, smoke = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, lightTest = false, trafficTest = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, playground = false, objects = false, peidrive = false, craftmenu = false, stationtest = false, editorMode = false, impactTest = false, doorGallery = false, lampTest = false, beamTest = false, impTest = false, treeSweep = false, bakeLods = false, bakeLodsDry = false, netobserve = false, zombieTier = false, zflow = false;
+            bool play = false, demo = false, netdemo = false, server = false, dedicated = false, client = false, smoke = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, lightTest = false, trafficTest = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, playground = false, objects = false, peidrive = false, craftmenu = false, stationtest = false, editorMode = false, impactTest = false, doorGallery = false, lampTest = false, beamTest = false, impTest = false, treeSweep = false, bakeLods = false, bakeLodsDry = false, netobserve = false, zombieTier = false, zflow = false, zhunt = false;
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
                 if (arg.StartsWith("--catalog=")) catalog = arg["--catalog=".Length..];
@@ -190,6 +190,7 @@ namespace UnturnedGodot
                 else if (arg == "--objects") objects = true;     // place PEI's real Level/Objects.dat objects (fences/props/rocks) on the terrain
                 else if (arg == "--zombietier") zombieTier = true;   // zombie AI rewrite phase-1 verify: chunk grid + tier classification (logs tiers as an anchor sweeps out of a town)
                 else if (arg == "--zflow") zflow = true;             // zombie AI rewrite phase-2 verify: flow field routes a horde AROUND a wall (log split; --write-movie for the visual)
+                else if (arg == "--zhunt") zhunt = true;             // zombie AI rewrite phase-3 verify: near zombies promote to visible HOT bodies + shamble in (log; --write-movie for the visual)
                 else if (arg.StartsWith("--landmarkshot=")) _lmShotDir = arg["--landmarkshot=".Length..];   // fly a camera past the big landmarks at range -> verify they render across the map
                 else if (arg == "--peidrive") peidrive = true;    // playable PEI: terrain + all objects/trees + player+jeep with real controls (same as the menu's "Drive PEI")
                 else if (arg.StartsWith("--map="))                // load a DIFFERENT map (e.g. --map="cow tools"): terrain + objects + spawns all follow _mapRoot
@@ -275,6 +276,7 @@ namespace UnturnedGodot
 
             if (zombieTier) { BuildZombieTierTest(); return; }   // zombie AI rewrite phase 1 verify (docs/ZOMBIE_REDESIGN.md)
             if (zflow) { BuildZombieFlow(); return; }             // zombie AI rewrite phase 2 verify
+            if (zhunt) { BuildZombieHunt(); return; }             // zombie AI rewrite phase 3 verify
 
             if (terrain)   // load a real Unturned map's terrain (PEI Landscape heightmap tile) -> a Godot mesh, replacing the flat test-plane
             {
@@ -1910,6 +1912,54 @@ namespace UnturnedGodot
             GD.Print($"[zflow] field: {f.BlockedCells}/{f.CellCount} cells blocked; cost behind-centre(-10,0)={f.CostAt(new Vector3(-10,0,0))} vs at-end(-10,33)={f.CostAt(new Vector3(-10,0,33))}  [behind should cost MORE if routing around]");
             GD.Print($"[zflow] field dir behind-centre (-10,0)= ({behind.X:0.00},{behind.Y:0.00})  further (-25,0)= ({mid.X:0.00},{mid.Y:0.00})  past-end (-10,33)= ({end.X:0.00},{end.Y:0.00})   [strong Y behind-centre => routing toward an end, NOT straight through]");
             _zflowMode = false;
+            GetTree().Quit();
+        }
+
+        // --zhunt: zombie AI rewrite PHASE 3 verify. A cluster of zombies ~24 m from a "player" anchor -> each promotes to
+        // a HOT ZombieBody (ripped rig + collision) and shambles in, separating from its neighbours. Headless logs the HOT
+        // count + closing distance; a `--write-movie` run shows the visible horde.
+        bool _zhMode; ZombieChunkField _zhf; Vector3 _zhAnchor; double _zhT;
+
+        void BuildZombieHunt()
+        {
+            GetWindow().Size = new Vector2I(1280, 720);
+            var env = new Godot.Environment { AmbientLightSource = Godot.Environment.AmbientSource.Color, AmbientLightColor = new Color(0.62f, 0.62f, 0.68f), AmbientLightEnergy = 1f, TonemapMode = Godot.Environment.ToneMapper.Aces };
+            AddChild(new WorldEnvironment { Environment = env });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-55f, -50f, 0f), LightEnergy = 1.3f, ShadowEnabled = true });
+
+            var ground = new StaticBody3D { CollisionLayer = WorldLayers.World };
+            ground.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = new Vector3(300f, 1f, 300f) }, Position = new Vector3(0f, -0.5f, 0f) });
+            var gm = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(300f, 300f) } };
+            gm.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.30f, 0.34f, 0.28f) };
+            ground.AddChild(gm); AddChild(ground);
+
+            var zf = new ZombieChunkField();   // no Terr -> flat ground at y=0
+            AddChild(zf);
+            _zhAnchor = Vector3.Zero;
+            zf.DebugAnchor = _zhAnchor;
+            zf.DebugSeed(new Vector3(0f, 0f, -24f), 24, spread: 30f);   // cluster ~10-40 m out, all within the 45 m HOT radius
+            _zhf = zf;
+
+            var am = new MeshInstance3D { Mesh = new SphereMesh { Radius = 0.5f, Height = 1.8f } };
+            am.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.2f, 1f, 0.3f), EmissionEnabled = true, Emission = new Color(0.15f, 0.8f, 0.25f) };
+            AddChild(am); am.Position = new Vector3(0f, 0.9f, 0f);
+
+            var cam = new Camera3D { Current = true, Fov = 55f, Far = 2000f };
+            AddChild(cam); cam.Position = new Vector3(6f, 6f, 16f); cam.LookAt(new Vector3(0f, 1f, -14f), Vector3.Up);
+            _zhMode = true;
+            GD.Print("[zhunt] 24 zombies ~24m from the anchor -> HOT bodies shamble in.");
+        }
+
+        void ZhuntReport()
+        {
+            int hot = 0; float sum = 0; int n = 0;
+            foreach (var z in _zhf.DebugZombies())
+            {
+                if (z.Body != null && GodotObject.IsInstanceValid(z.Body)) hot++;
+                sum += Mathf.Sqrt(z.Pos.X * z.Pos.X + z.Pos.Z * z.Pos.Z); n++;
+            }
+            GD.Print($"[zhunt] after {_zhT:0}s: {hot} HOT bodies of {n} zombies; avg dist to anchor {(n > 0 ? sum / n : 0):0.0}m (started ~24m -> CLOSES as they shamble in)");
+            _zhMode = false;
             GetTree().Quit();
         }
 
@@ -6480,6 +6530,7 @@ namespace UnturnedGodot
         public override void _Process(double delta)
         {
             if (_zflowMode) { _zflowT += delta; UpdateZflowDots(); if (_zflowT >= 40.0) ZflowReport(); return; }   // zombie phase-2 verify owns the frame
+            if (_zhMode) { _zhT += delta; if (_zhT >= 6.0) ZhuntReport(); return; }                               // zombie phase-3 verify owns the frame
             // Re-applied until two consecutive passes change nothing, rather than once on the first frame:
             // materials are still being created while the world builds, so a single early pass converts
             // whatever happened to exist yet and silently leaves the rest per-pixel -- which would make a
