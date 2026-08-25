@@ -932,20 +932,31 @@ void fragment() {
             var pts = BedStations(path, holeRForEnds: 0f);
             if (pts.Count < 2) return;
 
-            float level = float.MaxValue;
+            // THE SURFACE FOLLOWS THE BED at a fixed height above it, and is then SMOOTHED along the run.
+            //
+            // strawberry: "make the water level blend smoothly along the river. and it should stay a fixed
+            // height above the riverbed, even it results in a nonsensical river design." That overrules the
+            // flat level I shipped, deliberately and with the consequence stated -- water running uphill is
+            // wrong hydrology and right for a game where a river should look like a river everywhere along it
+            // rather than pooling at one end and leaving the rest dry.
+            //
+            // The offset is a fraction of DEPTH, not a constant, so a shallow stream is not brim-full and a
+            // deep one is not a puddle at the bottom. 0.5 against a bank that sits 0.65 * depth above the bed
+            // leaves real freeboard at every station.
+            var level = new float[pts.Count];
             for (int i = 0; i < pts.Count; i++)
+                level[i] = SurfaceHeightWorld(pts[i].X, pts[i].Z) + depth * 0.5f;
+
+            // SMOOTHING, and it is not cosmetic. The bed follows terrain that has its own noise, so a surface
+            // pinned to it inherits every bump as a ripple in what should read as still water. Three passes of
+            // neighbour averaging, ENDS PINNED so the run does not shrink away from where it meets the ground.
+            var tmp = new float[level.Length];
+            for (int pass = 0; pass < 3; pass++)
             {
-                Vector3 c = pts[i];
-                Vector3 fwd = (i < pts.Count - 1 ? pts[i + 1] - c : c - pts[i - 1]); fwd.Y = 0f;
-                if (fwd.LengthSquared() < 1e-8f) continue;
-                fwd = fwd.Normalized();
-                var r = new Vector3(-fwd.Z, 0f, fwd.X);
-                float bl = SurfaceHeightWorld(c.X - r.X * half, c.Z - r.Z * half);
-                float br = SurfaceHeightWorld(c.X + r.X * half, c.Z + r.Z * half);
-                level = Mathf.Min(level, Mathf.Min(bl, br));
+                System.Array.Copy(level, tmp, level.Length);
+                for (int i = 1; i < level.Length - 1; i++)
+                    level[i] = (tmp[i - 1] + tmp[i] * 2f + tmp[i + 1]) * 0.25f;
             }
-            if (level == float.MaxValue) return;
-            level -= depth * 0.08f;   // freeboard: sit just under the lowest bank, never proud of it
 
             var verts = new System.Collections.Generic.List<Vector3>();
             var uvs = new System.Collections.Generic.List<Vector2>();
@@ -958,13 +969,14 @@ void fragment() {
                 float seg = f0.Length();
                 f0 = f0.Normalized();
                 var r0 = new Vector3(-f0.Z, 0f, f0.X);
-                // Slightly INSIDE the bank: the surface should meet the bed under water, not clip through the
-                // bank face where the two are within a few centimetres of each other.
+                // Slightly INSIDE the bank, so the surface meets the bed under water rather than clipping
+                // through the bank face where the two are within centimetres of each other.
                 float w = half * 0.97f;
-                Vector3 l0 = new Vector3(c0.X - r0.X * w, level, c0.Z - r0.Z * w);
-                Vector3 rr0 = new Vector3(c0.X + r0.X * w, level, c0.Z + r0.Z * w);
-                Vector3 l1 = new Vector3(c1.X - r0.X * w, level, c1.Z - r0.Z * w);
-                Vector3 rr1 = new Vector3(c1.X + r0.X * w, level, c1.Z + r0.Z * w);
+                float y0 = level[i], y1 = level[i + 1];
+                Vector3 l0 = new Vector3(c0.X - r0.X * w, y0, c0.Z - r0.Z * w);
+                Vector3 rr0 = new Vector3(c0.X + r0.X * w, y0, c0.Z + r0.Z * w);
+                Vector3 l1 = new Vector3(c1.X - r0.X * w, y1, c1.Z - r0.Z * w);
+                Vector3 rr1 = new Vector3(c1.X + r0.X * w, y1, c1.Z + r0.Z * w);
                 float v0 = run / (half * 2f), v1 = (run + seg) / (half * 2f);
                 verts.Add(l0); verts.Add(rr0); verts.Add(l1);
                 uvs.Add(new Vector2(0f, v0)); uvs.Add(new Vector2(1f, v0)); uvs.Add(new Vector2(0f, v1));
@@ -994,7 +1006,7 @@ void fragment() {
         /// you set by drawing it, and until it is drawn on the water there is nothing in the scene that says
         /// it. Spaced by river WIDTH rather than a fixed distance, so a wide river does not get a dense line of
         /// them and a narrow one does not get none.</summary>
-        void BuildFlowArrows(System.Collections.Generic.IReadOnlyList<Vector3> pts, float level, float half)
+        void BuildFlowArrows(System.Collections.Generic.IReadOnlyList<Vector3> pts, float[] level, float half)
         {
             float spacing = Mathf.Max(12f, half * 4f);
             var mat = new StandardMaterial3D
@@ -1017,7 +1029,7 @@ void fragment() {
                 acc = 0f;
                 var r = new Vector3(-f.Z, 0f, f.X);
                 float aLen = Mathf.Min(half * 0.8f, 6f), aWide = aLen * 0.45f;
-                Vector3 mid = new Vector3(c0.X, level + 0.06f, c0.Z);   // just above the surface, or it z-fights
+                Vector3 mid = new Vector3(c0.X, level[i] + 0.06f, c0.Z);   // rides the surface, just above it or it z-fights
                 var tri = new System.Collections.Generic.List<Vector3>
                 {
                     mid + f * aLen,                    // tip, pointing DOWNSTREAM
