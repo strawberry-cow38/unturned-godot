@@ -18,7 +18,7 @@ namespace UnturnedGodot
         public override void _Ready()
         {
             CollisionLayer = 1 << 1;        // enemy -- the gun ray + melee mask this bit
-            CollisionMask = 1 << 0;         // walk on ground + buildings
+            CollisionMask = (1 << 0) | (1 << 1);   // ground+buildings AND each other -> the horde physically can't overlap into one blob (master: "make them aware of eachother"); boids separation steers them apart, this is the hard backstop
             FloorMaxAngle = Mathf.DegToRad(55f); FloorSnapLength = 0.5f;
             AddToGroup("zombies");
             var shape = new CollisionShape3D { Shape = new CapsuleShape3D { Height = 1.8f, Radius = 0.4f } };

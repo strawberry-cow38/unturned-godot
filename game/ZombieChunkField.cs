@@ -53,8 +53,8 @@ namespace UnturnedGodot
         // ---- phase 3: HOT (visible body) promotion + separation ----
         const float HotBodyDist = 45f;    // a zombie within this of a player gets a visible ZombieBody...
         const float HotBodyDrop = 60f;    // ...and loses it past this (hysteresis, so the edge doesn't flicker)
-        const float SepR = 1.7f;          // separation radius -- HOT bodies steer apart (boids), so a horde spreads
-        const float SepStrength = 1.3f;
+        const float SepR = 2.8f;          // separation radius -- HOT bodies steer apart (boids) so a horde SPREADS instead of stacking into one blob (master: "make them aware of eachother")
+        const float SepStrength = 1.7f;
         readonly List<Zombie> _hotList = new();
 
         // ---- phase 4: sound alert + sight targeting ----
