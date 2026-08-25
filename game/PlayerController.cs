@@ -4896,7 +4896,7 @@ namespace UnturnedGodot
                     GetViewport().SetInputAsHandled();
                     return;
                 }
-                bool allowedKey = @event is InputEventKey { Pressed: true } dk && (Keybinds.Matches(GameAction.Interact, @event) || Keybinds.Matches(GameAction.ToggleFirstPerson, @event) || Keybinds.Matches(GameAction.LeanLeft, @event) || Keybinds.Matches(GameAction.LeanRight, @event) || dk.Keycode == Key.G || dk.Keycode == Key.L || dk.Keycode == Key.Ctrl || dk.Keycode == Key.N || dk.Keycode == Key.Escape);   // Interact = exit; ToggleFirstPerson = cam; G = landing gear (retract-gear planes); L lights, Ctrl siren, N ignition, Esc pause. G/L/Ctrl/N stay literal -- vehicle-aux, hardcoded in v1. (ROOT CAUSE of "G does nothing while flying": this allow-list gated G out before the gear handler saw it -- master 2026-08-18)
+                bool allowedKey = @event is InputEventKey { Pressed: true } dk && (Keybinds.Matches(GameAction.Interact, @event) || Keybinds.Matches(GameAction.ToggleFirstPerson, @event) || dk.Keycode == Key.G || dk.Keycode == Key.L || dk.Keycode == Key.Ctrl || dk.Keycode == Key.N || dk.Keycode == Key.Escape);   // Interact = exit; ToggleFirstPerson = cam; G = landing gear (retract-gear planes); L lights, Ctrl siren, N ignition, Esc pause. G/L/Ctrl/N stay literal -- vehicle-aux, hardcoded in v1. (ROOT CAUSE of "G does nothing while flying": this allow-list gated G out before the gear handler saw it -- master 2026-08-18)
                 bool allowedMouse = @event is InputEventMouseButton { ButtonIndex: MouseButton.Left or MouseButton.Right };
                 bool camOrbit = @event is InputEventMouseMotion;   // mouse MOTION must pass through -> it orbits the 3rd-person chase cam (this guard was silently eating it, so the cam sat fixed) (strawberry 2026-07-15)
                 if (!allowedKey && !allowedMouse && !camOrbit) return;
@@ -6939,41 +6939,44 @@ namespace UnturnedGodot
             // is their OWN seat plus the same rise, or everyone in the bus looks out of the driver's window.
             var eye = _seatIndex == 0 ? _driving.DriverEyeLocal
                                       : _driving.SeatLocal(_seatIndex) + new Vector3(0f, PassengerEyeRise, 0f);
-            eye += WindowLeanOffset();
+            eye += DriverPeekOffset();
             PositionVehicleCam(vt, eye, size);
         }
 
-        /// <summary>Leaning out of the window, in FIRST PERSON only: the eye slides outward and a little back,
-        /// so you can see past the A-pillar and down the side of the vehicle.
+        /// <summary>The driver's eye slides sideways as they look around -- retail's "peek out of the window".
         ///
-        /// THIS IS NOT RETAIL, and it is worth saying so plainly rather than implying it is. Retail explicitly
-        /// FORBIDS it: PlayerAnimator.simulate gates the whole lean block on
-        /// `stance != CLIMB && != SPRINT && != DRIVING && != SITTING`, and drops through to `_lean = 0` for
-        /// everything else -- so in the real game leaning is dead the moment you sit in a seat. What retail
-        /// gives instead is the wide seated YAW (+/-160 for a driver), which is the "look over your shoulder"
-        /// half of the same idea and IS implemented above, to its exact numbers.
+        /// strawberry was right and my first read was wrong: I went looking for a LEAN, found PlayerAnimator
+        /// zeroing lean in DRIVING/SITTING, and concluded retail had nothing. It is not a lean -- it is a
+        /// camera OFFSET DRIVEN BY YAW, in PlayerLook, and only for the DRIVING stance:
         ///
-        /// So this is a deliberate addition on top, because it was asked for by name. Eased rather than
-        /// snapped, and first person only -- in a chase cam it would just slide the whole shot sideways.</summary>
-        Vector3 WindowLeanOffset()
+        ///     if (yaw &gt; 0) localPosition -> up*(heightLook+vOff) - left*(yaw/360)
+        ///     else          localPosition -> up*(heightLook+vOff) - left*(yaw/240)
+        ///     ...both Lerped at 4*dt
+        ///
+        /// ASYMMETRIC ON PURPOSE, and that asymmetry is the whole feel: looking LEFT offsets by yaw/240 and
+        /// looking right only by yaw/360, so the driver leans much further out of their own window than across
+        /// the cab. At retail's +/-160 yaw limit that is 0.67 m left against 0.44 m right.
+        ///
+        /// Our yaw sign is the mirror of retail's -- MEASURED, not assumed: a Basis about +Y is CCW, so
+        /// _rideLookYaw = +90 points the view down -X, which is LEFT. Hence the negated offset and the swapped
+        /// divisors. Getting that backwards would put the driver's head out of the passenger window, and it
+        /// would look deliberate.</summary>
+        Vector3 DriverPeekOffset()
         {
-            float want = 0f;
-            if (_fp && !UiInputBlocked)
+            float target = 0f;
+            if (_fp && _driving != null && _seatIndex == 0)
             {
-                if (Keybinds.Pressed(GameAction.LeanLeft)) want -= 1f;
-                if (Keybinds.Pressed(GameAction.LeanRight)) want += 1f;
+                // _rideLookYaw > 0 is looking LEFT for us, which is retail's yaw < 0 branch: the wider /240.
+                float div = _rideLookYaw > 0f ? PeekDivisorOwnSide : PeekDivisorAcrossCab;
+                target = -_rideLookYaw / div;
             }
-            _windowLean = Mathf.MoveToward(_windowLean, want, WindowLeanRate * (float)GetProcessDeltaTime());
-            if (Mathf.Abs(_windowLean) < 0.001f) return Vector3.Zero;
-            // Outward, plus a touch back and down -- a head out of a window drops below the roofline, and
-            // leaning straight sideways from a fixed eye reads as the camera strafing rather than the driver moving.
-            return new Vector3(_windowLean * WindowLeanOut, -Mathf.Abs(_windowLean) * WindowLeanDrop, Mathf.Abs(_windowLean) * WindowLeanBack);
+            // Lerp at 4/s, retail's own smoothing rate for this, so the head eases out rather than snapping.
+            _peekX = Mathf.Lerp(_peekX, target, Mathf.Min(1f, 4f * (float)GetProcessDeltaTime()));
+            return Mathf.Abs(_peekX) < 0.001f ? Vector3.Zero : new Vector3(_peekX, 0f, 0f);
         }
-        float _windowLean;                       // -1 fully out of the left window, +1 the right
-        const float WindowLeanOut = 0.55f;       // metres sideways at full lean
-        const float WindowLeanDrop = 0.12f;      // ...and this far down, so the head clears the roofline
-        const float WindowLeanBack = 0.10f;      // ...and back, so the shoulder leads rather than the nose
-        const float WindowLeanRate = 4.0f;       // per second: about a quarter second to full lean
+        float _peekX;                              // metres of lateral eye offset, vehicle-local (+X = right)
+        const float PeekDivisorOwnSide = 240f;     // looking out of the driver's OWN window: the bigger lean
+        const float PeekDivisorAcrossCab = 360f;   // ...and across the cab: less
 
         // C6 ride mode: the same cam anchored on the replicated puppet (no trailer towing over the wire in v1)
         void PositionRideCam(Transform3D vt) => PositionVehicleCam(vt, _riding.DriverEyeLocal, _fp ? 0f : _riding.MeshSize);
