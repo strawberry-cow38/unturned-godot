@@ -51,11 +51,14 @@ namespace UnturnedGodot
             Velocity = v;
             MoveAndSlide();
             if (DesiredVel.LengthSquared() > 0.04f)             // face the heading. Rig forward is -Z, so RotateY(yaw)*(-Z)
-            {                                                   // = dir needs yaw = atan2(-x,-z) -- atan2(x,z) faced them BACKWARDS (master caught it).
+            {                                                   // = dir needs yaw = atan2(-x,-z). VERIFIED forward via --zface (arms/face point at travel).
                 float want = Mathf.Atan2(-DesiredVel.X, -DesiredVel.Y);
                 _yaw = Mathf.LerpAngle(_yaw, want, 1f - Mathf.Exp(-10f * dt));
                 Rotation = new Vector3(0f, _yaw, 0f);           // rotate the BODY; the rig (child, forward -Z) follows
             }
+            // idle when stopped, shamble when moving -- at the clip's OWN 1x pace. Master: DON'T speed up the anim; instead
+            // ZombieSpeed (ZombieChunkField) is tuned DOWN to the shamble clip's natural stride so the feet don't skate.
+            if (_rig != null) _rig.SetLocomotion(new Vector2(Velocity.X, Velocity.Z).Length());
         }
 
         // PHASE 3b wires the gun/melee hit into this. Present now so ZombieChunkField can retire a dead body cleanly.

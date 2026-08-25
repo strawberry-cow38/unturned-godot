@@ -1525,7 +1525,15 @@ namespace UnturnedGodot
                 AttachPlayerShell(root, player, withCropManager: true);   // console/map/HUD/hitmarkers/pause/profiler/attachments -- the C3 shared shell block (same nodes, same order)
                 // (starter jeep removed 2026-08-23 -- master: no jeep at spawn. The map's OWN Spawns/Vehicles.dat vehicles still spawn via SpawnPeiVehicles below.)
 
-                // (zombie spawns removed 2026-08-25 -- master: rip out everything zombie)
+                // ZOMBIES (rewrite -- docs/ZOMBIE_REDESIGN.md): the chunked, flow-field horde streamed on the player off
+                // PEI's real Spawns/Animals.dat points. Only the ~64 nearest the player ever fully simulate (HOT bodies);
+                // the rest are cheap chunk data / frozen. Sight-chase + sound-lure targeting.
+                {
+                    await Phase("Zombies");
+                    var zf = new ZombieChunkField { Player = player, Terr = terr };
+                    root.AddChild(zf);
+                    zf.LoadFromPei(mapRoot);
+                }
 
                 // VEHICLE SPAWNS: Spawns/Vehicles.dat -- the shared extraction above (identical order/params/variants)
                 await SpawnPeiVehicles();
@@ -1947,7 +1955,9 @@ namespace UnturnedGodot
 
             GD.Print($"[PEIPLAY] grass spawn ({sx:0},{sz:0}) groundY {gy:0}, inland-margin {bestMargin}m, layer {terr.SampleDominantLayer(sx, sz)} + jeep beside");
 
-            // (peiplay zombie horde removed 2026-08-25 -- master: rip out everything zombie)
+            // ZOMBIES (rewrite -- docs/ZOMBIE_REDESIGN.md): the chunked flow-field horde, streamed on the player off the
+            // real Animals.dat spawns. Only the ~64 near you fully simulate; sight-chase + sound-lure.
+            { var zf = new ZombieChunkField { Player = player, Terr = terr }; root.AddChild(zf); zf.LoadFromPei(mapRoot); }
             result.Ready = true;
             return result;
         }

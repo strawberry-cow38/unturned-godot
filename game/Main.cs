@@ -109,7 +109,7 @@ namespace UnturnedGodot
             bool containerTest = false; string containerTestName = null;
             bool wallDemo = false;
             bool clockTest = false;
-            bool play = false, demo = false, netdemo = false, server = false, dedicated = false, client = false, smoke = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, lightTest = false, trafficTest = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, playground = false, objects = false, peidrive = false, craftmenu = false, stationtest = false, editorMode = false, impactTest = false, doorGallery = false, lampTest = false, beamTest = false, impTest = false, treeSweep = false, bakeLods = false, bakeLodsDry = false, netobserve = false, zombieTier = false, zflow = false, zhunt = false, zkill = false, zsound = false;
+            bool play = false, demo = false, netdemo = false, server = false, dedicated = false, client = false, smoke = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, lightTest = false, trafficTest = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, playground = false, objects = false, peidrive = false, craftmenu = false, stationtest = false, editorMode = false, impactTest = false, doorGallery = false, lampTest = false, beamTest = false, impTest = false, treeSweep = false, bakeLods = false, bakeLodsDry = false, netobserve = false, zombieTier = false, zflow = false, zhunt = false, zkill = false, zsound = false, zface = false, zpath = false;
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
                 if (arg.StartsWith("--catalog=")) catalog = arg["--catalog=".Length..];
@@ -193,6 +193,8 @@ namespace UnturnedGodot
                 else if (arg == "--zhunt") zhunt = true;             // zombie AI rewrite phase-3 verify: near zombies promote to visible HOT bodies + shamble in (log; --write-movie for the visual)
                 else if (arg == "--zkill") zkill = true;             // zombie AI rewrite phase-3b verify: player auto-fires at a chasing cluster -> bullet damage + kills climb
                 else if (arg == "--zsound") zsound = true;           // zombie AI rewrite phase-4 verify: a gunshot lures out-of-sight zombies to the NOISE, not the player (sound-lure + stealth)
+                else if (arg == "--zface") zface = true;             // facing DIAGNOSTIC: one zombie, DesiredVel forced world +X; top-down w/ RED=+X BLUE=+Z markers -> read the exact yaw offset unambiguously
+                else if (arg == "--zpath") zpath = true;             // pathfinding demo: horde behind a WALL, target beyond it -> the flow field routes them around the wall's open end (master: "show how they path around objects")
                 else if (arg.StartsWith("--landmarkshot=")) _lmShotDir = arg["--landmarkshot=".Length..];   // fly a camera past the big landmarks at range -> verify they render across the map
                 else if (arg == "--peidrive") peidrive = true;    // playable PEI: terrain + all objects/trees + player+jeep with real controls (same as the menu's "Drive PEI")
                 else if (arg.StartsWith("--map="))                // load a DIFFERENT map (e.g. --map="cow tools"): terrain + objects + spawns all follow _mapRoot
@@ -281,6 +283,8 @@ namespace UnturnedGodot
             if (zhunt) { BuildZombieHunt(); return; }             // zombie AI rewrite phase 3 verify
             if (zkill) { BuildZombieKill(); return; }             // zombie AI rewrite phase 3b verify
             if (zsound) { BuildZombieSound(); return; }           // zombie AI rewrite phase 4 verify
+            if (zface) { BuildZombieFace(); return; }             // facing diagnostic
+            if (zpath) { BuildZombiePath(); return; }            // pathfinding-around-obstacles demo
 
             if (terrain)   // load a real Unturned map's terrain (PEI Landscape heightmap tile) -> a Godot mesh, replacing the flat test-plane
             {
@@ -2054,6 +2058,79 @@ namespace UnturnedGodot
             GD.Print($"[zsound] after {_zsT:0}s: avg dist to GUNSHOT {(n > 0 ? toSound / n : 0):0}m (started ~37 -> SHRINKS = lured by the noise); avg dist to PLAYER {(n > 0 ? toPlayer / n : 0):0}m (started ~35 -> GROWS = they chased the sound, NOT the player)");
             _zsMode = false;
             GetTree().Quit();
+        }
+
+        // --zface: FACING DIAGNOSTIC. ONE zombie, DesiredVel forced to world +X, viewed TOP-DOWN so the world axes are
+        // unambiguous (RED ball = +X = the movement target, BLUE ball = +Z). Whichever ball the model's arms/face point
+        // at tells us the exact rig yaw offset -- ends the "which sign" guessing on ZombieBody's facing. Arms at RED = OK.
+        bool _zfMode; ZombieBody _zfz; double _zfT;
+        void BuildZombieFace()
+        {
+            GetWindow().Size = new Vector2I(1280, 720);
+            var env = new Godot.Environment { AmbientLightSource = Godot.Environment.AmbientSource.Color, AmbientLightColor = new Color(0.8f, 0.8f, 0.85f), AmbientLightEnergy = 1f, TonemapMode = Godot.Environment.ToneMapper.Aces };
+            AddChild(new WorldEnvironment { Environment = env });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-80f, 10f, 0f), LightEnergy = 1.1f });
+            var ground = new StaticBody3D { CollisionLayer = WorldLayers.World };
+            ground.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = new Vector3(60f, 1f, 60f) }, Position = new Vector3(0f, -0.5f, 0f) });
+            var gm = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(60f, 60f) } };
+            gm.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.30f, 0.34f, 0.28f) };
+            ground.AddChild(gm); AddChild(ground);
+
+            void Ball(Vector3 p, Color c) { var m = new MeshInstance3D { Mesh = new SphereMesh { Radius = 0.7f, Height = 1.4f } }; m.MaterialOverride = new StandardMaterial3D { AlbedoColor = c, EmissionEnabled = true, Emission = c }; AddChild(m); m.Position = p; }
+            Ball(new Vector3(7f, 0.7f, 0f), new Color(1f, 0.1f, 0.1f));    // +X = RED (the movement target)
+            Ball(new Vector3(0f, 0.7f, 7f), new Color(0.15f, 0.4f, 1f));   // +Z = BLUE
+            Ball(new Vector3(-7f, 0.7f, 0f), new Color(0.35f, 0f, 0f));    // -X = dark red
+            Ball(new Vector3(0f, 0.7f, -7f), new Color(0f, 0f, 0.35f));    // -Z = dark blue
+
+            _zfz = new ZombieBody(); AddChild(_zfz); _zfz.Position = Vector3.Zero;
+            var cam = new Camera3D { Current = true, Fov = 46f, Far = 500f };
+            AddChild(cam); cam.Position = new Vector3(6f, 3f, 15f); cam.LookAt(new Vector3(6f, 1f, 0f), Vector3.Up);   // wide SIDE view: zombie travels +X (screen-right) across frame; a planted foot should hold its WORLD spot, not skate back
+            _zfMode = true;
+            GD.Print("[zface] one zombie, DesiredVel = world +X (toward RED). top-down: RED=+X(right) BLUE=+Z(down). arms should point at RED if facing is correct.");
+        }
+
+        // --zpath: PATHFINDING-AROUND-OBSTACLES demo (master: "show how they path around objects"). A horde spawns BEHIND a
+        // long wall; the target (green) sits beyond it. A repeating noise at the target keeps the flow field flooded from
+        // there; the wall blocks both LOS (no beeline) and the walkability probe, so the BFS routes the horde AROUND the
+        // wall's open right end -> they stream around it, then beeline once they round the corner and can see the target.
+        bool _zpMode; ZombieChunkField _zpf; Vector3 _zpTarget; double _zpT, _zpNextEmit = 0.4;
+        void BuildZombiePath()
+        {
+            GetWindow().Size = new Vector2I(1280, 720);
+            var env = new Godot.Environment { AmbientLightSource = Godot.Environment.AmbientSource.Color, AmbientLightColor = new Color(0.62f, 0.62f, 0.68f), AmbientLightEnergy = 1f, TonemapMode = Godot.Environment.ToneMapper.Aces };
+            AddChild(new WorldEnvironment { Environment = env });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-55f, -50f, 0f), LightEnergy = 1.3f, ShadowEnabled = true });
+
+            var ground = new StaticBody3D { CollisionLayer = WorldLayers.World };
+            ground.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = new Vector3(300f, 1f, 300f) }, Position = new Vector3(0f, -0.5f, 0f) });
+            var gm = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(300f, 300f) } };
+            gm.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.30f, 0.34f, 0.28f) };
+            ground.AddChild(gm); AddChild(ground);
+
+            // THE WALL -- a tall barrier running along Z (16 m, X=-1..+1), dead between the horde (left, -X) and the target
+            // (right, +X). The straight line is blocked, so the flow field forks the horde around BOTH open ends (Z=+-8).
+            var wsz = new Vector3(2f, 4f, 16f);
+            var wall = new StaticBody3D { CollisionLayer = WorldLayers.World };
+            wall.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = wsz }, Position = Vector3.Zero });
+            var wm = new MeshInstance3D { Mesh = new BoxMesh { Size = wsz } };
+            wm.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.55f, 0.52f, 0.5f) };
+            wall.AddChild(wm); AddChild(wall); wall.Position = new Vector3(0f, 2f, 0f);
+
+            var zf = new ZombieChunkField();   // no Terr -> flat ground at y=0
+            AddChild(zf);
+            _zpTarget = new Vector3(11f, 0f, 0f);
+            zf.DebugAnchor = _zpTarget;
+            zf.DebugSeed(new Vector3(-11f, 0f, 0f), 18, spread: 8f);   // cluster on the far side of the wall from the target
+            _zpf = zf;
+
+            var am = new MeshInstance3D { Mesh = new SphereMesh { Radius = 0.6f, Height = 1.8f } };   // green = target (other side of the wall)
+            am.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.2f, 1f, 0.3f), EmissionEnabled = true, Emission = new Color(0.15f, 0.8f, 0.25f) };
+            AddChild(am); am.Position = _zpTarget + Vector3.Up * 0.9f;
+
+            var cam = new Camera3D { Current = true, Fov = 52f, Far = 2000f };
+            AddChild(cam); cam.Position = new Vector3(0f, 40f, 0.01f); cam.LookAt(Vector3.Zero, new Vector3(0f, 0f, -1f));   // TOP-DOWN (-Z up, +X right) -> the fork around the wall reads cleanly
+            _zpMode = true;
+            GD.Print("[zpath] 18 zombies vs a 16m wall between them and the target (green). Noise at the target floods the flow field -> they FORK around both ends.");
         }
 
         void BuildTerrainTest()
@@ -6626,6 +6703,8 @@ namespace UnturnedGodot
             if (_zhMode) { _zhT += delta; if (_zhT >= 6.0) ZhuntReport(); return; }                               // zombie phase-3 verify owns the frame
             if (_zkMode) { _zkT += delta; _zkFrame++; if (_zkFrame > 60 && _zkFrame % 15 == 0) _zkPlayer?.Fire(); if (_zkT >= 14.0) ZkillReport(); return; }   // phase-3b: pace shots so recoil recovers between them
             if (_zsMode) { _zsT += delta; if (!_zsFired && _zsT >= 3.0) { SoundBus.Emit(GetTree(), _zsSound, SoundBus.Gunshot); _zsFired = true; GD.Print("[zsound] GUNSHOT emitted at the far point"); } if (_zsT >= 13.0) ZsoundReport(); return; }   // phase-4: fire the lure at t=3s
+            if (_zfMode) { _zfT += delta; if (_zfz != null) _zfz.DesiredVel = new Vector2(1.3f, 0f); if (_zfT >= 5.0) { GD.Print("[zface] done"); GetTree().Quit(); } return; }   // facing/gait diagnostic: DesiredVel = world +X at the shamble speed
+            if (_zpMode) { _zpT += delta; if (_zpT >= _zpNextEmit) { _zpNextEmit += 4.0; SoundBus.Emit(GetTree(), _zpTarget, SoundBus.Gunshot); } if (_zpT >= 26.0) { GD.Print("[zpath] done"); GetTree().Quit(); } return; }   // pathing demo: re-emit the target's noise so the flow field stays flooded
             // Re-applied until two consecutive passes change nothing, rather than once on the first frame:
             // materials are still being created while the world builds, so a single early pass converts
             // whatever happened to exist yet and silently leaves the rest per-pixel -- which would make a

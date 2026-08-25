@@ -173,6 +173,11 @@ namespace UnturnedGodot
             { _ap.Play(name, -1, speed); }
         }
 
+        // Scale locomotion playback rate (1 = the clip's authored speed). ZombieBody matches the shamble cycle to the
+        // actual travel speed with this so the feet don't skate backward (foot-slide / moonwalk) when the body moves
+        // faster than the clip's natural stride. Set per-frame; cheap (no re-Play, so it never restarts the cycle).
+        public void SetLocoSpeedScale(float s) { if (_ap != null) _ap.SpeedScale = Mathf.Max(0.05f, s); }
+
         // Snap straight to a clip's END pose (Seek with update:true applies it this frame). Used to return to the
         // ready hold instantly when an inspect is cancelled -- without replaying the equip pull-out from frame 0.
         public void SnapToEnd(string name)

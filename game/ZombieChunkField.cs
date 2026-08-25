@@ -37,7 +37,7 @@ namespace UnturnedGodot
 
         // ---- phase 2: the flow field + drift ----
         const float FieldRadius = 160f;    // the flow field covers ±this around the anchor (comfortably past WARM)
-        const float ZombieSpeed = 3.2f;    // m/s ground walk (HOT+WARM); COLD takes ONE coarse step every ColdStep seconds
+        const float ZombieSpeed = 1.3f;    // m/s shamble -- tuned DOWN to the Move_N clip's natural stride so the 1x anim doesn't foot-slide (master: don't speed up the anim, slow the zombie). HOT+WARM; COLD takes ONE coarse step every ColdStep seconds
         const float ColdStep = 2f;
         const float StopDist = 1.5f;       // pile at the player rather than oscillate through them
         readonly ZombieFlowField _field = new();
