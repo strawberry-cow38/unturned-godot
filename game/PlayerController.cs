@@ -6133,21 +6133,26 @@ namespace UnturnedGodot
         // material is built -- see GrassDisplacers.EnsureGlobals; registering them AFTER a material links them invalid
         // ("removed at some point"), which silently kills ALL grass displacement). This just keeps the gather buffer.
         static System.Collections.Generic.List<(float d2, Vector3 pos, float r)> _dispScratch;
+        static Vector3 _grassSmooth; static bool _grassSmoothInit;   // the grass point's OWN smoothing (master): lerp toward the player each frame so the flatten glides instead of stepping
 
         /// <summary>Drive the grass-displacement shader each frame: retail's local-player point at (x, y+0.5, z) exactly
         /// as GrassDisplacement.cs, plus the master extension -- the nearest extended displacers (vehicles, dropped
         /// items, remote players) packed into the data texture. The +0.5 is the source's own offset (reads as a shin
         /// pushing through the blades, not the ground shoving them from below).</summary>
-        void UpdateGrassDisplacement()
+        void UpdateGrassDisplacement(double delta)
         {
             GrassDisplacers.EnsureGlobals();   // idempotent; grass materials already did this at build -- belt-and-suspenders (+ owns DispImg/DispTex)
-            // Use the INTERPOLATED visual position (master), NOT the raw 50Hz sim GlobalPosition -- otherwise the flatten
-            // (and its wake) steps at the physics tick while the player renders smooth. Mirror the render-interp
-            // condition + lerp EXACTLY; this runs just before that same lerp sets GlobalPosition below, so the
-            // interpolation fraction + the _interpPrev/_interpCurr endpoints match this frame.
-            var p = (_interpReady && !_dead && _driving == null && _ridingTrain == null && _ridingCrane == null)
+            // TARGET = the player's interpolated visual position when the render-interp is active, else GlobalPosition.
+            var pTarget = (_interpReady && !_dead && _driving == null && _ridingTrain == null && _ridingCrane == null)
                 ? _interpPrev.Lerp(_interpCurr, (float)Engine.GetPhysicsInterpolationFraction())
                 : GlobalPosition;
+            // GRASS'S OWN INTERP (master 2026-08-25 "does it need its own interp?"): the loopback path can still feed a
+            // stepped position, so smooth HERE -- lerp the grass point toward the target each frame (frame-rate-
+            // independent) so the flatten + wake glide instead of ticking at 50Hz. One vector lerp/frame; local to grass.
+            // Snap on a big jump (respawn/teleport) so the point doesn't slide across the map.
+            if (!_grassSmoothInit || _grassSmooth.DistanceSquaredTo(pTarget) > 100f) { _grassSmooth = pTarget; _grassSmoothInit = true; }
+            else _grassSmooth = _grassSmooth.Lerp(pTarget, 1f - Mathf.Exp(-25f * (float)delta));
+            var p = _grassSmooth;
             // RETAIL: the local player, one point at (x, y+0.5, z), w unused -- exactly GrassDisplacement.cs.
             RenderingServer.GlobalShaderParameterSet(GrassDisplacers.PointParam, new Vector4(p.X, p.Y + 0.5f, p.Z, 0f));
             var wd = WindField.WindXZ(p);   // FOLIAGE WIND SWAY: xy = direction, z = strength at the player (a representative gust for the whole view)
@@ -6226,7 +6231,7 @@ namespace UnturnedGodot
             // rather than cleared at each of them -- patching all eight is how the ninth ends up leaving a torch
             // burning in your pocket. Costs one bool test per frame and cannot go stale.
             if (_heldLightOn && !HoldingLight) { _heldLightOn = false; ApplyHeldLight(); }
-            UpdateGrassDisplacement();
+            UpdateGrassDisplacement(delta);
             if (_interpReady && !_dead && _driving == null && _ridingTrain == null && _ridingCrane == null)   // RENDER INTERPOLATION (master): lerp the visual position between the last two 50Hz ticks so it doesn't step at 50Hz while rendering at 60+
                 GlobalPosition = _interpPrev.Lerp(_interpCurr, (float)Engine.GetPhysicsInterpolationFraction());
             if (_driving != null && !_dead)   // driving: position the cam from the vehicle's Godot-INTERPOLATED visual transform, so cam + car mesh are both smooth + IN SYNC (master: godot smoothing for the car)
