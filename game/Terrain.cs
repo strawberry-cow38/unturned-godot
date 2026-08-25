@@ -240,71 +240,77 @@ void fragment() {
         /// correct if the bed geometry is ever improved. Same reasoning as not saving the collider.</summary>
         public void SaveRivers(string path)
         {
-            if (_riverSegs.Count == 0 && _bedMeshes.Count == 0)
+            if (_rivers.Count == 0)
             {
-                if (System.IO.File.Exists(path)) System.IO.File.Delete(path);   // carved then undone -> no stale file
+                if (System.IO.File.Exists(path)) System.IO.File.Delete(path);
                 return;
             }
             System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(path));
             using var w = new System.IO.BinaryWriter(System.IO.File.Create(path));
-            w.Write(2);   // format version: 2 stores the baked geometry as well as the recipe
-            w.Write(_riverSegs.Count);
-            foreach (var (a, b, half, depth) in _riverSegs)
+            // FORMAT 3: the ANCHORS the user placed, per river. v2 stored the sampled polyline plus baked bed
+            // vertices -- both derived data, both large, and storing the samples is what made the spline
+            // uneditable. This is the smallest thing that can regenerate everything else.
+            w.Write(3);
+            w.Write(_rivers.Count);
+            foreach (var r in _rivers)
             {
-                w.Write(a.X); w.Write(a.Y); w.Write(a.Z);
-                w.Write(b.X); w.Write(b.Y); w.Write(b.Z);
-                w.Write(half); w.Write(depth);
-            }
-            // THE BAKED VERTICES TOO (strawberry_cow: "disk space isnt a concern, ever... if we can save a
-            // single cpu cycle / ms of frame time / ms of loading by shoving stuff on the disk, thats a win").
-            //
-            // Storing only the segments made load rebuild every bed: a bezier walk, a SampleHeight scan per
-            // segment for the bank height, SurfaceTool, and GenerateNormals. All of that is now done once at
-            // carve time and read straight back. The segments are still written because the EDITOR needs the
-            // recipe to re-carve or extend a river -- geometry for the runtime, recipe for the tool.
-            //
-            // It also fixes a real inconsistency in the v1 format, which strawberry_cow caught: the CUT
-            // persists as a grid mask (fixed to the grid) while the bed was recomputed from live bank heights,
-            // so sculpting near a river made the two drift apart. Baked geometry is what you authored.
-            w.Write(_bedMeshes.Count);
-            foreach (var verts in _bedMeshes)
-            {
-                w.Write(verts.Length);
-                foreach (var v in verts) { w.Write(v.X); w.Write(v.Y); w.Write(v.Z); }
+                w.Write(r.Anchors.Count);
+                foreach (var a in r.Anchors) { w.Write(a.X); w.Write(a.Y); w.Write(a.Z); }
+                w.Write(r.Half); w.Write(r.Depth); w.Write(r.Material);
             }
         }
 
-        /// <summary>Rebuild the beds for saved segments. Does NOT re-cut: the holes came back from their own
-        /// sidecar already, and re-cutting would be a second pass over quads that are already gone.</summary>
         public void LoadRivers(string path)
         {
-            _riverSegs.Clear();
+            _rivers.Clear();
             if (_riverBeds != null) { _riverBeds.QueueFree(); _riverBeds = null; }   // drop the previous map's beds
             if (!System.IO.File.Exists(path)) return;
             try
             {
                 using var r = new System.IO.BinaryReader(System.IO.File.OpenRead(path));
                 int ver = r.ReadInt32();
-                if (ver != 2) { GD.PushWarning($"[terrain] rivers format v{ver} not understood; ignoring"); return; }
-                int n = r.ReadInt32();
-                if (n < 0 || n > 200000) { GD.PushWarning($"[terrain] implausible river count {n}; ignoring"); return; }
-                for (int i = 0; i < n; i++)
+                if (ver == 3)
                 {
-                    var a = new Vector3(r.ReadSingle(), r.ReadSingle(), r.ReadSingle());
-                    var b = new Vector3(r.ReadSingle(), r.ReadSingle(), r.ReadSingle());
-                    _riverSegs.Add((a, b, r.ReadSingle(), r.ReadSingle()));   // recipe only: the editor's, not the runtime's
+                    int n = r.ReadInt32();
+                    if (n < 0 || n > 100000) { GD.PushWarning($"[terrain] implausible river count {n}; ignoring"); return; }
+                    for (int i = 0; i < n; i++)
+                    {
+                        int ac = r.ReadInt32();
+                        if (ac < 0 || ac > 100000) { GD.PushWarning("[terrain] implausible anchor count; ignoring"); return; }
+                        var riv = new River();
+                        for (int k = 0; k < ac; k++) riv.Anchors.Add(new Vector3(r.ReadSingle(), r.ReadSingle(), r.ReadSingle()));
+                        riv.Half = r.ReadSingle(); riv.Depth = r.ReadSingle(); riv.Material = r.ReadInt32();
+                        _rivers.Add(riv);
+                    }
                 }
-                // Geometry read straight back -- no bezier walk, no SampleHeight scan, no GenerateNormals.
-                // Older files carry baked bed meshes. They are read and DISCARDED: the bed is no longer separate
-            // geometry, so replaying it would drop a duplicate surface inside the displaced channel.
-            int meshes = r.ReadInt32();
-                if (meshes < 0 || meshes > 100000) { GD.PushWarning($"[terrain] implausible bed count {meshes}; ignoring"); return; }
-                for (int m = 0; m < meshes; m++)
+                else if (ver == 2)
                 {
-                    int vc = r.ReadInt32();
-                    if (vc < 0 || vc > 20_000_000) { GD.PushWarning("[terrain] implausible bed vertex count; ignoring"); return; }
-                    for (int v = 0; v < vc; v++) { r.ReadSingle(); r.ReadSingle(); r.ReadSingle(); }   // skipped, not replayed
+                    // LEGACY: v2 stored the SAMPLED polyline, one entry per ~4 m segment, plus baked bed
+                    // geometry. Chained same-width runs are folded back into one river so the map still opens
+                    // and still carves -- but its "anchors" are the old samples, so it will have a node every
+                    // few metres until it is redrawn. Better than dropping the map's rivers on the floor.
+                    int n = r.ReadInt32();
+                    if (n < 0 || n > 200000) { GD.PushWarning($"[terrain] implausible river count {n}; ignoring"); return; }
+                    River cur = null; Vector3 last = default;
+                    for (int i = 0; i < n; i++)
+                    {
+                        var a2 = new Vector3(r.ReadSingle(), r.ReadSingle(), r.ReadSingle());
+                        var b2 = new Vector3(r.ReadSingle(), r.ReadSingle(), r.ReadSingle());
+                        float hf = r.ReadSingle(), dp = r.ReadSingle();
+                        bool chains = cur != null && cur.Half == hf && cur.Depth == dp && a2.DistanceSquaredTo(last) < 0.0001f;
+                        if (!chains) { cur = new River { Half = hf, Depth = dp }; cur.Anchors.Add(a2); _rivers.Add(cur); }
+                        cur.Anchors.Add(b2); last = b2;
+                    }
+                    int meshes = r.ReadInt32();   // baked beds: read past them, never replayed
+                    if (meshes >= 0 && meshes <= 100000)
+                        for (int m = 0; m < meshes; m++)
+                        {
+                            int vc = r.ReadInt32();
+                            if (vc < 0 || vc > 20_000_000) break;
+                            for (int v = 0; v < vc; v++) { r.ReadSingle(); r.ReadSingle(); r.ReadSingle(); }
+                        }
                 }
+                else { GD.PushWarning($"[terrain] rivers format v{ver} not understood; ignoring"); return; }
             }
             catch (System.Exception e) { GD.PushWarning($"[terrain] bad rivers file, ignoring: {e.Message}"); }
             RebuildRiverField();   // the field is derived, so it has to be rebuilt from the recipe on load
@@ -501,7 +507,71 @@ void fragment() {
 
         // Devkit RAMP (source handleHeightmapWriteRamp): a linear height grade between two clicked world points, in a
         // corridor of half-width radiusWorld (falloff on the cross axis). One-shot -- begin.Y..end.Y are the target heights.
-        readonly System.Collections.Generic.List<(Vector3 a, Vector3 b, float half, float depth)> _riverSegs = new();
+        /// <summary>A river as the user DREW it: the anchors, plus its width and depth.
+        ///
+        /// The recipe used to be the SAMPLED POLYLINE -- CarveRiverPath walked the bezier at grid spacing and
+        /// stored every ~4 m segment, so a 400 m river became ~100 entries and the anchors the user actually
+        /// placed were gone. That is why "i want it as an editable spline" could not be built: there was
+        /// nothing left to edit. Dragging one of a hundred sampled points is not editing a spline, and moving
+        /// it would not re-curve its neighbours.
+        ///
+        /// Storing anchors instead makes the polyline a DERIVED thing, regenerated from RiverPathPoints
+        /// wherever it is needed -- which is the same shape as everything else here: the displacement, the
+        /// paint and the water are all derived, nothing is baked.</summary>
+        public sealed class River
+        {
+            public readonly System.Collections.Generic.List<Vector3> Anchors = new();
+            public float Half = 8f, Depth = 4f;
+            public int Material = 5;
+        }
+        readonly System.Collections.Generic.List<River> _rivers = new();
+        public int RiverCount => _rivers.Count;
+
+        /// <summary>Move one anchor and regenerate everything downstream of it.
+        ///
+        /// Expensive on purpose -- it re-derives the field, the paint, the water and every affected chunk --
+        /// so the editor commits on mouse RELEASE and shows a cheap preview during the drag. Doing this per
+        /// mouse-move would rebuild the terrain sixty times a second.</summary>
+        public void MoveRiverAnchor(int river, int anchor, Vector3 to)
+        {
+            if (river < 0 || river >= _rivers.Count) return;
+            var r = _rivers[river];
+            if (anchor < 0 || anchor >= r.Anchors.Count) return;
+            r.Anchors[anchor] = to;
+            RegenerateRivers();
+        }
+
+        /// <summary>Delete a river outright. The ground comes back exactly, because the displacement was never
+        /// baked into the heightmap -- it is regenerated from the anchors every time, so removing them removes
+        /// the river.</summary>
+        public void RemoveRiver(int river)
+        {
+            if (river < 0 || river >= _rivers.Count) return;
+            _rivers.RemoveAt(river);
+            RegenerateRivers();
+        }
+
+        /// <summary>Drop and rebuild every derived thing a river owns: displacement, water, splat, geometry.</summary>
+        public void RegenerateRivers()
+        {
+            RebuildRiverField();
+            RebuildRiverWater();
+            foreach (var (pts, half, _) in RiverPolylines()) PaintRiverBed(pts, half, RiverMaterial);
+            _dirty = true;
+            RebuildAll();
+        }
+        public System.Collections.Generic.IReadOnlyList<River> Rivers => _rivers;
+
+        /// <summary>Every river's centreline, sampled. Rebuilt on demand rather than cached, because it is
+        /// cheap next to what consumes it and a cache here would be a third thing to invalidate when an anchor
+        /// moves.</summary>
+        System.Collections.Generic.List<(System.Collections.Generic.List<Vector3> pts, float half, float depth)> RiverPolylines()
+        {
+            var outp = new System.Collections.Generic.List<(System.Collections.Generic.List<Vector3>, float, float)>();
+            foreach (var r in _rivers)
+                if (r.Anchors.Count >= 2) outp.Add((RiverPathPoints(r.Anchors), r.Half, r.Depth));
+            return outp;
+        }
         Node3D _riverBeds;
 
         /// <summary>Carve a river along a path: CUT the terrain surface out and build a riverbed under it.
@@ -521,7 +591,10 @@ void fragment() {
         /// a river carved across sloping ground must stay below the surface for its whole length, and keying
         /// off one end leaves the other end floating above the hillside.</summary>
         public void CarveRiver(Vector3 begin, Vector3 end, float halfWidth, float depth)
-            => CarveRiverPolyline(new System.Collections.Generic.List<Vector3> { begin, end }, halfWidth, depth);
+        {
+            _pendingAnchors = new System.Collections.Generic.List<Vector3> { begin, end };
+            CarveRiverPolyline(new System.Collections.Generic.List<Vector3> { begin, end }, halfWidth, depth);
+        }
 
         /// <summary>Over-carve margin. The cut is a per-quad MASK, so its boundary is stair-stepped at cell
         /// resolution and never lands on the true bank circle. strawberry_cow: "carve slightly more than we
@@ -559,6 +632,8 @@ void fragment() {
         /// left a notch; each measured depth from its own lowest bank, so a run downhill stepped; and each
         /// stopped at the stair-stepped mask boundary. Walking the whole path once fixes all three, because a
         /// station can see its NEIGHBOURS.</summary>
+        System.Collections.Generic.List<Vector3> _pendingAnchors;   // set by the public entry points; see below
+
         void CarveRiverPolyline(System.Collections.Generic.IReadOnlyList<Vector3> path, float half, float depth)
         {
             if (_grid == null || path == null || path.Count < 2) return;
@@ -580,7 +655,15 @@ void fragment() {
             gy0 = Mathf.Clamp(gy0, 0, _gh - 2); gy1 = Mathf.Clamp(gy1, 0, _gh - 2);
             if (gx1 < gx0 || gy1 < gy0) return;   // wholly off-map
 
-            for (int e = 0; e < path.Count - 1; e++) _riverSegs.Add((path[e], path[e + 1], half, depth));
+            // The ANCHORS are the record, not the samples. `path` here is already the sampled centreline;
+            // CarveRiverPath hands the anchors down separately so the recipe stays editable.
+            if (_pendingAnchors != null)
+            {
+                var riv = new River { Half = half, Depth = depth, Material = RiverMaterial };
+                riv.Anchors.AddRange(_pendingAnchors);
+                _rivers.Add(riv);
+                _pendingAnchors = null;
+            }
             RebuildRiverField();
             PaintRiverBed(path, half, RiverMaterial);
             BuildRiverWater(path, half, depth);
@@ -732,9 +815,9 @@ void fragment() {
         public void CarveRiverPath(System.Collections.Generic.IReadOnlyList<Vector3> anchors, float halfWidth, float depth)
         {
             if (_grid == null || anchors == null || anchors.Count < 2) return;
-            // ONE polyline for the whole curve, cut and bedded in a single pass. It used to carve each bezier
-            // step as an independent CarveRiver call, which is what produced the notched joins and the stepped
-            // floor -- a segment that cannot see its neighbours cannot line up with them.
+            // ONE polyline for the whole curve, in a single pass -- a segment that cannot see its neighbours
+            // cannot line up with them. The ANCHORS ride along separately so the river stays editable.
+            _pendingAnchors = new System.Collections.Generic.List<Vector3>(anchors);
             CarveRiverPolyline(RiverPathPoints(anchors), halfWidth, depth);
         }
 
@@ -831,19 +914,7 @@ void fragment() {
         public void RebuildRiverWater()
         {
             if (_riverWater != null) { _riverWater.QueueFree(); _riverWater = null; }
-            if (_riverSegs.Count == 0) return;
-            int i = 0;
-            while (i < _riverSegs.Count)
-            {
-                var poly = new System.Collections.Generic.List<Vector3> { _riverSegs[i].a, _riverSegs[i].b };
-                float half = _riverSegs[i].half, depth = _riverSegs[i].depth;
-                int j = i + 1;
-                while (j < _riverSegs.Count && _riverSegs[j].half == half && _riverSegs[j].depth == depth
-                       && _riverSegs[j].a.DistanceSquaredTo(poly[^1]) < 0.0001f)
-                { poly.Add(_riverSegs[j].b); j++; }
-                BuildRiverWater(poly, half, depth);
-                i = j;
-            }
+            foreach (var (pts, half, depth) in RiverPolylines()) BuildRiverWater(pts, half, depth);
         }
 
         /// <summary>A translucent surface spanning bank to bank, plus arrows showing which way it flows.
@@ -972,7 +1043,7 @@ void fragment() {
         // terrain's own material and splat colours right up to the water, and the visible edge is the smooth
         // bank instead of a 4 m staircase.
         //
-        // Derived from _riverSegs rather than saved: the recipe already persists, so a load rebuilds this and
+        // Derived from the anchors rather than saved: the recipe already persists, so a load rebuilds this and
         // there is no third file to keep in step with the other two.
         // RIVER CUT DEPTH, per grid vertex, in metres to subtract from the surface.
         //
@@ -1029,11 +1100,13 @@ void fragment() {
         void RebuildRiverField()
         {
             _riverCut = null;
-            if (_grid == null || _riverSegs.Count == 0) return;
+            if (_grid == null || _rivers.Count == 0) return;
             var f = new float[_gw, _gh];
 
-            foreach (var (a, b, half, depth) in _riverSegs)
+            foreach (var (pts, half, depth) in RiverPolylines())
+            for (int pi = 0; pi < pts.Count - 1; pi++)
             {
+                Vector3 a = pts[pi], b = pts[pi + 1];
                 float blend = half * RiverBlendFactor;
                 float reach = blend;
                 float minX = Mathf.Min(a.X, b.X) - reach, maxX = Mathf.Max(a.X, b.X) + reach;
@@ -1092,11 +1165,13 @@ void fragment() {
         /// being interpolated between grid corners.</summary>
         public float RiverCutWorld(float worldX, float worldZ)
         {
-            if (_riverSegs.Count == 0) return 0f;
+            if (_rivers.Count == 0) return 0f;
             var p = new Vector2(worldX, worldZ);
             float best = 0f;
-            foreach (var (a, b, half, depth) in _riverSegs)
+            foreach (var (pts, half, depth) in RiverPolylines())
+            for (int pi = 0; pi < pts.Count - 1; pi++)
             {
+                Vector3 a = pts[pi], b = pts[pi + 1];
                 var A = new Vector2(a.X, a.Z); var B = new Vector2(b.X, b.Z);
                 var ab = B - A;
                 float t = Mathf.Clamp((p - A).Dot(ab) / Mathf.Max(1e-6f, ab.LengthSquared()), 0f, 1f);
@@ -1157,7 +1232,12 @@ void fragment() {
             return false;
         }
 
-        public int RiverSegmentCount => _riverSegs.Count;
+        /// <summary>Sampled segments across every river -- what the old recipe stored one-for-one. Kept as a
+        /// number because tests and the editor panel report it.</summary>
+        public int RiverSegmentCount
+        {
+            get { int n = 0; foreach (var r in _rivers) if (r.Anchors.Count >= 2) n += RiverPathPoints(r.Anchors).Count - 1; return n; }
+        }
 
         /// <summary>Splat layer painted into the bed, and how far past the bank the overspray reaches as a
         /// fraction of the blend zone. Layer 5 = Sand by the table on PaintSplat.</summary>
@@ -1254,30 +1334,17 @@ void fragment() {
         /// Returns the number of rivers (polylines) rebuilt.</summary>
         public int RebuildRiversFromRecipe()
         {
-            if (_grid == null || _riverSegs.Count == 0) return 0;
-            var recipe = new System.Collections.Generic.List<(Vector3 a, Vector3 b, float half, float depth)>(_riverSegs);
-            _riverSegs.Clear();
-            if (_riverBeds != null) { _riverBeds.QueueFree(); _riverBeds = null; }
-            _bedMeshes.Clear();
-            _bedVerts.Clear();
-            _riverCut = null;
-            if (_riverWater != null) { _riverWater.QueueFree(); _riverWater = null; }
-
-            int rebuilt = 0;
-            int i = 0;
-            while (i < recipe.Count)
-            {
-                var poly = new System.Collections.Generic.List<Vector3> { recipe[i].a, recipe[i].b };
-                float half = recipe[i].half, depth = recipe[i].depth;
-                int j = i + 1;
-                while (j < recipe.Count && recipe[j].half == half && recipe[j].depth == depth
-                       && recipe[j].a.DistanceSquaredTo(poly[^1]) < 0.0001f)
-                { poly.Add(recipe[j].b); j++; }
-                CarveRiverPolyline(poly, half, depth);
-                rebuilt++;
-                i = j;
-            }
-            GD.Print($"[river] rebuilt {rebuilt} river(s) from {recipe.Count} stored segments");
+            if (_grid == null || _rivers.Count == 0) return 0;
+            // Everything downstream of the anchors is derived, so a "rebuild" is just: drop the derived state
+            // and regenerate it. There is no geometry to free and no recipe to reconstruct any more -- which
+            // is the whole point of storing anchors rather than samples.
+            RebuildRiverField();
+            RebuildRiverWater();
+            foreach (var (pts, half, _) in RiverPolylines()) PaintRiverBed(pts, half, RiverMaterial);
+            _dirty = true;
+            RebuildAll();
+            int rebuilt = _rivers.Count;
+            GD.Print($"[river] rebuilt {rebuilt} river(s) from their anchors");
             return rebuilt;
         }
 

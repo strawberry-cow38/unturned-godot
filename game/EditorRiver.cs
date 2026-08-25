@@ -56,6 +56,16 @@ namespace UnturnedGodot
         public void SetHalfWidth(float v) { _halfWidth = Mathf.Clamp(v, MinHalfWidth, MaxHalfWidth); UpdatePreview(); }
         public void SetDepth(float v) { _depth = Mathf.Clamp(v, MinDepth, MaxDepth); UpdatePreview(); }
 
+        // EXISTING rivers' anchors, as draggable handles. strawberry: "i want it as an editable spline, not a
+        // permanent deform of the terrain." The non-permanent half was already true -- nothing is baked into
+        // the heightmap -- but until now you could draw a river and never touch it again, which is not what
+        // anyone means by editable.
+        const uint HandlePickLayer = 1u << 12;   // its own layer; the road tool owns 1<<11 and EditorRoads 1<<10
+        readonly List<StaticBody3D> _handles = new();
+        readonly List<(int river, int anchor)> _handleIds = new();
+        int _dragRiver = -1, _dragAnchor = -1;
+        Vector3 _dragTo;
+
         bool _carving;                       // tool active (V)
         bool _stroke;                        // mid-drag (Freehand)
         readonly List<Vector3> _anchors = new();
@@ -77,7 +87,7 @@ namespace UnturnedGodot
 
         public string ModeText => !_carving
             ? "V carve river"
-            : $"RIVER[{ToolNames[(int)_tool]}] · half-width {_halfWidth:0.#}m ([/]) · depth {_depth:0.#}m (-/=) · {_anchors.Count} placed · T tool · LMB place · Enter carve · Del undo point · Esc";
+            : $"RIVER[{ToolNames[(int)_tool]}] · half-width {_halfWidth:0.#}m ([/]) · depth {_depth:0.#}m (-/=) · {_anchors.Count} placed · T tool · LMB place/drag node · Enter carve · Del undo point · Esc";
 
         public EditorRiver(Editor editor, Camera3D cam, Terrain terr)
         {
@@ -89,7 +99,56 @@ namespace UnturnedGodot
         void SetCarving(bool on)
         {
             _carving = on;
-            if (!on) CancelPath();
+            if (on) BuildHandles();
+            else { CancelPath(); ClearHandles(); _dragRiver = -1; }
+        }
+
+        void ClearHandles()
+        {
+            foreach (var h in _handles) if (IsInstanceValid(h)) h.QueueFree();
+            _handles.Clear(); _handleIds.Clear();
+        }
+
+        /// <summary>One pickable sphere per anchor of every river. Rebuilt whenever the set changes rather
+        /// than moved, because an anchor list is small and a stale handle is a handle that edits the wrong
+        /// node.</summary>
+        void BuildHandles()
+        {
+            ClearHandles();
+            if (_terr == null) return;
+            for (int ri = 0; ri < _terr.RiverCount; ri++)
+            {
+                var riv = _terr.Rivers[ri];
+                for (int ai = 0; ai < riv.Anchors.Count; ai++)
+                {
+                    var body = new StaticBody3D { CollisionLayer = HandlePickLayer, Position = riv.Anchors[ai] };
+                    body.AddChild(new CollisionShape3D { Shape = new SphereShape3D { Radius = 2.2f } });
+                    body.AddChild(new MeshInstance3D
+                    {
+                        Mesh = new SphereMesh { Radius = 1.3f, Height = 2.6f, RadialSegments = 8, Rings = 4 },
+                        MaterialOverride = new StandardMaterial3D
+                        {
+                            AlbedoColor = new Color(1f, 0.85f, 0.25f),
+                            ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
+                            NoDepthTest = true,
+                        },
+                    });
+                    AddChild(body);
+                    _handles.Add(body); _handleIds.Add((ri, ai));
+                }
+            }
+        }
+
+        int PickHandle(Vector2 screen)
+        {
+            if (_cam == null) return -1;
+            var from = _cam.ProjectRayOrigin(screen);
+            var to = from + _cam.ProjectRayNormal(screen) * 12000f;
+            var q = new PhysicsRayQueryParameters3D { From = from, To = to, CollisionMask = HandlePickLayer };
+            var hit = GetWorld3D().DirectSpaceState.IntersectRay(q);
+            if (hit.Count == 0) return -1;
+            for (int i = 0; i < _handles.Count; i++) if (_handles[i] == (Node)hit["collider"]) return i;
+            return -1;
         }
 
         public override void _UnhandledInput(InputEvent ev)
@@ -122,6 +181,16 @@ namespace UnturnedGodot
                     case Key.Backspace:
                         DropLastAnchor();
                         GetViewport().SetInputAsHandled(); return;
+                    case Key.K when _anchors.Count == 0:
+                        // K, not R. EditorRoadDraw toggles itself on R BEFORE its own active-check, so R here
+                        // would silently switch the road tool on underneath the river tool -- the panel's
+                        // mutual exclusion cannot help, because the key never reaches it.
+                        //
+                        // Rebuild every river from its anchors. Cheap now -- there is no baked geometry left to
+                        // reconstruct, just derived state to regenerate.
+                        _terr?.RegenerateRivers();
+                        BuildHandles();
+                        GetViewport().SetInputAsHandled(); return;
                     // [ / ] width, - / = depth. Deliberately NOT , / . -- those are time-of-day in
                     // EditorEnvironment and are live the whole time this tool is, so taking them would break a
                     // control that has nothing to do with rivers. [ and ] belong to EditorRoads, which the
@@ -137,6 +206,16 @@ namespace UnturnedGodot
             {
                 if (mb.Pressed)
                 {
+                    // A HANDLE UNDER THE CURSOR WINS over starting a new stroke -- otherwise an existing
+                    // river's node is a thing you can create and never touch again, which is the complaint.
+                    int h = PickHandle(GetViewport().GetMousePosition());
+                    if (h >= 0)
+                    {
+                        (_dragRiver, _dragAnchor) = _handleIds[h];
+                        _dragTo = _handles[h].Position;
+                        GetViewport().SetInputAsHandled();
+                        return;
+                    }
                     if (_tool == ETool.Freehand) { _stroke = true; CancelPath(); AddAnchorAtCursor(); }
                     else
                     {
@@ -146,6 +225,14 @@ namespace UnturnedGodot
                         if (_tool == ETool.Straight && _anchors.Count >= 2) Commit();
                     }
                 }
+                else if (_dragRiver >= 0)
+                {
+                    // COMMIT ON RELEASE. Moving an anchor re-derives the displacement, the paint, the water and
+                    // every affected chunk; doing that per mouse-move would rebuild the terrain 60x a second.
+                    _terr?.MoveRiverAnchor(_dragRiver, _dragAnchor, _dragTo);
+                    _dragRiver = -1;
+                    BuildHandles();
+                }
                 else if (_stroke) { _stroke = false; Commit(); }
                 GetViewport().SetInputAsHandled();
                 return;
@@ -153,6 +240,16 @@ namespace UnturnedGodot
 
             if (ev is InputEventMouseMotion)
             {
+                if (_dragRiver >= 0)
+                {
+                    if (RaycastTerrain(GetViewport().GetMousePosition(), out var np))
+                    {
+                        _dragTo = np;
+                        for (int i = 0; i < _handleIds.Count; i++)
+                            if (_handleIds[i] == (_dragRiver, _dragAnchor)) _handles[i].Position = np;
+                    }
+                    return;
+                }
                 if (_stroke)
                 {
                     // Bank a point only once the cursor has actually travelled -- otherwise a slow drag lays
@@ -189,6 +286,7 @@ namespace UnturnedGodot
             if (_terr != null && _anchors.Count >= 2)
             {
                 _terr.CarveRiverPath(_anchors, _halfWidth, _depth);
+                BuildHandles();
                 GD.Print($"[river] carved {_anchors.Count} anchors, half-width {_halfWidth:0.#}m, depth {_depth:0.#}m -> {_terr.RiverSegmentCount} segments total");
             }
             CancelPath();
