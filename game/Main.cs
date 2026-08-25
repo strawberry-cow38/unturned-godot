@@ -109,7 +109,7 @@ namespace UnturnedGodot
             bool containerTest = false; string containerTestName = null;
             bool wallDemo = false;
             bool clockTest = false;
-            bool play = false, demo = false, netdemo = false, server = false, dedicated = false, client = false, smoke = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, lightTest = false, trafficTest = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, playground = false, objects = false, peidrive = false, craftmenu = false, stationtest = false, editorMode = false, impactTest = false, doorGallery = false, lampTest = false, beamTest = false, impTest = false, treeSweep = false, bakeLods = false, bakeLodsDry = false, netobserve = false, zombieTier = false;
+            bool play = false, demo = false, netdemo = false, server = false, dedicated = false, client = false, smoke = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, lightTest = false, trafficTest = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, playground = false, objects = false, peidrive = false, craftmenu = false, stationtest = false, editorMode = false, impactTest = false, doorGallery = false, lampTest = false, beamTest = false, impTest = false, treeSweep = false, bakeLods = false, bakeLodsDry = false, netobserve = false, zombieTier = false, zflow = false;
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
                 if (arg.StartsWith("--catalog=")) catalog = arg["--catalog=".Length..];
@@ -189,6 +189,7 @@ namespace UnturnedGodot
                 else if (arg == "--stationtest") { stationtest = true; _shotRequested = shot; }   // line up all 9 crafting-station deployables to eyeball the extracted models
                 else if (arg == "--objects") objects = true;     // place PEI's real Level/Objects.dat objects (fences/props/rocks) on the terrain
                 else if (arg == "--zombietier") zombieTier = true;   // zombie AI rewrite phase-1 verify: chunk grid + tier classification (logs tiers as an anchor sweeps out of a town)
+                else if (arg == "--zflow") zflow = true;             // zombie AI rewrite phase-2 verify: flow field routes a horde AROUND a wall (log split; --write-movie for the visual)
                 else if (arg.StartsWith("--landmarkshot=")) _lmShotDir = arg["--landmarkshot=".Length..];   // fly a camera past the big landmarks at range -> verify they render across the map
                 else if (arg == "--peidrive") peidrive = true;    // playable PEI: terrain + all objects/trees + player+jeep with real controls (same as the menu's "Drive PEI")
                 else if (arg.StartsWith("--map="))                // load a DIFFERENT map (e.g. --map="cow tools"): terrain + objects + spawns all follow _mapRoot
@@ -273,6 +274,7 @@ namespace UnturnedGodot
             }
 
             if (zombieTier) { BuildZombieTierTest(); return; }   // zombie AI rewrite phase 1 verify (docs/ZOMBIE_REDESIGN.md)
+            if (zflow) { BuildZombieFlow(); return; }             // zombie AI rewrite phase 2 verify
 
             if (terrain)   // load a real Unturned map's terrain (PEI Landscape heightmap tile) -> a Godot mesh, replacing the flat test-plane
             {
@@ -1821,6 +1823,93 @@ namespace UnturnedGodot
                        + $" | zombies HOT {zf.TierZombies[3]} WARM {zf.TierZombies[2]} COLD {zf.TierZombies[1]} (sim={sim}/{ZombieChunkField.Budget}) FROZEN-potential {zf.TierZombies[0]}");
             }
             GD.Print("[zombietier] done -- tiers should shed HOT->WARM->COLD->FROZEN as the anchor leaves, and sim never exceeds the budget.");
+            GetTree().Quit();
+        }
+
+        // --zflow: zombie AI rewrite PHASE 2 verify (docs/ZOMBIE_REDESIGN.md). Synthetic scene -- flat ground + a 60m WALL,
+        // the "player" anchor EAST of it, 40 zombies WEST. The flow field must route them AROUND the wall's ends, so if they
+        // reach EAST (past the wall) they demonstrably pathed around it (the wall blocks the direct line). Headless run logs
+        // the east/at-wall/west split; a `--write-movie` run records the flow (top-down cam + red dots).
+        bool _zflowMode; ZombieChunkField _zff; Vector3 _zflowAnchor; double _zflowT;
+        Node3D _zflowDotRoot; readonly System.Collections.Generic.List<MeshInstance3D> _zflowDots = new();
+
+        void BuildZombieFlow()
+        {
+            GetWindow().Size = new Vector2I(1000, 1000);
+            var env = new Godot.Environment { BackgroundMode = Godot.Environment.BGMode.Color, BackgroundColor = new Color(0.12f, 0.13f, 0.15f), AmbientLightSource = Godot.Environment.AmbientSource.Color, AmbientLightColor = new Color(0.8f, 0.8f, 0.85f), AmbientLightEnergy = 1f };
+            AddChild(new WorldEnvironment { Environment = env });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-70f, -30f, 0f), LightEnergy = 1f });
+
+            var ground = new StaticBody3D { CollisionLayer = WorldLayers.World };
+            ground.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = new Vector3(500f, 1f, 500f) }, Position = new Vector3(0f, -0.5f, 0f) });   // thin box, top at y=0 -> below the walkability probe (a WorldBoundaryShape half-space tripped the probe everywhere)
+            var gm = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(400, 400) } };
+            gm.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.26f, 0.30f, 0.24f) };
+            ground.AddChild(gm); AddChild(ground);
+
+            var wsize = new Vector3(6f, 5f, 60f);   // a 60m wall along Z at x=0 -- open only at each end
+            var wall = new StaticBody3D { CollisionLayer = WorldLayers.World };
+            wall.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = wsize } });
+            var wm = new MeshInstance3D { Mesh = new BoxMesh { Size = wsize } };
+            wm.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.55f, 0.42f, 0.35f) };
+            wall.AddChild(wm); AddChild(wall); wall.Position = new Vector3(0f, 2.5f, 0f);
+
+            var zf = new ZombieChunkField();   // no Terr -> flat ground at y=0
+            AddChild(zf);
+            _zflowAnchor = new Vector3(45f, 0f, 0f);
+            zf.DebugAnchor = _zflowAnchor;
+            zf.DebugSeed(new Vector3(-45f, 0f, 0f), 40, spread: 44f);
+            _zff = zf;
+
+            var am = new MeshInstance3D { Mesh = new SphereMesh { Radius = 1.6f, Height = 3.2f } };
+            am.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.2f, 1f, 0.3f), EmissionEnabled = true, Emission = new Color(0.15f, 0.8f, 0.25f) };
+            AddChild(am); am.Position = _zflowAnchor + Vector3.Up * 1.5f;
+
+            _zflowDotRoot = new Node3D(); AddChild(_zflowDotRoot);
+            var cam = new Camera3D { Current = true, Fov = 55f, Far = 4000f };
+            AddChild(cam); cam.Position = new Vector3(0f, 175f, 0.01f); cam.LookAt(Vector3.Zero, Vector3.Forward);
+            _zflowMode = true;
+            GD.Print("[zflow] wall scene: anchor +45x, 40 zombies -45x, 60m wall at x=0 -> they must round the ends.");
+        }
+
+        void UpdateZflowDots()
+        {
+            if (_zff == null) return;
+            int i = 0;
+            foreach (var z in _zff.DebugZombies())
+            {
+                MeshInstance3D dot;
+                if (i < _zflowDots.Count) dot = _zflowDots[i];
+                else
+                {
+                    dot = new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(1.5f, 1.9f, 1.5f) } };
+                    dot.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.9f, 0.2f, 0.2f), EmissionEnabled = true, Emission = new Color(0.5f, 0.08f, 0.08f) };
+                    _zflowDotRoot.AddChild(dot); _zflowDots.Add(dot);
+                }
+                dot.Position = z.Pos + Vector3.Up * 0.95f;
+                i++;
+            }
+        }
+
+        void ZflowReport()
+        {
+            int west = 0, atwall = 0, east = 0; float minx = 1e9f, maxx = -1e9f, sumx = 0; int n = 0;
+            foreach (var z in _zff.DebugZombies())
+            {
+                if (z.Pos.X > 8f) east++;
+                else if (z.Pos.X < -8f) west++;
+                else atwall++;
+                minx = Mathf.Min(minx, z.Pos.X); maxx = Mathf.Max(maxx, z.Pos.X); sumx += z.Pos.X; n++;
+            }
+            // The proof the field ROUTES rather than pushing into the wall: sample its direction just WEST of the wall
+            // centre -- it must aim toward an END (|z| grows), NOT straight +x into the wall.
+            var f = _zff.Field;
+            var behind = f.Sample(new Vector3(-10f, 0f, 0f));      // OPEN cell directly behind the wall centre -> must point to an END (strong |Z|)
+            var mid = f.Sample(new Vector3(-25f, 0f, 0f));         // further back, still behind centre -> still angled to an end
+            var end = f.Sample(new Vector3(-10f, 0f, 33f));        // OPEN cell past the north end -> curls east (+X) around it
+            GD.Print($"[zflow] after {_zflowT:0}s: EAST(past wall) {east} / at-wall {atwall} / WEST {west} | x min {minx:0} avg {(n>0?sumx/n:0):0} max {maxx:0}");
+            GD.Print($"[zflow] field: {f.BlockedCells}/{f.CellCount} cells blocked; cost behind-centre(-10,0)={f.CostAt(new Vector3(-10,0,0))} vs at-end(-10,33)={f.CostAt(new Vector3(-10,0,33))}  [behind should cost MORE if routing around]");
+            GD.Print($"[zflow] field dir behind-centre (-10,0)= ({behind.X:0.00},{behind.Y:0.00})  further (-25,0)= ({mid.X:0.00},{mid.Y:0.00})  past-end (-10,33)= ({end.X:0.00},{end.Y:0.00})   [strong Y behind-centre => routing toward an end, NOT straight through]");
+            _zflowMode = false;
             GetTree().Quit();
         }
 
@@ -6390,6 +6479,7 @@ namespace UnturnedGodot
 
         public override void _Process(double delta)
         {
+            if (_zflowMode) { _zflowT += delta; UpdateZflowDots(); if (_zflowT >= 40.0) ZflowReport(); return; }   // zombie phase-2 verify owns the frame
             // Re-applied until two consecutive passes change nothing, rather than once on the first frame:
             // materials are still being created while the world builds, so a single early pass converts
             // whatever happened to exist yet and silently leaves the rest per-pixel -- which would make a

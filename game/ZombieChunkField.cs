@@ -35,6 +35,21 @@ namespace UnturnedGodot
         const float WarmIn = 128f, WarmOut = 168f;
         const float ColdIn = 256f, ColdOut = 304f;
 
+        // ---- phase 2: the flow field + drift ----
+        const float FieldRadius = 160f;    // the flow field covers ±this around the anchor (comfortably past WARM)
+        const float ZombieSpeed = 3.2f;    // m/s ground walk (HOT+WARM); COLD takes ONE coarse step every ColdStep seconds
+        const float ColdStep = 2f;
+        const float StopDist = 1.5f;       // pile at the player rather than oscillate through them
+        readonly ZombieFlowField _field = new();
+        readonly Dictionary<(int, int), bool> _walkCache = new();   // per-cell walkability (buildings are static -> query once)
+        (int, int) _fieldCell = (int.MinValue, int.MinValue);
+        Vector3 _fieldAnchor;
+        bool _hasField;
+        double _coldAcc;
+        BoxShape3D _probe;
+        public bool HasField => _hasField;
+        public ZombieFlowField Field => _field;   // --zflow verify render reads the baked arrows
+
         public enum Tier { Frozen = 0, Cold = 1, Warm = 2, Hot = 3 }
 
         // A zombie. PHASE 1: just where it stands (Home == Pos, no movement). Later phases add velocity/target + a node
@@ -114,9 +129,8 @@ namespace UnturnedGodot
         public override void _PhysicsProcess(double delta)
         {
             _acc += delta;
-            if (_acc < Interval) return;
-            _acc = 0;
-            Reclassify();
+            if (_acc >= Interval) { _acc = 0; Reclassify(); RebuildFieldIfMoved(); }
+            Move(delta);   // drift every frame (HOT+WARM); COLD steps coarsely inside
         }
 
         // Verify hook (--zombietier): drive a classify pass synchronously (headless), no physics ticks needed.
@@ -128,6 +142,38 @@ namespace UnturnedGodot
             Chunk best = null;
             foreach (var c in _chunks.Values) if (best == null || c.SpawnPts.Count > best.SpawnPts.Count) best = c;
             return best?.Center ?? Vector3.Zero;
+        }
+
+        // --zflow verify: drop `count` zombies around `at` directly (no Animals.dat), pre-materialized so they drift
+        // as soon as the anchor tiers their chunk active.
+        public void DebugSeed(Vector3 at, int count, float spread)
+        {
+            var k = Key(at.X, at.Z);
+            if (!_chunks.TryGetValue(k, out var c))
+            {
+                c = new Chunk
+                {
+                    Cx = k.Item1, Cz = k.Item2,
+                    Center = new Vector3((k.Item1 + 0.5f) * ChunkSize, 0f, (k.Item2 + 0.5f) * ChunkSize),
+                    Seed = (uint)(k.Item1 * 73856093) ^ (uint)(k.Item2 * 19349663) ^ 0x9E3779B9u,
+                };
+                _chunks[k] = c;
+            }
+            c.Cap = count;
+            c.Live = new List<Zombie>(count);
+            uint s = c.Seed | 1u;
+            for (int i = 0; i < count; i++)
+            {
+                s ^= s << 13; s ^= s >> 17; s ^= s << 5; float ox = ((s % 1000u) / 1000f - 0.5f) * spread;
+                s ^= s << 13; s ^= s >> 17; s ^= s << 5; float oz = ((s % 1000u) / 1000f - 0.5f) * spread;
+                var p = new Vector3(at.X + ox, at.Y, at.Z + oz);
+                c.Live.Add(new Zombie { Home = p, Pos = p });
+            }
+        }
+
+        public IEnumerable<Zombie> DebugZombies()
+        {
+            foreach (var c in _chunks.Values) if (c.Live != null) foreach (var z in c.Live) yield return z;
         }
 
         // Gather anchors, tier every chunk (hysteresis), enforce the per-player HOT+WARM budget, materialize/drop.
@@ -214,6 +260,76 @@ namespace UnturnedGodot
                 s ^= s << 13; s ^= s >> 17; s ^= s << 5;             // xorshift32 -- deterministic pick
                 var p = c.SpawnPts[(int)(s % (uint)c.SpawnPts.Count)];
                 c.Live.Add(new Zombie { Home = p, Pos = p });
+            }
+        }
+
+        // Rebuild the flow field when the anchor crosses a field cell (it still points home between crossings, so this
+        // is amortised -- a BFS every few metres of player movement, not per frame and never per zombie).
+        void RebuildFieldIfMoved()
+        {
+            if (_anchors.Count == 0) { _hasField = false; return; }
+            _fieldAnchor = _anchors[0];   // SP: the single anchor. Nearest-player + sound retargeting arrive in phase 4.
+            var cell = (Mathf.FloorToInt(_fieldAnchor.X / ZombieFlowField.Cell), Mathf.FloorToInt(_fieldAnchor.Z / ZombieFlowField.Cell));
+            if (_hasField && cell == _fieldCell) return;
+            _fieldCell = cell;
+            var min = new Vector3(_fieldAnchor.X - FieldRadius, 0f, _fieldAnchor.Z - FieldRadius);
+            var max = new Vector3(_fieldAnchor.X + FieldRadius, 0f, _fieldAnchor.Z + FieldRadius);
+            _field.Build(min, max, _fieldAnchor, Walkable);
+            _hasField = true;
+        }
+
+        // A cell is walkable unless a building occupies its walking-height band. Probe a box ~0.5-2.2 m above the
+        // sampled ground -- ABOVE flat terrain (open ground reads clear) but through any wall. Cached, since buildings
+        // are static. (Phase-2 approximation: steep slopes can over-block; a building-only collision layer would tighten
+        // it for the HOT routing later.)
+        bool Walkable(int cx, int cz)
+        {
+            var key = (cx, cz);
+            if (_walkCache.TryGetValue(key, out bool cached)) return cached;
+            var space = GetWorld3D()?.DirectSpaceState;
+            if (space == null) return true;   // physics not up yet -> assume open, don't cache
+            float wx = (cx + 0.5f) * ZombieFlowField.Cell, wz = (cz + 0.5f) * ZombieFlowField.Cell;
+            float gy = Terr != null ? Terr.SampleHeight(wx, wz) : 0f;
+            _probe ??= new BoxShape3D { Size = new Vector3(ZombieFlowField.Cell * 0.9f, 1.7f, ZombieFlowField.Cell * 0.9f) };
+            var q = new PhysicsShapeQueryParameters3D
+            {
+                Shape = _probe,
+                Transform = new Transform3D(Basis.Identity, new Vector3(wx, gy + 1.35f, wz)),
+                CollisionMask = WorldLayers.World,
+                CollideWithBodies = true, CollideWithAreas = false,
+            };
+            bool walk = space.IntersectShape(q, 1).Count == 0;
+            _walkCache[key] = walk;
+            return walk;
+        }
+
+        // Drift live zombies down the field toward the anchor. HOT+WARM every frame; COLD one coarse step every
+        // ColdStep s; FROZEN doesn't move (no Live list). Phase 2 has no mesh/collision/separation yet.
+        void Move(double delta)
+        {
+            if (!_hasField) return;
+            float dt = (float)delta;
+            _coldAcc += delta;
+            bool coldStep = _coldAcc >= ColdStep;
+            if (coldStep) _coldAcc = 0;
+            foreach (var c in _chunks.Values)
+            {
+                if (c.Live == null) continue;                       // FROZEN
+                bool cold = c.Tier == Tier.Cold;
+                if (cold && !coldStep) continue;
+                float step = cold ? ZombieSpeed * ColdStep : ZombieSpeed * dt;
+                for (int i = 0; i < c.Live.Count; i++)
+                {
+                    var z = c.Live[i];
+                    float dx = _fieldAnchor.X - z.Pos.X, dz = _fieldAnchor.Z - z.Pos.Z;
+                    if (dx * dx + dz * dz <= StopDist * StopDist) continue;   // arrived -> pile at the player
+                    var dir = _field.Sample(z.Pos);
+                    if (dir == Vector2.Zero) continue;
+                    float nx = z.Pos.X + dir.X * step, nz = z.Pos.Z + dir.Y * step;
+                    float ny = Terr != null ? Terr.SampleHeight(nx, nz) : z.Pos.Y;
+                    z.Pos = new Vector3(nx, ny, nz);
+                    c.Live[i] = z;
+                }
             }
         }
     }
