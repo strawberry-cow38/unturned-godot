@@ -6141,7 +6141,13 @@ namespace UnturnedGodot
         void UpdateGrassDisplacement()
         {
             GrassDisplacers.EnsureGlobals();   // idempotent; grass materials already did this at build -- belt-and-suspenders (+ owns DispImg/DispTex)
-            var p = GlobalPosition;
+            // Use the INTERPOLATED visual position (master), NOT the raw 50Hz sim GlobalPosition -- otherwise the flatten
+            // (and its wake) steps at the physics tick while the player renders smooth. Mirror the render-interp
+            // condition + lerp EXACTLY; this runs just before that same lerp sets GlobalPosition below, so the
+            // interpolation fraction + the _interpPrev/_interpCurr endpoints match this frame.
+            var p = (_interpReady && !_dead && _driving == null && _ridingTrain == null && _ridingCrane == null)
+                ? _interpPrev.Lerp(_interpCurr, (float)Engine.GetPhysicsInterpolationFraction())
+                : GlobalPosition;
             // RETAIL: the local player, one point at (x, y+0.5, z), w unused -- exactly GrassDisplacement.cs.
             RenderingServer.GlobalShaderParameterSet(GrassDisplacers.PointParam, new Vector4(p.X, p.Y + 0.5f, p.Z, 0f));
             var wd = WindField.WindXZ(p);   // FOLIAGE WIND SWAY: xy = direction, z = strength at the player (a representative gust for the whole view)
