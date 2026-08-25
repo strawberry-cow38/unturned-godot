@@ -6422,7 +6422,17 @@ namespace UnturnedGodot
                 // The seat you are ACTUALLY in (strawberry 2026-08-16: "make the different seats actually move the
                 // player's seated position") -- previously every occupant was drawn in the driver's seat, so
                 // switching seats moved the camera and left the body behind the wheel.
-                _body.GlobalTransform = _driving.GlobalTransform * new Transform3D(Basis.Identity, _driving.SeatBodyLocal(_seatIndex));
+                // INTERPOLATED, not the raw physics transform (strawberry: "apply interp to the seated player
+                // position"). The vehicle is a rigid body stepped at the physics rate; reading GlobalTransform
+                // here samples whatever the last physics tick left, so at any framerate above the physics rate
+                // the body sat still for some frames and jumped on others -- while the car MESH beside it was
+                // being interpolated by Godot and moving smoothly. The occupant juddered against his own
+                // vehicle.
+                //
+                // The driving camera already reads the interpolated transform for exactly this reason. Using
+                // the same source here is what puts the body, the car and the view in one frame of reference
+                // rather than two.
+                _body.GlobalTransform = _driving.GetGlobalTransformInterpolated() * new Transform3D(Basis.Identity, _driving.SeatBodyLocal(_seatIndex));
                 // The DRIVER mimes a wheel; a passenger must not, or the back seats all sit there steering an
                 // invisible car -- and it reads worse now they are holding a rifle while doing it.
                 _body.PlayLoop(_seatIndex == 0

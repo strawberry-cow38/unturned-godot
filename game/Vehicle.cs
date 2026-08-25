@@ -2057,40 +2057,50 @@ namespace UnturnedGodot
         // SORTED BY SEAT INDEX at extraction. The prefab returns them in tree order, which is NOT index order
         // (the sedan hands back Seat_3 before Seat_2), and unsorted they would silently seat the driver in the
         // back of half the fleet.
+        /// <summary>Seat positions, VERBATIM from the retail prefabs (tools/vehicle_seats.json, dumped by
+        /// tools/dump_vehicle_seats.py). strawberry: "get all the CORRECT seating positions for all vehicles
+        /// from the source and implement."
+        ///
+        /// Mostly they already were -- diffed against the extraction, 20 of the 25 entries matched to 5 mm and
+        /// the other 5 differed only by 2-decimal rounding. What the diff DID find:
+        ///   - the TANK had no entry at all, so it fell through to a single default seat and its gunner sat on
+        ///     the driver;
+        ///   - the OTTER's seats were Z-NEGATED against the prefab (+1.23/+0.41 against -1.318/-0.504), which
+        ///     put the pilot behind the passenger and facing the tail.
+        ///
+        /// SORTED BY SEAT INDEX. The prefab returns them in TREE order -- the ambulance dumps Seat_3, Seat_2,
+        /// Seat_4 -- so taking the file's order seats the driver in the back.</summary>
         static readonly System.Collections.Generic.Dictionary<string, Vector3[]> SeatTable = new()
         {
-            ["jeep"] = new[] { new Vector3(-0.50f, 0.05f, -0.12f), new Vector3(0.50f, 0.05f, -0.12f), new Vector3(-0.50f, 0.05f, 1.40f), new Vector3(0.50f, 0.05f, 1.40f) },
-            ["quad"] = new[] { new Vector3(0f, 0.16f, 0.56f), new Vector3(0f, 0.44f, 1.65f) },
-            ["bus"] = new[] { new Vector3(-0.80f, -0.08f, -2.65f), new Vector3(-0.80f, -0.08f, -1.06f), new Vector3(0.80f, -0.08f, -1.06f), new Vector3(-0.80f, -0.08f, 0.45f), new Vector3(0.80f, -0.08f, 0.45f), new Vector3(-0.80f, -0.08f, 1.87f), new Vector3(0.80f, -0.08f, 1.87f), new Vector3(-0.80f, -0.08f, 3.37f), new Vector3(0.80f, -0.08f, 3.37f), new Vector3(0f, -0.08f, 3.37f) },
-            ["sedan"] = new[] { new Vector3(-0.50f, -0.08f, -0.62f), new Vector3(0.50f, -0.08f, -0.62f), new Vector3(-0.50f, -0.08f, 0.77f), new Vector3(0.50f, -0.08f, 0.77f) },
-            ["hatchback"] = new[] { new Vector3(-0.50f, -0.08f, -0.30f), new Vector3(0.50f, -0.08f, -0.30f), new Vector3(-0.50f, -0.08f, 1.24f), new Vector3(0.50f, -0.08f, 1.24f) },
-            ["humvee"] = new[] { new Vector3(-0.50f, -0.03f, -0.48f), new Vector3(0.50f, -0.03f, -0.48f), new Vector3(-0.50f, -0.03f, 0.86f), new Vector3(0.50f, -0.03f, 0.86f) },
-            ["roadster"] = new[] { new Vector3(-0.50f, -0.08f, 0.33f), new Vector3(0.50f, -0.08f, 0.33f) },
-            ["ambulance"] = new[] { new Vector3(-0.50f, 0.02f, -1.40f), new Vector3(0.50f, 0.02f, -1.40f), new Vector3(-0.60f, 0.05f, 0.14f), new Vector3(0.60f, 0.05f, 0.14f), new Vector3(0f, 0.05f, 1.71f) },
-            ["firetruck"] = new[] { new Vector3(-0.50f, 0.19f, -2.40f), new Vector3(0.50f, 0.19f, -2.40f) },
-            ["tractor"] = new[] { new Vector3(0f, 0.59f, 1.10f) },
-            ["ural"] = new[] { new Vector3(-0.50f, 0.06f, -1.30f), new Vector3(0.50f, 0.06f, -1.30f), new Vector3(-0.62f, 0.06f, 0.44f), new Vector3(0.62f, 0.06f, 0.44f), new Vector3(-0.62f, 0.06f, 1.44f), new Vector3(0.62f, 0.06f, 1.44f), new Vector3(-0.62f, 0.06f, 2.44f), new Vector3(0.62f, 0.06f, 2.44f) },
-            ["police"] = new[] { new Vector3(-0.50f, -0.08f, -0.62f), new Vector3(0.50f, -0.08f, -0.62f), new Vector3(-0.50f, -0.08f, 0.77f), new Vector3(0.50f, -0.08f, 0.77f) },
-            ["offroader"] = new[] { new Vector3(-0.50f, 0.05f, -0.12f), new Vector3(0.50f, 0.05f, -0.12f), new Vector3(-0.50f, 0.05f, 1.40f), new Vector3(0.50f, 0.05f, 1.40f) },
-            ["truck"] = new[] { new Vector3(-0.50f, 0.05f, -0.59f), new Vector3(0.50f, 0.05f, -0.59f), new Vector3(-0.60f, 0.05f, 1.19f), new Vector3(0.60f, 0.05f, 1.19f), new Vector3(0f, 0.05f, 1.71f) },
-            ["van"] = new[] { new Vector3(-0.50f, 0.05f, -0.73f), new Vector3(0.50f, 0.05f, -0.73f), new Vector3(-0.60f, 0.05f, 1.19f), new Vector3(0.60f, 0.05f, 1.19f), new Vector3(0f, 0.05f, 1.71f) },
-            ["golf"] = new[] { new Vector3(-0.50f, -0.08f, -0.35f), new Vector3(0.50f, -0.08f, -0.35f), new Vector3(-0.50f, -0.08f, 0.77f), new Vector3(0.50f, -0.08f, 0.77f) },
-            ["runabout"] = new[] { new Vector3(-0.50f, 0.06f, -0.76f), new Vector3(0.50f, 0.06f, -0.76f), new Vector3(-0.50f, 0.06f, 0.90f), new Vector3(0.50f, 0.06f, 0.90f) },
-            ["apc"] = new[] { new Vector3(-0.80f, -0.01f, -1.84f), new Vector3(0.80f, -0.01f, -1.84f), new Vector3(-1.00f, -0.01f, -0.03f), new Vector3(1.00f, -0.01f, -0.03f), new Vector3(-1.00f, -0.01f, 0.97f), new Vector3(1.00f, -0.01f, 0.97f), new Vector3(-1.00f, -0.01f, 1.97f), new Vector3(1.00f, -0.01f, 1.97f) },
-            // Helicopters. The Hind's driver seat is the one BEHIND and ABOVE -- a Mi-24 flies from the rear
-            // cockpit with the gunner in the nose, and the extracted indices say exactly that (Seat_0 y0.79
-            // z-1.96, Seat_1 y0.10 z-3.68). Worth stating because it looks like an off-by-one until you know.
-            ["huey"] = new[] { new Vector3(-0.62f, 0.10f, -1.96f), new Vector3(0.62f, 0.10f, -1.96f), new Vector3(-1.26f, -0.12f, -0.42f), new Vector3(1.26f, -0.12f, -0.42f) },
-            ["hind"] = new[] { new Vector3(0f, 0.79f, -1.96f), new Vector3(0f, 0.10f, -3.68f), new Vector3(0.50f, 0.08f, 0.26f), new Vector3(-0.50f, 0.08f, 0.26f), new Vector3(-0.50f, 0.08f, 1.48f), new Vector3(0.50f, 0.08f, 1.48f) },
-            ["orca"] = new[] { new Vector3(-0.61f, -0.08f, -0.30f), new Vector3(0.60f, -0.08f, -0.30f), new Vector3(-0.61f, -0.08f, 0.88f), new Vector3(0.60f, -0.08f, 0.88f), new Vector3(1.50f, -0.24f, 2.66f), new Vector3(-1.50f, -0.24f, 2.66f) },
-            ["skycrane"] = new[] { new Vector3(0f, 0.10f, -2.84f) },
-            ["hummingbird"] = new[] { new Vector3(-0.62f, 0.10f, -1.96f), new Vector3(0.62f, 0.10f, -1.96f), new Vector3(-1.26f, -0.12f, -0.42f), new Vector3(1.26f, -0.12f, -0.42f) },
-            // No retail prefab: the minicopter is procedural and VoX asked for exactly one seat on it
-            // (2026-08-16, "only 1 seat on the minicopter"); the scoutcopter keeps its pair.
-            ["minicopter"] = new[] { new Vector3(0f, 0.32f, 0.10f) },
-            ["scoutcopter"] = new[] { new Vector3(-0.34f, 0.32f, 0.10f), new Vector3(0.34f, 0.32f, 0.10f) },
-        };
+            ["jeep"] = new[] { new Vector3(-0.500f, 0.050f, -0.116f), new Vector3(0.500f, 0.050f, -0.116f), new Vector3(-0.500f, 0.050f, 1.404f), new Vector3(0.500f, 0.050f, 1.404f) },   // jeep: 4 seats, verbatim from the prefab
+            ["quad"] = new[] { new Vector3(-0.000f, 0.163f, 0.557f), new Vector3(-0.000f, 0.439f, 1.645f) },   // quad: 2 seats, verbatim from the prefab
+            ["bus"] = new[] { new Vector3(-0.800f, -0.081f, -2.651f), new Vector3(-0.800f, -0.081f, -1.056f), new Vector3(0.800f, -0.081f, -1.056f), new Vector3(-0.800f, -0.081f, 0.449f), new Vector3(0.800f, -0.081f, 0.449f), new Vector3(-0.800f, -0.081f, 1.866f), new Vector3(0.800f, -0.081f, 1.866f), new Vector3(-0.800f, -0.081f, 3.366f), new Vector3(0.800f, -0.081f, 3.366f), new Vector3(0.000f, -0.081f, 3.366f) },   // bus: 10 seats, verbatim from the prefab
+            ["sedan"] = new[] { new Vector3(-0.500f, -0.079f, -0.625f), new Vector3(0.500f, -0.079f, -0.625f), new Vector3(-0.500f, -0.079f, 0.772f), new Vector3(0.500f, -0.079f, 0.772f) },   // sedan: 4 seats, verbatim from the prefab
+            ["hatchback"] = new[] { new Vector3(-0.500f, -0.079f, -0.299f), new Vector3(0.500f, -0.079f, -0.299f), new Vector3(-0.500f, -0.079f, 1.240f), new Vector3(0.500f, -0.079f, 1.240f) },   // hatchback: 4 seats, verbatim from the prefab
+            ["humvee"] = new[] { new Vector3(-0.500f, -0.033f, -0.480f), new Vector3(0.500f, -0.033f, -0.480f), new Vector3(-0.500f, -0.033f, 0.858f), new Vector3(0.500f, -0.033f, 0.858f) },   // humvee: 4 seats, verbatim from the prefab
+            ["roadster"] = new[] { new Vector3(-0.500f, -0.079f, 0.331f), new Vector3(0.500f, -0.079f, 0.331f) },   // roadster: 2 seats, verbatim from the prefab
+            ["ambulance"] = new[] { new Vector3(-0.500f, 0.020f, -1.400f), new Vector3(0.500f, 0.020f, -1.400f), new Vector3(-0.603f, 0.051f, 0.138f), new Vector3(0.603f, 0.051f, 0.138f), new Vector3(0.000f, 0.051f, 1.707f) },   // ambulance: 5 seats, verbatim from the prefab
+            ["firetruck"] = new[] { new Vector3(-0.500f, 0.193f, -2.396f), new Vector3(0.500f, 0.193f, -2.396f) },   // firetruck: 2 seats, verbatim from the prefab
+            ["tractor"] = new[] { new Vector3(0.000f, 0.587f, 1.100f) },   // tractor_0: 1 seats, verbatim from the prefab
+            ["ural"] = new[] { new Vector3(-0.500f, 0.055f, -1.302f), new Vector3(0.500f, 0.055f, -1.302f), new Vector3(-0.617f, 0.055f, 0.444f), new Vector3(0.617f, 0.055f, 0.444f), new Vector3(-0.617f, 0.055f, 1.444f), new Vector3(0.617f, 0.055f, 1.444f), new Vector3(-0.617f, 0.055f, 2.444f), new Vector3(0.617f, 0.055f, 2.444f) },   // ural: 8 seats, verbatim from the prefab
+            ["police"] = new[] { new Vector3(-0.500f, -0.079f, -0.625f), new Vector3(0.500f, -0.079f, -0.625f), new Vector3(-0.500f, -0.079f, 0.772f), new Vector3(0.500f, -0.079f, 0.772f) },   // police: 4 seats, verbatim from the prefab
+            ["offroader"] = new[] { new Vector3(-0.500f, 0.050f, -0.116f), new Vector3(0.500f, 0.050f, -0.116f), new Vector3(-0.500f, 0.050f, 1.404f), new Vector3(0.500f, 0.050f, 1.404f) },   // off_roader: 4 seats, verbatim from the prefab
+            ["truck"] = new[] { new Vector3(-0.500f, 0.051f, -0.593f), new Vector3(0.500f, 0.051f, -0.593f), new Vector3(-0.603f, 0.051f, 1.188f), new Vector3(0.603f, 0.051f, 1.188f), new Vector3(0.000f, 0.051f, 1.707f) },   // truck: 5 seats, verbatim from the prefab
+            ["van"] = new[] { new Vector3(-0.500f, 0.051f, -0.731f), new Vector3(0.500f, 0.051f, -0.731f), new Vector3(-0.603f, 0.051f, 1.188f), new Vector3(0.603f, 0.051f, 1.188f), new Vector3(0.000f, 0.051f, 1.707f) },   // van: 5 seats, verbatim from the prefab
+            ["golf"] = new[] { new Vector3(-0.500f, -0.079f, -0.350f), new Vector3(0.500f, -0.079f, -0.350f), new Vector3(-0.500f, -0.079f, 0.772f), new Vector3(0.500f, -0.079f, 0.772f) },   // vw_golf: 4 seats, verbatim from the prefab
+            ["runabout"] = new[] { new Vector3(-0.500f, 0.062f, -0.758f), new Vector3(0.500f, 0.062f, -0.758f), new Vector3(-0.500f, 0.062f, 0.898f), new Vector3(0.500f, 0.062f, 0.898f) },   // runabout: 4 seats, verbatim from the prefab
+            ["apc"] = new[] { new Vector3(-0.800f, -0.015f, -1.845f), new Vector3(0.800f, -0.015f, -1.845f), new Vector3(-1.002f, -0.015f, -0.028f), new Vector3(1.002f, -0.015f, -0.028f), new Vector3(-1.002f, -0.015f, 0.972f), new Vector3(1.002f, -0.015f, 0.972f), new Vector3(-1.002f, -0.015f, 1.972f), new Vector3(1.002f, -0.015f, 1.972f) },   // apc: 8 seats, verbatim from the prefab
+            ["huey"] = new[] { new Vector3(-0.625f, 0.096f, -1.958f), new Vector3(0.625f, 0.096f, -1.958f), new Vector3(-1.261f, -0.120f, -0.423f), new Vector3(1.261f, -0.120f, -0.423f) },   // huey: 4 seats, verbatim from the prefab
+            ["hind"] = new[] { new Vector3(-0.000f, 0.790f, -1.960f), new Vector3(0.000f, 0.095f, -3.677f), new Vector3(0.500f, 0.080f, 0.260f), new Vector3(-0.500f, 0.080f, 0.260f), new Vector3(-0.500f, 0.080f, 1.480f), new Vector3(0.500f, 0.080f, 1.480f) },   // hind: 6 seats, verbatim from the prefab
+            ["orca"] = new[] { new Vector3(-0.610f, -0.079f, -0.299f), new Vector3(0.600f, -0.079f, -0.299f), new Vector3(-0.609f, -0.080f, 0.876f), new Vector3(0.601f, -0.080f, 0.876f), new Vector3(1.500f, -0.240f, 2.656f), new Vector3(-1.500f, -0.240f, 2.660f) },   // orca: 6 seats, verbatim from the prefab
+            ["skycrane"] = new[] { new Vector3(0.000f, 0.096f, -2.844f) },   // skycrane: 1 seats, verbatim from the prefab
+            ["hummingbird"] = new[] { new Vector3(-0.625f, 0.096f, -1.958f), new Vector3(0.625f, 0.096f, -1.958f), new Vector3(-1.261f, -0.120f, -0.423f), new Vector3(1.261f, -0.120f, -0.423f) },   // hummingbird_police: 4 seats, verbatim from the prefab
 
+            ["minicopter"] = new[] { new Vector3(0f, 0.32f, 0.10f) },
+
+            ["scoutcopter"] = new[] { new Vector3(-0.34f, 0.32f, 0.10f), new Vector3(0.34f, 0.32f, 0.10f) },
+            ["tank"] = new[] { new Vector3(0.000f, 0.192f, -2.711f), new Vector3(0.000f, 0.000f, -0.000f) },   // tank: 2 seats, verbatim from the prefab
+        };
         static Vector3 SeatOf(string name) => name switch
         {
             "Sedan" => new Vector3(-0.50f, -0.04f, -0.566f),
@@ -3261,7 +3271,6 @@ namespace UnturnedGodot
             ForwardGears = new[] { 1f }, ReverseGear = 1f, ShiftUpRpm = 5000f,
             Sound = "engine_plane.ogg", IgnitionSound = "otter_ignition.ogg", IdlePitch = 0.9f, MaxPitch = 1.9f, IdleVolume = 0.8f, MaxVolume = 1.0f,   // the REAL shared prop-plane engine loop + the Otter's own ignition
             Fuel = 1750f, Health = 800f, Name = "Otter",
-            Seats = new[] { new Vector3(0f, 0.62f, 1.23f), new Vector3(0f, 0.62f, 0.41f) },   // pilot + passenger (from the prefab)
             DriverEye = new Vector3(0f, 1.5f, 1.0f),
         };
         public static Vehicle BuildOtter(int variant = 0) => Build(_otter, variant, "otter");
