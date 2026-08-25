@@ -109,7 +109,7 @@ namespace UnturnedGodot
             bool containerTest = false; string containerTestName = null;
             bool wallDemo = false;
             bool clockTest = false;
-            bool play = false, demo = false, netdemo = false, server = false, dedicated = false, client = false, smoke = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, lightTest = false, trafficTest = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, playground = false, objects = false, peidrive = false, craftmenu = false, stationtest = false, editorMode = false, impactTest = false, doorGallery = false, lampTest = false, beamTest = false, impTest = false, treeSweep = false, bakeLods = false, bakeLodsDry = false, netobserve = false;
+            bool play = false, demo = false, netdemo = false, server = false, dedicated = false, client = false, smoke = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, lightTest = false, trafficTest = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, playground = false, objects = false, peidrive = false, craftmenu = false, stationtest = false, editorMode = false, impactTest = false, doorGallery = false, lampTest = false, beamTest = false, impTest = false, treeSweep = false, bakeLods = false, bakeLodsDry = false, netobserve = false, zombieTier = false;
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
                 if (arg.StartsWith("--catalog=")) catalog = arg["--catalog=".Length..];
@@ -188,6 +188,7 @@ namespace UnturnedGodot
                 else if (arg == "--craftmenu") craftmenu = true; // open the CraftingMenu (browsable recipe index) over a stocked bag
                 else if (arg == "--stationtest") { stationtest = true; _shotRequested = shot; }   // line up all 9 crafting-station deployables to eyeball the extracted models
                 else if (arg == "--objects") objects = true;     // place PEI's real Level/Objects.dat objects (fences/props/rocks) on the terrain
+                else if (arg == "--zombietier") zombieTier = true;   // zombie AI rewrite phase-1 verify: chunk grid + tier classification (logs tiers as an anchor sweeps out of a town)
                 else if (arg.StartsWith("--landmarkshot=")) _lmShotDir = arg["--landmarkshot=".Length..];   // fly a camera past the big landmarks at range -> verify they render across the map
                 else if (arg == "--peidrive") peidrive = true;    // playable PEI: terrain + all objects/trees + player+jeep with real controls (same as the menu's "Drive PEI")
                 else if (arg.StartsWith("--map="))                // load a DIFFERENT map (e.g. --map="cow tools"): terrain + objects + spawns all follow _mapRoot
@@ -270,6 +271,8 @@ namespace UnturnedGodot
                 BuildStationTest();
                 return;
             }
+
+            if (zombieTier) { BuildZombieTierTest(); return; }   // zombie AI rewrite phase 1 verify (docs/ZOMBIE_REDESIGN.md)
 
             if (terrain)   // load a real Unturned map's terrain (PEI Landscape heightmap tile) -> a Godot mesh, replacing the flat test-plane
             {
@@ -1795,6 +1798,32 @@ namespace UnturnedGodot
 
         // --terrain: load PEI's Landscape Tile_0_0 heightmap into a Godot terrain mesh (the first real WORLD step; replaces
         // the flat test-plane). Aerial camera over the 1024 m tile so the real terrain shape is visible.
+        // --zombietier: zombie AI rewrite PHASE 1 verify (docs/ZOMBIE_REDESIGN.md). Build PEI terrain + the ZombieChunkField,
+        // then sweep a debug anchor OUT of the densest town and log the tier counts at each step -- so you can watch chunks
+        // (+ their zombies) flip HOT -> WARM -> COLD -> FROZEN as a "player" walks away, and confirm the 64/anchor budget holds.
+        void BuildZombieTierTest()
+        {
+            var terr = Terrain.LoadMapMerged(MapDir("PEI") + "/Landscape/Heightmaps", withCollider: false);
+            if (terr == null) { GD.Print("[zombietier] no PEI terrain -- need the retail install"); GetTree().Quit(); return; }
+            AddChild(terr);
+            var zf = new ZombieChunkField { Terr = terr };
+            AddChild(zf);
+            zf.LoadFromPei(MapDir("PEI"));
+
+            var town = zf.DensestChunkCenter();
+            GD.Print($"[zombietier] densest town chunk @ ({town.X:0},{town.Z:0}); sweeping an anchor out of it:");
+            foreach (float off in new float[] { 0f, 60f, 120f, 200f, 300f, 500f })
+            {
+                zf.DebugAnchor = town + new Vector3(off, 0f, 0f);
+                zf.ForceReclassify();
+                int sim = zf.TierZombies[3] + zf.TierZombies[2];   // HOT + WARM = the simulated ones the budget caps
+                GD.Print($"[zombietier] +{off,4:0}m | chunks HOT {zf.TierChunks[3]} WARM {zf.TierChunks[2]} COLD {zf.TierChunks[1]} FROZEN {zf.TierChunks[0]}"
+                       + $" | zombies HOT {zf.TierZombies[3]} WARM {zf.TierZombies[2]} COLD {zf.TierZombies[1]} (sim={sim}/{ZombieChunkField.Budget}) FROZEN-potential {zf.TierZombies[0]}");
+            }
+            GD.Print("[zombietier] done -- tiers should shed HOT->WARM->COLD->FROZEN as the anchor leaves, and sim never exceeds the budget.");
+            GetTree().Quit();
+        }
+
         void BuildTerrainTest()
         {
             var env = new Godot.Environment
