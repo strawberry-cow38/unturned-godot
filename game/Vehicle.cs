@@ -1249,6 +1249,7 @@ namespace UnturnedGodot
         // What the focused player's look ray is currently pointing at on this hull, as a ready-made prompt line.
         // PlayerController owns the ray, so it writes this; the billboard below just draws it. Empty = no prompt.
         public string AccessHint = "";
+        public Vector3 AccessBoxCenter;   // hull box centre the AccessZones above were derived from (vehicle-local)
 
         /// <summary>The trunk's contents, created on FIRST OPEN rather than at spawn -- a map holds hundreds of
         /// vehicles and an inventory grid each, allocated up front, is a cost paid for cars nobody ever opens.
@@ -1332,25 +1333,52 @@ namespace UnturnedGodot
         const float MinCompartmentRun = 0.85f;
         const float CompartmentHeight = 0.9f;
 
-        /// <summary>Nearest access zone the look ray passes through, in the SAME oriented-box style as
-        /// LookRayHitsHull. Returns false when the ray misses every zone -- the caller then falls back to the
-        /// whole-hull test, so a vehicle without zones (boat, heli) still focuses the way it always did.</summary>
-        public bool LookRayHitsAccess(Vector3 from, Vector3 to, out AccessZone hit)
+        /// <summary>Which access zone the player is aiming at, in the SAME oriented-box style as LookRayHitsHull.
+        ///
+        /// Two rules, in order. A zone the look SEGMENT actually passes through wins outright. Otherwise the
+        /// zone nearest the AIM POINT wins, if it is within AccessNearReach of it -- and that second rule is
+        /// load-bearing, not a nicety: focus is won by a fat sphere probe at the ray terminus, so the crosshair
+        /// routinely sits on hull that no zone box contains (a wheel arch, the roof, the gap between two doors).
+        /// A strict segment test alone answers "no zone" for most of the car and every one of those frames
+        /// silently degrades to the driver's seat, which is the whole behaviour this replaced.
+        ///
+        /// Beyond that reach it genuinely returns false and the caller falls back to the hull, so a vehicle with
+        /// no zones at all (boat, heli, tank, trailer) focuses exactly the way it always did.</summary>
+        public bool ResolveAccess(Vector3 from, Vector3 to, out AccessZone hit)
         {
             hit = default;
             if (AccessZones.Length == 0) return false;
             var inv = GlobalTransform.AffineInverse();
             Vector3 lf = inv * from, lt = inv * to;
-            float best = float.MaxValue;
-            bool found = false;
+            float bestHit = float.MaxValue, bestNear = float.MaxValue;
+            AccessZone near = default;
+            bool found = false, anyNear = false;
             foreach (var z in AccessZones)
             {
                 var aabb = new Aabb(z.Center - z.Size * 0.5f, z.Size);
-                if (!aabb.IntersectsSegment(lf, lt)) continue;
-                float d = lf.DistanceSquaredTo(z.Center);
-                if (d < best) { best = d; hit = z; found = true; }
+                if (aabb.IntersectsSegment(lf, lt))
+                {
+                    float d = lf.DistanceSquaredTo(z.Center);   // ray through two zones -> the one nearer the eye
+                    if (d < bestHit) { bestHit = d; hit = z; found = true; }
+                    continue;
+                }
+                float nd = PointBoxDistSq(lt, aabb);
+                if (nd < bestNear) { bestNear = nd; near = z; anyNear = true; }
             }
-            return found;
+            if (found) return true;
+            if (anyNear && bestNear <= AccessNearReach * AccessNearReach) { hit = near; return true; }
+            return false;
+        }
+        /// <summary>How far off a zone the crosshair may sit and still count as aiming at it. Wide enough to
+        /// cover the unclaimed hull between zones, short enough that the roof of a bus still means "no zone".</summary>
+        const float AccessNearReach = 1.5f;
+        static float PointBoxDistSq(Vector3 p, Aabb b)
+        {
+            Vector3 mn = b.Position, mx = b.End;
+            float dx = Mathf.Max(Mathf.Max(mn.X - p.X, 0f), p.X - mx.X);
+            float dy = Mathf.Max(Mathf.Max(mn.Y - p.Y, 0f), p.Y - mx.Y);
+            float dz = Mathf.Max(Mathf.Max(mn.Z - p.Z, 0f), p.Z - mx.Z);
+            return dx * dx + dy * dy + dz * dz;
         }
 
         /// <summary>Where the 3rd-person BODY sits for a given seat.
@@ -4347,6 +4375,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             // from, and a null here would crash every seat lookup rather than degrading to one seat.
             v.SeatLocals = s.Seats ?? (SeatTable.TryGetValue(specKey, out var st) ? st : new[] { v.SeatOffset });
             v.AccessZones = BuildAccessZones(s, v.SeatLocals, s.BoxCenter, s.BoxSize);
+            v.AccessBoxCenter = s.BoxCenter;   // the frame the zones were laid out in; a test needs it to know which way is 'outboard' of a given zone
 
             // TURRETS. Two nested pivots per mount -- yaw about the vehicle's up, pitch inside it -- with each
             // mesh baked at its own origin, so rotating a node swings only its own geometry. Built even when no

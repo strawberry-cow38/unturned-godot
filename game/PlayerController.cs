@@ -128,6 +128,12 @@ namespace UnturnedGodot
             return _cam.GlobalTransform;
         }
         public Transform3D DebugEye => _cam?.GlobalTransform ?? Transform3D.Identity;
+        // The focus the look scan ACTUALLY resolved, so a test can assert which part of a car the crosshair
+        // won rather than inferring it from what F happened to do. Reading the zone alone would not have caught
+        // the first version of this: the zone maths was right and simply never ran.
+        public Vehicle DebugFocusVehicle => _focusVehicle;
+        public bool DebugFocusAccessValid => _focusAccessValid;
+        public Vehicle.AccessZone DebugFocusAccess => _focusAccess;
 
         /// <summary>Swing at the structure piece under the crosshair. Returns true if one was hit, so the melee
         /// chain stops there rather than also swinging at whatever is behind it. A blowtorch repairs instead of
@@ -486,7 +492,13 @@ namespace UnturnedGodot
             Train hitTrain = null;   // train loco under the look-ray (own scan; not in ResolveFocus)
             Train hitCT = null; int hitCI = -1;   // train + coupler index under the look-ray
             bool rayTerminal = false, rayShelfItem = false;   // did the RAY claim the target, and was it a shelf item? (see the arbitration below)
-            if (!_dead && _driving == null && _riding == null && _cam != null && Input.MouseMode == Input.MouseModeEnum.Captured)
+            // The captured-mouse gate is a gameplay condition: the scan only means anything while the player is
+            // actually looking around. Headless REFUSES to capture (MouseMode stays Visible no matter what a test
+            // sets), so L1 cannot reach this scan at all without a seam -- and the alternative, testing
+            // Vehicle.ResolveAccess on its own, is precisely the check that passed against the build where the
+            // zone code was never called. Default off; any suite that sets it must clear it (see l1 leaked globals).
+            if (!_dead && _driving == null && _riding == null && _cam != null
+                && (Input.MouseMode == Input.MouseModeEnum.Captured || DebugForceLookScan))
             {
                 var space = GetWorld3D().DirectSpaceState;
                 // THIRD person traces from the SHOULDER, straight down the look axis (strawberry) -- see ShoulderWorld
@@ -594,12 +606,7 @@ namespace UnturnedGodot
                         {
                             float d = vv.GlobalPosition.DistanceSquaredTo(from);
                             if (d >= maxD || d >= bestV) continue;   // cheap distance gate before the tight oriented-box tests
-                            // ZONES FIRST. A door/hood/trunk volume sits strictly INSIDE the hull, so testing
-                            // it first cannot widen the focus region -- it only makes the focus SPECIFIC.
-                            // Falling through to the hull keeps a vehicle with no zones (boat, heli, tank,
-                            // trailer) focusing exactly as it always has.
-                            if (vv.LookRayHitsAccess(from, _lookEnd, out var az)) { bestV = d; hitVeh = vv; hitAccess = az; hitAccessValid = true; }
-                            else if (vv.LookRayHitsHull(from, _lookEnd)) { bestV = d; hitVeh = vv; hitAccessValid = false; }
+                            if (vv.LookRayHitsHull(from, _lookEnd)) { bestV = d; hitVeh = vv; }
                         }
                 }
                 // TRAIN look-focus (not in ResolveFocus -- a train is a lone rail vehicle): when nothing else won,
@@ -639,6 +646,14 @@ namespace UnturnedGodot
                 _focusItem = hitItem;
                 _focusItem?.SetFocused(true);
             }
+            // WHICH PART of the winning car, resolved once here rather than inside any one of the paths that can
+            // win it. The first cut of this lived in the no-collider fallback loop below and so only ran when
+            // NOTHING else won the frame -- but a car you are stood in front of has a real hull collider and wins
+            // on the sphere probe above, so the zone code never ran and every press fell through to seat 0. The
+            // vehicle is final by this point no matter which path found it; that is the only correct place to ask.
+            // DebugLookOrigin is the `from` the scan above actually traced with -- the SHOULDER in 3rd person,
+            // which is NOT the camera. Re-deriving it from _cam here would test a different ray to the one that won.
+            hitAccessValid = hitVeh != null && IsInstanceValid(hitVeh) && hitVeh.ResolveAccess(DebugLookOrigin, _lookEnd, out hitAccess);
             _focusAccess = hitAccess; _focusAccessValid = hitAccessValid;   // updated every frame: same car, different door
             if (hitVeh != _focusVehicle)
             {
@@ -7374,6 +7389,8 @@ namespace UnturnedGodot
         /// <summary>Where the interaction trace actually started this frame. Recorded in UpdateLookFocus for the same
         /// reason as the shot seam: a test that recomputes the origin agrees with a wrong one. Only written while the
         /// mouse is captured, since that is the only time UpdateLookFocus runs -- use LookTrace() to ask directly.</summary>
+        public Vector3 DebugLookEnd => _lookEnd;   // where the eye-ray actually stopped, so a test can see what it aimed at
+        public static bool DebugForceLookScan;   // L1 only: stand in for a captured mouse, which headless will not grant
         public Vector3 DebugLookOrigin { get; private set; }
         public Vector3 DebugLookDir { get; private set; }
 
