@@ -22,12 +22,15 @@ namespace UnturnedGodot
         public const float CrouchWalk = 5f;    // crouched footsteps -- quiet
         public const float SneakWalk  = 2f;    // prone / sneaking -- barely audible
 
+        // A single listener (ZombieChunkField) subscribes to hear every emitted sound -- one cheap callback, NOT the old
+        // per-zombie broadcast. Static so the emit call sites (footsteps/gunshots/horn/doors) never reference the field.
+        public static System.Action<Vector3, float> OnNoise;
+
         // Emit a sound at (pos, loudness). loudness<=0 is silent (e.g. suppressed / not moving).
-        // (enemy hearing removed with the zombie system -- no listener is wired up right now; every
-        // caller is unchanged so a future listener can be added here without touching them.)
         public static void Emit(SceneTree tree, Vector3 pos, float loudness)
         {
             if (tree == null || loudness <= 0f) return;
+            OnNoise?.Invoke(pos, loudness);
         }
     }
 }

@@ -109,7 +109,7 @@ namespace UnturnedGodot
             bool containerTest = false; string containerTestName = null;
             bool wallDemo = false;
             bool clockTest = false;
-            bool play = false, demo = false, netdemo = false, server = false, dedicated = false, client = false, smoke = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, lightTest = false, trafficTest = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, playground = false, objects = false, peidrive = false, craftmenu = false, stationtest = false, editorMode = false, impactTest = false, doorGallery = false, lampTest = false, beamTest = false, impTest = false, treeSweep = false, bakeLods = false, bakeLodsDry = false, netobserve = false, zombieTier = false, zflow = false, zhunt = false, zkill = false;
+            bool play = false, demo = false, netdemo = false, server = false, dedicated = false, client = false, smoke = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, lightTest = false, trafficTest = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, playground = false, objects = false, peidrive = false, craftmenu = false, stationtest = false, editorMode = false, impactTest = false, doorGallery = false, lampTest = false, beamTest = false, impTest = false, treeSweep = false, bakeLods = false, bakeLodsDry = false, netobserve = false, zombieTier = false, zflow = false, zhunt = false, zkill = false, zsound = false;
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
                 if (arg.StartsWith("--catalog=")) catalog = arg["--catalog=".Length..];
@@ -192,6 +192,7 @@ namespace UnturnedGodot
                 else if (arg == "--zflow") zflow = true;             // zombie AI rewrite phase-2 verify: flow field routes a horde AROUND a wall (log split; --write-movie for the visual)
                 else if (arg == "--zhunt") zhunt = true;             // zombie AI rewrite phase-3 verify: near zombies promote to visible HOT bodies + shamble in (log; --write-movie for the visual)
                 else if (arg == "--zkill") zkill = true;             // zombie AI rewrite phase-3b verify: player auto-fires at a chasing cluster -> bullet damage + kills climb
+                else if (arg == "--zsound") zsound = true;           // zombie AI rewrite phase-4 verify: a gunshot lures out-of-sight zombies to the NOISE, not the player (sound-lure + stealth)
                 else if (arg.StartsWith("--landmarkshot=")) _lmShotDir = arg["--landmarkshot=".Length..];   // fly a camera past the big landmarks at range -> verify they render across the map
                 else if (arg == "--peidrive") peidrive = true;    // playable PEI: terrain + all objects/trees + player+jeep with real controls (same as the menu's "Drive PEI")
                 else if (arg.StartsWith("--map="))                // load a DIFFERENT map (e.g. --map="cow tools"): terrain + objects + spawns all follow _mapRoot
@@ -279,6 +280,7 @@ namespace UnturnedGodot
             if (zflow) { BuildZombieFlow(); return; }             // zombie AI rewrite phase 2 verify
             if (zhunt) { BuildZombieHunt(); return; }             // zombie AI rewrite phase 3 verify
             if (zkill) { BuildZombieKill(); return; }             // zombie AI rewrite phase 3b verify
+            if (zsound) { BuildZombieSound(); return; }           // zombie AI rewrite phase 4 verify
 
             if (terrain)   // load a real Unturned map's terrain (PEI Landscape heightmap tile) -> a Godot mesh, replacing the flat test-plane
             {
@@ -2004,6 +2006,53 @@ namespace UnturnedGodot
             // The death path (Die -> ragdoll -> despawn) shares the same Damage entry the bullets already proved. Trigger it lethally to confirm it fires.
             if (sample != null) { bool wasDead = sample.Dead; sample.Damage(999f, _zkPlayer.GlobalPosition); GD.Print($"[zkill] lethal test: 999 dmg -> zombie Dead {wasDead}->{sample.Dead} (true = Die() ran: ragdoll + leaves the group + despawns)"); }
             _zkMode = false;
+            GetTree().Quit();
+        }
+
+        // --zsound: zombie AI rewrite PHASE 4 verify. A "player" (anchor) sits at origin but OUT OF SIGHT of a cluster of
+        // zombies 35 m away. For 3 s: silence -> they hold (stealth). Then a gunshot lands 72 m out (behind them, away from
+        // the player) -> they LURE to the noise, walking toward the gunshot, NOT the player. Log: dist-to-gunshot shrinks,
+        // dist-to-player grows. A --write-movie run shows it.
+        bool _zsMode; ZombieChunkField _zsf; Vector3 _zsSound; double _zsT; bool _zsFired;
+
+        void BuildZombieSound()
+        {
+            GetWindow().Size = new Vector2I(1280, 720);
+            var env = new Godot.Environment { AmbientLightSource = Godot.Environment.AmbientSource.Color, AmbientLightColor = new Color(0.6f, 0.6f, 0.66f), AmbientLightEnergy = 1f, TonemapMode = Godot.Environment.ToneMapper.Aces };
+            AddChild(new WorldEnvironment { Environment = env });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-55f, -40f, 0f), LightEnergy = 1.3f, ShadowEnabled = true });
+            var ground = new StaticBody3D { CollisionLayer = WorldLayers.World };
+            ground.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = new Vector3(400f, 1f, 400f) }, Position = new Vector3(0f, -0.5f, 0f) });
+            var gm = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(400f, 400f) } };
+            gm.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.28f, 0.32f, 0.26f) };
+            ground.AddChild(gm); AddChild(ground);
+
+            var zf = new ZombieChunkField();
+            AddChild(zf);
+            zf.DebugAnchor = Vector3.Zero;                      // the player -- but the zombies are 35m off, past the 24m sight range
+            zf.DebugSeed(new Vector3(0f, 0f, -35f), 10, spread: 14f);
+            _zsf = zf;
+            _zsSound = new Vector3(0f, 0f, -72f);               // the gunshot lands here (behind the zombies, away from the player)
+
+            var pm = new MeshInstance3D { Mesh = new SphereMesh { Radius = 0.6f, Height = 2f } };   // green = player
+            pm.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.2f, 1f, 0.3f), EmissionEnabled = true, Emission = new Color(0.15f, 0.8f, 0.25f) };
+            AddChild(pm); pm.Position = new Vector3(0f, 1f, 0f);
+            var sm = new MeshInstance3D { Mesh = new SphereMesh { Radius = 0.8f, Height = 1.6f } };  // orange = the gunshot point
+            sm.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(1f, 0.55f, 0.1f), EmissionEnabled = true, Emission = new Color(1f, 0.45f, 0.05f) };
+            AddChild(sm); sm.Position = _zsSound + Vector3.Up * 0.8f;
+
+            var cam = new Camera3D { Current = true, Fov = 58f, Far = 2000f };
+            AddChild(cam); cam.Position = new Vector3(34f, 20f, -35f); cam.LookAt(new Vector3(0f, 1f, -52f), Vector3.Up);
+            _zsMode = true;
+            GD.Print("[zsound] player at origin (out of sight); 10 zombies at -35 -> silent hold; gunshot at -72 @ 3s -> lure to the NOISE.");
+        }
+
+        void ZsoundReport()
+        {
+            float toSound = 0f, toPlayer = 0f; int n = 0;
+            foreach (var z in _zsf.DebugZombies()) { toSound += z.Pos.DistanceTo(_zsSound); toPlayer += Mathf.Sqrt(z.Pos.X * z.Pos.X + z.Pos.Z * z.Pos.Z); n++; }
+            GD.Print($"[zsound] after {_zsT:0}s: avg dist to GUNSHOT {(n > 0 ? toSound / n : 0):0}m (started ~37 -> SHRINKS = lured by the noise); avg dist to PLAYER {(n > 0 ? toPlayer / n : 0):0}m (started ~35 -> GROWS = they chased the sound, NOT the player)");
+            _zsMode = false;
             GetTree().Quit();
         }
 
@@ -6576,6 +6625,7 @@ namespace UnturnedGodot
             if (_zflowMode) { _zflowT += delta; UpdateZflowDots(); if (_zflowT >= 40.0) ZflowReport(); return; }   // zombie phase-2 verify owns the frame
             if (_zhMode) { _zhT += delta; if (_zhT >= 6.0) ZhuntReport(); return; }                               // zombie phase-3 verify owns the frame
             if (_zkMode) { _zkT += delta; _zkFrame++; if (_zkFrame > 60 && _zkFrame % 15 == 0) _zkPlayer?.Fire(); if (_zkT >= 14.0) ZkillReport(); return; }   // phase-3b: pace shots so recoil recovers between them
+            if (_zsMode) { _zsT += delta; if (!_zsFired && _zsT >= 3.0) { SoundBus.Emit(GetTree(), _zsSound, SoundBus.Gunshot); _zsFired = true; GD.Print("[zsound] GUNSHOT emitted at the far point"); } if (_zsT >= 13.0) ZsoundReport(); return; }   // phase-4: fire the lure at t=3s
             // Re-applied until two consecutive passes change nothing, rather than once on the first frame:
             // materials are still being created while the world builds, so a single early pass converts
             // whatever happened to exist yet and silently leaves the rest per-pixel -- which would make a

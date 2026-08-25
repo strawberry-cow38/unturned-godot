@@ -57,6 +57,13 @@ namespace UnturnedGodot
         const float SepStrength = 1.3f;
         readonly List<Zombie> _hotList = new();
 
+        // ---- phase 4: sound alert + sight targeting ----
+        const float SightRange = 24f;      // a HOT zombie that SEES a player within this (clear line of sight) chases it directly
+        const float AlertSeconds = 8f;     // a heard noise stays the field's target this long, then fades -> they lose the trail
+        Vector3 _alertPos; float _alertLoud; double _alertExpiry = -1; double _clock;
+        System.Action<Vector3, float> _noiseHandler;
+        public bool HasAlert => _clock < _alertExpiry;
+
         public enum Tier { Frozen = 0, Cold = 1, Warm = 2, Hot = 3 }
 
         // A zombie. Home = spawn point; Pos = current position. Body != null once it's HOT (within ~45 m of a player):
@@ -134,11 +141,23 @@ namespace UnturnedGodot
                      $"map population potential = {capSum} zombies (Σ min({ChunkMaxLive}, ceil(pts*{SpawnChance})))");
         }
 
+        public override void _EnterTree() { _noiseHandler = HearNoise; SoundBus.OnNoise += _noiseHandler; }
+        public override void _ExitTree() { if (_noiseHandler != null) { SoundBus.OnNoise -= _noiseHandler; _noiseHandler = null; } }
+
         public override void _PhysicsProcess(double delta)
         {
+            _clock += delta;
             _acc += delta;
-            if (_acc >= Interval) { _acc = 0; Reclassify(); RebuildFieldIfMoved(); }
-            Move(delta);   // drift every frame (HOT+WARM); COLD steps coarsely inside
+            if (_acc >= Interval) { _acc = 0; Reclassify(); RebuildFieldForAlert(); }
+            Move(delta);   // sight-chase / sound-drift every frame; COLD steps coarsely inside
+        }
+
+        // A sound was emitted (footstep/gunshot/horn/door). Make it the field's target if it's LOUDER than the current
+        // still-live alert (a gunshot beats footsteps), or the old one has faded. Footsteps keep it fresh near a moving player.
+        void HearNoise(Vector3 pos, float loudness)
+        {
+            if (_clock < _alertExpiry && loudness < _alertLoud) return;   // a louder, still-live alert stands
+            _alertPos = pos; _alertLoud = loudness; _alertExpiry = _clock + AlertSeconds;
         }
 
         // Verify hook (--zombietier): drive a classify pass synchronously (headless), no physics ticks needed.
@@ -271,19 +290,36 @@ namespace UnturnedGodot
             }
         }
 
-        // Rebuild the flow field when the anchor crosses a field cell (it still points home between crossings, so this
-        // is amortised -- a BFS every few metres of player movement, not per frame and never per zombie).
-        void RebuildFieldIfMoved()
+        // Rebuild the flow field from the last heard SOUND (the field's target now, not the player -- phase 4). Amortised:
+        // a BFS only when the alert crosses a cell. No live alert -> no field, and the zombies wander / rely on sight.
+        void RebuildFieldForAlert()
         {
-            if (_anchors.Count == 0) { _hasField = false; return; }
-            _fieldAnchor = _anchors[0];   // SP: the single anchor. Nearest-player + sound retargeting arrive in phase 4.
-            var cell = (Mathf.FloorToInt(_fieldAnchor.X / ZombieFlowField.Cell), Mathf.FloorToInt(_fieldAnchor.Z / ZombieFlowField.Cell));
+            if (_clock >= _alertExpiry) { _hasField = false; return; }   // the noise faded -> nothing to path to
+            _fieldAnchor = _alertPos;
+            var cell = (Mathf.FloorToInt(_alertPos.X / ZombieFlowField.Cell), Mathf.FloorToInt(_alertPos.Z / ZombieFlowField.Cell));
             if (_hasField && cell == _fieldCell) return;
             _fieldCell = cell;
-            var min = new Vector3(_fieldAnchor.X - FieldRadius, 0f, _fieldAnchor.Z - FieldRadius);
-            var max = new Vector3(_fieldAnchor.X + FieldRadius, 0f, _fieldAnchor.Z + FieldRadius);
-            _field.Build(min, max, _fieldAnchor, Walkable);
+            var min = new Vector3(_alertPos.X - FieldRadius, 0f, _alertPos.Z - FieldRadius);
+            var max = new Vector3(_alertPos.X + FieldRadius, 0f, _alertPos.Z + FieldRadius);
+            _field.Build(min, max, _alertPos, Walkable);
             _hasField = true;
+        }
+
+        // Can this zombie SEE a player? Nearest anchor within SightRange with a clear line of sight (walls block it).
+        // Returns the seen player's position, or Vector3.Zero if none. Only HOT zombies pay for it (they're few).
+        bool SeePlayer(PhysicsDirectSpaceState3D space, Vector3 from, out Vector3 seen)
+        {
+            seen = default;
+            if (space == null) return false;
+            Vector3 eye = from + Vector3.Up * 1.5f;
+            foreach (var a in _anchors)
+            {
+                float dx = a.X - from.X, dz = a.Z - from.Z;
+                if (dx * dx + dz * dz > SightRange * SightRange) continue;
+                var q = PhysicsRayQueryParameters3D.Create(eye, a + Vector3.Up * 1.0f, WorldLayers.World);   // a wall between = can't see
+                if (space.IntersectRay(q).Count == 0) { seen = a; return true; }
+            }
+            return false;
         }
 
         // A cell is walkable unless a building occupies its walking-height band. Probe a box ~0.5-2.2 m above the
@@ -316,14 +352,13 @@ namespace UnturnedGodot
         // zombies keep drifting as pure DATA (COLD on the coarse step). FROZEN chunks aren't touched.
         void Move(double delta)
         {
-            if (!_hasField) return;
             float dt = (float)delta;
             _coldAcc += delta;
             bool coldStep = _coldAcc >= ColdStep;
             if (coldStep) _coldAcc = 0;
 
             _hotList.Clear();
-            // pass 1: body promote/demote + death cleanup; drift the data-only (WARM/COLD) ones; gather the HOT ones
+            // pass 1: body promote/demote + death cleanup; drift the data-only (WARM/COLD) ones TOWARD THE SOUND; gather HOT
             foreach (var c in _chunks.Values)
             {
                 if (c.Live == null) continue;                       // FROZEN
@@ -333,20 +368,13 @@ namespace UnturnedGodot
                     var z = c.Live[i];
                     if (z.Body != null && (!GodotObject.IsInstanceValid(z.Body) || z.Body.Dead)) { z.Body = null; c.Live.RemoveAt(i); continue; }   // killed -> gone
                     float d = NearestAnchorDist(z.Pos);             // XZ distance to the nearest player
-                    if (z.Body == null && d < HotBodyDist)          // close enough -> spawn the visible body
-                    {
-                        z.Body = new ZombieBody();
-                        AddChild(z.Body);
-                        z.Body.GlobalPosition = z.Pos;
-                    }
-                    else if (z.Body != null && d > HotBodyDrop)     // walked off -> drop back to data
-                    {
-                        z.Body.QueueFree(); z.Body = null;
-                    }
+                    if (z.Body == null && d < HotBodyDist) { z.Body = new ZombieBody(); AddChild(z.Body); z.Body.GlobalPosition = z.Pos; }
+                    else if (z.Body != null && d > HotBodyDrop) { z.Body.QueueFree(); z.Body = null; }
 
                     if (z.Body != null) { z.Pos = z.Body.GlobalPosition; _hotList.Add(z); continue; }   // HOT -> steered in pass 2
 
-                    // WARM/COLD data drift (phase 2 behaviour)
+                    // WARM/COLD drift toward the last SOUND -- only when there's a live alert (else they stay put / wander)
+                    if (!_hasField) continue;
                     if (cold && !coldStep) continue;
                     float step = cold ? ZombieSpeed * ColdStep : ZombieSpeed * dt;
                     float ddx = _fieldAnchor.X - z.Pos.X, ddz = _fieldAnchor.Z - z.Pos.Z;
@@ -358,7 +386,9 @@ namespace UnturnedGodot
                 }
             }
 
-            // pass 2: steer the HOT bodies -- flow field + boids separation from nearby HOT zombies, stop at the player
+            // pass 2: HOT bodies -- SIGHT overrides the sound (a zombie that can SEE a player chases it directly; else it
+            // paths to the last sound), plus boids separation so a horde surrounds rather than stacks.
+            var space = GetWorld3D()?.DirectSpaceState;
             for (int i = 0; i < _hotList.Count; i++)
             {
                 var z = _hotList[i];
@@ -371,8 +401,19 @@ namespace UnturnedGodot
                     float ax = z.Pos.X - o.Pos.X, az = z.Pos.Z - o.Pos.Z, d2 = ax * ax + az * az;
                     if (d2 > 1e-4f && d2 < SepR * SepR) { float dd = Mathf.Sqrt(d2); sep += new Vector2(ax / dd, az / dd) * (1f - dd / SepR); }
                 }
-                float dx = _fieldAnchor.X - z.Pos.X, dz = _fieldAnchor.Z - z.Pos.Z;
-                Vector2 want = (dx * dx + dz * dz <= StopDist * StopDist) ? Vector2.Zero : _field.Sample(z.Pos);
+                Vector2 want;
+                if (SeePlayer(space, z.Pos, out var seen))   // I can SEE a player -> chase it directly (sight beats sound)
+                {
+                    float sx = seen.X - z.Pos.X, sz = seen.Z - z.Pos.Z;
+                    want = (sx * sx + sz * sz <= StopDist * StopDist) ? Vector2.Zero : new Vector2(sx, sz).Normalized();
+                    HearNoise(seen, 6f);   // seeing a player also refreshes the alert, so nearby unseen zombies get pulled in
+                }
+                else if (_hasField)                          // can't see -> path to the last SOUND
+                {
+                    float dx = _fieldAnchor.X - z.Pos.X, dz = _fieldAnchor.Z - z.Pos.Z;
+                    want = (dx * dx + dz * dz <= StopDist * StopDist) ? Vector2.Zero : _field.Sample(z.Pos);
+                }
+                else want = Vector2.Zero;                    // no sight, no sound -> hold (wander can slot in here later)
                 z.Body.DesiredVel = (want + sep * SepStrength).LimitLength(1f) * ZombieSpeed;
             }
         }
