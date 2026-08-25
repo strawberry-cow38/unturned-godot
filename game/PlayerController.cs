@@ -212,6 +212,10 @@ namespace UnturnedGodot
         bool _craneMagPrev;   // Shift edge-detect: energise/de-energise the hoist magnet
         Vehicle _driving; bool _fp = true;   // vehicle being driven + camera mode: true = 1st person (spawn default, strawberry), false = 3rd; H toggles (on foot + driving)
         float _driveCamYaw, _driveCamPitch = 15f;   // 3rd-person driving orbit: mouse yaws/pitches the chase cam around the car (master)
+        /// <summary>Seated look limits, taken from retail PlayerLook (clampYaw / clampPitch) rather than
+        /// invented: a DRIVING seat clamps yaw to +/-160, any other seat to +/-90, and a seated pitch to
+        /// MIN_ANGLE_SIT 60 / MAX_ANGLE_SIT 120 against a 0..180 scale where 90 is level -- +/-30 for us.</summary>
+        const float DriverYawLimit = 160f, PassengerYawLimit = 90f, SeatedPitchLimit = 30f;
         // FP RIDE free-look (#37, MP only): mouse yaw/pitch of the view in VEHICLE-LOCAL space while seated on a
         // puppet in first person (real Unturned lets you look around while driving; the fixed forward gaze made the
         // default MP ride cam feel stuck). At (0, FpRideGazePitchDeg) this reproduces the SP fixed gaze exactly --
@@ -4892,7 +4896,7 @@ namespace UnturnedGodot
                     GetViewport().SetInputAsHandled();
                     return;
                 }
-                bool allowedKey = @event is InputEventKey { Pressed: true } dk && (Keybinds.Matches(GameAction.Interact, @event) || Keybinds.Matches(GameAction.ToggleFirstPerson, @event) || dk.Keycode == Key.G || dk.Keycode == Key.L || dk.Keycode == Key.Ctrl || dk.Keycode == Key.N || dk.Keycode == Key.Escape);   // Interact = exit; ToggleFirstPerson = cam; G = landing gear (retract-gear planes); L lights, Ctrl siren, N ignition, Esc pause. G/L/Ctrl/N stay literal -- vehicle-aux, hardcoded in v1. (ROOT CAUSE of "G does nothing while flying": this allow-list gated G out before the gear handler saw it -- master 2026-08-18)
+                bool allowedKey = @event is InputEventKey { Pressed: true } dk && (Keybinds.Matches(GameAction.Interact, @event) || Keybinds.Matches(GameAction.ToggleFirstPerson, @event) || Keybinds.Matches(GameAction.LeanLeft, @event) || Keybinds.Matches(GameAction.LeanRight, @event) || dk.Keycode == Key.G || dk.Keycode == Key.L || dk.Keycode == Key.Ctrl || dk.Keycode == Key.N || dk.Keycode == Key.Escape);   // Interact = exit; ToggleFirstPerson = cam; G = landing gear (retract-gear planes); L lights, Ctrl siren, N ignition, Esc pause. G/L/Ctrl/N stay literal -- vehicle-aux, hardcoded in v1. (ROOT CAUSE of "G does nothing while flying": this allow-list gated G out before the gear handler saw it -- master 2026-08-18)
                 bool allowedMouse = @event is InputEventMouseButton { ButtonIndex: MouseButton.Left or MouseButton.Right };
                 bool camOrbit = @event is InputEventMouseMotion;   // mouse MOTION must pass through -> it orbits the 3rd-person chase cam (this guard was silently eating it, so the cam sat fixed) (strawberry 2026-07-15)
                 if (!allowedKey && !allowedMouse && !camOrbit) return;
@@ -4922,7 +4926,7 @@ namespace UnturnedGodot
                     _driveCamYaw -= mm.Relative.X * MouseSensitivity;
                     _driveCamPitch = Mathf.Clamp(_driveCamPitch + mm.Relative.Y * MouseSensitivity, -25f, 70f);   // inverted Y: mouse up -> cam tilts down (strawberry)
                 }
-                else if (_riding != null || DrivingPredicted || IsPassenger)   // FP free-look: the mouse turns the VIEW while the driver steers (real Unturned). MP ride, Part A predicted driving, or ANY passenger seat -- a passenger who cannot look around cannot use the weapon they are allowed to hold. The SP DRIVER keeps the fixed gaze over the hood.
+                else if (_riding != null || _driving != null)   // FP free-look: the mouse turns the VIEW while the vehicle steers (retail). Now includes the SP DRIVER, who used to be the one seat pinned facing the hood.
                 {
                     // WRAPPED to (-180, 180]. The camera consumes this through a Basis, which is periodic and so
                     // never cared -- but AimTurret CLAMPS it against the mount's traverse limits, and an unwrapped
@@ -4932,6 +4936,27 @@ namespace UnturnedGodot
                     // Recovering needed ~240 deg of mouse travel before the gun moved at all. Review 2026-08-16.
                     _rideLookYaw = Mathf.Wrap(_rideLookYaw - mm.Relative.X * MouseSensitivity, -180f, 180f);
                     _rideLookPitch = Mathf.Clamp(_rideLookPitch - mm.Relative.Y * MouseSensitivity, -89f, 89f);   // same Y convention as on-foot look: mouse up -> look up
+
+                    // RETAIL SEATED LOOK LIMITS (PlayerLook.clampYaw / clampPitch), read from the source rather
+                    // than guessed. Retail stores pitch as 0..180 with 90 level and clamps a seated player to
+                    // MIN_ANGLE_SIT 60 / MAX_ANGLE_SIT 120, i.e. +/-30 from level; our pitch is already
+                    // level-relative, so it is a straight +/-30.
+                    //
+                    // Yaw differs by SEAT, which is the detail that makes it feel right: a DRIVER gets +/-160
+                    // (you can look back over either shoulder, but never quite straight behind), a passenger
+                    // +/-90. A turret seat is exempt -- its own traverse limits already own the yaw, and
+                    // clamping here would fight them.
+                    // A TURRET SEAT IS EXEMPT: AimTurret already clamps to the mount's own traverse limits, and a
+                    // second clamp here would fight them -- the gunner's view would stop before the gun did.
+                    bool turretSeat = false;
+                    if (_driving?.Turrets != null)
+                        foreach (var td in _driving.Turrets) if (td != null && td.Seat == _seatIndex) { turretSeat = true; break; }
+                    if (!turretSeat)
+                    {
+                        float yawLim = (_driving != null && _seatIndex == 0) ? DriverYawLimit : PassengerYawLimit;
+                        _rideLookYaw = Mathf.Clamp(_rideLookYaw, -yawLim, yawLim);
+                        _rideLookPitch = Mathf.Clamp(_rideLookPitch, -SeatedPitchLimit, SeatedPitchLimit);
+                    }
                 }
                 else if (_driving == null && _riding == null)
                 {
@@ -6914,8 +6939,41 @@ namespace UnturnedGodot
             // is their OWN seat plus the same rise, or everyone in the bus looks out of the driver's window.
             var eye = _seatIndex == 0 ? _driving.DriverEyeLocal
                                       : _driving.SeatLocal(_seatIndex) + new Vector3(0f, PassengerEyeRise, 0f);
+            eye += WindowLeanOffset();
             PositionVehicleCam(vt, eye, size);
         }
+
+        /// <summary>Leaning out of the window, in FIRST PERSON only: the eye slides outward and a little back,
+        /// so you can see past the A-pillar and down the side of the vehicle.
+        ///
+        /// THIS IS NOT RETAIL, and it is worth saying so plainly rather than implying it is. Retail explicitly
+        /// FORBIDS it: PlayerAnimator.simulate gates the whole lean block on
+        /// `stance != CLIMB && != SPRINT && != DRIVING && != SITTING`, and drops through to `_lean = 0` for
+        /// everything else -- so in the real game leaning is dead the moment you sit in a seat. What retail
+        /// gives instead is the wide seated YAW (+/-160 for a driver), which is the "look over your shoulder"
+        /// half of the same idea and IS implemented above, to its exact numbers.
+        ///
+        /// So this is a deliberate addition on top, because it was asked for by name. Eased rather than
+        /// snapped, and first person only -- in a chase cam it would just slide the whole shot sideways.</summary>
+        Vector3 WindowLeanOffset()
+        {
+            float want = 0f;
+            if (_fp && !UiInputBlocked)
+            {
+                if (Keybinds.Pressed(GameAction.LeanLeft)) want -= 1f;
+                if (Keybinds.Pressed(GameAction.LeanRight)) want += 1f;
+            }
+            _windowLean = Mathf.MoveToward(_windowLean, want, WindowLeanRate * (float)GetProcessDeltaTime());
+            if (Mathf.Abs(_windowLean) < 0.001f) return Vector3.Zero;
+            // Outward, plus a touch back and down -- a head out of a window drops below the roofline, and
+            // leaning straight sideways from a fixed eye reads as the camera strafing rather than the driver moving.
+            return new Vector3(_windowLean * WindowLeanOut, -Mathf.Abs(_windowLean) * WindowLeanDrop, Mathf.Abs(_windowLean) * WindowLeanBack);
+        }
+        float _windowLean;                       // -1 fully out of the left window, +1 the right
+        const float WindowLeanOut = 0.55f;       // metres sideways at full lean
+        const float WindowLeanDrop = 0.12f;      // ...and this far down, so the head clears the roofline
+        const float WindowLeanBack = 0.10f;      // ...and back, so the shoulder leads rather than the nose
+        const float WindowLeanRate = 4.0f;       // per second: about a quarter second to full lean
 
         // C6 ride mode: the same cam anchored on the replicated puppet (no trailer towing over the wire in v1)
         void PositionRideCam(Transform3D vt) => PositionVehicleCam(vt, _riding.DriverEyeLocal, _fp ? 0f : _riding.MeshSize);
