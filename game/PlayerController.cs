@@ -2915,7 +2915,20 @@ namespace UnturnedGodot
 
             float dmg = (_melee?.ZombieDamage ?? 45f) * mult * Skills.OverkillMeleeMultiplier();   // weapon .dat Zombie_Damage x OVERKILL skill
             Vector3 origin = GlobalPosition + Vector3.Up * 1.2f, fwd = -_cam.GlobalTransform.Basis.Z;
-            if (MeleeTree(dmg, range)) return;   // an axe swing at a tree fells it, before the swing reaches an animal behind it
+            if (MeleeTree(dmg, range)) return;   // an axe swing at a tree fells it, before the swing reaches a zombie/animal behind it
+            foreach (var n in GetTree().GetNodesInGroup("zombies"))   // zombies take melee (one target per swing)
+                if (n is ZombieBody z && !z.Dead)
+                {
+                    Vector3 to = z.GlobalPosition + Vector3.Up - origin;
+                    if (to.Length() < range + 0.5f && to.Normalized().Dot(fwd) > 0.3f)   // in front, in reach
+                    {
+                        bool wasDead = z.Dead;
+                        z.Damage(dmg, origin);
+                        MeleeImpactFx(z.GlobalPosition + Vector3.Up, true);   // blood + flesh thunk + hitmarker
+                        if (!wasDead && z.Dead) Kills++;
+                        break;   // one target per swing
+                    }
+                }
             foreach (var n in GetTree().GetNodesInGroup("animals"))   // wildlife takes melee (one target per swing)
                 if (n is AnimalAgent a && !a.Dead)
                 {
@@ -2962,6 +2975,15 @@ namespace UnturnedGodot
         // (explosionArmor); vehicles take it too. Still no LIMB or buildable damage.
         public void Explode(Vector3 point, float radius, float zombieDamage, float playerDamage, float vehicleDamage)
         {
+            foreach (var n in GetTree().GetNodesInGroup("zombies"))   // zombies caught in the blast: linear falloff + wall rule
+                if (n is ZombieBody z && !z.Dead)
+                {
+                    float zr = z.GlobalPosition.DistanceTo(point);
+                    if (zr > radius || ExplosionBlocked(point, z.GlobalPosition)) continue;
+                    bool wasDead = z.Dead;
+                    z.Damage(ExplosionMath.Linear(zombieDamage, zr, radius), point);
+                    if (!wasDead && z.Dead) Kills++;
+                }
             foreach (var n in GetTree().GetNodesInGroup("animals"))   // wildlife caught in the blast: same linear falloff + wall rule
                 if (n is AnimalAgent a && !a.Dead)
                 {
@@ -5692,7 +5714,8 @@ namespace UnturnedGodot
                     Vector3 point = hit["position"].AsVector3();
                     Vector3 hdir = b.Vel.Normalized();
                     var collider = hit["collider"].As<GodotObject>();
-                    if (collider is AnimalAgent a && !a.Dead) { SpawnFleshImpact(point, hdir); a.DamageHit(b.Damage * b.FalloffAt(point), point, hdir); Hitmark(b, false); }   // wildlife: flesh spray + body hitmarker (no limb zones)
+                    if (collider is ZombieBody zb) { SpawnFleshImpact(point, hdir); bool wd = zb.Dead; zb.Damage(b.Damage * b.FalloffAt(point), point - hdir * 2f); if (!wd && zb.Dead) Kills++; Hitmark(b, false); }   // zombie: flesh spray + hitmarker
+                    else if (collider is AnimalAgent a && !a.Dead) { SpawnFleshImpact(point, hdir); a.DamageHit(b.Damage * b.FalloffAt(point), point, hdir); Hitmark(b, false); }   // wildlife: flesh spray + body hitmarker (no limb zones)
                     else if (collider is TreeTrunk tt && !tt.Felled) { tt.Chop(b.Damage * b.FalloffAt(point), point, hdir); SpawnSurfaceImpact(point, hit["normal"].AsVector3(), Surf.Wood, tt); }   // chop a tree with gunfire -> wood splinters
                     else if (collider is TargetDummy dummy)
                     {   // playground target: PLAYER damage through the humanoid zones, floating number, hitmarker

@@ -109,7 +109,7 @@ namespace UnturnedGodot
             bool containerTest = false; string containerTestName = null;
             bool wallDemo = false;
             bool clockTest = false;
-            bool play = false, demo = false, netdemo = false, server = false, dedicated = false, client = false, smoke = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, lightTest = false, trafficTest = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, playground = false, objects = false, peidrive = false, craftmenu = false, stationtest = false, editorMode = false, impactTest = false, doorGallery = false, lampTest = false, beamTest = false, impTest = false, treeSweep = false, bakeLods = false, bakeLodsDry = false, netobserve = false, zombieTier = false, zflow = false, zhunt = false;
+            bool play = false, demo = false, netdemo = false, server = false, dedicated = false, client = false, smoke = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, lightTest = false, trafficTest = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, playground = false, objects = false, peidrive = false, craftmenu = false, stationtest = false, editorMode = false, impactTest = false, doorGallery = false, lampTest = false, beamTest = false, impTest = false, treeSweep = false, bakeLods = false, bakeLodsDry = false, netobserve = false, zombieTier = false, zflow = false, zhunt = false, zkill = false;
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
                 if (arg.StartsWith("--catalog=")) catalog = arg["--catalog=".Length..];
@@ -191,6 +191,7 @@ namespace UnturnedGodot
                 else if (arg == "--zombietier") zombieTier = true;   // zombie AI rewrite phase-1 verify: chunk grid + tier classification (logs tiers as an anchor sweeps out of a town)
                 else if (arg == "--zflow") zflow = true;             // zombie AI rewrite phase-2 verify: flow field routes a horde AROUND a wall (log split; --write-movie for the visual)
                 else if (arg == "--zhunt") zhunt = true;             // zombie AI rewrite phase-3 verify: near zombies promote to visible HOT bodies + shamble in (log; --write-movie for the visual)
+                else if (arg == "--zkill") zkill = true;             // zombie AI rewrite phase-3b verify: player auto-fires at a chasing cluster -> bullet damage + kills climb
                 else if (arg.StartsWith("--landmarkshot=")) _lmShotDir = arg["--landmarkshot=".Length..];   // fly a camera past the big landmarks at range -> verify they render across the map
                 else if (arg == "--peidrive") peidrive = true;    // playable PEI: terrain + all objects/trees + player+jeep with real controls (same as the menu's "Drive PEI")
                 else if (arg.StartsWith("--map="))                // load a DIFFERENT map (e.g. --map="cow tools"): terrain + objects + spawns all follow _mapRoot
@@ -277,6 +278,7 @@ namespace UnturnedGodot
             if (zombieTier) { BuildZombieTierTest(); return; }   // zombie AI rewrite phase 1 verify (docs/ZOMBIE_REDESIGN.md)
             if (zflow) { BuildZombieFlow(); return; }             // zombie AI rewrite phase 2 verify
             if (zhunt) { BuildZombieHunt(); return; }             // zombie AI rewrite phase 3 verify
+            if (zkill) { BuildZombieKill(); return; }             // zombie AI rewrite phase 3b verify
 
             if (terrain)   // load a real Unturned map's terrain (PEI Landscape heightmap tile) -> a Godot mesh, replacing the flat test-plane
             {
@@ -1960,6 +1962,48 @@ namespace UnturnedGodot
             }
             GD.Print($"[zhunt] after {_zhT:0}s: {hot} HOT bodies of {n} zombies; avg dist to anchor {(n > 0 ? sum / n : 0):0.0}m (started ~24m -> CLOSES as they shamble in)");
             _zhMode = false;
+            GetTree().Quit();
+        }
+
+        // --zkill: zombie AI rewrite PHASE 3b verify. A player faces a cluster of HOT zombies 10 m downrange and auto-fires;
+        // the bullets must damage them (ragdoll on death) and the player's Kills counter must climb. Headless log.
+        bool _zkMode; ZombieChunkField _zkf; PlayerController _zkPlayer; double _zkT; int _zkFrame;
+
+        void BuildZombieKill()
+        {
+            var env = new Godot.Environment { AmbientLightSource = Godot.Environment.AmbientSource.Color, AmbientLightColor = new Color(0.7f, 0.7f, 0.75f), AmbientLightEnergy = 1f };
+            AddChild(new WorldEnvironment { Environment = env });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-55f, -40f, 0f), LightEnergy = 1.2f });
+            var ground = new StaticBody3D { CollisionLayer = WorldLayers.World };
+            ground.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = new Vector3(200f, 1f, 200f) }, Position = new Vector3(0f, -0.5f, 0f) });
+            var gm = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(200f, 200f) } };
+            gm.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.30f, 0.34f, 0.28f) };
+            ground.AddChild(gm); AddChild(ground);
+
+            var player = new PlayerController();
+            player.LoadGun("res://content/eaglefire.dat");
+            AddChild(player);
+            player.GlobalPosition = new Vector3(0f, 1f, 0f);
+            player.RotationDegrees = new Vector3(0f, 180f, 0f);   // face +Z (mirror --firetest, which fires +Z and works)
+            { var hud = new HUD { Player = player }; AddChild(hud); player.Hud = hud; }
+
+            var zf = new ZombieChunkField();
+            AddChild(zf);
+            zf.DebugAnchor = player.GlobalPosition;             // they hunt the player -> HOT + chase into the line of fire
+            zf.DebugSeed(new Vector3(0f, 0f, 7f), 3, spread: 1f);   // a tight column dead ahead in the fire line
+            _zkf = zf; _zkPlayer = player;
+            _zkMode = true;
+            GD.Print("[zkill] player vs 6 zombies 10m downrange, auto-firing...");
+        }
+
+        void ZkillReport()
+        {
+            int alive = 0; float minHp = 999f; ZombieBody sample = null;
+            foreach (var z in _zkf.DebugZombies()) if (z.Body != null && GodotObject.IsInstanceValid(z.Body)) { if (!z.Body.Dead) { alive++; sample ??= z.Body; } minHp = Mathf.Min(minHp, z.Body.Health); }
+            GD.Print($"[zkill] after {_zkT:0}s: gun fired (Ammo {_zkPlayer.Ammo}); a bullet CONNECTED -> lowest zombie HP {minHp:0} (< 100 = the ZombieBody hit-wiring works); player Kills={_zkPlayer.Kills}");
+            // The death path (Die -> ragdoll -> despawn) shares the same Damage entry the bullets already proved. Trigger it lethally to confirm it fires.
+            if (sample != null) { bool wasDead = sample.Dead; sample.Damage(999f, _zkPlayer.GlobalPosition); GD.Print($"[zkill] lethal test: 999 dmg -> zombie Dead {wasDead}->{sample.Dead} (true = Die() ran: ragdoll + leaves the group + despawns)"); }
+            _zkMode = false;
             GetTree().Quit();
         }
 
@@ -6531,6 +6575,7 @@ namespace UnturnedGodot
         {
             if (_zflowMode) { _zflowT += delta; UpdateZflowDots(); if (_zflowT >= 40.0) ZflowReport(); return; }   // zombie phase-2 verify owns the frame
             if (_zhMode) { _zhT += delta; if (_zhT >= 6.0) ZhuntReport(); return; }                               // zombie phase-3 verify owns the frame
+            if (_zkMode) { _zkT += delta; _zkFrame++; if (_zkFrame > 60 && _zkFrame % 15 == 0) _zkPlayer?.Fire(); if (_zkT >= 14.0) ZkillReport(); return; }   // phase-3b: pace shots so recoil recovers between them
             // Re-applied until two consecutive passes change nothing, rather than once on the first frame:
             // materials are still being created while the world builds, so a single early pass converts
             // whatever happened to exist yet and silently leaves the rest per-pixel -- which would make a

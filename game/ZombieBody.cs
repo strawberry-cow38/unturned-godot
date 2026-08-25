@@ -50,12 +50,11 @@ namespace UnturnedGodot
             if (IsOnFloor()) v.Y = 0f; else v.Y -= 22f * dt;   // gravity
             Velocity = v;
             MoveAndSlide();
-            if (DesiredVel.LengthSquared() > 0.04f)             // face the heading
-            {
-                float want = Mathf.Atan2(DesiredVel.X, DesiredVel.Y);
+            if (DesiredVel.LengthSquared() > 0.04f)             // face the heading. Rig forward is -Z, so RotateY(yaw)*(-Z)
+            {                                                   // = dir needs yaw = atan2(-x,-z) -- atan2(x,z) faced them BACKWARDS (master caught it).
+                float want = Mathf.Atan2(-DesiredVel.X, -DesiredVel.Y);
                 _yaw = Mathf.LerpAngle(_yaw, want, 1f - Mathf.Exp(-10f * dt));
-                if (_rig != null) _rig.Rotation = new Vector3(0f, _yaw, 0f);
-                else Rotation = new Vector3(0f, _yaw, 0f);
+                Rotation = new Vector3(0f, _yaw, 0f);           // rotate the BODY; the rig (child, forward -Z) follows
             }
         }
 

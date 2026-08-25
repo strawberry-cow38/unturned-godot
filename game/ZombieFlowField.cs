@@ -109,12 +109,33 @@ namespace UnturnedGodot
         public Vector2 Sample(Vector3 pos)
         {
             Vector2 toTarget = new Vector2(_target.X - pos.X, _target.Z - pos.Z);
-            if (_flow == null) return toTarget.LengthSquared() > 1e-6f ? toTarget.Normalized() : Vector2.Zero;
+            Vector2 direct = toTarget.LengthSquared() > 1e-6f ? toTarget.Normalized() : Vector2.Zero;
+            // OPEN-GROUND SMOOTHING: if nothing blocks the straight line to the target, BEELINE -- avoids the 8-direction
+            // grid zigzag that made open paths look wide/dumb (master). Only fall back to the (grid) flow AROUND walls.
+            if (_flow == null || ClearLineTo(pos)) return direct;
             int cx = CellOf(pos.X) - _ox, cz = CellOf(pos.Z) - _oz;
-            if (cx < 0 || cx >= _w || cz < 0 || cz >= _h) return toTarget.LengthSquared() > 1e-6f ? toTarget.Normalized() : Vector2.Zero;
+            if (cx < 0 || cx >= _w || cz < 0 || cz >= _h) return direct;
             var f = _flow[cz * _w + cx];
-            if (f == Vector2.Zero) return toTarget.LengthSquared() > 1e-6f ? toTarget.Normalized() : Vector2.Zero;
-            return f;
+            return f == Vector2.Zero ? direct : f;
+        }
+
+        // Bresenham walkability check over the field cells from pos to the target -- any Blocked cell on the line -> not clear.
+        bool ClearLineTo(Vector3 pos)
+        {
+            if (_cost == null) return true;
+            int x0 = CellOf(pos.X), z0 = CellOf(pos.Z), x1 = CellOf(_target.X), z1 = CellOf(_target.Z);
+            int dx = Mathf.Abs(x1 - x0), dz = Mathf.Abs(z1 - z0);
+            int sx = x0 < x1 ? 1 : -1, sz = z0 < z1 ? 1 : -1, err = dx - dz;
+            for (int guard = 0; guard < 4096; guard++)
+            {
+                int lx = x0 - _ox, lz = z0 - _oz;
+                if (lx >= 0 && lx < _w && lz >= 0 && lz < _h && _cost[lz * _w + lx] == Blocked) return false;
+                if (x0 == x1 && z0 == z1) return true;
+                int e2 = 2 * err;
+                if (e2 > -dz) { err -= dz; x0 += sx; }
+                if (e2 < dx) { err += dx; z0 += sz; }
+            }
+            return true;
         }
 
         // ---- debug (for the --zflow verify render): iterate baked flow arrows ----
