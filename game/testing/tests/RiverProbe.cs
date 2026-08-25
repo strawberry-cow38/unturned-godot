@@ -3,15 +3,15 @@ using System.Collections.Generic;
 
 namespace UnturnedGodot.Testing
 {
-    /// <summary>What the river actually leaves behind, measured through the COLLIDER rather than reasoned about.
+    /// <summary>What a carved river actually does to the ground, measured through the COLLIDER.
     ///
-    /// Written after four wrong theories in a row about an overhang -- stair-stepping, persistence, mitre
-    /// length, then depth order -- none of which survived contact with a measurement. The rule this encodes:
-    /// ask the geometry, do not model it in your head.
+    /// Written after five wrong theories about a seam -- stair-stepping, persistence, mitre length, depth
+    /// order, then clip-vs-station mismatch. The seam is gone now for a structural reason rather than a
+    /// tuned one: the river DISPLACES the terrain instead of cutting a hole and covering it, so there is one
+    /// surface and nothing to line up. These checks are the ones that would catch it coming back.
     ///
-    /// The terrain now CLIPS ITSELF to the bank (see Terrain._riverField), so the invariants are end-to-end:
-    /// just outside the bank you land on terrain at ground level; just inside it you land on the riverbed, a
-    /// depth below. A gap between them, or terrain hanging over the water, breaks one of the two.</summary>
+    /// Cross-section sampled BEFORE and AFTER the carve, so the displacement is measured rather than inferred
+    /// from a constant.</summary>
     public sealed class RiverOverhangProbe : GameTest
     {
         public override string Name => "river.overhang_probe";
@@ -21,7 +21,7 @@ namespace UnturnedGodot.Testing
         {
             var terr = Terrain.CreateFlat(1, 1, withCollider: true);
             World.AddChild(terr);
-            terr.EditHeight(300f, -300f, 120f, 40f);   // sculpted: a flat plane hides a floor that does not follow
+            terr.EditHeight(300f, -300f, 120f, 40f);   // sculpted: a flat plane hides a bed that does not follow
             terr.RebuildAll();
             yield return Ticks(2);
 
@@ -29,14 +29,21 @@ namespace UnturnedGodot.Testing
             const float half = 8f, depth = 4f;
             var a = new Vector3(minX + 200f, 0f, maxZ - 300f);
             var b = new Vector3(minX + 600f, 0f, maxZ - 300f);
+            float midX = (a.X + b.X) * 0.5f;
+
+            // offsets across the channel, in metres from the centreline
+            var offs = new float[] { 0f, 2f, 4f, 6f, 7.5f, 8f, 10f, 14f };
+            var before = new float[offs.Length];
+            for (int i = 0; i < offs.Length; i++) before[i] = terr.SampleHeight(midX, a.Z + offs[i]);
+
             terr.CarveRiver(a, b, half, depth);
             yield return Ticks(3);
 
             var space = World.GetWorld3D().DirectSpaceState;
-            bool Probe(float wx, float wz, out float y)
+            bool Ray(float wx, float wz, out float y)
             {
                 y = 0f;
-                var q = PhysicsRayQueryParameters3D.Create(new Vector3(wx, 400f, wz), new Vector3(wx, -400f, wz));
+                var q = PhysicsRayQueryParameters3D.Create(new Vector3(wx, 500f, wz), new Vector3(wx, -500f, wz));
                 q.CollisionMask = 1u << 0;
                 var hit = space.IntersectRay(q);
                 if (hit.Count == 0) return false;
@@ -44,63 +51,38 @@ namespace UnturnedGodot.Testing
                 return true;
             }
 
-            // WHAT IS ACTUALLY THERE? Name the collider instead of inferring from a miss.
-            for (float off = 0f; off <= 12f; off += 4f)
+            int hits = 0; var drop = new float[offs.Length];
+            for (int i = 0; i < offs.Length; i++)
             {
-                float px = (a.X + b.X) * 0.5f, pz = a.Z + off;
-                var qq = PhysicsRayQueryParameters3D.Create(new Vector3(px, 400f, pz), new Vector3(px, -400f, pz));
-                qq.CollisionMask = 1u << 0;
-                var hh = space.IntersectRay(qq);
-                string what = hh.Count == 0 ? "NOTHING"
-                    : $"{((Node)hh["collider"]).Name} @ y={((Vector3)hh["position"]).Y:F2}";
-                GD.Print($"[river-probe] offset {off:F0} m -> {what} (ground {terr.SampleHeight(px, pz):F2})");
+                if (!Ray(midX, a.Z + offs[i], out float y)) { drop[i] = float.NaN; continue; }
+                hits++;
+                drop[i] = before[i] - y;
             }
+            var parts = new List<string>();
+            for (int i = 0; i < offs.Length; i++) parts.Add($"{offs[i]:0.#}m:{drop[i]:0.00}");
+            GD.Print("[river-probe] drop by offset -> " + string.Join("  ", parts));
 
-            var dir = new Vector2(b.X - a.X, b.Z - a.Z).Normalized();
-            var nrm = new Vector2(-dir.Y, dir.X);
+            // 1. ONE SURFACE. The old design cut a hole and laid a bed over it; a ray that hits NOTHING is the
+            //    signature of that hole reopening, and it is also how the bed's missing collider hid for weeks.
+            T.Check($"the ground is unbroken across the whole channel ({hits}/{offs.Length} rays landed)",
+                    hits == offs.Length);
 
-            int outsideOk = 0, outsideN = 0, insideOk = 0, insideN = 0, insideNoHit = 0, insideOnTerrain = 0;
-            float worstOutside = 0f, worstInside = 0f;
-            for (float t = 0.2f; t <= 0.8f; t += 0.05f)
-            {
-                var mid = new Vector2(a.X, a.Z).Lerp(new Vector2(b.X, b.Z), t);
-                for (int sgn = -1; sgn <= 1; sgn += 2)
-                {
-                    // JUST OUTSIDE the bank: terrain must still be there, at ground level. This is the check
-                    // that catches terrain clipped away too eagerly -- a gap between bank and ground.
-                    float ox = mid.X + nrm.X * (half + 1.5f) * sgn, oz = mid.Y + nrm.Y * (half + 1.5f) * sgn;
-                    outsideN++;
-                    if (Probe(ox, oz, out float oy))
-                    {
-                        float ground = terr.SampleHeight(ox, oz);
-                        float err = Mathf.Abs(oy - ground);
-                        if (err <= 0.35f) outsideOk++;
-                        if (err > worstOutside) worstOutside = err;
-                    }
+            // 2. IT IS ACTUALLY A CHANNEL. Full depth at the centreline.
+            T.Check($"the centreline is a full depth down ({drop[0]:0.00} m of {depth:0.00})",
+                    Mathf.Abs(drop[0] - depth) < 0.35f);
 
-                    // JUST INSIDE the bank: you must land on the BED, clearly below ground. This is the check
-                    // that catches terrain hanging over the channel -- the bug that shipped three times.
-                    float ix = mid.X + nrm.X * (half - 2.5f) * sgn, iz = mid.Y + nrm.Y * (half - 2.5f) * sgn;
-                    insideN++;
-                    if (Probe(ix, iz, out float iy))
-                    {
-                        float ground = terr.SampleHeight(ix, iz);
-                        float below = ground - iy;
-                        if (below > depth * 0.5f) insideOk++; else insideOnTerrain++;
-                        if (below < worstInside || worstInside == 0f) worstInside = below;
-                    }
-                    else insideNoHit++;   // distinct from landing on terrain: 0.00 alone cannot tell them apart
-                }
-            }
+            // 3. IT CLOSES AT THE BANK. Zero displacement at and beyond half-width -- this is what makes the
+            //    join seamless rather than a lip, and it is the check that fails if the profile is rescaled
+            //    without thinking about its endpoint.
+            T.Check($"the cut has closed by the bank ({drop[5]:0.000} m at {offs[5]:0.#} m, {drop[6]:0.000} m beyond)",
+                    Mathf.Abs(drop[5]) < 0.05f && Mathf.Abs(drop[6]) < 0.05f);
 
-            GD.Print($"[river-probe] outside {outsideOk}/{outsideN} at ground (worst err {worstOutside:F2} m) | " +
-                     $"inside {insideOk}/{insideN} on the bed (shallowest {worstInside:F2} m below ground) " +
-                     $"[no-hit {insideNoHit}, landed-on-terrain {insideOnTerrain}]");
-
-            T.Check($"terrain survives right up to the bank ({outsideOk}/{outsideN}, worst error {worstOutside:F2} m)",
-                    outsideN > 0 && outsideOk == outsideN);
-            T.Check($"inside the bank you land on the BED, not on terrain ({insideOk}/{insideN}, no-hit {insideNoHit}, on-terrain {insideOnTerrain})",
-                    insideN > 0 && insideOk == insideN);
+            // 4. SMOOTH, NOT A TRENCH. Monotonic from centre to bank, and the last step before the bank must be
+            //    small -- a profile that hits zero with a steep slope reads as a lip however smooth the maths.
+            bool mono = true;
+            for (int i = 1; i <= 5; i++) if (drop[i] > drop[i - 1] + 0.001f) mono = false;
+            T.Check($"the bed rises smoothly to the bank (monotonic {mono}, last step {Mathf.Abs(drop[5] - drop[4]):0.000} m)",
+                    mono && Mathf.Abs(drop[5] - drop[4]) < 0.5f);
             yield break;
         }
     }
