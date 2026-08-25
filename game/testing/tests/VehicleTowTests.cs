@@ -151,7 +151,7 @@ namespace UnturnedGodot.Testing
         {
             var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
                 mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
-                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+                syncLoad: true, activeHoliday: "NONE");
             var world = task.Result;
             T.Check("world ready (the ONE world path, flat fallback on CI)", world.Ready);
 
@@ -239,7 +239,7 @@ namespace UnturnedGodot.Testing
         {
             var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
                 mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
-                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+                syncLoad: true, activeHoliday: "NONE");
             var world = task.Result;
             T.Check("world ready (flat fallback on CI)", world.Ready);
 
@@ -334,7 +334,7 @@ namespace UnturnedGodot.Testing
         {
             var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
                 mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
-                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+                syncLoad: true, activeHoliday: "NONE");
             var world = task.Result;
             T.Check("world ready", world.Ready);
 

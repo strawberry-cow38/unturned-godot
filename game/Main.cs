@@ -15,7 +15,6 @@ namespace UnturnedGodot
         string _shotPath; float _shotElapsed;   // UG_SHOTTIME: capture at an elapsed-time target (real-time frame counts drift off fixed-fps -- tinyclaw)
         Deployable _spotDbg;    // UG_WIRETEST: spotlight, probed for lamp-lit state at the shot frame
         Vector3 _vAim; bool _vHave;   // first real (Police/Fire/Ambulance) vehicle, for the demo cam
-        bool _noZombies;   // --nozombies: a quiet test environment (skip the horde spawner)
         // Unturned install root -> Maps\<name>. The real map terrain (Landscape heightmaps) is read live from a local
         // Unturned install (not shipped in-repo). Override the Steam location with the UG_UNTURNED_DIR env var for
         // NON-default installs, e.g. UG_UNTURNED_DIR="D:\SteamLibrary\steamapps\common\Unturned".
@@ -54,7 +53,7 @@ namespace UnturnedGodot
         bool _vmMelee;                               // --vm target is a melee weapon -> skip the gun aim/fire/reload script (MeleeSwingDriver swings it instead)
         bool _vmAimed; int _vmAimStart; int _vmSettle;
         bool _vmAttach; AttachmentMenu _am; bool _vmSightSet;   // --attach : hold the T attachment menu open for the render; UG_SIGHT=<mesh.txt> mounts a specific sight/scope for a demo
-        bool _vehTest; Vehicle _veh; Camera3D _vehCam; int _vehVariant; bool _night, _demo, _crash, _roadkill, _chain, _hitch, _backunder, _pivots; Vehicle _buTrailer; int _buCoupledFrame = 999999;   // --vehicle=DIR [--variant=N] [--night] [--demo] [--crash] [--roadkill] [--chain] [--hitch] [--backunder] [--pivots]
+        bool _vehTest; Vehicle _veh; Camera3D _vehCam; int _vehVariant; bool _night, _demo, _crash, _chain, _hitch, _backunder, _pivots; Vehicle _buTrailer; int _buCoupledFrame = 999999;   // --vehicle=DIR [--variant=N] [--night] [--demo] [--crash] [--chain] [--hitch] [--backunder] [--pivots]
         bool _planeTest;   // UG_PLANETEST (with --boattest --gun=otter): scripted fixed-wing flight (throttle/pitch/roll injected) to verify the flight model in a render
         int _heliPhase, _heliPhaseTick;   // UG_HELITEST maneuver sequence: 0 climb, 1 cruise, 2 turn, 3 slide, 4 recover
         bool _heliTest;    // UG_HELITEST (with --vehicle --gun=minicopter|huey): scripted ROTARY flight -- see the loop in _PhysicsProcess for why this exists
@@ -63,8 +62,8 @@ namespace UnturnedGodot
         float _trS, _trRailY = 1.4f; bool _trAnim;
         readonly System.Collections.Generic.List<(Node3D mark, Vehicle veh, Vector3 local)> _pivotMarks = new();   // --pivots: arrow markers pinned to each coupling point
         bool _driveTest, _swarm, _drivethru, _nade, _grassTest; PlayerController _dtPlayer;      // --drivetest=DIR [--swarm|--drivethru|--nade] : enter/drive a jeep; swarm = mob it; drivethru = loud drive wakes zombies; nade = grenade the parked car. _grassTest (UG_GRASSTEST=1): a lawn + overhead cam, jeep stays parked -> verify grass displacement
-        bool _fireTest; PlayerController _ftPlayer; int _ftFrame;   // --firetest [--supp] : player fires near a distant zombie -> gunshot alert (suppressed = none)
-        bool _peiPlay; PlayerController _peiPlayer; int _peiFrame; bool _peiHorde;   // --peiplay [--horde] : drive a jeep on real PEI (--horde = a zombie horde swarms it, vehicle<->zombie loop on real ground)
+        bool _fireTest; PlayerController _ftPlayer; int _ftFrame;   // --firetest [--supp] : player fires downrange -- viewmodel / tracer / ADS / impact test rig
+        bool _peiPlay; PlayerController _peiPlayer; int _peiFrame;   // --peiplay : drive a jeep on real PEI
         int _tpFrame; double _tpPrims, _tpDraws, _tpMs; int _tpN;   // --- UG_TERRPERF terrain cost probe
         PlayerController _pdPlayer; int _pdFireT;   // --peidrive on-foot player -> UG_AUTOFIRE terrain-impact verification
         bool _peiPlayable;   // menu "Drive PEI": BuildObjectsTest spawns a player+jeep with REAL controls instead of the aerial cam
@@ -81,11 +80,6 @@ namespace UnturnedGodot
             (new Vector3(247f, 220f, -30f),  new Vector3(247f, 78f, -793f), "lighthouse_780"),    // ~780m across the map
             (new Vector3(-212f, 55f, -280f), new Vector3(-248f, 46f, -320f), "foliage"),            // Fernwood treed hills for the wind-sway A/B
         };
-        bool _navShot;   // --navshot: nav-debug verify screenshot (waits for load + navmesh overlay + zombie cones)
-        bool _navPathTest;   // --navpathtest: after a few frames (nav synced), query the navmesh + report routing
-        bool _zombieTest; ZombieField _ztField;   // --zombietest: after a few frames, verify planned pocket spawns land ON the baked navmesh
-        bool _zdirTest; ZombieDirector _zdField; int _zdFrames;   // --zdirtest: boot the REWRITE on PEI and watch it run -- do rows tier, path and actually move?
-        bool _bakeNav;   // --bakenav: sync-load the full world + bake+save the canonical navmesh, then quit (offline tool; the game only loads)
         int _treeCheckFrame; bool _treeChecked;   // UG_TREECHECK: raycast self-test that tree trunk colliders are actually hittable
         float _perfT;   // UG_PERF: throttle the perf log
         bool _itemTest;   // --itemtest=ID,ID,... : drop those items as physics WorldItems onto a ground plane -> validate mesh/tex/scale/settle
@@ -104,9 +98,7 @@ namespace UnturnedGodot
                 DisplayServer.WindowSetVsyncMode(DisplayServer.VSyncMode.Disabled);
                 GD.Print($"[display] vsync -> {DisplayServer.WindowGetVsyncMode()}");
             }
-            string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null, drivetest = null, proptest = null, magnettest = null, animrig = null, rottest = null, itemtest = null, navShot = null, croptest = null, menuShot = null, clothtest = null, boattest = null, slingtest = null, trainshow = null, traintrack = null, ammoRadial = null, animaltest = null, treetest = null;
-            bool zperf = false;
-            bool zbody = false;
+            string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null, drivetest = null, proptest = null, magnettest = null, animrig = null, rottest = null, itemtest = null, croptest = null, menuShot = null, clothtest = null, boattest = null, slingtest = null, trainshow = null, traintrack = null, ammoRadial = null, animaltest = null, treetest = null;
             bool deployTest = false, barricadeTest = false, barricadePlay = false;
             bool wearcloth = false;
             bool skillsui = false;
@@ -117,23 +109,18 @@ namespace UnturnedGodot
             bool containerTest = false; string containerTestName = null;
             bool wallDemo = false;
             bool clockTest = false;
-            bool play = false, demo = false, netdemo = false, server = false, dedicated = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, lightTest = false, trafficTest = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, playground = false, objects = false, peidrive = false, craftmenu = false, stationtest = false, bakenav = false, navPathTest = false, zombieTest = false, zdirTest = false, editorMode = false, impactTest = false, doorGallery = false, lampTest = false, beamTest = false, impTest = false, treeSweep = false, bakeLods = false, bakeLodsDry = false, netobserve = false;
+            bool play = false, demo = false, netdemo = false, server = false, dedicated = false, client = false, smoke = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, lightTest = false, trafficTest = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, playground = false, objects = false, peidrive = false, craftmenu = false, stationtest = false, editorMode = false, impactTest = false, doorGallery = false, lampTest = false, beamTest = false, impTest = false, treeSweep = false, bakeLods = false, bakeLodsDry = false, netobserve = false;
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
                 if (arg.StartsWith("--catalog=")) catalog = arg["--catalog=".Length..];
                 else if (arg.StartsWith("--shot=")) { shot = arg["--shot=".Length..]; _shotRequested = shot; }
-                else if (arg.StartsWith("--navshot=")) { navShot = arg["--navshot=".Length..]; _shotRequested = navShot; }   // verify screenshot: navmesh floor overlay + zombie vision cones, synchronous world, aerial over a pocket
                 else if (arg.StartsWith("--menushot=")) { menuShot = arg["--menushot=".Length..]; _shotRequested = menuShot; }   // render the 3D barn main menu + capture each of the 5 camera anchors (menu_00..04.png)
-                else if (arg == "--bakenav") bakenav = true;   // offline TOOL: sync-load the FULL world + bake all 19 nav pockets -> save the .res files (commit them; the game only LOADS, never gens)
-                else if (arg == "--navpathtest") navPathTest = true;   // OFFLINE verify: sync world -> query the navmesh -> log whether zombie paths ROUTE AROUND buildings (not through)
                 else if (arg == "--editor") editorMode = true;   // boot straight into the map editor (the Workshop entry); --editor --shot=OUT captures a loaded frame
                 else if (arg == "--fluidtest") fluidTest = true;   // F2 verify: source -> hose -> storage flows + fills (headless log check)
                 else if (arg == "--doortest") { doorTest = true; doorTestName = "Fridge_0"; }   // openable prop door MVP: place one a few metres from the camera; UG_DOOR_OPEN=1 spawns it already open
                 else if (arg.StartsWith("--doortest=")) { doorTest = true; doorTestName = arg["--doortest=".Length..]; }   // e.g. --doortest=Wardrobe_0 -- any prop with a doors.txt entry
                 else if (arg == "--containertest") { containerTest = true; containerTestName = "Fridge_0"; }   // lootable+openable merge: spawn the doored prop as a REAL StoreShelf container + render its door; UG_CONTAINER_OPEN=1 opens it
                 else if (arg.StartsWith("--containertest=")) { containerTest = true; containerTestName = arg["--containertest=".Length..]; }
-                else if (arg == "--zombietest") zombieTest = true;   // OFFLINE verify: sync world -> bucket Animals.dat into pockets -> check planned spawns land ON the baked navmesh
-                else if (arg == "--zdirtest") zdirTest = true;       // OFFLINE verify: boot the REWRITE on PEI -> do rows tier, query paths and actually MOVE? (implies --newzombies)
                 else if (arg.StartsWith("--proptest=")) { proptest = arg["--proptest=".Length..]; _shotRequested = proptest; }
                 else if (arg.StartsWith("--animaltest=")) { animaltest = arg["--animaltest=".Length..]; _shotRequested = animaltest; }   // one animal rig posed as if walking -Z, to measure the RigYawFix (UG_ANIMALYAW spins it)
                 else if (arg.StartsWith("--treetest=")) { treetest = arg["--treetest=".Length..]; _shotRequested = treetest; }   // standing tree beside a felled one (its dropped logs) -> render the harvest
@@ -145,8 +132,6 @@ namespace UnturnedGodot
                 else if (arg.StartsWith("--bellyshot=")) { bellyShot = arg["--bellyshot=".Length..]; _shotRequested = bellyShot; }
                 else if (arg.StartsWith("--tailshot=")) { tailShot = arg["--tailshot=".Length..]; _shotRequested = tailShot; }   // NAME:OUT -- close-up of one heli's tail from behind   // audit every heli: which side is the tail-rotor POST on, vs where the spec puts the hub   // sky-crane winch + electromagnet: dangle, energise, bite a load, lift it   // skycrane + shipping container: in-the-bay vs slung-beneath, side by side   // spawn ONE named prop at identity + RGB axes -> diagnose mirror/orientation/material
                 else if (arg.StartsWith("--croptest=")) croptest = arg["--croptest=".Length..];   // spawn a farm crop (young + grown) on a ground plane -> validate mesh/tex/orientation (UG_CROPROT tunes rot)
-                else if (arg == "--zperf") zperf = true;   // GPU perf probe: N zombies, render counters ON vs OFF (MUST run with a rendering driver, not --headless)
-                else if (arg == "--zbody") zbody = true;   // MECHANISM probe: N bare kinematic capsules, moving vs parked -> is the physics cost the BODIES?
                 else if (arg == "--deploytest") deployTest = true;   // both deployables placed on a ground plane + a valid(blue)+invalid(red) ghost -> verify models/palette/stand-up/ghost materials
                 else if (arg == "--impacttest") impactTest = true;   // one bullet-impact FX per surface (concrete/metal/wood/dirt/grass/sand/water/blood) across a wall -> verify the reimplemented ImpactFx
                 else if (arg == "--doorgallery") doorGallery = true;   // --shot=OUT : lineup of the 12 ripped WOODEN door barricade models (Door/Doubledoor/Gate/Hatch x Birch/Maple/Pine) for master to eyeball
@@ -172,15 +157,11 @@ namespace UnturnedGodot
                 else if (arg == "--night") _night = true;   // dark env + headlights on (headlight demo)
                 else if (arg == "--demo") _demo = true;      // scripted honk + damage->explosion (destruction demo); off = clean drive
                 else if (arg == "--crash") _crash = true;    // a wall ahead to ram (collision-damage demo)
-                else if (arg == "--roadkill") _roadkill = true;   // idle zombies ahead to run over (roadkill demo)
-                else if (arg == "--chain") _chain = true;         // a 2nd car + zombies beside _veh -> blow _veh -> chain reaction (source vehicle-explosion damage)
+                else if (arg == "--chain") _chain = true;         // a 2nd car beside _veh -> blow _veh -> chain reaction (source vehicle-explosion damage)
                 else if (arg == "--hitch") _hitch = true;         // with --gun=semi: back a trailer under the cab + couple it (verify the fifth-wheel hitch + articulation)
                 else if (arg == "--backunder") { _backunder = true; _hitch = false; }   // with --gun=semi: spawn a PARKED trailer behind + reverse the cab UNDER it, couple on proximity (verify the drive-under + phase-through)
                 else if (arg == "--pivots") { _pivots = true; _hitch = false; }   // with --gun=semi: show cab + trailer SEPARATE with a labeled arrow at each coupling pivot (fifth wheel / kingpin)
-                else if (arg == "--swarm") _swarm = true;         // with --drivetest: a horde mobs the parked car + swipes it (source targetPassengerVehicle)
-                else if (arg == "--drivethru") _drivethru = true; // with --drivetest: driving past distant zombies wakes them (source DRIVING stealth radius)
                 else if (arg == "--nade") _nade = true;           // with --drivetest: lob a grenade onto the parked jeep (source Grenade Vehicle_Damage)
-                else if (arg == "--horde") _peiHorde = true;       // with --peiplay: a zombie ring converges on the jeep -> vehicle<->zombie combat on real PEI
                 else if (arg.StartsWith("--pick=")) picks = arg["--pick=".Length..];
                 else if (arg.StartsWith("--gun=")) gun = arg["--gun=".Length..];
                 // NOTE: `--demo` is claimed higher up this same else-if chain (it sets _demo, the scripted
@@ -190,8 +171,6 @@ namespace UnturnedGodot
                 // the window size instead of the scripted demo. Both meanings now ride the ONE flag, so the two
                 // cannot drift apart again. Review 2026-08-16.
                 else if (arg == "--play") play = true;
-                else if (arg == "--nozombies") _noZombies = true;   // no-zombie test environment
-                else if (arg == "--newzombies") ZombieDirector.Enabled = true;   // the rewrite (docs/ZOMBIE_REWRITE_PLAN.md): sim rows + borrowed rigs, no per-zombie body. Off = the old ZombieField/ZombieController path, untouched
                 else if (arg == "--netdemo") netdemo = true;
                 else if (arg == "--server") server = true;
                 else if (arg == "--dedicated") dedicated = true;   // headless dedicated server: the REAL world (WorldBuilder dedicated mode) + NetServerSession on UDP
@@ -203,8 +182,7 @@ namespace UnturnedGodot
                 else if (arg.StartsWith("--connect=")) { client = true; _playableClient = true; _connectHost = arg["--connect=".Length..]; }   // join a dedicated server by IP -- C3: the PLAYABLE client (ClientWorldSession: predicted first-person shell)
                 else if (arg == "--netobserve") netobserve = true;   // headless net-observer: full netcode + replica state, NO render world (combine with --connect= for the target; see BuildNetObserver)
                 else if (arg == "--smoke") smoke = true;
-                else if (arg == "--hurtdemo") hurtdemo = true;
-                else if (arg == "--firetest") firetest = true;   // player fires near a distant zombie: verify the gunshot alert (+ --supp = suppressed -> no alert)
+                else if (arg == "--firetest") firetest = true;   // player fires downrange: viewmodel / tracer / ADS / impact rig (+ --supp = suppressor)
                 else if (arg == "--supp") supp = true;           // with --firetest: attach the suppressor
                 else if (arg == "--terrain") terrain = true;     // load a real map's Landscape heightmap terrain (PEI Tile_0_0)
                 else if (arg == "--craftmenu") craftmenu = true; // open the CraftingMenu (browsable recipe index) over a stocked bag
@@ -267,14 +245,8 @@ namespace UnturnedGodot
                 Terrain.MapDir = ugMap == "PEI" ? "terrain" : "terrain_" + ugKey.ToLower();
             }
 
-            if (hurtdemo)   // first-person: a zombie hits the player so the hurt flash + camera flinch are visible
-            {
-                GetWindow().Size = new Vector2I(1280, 720);
-                BuildHurtDemo(gun);
-                return;
-            }
 
-            if (firetest)   // player fires away from a zombie 25 m off -> it should hear the shot (gunshot alert) UNLESS a suppressor is on
+            if (firetest)   // player fires downrange -> viewmodel / tracer / ADS / bullet-impact test rig
             {
                 GetWindow().Size = new Vector2I(1280, 720);
                 _fireTest = true;
@@ -307,32 +279,6 @@ namespace UnturnedGodot
                 return;
             }
 
-            if (bakenav)   // offline navmesh bake tool: sync full-world load (peiPlayable=true -> object COLLIDERS get built -> buildings carve the mesh) -> bake + save
-            {
-                _bakeNav = true; _peiPlayable = true;
-                BuildObjectsTest();
-                string navShotOut = System.Environment.GetEnvironmentVariable("UG_NAVSHOT");
-                if (navShotOut == null) { GetTree().Quit(); return; }   // pure bake -> quit
-                // verify shot (UG_NAVSHOT): overlay the just-baked BUILDING-AWARE meshes + aerial cam over a pocket, so
-                // the holes-around-buildings read visually. _peiPlayer/HUD are hidden so it's a clean nav overview.
-                if (_peiPlayer != null) _peiPlayer.Visible = false;
-                var _pk = ZombieNav.LoadPockets(_mapRoot);
-                if (System.Environment.GetEnvironmentVariable("UG_NAVOVERLAY") != "0") ZombieNav.BuildOrLoad(this, _pk, overlay: true, save: false, bakeIfMissing: false);   // UG_NAVOVERLAY=0 -> plain world render (eyeball road/prop textures)
-                int _pi = int.TryParse(System.Environment.GetEnvironmentVariable("UG_NAVPOCKET"), out var _p) ? Mathf.Clamp(_p, 0, _pk.Count - 1) : 7;
-                if (_pk.Count > 0)
-                {
-                    var c = _pk[_pi].Center; var look = new Vector3(c.X, 32f, c.Z);
-                    if (System.Environment.GetEnvironmentVariable("UG_NAVLOOK") is string _lk) { var _lp = _lk.Split(','); if (_lp.Length == 2 && float.TryParse(_lp[0], out var _lx) && float.TryParse(_lp[1], out var _lz)) look += new Vector3(_lx, 0f, _lz); }   // UG_NAVLOOK=x,z world offset to the look point
-                    var cam = new Camera3D { Fov = 60f, Current = true };
-                    AddChild(cam);
-                    var _off = System.Environment.GetEnvironmentVariable("UG_NAVLOW") == "1" ? new Vector3(0f, 14f, 34f) : new Vector3(0f, 80f, 65f);   // UG_NAVLOW=1 -> low/close angle
-                    if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_NAVYAW"), out var _yaw)) _off = _off.Rotated(Vector3.Up, Mathf.DegToRad(_yaw));   // UG_NAVYAW=deg -> orbit the cam around the look point (+90 = face west)
-                    cam.GlobalPosition = look + _off;
-                    cam.LookAt(look, Vector3.Up);
-                }
-                _shotPath = navShotOut; _navShot = true;
-                return;
-            }
 
             if (objects)   // real PEI placed objects (Objects.dat) on the terrain, viewed over the densest cluster
             {
@@ -354,7 +300,6 @@ namespace UnturnedGodot
             if (_lmShotDir != null)   // --landmarkshot: build the real PEI world (no player/zombies), then run the camera tour in _Process
             {
                 GetWindow().Size = new Vector2I(1280, 720);
-                _noZombies = true;
                 BuildObjectsTest();
                 return;
             }
@@ -412,11 +357,7 @@ namespace UnturnedGodot
 
 
 
-            if (navPathTest) { _bakeNav = true; _peiPlayable = true; BuildObjectsTest(); _navPathTest = true; return; }   // sync-load; RunNavPathTest fires after a few frames (the nav map merges its regions on a physics tick, not in _Ready)
-            if (zombieTest) { _bakeNav = true; _peiPlayable = true; _zombieTest = true; BuildObjectsTest(); return; }   // sync-load (creates the ZombieField + buckets spawns); RunZombieTest fires at frame 25 once the nav map has synced
-            if (zdirTest) { ZombieDirector.Enabled = true; _bakeNav = true; _peiPlayable = true; _zdirTest = true; BuildObjectsTest(); return; }   // sync-load the REWRITE on the real map, then watch it tier/path/move for a few seconds
 
-            if (navShot != null) { GetWindow().Size = new Vector2I(1280, 720); BuildNavShot(navShot); return; }
 
             if (playground) { WorldBuilder.BuildPlaygroundWorld(this); return; }
             if (peiplay)   // drop the player onto real PEI terrain (colliders on) + walk -> the whole session's work on an actual map
@@ -475,8 +416,6 @@ namespace UnturnedGodot
             if (trainshow != null) { GetWindow().Size = new Vector2I(1600, 720); BuildTrainShow(); return; }
             if (traintrack != null) { GetWindow().Size = new Vector2I(1600, 900); BuildTrainTrack(); return; }
 
-            if (zbody) { BuildZBody(); return; }
-            if (zperf) { BuildZPerf(); return; }
             if (deployTest)   // deployables showcase: both placed on a ground plane + a valid(blue)/invalid(red) ghost
             {
                 GetWindow().Size = new Vector2I(1280, 720);
@@ -804,7 +743,7 @@ namespace UnturnedGodot
             if (menuShot != null)   // render the 3D barn menu + capture each camera anchor (menu_00..04.png), then quit
             {
                 GetWindow().Size = new Vector2I(1280, 720);
-                var m = new MainMenu { OnDrivePEI = _ => { }, OnPlay = _ => { } };
+                var m = new MainMenu { OnDrivePEI = () => { }, OnPlay = () => { } };
                 _menuShotMenu = m; _menuShotDir = menuShot;
                 AddChild(m);
                 return;
@@ -826,10 +765,8 @@ namespace UnturnedGodot
                 {
                     warmLs.QueueFree();
                     var menu = new MainMenu();
-                    menu.OnPlay = noZombies => { menu.QueueFree(); _noZombies = noZombies; BuildPlayable(null, false, null); };
-                    menu.OnDrivePEI = noZombies => { menu.QueueFree(); _noZombies = noZombies; ApplyMenuMap(menu.SelectedMapFolder); _peiPlayable = true; BuildObjectsTest(); };
-                    // Same world, zombie REWRITE enabled (== --newzombies); the menu route exists because the launcher passes no game args.
-                    menu.OnDriveNewZombies = () => { menu.QueueFree(); ZombieDirector.Enabled = true; _noZombies = false; ApplyMenuMap(menu.SelectedMapFolder); _peiPlayable = true; BuildObjectsTest(); };
+                    menu.OnPlay = () => { menu.QueueFree(); BuildPlayable(null, false, null); };
+                    menu.OnDrivePEI = () => { menu.QueueFree(); ApplyMenuMap(menu.SelectedMapFolder); _peiPlayable = true; BuildObjectsTest(); };
                     menu.OnMultiplayer = () => { menu.QueueFree(); _connectHost = "claw.bitvox.me"; _playableClient = true; BuildClient(); };   // legacy MP-test entry (fallback)
                     menu.OnJoinServer = (host, port) => { menu.QueueFree(); _connectHost = host; _connectPort = port; _playableClient = true; BuildClient(); };   // server browser JOIN / direct-connect -> real client join
                     menu.OnEditor = () => { menu.QueueFree(); BuildEditor(); };   // Workshop -> the singleplayer map editor (PEI)
@@ -1453,28 +1390,11 @@ namespace UnturnedGodot
                 // (the static cam is positioned in the vehTest loop, once _vehCam exists)
             }
 
-            if (_roadkill)   // idle zombies straight ahead (-Z) in the auto-drive path to run over
+            if (_chain)   // a 2nd jeep beside _veh: when _veh blows, the blast chains to the car (source vehicle-explosion damage)
             {
-                for (int i = 0; i < 3; i++)
-                {
-                    var z = new ZombieController { Speciality = ZombieController.ESpeciality.NORMAL };   // Target null -> stands still
-                    z.Position = new Vector3(i % 2 == 0 ? -0.6f : 0.6f, 0.9f, -12f - i * 3f);
-                    AddChild(z);
-                }
-            }
-
-            if (_chain)   // a 2nd jeep + a few zombies beside _veh: when _veh blows, the blast chains to the car (500) + wipes the zombies (200)
-            {
-                CharacterModel.LoadBundled();
                 var jeep2 = Vehicle.BuildByName("jeep");
                 jeep2.Position = _veh.Position + new Vector3(4f, 0f, 0f);   // ~4 m away, well inside the 8 m blast
                 AddChild(jeep2);
-                for (int i = 0; i < 3; i++)
-                {
-                    var z = new ZombieController { Speciality = ZombieController.ESpeciality.NORMAL };   // Target null -> stands still
-                    z.Position = _veh.Position + new Vector3(-2f + i * 1.2f, -0.3f, 2.5f);   // clustered near _veh
-                    AddChild(z);
-                }
             }
 
             _vehCam = new Camera3D { Current = true, Fov = 60f };
@@ -1592,34 +1512,6 @@ namespace UnturnedGodot
                 AddChild(gcam);
                 gcam.GlobalPosition = new Vector3(-9f, 4f, 5.5f);
                 gcam.LookAt(new Vector3(-1f, 0.4f, 0f), Vector3.Up);
-            }
-
-            if (_swarm)   // zombies lock onto the on-foot player, then keep hunting as he enters the car + swipe it (source targetPassengerVehicle) -> health drops -> smoke -> explode
-            {
-                CharacterModel.LoadBundled();
-                var hud = new HUD { Player = _dtPlayer }; AddChild(hud); _dtPlayer.Hud = hud;   // vehicle health bar shows the drain
-                Vector3 pc = _dtPlayer.GlobalPosition;
-                for (int i = 0; i < 6; i++)
-                {
-                    float ang = -1.0f + i * 0.4f;   // front-biased arc so the chase cam catches the mob
-                    var z = new ZombieController { Target = _dtPlayer, Speciality = ZombieController.ESpeciality.NORMAL };
-                    AddChild(z);
-                    z.GlobalPosition = pc + new Vector3(Mathf.Sin(ang) * 6f, 0f, -Mathf.Cos(ang) * 6f);   // ~6 m out (inside the 12 m stand-detect radius)
-                    z.LookAt(new Vector3(pc.X, z.GlobalPosition.Y, pc.Z), Vector3.Up);                    // FACE the player so TrySense fires (sneak facing-rule)
-                }
-            }
-
-            if (_drivethru)   // DRIVING-detection: drive PAST zombies out of on-foot range + facing away -> only the loud car (up to 48 m at speed) can wake them (source DRIVING stealth radius)
-            {
-                CharacterModel.LoadBundled();
-                var hud = new HUD { Player = _dtPlayer }; AddChild(hud); _dtPlayer.Hud = hud;
-                foreach (var (sx, sz) in new (float x, float z)[] { (12f, -16f), (-12f, -24f), (12f, -34f), (-12f, -44f) })
-                {
-                    var z = new ZombieController { Target = _dtPlayer, Speciality = ZombieController.ESpeciality.NORMAL };
-                    AddChild(z);
-                    z.GlobalPosition = new Vector3(3f + sx, 1.0f, sz);                        // ~12 m to the SIDE of the drive path, far ahead (well beyond the 12 m on-foot radius)
-                    z.LookAt(new Vector3(3f + sx * 2f, z.GlobalPosition.Y, sz), Vector3.Up);  // face AWAY from the path -> on-foot facing-rule can't sense them; only the driving alert can
-                }
             }
 
             if (_nade)   // lob a grenade onto the PARKED jeep -> detonates on it -> health drops (source Grenade Vehicle_Damage 100)
@@ -1744,7 +1636,7 @@ namespace UnturnedGodot
             ground.AddChild(gmesh);
             AddChild(ground);
 
-            CharacterModel.LoadBundled();  // real ripped character for the zombies
+            CharacterModel.LoadBundled();  // real ripped character model
             BuildCrates();                 // bundled ripped-prop scenery
 
             var player = new PlayerController();
@@ -1762,83 +1654,26 @@ namespace UnturnedGodot
             jeep.AddToGroup("vehicles");
             AddChild(jeep);
 
-            if (demo)
-            {
-                player.Camera.Current = false;
-                var overview = new Camera3D { Current = true, Fov = 62f };
-                AddChild(overview);
-                overview.Position = new Vector3(8f, 3.6f, 8f);
-                overview.LookAt(new Vector3(0, 1.0f, -4f), Vector3.Up);
-                AddChild(new DemoDirector { Player = player, SpawnRoot = this });
-                GD.Print("[PLAY] demo: player + scripted director vs chasing zombies (recording)");
-            }
-            else
-            {
-                if (!_noZombies) AddChild(new HordeSpawner { Target = player, MaxAlive = int.TryParse(System.Environment.GetEnvironmentVariable("UG_HORDE"), out var _h) ? _h : 8 });   // UG_HORDE overrides the horde size (perf repro)
-                var freezeMode = new FreezeMode();   // ESC -> Freeze Mode: paused sim + freecam + single-tick stepping
-                AddChild(freezeMode);
-                var pause = new PauseMenu();   // ESC -> pause menu (freezes the sim)
-                pause.Freeze = freezeMode;
-                pause.WorldRoot = this;
-                AddChild(pause);
-                player.PauseMenu = pause;
-                AddChild(new Profiler());   // console `profiler` -> perf overlay (fps/frame/worst-frame/timings/draw-calls/mem) for stutter diagnosis (master)
-                AddChild(new ZombieAnimCut());   // F6 -> freeze ALL rig anim (skeletons leg of the engine-side POI-fps cut: read F3 physics ms with it on vs off)
-                var attach = new AttachmentMenu();   // T -> weapon-attachment menu (iron sights removable, etc.)
-                AddChild(attach);
-                player.AttachMenu = attach;
-                var ammoRadial = new AmmoRadial();   // R-hold -> shotgun ammo-type picker (buckshot / slug)
-                AddChild(ammoRadial);
-                player.AmmoRadial = ammoRadial;
-                GD.Print(_noZombies ? "[PLAY] interactive: NO-ZOMBIE test environment"
-                                    : "[PLAY] interactive: WASD move / mouse look / LMB fire / Space jump");
-            }
+            var freezeMode = new FreezeMode();   // ESC -> Freeze Mode: paused sim + freecam + single-tick stepping
+            AddChild(freezeMode);
+            var pause = new PauseMenu();   // ESC -> pause menu (freezes the sim)
+            pause.Freeze = freezeMode;
+            pause.WorldRoot = this;
+            AddChild(pause);
+            player.PauseMenu = pause;
+            AddChild(new Profiler());   // console `profiler` -> perf overlay (fps/frame/worst-frame/timings/draw-calls/mem) for stutter diagnosis (master)
+            var attach = new AttachmentMenu();   // T -> weapon-attachment menu (iron sights removable, etc.)
+            AddChild(attach);
+            player.AttachMenu = attach;
+            var ammoRadial = new AmmoRadial();   // R-hold -> shotgun ammo-type picker (buckshot / slug)
+            AddChild(ammoRadial);
+            player.AmmoRadial = ammoRadial;
+            GD.Print("[PLAY] interactive: WASD move / mouse look / LMB fire / Space jump");
         }
 
-        // First-person hurt-feedback demo: keep the player's own camera current and drop a zombie point-blank in front
-        // so it lands hits — the red flash (HUD overlay) and the camera flinch ride the FP view for a --write-movie clip.
-        void BuildHurtDemo(string gunPath)
-        {
-            var env = new Godot.Environment
-            {
-                BackgroundMode = Godot.Environment.BGMode.Color,
-                BackgroundColor = new Color(0.42f, 0.55f, 0.72f),
-                AmbientLightSource = Godot.Environment.AmbientSource.Color,
-                AmbientLightColor = new Color(0.55f, 0.57f, 0.6f),
-                AmbientLightEnergy = 0.6f,
-            };
-            AddChild(new WorldEnvironment { Environment = env });
-            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-52f, -46f, 0f), LightEnergy = 1.2f, ShadowEnabled = true });
-
-            var ground = new StaticBody3D { CollisionLayer = 1 << 0 };
-            ground.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
-            var gmesh = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(240, 240) } };
-            gmesh.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.30f, 0.34f, 0.28f) };
-            ground.AddChild(gmesh);
-            AddChild(ground);
-
-            CharacterModel.LoadBundled();
-
-            var player = new PlayerController();
-            player.LoadGun(gunPath ?? "res://content/eaglefire.dat");
-            AddChild(player);                       // _Ready builds the FP camera (stays Current) + viewmodel
-            player.GlobalPosition = new Vector3(0, 1.0f, 0);
-            { var hud = new HUD { Player = player }; AddChild(hud); player.Hud = hud; }
-
-            // a normal zombie 1.2 m dead ahead (-Z): inside ATTACK_PLAYER_SQ, so it startles then bites on its cadence
-            var z = new ZombieController { Target = player, Speciality = ZombieController.ESpeciality.NORMAL };
-            AddChild(z);
-            z.GlobalPosition = player.GlobalPosition + new Vector3(0f, 0.2f, -1.2f);
-            // face it at the player so TrySense fires -- otherwise the source's sneak-from-behind rule (a standing player
-            // behind the zombie's facing goes undetected) leaves it oblivious to a point-blank spawn
-            z.LookAt(new Vector3(player.GlobalPosition.X, z.GlobalPosition.Y, player.GlobalPosition.Z), Vector3.Up);
-            GD.Print("[HURT] first-person: zombie point-blank, recording flash + flinch");
-        }
-
-        // --firetest [--supp]: the player fires AWAY from a zombie 25 m off. The zombie is out of its 12 m stand-detect
-        // radius (won't sense the player), but inside the 48 m gunshot alert -> it should hear an UNsuppressed shot and
-        // print [ALERT]; with a suppressor attached the shot is silent (source UseableGun ~936) -> no [ALERT]. Behavioral
-        // proof of the suppressor effect (+ a reusable firing-mechanics harness).
+        // --firetest [--supp]: a reusable firing-mechanics harness -- the player fires downrange (UG_HITWALL / UG_HITGLASS
+        // put a concrete wall / destructible pane in front) to render the viewmodel, tracers, ADS (UG_ADS) and the
+        // bullet-impact FX. --supp attaches the suppressor (verify the suppressed muzzle flash / viewmodel).
         void BuildFireTest(bool suppressed, string gun)
         {
             var env = new Godot.Environment
@@ -1865,14 +1700,11 @@ namespace UnturnedGodot
             player.LoadGun($"res://content/{gun ?? "eaglefire"}.dat");   // --gun=<name> to fire-test a specific gun (launcher_rocket -> verify the rocket blast)
             AddChild(player);
             player.GlobalPosition = new Vector3(0, 1.0f, 0);
-            player.RotationDegrees = new Vector3(0, System.Environment.GetEnvironmentVariable("UG_HITZOMBIE") == "1" ? 0f : 180f, 0);   // default: face +Z AWAY from the zombie (noise-only, suppressor-alert test). UG_HITZOMBIE: face -Z AT it -> hit it -> verify the flesh/blood impact
+            player.RotationDegrees = new Vector3(0, 180f, 0);   // face +Z toward the downrange wall/glass (UG_HITWALL / UG_HITGLASS)
             { var hud = new HUD { Player = player }; AddChild(hud); player.Hud = hud; }
             _ftPlayer = player;
             if (suppressed) player.SetSuppressor(true);
 
-            var z = new ZombieController { Target = player, Speciality = ZombieController.ESpeciality.NORMAL };
-            AddChild(z);
-            z.GlobalPosition = new Vector3(0, 1.0f, System.Environment.GetEnvironmentVariable("UG_HITZOMBIE") == "1" ? -6f : -25f);   // UG_HITZOMBIE: point-blank so shots connect -> verify blood
 
             // UG_HITWALL: a concrete wall 18 m downrange in the player's default (+Z) fire direction, so the firetest
             // reproduces shooting a hard surface at PLAY DISTANCE -> diagnose the real in-game bullet-impact FX (the
@@ -1918,7 +1750,7 @@ namespace UnturnedGodot
                 GD.Print($"[FIRETEST] UG_HITGLASS: destructible glass pane at +Z 6 m, hp {ghp:0.#} (player shatters it)");
             }
             env.TonemapMode = Godot.Environment.ToneMapper.Aces;   // match the game's ACES so this harness validates the scope PiP color/tonemap (was default Linear)
-            GD.Print($"[FIRETEST] suppressed={suppressed} -- firing away from a zombie 25 m off; expect [ALERT] ONLY when unsuppressed");
+            GD.Print($"[FIRETEST] suppressed={suppressed} -- firing downrange (viewmodel / tracer / ADS / impact rig)");
         }
 
         // --craftmenu: open the NEWER CraftingMenu (the browsable recipe index wired to the player as _craftMenu / Y)
@@ -3044,326 +2876,6 @@ namespace UnturnedGodot
             return new Color(1f, 1f - (w - 0.75f) * 4f, 0f);
         }
 
-        // GPU perf probe (--zperf). MUST run with a real rendering driver (xvfb + lavapipe + --rendering-driver
-        // vulkan), NEVER --headless: under --headless nothing renders, so every render counter reads zero and any
-        // timing is just the frame pacer. That was the bug in my first two attempts at measuring this.
-        //
-        // lavapipe is a software rasteriser so absolute ms means nothing here -- but DRAW CALLS, PRIMITIVES and
-        // VRAM are hardware-independent, and a multiplier is exactly what those expose. Spawns N zombies, samples
-        // the counters, hides them, samples again: the delta is the per-zombie render cost, including how many
-        // times each one is drawn (shadow cascades included).
-        //
-        // Frame time is also reported, and it is NOT redundant with the counters. Counters cannot see FRAGMENTS --
-        // overdraw and shadow-map fill cost the same zero draw calls whether they shade 1 pixel or 10 million.
-        // lavapipe's cost is fragment-dominated, so the RATIO between phases is a fill-rate proxy even though the
-        // absolute ms is worthless. Read ratios here, never numbers.
-        int _zpN; int _zpStep; double _zpStepClock; int _zpFrames; double _zpFrameSum; double _zpFrameMax;
-        readonly System.Collections.Generic.List<ZombieController> _zpZombies = new();
-
-        void BuildZPerf()
-        {
-            _zpN = int.TryParse(System.Environment.GetEnvironmentVariable("UG_ZN"), out var n) ? n : 20;
-            var env = new Godot.Environment
-            {
-                BackgroundMode = Godot.Environment.BGMode.Color,
-                BackgroundColor = new Color(0.30f, 0.34f, 0.42f),
-                AmbientLightSource = Godot.Environment.AmbientSource.Color,
-                AmbientLightColor = new Color(0.72f, 0.72f, 0.75f), AmbientLightEnergy = 1.0f,
-            };
-            AddChild(new WorldEnvironment { Environment = env });
-            // UG_ZSUN=noshadow drops the sun's shadow pass. Not a scene option -- a NOISE FLOOR control. The default
-            // 4-split PSSM atlas is rasterised in full every frame regardless of screen resolution or scene content,
-            // so under a software rasteriser it is a large fixed cost that swamps whatever is being measured (an
-            // empty 5-draw frame still cost ~124ms). Run any measurement both ways: if a delta only exists with the
-            // floor present, the delta was the floor.
-            bool sunShadow = System.Environment.GetEnvironmentVariable("UG_ZSUN") != "noshadow";
-            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-48f, -40f, 0f), LightEnergy = 1.3f, ShadowEnabled = sunShadow });
-            AddChild(new MeshInstance3D
-            {
-                Mesh = new PlaneMesh { Size = new Vector2(300f, 300f) },
-                MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.34f, 0.40f, 0.28f), Roughness = 1f },
-            });
-            var gb = new StaticBody3D(); gb.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() }); AddChild(gb);
-
-            // Uncapped and vsync off: the timing pass is only meaningful as a ratio between phases, and a frame
-            // pacer flattens exactly that. (Under a pacer every phase reads the pacer's period -- the mistake that
-            // produced the first two rounds of garbage numbers.)
-            DisplayServer.WindowSetVsyncMode(DisplayServer.VSyncMode.Disabled);
-            Engine.MaxFps = 0;
-
-            // UG_ZRES=WxH. Resolution is the discriminator the counters cannot give: fragment cost scales with
-            // PIXELS, geometry/draw cost does not. Run the same N at two resolutions -- if the zombies' marginal
-            // frame time scales with pixel count their cost is fill (overdraw / shadow-map rasterisation); if it
-            // stays flat it is geometry. The scaling LAW transfers to real hardware; lavapipe's constant does not.
-            //
-            // ContentScaleMode MUST be cleared first. The project uses stretch mode "canvas_items", which pins the
-            // render target to the 2560x1440 content size no matter what the window does -- both `--resolution` and
-            // WindowSetSize were silently ignored because of it, and three runs "measured" 2560x1600 while claiming
-            // to sweep resolutions. Mode must leave Maximized too, or a size request is a no-op.
-            var res = (System.Environment.GetEnvironmentVariable("UG_ZRES") ?? "").Split('x');
-            if (res.Length == 2 && int.TryParse(res[0], out var rw) && int.TryParse(res[1], out var rh))
-            {
-                var win = GetWindow();
-                win.ContentScaleMode = Window.ContentScaleModeEnum.Disabled;
-                win.ContentScaleAspect = Window.ContentScaleAspectEnum.Ignore;
-                win.Mode = Window.ModeEnum.Windowed;
-                win.Size = new Vector2I(rw, rh);
-            }
-
-            // UG_ZCAM=1p sits the camera at driver-eye range; the default 3p matches the chase cam's worst case
-            // (34 m back and elevated). That camera distance is the one thing strawberry's tank is gated on, and it
-            // is also what decides how much world each shadow cascade has to cover.
-            bool cam1p = System.Environment.GetEnvironmentVariable("UG_ZCAM") == "1p";
-            var cam = new Camera3D { Current = true, Fov = 60f, Far = 4000f };
-            AddChild(cam);
-            cam.GlobalPosition = cam1p ? new Vector3(0f, 1.7f, 6f) : new Vector3(0f, 12f, 34f);
-            cam.LookAt(new Vector3(0f, 1f, 0f), Vector3.Up);
-
-            SDG.Unturned.ItemCatalog.RegisterAll();
-
-            // UG_ZAI=1 makes this the CPU probe instead of the render probe. strawberry's F3 in the tanked POI
-            // reads frame 37.2ms / physics 32.2ms / render 487 draws, so the tank is the PHYSICS frame and the
-            // renderer was never involved. Physics is CPU, which means -- unlike every render number today -- this
-            // box can measure it honestly, and it does not need a rendering driver at all.
-            //
-            // Real AI, not puppets: the whole cost being hunted lives in ZombieController._PhysicsProcess, which
-            // puppets skip entirely. Needs a registered player avatar too, or every zombie early-returns before
-            // doing any work and the probe reports a confident zero.
-            // UG_ZAI=1 runs real AI. UG_ZAI=puppet builds the identical scene -- same bodies, same rigs, same
-            // NavigationAgent3Ds -- but as puppets, whose _PhysicsProcess returns immediately. Same reporting
-            // either way, so AI-minus-puppet is exactly the AI script's share and the remainder is what a zombie
-            // costs the engine just by EXISTING. No new code paths to be wrong about; the difference is the answer.
-            string zai = System.Environment.GetEnvironmentVariable("UG_ZAI");
-            _zaiMode = zai == "1" || zai == "puppet";
-            bool aiPuppets = zai == "puppet";
-            if (_zaiMode && !aiPuppets)
-            {
-                _zaiPlayer = new PlayerController { Inventory = new SDG.Unturned.PlayerInventory() };
-                AddChild(_zaiPlayer);
-                _zaiPlayer.GlobalPosition = new Vector3(0f, 0f, 6f);
-            }
-
-            for (int i = 0; i < _zpN; i++)
-            {
-                var z = new ZombieController { IsPuppet = !_zaiMode || aiPuppets };   // puppet: no AI, isolates the RENDER cost
-                AddChild(z);
-                z.GlobalPosition = new Vector3((i % 8) * 2.5f - 9f, 0f, (i / 8) * 2.5f - 4f);
-                _zpZombies.Add(z);
-            }
-            // UG_ZFREEZE=1 is cow tools' F6 (RiggedCharacter.SetAnimFrozen) driven headlessly, so the skeleton
-            // share can be measured here instead of only in a live session. It is the leg z.rig CANNOT see: Tick()
-            // is a near-no-op once UsePhysicsAnimRate has put the mixer in Physics callback mode, so the actual
-            // 17-bones-per-zombie posing happens engine-side inside the physics frame and no script timer wraps it.
-            if (System.Environment.GetEnvironmentVariable("UG_ZFREEZE") == "1") RiggedCharacter.SetAnimFrozen(true);
-
-            GD.Print($"[zperf] spawned {_zpN} zombies  cam={(cam1p ? "1p" : "3p")}  mode={(_zaiMode ? "AI/cpu" : "render")}  animFrozen={RiggedCharacter.AnimFrozen}");
-            SetProcess(true);
-        }
-
-        // ============================================================================
-        // --zbody: MECHANISM PROBE FOR THE 20ms
-        //
-        // strawberry's zombies-off control in a live POI, same spot, 3p in a vehicle:
-        //     zombies OFF  physics  2.4ms  217fps  11 active,  28 pairs
-        //     zombies ON   physics 26.8ms   30fps  74 active, 192 pairs
-        // Zombies add 24.4ms of physics. Their SCRIPT (every Prof tag summed) is 4.1ms of it.
-        // The other 20.3ms is the physics server simulating their bodies.
-        //
-        // So the claim to test is narrow and does not need the AI at all: do N kinematic capsules
-        // being swept every tick cost engine-side physics proportional to N? This spawns bare
-        // CharacterBody3Ds with no rig, no AI, no nav agent, and alternates moving/parked windows
-        // INSIDE ONE PROCESS -- the only design that survived this box's variance.
-        //
-        // Also corrects something I told strawberry: I claimed kinematic bodies contribute nothing
-        // to the active-body counter. 11 -> 74 with 63 zombies says otherwise. A CharacterBody3D
-        // that is moved every tick is active. I reasoned from what "kinematic" means instead of
-        // checking a delta that was already on screen.
-        readonly System.Collections.Generic.List<CharacterBody3D> _zbBodies = new();
-        bool _zbMode, _zbMoving = true; int _zbPhase, _zbPhysN; double _zbClock, _zbPhysSum, _zbPhysMax;
-        readonly double[] _zbRes = new double[4];
-
-        void BuildZBody()
-        {
-            _zbMode = true;
-            int n = int.TryParse(System.Environment.GetEnvironmentVariable("UG_ZN"), out var v) ? v : 63;
-            bool obstacles = System.Environment.GetEnvironmentVariable("UG_ZBOBST") == "1";
-
-            var gb = new StaticBody3D();
-            gb.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
-            AddChild(gb);
-
-            // UG_ZBOBST=1 adds static boxes so the sweeps hit real geometry instead of one infinite
-            // plane. strawberry's POI is full of buildings; a bare plane is the cheapest possible case
-            // and will understate, so the two modes bracket the answer rather than pretending to be it.
-            if (obstacles)
-                for (int i = 0; i < 120; i++)
-                {
-                    var sb = new StaticBody3D();
-                    var cs = new CollisionShape3D { Shape = new BoxShape3D { Size = new Vector3(2f, 3f, 2f) } };
-                    sb.AddChild(cs); AddChild(sb);
-                    sb.GlobalPosition = new Vector3((i % 12) * 4f - 22f, 1.5f, (i / 12) * 4f - 18f);
-                }
-
-            for (int i = 0; i < n; i++)
-            {
-                var b = new CharacterBody3D { CollisionLayer = 1u << 1, CollisionMask = 1u << 0 };
-                b.AddChild(new CollisionShape3D { Shape = new CapsuleShape3D { Radius = 0.35f, Height = 1.8f } });
-                AddChild(b);
-                b.GlobalPosition = new Vector3((i % 10) * 2.2f - 10f, 1.0f, (i / 10) * 2.2f - 6f);
-                _zbBodies.Add(b);
-            }
-            GD.Print($"[zbody] {n} kinematic capsules, obstacles={obstacles}");
-            SetProcess(true); SetPhysicsProcess(true);
-        }
-
-        // Driving the capsules from here rather than from a per-body script keeps the probe honest:
-        // the only thing under test is MoveAndSlide on N kinematic bodies, with no other per-node work.
-        public override void _PhysicsProcess(double delta)
-        {
-            if (_zbMode) ZBodyPhysics(delta);
-        }
-
-        void ZBodyPhysics(double delta)
-        {
-            if (!_zbMoving) return;
-            float t = (float)_zbClock;
-            for (int i = 0; i < _zbBodies.Count; i++)
-            {
-                var b = _zbBodies[i];
-                float a = t * 0.7f + i * 0.37f;
-                b.Velocity = new Vector3(Mathf.Cos(a) * 2.4f, -9.8f * (float)delta, Mathf.Sin(a) * 2.4f);
-                b.MoveAndSlide();
-            }
-        }
-
-        void ZBodyTick(double delta)
-        {
-            const double Warm = 1.0, Win = 3.0;
-            _zbClock += delta;
-            if (_zbClock < Warm) return;
-            double now = Performance.GetMonitor(Performance.Monitor.TimePhysicsProcess) * 1000.0;
-            _zbPhysSum += now; _zbPhysN++;
-            if (now > _zbPhysMax) _zbPhysMax = now;
-            if (_zbClock < Warm + Win * (_zbPhase + 1)) return;
-
-            double phys = _zbPhysN > 0 ? _zbPhysSum / _zbPhysN : 0.0;
-            GD.Print($"[zbody] win{_zbPhase} {( _zbMoving ? "MOVING" : "parked")} n={_zbBodies.Count} " +
-                     $"physics={phys:0.000}ms (worst {_zbPhysMax:0.000}, {_zbPhysN} samples) " +
-                     $"active={Performance.GetMonitor(Performance.Monitor.Physics3DActiveObjects):0} " +
-                     $"pairs={Performance.GetMonitor(Performance.Monitor.Physics3DCollisionPairs):0}");
-            if (_zbPhase < 4) _zbRes[_zbPhase] = phys;
-
-            _zbPhase++; _zbPhysSum = 0; _zbPhysN = 0; _zbPhysMax = 0;
-            if (_zbPhase < 4) { _zbMoving = _zbPhase % 2 == 0; return; }
-
-            GD.Print($"[zbody] pair1 moving {_zbRes[0]:0.000} -> parked {_zbRes[1]:0.000} (delta {_zbRes[0] - _zbRes[1]:0.000}ms)");
-            GD.Print($"[zbody] pair2 moving {_zbRes[2]:0.000} -> parked {_zbRes[3]:0.000} (delta {_zbRes[2] - _zbRes[3]:0.000}ms)  -- trust only if the pairs agree");
-            GetTree().Quit();
-        }
-
-        bool _zaiMode; PlayerController _zaiPlayer; double _zaiClock; ulong _zaiPhys0;
-        double _zaiPhysSum, _zaiPhysMax; int _zaiPhysN; int _zaiPhase; readonly double[] _zaiResult = new double[2];
-        int _zaiGc0, _zaiGc1, _zaiGc2;
-
-        // A/B INSIDE ONE PROCESS, alternating windows. Comparing two separate launches does not work on this box:
-        // three paired frozen/live runs gave 13.3/13.5, 11.5/6.6 and 17.3/33.8ms -- the effect changed SIGN, and the
-        // mean said freezing animation made it slower, which is impossible. Cross-process noise (boot, JIT, page
-        // cache, whatever else has the 4 cores) is larger than anything being measured. Back-to-back windows in one
-        // process share all of that, so the difference between them is the thing that actually changed.
-        //
-        // Alternates live/frozen/live/frozen rather than doing one of each, so a monotonic drift over the run shows
-        // up as disagreement between the two halves instead of masquerading as the effect.
-        void ZAITick(double delta)
-        {
-            const double Warm = 1.5, Win = 3.0;
-            _zaiClock += delta;
-            if (_zaiClock < Warm) return;                  // rigs build + the AI settles out of its first tick
-
-            double physNow = Performance.GetMonitor(Performance.Monitor.TimePhysicsProcess) * 1000.0;
-            _zaiPhysSum += physNow; _zaiPhysN++;
-            if (physNow > _zaiPhysMax) _zaiPhysMax = physNow;
-            if (_zaiClock < Warm + Win * (_zaiPhase + 1)) return;
-
-            ulong ticks = Engine.GetPhysicsFrames() - _zaiPhys0;
-            double phys = _zaiPhysN > 0 ? _zaiPhysSum / _zaiPhysN : 0.0;
-            bool frozen = RiggedCharacter.AnimFrozen;
-
-            // Check BEFORE the reset below, not after -- the first version of this guard read Prof.Us on the far
-            // side of Prof.Reset() and cheerfully reported "z.total is ZERO, NOT a result" on runs that had just
-            // produced perfectly good numbers. A guard against lying instruments that lies is worse than none.
-            bool noAiWork = !Prof.Us.TryGetValue("z.total", out var tot) || tot == 0;
-
-            // GC per window. The worst frames here reach 120ms in a headless probe on flat ground, which is not a
-            // plausible cost for 60 capsules -- so the question is whether the "noise" is this box or the GAME.
-            // CanSee allocates a Godot.Collections.Array<Rid> and a PhysicsRayQueryParameters3D per zombie per tick;
-            // at n=60 that is ~3000 marshalled allocations a second. If gen0 tracks the spikes, the spikes are ours.
-            int g0 = System.GC.CollectionCount(0), g1 = System.GC.CollectionCount(1), g2 = System.GC.CollectionCount(2);
-            int d0 = g0 - _zaiGc0, d1 = g1 - _zaiGc1, d2 = g2 - _zaiGc2; _zaiGc0 = g0; _zaiGc1 = g1; _zaiGc2 = g2;
-
-            var parts = new System.Collections.Generic.List<string>();
-            if (ticks > 0) foreach (var kv in Prof.Us) parts.Add($"{kv.Key}={kv.Value / (double)ticks / 1000.0:0.000}ms");
-            parts.Sort();
-            GD.Print($"[zai] n={_zpN} win{_zaiPhase} anim={(frozen ? "FROZEN" : "live  ")} " +
-                     $"physicsFrame={phys:0.000}ms (worst {_zaiPhysMax:0.000}, {_zaiPhysN} samples) " +
-                     $"gc[{d0}/{d1}/{d2}] heap={System.GC.GetTotalMemory(false) / 1048576.0:0.0}MB   per-tick: {string.Join("  ", parts)}");
-            if (_zaiPhase < 2) _zaiResult[_zaiPhase] = phys;
-            if (noAiWork) GD.Print("[zai] z.total is ZERO -> zombies early-returned before any AI work (no player registered?). NOT a result.");
-
-            _zaiPhase++;
-            _zaiPhysSum = 0; _zaiPhysN = 0; _zaiPhysMax = 0; Prof.Reset(); _zaiPhys0 = Engine.GetPhysicsFrames();
-            if (_zaiPhase < 4) { RiggedCharacter.SetAnimFrozen(_zaiPhase % 2 == 1); return; }
-
-            GD.Print($"[zai] first pair: live {_zaiResult[0]:0.000}ms -> frozen {_zaiResult[1]:0.000}ms " +
-                     $"(skeleton share {_zaiResult[0] - _zaiResult[1]:0.000}ms). Trust it only if the SECOND pair agrees.");
-            GetTree().Quit();
-        }
-
-        // Each step: let the change settle, then average frame time over a window and print it with the counters.
-        // ON - OFF is the zombies' whole render cost; ON - ON,noshadow is the part that is shadow casting.
-        void ZPerfTick(double delta)
-        {
-            const double Warm = 0.6, Win = 2.0;
-            _zpStepClock += delta;
-            if (_zpStepClock > Warm)
-            {
-                _zpFrames++; _zpFrameSum += delta;
-                // Worst frame in the window, not just the mean. A STALL -- a GPU->CPU sync or a synchronous
-                // pipeline compile -- is spikes, and a mean averages it straight back out of existence.
-                if (delta > _zpFrameMax) _zpFrameMax = delta;
-            }
-            if (_zpStepClock < Warm + Win) return;
-
-            double M(Performance.Monitor m) => Performance.GetMonitor(m);
-            string tag = _zpStep switch { 0 => $"ON(n={_zpN})", 1 => "OFF", _ => "ON,noshadow" };
-            // Report the size actually rendered, straight off the render target -- not the size asked for, and not
-            // the window's idea of it. A resolution-scaling experiment where the resolution silently never changed
-            // reads as "flat, therefore not fill": a null result that looks exactly like data. That already happened
-            // once here (WindowSetSize was ignored and every run rendered 2560x1600).
-            Vector2I vp = (Vector2I)GetViewport().GetTexture().GetSize();
-            GD.Print(
-                $"[zperf] {tag,-12} {vp.X}x{vp.Y} " +
-                $"frame={(_zpFrames > 0 ? _zpFrameSum / _zpFrames * 1000.0 : 0.0):0.00}ms " +
-                $"worst={_zpFrameMax * 1000.0:0.00}ms " +
-                $"draws={M(Performance.Monitor.RenderTotalDrawCallsInFrame):0} " +
-                $"objs={M(Performance.Monitor.RenderTotalObjectsInFrame):0} " +
-                $"prims={M(Performance.Monitor.RenderTotalPrimitivesInFrame):0} " +
-                $"vram={M(Performance.Monitor.RenderVideoMemUsed) / 1048576.0:0.0}MB");
-
-            _zpStep++; _zpStepClock = 0; _zpFrames = 0; _zpFrameSum = 0; _zpFrameMax = 0;
-            switch (_zpStep)
-            {
-                case 1: foreach (var z in _zpZombies) z.Visible = false; break;                                  // scene without them at all
-                case 2: foreach (var z in _zpZombies) { z.Visible = true; SetZombieShadows(z, false); } break;   // drawn, casting nothing
-                default: GetTree().Quit(); break;
-            }
-        }
-
-        static void SetZombieShadows(Node root, bool on)
-        {
-            if (root is GeometryInstance3D gi) gi.CastShadow = on ? GeometryInstance3D.ShadowCastingSetting.On : GeometryInstance3D.ShadowCastingSetting.Off;
-            foreach (var c in root.GetChildren()) SetZombieShadows(c, on);
-        }
-
         // --impacttest : fire ONE reimplemented ImpactFx per surface across a grey wall (concrete / metal / wood / dirt
         // / grass / sand, then a water plip + a blood spray), captured a few frames into the burst so the debris is
         // mid-flight -- the exact thing the old (culled, no-VisibilityAabb) bursts couldn't show.
@@ -4148,9 +3660,9 @@ namespace UnturnedGodot
             // (no GPU) each per-phase drawn frame software-renders the whole growing scene (612k grass, 3614 objects),
             // which paces the load; syncLoad never draws mid-load, so the box boots far faster. Off by default (a
             // real interactive session wants the loading screen); the game still renders normally once loaded.
-            bool syncLoad = _bakeNav || System.Environment.GetEnvironmentVariable("UG_SYNCLOAD") == "1";
+            bool syncLoad = System.Environment.GetEnvironmentVariable("UG_SYNCLOAD") == "1";
             var res = await WorldBuilder.BuildFullWorld(this, _peiPlayable ? WorldMode.Playable : WorldMode.Aerial,
-                _mapRoot, _mapPlace, _noZombies, syncLoad: syncLoad, bakeNav: _bakeNav, ActiveHoliday());
+                _mapRoot, _mapPlace, syncLoad: syncLoad, ActiveHoliday());
             // A1 FIX (master 2026-07-20: PEI shelves spawned empty in SP): load the loot tables BEFORE AttachMpLoopback.
             // Under a consuming loopback ContainerNetSync rolls the map containers' loot INSIDE AttachMpLoopback (below),
             // so the tables must be loaded by then -- but the only load site was SpawnMapContainers (@1848), which is
@@ -4158,13 +3670,11 @@ namespace UnturnedGodot
             if (_peiPlayable) LootTables.Load(_mapRoot + "/Spawns/Items.dat");
             _pdPlayer = res.Player;   // UG_AUTOFIRE terrain-impact verification
             if (_pdPlayer != null && System.Environment.GetEnvironmentVariable("UG_START3P") == "1") _pdPlayer.DriveFP = false;   // start in 3rd person (verify the 3P centre crosshair + the 3P body)
-            _ztField = res.Zombies;   // --zombietest reads this at frame 25 to verify spawns land on the navmesh
-            _zdField = res.Director;  // --zdirtest reads this to watch the rewrite tier/path/move on the real map
             if (res.HasVehicleAim && !_vHave) { _vAim = res.VehicleAim; _vHave = true; }
             // P6a: the GAME "Drive PEI"/--peidrive path (Playable + a real player, NOT the nav-bake/navpath/zombie
             // offline harnesses, which set _bakeNav) boots the consuming listen-server by default. --objects is Aerial
             // (res.Player == null) so it early-returns regardless. gameDefault=false keeps the harnesses direct.
-            AttachMpLoopback(res, gameDefault: _peiPlayable && !_bakeNav);
+            AttachMpLoopback(res, gameDefault: _peiPlayable);
             if (res.Ready) _worldReady = true;   // async world fully built (terrain..trees) -> the --shot harness can now capture a loaded frame
             // UG_MAPSHOT=<half-extent-metres>: a top-down ORTHOGRAPHIC map capture. Orthographic and axis-aligned on
             // purpose -- it makes world->pixel an exact linear mapping, so an overlay (signal positions, spawns,
@@ -4975,8 +4485,8 @@ namespace UnturnedGodot
             // retail->ours one-way (the retail placements file is never written). Same 10-field format either way.
             string editorObjFile = "editor_PEI.txt";
             string objPlace = System.IO.File.Exists(ProjectSettings.GlobalizePath("res://content/objects/") + editorObjFile) ? editorObjFile : _mapPlace;
-            var res = await WorldBuilder.BuildFullWorld(this, WorldMode.Editor, _mapRoot, objPlace, noZombies: true,
-                                                        syncLoad: false, bakeNav: false, ActiveHoliday());
+            var res = await WorldBuilder.BuildFullWorld(this, WorldMode.Editor, _mapRoot, objPlace,
+                                                        syncLoad: false, ActiveHoliday());
             // THE EDITOR BOOTS UNDER THE REAL LIGHTING (strawberry 2026-08-19: "the global lighting etc etc
             // should always be on, not just with the environment tab open"). It used to freeze the day-night
             // visuals and paint a flat fog-free sky, so every tab except Environment dressed the map under a
@@ -5255,73 +4765,11 @@ namespace UnturnedGodot
                                       ConsumeDeployables = consume });                      // P6a: true by default on the GAME path
         }
 
-        // --navshot=OUT: a VERIFY screenshot for the zombie nav rework -- synchronous world (loads reliably offline),
-        // the baked navmesh pockets painted as a translucent floor overlay, a ring of zombies with their vision cones
-        // wireframed, aerial cam over a central pocket. Waits a few settle frames, saves the PNG, quits.
-        void BuildNavShot(string outPath)
-        {
-            var env = new Godot.Environment { AmbientLightSource = Godot.Environment.AmbientSource.Color, AmbientLightColor = new Color(0.72f, 0.70f, 0.62f), AmbientLightEnergy = 1f };
-            AddChild(new WorldEnvironment { Environment = env });
-            var sun = new DirectionalLight3D { LightEnergy = 1.3f, ShadowEnabled = true, RotationDegrees = new Vector3(-55f, 35f, 0f) };
-            AddChild(sun);
-
-            var terr = Terrain.LoadMapMerged(MapDir("PEI") + "/Landscape/Heightmaps", withCollider: true);
-            if (terr == null) return;
-            AddChild(terr);
-
-            var pockets = ZombieNav.LoadPockets(MapDir("PEI"));
-            ZombieNav.BuildOrLoad(this, pockets, overlay: true, save: false);   // verify shot: terrain-only, don't overwrite the canonical full-world bake
-
-            var cam = new Camera3D { Current = true };
-            AddChild(cam);
-            if (System.Environment.GetEnvironmentVariable("UG_NAVFULL") == "1")   // zoomed-out full-island map of ALL 19 pockets (top-down, north up)
-            {
-                cam.Fov = 72f;
-                cam.Position = new Vector3(0f, 1650f, 0f);
-                cam.RotationDegrees = new Vector3(-90f, 0f, 0f);   // straight down: +X = east, -Z = north (map orientation)
-                cam.Near = 1200f; cam.Far = 2200f;   // terrain is all ~1.4-1.7km away -> a tight near/far restores depth precision + kills the z-fighting that hid pockets at this zoom
-            }
-            else   // close-up over one pocket with a ring of zombies + their vision cones
-            {
-                CharacterModel.LoadBundled();
-                Vector3 look = Vector3.Zero;
-                if (pockets.Count > 0)
-                {
-                    // Default to the most INLAND pocket rather than a hardcoded index. Pocket 3 sat on the
-                    // coast, so the verify shot framed open water with the cones adrift in it -- a render
-                    // that passed every "did it produce a file" check and showed nothing worth looking at.
-                    // Scoring by surrounding land keeps the framing meaningful even if pocket ORDER changes,
-                    // which an index cannot. UG_NAVPOCKET=N still overrides for a specific pocket.
-                    int pkIdx = int.TryParse(System.Environment.GetEnvironmentVariable("UG_NAVPOCKET"), out var pi)
-                        ? Mathf.Clamp(pi, 0, pockets.Count - 1)
-                        : MostInlandPocket(pockets, terr);
-                var pk = pockets[pkIdx];
-                    float cy = terr.SampleHeight(pk.Center.X, pk.Center.Z);
-                    look = new Vector3(pk.Center.X, cy, pk.Center.Z);
-                    for (int i = 0; i < 6; i++)
-                    {
-                        float ang = i / 6f * Mathf.Tau;
-                        float zx = pk.Center.X + 9f * Mathf.Cos(ang), zz = pk.Center.Z + 9f * Mathf.Sin(ang);
-                        var z = new ZombieController { Speciality = ZombieController.ESpeciality.NORMAL };
-                        AddChild(z);
-                        z.GlobalPosition = new Vector3(zx, terr.SampleHeight(zx, zz) + 0.05f, zz);
-                        z.LookAt(new Vector3(look.X, z.GlobalPosition.Y, look.Z), Vector3.Up);   // face the pocket centre so the cones point inward
-                        z.AddChild(NavDebug.ConeWire(18f, 55f, new Color(1f, 0.9f, 0.2f)));
-                    }
-                }
-                cam.Fov = 62f;
-                cam.GlobalPosition = look + new Vector3(0f, 60f, 36f);
-                cam.LookAt(look, Vector3.Up);
-            }
-            _shotPath = outPath; _navShot = true;
-            GD.Print($"[NAVSHOT] terrain + {pockets.Count} nav pockets (overlay) + zombie cones; capturing -> {outPath}");
-        }
-
         // --peiplay: the world assembly lives in WorldBuilder.BuildPeiPlayWorld (MP_PLAN §4 Phase 3);
         // this wrapper keeps the capture plumbing (_peiPlayer drives the scripted drop/enter/drive).
         void BuildPeiPlay()
         {
-            var res = WorldBuilder.BuildPeiPlayWorld(this, MapDir("PEI"), _peiHorde);
+            var res = WorldBuilder.BuildPeiPlayWorld(this, MapDir("PEI"));
             _peiPlayer = res.Player;
             AttachMpLoopback(res, gameDefault: true);   // P6a: --peiplay is a real SP GAME entry -> consuming listen-server by default (--direct opts out)
         }
@@ -6759,10 +6207,7 @@ namespace UnturnedGodot
             {
                 string holiday = ActiveHoliday();   // P3: ONE decision -- the world builds with it AND it rides the Accept (joiners build the same collision set)
                 var res = await WorldBuilder.BuildFullWorld(this, WorldMode.Dedicated, _mapRoot, _mapPlace,
-                    // C4: the dedicated world is POPULATED -- zombies ON by default for the test server;
-                    // --nozombies or UG_DEDICATED_NOZOMBIES=1 gives a quiet server, no code change
-                    noZombies: _noZombies || System.Environment.GetEnvironmentVariable("UG_DEDICATED_NOZOMBIES") == "1",
-                    syncLoad: true, bakeNav: false, activeHoliday: holiday);
+                    syncLoad: true, activeHoliday: holiday);
                 AddChild(new DedicatedServer { Port = PortEnv(), Driver = res.Sim, Terr = res.Terr,   // Terr: server grenades bounce on real terrain height (Phase 5)
                     DayNight = res.DayNight, Resources = res.Resources, Destructibles = res.Destructibles, MapRoot = _mapRoot,   // Phase 8: tick-derived clock + resource bitmap + rubble + nav-pocket relevancy cells (§3.7/§2.6)
                     Deadzones = res.Deadzones,                                                       // SP/MP unify: the contaminated volumes get copied into the server's own hazard step
@@ -6797,7 +6242,7 @@ namespace UnturnedGodot
             try
             {
                 var res = await WorldBuilder.BuildFullWorld(this, WorldMode.Dedicated, _mapRoot, _mapPlace,
-                    noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: ActiveHoliday());
+                    syncLoad: true, activeHoliday: ActiveHoliday());
                 _worldReady = res.Ready;
                 AddChild(new NetObserver { Host = _connectHost, Port = PortEnv(), Driver = res.Sim });
                 GD.Print($"[NETOBS] scaffold up (terrain={(res.Terr != null ? "real map" : "fallback plane")}); observing {_connectHost}:{PortEnv()}");
@@ -6830,7 +6275,7 @@ namespace UnturnedGodot
             try
             {
                 var res = await WorldBuilder.BuildFullWorld(this, WorldMode.Client, _mapRoot, _mapPlace,
-                    noZombies: true, syncLoad: false, bakeNav: false, activeHoliday: ActiveHoliday());
+                    syncLoad: false, activeHoliday: ActiveHoliday());
                 if (res.Terr == null)
                 {
                     // FAIL-FAST (C1): a client without the retail map cannot render the world the server is
@@ -6909,143 +6354,6 @@ namespace UnturnedGodot
             GD.Print("[NETDEMO] NetWorldServer + 2 NetWorldClients on loopback UDP (NetSession + snapshot/command planes); rendering server-synced players");
         }
 
-        // --navpathtest: once the nav map has synced (a few frames), query the baked navmesh + report whether paths route around obstacles.
-        void RunNavPathTest()
-        {
-            var map = GetViewport().World3D.NavigationMap;
-            GD.Print($"[navpath] map active={NavigationServer3D.MapIsActive(map)} regions={NavigationServer3D.MapGetRegions(map).Count}");
-            var pk = ZombieNav.LoadPockets(_mapRoot);
-            int routed = 0, ok = 0;
-            for (int i = 0; i < pk.Count; i++)
-            {
-                var c = pk[i].Center; float hx = pk[i].HalfExtent.X, hz = pk[i].HalfExtent.Z; float qy = 40f;   // query near terrain (navmesh ~25-70m; Center.Y is the bounds mid ~140)
-                foreach (var ab in new[] { (new Vector3(c.X - hx * 0.6f, qy, c.Z), new Vector3(c.X + hx * 0.6f, qy, c.Z)),
-                                           (new Vector3(c.X, qy, c.Z - hz * 0.6f), new Vector3(c.X, qy, c.Z + hz * 0.6f)) })
-                {
-                    var A = NavigationServer3D.MapGetClosestPoint(map, ab.Item1);
-                    var B = NavigationServer3D.MapGetClosestPoint(map, ab.Item2);
-                    var path = NavigationServer3D.MapGetPath(map, A, B, true);
-                    if (path.Length >= 2)
-                    {
-                        float plen = 0f; for (int k = 1; k < path.Length; k++) plen += path[k - 1].DistanceTo(path[k]);
-                        float straight = A.DistanceTo(B);
-                        bool routes = path.Length > 2 && plen > straight * 1.12f;
-                        ok++; if (routes) routed++;
-                        GD.Print($"[navpath] pocket {i}: pts={path.Length} len={plen:0.#} straight={straight:0.#} snapY={A.Y:0.#} -> {(routes ? "ROUTES AROUND" : "straight/open")}");
-                    }
-                    else GD.Print($"[navpath] pocket {i}: NO PATH (snapA={A} snapB={B})");
-                }
-            }
-            GD.Print($"[navpath] {routed} queries ROUTED AROUND obstacles, {ok} valid paths -> zombie pathfinding {(ok > 0 ? "WORKS on the baked navmesh" : "FAILED")}");
-            GetTree().Quit();
-        }
-
-        // --zombietest: verify the pocket-based spawner puts zombies ON the baked navmesh (so the Phase-2 agent can path from spawn).
-        void RunZombieTest()
-        {
-            var map = GetViewport().World3D.NavigationMap;
-            GD.Print($"[zombietest] map active={NavigationServer3D.MapIsActive(map)} regions={NavigationServer3D.MapGetRegions(map).Count} pockets={_ztField?.PocketCount ?? 0}");
-            if (_ztField == null) { GD.Print("[zombietest] no ZombieField (zombies disabled?)"); GetTree().Quit(); return; }
-            var plan = _ztField.DebugPlanSpawns();
-            int n = plan.Count, onNav = 0; float worst = 0f, sum = 0f;
-            foreach (var (pk, pos) in plan)
-            {
-                var snap = NavigationServer3D.MapGetClosestPoint(map, pos);
-                float d = new Vector2(snap.X - pos.X, snap.Z - pos.Z).Length();   // horizontal distance to nearest navmesh poly
-                if (d <= 1.5f) onNav++;
-                sum += d; if (d > worst) worst = d;
-            }
-            GD.Print($"[zombietest] planned {n} zombie spawns; {onNav}/{n} within 1.5m of the baked navmesh ({(n > 0 ? 100f * onNav / n : 0):0.#}%), avg snap {(n > 0 ? sum / n : 0):0.##}m, worst {worst:0.#}m");
-            GD.Print($"[zombietest] {(n > 0 && onNav >= n * 0.85f ? "PASS -- zombies spawn on the navmesh, ready to pathfind" : "CHECK -- many spawns off-navmesh (bucketing or navmesh gap?)")}");
-            GetTree().Quit();
-        }
-
-        // --zdirtest: run the REWRITE on the real map and watch it. The L0 tests prove the sim's logic
-        // against a mock navmesh; this proves the thing that L0 cannot -- that it is wired to the actual
-        // baked pockets, that rows tier correctly against a real player position, that Godot's navigation
-        // server answers the corridor queries, and that zombies MOVE. Reports positions, not intentions.
-        UnityEngine.Vector3[] _zdStart;
-        ulong _zdPhys0;   // physics-frame baseline, so the per-tick costs below divide by the sampled window
-
-        // Stand the measurement point in the POCKET WITH THE MOST ZOMBIES, deliberately, and before the
-        // clock starts. PEI's player spawn is out in the wilderness, where the correct behaviour is that
-        // nothing happens -- measuring there says nothing about whether the system works. The case worth
-        // measuring is the one that used to cost 24.4 ms: a player standing inside a populated POI.
-        void ZombieDirTestStand()
-        {
-            var zd = _zdField;
-            if (zd?.Sim == null) return;
-            var sim = zd.Sim;
-            int best = -1, bestCount = 0;
-            var perRegion = new int[sim.Regions.Count];
-            for (int i = 0; i < sim.Count; i++)
-            {
-                int r = sim.RegionOf(i);
-                if (r >= 0 && ++perRegion[r] > bestCount) { bestCount = perRegion[r]; best = r; }
-            }
-            if (best < 0) { GD.Print("[zdirtest] every row is off-partition -- cannot pick a POI"); return; }
-
-            // Centre of the pocket is not necessarily ON the zombies; stand on the densest one's position
-            // so the sample really is "a player among the horde".
-            var c = sim.Regions.BoundsOf(best).Center;
-            UnityEngine.Vector3 anchor = new UnityEngine.Vector3(c.x, 0f, c.z);
-            for (int i = 0; i < sim.Count; i++)
-                if (sim.RegionOf(i) == best) { anchor = sim.PositionOf(i); break; }
-
-            zd.DebugPlayer = new Vector3(anchor.x, anchor.y, anchor.z);
-            GD.Print($"[zdirtest] standing the test player in pocket {best} ({bestCount} zombies) at ({anchor.x:0},{anchor.z:0})");
-        }
-
-        void RunZombieDirTest()
-        {
-            var zd = _zdField;
-            if (zd?.Sim == null) { GD.Print("[zdirtest] no ZombieDirector/sim -- did --newzombies wire in?"); GetTree().Quit(); return; }
-            var sim = zd.Sim;
-
-            if (_zdStart == null)   // first sampled frame: remember where everyone was
-            {
-                _zdStart = new UnityEngine.Vector3[sim.Count];
-                for (int i = 0; i < sim.Count; i++) _zdStart[i] = sim.PositionOf(i);
-                _zdPhys0 = Engine.GetPhysicsFrames(); Prof.Reset();   // measure only the sampled window
-                GD.Print($"[zdirtest] {sim.Count} rows, {sim.Regions.Count} regions from the pockets, 0 CharacterBody3D");
-                GD.Print($"[zdirtest] {zd.DebugLine()}");
-                return;
-            }
-
-            int moved = 0; float furthest = 0f, total = 0f;
-            int n = Mathf.Min(_zdStart.Length, sim.Count);
-            for (int i = 0; i < n; i++)
-            {
-                var d = sim.PositionOf(i) - _zdStart[i];
-                float dist = new Vector2(d.x, d.z).Length();
-                if (dist > 0.25f) moved++;
-                total += dist;
-                if (dist > furthest) furthest = dist;
-            }
-            var s = sim.Stats;
-            GD.Print($"[zdirtest] {zd.DebugLine()}");
-            GD.Print($"[zdirtest] over the sampled window: {moved}/{n} rows moved, furthest {furthest:0.##} m, mean {(n > 0 ? total / n : 0):0.###} m");
-            // Per-tick cost of the REWRITE. --zperf cannot answer this: it builds ZombieController, the OLD
-            // path, so the rewrite has never had perf coverage -- which is how it reached strawberry at 2 fps
-            // with the F3 systems line naming none of it. z.rays is a count, not a time.
-            {
-                ulong pticks = Engine.GetPhysicsFrames() - _zdPhys0;
-                var parts = new System.Collections.Generic.List<string>();
-                foreach (var kv in Prof.Us)
-                    parts.Add(kv.Key == "z.rays"
-                        ? $"{kv.Key}={kv.Value / (double)System.Math.Max(1, (long)pticks):0.0}/tick"
-                        : $"{kv.Key}={kv.Value / (double)System.Math.Max(1, (long)pticks) / 1000.0:0.000}ms");
-                parts.Sort();
-                GD.Print($"[zdirtest] per-tick over {pticks} physics frames: "
-                         + (parts.Count > 0 ? string.Join("  ", parts) : "(NOTHING INSTRUMENTED)"));
-            }
-            GD.Print($"[zdirtest] {(moved > 0 && s.PathQueries >= 0 && s.Alive > 0 ? "PASS -- zombies exist, tier, path and walk with no physics bodies" : "FAIL -- nothing moved")}");
-            GetTree().Quit();
-        }
-
-
-
-
         // UG_VERTEXLIGHT=1: apply vertex shading at boot, so the look can be captured in a render rather than
         // only toggled at runtime through the console. The perf question needs real hardware (this box is
         // software-rasterised) but the LOOK does not -- lavapipe draws the right image, just slowly.
@@ -7088,8 +6396,6 @@ namespace UnturnedGodot
                 }
                 return;
             }
-            if (_zbMode) { ZBodyTick(delta); return; }                                                  // --zbody probe owns the frame
-            if (_zpZombies.Count > 0) { if (_zaiMode) ZAITick(delta); else ZPerfTick(delta); return; }   // --zperf probe owns the frame
             if (_menuShotDir != null && _menuShotMenu != null)   // step the menu camera through its 5 anchors, capture each
             {
                 _frame++;
@@ -7106,18 +6412,6 @@ namespace UnturnedGodot
                     _menuShotIdx++;
                     if (_menuShotIdx >= shotAt.Length) GetTree().Quit();
                 }
-                return;
-            }
-            if (_navPathTest) { if (++_frame >= 25) { _navPathTest = false; RunNavPathTest(); } return; }   // let the nav map sync a few frames, then query
-            if (_zombieTest) { if (++_frame >= 25) { _zombieTest = false; RunZombieTest(); } return; }   // let the nav map sync, then verify pocket spawns land on it
-            // sample at frame 30 (nav synced), then again ~5 s later, and report how far rows actually walked
-            if (_zdirTest)
-            {
-                // Stand the player in a POI first, THEN start the clock. Movie-mode frames are expensive
-                // under lavapipe, so the window is short -- a few seconds of sim, not the ten it was.
-                if (++_zdFrames == 10) ZombieDirTestStand();
-                else if (_zdFrames == 40) RunZombieDirTest();
-                else if (_zdFrames >= 130) { _zdirTest = false; RunZombieDirTest(); }
                 return;
             }
             // --- UG_TERRPERF=1 : what does the TERRAIN cost? (strawberry: "dumbing down terrain verts at a
@@ -7156,10 +6450,9 @@ namespace UnturnedGodot
             if (System.Environment.GetEnvironmentVariable("UG_PERF") == "1" && (_perfT -= (float)delta) <= 0f)
             {
                 _perfT = 1f;
-                int zc = GetTree().GetNodesInGroup("zombies").Count;
                 double physMs = Performance.GetMonitor(Performance.Monitor.TimePhysicsProcess) * 1000.0;
                 double procMs = Performance.GetMonitor(Performance.Monitor.TimeProcess) * 1000.0;
-                GD.Print($"[perf] fps={Engine.GetFramesPerSecond()} zombies={zc} physicsMs={physMs:0.0} processMs={procMs:0.0} draws={Performance.GetMonitor(Performance.Monitor.RenderTotalDrawCallsInFrame)}");
+                GD.Print($"[perf] fps={Engine.GetFramesPerSecond()} physicsMs={physMs:0.0} processMs={procMs:0.0} draws={Performance.GetMonitor(Performance.Monitor.RenderTotalDrawCallsInFrame)}");
             }
             if (_fireTest && _ftPlayer != null) { _ftFrame++; if (System.Environment.GetEnvironmentVariable("UG_LEAN") is string _ln && _ln.Length > 0 && _ftFrame >= 8) _ftPlayer.ScriptedLean = int.Parse(_ln);   /* UG_LEAN=1 lean left / -1 right: verify the 1P viewmodel rolls with the lean */ if (System.Environment.GetEnvironmentVariable("UG_MOVE") == "1" && _ftFrame >= 8) _ftPlayer.ScriptedInput = new UnityEngine.Vector2(0f, 1f);   /* UG_MOVE=1: walk forward -> verify the viewmodel movement-sway tilt */ if (System.Environment.GetEnvironmentVariable("UG_ADS") == "1") { if (_ftFrame >= 40) _ftPlayer.ForceAim(true); } else if (System.Environment.GetEnvironmentVariable("UG_TRACERANGLE") == "1") { if (_ftFrame >= 45 && _ftFrame % 10 == 0) _ftPlayer.DebugFireAngled(-28f); } else if (_ftFrame >= 60 && _ftFrame % 15 == 0) _ftPlayer.Fire(); }   // own counter; UG_ADS: hold ADS; UG_TRACERANGLE: fire tracers 38deg across the view so the stretched streak is seen side-on
             if (_peiPlay && _peiPlayer != null)
@@ -7551,7 +6844,6 @@ namespace UnturnedGodot
                     _veh.Drive(throttle, steer, false);
                     }
                     if (_chain && _frame == 20) _veh.TakeDamage(9999f);   // detonate _veh -> ~4 s later it blows -> chains to the car + horde
-                    if (_roadkill && _frame == 35) _veh.Honk();   // honk before reaching them -> verify the horn's noise alert (source tellHorn AlertTool.alert 32)
                     if (_demo && (_frame == 45 || _frame == 80 || _frame == 115)) _veh.Honk();   // --demo: a few horn honks
                     if (_demo && _frame >= 40 && _frame < 100 && _frame % 8 == 0) _veh.TakeDamage(90f);   // --demo: damage -> smoke -> explode
                     if (_vehCam != null)   // chase cam: behind the jeep's heading (flattened), above -- shows the red taillights at night
@@ -7639,12 +6931,11 @@ namespace UnturnedGodot
             if (_shotPath == null) return;
             float _shotTimeTarget = 0f; { var _ste = System.Environment.GetEnvironmentVariable("UG_SHOTTIME"); if (!string.IsNullOrEmpty(_ste)) float.TryParse(_ste, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out _shotTimeTarget); }
             if (_shotTimeTarget > 0f) { _shotElapsed += (float)delta; if (_shotElapsed < _shotTimeTarget) return; }   // UG_SHOTTIME: capture at an ELAPSED-TIME target (real-time frame counts drift off fixed-fps)
-            else if (_peiPlay) { if (_peiFrame < (_peiHorde ? 130 : 160)) return; }   // peiplay: drop(~25f)+enter(50f)+drive(55f+); --horde captures mid-plow through the zombie field
+            else if (_peiPlay) { if (_peiFrame < 160) return; }   // peiplay: drop(~25f)+enter(50f)+drive(55f+)
             else if (_itemTest) { if (++_frame < 90) return; }   // itemtest: let the dropped items FALL + settle onto the plane before the shot
             else if (_driveTest) { if (++_frame < 120) return; }   // drivetest: let the car spawn+enter+drive (+ --demo damage->explosion) play out before the shot
             else if (_fireTest) { if (System.Environment.GetEnvironmentVariable("UG_ADS") == "1") { if (_ftFrame < 70) return; } else if (_ftPlayer == null || _ftPlayer.Ammo > 20 || _ftFrame < 75) return; }   // firetest: capture once ~10 shots fired (high-cap: Ammo<=20); the _ftFrame>=75 floor lets a low-cap gun (launcher = 1 rocket at frame 60) actually fire + impact before the quit. UG_ADS: capture the settled aim frame (70) instead
             else if (_worldBuild) { if (!_worldReady || ++_frame < ShotSettleFrames) return; }   // objects/peidrive: WAIT for the async world (terrain..trees) to finish + settle before the shot
-            else if (_navShot) { if (++_frame < 24) return; }   // navshot: let lighting/shadows + the overlay settle before capture
             else if (System.Environment.GetEnvironmentVariable("UG_DEPLOYDMG") != null) { if (++_frame < 45) return; }   // deploytest damage: let smoke/fire particles accumulate before the shot
             else if (System.Environment.GetEnvironmentVariable("UG_WIREWRECK") == "1") { if (++_frame < 20) return; }   // shatter: catch the debris collapsing toward the ground
             else if (System.Environment.GetEnvironmentVariable("UG_WIRETEST") == "1") { if (++_frame < 50) return; }   // wire test: let the lamp warmup envelope settle (past the flicker ramp) before capturing steady state
@@ -7769,27 +7060,6 @@ namespace UnturnedGodot
             int.TryParse(System.Environment.GetEnvironmentVariable("UG_SHOTFRAMES"), out int n) && n > 0 ? n : 45;
 
         string _shotRequested;       // the capture the COMMAND LINE asked for, set at parse time
-        /// <summary>The pocket with the most land around it, so the nav verify shot frames terrain rather
-        /// than sea. Samples a ring at the camera's own radius (~60 m) and counts non-water hits; ties break
-        /// on the lower index so the choice stays deterministic run to run.</summary>
-        static int MostInlandPocket(System.Collections.Generic.List<NavPocket> pockets, Terrain terr)
-        {
-            int best = 0, bestLand = -1;
-            for (int i = 0; i < pockets.Count; i++)
-            {
-                var c = pockets[i].Center;
-                int land = 0;
-                for (int a = 0; a < 12; a++)
-                {
-                    float ang = a / 12f * Mathf.Tau;
-                    float sx = c.X + 60f * Mathf.Cos(ang), sz = c.Z + 60f * Mathf.Sin(ang);
-                    if (!Terrain.IsWater(terr.SampleDominantLayer(sx, sz))) land++;
-                }
-                if (land > bestLand) { bestLand = land; best = i; }
-            }
-            return best;
-        }
-
         ulong _shotWaitStartMs;      // wall clock at the first frame with a capture pending
         ulong _shotLastReportMs;
         bool _shotTimedOut;
@@ -7858,7 +7128,6 @@ namespace UnturnedGodot
             if (_worldBuild && !_worldReady) return "async world load (worldReady=false; map data missing or still loading)";
             if (_peiPlay) return $"peiplay frame budget (frame={_peiFrame})";
             if (_fireTest) return $"firetest (frame={_ftFrame}, ammo={_ftPlayer?.Ammo.ToString() ?? "no player"})";
-            if (_navShot) return $"navshot settle (frame={_frame})";
             return $"settle frame budget (frame={_frame})";
         }
     }

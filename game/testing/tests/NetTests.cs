@@ -20,7 +20,7 @@ namespace UnturnedGodot.Testing
             // dedicated world build: syncLoad -> zero frame-yields, completes before the Task is observed
             var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
                 mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
-                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+                syncLoad: true, activeHoliday: "NONE");
             T.Check("dedicated world build completed synchronously (syncLoad)", task.IsCompleted);
             var world = task.Result;
             T.Check("dedicated world ready (fallback ground, no map data needed)", world.Ready);
@@ -76,7 +76,7 @@ namespace UnturnedGodot.Testing
         {
             var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
                 mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
-                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+                syncLoad: true, activeHoliday: "NONE");
             var world = task.Result;
             T.Check("world ready (the ONE world path, flat fallback on CI)", world.Ready);
 
@@ -183,7 +183,7 @@ namespace UnturnedGodot.Testing
         {
             var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
                 mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
-                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+                syncLoad: true, activeHoliday: "NONE");
             var world = task.Result;
             T.Check("world ready (the ONE world path, flat fallback on CI)", world.Ready);
             ItemCatalog.RegisterAll();   // `give 458` resolves against the real catalog (2x2 -> fits pockets)
@@ -273,104 +273,6 @@ namespace UnturnedGodot.Testing
         }
     }
 
-    // MP_PLAN §4 Phase 5: the zombie brain/puppet split, end to end on the real world path. The SERVER runs
-    // a real ZombieController brain (sensing/vision/nav chase) against a real PlayerController avatar it
-    // acquires through PlayerRegistry (no Target wired -- the §3.5 generalization); ZombieNetSync (inside
-    // DedicatedServer) publishes it at 12.5 Hz; a headless observer client receives the replicas and a
-    // ZombiePuppets node renders an IsPuppet ZombieController that follows by INTERPOLATION -- visibly
-    // chasing, never teleporting, never running AI of its own.
-    public class NetZombieChaseSync : GameTest
-    {
-        public override string Name => "net.zombie_chase_sync";
-        public override double TimeoutSimSeconds => 25;
-
-        public override IEnumerable<Step> Run()
-        {
-            var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
-                mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
-                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
-            var world = task.Result;
-            T.Check("world ready (the ONE world path, flat fallback on CI)", world.Ready);
-
-            // a walkable navmesh for the brain: one authored quad over the flat fallback ground (the real
-            // map's pockets are pre-baked; the fallback world has none)
-            var nm = new NavigationMesh();
-            nm.Vertices = new[] { new Vector3(-60f, 0f, -60f), new Vector3(-60f, 0f, 60f), new Vector3(60f, 0f, 60f), new Vector3(60f, 0f, -60f) };
-            nm.AddPolygon(new int[] { 0, 1, 2, 3 });
-            World.AddChild(new NavigationRegion3D { NavigationMesh = nm });
-
-            var net = new MemNetwork(20260717);
-            var player = Rigs.Player(World, new Vector3(0f, 1.1f, 0f));   // the avatar the brain hunts (registers in PlayerRegistry)
-            var b = new NetWorldClient(new MemClientTransport(net), "watcher", contentHash: NetContent.Hash);
-            int swings = 0;
-            b.ZombieSwung += _ => swings++;
-            var pump = new DelegateSimStep((t, dt) => { net.Tick(); b.Tick(); }, "l1.clientpump");
-            world.Sim.Sim.Add(pump);   // registered BEFORE DedicatedServer -> server sim + zombie publish + replicate stay after/LAST (§2.5)
-            var ded = new DedicatedServer { Driver = world.Sim, TransportOverride = new MemServerTransport(net) };
-            World.AddChild(ded);
-            var puppets = new ZombiePuppets { Client = b };
-            World.AddChild(puppets);
-            b.Connect();
-
-            yield return Until(() => b.State == NetSessionState.Connected, 5);
-            T.Check("observer client joined", b.State == NetSessionState.Connected);
-
-            // the BRAIN: a real ZombieController with NO Target wired -- it must acquire the player through
-            // PlayerRegistry (§3.5 "sensing generalizes to any player avatar"). Spawned 8 m out, facing the
-            // player, inside the sneak-halved vision cone (20 * 0.5 = 10 m).
-            var z = new ZombieController { Speciality = ZombieController.ESpeciality.NORMAL };
-            World.AddChild(z);
-            z.GlobalPosition = new Vector3(0f, 0.3f, 8f);
-
-            yield return Until(() => b.Zombies.Count == 1, 5);
-            T.Check("server zombie replicated to the observer (12.5 Hz snap)", b.Zombies.Count == 1);
-            T.Check("exactly one zombie tracked server-side (the puppet never re-registers)", ded.Server.Zombies.Count == 1);
-            yield return Until(() => puppets.PuppetCount == 1, 5);
-            uint netId = 0;
-            foreach (var e in b.Zombies.All) { netId = e.NetIdValue; break; }
-            bool havePuppet = puppets.TryGetPuppet(netId, out var pup);
-            T.Check("a puppet ZombieController spawned from the replica (IsPuppet)", havePuppet && pup.IsPuppet);
-
-            // the avatar walks to meet the horde (a stationary player on open flat ground parks the RUSH
-            // approach at ~2.3 m -- the 1 m short approach point + the agent's 1.3 m finish radius -- a
-            // pre-existing brain equilibrium this phase must NOT retune; any movement breaks it)
-            player.RotationDegrees = new Vector3(0f, 180f, 0f);   // face +Z, toward the zombie
-            player.ScriptedInput = new UnityEngine.Vector2(0f, 0.4f);
-
-            // sample the chase per tick: the brain closes 8 m -> swing range; the puppet follows by glide --
-            // total displacement proves it tracked, the max per-tick step proves it interpolated (no snaps)
-            float maxStep = 0f, total = 0f;
-            Vector3 prev = pup.GlobalPosition;
-            for (int i = 0; i < 250; i++)
-            {
-                yield return Ticks(1);
-                var now = pup.GlobalPosition;
-                float d = now.DistanceTo(prev);
-                maxStep = Mathf.Max(maxStep, d);
-                total += d;
-                prev = now;
-                float brainToPlayer = z.GlobalPosition.DistanceTo(player.GlobalPosition);
-                if (brainToPlayer < 1.45f) player.ScriptedInput = UnityEngine.Vector2.zero;   // met the zombie -> stand and get bitten
-                if (brainToPlayer < 1.5f && total > 3f) break;
-            }
-            float brainDist = z.GlobalPosition.DistanceTo(player.GlobalPosition);
-            T.Check($"brain chased the registry-acquired player (now {brainDist:0.00} m out, from 8 m)", brainDist < 2.5f);
-            T.Check($"puppet followed the chase ({total:0.0} m tracked)", total > 3f);
-            T.Check($"puppet moved by INTERPOLATION (max per-tick step {maxStep:0.00} m)", maxStep > 0f && maxStep < 1.5f);
-            float lag = pup.GlobalPosition.DistanceTo(z.GlobalPosition);
-            T.Check($"puppet within glide lag of the brain ({lag:0.00} m)", lag < 2.5f);
-
-            // in reach the brain swings: the AttackSwing event flows, and the avatar authoritatively bleeds
-            yield return Until(() => swings > 0 && player.Health < 100f, 8);
-            T.Check($"AttackSwing event reached the observer ({swings} swings)", swings > 0);
-            T.Check($"server brain bit the avatar (health {player.Health:0})", player.Health < 100f);
-
-            // teardown: unhook the pump so nothing touches the dying MemNetwork after QueueFree
-            world.Sim.Sim.Remove(pump);
-            b.Disconnect();
-        }
-    }
-
     // MP_PLAN §3.7: the resource index space against the REAL committed content. The load-order index is
     // the implicit wire id the alive-bitmap keys on, so the dedicated build (VisualInstances=false --
     // colliders only, no MultiMesh) and the client build must agree on it EXACTLY, and SetAlive must fell/
@@ -417,7 +319,7 @@ namespace UnturnedGodot.Testing
         {
             var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
                 mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
-                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+                syncLoad: true, activeHoliday: "NONE");
             var world = task.Result;
             T.Check("world ready (the ONE world path, flat fallback on CI)", world.Ready);
 
@@ -523,7 +425,7 @@ namespace UnturnedGodot.Testing
         {
             var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
                 mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
-                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+                syncLoad: true, activeHoliday: "NONE");
             var world = task.Result;
             T.Check("world ready (the ONE world path, flat fallback on CI)", world.Ready);
 
@@ -649,7 +551,7 @@ namespace UnturnedGodot.Testing
         {
             var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
                 mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
-                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+                syncLoad: true, activeHoliday: "NONE");
             var world = task.Result;
             T.Check("world ready (the ONE world path, flat fallback on CI)", world.Ready);
 
@@ -773,7 +675,7 @@ namespace UnturnedGodot.Testing
         {
             var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
                 mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
-                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+                syncLoad: true, activeHoliday: "NONE");
             var world = task.Result;
             T.Check("world ready (the ONE world path, flat fallback on CI)", world.Ready);
 
@@ -911,7 +813,7 @@ namespace UnturnedGodot.Testing
         {
             var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
                 mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
-                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+                syncLoad: true, activeHoliday: "NONE");
             var world = task.Result;
             T.Check("world ready (the ONE world path, flat fallback on CI)", world.Ready);
 
@@ -1004,7 +906,7 @@ namespace UnturnedGodot.Testing
 
     // PEI_CLIENT_PLAN §3 Phase C1: a joined client assembles its world through the ONE WorldBuilder path
     // in the new Client mode -- and that mode must stay pure scenery+physics: no local PlayerController,
-    // no ZombieField, no local-authority spawns. On a missing map the contract is FAIL-FAST (Terr == null,
+    // no local-authority spawns. On a missing map the contract is FAIL-FAST (Terr == null,
     // world NOT ready) -- Main.BuildClient shows an error screen instead of silently faking a demo arena;
     // the flat-ground fallback is Dedicated-only. The bogus map path makes this deterministic on any box
     // (no retail map data needed), the NetDedicatedBoot pattern.
@@ -1015,14 +917,13 @@ namespace UnturnedGodot.Testing
         {
             var task = WorldBuilder.BuildFullWorld(World, WorldMode.Client,
                 mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
-                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+                syncLoad: true, activeHoliday: "NONE");
             T.Check("client world build completed synchronously (syncLoad)", task.IsCompleted);
             var world = task.Result;
             T.Check("sim spine (SimDriver/SimRoot) present", world.Sim != null);
             T.Check("fail-fast: Terr is null on a missing map", world.Terr == null);
             T.Check("fail-fast: world NOT ready (no flat-ground fallback for a client)", !world.Ready);
             T.Check("no local player in a client world", world.Player == null);
-            T.Check("no ZombieField in a client world", world.Zombies == null);
             T.Check("no PlayerController registered (PlayerRegistry empty)", PlayerRegistry.Count == 0);
             yield return Ticks(1);   // let the sandbox tick once so teardown exercises the built nodes
         }
@@ -1050,7 +951,7 @@ namespace UnturnedGodot.Testing
         {
             var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
                 mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
-                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+                syncLoad: true, activeHoliday: "NONE");
             var world = task.Result;
             T.Check("world ready (the ONE world path, flat fallback on CI)", world.Ready);
 
@@ -1134,7 +1035,7 @@ namespace UnturnedGodot.Testing
         {
             var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
                 mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
-                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+                syncLoad: true, activeHoliday: "NONE");
             var world = task.Result;
             T.Check("world ready (the ONE world path, flat fallback on CI)", world.Ready);
 
@@ -1207,7 +1108,7 @@ namespace UnturnedGodot.Testing
         {
             var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
                 mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
-                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+                syncLoad: true, activeHoliday: "NONE");
             var world = task.Result;
             T.Check("world ready (the ONE world path, flat fallback on CI)", world.Ready);
 
@@ -1276,7 +1177,7 @@ namespace UnturnedGodot.Testing
         {
             var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
                 mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
-                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+                syncLoad: true, activeHoliday: "NONE");
             var world = task.Result;
             T.Check("world ready (the ONE world path, flat fallback on CI)", world.Ready);
 
@@ -1346,7 +1247,7 @@ namespace UnturnedGodot.Testing
         {
             var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
                 mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
-                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+                syncLoad: true, activeHoliday: "NONE");
             var world = task.Result;
             T.Check("world ready (the ONE world path, flat fallback on CI)", world.Ready);
 
@@ -1423,7 +1324,7 @@ namespace UnturnedGodot.Testing
         {
             var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
                 mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
-                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+                syncLoad: true, activeHoliday: "NONE");
             var world = task.Result;
             T.Check("world ready (the ONE world path, flat fallback on CI)", world.Ready);
 
@@ -1514,95 +1415,16 @@ namespace UnturnedGodot.Testing
         }
     }
 
-    // PEI_CLIENT_PLAN §3 Phase C4: ZombieField streams on ANY registered player -- and the SP path stays
-    // byte-identical. Two NetAvatar PlayerControllers (the C2 server-avatar construction) register at far
-    // apart positions; three synthetic pockets (the DebugAddPocket seam -- no map data on CI) sit near A,
-    // near B, and far from both. With Player EXPLICITLY set to A (the SP shape), streaming keys on A ALONE:
-    // B's pocket must NOT populate even though B is registered -- the SP guard. With Player = null (the
-    // dedicated shape), the PlayerRegistry fallback streams per-pocket on the NEAREST player: A's and B's
-    // pockets are both live (spawned brains carry Target = null -> the ZombieController registry hunt), the
-    // far pocket stays empty, and moving B away despawns B's pocket through the same nearest-any query.
-    public class NetZombieFieldAnyPlayer : GameTest
-    {
-        public override string Name => "net.zombiefield_anyplayer";
-
-        public override IEnumerable<Step> Run()
-        {
-            Rigs.Ground(World);
-            var terr = new Terrain();   // inert instance: the field only null-gates on Terr (points carry their own Y)
-            World.AddChild(terr);
-
-            // the two registered avatars: A at the origin, B 400 m north (far outside every hysteresis radius)
-            var a = new PlayerController { NetAvatar = true, CaptureMouse = false };
-            World.AddChild(a);
-            a.GlobalPosition = new Vector3(0f, 1.1f, 0f);
-            var b = new PlayerController { NetAvatar = true, CaptureMouse = false };
-            World.AddChild(b);
-            b.GlobalPosition = new Vector3(0f, 1.1f, 400f);
-            yield return Ticks(2);
-            T.Check("both NetAvatar controllers registered (PlayerRegistry)", PlayerRegistry.Count == 2);
-
-            var field = new ZombieField { Player = a, Terr = terr };   // SP shape first: Player EXPLICITLY set
-            World.AddChild(field);
-            Vector3[] PtsAround(float cx, float cz) => new[]
-            {
-                new Vector3(cx - 3f, 0.5f, cz - 3f), new Vector3(cx + 3f, 0.5f, cz - 3f),
-                new Vector3(cx - 3f, 0.5f, cz + 3f), new Vector3(cx + 3f, 0.5f, cz + 3f),
-            };
-            var half = new Vector3(10f, 50f, 10f);
-            int pkA = field.DebugAddPocket(new Vector3(0f, 0f, 20f), half, PtsAround(0f, 20f), cap: 2);    // 10 m from A / 370 m from B
-            int pkB = field.DebugAddPocket(new Vector3(0f, 0f, 380f), half, PtsAround(0f, 380f), cap: 2);  // 370 m from A / 10 m from B
-            int pkFar = field.DebugAddPocket(new Vector3(0f, 0f, 200f), half, PtsAround(0f, 200f), cap: 2); // 170/190 m -- outside ActivateR for both
-
-            // ---- SP guard: Player set -> streaming keys on A ALONE, the registry is never consulted ----
-            yield return Ticks(40);   // > the 0.4 s streaming cadence
-            T.Check("SP path: exactly ONE anchor (the explicit Player) despite 2 registered players", field.DebugAnchors().Count == 1);
-            T.Check($"SP path: A's pocket activated + populated to cap ({field.DebugLiveCount(pkA)})",
-                    field.DebugPocketActive(pkA) && field.DebugLiveCount(pkA) == 2);
-            T.Check("SP path: B's pocket did NOT activate (registered B is invisible while Player is set)",
-                    !field.DebugPocketActive(pkB) && field.DebugLiveCount(pkB) == 0);
-            T.Check("far pocket inactive", !field.DebugPocketActive(pkFar));
-            bool spTargets = true;
-            foreach (var z in field.DebugLive(pkA)) spTargets &= z.Target == a;
-            T.Check("SP path: spawned brains carry Target = Player EXACTLY (the old Spawn shape)", spTargets);
-            T.Check($"SP path: B's pocket distance is B-blind ({field.DebugPocketDist(pkB):0} m)", field.DebugPocketDist(pkB) > 300f);
-
-            // ---- dedicated shape: Player = null -> nearest-ANY-player per pocket via PlayerRegistry ----
-            field.Player = null;
-            yield return Ticks(40);
-            T.Check("anyplayer: both registered players are anchors", field.DebugAnchors().Count == 2);
-            T.Check($"anyplayer: B's pocket distance keys on the NEAREST player ({field.DebugPocketDist(pkB):0} m)", field.DebugPocketDist(pkB) < 90f);
-            T.Check($"anyplayer: B's pocket activated + populated to cap ({field.DebugLiveCount(pkB)})",
-                    field.DebugPocketActive(pkB) && field.DebugLiveCount(pkB) == 2);
-            T.Check("anyplayer: A's pocket stays live (A is still near it)",
-                    field.DebugPocketActive(pkA) && field.DebugLiveCount(pkA) == 2);
-            T.Check("far pocket STILL inactive (nearest of both anchors is outside ActivateR)", !field.DebugPocketActive(pkFar));
-            bool nullTargets = true;
-            foreach (var z in field.DebugLive(pkB)) nullTargets &= z.Target == null;
-            T.Check("anyplayer: spawned brains carry Target = null (the ZombieController registry-hunt fallback)", nullTargets);
-
-            // ---- hysteresis under anyplayer: B leaves -> B's pocket despawns through the same query ----
-            // (TeleportTo, not a bare GlobalPosition write -- the body's manual-interp restore would
-            // undo the latter next tick, the §7 risk 5 seam)
-            b.TeleportTo(b.GlobalPosition + new Vector3(0f, 0f, 600f));   // B: z 400 -> 1000, ~610 m from its pocket
-            yield return Ticks(40);
-            T.Check("anyplayer: B's pocket despawned once its nearest player left (40 m hysteresis passed)",
-                    !field.DebugPocketActive(pkB) && field.DebugLiveCount(pkB) == 0);
-            T.Check("anyplayer: A's pocket unaffected by B leaving", field.DebugPocketActive(pkA) && field.DebugLiveCount(pkA) == 2);
-        }
-    }
-
     // PEI_CLIENT_PLAN §3 Phase C4 verify (review fold): a POPULATED dedicated world is DESYNC-QUIET and its
     // join snapshot FITS. The population is built server-side BEFORE anyone joins (the real dedicated boot
-    // order): real Vehicle nodes + real ZombieController brains (published by VehicleNetSync/ZombieNetSync),
-    // plus PEI-scale wire entities spawned directly into the replication systems (120 vehicles / 96 zombies /
-    // 300 world items -- the §7 risk 3 worst case, everything inside the joiner's relevancy rings). The
-    // interaction under test: vehicles are AllRelevant -> IN the EnableSyncCheck set (NetWorldHost.cs
-    // EnableSyncCheck lists SystemVehicles), so the client's vehicle replica must hash-converge; zombies are
-    // relevancy-filtered -> EXCLUDED from the check by design, and actively-churning brains must not trip it
-    // either. Then a FRESH joiner lands against the full population: everything arrives in ONE reliable join
-    // snapshot, the composer never budget-drops a block (OversizedBlocksSkipped == 0), and a join-shaped
-    // probe compose measures the actual bytes against the reliable budget (plan §7 risk 3 -- report numbers).
+    // order): real Vehicle nodes (published by VehicleNetSync), plus PEI-scale wire entities spawned
+    // directly into the replication systems (120 vehicles / 300 world items -- the §7 risk 3 worst case,
+    // everything inside the joiner's relevancy rings). The interaction under test: vehicles are AllRelevant
+    // -> IN the EnableSyncCheck set (NetWorldHost.cs EnableSyncCheck lists SystemVehicles), so the client's
+    // vehicle replica must hash-converge. Then a FRESH joiner lands against the full population: everything
+    // arrives in ONE reliable join snapshot, the composer never budget-drops a block (OversizedBlocksSkipped
+    // == 0), and a join-shaped probe compose measures the actual bytes against the reliable budget (plan §7
+    // risk 3 -- report numbers).
     public class NetPopulatedWorldQuiet : GameTest
     {
         public override string Name => "net.populated_world_quiet";
@@ -1612,15 +1434,9 @@ namespace UnturnedGodot.Testing
         {
             var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
                 mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
-                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+                syncLoad: true, activeHoliday: "NONE");
             var world = task.Result;
             T.Check("world ready (the ONE world path, flat fallback on CI)", world.Ready);
-
-            // a walkable navmesh for the brains (the net.zombie_chase_sync rig)
-            var nm = new NavigationMesh();
-            nm.Vertices = new[] { new Vector3(-60f, 0f, -60f), new Vector3(-60f, 0f, 60f), new Vector3(60f, 0f, 60f), new Vector3(60f, 0f, -60f) };
-            nm.AddPolygon(new int[] { 0, 1, 2, 3 });
-            World.AddChild(new NavigationRegion3D { NavigationMesh = nm });
 
             var net = new MemNetwork(20260719);
             var clients = new List<NetWorldClient>();
@@ -1630,7 +1446,7 @@ namespace UnturnedGodot.Testing
             World.AddChild(ded);
 
             // ---- POPULATE (before any join -- the C4 dedicated boot order) ----
-            // real nodes: 6 vehicles across the spec pool + 8 zombie brains (they idle until a player registers)
+            // real nodes: 6 vehicles across the spec pool
             string[] specs = { "jeep", "sedan", "police", "ambulance", "humvee", "truck" };
             for (int i = 0; i < specs.Length; i++)
             {
@@ -1638,33 +1454,22 @@ namespace UnturnedGodot.Testing
                 World.AddChild(v);
                 v.GlobalPosition = new Vector3(-25f + i * 9f, 1.2f, -18f);
             }
-            for (int i = 0; i < 8; i++)
-            {
-                float ang = i * 2.39996f;
-                var z = new ZombieController { Speciality = ZombieController.ESpeciality.NORMAL };
-                World.AddChild(z);
-                z.GlobalPosition = new Vector3(18f * Mathf.Cos(ang), 0.3f, 18f * Mathf.Sin(ang) + 25f);
-            }
-            yield return Ticks(10);   // one publish round: VehicleNetSync/ZombieNetSync mint the node entities
-            T.Check("node population minted (6 vehicles / 8 zombies tracked server-side)",
-                    ded.Server.Vehicles.Count == 6 && ded.Server.Zombies.Count == 8);
+            yield return Ticks(10);   // one publish round: VehicleNetSync mints the node entities
+            T.Check("node population minted (6 vehicles tracked server-side)",
+                    ded.Server.Vehicles.Count == 6);
 
             // PEI-scale wire entities, directly into the replication systems (wire size needs no nodes):
-            // vehicles -> 126 total (PEI spawns ~100), zombies -> 104 total (the 96 GlobalMaxLive cap + the
-            // 8 brains), world items -> 300 (a LootField-heavy town). ALL inside the joiner's rings
-            // (zombies 192 m / items 128 m; vehicles are AllRelevant regardless).
+            // vehicles -> 126 total (PEI spawns ~100), world items -> 300 (a LootField-heavy town). ALL
+            // inside the joiner's rings (items 128 m; vehicles are AllRelevant regardless).
             long tick = ded.Server.Session.CurrentTick;
             for (int i = 0; i < 120; i++)
                 ded.Server.Vehicles.ServerSpawn(ded.Server.Ids.Mint(), (byte)(i % Vehicle.SpecNames.Length), (byte)i,
                                                 new UnityEngine.Vector3(-60f + (i % 16) * 8f, 0.6f, -60f + (i / 16) * 8f), tick);
-            for (int i = 0; i < 96; i++)
-                ded.Server.Zombies.ServerSpawn(ded.Server.Ids.Mint(), 0,
-                                               new UnityEngine.Vector3(-40f + (i % 12) * 7f, 0.3f, 40f + (i / 12) * 7f), tick);
             for (int i = 0; i < 300; i++)
                 ded.Server.WorldItems.ServerSpawn(ded.Server.Ids.Mint(), new Item((ushort)(1 + i % 50), 1, 100),
                                                   new UnityEngine.Vector3(-50f + (i % 25) * 4f, 0.1f, -50f + (i / 25) * 4f), tick);
-            T.Check("PEI-scale wire population stands (126 vehicles / 104 zombies / 300 items)",
-                    ded.Server.Vehicles.Count == 126 && ded.Server.Zombies.Count == 104 && ded.Server.WorldItems.Count == 300);
+            T.Check("PEI-scale wire population stands (126 vehicles / 300 items)",
+                    ded.Server.Vehicles.Count == 126 && ded.Server.WorldItems.Count == 300);
 
             // ---- a client joins the POPULATED world; walks; the desync detector must stay silent ----
             var a = new NetWorldClient(new MemClientTransport(net), "walker", contentHash: NetContent.Hash);
@@ -1675,8 +1480,8 @@ namespace UnturnedGodot.Testing
             yield return Until(() => a.State == NetSessionState.Connected && a.JoinSnapshotsApplied >= 1, 5);
             T.Check("walker joined the populated world (reliable join snapshot applied)",
                     a.State == NetSessionState.Connected && a.JoinSnapshotsApplied >= 1);
-            T.Check($"the ONE join snapshot carried the WHOLE population (v={a.Vehicles.Count} z={a.Zombies.Count} i={a.WorldItems.Count})",
-                    a.Vehicles.Count == 126 && a.Zombies.Count == 104 && a.WorldItems.Count == 300);
+            T.Check($"the ONE join snapshot carried the WHOLE population (v={a.Vehicles.Count} i={a.WorldItems.Count})",
+                    a.Vehicles.Count == 126 && a.WorldItems.Count == 300);
 
             // walk for 10 s of sim among chasing brains + publishing vehicles: >= 10 sync-check rounds
             // (EnableSyncCheck default 50-tick interval, on for every DedicatedServer)
@@ -1691,9 +1496,6 @@ namespace UnturnedGodot.Testing
             // vehicles are IN the sync-check set (AllRelevant): the replica must hash-converge on the server
             T.Check("vehicles replica == server (StateHash parity -- the checked system converged)",
                     a.Vehicles.StateHash() == ded.Server.Vehicles.StateHash());
-            // zombies are relevancy-filtered -> excluded from the check set BY DESIGN; the churning brains
-            // replicated fine and never tripped the detector (desyncs == 0 above covers the whole run)
-            T.Check($"zombie replicas flowed throughout ({a.Zombies.Count})", a.Zombies.Count == 104);
 
             // ---- join-snapshot size (plan §7 risk 3): a FRESH joiner against the full population ----
             long skippedBefore = ded.Server.Composer.Diag.OversizedBlocksSkipped;
@@ -1702,15 +1504,15 @@ namespace UnturnedGodot.Testing
             clients.Add(late);
             late.Connect();
             yield return Until(() => late.State == NetSessionState.Connected && late.JoinSnapshotsApplied >= 1, 5);
-            T.Check($"latecomer's ONE reliable join snapshot carried everything (v={late.Vehicles.Count} z={late.Zombies.Count} i={late.WorldItems.Count})",
-                    late.JoinSnapshotsApplied >= 1 && late.Vehicles.Count == 126 && late.Zombies.Count == 104 && late.WorldItems.Count == 300);
+            T.Check($"latecomer's ONE reliable join snapshot carried everything (v={late.Vehicles.Count} i={late.WorldItems.Count})",
+                    late.JoinSnapshotsApplied >= 1 && late.Vehicles.Count == 126 && late.WorldItems.Count == 300);
             T.Check("the latecomer's join dropped NO system block (composer truncation never fired)",
                     ded.Server.Composer.Diag.OversizedBlocksSkipped == skippedBefore);
 
             // measure the join-shaped FULL compose (baseline 0, the exact reliable budget) for a probe id
             int budget = NetProtocol.MaxReliableMessageBytes / 2;
             var probe = ded.Server.Composer.Compose(ded.Server.Session.CurrentTick, 9999, default, maxBytes: budget);
-            GD.Print($"[C4] populated join snapshot: {probe.Length} B of {budget} B reliable budget ({100.0 * probe.Length / budget:0.00}%) -- 126 vehicles / 104 zombies / 300 items / 2 players");
+            GD.Print($"[C4] populated join snapshot: {probe.Length} B of {budget} B reliable budget ({100.0 * probe.Length / budget:0.00}%) -- 126 vehicles / 300 items / 2 players");
             T.Check($"populated join snapshot MEASURED: {probe.Length} B of {budget} B reliable budget ({100.0 * probe.Length / budget:0.0}%)",
                     probe.Length > 2000 && probe.Length < budget);
             T.Check("the probe compose dropped nothing either",
@@ -1726,11 +1528,11 @@ namespace UnturnedGodot.Testing
     // PEI_CLIENT_PLAN §3 Phase C5: the client-session world views on the fallback world. The server spawns
     // a world item (the drop path), fells + respawns a resource index, and configures the clock; the
     // session's views must (a) materialize a STATIC item visual, (b) mirror the alive-bitmap onto the
-    // client's ResourceField -- trunk collider included (§7 risk 7), (c) anchor the client DayNightCycle on
-    // the tick-derived time (§7 risk 8 glide), and (d) puppet a replicated zombie. Server and client each
-    // get their OWN ResourceField/DayNightCycle instance (same committed content -> same §3.7 index space),
-    // so a mirrored flip is unambiguously the VIEW's work, not the server sync's. All views are read-only
-    // replica consumers, so the desync detector must stay silent throughout -- the accidental-mutation guard.
+    // client's ResourceField -- trunk collider included (§7 risk 7), and (c) anchor the client DayNightCycle
+    // on the tick-derived time (§7 risk 8 glide). Server and client each get their OWN ResourceField/
+    // DayNightCycle instance (same committed content -> same §3.7 index space), so a mirrored flip is
+    // unambiguously the VIEW's work, not the server sync's. All views are read-only replica consumers, so
+    // the desync detector must stay silent throughout -- the accidental-mutation guard.
     public class NetClientWorldViews : GameTest
     {
         public override string Name => "net.client_world_views";
@@ -1740,7 +1542,7 @@ namespace UnturnedGodot.Testing
         {
             var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
                 mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
-                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+                syncLoad: true, activeHoliday: "NONE");
             var world = task.Result;
             T.Check("world ready (the ONE world path, flat fallback on CI)", world.Ready);
 
@@ -1816,13 +1618,6 @@ namespace UnturnedGodot.Testing
             T.Check($"...and that value is the SERVER's 0.80 clock, not the 0.35 default ({derived:0.###})",
                     Mathf.Abs(Mathf.PosMod(derived - 0.80f + 0.5f, 1f) - 0.5f) < 0.02f);
 
-            // (d) a replicated zombie gets an interpolated puppet (the ZombiePuppets attach)
-            ded.Server.Zombies.ServerSpawn(ded.Server.Ids.Mint(), 0,
-                new UnityEngine.Vector3(6f, 0.3f, 6f), ded.Server.Session.CurrentTick);
-            yield return Until(() => sess.Puppets.PuppetCount == 1, 5);
-            bool havePuppet = sess.Puppets.PuppetCount == 1;
-            T.Check("(d) the replicated zombie got a puppet in the session's world", havePuppet);
-
             // remove the item -> the visual retires
             ded.Server.Transactions.RemoveWorldItem(item.NetIdValue);
             yield return Until(() => sess.Items.NodeCount == 0, 5);
@@ -1862,7 +1657,7 @@ namespace UnturnedGodot.Testing
         {
             var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
                 mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
-                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+                syncLoad: true, activeHoliday: "NONE");
             var world = task.Result;
             T.Check("world ready (the ONE world path, flat fallback on CI)", world.Ready);
 
@@ -1996,16 +1791,13 @@ namespace UnturnedGodot.Testing
         }
     }
 
-    // PEI_COMBAT_PLAN §3 / SP-MP-unify P3a -- the combat lane: a joined client's fire routes OVER THE WIRE and
-    // kills a real server zombie brain, with the server's facts (HitConfirmed / ZombieDied / kill credit /
-    // the replicated Dead anim) rendering the result. The net.shell_walk_reconcile rig (ClientWorldSession +
-    // DedicatedServer{RemoteAvatars}) plus the net.zombie_chase_sync brain. The shell fires through the seam
-    // (scripted Shell.Fire() with NetFire wired -- never polled input): its LOCAL bullet is COSMETIC (tracer
-    // only -- Kills stays 0, the shared-world brain takes no direct DamageHit), the server's bullet is the
-    // authority. Then a burst at a second peer's avatar proves the P3a posture: PvP is now ON, so the burst is
-    // server-resolved PLAYER damage that drops the bystander (was the D1 "players aren't targets" no-op) -- and
-    // the whole run stays DESYNC-QUIET (SystemPlayerCombat is in the EnableSyncCheck set, so the kill/health
-    // counters are hash-checked).
+    // PEI_COMBAT_PLAN §3 / SP-MP-unify P3a -- the combat lane: a joined client's fire routes OVER THE WIRE.
+    // The net.shell_walk_reconcile rig (ClientWorldSession + DedicatedServer{RemoteAvatars}). The shell
+    // fires through the seam (scripted Shell.Fire() with NetFire wired -- never polled input). A burst at a
+    // second peer's avatar proves the P3a posture: PvP is now ON, so the burst is server-resolved PLAYER
+    // damage that drops the bystander (was the D1 "players aren't targets" no-op) -- and the whole run stays
+    // DESYNC-QUIET (SystemPlayerCombat is in the EnableSyncCheck set, so the kill/health counters are
+    // hash-checked).
     public class NetShellFireZombie : GameTest
     {
         public override string Name => "net.shell_fire_zombie";
@@ -2015,15 +1807,9 @@ namespace UnturnedGodot.Testing
         {
             var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
                 mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
-                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+                syncLoad: true, activeHoliday: "NONE");
             var world = task.Result;
             T.Check("world ready (the ONE world path, flat fallback on CI)", world.Ready);
-
-            // a walkable navmesh for the brain (the net.zombie_chase_sync rig)
-            var nm = new NavigationMesh();
-            nm.Vertices = new[] { new Vector3(-60f, 0f, -60f), new Vector3(-60f, 0f, 60f), new Vector3(60f, 0f, 60f), new Vector3(60f, 0f, -60f) };
-            nm.AddPolygon(new int[] { 0, 1, 2, 3 });
-            World.AddChild(new NavigationRegion3D { NavigationMesh = nm });
 
             var net = new MemNetwork(20260727);
             NetWorldClient bystander = null;
@@ -2039,11 +1825,7 @@ namespace UnturnedGodot.Testing
             bystander.DesyncDetected += _ => desyncs++;
             bystander.Connect();
 
-            var confirms = new List<HitConfirmEvent>();
-            var zDeaths = new List<ZombieDiedEvent>();
             var pDeaths = new List<PlayerDiedEvent>();
-            sess.Client.HitConfirmed += confirms.Add;
-            sess.Client.ZombieDied += zDeaths.Add;
             sess.Client.PlayerDied += pDeaths.Add;
             bystander.PlayerDied += pDeaths.Add;
 
@@ -2069,53 +1851,6 @@ namespace UnturnedGodot.Testing
                     sess.Shell.HasGunOut && sess.Shell.HeldGunName == "eaglefire");
             yield return Until(() => ded.PlayerSync.TrackedCount == 2, 5);
             T.Check("both peers have C2 avatar bodies", ded.PlayerSync.TrackedCount == 2);
-
-            // the target: a REAL ZombieController brain 8 m in front of the shell, published by ZombieNetSync
-            var z = new ZombieController { Speciality = ZombieController.ESpeciality.NORMAL };
-            World.AddChild(z);
-            z.GlobalPosition = new Vector3(0f, 0.3f, 8f);
-            yield return Until(() => sess.Puppets.PuppetCount == 1, 5);
-            T.Check("the zombie replicated + puppeted in the session's world", sess.Puppets.PuppetCount == 1);
-            uint zid = 0;
-            foreach (var e in sess.Client.Zombies.All) { zid = e.NetIdValue; break; }
-
-            // FIRE through the seam -- scripted Shell.Fire() (the NetFire delegate sends the aim ray), the
-            // shell re-aimed at the brain each tick (it chases). Eaglefire Zombie_Damage 99 vs brain HP 100
-            // -> the second landed bullet kills. The kill must come back over the wire, not from the local
-            // bullet: the cosmetic flag means the shared-world brain never takes a direct local DamageHit.
-            int shots = 0;
-            for (int i = 0; i < 500 && !z.Dead; i++)
-            {
-                var eye = sess.Shell.TruePhysicsPosition + Vector3.Up * 1.6f;
-                var dir = z.GlobalPosition + Vector3.Up * 1.2f - eye;
-                sess.Shell.RotationDegrees = new Vector3(0f, Mathf.RadToDeg(Mathf.Atan2(-dir.X, -dir.Z)), 0f);
-                sess.Shell.DebugSetPitch(Mathf.RadToDeg(Mathf.Atan2(dir.Y, new Vector2(dir.X, dir.Z).Length())));   // same fix: aim, do not inherit the climb
-                if (sess.Shell.Fire()) shots++;
-                yield return Ticks(1);
-            }
-            T.Check($"the WIRE killed the brain ({shots} shots fired)", z.Dead && shots >= 2);
-            T.Check("the local cosmetic bullet never credited a kill (shell Kills == 0 -- credit is the server's)", sess.Shell.Kills == 0);
-            yield return Until(() => zDeaths.Count > 0, 5);
-            T.Check("ZombieDied fact reached the shooter", zDeaths.Count == 1);
-            T.Check("...with the shell's kill credit", zDeaths.Count > 0 && zDeaths[0].NetId == zid && zDeaths[0].Killer == sess.Client.PlayerId);
-            bool sawZombieConfirm = false, sawKillConfirm = false;
-            foreach (var c in confirms)
-            {
-                if (c.TargetKind == (byte)HitTargetKind.Zombie) sawZombieConfirm = true;
-                if (c.Killed) sawKillConfirm = true;
-            }
-            T.Check($"HitConfirmed flowed with TargetKind=Zombie ({confirms.Count} confirms)", sawZombieConfirm);
-            T.Check("the killing hit confirmed Killed=true", sawKillConfirm);
-            yield return Until(() => sess.Client.Zombies.TryGet(new NetId(zid), out var zr) && zr.IsDead, 5);
-            T.Check("the replica anim byte reads DEAD (the puppet ragdolls off it)",
-                    sess.Client.Zombies.TryGet(new NetId(zid), out var zRep) && zRep.IsDead);
-            yield return Until(() => ded.Server.CombatState.TryGet(sess.Client.PlayerId, out var cs) && cs.Kills == 1, 5);
-            T.Check("server CombatState credited kills == 1", ded.Server.CombatState.TryGet(sess.Client.PlayerId, out var sCs) && sCs.Kills == 1);
-            yield return Ticks(30);   // settle: the kills delta + a sync-check round flush to both clients
-            T.Check("CombatState parity: session replica == server (StateHash)",
-                    sess.Client.CombatState.StateHash() == ded.Server.CombatState.StateHash());
-            T.Check("CombatState parity: bystander replica == server",
-                    bystander.CombatState.StateHash() == ded.Server.CombatState.StateHash());
 
             // PvP-ON (P3a): a burst at the bystander's avatar (~2 m away, torso height) is server-resolved
             // PLAYER damage now -- 3 landed Eaglefire torso shots (40 each) drop the 100 HP bystander. This was
@@ -2180,7 +1915,7 @@ namespace UnturnedGodot.Testing
         {
             var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
                 mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
-                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+                syncLoad: true, activeHoliday: "NONE");
             var world = task.Result;
             T.Check("world ready (the ONE world path, flat fallback on CI)", world.Ready);
             ItemCatalog.RegisterAll();   // real ids: the puppet view + the join demo-kit seeding resolve against the catalog
@@ -2251,7 +1986,7 @@ namespace UnturnedGodot.Testing
         {
             var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
                 mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
-                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+                syncLoad: true, activeHoliday: "NONE");
             var world = task.Result;
             T.Check("world ready (the ONE world path, flat fallback on CI)", world.Ready);
             ItemCatalog.RegisterAll();
@@ -2319,7 +2054,7 @@ namespace UnturnedGodot.Testing
         {
             var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
                 mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
-                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+                syncLoad: true, activeHoliday: "NONE");
             var world = task.Result;
             T.Check("world ready", world.Ready);
             ItemCatalog.RegisterAll();
@@ -2383,7 +2118,7 @@ namespace UnturnedGodot.Testing
         {
             var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
                 mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
-                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+                syncLoad: true, activeHoliday: "NONE");
             var world = task.Result;
             T.Check("world ready", world.Ready);
             ItemCatalog.RegisterAll();
@@ -2436,7 +2171,7 @@ namespace UnturnedGodot.Testing
         {
             var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
                 mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
-                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+                syncLoad: true, activeHoliday: "NONE");
             var world = task.Result;
             T.Check("world ready", world.Ready);
             ItemCatalog.RegisterAll();
@@ -2489,7 +2224,7 @@ namespace UnturnedGodot.Testing
         {
             var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
                 mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
-                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+                syncLoad: true, activeHoliday: "NONE");
             var world = task.Result;
             T.Check("world ready", world.Ready);
             ItemCatalog.RegisterAll();
@@ -2562,7 +2297,7 @@ namespace UnturnedGodot.Testing
         {
             var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
                 mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
-                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+                syncLoad: true, activeHoliday: "NONE");
             var world = task.Result;
             T.Check("world ready", world.Ready);
             ItemCatalog.RegisterAll();
@@ -2637,7 +2372,7 @@ namespace UnturnedGodot.Testing
         {
             var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
                 mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
-                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+                syncLoad: true, activeHoliday: "NONE");
             var world = task.Result;
             T.Check("world ready (the ONE world path, flat fallback on CI)", world.Ready);
 
@@ -2838,7 +2573,7 @@ namespace UnturnedGodot.Testing
         {
             var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
                 mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
-                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+                syncLoad: true, activeHoliday: "NONE");
             var world = task.Result;
             T.Check("world ready (the ONE world path, flat fallback on CI)", world.Ready);
 
@@ -2916,7 +2651,7 @@ namespace UnturnedGodot.Testing
         {
             var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
                 mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
-                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+                syncLoad: true, activeHoliday: "NONE");
             var world = task.Result;
             T.Check("world ready (the ONE world path, flat fallback on CI)", world.Ready);
 
@@ -3006,7 +2741,7 @@ namespace UnturnedGodot.Testing
         {
             var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
                 mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
-                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+                syncLoad: true, activeHoliday: "NONE");
             var world = task.Result;
             T.Check("world ready (the ONE world path, flat fallback on CI)", world.Ready);
 
@@ -3114,7 +2849,7 @@ namespace UnturnedGodot.Testing
         {
             var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
                 mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
-                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+                syncLoad: true, activeHoliday: "NONE");
             var world = task.Result;
             T.Check("world ready", world.Ready);
 
@@ -3184,7 +2919,7 @@ namespace UnturnedGodot.Testing
         {
             var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
                 mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
-                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+                syncLoad: true, activeHoliday: "NONE");
             var world = task.Result;
             T.Check("world ready", world.Ready);
 
@@ -3327,7 +3062,7 @@ namespace UnturnedGodot.Testing
         {
             var task = WorldBuilder.BuildFullWorld(test.World, WorldMode.Dedicated,
                 mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
-                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+                syncLoad: true, activeHoliday: "NONE");
             World = task.Result;
             test.T.Check("world ready (the ONE world path, flat fallback on CI)", World.Ready);
 
@@ -3621,7 +3356,7 @@ namespace UnturnedGodot.Testing
         {
             var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
                 mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
-                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+                syncLoad: true, activeHoliday: "NONE");
             var world = task.Result;
             T.Check("world ready (the ONE world path, flat fallback on CI)", world.Ready);
 

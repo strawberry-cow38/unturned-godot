@@ -7,9 +7,9 @@ namespace UnturnedGodot
 {
     // ---------------------------------------------------------------------------------------------------
     // MP Phase 8 world-state syncs (MP_PLAN §3.7): the game-side bridges between the world's nodes and the
-    // engine-free WorldClock/Crop/Resource replication systems, following the ZombieNetSync /
-    // WorldItemNetSync pattern -- polled at a low cadence on the server's SimRoot, registered before the
-    // replication send. None of this exists on the SP direct path.
+    // engine-free WorldClock/Crop/Resource replication systems, following the WorldItemNetSync pattern --
+    // polled at a low cadence on the server's SimRoot, registered before the replication send. None of
+    // this exists on the SP direct path.
     // ---------------------------------------------------------------------------------------------------
 
     /// <summary>Registers every farms.tsv crop def into a CropSchema -- the same def table on server and

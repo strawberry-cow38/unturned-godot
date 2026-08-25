@@ -11,6 +11,11 @@ namespace UnturnedGodot
     {
         public string Name = "fists";
         public float Range = 2.2f;
+        // TODO(zombie-removal): ZombieDamage NOT removed despite the name -- PlayerController.ApplyMeleeHit
+        // (off-limits, handled elsewhere) computes `dmg` from this field and applies it to BOTH the "zombies"
+        // group AND the "animals" group (wildlife melee damage reuses the same number). Deleting the field
+        // breaks that off-limits compile AND silently zeroes animal melee damage, which is non-zombie
+        // behaviour -- ambiguous per the task's own "don't guess" rule. See the matching note in GunDef.cs.
         public float ZombieDamage = 45f, PlayerDamage = 45f, VehicleDamage = 10f, StructureDamage = 5f, ResourceDamage = 5f;
         public float Stamina;   // swing stamina cost (.dat Stamina, 0-100)
         public float Strong = 0.5f;   // strong-swing timing fraction (.dat Strong)

@@ -52,6 +52,13 @@ namespace UnturnedGodot
         public bool TrapManual = false;     // src Charge/InteractableCharge: INERT until a Detonator triggers it (no proximity/contact poll)
         public float TrapTrigger = 1.4f;   // proximity radius that fires it (m)
         public float TrapBlast = 6f;       // AoE explosion radius on trigger (m; 0 = contact-only)
+        // TODO(zombie-removal): TrapZombieDamage NOT removed despite the name -- Deployable.cs's DetonateTrap
+        // forwards it straight into PlayerController.Explode (off-limits, handled elsewhere), whose
+        // zombieDamage parameter is ALSO spent on the "animals" group there. Deleting the field breaks that
+        // off-limits compile AND silently zeroes animal blast damage from mines/charges, which is non-zombie
+        // behaviour -- ambiguous per the task's own "don't guess" rule. Its one purely-zombie use (the
+        // contact-trap "zombies" group loop in Deployable.cs.TrapContactTick) WAS removed since that loop also
+        // referenced the now-deleted ZombieController type. See the matching note in GunDef.cs/MeleeDef.cs.
         public float TrapZombieDamage = 200f, TrapPlayerDamage = 101f, TrapVehicleDamage = 100f;
         public float TrapAnimalDamage = 0f;   // src Animal_Damage (contact traps); 0 = leaves animals alone (no animal-trap target wired yet)
         public float TrapArmDelay = 1.5f;   // placer grace / src Trap_Setup_Delay: inert this long after planting (landmine QoL 1.5; src spike 0.25)

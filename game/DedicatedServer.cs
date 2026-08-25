@@ -36,7 +36,8 @@ namespace UnturnedGodot
 
         public NetWorldServer Server { get; private set; }
         public PlayerNetSync PlayerSync { get; private set; }
-        public ZombieNetSync ZombieSync { get; private set; }
+        // (ZombieSync/ZombieNetSync removed with the zombie system -- it published the world's zombie brains
+        // into Server.Zombies/ZombieReplication, core/ types that are NOT deleted and still exist unused.)
         public AnimalNetSync AnimalSync { get; private set; }   // A5: publishes AnimalAgent brains (no-op until AnimalField's streamer is PlayerRegistry-generalized for dedicated)
         public PlayerAppearanceNetSync AppearanceSync { get; private set; }   // B10: publishes each player's worn clothing + stance into the combat block
         public WorldItemNetSync WorldItemSync { get; private set; }
@@ -142,18 +143,11 @@ namespace UnturnedGodot
                     return p.y < h + 0.1f ? new UnityEngine.Vector3(p.x, h + 0.5f, p.z) : p;
                 };
 
-            // Phase 8 interest policy (§2.6): distance rings for the world entities, plus the 19 PEI nav
-            // pockets as relevancy cells -- a town's whole horde stays relevant while a client is in that
-            // town. Fallback worlds (no map) have no pockets: rings only.
-            var pockets = MapRoot != null ? ZombieNav.LoadPockets(MapRoot) : new System.Collections.Generic.List<NavPocket>();
-            System.Func<UnityEngine.Vector3, int> cellOf = pos =>
-            {
-                var p = new Vector3(pos.x, pos.y, pos.z);
-                for (int i = 0; i < pockets.Count; i++) if (pockets[i].Box.HasPoint(p)) return i;
-                return -1;
-            };
-            Server.Zombies.Interest = new InterestPolicy { RingRadius = 192f, CellOf = cellOf };
-            Server.WorldItems.Interest = new InterestPolicy { RingRadius = 128f, CellOf = cellOf };
+            // Phase 8 interest policy (§2.6): distance rings for the world entities. The 19 PEI nav-pocket
+            // relevancy cells were removed with the zombie navmesh (they were derived from LevelNavigation
+            // flags and loaded via the now-deleted ZombieNav); WorldItems streaming keys on the distance ring
+            // alone. CellOf returns -1 everywhere (no pocket cells) so the ring is the sole relevancy input.
+            Server.WorldItems.Interest = new InterestPolicy { RingRadius = 128f, CellOf = (UnityEngine.Vector3 _) => -1 };
 
             // C2 real spawns: joiners land on real Spawns/Players.dat points at terrain height (+1.5 m drop),
             // spread deterministically by playerId. Fallback worlds (no map/terrain) keep the default demo
@@ -172,15 +166,14 @@ namespace UnturnedGodot
             Driver.Sim.Add(new DelegateSimStep((tick, dt) => Server.TickSimulation(), "net.server.sim"));
             // C2 remote avatar bodies: real PlayerController physics per peer, written back through
             // ServerDrive -- registered right after the sim step (input is dispatched) and before every
-            // publish sync, so published state (zombie targets etc.) sees this tick's driven positions.
+            // publish sync, so published state sees this tick's driven positions.
             if (RemoteAvatars)
             {
                 PlayerSync = new PlayerNetSync(Server, this);
                 Driver.Sim.Add(new DelegateSimStep((tick, dt) => PlayerSync.Tick(), "net.players.sync"));
             }
-            // zombie brains -> ZombieReplication at 12.5 Hz (§3.5), BEFORE the snapshot send
-            ZombieSync = new ZombieNetSync(Server, this);
-            Driver.Sim.Add(new DelegateSimStep((tick, dt) => ZombieSync.Tick(), "net.zombies.publish"));
+            // (zombie brains -> ZombieReplication publish step removed with the zombie system; see the
+            // ZombieSync field note above.)
             AnimalSync = new AnimalNetSync(Server, this);   // A5: publish wildlife brains (currently a no-op on dedicated -- see the AnimalField note above)
             Driver.Sim.Add(new DelegateSimStep((tick, dt) => AnimalSync.Tick(), "net.animals.publish"));
             AppearanceSync = new PlayerAppearanceNetSync(Server);   // B10: publish each connected player's worn clothing + stance into the combat block

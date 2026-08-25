@@ -34,7 +34,7 @@ namespace UnturnedGodot.Testing
             // the ONE world path, dedicated mode (flat fallback on CI -- the bogus map forces it, no sockets)
             var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
                 mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
-                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+                syncLoad: true, activeHoliday: "NONE");
             var world = task.Result;
             T.Check("world ready (the ONE world path, flat fallback on CI)", world.Ready);
             ItemCatalog.RegisterAll();   // `give 458/459` resolve against the real catalog (2x2 -> fit the demo pockets)
@@ -497,7 +497,7 @@ namespace UnturnedGodot.Testing
         {
             var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
                 mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
-                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+                syncLoad: true, activeHoliday: "NONE");
             var world = task.Result;
             T.Check("world ready (the ONE world path, flat fallback on CI)", world.Ready);
             ItemCatalog.RegisterAll();   // item 458 (generator) + 95 (Bandage) resolve against the real catalog
@@ -664,7 +664,7 @@ namespace UnturnedGodot.Testing
         {
             var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
                 mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
-                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+                syncLoad: true, activeHoliday: "NONE");
             var world = task.Result;
             T.Check("world ready", world.Ready);
             ItemCatalog.RegisterAll();   // id 14 (Bottled Water) resolves as a WATER consumable
@@ -751,7 +751,7 @@ namespace UnturnedGodot.Testing
         {
             var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
                 mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
-                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+                syncLoad: true, activeHoliday: "NONE");
             var world = task.Result;
             T.Check("world ready (the ONE world path, flat fallback on CI)", world.Ready);
             ItemCatalog.RegisterAll();   // the puppet view + the join demo-kit seeding resolve against the catalog
@@ -883,7 +883,7 @@ namespace UnturnedGodot.Testing
         {
             var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
                 mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
-                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+                syncLoad: true, activeHoliday: "NONE");
             var world = task.Result;
             T.Check("world ready (the ONE world path, flat fallback on CI)", world.Ready);
             ItemCatalog.RegisterAll();   // the item mesh/collider + the join demo-kit seeding resolve against the catalog
@@ -984,7 +984,7 @@ namespace UnturnedGodot.Testing
         {
             var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
                 mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
-                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+                syncLoad: true, activeHoliday: "NONE");
             var world = task.Result;
             T.Check("world ready (the ONE world path, flat fallback on CI)", world.Ready);
 
@@ -1058,7 +1058,7 @@ namespace UnturnedGodot.Testing
         {
             var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
                 mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
-                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+                syncLoad: true, activeHoliday: "NONE");
             var world = task.Result;
             T.Check("world ready (the ONE world path, flat fallback on CI)", world.Ready);
 
@@ -1190,7 +1190,7 @@ namespace UnturnedGodot.Testing
         {
             var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
                 mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
-                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+                syncLoad: true, activeHoliday: "NONE");
             var world = task.Result;
             T.Check("world ready (the ONE world path, flat fallback on CI)", world.Ready);
 
@@ -1267,7 +1267,7 @@ namespace UnturnedGodot.Testing
         {
             var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
                 mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
-                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+                syncLoad: true, activeHoliday: "NONE");
             var world = task.Result;
             T.Check("world ready (the ONE world path, flat fallback on CI)", world.Ready);
 
@@ -1313,75 +1313,6 @@ namespace UnturnedGodot.Testing
         }
     }
 
-    // SP/MP-unify P3b phase gate (source 1 of 5): ZOMBIE MELEE. A real server-side zombie BRAIN adjacent to the
-    // client-auth walker's follower body swings and its hit lands on the SERVER HP -- routed through the follower
-    // body's NetDamageSink (PlayerNetSync) into ServerCombat.DamagePlayerExternal, instead of the old NetAvatar
-    // no-op. This is the whole point of the source: the brain runs unchanged (SP-identical), the sink is what P3b
-    // adds. On the pre-P3b server the zombie chased + swung forever while the adopted body stayed invulnerable.
-    public class UnifyDamageZombie : GameTest
-    {
-        public override string Name => "unify.damage_zombie";
-        public override double TimeoutSimSeconds => 30;
-
-        public override IEnumerable<Step> Run()
-        {
-            var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
-                mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
-                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
-            var world = task.Result;
-            T.Check("world ready (the ONE world path, flat fallback on CI)", world.Ready);
-
-            var net = new MemNetwork(20260732);
-            var walker = new NetWorldClient(new MemClientTransport(net), "bitten", contentHash: NetContent.Hash);
-            bool send = false;
-            UnityEngine.Vector3 claim = default;
-            byte recovAck = 0;
-            walker.PlayerRecov += e => { recovAck = e.RecovCounter; claim = e.Pos; };
-            var pump = new DelegateSimStep((t, dt) =>
-            {
-                net.Tick(); walker.Tick();
-                if (send) walker.SendPlayerState(claim, 0f, 0f, UnityEngine.Vector3.zero, 0, grounded: true, recovAck);
-            }, "l1.clientpump");
-            world.Sim.Sim.Add(pump);
-            var ded = new DedicatedServer { Driver = world.Sim, TransportOverride = new MemServerTransport(net), RemoteAvatars = true };
-            World.AddChild(ded);
-            walker.Connect();
-
-            yield return Until(() => walker.State == NetSessionState.Connected && walker.JoinSnapshotsApplied >= 1, 5);
-            walker.Players.TryGetByOwner(walker.PlayerId, out var spawnE);
-            claim = spawnE.Pos;
-            send = true;   // adopt -> the follower body spawns
-            yield return Until(() => ded.PlayerSync != null && ded.PlayerSync.TrackedCount == 1, 5);
-            bool haveBody = ded.PlayerSync.TryGetBody(walker.PlayerId, out var body);
-            T.Check("the follower body spawned for the adopted owner", haveBody && body.NetAvatar);
-            if (!haveBody) { world.Sim.Sim.Remove(pump); walker.Disconnect(); yield break; }
-            yield return Ticks(2);
-
-            // a real NORMAL zombie brain placed 1 m dead ahead of the body (at the body's -Z so its default facing
-            // points at it -> the vision cone catches it on the first idle sense tick), targeting the body.
-            var bp = body.GlobalPosition;
-            var z = new ZombieController { Target = body };
-            World.AddChild(z);
-            z.GlobalPosition = new Vector3(bp.X, bp.Y, bp.Z + 1.0f);   // within ATTACK_PLAYER reach (sqrt2 ~ 1.41 m)
-            z.Rotation = Vector3.Zero;                                 // forward -Z -> toward the body
-            T.Check("(baseline) full server HP before the zombie swings", ServerHp(ded, walker) == 100);
-
-            // the brain senses -> hunts -> plants -> swings; the hit lands mid-swing (~0.4 s) on the SERVER HP
-            yield return Until(() => ServerHp(ded, walker) < 100, 15);
-            int hp = ServerHp(ded, walker);
-            T.Check($"(teeth) the server zombie brain's melee landed on the SERVER HP (100 -> {hp})", hp < 100 && hp <= 100 - (int)z.AttackDamage + 1);
-            T.Check($"(teeth) exactly one swing's worth (AttackDamage {z.AttackDamage:0}) so far (server HP {hp})", hp == 100 - (int)z.AttackDamage);
-            yield return Until(() => OwnerHp(walker) == hp, 5);
-            T.Check($"the owner's replica adopted the zombie-melee HP (replica {OwnerHp(walker)} == server {hp})", OwnerHp(walker) == hp);
-
-            world.Sim.Sim.Remove(pump);
-            walker.Disconnect();
-        }
-
-        static int ServerHp(DedicatedServer ded, NetWorldClient c) => ded.Server.CombatState.TryGet(c.PlayerId, out var cs) ? cs.Health : -1;
-        static int OwnerHp(NetWorldClient c) => c.CombatState.TryGet(c.PlayerId, out var cs) ? cs.Health : -1;
-    }
-
     // SP/MP-unify P3b phase gate (source 2 of 5): EXPLOSIONS. A real server-side deployable Explode group-scan
     // hits the client-auth walker's follower body, routed through its NetDamageSink into DamagePlayerExternal
     // with the source LINEAR falloff. On the pre-P3b server the blast's TakeDamage on the adopted body was a
@@ -1395,7 +1326,7 @@ namespace UnturnedGodot.Testing
         {
             var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
                 mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
-                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+                syncLoad: true, activeHoliday: "NONE");
             var world = task.Result;
             T.Check("world ready (the ONE world path, flat fallback on CI)", world.Ready);
 
@@ -1842,7 +1773,7 @@ namespace UnturnedGodot.Testing
         {
             var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
                 mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
-                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+                syncLoad: true, activeHoliday: "NONE");
             var world = task.Result;
             T.Check("world ready (the ONE world path, flat fallback on CI)", world.Ready);
 
@@ -1930,7 +1861,7 @@ namespace UnturnedGodot.Testing
         {
             var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
                 mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
-                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+                syncLoad: true, activeHoliday: "NONE");
             var world = task.Result;
             T.Check("world ready (the ONE world path, flat fallback on CI)", world.Ready);
             ItemCatalog.RegisterAll();   // the yield world-item puppet resolves against the real catalog
@@ -2193,7 +2124,7 @@ namespace UnturnedGodot.Testing
         {
             var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
                 mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
-                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+                syncLoad: true, activeHoliday: "NONE");
             var world = task.Result;
             T.Check("world ready (the ONE world path, flat fallback on CI)", world.Ready);
             ItemCatalog.RegisterAll();   // id 13 (Canned Beans: useFood 55, useHealth 10) resolves as a FOOD consumable
@@ -2375,7 +2306,7 @@ namespace UnturnedGodot.Testing
             PowerNet.SetGlobalPower(false);   // defensive: mains OFF is the default; a replica derives producing from ToggledOn, NOT this flag
             var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
                 mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
-                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+                syncLoad: true, activeHoliday: "NONE");
             var world = task.Result;
             T.Check("world ready (the ONE world path, flat fallback on CI)", world.Ready);
             ItemCatalog.RegisterAll();   // `give 459` resolves the spotlight (2x2) against the real catalog

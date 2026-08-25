@@ -1260,7 +1260,6 @@ namespace UnturnedGodot
         const float TowDamping = 3200f;            // spring damper along the rope axis (kills bounce/oscillation; scaled up with the stiffer spring to stay stable)
         const float TowMaxForce = 30000f;          // clamp so a hard yank can't explode the ~900kg bodies at the physics rate (13000->30000: let a real haul actually pull)
         float _engineNoiseT;   // Phase 3 hearing: throttle the moving-car engine-noise emit
-        public Vector3 BodyExtents, BodyCenter;   // BoxCollider half-size + centre (local) -> zombies reach for the body SURFACE, not the centre
         const float BatteryMax = 10000f;   // battery full = 10000 (fuel burn is now per-class -> Vehicle.FuelBurn, set by FuelClassOf)
         public float FuelNorm => FuelMax > 0f ? Fuel / FuelMax : 0f;
         public float HealthNorm => HealthMax > 0f ? Health / HealthMax : 0f;
@@ -1279,16 +1278,17 @@ namespace UnturnedGodot
         bool _braking;   // cab: is the brake being applied this frame (hand/foot) -> passed through to the trailer's brake lights while towing
         StandardMaterial3D _sirenMat0, _sirenMat1; OmniLight3D _sirenLight0, _sirenLight1; bool _sirenOn; float _sirenFlash;   // emergency lightbar (police/fire/ambulance): ctrl toggles; red + blue lenses alternate every 0.33s (source UpdateSirenVisuals) + cast real colored light from each side
         AudioStreamPlayer3D _hornAudio; float _hornCd;   // horn (LMB): one-shot the .dat HornAudioClip, 0.5s cooldown (source canUseHorn)
-        bool _alarmed; float _alarmTimer, _alarmBlip, _alarmCheckT = 0.3f; bool _alarmLit;   // "alarmed" car (5% of spawns): proximity (player/zombie) or damage sets off a ~30s honk+lights blip loop that lures zombies (master)
+        bool _alarmed; float _alarmTimer, _alarmBlip, _alarmCheckT = 0.3f; bool _alarmLit;   // "alarmed" car (5% of spawns): proximity (player) or damage sets off a ~30s honk+lights blip loop (master)
         AudioStreamPlayer3D _sirenAudio;   // looping siren clip while the emergency lightbar's on (master)
         Node3D _steerPivot; Vector3 _steerAxis;   // steering wheel model (source Objects/Steer): rotates by the steer angle around the disc normal
         const float BatteryBurnRate = 20f;   // source batteryBurnRate default (headlights drain while on, EBatteryMode.Burn)
         // Bumper roadkill (source Bumper.OnTriggerEnter + VehicleAsset ParseFloat defaults): a moving vehicle damages a
         // character its front bumper touches. dmg = floor(baseDamage * speed); speed = clamp(fwdVel * mult, -10, 10),
         // ignored below the threshold. None of the stock vehicles override these in their .dat, so the defaults hold.
-        const float BumperMult = 1f, BumperThreshold = 3f, BumperZombieDmg = 15f, BumperPlayerDmg = 10f, BumperSelfMult = 1f;
+        // (enemy targeting removed with the zombie system: OnBumperHit's only wired branch was zombies -- see there.)
+        const float BumperMult = 1f, BumperThreshold = 3f, BumperPlayerDmg = 10f, BumperSelfMult = 1f;
         const float CrashPropThreshold = 4f, CrashPropDmgPerSpeed = 18f, CrashPropMaxDmg = 500f;   // vehicle -> destructible prop: min impact speed to break, dmg per m/s, cap
-        const float HornAlertRadius = 32f;   // source InteractableVehicle.tellHorn: AlertTool.alert(pos, 32) -> zombies within earshot investigate
+        const float HornAlertRadius = 32f;   // source InteractableVehicle.tellHorn: AlertTool.alert(pos, 32) -> earshot-radius, unused (no listener wired up currently)
         public bool HeadlightsOn => _headlightsOn;
         public bool TaillightsOn => _taillightsOn;          // MP §3.6: replicated light/brake flags (read-only views of the SP state)
         public bool SirenOn => _sirenOn;
@@ -1629,7 +1629,7 @@ namespace UnturnedGodot
         }
 
         // source Bumper.OnTriggerEnter: the front bumper roadkills a character it drives into. Damage scales with impact
-        // speed (clamped at 10) x the base BumperZombieDamage; the vehicle takes a little self-damage per hit too.
+        // speed (clamped at 10) x a per-target base damage; the vehicle takes a little self-damage per hit too.
         public void Wake() { Freeze = false; Sleeping = false; _asleep = false; _parked = false; }   // resume dynamic physics (rammed or re-driven)
         // vehicle crash -> authoritative destructible break, through the SAME seam the heli rotors already use
         // (Vehicle.NetDamageObject, declared once above -- main had added it for rotors while this branch was adding
@@ -1653,19 +1653,11 @@ namespace UnturnedGodot
         void OnBumperHit(Node3D body)
         {
             if (_exploded || _parked) return;
-            if (body is ZombieController z && !z.Dead)
-            {
-                float fwd = LinearVelocity.Dot(-GlobalTransform.Basis.Z);       // signed forward speed (front = -Z)
-                float speed = Mathf.Clamp(fwd * BumperMult, -10f, 10f);
-                if (speed < BumperThreshold) return;                            // too slow to hurt (source threshold gate)
-                float dmg = Mathf.Floor(BumperZombieDmg * speed);               // source DamageTool: floor(damage * times)
-                z.DamageHit(dmg, z.GlobalPosition, -GlobalTransform.Basis.Z);   // knock the ragdoll forward
-                TakeDamage(2f * BumperSelfMult);                                // source takeCrashDamage(2)
-                GD.Print($"[ROADKILL] speed={speed:0.0} dmg={dmg} -> zombie HP {z.Health:0}");
-            }
+            // (enemy targeting removed with the zombie system -- this was the only body type wired here.)
             // NOTE: source Bumper also roadkills Players ("Player" tag -> BumperPlayerDamage) and Animals (Animal on the
-            // "Agent" tag -> BumperAnimalDamage) the same way. No player/animal targets share a scene in the port yet,
-            // so only the zombie path is wired + tested here; add those branches when those entities co-exist.
+            // "Agent" tag -> BumperAnimalDamage). No player/animal targets share a scene in the port yet, so neither
+            // path is wired + tested here; add those branches (using BumperMult/BumperThreshold/BumperPlayerDmg/
+            // BumperSelfMult above) when those entities co-exist.
         }
 
         /// <summary>Where this vehicle was last shot FROM, in world space, and when. Recorded for every vehicle
@@ -1730,18 +1722,13 @@ namespace UnturnedGodot
         }
 
         // source InteractableVehicle explode: DamageTool.explode(pos, radius 8, playerDmg 200, zombieDmg 200, vehicleDmg 500).
-        // The 500 vehicle damage easily blows a neighbouring car too -> a staggered chain reaction; 200 wipes a nearby horde.
+        // The 500 vehicle damage easily blows a neighbouring car too -> a staggered chain reaction.
         void ExplodeDamage()
         {
             const float R = 8f;
             Vector3 p = GlobalPosition;
             PlayerRegistry.FlinchAllFromExplosion(p, 32f, 45f);   // big vehicle blast -> strong camera shake, every player, distance-gated (src Bomb_0-like: radius 32 / mag 45)
-            foreach (var n in GetTree().GetNodesInGroup("zombies"))
-                if (n is ZombieController z && !z.Dead)
-                {
-                    float d = z.GlobalPosition.DistanceTo(p);
-                    if (d <= R) z.DamageHit(SDG.Unturned.ExplosionMath.Linear(200f, d, R), z.GlobalPosition, (z.GlobalPosition - p).Normalized());
-                }
+            // (enemy damage removed with the zombie system)
             foreach (var n in GetTree().GetNodesInGroup("vehicles"))
                 if (n is Vehicle v && v != this && !v.Exploded)
                 {
@@ -4185,7 +4172,6 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                 v._landingGear = new CollisionShape3D { Name = "LandingGear", Shape = new BoxShape3D { Size = s.LandingGearSize }, Position = s.LandingGearCenter };
                 v.AddChild(v._landingGear);
             }
-            v.BodyExtents = s.BoxSize * 0.5f; v.BodyCenter = s.BoxCenter;   // for the zombie swipe-reach
             // GROUND CLEARANCE: how far the lowest collision point sits BELOW the origin, measured off the
             // shapes actually attached rather than assumed from the spec. A wheeled vehicle can be dropped from
             // any sensible height and its suspension sorts it out; a helicopter has no suspension, so spawning
@@ -5894,7 +5880,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             DoHorn();
             _hornCd = 0.5f;
         }
-        void DoHorn()   // the actual honk: a pitch-varied one-shot (master: slight variation per honk) + the zombie noise alert
+        void DoHorn()   // the actual honk: a pitch-varied one-shot (master: slight variation per honk) + a sound-bus hearing alert
         {
             if (_hornAudio == null) return;
             _hornAudio.Play();
@@ -6471,8 +6457,10 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                 // inaudible loops running. Volume alone was never going to stop that; Playing is the switch.
                 else if (_engineAudio.Playing) { _engineAudio.VolumeDb = -80f; _engineAudio.Stop(); }
             }
-            // Phase 3 hearing: a running, MOVING car makes engine/tire noise zombies hear -- source DRIVING stealth
-            // radius DETECT_FORWARD(48) x forward-speed% (parked/idling ~silent since speed~0). Throttled like footsteps.
+            // Phase 3 hearing: a running, MOVING car makes engine/tire noise a listener would hear -- source DRIVING
+            // stealth radius DETECT_FORWARD(48) x forward-speed% (parked/idling ~silent since speed~0). Throttled like
+            // footsteps. (SoundBus currently has no listener wired up -- it lost its zombie audience with the zombie
+            // system -- but the emit stays so a future one needs no changes here.)
             _engineNoiseT -= (float)delta;
             if (EngineOn && _engineNoiseT <= 0f)
             {
@@ -6489,7 +6477,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                 Battery = Mathf.Max(0f, Battery - BatteryBurnRate * (float)delta);
                 if (Battery <= 0f) SetHeadlights(false);
             }
-            if (_alarmed && !_exploded)   // "alarmed" car (master): proximity (player/zombie) or damage sets off a ~30s honk+lights blip loop that lures zombies. NOT on a wreck -- Explode clears the state, and this guard means even a re-arm can't relight a corpse
+            if (_alarmed && !_exploded)   // "alarmed" car (master): proximity (player) or damage sets off a ~30s honk+lights blip loop. NOT on a wreck -- Explode clears the state, and this guard means even a re-arm can't relight a corpse
             {
                 if (_alarmTimer <= 0f)   // idle -> watch for a proximity trigger (throttled)
                 {
@@ -6499,7 +6487,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                         _alarmCheckT = 0.3f;
                         var acam = GetViewport().GetCamera3D();
                         bool near = acam != null && acam.GlobalPosition.DistanceSquaredTo(GlobalPosition) < 49f;   // player within ~7m
-                        if (!near) foreach (var z in GetTree().GetNodesInGroup("zombies")) if (z is Node3D zn && zn.GlobalPosition.DistanceSquaredTo(GlobalPosition) < 36f) { near = true; break; }   // a zombie within ~6m
+                        // (enemy proximity check removed with the zombie system)
                         if (near) TriggerAlarm();
                     }
                 }
@@ -6507,7 +6495,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                 {
                     _alarmTimer -= (float)delta; _alarmBlip += (float)delta;
                     bool on = (_alarmBlip % 1.0f) < 0.5f;
-                    if (on && !_alarmLit) { DoHorn(); SetHeadlights(true); SetTaillights(true); }   // rising edge -> honk + head+tail lights ON in sync (master); the honk lures zombies like a real horn
+                    if (on && !_alarmLit) { DoHorn(); SetHeadlights(true); SetTaillights(true); }   // rising edge -> honk + head+tail lights ON in sync (master), like a real horn
                     else if (!on && _alarmLit) { SetHeadlights(false); SetTaillights(false); }     // falling edge -> all lights off, NO honk
                     _alarmLit = on;
                     if (_alarmTimer <= 0f) { SetHeadlights(false); SetTaillights(false); _alarmLit = false; _alarmed = false; }   // alarm done -> killed for good, never alarms again (master)

@@ -15,9 +15,8 @@ namespace UnturnedGodot
     // quits. OnPlay (legacy flat-terrain survival) is kept for the --flag test harnesses.
     public partial class MainMenu : Node3D
     {
-        public System.Action<bool> OnPlay;        // legacy flat-terrain survival build (test flags only)
-        public System.Action<bool> OnDrivePEI;    // bool = noZombies -- the real PEI world; the dashboard's Play opens this
-        public System.Action OnDriveNewZombies;   // the same PEI world with the zombie REWRITE enabled (equivalent to --newzombies)
+        public System.Action OnPlay;              // legacy flat-terrain survival build (test flags only)
+        public System.Action OnDrivePEI;          // the real PEI world; the dashboard's Play opens this
         public System.Action OnMultiplayer;       // legacy top-level hard-connect to the MP test server (kept as a fallback)
         public System.Action<string, ushort> OnJoinServer;   // server browser JOIN / direct-connect: real client join to host:port
         public System.Action OnEditor;            // Workshop -> the singleplayer map editor (PEI)

@@ -33,8 +33,6 @@ namespace UnturnedGodot
         public SimDriver Sim;              // the 50 Hz sim spine (SimRoot host), present in every world
         public Terrain Terr;               // null if the map couldn't load (no local Unturned install)
         public PlayerController Player;    // Playable/PeiPlay only
-        public ZombieField Zombies;        // Playable/Dedicated (and only when zombies are enabled; C4 populated the server)
-        public ZombieDirector Director;    // --newzombies: the rewrite's single node, in place of Zombies
         public DeadzoneField Deadzones;    // contaminated volumes ticking the player's vitals
         public DayNightCycle DayNight;     // the world clock -- MP Phase 8 syncs read/drive it (§3.7)
         public ResourceField Resources;    // trees/rocks -- MP Phase 8's alive-bitmap indexes into it (§3.7)
@@ -219,11 +217,10 @@ namespace UnturnedGodot
         }
 
         // The full placed world (terrain + Objects.dat + spawns). syncLoad skips every frame-yield so the
-        // whole build runs synchronously inside one _Ready (the --bakenav/--navpathtest/--zombietest tools
-        // and the dedicated server use this); bakeNav additionally re-bakes + saves the canonical navmesh.
+        // whole build runs synchronously inside one _Ready (the dedicated server uses this).
         public static async System.Threading.Tasks.Task<WorldBuildResult> BuildFullWorld(
             Node root, WorldMode mode, string mapRoot, string mapPlace,
-            bool noZombies, bool syncLoad, bool bakeNav, string activeHoliday)
+            bool syncLoad, string activeHoliday)
         {
             var result = new WorldBuildResult();
             // The sim spine (SimRoot/SimDriver) now exists in every world: gameplay systems migrate onto it
@@ -1528,27 +1525,7 @@ namespace UnturnedGodot
                 AttachPlayerShell(root, player, withCropManager: true);   // console/map/HUD/hitmarkers/pause/profiler/attachments -- the C3 shared shell block (same nodes, same order)
                 // (starter jeep removed 2026-08-23 -- master: no jeep at spawn. The map's OWN Spawns/Vehicles.dat vehicles still spawn via SpawnPeiVehicles below.)
 
-                // ZOMBIE SPAWNS: PEI's REAL zombie spawn points (Spawns/Animals.dat = 1456 points; legacy filename that
-                // LevelZombies reads), region-streamed around the player like Unturned's region loader -- see ZombieField.
-                // Replaces the old Environment/Bounds.dat navmesh approximation (52 zombies) with the map's actual horde design.
-                if (!noZombies)   // "Drive PEI — No Zombies" menu button / --nozombies flag
-                {
-                    await Phase("Zombies");
-                    if (ZombieDirector.Enabled)   // --newzombies: the rewrite. One node, sim rows, borrowed rigs, no per-zombie body
-                    {
-                        var zd = new ZombieDirector { Player = player, Terr = terr };
-                        root.AddChild(zd);
-                        zd.LoadFromPei(mapRoot);
-                        result.Director = zd;
-                    }
-                    else
-                    {
-                        var zf = new ZombieField { Player = player, Terr = terr };
-                        zf.LoadFromPei(mapRoot);
-                        root.AddChild(zf);
-                        result.Zombies = zf;   // --zombietest reads this at frame 25 to verify spawns land on the navmesh
-                    }
-                }
+                // (zombie spawns removed 2026-08-25 -- master: rip out everything zombie)
 
                 // VEHICLE SPAWNS: Spawns/Vehicles.dat -- the shared extraction above (identical order/params/variants)
                 await SpawnPeiVehicles();
@@ -1567,14 +1544,6 @@ namespace UnturnedGodot
                     root.AddChild(animals);
                 }
                 await BuildRoadsFoliageTrees();   // roads/foliage/trees -- the shared extraction above (identical order/params)
-                if (System.Environment.GetEnvironmentVariable("UG_ZAERIAL") == "1")   // demo cam: look down on the spawn town so the zombies are visible
-                {
-                    var acam = new Camera3D { Current = true, Fov = 62f, Far = 20000f };
-                    root.AddChild(acam);
-                    var ctr = result.HasVehicleAim ? result.VehicleAim : player.GlobalPosition;   // prefer a real vehicle; else the spawn town
-                    acam.Position = ctr + (result.HasVehicleAim ? new Vector3(0f, 9f, 11f) : new Vector3(0f, 50f, 44f));
-                    acam.LookAt(ctr, Vector3.Up);
-                }
                 if (System.Environment.GetEnvironmentVariable("UG_LHSPAWN") == "1")   // demo cam: frame the lighthouse (prop-orientation check)
                 {
                     var lcam = new Camera3D { Current = true, Fov = 55f, Far = 20000f };
@@ -1629,18 +1598,7 @@ namespace UnturnedGodot
                     loot.LoadFromPei(mapRoot);
                     root.AddChild(loot);
                 }
-                // ZOMBIES (C4, §3): the SAME pocket-streamed ZombieField as Playable, with NO Player wired --
-                // streaming keys on every registered player (the C2 avatar bodies) via PlayerRegistry, and
-                // each spawned brain's null Target falls back to PlayerRegistry.Nearest (ZombieController's
-                // §3.5 generalization). Same noZombies gate as Playable (--nozombies / UG_DEDICATED_NOZOMBIES).
-                if (!noZombies)
-                {
-                    await Phase("Zombies");
-                    var zf = new ZombieField { Terr = terr };
-                    zf.LoadFromPei(mapRoot);
-                    root.AddChild(zf);
-                    result.Zombies = zf;
-                }
+                // (server zombie spawns removed 2026-08-25 -- master: rip out everything zombie)
                 // WILDLIFE (A5 follow-up 2026-07-20): the same Fauna-streamed AnimalField as Playable, NO Player wired --
                 // streams on every registered player via PlayerRegistry (the C4 generalization now extended to
                 // AnimalField, like ZombieField/LootField). Rig-less server-side (the agent wanders + AnimalNetSync
@@ -1722,11 +1680,7 @@ namespace UnturnedGodot
                 GD.Print($"[loadprof] {string.Join(" | ", parts)}");
                 GD.Print($"[loadprof] WORK {sum:F0} ms | YIELD {ysum:F0} ms | WALL {wallSw.Elapsed.TotalMilliseconds:F0} ms   (Ny = ms spent waiting for a drawn frame, NOT that phase's work)");
             }
-            // Zombie navmesh POCKETS -- bake NOW, in the FULL world, so the BUILDINGS (layer 1<<0) carve the mesh and
-            // zombies route around them. This full-world bake is the CANONICAL one (save:true -> pei_pocket_N.res);
-            // the terrain-only peiplay/navshot verify modes pass save:false so they never overwrite it.
-            if (mode != WorldMode.Client && (!noZombies || bakeNav))   // client puppets don't path; noZombies -> nothing consumes the navmesh (only zombie AI does) so skip the pocket load+sync entirely; bakeNav still forces it (offline bake tool) -- pure load-time savings
-                try { var _navPk = ZombieNav.LoadPockets(mapRoot); ZombieNav.BuildOrLoad(root, _navPk, overlay: false, save: bakeNav, bakeIfMissing: bakeNav); } catch (System.Exception _ne) { GD.PrintErr($"[zombienav] full-world nav failed: {_ne.Message}"); }   // --bakenav BAKES+SAVES here; the game just LOADS the committed .res
+            // (zombie navmesh bake removed 2026-08-25 -- master: rip out everything zombie)
             result.Ready = true;   // async world fully built (terrain..trees) -> the --shot harness can now capture a loaded frame
             return result;
         }
@@ -1811,7 +1765,6 @@ namespace UnturnedGodot
             { var hmL = new CanvasLayer { Layer = 98 }; hmL.AddChild(new HitmarkerHUD()); root.AddChild(hmL); }   // hit / headshot markers (master)
             { var pause = new PauseMenu(); root.AddChild(pause); player.PauseMenu = pause; }               // ESC menu (parity with BuildPlayable)
             root.AddChild(new Profiler());   // perf overlay, console `profiler` (parity)
-            root.AddChild(new ZombieAnimCut());   // F6 -> freeze rig anim (skeletons-cut, parity)
             { var attach = new AttachmentMenu(); root.AddChild(attach); player.AttachMenu = attach; }       // T weapon-attachment menu -- was never wired in PEI drive, so T did nothing (broken since PEI map)
             { var ammo = new AmmoRadial(); root.AddChild(ammo); player.AmmoRadial = ammo; }                 // R-hold -> shotgun ammo-type picker (buckshot / slug)
         }
@@ -1909,7 +1862,7 @@ namespace UnturnedGodot
             return result;
         }
 
-        public static WorldBuildResult BuildPeiPlayWorld(Node root, string mapRoot, bool horde)
+        public static WorldBuildResult BuildPeiPlayWorld(Node root, string mapRoot)
         {
             var result = new WorldBuildResult();
             var sim = new SimDriver();
@@ -1937,9 +1890,7 @@ namespace UnturnedGodot
             root.AddChild(terr);
             result.Terr = terr;
 
-            // Zombie navmesh POCKETS (source LevelNavigation Flags): bake a Godot navmesh in each of PEI's 19 POI
-            // pockets from the world collision (agent-radius wall buffer), saved + reused. (Phase 1 -- pathing wired next.)
-            { var _pk = ZombieNav.LoadPockets(mapRoot); ZombieNav.BuildOrLoad(root, _pk, overlay: false, save: false); }   // peiplay is terrain-only -> don't save (loads the canonical full-world mesh if --peidrive baked it)
+            // (zombie navmesh removed 2026-08-25 -- master: rip out everything zombie)
 
             CharacterModel.LoadBundled();
             var player = new PlayerController();
@@ -1996,20 +1947,7 @@ namespace UnturnedGodot
 
             GD.Print($"[PEIPLAY] grass spawn ({sx:0},{sz:0}) groundY {gy:0}, inland-margin {bestMargin}m, layer {terr.SampleDominantLayer(sx, sz)} + jeep beside");
 
-            if (horde)   // a zombie field the jeep drives into -> the loud engine aggros them (source 48*speed), roadkill + swarm on real PEI
-            {
-                const int N = 18;
-                for (int i = 0; i < N; i++)
-                {
-                    float ang = i * 2.39996f;                          // golden-angle scatter -> even disc fill
-                    float r = 9f + 26f * (i / (float)N);               // 9..35 m filled disc around the spawn (jeep plows through the forward slice)
-                    float zx = sx + r * Mathf.Cos(ang), zz = sz + r * Mathf.Sin(ang);
-                    var z = new ZombieController { Target = player, Speciality = ZombieController.ESpeciality.NORMAL };
-                    root.AddChild(z);                                  // in the tree first, else GlobalPosition no-ops
-                    z.GlobalPosition = new Vector3(zx, terr.SampleHeight(zx, zz) + 1.5f, zz);
-                }
-                GD.Print($"[PEIPLAY] +{N} zombies scattered around the jeep (loud drive aggros -> roadkill + swarm)");
-            }
+            // (peiplay zombie horde removed 2026-08-25 -- master: rip out everything zombie)
             result.Ready = true;
             return result;
         }

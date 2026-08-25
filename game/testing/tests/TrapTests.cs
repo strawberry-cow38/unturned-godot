@@ -3,44 +3,9 @@ using System.Collections.Generic;
 
 namespace UnturnedGodot.Testing
 {
-    // Landmine trap: a placed Deployable (IsTrap) is inert for TrapArmDelay (placer grace), then arms and watches
-    // TrapTrigger for a zombie; a victim in range detonates it (AoE via DamageTool.explode, covered by the grenade
-    // tests) and shatters the mine. Proves the pieces I added: the arming grace, the trigger radius, and detonation.
-    public class LandmineArmsAndDetonates : GameTest
-    {
-        public override string Name => "trap.landmine";
-        public override IEnumerable<Step> Run()
-        {
-            var mine = Deployable.Spawn(World, DeployableDef.Landmine, Vector3.Zero, 0f);
-            var z = new ZombieController();
-            World.AddChild(z);
-            yield return Ticks(3);   // mesh/collision build + the zombie joins the "zombies" group
-            T.Check("landmine placed (not yet exploded)", mine != null && !mine.DebugExploded);
-            if (mine == null) yield break;
-
-            z.GlobalPosition = new Vector3(0.8f, 0f, 0f);   // INSIDE the 1.4 m trigger (no Ticks after -> it stays put)
-
-            // GRACE: a freshly-planted mine is inert -- a zombie in range must NOT set it off (else you blast yourself)
-            mine.DebugTrapCheck();
-            T.Check("placer grace: a fresh mine ignores a zombie in range", !mine.DebugExploded);
-
-            mine.DebugAdvanceArm(2f);   // past TrapArmDelay -> armed
-
-            // armed, but a zombie OUT of range still doesn't trigger it
-            z.GlobalPosition = new Vector3(5f, 0f, 0f);     // 5 m > 1.4 m
-            mine.DebugTrapCheck();
-            T.Check("armed but zombie out of range: still armed", !mine.DebugExploded);
-
-            // armed + a zombie IN range detonates it
-            z.GlobalPosition = new Vector3(0.8f, 0f, 0f);
-            mine.DebugTrapCheck();
-            T.Check("armed + zombie in range detonates the mine", mine.DebugExploded);
-        }
-    }
-
     // The landmine also arms on a PLAYER (PvP + you can't just walk over your own field). This covers the DETECTION
-    // path (TrapVictimNear via PlayerRegistry) without detonating -- the detonation is the same code the zombie test
-    // already exercises, so there's no need to blast a bare test player through its damage/UI path.
+    // path (TrapVictimNear via PlayerRegistry) without detonating -- there's no need to blast a bare test player
+    // through its damage/UI path just to prove the trigger radius.
     public class LandmineDetectsPlayer : GameTest
     {
         public override string Name => "trap.landmine_player";
@@ -98,85 +63,6 @@ namespace UnturnedGodot.Testing
         }
     }
 
-    // Wooden Spikes (src Spikes_Pine.dat, id 385): a CONTACT trap, not explosive. A zombie that steps onto it gets shredded
-    // (Zombie_Damage 60) and the spike WEARS 5 HP (src BarricadeManager.damage 5f) rather than detonating. Proves the
-    // contact path: per-victim direct damage + self-wear, no AoE, no self-consume.
-    public class SpikeShredsAndWears : GameTest
-    {
-        public override string Name => "trap.spike_contact";
-        public override IEnumerable<Step> Run()
-        {
-            var spike = Deployable.Spawn(World, DeployableDef.Spike, Vector3.Zero, 0f);
-            var z = new ZombieController();
-            World.AddChild(z);
-            yield return Ticks(3);   // mesh build + the zombie joins the "zombies" group
-            T.Check("spike placed (not broken)", spike != null && !spike.DebugExploded);
-            if (spike == null) yield break;
-
-            spike.DebugAdvanceArm(1f);   // past the 0.25 s setup delay
-            z.GlobalPosition = new Vector3(0.5f, 0f, 0f);   // INSIDE the 1.1 m footprint
-            float zhp = z.Health, shp = spike.Health;
-            spike.DebugContactTick();
-
-            T.Check($"a zombie on the spike is shredded ({zhp:0} -> {z.Health:0}, ~60)", z.Health <= zhp - 59f);
-            T.Check($"the spike wears down per hit ({shp:0} -> {spike.Health:0}, ~5)", Mathf.IsEqualApprox(spike.Health, shp - 5f));
-            T.Check("a contact spike does NOT detonate/consume itself", !spike.DebugExploded);
-        }
-    }
-
-    // src OnTriggerEnter fires once per ENTRY, not every frame you stand on it. The _trapInside set models that: a victim
-    // that stays gets hit ONCE; it must leave and re-enter to be hit again.
-    public class SpikeHitsOnEntryNotWhileStanding : GameTest
-    {
-        public override string Name => "trap.spike_enter_once";
-        public override IEnumerable<Step> Run()
-        {
-            var spike = Deployable.Spawn(World, DeployableDef.Spike, Vector3.Zero, 0f);
-            var z = new ZombieController();
-            World.AddChild(z);
-            yield return Ticks(3);
-            if (spike == null) yield break;
-            spike.DebugAdvanceArm(1f);
-            z.Health = 100000f;   // survive many hits so we isolate the ENTER semantics, not zombie death
-
-            z.GlobalPosition = new Vector3(0.5f, 0f, 0f);   // ENTER
-            spike.DebugContactTick();
-            float afterEnter = z.Health, spikeAfterEnter = spike.Health;
-
-            spike.DebugContactTick();   // STILL inside, no re-entry
-            T.Check("standing on the spike does not re-hit the victim", Mathf.IsEqualApprox(z.Health, afterEnter));
-            T.Check("standing on the spike does not wear it further", Mathf.IsEqualApprox(spike.Health, spikeAfterEnter));
-
-            z.GlobalPosition = new Vector3(6f, 0f, 0f); spike.DebugContactTick();   // LEAVE (clears the inside-set)
-            z.GlobalPosition = new Vector3(0.5f, 0f, 0f); spike.DebugContactTick();  // RE-ENTER
-            T.Check("leaving and re-entering hits again", z.Health < afterEnter && spike.Health < spikeAfterEnter);
-        }
-    }
-
-    // src: each shred wears the trap 5 HP and it's Unrepairable, so a spike is a war of attrition -- Health 40 -> ~8 hits,
-    // then it BREAKS (clean, no blast). Prove it grinds down to a break.
-    public class SpikeWearsOutAndBreaks : GameTest
-    {
-        public override string Name => "trap.spike_wears_out";
-        public override IEnumerable<Step> Run()
-        {
-            var spike = Deployable.Spawn(World, DeployableDef.Spike, Vector3.Zero, 0f);
-            var z = new ZombieController();
-            World.AddChild(z);
-            yield return Ticks(3);
-            if (spike == null) yield break;
-            spike.DebugAdvanceArm(1f);
-            z.Health = 100000f;
-
-            for (int i = 0; i < 8 && !spike.DebugExploded; i++)   // 8 entries x 5 HP wear = 40 HP = its whole health
-            {
-                z.GlobalPosition = new Vector3(6f, 0f, 0f); spike.DebugContactTick();   // out (reset inside-set)
-                z.GlobalPosition = new Vector3(0.5f, 0f, 0f); spike.DebugContactTick();  // in -> one shred + 5 wear
-            }
-            T.Check("the spike wears out and breaks after ~8 hits", spike.DebugExploded);
-        }
-    }
-
     // The spike also shreds a PLAYER that steps on it (src Player_Damage 30). Covers the player victim branch.
     public class SpikeShredsPlayer : GameTest
     {
@@ -216,26 +102,6 @@ namespace UnturnedGodot.Testing
             yield return Ticks(1);
             T.Check("shooting the spike breaks it", spike.DebugExploded);
             T.Check($"breaking a spike does NOT blast the neighbour ({genHp:0} -> {gen.Health:0})", Mathf.IsEqualApprox(gen.Health, genHp));
-        }
-    }
-
-    // Remote Explosive (src Charge.dat id 1241): a MANUAL charge is INERT -- unlike the landmine it does NOT auto-trigger
-    // on proximity. A zombie sitting right on it, for many ticks, must not set it off. Proves TrapManual skips the poll.
-    public class ChargeIsInertUntilTriggered : GameTest
-    {
-        public override string Name => "trap.charge_inert";
-        public override IEnumerable<Step> Run()
-        {
-            var charge = Deployable.Spawn(World, DeployableDef.Charge, Vector3.Zero, 0f);
-            var z = new ZombieController();
-            World.AddChild(z);
-            yield return Ticks(3);
-            T.Check("charge placed", charge != null && !charge.DebugExploded);
-            if (charge == null) yield break;
-
-            z.GlobalPosition = new Vector3(0.5f, 0f, 0f);   // right on top of it (would set off a landmine)
-            yield return Ticks(20);   // 4 s of _Process polls -- a manual charge ignores them all
-            T.Check("a placed charge is INERT (no proximity auto-trigger)", !charge.DebugExploded);
         }
     }
 
@@ -333,29 +199,6 @@ namespace UnturnedGodot.Testing
 
             player.TryDetonateCharges();   // the LMB plunge
             T.Check("the detonator plunge fires every placed charge", a.DebugExploded && b.DebugExploded);
-        }
-    }
-
-    // Barbed Wire (src Barbedwire.dat id 386): a CONTACT trap like the spike, tougher (Health 70) + nastier (zombie 80).
-    // Reuses the spike's contact/wear path verbatim -- just different values + mesh; confirms the shared infra covers it.
-    public class BarbedwireShreds : GameTest
-    {
-        public override string Name => "trap.barbedwire";
-        public override IEnumerable<Step> Run()
-        {
-            var bw = Deployable.Spawn(World, DeployableDef.Barbedwire, Vector3.Zero, 0f);
-            var z = new ZombieController();
-            World.AddChild(z);
-            yield return Ticks(3);
-            T.Check("barbed wire placed", bw != null && !bw.DebugExploded);
-            if (bw == null) yield break;
-            bw.DebugAdvanceArm(1f);
-            z.GlobalPosition = new Vector3(0.5f, 0f, 0f);   // inside the footprint
-            float zhp = z.Health, shp = bw.Health;
-            bw.DebugContactTick();
-            T.Check($"a zombie in the wire is shredded ({zhp:0} -> {z.Health:0}, ~80)", z.Health <= zhp - 79f);
-            T.Check($"the wire wears down per hit ({shp:0} -> {bw.Health:0}, ~5)", Mathf.IsEqualApprox(bw.Health, shp - 5f));
-            T.Check("a contact trap doesn't self-detonate", !bw.DebugExploded);
         }
     }
 }

@@ -287,7 +287,8 @@ namespace UnturnedGodot
         public void Repair(float amount) { if (!OnFire) Health = Mathf.Min(HealthMax, Health + amount); }   // blowtorch repair: heal HP up to max, same as a car
 
         // --- TRAP (landmine): a proximity mine. _Process watches TrapTrigger for a victim, then DetonateTrap() blasts +
-        //     shatters. v1 arms on zombies only (base defense); player-trigger + a place-and-walk-away arming grace = follow-ups. ---
+        //     shatters. Arms on players (a place-and-walk-away arming grace protects the placer); enemy targeting
+        //     (zombies) was removed with the zombie system. ---
         float _trapAccum, _armTime, _trapCd;
         System.Collections.Generic.HashSet<ulong> _trapInside = new();   // instance ids currently inside a CONTACT trap's footprint -> src OnTriggerEnter fires once per ENTRY, not every tick you stand on it
         bool TrapVictimNear()
@@ -295,8 +296,7 @@ namespace UnturnedGodot
             if (Def == null || GetTree() == null) return false;
             float r2 = Def.TrapTrigger * Def.TrapTrigger;
             Vector3 me = GlobalPosition;
-            foreach (var n in GetTree().GetNodesInGroup("zombies"))
-                if (n is ZombieController z && z.GlobalPosition.DistanceSquaredTo(me) <= r2) return true;
+            // (enemy targeting removed with the zombie system)
             var p = PlayerRegistry.Nearest(me);   // a mine doesn't care WHO steps on it (PvP + you); the arm grace already protects the placer
             if (p != null && p.GlobalPosition.DistanceSquaredTo(me) <= r2) return true;
             return false;
@@ -304,7 +304,9 @@ namespace UnturnedGodot
         void DetonateTrap()
         {
             if (_exploded) return;
-            // AoE to living things + vehicles (reuse DamageTool.explode via the nearest player -- it only HOLDS the method)
+            // AoE to living things + vehicles (reuse DamageTool.explode via the nearest player -- it only HOLDS the method).
+            // Def.TrapZombieDamage still feeds this (see the TODO(zombie-removal) on that field in DeployableDef.cs --
+            // PlayerController.Explode, off-limits, also spends this number on the "animals" group).
             PlayerRegistry.Nearest(GlobalPosition)?.Explode(GlobalPosition, Def.TrapBlast, Def.TrapZombieDamage, Def.TrapPlayerDamage, Def.TrapVehicleDamage);
             // + nearby placed DEPLOYABLES (src Structure_Damage, base-raiding). Skip other traps so mines don't chain-RECURSE
             // (a minefield still works -- each mine triggers on its own proximity); a real chain reaction is a deferred follow-up.
@@ -339,13 +341,7 @@ namespace UnturnedGodot
             float r2 = Def.TrapTrigger * Def.TrapTrigger;
             Vector3 me = GlobalPosition;
             var nowInside = new System.Collections.Generic.HashSet<ulong>();
-            foreach (var n in GetTree().GetNodesInGroup("zombies"))
-            {
-                if (n is not ZombieController z || z.GlobalPosition.DistanceSquaredTo(me) > r2) continue;
-                ulong id = z.GetInstanceId(); nowInside.Add(id);
-                if (!_trapInside.Contains(id)) TrapShred(() => z.DamageHit(Def.TrapZombieDamage, z.GlobalPosition, Vector3.Up));
-                if (_exploded) { _trapInside = nowInside; return; }   // wore out mid-sweep -> stop
-            }
+            // (enemy targeting removed with the zombie system)
             var p = PlayerRegistry.Nearest(me);   // like the landmine: whoever steps on it (the arm grace protects the placer)
             if (p != null && p.GlobalPosition.DistanceSquaredTo(me) <= r2)
             {
@@ -454,18 +450,13 @@ namespace UnturnedGodot
         }
 
         // src generator/barricade explode: a smaller blast than a car (radius 5, ~120 dmg) -> hurts nearby
-        // zombies/players/vehicles/deployables, chaining a row of gennies. Half a car's radius/damage.
+        // players/vehicles/deployables, chaining a row of gennies. Half a car's radius/damage.
         void ExplodeDamage()
         {
             const float R = 5f;
             Vector3 p = GlobalPosition;
             PlayerRegistry.FlinchAllFromExplosion(p, 18f, 28f);   // every player's camera; distance-gated per player
-            foreach (var n in GetTree().GetNodesInGroup("zombies"))
-                if (n is ZombieController z && !z.Dead)
-                {
-                    float d = z.GlobalPosition.DistanceTo(p);
-                    if (d <= R) z.DamageHit(SDG.Unturned.ExplosionMath.Linear(120f, d, R), z.GlobalPosition, (z.GlobalPosition - p).Normalized());
-                }
+            // (enemy damage removed with the zombie system)
             foreach (var n in GetTree().GetNodesInGroup("players"))
                 if (n is PlayerController pl)
                 {
@@ -612,9 +603,10 @@ namespace UnturnedGodot
         {
             using var _prof = Prof.Scope("Deployable");
             // TRAP (landmine): proximity-armed. Watch for a victim inside TrapTrigger, then detonate. Throttled to ~5 Hz
-            // -- a mine is cheap, but N mines x M zombies EVERY frame is exactly the _PhysicsProcess-shaped cost we just
-            // spent a day chasing; a proximity trap doesn't need per-frame resolution. A MANUAL charge (TrapManual) skips
-            // this entirely -- it's inert until a Detonator fires it.
+            // -- a mine is cheap, but N mines x M targets EVERY frame is exactly the _PhysicsProcess-shaped cost we just
+            // spent a day chasing (historically M was zombies; a proximity trap doesn't need per-frame resolution
+            // regardless of what it's checking against). A MANUAL charge (TrapManual) skips this entirely -- it's inert
+            // until a Detonator fires it.
             if (Def != null && Def.IsTrap && !Def.TrapManual && !_exploded && _deadTimer < 0f)
             {
                 _armTime += (float)delta;   // placer grace: inert until armed, so planting it doesn't blast you

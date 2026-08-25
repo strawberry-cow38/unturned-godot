@@ -173,6 +173,13 @@ namespace UnturnedGodot
             return 1f + (FalloffMin - 1f) * t;
         }
         public float PlayerDamage;
+        // TODO(zombie-removal): NOT removed despite the name -- kept because PlayerController.ApplyMeleeHit and
+        // PlayerController.Explode (both off-limits, handled elsewhere) still read this value and, past the
+        // zombie branch, reuse the SAME number as wildlife/animal damage (see the "animals" group loop right
+        // after the "zombies" one in each). Deleting the field breaks that off-limits compile AND silently
+        // zeroes animal gunfire/blast damage, which is non-zombie behaviour -- ambiguous per the task's own
+        // "don't guess" rule. Safe fix (out of my scope) is probably renaming this to a neutral CreatureDamage
+        // once PlayerController.cs/ServerCombat.cs/Grenade.cs are cleaned up in the same pass.
         public float ZombieDamage;
         public float VehicleDamage;   // Vehicle_Damage: bullets hurt vehicles LESS than zombies (eaglefire 35 vs 99) -- was wrongly using ZombieDamage
         public float ObjectDamage;    // Object_Damage: bullets vs destructible props (rubble); mirrors ServerGunProfile.ObjectDamage (eaglefire 25)
@@ -189,6 +196,9 @@ namespace UnturnedGodot
         // the second one either copies the branch or silently gets the first one's numbers. BlastRadius 0 = no blast,
         // which is every gun that does not ask for one.
         public float BlastRadius;           // Explosion_Radius, metres. 0 = this round does not detonate
+        // TODO(zombie-removal): same entanglement as ZombieDamage above -- PlayerController.Explode (off-limits)
+        // forwards this straight into its zombieDamage parameter, which it also spends on the "animals" group.
+        // Not deleted; see the note on ZombieDamage.
         public float BlastZombieDamage;     // Explosion_Zombie_Damage  -- linear falloff (DamageTool.explode)
         public float BlastPlayerDamage;     // Explosion_Player_Damage  -- SQUARED falloff, and cut by explosion armour
         public float BlastVehicleDamage;    // Explosion_Vehicle_Damage -- linear falloff

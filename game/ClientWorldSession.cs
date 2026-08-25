@@ -44,7 +44,8 @@ namespace UnturnedGodot
 
         public NetWorldClient Client { get; private set; }
         public RemotePlayers Remotes { get; private set; }
-        public ZombiePuppets Puppets { get; private set; }        // C5: server zombies as interpolated puppets
+        // (ZombiePuppets Puppets removed with the zombie system -- it rendered server zombies as interpolated
+        // puppets on a joined client; see the ZombieHit/ZombieDied event note below.)
         public AnimalPuppets AnimalPups { get; private set; }     // A5: server wildlife as interpolated puppets (the SOLE animal materializer on a joined client -- no AnimalField)
         public WorldItemReplicaView Items { get; private set; }   // C5: replicated world items as static visuals
         public CropReplicaView Crops { get; private set; }        // A4: replicated crops as real CropNodes (the SOLE crop materializer on a joined client -- no client CropManager)
@@ -146,11 +147,9 @@ namespace UnturnedGodot
                 _vehRecovHold = true;
                 GD.Print($"[CLIENT] vehicle recov #{e.RecovCounter} -- rolled back to ({e.Pos.x:0.0},{e.Pos.y:0.0},{e.Pos.z:0.0})");
             };
-            // C5 (§3): the remaining world-state views -- all read-only replica consumers. Zombie puppets,
-            // world items as static visuals, the synced clock anchoring the local sky, and server-felled
-            // resources dropping their client visual + trunk collider (§7 risk 7).
-            Puppets = new ZombiePuppets { Client = Client };
-            AddChild(Puppets);
+            // C5 (§3): the remaining world-state views -- all read-only replica consumers. World items as
+            // static visuals, the synced clock anchoring the local sky, and server-felled resources dropping
+            // their client visual + trunk collider (§7 risk 7). (Zombie puppets removed with the zombie system.)
             // A5: the SOLE wildlife materializer on a joined client -- the shell runs no AnimalField (server owns
             // the brains), so this view is the only thing that renders animals. NEVER on a loopback (double-render).
             AnimalPups = new AnimalPuppets { Client = Client };
@@ -190,15 +189,9 @@ namespace UnturnedGodot
                 if (Shell != null && IsInstanceValid(Shell))
                     Shell.RenderImpactFx(new Vector3(e.Pos.x, e.Pos.y, e.Pos.z), e.Surface == (byte)ImpactSurface.Flesh);
             };
-            Client.ZombieHit += e =>
-            {
-                // melee blood (melee broadcasts no ImpactFx); bullet hits also land here -- their ImpactFx
-                // arrives at the exact hit point too, so a shot zombie just bleeds a little harder
-                if (Shell != null && IsInstanceValid(Shell) && Puppets.TryGetPuppet(e.NetId, out var pup) && IsInstanceValid(pup))
-                    Shell.RenderImpactFx(pup.GlobalPosition + Vector3.Up, flesh: true);
-            };
-            Client.ZombieDied += e =>
-                GD.Print($"[combat] zombie {e.NetId} killed by {(e.Killer == Client.PlayerId ? "you" : $"player {e.Killer}")}");
+            // (Client.ZombieHit/ZombieDied subscriptions removed with the zombie system -- their handlers
+            // rendered melee blood onto ZombiePuppets and logged zombie kills; both events still exist on
+            // NetWorldClient, a core/ type that is NOT deleted, but nothing server-side fires them anymore.)
             Client.GrenadeExploded += e =>
                 // the SP blast "fx" is the camera flinch (PlayerController.Explode -> FlinchAllFromExplosion,
                 // same params) -- fx only, zero damage: the server already applied the authoritative damage

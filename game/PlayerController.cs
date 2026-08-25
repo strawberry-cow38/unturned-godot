@@ -2915,25 +2915,8 @@ namespace UnturnedGodot
 
             float dmg = (_melee?.ZombieDamage ?? 45f) * mult * Skills.OverkillMeleeMultiplier();   // weapon .dat Zombie_Damage x OVERKILL skill
             Vector3 origin = GlobalPosition + Vector3.Up * 1.2f, fwd = -_cam.GlobalTransform.Basis.Z;
-            if (MeleeTree(dmg, range)) return;   // an axe swing at a tree fells it, before the swing reaches a zombie/animal behind it
-            // The rewrite's zombies are sim ROWS, not nodes, so the group sweep below cannot see them --
-            // which is why they were unkillable under --newzombies. Swing at the sim too.
-            if (ZombieDirector.Instance is { } zdm && zdm.ShootRay(origin, fwd, range + 0.5f, dmg, out bool zdKilled)) { MeleeImpactFx(origin + fwd * Mathf.Min(range, 1.5f), true); if (zdKilled) Kills++; }   // sim zombie: FX at an estimated point along the swing
-            foreach (var n in GetTree().GetNodesInGroup("zombies"))
-                if (n is ZombieController z && !z.Dead)
-                {
-                    Vector3 to = z.GlobalPosition + Vector3.Up - origin;
-                    if (to.Length() < range + 0.5f && to.Normalized().Dot(fwd) > 0.3f)   // in front, in reach
-                    {
-                        bool wd = z.Dead;
-                        z.DamageHit(dmg, z.GlobalPosition + Vector3.Up, fwd);
-                        MeleeImpactFx(z.GlobalPosition + Vector3.Up, true);   // blood + flesh thunk + hitmarker so the swing/punch REGISTERS
-                        if (!wd && z.Dead) Kills++;
-                        GD.Print($"[melee] {(strong ? "STRONG" : "weak")} hit ({_melee?.Name ?? "fists"} {dmg:0} dmg)");
-                        break;   // one target per swing
-                    }
-                }
-            foreach (var n in GetTree().GetNodesInGroup("animals"))   // wildlife takes melee too (one target per swing)
+            if (MeleeTree(dmg, range)) return;   // an axe swing at a tree fells it, before the swing reaches an animal behind it
+            foreach (var n in GetTree().GetNodesInGroup("animals"))   // wildlife takes melee (one target per swing)
                 if (n is AnimalAgent a && !a.Dead)
                 {
                     Vector3 to = a.GlobalPosition + Vector3.Up * 0.5f - origin;
@@ -2979,21 +2962,6 @@ namespace UnturnedGodot
         // (explosionArmor); vehicles take it too. Still no LIMB or buildable damage.
         public void Explode(Vector3 point, float radius, float zombieDamage, float playerDamage, float vehicleDamage)
         {
-            // Sim rows take the blast too, with the SAME falloff and the same wall rule the node path uses.
-            if (ZombieDirector.Instance is { } zde)
-                Kills += zde.DamageSphere(point, radius,
-                    d => ExplosionMath.Linear(zombieDamage, d, radius),
-                    p => ExplosionBlocked(point, p));
-            foreach (var n in GetTree().GetNodesInGroup("zombies"))
-                if (n is ZombieController z && !z.Dead)
-                {
-                    float range = z.GlobalPosition.DistanceTo(point);
-                    if (range > radius) continue;
-                    if (ExplosionBlocked(point, z.GlobalPosition)) continue;   // a wall between the blast and the zombie stops it (source LineOfSightTest)
-                    bool wd = z.Dead;
-                    z.DamageHit(ExplosionMath.Linear(zombieDamage, range, radius), z.GlobalPosition, (z.GlobalPosition - point).Normalized());
-                    if (!wd && z.Dead) Kills++;
-                }
             foreach (var n in GetTree().GetNodesInGroup("animals"))   // wildlife caught in the blast: same linear falloff + wall rule
                 if (n is AnimalAgent a && !a.Dead)
                 {
@@ -3027,7 +2995,7 @@ namespace UnturnedGodot
         bool ExplosionBlocked(Vector3 point, Vector3 target)
         {
             Vector3 a = point + Vector3.Up * 0.8f, b = target + Vector3.Up * 0.8f;
-            var q = PhysicsRayQueryParameters3D.Create(a, b, ZombieNav.WorldLayer);
+            var q = PhysicsRayQueryParameters3D.Create(a, b, WorldLayers.World);
             return GetWorld3D().DirectSpaceState.IntersectRay(q).Count > 0;
         }
 
@@ -5706,38 +5674,7 @@ namespace UnturnedGodot
                 Vector3 next = new Vector3(un.x, un.y, un.z);
                 var query = PhysicsRayQueryParameters3D.Create(b.Pos, next, (1u << 0) | (1u << 1) | (1u << 4) | (1u << 5) | (1u << 6) | (1u << 9)); // world + enemy + ragdoll + vehicle + props + water surface
                 var hit = space.IntersectRay(query);
-                // A sim zombie has NO collider -- that is the point of the rewrite -- so the physics ray
-                // above passes straight through it and bullets did nothing at all under --newzombies.
-                // Test this step's segment against the sim analytically, and let it win only if it is
-                // CLOSER than whatever the collider ray found, so a wall still stops the bullet.
-                if (!b.Cosmetic && ZombieDirector.Instance is { } zdb)
-                {
-                    Vector3 seg = next - b.Pos;
-                    float segLen = seg.Length();
-                    float wallDist = hit.Count > 0 ? b.Pos.DistanceTo(hit["position"].AsVector3()) : float.MaxValue;
-                    // DISTANCE FALLOFF, which the collider branch below has always applied and this one did not --
-                    // the same shot at 200 m dealt 11.2 or 20 depending purely on which zombie system was running.
-                    // Evaluated at the segment MIDPOINT because the real impact point only comes back out of
-                    // ShootSegment: one physics step is ~10 m of flight at rifle velocity, so the estimate is
-                    // within ~5 m of the hit on a 113-212 m ramp. That is a rounding error against the 1.78x
-                    // discrepancy it replaces. Review 2026-08-16.
-                    float segDmg = b.Damage * b.FalloffAt(b.Pos + seg * 0.5f);
-                    if (segLen > 1e-5f && zdb.ShootSegment(b.Pos, seg / segLen, segLen, wallDist, segDmg,
-                                                           out Vector3 zPoint, out bool zHead, out bool zKilled))
-                    {
-                        SpawnFleshImpact(zPoint, b.Vel.Normalized());
-                        if (zKilled) Kills++;
-                        Hitmark(b, zHead);
-                        // A WARHEAD STILL DETONATES HERE. This branch exits before the collider block below, where
-                        // the blast used to live exclusively -- so under --newzombies a direct rocket hit on a
-                        // zombie dealt its direct damage and did not explode at all, while the same rocket hitting
-                        // the ground beside it did. Review 2026-08-16.
-                        if (b.BlastRadius > 0f)
-                            Explode(zPoint, b.BlastRadius, b.BlastZombieDamage, b.BlastPlayerDamage, b.BlastVehicleDamage);
-                        RemoveBullet(i);
-                        continue;
-                    }
-                }
+                // (sim-zombie analytic bullet path removed 2026-08-25 -- master: rip out everything zombie)
                 if (hit.Count > 0)
                 {
                     if (b.Cosmetic)
@@ -5755,8 +5692,7 @@ namespace UnturnedGodot
                     Vector3 point = hit["position"].AsVector3();
                     Vector3 hdir = b.Vel.Normalized();
                     var collider = hit["collider"].As<GodotObject>();
-                    if (collider is ZombieController z) { bool head = z.IsHeadshot(point); SpawnFleshImpact(point, hdir); bool wd = z.Dead; z.DamageHitLimb(b.Damage * b.FalloffAt(point), point, hdir); if (!wd && z.Dead) Kills++; Hitmark(b, head); }   // hitmarker: white body / red headshot (source EPlayerHit)
-                    else if (collider is AnimalAgent a && !a.Dead) { SpawnFleshImpact(point, hdir); a.DamageHit(b.Damage * b.FalloffAt(point), point, hdir); Hitmark(b, false); }   // wildlife: flesh spray + body hitmarker (no limb zones)
+                    if (collider is AnimalAgent a && !a.Dead) { SpawnFleshImpact(point, hdir); a.DamageHit(b.Damage * b.FalloffAt(point), point, hdir); Hitmark(b, false); }   // wildlife: flesh spray + body hitmarker (no limb zones)
                     else if (collider is TreeTrunk tt && !tt.Felled) { tt.Chop(b.Damage * b.FalloffAt(point), point, hdir); SpawnSurfaceImpact(point, hit["normal"].AsVector3(), Surf.Wood, tt); }   // chop a tree with gunfire -> wood splinters
                     else if (collider is TargetDummy dummy)
                     {   // playground target: PLAYER damage through the humanoid zones, floating number, hitmarker

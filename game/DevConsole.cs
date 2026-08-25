@@ -66,7 +66,7 @@ namespace UnturnedGodot
 
         LineEdit _input;
         Label _log;
-        static readonly string[] Verbs = { "give", "vehicle", "spawnMagnetableContainer", "spawnheli", "spawntrain", "spawncrane", "spawncraneontrack", "spawncontainerflatbed", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "toggleGlobalPower", "toggleGlobalWater", "toggleBbat", "infFuel", "infAmmo", "wear", "unwear", "fluid", "date", "dateset", "whenBlackout", "triggerGlobalBrownout", "hurtmain", "killmain", "hurttail", "killtail", "profiler", "renderscale", "zshadows", "freezerigs", "vertexlight", "weather", "fridge", "fill", "empty", "units", "simspeed", "time", "timeset", "timeadd", "timespeed", "daylength", "hitbox", "heliphys", "procisland" };
+        static readonly string[] Verbs = { "give", "vehicle", "spawnMagnetableContainer", "spawnheli", "spawntrain", "spawncrane", "spawncraneontrack", "spawncontainerflatbed", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "toggleGlobalPower", "toggleGlobalWater", "toggleBbat", "infFuel", "infAmmo", "wear", "unwear", "fluid", "date", "dateset", "whenBlackout", "triggerGlobalBrownout", "hurtmain", "killmain", "hurttail", "killtail", "profiler", "renderscale", "vertexlight", "weather", "fridge", "fill", "empty", "units", "simspeed", "time", "timeset", "timeadd", "timespeed", "daylength", "hitbox", "heliphys", "procisland" };
         static readonly EItemType[] ClothingTypes = { EItemType.SHIRT, EItemType.PANTS, EItemType.HAT, EItemType.VEST, EItemType.MASK, EItemType.GLASSES, EItemType.BACKPACK };
         readonly System.Collections.Generic.List<string> _history = new();
         int _histIdx;
@@ -227,9 +227,10 @@ namespace UnturnedGodot
                 return;
             }
 
-            // profiler / renderscale / zshadows / freezerigs -- the old F3/F4/F5/F6 dev tools, moved to the
-            // console so the function keys are free for vehicle seats (strawberry 2026-08-16). Above the arg
-            // guard because every one of them is a bare no-arg toggle.
+            // profiler / renderscale -- the old F3/F4 dev tools, moved to the console so the function keys
+            // are free for vehicle seats (strawberry 2026-08-16). Above the arg guard because every one of
+            // them is a bare no-arg toggle. (zshadows/freezerigs -- the old F5/F6 zombie-rig dev tools --
+            // removed with the zombie system.)
             if (verb is "profiler" or "fps")
             {
                 var pr = Profiler.Instance;
@@ -244,20 +245,8 @@ namespace UnturnedGodot
                 Log($"3D render scale -> {pr.CycleRenderScale():0.##}x");
                 return;
             }
-            if (verb == "zshadows")
-            {
-                var pr = Profiler.Instance;
-                if (pr == null) { Log("zshadows: no profiler in this scene"); return; }
-                Log($"zombie rig shadows {(pr.ToggleZombieShadows() ? "ON" : "OFF")}");
-                return;
-            }
-            if (verb is "freezerigs" or "animcut")
-            {
-                var ac = ZombieAnimCut.Instance;
-                if (ac == null) { Log("freezerigs: no anim-cut overlay in this scene"); return; }
-                Log($"rig animation {(ac.ToggleFrozen() ? "FROZEN" : "running")}");
-                return;
-            }
+            // (zshadows / freezerigs+animcut commands removed with the zombie system: they toggled
+            // ZombieDirector's rig shadow casting and ZombieAnimCut's frozen-rig overlay, both gone.)
 
             // infFuel [on|off]  -- dev/playtesting: ALL cars stop burning fuel. ON by DEFAULT (master 2026-07-20);
             // bare form FLIPS it. Handled above the arg guard so the no-arg toggle works. SP-local static, not networked.

@@ -64,33 +64,6 @@ namespace UnturnedGodot.Testing
         }
     }
 
-    public class DoorToggleIsHeard : GameTest
-    {
-        public override string Name => "door.toggle_alerts";
-        public override IEnumerable<Step> Run()
-        {
-            Rigs.Ground(World);
-            var z = new ZombieController();
-            World.AddChild(z);
-            z.GlobalPosition = new Vector3(4f, 0f, 0f);   // well inside the door's alert radius
-            var door = Door.Spawn(World, Vector3.Zero, 0f, owner: 111);
-            yield return Ticks(3);
-
-            var (_, before) = z.DebugHeard();
-            T.Check("the zombie has heard nothing yet", before <= 0f);
-
-            door.TryToggle(111, 0, 100.0);
-            yield return Ticks(1);
-
-            var (pos, salience) = z.DebugHeard();
-            T.Check($"opening a door is heard (salience {salience:0.##})", salience > 0f);
-            // The hinge, not GlobalPosition: the body swings, so its origin moves between the emit and
-            // this read. The doorway is the fixed thing a listener should localise.
-            T.Check($"and it heard the DOORWAY (heard {pos}, hinge {door.DebugHinge})",
-                    pos.DistanceTo(door.DebugHinge) < 0.01f);
-        }
-    }
-
     public class BedClaimSurvivesTheNodeLifecycle : GameTest
     {
         public override string Name => "bed.claim_lifecycle";

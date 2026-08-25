@@ -15,7 +15,6 @@ namespace UnturnedGodot
     {
         // per-map gameplay config. Zombies is REAL (-> PlaySelected); the rest are cosmetic for now.
         int _optDifficulty = 1;   // 0 Easy / 1 Normal / 2 Hard      (dummy)
-        int _optZombies    = 0;   // 0 Normal / 1 No Zombies / 2 New  (REAL)
         int _optLoot       = 1;   // 0 Sparse / 1 Normal / 2 Abundant (dummy)
         int _optDay        = 1;   // 0 Short / 1 Default / 2 Long / 3 Endless Day (dummy)
         int _optCombat     = 0;   // 0 PvE / 1 PvP                    (dummy)
@@ -41,7 +40,6 @@ namespace UnturnedGodot
         public string SelectedMapFolder = "PEI";
 
         static readonly string[] Difficulties = { "Easy", "Normal", "Hard" };
-        static readonly string[] ZombieModes  = { "Normal", "No Zombies", "New Zombies" };
         static readonly string[] LootModes    = { "Sparse", "Normal", "Abundant" };
         static readonly string[] DayModes     = { "Short", "Default", "Long", "Endless Day" };
         static readonly string[] CombatModes  = { "PvE", "PvP" };
@@ -56,7 +54,6 @@ namespace UnturnedGodot
             var cfg = new ConfigFile();
             if (cfg.Load(MapSettingsPath) != Error.Ok) return;   // nothing saved yet -> keep defaults
             _optDifficulty = cfg.GetValue("map", "difficulty", _optDifficulty).AsInt32();
-            _optZombies    = cfg.GetValue("map", "zombies",    _optZombies).AsInt32();
             _optLoot       = cfg.GetValue("map", "loot",       _optLoot).AsInt32();
             _optDay        = cfg.GetValue("map", "day",        _optDay).AsInt32();
             _optCombat     = cfg.GetValue("map", "combat",     _optCombat).AsInt32();
@@ -68,7 +65,6 @@ namespace UnturnedGodot
         {
             var cfg = new ConfigFile();
             cfg.SetValue("map", "difficulty", _optDifficulty);
-            cfg.SetValue("map", "zombies",    _optZombies);
             cfg.SetValue("map", "loot",       _optLoot);
             cfg.SetValue("map", "day",        _optDay);
             cfg.SetValue("map", "combat",     _optCombat);
@@ -212,7 +208,6 @@ namespace UnturnedGodot
             right.AddChild(new HSeparator());
             right.AddChild(Header("GAMEPLAY OPTIONS", 16));
             right.AddChild(OptionRow("Difficulty", Difficulties, _optDifficulty, i => { _optDifficulty = i; SaveMapSettings(); }));
-            right.AddChild(OptionRow("Zombies",    ZombieModes,  _optZombies,    i => { _optZombies = i; SaveMapSettings(); }));   // REAL
             right.AddChild(OptionRow("Loot",       LootModes,    _optLoot,       i => { _optLoot = i; SaveMapSettings(); }));
             right.AddChild(OptionRow("Day Cycle",  DayModes,     _optDay,        i => { _optDay = i; SaveMapSettings(); }));
             right.AddChild(OptionRow("Combat",     CombatModes,  _optCombat,     i => { _optCombat = i; SaveMapSettings(); }));
@@ -367,12 +362,7 @@ namespace UnturnedGodot
                 if (_descLabel != null) _descLabel.Text = _selectedMap + " isn't ported yet — only Prince Edward Island is playable right now.";
                 return;
             }
-            switch (_optZombies)
-            {
-                case 1: OnDrivePEI?.Invoke(true); break;     // No Zombies
-                case 2: OnDriveNewZombies?.Invoke(); break;  // New Zombies (rewrite)
-                default: OnDrivePEI?.Invoke(false); break;   // Normal
-            }
+            OnDrivePEI?.Invoke();
         }
     }
 }

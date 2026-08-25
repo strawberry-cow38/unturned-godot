@@ -62,7 +62,7 @@ namespace UnturnedGodot.Testing
             {
             var task = WorldBuilder.BuildFullWorld(World, WorldMode.Playable,
                 mapRoot: mapRoot, mapPlace: "placements.txt",
-                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+                syncLoad: true, activeHoliday: "NONE");
             yield return Until(() => task.IsCompleted, 30);
             var world = task.Result;
             T.Check("world ready", world.Ready);

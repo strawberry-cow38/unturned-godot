@@ -53,7 +53,7 @@ namespace UnturnedGodot
         public GasStationServer GasStation { get; private set; }     // A2 --spconsume: authoritative per-station fuel tanks (the ExtractFuel choke drains them)
         public WorldItemReplicaView Items { get; private set; }      // P2 --spconsume: server world-item (drop/loot) entities -> local puppets (null unless ConsumeDeployables)
         public StorageReplicaView Storage { get; private set; }      // A1 --spconsume: server container fixtures -> local StoreShelf nodes (null unless ConsumeDeployables; the SP-local SpawnMapContainers is gated off)
-        public ZombieNetSync ZombieSync { get; private set; }
+        // (ZombieSync/ZombieNetSync removed with the zombie system -- see DedicatedServer.cs's matching note.)
         public AnimalNetSync AnimalSync { get; private set; }   // A5: publishes the host's real AnimalAgent brains as replicas (no puppets here -- the host owns them)
         public PlayerAppearanceNetSync AppearanceSync { get; private set; }   // B10: publishes each player's worn clothing + stance into the combat block
         public WorldItemNetSync WorldItemSync { get; private set; }
@@ -212,8 +212,8 @@ namespace UnturnedGodot
                 Client.PlayerDied += e => { if (e.Victim == Client.PlayerId && Player != null && IsInstanceValid(Player)) Player.NetDie(); };
                 Client.PlayerRespawned += e => { if (e.PlayerId == Client.PlayerId && Player != null && IsInstanceValid(Player)) Player.NetRespawn(reposition: true); };
                 // P3b (SP/MP-unify): the loopback host shell is the listen-server's OWN authority (not a follower
-                // body, not a client-auth claim stream), so its LOCAL environmental damage (zombie melee/acid,
-                // blast, fall, OOB) has nowhere to go under P3a's NetVitalsAdopted no-op. Route it to the server
+                // body, not a client-auth claim stream), so its LOCAL environmental damage (blast, fall, OOB --
+                // originally also zombie melee/acid) has nowhere to go under P3a's NetVitalsAdopted no-op. Route it to the server
                 // sink -- the shell's TakeDamage forwards here instead of moving local HP. SINGLE source: the
                 // server does NOT independently derive fall/OOB for the loopback owner (it has no
                 // ServerPlayerAuthority claim stream -- MpLoopback ServerDrives its position directly), so no
@@ -300,14 +300,11 @@ namespace UnturnedGodot
             VehicleSync.RegisterCommands();   // B11: a joined client's tow tie/untie intents apply on the listen-server host's real nodes
             Driver.Sim.Add(new DelegateSimStep((t, dt) => VehicleSync.ReconcileLocalOccupancy(), "net.vehicles.occupancy"));
             Driver.Sim.Add(new DelegateSimStep((t, dt) => Server.TickSimulation(), "net.server.sim"));
-            // Phase 5: the world's real zombie brains publish into ZombieReplication at 12.5 Hz (§3.5) --
-            // every loopback session soaks the zombie wire; the local view renders the brains directly
-            // (no ZombiePuppets here -- puppets are for worlds that don't own the brains).
-            ZombieSync = new ZombieNetSync(Server, this);
-            Driver.Sim.Add(new DelegateSimStep((t, dt) => ZombieSync.Tick(), "net.zombies.publish"));
+            // (Phase 5 zombie-brain publish -> ZombieReplication removed with the zombie system; see the
+            // ZombieSync field note above.)
             // A5: the loopback world's wildlife (AnimalField's real AnimalAgents) publish as replicas too -- every
-            // SP-loopback session soaks the animal wire like the zombie wire. The local view renders the real
-            // brains directly (no AnimalPuppets here -- puppets are for a remote client that doesn't own them).
+            // SP-loopback session soaks the animal wire the same way the world's other entity wires work. The local
+            // view renders the real brains directly (no AnimalPuppets here -- puppets are for a remote client that doesn't own them).
             AnimalSync = new AnimalNetSync(Server, this);
             Driver.Sim.Add(new DelegateSimStep((t, dt) => AnimalSync.Tick(), "net.animals.publish"));
             // B10: publish each player's worn clothing + stance into the combat block so joiners' RemotePlayers
@@ -315,7 +312,7 @@ namespace UnturnedGodot
             AppearanceSync = new PlayerAppearanceNetSync(Server);
             Driver.Sim.Add(new DelegateSimStep((t, dt) => AppearanceSync.Tick(), "net.appearance.publish"));
             // Phase 6: the loopback world's dropped/loot items publish as entities too (§3.3) -- every SP
-            // session soaks the world-item wire the same way it soaks the zombie wire.
+            // session soaks the world-item wire the same way it soaks the other entity wires.
             WorldItemSync = new WorldItemNetSync(Server, this);
             Driver.Sim.Add(new DelegateSimStep((t, dt) => WorldItemSync.Tick(), "net.worlditems.publish"));
             // Phase 7: the loopback world's vehicles publish as entities too (§3.6) -- every SP-loopback

@@ -33,25 +33,21 @@ namespace UnturnedGodot
             SetProcess(false);   // start hidden: _Process is fully DISABLED (not even called) until F3 -> zero cost while off (master)
         }
 
-        // F4/F5 are the two discriminators for the zombie fps tank (docs/ZOMBIE_FPS_NOTES.md). Neither question
-        // can be answered off a counter, and neither can be answered on the ARM box at all -- lavapipe's frame
-        // timing sits on a fixed ~95-160ms floor -- so they have to be answerable in one keypress in the live
+        // F4 is a discriminator for a fill-vs-stall fps tank (originally paired with an F5 zombie-shadow
+        // toggle -- docs/ZOMBIE_FPS_NOTES.md -- removed with the zombie system). Neither question can be
+        // answered off a counter, and neither can be answered on the ARM box at all -- lavapipe's frame
+        // timing sits on a fixed ~95-160ms floor -- so it has to be answerable in one keypress in the live
         // session where the tank actually happens.
         //
         //   F4  3D render scale 1.0 -> 0.5 -> 0.25. Fragment cost scales with pixels and NOTHING else does, so
         //       fps roughly doubling at 0.5 means it is fill (overdraw / shadow-map rasterisation); fps barely
         //       moving means it is not fill, and what is left is a stall.
-        //   F5  zombie shadow casting off. Recovers -> the shadow pass (which is 178 of 303 zombie draws and 75%
-        //       of their triangles, measured). Doesn't -> the zombie render path itself.
-        //
-        // F5 applies to the zombies that exist right now; press it again after a wave spawns.
         float _scale3D = 1f;
-        bool _zShadows = true;
 
-        // Driven by console verbs (`profiler`, `renderscale`, `zshadows`) rather than F3/F4/F5. The function
-        // keys moved to vehicle seat selection (strawberry 2026-08-16: "move the dev tools to be console
-        // commands instead"), and a debug overlay is exactly the sort of thing that should not outrank a
-        // control the player uses while driving.
+        // Driven by console verbs (`profiler`, `renderscale`) rather than F3/F4/F5. The function keys moved
+        // to vehicle seat selection (strawberry 2026-08-16: "move the dev tools to be console commands
+        // instead"), and a debug overlay is exactly the sort of thing that should not outrank a control the
+        // player uses while driving.
         public static Profiler Instance;
 
         /// <summary>Show/hide the overlay. Sampling only runs while it is visible.</summary>
@@ -72,32 +68,9 @@ namespace UnturnedGodot
             return _scale3D;
         }
 
-        /// <summary>Toggle zombie rig shadows. Also drives the REWRITE's rigs, which are not in the "zombies"
-        /// group and so were never toggled by the old key -- it silently did nothing under --newzombies while
-        /// the overlay claimed a state, which reads as "shadows are not the cost" rather than "the control is
-        /// not wired". A debug toggle that no-ops is a false negative generator.</summary>
-        public bool ToggleZombieShadows()
-        {
-            _zShadows = !_zShadows;
-            foreach (var z in GetTree().GetNodesInGroup("zombies")) SetShadows(z, _zShadows);
-            ZombieDirector.Instance?.SetRigShadows(_zShadows);
-            return _zShadows;
-        }
-
-        /// What the zombies are ACTUALLY doing, preferring the live director over this class's own flag.
-        string ShadowState()
-        {
-            var zd = ZombieDirector.Instance;
-            if (zd != null) return zd.RigShadowsOn ? "ON" : "OFF";
-            return _zShadows ? "ON" : "OFF";
-        }
-
-        static void SetShadows(Node root, bool on)
-        {
-            if (root is GeometryInstance3D gi)
-                gi.CastShadow = on ? GeometryInstance3D.ShadowCastingSetting.On : GeometryInstance3D.ShadowCastingSetting.Off;
-            foreach (var c in root.GetChildren()) SetShadows(c, on);
-        }
+        // (zombie rig shadow toggle removed with the zombie system: ToggleZombieShadows/ShadowState/SetShadows
+        // drove ZombieDirector's rig shadow casting and the DevConsole "zshadows" verb that called them; both
+        // are gone now too.)
 
         public override void _Process(double delta)
         {
@@ -128,10 +101,7 @@ namespace UnturnedGodot
                 $"mem: static {M(Performance.Monitor.MemoryStatic) / 1048576.0:0} MB   vram {M(Performance.Monitor.RenderVideoMemUsed) / 1048576.0:0} MB\n" +
                 $"systems (ms/win, big = the spike): {SystemsBreakdown()}\n" +
                 $"counts/win: {CountsBreakdown()}\n" +
-                // Report the rigs' ACTUAL casting state when the rewrite is live, not this toggle's flag.
-                // The flag said "ON" while ZombieDirector.BuildRig had set them Off, and that readout was
-                // acted on as evidence.
-                $"3d scale {_scale3D:0.00} [F4]   zombie shadows {ShadowState()} [F5]   [F3 to hide]";
+                $"3d scale {_scale3D:0.00} [F4]   [F3 to hide]";
             Prof.Reset();
             _accum = 0; _frames = 0; _worstFrame = 0; _procAccum = 0; _physAccum = 0;
             _physFrames0 = (long)Engine.GetPhysicsFrames();
