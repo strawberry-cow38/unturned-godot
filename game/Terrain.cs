@@ -308,6 +308,7 @@ void fragment() {
             }
             catch (System.Exception e) { GD.PushWarning($"[terrain] bad rivers file, ignoring: {e.Message}"); }
             RebuildRiverField();   // the field is derived, so it has to be rebuilt from the recipe on load
+            RebuildRiverWater();
         }
 
         /// <summary>Write the hole mask, bit-packed 8 quads per byte (retail packs the same way). Writes
@@ -581,6 +582,8 @@ void fragment() {
 
             for (int e = 0; e < path.Count - 1; e++) _riverSegs.Add((path[e], path[e + 1], half, depth));
             RebuildRiverField();
+            PaintRiverBed(path, half, RiverMaterial);
+            BuildRiverWater(path, half, depth);
             // NO BED GEOMETRY. The terrain IS the riverbed now -- it is displaced by the U profile rather than
             // cut away and replaced. Every seam this feature has had came from two surfaces meeting; there is
             // one surface now, so there is nothing to meet.
@@ -818,6 +821,145 @@ void fragment() {
 
         Node3D AddOwned(Node3D n) { AddChild(n); return n; }
 
+        Node3D _riverWater;
+
+        /// <summary>Rebuild every river's water from the recipe. The surface is derived like the displacement
+        /// is -- nothing about it is saved -- so a load has to regenerate it or a map opens with carved
+        /// channels and no water in them. Groups chained same-width segments back into runs first, because the
+        /// LEVEL is per-run: feeding segments in one at a time would give each one its own surface and step
+        /// them down the river.</summary>
+        public void RebuildRiverWater()
+        {
+            if (_riverWater != null) { _riverWater.QueueFree(); _riverWater = null; }
+            if (_riverSegs.Count == 0) return;
+            int i = 0;
+            while (i < _riverSegs.Count)
+            {
+                var poly = new System.Collections.Generic.List<Vector3> { _riverSegs[i].a, _riverSegs[i].b };
+                float half = _riverSegs[i].half, depth = _riverSegs[i].depth;
+                int j = i + 1;
+                while (j < _riverSegs.Count && _riverSegs[j].half == half && _riverSegs[j].depth == depth
+                       && _riverSegs[j].a.DistanceSquaredTo(poly[^1]) < 0.0001f)
+                { poly.Add(_riverSegs[j].b); j++; }
+                BuildRiverWater(poly, half, depth);
+                i = j;
+            }
+        }
+
+        /// <summary>A translucent surface spanning bank to bank, plus arrows showing which way it flows.
+        ///
+        /// LEVEL IS FLAT PER RIVER, at the LOWEST bank along the run minus a little freeboard. Water that
+        /// follows the bed is not water, it is wet paint -- a real surface is level, and picking the lowest
+        /// bank is what guarantees it never stands above the ground somewhere along the way. The cost is that a
+        /// river drawn down a hillside pools at the bottom and leaves the top dry, which is the honest result
+        /// of asking for one flat surface over sloping ground; draw it in shorter runs to terrace it.</summary>
+        void BuildRiverWater(System.Collections.Generic.IReadOnlyList<Vector3> path, float half, float depth)
+        {
+            if (path == null || path.Count < 2) return;
+            _riverWater ??= AddOwned(new Node3D { Name = "RiverWater" });
+
+            var pts = BedStations(path, holeRForEnds: 0f);
+            if (pts.Count < 2) return;
+
+            float level = float.MaxValue;
+            for (int i = 0; i < pts.Count; i++)
+            {
+                Vector3 c = pts[i];
+                Vector3 fwd = (i < pts.Count - 1 ? pts[i + 1] - c : c - pts[i - 1]); fwd.Y = 0f;
+                if (fwd.LengthSquared() < 1e-8f) continue;
+                fwd = fwd.Normalized();
+                var r = new Vector3(-fwd.Z, 0f, fwd.X);
+                float bl = SurfaceHeightWorld(c.X - r.X * half, c.Z - r.Z * half);
+                float br = SurfaceHeightWorld(c.X + r.X * half, c.Z + r.Z * half);
+                level = Mathf.Min(level, Mathf.Min(bl, br));
+            }
+            if (level == float.MaxValue) return;
+            level -= depth * 0.08f;   // freeboard: sit just under the lowest bank, never proud of it
+
+            var verts = new System.Collections.Generic.List<Vector3>();
+            var uvs = new System.Collections.Generic.List<Vector2>();
+            float run = 0f;
+            for (int i = 0; i < pts.Count - 1; i++)
+            {
+                Vector3 c0 = pts[i], c1 = pts[i + 1];
+                Vector3 f0 = c1 - c0; f0.Y = 0f;
+                if (f0.LengthSquared() < 1e-8f) continue;
+                float seg = f0.Length();
+                f0 = f0.Normalized();
+                var r0 = new Vector3(-f0.Z, 0f, f0.X);
+                // Slightly INSIDE the bank: the surface should meet the bed under water, not clip through the
+                // bank face where the two are within a few centimetres of each other.
+                float w = half * 0.97f;
+                Vector3 l0 = new Vector3(c0.X - r0.X * w, level, c0.Z - r0.Z * w);
+                Vector3 rr0 = new Vector3(c0.X + r0.X * w, level, c0.Z + r0.Z * w);
+                Vector3 l1 = new Vector3(c1.X - r0.X * w, level, c1.Z - r0.Z * w);
+                Vector3 rr1 = new Vector3(c1.X + r0.X * w, level, c1.Z + r0.Z * w);
+                float v0 = run / (half * 2f), v1 = (run + seg) / (half * 2f);
+                verts.Add(l0); verts.Add(rr0); verts.Add(l1);
+                uvs.Add(new Vector2(0f, v0)); uvs.Add(new Vector2(1f, v0)); uvs.Add(new Vector2(0f, v1));
+                verts.Add(l1); verts.Add(rr0); verts.Add(rr1);
+                uvs.Add(new Vector2(0f, v1)); uvs.Add(new Vector2(1f, v0)); uvs.Add(new Vector2(1f, v1));
+                run += seg;
+            }
+            if (verts.Count < 3) return;
+
+            var arr = new Godot.Collections.Array(); arr.Resize((int)Mesh.ArrayType.Max);
+            arr[(int)Mesh.ArrayType.Vertex] = verts.ToArray();
+            arr[(int)Mesh.ArrayType.TexUV] = uvs.ToArray();
+            var mesh = new ArrayMesh(); mesh.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, arr);
+            var mat = new StandardMaterial3D
+            {
+                AlbedoColor = new Color(0.22f, 0.42f, 0.55f, 0.62f),
+                Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
+                CullMode = BaseMaterial3D.CullModeEnum.Disabled,
+                Metallic = 0.2f, Roughness = 0.12f,
+            };
+            _riverWater.AddChild(new MeshInstance3D { Mesh = mesh, MaterialOverride = mat });
+
+            BuildFlowArrows(pts, level, half);
+        }
+
+        /// <summary>Flow-direction arrows on the surface. Editor-facing: which way a river runs is a property
+        /// you set by drawing it, and until it is drawn on the water there is nothing in the scene that says
+        /// it. Spaced by river WIDTH rather than a fixed distance, so a wide river does not get a dense line of
+        /// them and a narrow one does not get none.</summary>
+        void BuildFlowArrows(System.Collections.Generic.IReadOnlyList<Vector3> pts, float level, float half)
+        {
+            float spacing = Mathf.Max(12f, half * 4f);
+            var mat = new StandardMaterial3D
+            {
+                AlbedoColor = new Color(0.85f, 0.95f, 1f, 0.75f),
+                Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
+                ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
+                CullMode = BaseMaterial3D.CullModeEnum.Disabled,
+            };
+            float acc = spacing;
+            for (int i = 0; i < pts.Count - 1; i++)
+            {
+                Vector3 c0 = pts[i], c1 = pts[i + 1];
+                Vector3 f = c1 - c0; f.Y = 0f;
+                float seg = f.Length();
+                if (seg < 1e-4f) continue;
+                f = f.Normalized();
+                acc += seg;
+                if (acc < spacing) continue;
+                acc = 0f;
+                var r = new Vector3(-f.Z, 0f, f.X);
+                float aLen = Mathf.Min(half * 0.8f, 6f), aWide = aLen * 0.45f;
+                Vector3 mid = new Vector3(c0.X, level + 0.06f, c0.Z);   // just above the surface, or it z-fights
+                var tri = new System.Collections.Generic.List<Vector3>
+                {
+                    mid + f * aLen,                    // tip, pointing DOWNSTREAM
+                    mid - f * aLen * 0.4f + r * aWide,
+                    mid - f * aLen * 0.4f - r * aWide,
+                };
+                var aarr = new Godot.Collections.Array(); aarr.Resize((int)Mesh.ArrayType.Max);
+                aarr[(int)Mesh.ArrayType.Vertex] = tri.ToArray();
+                var am = new ArrayMesh(); am.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, aarr);
+                _riverWater.AddChild(new MeshInstance3D { Mesh = am, MaterialOverride = mat });
+            }
+        }
+
         // RIVER FIELD: signed distance from the channel, per GRID VERTEX. >0 outside, <0 inside, metres.
         //
         // strawberry, after four attempts at hiding the seam: "why arent you modify-blending the terrain tris
@@ -1017,6 +1159,65 @@ void fragment() {
 
         public int RiverSegmentCount => _riverSegs.Count;
 
+        /// <summary>Splat layer painted into the bed, and how far past the bank the overspray reaches as a
+        /// fraction of the blend zone. Layer 5 = Sand by the table on PaintSplat.</summary>
+        public int RiverMaterial = 5;
+        const float RiverOversprayFrac = 0.6f;
+
+        /// <summary>Paint the bed, and fade it out over the bank.
+        ///
+        /// The splat shader is WINNER-TAKE-ALL -- one layer at 1.0 is the material, there is no blend weight to
+        /// ramp -- so a soft edge cannot be painted as a gradient. It is DITHERED instead: past the bank each
+        /// texel is painted with a probability that falls to zero at the overspray limit, which reads as spray
+        /// at any distance you actually look at terrain from. A hard circle would read as a decal.
+        ///
+        /// Deterministic on position, not random: a repaint of the same river must produce the same speckle,
+        /// or every rebuild reshuffles the bank.</summary>
+        public void PaintRiverBed(System.Collections.Generic.IReadOnlyList<Vector3> path, float half, int layer)
+        {
+            if (_dom == null || path == null || path.Count < 2) return;
+            float outer = half * (1f + (RiverBlendFactor - 1f) * RiverOversprayFrac);
+            for (int e = 0; e < path.Count - 1; e++)
+            {
+                Vector3 a = path[e], b = path[e + 1];
+                var d = new Vector2(b.X - a.X, b.Z - a.Z);
+                float len = d.Length();
+                if (len < 0.001f) continue;
+                d /= len;
+                for (float t = 0f; t <= len; t += UNIT * 0.5f)
+                {
+                    float wx = a.X + d.X * t, wz = a.Z + d.Y * t;
+                    int cgx = Mathf.RoundToInt((wx - _bx) / UNIT), cgy = Mathf.RoundToInt((-wz - _bz) / UNIT);
+                    int rg = Mathf.CeilToInt(outer / UNIT) + 1;
+                    for (int gx = System.Math.Max(0, cgx - rg); gx <= System.Math.Min(_dw - 1, cgx + rg); gx++)
+                        for (int gy = System.Math.Max(0, cgy - rg); gy <= System.Math.Min(_dh - 1, cgy + rg); gy++)
+                        {
+                            float px = _bx + gx * UNIT, pz = -(_bz + gy * UNIT);
+                            float dist = new Vector2(px - wx, pz - wz).Length();
+                            if (dist > outer) continue;
+                            if (dist > half)
+                            {
+                                float k = 1f - (dist - half) / Mathf.Max(0.001f, outer - half);   // 1 at the bank -> 0 at the limit
+                                // Hash on the TEXEL, so the same river repaints to the same speckle.
+                                uint h = (uint)(gx * 73856093) ^ (uint)(gy * 19349663);
+                                h ^= h >> 13; h *= 0x5bd1e995u; h ^= h >> 15;
+                                if ((h & 0xFFFF) / 65535f > k * k) continue;
+                            }
+                            PaintTexel(gx, gy, layer);
+                        }
+                }
+            }
+            _s0Tex.Update(_s0Img); _s1Tex.Update(_s1Img);
+        }
+
+        void PaintTexel(int gx, int gy, int layer)
+        {
+            var c0 = new Color(layer == 0 ? 1 : 0, layer == 1 ? 1 : 0, layer == 2 ? 1 : 0, layer == 3 ? 1 : 0);
+            var c1 = new Color(layer == 4 ? 1 : 0, layer == 5 ? 1 : 0, layer == 6 ? 1 : 0, layer == 7 ? 1 : 0);
+            _dom[gx, gy] = (byte)layer;
+            _s0Img.SetPixel(gx, gy, c0); _s1Img.SetPixel(gx, gy, c1);
+        }
+
         /// <summary>How far the bed's flat shelf reaches from the centreline for a given half-width. Exposed so
         /// a probe can compare it against the cut it is meant to cover rather than re-deriving the constants
         /// and agreeing with itself.</summary>
@@ -1060,6 +1261,7 @@ void fragment() {
             _bedMeshes.Clear();
             _bedVerts.Clear();
             _riverCut = null;
+            if (_riverWater != null) { _riverWater.QueueFree(); _riverWater = null; }
 
             int rebuilt = 0;
             int i = 0;
