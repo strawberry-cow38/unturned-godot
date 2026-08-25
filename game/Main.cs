@@ -62,13 +62,25 @@ namespace UnturnedGodot
         System.Collections.Generic.List<(MeshInstance3D body, MeshInstance3D bf, MeshInstance3D bb, float off)> _trUnits;
         float _trS, _trRailY = 1.4f; bool _trAnim;
         readonly System.Collections.Generic.List<(Node3D mark, Vehicle veh, Vector3 local)> _pivotMarks = new();   // --pivots: arrow markers pinned to each coupling point
-        bool _driveTest, _swarm, _drivethru, _nade; PlayerController _dtPlayer;      // --drivetest=DIR [--swarm|--drivethru|--nade] : enter/drive a jeep; swarm = mob it; drivethru = loud drive wakes zombies; nade = grenade the parked car
+        bool _driveTest, _swarm, _drivethru, _nade, _grassTest; PlayerController _dtPlayer;      // --drivetest=DIR [--swarm|--drivethru|--nade] : enter/drive a jeep; swarm = mob it; drivethru = loud drive wakes zombies; nade = grenade the parked car. _grassTest (UG_GRASSTEST=1): a lawn + overhead cam, jeep stays parked -> verify grass displacement
         bool _fireTest; PlayerController _ftPlayer; int _ftFrame;   // --firetest [--supp] : player fires near a distant zombie -> gunshot alert (suppressed = none)
         bool _peiPlay; PlayerController _peiPlayer; int _peiFrame; bool _peiHorde;   // --peiplay [--horde] : drive a jeep on real PEI (--horde = a zombie horde swarms it, vehicle<->zombie loop on real ground)
         int _tpFrame; double _tpPrims, _tpDraws, _tpMs; int _tpN;   // --- UG_TERRPERF terrain cost probe
         PlayerController _pdPlayer; int _pdFireT;   // --peidrive on-foot player -> UG_AUTOFIRE terrain-impact verification
         bool _peiPlayable;   // menu "Drive PEI": BuildObjectsTest spawns a player+jeep with REAL controls instead of the aerial cam
         bool _worldBuild, _worldReady;   // BuildObjectsTest (objects/peidrive) async load -> the --shot harness waits for _worldReady before capturing
+        // --landmarkshot=DIR: after the PEI world loads, fly a camera to a few points at rising distance from the big
+        // landmarks (Lighthouse_0, the Alberton Dock/Harbor) and capture each -> verify the landmark cull extension
+        // (LodTable) actually draws them across the map, past the old 447m region cap.
+        string _lmShotDir; Camera3D _lmCam; int _lmIdx, _lmFrame;
+        static readonly (Vector3 Eye, Vector3 Look, string Tag)[] _lmTour =
+        {
+            (new Vector3(247f, 68f, -650f),  new Vector3(247f, 90f, -793f), "lighthouse_close"),  // Lighthouse_0 WORLD (247,58,-793) -- port NEGATES Z: ~145m, the 51m tower vs the sea
+            (new Vector3(150f, 72f, -700f),  new Vector3(247f, 88f, -793f), "lighthouse_sw"),     // ~135m from the SW
+            (new Vector3(247f, 160f, -380f), new Vector3(247f, 82f, -793f), "lighthouse_420"),    // ~420m -- carries with the fix
+            (new Vector3(247f, 220f, -30f),  new Vector3(247f, 78f, -793f), "lighthouse_780"),    // ~780m across the map
+            (new Vector3(-212f, 55f, -280f), new Vector3(-248f, 46f, -320f), "foliage"),            // Fernwood treed hills for the wind-sway A/B
+        };
         bool _navShot;   // --navshot: nav-debug verify screenshot (waits for load + navmesh overlay + zombie cones)
         bool _navPathTest;   // --navpathtest: after a few frames (nav synced), query the navmesh + report routing
         bool _zombieTest; ZombieField _ztField;   // --zombietest: after a few frames, verify planned pocket spawns land ON the baked navmesh
@@ -198,6 +210,7 @@ namespace UnturnedGodot
                 else if (arg == "--craftmenu") craftmenu = true; // open the CraftingMenu (browsable recipe index) over a stocked bag
                 else if (arg == "--stationtest") { stationtest = true; _shotRequested = shot; }   // line up all 9 crafting-station deployables to eyeball the extracted models
                 else if (arg == "--objects") objects = true;     // place PEI's real Level/Objects.dat objects (fences/props/rocks) on the terrain
+                else if (arg.StartsWith("--landmarkshot=")) _lmShotDir = arg["--landmarkshot=".Length..];   // fly a camera past the big landmarks at range -> verify they render across the map
                 else if (arg == "--peidrive") peidrive = true;    // playable PEI: terrain + all objects/trees + player+jeep with real controls (same as the menu's "Drive PEI")
                 else if (arg.StartsWith("--map="))                // load a DIFFERENT map (e.g. --map="cow tools"): terrain + objects + spawns all follow _mapRoot
                 {
@@ -334,6 +347,14 @@ namespace UnturnedGodot
                 GetWindow().Size = new Vector2I(1280, 720);
                 _shotPath = shot;
                 _peiPlayable = true;
+                BuildObjectsTest();
+                return;
+            }
+
+            if (_lmShotDir != null)   // --landmarkshot: build the real PEI world (no player/zombies), then run the camera tour in _Process
+            {
+                GetWindow().Size = new Vector2I(1280, 720);
+                _noZombies = true;
                 BuildObjectsTest();
                 return;
             }
@@ -1522,6 +1543,38 @@ namespace UnturnedGodot
             ground.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
             AddChild(ground);
 
+            // GRASS-DISPLACEMENT VERIFICATION (master, opt-in UG_GRASSTEST=1): carpet the drive lane with the REAL grass
+            // billboard on the grass_displace material, so the auto-driving jeep + the on-foot player visibly flatten it
+            // -- the chase cam frames the swath. Proves the whole pipeline at once: shader parse, the C# displacer
+            // texture, retail's player point, AND the vehicle texture path. No collider (visual only), so it can't
+            // affect the physics this harness exists to check. Off by default -> a normal --drivetest is unchanged.
+            if (System.Environment.GetEnvironmentVariable("UG_GRASSTEST") == "1")
+            {
+                _grassTest = true;
+                string fdir = ProjectSettings.GlobalizePath("res://content/foliage/");
+                var gblade = ObjMesh.Load(fdir + "grass_00.obj");
+                if (gblade != null)
+                {
+                    GrassDisplacers.EnsureGlobals();   // globals before the grass material (same rule as FoliageField -- else it links them invalid + no displacement)
+                    var gsMat = new ShaderMaterial { Shader = GD.Load<Shader>("res://content/grass_displace.gdshader") };
+                    var gimg = new Image();
+                    if (gimg.Load(fdir + "grass_00_tex.png") == Error.Ok) { gimg.GenerateMipmaps(); gsMat.SetShaderParameter("albedo_tex", ImageTexture.CreateFromImage(gimg)); }
+                    const int side = 110; const float spacing = 0.6f;   // 110x110 blades ~0.6m apart -> a dense ~66m lawn over the whole drive path
+                    var gmm = new MultiMesh { Mesh = gblade, TransformFormat = MultiMesh.TransformFormatEnum.Transform3D, InstanceCount = side * side };
+                    int gi = 0;
+                    for (int gx = 0; gx < side; gx++)
+                        for (int gz = 0; gz < side; gz++)
+                        {
+                            // deterministic jitter + yaw from the indices (no Math.random in a harness -> repeatable frames)
+                            float jx = ((gx * 7 + gz * 13) % 11) * 0.03f, jz = ((gx * 11 + gz * 5) % 11) * 0.03f;
+                            float yaw = ((gx * 37 + gz * 101) % 360) * Mathf.Pi / 180f;
+                            var t = new Transform3D(new Basis(Vector3.Up, yaw).Scaled(Vector3.One * 1.4f), new Vector3((gx - side / 2) * spacing + jx, 0f, (gz - side / 2) * spacing + jz));   // slightly taller tufts so a flattened patch reads at a low angle without occluding
+                            gmm.SetInstanceTransform(gi++, t);
+                        }
+                    AddChild(new MultiMeshInstance3D { Multimesh = gmm, MaterialOverride = gsMat, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off });
+                }
+            }
+
             var jeep = Vehicle.BuildByName("jeep");
             jeep.GlobalPosition = new Vector3(3f, 1.2f, 0f);
             jeep.AddToGroup("vehicles");
@@ -1531,6 +1584,15 @@ namespace UnturnedGodot
             _dtPlayer.LoadGun("res://content/eaglefire.dat");
             AddChild(_dtPlayer);
             _dtPlayer.GlobalPosition = new Vector3(0.8f, 1.0f, 0f);   // right beside the jeep (within enter range)
+
+            if (_grassTest)   // park the player well clear of the jeep so BOTH flattened patches show separately: the player's
+            {                 // retail point (small) AND the jeep's texture-path ring (wide). Frame both from a 3/4 overhead cam,
+                _dtPlayer.GlobalPosition = new Vector3(-5.5f, 1f, 0f);   // created AFTER the player so its Current wins (player cam is made Current once at build, never re-asserted).
+                var gcam = new Camera3D { Fov = 60f, Current = true };   // LOW 3/4 sweep across the lawn (not overhead -- tall grass occludes from above; a low angle shows the parting against the blade silhouette)
+                AddChild(gcam);
+                gcam.GlobalPosition = new Vector3(-9f, 4f, 5.5f);
+                gcam.LookAt(new Vector3(-1f, 0.4f, 0f), Vector3.Up);
+            }
 
             if (_swarm)   // zombies lock onto the on-foot player, then keep hunting as he enters the car + swipe it (source targetPassengerVehicle) -> health drops -> smoke -> explode
             {
@@ -7524,8 +7586,8 @@ namespace UnturnedGodot
                 }
                 if (_driveTest && _dtPlayer != null)
                 {
-                    if (_frame == 25 && !_nade) _dtPlayer.EnterNearestVehicle();                          // hop in (skip for --nade: keep the jeep parked to grenade it)
-                    if (_frame >= 30) _dtPlayer.ScriptedDrive = _swarm ? Vector2.Zero : _drivethru ? new Vector2(0f, 1f) : new Vector2(_frame > 130 ? 0.5f : 0f, 1f);  // swarm: sit still; drivethru: straight full-throttle; else forward then curve
+                    if (_frame == 25 && !_nade && !_grassTest) _dtPlayer.EnterNearestVehicle();             // hop in (skip for --nade: keep the jeep parked to grenade it; grasstest: keep it parked on the lawn)
+                    if (_frame >= 30 && !_grassTest) _dtPlayer.ScriptedDrive = _swarm ? Vector2.Zero : _drivethru ? new Vector2(0f, 1f) : new Vector2(_frame > 130 ? 0.5f : 0f, 1f);  // swarm: sit still; drivethru: straight full-throttle; else forward then curve
                 }
                 if (_rigList.Length > 1)   // montage: switch clip every window
                 {
@@ -7557,6 +7619,23 @@ namespace UnturnedGodot
                 return;
             }
             if (_worldReady && !_treeChecked && System.Environment.GetEnvironmentVariable("UG_TREECHECK") == "1" && ++_treeCheckFrame > 15) { _treeChecked = true; DoTreeCheck(); }
+            // --landmarkshot camera tour: independent of the single-shot _shotPath harness below. One point per settle
+            // window: position the cam, wait ShotSettleFrames for VisibilityRange to recompute at the new pos, capture.
+            if (_lmShotDir != null)
+            {
+                if (!_worldReady) return;
+                if (_lmCam == null) { _lmCam = new Camera3D { Fov = 55f, Far = 3000f, Current = true }; AddChild(_lmCam); }
+                if (_lmIdx >= _lmTour.Length) { GD.Print("[LMSHOT] done"); GetTree().Quit(); return; }
+                var lt = _lmTour[_lmIdx];
+                if (_lmFrame == 0) { _lmCam.GlobalPosition = lt.Eye; _lmCam.LookAt(lt.Look, Vector3.Up); }
+                if (++_lmFrame < ShotSettleFrames) return;
+                var lmimg = GetViewport().GetTexture()?.GetImage();
+                if (lmimg == null) { GD.PrintErr("[LMSHOT] null image -- need --rendering-driver vulkan"); GetTree().Quit(1); return; }
+                lmimg.SavePng($"{_lmShotDir}/{_lmIdx:D2}_{lt.Tag}.png");
+                GD.Print($"[LMSHOT] {lt.Tag} dist~{lt.Eye.DistanceTo(lt.Look):0}m draws={RenderingServer.GetRenderingInfo(RenderingServer.RenderingInfo.TotalDrawCallsInFrame)} objs={RenderingServer.GetRenderingInfo(RenderingServer.RenderingInfo.TotalObjectsInFrame)}");
+                _lmIdx++; _lmFrame = 0;
+                return;
+            }
             if (_shotPath == null) return;
             float _shotTimeTarget = 0f; { var _ste = System.Environment.GetEnvironmentVariable("UG_SHOTTIME"); if (!string.IsNullOrEmpty(_ste)) float.TryParse(_ste, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out _shotTimeTarget); }
             if (_shotTimeTarget > 0f) { _shotElapsed += (float)delta; if (_shotElapsed < _shotTimeTarget) return; }   // UG_SHOTTIME: capture at an ELAPSED-TIME target (real-time frame counts drift off fixed-fps)

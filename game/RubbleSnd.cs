@@ -21,6 +21,12 @@ namespace UnturnedGodot
             return _byId.TryGetValue(id, out stream) && stream != null;
         }
 
+        /// <summary>Front-load the JSON + all break WAVs during the loading screen so the first break doesn't (master).</summary>
+        public static void Warm() => EnsureLoaded();
+
+        /// <summary>Drop the cache (AudioStreams) for ResourceCaches.ClearAll; re-warmed by Warmup.Begin on entry.</summary>
+        public static void Clear() => _byId = null;
+
         static void EnsureLoaded()
         {
             if (_byId != null) return;

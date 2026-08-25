@@ -27,6 +27,22 @@ namespace UnturnedGodot
             return _byId.TryGetValue(id, out fx);
         }
 
+        /// <summary>Front-load the JSON + all break textures during the loading screen so the FIRST prop break
+        /// doesn't parse/crop/mipmap them synchronously (master: hard stutter on the first smash).</summary>
+        public static void Warm() => EnsureLoaded();
+
+        /// <summary>Drop the cache (ImageTextures) for ResourceCaches.ClearAll on the editor->map transition (master:
+        /// no editor state in play mode); the next Warm/TryGet reloads. Re-warmed by Warmup.Begin on map entry.</summary>
+        public static void Clear() => _byId = null;
+
+        /// <summary>Any loaded break texture, for the shader/GPU-upload warm render. Null if none extracted.</summary>
+        public static ImageTexture AnyTex()
+        {
+            EnsureLoaded();
+            foreach (var f in _byId.Values) if (f.Tex != null) return f.Tex;
+            return null;
+        }
+
         static void EnsureLoaded()
         {
             if (_byId != null) return;

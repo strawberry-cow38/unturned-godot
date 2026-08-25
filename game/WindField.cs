@@ -20,12 +20,31 @@ namespace UnturnedGodot
         // 0..1 wind strength at a world position, drifting over time. Remapped so there's usually a light breeze with
         // occasional calms + gusts (the raw Perlin is centred on 0.5).
         public static float? TestWind;   // L1: force a fixed wind (null = live noise). Set + cleared by power.wind_turbine.
+        static bool _envRead;
         public static float SampleWind(Vector3 worldPos)
         {
+            if (!_envRead) { _envRead = true; var e = System.Environment.GetEnvironmentVariable("UG_WIND"); if (float.TryParse(e, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var w)) TestWind = w; }   // UG_WIND=0..1 forces a fixed strength (flag droop / turbine tests)
             if (TestWind.HasValue) return TestWind.Value;
             float t = (float)(Time.GetTicksMsec() / 1000.0);
             float n = Noise().GetNoise2D(worldPos.X + t * DriftX, worldPos.Z + t * DriftZ);   // -1..1
-            return Mathf.Clamp(0.5f + 0.65f * n, 0f, 1f);                                      // -> 0..1, slightly gusty
+            return Mathf.Clamp(0.5f + 0.65f * n, 0f, MaxAmbient);                              // -> 0..MaxAmbient, slightly gusty
         }
+
+        public const float MaxAmbient = 0.8f;      // master: cap the windmap's upper end so flags don't flap like crazy
+
+        public static float? TestAngle;   // L1: force a fixed wind bearing (null = live)
+        // Which way the wind BLOWS, as a bearing in radians in the world XZ plane. The prevailing direction is the
+        // gust-drift bearing; a per-region noise offset (so distant flags differ) + a slow global swing make it shift.
+        public static float WindAngle(Vector3 worldPos)
+        {
+            if (TestAngle.HasValue) return TestAngle.Value;
+            float t = (float)(Time.GetTicksMsec() / 1000.0);
+            float baseAng = Mathf.Atan2(DriftZ, DriftX);                                        // prevailing bearing
+            float region = Noise().GetNoise2D(worldPos.X * 0.5f + 5000f, worldPos.Z * 0.5f + 5000f);   // -1..1, decorrelated from strength
+            return baseAng + region * 0.8f + 0.3f * Mathf.Sin(t * 0.06f);                       // ±~46 deg region swing + a slow global drift
+        }
+
+        // Unit XZ vector the wind blows TOWARD (a flag streams this way from its pole).
+        public static Vector2 WindXZ(Vector3 worldPos) { float a = WindAngle(worldPos); return new Vector2(Mathf.Cos(a), Mathf.Sin(a)); }
     }
 }

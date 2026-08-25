@@ -19,36 +19,72 @@ render_mode world_vertex_coords, cull_disabled, depth_prepass_alpha, diffuse_lam
 // Set by PlayerController via RenderingServer.GlobalShaderParameterSet. xyz = the point, w unused (matches retail's
 // Vector4, whose w is likewise 0).
 global uniform vec4 grass_displacement_point;
+// FOLIAGE WIND (master 2026-08-24): set per-frame by PlayerController from WindField. xy = wind direction, z = 0..1 strength.
+global uniform vec4 wind_vec;
+// EXTENDED DISPLACERS (master 2026-08-24: vehicles, dropped items, remote players -- BEYOND retail's local-player-only
+// point above). PlayerController packs the nearest few into this data texture: one texel each, xyz = world point,
+// w = footprint radius in metres (w <= 0 = an empty slot). grass_displacer_count = how many are live this frame, so
+// the per-blade loop only touches active slots. texelFetch (not texture()) so the packed floats read back exact.
+global uniform sampler2D grass_displacers : filter_nearest;
+global uniform int grass_displacer_count;
 
 uniform sampler2D albedo_tex : source_color, filter_linear_mipmap;
 uniform float alpha_scissor : hint_range(0.0, 1.0) = 0.4;
-uniform float radius : hint_range(0.1, 6.0) = 1.5;        // how far out blades feel you
-uniform float strength : hint_range(0.0, 2.0) = 0.55;     // how far the tip is pushed, in metres
-uniform float vertical_reach : hint_range(0.1, 6.0) = 1.6; // ...and how far up/down, so a roof overhead flattens nothing
+uniform float radius : hint_range(0.1, 8.0) = 3.3;        // how far out blades feel you (master: slightly bigger; matches GrassDisplacers.PlayerWakeRadius so the wake trail is the same width)
+uniform float strength : hint_range(0.0, 5.0) = 1.4;     // how far the tip is pushed aside, in metres
+uniform float vertical_reach : hint_range(0.1, 8.0) = 3.5; // ...and how far up/down, so a roof overhead flattens nothing
+
+// One displacer's offset on this blade: bend the tip away in XZ + press it down, scaled by INFLUENCE (radial +
+// vertical falloff, squared for a soft edge) and the HEIGHT WEIGHT h (base fixed, tip bends most -- a blade hinging
+// at the ground). Factored out so retail's player point and every extended displacer share ONE curve, each sizing
+// its own footprint (pradius) / push (pstrength) / vertical gate (pvert) / flatten (downf).
+vec3 grass_push(vec3 v, float uvy, vec3 point, float pradius, float pstrength, float pvert, float downf) {
+	vec2 away = v.xz - point.xz;
+	float dist = length(away);
+	float infl = clamp(1.0 - dist / pradius, 0.0, 1.0);
+	// Gate vertically too: the point is a position, not a capsule, so this is what stops a car on a bridge (or a
+	// player on a roof) from mowing the lawn underneath.
+	infl *= clamp(1.0 - abs(v.y - point.y) / pvert, 0.0, 1.0);
+	infl *= infl;   // ease in, so the radius edge is a soft boundary, not a visible circle in the grass
+	// HEIGHT WEIGHT. ObjMesh.Load V-flips UVs on import (Unity V-up -> Godot V-down) and grass_00.obj has v=1 at the
+	// blade TOP, so in Godot uvy = 0 is the top. Weighting the wrong end anchors the tips + swings the roots.
+	float h = 1.0 - uvy;
+	h *= h;
+	float push = infl * h * pstrength;
+	if (dist < 0.0001) return vec3(0.0);
+	vec3 o = vec3(0.0);
+	o.xz = (away / dist) * push;   // bent aside...
+	o.y = -push * downf;           // ...and pressed down -- a bent blade is shorter
+	return o;
+}
 
 void vertex() {
-	// world_vertex_coords: VERTEX arrives in WORLD space, so the push can be computed directly. UV is a vertex
-	// attribute and is unaffected by that mode, which is what makes the height weight below still available.
-	vec2 away = VERTEX.xz - grass_displacement_point.xz;
-	float dist = length(away);
-
-	float infl = clamp(1.0 - dist / radius, 0.0, 1.0);
-	// Gate vertically too. Without this, standing on a roof or a second floor mows the lawn underneath -- the point
-	// is a position, not a capsule, so nothing else stops it reaching through a floor.
-	infl *= clamp(1.0 - abs(VERTEX.y - grass_displacement_point.y) / vertical_reach, 0.0, 1.0);
-	infl *= infl;   // ease in, so the edge of the radius is a soft boundary rather than a visible circle in the grass
-
-	// HEIGHT WEIGHT. ObjMesh.Load V-flips UVs on import (Unity V-up -> Godot V-down) and grass_00.obj has v=1 at the
-	// blade TOP, so in Godot UV.y = 0 is the top. Verified against the mesh rather than assumed -- weighting the wrong
-	// end anchors the tips and swings the roots, which reads as the grass being blown from below.
-	float h = 1.0 - UV.y;
-	h *= h;   // the base barely moves; the bend accumulates toward the tip, like a real blade hinging at the ground
-
-	float push = infl * h * strength;
-	if (dist > 0.0001) {
-		VERTEX.xz += (away / dist) * push;
-		VERTEX.y -= push * 0.35;   // pressed down as well as aside -- a blade bent over is shorter
+	// world_vertex_coords: VERTEX arrives in WORLD space, so pushes compute directly. UV is a vertex attribute,
+	// unaffected by that mode, so the height weight stays available. Accumulate every displacer's offset from the
+	// REST position (each measured against the unmodified VERTEX, so they add rather than compound), apply once.
+	vec3 off = vec3(0.0);
+	// LOCAL PLAYER -- retail's single point at (x, y+0.5, z); radius/strength/vertical_reach + the 0.35 flatten
+	// exactly as before, so this path is behaviourally unchanged.
+	off += grass_push(VERTEX, UV.y, grass_displacement_point.xyz, radius, strength, vertical_reach, 1.4);   // strong flatten -- mats the grass DOWN so the trampled patch is unmistakable, not a subtle sideways shuffle
+	// EXTENDED DISPLACERS (master): vehicles, dropped items, remote players. Each texel's w is its footprint radius;
+	// strength / vertical gate / flatten scale UP with radius, so a truck presses a wide hard swath while a dropped
+	// can only dimples. The loop is bounded by the live count, so quiet frames cost nothing.
+	for (int i = 0; i < grass_displacer_count; i++) {
+		vec4 d = texelFetch(grass_displacers, ivec2(i, 0), 0);
+		float pr = d.w;
+		if (pr <= 0.0) continue;
+		float ps = clamp(pr * 0.5, 0.6, 2.4);         // bigger footprint -> stronger bend
+		float pv = max(pr, 3.0);                        // ...reaches higher up/down
+		float pd = clamp(1.0 + pr * 0.2, 1.0, 2.2);    // ...and flattens HARD (a car mats the grass flat, not just parts it)
+		off += grass_push(VERTEX, UV.y, d.xyz, pr, ps, pv, pd);
 	}
+	VERTEX += off;
+	// WIND SWAY (master 2026-08-24): bend the tips in the wind direction with a gust wave crawling over the map.
+	float wh = 1.0 - UV.y;   // 1 at the tip, 0 at the root (same weight as the player push)
+	float gust = sin(TIME * 1.5 + VERTEX.x * 0.25 + VERTEX.z * 0.2);
+	float wbend = wh * (0.10 + 0.35 * wind_vec.z) * (0.65 + 0.35 * gust);
+	VERTEX.xz += wind_vec.xy * wbend;
+	VERTEX.y -= abs(wbend) * 0.15;   // a bent blade sits a touch lower
 }
 
 void fragment() {

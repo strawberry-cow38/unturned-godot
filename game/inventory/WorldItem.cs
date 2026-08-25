@@ -319,6 +319,10 @@ namespace UnturnedGodot
                 Visible = false;
                 CollisionLayer &= ~ItemHitLayer;
             }
+            // GRASS DISPLACEMENT (master): a dropped item resting in grass presses a small dimple. Only the VISIBLE
+            // copy enlists -- a --spconsume-suppressed node hands that off to its WorldItemReplicaView puppet, so the
+            // same item isn't counted twice at one spot.
+            if (!_suppressed) GrassDisplacers.Register(this, GrassDisplacers.ItemRadius);
         }
 
         // look-at focus (PlayerController drives this): rarity glow outline + name billboard on the item you're aiming at

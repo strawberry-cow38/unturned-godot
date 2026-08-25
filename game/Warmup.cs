@@ -86,6 +86,7 @@ namespace UnturnedGodot
             }
             if (_i >= _entries.Count)
             {
+                RubbleFx.Warm(); RubbleSnd.Warm();   // front-load the retail break VFX/SFX so the FIRST prop smash doesn't (master: hard stutter). Re-run on map entry re-warms after ResourceCaches.ClearAll.
                 GD.Print($"[warmup] preloaded {ObjMesh.CachedCount} meshes across {_entries.Count} assets");
                 _onDone?.Invoke();
                 QueueFree();

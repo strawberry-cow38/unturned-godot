@@ -74,6 +74,19 @@ namespace UnturnedGodot
         // modelled, and does not need to be at retail defaults: LandmarkQuality defaults to OFF and
         // LandmarkDistance to 0.0, so SkyboxTreeMaxDistance/SkyboxObjectMaxDistance both evaluate to 0 and
         // landmarkExtraDistance to 0. The billboards are opt-in, not the default experience.
+        //
+        // ...EXCEPT (master 2026-08-24: "do these imposters for everything except small props"): the 447m region cap
+        // culls MEDIUM/LARGE structures that should carry across PEI. We approximate retail's landmarkExtraDistance by
+        // letting every non-SMALL prop draw its LOWEST LOD (the low-poly "imposter") out to a SIZE-SCALED distance past
+        // the region cap -- so a lighthouse/warehouse/bridge/hangar carries far and a counter/haybale does not waste
+        // draws. SMALL props keep their tight region-capped cull. The scale saturates ImposterMaxDistance for the
+        // biggest props (Harbor 100, Ship 67, Lighthouse 51, Bridge 48-50, Hangar 40) while a ~size-14 silo lands ~560m.
+        public const float ImposterDistPerSize = 40f;      // imposter cull distance per unit of bounding-sphere diameter
+        public static float ImposterMaxDistance => Mathf.Max(RegionMaxDistance, 1400f);   // ~PEI-diagonal ceiling
+        // The distance a prop's LOWEST LOD (imposter) still draws to: SMALL stays tight, MEDIUM/LARGE extend by size.
+        static float ImposterCull(Entry e)
+            => e.Layer == "SMALL" ? LayerCull(e.Layer)
+                                  : Mathf.Clamp(e.Size * ImposterDistPerSize, LayerCull(e.Layer), ImposterMaxDistance);
 
         public static void Load(string path)
         {
@@ -117,7 +130,7 @@ namespace UnturnedGodot
         public static float CullDistance(string guid, float fovDeg)
         {
             if (!_byGuid.TryGetValue(guid.ToLowerInvariant(), out var e)) return 0f;
-            float layer = LayerCull(e.Layer);
+            float layer = ImposterCull(e);
             if (e.Heights == null || e.Heights.Length == 0 || e.Size <= 0f) return layer;
             return Mathf.Min(layer, DistanceForHeight(e.Size, e.Heights[e.Heights.Length - 1], fovDeg));
         }
@@ -192,9 +205,10 @@ namespace UnturnedGodot
 
         static (float Begin, float End)[] RangesFor(Entry e, float fovDeg)
         {
-            float layer = LayerCull(e.Layer);
+            float layer = LayerCull(e.Layer);   // region-capped (447 for LARGE): the HIGHER LODs stay near
+            bool imposter = e.Layer != "SMALL";   // master: imposters for everything except small props
             if (e.Heights == null || e.Heights.Length == 0 || e.Size <= 0f)
-                return new[] { (0f, layer) };
+                return new[] { (0f, imposter ? ImposterCull(e) : layer) };
             var r = new (float, float)[e.Heights.Length];
             float prev = 0f;
             for (int i = 0; i < e.Heights.Length; i++)
@@ -205,6 +219,9 @@ namespace UnturnedGodot
                 r[i] = (prev, d);
                 prev = d;
             }
+            // Imposter: carry the LOWEST LOD out to its SIZE-SCALED distance so the prop stays visible across the map,
+            // while the higher LODs stay region-capped -- full detail doesn't draw far, the prop just doesn't vanish.
+            if (imposter) { float imp = ImposterCull(e); if (imp > layer) r[r.Length - 1] = (r[r.Length - 1].Item1, imp); }
             return r;
         }
 

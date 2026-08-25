@@ -49,6 +49,7 @@ namespace UnturnedGodot
                     av = Build();
                     if (av == null) continue;
                     AddChild(av.Body);
+                    GrassDisplacers.Register(av.Body, GrassDisplacers.PlayerRadius);   // master: remote players flatten grass just like the local one (retail's point covers only self)
                     av.Body.Position = target;
                     _avatars[e.OwnerPlayerId] = av;
                 }
