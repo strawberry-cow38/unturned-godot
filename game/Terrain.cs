@@ -938,10 +938,72 @@ void fragment() {
         float RiverCutAt(int gx, int gy) =>
             _riverCut == null ? 0f : _riverCut[Mathf.Clamp(gx, 0, _gw - 1), Mathf.Clamp(gy, 0, _gh - 1)];
 
+        /// <summary>The same displacement, evaluated ANALYTICALLY at any world point rather than read off the
+        /// grid.
+        ///
+        /// strawberry: "its a smooth round bottom rather than a hard U shape". The profile was never the
+        /// problem -- measured, a half-width-8 river on a 4 m grid gets TWO samples between centreline and
+        /// bank, so the mesh can only draw two straight segments and the roundness has nowhere to live. Error
+        /// against the true curve peaks at 0.25 m mid-slope, which is exactly the crease you can see.
+        ///
+        /// So river quads get SUBDIVIDED and their heights come from here, off the real curve, instead of
+        /// being interpolated between grid corners.</summary>
+        public float RiverCutWorld(float worldX, float worldZ)
+        {
+            if (_riverSegs.Count == 0) return 0f;
+            var p = new Vector2(worldX, worldZ);
+            float best = 0f;
+            foreach (var (a, b, half, depth) in _riverSegs)
+            {
+                var A = new Vector2(a.X, a.Z); var B = new Vector2(b.X, b.Z);
+                var ab = B - A;
+                float t = Mathf.Clamp((p - A).Dot(ab) / Mathf.Max(1e-6f, ab.LengthSquared()), 0f, 1f);
+                float d = (p - (A + ab * t)).Length();
+                float blend = half * RiverBlendFactor;
+                if (d >= blend) continue;
+                float rim = depth * RiverBlendDrop;
+                float cut = d <= half
+                    ? rim + (depth - rim) * RiverProfile(d / Mathf.Max(0.001f, half))
+                    : rim * RiverBlendProfile((d - half) / Mathf.Max(0.001f, blend - half));
+                if (cut > best) best = cut;
+            }
+            return best;
+        }
+
+        /// <summary>Sub-quads per grid quad inside a river. 4 puts a vertex every metre on a 4 m grid, which
+        /// takes the worst-case error against the true curve from 0.25 m to under 0.02 m -- and it is applied
+        /// ONLY to quads the river touches, so the rest of the map keeps its cheap geometry.</summary>
+        const int RiverSubdiv = 4;
+
+        /// <summary>Base terrain height at a world point, WITHOUT the river -- bilinear across the same grid
+        /// corners the mesh uses, so a subdivided patch lands exactly on the untouched surface at its edges
+        /// and there is no step where subdivision starts.</summary>
+        float BaseHeightWorld(float worldX, float worldZ)
+        {
+            float fx = (worldX - _bx) / UNIT, fy = (-worldZ - _bz) / UNIT;
+            int xi = Mathf.FloorToInt(fx), yi = Mathf.FloorToInt(fy);
+            float tx = fx - xi, ty = fy - yi;
+            int x0 = Mathf.Clamp(xi, 0, _gw - 1), x1 = Mathf.Clamp(xi + 1, 0, _gw - 1);
+            int y0 = Mathf.Clamp(yi, 0, _gh - 1), y1 = Mathf.Clamp(yi + 1, 0, _gh - 1);
+            float h0 = Mathf.Lerp(_grid[x0, y0], _grid[x1, y0], tx);
+            float h1 = Mathf.Lerp(_grid[x0, y1], _grid[x1, y1], tx);
+            return Mathf.Lerp(h0, h1, ty) * TILE_HEIGHT - TILE_HEIGHT / 2f;
+        }
+
+        /// <summary>Surface height at a world point: base terrain minus the analytic river. The one expression
+        /// the render mesh, the collider and SampleHeight all go through, so they cannot disagree about where
+        /// the ground is.</summary>
+        public float SurfaceHeightWorld(float worldX, float worldZ) =>
+            BaseHeightWorld(worldX, worldZ) - RiverCutWorld(worldX, worldZ);
+
         /// <summary>Does this chunk carry any river displacement? The heightfield collider path hands Jolt
         /// _grid DIRECTLY and so cannot see the cut -- such a chunk would collide with the un-carved surface
         /// while rendering the carved one, i.e. you would walk on the water. Those chunks take the trimesh
         /// path, same as dug holes.</summary>
+        bool QuadHasRiver(int gx, int gy) =>
+            _riverCut != null && (RiverCutAt(gx, gy) > 0f || RiverCutAt(gx + 1, gy) > 0f
+                               || RiverCutAt(gx, gy + 1) > 0f || RiverCutAt(gx + 1, gy + 1) > 0f);
+
         bool ChunkHasRiver(int cxi, int cyi)
         {
             if (_riverCut == null) return false;
@@ -1074,21 +1136,63 @@ void fragment() {
                     float hd = _grid[gx, System.Math.Max(0, gy - 1)], hu = _grid[gx, System.Math.Min(_gh - 1, gy + 1)];
                     norms[i] = new Vector3(-(hr - hl) * TILE_HEIGHT, 2f * UNIT, (hu - hd) * TILE_HEIGHT).Normalized();
                 }
-            var idx = new int[(nx - 1) * (ny - 1) * 6]; int t = 0;
+            // Subdivided river quads need vertices that are not grid corners, so the buffers grow.
+            var vList = new System.Collections.Generic.List<Vector3>(verts);
+            var nList = new System.Collections.Generic.List<Vector3>(norms);
+            var uList = new System.Collections.Generic.List<Vector2>(uvs);
+            var cList = new System.Collections.Generic.List<Color>(cols);
+            var iList = new System.Collections.Generic.List<int>((nx - 1) * (ny - 1) * 6);
+
             for (int lx = 0; lx < nx - 1; lx++)
                 for (int ly = 0; ly < ny - 1; ly++)
                 {
+                    int qgx = x0 + lx, qgy = y0 + ly;
                     // A hole is a quad that emits no triangles. The VERTS stay in the buffer -- dropping them
                     // would renumber every index after them, and the neighbouring quads still reference these
                     // corners. Unreferenced verts cost a few bytes and nothing else.
-                    //
-                    // Rivers do NOT appear here any more: they displace the surface rather than remove it, so
-                    // there is nothing to clip and no boundary to line up with. This is the dug-hole brush only.
-                    if (_anyHoles && IsHole(x0 + lx, y0 + ly)) continue;
+                    if (_anyHoles && IsHole(qgx, qgy)) continue;
                     int i00 = lx * ny + ly, i10 = (lx + 1) * ny + ly, i01 = lx * ny + (ly + 1), i11 = (lx + 1) * ny + (ly + 1);
-                    idx[t++] = i00; idx[t++] = i01; idx[t++] = i10; idx[t++] = i10; idx[t++] = i01; idx[t++] = i11;
+
+                    if (!QuadHasRiver(qgx, qgy))
+                    {
+                        iList.Add(i00); iList.Add(i01); iList.Add(i10);
+                        iList.Add(i10); iList.Add(i01); iList.Add(i11);
+                        continue;
+                    }
+
+                    // SUBDIVIDED, and every sub-vertex takes its height from the analytic curve. The corners
+                    // land on exactly the same points the neighbouring un-subdivided quads use, so there is no
+                    // crack where subdivision starts -- the shared edge is sampled from the same function.
+                    const int S = RiverSubdiv;
+                    int b0 = vList.Count;
+                    for (int sy = 0; sy <= S; sy++)
+                        for (int sx = 0; sx <= S; sx++)
+                        {
+                            float gxf = qgx + sx / (float)S, gyf = qgy + sy / (float)S;
+                            float wx = _bx + gxf * UNIT, wz = -(_bz + gyf * UNIT);
+                            vList.Add(new Vector3(wx, SurfaceHeightWorld(wx, wz), wz));
+                            uList.Add(new Vector2(gxf / (_gw - 1), gyf / (_gh - 1)));
+                            float fx2 = sx / (float)S, fy2 = sy / (float)S;
+                            cList.Add(cols[i00].Lerp(cols[i10], fx2).Lerp(cols[i01].Lerp(cols[i11], fx2), fy2));
+                            // Normal from the surface itself by central difference, so the shading follows the
+                            // carved bed rather than the flat grid it was cut out of.
+                            const float e = 0.5f;
+                            float hl = SurfaceHeightWorld(wx - e, wz), hr = SurfaceHeightWorld(wx + e, wz);
+                            float hd = SurfaceHeightWorld(wx, wz - e), hu = SurfaceHeightWorld(wx, wz + e);
+                            nList.Add(new Vector3(hl - hr, 2f * e, hd - hu).Normalized());
+                        }
+                    for (int sy = 0; sy < S; sy++)
+                        for (int sx = 0; sx < S; sx++)
+                        {
+                            int a0 = b0 + sy * (S + 1) + sx, a1 = a0 + 1;
+                            int a2 = a0 + (S + 1), a3 = a2 + 1;
+                            iList.Add(a0); iList.Add(a2); iList.Add(a1);
+                            iList.Add(a1); iList.Add(a2); iList.Add(a3);
+                        }
                 }
-            if (t != idx.Length) System.Array.Resize(ref idx, t);   // holes shortened it; a trailing run of 0s would draw degenerate tris at vert 0
+
+            verts = vList.ToArray(); norms = nList.ToArray(); uvs = uList.ToArray(); cols = cList.ToArray();
+            var idx = iList.ToArray(); int t = idx.Length;
 
             if (t == 0)   // every quad in this chunk is dug: no surface at all
             {
@@ -1178,6 +1282,30 @@ void fragment() {
                 for (int gy = y0; gy < y1; gy++)
                 {
                     if (IsHole(gx, gy)) continue;
+                    if (QuadHasRiver(gx, gy))
+                    {
+                        // SUBDIVIDED EXACTLY LIKE THE RENDER MESH, off the same SurfaceHeightWorld. Getting
+                        // this wrong is ground you can see but not stand on -- and the coarse version would be
+                        // wrong by up to a quarter of a metre mid-slope, which is a visible hover.
+                        const int S = RiverSubdiv;
+                        var sub = new Vector3[(S + 1) * (S + 1)];
+                        for (int sy = 0; sy <= S; sy++)
+                            for (int sx = 0; sx <= S; sx++)
+                            {
+                                float gxf = gx + sx / (float)S, gyf = gy + sy / (float)S;
+                                float wx = _bx + gxf * UNIT, wz = -(_bz + gyf * UNIT);
+                                sub[sy * (S + 1) + sx] = new Vector3(wx, SurfaceHeightWorld(wx, wz), wz);
+                            }
+                        for (int sy = 0; sy < S; sy++)
+                            for (int sx = 0; sx < S; sx++)
+                            {
+                                Vector3 s00 = sub[sy * (S + 1) + sx], s10 = sub[sy * (S + 1) + sx + 1];
+                                Vector3 s01 = sub[(sy + 1) * (S + 1) + sx], s11 = sub[(sy + 1) * (S + 1) + sx + 1];
+                                tris.Add(s00); tris.Add(s01); tris.Add(s10);
+                                tris.Add(s10); tris.Add(s01); tris.Add(s11);
+                            }
+                        continue;
+                    }
                     Vector3 V(int ax, int ay) => new Vector3(
                         _bx + ax * UNIT,
                         _grid[ax, ay] * TILE_HEIGHT - TILE_HEIGHT / 2f - RiverCutAt(ax, ay),   // identical to the mesh vert expression, river included
@@ -1237,9 +1365,10 @@ void fragment() {
             // ...minus the river, bilinear through the same corners. Everything that follows the ground -- road
             // splines, prop placement, the editor's own preview -- reads this, and a river the surface knows
             // about but SampleHeight does not is a river props stand over in mid-air.
-            float c0 = Mathf.Lerp(RiverCutAt(x0, y0), RiverCutAt(x1, y0), tx);
-            float c1 = Mathf.Lerp(RiverCutAt(x0, y1), RiverCutAt(x1, y1), tx);
-            return Mathf.Lerp(h0, h1, ty) * TILE_HEIGHT - TILE_HEIGHT / 2f - Mathf.Lerp(c0, c1, ty);
+            // The river comes off the ANALYTIC curve, not off interpolated grid samples -- the mesh is
+            // subdivided inside a river, so a SampleHeight that read the coarse grid would disagree with the
+            // ground the player is standing on by up to a quarter of a metre mid-slope.
+            return Mathf.Lerp(h0, h1, ty) * TILE_HEIGHT - TILE_HEIGHT / 2f - RiverCutWorld(worldX, worldZ);
         }
         // dominant splatmap layer at a world point (2=grass, 0/7=forest, 1=sand, 3=road, 4=rock, 5=water, 6=dirt); 255 = no splats
         public byte SampleDominantLayer(float worldX, float worldZ)
