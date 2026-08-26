@@ -141,6 +141,23 @@ namespace UnturnedGodot.Testing
                 T.Check("a foliage stroke that touched nothing returns null", field.EndFoliageStroke() == null);
             }
             field.QueueFree();
+            yield return Ticks(1);
+
+            // ---- 7. THE DIRTY CONTRACT. Autosave only fires when IsDirty, so anything that changes saved state
+            // without setting it is silently excluded -- and dirty-tracking rides on PushUndo, which means the
+            // one tool that mutates saved state WITHOUT an undo step (environment: time, overcast) is exactly
+            // the one that can slip through. Found on a second pass, after I had already shipped the flag.
+            var ed = new Editor();
+            World.AddChild(ed);
+            T.Check("a fresh session is not dirty", !ed.IsDirty);
+            ed.PushUndo("x", () => { });
+            T.Check("any undoable action marks the session dirty", ed.IsDirty);
+            ed.Save();
+            T.Check("saving clears it", !ed.IsDirty);
+            T.Check($"...and resets the age ({ed.SecondsSinceSave:0.00}s)", ed.SecondsSinceSave < 0.5);
+            ed.MarkDirty();
+            T.Check("MarkDirty works without an undo step, which is the environment tool's only route", ed.IsDirty);
+            ed.QueueFree();
             yield break;
         }
     }
