@@ -18,7 +18,8 @@ namespace UnturnedGodot
         EditorRoadsPanel _roadsPanel;       // the road/rail AND river tool buttons (shown only in Environment mode)
         EditorBuildingsPanel _buildPanel;   // the Level-tab building tool (shares the tab with the browser)
         readonly Dictionary<EEditorMode, Button> _tabs = new();
-        Label _toast; double _toastT;                       // transient centered message (source EditorUI.message / EEditorMessage)
+        Label _toast; double _toastT;
+        Button _exitBtn; bool _exitArmed; double _exitArmT;   // two-step exit while there is unsaved work                       // transient centered message (source EditorUI.message / EEditorMessage)
         Control _pause;                                     // ESC pause overlay (source EditorPauseUI, slim: Resume/Save/Exit)
         bool _visObjects = true, _visRoads = true, _visFoliage = true;   // F1/F2/F3 level-visibility toggles (source EditorLevelVisibilityUI)
         Label _hover;                                       // object-under-cursor readout (source EditorObjects hover hint)
@@ -51,7 +52,22 @@ namespace UnturnedGodot
             save.Pressed += () => Editor?.Save();
             right.AddChild(save);
             var exit = new Button { Text = "Exit", CustomMinimumSize = new Vector2(90f, 40f) };
-            exit.Pressed += () => OnExit?.Invoke();
+            // TWO-STEP EXIT WHEN DIRTY. Leaving on a single click with unsaved work is the most common way an
+            // afternoon disappears, and it is silent. The first press arms and says what is at stake; the
+            // second within 4s leaves anyway, so this costs a deliberate quitter one extra click and never
+            // blocks them. Not a modal: a modal here would need focus handling the rest of this UI does not do.
+            exit.Pressed += () =>
+            {
+                if (Editor != null && Editor.WouldLoseWork && !_exitArmed)
+                {
+                    _exitArmed = true; _exitArmT = 4.0;
+                    exit.Text = "Exit anyway?";
+                    ShowMessage($"Unsaved changes ({Editor.SecondsSinceSave:0}s). Ctrl+S to save, or press Exit again to discard.", 4.0);
+                    return;
+                }
+                OnExit?.Invoke();
+            };
+            _exitBtn = exit;
             right.AddChild(exit);
 
             // bottom-left: status + controls help
@@ -164,6 +180,7 @@ namespace UnturnedGodot
         public override void _Process(double delta)
         {
             if (_toast != null && _toast.Visible) { _toastT -= delta; if (_toastT <= 0.0) _toast.Visible = false; }   // expire the message toast
+            if (_exitArmed) { _exitArmT -= delta; if (_exitArmT <= 0.0) { _exitArmed = false; if (_exitBtn != null) _exitBtn.Text = "Exit"; } }   // disarm, so a stale arm cannot swallow a later deliberate click
             if (_hover != null) { var hn = Editor?.Objects?.HoverName; _hover.Visible = !string.IsNullOrEmpty(hn); _hover.Text = hn; }   // object-under-cursor readout
             if (Editor == null || _status == null) return;
             float spd = Editor.Camera?.Speed ?? 0f;
@@ -176,7 +193,17 @@ namespace UnturnedGodot
             string spawn = Editor.Mode == EEditorMode.Spawns && Editor.Spawns != null ? $"   ·   Tab category · 1=add 2=remove · {Editor.Spawns.ModeText} · ,/. rot · [/] radius · V alt · T type · {Editor.Spawns.Count} spawns" : "";
             string envs = Editor.Mode == EEditorMode.Environment && Editor.Environment != null ? $"   ·   ,/. time · O overcast · {Editor.Environment.ModeText}{(Editor.RoadDrawEd != null ? $"   ·   {Editor.RoadDrawEd.ModeText}" : "")}{(Editor.RoadsEd is { Paving: true } ? $"   ·   {Editor.RoadsEd.ModeText}" : "")}{(Editor.RiverEd != null ? $"   ·   {Editor.RiverEd.ModeText}" : "")}" : "";
             string terr = Editor.Mode == EEditorMode.Terrain && Editor.TerrainEd != null ? $"   ·   LMB raise · Shift+LMB lower · [/] radius · ,/. strength · {Editor.TerrainEd.ModeText}" : "";
-            _status.Text = $"{Editor.Mode}   ·   RMB fly · WASD · E/Q up-down · scroll = speed (×{spd:0}){obj}{build}{spawn}{envs}{terr}   ·   map: {Editor.MapName}";
+            // UNSAVED indicator. Nothing used to tell you there were unsaved changes, so the only way to find
+            // out was to lose them. Shows the AGE of the unsaved work, not just a dot -- "unsaved" alone is easy
+            // to stop seeing, whereas a number that keeps climbing is not.
+            string save = Editor.IsDirty
+                ? $"   ·   ● UNSAVED {Editor.SecondsSinceSave:0}s (Ctrl+S)"
+                : $"   ·   {Editor.LastSaveLabel}";
+            _status.Text = $"{Editor.Mode}   ·   RMB fly · WASD · E/Q up-down · scroll = speed (×{spd:0}){obj}{build}{spawn}{envs}{terr}   ·   map: {Editor.MapName}{save}";
+            if (_status != null)
+                _status.AddThemeColorOverride("font_color", Editor.IsDirty
+                    ? new Color(1f, 0.82f, 0.35f)        // amber while unsaved
+                    : new Color(0.9f, 0.95f, 0.9f));
         }
     }
 }

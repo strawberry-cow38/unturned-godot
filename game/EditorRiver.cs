@@ -19,9 +19,11 @@ namespace UnturnedGodot
     // MUTUALLY EXCLUSIVE with the two road tools, enforced by the panel: all three bind LMB on the terrain, so
     // two live at once means one click does two things.
     //
-    // NO UNDO, deliberately, and this is a real gap rather than an oversight: EditorTerrain has no undo either
-    // (Editor.PushUndo exists, nothing in terrain calls it), and a heightmap snapshot per carve is a different
-    // piece of work than moving a tool between tabs. Flagged rather than half-built.
+    // UNDO (added 2026-08-26, strawberry). The old comment here said river undo needed "a heightmap snapshot
+    // per carve" and deferred it as too expensive. That stopped being true when rivers became DISPLACEMENT
+    // rather than baked geometry: the ground is re-derived from the anchors every regenerate, so undoing a
+    // river only has to restore the anchor list -- a handful of Vector3s, not a heightmap. Terrain.Snapshot-
+    // Rivers/RestoreRivers do exactly that, and every mutating action here goes through SnapUndo first.
     public partial class EditorRiver : Node3D
     {
         readonly Editor _editor;
@@ -84,6 +86,15 @@ namespace UnturnedGodot
         /// geometry verbatim on load -- deliberately, it is what makes loading cheap -- so a fix to the carve
         /// never reaches a river that already exists. This is the migration button for exactly that.</summary>
         public int RebuildExisting() => _terr?.RebuildRiversFromRecipe() ?? 0;
+
+        /// <summary>Snapshot every river and register the restore as one undo step. Call BEFORE mutating.
+        /// Cheap: see Terrain.SnapshotRivers.</summary>
+        void SnapUndo(string label)
+        {
+            if (_terr == null) return;
+            var snap = _terr.SnapshotRivers();
+            _editor?.PushUndo(label, () => { _terr.RestoreRivers(snap); BuildHandles(); });
+        }
 
         public string ModeText => !_carving
             ? "V carve river"
@@ -229,6 +240,7 @@ namespace UnturnedGodot
                 {
                     // COMMIT ON RELEASE. Moving an anchor re-derives the displacement, the paint, the water and
                     // every affected chunk; doing that per mouse-move would rebuild the terrain 60x a second.
+                    SnapUndo("move river anchor");
                     _terr?.MoveRiverAnchor(_dragRiver, _dragAnchor, _dragTo);
                     _dragRiver = -1;
                     BuildHandles();
@@ -285,6 +297,7 @@ namespace UnturnedGodot
         {
             if (_terr != null && _anchors.Count >= 2)
             {
+                SnapUndo("carve river");
                 _terr.CarveRiverPath(_anchors, _halfWidth, _depth);
                 BuildHandles();
                 GD.Print($"[river] carved {_anchors.Count} anchors, half-width {_halfWidth:0.#}m, depth {_depth:0.#}m -> {_terr.RiverSegmentCount} segments total");

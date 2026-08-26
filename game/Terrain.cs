@@ -142,6 +142,7 @@ void fragment() {
             if (!dug && !_anyHoles) return false;              // filling a map with no holes: nothing to do
             _holes ??= new bool[_gw - 1, _gh - 1];
             if (_holes[gx, gy] == dug) return false;
+            JournalHole(gx, gy);
             _holes[gx, gy] = dug;
             if (dug) _anyHoles = true;
             return true;
@@ -213,6 +214,7 @@ void fragment() {
                     float dist = Mathf.Sqrt(dx * dx + dy * dy);
                     if (dist > radiusWorld) continue;
                     float falloff = BrushAlpha(dist / radiusWorld);   // source linear falloff (getBrushAlpha)
+                    JournalH(gx, gy);
                     _grid[gx, gy] = Mathf.Clamp(_grid[gx, gy] + dNorm * falloff, 0f, 1f);
                 }
             _dirty = true;
@@ -480,6 +482,7 @@ void fragment() {
                     float dx = (gx - cx) * UNIT, dy = (gy - cy) * UNIT; float dist = Mathf.Sqrt(dx * dx + dy * dy);
                     if (dist > radiusWorld) continue;
                     float f = BrushAlpha(dist / radiusWorld);   // source linear falloff
+                    JournalH(gx, gy);
                     _grid[gx, gy] = Mathf.Lerp(_grid[gx, gy], target, Mathf.Clamp(strength * f, 0f, 1f));
                 }
             _dirty = true; RebuildChunksIn(cgx - rg, cgx + rg, cgy - rg, cgy + rg);
@@ -501,7 +504,7 @@ void fragment() {
                     float avg = (_grid[gx - 1, gy] + _grid[gx + 1, gy] + _grid[gx, gy - 1] + _grid[gx, gy + 1]) * 0.25f;
                     next.Add((gx, gy, Mathf.Lerp(_grid[gx, gy], avg, Mathf.Clamp(strength * f, 0f, 1f))));
                 }
-            foreach (var (gx, gy, nv) in next) _grid[gx, gy] = nv;
+            foreach (var (gx, gy, nv) in next) { JournalH(gx, gy); _grid[gx, gy] = nv; }
             _dirty = true; RebuildChunksIn(cgx - rg, cgx + rg, cgy - rg, cgy + rg);
         }
 
@@ -560,7 +563,85 @@ void fragment() {
             _dirty = true;
             RebuildAll();
         }
+        // ---- SCULPT UNDO JOURNAL ----
+        // Terrain brushes are held-drag and apply per FRAME, so undo has to be per STROKE or one Ctrl+Z would
+        // rewind a single frame of a drag. Heightmap writes are scattered across five call sites with no single
+        // choke point, so instead of a whole-grid snapshot (megabytes per step) each write site records the
+        // cell's ORIGINAL value the first time that cell is touched in a stroke. Only touched cells are stored,
+        // first write wins, and when no stroke is recording every one of these calls is a null check.
+        System.Collections.Generic.Dictionary<(int, int), float> _strokeH;
+        System.Collections.Generic.Dictionary<(int, int), bool> _strokeHole;
+
+        public void BeginSculptStroke()
+        {
+            _strokeH = new System.Collections.Generic.Dictionary<(int, int), float>();
+            _strokeHole = new System.Collections.Generic.Dictionary<(int, int), bool>();
+        }
+
+        /// <summary>Close the stroke and return an action that puts every touched cell back, or null when the
+        /// stroke changed nothing -- the caller uses null to avoid pushing an undo step that does nothing, which
+        /// is the bug where Ctrl+Z appears to be ignored because it silently consumed an empty step.</summary>
+        public System.Action EndSculptStroke()
+        {
+            var h = _strokeH; var hole = _strokeHole;
+            _strokeH = null; _strokeHole = null;
+            if ((h == null || h.Count == 0) && (hole == null || hole.Count == 0)) return null;
+            return () =>
+            {
+                if (h != null) foreach (var kv in h) _grid[kv.Key.Item1, kv.Key.Item2] = kv.Value;
+                if (hole != null && _holes != null)
+                {
+                    foreach (var kv in hole) _holes[kv.Key.Item1, kv.Key.Item2] = kv.Value;
+                    _anyHoles = false;
+                    for (int x = 0; x < _gw - 1 && !_anyHoles; x++)
+                        for (int y = 0; y < _gh - 1 && !_anyHoles; y++) if (_holes[x, y]) _anyHoles = true;
+                }
+                _dirty = true;
+                RebuildAll();
+                FlushColliders();
+            };
+        }
+
+        void JournalH(int gx, int gy)
+        {
+            if (_strokeH == null) return;
+            var k = (gx, gy);
+            if (!_strokeH.ContainsKey(k)) _strokeH[k] = _grid[gx, gy];
+        }
+        void JournalHole(int gx, int gy)
+        {
+            if (_strokeHole == null || _holes == null) return;
+            var k = (gx, gy);
+            if (!_strokeHole.ContainsKey(k)) _strokeHole[k] = _holes[gx, gy];
+        }
+
         public System.Collections.Generic.IReadOnlyList<River> Rivers => _rivers;
+
+        /// <summary>Deep-copy every river, for undo. This is CHEAP -- a river is a handful of anchors plus
+        /// three numbers, not a heightmap -- and it is cheap specifically because the displacement is derived
+        /// from the anchors rather than baked into the grid (see RemoveRiver). The editor comment that called
+        /// river undo "a heightmap snapshot per carve" predates that change and is no longer true.</summary>
+        public System.Collections.Generic.List<River> SnapshotRivers()
+        {
+            var copy = new System.Collections.Generic.List<River>(_rivers.Count);
+            foreach (var r in _rivers)
+            {
+                var c = new River { Half = r.Half, Depth = r.Depth, Material = r.Material };
+                c.Anchors.AddRange(r.Anchors);   // Vector3 is a value type, so this is a real copy
+                copy.Add(c);
+            }
+            return copy;
+        }
+
+        /// <summary>Replace every river with a snapshot and rebuild. Restores the ground exactly, for the same
+        /// reason RemoveRiver does.</summary>
+        public void RestoreRivers(System.Collections.Generic.List<River> snap)
+        {
+            if (snap == null) return;
+            _rivers.Clear();
+            _rivers.AddRange(snap);
+            RegenerateRivers();
+        }
 
         /// <summary>Every river's centreline, sampled. Rebuilt on demand rather than cached, because it is
         /// cheap next to what consumes it and a cache here would be a third thing to invalidate when an anchor
@@ -1379,7 +1460,7 @@ void fragment() {
                     float wx = _bx + gx * UNIT, wz = -(_bz + gy * UNIT);
                     var wo = new Vector2(wx - begin.X, wz - begin.Z);
                     float wMag = wo.Length();
-                    if (wMag < 0.001f) { _grid[gx, gy] = Mathf.Clamp(Mathf.Lerp(_grid[gx, gy], beginH, 1f), 0f, 1f); continue; }
+                    if (wMag < 0.001f) { JournalH(gx, gy); _grid[gx, gy] = Mathf.Clamp(Mathf.Lerp(_grid[gx, gy], beginH, 1f), 0f, 1f); continue; }
                     var wDir = wo / wMag;
                     float alongAlign = wDir.Dot(rampDir);
                     if (alongAlign < 0f) continue;                                   // behind the ramp begin
@@ -1389,6 +1470,7 @@ void fragment() {
                     if (crossDist > 1f) continue;                                    // outside the corridor
                     float alpha = BrushAlpha(crossDist);
                     float target = Mathf.Lerp(beginH, endH, alongDist);
+                    JournalH(gx, gy);
                     _grid[gx, gy] = Mathf.Clamp(Mathf.Lerp(_grid[gx, gy], target, alpha), 0f, 1f);
                 }
             _dirty = true; RebuildChunksIn(gx0, gx1, gy0, gy1); FlushColliders();

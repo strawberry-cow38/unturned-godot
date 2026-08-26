@@ -50,12 +50,45 @@ namespace UnturnedGodot
             Instance = this; MapName = mapName; World = world; Camera = cam;
         }
 
+        // ---- UNSAVED-WORK TRACKING + AUTOSAVE ----
+        // Before this, the editor had NO dirty flag and NO autosave: save was Ctrl+S only, nothing told you
+        // there were unsaved changes, and nothing stopped you quitting on top of them. Combined with terrain
+        // and rivers having no undo, one crash or one absent-minded quit cost the whole session.
+        //
+        // Autosaving is safe here specifically because the editor never writes the SOURCE map -- every
+        // sub-editor persists to its own `editor_<map>_*` overlay (see EditorTerrain.SavePath), which is also
+        // what it loads on open. So a timed Save() can only overwrite the editor's own working copy.
+        public bool IsDirty { get; private set; }
+        public double SecondsSinceSave { get; private set; }
+        public const double AutosaveEvery = 120.0;         // 2 min of unsaved work is the most this can cost you
+        public string LastSaveLabel { get; private set; } = "not saved yet";
+        double _autosaveTimer;
+
+        /// <summary>Mark the session as having unsaved changes. Called from PushUndo so every reversible action
+        /// is covered automatically, and directly by the tools that change state WITHOUT an undo step.</summary>
+        public void MarkDirty()
+        {
+            IsDirty = true;
+        }
+
+        public override void _Process(double delta)
+        {
+            SecondsSinceSave += delta;
+            if (!IsDirty) { _autosaveTimer = 0.0; return; }
+            _autosaveTimer += delta;
+            if (_autosaveTimer < AutosaveEvery) return;
+            _autosaveTimer = 0.0;
+            Save(autosave: true);
+        }
+
         // Undo stack (source EditorInteract Ctrl+Z). Each reversible action pushes a label + a closure that undoes it;
         // Ctrl+Z pops + runs the newest. General so every sub-editor can register (objects wired first).
         readonly System.Collections.Generic.List<(string label, System.Action undo)> _history = new();
         public void PushUndo(string label, System.Action undo)
         {
             _history.Add((label, undo));
+            MarkDirty();   // every reversible action is by definition a change -- one choke point, so a new tool
+                           // that pushes undo gets dirty-tracking without having to remember to ask for it
             if (_history.Count > 256) _history.RemoveAt(0);   // cap the stack
         }
         /// <summary>Discard the newest undo step WITHOUT running it -- for an action that undid itself, like a
@@ -72,6 +105,7 @@ namespace UnturnedGodot
             var e = _history[^1];
             _history.RemoveAt(_history.Count - 1);
             e.undo();
+            MarkDirty();   // undoing is itself a change against what is on disk
             GD.Print($"[editor] undo: {e.label} ({_history.Count} left)");
             return true;
         }
@@ -91,7 +125,7 @@ namespace UnturnedGodot
 
         // source Editor.save() -> EditorInteract.save() + EditorObjects.save() + EditorSpawns.save().
         // wired per-phase as the sub-editors land; Phase 1 has nothing persistent yet.
-        public void Save()   // source Editor.save() -> fans out to the sub-editors
+        public void Save(bool autosave = false)   // source Editor.save() -> fans out to the sub-editors
         {
             int n = Objects?.Save() ?? 0;
             int s = Spawns?.Save() ?? 0;
@@ -99,7 +133,17 @@ namespace UnturnedGodot
             int t = TerrainEd?.Save() ?? 0;
             int r = RoadsEd?.Save() ?? 0;
             int b2 = Buildings?.Save() ?? 0;
-            GD.Print($"[editor] saved '{MapName}' ({n} props, {s} spawns, {e} env, {t} terrain, {r} roads, {b2} walls)");
+            IsDirty = false; SecondsSinceSave = 0.0;
+            LastSaveLabel = autosave ? "autosaved" : "saved";
+            GD.Print($"[editor] {(autosave ? "AUTOsaved" : "saved")} '{MapName}' ({n} props, {s} spawns, {e} env, {t} terrain, {r} roads, {b2} walls)");
+            EmitSignal(SignalName.Saved, autosave);
         }
+
+        [Signal] public delegate void SavedEventHandler(bool autosave);
+
+        /// <summary>True when quitting now would lose work. The caller decides what to do about it -- the
+        /// dashboard asks, headless callers can just check. Kept as a query rather than a dialog so this class
+        /// stays free of UI.</summary>
+        public bool WouldLoseWork => IsDirty;
     }
 }

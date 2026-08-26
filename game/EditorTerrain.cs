@@ -126,6 +126,15 @@ namespace UnturnedGodot
             }
         }
 
+        /// <summary>Close the sculpt journal and register it as one undo step. Pushes NOTHING when the stroke
+        /// touched no cells -- a click that missed the terrain would otherwise leave an empty step on the stack,
+        /// and the next Ctrl+Z would silently consume it and appear to do nothing.</summary>
+        void PushSculptUndo(string label)
+        {
+            var restore = _terr?.EndSculptStroke();
+            if (restore != null) _editor?.PushUndo(label, restore);
+        }
+
         public override void _UnhandledInput(InputEvent ev)
         {
             if (_editor.Mode != EEditorMode.Terrain || (_flyCam != null && _flyCam.Flying) || _terr == null) return;
@@ -134,9 +143,25 @@ namespace UnturnedGodot
                 if (mb.Pressed && _brush == EBrush.Ramp && !_paint && !Editor.PointerOverUI(this) && RaycastTerrain(GetViewport().GetMousePosition(), out var rp))
                 {
                     if (!_rampArmed) { _rampBegin = rp; _rampArmed = true; _rampMarker.Position = rp + Vector3.Up * 0.5f; _rampMarker.Visible = true; }   // first click: begin
-                    else { _terr.EditRamp(_rampBegin, rp, _radius); _rampArmed = false; _rampMarker.Visible = false; }                                     // second click: grade begin->end
+                    else
+                    {
+                        // A ramp is one click-pair, not a drag, so its stroke opens and closes right here.
+                        _terr.BeginSculptStroke();
+                        _terr.EditRamp(_rampBegin, rp, _radius);
+                        PushSculptUndo("ramp");
+                        _rampArmed = false; _rampMarker.Visible = false;
+                    }
                 }
-                else if (!mb.Pressed && !_paint && _brush != EBrush.Ramp) _terr.FlushColliders();   // held-drag stroke end: rebuild the touched chunks' colliders
+                // UNDO IS PER STROKE, not per frame. The brushes apply every frame while held, so opening the
+                // journal on PRESS and closing it on RELEASE makes one Ctrl+Z rewind the whole drag -- which is
+                // what a person means by "undo that". Paint strokes are excluded: they write the splat map, not
+                // the heightmap, and the journal only covers heights and holes.
+                else if (mb.Pressed && !_paint && _brush != EBrush.Ramp && !Editor.PointerOverUI(this)) _terr.BeginSculptStroke();
+                else if (!mb.Pressed && !_paint && _brush != EBrush.Ramp)
+                {
+                    PushSculptUndo(BrushNames[(int)_brush].ToLowerInvariant());
+                    _terr.FlushColliders();   // held-drag stroke end: rebuild the touched chunks' colliders
+                }
             }
             else if (ev is InputEventKey { Pressed: true, Echo: false } k)   // keyboard shortcuts (buttons are the primary UI now)
             {
