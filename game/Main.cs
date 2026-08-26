@@ -2120,7 +2120,7 @@ namespace UnturnedGodot
             AddChild(zf);
             _zpTarget = new Vector3(11f, 0f, 0f);
             zf.DebugAnchor = _zpTarget;
-            zf.DebugSeed(new Vector3(-11f, 0f, 0f), 18, spread: 8f);   // cluster on the far side of the wall from the target
+            zf.DebugSeed(new Vector3(-12f, 0f, 0f), 18, spread: 12f);   // spread across the wall's height so the field FORKS them -- upper half round the top end, lower half the bottom
             _zpf = zf;
 
             var am = new MeshInstance3D { Mesh = new SphereMesh { Radius = 0.6f, Height = 1.8f } };   // green = target (other side of the wall)

@@ -115,13 +115,28 @@ namespace UnturnedGodot
         {
             Vector2 toTarget = new Vector2(_target.X - pos.X, _target.Z - pos.Z);
             Vector2 direct = toTarget.LengthSquared() > 1e-6f ? toTarget.Normalized() : Vector2.Zero;
-            // OPEN-GROUND SMOOTHING: nothing blocks the straight line -> BEELINE (exact, cancels the grid's octile bias).
-            // Only fall back to the (smooth) flow when a wall is actually between the agent and the target.
-            if (_flow == null || ClearLineTo(pos)) return direct;
+            if (_flow == null) return direct;
             int cx = CellOf(pos.X) - _ox, cz = CellOf(pos.Z) - _oz;
             if (cx < 0 || cx >= _w || cz < 0 || cz >= _h) return direct;
             var f = _flow[cz * _w + cx];
-            return f == Vector2.Zero ? direct : f;
+            if (f == Vector2.Zero)
+            {
+                // Blocked/unreached cell. A zombie is usually here standing on the OPEN sliver of a wall-BORDER cell --
+                // the 2m wall's footprint rounds up to the whole 4m cell, so the cell reads "wall" though it's mostly
+                // walkable. Borrow the nearest OPEN neighbours' flow so it curls AROUND. (Returning `direct` here was the
+                // "walks straight into the wall" bug master caught: the target is on the far side, so direct aims INTO it.)
+                Vector2 nb = Vector2.Zero;
+                for (int d = 0; d < 8; d++)
+                {
+                    int nx = cx + Dx[d], nz = cz + Dz[d];
+                    if (nx < 0 || nx >= _w || nz < 0 || nz >= _h) continue;
+                    nb += _flow[nz * _w + nx];
+                }
+                return nb.LengthSquared() > 1e-9f ? nb.Normalized() : direct;
+            }
+            // OPEN cell: BEELINE if the target is directly visible (cancels the grid's octile bias), else the smooth flow.
+            if (ClearLineTo(pos)) return direct;
+            return f;
         }
 
         // Bresenham walkability check over the field cells from pos to the target -- any Blocked cell on the line -> not clear.
