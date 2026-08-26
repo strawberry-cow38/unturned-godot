@@ -36,6 +36,7 @@ namespace UnturnedGodot
         Button _close;
         Label _qLabel;
         Vector2 _lastVp;                          // relayout only when the viewport size changes
+        readonly System.Collections.Generic.List<(Panel bg, Label lbl, Button hit)> _tabs = new();   // inv/craft/skills/info top tabs (Craft lit)
         BlueprintDef _sel;
         string _cat = "All";
         int _qty = 1;
@@ -145,8 +146,28 @@ void fragment() {
             _bar = new Panel();
             Box(_bar, UITheme.Nav);
             _panel.AddChild(_bar);
-            _header = new Label { Text = "CRAFTING", Position = new Vector2(22, 15) };
-            _header.AddThemeFontSizeOverride("font_size", UITheme.FontTitle);
+            // top tabs -- SAME as the inventory (master 2026-08-26: crafting keeps inv/craft/skills/info); Craft is lit.
+            (string label, string key)[] tabDefs = { ("Inventory", "G"), ("Craft", "Y"), ("Skills", "U"), ("Information", "M") };
+            foreach (var (label, key) in tabDefs)
+            {
+                bool active = label == "Craft";
+                var bg = new Panel();
+                Box(bg, active ? UITheme.Selected : UITheme.Slot);
+                _bar.AddChild(bg);
+                var lbl = new Label { Text = $"{label} [{key}]", HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, MouseFilter = Control.MouseFilterEnum.Ignore };
+                lbl.AddThemeColorOverride("font_color", active ? new Color(1f, 1f, 1f) : UITheme.TextBody);
+                lbl.AddThemeFontSizeOverride("font_size", 32);
+                _bar.AddChild(lbl);
+                var hit = new Button { Flat = true, MouseFilter = Control.MouseFilterEnum.Stop };
+                string cap = label;
+                hit.Pressed += () => OnTab(cap);
+                _bar.AddChild(hit);
+                _tabs.Add((bg, lbl, hit));
+            }
+            // "N shown / M craftable" info line, small, below the navbar (text set in Rebuild)
+            _header = new Label();
+            _header.AddThemeFontSizeOverride("font_size", UITheme.FontBody);
+            _header.AddThemeColorOverride("font_color", UITheme.TextDim);
             _panel.AddChild(_header);
             _close = new Button { Text = "X", Size = new Vector2(36, 36) };
             _close.Pressed += Close;
@@ -220,9 +241,19 @@ void fragment() {
             _panel.Position = new Vector2(M, M);
             _panel.Size = new Vector2(pw, ph);
 
-            const float barH = 60f, top = barH + 16f, bottomPad = 150f;
+            const float barH = 60f, top = barH + 40f, bottomPad = 150f;   // content clears the navbar + the info line
             _bar.Position = Vector2.Zero; _bar.Size = new Vector2(pw, barH);
-            _close.Position = new Vector2(pw - 52f, (barH - 36f) / 2f);
+            float tabGap = 8f, tabsW = pw - 64f;   // reserve the right end for the X close
+            float tabW = (tabsW - tabGap * (_tabs.Count - 1)) / Mathf.Max(1, _tabs.Count);
+            for (int i = 0; i < _tabs.Count; i++)
+            {
+                var p = new Vector2(i * (tabW + tabGap), 8f); var sz = new Vector2(tabW, barH - 16f);
+                _tabs[i].bg.Position = p; _tabs[i].bg.Size = sz;
+                _tabs[i].lbl.Position = p; _tabs[i].lbl.Size = sz;
+                _tabs[i].hit.Position = p; _tabs[i].hit.Size = sz;
+            }
+            _close.Position = new Vector2(pw - 48f, (barH - 36f) / 2f);
+            _header.Position = new Vector2(16f, barH + 8f); _header.Size = new Vector2(pw - 32f, 24f);
 
             float catW = CATW, detW = DETW;
             float gridX = M + catW + 16f;
@@ -280,6 +311,11 @@ void fragment() {
         public BlueprintDef DebugActiveBp => _queue.Count > 0 ? _queue[_queue.Count - 1].Bp : null;
 
         public void Toggle() { if (_open) Close(); else Open(); }
+        void OnTab(string label)   // Craft = current view; Inventory returns to the bag (mirrors the inventory's OnTab)
+        {
+            if (label == "Inventory") { Close(); Player?.OpenInventory(); }
+        }
+
         public void Close() { _open = false; Visible = false; }
 
         public void Open()
