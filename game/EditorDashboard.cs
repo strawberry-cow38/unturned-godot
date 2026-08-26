@@ -135,6 +135,18 @@ namespace UnturnedGodot
             _toast.Text = msg; _toast.Visible = true; _toastT = dur;
         }
 
+        /// <summary>Global key reference, on ? or Shift+F1. The per-tool hints in the status line only cover the
+        /// ACTIVE tool -- the session-wide keys (save, undo, the visibility toggles) were written down nowhere on
+        /// screen, so the only way to learn them was to be told or to read the source.</summary>
+        void ShowHelp()
+        {
+            ShowMessage(
+                "Ctrl+S save   ·   Ctrl+Z undo   ·   F1/F2/F3 show-hide objects/roads/foliage   ·   Esc menu\n" +
+                "RMB-drag fly   ·   WASD move   ·   E/Q up-down   ·   scroll speed\n" +
+                "Tools: R draw road · Shift+R legacy pave · V river   ·   per-tool keys are in the status bar",
+                7.0);
+        }
+
         void TogglePause(bool? on = null) { if (_pause != null) _pause.Visible = on ?? !_pause.Visible; }
         void ShowMenuForShot() { ShowMessage("Saved 'PEI'  ·  42 props", 999.0); TogglePause(true); }   // UG_EDITOR_SHOWMENU verify hook
         void HideLayersForShot() { Editor?.Objects?.SetVisible(false); Editor?.RoadsEd?.SetVisible(false); Editor?.Objects?.SetFoliageVisible(false); ShowMessage("layers hidden: objects · roads · foliage", 999.0); }   // UG_EDITOR_HIDETEST verify hook
@@ -175,6 +187,9 @@ namespace UnturnedGodot
             else if (k.Keycode == Key.F1) { _visObjects = !_visObjects; Editor?.Objects?.SetVisible(_visObjects); ShowMessage($"Objects: {(_visObjects ? "shown" : "hidden")}"); GetViewport().SetInputAsHandled(); }   // level-visibility toggles (source EditorLevelVisibilityUI F1-F9)
             else if (k.Keycode == Key.F2) { _visRoads = !_visRoads; Editor?.RoadsEd?.SetVisible(_visRoads); ShowMessage($"Roads: {(_visRoads ? "shown" : "hidden")}"); GetViewport().SetInputAsHandled(); }
             else if (k.Keycode == Key.F3) { _visFoliage = !_visFoliage; Editor?.Objects?.SetFoliageVisible(_visFoliage); ShowMessage($"Foliage: {(_visFoliage ? "shown" : "hidden")}"); GetViewport().SetInputAsHandled(); }
+            else if (k.Keycode == Key.F1 && Input.IsKeyPressed(Key.Shift)) { ShowHelp(); GetViewport().SetInputAsHandled(); }
+            else if (k.Keycode == Key.Slash && Input.IsKeyPressed(Key.Shift)) { ShowHelp(); GetViewport().SetInputAsHandled(); }   // "?"
+
         }
 
         public override void _Process(double delta)
@@ -191,7 +206,7 @@ namespace UnturnedGodot
             string build = bld && Editor.Buildings != null
                 ? $"   ·   {Editor.Buildings.ToolText} · 1-6 preset · drag an edge to resize · Del removes · Esc cancels · {Editor.Buildings.Walls.Count} walls" : "";
             string spawn = Editor.Mode == EEditorMode.Spawns && Editor.Spawns != null ? $"   ·   Tab category · 1=add 2=remove · {Editor.Spawns.ModeText} · ,/. rot · [/] radius · V alt · T type · {Editor.Spawns.Count} spawns" : "";
-            string envs = Editor.Mode == EEditorMode.Environment && Editor.Environment != null ? $"   ·   ,/. time · O overcast · {Editor.Environment.ModeText}{(Editor.RoadDrawEd != null ? $"   ·   {Editor.RoadDrawEd.ModeText}" : "")}{(Editor.RoadsEd is { Paving: true } ? $"   ·   {Editor.RoadsEd.ModeText}" : "")}{(Editor.RiverEd != null ? $"   ·   {Editor.RiverEd.ModeText}" : "")}" : "";
+            string envs = Editor.Mode == EEditorMode.Environment && Editor.Environment != null ? $"   ·   ,/. time · O overcast · {Editor.Environment.ModeText}{(Editor.RoadDrawEd != null ? $"   ·   {Editor.RoadDrawEd.ModeText}" : "")}{(Editor.RoadsEd is { Paving: true } ? $"   ·   {Editor.RoadsEd.ModeText}" : "")}{(Editor.RiverEd != null ? $"   ·   {Editor.RiverEd.ModeText}" : "")}{(Editor.FoliageEd != null ? $"   ·   FOLIAGE {Editor.FoliageEd.ModeText} · LMB paint · Alt+LMB erase placed · Alt+Shift+LMB erase baked" : "")}" : "";
             string terr = Editor.Mode == EEditorMode.Terrain && Editor.TerrainEd != null ? $"   ·   LMB raise · Shift+LMB lower · [/] radius · ,/. strength · {Editor.TerrainEd.ModeText}" : "";
             // UNSAVED indicator. Nothing used to tell you there were unsaved changes, so the only way to find
             // out was to lose them. Shows the AGE of the unsaved work, not just a dot -- "unsaved" alone is easy
