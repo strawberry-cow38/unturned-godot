@@ -43,6 +43,29 @@ namespace UnturnedGodot.Testing
             // in the fleet, and every single-hull `UG_CAR=` run, would otherwise report a cold number that
             // misrepresents it. One throwaway heavy hull off to the side populates the warmstart so every measured
             // hull sees the representative WARM solver. (Engine warmstart persists after the body is freed.)
+            // Default = PASSIVE: a cluster of boxes drop + collide + settle (physics activity WITHOUT any vehicle),
+            // which warms the solver to the SAME 33.7% a driving hull does -- MEASURED 2026-08-26 (none=62%,
+            // passive=33.7%, drive=33.7%). So it's ANY physics activity, not vehicle-specific. A real world load
+            // (props settling, terrain, a walking player) supplies exactly this, so a real first drive is WARM, and
+            // the cold 62% only exists in a sterile flat-plane probe -- never in gameplay. The passive drop is the
+            // HONEST proxy for that (a driving-hull warm-up would be circular). UG_WARMMODE=none|passive|drive.
+            string warmMode = System.Environment.GetEnvironmentVariable("UG_WARMMODE") ?? "passive";
+            if (warmMode == "passive")
+            {
+                var bodies = new List<RigidBody3D>();
+                for (int b = 0; b < 30; b++)
+                {
+                    var box = new RigidBody3D { Mass = 40f };
+                    box.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = new Vector3(1.5f, 1.5f, 1.5f) } });
+                    World.AddChild(box);
+                    box.GlobalPosition = new Vector3(-300f + (b % 6) * 2f, 2f + (b / 6) * 2f, (b % 3) * 2f - 3f);
+                    bodies.Add(box);
+                }
+                for (int i = 0; i < 300; i++) yield return Ticks(1);   // drop + collide + settle: physics activity WITHOUT any vehicle
+                foreach (var b in bodies) { World.RemoveChild(b); b.QueueFree(); }
+                yield return Ticks(5);
+            }
+            else if (warmMode != "none")
             {
                 var warm = Vehicle.BuildByName("tank");   // heaviest -> exercises the solver hardest
                 World.AddChild(warm);
