@@ -21,7 +21,7 @@ namespace UnturnedGodot
         public PlayerController Player;
 
         const int PANELW = 1100, PANELH = 680;
-        const int CATW = 180, GRIDW = 470, DETW = 390, GRIDCOLS = 5, TILE = 84;
+        const int CATW = 300, GRIDW = 470, DETW = 520, GRIDCOLS = 5, TILE = 84;   // CATW/DETW widened for the FULLSCREEN layout (master 2026-08-26); GRIDW now dynamic in Layout()
 
         Control _root;
         Panel _panel;
@@ -31,6 +31,11 @@ namespace UnturnedGodot
         GridContainer _grid;
         Panel _detail;
         VBoxContainer _detailBox;
+        Panel _bar, _queuePanel;                  // fullscreen layout refs, repositioned in Layout()
+        ScrollContainer _catScroll, _gridScroll;
+        Button _close;
+        Label _qLabel;
+        Vector2 _lastVp;                          // relayout only when the viewport size changes
         BlueprintDef _sel;
         string _cat = "All";
         int _qty = 1;
@@ -73,6 +78,28 @@ namespace UnturnedGodot
         static void Box(Control p, Color c, int r = UITheme.RadiusCell)
             => p.AddThemeStyleboxOverride("panel", UITheme.Box(c, r));
 
+        // frosted-glass backdrop -- the SAME blur the inventory uses (master 2026-08-26: "same ui design down to the background").
+        const string BACKDROP_BLUR = @"
+shader_type canvas_item;
+uniform sampler2D screen_tex : hint_screen_texture, filter_linear_mipmap;
+uniform float lod = 1.5;
+uniform float spread = 3.0;
+uniform vec4 tint : source_color = vec4(0.03, 0.04, 0.06, 0.40);
+void fragment() {
+    vec2 px = SCREEN_PIXEL_SIZE;
+    vec3 c = vec3(0.0);
+    float total = 0.0;
+    for (int x = -2; x <= 2; x++) {
+        for (int y = -2; y <= 2; y++) {
+            float w = 1.0 / (1.0 + float(x*x + y*y));
+            c += textureLod(screen_tex, SCREEN_UV + vec2(float(x), float(y)) * px * spread, lod).rgb * w;
+            total += w;
+        }
+    }
+    c /= total;
+    COLOR = vec4(mix(c, tint.rgb, tint.a), 1.0);
+}";
+
         static readonly string[] CatOrder = { "All", "Weapons", "Attachments", "Ammo", "Clothing", "Medical", "Food", "Building", "Resources", "Tools", "Other", "Dyes" };
 
         // group the output item's EItemType (by name, so a type this build doesn't know just falls to Other).
@@ -103,82 +130,124 @@ namespace UnturnedGodot
             _root.MouseFilter = Control.MouseFilterEnum.Stop;
             AddChild(_root);
 
-            var dim = new ColorRect { Color = UITheme.Scrim };
+            // frosted-glass backdrop -- the SAME blur the inventory uses (master 2026-08-26: "same ui design ... background")
+            var dim = new ColorRect();
+            dim.Material = new ShaderMaterial { Shader = new Shader { Code = BACKDROP_BLUR } };
             dim.SetAnchorsPreset(Control.LayoutPreset.FullRect);
             dim.MouseFilter = Control.MouseFilterEnum.Ignore;
             _root.AddChild(dim);
 
-            _panel = new Panel { CustomMinimumSize = new Vector2(PANELW, PANELH), Size = new Vector2(PANELW, PANELH) };
-            Box(_panel, Bg, 6);
+            // FULLSCREEN, translucent panel matching the inventory (was a centred 1100x680 SOLID box); sized in Layout()
+            _panel = new Panel();
+            Box(_panel, UITheme.Bg, 6);
             _root.AddChild(_panel);
 
-            var bar = new Panel { Position = new Vector2(0, 0), Size = new Vector2(PANELW, 44) };
-            Box(bar, Bar);
-            _panel.AddChild(bar);
-            _header = new Label { Text = "CRAFTING", Position = new Vector2(18, 8), Size = new Vector2(PANELW - 140, 28) };
+            _bar = new Panel();
+            Box(_bar, UITheme.Nav);
+            _panel.AddChild(_bar);
+            _header = new Label { Text = "CRAFTING", Position = new Vector2(22, 15) };
             _header.AddThemeFontSizeOverride("font_size", UITheme.FontTitle);
             _panel.AddChild(_header);
-            var close = new Button { Text = "X", Position = new Vector2(PANELW - 42, 8), Size = new Vector2(28, 28) };
-            close.Pressed += Close;
-            _panel.AddChild(close);
+            _close = new Button { Text = "X", Size = new Vector2(36, 36) };
+            _close.Pressed += Close;
+            _panel.AddChild(_close);
 
-            int top = 54, bottomPad = 96;
             // LEFT: category list
-            var catScroll = new ScrollContainer { Position = new Vector2(16, top), Size = new Vector2(CATW, PANELH - top - bottomPad) };
-            catScroll.HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled;
-            _panel.AddChild(catScroll);
+            _catScroll = new ScrollContainer();
+            _catScroll.HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled;
+            _panel.AddChild(_catScroll);
             _catList = new VBoxContainer { CustomMinimumSize = new Vector2(CATW, 0) };
             _catList.AddThemeConstantOverride("separation", 2);
-            catScroll.AddChild(_catList);
+            _catScroll.AddChild(_catList);
 
             // MIDDLE: icon grid + search
-            int gridX = 16 + CATW + 12;
-            var gridScroll = new ScrollContainer { Position = new Vector2(gridX, top), Size = new Vector2(GRIDW, PANELH - top - bottomPad - 40) };
-            gridScroll.HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled;
-            _panel.AddChild(gridScroll);
-            _grid = new GridContainer { Columns = GRIDCOLS, CustomMinimumSize = new Vector2(GRIDW - 16, 0) };
-            _grid.AddThemeConstantOverride("h_separation", 6);
-            _grid.AddThemeConstantOverride("v_separation", 6);
-            gridScroll.AddChild(_grid);
-            _search = new LineEdit { Position = new Vector2(gridX, PANELH - bottomPad - 34), Size = new Vector2(GRIDW, 30), PlaceholderText = "search recipes..." };
+            _gridScroll = new ScrollContainer();
+            _gridScroll.HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled;
+            _panel.AddChild(_gridScroll);
+            _grid = new GridContainer { Columns = GRIDCOLS };
+            _grid.AddThemeConstantOverride("h_separation", 8);
+            _grid.AddThemeConstantOverride("v_separation", 8);
+            _gridScroll.AddChild(_grid);
+            _search = new LineEdit { PlaceholderText = "search recipes..." };
             UITheme.Field(_search);
             _search.AddThemeFontSizeOverride("font_size", UITheme.FontBody);
             _search.TextChanged += _ => { _sel = null; Rebuild(); };
             _panel.AddChild(_search);
 
             // BOTTOM: crafting queue -- jobs fill RIGHTWARD (rightmost = active/counting; new jobs prepend on the left)
-            var queue = new Panel { Position = new Vector2(16, PANELH - bottomPad + 8), Size = new Vector2(CATW + 12 + GRIDW, bottomPad - 24) };
-            Box(queue, UITheme.BgSolid);
-            _panel.AddChild(queue);
-            var qLabel = new Label { Text = "CRAFTING QUEUE", Position = new Vector2(14, 6), Size = new Vector2(200, 22) };
-            qLabel.AddThemeFontSizeOverride("font_size", UITheme.FontBody);
-            qLabel.AddThemeColorOverride("font_color", UITheme.TextDim);
-            queue.AddChild(qLabel);
-            _qEmpty = new Label { Text = "(empty)", Position = new Vector2(14, 28), Size = new Vector2(200, 20) };
+            _queuePanel = new Panel();
+            Box(_queuePanel, UITheme.BarSolid);
+            _panel.AddChild(_queuePanel);
+            _qLabel = new Label { Text = "CRAFTING QUEUE", Position = new Vector2(16, 8), Size = new Vector2(240, 24) };
+            _qLabel.AddThemeFontSizeOverride("font_size", UITheme.FontBody);
+            _qLabel.AddThemeColorOverride("font_color", UITheme.TextDim);
+            _queuePanel.AddChild(_qLabel);
+            _qEmpty = new Label { Text = "(empty)", Position = new Vector2(16, 36), Size = new Vector2(200, 20) };
             _qEmpty.AddThemeFontSizeOverride("font_size", UITheme.FontLabel);
             _qEmpty.AddThemeColorOverride("font_color", UITheme.TextDisabled);
-            queue.AddChild(_qEmpty);
-            _queueRow = new Control { Position = new Vector2(150, 4), Size = new Vector2(CATW + 12 + GRIDW - 158, bottomPad - 32) };
+            _queuePanel.AddChild(_qEmpty);
+            _queueRow = new Control { Position = new Vector2(150, 6) };
             _queueRow.ClipContents = true;
             _queueRow.MouseFilter = Control.MouseFilterEnum.Stop;   // handles drag-scroll / click-remove / rmb-promote (tiles are mouse-transparent)
             _queueRow.GuiInput += OnQueueGuiInput;
-            queue.AddChild(_queueRow);
+            _queuePanel.AddChild(_queueRow);
 
             // RIGHT: detail
-            int detX = gridX + GRIDW + 14;
-            _detail = new Panel { Position = new Vector2(detX, top), Size = new Vector2(DETW, PANELH - top - 16) };
+            _detail = new Panel();
             Box(_detail, UITheme.BgSolid);
             _panel.AddChild(_detail);
-            _detailBox = new VBoxContainer { Position = new Vector2(16, 14), CustomMinimumSize = new Vector2(DETW - 32, PANELH - top - 44) };
+            _detailBox = new VBoxContainer { Position = new Vector2(16, 14) };
             _detailBox.AddThemeConstantOverride("separation", 6);
             _detail.AddChild(_detailBox);
+
+            Layout();
         }
 
         public override void _Process(double delta)
         {
-            if (_open && _panel != null)
-                _panel.Position = new Vector2((_root.Size.X - PANELW) / 2f, (_root.Size.Y - PANELH) / 2f);
+            if (_open && _root != null && (_root.Size - _lastVp).LengthSquared() > 1f) { _lastVp = _root.Size; Layout(); }
             TickQueue((float)delta);
+        }
+
+        // Fullscreen responsive layout (master 2026-08-26): the panel fills the screen, sections reflow to it.
+        void Layout()
+        {
+            if (_panel == null || _root == null) return;
+            Vector2 vp = _root.Size;
+            if (vp.X < 1f) vp = GetViewport().GetVisibleRect().Size;
+            const float M = 16f;
+            float pw = vp.X - 2f * M, ph = vp.Y - 2f * M;
+            _panel.Position = new Vector2(M, M);
+            _panel.Size = new Vector2(pw, ph);
+
+            const float barH = 60f, top = barH + 16f, bottomPad = 150f;
+            _bar.Position = Vector2.Zero; _bar.Size = new Vector2(pw, barH);
+            _close.Position = new Vector2(pw - 52f, (barH - 36f) / 2f);
+
+            float catW = CATW, detW = DETW;
+            float gridX = M + catW + 16f;
+            float detX = pw - detW - M;
+            float gridW = detX - gridX - 16f;
+
+            _catScroll.Position = new Vector2(M, top);
+            _catScroll.Size = new Vector2(catW, ph - top - bottomPad);
+
+            _gridScroll.Position = new Vector2(gridX, top);
+            _gridScroll.Size = new Vector2(gridW, ph - top - bottomPad - 44f);
+            _grid.CustomMinimumSize = new Vector2(gridW - 16f, 0);
+            int cols = Mathf.Max(5, (int)(gridW / (TILE + 8f)));
+            if (_grid.Columns != cols) _grid.Columns = cols;
+
+            _search.Position = new Vector2(gridX, ph - bottomPad - 38f);
+            _search.Size = new Vector2(gridW, 32f);
+
+            _queuePanel.Position = new Vector2(M, ph - bottomPad + 8f);
+            _queuePanel.Size = new Vector2(catW + 16f + gridW, bottomPad - 24f);
+            _queueRow.Size = new Vector2(catW + 16f + gridW - 158f, bottomPad - 32f);
+
+            _detail.Position = new Vector2(detX, top);
+            _detail.Size = new Vector2(detW, ph - top - 16f);
+            _detailBox.CustomMinimumSize = new Vector2(detW - 32f, ph - top - 44f);
         }
 
         // the queue runs even while the menu is closed (a job you started keeps cooking in the background).

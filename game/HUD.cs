@@ -81,13 +81,22 @@ namespace UnturnedGodot
             root.AddChild(_pain);
             _playerOnly.Add(_pain);
 
+            // vitals draw on their OWN CanvasLayer ABOVE the inventory (layer 11) so the health/food/water/stamina/
+            // infection bars stay visible with the bag open (master 2026-08-26). The rest of the HUD stays on layer 10.
+            var vitalsLayer = new CanvasLayer { Layer = 12 };
+            AddChild(vitalsLayer);
+            var vitalsRoot = new Control();
+            vitalsRoot.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+            vitalsRoot.MouseFilter = Control.MouseFilterEnum.Ignore;
+            vitalsLayer.AddChild(vitalsRoot);
+
             // lifeBox: bottom-left, right edge at 20% of the screen, sized to the 4 always-on vitals
             var lifeBox = new Control();
             lifeBox.AnchorLeft = 0f; lifeBox.AnchorRight = 0.2f; lifeBox.AnchorTop = 1f; lifeBox.AnchorBottom = 1f;
-            lifeBox.OffsetLeft = 0f; lifeBox.OffsetRight = 0f;
-            lifeBox.OffsetTop = -(TopPad + 5f * RowH); lifeBox.OffsetBottom = -6f;   // 5 rows: 4 always-on vitals + the situational virus meter
+            lifeBox.OffsetLeft = 24f; lifeBox.OffsetRight = 24f;   // left padding off the screen edge (master 2026-08-26)
+            lifeBox.OffsetTop = -(TopPad + 5f * RowH) - 36f; lifeBox.OffsetBottom = -42f;   // 5 rows, lifted off the bottom; bottom padding trimmed 25% (56->42, master 2026-08-26)
             lifeBox.MouseFilter = Control.MouseFilterEnum.Ignore;
-            root.AddChild(lifeBox);
+            vitalsRoot.AddChild(lifeBox);   // layer-12 root -> the vitals render OVER the inventory
             _playerOnly.Add(lifeBox);
 
             // top-down: health, food, water, stamina (the always-visible vitals; virus/oxygen are situational)
@@ -396,7 +405,8 @@ namespace UnturnedGodot
             if (Player != null)
             {
                 bool gun = Player.HasGunOut;                       // ammo counter + firemode ONLY when a gun is genuinely out (master: off for fists/melee/held item)
-                _ammo.Visible = gun; _fireMode.Visible = gun; _weaponName.Visible = gun;
+                bool bagOpen = Player.InventoryOpen;               // master 2026-08-26: hide the bottom-right weapon/ammo readout while the inventory is open
+                _ammo.Visible = gun && !bagOpen; _fireMode.Visible = gun && !bagOpen; _weaponName.Visible = gun && !bagOpen;
                 if (gun)
                 {
                     // "x + 1 / max" when a round rides the chamber (master). The +1 is REAL state, not decoration:

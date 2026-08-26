@@ -56,6 +56,7 @@ namespace UnturnedGodot
         Viewmodel _viewmodel;
         public PlayerInventory Inventory;   // the ported 9-page inventory model
         InventoryUI _invUI;                 // the dashboard (Tab to open)
+        public bool InventoryOpen => _invUI?.IsOpen ?? false;   // HUD hides the weapon/ammo readout while the bag is open (master 2026-08-26)
         CraftingMenu _craftMenu;            // the browsable recipe index (Y, or the inventory Craft tab)
         SkillsUI _skillsUI;                 // the skills menu (J to open) -- spend XP to level skills
         BuildTool _build;                   // B = build mode. C = construct, V = tier, LMB place, R salvage.

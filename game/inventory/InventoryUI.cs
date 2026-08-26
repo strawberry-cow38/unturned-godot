@@ -33,6 +33,32 @@ namespace UnturnedGodot
         static readonly Color UI_TAB_OFF = UITheme.Slot;
         static readonly Color UI_STAGE = UITheme.Stage;
 
+        // Frosted-glass backdrop for the whole dashboard: sample the game framebuffer behind the UI and BLUR it, with
+        // only a whisper of darkening -- master 2026-08-26: "change the background from a darkening tint to a slight
+        // blur of what's behind." Replaces the flat 72% black scrim. 5x5 weighted taps + a mip-LOD bias so the blur is
+        // robust even if the screen copy's mipmaps are shallow. The panels are translucent, so this shows through the
+        // entire dashboard (paperdoll included).
+        const string BACKDROP_BLUR = @"
+shader_type canvas_item;
+uniform sampler2D screen_tex : hint_screen_texture, filter_linear_mipmap;
+uniform float lod = 1.5;
+uniform float spread = 3.0;
+uniform vec4 tint : source_color = vec4(0.03, 0.04, 0.06, 0.40);
+void fragment() {
+    vec2 px = SCREEN_PIXEL_SIZE;
+    vec3 c = vec3(0.0);
+    float total = 0.0;
+    for (int x = -2; x <= 2; x++) {
+        for (int y = -2; y <= 2; y++) {
+            float w = 1.0 / (1.0 + float(x*x + y*y));
+            c += textureLod(screen_tex, SCREEN_UV + vec2(float(x), float(y)) * px * spread, lod).rgb * w;
+            total += w;
+        }
+    }
+    c /= total;
+    COLOR = vec4(mix(c, tint.rgb, tint.a), 1.0);
+}";
+
         const int CELL = 72;         // SleekItems cell size
         const int HEADER = 30;       // legacy per-page strip (kept for the char-panel slots)
         // --- the source's ACTUAL page-stacking metrics (PlayerDashboardInventoryUI.updateBoxAreas) ---
@@ -44,8 +70,8 @@ namespace UnturnedGodot
         const int HDRGAP = 86;       // grid sits 70px below its own header
         const int PAGEADV = 96;      // advance = gridHeight + 80 (=> 10px between grid bottom and next header)
         const int GRIDPAD = 30;      // SleekItems.SizeOffset_Y = rows*50 + 30
-        const int BOXX = 530;        // box.PositionOffset_X = 430 (410 char panel + margins)
-        const int BOXINSET = 540;    // box.SizeOffset_X = -440
+        const int BOXX = 580;        // box start = MARGIN + CHARW + 8 (follows the tighter char panel; was 700)
+        const int BOXINSET = 590;    // BOXX + 10 -> 10px right margin (was 710)
         const int SPLITMIN = 1350;   // isSplitClothingArea kicks in at this screen width
         const int PAD = 12;
         // SOURCE-ACCURATE layout (PlayerDashboardInventoryUI): top navbar (60px), a fixed 410px CHARACTER panel on
@@ -54,11 +80,12 @@ namespace UnturnedGodot
         // NOT a centred blob.
         const int NAVH = 60;         // top navbar strip (source backdropBox starts at Y=60, below the nav)
         const int MARGIN = 12;       // screen-edge margin
-        const int CHARW = 510;       // character panel width (source characterBox SizeOffset_X = 410)
+        const int CHARW = 560;       // character panel width -- sized to hug the SHRUNK paperdoll (master 2026-08-26: "shrink the stuff around to fit the new scale"; was 680).
         const int GUTTER = 20;       // gap between the character panel and the storage box
         const int PDTOP = 88;        // paperdoll y inside the character panel (below the name/faction badge)
         const int PDW = CHARW - 40;  // paperdoll fills the panel width (370)
         const int PDH = 440;         // paperdoll display height (portrait, fills the upper panel)
+        const float PD_ASPECT = 0.585f;  // paperdoll viewport w/h -- wide enough his arm span clears the frame (measured off the widened render)
         const int COSMH = 44;        // reserved strip under the paperdoll: rotation slider + cosmetic-swap buttons
 
         Control _root, _dash, _storageCol, _weaponRow, _cosmeticRow;
@@ -82,10 +109,9 @@ namespace UnturnedGodot
         bool _open;
         float _storageW, _storageH;
 
-        // quick-craft bar (bottom-right): icons of recipes you can afford -- LMB queues 1, RMB queues 5 into the crafting queue
-        Control _quickCraft;
+        // quick-craft: a dashboard SECTION under the bags (icons of recipes you can afford); LMB queues 1, RMB queues 5.
         readonly List<(Control tile, BlueprintDef bp)> _quickTiles = new();
-        const int QUICK_MAX = 18;   // 3-wide grid x 6 rows (master: "3x6")
+        const int QUICK_MAX = 18;   // recipes shown in the quick-craft section (6-wide -> up to 3 rows)
 
         // drag-drop: registered drop zones (a page + the Control whose global rect maps to its cells) and the live drag
         readonly List<(byte page, Control ctl, bool isSlot)> _drop = new();
@@ -129,7 +155,8 @@ namespace UnturnedGodot
             _root.MouseFilter = Control.MouseFilterEnum.Stop;
             AddChild(_root);
 
-            var dim = new ColorRect { Color = UITheme.Chip };
+            var dim = new ColorRect();   // frosted-glass backdrop: blur the world behind the UI instead of flat-darkening it (master)
+            dim.Material = new ShaderMaterial { Shader = new Shader { Code = BACKDROP_BLUR } };
             dim.SetAnchorsPreset(Control.LayoutPreset.FullRect);
             dim.MouseFilter = Control.MouseFilterEnum.Ignore;
             _root.AddChild(dim);
@@ -148,8 +175,6 @@ namespace UnturnedGodot
             _storageCol.AddChild(_clothingCol);
             _storageCol.AddChild(_areaCol);
 
-            _quickCraft = new Control { MouseFilter = Control.MouseFilterEnum.Ignore };   // bottom-right quick-craft bar (tiles hit-tested in _Input, positioned in RefreshQuickCraft)
-            _dash.AddChild(_quickCraft);
             _magFx = new Control { MouseFilter = Control.MouseFilterEnum.Ignore };   // mag load/unload fill wheel + the drag-over compat hint, drawn ON TOP of the grid
             _magFx.SetAnchorsPreset(Control.LayoutPreset.FullRect);
             _magFx.Draw += DrawMagFx;
@@ -157,13 +182,14 @@ namespace UnturnedGodot
         }
 
         // quick-craft: rebuild the bottom-right bar with the recipes you can afford right now (icon per recipe).
-        // LMB a tile = queue 1, RMB = queue 5 -- handled in _Input (which consumes every click before gui) via QuickCraftHit.
-        void RefreshQuickCraft()
+        // QUICK CRAFT is a dashboard SECTION under the bags (master: "integrate it as another tab below 'nearby'"), not a
+        // floating corner panel: same HeaderBar + GridPanel + Slot tiles a bag uses, so it reads as one of them. The
+        // craftable set is recomputed each Refresh. LMB a tile = queue 1, RMB = queue 5 (caught in _Input via QuickCraftHit).
+        // Returns the y just past the section so the caller keeps stacking.
+        float BuildQuickCraftSection(Control col, float yA, float colW)
         {
             _quickTiles.Clear();
-            if (_quickCraft == null) return;
-            foreach (Node c in _quickCraft.GetChildren()) c.QueueFree();
-            if (Inv == null) return;
+            if (Inv == null) return yA;
 
             var inv = new Crafting.PlayerInvAdapter(Inv);
             var stations = Player?.CraftingStationTags() ?? new System.Collections.Generic.HashSet<string>();
@@ -171,30 +197,24 @@ namespace UnturnedGodot
             foreach (var bp in BlueprintRegistry.Applicable(inv))   // Applicable = every input present (consumables AND tools)
             {
                 if (BlueprintRegistry.IsRecolour(bp)) continue;         // skip the 126 dye repaints
-                if (!Crafting.HasStations(bp, stations)) continue;      // master: only if the recipe's workbench/station is satisfied (nearby station in range + LOS)
+                if (!Crafting.HasStations(bp, stations)) continue;      // only if the recipe's workbench/station is satisfied (in range + LOS)
                 if (!Crafting.MeetsSkill(bp, Player?.Skills)) continue;
                 show.Add(bp);
                 if (show.Count >= QUICK_MAX) break;
             }
+            if (show.Count == 0) return yA;   // nothing craftable right now -> no section, no empty header
 
-            const int PADX = 8, COLS = 6, ROWS = 3, HDR = 26;   // grid CELLS are the inventory's (CELL, via GridPanel) -- no bespoke tile size of its own (master: "standardize them all on the same grid")
-            float w = PADX * 2 + COLS * CELL, h = HDR + ROWS * CELL + PADX;
-            var bg = new Panel { Position = Vector2.Zero, Size = new Vector2(w, h), MouseFilter = Control.MouseFilterEnum.Ignore };
-            bg.AddThemeStyleboxOverride("panel", UITheme.Box(UITheme.Bar, 6, UITheme.Border, UITheme.BorderWidth));   // defined edge -> reads as its own panel, not a faint smear over the world
-            _quickCraft.AddChild(bg);
-            var hdr = new Label { Text = "QUICK CRAFT", Position = new Vector2(PADX, 5), Size = new Vector2(w - PADX * 2, 16), MouseFilter = Control.MouseFilterEnum.Ignore };
-            hdr.AddThemeFontSizeOverride("font_size", UITheme.FontLabel);
-            hdr.AddThemeColorOverride("font_color", UITheme.Text);
-            bg.AddChild(hdr);
-            // the SAME empty-cell grid the bags draw (one GridPanel, CELL-sized), so quick-craft reads as one of them
-            var gp = new GridPanel { Cells = new Vector2I(COLS, ROWS), Cell = CELL, Position = new Vector2(PADX, HDR), MouseFilter = Control.MouseFilterEnum.Ignore };
-            bg.AddChild(gp);
-            for (int i = 0; i < show.Count && i < COLS * ROWS; i++)   // filled cells only; the GridPanel shows the empties
+            col.AddChild(HeaderBar("Quick Craft", new Vector2(0, yA), colW, null, show.Count));
+            const int COLS = 6;
+            int rows = System.Math.Max(1, Mathf.CeilToInt(show.Count / (float)COLS));
+            var gp = new GridPanel { Cells = new Vector2I(COLS, rows), Cell = CELL, Position = new Vector2(0, yA + HDRGAP), Size = new Vector2(COLS * CELL, rows * CELL) };
+            col.AddChild(gp);
+            for (int i = 0; i < show.Count; i++)
             {
                 var bp = show[i];
                 var a = CraftingMenu.OutAsset(bp);
-                var tile = new Panel { Position = new Vector2(PADX + (i % COLS) * CELL, HDR + (i / COLS) * CELL), Size = new Vector2(CELL, CELL) };
-                tile.AddThemeStyleboxOverride("panel", UITheme.Box(UITheme.Slot, UITheme.RadiusCell));   // filled cell = the same Slot bg an inventory item tile sits on
+                var tile = new Panel { Position = new Vector2((i % COLS) * CELL, (i / COLS) * CELL), Size = new Vector2(CELL, CELL) };
+                tile.AddThemeStyleboxOverride("panel", UITheme.Box(UITheme.Slot, UITheme.RadiusCell));   // filled cell = the same Slot bg an item tile sits on
                 tile.TooltipText = $"{CraftingMenu.Title(bp)}\nLMB +1   RMB +5";   // MouseFilter left Stop so the tooltip shows; the click is caught in _Input
                 var tex = a != null ? IconFor(a.id) : null;
                 if (tex != null)
@@ -211,24 +231,10 @@ namespace UnturnedGodot
                     lbl.AddThemeFontSizeOverride("font_size", UITheme.FontSmall);
                     tile.AddChild(lbl);
                 }
-                bg.AddChild(tile);
+                gp.AddChild(tile);
                 _quickTiles.Add((tile, bp));
             }
-
-            Vector2 vp = GetViewport().GetVisibleRect().Size;
-            // ABOVE the HUD ammo counter, not on top of it. Both wanted the bottom-right corner, so the
-            // magazine readout ("29 + 1 / 30", HUD.cs anchors it to the last 92 px) was rendering straight
-            // through the quick-craft grid. It went unnoticed because the panel used to be nearly black --
-            // lighting it in the theme pass is what made the collision visible, which is its own small
-            // argument for the theme.
-            //
-            // Quick-craft is the one that yields: it only exists while the bag is open, whereas the ammo
-            // counter is permanent HUD furniture with a fixed home. AMMO_BAND is that home's height plus a
-            // gap; it is duplicated from HUD rather than shared because a Control in the dashboard cannot
-            // see the HUD's node, and the alternative -- a lookup across two CanvasLayers on every refresh --
-            // buys nothing for one constant.
-            const int AMMO_BAND = 92 + MARGIN;
-            _quickCraft.Position = new Vector2(vp.X - w - MARGIN, vp.Y - h - AMMO_BAND);
+            return yA + rows * CELL + GRIDPAD + PAGEADV;
         }
 
         // a press over a quick-craft tile queues a craft (qty 1 on LMB, 5 on RMB). Returns true if it hit one.
@@ -1535,12 +1541,17 @@ namespace UnturnedGodot
             var av = new Panel { Position = new Vector2(10, 10), Size = new Vector2(56, 56) };
             StyleBox(av, UI_TAB_OFF);
             badge.AddChild(av);
-            var uname = new Label { Text = "Survivor", Position = new Vector2(78, 13) };
+            // Survivor + faction/rank[rep], vertically CENTERED as a block in the badge (master 2026-08-26).
+            var textCol = new VBoxContainer { Position = new Vector2(78, 0), Size = new Vector2(CHARW - 16 - 78 - 40, 76) };
+            textCol.Alignment = BoxContainer.AlignmentMode.Center; textCol.AddThemeConstantOverride("separation", 0);
+            textCol.MouseFilter = Control.MouseFilterEnum.Ignore;
+            badge.AddChild(textCol);
+            var uname = new Label { Text = "Survivor" };
             uname.AddThemeColorOverride("font_color", UITheme.Accent); uname.AddThemeFontSizeOverride("font_size", 28);   // yellow username
-            badge.AddChild(uname);
-            var fac = new Label { Text = "Neutral [0]", Position = new Vector2(78, 45) };
+            textCol.AddChild(uname);
+            var fac = new Label { Text = "Neutral [0]" };
             fac.AddThemeColorOverride("font_color", UITheme.TextBody); fac.AddThemeFontSizeOverride("font_size", 18);
-            badge.AddChild(fac);
+            textCol.AddChild(fac);
             var plus = new Label { Text = "+", Position = new Vector2(CHARW - 56, 20) };
             plus.AddThemeColorOverride("font_color", UITheme.Accent); plus.AddThemeFontSizeOverride("font_size", 30);
             badge.AddChild(plus);
@@ -1551,7 +1562,7 @@ namespace UnturnedGodot
         void BuildCharacterPanel()
         {
             _charBox = new Panel { Position = new Vector2(MARGIN, NAVH + MARGIN), Size = new Vector2(CHARW, 600) };   // height fixed up in LayoutDash
-            StyleBox(_charBox, UI_PANEL);
+            StyleBox(_charBox, UI_PANEL);   // translucent + blurred like the REST of the UI (master 2026-08-26: "apply the transparency + blur the rest has"); the model floats on it with NO box
             _dash.AddChild(_charBox);
             BuildNameBadge(_charBox);   // name/faction badge strip (source characterPlayer @ (10,10), 410x50)
 
@@ -1592,15 +1603,8 @@ namespace UnturnedGodot
         {
             _cosmeticRow = new Control();
             _charBox.AddChild(_cosmeticRow);
-            string[] tips = { "Cosmetics", "Skins", "Mythics" };
-            for (int i = 0; i < 3; i++)
-            {
-                var b = new Button { Text = tips[i].Substring(0, 1), Position = new Vector2(10 + i * 36, 4), Size = new Vector2(32, 32), TooltipText = "Swap " + tips[i] };
-                _cosmeticRow.AddChild(b);
-            }
-            var slider = new HSlider { Position = new Vector2(10 + 3 * 36 + 10, 12), Size = new Vector2(CHARW - (10 + 3 * 36 + 10) - 20, 18), MinValue = -Mathf.Pi, MaxValue = Mathf.Pi, Step = 0.01 };
-            slider.ValueChanged += (double v) => { _pdYaw = (float)v; if (_pdBody != null) _pdBody.Rotation = new Vector3(0f, Mathf.Pi + _pdYaw, 0f); };
-            _cosmeticRow.AddChild(slider);
+            // C/S/M cosmetic-swap buttons AND the rotation slider both removed (master 2026-08-26). Row kept empty so
+            // LayoutDash's null-check stays valid; drag the paperdoll itself to spin it (see the spin branch in _Input).
         }
 
         // Build the 3D paperdoll: a dark stage + an isolated SubViewport rendering a preview character clothed off the
@@ -1609,7 +1613,7 @@ namespace UnturnedGodot
         {
             var stage = new Panel { Position = new Vector2(8, PDTOP), Size = new Vector2(PDW, PDH) };
             _pdStage = stage;
-            StyleBox(stage, UI_STAGE);   // translucent backing -- retail shows the world behind the model
+            StyleBox(stage, new Color(0f, 0f, 0f, 0f));   // NO box (master 2026-08-26: "ideally i want NO box") -- the model floats straight on the character panel; the opaque panel below hides any world-bleed
             box.AddChild(stage);
 
             // a SubViewportContainer shows the viewport clipped to the stage. Stretch off -> the viewport keeps its own
@@ -1674,7 +1678,7 @@ namespace UnturnedGodot
             Aabb ab = mi.GlobalTransform * mi.GetAabb();          // world-space bounds of the body mesh
             if (ab.Size.Y < 0.1f) return;                         // not skinned/built yet -> wait a frame
             float cy = ab.Position.Y + ab.Size.Y * 0.5f;          // vertical centre of the body
-            float frameH = ab.Size.Y * 1.51f;                     // master: paperdoll scaled ~10% smaller -> ~76% fill (was 1.36f)
+            float frameH = ab.Size.Y * 1.36f;                     // master 2026-08-26: reverted the +padding (was 1.51f). Arms fit via the WIDER viewport now, not by shrinking him.
             float dist = frameH * 0.5f / Mathf.Tan(Mathf.DegToRad(_pdCam.Fov * 0.5f));
             float aimY = cy - 0.15f;
             _pdCam.Position = new Vector3(0f, aimY, dist);
@@ -1722,7 +1726,7 @@ namespace UnturnedGodot
         {
             if (Inv == null || _storageCol == null) return;
             CloseSelection();   // the panel points at a specific item; drop it when the layout rebuilds
-            RefreshQuickCraft();   // repopulate the bottom-right quick-craft bar (craftable set changes with the bag)
+            _quickTiles.Clear();   // quick-craft is rebuilt as a dashboard section in the layout below
 
             // repaint the paperdoll's worn clothing off the current slots (any inventory change can wear/unwear)
             if (_pdClothing == null && _pdBody != null) _pdClothing = new PlayerClothingController(_pdBody, Inv);   // Inv wasn't ready at build time
@@ -1756,8 +1760,9 @@ namespace UnturnedGodot
             // they were added BEFORE the clear, so their drag targets got wiped every refresh and the primary/secondary
             // slots silently rejected any dragged weapon (master: "make primary/secondary function as inv slots"). The 1/2
             // keys already equip pages 0/1 (PlayerController.EquipHotbar), so registering the drop targets completes it.
-            AddSlotAt(_weaponRow, "PRIMARY",   0, new Vector2(0, 0),             3 * CELL);
-            AddSlotAt(_weaponRow, "SECONDARY", 1, new Vector2(3 * CELL + 16, 0), 3 * CELL);
+            float wSlotW = (CHARW - 2 * MARGIN - 16) / 2f;   // scale the two slots up to fill the panel width (master 2026-08-26)
+            AddSlotAt(_weaponRow, "PRIMARY",   0, new Vector2(0, 0),           wSlotW);
+            AddSlotAt(_weaponRow, "SECONDARY", 1, new Vector2(wSlotW + 16, 0), wSlotW);
             Vector2 vpsz = GetViewport().GetVisibleRect().Size;
             float boxW = vpsz.X - BOXINSET;                       // source box.SizeOffset_X = -440
             bool split = vpsz.X >= SPLITMIN;                      // source isSplitClothingArea
@@ -1805,6 +1810,7 @@ namespace UnturnedGodot
                 AddGridAt(name, pg, new Vector2(0, yA), aCol, colW);
                 yA += pg.height * CELL + GRIDPAD + PAGEADV;
             }
+            yA = BuildQuickCraftSection(aCol, yA, colW);   // Quick Craft as a section under Nearby (master), not a floating panel
             _storageW = boxW;
             _storageH = Mathf.Max(yC, split ? yA : yA) - 10f;   // source ContentSizeOffset = y - 10
 
@@ -1817,20 +1823,22 @@ namespace UnturnedGodot
             if (_charBox != null)
             {
                 _charBox.Size = new Vector2(CHARW, Mathf.Max(600f, vp.Y - NAVH - 2 * MARGIN));   // fill the height below the navbar
-                if (_weaponRow != null) _weaponRow.Position = new Vector2(12, _charBox.Size.Y - CELL - (HEADER - 6) - MARGIN);
+                if (_weaponRow != null) _weaponRow.Position = new Vector2(12, _charBox.Size.Y - CELL - (HEADER - 6) - MARGIN - 155);   // lifted ABOVE the layer-12 vitals (~180px up from the panel bottom) so they don't collide (master 2026-08-26)
                 // rotation slider + cosmetic buttons sit in the reserved COSMH strip just above the weapon slots
                 if (_cosmeticRow != null) _cosmeticRow.Position = new Vector2(0, _charBox.Size.Y - CELL - (HEADER - 6) - MARGIN - COSMH);
 
-                // The model DOMINATES the left column in the reference -- it isn't a small portrait pinned to the
-                // top. Stretch it to the space between the header and the weapon row.
-                // Reference measurement: retail's model area is ~260x590 => aspect ~0.44. Match that rather than
-                // stretching to the full column, which produced an extreme aspect the camera can't frame.
+                // The paperdoll: a portrait viewport CENTERED in the character panel with margin all round
+                // (master 2026-08-26: "shrink the whole viewport down by 25%, centered in its little frame"). It
+                // fills 75% of the vertical region and keeps the arms-fitting aspect (PD_ASPECT), then sits centered.
                 float avail = _charBox.Size.Y - PDTOP - CELL - (HEADER - 6) - 2 * MARGIN - 10f - COSMH;
-                float pdH = Mathf.Clamp(avail, PDH, PDW / 0.44f);
-                if (_pdVp != null && Mathf.Abs(_pdVp.Size.Y - pdH) > 1f) _pdFramed = false;   // re-frame for the new aspect
-                if (_pdStage != null) _pdStage.Size = new Vector2(PDW, pdH);
-                if (_pdHit != null) _pdHit.Size = new Vector2(PDW, pdH);
-                if (_pdVp != null) _pdVp.Size = new Vector2I(PDW, Mathf.RoundToInt(pdH));
+                float pdH = avail * 0.75f;                            // 25% smaller than the full region
+                float pdW = Mathf.Min(pdH * PD_ASPECT, CHARW - 2 * MARGIN);   // preserve the aspect so his arms fit; never wider than the panel
+                float pdX = Mathf.Round((CHARW - pdW) / 2f);          // centered horizontally in the panel
+                float pdY = Mathf.Round(PDTOP + (avail - pdH) / 2f);  // centered vertically in the region
+                if (_pdVp != null && Mathf.Abs(_pdVp.Size.Y - pdH) > 1f) _pdFramed = false;   // re-frame for the new size
+                if (_pdStage != null) { _pdStage.Position = new Vector2(pdX, pdY); _pdStage.Size = new Vector2(pdW, pdH); }
+                if (_pdHit != null)   { _pdHit.Position   = new Vector2(pdX, pdY); _pdHit.Size   = new Vector2(pdW, pdH); }
+                if (_pdVp != null)    _pdVp.Size = new Vector2I(Mathf.RoundToInt(pdW), Mathf.RoundToInt(pdH));
             }
         }
 
@@ -2082,6 +2090,7 @@ namespace UnturnedGodot
         // reference -- retail's inventory reads as a stack of BARS, not a list of captions.
         Control HeaderBar(string text, Vector2 pos, float width, Item worn = null, int count = -1)
         {
+            width = Mathf.Min(width, 8 * CELL);   // master 2026-08-26: clothing tabs never extend past 8 tiles' width (the widest grid, Alicepack, is 8)
             var bar = new Panel { Position = pos, Size = new Vector2(width, HDRH), MouseFilter = Control.MouseFilterEnum.Ignore };
             StyleBox(bar, UI_BAR);
 
@@ -2111,7 +2120,7 @@ namespace UnturnedGodot
                 pct.AddThemeFontSizeOverride("font_size", 30);
                 bar.AddChild(pct);
             }
-            else if (count >= 0)   // storage-type section (no worn item): show how many items it holds, right-aligned like the worn %
+            else if (count > 0)   // storage section WITH items: show the count, right-aligned like the worn %. Hidden at 0 so an empty bag doesn't show a confusing "0" (master 2026-08-26)
             {
                 var cnt = new Label { Text = count.ToString(), Position = new Vector2(width - 116, 0),
                                       Size = new Vector2(94, HDRH), HorizontalAlignment = HorizontalAlignment.Right,

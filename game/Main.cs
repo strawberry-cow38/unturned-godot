@@ -264,7 +264,7 @@ namespace UnturnedGodot
 
             if (craftmenu)   // open the CraftingMenu (the current in-game one) over a stocked bag -> render it
             {
-                GetWindow().Size = new Vector2I(1280, 720);
+                GetWindow().Size = new Vector2I(2560, 1440);   // full-res so the now-FULLSCREEN crafting menu renders crisp (master 2026-08-26)
                 _shotPath = shot;
                 BuildCraftMenu();
                 return;
@@ -1772,6 +1772,27 @@ namespace UnturnedGodot
         // over a bag stocked with metal scrap + a blowtorch + our tree logs, so the recipe list + craftability render.
         void BuildCraftMenu()
         {
+            // a lit 3D scene behind the menu so the frosted-glass backdrop has real content to blur (like --invdemo)
+            AddChild(new WorldEnvironment { Environment = new Godot.Environment {
+                BackgroundMode = Godot.Environment.BGMode.Color, BackgroundColor = new Color(0.42f, 0.55f, 0.72f),
+                AmbientLightSource = Godot.Environment.AmbientSource.Color, AmbientLightColor = new Color(0.55f, 0.57f, 0.6f), AmbientLightEnergy = 0.6f } });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-52f, -46f, 0f), LightEnergy = 1.2f });
+            var gmesh = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(120, 120) } };
+            gmesh.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.30f, 0.34f, 0.28f) };
+            AddChild(gmesh);
+            var craftBoxCols = new[] { new Color(0.85f,0.30f,0.30f), new Color(0.30f,0.70f,0.90f), new Color(0.92f,0.80f,0.32f), new Color(0.40f,0.80f,0.45f), new Color(0.92f,0.52f,0.25f), new Color(0.68f,0.42f,0.85f) };
+            for (int bi = 0; bi < 6; bi++)
+            {
+                float ang = bi * Mathf.Pi * 2f / 6f;
+                var box = new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(2.4f, 3.2f + (bi % 3), 2.4f) } };
+                box.MaterialOverride = new StandardMaterial3D { AlbedoColor = craftBoxCols[bi] };
+                box.Position = new Vector3(Mathf.Sin(ang) * 10f, 1.6f, Mathf.Cos(ang) * 10f);
+                AddChild(box);
+            }
+            var craftCam = new Camera3D { Position = new Vector3(0f, 2f, 6f), Fov = 60f, Current = true };
+            AddChild(craftCam);
+            craftCam.LookAt(new Vector3(0f, 1.5f, 0f), Vector3.Up);   // LookAt needs the node in-tree
+
             SDG.Unturned.ItemCatalog.RegisterAll();
             BlueprintRegistry.Load();
             var inv = new SDG.Unturned.PlayerInventory();
@@ -5258,6 +5279,23 @@ namespace UnturnedGodot
             ground.AddChild(gmesh);
             AddChild(ground);
 
+            // A ring of bright props around the player so the new frosted-glass backdrop actually READS in the
+            // screenshot -- the blur is invisible over a flat void. Demo dressing only, not part of the UI.
+            var boxCols = new[] {
+                new Color(0.85f, 0.30f, 0.30f), new Color(0.30f, 0.70f, 0.90f), new Color(0.92f, 0.80f, 0.32f),
+                new Color(0.40f, 0.80f, 0.45f), new Color(0.92f, 0.52f, 0.25f), new Color(0.68f, 0.42f, 0.85f),
+                new Color(0.95f, 0.60f, 0.72f), new Color(0.50f, 0.85f, 0.80f),
+            };
+            for (int bi = 0; bi < 8; bi++)
+            {
+                float ang = bi * Mathf.Pi * 2f / 8f;
+                float r = 9f + (bi % 3) * 2.5f;
+                var box = new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(2.2f, 3.0f + (bi % 4), 2.2f) } };
+                box.MaterialOverride = new StandardMaterial3D { AlbedoColor = boxCols[bi] };
+                box.Position = new Vector3(Mathf.Sin(ang) * r, 1.5f, Mathf.Cos(ang) * r);
+                AddChild(box);
+            }
+
             var player = new PlayerController { CaptureMouse = false };
             player.LoadGun(gunPath ?? "res://content/eaglefire.dat");
             AddChild(player);                    // _Ready builds + populates the inventory and its dashboard
@@ -5283,6 +5321,8 @@ namespace UnturnedGodot
                 SDG.Unturned.ItemCatalog.RegisterAll();
                 player.Inventory.tryAddItem(new SDG.Unturned.Item(6, 30));   // full STANAG magazine (30 rounds)
             }
+            SDG.Unturned.ItemCatalog.RegisterAll();
+            player.Inventory.wearBackpack(new SDG.Unturned.Item(253));   // Alicepack (8x7) -> the widest storage grid, so master can eyeball the wide layout next to the paperdoll
             if (equipDemo) { player.OpenInventory(); player.DemoEquip(1, 0, 0); }   // equip the SECONDARY Maplestrike -> held
             else if (selectDemo) player.DemoSelect(2, 0, 0);   // pop the selection panel for the Medkit in pockets
             else player.OpenInventory();
