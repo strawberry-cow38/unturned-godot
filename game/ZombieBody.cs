@@ -14,11 +14,15 @@ namespace UnturnedGodot
         public float Health = 100f;
         public bool Dead { get; private set; }
         RiggedCharacter _rig; MeshInstance3D _cap; float _yaw;
+        Vector3 _windowPos; float _windowT, _escapeT; bool _posInit;   // unstuck: slide a straggler along a wall it's pinned on
 
         public override void _Ready()
         {
             CollisionLayer = 1 << 1;        // enemy -- the gun ray + melee mask this bit
-            CollisionMask = (1 << 0) | (1 << 1);   // ground+buildings AND each other -> the horde physically can't overlap into one blob (master: "make them aware of eachother"); boids separation steers them apart, this is the hard backstop
+            CollisionMask = 1 << 0;         // ground+buildings ONLY. Agent-vs-agent is SOFT boids separation, NOT hard collision:
+                                            // hard collision JAMS a horde against a wall at a bottleneck (a corner) -> permanently
+                                            // stuck zombies (nothing can free a body pinned on all sides). Separation still keeps them
+                                            // "aware of each other" (steer apart) but lets them squeeze past under pressure instead of pinning.
             FloorMaxAngle = Mathf.DegToRad(55f); FloorSnapLength = 0.5f;
             AddToGroup("zombies");
             var shape = new CollisionShape3D { Shape = new CapsuleShape3D { Height = 1.8f, Radius = 0.4f } };
@@ -45,14 +49,47 @@ namespace UnturnedGodot
         {
             if (Dead) return;
             float dt = (float)delta;
+
+            // UNSTUCK: a straggler can park against a wall (or its corner) where the flow points into the face and the
+            // tangential part is ~0. When that happens, SLIDE ALONG the wall we're actually touching, in whichever tangent
+            // direction heads toward the target -- from the real contact normal, so it's deterministic, not a guess.
+            Vector2 drive = DesiredVel;
+            if (_escapeT > 0f && DesiredVel.LengthSquared() > 0.04f)
+            {
+                _escapeT -= dt;
+                Vector3 nAcc = Vector3.Zero;
+                for (int i = 0; i < GetSlideCollisionCount(); i++) nAcc += GetSlideCollision(i).GetNormal();
+                var n2 = new Vector2(nAcc.X, nAcc.Z);
+                if (n2.LengthSquared() > 0.01f)
+                {
+                    n2 = n2.Normalized();
+                    var tan = new Vector2(-n2.Y, n2.X);
+                    if (tan.Dot(DesiredVel) < 0f) tan = -tan;   // pick the along-wall direction that heads toward the target
+                    drive = (tan * 0.9f + DesiredVel.Normalized() * 0.1f).Normalized() * DesiredVel.Length();
+                }
+            }
+
             var v = Velocity;
-            v.X = DesiredVel.X; v.Z = DesiredVel.Y;
+            v.X = drive.X; v.Z = drive.Y;
             if (IsOnFloor()) v.Y = 0f; else v.Y -= 22f * dt;   // gravity
             Velocity = v;
             MoveAndSlide();
-            if (DesiredVel.LengthSquared() > 0.04f)             // face the heading. Rig forward is -Z, so RotateY(yaw)*(-Z)
+
+            // stuck bookkeeping (after the move): did we actually travel? If we wanted to and barely did, count it; past a
+            // short grace, fire an escape burst. Escaping itself doesn't re-trigger (guarded), and alternates side so a
+            // dead-end on one side tries the other next time.
+            if (!_posInit) { _windowPos = GlobalPosition; _posInit = true; }
+            _windowT += dt;
+            if (_windowT >= 1.0f)   // progress over a WINDOW, not per-tick: a zombie OSCILLATING against a wall moves every
+            {                       // tick but nets ~0, so a per-tick check never fires. <0.5 m of real progress in 1 s = stuck.
+                float progress = new Vector2(GlobalPosition.X - _windowPos.X, GlobalPosition.Z - _windowPos.Z).Length();
+                if (_escapeT <= 0f && DesiredVel.LengthSquared() > 0.2f && progress < 0.5f) _escapeT = 1.0f;
+                _windowPos = GlobalPosition; _windowT = 0f;
+            }
+
+            if (drive.LengthSquared() > 0.04f)                  // face the heading. Rig forward is -Z, so RotateY(yaw)*(-Z)
             {                                                   // = dir needs yaw = atan2(-x,-z). VERIFIED forward via --zface (arms/face point at travel).
-                float want = Mathf.Atan2(-DesiredVel.X, -DesiredVel.Y);
+                float want = Mathf.Atan2(-drive.X, -drive.Y);
                 _yaw = Mathf.LerpAngle(_yaw, want, 1f - Mathf.Exp(-10f * dt));
                 Rotation = new Vector3(0f, _yaw, 0f);           // rotate the BODY; the rig (child, forward -Z) follows
             }

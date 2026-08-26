@@ -2093,7 +2093,21 @@ namespace UnturnedGodot
         // long wall; the target (green) sits beyond it. A repeating noise at the target keeps the flow field flooded from
         // there; the wall blocks both LOS (no beeline) and the walkability probe, so the BFS routes the horde AROUND the
         // wall's open right end -> they stream around it, then beeline once they round the corner and can see the target.
-        bool _zpMode; ZombieChunkField _zpf; Vector3 _zpTarget; double _zpT, _zpNextEmit = 0.4;
+        bool _zpMode, _zpReported; ZombieChunkField _zpf; Vector3 _zpTarget; MeshInstance3D _zpMarker; double _zpT, _zpNextEmit = 0.4;
+        // Diagnostic: at t=25s, log every zombie that hasn't reached the target -> WHERE it's stuck (near the wall X~0? in
+        // the open? which end?) so the stuck cause is data, not a guess.
+        void ZpathReport()
+        {
+            int far = 0, atWall = 0, total = 0;
+            foreach (var z in _zpf.DebugZombies())
+            {
+                total++;
+                float dT = new Vector2(z.Pos.X - _zpTarget.X, z.Pos.Z - _zpTarget.Z).Length();
+                bool wall = Mathf.Abs(z.Pos.X) < 4f;
+                if (dT > 4f) { far++; if (wall) atWall++; GD.Print($"[zpath] STUCK at ({z.Pos.X:0.0},{z.Pos.Z:0.0}) dT {dT:0.0}m  {(wall ? "<-AT WALL (genuine)" : "(en route near target)")}"); }
+            }
+            GD.Print($"[zpath] after 25s: {atWall}/{total} genuinely stuck AT WALL; {far - atWall} more en route near the target");
+        }
         void BuildZombiePath()
         {
             GetWindow().Size = new Vector2I(1280, 720);
@@ -2125,7 +2139,7 @@ namespace UnturnedGodot
 
             var am = new MeshInstance3D { Mesh = new SphereMesh { Radius = 0.6f, Height = 1.8f } };   // green = target (other side of the wall)
             am.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.2f, 1f, 0.3f), EmissionEnabled = true, Emission = new Color(0.15f, 0.8f, 0.25f) };
-            AddChild(am); am.Position = _zpTarget + Vector3.Up * 0.9f;
+            AddChild(am); am.Position = _zpTarget + Vector3.Up * 0.9f; _zpMarker = am;
 
             var cam = new Camera3D { Current = true, Fov = 52f, Far = 2000f };
             AddChild(cam); cam.Position = new Vector3(0f, 40f, 0.01f); cam.LookAt(Vector3.Zero, new Vector3(0f, 0f, -1f));   // TOP-DOWN (-Z up, +X right) -> the fork around the wall reads cleanly
@@ -6704,7 +6718,7 @@ namespace UnturnedGodot
             if (_zkMode) { _zkT += delta; _zkFrame++; if (_zkFrame > 60 && _zkFrame % 15 == 0) _zkPlayer?.Fire(); if (_zkT >= 14.0) ZkillReport(); return; }   // phase-3b: pace shots so recoil recovers between them
             if (_zsMode) { _zsT += delta; if (!_zsFired && _zsT >= 3.0) { SoundBus.Emit(GetTree(), _zsSound, SoundBus.Gunshot); _zsFired = true; GD.Print("[zsound] GUNSHOT emitted at the far point"); } if (_zsT >= 13.0) ZsoundReport(); return; }   // phase-4: fire the lure at t=3s
             if (_zfMode) { _zfT += delta; if (_zfz != null) _zfz.DesiredVel = new Vector2(1.3f, 0f); if (_zfT >= 5.0) { GD.Print("[zface] done"); GetTree().Quit(); } return; }   // facing/gait diagnostic: DesiredVel = world +X at the shamble speed
-            if (_zpMode) { _zpT += delta; if (_zpT >= _zpNextEmit) { _zpNextEmit += 4.0; SoundBus.Emit(GetTree(), _zpTarget, SoundBus.Gunshot); } if (_zpT >= 26.0) { GD.Print("[zpath] done"); GetTree().Quit(); } return; }   // pathing demo: re-emit the target's noise so the flow field stays flooded
+            if (_zpMode) { _zpT += delta; _zpTarget = new Vector3(11f, 0f, Mathf.Sin((float)_zpT * 0.4f) * 7f); if (_zpMarker != null) _zpMarker.Position = _zpTarget + Vector3.Up * 0.9f; if (_zpf != null) _zpf.DebugAnchor = _zpTarget; if (_zpT >= _zpNextEmit) { _zpNextEmit += 2.0; SoundBus.Emit(GetTree(), _zpTarget, SoundBus.Gunshot); } if (_zpT >= 25.0 && !_zpReported) { _zpReported = true; ZpathReport(); } if (_zpT >= 26.0) { GD.Print("[zpath] done"); GetTree().Quit(); } return; }   // MOVING target (a real player moves) -> the field keeps rebuilding so no stable corner-trap can hold
             // Re-applied until two consecutive passes change nothing, rather than once on the first frame:
             // materials are still being created while the world builds, so a single early pass converts
             // whatever happened to exist yet and silently leaves the rest per-pixel -- which would make a

@@ -123,16 +123,20 @@ namespace UnturnedGodot
             {
                 // Blocked/unreached cell. A zombie is usually here standing on the OPEN sliver of a wall-BORDER cell --
                 // the 2m wall's footprint rounds up to the whole 4m cell, so the cell reads "wall" though it's mostly
-                // walkable. Borrow the nearest OPEN neighbours' flow so it curls AROUND. (Returning `direct` here was the
-                // "walks straight into the wall" bug master caught: the target is on the far side, so direct aims INTO it.)
-                Vector2 nb = Vector2.Zero;
+                // walkable. Steer toward the single LOWEST-COST open neighbour = get onto the geodesic and slide ALONG the
+                // wall toward the corner. (Averaging ALL neighbours' flow cancelled the tangential part -- some point up to
+                // the corner, some down past it -- leaving a push straight INTO the wall, so bodies pinned on the face and
+                // never progressed. Returning `direct` was even worse: straight at the target THROUGH the wall.)
+                float best = float.MaxValue; Vector2 bestDir = Vector2.Zero;
                 for (int d = 0; d < 8; d++)
                 {
                     int nx = cx + Dx[d], nz = cz + Dz[d];
                     if (nx < 0 || nx >= _w || nz < 0 || nz >= _h) continue;
-                    nb += _flow[nz * _w + nx];
+                    int ni = nz * _w + nx;
+                    if (_blocked[ni] || _cost[ni] == float.MaxValue) continue;
+                    if (_cost[ni] < best) { best = _cost[ni]; bestDir = Dir[d]; }
                 }
-                return nb.LengthSquared() > 1e-9f ? nb.Normalized() : direct;
+                return bestDir != Vector2.Zero ? bestDir : direct;
             }
             // OPEN cell: BEELINE if the target is directly visible (cancels the grid's octile bias), else the smooth flow.
             if (ClearLineTo(pos)) return direct;
