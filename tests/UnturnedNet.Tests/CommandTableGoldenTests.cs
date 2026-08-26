@@ -32,7 +32,7 @@ namespace UnturnedNet.Tests
     [TestFixture]
     public class CommandTableGoldenTests
     {
-        // id -> name, as of NetProtocol.Version 16.
+        // id -> name, as of NetProtocol.Version 17.
         static readonly Dictionary<byte, string> Expected = new()
         {
             [35] = "CommandFitAttachment",
@@ -45,6 +45,9 @@ namespace UnturnedNet.Tests
             // overwriting real values with constructor defaults -- a moved gun came back with a full magazine.
             [40] = "CommandGunState",
             [41] = "CommandSetAutoDrink",
+            // v17 (player-profiles): who you are, as an intent. Every field is attacker-controlled and lands
+            // on someone else's screen, so the server re-runs ProfileRules and publishes its OWN answer.
+            [42] = "CommandSetProfile",
         };
 
         static Dictionary<byte, string> Actual() =>

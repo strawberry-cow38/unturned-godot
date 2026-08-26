@@ -17,7 +17,13 @@ namespace UnturnedGodot
         const float GlideRate = 14f;      // 1/s exponential approach to the replicated target
         const float SnapDistance = 5f;    // beyond this the glide would look like skating -> snap
 
-        sealed class Av { public RiggedCharacter Body; public PlayerInventory Inv; public PlayerClothingController Clothing; public ulong AppSig; }
+        sealed class Av
+        {
+            public RiggedCharacter Body; public PlayerInventory Inv; public PlayerClothingController Clothing; public ulong AppSig;
+            public Nameplate Plate;      // name + profile picture over the head
+            public string PlateName;     // what the plate currently reads -- rebuild only on a change
+            public ulong PlateAvatar = ulong.MaxValue;   // and which avatar hash it is showing (MaxValue = never set)
+        }
         readonly Dictionary<ushort, Av> _avatars = new();
         static readonly Color Skin = new Color(0.82f, 0.66f, 0.52f);   // the 3P body skin (matches PlayerController._body)
 
@@ -60,6 +66,24 @@ namespace UnturnedGodot
                 {
                     ulong sig = AppSig(ce);
                     if (sig != av.AppSig) { Dress(av, ce); av.AppSig = sig; }
+                }
+
+                // WHO THIS IS. Name + profile picture from the replicated profile block; the picture's bytes
+                // arrive separately (the snapshot carries only a hash), so the plate is rebuilt when EITHER
+                // changes -- including the moment the bytes finally land for a hash it already knew about.
+                if (Client.Profiles.TryGet(e.OwnerPlayerId, out var prof))
+                {
+                    Client.Profiles.TryGetAvatar(e.OwnerPlayerId, out var png);
+                    // Key on 0 while the bytes are still in flight, so their arrival counts as a change and
+                    // the placeholder gets replaced rather than sticking until the player re-dresses.
+                    ulong shown = png != null ? prof.AvatarHash : 0UL;
+                    if (av.PlateName != prof.Name || av.PlateAvatar != shown)
+                    {
+                        av.Plate ??= Nameplate.Attach(av.Body);
+                        av.Plate?.Set(prof.Name, png);
+                        av.PlateName = prof.Name;
+                        av.PlateAvatar = shown;
+                    }
                 }
             }
 

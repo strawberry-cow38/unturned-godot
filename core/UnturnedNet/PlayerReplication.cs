@@ -33,6 +33,7 @@ namespace UnturnedGodot.Net
         public const byte SystemAnimals = 15;       // wildlife (deer/pig/cow) puppets (A5). AnimalReplication.cs
         public const byte SystemDestructibles = 16; // destructible props (rubble) alive-bitmap keyed by deterministic placement index -- the ResourceReplication(12) shape for objects (DestructibleReplication.cs). IN EnableSyncCheck (authored, cross-checkable).
         public const byte SystemInteractables = 17; // doors + beds: open/locked/owner state, server-authoritative (InteractableReplication.cs). Deadzones need no system -- their effect is damage the server already replicates through SystemVitals(13).
+        public const byte SystemProfiles = 18;      // display name + avatar hash per player (ProfileReplication.cs). Everyone-visible, unlike skills: the point is that other players see it. The avatar BYTES do not ride the snapshot -- only a 64-bit content hash does, and the image goes out once per (peer, hash) as EventAvatarData.
         public const byte SystemSyncCheck = 255;    // hardening: rolling per-system StateHash block for desync detection, composed LAST
                                                     // when SnapshotComposer.EnableSyncCheck is on; never a real system id (reserved)
 
@@ -125,6 +126,12 @@ namespace UnturnedGodot.Net
         /// autodrink OFF on their clean water gets it drunk automatically after their next inventory drag, which
         /// looks like the toggle simply not working rather than like a replication fault.</summary>
         public const byte CommandSetAutoDrink = 41;
+        /// <summary>Client -> server on join: display name + profile picture (strawberry 2026-08-26). BOTH
+        /// are untrusted input that every other client renders, so the server re-runs ProfileRules on the
+        /// name and publishes its OWN answer, and validates the PNG header without decoding it. See
+        /// ProfileRules for the threat model -- the short version is that Godot's RichTextLabel renders
+        /// BBCode, so a name is a place someone can put [img]https://attacker/x[/img].</summary>
+        public const byte CommandSetProfile = 42;
 
         // EventRegistry id space (server -> client, ReliableOrdered)
         public const byte EventJoinSnapshot = 1;   // the join-time FULL snapshot rides the reliable channel (§2.2: fragmentation is safe there)
@@ -162,6 +169,7 @@ namespace UnturnedGodot.Net
         public const byte EventObjectRestored = 33;    // destructible props: the Rubble_Reset respawn -- alive-bit back on by index
         public const byte EventDoorState = 34;         // SP/MP unify: a door's authoritative open+locked state (both bits, so a lock is visible to everyone rather than only to the server)
         public const byte EventBedClaimed = 35;        // SP/MP unify: a bed's owner changed (0 = released); the loser of a re-claim gets its own event
+        public const byte EventAvatarData = 36;        // the bytes behind an avatar hash, sent once per (peer, hash) on the reliable channel -- the snapshot carries only the hash, because a PNG per player per tick is not a snapshot
     }
 
     /// <summary>

@@ -71,7 +71,8 @@ namespace UnturnedNet.Tests
             session.SendControl(NetControlType.KeepAlive);
             Assert.That(captured, Is.Not.Null);
             Assert.That(capturedLen, Is.EqualTo(12));
-            // v16: gun-state-authority (CommandGunState(40) + CommandSetAutoDrink(41)) -- only the version byte
+            // v17: player-profiles (CommandSetProfile(42) + SystemProfiles(18) + EventAvatarData(36)) -- only
+            // the version byte (10->11) moves. Before that v16: gun-state-authority -- only the version byte
             // (0F->10) moves, per the re-golden-with-bump discipline. Before that v15: wire-catchup (0E->0F).
             //
             // WORTH KNOWING WHAT THIS GOLDEN CANNOT SEE. It caught the version byte the instant it changed,
@@ -80,7 +81,7 @@ namespace UnturnedNet.Tests
             // nothing in these twelve bytes moves when the command table grows. So this golden guards the
             // FRAMING, and the command table has no equivalent guard; the four unbumped ids were found by
             // reading git dates, not by a test. See CommandTableGoldenTests for the one that would have.
-            Assert.That(ToHex(captured, capturedLen), Is.EqualTo("751008000000000000002800"));
+            Assert.That(ToHex(captured, capturedLen), Is.EqualTo("751108000000000000002800"));
         }
 
         [Test]

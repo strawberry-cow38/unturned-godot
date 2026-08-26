@@ -25,6 +25,7 @@ namespace UnturnedGodot
         public string Host = "127.0.0.1";
         public ushort Port = 47872;
         public string PlayerName = "player";
+        bool _profileSent;   // reset by a reconnect, so a rejoin re-states the profile (the server keeps none)
         public SimDriver Driver;                    // the world's sim spine (WorldBuildResult.Sim) -- steps registered here in §2.5 order
         public DirectionalLight3D Sun;              // world lighting (WorldBuildResult.Sun/Env): the late-spawned shell's FP gun links to it, like Playable
         public Godot.Environment Env;
@@ -276,6 +277,15 @@ namespace UnturnedGodot
         void ShellStep(float dt)
         {
             if (Client.State != NetSessionState.Connected) return;
+            if (!_profileSent)
+            {
+                // ON EVERY JOIN, not once per install (strawberry: "client sends username + pfp on each
+                // server join"). The server keeps no profile database, so a rejoin has to re-state it -- and
+                // the picture costs nothing the second time because the SERVER dedupes by content hash and
+                // only pushes bytes a peer has not already been sent.
+                _profileSent = true;
+                Client.SendSetProfile(PlayerProfile.Name, PlayerProfile.AvatarPng);
+            }
             if (!_holidayApplied)
             {
                 // P3: first Connected tick -- build the deferred holiday world content with the SERVER's
@@ -595,6 +605,9 @@ namespace UnturnedGodot
             // DISCONNECTED overlay: latch once we've been Connected, then show the banner whenever the link
             // is no longer Connected -- so a server bounce / dropped link reads as DISCONNECTED, not a silent freeze
             if (Client.State == NetSessionState.Connected) _wasConnected = true;
+            // "on each server join" means a RECONNECT re-states it too. The server keeps no profile database,
+            // so a peer that comes back is a stranger to it again.
+            else _profileSent = false;
             if (_disconnectBanner != null)
                 _disconnectBanner.Visible = _wasConnected && Client.State != NetSessionState.Connected;
         }

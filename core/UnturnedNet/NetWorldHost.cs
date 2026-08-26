@@ -29,6 +29,7 @@ namespace UnturnedGodot.Net
         public readonly ProjectileReplication Projectiles = new ProjectileReplication();
         // Phase 6 -- the transactional slice (MP_PLAN §4 Phase 6)
         public readonly SkillsReplication Skills = new SkillsReplication();
+        public readonly PlayerProfileReplication Profiles = new PlayerProfileReplication();
         public readonly DeployableReplication Deployables = new DeployableReplication();
         public readonly InventoryReplication Inventories = new InventoryReplication();
         public readonly WorldItemReplication WorldItems = new WorldItemReplication();
@@ -88,7 +89,7 @@ namespace UnturnedGodot.Net
                                                                       Skills, Deployables, Inventories, WorldItems,
                                                                       Vehicles, Clock, Crops, Resources,
                                                                       Vitals, Containers, Animals, Destructibles,
-                                                                      InteractableState });   // wave 2 (v11): 13/14/15; v13: Destructibles(16); v14: InteractableState(17) last, ascending
+                                                                      InteractableState, Profiles });   // wave 2 (v11): 13/14/15; v13: Destructibles(16); v14: InteractableState(17); v17: Profiles(18) last, ascending
             Composer.CurrentTick = () => Session.CurrentTick;   // review L1: rejects acks of future ticks
             Composer.RegisterAck(Commands);
             Combat = new ServerCombat(Players, CombatState, Zombies, Projectiles, Ids, BroadcastEvent, SendEventTo);
@@ -200,6 +201,28 @@ namespace UnturnedGodot.Net
             Commands.Register<ReloadCommand>(ReplicationIds.CommandReload, ReloadCommand.TryRead,
                 (sender, cmd) => Combat.OnReload(sender, cmd, Session.CurrentTick));
 
+            // WHO YOU ARE, as an intent. Every field here is attacker-controlled and ends up rendered on
+            // someone else's screen, so nothing is taken on trust: ServerApplyProfile re-runs ProfileRules on
+            // the raw name and stores ITS answer, and validates the PNG header WITHOUT decoding it (see
+            // ProfileRules for why decoding untrusted images server-side is the thing to avoid). A rejected
+            // picture leaves the player's existing one alone rather than clearing it.
+            Commands.Register<SetProfileCommand>(ReplicationIds.CommandSetProfile, SetProfileCommand.TryRead,
+                (sender, cmd) =>
+                {
+                    // Rate-gated FIRST. A profile is set once on join and then essentially never, so anything
+                    // faster is either a bug or a client turning its one 64 KB upload into 64 KB x every peer,
+                    // repeatedly. Drop the whole command rather than applying the name and refusing the picture.
+                    if (!Profiles.ServerProfileAccepted(sender, Session.CurrentTick)) return;
+                    if (!Profiles.ServerApplyProfile(sender, cmd.Name, cmd.AvatarPng, Session.CurrentTick, out var verdict))
+                    {
+                        if (verdict != ProfileRules.AvatarVerdict.Ok && verdict != ProfileRules.AvatarVerdict.Empty)
+                            NetLog.Info($"player {sender}: profile picture refused ({ProfileRules.Explain(verdict)})");
+                        return;
+                    }
+                    if (Profiles.TryGet(sender, out var e)) SendAvatarToPeersWhoNeedIt(e.AvatarHash, e.AvatarPng);
+                },
+                validate: (sender, cmd) => Session.FindPeer(sender) != null);
+
             Session.PeerConnected += peer =>
             {
                 var spawn = SpawnProvider(peer.PlayerId);
@@ -208,6 +231,11 @@ namespace UnturnedGodot.Net
                 // Phase 6 per-player authoritative state -- added BEFORE the join snapshot composes below,
                 // so the joiner's own owner-only skills/inventory blocks ride the join snapshot too.
                 Skills.ServerAdd(peer.PlayerId, Session.CurrentTick);
+                // The name from the Connect handshake is a STARTING POINT, not the answer: it is sanitised
+                // here like everything else, and the client's CommandSetProfile replaces it moments later
+                // with the launcher's name plus the picture. Seeding it means a player is never nameless,
+                // even if their profile command is lost or they are running an older client.
+                Profiles.ServerAdd(peer.PlayerId, peer.Name, Session.CurrentTick);
                 Inventories.ServerAdd(peer.PlayerId, Session.CurrentTick);
                 Vitals.ServerAdd(peer.PlayerId, Session.CurrentTick);   // B5: one PlayerVitalsSim per player, owner-only on the wire
                 // The join flow (MP_PLAN §4 Phase 4): Accept -> reliable FULL snapshot -> deltas. The full
@@ -229,6 +257,8 @@ namespace UnturnedGodot.Net
                 Players.ServerRemove(peer.PlayerId, Session.CurrentTick);
                 CombatState.ServerRemove(peer.PlayerId, Session.CurrentTick);
                 Skills.ServerRemove(peer.PlayerId);
+                Profiles.ServerRemove(peer.PlayerId);
+                Profiles.ServerForgetPeer(peer.PlayerId);   // player ids are RECYCLED: a new peer must not inherit "already has these pictures"
                 Vitals.ServerRemove(peer.PlayerId);   // B5: the leaving peer's vitals sim dies with it
                 Inventories.ServerRemove(peer.PlayerId, Session.CurrentTick);   // also releases any crate they held open
                 Composer.ForgetClient(peer.PlayerId);
@@ -260,6 +290,28 @@ namespace UnturnedGodot.Net
         }
 
         /// <summary>Reliable event to every connected peer (the event plane, §2.3).</summary>
+        /// <summary>Send one picture only to the peers that do not already hold it. The ledger claim and the
+        /// send are the same call, so there is no "checked but forgot to record" path.</summary>
+        void SendAvatarToPeersWhoNeedIt(ulong hash, byte[] png)
+        {
+            if (hash == 0 || png == null) return;
+            byte[] message = null;
+            foreach (var peer in Session.Peers)
+            {
+                if (!Profiles.ServerClaimAvatarSend(peer.PlayerId, hash)) continue;
+                message ??= NetMessagePak.Pack(ReplicationIds.EventAvatarData,
+                                               new AvatarDataEvent { Hash = hash, Png = png }.Write);
+                peer.SendReliable(message);   // packed ONCE for the whole fan-out, not per recipient
+            }
+        }
+
+        void SendAvatarToPeerIfNeeded(NetPeer peer, ulong hash, byte[] png)
+        {
+            if (hash == 0 || png == null || !Profiles.ServerClaimAvatarSend(peer.PlayerId, hash)) return;
+            peer.SendReliable(NetMessagePak.Pack(ReplicationIds.EventAvatarData,
+                                                 new AvatarDataEvent { Hash = hash, Png = png }.Write));
+        }
+
         public void BroadcastEvent(byte[] message)
         {
             foreach (var peer in Session.Peers) peer.SendReliable(message);
@@ -389,6 +441,11 @@ namespace UnturnedGodot.Net
                 {
                     Vector3 spawnPos = Players.TryGetByOwner(peer.PlayerId, out var pe) ? pe.Pos : Vector3.zero;
                     SendReliableFullSnapshot(peer, spawnPos);
+                    // The snapshot names everyone's avatar by HASH; a joiner has none of the bytes yet, so
+                    // send them the pictures of everyone already here. The per-peer ledger does the deduping,
+                    // so two players sharing a picture cost this joiner one send.
+                    foreach (var prof in Profiles.All)
+                        SendAvatarToPeerIfNeeded(peer, prof.AvatarHash, prof.AvatarPng);
                 }
                 _pendingJoinSnapshots.Clear();
             }
@@ -442,6 +499,7 @@ namespace UnturnedGodot.Net
         // Phase 6 replicas: skills/inventory arrive owner-only (only MY entry ever fills in); the
         // deployable graph + world items are world state every client mirrors and solves locally (§3.1).
         public readonly SkillsReplication Skills = new SkillsReplication();
+        public readonly PlayerProfileReplication Profiles = new PlayerProfileReplication();
         public readonly DeployableReplication Deployables = new DeployableReplication();
         public readonly InventoryReplication Inventories = new InventoryReplication();
         public readonly WorldItemReplication WorldItems = new WorldItemReplication();
@@ -531,7 +589,7 @@ namespace UnturnedGodot.Net
                                                                     Skills, Deployables, Inventories, WorldItems,
                                                                     Vehicles, Clock, Crops, Resources,
                                                                     Vitals, Containers, Animals, Destructibles,
-                                                                    InteractableState });   // wave 2 (v11): 13/14/15; v13: Destructibles(16); v14: InteractableState(17), symmetric with the server Composer
+                                                                    InteractableState, Profiles });   // wave 2 (v11): 13/14/15; v13: Destructibles(16); v14: InteractableState(17); v17: Profiles(18) -- symmetric with the server Composer
             Applier.DesyncDetected += report => DesyncDetected?.Invoke(report);   // (already NetLog'd in the applier)
             Events.Register(ReplicationIds.EventJoinSnapshot, reader =>
             {
@@ -610,7 +668,29 @@ namespace UnturnedGodot.Net
                 e => DoorStateChanged?.Invoke(e));
             Events.Register<BedClaimedEvent>(ReplicationIds.EventBedClaimed, BedClaimedEvent.TryRead,
                 e => BedClaimed?.Invoke(e));
+            // Avatar bytes. ClientAcceptAvatar RE-VALIDATES the header and RECOMPUTES the hash rather than
+            // believing either: this is the last point before something hands the bytes to an image decoder,
+            // and a client that trusts whatever a server sends is a client a hostile server owns.
+            Events.Register<AvatarDataEvent>(ReplicationIds.EventAvatarData, AvatarDataEvent.TryRead,
+                e => { if (Profiles.ClientAcceptAvatar(e.Hash, e.Png)) AvatarArrived?.Invoke(e.Hash); });
         }
+
+        /// <summary>Raised when an avatar's bytes land, so the UI can rebuild a texture it was waiting on.</summary>
+        public event System.Action<ulong> AvatarArrived;
+
+        /// <summary>Tell the server who we are. Sent once the session is Connected, on every join -- the
+        /// server holds no profile database, so a rejoin re-states it. The name is sanitised HERE too, so the
+        /// player sees the name they will actually get; the server does not rely on that and re-runs it.</summary>
+        public bool SendSetProfile(string name, byte[] avatarPng)
+            => SendCommand(ReplicationIds.CommandSetProfile,
+                           new SetProfileCommand { Name = ProfileRules.SanitizeName(name), AvatarPng = avatarPng }.Write);
+
+        /// <summary>Send a profile WITHOUT the client-side sanitise -- what a modified client, or one written
+        /// by someone who read the wire format, would send. Exists so a test can prove the SERVER's pass is
+        /// what protects everyone, rather than proving the client politely sanitised its own input.</summary>
+        public bool SendRawProfileForTest(string name, byte[] avatarPng)
+            => SendCommand(ReplicationIds.CommandSetProfile,
+                           new SetProfileCommand { Name = name, AvatarPng = avatarPng }.Write);
 
         public NetSessionState State => Session.State;
         public ushort PlayerId => Session.PlayerId;
