@@ -35,8 +35,28 @@ namespace UnturnedGodot.Testing
         public override IEnumerable<Step> Run()
         {
             Rigs.Ground(World);
+
+            // WARM THE SOLVER before measuring. The physics warmstart is COLD on the first body of a session, and a
+            // heavy hull hops ~2x more cold than warm -- the tank reads 62% airborne run ALONE (or first) vs 33.7%
+            // after ANY prior hull (jeep/semi/apc all give 33.7%; discriminated 2026-08-26). That is a cold-start
+            // ARTIFACT of the engine, not the vehicle -- real gameplay is never cold -- but it means the FIRST hull
+            // in the fleet, and every single-hull `UG_CAR=` run, would otherwise report a cold number that
+            // misrepresents it. One throwaway heavy hull off to the side populates the warmstart so every measured
+            // hull sees the representative WARM solver. (Engine warmstart persists after the body is freed.)
+            {
+                var warm = Vehicle.BuildByName("tank");   // heaviest -> exercises the solver hardest
+                World.AddChild(warm);
+                warm.GlobalPosition = new Vector3(-300f, 1.5f, 0f);
+                yield return Ticks(60);
+                warm.EngineOn = true; warm.Wake();
+                for (int i = 0; i < 250; i++) { warm.Drive(1f, 0f, false); yield return Ticks(1); }
+                World.RemoveChild(warm); warm.QueueFree();
+                yield return Ticks(5);
+            }
+
+            string seq = System.Environment.GetEnvironmentVariable("UG_CARS");   // comma-separated custom ORDER (diagnostic: isolate cross-vehicle state carrying between runs)
             string only = System.Environment.GetEnvironmentVariable("UG_CAR");
-            var fleet = string.IsNullOrEmpty(only) ? Fleet : new[] { only };
+            var fleet = !string.IsNullOrEmpty(seq) ? seq.Split(',') : (string.IsNullOrEmpty(only) ? Fleet : new[] { only });
             float spawnX = 0f;
             foreach (var car in fleet)
             {
