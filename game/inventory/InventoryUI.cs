@@ -177,42 +177,41 @@ namespace UnturnedGodot
                 if (show.Count >= QUICK_MAX) break;
             }
 
-            const int TQ = 52, GAP = 6, PADX = 8, COLS = 6, ROWS = 3;   // ALWAYS a fixed 6x3 grid (master: even when cells are empty)
-            float w = PADX * 2 + COLS * (TQ + GAP) - GAP, h = 24 + ROWS * (TQ + GAP) - GAP + 6;
+            const int PADX = 8, COLS = 6, ROWS = 3, HDR = 26;   // grid CELLS are the inventory's (CELL, via GridPanel) -- no bespoke tile size of its own (master: "standardize them all on the same grid")
+            float w = PADX * 2 + COLS * CELL, h = HDR + ROWS * CELL + PADX;
             var bg = new Panel { Position = Vector2.Zero, Size = new Vector2(w, h), MouseFilter = Control.MouseFilterEnum.Ignore };
-            var sb = new StyleBoxFlat { BgColor = UITheme.Bar, CornerRadiusTopLeft = 6, CornerRadiusTopRight = 6, CornerRadiusBottomLeft = 6, CornerRadiusBottomRight = 6 };
-            bg.AddThemeStyleboxOverride("panel", sb);
+            bg.AddThemeStyleboxOverride("panel", UITheme.Box(UITheme.Bar, 6, UITheme.Border, UITheme.BorderWidth));   // defined edge -> reads as its own panel, not a faint smear over the world
             _quickCraft.AddChild(bg);
-            var hdr = new Label { Text = "QUICK CRAFT", Position = new Vector2(PADX, 4), Size = new Vector2(160, 16), MouseFilter = Control.MouseFilterEnum.Ignore };
-            hdr.AddThemeFontSizeOverride("font_size", UITheme.FontSmall);
-            hdr.AddThemeColorOverride("font_color", UITheme.TextDim);
+            var hdr = new Label { Text = "QUICK CRAFT", Position = new Vector2(PADX, 5), Size = new Vector2(w - PADX * 2, 16), MouseFilter = Control.MouseFilterEnum.Ignore };
+            hdr.AddThemeFontSizeOverride("font_size", UITheme.FontLabel);
+            hdr.AddThemeColorOverride("font_color", UITheme.Text);
             bg.AddChild(hdr);
-            for (int i = 0; i < COLS * ROWS; i++)   // ALWAYS 18 cells; slots past the recipe count are dim empty placeholders
+            // the SAME empty-cell grid the bags draw (one GridPanel, CELL-sized), so quick-craft reads as one of them
+            var gp = new GridPanel { Cells = new Vector2I(COLS, ROWS), Cell = CELL, Position = new Vector2(PADX, HDR), MouseFilter = Control.MouseFilterEnum.Ignore };
+            bg.AddChild(gp);
+            for (int i = 0; i < show.Count && i < COLS * ROWS; i++)   // filled cells only; the GridPanel shows the empties
             {
-                var tile = new Panel { Position = new Vector2(PADX + (i % COLS) * (TQ + GAP), 24 + (i / COLS) * (TQ + GAP)), Size = new Vector2(TQ, TQ) };
-                bool filled = i < show.Count;
-                var tsb = new StyleBoxFlat { BgColor = filled ? UITheme.Slot : UITheme.SlotEmpty, CornerRadiusTopLeft = 4, CornerRadiusTopRight = 4, CornerRadiusBottomLeft = 4, CornerRadiusBottomRight = 4 };
-                tile.AddThemeStyleboxOverride("panel", tsb);   // MouseFilter left Stop so a filled tile's tooltip shows on hover; the click is caught in _Input
-                if (!filled) { tile.MouseFilter = Control.MouseFilterEnum.Ignore; _quickCraft.AddChild(tile); continue; }   // empty slot: no icon, not clickable
                 var bp = show[i];
                 var a = CraftingMenu.OutAsset(bp);
-                tile.TooltipText = $"{CraftingMenu.Title(bp)}\nLMB +1   RMB +5";
+                var tile = new Panel { Position = new Vector2(PADX + (i % COLS) * CELL, HDR + (i / COLS) * CELL), Size = new Vector2(CELL, CELL) };
+                tile.AddThemeStyleboxOverride("panel", UITheme.Box(UITheme.Slot, UITheme.RadiusCell));   // filled cell = the same Slot bg an inventory item tile sits on
+                tile.TooltipText = $"{CraftingMenu.Title(bp)}\nLMB +1   RMB +5";   // MouseFilter left Stop so the tooltip shows; the click is caught in _Input
                 var tex = a != null ? IconFor(a.id) : null;
                 if (tex != null)
                 {
                     var ico = new TextureRect { Texture = tex, ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize, StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered, MouseFilter = Control.MouseFilterEnum.Ignore };
                     ico.SetAnchorsPreset(Control.LayoutPreset.FullRect);
-                    ico.OffsetLeft = 4; ico.OffsetTop = 4; ico.OffsetRight = -4; ico.OffsetBottom = -4;
+                    ico.OffsetLeft = 6; ico.OffsetTop = 6; ico.OffsetRight = -6; ico.OffsetBottom = -6;
                     tile.AddChild(ico);
                 }
                 else
                 {
                     var lbl = new Label { Text = CraftingMenu.Title(bp), AutowrapMode = TextServer.AutowrapMode.WordSmart, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, MouseFilter = Control.MouseFilterEnum.Ignore };
                     lbl.SetAnchorsPreset(Control.LayoutPreset.FullRect);
-                    lbl.AddThemeFontSizeOverride("font_size", UITheme.FontTiny);
+                    lbl.AddThemeFontSizeOverride("font_size", UITheme.FontSmall);
                     tile.AddChild(lbl);
                 }
-                _quickCraft.AddChild(tile);
+                bg.AddChild(tile);
                 _quickTiles.Add((tile, bp));
             }
 
@@ -1876,7 +1875,7 @@ namespace UnturnedGodot
         {
             col ??= _clothingCol;
             if (colW <= 0f) colW = page.width * CELL;
-            col.AddChild(HeaderBar(name, pos, colW, worn));
+            col.AddChild(HeaderBar(name, pos, colW, worn, worn == null ? page.getItemCount() : -1));
             var grid = new GridPanel { Cells = new Vector2I(page.width, page.height), Cell = CELL,
                                        Position = pos + new Vector2(0, HDRGAP), Size = new Vector2(page.width * CELL, page.height * CELL) };
             col.AddChild(grid);
@@ -2081,7 +2080,7 @@ namespace UnturnedGodot
         // SizeOffset_Y = 60, SizeScale_X = 1) with the worn item's icon on the left, its name centred, and the
         // item's condition on the right. The old plain text label was the single biggest visual gap vs the
         // reference -- retail's inventory reads as a stack of BARS, not a list of captions.
-        Control HeaderBar(string text, Vector2 pos, float width, Item worn = null)
+        Control HeaderBar(string text, Vector2 pos, float width, Item worn = null, int count = -1)
         {
             var bar = new Panel { Position = pos, Size = new Vector2(width, HDRH), MouseFilter = Control.MouseFilterEnum.Ignore };
             StyleBox(bar, UI_BAR);
@@ -2112,6 +2111,15 @@ namespace UnturnedGodot
                 pct.AddThemeFontSizeOverride("font_size", 30);
                 bar.AddChild(pct);
             }
+            else if (count >= 0)   // storage-type section (no worn item): show how many items it holds, right-aligned like the worn %
+            {
+                var cnt = new Label { Text = count.ToString(), Position = new Vector2(width - 116, 0),
+                                      Size = new Vector2(94, HDRH), HorizontalAlignment = HorizontalAlignment.Right,
+                                      VerticalAlignment = VerticalAlignment.Center, MouseFilter = Control.MouseFilterEnum.Ignore };
+                cnt.AddThemeColorOverride("font_color", UITheme.TextDim);
+                cnt.AddThemeFontSizeOverride("font_size", 26);
+                bar.AddChild(cnt);
+            }
             return bar;
         }
         static Label Header(string text, Vector2 pos, float width)
@@ -2139,9 +2147,11 @@ namespace UnturnedGodot
 
         // Retail draws each empty cell as its OWN light, translucent, rounded tile with a bright border -- the
         // grid reads as a sheet of pale squares you can see the world through, not a dark slab with faint
-        // gridlines. Verified off the reference: cells there sample as light blue (the sky behind them).
-        public static Color CellFill = new(0.62f, 0.72f, 0.84f, 0.30f);
-        public static Color CellEdge = new(0.86f, 0.92f, 1f, 0.55f);
+        // gridlines. STANDARDISED on the theme (strawberry: "standardize them all on the same grid"): these were a
+        // raw blue-slate near-miss of UITheme.SlotEmpty; now they ARE it, so every grid -- bags, crates, quick-craft
+        // -- draws the identical empty cell and can't drift apart again.
+        public static Color CellFill => UITheme.SlotEmpty;
+        public static Color CellEdge => UITheme.SlotEmptyEdge;
 
         public override void _Draw()
         {
