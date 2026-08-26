@@ -36,6 +36,7 @@ namespace UnturnedGodot
         float _falloff = 0.5f;
         float _strength = 0.05f;
         double _accum;            // fractional instances carried between frames, so a low rate still paints
+        bool _strokeOpen, _strokeErased;   // one undo step per held-drag, and which verb to label it with
 
         public EditorFoliage(Editor ed, Camera3D cam, FoliageField field)
         {
@@ -63,7 +64,20 @@ namespace UnturnedGodot
         public override void _Process(double dt)
         {
             if (_ed == null || _ed.Mode != EEditorMode.Environment || _types.Count == 0) return;
-            if (!Input.IsMouseButtonPressed(MouseButton.Left)) { _accum = 0; return; }
+            // STROKE BOUNDARIES. The brush runs every frame while held, so undo is per stroke: open the journal
+            // on the frame the button goes down, close it on the frame it comes up. Before this the foliage
+            // brush had no undo at all -- an alt-drag over hand-placed foliage was simply gone.
+            if (!Input.IsMouseButtonPressed(MouseButton.Left))
+            {
+                if (_strokeOpen)
+                {
+                    _strokeOpen = false;
+                    var restore = _field.EndFoliageStroke();
+                    if (restore != null) _ed.PushUndo(_strokeErased ? "erase foliage" : "paint foliage", restore);
+                }
+                _accum = 0; return;
+            }
+            if (!_strokeOpen) { _strokeOpen = true; _strokeErased = false; _field.BeginFoliageStroke(); }
             if (!CursorOnGround(out var at)) return;
 
             // ALT erases. Which population it erases follows retail: alt+shift takes baked foliage, plain alt
@@ -72,6 +86,7 @@ namespace UnturnedGodot
             if (Input.IsKeyPressed(Key.Alt))
             {
                 bool baked = Input.IsKeyPressed(Key.Shift);
+                _strokeErased = true;
                 _field.RemoveInSphere(TypeName, at, _radius, manual: !baked, baked: baked);
                 return;
             }

@@ -95,6 +95,52 @@ namespace UnturnedGodot.Testing
                 terr.Rivers[0].Anchors[1].DistanceTo(origin) < 1e-3f);
 
             terr.QueueFree();
+            yield return Ticks(1);
+
+            // ---- 6. FOLIAGE had no undo AT ALL -- an alt-drag over hand-placed foliage was simply gone.
+            // Journalled per CELL rather than per instance, because that covers painting and erasing with one
+            // mechanism: a capture-what-was-removed API has nothing to hand back after a paint.
+            var field = new FoliageField();
+            World.AddChild(field);
+            field.LoadGrass();
+            yield return Ticks(2);
+            string ft = null;
+            foreach (var t in field.AuthoringTypes) { ft = t; break; }
+            T.Check("a foliage type loaded to test against", ft != null);
+            if (ft != null)
+            {
+                int start = field.InstanceCount(ft);
+                field.BeginFoliageStroke();
+                for (int i = 0; i < 12; i++)
+                    field.AddInstance(ft, new Transform3D(Basis.Identity, new Vector3(600f + i * 3f, 0f, -600f)), manual: true);
+                int painted = field.InstanceCount(ft);
+                T.Check($"the paint landed ({start} -> {painted} instances)", painted > start);
+                var undoPaint = field.EndFoliageStroke();
+                T.Check("the paint stroke produced an undo action", undoPaint != null);
+                undoPaint?.Invoke();
+                T.Check($"undo removes exactly what the stroke painted ({field.InstanceCount(ft)}, expected {start})",
+                    field.InstanceCount(ft) == start);
+
+                // Erase is the direction that actually loses work, so it gets its own leg.
+                field.BeginFoliageStroke();
+                for (int i = 0; i < 12; i++)
+                    field.AddInstance(ft, new Transform3D(Basis.Identity, new Vector3(900f + i * 3f, 0f, -900f)), manual: true);
+                field.EndFoliageStroke();
+                int seeded = field.InstanceCount(ft);
+                field.BeginFoliageStroke();
+                field.RemoveInSphere(ft, new Vector3(918f, 0f, -900f), 60f, manual: true, baked: false);
+                int afterErase = field.InstanceCount(ft);
+                T.Check($"the erase landed ({seeded} -> {afterErase} instances)", afterErase < seeded);
+                var undoErase = field.EndFoliageStroke();
+                T.Check("the erase stroke produced an undo action", undoErase != null);
+                undoErase?.Invoke();
+                T.Check($"undo restores erased foliage ({field.InstanceCount(ft)}, expected {seeded})",
+                    field.InstanceCount(ft) == seeded);
+
+                field.BeginFoliageStroke();
+                T.Check("a foliage stroke that touched nothing returns null", field.EndFoliageStroke() == null);
+            }
+            field.QueueFree();
             yield break;
         }
     }
