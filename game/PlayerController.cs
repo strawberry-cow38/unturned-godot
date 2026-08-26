@@ -3526,6 +3526,14 @@ namespace UnturnedGodot
         // version broke: the next inventory move echoed the server's untouched magazine back.
         public System.Action<byte, byte, byte, ushort, byte, byte, byte, ushort, bool> NetMagLoad;
         public System.Action<byte, byte, byte> NetConsume;           // (page,x,y) -> Client.SendConsume (server deletes the item; vitals stay client-led until the vitals split)
+        /// <summary>(page,x,y,item) -> Client.SendGunState. The client is the ONLY writer of a gun's
+        /// ammo/chamber/mag/firemode/attachments, and it used to be the only holder of them too: the server's
+        /// copy of all nine fields sat at its constructor default forever, and the owner echo sent that default
+        /// back over the top of the real one. Invisible until the grid moves, because a move is a request and
+        /// the client repaints from the echo -- which is why "fire it, holster it, take it out again" was fine
+        /// and "fire it, then drag it anywhere" handed back a full magazine.</summary>
+        public System.Action<byte, byte, byte, SDG.Unturned.Item> NetGunState;
+        public System.Action<byte, byte, byte, ushort, bool> NetSetAutoDrink;   // (page,x,y,id,on) -> Client.SendSetAutoDrink
         public System.Action<byte, byte, byte, ushort, byte> NetReloadSwap;   // (page,x,y, spentId,spentAmount) -> Client.SendReload (server spends the fresh mag + returns the spent one)
         public System.Action<byte, byte, byte, byte> NetWearClothing;     // (page,x,y, EItemType slot) -> Client.SendWearClothing (server does the whole swap)
         public System.Action<byte> NetUnwearClothing;                     // (EItemType slot) -> Client.SendUnwearClothing
@@ -3686,6 +3694,7 @@ namespace UnturnedGodot
         public bool RequestMoveItem(byte page0, byte x0, byte y0, byte page1, byte x1, byte y1, byte rot1)
         {
             if (NetMoveItem == null) return false;
+            FlushGunState(force: true);   // the server must own the gun state BEFORE it owns the move
             NetMoveItem(page0, x0, y0, page1, x1, y1, rot1);
             return true;
         }
@@ -3695,7 +3704,18 @@ namespace UnturnedGodot
         public bool RequestEquipItem(byte fromPage, byte x, byte y, byte slot)
         {
             if (NetEquipItem == null) return false;
+            FlushGunState(force: true);   // the server must own the gun state BEFORE it owns the move
             NetEquipItem(fromPage, x, y, slot);
+            return true;
+        }
+
+        /// <summary>Toggle autodrink on the item at (page,x,y). Routed through the server when the bag is
+        /// server-owned, for the same reason every other grid mutation is: a local-only flip is handed straight
+        /// back by the next owner echo. Returns false when there is no wire, so the caller does it locally.</summary>
+        public bool RequestSetAutoDrink(byte page, byte x, byte y, ushort id, bool on)
+        {
+            if (NetSetAutoDrink == null || !InventoryIsServerOwned) return false;
+            NetSetAutoDrink(page, x, y, id, on);
             return true;
         }
 
@@ -3704,6 +3724,7 @@ namespace UnturnedGodot
         public bool RequestDropItem(byte page, byte x, byte y)
         {
             if (NetDropItem == null) return false;
+            FlushGunState(force: true);   // the server must own the gun state BEFORE it owns the move
             NetDropItem(page, x, y);
             return true;
         }
@@ -3959,7 +3980,76 @@ namespace UnturnedGodot
         string _chamberedAmmoType;  // the bullet TYPE of the loaded rounds / chamber (FMJ/AP/HP), from the loaded mag; persisted (master) -- opens the door for AP/HP/FMJ loads
         SDG.Unturned.Item _heldItem;   // the inventory/world Item backing the held gun -> where its ammo/firemode/mag PERSIST (master)
         // Mirror the held gun's live state onto its backing item so it survives hands<->inventory<->drop (source: equipment.state).
-        void SaveGunState() { if (_heldItem != null && Gun != null) { _heldItem.gunAmmo = Ammo; _heldItem.gunChambered = _chambered; _heldItem.gunChamberedType = _chamberedAmmoType; _heldItem.gunFiremode = (int)_firemode; _heldItem.gunMagId = _loadedMagId; if (_viewmodel != null && _viewmodel.IsGunViewmodel) _heldItem.gunAttach = _viewmodel.GetAttachMask(); } }   // only save the attach mask from the GUN's own viewmodel -- a consumable/fists viewmodel returns 0 and would wipe the gun's attachments (strawberry)
+        void SaveGunState() { if (_heldItem != null && Gun != null) { _heldItem.gunAmmo = Ammo; _heldItem.gunChambered = _chambered; _heldItem.gunChamberedType = _chamberedAmmoType; _heldItem.gunFiremode = (int)_firemode; _heldItem.gunMagId = _loadedMagId; if (_viewmodel != null && _viewmodel.IsGunViewmodel) _heldItem.gunAttach = _viewmodel.GetAttachMask(); MarkGunStateDirty(); } }   // only save the attach mask from the GUN's own viewmodel -- a consumable/fists viewmodel returns 0 and would wipe the gun's attachments (strawberry)
+        // Telling the server what the client just wrote. COALESCED, not sent per SaveGunState: SaveGunState runs
+        // on every shot, and one reliable-ordered datagram per shot is exactly the head-of-line stutter v10 was
+        // written to remove. A 0.25s floor bounds a firefight to 4 sends/sec, and every point where the state is
+        // about to leave the client's hands -- any grid mutation request -- forces an immediate flush so the
+        // move cannot race it. The item AND its address are captured at save time, not read at flush time:
+        // holstering clears _heldItem, and the flush that matters most is the one right after that.
+        const double GunStateFlushEvery = 0.25;
+        bool _gunStateDirty;
+        double _gunStateFlushCd;
+        int _gunStatePage = -1; byte _gunStateX, _gunStateY;
+        SDG.Unturned.Item _gunStateItem;
+
+        /// <summary>Where the held item actually IS, found by object identity rather than read off _heldPage.
+        ///
+        /// _heldPage is not usable here. EquipFromLocation calls NoteHeldFrom(newPage,newX,newY) BEFORE
+        /// EquipItemAsset, and EquipHeldGun's first act is SaveGunState() on the OUTGOING gun -- so at the moment
+        /// the outgoing gun's state is saved, _heldPage already names the INCOMING gun's cell. Pairing the two
+        /// would flush one gun's magazine onto another gun's address; with two identical rifles the server's id
+        /// check would not even catch it. The grid is seven small pages, and this runs on a save, not a frame.</summary>
+        bool TryFindItemAddress(SDG.Unturned.Item item, out int page, out byte x, out byte y)
+        {
+            page = -1; x = y = 0;
+            if (item == null || Inventory == null) return false;
+            for (int p = 0; p < Inventory.items.Length && p < PlayerInventory.PAGES; p++)
+            {
+                var pg = Inventory.items[p];
+                for (byte i = 0; i < pg.getItemCount(); i++)
+                {
+                    var jar = pg.getItem(i);
+                    if (jar != null && ReferenceEquals(jar.item, item)) { page = p; x = jar.x; y = jar.y; return true; }
+                }
+            }
+            return false;
+        }
+
+        void MarkGunStateDirty()
+        {
+            if (_heldItem == null) return;
+            if (!TryFindItemAddress(_heldItem, out int page, out byte x, out byte y)) return;   // not in the grid (a world pickup in flight) -> no address to name
+            // ONE pending slot, so a save for a DIFFERENT gun must push the current one out first or it is simply
+            // lost. That is not a rare race: swapping weapons saves the outgoing gun and then, a few ticks later,
+            // the incoming one -- inside the 0.25s coalescing window -- so the outgoing gun's magazine would be
+            // dropped every single time you switched weapons, which is exactly when you have just spent it.
+            // Coalescing is still doing its job: repeated saves for the SAME gun (every shot) collapse.
+            if (_gunStateDirty && !ReferenceEquals(_gunStateItem, _heldItem)) FlushGunState(force: true);
+            _gunStateItem = _heldItem; _gunStatePage = page; _gunStateX = x; _gunStateY = y;
+            _gunStateDirty = true;
+        }
+
+        /// <summary>Push the pending gun state to the server. force skips the rate floor -- use it wherever a
+        /// grid mutation is about to be requested, so the server applies the state BEFORE it moves the item.</summary>
+        public void FlushGunState(bool force = false)
+        {
+            if (!_gunStateDirty || NetGunState == null || !InventoryIsServerOwned) return;
+            if (!force && _gunStateFlushCd > 0) return;
+            if (_gunStateItem == null || _gunStatePage < 0 || _gunStatePage >= PlayerInventory.PAGES) { _gunStateDirty = false; return; }
+            NetGunState((byte)_gunStatePage, _gunStateX, _gunStateY, _gunStateItem);
+            _gunStateDirty = false;
+            _gunStateFlushCd = GunStateFlushEvery;
+        }
+
+        void TickGunStateFlush(double delta)
+        {
+            if (_gunStateFlushCd > 0) _gunStateFlushCd -= delta;
+            FlushGunState();
+        }
+
+        public bool DebugGunStatePending => _gunStateDirty;   // test seam: did a save actually queue a send
+
         void RestoreGunState(SDG.Unturned.Item item)
         {
             if (item == null || item.gunAmmo < 0) return;   // a fresh gun with no saved state keeps its LoadGun defaults
@@ -7133,6 +7223,9 @@ namespace UnturnedGodot
         public override void _PhysicsProcess(double delta)
         {
             using var _prof = Prof.Scope("PlayerController.phys");
+            // BEFORE every early return below (driving, riding, NetHold): you can hold a gun in a car, and a
+            // pending gun state that only flushes while on foot is a pending gun state that is sometimes lost.
+            if (!NetAvatar) TickGunStateFlush(delta);
             if (_pdieTest > 0) { _pdieTest -= delta; if (_pdieTest <= 0) { _pdieTest = -1; TakeDamage(9999f); } }
             // below-map kill: Unturned Level.isPointWithinValidHeight = y in [-1024,1024]; fall past the map floor -> die + respawn (covers driving too)
             if (!NetAvatar && !_dead && GlobalPosition.Y < -1030f) { GD.Print("[oob] fell below the map -> killed"); TakeDamage(9999f); }   // NetAvatar: TakeDamage is a no-op (invulnerable) -- gate here too so a pathological fall can't spam the log every tick

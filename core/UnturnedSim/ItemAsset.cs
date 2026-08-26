@@ -31,6 +31,11 @@ namespace SDG.Unturned
         public byte amount = 1;        // default stack Amount (min 1)
         public string iconPath;        // res:// icon texture, if we have one
         public string gunName;         // for a GUN: the content name (eaglefire|maplestrike|masterkey) to hold on Equip
+        // The gun's Ammo_Max, copied off its .dat by ItemCatalog. GunDef lives in the game layer and core cannot
+        // see it, but the SERVER needs a number to clamp a client-asserted ammo count against (CommandGunState),
+        // and "the client says 4000" has to be answerable without a gun simulation. 0 = not a gun, or a gun whose
+        // .dat did not parse.
+        public int gunAmmoMax;
         public string meleeName;       // for a MELEE weapon: the content folder name (knife_military|sledgehammer|...) to hold on Equip
         // ItemBagAsset: the storage grid a worn bag/shirt/pants/vest provides (0,0 = none)
         public byte width;

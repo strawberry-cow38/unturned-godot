@@ -99,6 +99,32 @@ namespace UnturnedGodot.Net
         /// loopback server and echoes the stale magazine back -- "unload a mag, move anything, the rounds
         /// go back in".</summary>
         public const byte CommandMagLoad = 39;     // a worn slot -> the grid
+        /// <summary>The client's gun state for one grid address (v16). NINE fields on Item -- gunAmmo,
+        /// gunChambered, gunFiremode, gunMagId, gunAttach and the four per-slot attachment ids -- are written
+        /// ONLY by the client (SaveGunState, AttachmentFit) and had no server-side writer at all, so the
+        /// server's copy of each sat at its constructor default for the life of the session. WriteJar dutifully
+        /// sent that default back on every owner echo, which is why the wire tests were green: the field
+        /// round-trips perfectly, it is the SOURCE that was never populated.
+        ///
+        /// It only shows once the grid moves, because a move is a request -- the client does not touch its own
+        /// grid, it repaints from the echo -- and the echo replaces every jar with a fresh Item carrying the
+        /// server's -1. RestoreGunState reads -1 as "no saved state" and leaves LoadGun's factory defaults
+        /// standing, so the magazine comes back FULL (strawberry: "sometimes ammo magically refills into guns
+        /// after some combo of equip/dequip/moving around between primary slot/inv"). The fitted sight, the
+        /// attach mask, the loaded mag and the fire mode all reset on the same echo.
+        ///
+        /// Client-asserted, server-clamped, exactly like ReloadSwapCommand's SpentAmount: the server has no gun
+        /// simulation to derive ammo from, so the honest thing is to take the client's number and cap it at the
+        /// magazine's real capacity. The worst a lying client gets is the full magazine it could have reloaded
+        /// to anyway.</summary>
+        public const byte CommandGunState = 40;
+        /// <summary>The autodrink toggle for the item at (Page,X,Y) (v16). Same class of bug as CommandGunState
+        /// and found by the same audit: Item.autoDrink is on the wire, is written only by InventoryUI's toggle,
+        /// and has no server-side writer at all -- so the server's copy is the `= true` field initialiser
+        /// forever and the next owner echo turns the toggle back ON. A player who deliberately switched
+        /// autodrink OFF on their clean water gets it drunk automatically after their next inventory drag, which
+        /// looks like the toggle simply not working rather than like a replication fault.</summary>
+        public const byte CommandSetAutoDrink = 41;
 
         // EventRegistry id space (server -> client, ReliableOrdered)
         public const byte EventJoinSnapshot = 1;   // the join-time FULL snapshot rides the reliable channel (§2.2: fragmentation is safe there)

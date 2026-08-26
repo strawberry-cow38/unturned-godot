@@ -1382,7 +1382,12 @@ namespace UnturnedGodot
             var jar = pg.getItem(idx);
             var asset = jar.GetAsset();
             if (asset == null || !asset.IsFluidContainer || jar.item == null) return;
-            jar.item.autoDrink = !jar.item.autoDrink;
+            bool want = !jar.item.autoDrink;
+            jar.item.autoDrink = want;               // locally first, so the label flips on this frame either way
+            // ...then tell the server, or the next owner echo hands the old value straight back. autoDrink is on
+            // the item wire but had no server-side writer at all, so the server's copy was the `= true` field
+            // initialiser for the life of the session and any inventory move switched autodrink back ON.
+            Player?.RequestSetAutoDrink(_selPage, _selX, _selY, jar.item.id, want);
             OpenSelection(_selPage, _selX, _selY);   // re-render with the new ON/OFF label
         }
 

@@ -851,6 +851,21 @@ namespace UnturnedGodot.Net
         public bool SendFitAttachment(byte page, byte x, byte y, ushort id)
             => SendCommand(ReplicationIds.CommandFitAttachment, new FitAttachmentCommand { Page = page, X = x, Y = y, Id = id }.Write);
 
+        /// <summary>Tell the server the gun state the client owns for the item at (page,x,y). Coalesced by the
+        /// caller -- SaveGunState runs on every shot, and one reliable-ordered datagram per shot is the
+        /// head-of-line stutter v10 went to some trouble to remove.</summary>
+        public bool SendGunState(byte page, byte x, byte y, ushort id, short ammo, bool chambered, sbyte firemode,
+                                 int magId, int attach, int sight, int barrel, int grip, int tactical, bool attachSeeded)
+            => SendCommand(ReplicationIds.CommandGunState, new GunStateCommand
+            {
+                Page = page, X = x, Y = y, Id = id, Ammo = ammo, Chambered = chambered, Firemode = firemode,
+                MagId = magId, Attach = attach, Sight = sight, Barrel = barrel, Grip = grip, Tactical = tactical,
+                AttachSeeded = attachSeeded,
+            }.Write);
+
+        public bool SendSetAutoDrink(byte page, byte x, byte y, ushort id, bool autoDrink)
+            => SendCommand(ReplicationIds.CommandSetAutoDrink, new SetAutoDrinkCommand { Page = page, X = x, Y = y, Id = id, AutoDrink = autoDrink }.Write);
+
         public bool SendConsume(byte page, byte x, byte y)
             => SendCommand(ReplicationIds.CommandConsume, new ConsumeCommand { Page = page, X = x, Y = y }.Write);
 
