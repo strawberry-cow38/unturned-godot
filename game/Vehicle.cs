@@ -4232,7 +4232,14 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             // The headroom factor reproduces the original 12000 for a jeep (3 * 1700 * 9.8 / 4 = 12495), which
             // is the check that this is a generalisation of the tuned value rather than a replacement for it.
             float loadScale = (v.Mass / Mathf.Max(1, nw)) / (GlobalMass / 4f);
-            float suspMaxF = SuspensionHeadroom * v.Mass * 9.8f / Mathf.Max(1, nw);
+            // Heavy multi-axle hulls (the semi) LAUNCH off a full 3x-headroom spring under throttle: the rebound
+            // out-pushes gravity and the whole truck hops airborne ~21% of a run -- the machine-dependent flake in
+            // vehicle.drivetrain (tinyclaw 2026-08-26: red every run on their box, green+deterministic on the 4080).
+            // Trim the headroom on heavy hulls so the spring still holds static + dynamic load but can't FLING the
+            // hull; the light jeep keeps the full 3x for bumps/landings. (Scaling damping up instead made it WORSE:
+            // an over-damped stiff spring goes numerically unstable at 50 Hz and hops harder.)
+            float headroom = (loadScale > 1.3f && !s.Tracked) ? 1.8f : SuspensionHeadroom;   // tracked hulls (tank) need the full force to sit on their short stiff suspension -- trim only the WHEELED heavy hulls (semi/apc)
+            float suspMaxF = headroom * v.Mass * 9.8f / Mathf.Max(1, nw);
             for (int i = 0; i < nw; i++)
             {
                 var (x, y, z, steer) = s.Wheels[i];
