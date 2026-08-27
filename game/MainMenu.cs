@@ -183,7 +183,7 @@ namespace UnturnedGodot
 
             // UG_MENUREAL: assemble the real extracted Menu_Base diorama instead of the single placeholder barn.
             _menuReal = System.Environment.GetEnvironmentVariable("UG_MENUREAL") == "1";
-            if (_menuReal) { LoadMenuScene(); LoadMenuLamps(); }
+            if (_menuReal) { LoadMenuScene(); LoadMenuLamps(); LoadMenuHero(); }
             else {
             // the hero barn -- real ripped Barn_0 (content/objects), flat 4x2 palette texture, nearest filter
             var mesh = ObjMesh.Load(G("res://content/objects/Barn_0.obj"));
@@ -339,6 +339,25 @@ namespace UnturnedGodot
                 catch (System.Exception ex) { GD.PrintErr($"[menu] lamp error: {ex.Message}"); }
             }
             GD.Print($"[menu] placed {lamps} real lamps (point x{ptScale}, spot x{spScale})");
+        }
+
+        // The Hero -- the skinned survivor the whole diorama is arranged around (the Survivors camera frames it).
+        // Menu.unity's `Hero` GameObject / MenuOverridableObjects.playerCharacterTransform sits at (-2.951, 0.087,
+        // 2.129) (F*M), Unity yaw -38.75 (the transform's +90 X is a Unity-prefab stand-up artifact the port's
+        // already-upright RiggedCharacter doesn't need, so apply position + yaw only). Reuse the in-game 3rd-person
+        // body + its own Idle_Stand loop. UG_HEROYAW tunes the facing against the render.
+        void LoadMenuHero()
+        {
+            try
+            {
+                var hero = RiggedCharacter.Build("res://content/rig.json", new Color(0.82f, 0.66f, 0.52f));
+                hero.Position = new Vector3(-2.951f, 0.087f, 2.129f);
+                hero.RotationDegrees = new Vector3(0f, ParseF(System.Environment.GetEnvironmentVariable("UG_HEROYAW"), 38.75f), 0f);
+                AddChild(hero);
+                hero.PlayLoop(hero.IdleClip);
+                GD.Print("[menu] placed Hero (RiggedCharacter, Idle_Stand)");
+            }
+            catch (System.Exception ex) { GD.PrintErr($"[menu] hero failed: {ex.Message}"); }
         }
 
         static float ParseF(string s, float def) => float.TryParse(s, out var v) ? v : def;
