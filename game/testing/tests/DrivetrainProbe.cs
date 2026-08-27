@@ -214,7 +214,14 @@ namespace UnturnedGodot.Testing
             for (int i = 0; i < 400 && Mathf.Abs(v.LinearVelocity.Dot(-v.GlobalTransform.Basis.Z)) > top * 0.95f; i++)
             { v.Drive(1f, 0f, false); yield return Ticks(1); }
             float cHi0 = Mathf.Abs(v.LinearVelocity.Dot(-v.GlobalTransform.Basis.Z));
-            for (int i = 0; i < 100; i++) { v.Drive(0f, 0f, false); yield return Ticks(1); }
+            float maxTickDecel = 0f, pv = cHi0;
+            for (int i = 0; i < 100; i++)
+            {
+                v.Drive(0f, 0f, false); yield return Ticks(1);
+                float s2 = Mathf.Abs(v.LinearVelocity.Dot(-v.GlobalTransform.Basis.Z));
+                if (pv > 0.5f) maxTickDecel = Mathf.Max(maxTickDecel, (pv - s2) / Dt);   // biggest one-tick speed DROP on release = the bottoming signature (chassis on the ground)
+                pv = s2;
+            }
             float cHi1 = Mathf.Abs(v.LinearVelocity.Dot(-v.GlobalTransform.Basis.Z));
             float decelHi = (cHi0 - cHi1) / (100f * Dt);
             GD.Print($"[drv] {car}: coastdown {cHi0:0.00} -> {cHi1:0.00} m/s = {decelHi:0.00} m/s2 over 2 s");
@@ -227,6 +234,20 @@ namespace UnturnedGodot.Testing
             // resistance and sits near 3.8, an APC near 2.9, the jeep at 1.8. 4.0 still fails the old model on
             // every one of them, because the old coast brake was ~12x this one at the same revs.
             T.Check($"...but coasting is not secretly a brake pedal ({decelHi:0.00} m/s2, was ~9.9)", decelHi < 4.0f);
+
+            // FLEET-WIDE HEADROOM GUARDS (tinyclaw 2026-08-27): assert the two suspension-headroom FAILURE MODES on
+            // every WHEELED hull, so a new vehicle with the wrong headroom fails ON ARRIVAL, not when someone thinks
+            // to check by hand -- the override then becomes an implementation detail the test doesn't care about.
+            // Launch = airborne fraction too HIGH (over-generous headroom FLINGS the hull -- the semi hit 21% before
+            // its trim). Bottoming = a one-tick decel SPIKE on release (headroom too LOW, the suspension can't hold
+            // the dynamic load, chassis drags -- ~36g in a tick, what my too-broad trim did to the jeep). Tracked
+            // hulls (tank) skip these: they legitimately hop on their short stiff suspension.
+            GD.Print($"[drv] {car}: worst one-tick decel on release {maxTickDecel:0.0} m/s2");
+            if (!v.Tracked)
+            {
+                T.Check($"{car}: headroom not too HIGH -- doesn't launch airborne ({airborneFrac * 100f:0.0}%)", airborneFrac < 0.15f);
+                T.Check($"{car}: headroom not too LOW -- doesn't bottom out on release ({maxTickDecel:0.0} m/s2 worst tick)", maxTickDecel < 15f);
+            }
         }
     }
 }

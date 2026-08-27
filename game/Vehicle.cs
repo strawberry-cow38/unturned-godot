@@ -838,6 +838,7 @@ namespace UnturnedGodot
         // to tune the wrong constant.
         public int WheelsOnGroundForTest { get { int n = 0; if (_wNodes != null) foreach (var w in _wNodes) if (w.IsInContact()) n++; return n; } }
         public int WheelCountForTest => _wNodes?.Length ?? 0;
+        public bool Tracked;   // set from the spec at build; the drivetrain probe's fleet-wide guards skip tracked hulls (they hop legitimately on their short stiff suspension)
         public float SpecSpeedMaxForTest => _specSpeedMax;   // L1: the un-buffed spec top speed the OLD model capped at
         public float RedlineRpmForTest => RedlineFrac * MaxRpm;                                   // L1: the shift/limit point, so a probe doesn't re-derive it
         public float TorqueAtRpmForTest(float rpm) =>                                             // L1: sample the torque CURVE directly -- a flat-force model returns the same number at every rpm
@@ -4231,6 +4232,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             //
             // The headroom factor reproduces the original 12000 for a jeep (3 * 1700 * 9.8 / 4 = 12495), which
             // is the check that this is a generalisation of the tuned value rather than a replacement for it.
+            v.Tracked = s.Tracked;   // surface for the probe's fleet-wide headroom guards
             float loadScale = (v.Mass / Mathf.Max(1, nw)) / (GlobalMass / 4f);
             // Heavy multi-axle hulls (the semi) LAUNCH off a full 3x-headroom spring under throttle: the rebound
             // out-pushes gravity and the whole truck hops airborne ~21% of a run -- the machine-dependent flake in
