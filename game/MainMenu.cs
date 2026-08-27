@@ -129,9 +129,14 @@ namespace UnturnedGodot
                 TonemapMode = Godot.Environment.ToneMapper.Filmic,
                 SsaoEnabled = true,
             };
-            env.SetFogEnabled(true);
-            env.FogDensity = 0.0012f;
-            env.FogLightColor = new Color(0.72f, 0.80f, 0.86f);
+            // Fog gives the placeholder-barn exterior a pastoral haze, but the REAL menu (Menu_NoHoliday
+            // RenderSettings m_Fog: 0) has NO fog -- inside the barn it reads as a glowing haze over everything.
+            if (System.Environment.GetEnvironmentVariable("UG_MENUREAL") != "1")
+            {
+                env.SetFogEnabled(true);
+                env.FogDensity = 0.0012f;
+                env.FogLightColor = new Color(0.72f, 0.80f, 0.86f);
+            }
             AddChild(new WorldEnvironment { Environment = env });
 
             var sun = new DirectionalLight3D
