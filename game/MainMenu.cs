@@ -430,7 +430,12 @@ namespace UnturnedGodot
                         s.LookAt(V("pos") + V("fwd"), Vector3.Up);
                     }
                     else if (type == 2)   // Unity Point
-                        AddChild(new OmniLight3D { Position = V("pos"), LightColor = c, LightEnergy = intensity * ptScale, OmniRange = range });
+                        // OmniAttenuation shapes the falloff toward Unity's faster (inverse-square-ish) decay: godot's
+                        // default (1) falls off too slowly, so a range-4 lamp at y2.56 over-delivers 2.3m up and lights
+                        // the loft floor above it (a shadowless point light past a floor -- the "mystery loft light").
+                        // Steepen it so the lamp is near-zero before the loft, WITHOUT dimming the floor it's meant to light.
+                        AddChild(new OmniLight3D { Position = V("pos"), LightColor = c, LightEnergy = intensity * ptScale, OmniRange = range,
+                                                   OmniAttenuation = ParseF(System.Environment.GetEnvironmentVariable("UG_OMNIATTEN"), 2.5f) });
                     else
                         GD.PrintErr($"[menu] unhandled lamp type {type} (Menu_Base has only Point/Spot)");
                     lamps++;
