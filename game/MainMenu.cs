@@ -216,6 +216,29 @@ namespace UnturnedGodot
             var gray = new StandardMaterial3D { AlbedoColor = new Color(0.62f, 0.62f, 0.60f), Roughness = 1f,
                                                 CullMode = BaseMaterial3D.CullModeEnum.Disabled };
             bool noTrees = System.Environment.GetEnvironmentVariable("UG_MENUNOTREES") == "1";   // dev: showcase the props
+            // per-placement albedo: each object's extracted Texture2D (content/menu/tex), cached by name. Unturned
+            // albedos are small palette textures -> Nearest; foliage/leaves are alpha-cutout sheets -> AlphaScissor.
+            var matCache = new System.Collections.Generic.Dictionary<string, StandardMaterial3D>();
+            StandardMaterial3D MatFor(string tex)
+            {
+                if (string.IsNullOrEmpty(tex)) return gray;
+                if (matCache.TryGetValue(tex, out var hit)) return hit;
+                string tp = G($"res://content/menu/tex/{tex}");
+                var img = new Image();
+                if (!System.IO.File.Exists(tp) || img.Load(tp) != Error.Ok) { matCache[tex] = gray; return gray; }
+                bool leafy = tex.Contains("Foliage") || tex.Contains("Leaves");
+                var mat = new StandardMaterial3D
+                {
+                    AlbedoTexture = ImageTexture.CreateFromImage(img),
+                    Roughness = 1f,
+                    CullMode = BaseMaterial3D.CullModeEnum.Disabled,
+                    TextureFilter = leafy ? BaseMaterial3D.TextureFilterEnum.LinearWithMipmaps
+                                          : BaseMaterial3D.TextureFilterEnum.Nearest,
+                };
+                if (leafy) { mat.Transparency = BaseMaterial3D.TransparencyEnum.AlphaScissor; mat.AlphaScissorThreshold = 0.5f; }
+                matCache[tex] = mat;
+                return mat;
+            }
             int placed = 0, missed = 0;
             foreach (var e in arr)
             {
@@ -230,7 +253,8 @@ namespace UnturnedGodot
                 if (mesh == null) { missed++; continue; }
                 Vector3 V(string k) { var a = d[k].AsGodotArray(); return new Vector3(a[0].AsSingle(), a[1].AsSingle(), a[2].AsSingle()); }
                 var basis = new Basis(V("xaxis"), V("yaxis"), V("zaxis"));
-                AddChild(new MeshInstance3D { Mesh = mesh, MaterialOverride = gray, Transform = new Transform3D(basis, V("origin")) });
+                string tex = d.ContainsKey("tex") ? d["tex"].AsString() : "";   // "" (null in json) -> gray fallback
+                AddChild(new MeshInstance3D { Mesh = mesh, MaterialOverride = MatFor(tex), Transform = new Transform3D(basis, V("origin")) });
                 placed++;
             }
             GD.Print($"[menu] extracted diorama: placed {placed}, missing-mesh {missed}");
