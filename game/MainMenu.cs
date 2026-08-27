@@ -55,6 +55,29 @@ namespace UnturnedGodot
         Control _workshopPanel;      // Workshop submenu: Editor (PEI)
         Control _serversPanel;       // Multiplayer submenu: the server browser (MainMenuServers.cs)
 
+        // --- UG_MENUREAL: build the REAL extracted Menu_Base diorama (trees/barn/off-roader/props from the
+        //     release scene) instead of the single placeholder barn. Five framings so a --menushot sweep gives
+        //     five angles to pick the hero shot from. UG_MENUEYE/UG_MENULOOK ("x,y,z") override view 0. ---
+        bool _menuReal;
+        // Framings of the hero cluster (barn at origin, Off_Roader in front at z~13, props/fridge/barricades),
+        // which sits in a tight X[-6,6] Z[-10,20] box; the trees are the surrounding forest. Look at ~(0,3,5).
+        static readonly (Vector3 pos, Vector3 look)[] RealViews =
+        {
+            (new Vector3(  2f,  7f, 22f), new Vector3(0f, 5f, 6f)),   // 0 front, barn + off-roader + props
+            (new Vector3( 13f,  8f, 20f), new Vector3(0f, 5f, 6f)),   // 1 front-right 3/4
+            (new Vector3(  0f, 13f, 18f), new Vector3(0f, 4f, 4f)),   // 2 higher front, looks down into the yard
+            (new Vector3(-13f,  8f, 20f), new Vector3(0f, 5f, 6f)),   // 3 front-left 3/4
+            (new Vector3(  0f,  6f, 15f), new Vector3(0f, 4f, 5f)),   // 4 close on the off-roader + barn door
+        };
+        static Vector3 ParseV3(string env, Vector3 def)
+        {
+            var s = System.Environment.GetEnvironmentVariable(env);
+            if (string.IsNullOrEmpty(s)) return def;
+            var p = s.Split(',');
+            return (p.Length == 3 && float.TryParse(p[0], out var x) && float.TryParse(p[1], out var y) && float.TryParse(p[2], out var z))
+                ? new Vector3(x, y, z) : def;
+        }
+
         static string G(string res) => ProjectSettings.GlobalizePath(res);
 
         public override void _Ready()
@@ -66,6 +89,12 @@ namespace UnturnedGodot
             if (_open == "map" || _open == "play" || _open == "options" || _open == "advanced") TogglePlayPanel();
             if (_open == "servers") ToggleServersPanel();
             if (_open == "advanced") ToggleAdvanced();
+            if (_menuReal)   // extracted diorama: freeze on a chosen framing (a --menushot sweep steps RealViews)
+            {
+                _cam.Position = ParseV3("UG_MENUEYE", RealViews[0].pos);
+                _cam.LookAt(ParseV3("UG_MENULOOK", RealViews[0].look), Vector3.Up);
+                return;
+            }
             // start the camera pulled back toward the near gable + a touch higher, then slow-pan in
             // (the vanilla intro) -- kept inside the barn so it doesn't clip through the back wall
             var t = Anchors[0];
@@ -130,6 +159,10 @@ namespace UnturnedGodot
             };
             AddChild(ground);
 
+            // UG_MENUREAL: assemble the real extracted Menu_Base diorama instead of the single placeholder barn.
+            _menuReal = System.Environment.GetEnvironmentVariable("UG_MENUREAL") == "1";
+            if (_menuReal) { LoadMenuScene(); }
+            else {
             // the hero barn -- real ripped Barn_0 (content/objects), flat 4x2 palette texture, nearest filter
             var mesh = ObjMesh.Load(G("res://content/objects/Barn_0.obj"));
             if (mesh != null)
@@ -164,9 +197,43 @@ namespace UnturnedGodot
                 AddChild(barn);
             }
             else GD.PrintErr("[menu] Barn_0.obj failed to load");
+            }
 
             _cam = new Camera3D { Current = true, Fov = 60f };
             AddChild(_cam);
+        }
+
+        // The real main-menu diorama, extracted from the release scene Assets/Game/Sources/MainMenu/Menu_Base.unity.
+        // Pipeline (scratchpad tools): parse the Unity scene -> per-object world transform; decode each referenced
+        // Mesh .asset -> a raw-Unity .obj under content/menu/mesh. Each placement's transform already carries the
+        // Unity->Godot Z-flip (world = F*M_unity), so the meshes load RAW (ObjMesh CONV=1) exactly like every
+        // other content prop and ObjMesh's winding-reverse lands the faces outward.
+        void LoadMenuScene()
+        {
+            string jf = G("res://content/menu/menu_scene.json");
+            if (!System.IO.File.Exists(jf)) { GD.PrintErr("[menu] menu_scene.json missing"); return; }
+            var arr = Json.ParseString(System.IO.File.ReadAllText(jf)).AsGodotArray();
+            var gray = new StandardMaterial3D { AlbedoColor = new Color(0.62f, 0.62f, 0.60f), Roughness = 1f,
+                                                CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+            bool noTrees = System.Environment.GetEnvironmentVariable("UG_MENUNOTREES") == "1";   // dev: showcase the props
+            int placed = 0, missed = 0;
+            foreach (var e in arr)
+            {
+                var d = e.AsGodotDictionary();
+                string nm = d["name"].AsString();   // drop editor gizmos that carry a mesh in the scene but aren't visual
+                if (nm is "Radius" or "Icon" or "Icon2" or "Target" or "Effect" or "Skeleton") { missed++; continue; }
+                string mn = d["mesh"].AsString();
+                if (noTrees && (mn.StartsWith("Birch") || mn.StartsWith("Pine") || mn.StartsWith("Maple") || mn.Contains("Foliage"))) { missed++; continue; }
+                string op = G($"res://content/menu/mesh/{mn}.obj");
+                if (!System.IO.File.Exists(op)) { missed++; continue; }   // ObjMesh.Load THROWS on a missing file
+                var mesh = ObjMesh.Load(op);
+                if (mesh == null) { missed++; continue; }
+                Vector3 V(string k) { var a = d[k].AsGodotArray(); return new Vector3(a[0].AsSingle(), a[1].AsSingle(), a[2].AsSingle()); }
+                var basis = new Basis(V("xaxis"), V("yaxis"), V("zaxis"));
+                AddChild(new MeshInstance3D { Mesh = mesh, MaterialOverride = gray, Transform = new Transform3D(basis, V("origin")) });
+                placed++;
+            }
+            GD.Print($"[menu] extracted diorama: placed {placed}, missing-mesh {missed}");
         }
 
         static float ParseF(string s, float def) => float.TryParse(s, out var v) ? v : def;
@@ -434,6 +501,7 @@ namespace UnturnedGodot
         public override void _Process(double delta)
         {
             if (_cam == null) return;
+            if (_menuReal) return;   // extracted-diorama mode: camera is frozen / snapped by ShowTab, no glide
             var t = Anchors[_targetTab];
             var target = new Transform3D(Basis.LookingAt(t.look - t.pos, Vector3.Up), t.pos);
             float d = (float)delta;
@@ -453,6 +521,15 @@ namespace UnturnedGodot
         }
 
         // harness hook: jump the camera target to a tab (used by --menushot to capture each framing)
-        public void ShowTab(int tab) { _targetTab = Mathf.Clamp(tab, 0, Anchors.Length - 1); if (tab != 0) _reachedTitle = true; }
+        public void ShowTab(int tab)
+        {
+            if (_menuReal)   // sweep the extracted diorama's framings for the render harness
+            {
+                var v = RealViews[Mathf.Clamp(tab, 0, RealViews.Length - 1)];
+                _cam.Position = v.pos; _cam.LookAt(v.look, Vector3.Up);
+                return;
+            }
+            _targetTab = Mathf.Clamp(tab, 0, Anchors.Length - 1); if (tab != 0) _reachedTitle = true;
+        }
     }
 }
