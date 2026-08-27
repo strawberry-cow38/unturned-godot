@@ -3890,50 +3890,100 @@ namespace UnturnedGodot
         // This is the standard stair-smoothing trick for exactly that reason. Physics is unchanged and
         // authoritative; only the thing looking at it lags.
         float _stepSmooth;                 // metres the camera is still BELOW the body after a step
-        const float StepSmoothDecay = 8f;  // per second. 0.5 m clears in ~0.13 s -- fast enough not to feel like lag, slow enough to read as a rise
+        // CONSTANT RATE, not exponential decay (strawberry 2026-08-27: "a smooth ramp, not a sharp step").
+        // Decay is asymptotic -- it never arrives, and worse, its SPEED scales with what is left, so a 5 cm
+        // curb and a 50 cm crate both take the same time to settle and the small one reads as sluggish. At a
+        // fixed m/s the settle time is proportional to the step, which is what "ramp" actually means.
+        const float StepSmoothRate = 4f;   // m/s. 0.5 m clears in 0.125 s, a 5 cm lip in 12 ms.
+        float _stepChatterCd;              // see StepUp: suppresses SMALL repeat steps only, never stair risers
+        // Test observability. The defect being fixed is invisible from the outside -- a step that lifts 12.5 cm
+        // for a 2 cm lip ends up at the same PLACE as one that lifts 2 cm, because FloorSnapLength drags it
+        // back down. Only the rise itself distinguishes them, so the rise is what the tests read.
+        public int StepUpCount;            // steps actually taken
+        public float LastStepRise;         // metres of the last step
 
         void StepUp(float delta, bool grounded)
         {
+            if (_stepChatterCd > 0f) _stepChatterCd -= delta;
             if (!grounded) return;
             Vector3 motion = new Vector3(Velocity.X, 0f, Velocity.Z) * delta;
             if (motion.LengthSquared() < 1e-6f) return;
-            var hit = new KinematicCollision3D();
-            if (!TestMove(GlobalTransform, motion, hit)) return;   // not blocked at foot level
+            if (!TestMove(GlobalTransform, motion)) return;   // not blocked at foot level
 
-            // A WALKABLE SLOPE IS NOT A STEP (strawberry 2026-08-24: "the step-up keeps getting erroneously
-            // triggered on somewhat flat ground").
+            // MEASURE the step, don't search for it.
             //
-            // TestMove reports blocked for ANY contact, and on undulating terrain the capsule touches the
-            // ground ahead constantly -- so "blocked at foot level, clear when raised" is true across a whole
-            // hillside, not just at curbs. Every one of those became a step: a teleport up, then the smoothing
-            // easing the camera back down, on flat-looking ground.
+            // The old code asked TestMove "what is the smallest lift that stops the sweep being blocked", by
+            // sampling StepHeight/4. Two things were wrong with that. The sampling was coarse enough that its
+            // smallest answer was 0.125 m, which made the `need < MinStepHeight` guard under it unreachable --
+            // dead code guarding against a value the sampler could not produce. And the question itself is the
+            // wrong one: a capsule has a ROUNDED bottom, so the sweep stops being blocked while the feet are
+            // still below the obstacle's top. Lifting by that amount clears the sweep and then fails to mount
+            // -- MoveAndSlide pushes back out and FloorSnapLength drops you, which is a jolt with no progress.
             //
-            // move_and_slide already walks anything up to FloorMaxAngle. So the test that matters is not "is
-            // something there" but "is it too steep to walk up" -- and only then is it a step. Compared against
-            // the body's OWN FloorMaxAngle rather than a second hardcoded angle, so the two cannot disagree
-            // about what counts as ground.
-            float cosUp = Mathf.Clamp(hit.GetNormal().Dot(Vector3.Up), -1f, 1f);
-            if (Mathf.Acos(cosUp) <= FloorMaxAngle) return;   // walkable: let the normal floor logic have it
+            // So: cast down onto the surface AHEAD and rise to meet it. That gives the exact height, needs no
+            // search, and answers "is there anything to stand on" and "how high is it" with one query.
+            var space = GetWorld3D().DirectSpaceState;
+            // Past the obstacle, not under our own feet -- and past it by the SWEEP's reach, not just the
+            // capsule's. TestMove reports blocked for the swept motion, so contact happens up to |motion|
+            // before the capsule surface touches; a probe offset by the radius alone lands INSIDE the thing
+            // that blocked us and reads its top as the landing surface.
+            Vector3 ahead = motion.Normalized() * (_capsule.Radius + motion.Length() + 0.05f);
+            Vector3 probe = GlobalPosition + ahead;
+            var down = PhysicsRayQueryParameters3D.Create(
+                probe + Vector3.Up * (StepHeight + 0.05f), probe - Vector3.Up * 0.05f);
+            down.CollisionMask = CollisionMask;
+            down.Exclude = new Godot.Collections.Array<Rid> { GetRid() };
+            var landing = space.IntersectRay(down);
+            if (landing.Count == 0) return;   // nothing to stand on within a step: a ledge, not a stair
 
-            var raised = new Transform3D(GlobalTransform.Basis, GlobalPosition + Vector3.Up * StepHeight);
-            if (TestMove(raised, motion)) return;             // blocked even raised: a wall, not a step
+            float need = ((Vector3)landing["position"]).Y - GlobalPosition.Y;
+            if (need <= MinStepHeight || need > StepHeight) return;
 
-            // Rise by what the step ACTUALLY needs, not always the 0.5 m maximum. The old code lifted the full
-            // StepHeight for a 3 cm threshold and let FloorSnapLength drag it back down, so every curb cost a
-            // half-metre pop up followed by a settle -- half the jolt was the snap-back, not the step. Four
-            // samples is enough resolution at this scale and costs at most four TestMove calls for one player.
-            float need = StepHeight;
-            for (int i = 1; i <= 4; i++)
-            {
-                float h = StepHeight * i / 4f;
-                var probe = new Transform3D(GlobalTransform.Basis, GlobalPosition + Vector3.Up * h);
-                if (!TestMove(probe, motion)) { need = h; break; }   // smallest sampled rise that clears
-            }
-            // Below this, it is ground noise rather than a threshold, and move_and_slide handles it without a
-            // reposition. The slope guard above catches most of it; this catches the rest -- a near-vertical
-            // 2 cm lip is steep enough to pass that test and still not worth teleporting the player over.
-            if (need < MinStepHeight) return;
+            // A WALKABLE SLOPE IS NOT A STEP -- and the test has to be about SHAPE, not gradient.
+            //
+            // The obvious test is "is the average gradient steeper than FloorMaxAngle". It cannot work here.
+            // FloorMaxAngle is 55 degrees, and the probe reaches ~0.47 m: a 0.30 m curb across that distance
+            // is a 33-degree average, comfortably walkable. Every step is a walkable gradient when measured
+            // over a step-sized distance, so gradient tells a curb and a ramp apart not at all. (An earlier
+            // version of this compared `need` against |motion| * tan(FloorMaxAngle) -- a threshold measured
+            // over one tick's travel against a rise measured over the probe distance. Two different baselines,
+            // so the comparison was meaningless in whichever direction it happened to fall.)
+            //
+            // What separates them is the FACE we are walking into. Cast a short ray forward at ankle height:
+            // a ramp's face there IS the ramp surface, whose normal is walkable; a curb's is a vertical riser.
+            // This is the "check a surface you can name" fix -- the old guard used hit.GetNormal(), the normal
+            // of the first thing the capsule TOUCHED, which on a capsule is usually an EDGE (a terrain triangle
+            // boundary, the lip of a curb) whose normal is neither the ground nor the riser and reads steep on
+            // ground you could have walked. That was the false-trigger source.
+            Vector3 ankle = GlobalPosition + Vector3.Up * 0.05f;
+            var faceQ = PhysicsRayQueryParameters3D.Create(
+                ankle, ankle + motion.Normalized() * (_capsule.Radius + motion.Length() + 0.05f));
+            faceQ.CollisionMask = CollisionMask;
+            faceQ.Exclude = new Godot.Collections.Array<Rid> { GetRid() };
+            var face = space.IntersectRay(faceQ);
+            if (face.Count == 0) return;   // nothing solid at ankle height: an overhang, or already clear
+            float faceAngle = Mathf.Acos(Mathf.Clamp(((Vector3)face["normal"]).Dot(Vector3.Up), -1f, 1f));
+            if (faceAngle <= FloorMaxAngle) return;   // walkable face: a slope, MoveAndSlide's job
+
+            // And the surface we would land ON has to be one we can stand on -- the face test above only says
+            // the thing in our way is a riser, not that its top is level enough to hold us.
+            var landNormal = (Vector3)landing["normal"];
+            if (Mathf.Acos(Mathf.Clamp(landNormal.Dot(Vector3.Up), -1f, 1f)) > FloorMaxAngle) return;
+
+            // Finally: is the raised body actually free to move? Everything above describes the floor; this is
+            // the only thing that rules out an overhang or a wall with a ledge painted on it.
+            var raised = new Transform3D(GlobalTransform.Basis, GlobalPosition + Vector3.Up * (need + 0.02f));
+            if (TestMove(raised, motion)) return;
+
+            // CHATTER GUARD. Size-gated, not a flat cooldown: a flat one would have to be shorter than the time
+            // to cross one stair tread (0.25 m at a 6 m/s sprint is 40 ms) to avoid breaking staircases, which
+            // makes it useless. Real risers are 0.15-0.30 m and terrain chatter is small, so only SMALL repeat
+            // steps are suppressed and a staircase never sees this.
+            if (_stepChatterCd > 0f && need < 2f * MinStepHeight) return;
+            _stepChatterCd = 0.1f;
+
             GlobalPosition += Vector3.Up * need;
+            StepUpCount++; LastStepRise = need;
             _stepSmooth = Mathf.Min(StepHeight, _stepSmooth + need);   // clamped: a stair RUN must not stack into the camera sinking through the floor
         }
 
@@ -6515,8 +6565,7 @@ namespace UnturnedGodot
             _eyeHeight = Mathf.Lerp(_eyeHeight, EyeHeight, Mathf.Min(1f, 4f * (float)delta));
             // Exponential decay, not MoveToward: a linear catch-up arrives with a visible corner where it stops,
             // which is the same abruptness in a different place. This eases out.
-            _stepSmooth *= Mathf.Exp(-StepSmoothDecay * (float)delta);
-            if (_stepSmooth < 0.001f) _stepSmooth = 0f;
+            _stepSmooth = Mathf.MoveToward(_stepSmooth, 0f, StepSmoothRate * (float)delta);
             if (_cam != null && !_dead && _driving == null && _riding == null && _ridingTrain == null && _ridingCrane == null)   // while driving/riding, the drive cam above owns the view
             {
                 if (_ugFp) _fp = true;   // render harness (UG_FP=1): force 1st-person so the FP viewmodel is captured
