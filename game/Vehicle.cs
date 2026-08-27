@@ -4238,7 +4238,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             // Trim the headroom on heavy hulls so the spring still holds static + dynamic load but can't FLING the
             // hull; the light jeep keeps the full 3x for bumps/landings. (Scaling damping up instead made it WORSE:
             // an over-damped stiff spring goes numerically unstable at 50 Hz and hops harder.)
-            float headroom = (loadScale > 1.3f && !s.Tracked) ? 1.8f : SuspensionHeadroom;   // tracked hulls (tank) need the full force to sit on their short stiff suspension -- trim only the WHEELED heavy hulls (semi/apc)
+            float headroom = (loadScale > 3.0f && !s.Tracked) ? 1.8f : SuspensionHeadroom;   // trim ONLY the very-heavy launchers: semi (loadScale 5.78, 7800kg) + apc (~7, 13000kg). 3.0 EXCLUDES the jeep (1.89, 1700kg) -- it never launches, and 1.8x makes it BOTTOM OUT (chassis-drag, ~36g one-tick stop that broke net.vehicle_freeze_hold). Tracked hulls (tank) keep full force too, for their short stiff suspension.
             float suspMaxF = headroom * v.Mass * 9.8f / Mathf.Max(1, nw);
             for (int i = 0; i < nw; i++)
             {
