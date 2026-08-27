@@ -221,6 +221,11 @@ namespace UnturnedGodot
                 const float amb = 0.39215687f;
                 env.AmbientLightColor = new Color(amb, amb, amb);
                 env.AmbientLightEnergy = 1.0f;
+                // AmbientLightSkyContribution defaults to 1.0 -- "all the light that affects the scene is
+                // provided by the Sky". With a BLACK-zenith night sky that is close to no ambient at all,
+                // which silently discards the 0.392 set right above. Setting the source to Color is not
+                // enough on its own; the blend is a separate knob. Measured, not assumed: see below.
+                env.AmbientLightSkyContribution = 0f;
                 env.SsaoEnabled = false;                       // retail's AO defaults OFF (GraphicsSettingsData)
                 env.TonemapMode = Godot.Environment.ToneMapper.Linear;   // retail applies no tonemapper here
                 env.Sky = new Sky { SkyMaterial = MenuSkyMaterial() };

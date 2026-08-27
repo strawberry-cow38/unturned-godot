@@ -6796,8 +6796,15 @@ namespace UnturnedGodot
             }
             if (_menuShotDir != null && _menuShotMenu != null)   // step the menu camera through its 5 anchors, capture each
             {
-                _frame++;
-                // switch to anchor i, then capture ~45 frames later once the glide has settled (title gets a longer slow pan)
+                // switch to anchor i, then capture 15 frames later.
+                //
+                // The increment used to run BEFORE these comparisons, so _frame was never 0 here and
+                // switchAt[0] == 0 NEVER MATCHED -- ShowTab(0) has never once fired. That was invisible while
+                // MainMenu happened to start the camera already sitting on the Title anchor: the capture
+                // agreed with the anchor it was never told to select. It stops being invisible the moment the
+                // menu opens anywhere else (it now opens on initialCamera, as retail does), and menu_00 then
+                // records the opening pose instead of Title. A harness whose first step silently does nothing
+                // is worse than one that fails, because its output still looks like an answer.
                 int[] switchAt = { 0, 20, 40, 60, 80 };
                 int[] shotAt = { 15, 35, 55, 75, 95 };
                 if (_menuShotIdx < switchAt.Length && _frame == switchAt[_menuShotIdx]) _menuShotMenu.ShowTab(_menuShotIdx);
@@ -6810,6 +6817,7 @@ namespace UnturnedGodot
                     _menuShotIdx++;
                     if (_menuShotIdx >= shotAt.Length) GetTree().Quit();
                 }
+                _frame++;
                 return;
             }
             // --- UG_TERRPERF=1 : what does the TERRAIN cost? (strawberry: "dumbing down terrain verts at a
