@@ -137,6 +137,17 @@ namespace UnturnedGodot
                 env.FogDensity = 0.0012f;
                 env.FogLightColor = new Color(0.72f, 0.80f, 0.86f);
             }
+            // "reverse-AO" haze fix (diffed against the working gameplay Environment, WorldBuilder ~1825):
+            // that one runs NO SSAO and ambient @1.0; mine ran SSAO + 0.52@1.35. The real difference is the
+            // ENCLOSED interior -- flat color-ambient lights every barn surface full-strength with nothing to
+            // occlude it, so the upper walls wash toward the sky colour (tinyclaw's read). Drop the ambient for
+            // the interior and drop SSAO (the double-sided menu meshes only confuse it).
+            if (System.Environment.GetEnvironmentVariable("UG_MENUREAL") == "1")
+            {
+                env.AmbientLightColor = new Color(0.28f, 0.30f, 0.33f);
+                env.AmbientLightEnergy = 1.0f;
+                env.SsaoEnabled = false;
+            }
             AddChild(new WorldEnvironment { Environment = env });
 
             var sun = new DirectionalLight3D
