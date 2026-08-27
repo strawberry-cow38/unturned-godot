@@ -59,15 +59,17 @@ namespace UnturnedGodot
         //     release scene) instead of the single placeholder barn. Five framings so a --menushot sweep gives
         //     five angles to pick the hero shot from. UG_MENUEYE/UG_MENULOOK ("x,y,z") override view 0. ---
         bool _menuReal;
-        // Framings of the hero cluster (barn at origin, Off_Roader in front at z~13, props/fridge/barricades),
-        // which sits in a tight X[-6,6] Z[-10,20] box; the trees are the surrounding forest. Look at ~(0,3,5).
+        // The REAL retail menu camera anchors, extracted from the harness scene Menu.unity's named Transforms
+        // (Title/Play/Survivors/Configuration/Workshop -> MenuUI.cs targetCameraTransform) into this diorama's
+        // world space (F*M). They're INTERIOR framings -- the camera lives in the barn loft. MenuUI lerps between
+        // them (deltaTime*4; the first approach to Title is a slow deltaTime*1 cinematic pan).
         static readonly (Vector3 pos, Vector3 look)[] RealViews =
         {
-            (new Vector3(  2f,  7f, 22f), new Vector3(0f, 5f, 6f)),   // 0 front, barn + off-roader + props
-            (new Vector3( 13f,  8f, 20f), new Vector3(0f, 5f, 6f)),   // 1 front-right 3/4
-            (new Vector3(  0f, 13f, 18f), new Vector3(0f, 4f, 4f)),   // 2 higher front, looks down into the yard
-            (new Vector3(-13f,  8f, 20f), new Vector3(0f, 5f, 6f)),   // 3 front-left 3/4
-            (new Vector3(  0f,  6f, 15f), new Vector3(0f, 4f, 5f)),   // 4 close on the off-roader + barn door
+            (new Vector3(0.00f, 5.49f, -5.99f), new Vector3(-0.08f, 5.27f, -5.02f)),   // 0 Title (idle)
+            (new Vector3(0.53f, 2.18f,  5.10f), new Vector3( 0.40f, 2.18f,  6.09f)),   // 1 Play
+            (new Vector3(-2.00f, 1.74f, 1.14f), new Vector3(-2.91f, 1.56f,  1.52f)),   // 2 Survivors
+            (new Vector3(3.37f, 2.36f,  2.85f), new Vector3( 3.91f, 1.97f,  3.60f)),   // 3 Configuration
+            (new Vector3(0.22f, 2.90f, -1.36f), new Vector3( 1.12f, 2.67f, -1.75f)),   // 4 Workshop
         };
         static Vector3 ParseV3(string env, Vector3 def)
         {
@@ -89,8 +91,9 @@ namespace UnturnedGodot
             if (_open == "map" || _open == "play" || _open == "options" || _open == "advanced") TogglePlayPanel();
             if (_open == "servers") ToggleServersPanel();
             if (_open == "advanced") ToggleAdvanced();
-            if (_menuReal)   // extracted diorama: freeze on a chosen framing (a --menushot sweep steps RealViews)
+            if (_menuReal)   // extracted diorama: start settled on Title, then glide to hovered anchors (MenuUI.Update port)
             {
+                _targetTab = 0; _reachedTitle = true;
                 _cam.Position = ParseV3("UG_MENUEYE", RealViews[0].pos);
                 _cam.LookAt(ParseV3("UG_MENULOOK", RealViews[0].look), Vector3.Up);
                 return;
@@ -525,8 +528,8 @@ namespace UnturnedGodot
         public override void _Process(double delta)
         {
             if (_cam == null) return;
-            if (_menuReal) return;   // extracted-diorama mode: camera is frozen / snapped by ShowTab, no glide
-            var t = Anchors[_targetTab];
+            var anchorSet = _menuReal ? RealViews : Anchors;   // the real diorama pans between the extracted retail anchors
+            var t = anchorSet[_targetTab];
             var target = new Transform3D(Basis.LookingAt(t.look - t.pos, Vector3.Up), t.pos);
             float d = (float)delta;
             if (_targetTab == 0)
@@ -547,13 +550,8 @@ namespace UnturnedGodot
         // harness hook: jump the camera target to a tab (used by --menushot to capture each framing)
         public void ShowTab(int tab)
         {
-            if (_menuReal)   // sweep the extracted diorama's framings for the render harness
-            {
-                var v = RealViews[Mathf.Clamp(tab, 0, RealViews.Length - 1)];
-                _cam.Position = v.pos; _cam.LookAt(v.look, Vector3.Up);
-                return;
-            }
-            _targetTab = Mathf.Clamp(tab, 0, Anchors.Length - 1); if (tab != 0) _reachedTitle = true;
+            var anchorSet = _menuReal ? RealViews : Anchors;
+            _targetTab = Mathf.Clamp(tab, 0, anchorSet.Length - 1); if (tab != 0) _reachedTitle = true;
         }
     }
 }
