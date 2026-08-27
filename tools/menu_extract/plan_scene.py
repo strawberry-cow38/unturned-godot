@@ -21,18 +21,21 @@ for o in objs:
     ma = idx.get(o['mat']) if o.get('mat') else None
     o['mat_base'] = ma['base'] if ma else None; o['mat_path'] = ma['path'] if ma else None
 
-def lodnum(o):
-    # LOD level comes from the GameObject name suffix (Model_0/1/2, Foliage_0/1/2, Wheel_LOD0/1), not the mesh file
-    m = re.search(r'(?:_|LOD)(\d)$', o['name'] or '')
-    return int(m.group(1)) if m else 0
-
-# dedup by rounded world origin, keep the lowest LOD (LOD0)
-groups = {}
-for o in objs:
-    key = tuple(round(v, 2) for v in o['origin'])
-    if key not in groups or lodnum(o) < lodnum(groups[key]):
-        groups[key] = o
-placements = list(groups.values())
+# NO origin-dedup. Retail stacks DISTINCT meshes at one transform -- a tree is trunk Model_0 + canopy
+# Foliage_0; a fence section is Alive + Dead. Origin-keying kept one arbitrarily and dropped the other,
+# losing 34 objects (19 tree halves + 15 fences). Instead keep every visible LOD0 object, filter by role:
+def is_higher_lod(o):
+    n = o['name'] or ''
+    return n in ('Model_1', 'Model_2', 'Foliage_1', 'Foliage_2') or bool(re.search(r'(?:_|LOD)[1-9]$', n))
+def keep(o):
+    mb = o.get('mesh_base') or ''
+    # destroyed fence variant -> show Alive. The GO name is inconsistent (Model_0/Alive/Dead), so gate on the
+    # MESH name, which reliably ends _Dead vs _Alive.
+    if o['name'] == 'Dead' or '_Dead' in mb: return False
+    if o.get('active', 1) == 0:              return False   # honor m_IsActive (drops the hidden Engine; Dead is active=1)
+    if is_higher_lod(o):                     return False   # keep LOD0 only
+    return True
+placements = [o for o in objs if keep(o)]
 json.dump(placements, open('placements.json', 'w'), indent=0)
 
 resolved = [o for o in placements if o['mesh_path']]

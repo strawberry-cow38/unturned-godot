@@ -235,51 +235,65 @@ namespace UnturnedGodot
             string jf = G("res://content/menu/menu_scene.json");
             if (!System.IO.File.Exists(jf)) { GD.PrintErr("[menu] menu_scene.json missing"); return; }
             var arr = Json.ParseString(System.IO.File.ReadAllText(jf)).AsGodotArray();
-            var gray = new StandardMaterial3D { AlbedoColor = new Color(0.62f, 0.62f, 0.60f), Roughness = 1f,
-                                                CullMode = BaseMaterial3D.CullModeEnum.Disabled };
             bool noTrees = System.Environment.GetEnvironmentVariable("UG_MENUNOTREES") == "1";   // dev: showcase the props
-            // per-placement albedo: each object's extracted Texture2D (content/menu/tex), cached by name. Unturned
-            // albedos are small palette textures -> Nearest; foliage/leaves are alpha-cutout sheets -> AlphaScissor.
+            // Per-placement albedo = the material's _Color * its _MainTex (content/menu/tex). _MainTex defaults to
+            // white, so an _MainTex-less material is still coloured by _Color, not grey. Palette albedos -> Nearest;
+            // foliage sheets -> alpha-cutout at the retail _Cutoff (Leaves override 0.5->0.2) with real mipmaps
+            // (GenerateMipmaps, else the LinearWithMipmaps filter is a no-op and the canopy vanishes at distance).
+            // Cache keyed by tex+colour+cutoff; a failed texture NEVER caches a grey stand-in under the texture's name.
             var matCache = new System.Collections.Generic.Dictionary<string, StandardMaterial3D>();
-            StandardMaterial3D MatFor(string tex)
+            StandardMaterial3D MatFor(string tex, Color albedo, float cutoff, bool leafy)
             {
-                if (string.IsNullOrEmpty(tex)) return gray;
-                if (matCache.TryGetValue(tex, out var hit)) return hit;
-                string tp = G($"res://content/menu/tex/{tex}");
-                var img = new Image();
-                if (!System.IO.File.Exists(tp) || img.Load(tp) != Error.Ok) { matCache[tex] = gray; return gray; }
-                bool leafy = tex.Contains("Foliage") || tex.Contains("Leaves");
-                var mat = new StandardMaterial3D
+                string key = $"{tex}|{albedo}|{cutoff}|{leafy}";
+                if (matCache.TryGetValue(key, out var hit)) return hit;
+                var mat = new StandardMaterial3D { AlbedoColor = albedo, Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+                if (!string.IsNullOrEmpty(tex))
                 {
-                    AlbedoTexture = ImageTexture.CreateFromImage(img),
-                    Roughness = 1f,
-                    CullMode = BaseMaterial3D.CullModeEnum.Disabled,
-                    TextureFilter = leafy ? BaseMaterial3D.TextureFilterEnum.LinearWithMipmaps
-                                          : BaseMaterial3D.TextureFilterEnum.Nearest,
-                };
-                if (leafy) { mat.Transparency = BaseMaterial3D.TransparencyEnum.AlphaScissor; mat.AlphaScissorThreshold = 0.5f; }
-                matCache[tex] = mat;
+                    string tp = G($"res://content/menu/tex/{tex}");
+                    var img = new Image();
+                    if (System.IO.File.Exists(tp) && img.Load(tp) == Error.Ok)
+                    {
+                        if (leafy) img.GenerateMipmaps();
+                        mat.AlbedoTexture = ImageTexture.CreateFromImage(img);
+                        mat.TextureFilter = leafy ? BaseMaterial3D.TextureFilterEnum.LinearWithMipmaps : BaseMaterial3D.TextureFilterEnum.Nearest;
+                    }
+                    else GD.PrintErr($"[menu] texture load failed, _Color only: {tex}");
+                }
+                if (leafy)
+                {
+                    mat.Transparency = BaseMaterial3D.TransparencyEnum.AlphaScissor;
+                    mat.AlphaScissorThreshold = cutoff > 0f ? cutoff : 0.2f;
+                }
+                matCache[key] = mat;
                 return mat;
             }
-            int placed = 0, missed = 0;
+            int placed = 0, skipGizmo = 0, skipTree = 0, skipNoMesh = 0, errored = 0;
             foreach (var e in arr)
             {
-                var d = e.AsGodotDictionary();
-                string nm = d["name"].AsString();   // drop editor gizmos that carry a mesh in the scene but aren't visual
-                if (nm is "Radius" or "Icon" or "Icon2" or "Target" or "Effect" or "Skeleton") { missed++; continue; }
-                string mn = d["mesh"].AsString();
-                if (noTrees && (mn.StartsWith("Birch") || mn.StartsWith("Pine") || mn.StartsWith("Maple") || mn.Contains("Foliage"))) { missed++; continue; }
-                string op = G($"res://content/menu/mesh/{mn}.obj");
-                if (!System.IO.File.Exists(op)) { missed++; continue; }   // ObjMesh.Load THROWS on a missing file
-                var mesh = ObjMesh.Load(op);
-                if (mesh == null) { missed++; continue; }
-                Vector3 V(string k) { var a = d[k].AsGodotArray(); return new Vector3(a[0].AsSingle(), a[1].AsSingle(), a[2].AsSingle()); }
-                var basis = new Basis(V("xaxis"), V("yaxis"), V("zaxis"));
-                string tex = d.ContainsKey("tex") ? d["tex"].AsString() : "";   // "" (null in json) -> gray fallback
-                AddChild(new MeshInstance3D { Mesh = mesh, MaterialOverride = MatFor(tex), Transform = new Transform3D(basis, V("origin")) });
-                placed++;
+                try
+                {
+                    var d = e.AsGodotDictionary();
+                    string nm = d["name"].AsString();   // defensive: gizmos are already filtered upstream (plan_scene)
+                    if (nm is "Radius" or "Icon" or "Icon2" or "Target" or "Effect" or "Skeleton") { skipGizmo++; continue; }
+                    string mn = d["mesh"].AsString();
+                    if (noTrees && (mn.StartsWith("Birch") || mn.StartsWith("Pine") || mn.StartsWith("Maple") || mn.Contains("Foliage"))) { skipTree++; continue; }
+                    string op = G($"res://content/menu/mesh/{mn}.obj");
+                    if (!System.IO.File.Exists(op)) { GD.PrintErr($"[menu] mesh missing: {mn}"); skipNoMesh++; continue; }   // ObjMesh.Load THROWS on a missing file
+                    var mesh = ObjMesh.Load(op);
+                    if (mesh == null) { GD.PrintErr($"[menu] mesh empty: {mn}"); skipNoMesh++; continue; }
+                    Vector3 V(string k) { var a = d[k].AsGodotArray(); return new Vector3(a[0].AsSingle(), a[1].AsSingle(), a[2].AsSingle()); }
+                    var basis = new Basis(V("xaxis"), V("yaxis"), V("zaxis"));
+                    string tex = (d.ContainsKey("tex") && d["tex"].VariantType != Variant.Type.Nil) ? d["tex"].AsString() : "";
+                    Color albedo = Colors.White;
+                    if (d.ContainsKey("color")) { var ca = d["color"].AsGodotArray(); albedo = new Color(ca[0].AsSingle(), ca[1].AsSingle(), ca[2].AsSingle()); }
+                    float cutoff = (d.ContainsKey("cutoff") && d["cutoff"].VariantType != Variant.Type.Nil) ? d["cutoff"].AsSingle() : 0f;
+                    bool leafy = mn.Contains("Foliage") || tex.Contains("Foliage") || tex.Contains("Leaves");
+                    AddChild(new MeshInstance3D { Mesh = mesh, MaterialOverride = MatFor(tex, albedo, cutoff, leafy), Transform = new Transform3D(basis, V("origin")) });
+                    placed++;
+                }
+                catch (System.Exception ex) { GD.PrintErr($"[menu] placement error: {ex.Message}"); errored++; }
             }
-            GD.Print($"[menu] extracted diorama: placed {placed}, missing-mesh {missed}");
+            GD.Print($"[menu] diorama: placed {placed} | skipped gizmo {skipGizmo}, tree {skipTree}, no-mesh {skipNoMesh}, errored {errored}");
         }
 
         // The real menu's own 6 lamps (Light docs extracted from Menu_Base into content/menu/menu_lamps.json:
@@ -289,31 +303,42 @@ namespace UnturnedGodot
         {
             string jf = G("res://content/menu/menu_lamps.json");
             if (!System.IO.File.Exists(jf)) { GD.PrintErr("[menu] menu_lamps.json missing"); return; }
-            // Unity's built-in light intensity and Godot's light energy use different units, so ONE global
-            // conversion factor (applied evenly to all 6 lamps -- not a per-light eyeball) brings the extracted
-            // intensities into Godot's range. ~4x reads right against the retail brightness; UG_LAMPSCALE overrides.
-            float scale = ParseF(System.Environment.GetEnvironmentVariable("UG_LAMPSCALE"), 4.0f);
+            // Godot energy vs Unity intensity relate differently at different RANGES (godot's falloff vs unity's), so
+            // ONE global factor can't hold: the range-4 point lamps and range-64 spots need factors ~11x apart
+            // (measured -- a single 4.0 blew out the point-lit workbench ~11x). Per-family. UG_LAMPSCALE_PT/_SP override.
+            float ptScale = ParseF(System.Environment.GetEnvironmentVariable("UG_LAMPSCALE_PT"), 0.39f);
+            float spScale = ParseF(System.Environment.GetEnvironmentVariable("UG_LAMPSCALE_SP"), 4.2f);
             var arr = Json.ParseString(System.IO.File.ReadAllText(jf)).AsGodotArray();
+            int lamps = 0;
             foreach (var e in arr)
             {
-                var d = e.AsGodotDictionary();
-                Vector3 V(string k) { var a = d[k].AsGodotArray(); return new Vector3(a[0].AsSingle(), a[1].AsSingle(), a[2].AsSingle()); }
-                var col = V("color");
-                var c = new Color(col.X, col.Y, col.Z);
-                float energy = d["intensity"].AsSingle() * scale;
-                float range = d["range"].AsSingle();
-                if ((int)d["type"].AsInt64() == 0)   // spot (Unity Type 0) -> aims along +fwd (Godot spot emits -Z)
+                try
                 {
-                    var s = new SpotLight3D { Position = V("pos"), LightColor = c, LightEnergy = energy, SpotRange = range, SpotAngle = d["spot"].AsSingle() };
-                    AddChild(s);
-                    s.LookAt(V("pos") + V("fwd"), Vector3.Up);
+                    var d = e.AsGodotDictionary();
+                    Vector3 V(string k) { var a = d[k].AsGodotArray(); return new Vector3(a[0].AsSingle(), a[1].AsSingle(), a[2].AsSingle()); }
+                    var col = V("color");
+                    var c = new Color(col.X, col.Y, col.Z);
+                    float intensity = d["intensity"].AsSingle();
+                    float range = d["range"].AsSingle();
+                    int type = (int)d["type"].AsInt64();
+                    // retail's 6 menu lamps are all m_Shadows.m_Type=0 -> shadows stay OFF (Godot lights default off).
+                    if (type == 0)   // Unity Spot -> aims along +fwd (Godot spot emits -Z)
+                    {
+                        // Godot SpotAngle is the HALF cone; Unity m_SpotAngle is the FULL cone -> halve it.
+                        var s = new SpotLight3D { Position = V("pos"), LightColor = c, LightEnergy = intensity * spScale,
+                                                  SpotRange = range, SpotAngle = d["spot"].AsSingle() * 0.5f };
+                        AddChild(s);
+                        s.LookAt(V("pos") + V("fwd"), Vector3.Up);
+                    }
+                    else if (type == 2)   // Unity Point
+                        AddChild(new OmniLight3D { Position = V("pos"), LightColor = c, LightEnergy = intensity * ptScale, OmniRange = range });
+                    else
+                        GD.PrintErr($"[menu] unhandled lamp type {type} (Menu_Base has only Point/Spot)");
+                    lamps++;
                 }
-                else   // point (Type 2)
-                {
-                    AddChild(new OmniLight3D { Position = V("pos"), LightColor = c, LightEnergy = energy, OmniRange = range });
-                }
+                catch (System.Exception ex) { GD.PrintErr($"[menu] lamp error: {ex.Message}"); }
             }
-            GD.Print($"[menu] placed {arr.Count} real lamps (energy scale {scale})");
+            GD.Print($"[menu] placed {lamps} real lamps (point x{ptScale}, spot x{spScale})");
         }
 
         static float ParseF(string s, float def) => float.TryParse(s, out var v) ? v : def;

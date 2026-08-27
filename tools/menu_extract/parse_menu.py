@@ -25,7 +25,9 @@ for cls, fid, body in docs:
     if cls == 1:
         nm = re.search(r'm_Name:\s*(.*)', body)
         comps = re.findall(r'component:\s*\{fileID:\s*(\d+)\}', body)
-        gameobjects[fid] = {'name': nm.group(1).strip() if nm else '', 'comps': [int(c) for c in comps]}
+        act = re.search(r'm_IsActive:\s*(-?\d+)', body)
+        gameobjects[fid] = {'name': nm.group(1).strip() if nm else '', 'comps': [int(c) for c in comps],
+                            'active': int(act.group(1)) if act else 1}
     elif cls == 23:  # MeshRenderer -> material guids on this GameObject
         go = fileid_of(body, 'm_GameObject')
         ms = re.search(r'm_Materials:\s*((?:\s*-\s*\{fileID:[^\n]*\n)+)', body)
@@ -91,6 +93,7 @@ for mf in meshfilters.values():
     out.append({'name': gameobjects.get(go,{}).get('name','?'),
                 'parent': gameobjects.get(pgo,{}).get('name','') if pgo else '',
                 'grandparent': gameobjects.get(ggo,{}).get('name','') if ggo else '',
+                'active': gameobjects.get(go,{}).get('active',1),
                 'guid': mf['mesh'][1], 'meshFileID': mf['mesh'][0],
                 'mat': mats[0] if mats else None, 'mats': mats,
                 'origin': [round(v,4) for v in (wm[3], wm[7], wm[11])],
