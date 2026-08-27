@@ -42,6 +42,14 @@ for cls, fid, body in docs:
     elif cls == 33:
         m = re.search(r'm_Mesh:\s*\{fileID:\s*(-?\d+),\s*guid:\s*([0-9a-f]+)', body)
         meshfilters[fid] = {'go': fileid_of(body, 'm_GameObject'), 'mesh': (int(m.group(1)), m.group(2)) if m else None}
+    elif cls == 137:  # SkinnedMeshRenderer: mesh + materials on ONE component, no separate MeshFilter (doors/lockers/car-lift)
+        go = fileid_of(body, 'm_GameObject')
+        m = re.search(r'm_Mesh:\s*\{fileID:\s*(-?\d+),\s*guid:\s*([0-9a-f]+)', body)
+        ms = re.search(r'm_Materials:\s*((?:\s*-\s*\{fileID:[^\n]*\n)+)', body)
+        mats = re.findall(r'guid:\s*([0-9a-f]{32})', ms.group(1)) if ms else []
+        if go is not None and m:
+            meshfilters[fid] = {'go': go, 'mesh': (int(m.group(1)), m.group(2))}
+            if go not in meshrenderers: meshrenderers[go] = mats
 
 go_to_tf = {tf['go']: tfid for tfid, tf in transforms.items() if tf['go'] is not None}
 
