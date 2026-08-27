@@ -75,7 +75,7 @@ namespace UnturnedGodot
 
         // Faithful port of Skybox/Sky (Skybox-Sky.shader). EYEDIR == Unturned's viewDir; rayDir == -EYEDIR.
         // Unity _Time.x -> TIME/20, _Time.y -> TIME. Clouds + stars gated to above-horizon (guards the /viewDir.y).
-        const string SkyShaderCode = @"
+        internal const string SkyShaderCode = @"
 shader_type sky;
 
 uniform vec3 sky_color : source_color;
@@ -425,7 +425,7 @@ void sky() {
 
         public bool Overcast;   // denser fog + greyer feel (a simple weather state)
 
-        static ImageTexture LoadTex(string res)
+        internal static ImageTexture LoadTex(string res)
         {
             string p = ProjectSettings.GlobalizePath(res);
             if (System.IO.File.Exists(p)) { var img = Image.LoadFromFile(p); if (img != null) return ImageTexture.CreateFromImage(img); }

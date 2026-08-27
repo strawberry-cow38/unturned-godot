@@ -29,7 +29,7 @@ namespace UnturnedGodot
 
         // --- camera anchors (framings of the barn). Tuned against the render; index 0 = Title (idle). ---
         // pos + look-at, world space. Title is a pulled-back 3/4 hero shot; each tab reframes the barn.
-        // The whole menu takes place INSIDE the barn (interior ~ X[-7.5,7.5] Z[-10.5,10.5] Y[0,15.9],
+        // The whole menu takes place INSIDE the barn (interior ~ X[-7.5,7.5] Z[-10.5,10.5] Y[-4.89,+11.04],
         // gable ends at Z=+-10.5). Camera sits near the back gable and looks down the length toward the
         // far gable; each tab reframes that interior. Barn material is CullMode.Disabled so the walls
         // read from the inside.
@@ -64,14 +64,74 @@ namespace UnturnedGodot
         // (Title/Play/Survivors/Configuration/Workshop -> MenuUI.cs targetCameraTransform) into this diorama's
         // world space (F*M). They're INTERIOR framings -- the camera lives in the barn loft. MenuUI lerps between
         // them (deltaTime*4; the first approach to Title is a slow deltaTime*1 cinematic pan).
-        static readonly (Vector3 pos, Vector3 look)[] RealViews =
+        static readonly (Vector3 pos, Quaternion rot)[] RealViews =
         {
-            (new Vector3(0.00f, 5.49f, -5.99f), new Vector3(-0.08f, 5.27f, -5.02f)),   // 0 Title (idle)
-            (new Vector3(0.53f, 2.18f,  5.10f), new Vector3( 0.40f, 2.18f,  6.09f)),   // 1 Play
-            (new Vector3(-2.00f, 1.74f, 1.14f), new Vector3(-2.91f, 1.56f,  1.52f)),   // 2 Survivors
-            (new Vector3(3.37f, 2.36f,  2.85f), new Vector3( 3.91f, 1.97f,  3.60f)),   // 3 Configuration
-            (new Vector3(0.22f, 2.90f, -1.36f), new Vector3( 1.12f, 2.67f, -1.75f)),   // 4 Workshop
+            // Retail's own anchors, read out of MenuOverridableObjects (&113) in the ripped Menu.unity and
+            // converted Unity->Godot (position z negated, quaternion (x,y,-z,-w)).
+            //
+            // Stored as QUATERNIONS, not as a look-at point. A look point cannot express ROLL, and three of
+            // these carry some -- Workshop 1.90 deg, Survivors 0.90 deg -- which Basis.LookingAt silently
+            // flattened to zero. Control for the conversion: the forward vectors these produce agree with the
+            // old hand-entered look points to 0.11-0.35 deg, which is the quantisation of a 2-decimal look
+            // point at 1 m. Same direction, roll recovered.
+            (new Vector3(0.0000f, 5.4905f, -5.9909f), new Quaternion(-0.002670f, 0.992978f, 0.110306f, 0.042664f)),   // 0 Title (idle)
+            (new Vector3(0.5273f, 2.1790f,  5.1001f), new Quaternion( 0.000000f, 0.998066f, 0.000000f, 0.062158f)),   // 1 Play
+            (new Vector3(-2.0023f, 1.7429f, 1.1436f), new Quaternion(-0.044532f, 0.829203f, 0.081010f, 0.551251f)),   // 2 Survivors
+            (new Vector3(3.3740f, 2.3604f,  2.8481f), new Quaternion(-0.061019f, -0.932827f, -0.189541f, 0.300306f)), // 3 Configuration
+            (new Vector3(0.2250f, 2.9024f, -1.3593f), new Quaternion( 0.105851f, 0.542197f, 0.049556f, -0.832083f)),  // 4 Workshop
         };
+
+        // MenuOverridableObjects.initialCamera -- "Point of view when menu first loads. Blends into Title
+        // Camera." A SIXTH pose the port never had, 9.3 m from Title, outside the barn looking in. Retail
+        // opens here and drifts to Title at the slow deltaTime*1 rate; that is the whole cinematic intro.
+        static readonly Vector3 InitialPos = new Vector3(0.1989f, 9.9996f, -14.1008f);
+        static readonly Quaternion InitialRot = new Quaternion(0.001128f, -0.982858f, -0.184262f, -0.006016f);
+        /// <summary>Unity's Quaternion.Lerp: componentwise lerp along the SHORT arc, then normalise.
+        /// Godot ships Slerp but not this, and MenuUI uses Lerp -- see the glide in _Process.</summary>
+        /// <summary>The retail main-menu sky: Skybox_MainMenu.mat, verbatim.
+        ///
+        /// Menu.unity's RenderSettings point m_SkyboxMaterial at
+        /// Assets/Game/Sources/Scenes/Skybox_MainMenu.mat (shader Skybox/Sky, keyword WITH_CLOUDS), and
+        /// LevelLighting.resetForMainMenu only clears atmospheric fog -- nothing replaces it. It is a NIGHT
+        /// sky: black zenith, grey-blue equator, and the sun sitting ON the horizon at +X in orange. The port
+        /// was inventing a bright pastoral midday blue instead, and that is what shows through the barn
+        /// doorway and the loft window in every frame.
+        ///
+        /// The shader itself is already ported -- DayNightCycle.SkyShaderCode is a faithful port of
+        /// Skybox-Sky.shader -- so this only has to feed it the material's own values.</summary>
+        static ShaderMaterial MenuSkyMaterial()
+        {
+            var m = new ShaderMaterial { Shader = new Shader { Code = DayNightCycle.SkyShaderCode } };
+            m.SetShaderParameter("sky_color", new Color(0f, 0f, 0f));                       // _SkyColor
+            m.SetShaderParameter("equator_color", new Color(0.4099f, 0.4291f, 0.4906f));    // _EquatorColor
+            m.SetShaderParameter("ground_color", new Color(0.2075f, 0.2075f, 0.2075f));     // _GroundColor
+            m.SetShaderParameter("sun_color", new Color(1f, 0.5f, 0f));                     // _SunColor
+            m.SetShaderParameter("sun_direction", new Vector3(-1f, 0f, 0f));                // _SunDirection: on the horizon
+            m.SetShaderParameter("moon_direction", new Vector3(1f, 0f, 0f));
+            m.SetShaderParameter("moon_light_direction", new Vector3(0f, -1f, 0f));
+            m.SetShaderParameter("moon_color", new Color(0.749f, 0.804f, 0.808f));
+            m.SetShaderParameter("sqr_moon_radius", 0.01f);                                 // _SqrMoonRadius
+            m.SetShaderParameter("sun_inner", 0.995f);                                      // _SunInnerThreshold
+            m.SetShaderParameter("sun_outer", 0.993f);                                      // _SunOuterThreshold
+            m.SetShaderParameter("stars_cutoff", 0f);                                       // _StarsCutoff
+            m.SetShaderParameter("cloud_rim_color", new Color(0.2170f, 0.2170f, 0.2170f));  // _CloudRimColor
+            m.SetShaderParameter("cloud_intensity", 1f);                                    // _CloudIntensity
+            m.SetShaderParameter("cloud_params", new Vector4(0.6f, 10f, 0f, 0f));
+            m.SetShaderParameter("ambient_ground", new Color(0.2075f, 0.2075f, 0.2075f));
+            m.SetShaderParameter("ambient_equator", new Color(0.4099f, 0.4291f, 0.4906f));
+            m.SetShaderParameter("clouds_tex", DayNightCycle.LoadTex("res://content/sky_clouds.png"));
+            m.SetShaderParameter("stars_tex", DayNightCycle.LoadTex("res://content/sky_stars.png"));
+            return m;
+        }
+
+        static Quaternion Nlerp(Quaternion a, Quaternion b, float t)
+        {
+            if (a.Dot(b) < 0f) b = new Quaternion(-b.X, -b.Y, -b.Z, -b.W);   // short arc, as Unity does
+            return new Quaternion(
+                Mathf.Lerp(a.X, b.X, t), Mathf.Lerp(a.Y, b.Y, t),
+                Mathf.Lerp(a.Z, b.Z, t), Mathf.Lerp(a.W, b.W, t)).Normalized();
+        }
+
         static Vector3 ParseV3(string env, Vector3 def)
         {
             var s = System.Environment.GetEnvironmentVariable(env);
@@ -85,6 +145,10 @@ namespace UnturnedGodot
 
         public override void _Ready()
         {
+            // BEFORE BuildWorld: it now branches on this for the environment and the sun. It used to be set
+            // further down, after BuildWorld had already run, so anything in BuildWorld reading the field
+            // rather than the env var directly would silently take the placeholder path.
+            _menuReal = System.Environment.GetEnvironmentVariable("UG_MENUREAL") == "1";
             BuildWorld();
             BuildUI();
             // --menushot / debug: open the Play submenu at load so a render captures it (UG_MENUOPEN=map|options|advanced)
@@ -92,11 +156,17 @@ namespace UnturnedGodot
             if (_open == "map" || _open == "play" || _open == "options" || _open == "advanced") TogglePlayPanel();
             if (_open == "servers") ToggleServersPanel();
             if (_open == "advanced") ToggleAdvanced();
-            if (_menuReal)   // extracted diorama: start settled on Title, then glide to hovered anchors (MenuUI.Update port)
+            if (_menuReal)
             {
-                _targetTab = 0; _reachedTitle = true;
-                _cam.Position = ParseV3("UG_MENUEYE", RealViews[0].pos);
-                _cam.LookAt(ParseV3("UG_MENULOOK", RealViews[0].look), Vector3.Up);
+                // Open on initialCamera and let the slow deltaTime*1 pan carry us to Title, which is what
+                // retail does (MenuUI.cs:979-991 snaps to source.initialCamera when the decoration scene
+                // finishes loading, then Update lerps toward Title at k=1 until a submenu is opened).
+                // This used to set _reachedTitle = true and snap straight onto Title, which made the k=1
+                // branch below dead code on this path -- the cinematic intro the commit message advertised
+                // could never run.
+                _targetTab = 0; _reachedTitle = false;
+                _cam.Position = ParseV3("UG_MENUEYE", InitialPos);
+                _cam.Quaternion = InitialRot;
                 return;
             }
             // start the camera pulled back toward the near gable + a touch higher, then slow-pan in
@@ -138,27 +208,41 @@ namespace UnturnedGodot
                 env.FogDensity = 0.0012f;
                 env.FogLightColor = new Color(0.72f, 0.80f, 0.86f);
             }
-            // "reverse-AO" haze fix (diffed against the working gameplay Environment, WorldBuilder ~1825):
-            // that one runs NO SSAO and ambient @1.0; mine ran SSAO + 0.52@1.35. The real difference is the
-            // ENCLOSED interior -- flat color-ambient lights every barn surface full-strength with nothing to
-            // occlude it, so the upper walls wash toward the sky colour (tinyclaw's read). Drop the ambient for
-            // the interior and drop SSAO (the double-sided menu meshes only confuse it).
-            if (System.Environment.GetEnvironmentVariable("UG_MENUREAL") == "1")
+            // Retail values, not tuned ones. Menu.unity's RenderSettings are the ones that govern (Menu_Base
+            // and Menu_NoHoliday load ADDITIVELY, and the active scene's settings win): m_AmbientMode 1
+            // (trilight) with sky/equator/ground ALL 0.39215687 neutral and m_AmbientIntensity 1.
+            //
+            // The earlier 0.28/0.30/0.33 was the right diagnosis overshooting the answer -- the haze really
+            // was unoccluded ambient, but the correct number was sitting in the scene the whole time, and the
+            // diff that motivated the guess was against WorldBuilder's BuildPlaygroundWorld (the flat mapless
+            // gun range), not the gameplay world.
+            if (_menuReal)
             {
-                env.AmbientLightColor = new Color(0.28f, 0.30f, 0.33f);
+                const float amb = 0.39215687f;
+                env.AmbientLightColor = new Color(amb, amb, amb);
                 env.AmbientLightEnergy = 1.0f;
-                env.SsaoEnabled = false;
+                env.SsaoEnabled = false;                       // retail's AO defaults OFF (GraphicsSettingsData)
+                env.TonemapMode = Godot.Environment.ToneMapper.Linear;   // retail applies no tonemapper here
+                env.Sky = new Sky { SkyMaterial = MenuSkyMaterial() };
             }
             AddChild(new WorldEnvironment { Environment = env });
 
-            var sun = new DirectionalLight3D
+            // No sun on the real path. Menu_Base holds exactly 6 Light components -- 4 point + 2 spot, the
+            // two Spotlight barricades -- and NO directional; Menu.unity's m_Sun is fileID 0 and its only
+            // Light sits on the inactive Inspect camera. Retail lights that barn with the barricades and
+            // ambient, nothing else. The invented sun was also the scene's only shadow caster, which is what
+            // made the interior read as a black box that then needed the lamps cranked ~11x to compensate.
+            if (!_menuReal)
             {
-                RotationDegrees = new Vector3(-42f, 138f, 0f),
-                LightColor = new Color(1f, 0.96f, 0.87f),
-                LightEnergy = 1.25f,
-                ShadowEnabled = true,
-            };
-            AddChild(sun);
+                var sun = new DirectionalLight3D
+                {
+                    RotationDegrees = new Vector3(-42f, 138f, 0f),
+                    LightColor = new Color(1f, 0.96f, 0.87f),
+                    LightEnergy = 1.25f,
+                    ShadowEnabled = true,
+                };
+                AddChild(sun);
+            }
 
             // interior fill for the PLACEHOLDER barn only: the roof occludes the sky so the inside would be a
             // black box, and a warm omni fakes the light. The real diorama uses its own 6 extracted lamps
@@ -182,7 +266,6 @@ namespace UnturnedGodot
             AddChild(ground);
 
             // UG_MENUREAL: assemble the real extracted Menu_Base diorama instead of the single placeholder barn.
-            _menuReal = System.Environment.GetEnvironmentVariable("UG_MENUREAL") == "1";
             if (_menuReal) { LoadMenuScene(); LoadMenuLamps(); LoadMenuHero(); }
             else {
             // the hero barn -- real ripped Barn_0 (content/objects), flat 4x2 palette texture, nearest filter
@@ -221,7 +304,13 @@ namespace UnturnedGodot
             else GD.PrintErr("[menu] Barn_0.obj failed to load");
             }
 
-            _cam = new Camera3D { Current = true, Fov = 60f };
+            // FOV 90, not the 60 authored in the scene. OptionsSettings computes the menu camera's vertical
+            // FOV as MIN_FOV + MAX_FOV * fov = 60 + 40 * 0.75 (MAX_FOV is the SPAN, not a ceiling), and
+            // MenuUI.customStart -> OptionsSettings.apply() writes it before the menu is interactive because
+            // !Level.isLoaded. So the scene's 60 is an authored default retail overwrites, and it happens to
+            // be the slider MINIMUM -- 60 vs 90 vertical is 3.0x the frame area.
+            // near/far match the retail menu cameras (0.08 / 1024) rather than Godot's 0.05 / 4000.
+            _cam = new Camera3D { Current = true, Fov = 90f, Near = 0.08f, Far = 1024f };
             AddChild(_cam);
         }
 
@@ -384,15 +473,15 @@ namespace UnturnedGodot
             // the five dashboard buttons (positions from MenuDashboardUI ctor: Play 170, Survivors 230,
             // Configuration 290, Workshop 350; Exit anchored to the bottom). Hover glides the camera to that
             // tab's anchor; click runs the action.
-            MenuButton(layer, "play",          "Play",          170f, false, 1, () => TogglePlayPanel());
-            MenuButton(layer, "multiplayer",   "Multiplayer",   230f, false, 1, () => ToggleServersPanel());   // -> the server browser (MainMenuServers.cs)
-            MenuButton(layer, "survivors",     "Survivors",     290f, false, 2, () => ShowStub("Survivors"));
+            MenuButton(layer, "play",          "Play",          170f, false, () => TogglePlayPanel());
+            MenuButton(layer, "multiplayer",   "Multiplayer",   230f, false, () => ToggleServersPanel());   // -> the server browser (MainMenuServers.cs)
+            MenuButton(layer, "survivors",     "Survivors",     290f, false, () => ShowStub("Survivors"));
             // Configuration -> the GRAPHICS panel (master asked for it here and in the pause menu). Retail's
             // Configuration menu is where graphics live, so this replaces the stub rather than adding a sixth button.
-            MenuButton(layer, "configuration", "Configuration", 350f, false, 3, () => ToggleGraphicsPanel());
-            MenuButton(layer, "workshop",      "Workshop",      410f, false, 4, () => ToggleWorkshopPanel());
-            MenuButton(layer, "playground",    "Playground",    470f, false, 1, () => OnPlayground?.Invoke());   // gun range; no icon file yet -> MenuButton just skips the icon
-            MenuButton(layer, "exit",          "Exit",          -70f, true,  0, () => GetTree().Quit());
+            MenuButton(layer, "configuration", "Configuration", 350f, false, () => ToggleGraphicsPanel());
+            MenuButton(layer, "workshop",      "Workshop",      410f, false, () => ToggleWorkshopPanel());
+            MenuButton(layer, "playground",    "Playground",    470f, false, () => OnPlayground?.Invoke());   // gun range; no icon file yet -> MenuButton just skips the icon
+            MenuButton(layer, "exit",          "Exit",          -70f, true,  () => GetTree().Quit());
 
             BuildMapSelector(layer);   // Play -> retail singleplayer map selector + gameplay options (MainMenuPlay.cs)
             BuildServersPanel(layer);  // Multiplayer -> the server browser (MainMenuServers.cs)
@@ -432,7 +521,9 @@ namespace UnturnedGodot
             if (_serversPanel != null) _serversPanel.Visible = false;
         }
 
-        void MenuButton(CanvasLayer layer, string icon, string text, float y, bool fromBottom, int tab, System.Action onClick)
+        // (no `tab` parameter: the camera framing is derived from which panel is OPEN, in _Process.
+//  It lingered after that change reading like it still selected a framing, and nothing used it.)
+        void MenuButton(CanvasLayer layer, string icon, string text, float y, bool fromBottom, System.Action onClick)
         {
             var b = new Button
             {
@@ -479,7 +570,6 @@ namespace UnturnedGodot
             HideAllPanels();
             _playPanel.Visible = show;
             if (_advancedPanel != null) _advancedPanel.Visible = false;   // advanced starts collapsed each open
-            _targetTab = 1;   // hold the Play framing while the panel is open
         }
 
         // Multiplayer -> the server browser (MainMenuServers.cs; BuildServersPanel assigns _serversPanel).
@@ -492,7 +582,6 @@ namespace UnturnedGodot
             if (_stubPanel != null) _stubPanel.Visible = false;
             if (_workshopPanel != null) _workshopPanel.Visible = false;
             if (_advancedPanel != null) _advancedPanel.Visible = false;
-            _targetTab = 1;   // hold the Play framing while the browser is open
             if (show && _selectedServer == null && OfficialServers.Length > 0) SelectServer(OfficialServers[0]);   // highlight the top row so info/JOIN reflect it
             if (show && !_serversAutoRefreshed) { _serversAutoRefreshed = true; RefreshServers(); }   // auto-query live ping/count on first open
         }
@@ -594,7 +683,6 @@ namespace UnturnedGodot
             if (_stubPanel != null) _stubPanel.Visible = false;
             if (_serversPanel != null) _serversPanel.Visible = false;
             if (_advancedPanel != null) _advancedPanel.Visible = false;
-            _targetTab = 4;   // hold the Workshop framing while the panel is open
         }
 
         void BuildStubPanel(CanvasLayer layer)
@@ -632,31 +720,55 @@ namespace UnturnedGodot
                        : _graphicsPanel?.Visible == true ? 3
                        : _workshopPanel?.Visible == true ? 4
                        : 0;
-            var anchorSet = _menuReal ? RealViews : Anchors;   // the real diorama pans between the extracted retail anchors
-            var t = anchorSet[_targetTab];
-            var target = new Transform3D(Basis.LookingAt(t.look - t.pos, Vector3.Up), t.pos);
             float d = (float)delta;
-            if (_targetTab == 0)
+            if (_menuReal)
             {
-                float w = _reachedTitle ? d * 4f : d * 1f;   // first approach to Title is the slow cinematic pan
-                _cam.Position = _cam.Position.Lerp(target.Origin, w);
-                _cam.Quaternion = _cam.Quaternion.Slerp(target.Basis.GetRotationQuaternion(), w);
-                if (_cam.Position.DistanceTo(target.Origin) < 0.4f) _reachedTitle = true;
+                var t = RealViews[_targetTab];
+                // Quaternion.Lerp (nlerp), NOT Slerp -- MenuUI.cs:693/698/706 uses Quaternion.Lerp. Same
+                // endpoints, different curve: nlerp lags at the start of a wide arc then catches up, and the
+                // two diverge by up to 3.9 deg mid-glide on Title->Workshop (a 119 deg arc). Godot's
+                // Quaternion has no Lerp, so this is the componentwise lerp + normalise that nlerp is.
+                float w = _targetTab == 0 && !_reachedTitle ? d * 1f : d * 4f;
+                _cam.Position = _cam.Position.Lerp(t.pos, w);
+                _cam.Quaternion = Nlerp(_cam.Quaternion, t.rot, w);
+                // MenuUI.hasReachedTitleCameraTransform is set ONLY when the target is not the title camera
+                // (MenuUI.cs:703) -- i.e. the first time you open any submenu. Arriving at Title never sets
+                // it, so the opening pan stays slow the whole way in. The old 0.4 m proximity trigger cut
+                // roughly the last 1.4 s of that pan by flipping it to the k=4 rate early.
+                if (_targetTab != 0) _reachedTitle = true;
             }
             else
             {
-                _reachedTitle = true;
-                _cam.Position = _cam.Position.Lerp(target.Origin, d * 4f);
-                _cam.Quaternion = _cam.Quaternion.Slerp(target.Basis.GetRotationQuaternion(), d * 4f);
+                var t = Anchors[_targetTab];
+                var target = new Transform3D(Basis.LookingAt(t.look - t.pos, Vector3.Up), t.pos);
+                float w = _targetTab == 0 && !_reachedTitle ? d * 1f : d * 4f;
+                _cam.Position = _cam.Position.Lerp(target.Origin, w);
+                _cam.Quaternion = Nlerp(_cam.Quaternion, target.Basis.GetRotationQuaternion(), w);
+                if (_targetTab != 0) _reachedTitle = true;
             }
         }
 
         // harness hook: jump the camera target to a tab (used by --menushot to capture each framing)
         public void ShowTab(int tab)
         {
-            var anchorSet = _menuReal ? RealViews : Anchors;
-            _forceTab = Mathf.Clamp(tab, 0, anchorSet.Length - 1);   // render-harness override; the live menu follows panel state
-            _targetTab = _forceTab; if (tab != 0) _reachedTitle = true;
+            int n = _menuReal ? RealViews.Length : Anchors.Length;
+            _forceTab = Mathf.Clamp(tab, 0, n - 1);   // render-harness override; the live menu follows panel state
+            _targetTab = _forceTab;
+            // SNAP, don't glide. The harness captures a fixed number of frames after switching, and the
+            // camera now starts at initialCamera 9.3 m from Title, so a lerp lands it mid-pan and the golden
+            // records wherever it happened to be. Setting _reachedTitle alone only picks the faster rate --
+            // it does not arrive. The live menu never takes this path (_forceTab stays -1).
+            _reachedTitle = true;
+            if (_cam != null)
+            {
+                if (_menuReal) { _cam.Position = RealViews[_targetTab].pos; _cam.Quaternion = RealViews[_targetTab].rot; }
+                else
+                {
+                    var a = Anchors[_targetTab];
+                    _cam.Position = a.pos;
+                    _cam.Quaternion = new Transform3D(Basis.LookingAt(a.look - a.pos, Vector3.Up), a.pos).Basis.GetRotationQuaternion();
+                }
+            }
         }
     }
 }
