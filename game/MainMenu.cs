@@ -51,6 +51,11 @@ namespace UnturnedGodot
         int _targetTab;              // which anchor the camera is gliding toward (0 = title)
         int _forceTab = -1;          // >=0: the --menushot harness (ShowTab) is forcing an anchor; the live menu stays -1 and follows the open submenu
         bool _reachedTitle;          // MenuUI.hasReachedTitleCameraTransform: first pan to Title is slow, then snappy
+        // Retail's Play menu is a LIST OF BUTTONS (MenuPlayUI: Singleplayer / Servers / Connect /
+        // Bookmarks / Lobbies), and Singleplayer is what opens the map selector. The port had that
+        // flattened -- "Play" went straight to the map selector and Multiplayer sat as a sixth
+        // top-level button retail does not have. This is the missing middle layer.
+        Control _playMenuPanel;
         Control _stubPanel;          // the "coming to Cow.0" placeholder for unimplemented tabs
         Control _playPanel;          // Play submenu: PEI / PEI no-zombies (our real modes)
         Control _workshopPanel;      // Workshop submenu: Editor (PEI)
@@ -478,17 +483,21 @@ namespace UnturnedGodot
             // the five dashboard buttons (positions from MenuDashboardUI ctor: Play 170, Survivors 230,
             // Configuration 290, Workshop 350; Exit anchored to the bottom). Hover glides the camera to that
             // tab's anchor; click runs the action.
-            MenuButton(layer, "play",          "Play",          170f, false, () => TogglePlayPanel());
-            MenuButton(layer, "multiplayer",   "Multiplayer",   230f, false, () => ToggleServersPanel());   // -> the server browser (MainMenuServers.cs)
-            MenuButton(layer, "survivors",     "Survivors",     290f, false, () => ShowStub("Survivors"));
+            // The dashboard is retail's five: Play / Survivors / Configuration / Workshop / Exit
+            // (MenuDashboardUI opens exactly MenuPlayUI, MenuSurvivorsUI, MenuConfigurationUI,
+            // MenuWorkshopUI). Multiplayer and Playground used to sit up here as extra top-level
+            // buttons; both are now inside Play, where retail keeps servers -- which also disposes of
+            // the missing icon_multiplayer.png, since retail has no such button to give an icon to.
+            MenuButton(layer, "play",          "Play",          170f, false, () => TogglePlayMenu());
+            MenuButton(layer, "survivors",     "Survivors",     230f, false, () => ShowStub("Survivors"));
             // Configuration -> the GRAPHICS panel (master asked for it here and in the pause menu). Retail's
             // Configuration menu is where graphics live, so this replaces the stub rather than adding a sixth button.
-            MenuButton(layer, "configuration", "Configuration", 350f, false, () => ToggleGraphicsPanel());
-            MenuButton(layer, "workshop",      "Workshop",      410f, false, () => ToggleWorkshopPanel());
-            MenuButton(layer, "playground",    "Playground",    470f, false, () => OnPlayground?.Invoke());   // gun range; no icon file yet -> MenuButton just skips the icon
+            MenuButton(layer, "configuration", "Configuration", 290f, false, () => ToggleGraphicsPanel());
+            MenuButton(layer, "workshop",      "Workshop",      350f, false, () => ToggleWorkshopPanel());
             MenuButton(layer, "exit",          "Exit",          -70f, true,  () => GetTree().Quit());
 
-            BuildMapSelector(layer);   // Play -> retail singleplayer map selector + gameplay options (MainMenuPlay.cs)
+            BuildPlayMenuPanel(layer); // Play -> retail's Play MENU (Singleplayer / Multiplayer / Playground)
+            BuildMapSelector(layer);   // Play > Singleplayer -> map selector + gameplay options (MainMenuPlay.cs)
             BuildServersPanel(layer);  // Multiplayer -> the server browser (MainMenuServers.cs)
             BuildWorkshopPanel(layer);
             BuildStubPanel(layer);
@@ -518,6 +527,7 @@ namespace UnturnedGodot
         /// stacked on top of each other.</summary>
         void HideAllPanels()
         {
+            if (_playMenuPanel != null) _playMenuPanel.Visible = false;
             if (_playPanel != null) _playPanel.Visible = false;
             if (_stubPanel != null) _stubPanel.Visible = false;
             if (_advancedPanel != null) _advancedPanel.Visible = false;
@@ -563,6 +573,43 @@ namespace UnturnedGodot
             b.AddThemeFontSizeOverride("font_size", 18);
             b.Pressed += () => onClick();
             return b;
+        }
+
+        /// <summary>Retail's Play menu (MenuPlayUI): a column of buttons, not the map selector.
+        /// Singleplayer opens the selector (MenuPlaySingleplayerUI), Servers the browser. Connect /
+        /// Bookmarks / Lobbies are retail buttons this port has no backend for and so does not show;
+        /// Playground has no retail equivalent and lives here because it is a way to start playing.</summary>
+        void BuildPlayMenuPanel(CanvasLayer layer)
+        {
+            var panel = new PanelContainer { Position = new Vector2(240f, 200f), Visible = false };
+            var margin = new MarginContainer();
+            foreach (var side in new[] { "margin_left", "margin_right", "margin_top", "margin_bottom" })
+                margin.AddThemeConstantOverride(side, 14);
+            panel.AddChild(margin);
+            var box = new VBoxContainer();
+            box.AddThemeConstantOverride("separation", 8);
+            margin.AddChild(box);
+            box.AddChild(Header("PLAY", 24));
+            void Row(string text, string tip, System.Action go)
+            {
+                var b = new Button { Text = text, CustomMinimumSize = new Vector2(300f, 44f), TooltipText = tip,
+                                     Alignment = HorizontalAlignment.Left };
+                b.AddThemeFontSizeOverride("font_size", 18);
+                b.Pressed += () => go();
+                box.AddChild(b);
+            }
+            Row("  Singleplayer", "Pick a map and play on your own.", TogglePlayPanel);
+            Row("  Multiplayer",  "Browse and join servers.",         ToggleServersPanel);
+            Row("  Playground",   "The gun range -- no retail equivalent.", () => OnPlayground?.Invoke());
+            layer.AddChild(panel);
+            _playMenuPanel = panel;
+        }
+
+        void TogglePlayMenu()
+        {
+            bool show = !_playMenuPanel.Visible;
+            HideAllPanels();
+            _playMenuPanel.Visible = show;
         }
 
         void TogglePlayPanel()
@@ -720,7 +767,7 @@ namespace UnturnedGodot
             // by the active page). Master: "the camera shift should only occur with each submenu selected." _forceTab
             // lets the --menushot harness sweep the anchors regardless of panel state.
             _targetTab = _forceTab >= 0 ? _forceTab
-                       : (_playPanel?.Visible == true || _serversPanel?.Visible == true) ? 1
+                       : (_playMenuPanel?.Visible == true || _playPanel?.Visible == true || _serversPanel?.Visible == true) ? 1
                        : _stubPanel?.Visible == true ? 2
                        : _graphicsPanel?.Visible == true ? 3
                        : _workshopPanel?.Visible == true ? 4
