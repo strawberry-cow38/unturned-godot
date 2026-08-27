@@ -405,7 +405,10 @@ namespace UnturnedGodot
             // Godot energy vs Unity intensity relate differently at different RANGES (godot's falloff vs unity's), so
             // ONE global factor can't hold: the range-4 point lamps and range-64 spots need factors ~11x apart
             // (measured -- a single 4.0 blew out the point-lit workbench ~11x). Per-family. UG_LAMPSCALE_PT/_SP override.
-            float ptScale = ParseF(System.Environment.GetEnvironmentVariable("UG_LAMPSCALE_PT"), 0.39f);
+            // The point family runs INVERSE-SQUARE (decay=2, see the OmniAttenuation note below). 0.65 = the old decay-1
+            // workbench fit (0.39) x the lamp->workbench distance (~1.66m = y2.56 lamp - ~0.9 table): re-derived ONCE so
+            // the workbench holds its brightness under decay=2, instead of stacking a 2nd falloff fit on top of 0.39.
+            float ptScale = ParseF(System.Environment.GetEnvironmentVariable("UG_LAMPSCALE_PT"), 0.65f);
             float spScale = ParseF(System.Environment.GetEnvironmentVariable("UG_LAMPSCALE_SP"), 4.2f);
             var arr = Json.ParseString(System.IO.File.ReadAllText(jf)).AsGodotArray();
             int lamps = 0;
@@ -430,12 +433,14 @@ namespace UnturnedGodot
                         s.LookAt(V("pos") + V("fwd"), Vector3.Up);
                     }
                     else if (type == 2)   // Unity Point
-                        // OmniAttenuation shapes the falloff toward Unity's faster (inverse-square-ish) decay: godot's
-                        // default (1) falls off too slowly, so a range-4 lamp at y2.56 over-delivers 2.3m up and lights
-                        // the loft floor above it (a shadowless point light past a floor -- the "mystery loft light").
-                        // Steepen it so the lamp is near-zero before the loft, WITHOUT dimming the floor it's meant to light.
+                        // INVERSE-SQUARE falloff (decay=2) -- what Unity's SHADOWLESS point light approximates (these menu
+                        // lamps are m_Shadows.m_Type=0). Godot's default (1) decays far too slowly, so a range-4 lamp at
+                        // y2.56 stays bright at the loft floor above and lights it through the (unoccluded G4.6) floor --
+                        // the "mystery loft light". decay=2 dies as 1/d^2 exactly as Unity's did, so the loft goes dark as a
+                        // CONSEQUENCE of the correct curve, not a 2nd fit; ptScale above is re-derived once to hold the
+                        // workbench. (2.5 was TUNED and drifted the ground floor dim -- A/B-confirmed. UG_OMNIATTEN overrides.)
                         AddChild(new OmniLight3D { Position = V("pos"), LightColor = c, LightEnergy = intensity * ptScale, OmniRange = range,
-                                                   OmniAttenuation = ParseF(System.Environment.GetEnvironmentVariable("UG_OMNIATTEN"), 2.5f) });
+                                                   OmniAttenuation = ParseF(System.Environment.GetEnvironmentVariable("UG_OMNIATTEN"), 2.0f) });
                     else
                         GD.PrintErr($"[menu] unhandled lamp type {type} (Menu_Base has only Point/Spot)");
                     lamps++;
