@@ -433,12 +433,14 @@ namespace UnturnedGodot
                         s.LookAt(V("pos") + V("fwd"), Vector3.Up);
                     }
                     else if (type == 2)   // Unity Point
-                        // INVERSE-SQUARE falloff (decay=2) -- what Unity's SHADOWLESS point light approximates (these menu
-                        // lamps are m_Shadows.m_Type=0). Godot's default (1) decays far too slowly, so a range-4 lamp at
-                        // y2.56 stays bright at the loft floor above and lights it through the (unoccluded G4.6) floor --
-                        // the "mystery loft light". decay=2 dies as 1/d^2 exactly as Unity's did, so the loft goes dark as a
-                        // CONSEQUENCE of the correct curve, not a 2nd fit; ptScale above is re-derived once to hold the
-                        // workbench. (2.5 was TUNED and drifted the ground floor dim -- A/B-confirmed. UG_OMNIATTEN overrides.)
+                        // decay=2 (~inverse-square) -- the RIGHT FAMILY, not an exact match. Godot's default (1) decays far
+                        // too slowly, so a range-4 lamp at y2.56 stays bright at the loft floor above and lights it through
+                        // the (unoccluded G4.6) floor -- the "mystery loft light". Unity's built-in point falloff is actually
+                        // 1/(1+25(d/r)^2), whose +1 flattens it near the lamp, so decay=2 carries a KNOWN RESIDUAL vs retail
+                        // (over-bright within ~0.5m of a fixture, ~3.3x span over 0.5-3m) -- but it's a curve error now, not a
+                        // fitted constant, and far better than the unusable decay=1. So the loft dims as a CONSEQUENCE of the
+                        // curve, not a 2nd fit; ptScale above is re-derived once to hold the workbench. (2.5 was TUNED and
+                        // drifted the ground floor dim -- A/B-confirmed. UG_OMNIATTEN overrides.)
                         AddChild(new OmniLight3D { Position = V("pos"), LightColor = c, LightEnergy = intensity * ptScale, OmniRange = range,
                                                    OmniAttenuation = ParseF(System.Environment.GetEnvironmentVariable("UG_OMNIATTEN"), 2.0f) });
                     else
