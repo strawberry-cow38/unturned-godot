@@ -159,16 +159,18 @@ namespace UnturnedGodot
             };
             AddChild(sun);
 
-            // interior fill: the roof occludes the sky, so the inside would be a black box. A warm omni
-            // hung near the ridge fakes the "light coming through the barn" glow so the space reads.
-            AddChild(new OmniLight3D
-            {
-                Position = new Vector3(0f, 8.5f, 0f),
-                LightColor = new Color(1f, 0.90f, 0.74f),
-                LightEnergy = 3.0f,
-                OmniRange = 34f,
-                OmniAttenuation = 0.6f,
-            });
+            // interior fill for the PLACEHOLDER barn only: the roof occludes the sky so the inside would be a
+            // black box, and a warm omni fakes the light. The real diorama uses its own 6 extracted lamps
+            // (LoadMenuLamps) instead of this eyeballed fill -- source-accurate, not tuned by eye.
+            if (System.Environment.GetEnvironmentVariable("UG_MENUREAL") != "1")
+                AddChild(new OmniLight3D
+                {
+                    Position = new Vector3(0f, 8.5f, 0f),
+                    LightColor = new Color(1f, 0.90f, 0.74f),
+                    LightEnergy = 3.0f,
+                    OmniRange = 34f,
+                    OmniAttenuation = 0.6f,
+                });
 
             // grassy ground
             var ground = new MeshInstance3D
@@ -180,7 +182,7 @@ namespace UnturnedGodot
 
             // UG_MENUREAL: assemble the real extracted Menu_Base diorama instead of the single placeholder barn.
             _menuReal = System.Environment.GetEnvironmentVariable("UG_MENUREAL") == "1";
-            if (_menuReal) { LoadMenuScene(); }
+            if (_menuReal) { LoadMenuScene(); LoadMenuLamps(); }
             else {
             // the hero barn -- real ripped Barn_0 (content/objects), flat 4x2 palette texture, nearest filter
             var mesh = ObjMesh.Load(G("res://content/objects/Barn_0.obj"));
@@ -277,6 +279,40 @@ namespace UnturnedGodot
                 placed++;
             }
             GD.Print($"[menu] extracted diorama: placed {placed}, missing-mesh {missed}");
+        }
+
+        // The real menu's own 6 lamps (Light docs extracted from Menu_Base into content/menu/menu_lamps.json:
+        // 4 warm point lamps + 2 spots on the +X wall). Source-accurate interior light instead of an eyeballed
+        // fill. UG_LAMPSCALE multiplies energy if the Unity->Godot intensity needs a nudge (default 1).
+        void LoadMenuLamps()
+        {
+            string jf = G("res://content/menu/menu_lamps.json");
+            if (!System.IO.File.Exists(jf)) { GD.PrintErr("[menu] menu_lamps.json missing"); return; }
+            // Unity's built-in light intensity and Godot's light energy use different units, so ONE global
+            // conversion factor (applied evenly to all 6 lamps -- not a per-light eyeball) brings the extracted
+            // intensities into Godot's range. ~4x reads right against the retail brightness; UG_LAMPSCALE overrides.
+            float scale = ParseF(System.Environment.GetEnvironmentVariable("UG_LAMPSCALE"), 4.0f);
+            var arr = Json.ParseString(System.IO.File.ReadAllText(jf)).AsGodotArray();
+            foreach (var e in arr)
+            {
+                var d = e.AsGodotDictionary();
+                Vector3 V(string k) { var a = d[k].AsGodotArray(); return new Vector3(a[0].AsSingle(), a[1].AsSingle(), a[2].AsSingle()); }
+                var col = V("color");
+                var c = new Color(col.X, col.Y, col.Z);
+                float energy = d["intensity"].AsSingle() * scale;
+                float range = d["range"].AsSingle();
+                if ((int)d["type"].AsInt64() == 0)   // spot (Unity Type 0) -> aims along +fwd (Godot spot emits -Z)
+                {
+                    var s = new SpotLight3D { Position = V("pos"), LightColor = c, LightEnergy = energy, SpotRange = range, SpotAngle = d["spot"].AsSingle() };
+                    AddChild(s);
+                    s.LookAt(V("pos") + V("fwd"), Vector3.Up);
+                }
+                else   // point (Type 2)
+                {
+                    AddChild(new OmniLight3D { Position = V("pos"), LightColor = c, LightEnergy = energy, OmniRange = range });
+                }
+            }
+            GD.Print($"[menu] placed {arr.Count} real lamps (energy scale {scale})");
         }
 
         static float ParseF(string s, float def) => float.TryParse(s, out var v) ? v : def;
