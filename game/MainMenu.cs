@@ -49,6 +49,7 @@ namespace UnturnedGodot
 
         Camera3D _cam;
         int _targetTab;              // which anchor the camera is gliding toward (0 = title)
+        int _forceTab = -1;          // >=0: the --menushot harness (ShowTab) is forcing an anchor; the live menu stays -1 and follows the open submenu
         bool _reachedTitle;          // MenuUI.hasReachedTitleCameraTransform: first pan to Title is slow, then snappy
         Control _stubPanel;          // the "coming to Cow.0" placeholder for unimplemented tabs
         Control _playPanel;          // Play submenu: PEI / PEI no-zombies (our real modes)
@@ -409,9 +410,7 @@ namespace UnturnedGodot
                 if (img.Load(ip) == Error.Ok) b.Icon = ImageTexture.CreateFromImage(img);
             }
             b.AddThemeFontSizeOverride("font_size", 20);
-            b.MouseEntered += () => _targetTab = tab;      // camera glides to this tab's framing while hovered
-            b.MouseExited += () => { if (_playPanel == null || !_playPanel.Visible) _targetTab = 0; };
-            b.Pressed += () => onClick();
+            b.Pressed += () => onClick();   // camera follows which submenu is OPEN (see _Process), NOT hover
             layer.AddChild(b);
         }
 
@@ -580,6 +579,15 @@ namespace UnturnedGodot
         public override void _Process(double delta)
         {
             if (_cam == null) return;
+            // Camera framing follows which submenu is OPEN, not mouse hover (MenuUI.Update picks targetCameraTransform
+            // by the active page). Master: "the camera shift should only occur with each submenu selected." _forceTab
+            // lets the --menushot harness sweep the anchors regardless of panel state.
+            _targetTab = _forceTab >= 0 ? _forceTab
+                       : (_playPanel?.Visible == true || _serversPanel?.Visible == true) ? 1
+                       : _stubPanel?.Visible == true ? 2
+                       : _graphicsPanel?.Visible == true ? 3
+                       : _workshopPanel?.Visible == true ? 4
+                       : 0;
             var anchorSet = _menuReal ? RealViews : Anchors;   // the real diorama pans between the extracted retail anchors
             var t = anchorSet[_targetTab];
             var target = new Transform3D(Basis.LookingAt(t.look - t.pos, Vector3.Up), t.pos);
@@ -603,7 +611,8 @@ namespace UnturnedGodot
         public void ShowTab(int tab)
         {
             var anchorSet = _menuReal ? RealViews : Anchors;
-            _targetTab = Mathf.Clamp(tab, 0, anchorSet.Length - 1); if (tab != 0) _reachedTitle = true;
+            _forceTab = Mathf.Clamp(tab, 0, anchorSet.Length - 1);   // render-harness override; the live menu follows panel state
+            _targetTab = _forceTab; if (tab != 0) _reachedTitle = true;
         }
     }
 }
