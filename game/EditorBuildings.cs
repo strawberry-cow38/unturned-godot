@@ -192,7 +192,68 @@ namespace UnturnedGodot
         public IReadOnlyList<WallSurface> Walls => _walls;
         public WallSurface SelectedWall => _selWall;
         public int SelectedOpening => _selOpening;
+        /// <summary>Which opening preset is armed, or -1. Exposed so the panel can light the right preset
+        /// button when the KEYBOARD armed it -- it used to remember what it last set, which is how the UI and
+        /// the editor got to disagree.</summary>
+        public int ArmedArchetype => _armed;
+
         public void Arm(int archetype) { _armed = archetype; if (archetype < 0) { HideGhost(); HideReadout(); } }
+
+        /// <summary>Which tool is live. ONE authority for a rule that has already drifted here once: tool
+        /// selection used to be five hand-written "clear the others", each clearing a different subset, and
+        /// the panel's SetTool was written to end that. It ended it ON THE PANEL -- the KEYBOARD still set
+        /// _armed directly, so pressing 1-6 while the room tool was live left both armed, which is the exact
+        /// bug the centralisation existed to kill. Both paths now come through here.</summary>
+        public enum BuildTool { None, Wall, Room, Floor, Roof, Foundation, Delete, Stairs, Opening }
+
+        /// <summary>The live tool, so the panel can light the right button when the KEYBOARD changed it --
+        /// without which a shortcut leaves the UI lying about what is armed.</summary>
+        public BuildTool Tool { get; private set; } = BuildTool.None;
+
+        /// <summary>Tool selection from the keyboard. Split out of _UnhandledInput so it can be DRIVEN by a
+        /// test: the handler itself needs a live Editor and a camera, which is exactly how the last version of
+        /// this went untested -- the rule was right in SelectTool and the caller bypassed it anyway.
+        ///
+        /// Deliberately NOT on WASD: those fly the camera, and a tool that fires only when you happen not to
+        /// be holding RMB is worse than no shortcut. Pressing the live tool's key again returns to select, so
+        /// one key both arms and disarms.</summary>
+        /// <returns>true if the key was a tool key and has been handled.</returns>
+        public bool HandleToolKey(Key keycode)
+        {
+            // Opening presets route through SelectTool like everything else. Setting _armed directly here was
+            // the surviving half of the five-places bug: it left the room/wall/slab tool armed beside it.
+            if (keycode >= Key.Key1 && keycode <= Key.Key6)
+            { SelectTool(BuildTool.Opening, (int)(keycode - Key.Key1)); return true; }
+
+            BuildTool want = keycode switch
+            {
+                Key.B => BuildTool.Wall,
+                Key.R => BuildTool.Room,
+                Key.F => BuildTool.Floor,
+                Key.G => BuildTool.Roof,
+                Key.T => BuildTool.Stairs,
+                Key.V => BuildTool.Foundation,
+                Key.X => BuildTool.Delete,
+                _     => BuildTool.None,
+            };
+            if (want == BuildTool.None) return false;
+            SelectTool(Tool == want ? BuildTool.None : want);
+            return true;
+        }
+
+        public void SelectTool(BuildTool t, int archetype = -1)
+        {
+            Tool = t;
+            WallDrawMode = t == BuildTool.Wall;
+            RoomDrawMode = t == BuildTool.Room;
+            SlabDrawMode = t == BuildTool.Floor || t == BuildTool.Roof;
+            DeleteDrawMode = t == BuildTool.Delete;
+            FoundationDrawMode = t == BuildTool.Foundation;
+            StairsDrawMode = t == BuildTool.Stairs;
+            if (t == BuildTool.Floor) SlabDrawKind = SurfaceKind.Floor;
+            if (t == BuildTool.Roof) SlabDrawKind = SurfaceKind.Roof;
+            Arm(t == BuildTool.Opening ? archetype : -1);
+        }
 
         /// <summary>The palette new walls are drawn with. A retail "material" is only a choice of eight flat
         /// colours -- there are no textures on these buildings -- so this is an index, not an asset.</summary>
@@ -269,11 +330,11 @@ namespace UnturnedGodot
 
         public bool Drawing => _drawing != null;
         public string ToolText => $"floor {ActiveFloor} (Q/E) · " + ToolName;
-        string ToolName => StairsDrawMode ? $"stairs: click to drop a {WallOpenings.StairSteps(StoreyHeight)}-step flight to floor {ActiveFloor + 1}"
-                                : FoundationDrawMode ? "foundation: drag a rectangle"
-                                : DeleteDrawMode ? "delete: click a wall, or drag along one to cut a piece out"
-                                : SlabDrawMode ? (_drawingSlab != null ? $"drag the {SlabDrawKind.ToString().ToLower()} out — release to place" : $"{SlabDrawKind.ToString().ToLower()}: drag a rectangle")
-                                : WallDrawMode ? (_drawing != null ? "drag the wall out — release to place, Esc cancels" : "wall: press and drag")
+        string ToolName => StairsDrawMode ? $"stairs (T): click to drop a {WallOpenings.StairSteps(StoreyHeight)}-step flight to floor {ActiveFloor + 1}"
+                                : FoundationDrawMode ? "foundation (V): drag a rectangle"
+                                : DeleteDrawMode ? "delete (X): click a wall, or drag along one to cut a piece out"
+                                : SlabDrawMode ? (_drawingSlab != null ? $"drag the {SlabDrawKind.ToString().ToLower()} out — release to place" : $"{SlabDrawKind.ToString().ToLower()} ({(SlabDrawKind == SurfaceKind.Roof ? "G" : "F")}): drag a rectangle")
+                                : WallDrawMode ? (_drawing != null ? "drag the wall out — release to place, Esc cancels" : "wall (B): press and drag")
                                 : _armed >= 0 ? $"placing {Archetypes[Mathf.PosMod(_armed, Archetypes.Length)].Name}"
                                 : "select";
 
@@ -779,7 +840,7 @@ namespace UnturnedGodot
                     else { _selWall = null; HideSideGhost(); }
                     PositionHandles();
                 }
-                else if (k.Keycode >= Key.Key1 && k.Keycode <= Key.Key6) _armed = (int)(k.Keycode - Key.Key1);
+                else if (HandleToolKey(k.Keycode)) { }
                 else if (k.Keycode == Key.E) ActiveFloor = Mathf.Min(ActiveFloor + 1, 12);
                 else if (k.Keycode == Key.Q) ActiveFloor = Mathf.Max(ActiveFloor - 1, 0);
                 // Ctrl+Z. The undo STACK was always here -- every wall, opening and edit pushes onto it --

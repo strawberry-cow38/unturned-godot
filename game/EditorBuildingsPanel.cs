@@ -39,6 +39,7 @@ namespace UnturnedGodot
         /// every other readout in this editor is polled the same way.</summary>
         public override void _Process(double delta)
         {
+            SyncToolButtons();
             var w = _b.SelectedWall;
             int i = _b.SelectedOpening;
             bool has = w != null && IsInstanceValid(w) && i >= 0 && i < w.Openings.Count;
@@ -107,28 +108,41 @@ namespace UnturnedGodot
         /// next click did whichever the input handler reached first. strawberry_cow: "prevent multiple tools
         /// being selected at once, ie wall and an opening." One place that sets all of them is the only way
         /// this stays true as tools get added.</summary>
+        /// <summary>Panel clicks set the tool THROUGH EditorBuildings, which owns it. The panel used to set
+        /// the six mode flags itself, which meant the keyboard could put the editor in a state the buttons
+        /// disagreed with -- press 1 with the room tool live and both were armed, with the room button still
+        /// lit. Button state is now SYNCED from the live tool in _Process instead of being set here, so
+        /// however the tool changed, the UI tells the truth about it.</summary>
         void SetTool(Tool t, int archetype = -1)
-        {
-            _b.WallDrawMode = t == Tool.Wall;
-            _b.RoomDrawMode = t == Tool.Room;
-            _b.SlabDrawMode = t == Tool.Floor || t == Tool.Roof;
-            _b.DeleteDrawMode = t == Tool.Delete;
-            _b.FoundationDrawMode = t == Tool.Foundation;
-            _b.StairsDrawMode = t == Tool.Stairs;
-            if (t == Tool.Floor) _b.SlabDrawKind = SurfaceKind.Floor;
-            if (t == Tool.Roof) _b.SlabDrawKind = SurfaceKind.Roof;
-            _b.Arm(t == Tool.Opening ? archetype : -1);
+            => _b.SelectTool(t switch
+            {
+                Tool.Wall       => EditorBuildings.BuildTool.Wall,
+                Tool.Room       => EditorBuildings.BuildTool.Room,
+                Tool.Floor      => EditorBuildings.BuildTool.Floor,
+                Tool.Roof       => EditorBuildings.BuildTool.Roof,
+                Tool.Foundation => EditorBuildings.BuildTool.Foundation,
+                Tool.Delete     => EditorBuildings.BuildTool.Delete,
+                Tool.Stairs     => EditorBuildings.BuildTool.Stairs,
+                Tool.Opening    => EditorBuildings.BuildTool.Opening,
+                _               => EditorBuildings.BuildTool.None,
+            }, archetype);
 
-            if (_draw != null) _draw.ButtonPressed = t == Tool.Wall;
-            if (_room != null) _room.ButtonPressed = t == Tool.Room;
-            if (_drawFloor != null) _drawFloor.ButtonPressed = t == Tool.Floor;
-            if (_drawRoof != null) _drawRoof.ButtonPressed = t == Tool.Roof;
-            if (_del != null) _del.ButtonPressed = t == Tool.Delete;
-            if (_stairs != null) _stairs.ButtonPressed = t == Tool.Stairs;
-            if (_found != null) _found.ButtonPressed = t == Tool.Foundation;
+        /// <summary>Light the button for whatever tool is actually live -- panel click, keyboard shortcut or
+        /// a tool that disarmed itself. Reads the authority rather than remembering what it last set.</summary>
+        void SyncToolButtons()
+        {
+            var t = _b.Tool;
+            if (_draw != null)      _draw.ButtonPressed      = t == EditorBuildings.BuildTool.Wall;
+            if (_room != null)      _room.ButtonPressed      = t == EditorBuildings.BuildTool.Room;
+            if (_drawFloor != null) _drawFloor.ButtonPressed = t == EditorBuildings.BuildTool.Floor;
+            if (_drawRoof != null)  _drawRoof.ButtonPressed  = t == EditorBuildings.BuildTool.Roof;
+            if (_del != null)       _del.ButtonPressed       = t == EditorBuildings.BuildTool.Delete;
+            if (_stairs != null)    _stairs.ButtonPressed    = t == EditorBuildings.BuildTool.Stairs;
+            if (_found != null)     _found.ButtonPressed     = t == EditorBuildings.BuildTool.Foundation;
             for (int i = 0; i < _arch.Count; i++)
-                _arch[i].ButtonPressed = t == Tool.Opening && i == archetype;
+                _arch[i].ButtonPressed = t == EditorBuildings.BuildTool.Opening && i == _b.ArmedArchetype;
         }
+
         readonly System.Collections.Generic.List<Button> _arch = new();
         Label _thickLbl;
 

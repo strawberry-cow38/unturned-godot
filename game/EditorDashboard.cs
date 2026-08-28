@@ -204,7 +204,9 @@ namespace UnturnedGodot
             bool bld = Editor.Mode == EEditorMode.Buildings;
             string obj = Editor.Mode == EEditorMode.Level ? $"   ·   LMB place/select · drag box-select · Shift multi · {gm} gizmo (T) · Ctrl+C/V dup · Ctrl+B/N align · Del · F focus · Ctrl-snap {Editor.Objects?.GizmoSnapLabel} (. cycles)" : "";
             string build = bld && Editor.Buildings != null
-                ? $"   ·   {Editor.Buildings.ToolText} · 1-6 preset · drag an edge to resize · Del removes · Esc cancels · {Editor.Buildings.Walls.Count} walls" : "";
+                // The tool keys are listed because until they were, there were none -- every switch was a trip
+                // to the panel. A shortcut nobody is told about is the same as no shortcut.
+                ? $"   ·   {Editor.Buildings.ToolText} · B wall R room F floor G roof T stairs V foundation X delete · 1-6 preset · Q/E storey · drag an edge to resize · Del removes · Esc cancels · {Editor.Buildings.Walls.Count} walls" : "";
             string spawn = Editor.Mode == EEditorMode.Spawns && Editor.Spawns != null ? $"   ·   Tab category · 1=add 2=remove · {Editor.Spawns.ModeText} · ,/. rot · [/] radius · V alt · T type · {Editor.Spawns.Count} spawns" : "";
             string envs = Editor.Mode == EEditorMode.Environment && Editor.Environment != null ? $"   ·   ,/. time · O overcast · {Editor.Environment.ModeText}{(Editor.RoadDrawEd != null ? $"   ·   {Editor.RoadDrawEd.ModeText}" : "")}{(Editor.RoadsEd is { Paving: true } ? $"   ·   {Editor.RoadsEd.ModeText}" : "")}{(Editor.RiverEd != null ? $"   ·   {Editor.RiverEd.ModeText}" : "")}{(Editor.FoliageEd != null ? $"   ·   FOLIAGE {Editor.FoliageEd.ModeText} · LMB paint · Alt+LMB erase placed · Alt+Shift+LMB erase baked" : "")}" : "";
             string terr = Editor.Mode == EEditorMode.Terrain && Editor.TerrainEd != null ? $"   ·   LMB raise · Shift+LMB lower · [/] radius · ,/. strength · {Editor.TerrainEd.ModeText}" : "";
