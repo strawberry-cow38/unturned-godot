@@ -55,8 +55,8 @@
     "tolerance": 0.001 },
 
   { "name": "menu.play",
-    "comment": "The default menu (first screen players see), Play anchor = most mid-tone so the diff can move over a night interior. Tolerance is MEASURED, not guessed: control re-run of the unmodified scene is bit-identical (mae 0.0000), and deleting one large foreground crate (Model_0_32 at 2.94,0.71,9.14) gives mae 0.0031 / changed 3.4%. At the original 0.02 that deletion still PASSED -- the tol was 6.5x the signal from losing a whole prop. 0.001 fails it with 3x margin and still sits 1000x above a zero noise floor. NB the harness gates on mae ONLY; changed% is printed and ignored, and it is the more sensitive of the two.",
+    "comment": "The default menu (first screen players see), Play anchor = most mid-tone so the diff can move over a night interior. Tolerance is MEASURED, not guessed: control re-run of the unmodified scene is bit-identical (mae 0.0000), and deleting one large foreground crate (Model_0_32 at 2.94,0.71,9.14) gives mae 0.0031 / changed 3.4%. At the original 0.02 that deletion still PASSED -- the tol was 6.5x the signal from losing a whole prop. 0.001 fails it with 3x margin and still sits 1000x above a zero noise floor. Gated on BOTH: mae 0.001 for global drift, max_changed 0.005 for localized loss. mae AVERAGES over the frame, so on this dark interior a whole missing crate is only 0.0031 while its footprint is 3.4% -- changed% is the sharper number here. Both teeth-checked on real renders: with tol slackened to 0.02 the crate deletion still FAILED on changed alone (3.4% > 0.5%, mae within tol).",
     "args": ["--menushot={TMP}"],
     "capture": "menu_01.png",
-    "tolerance": 0.001 }
+    "tolerance": 0.001, "max_changed": 0.005 }
 ]

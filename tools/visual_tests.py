@@ -14,6 +14,9 @@ Usage:
 
 Manifest entry: { "name": str, "args": [...], "env": {...}, "tolerance": float,
                   "capture": "rig_00.png" (optional; default = the {OUT} shot path),
+                  "max_changed": 0.005 (optional; also fail if the CHANGED-PIXEL FRACTION exceeds this.
+                            mae averages over the frame and goes soft on a localized loss in a dark
+                            scene; changed% counts footprint. Omit to gate on mae alone),
                   "angles": [0, 45, -45] (optional; deploytest scenes only -- render the same scene from
                             several camera yaws. 0 == the base golden; each non-zero deg orbits via UG_CAMYAW
                             and bakes its own golden <name>@yaw<+deg>.png) }
@@ -139,11 +142,22 @@ def main():
             failed += 1
             continue
         tol = e.get("tolerance", 0.02)
-        if mae <= tol:
-            print(f"[TEST] visual.{name:<36} | PASS | mae={mae:.4f} (tol {tol}) changed={changed:.1%} ({secs:.0f}s)")
+        # mae AVERAGES a difference over the whole frame, so on a dark scene a large localized loss
+        # barely moves it -- deleting a whole foreground crate from menu.play is mae 0.0031 but
+        # changed 3.4%. Optional max_changed gates the footprint instead. Opt-in per entry: entries
+        # without it keep gating on mae alone.
+        max_changed = e.get("max_changed")
+        why_fail = None
+        if mae > tol:
+            why_fail = f"mae={mae:.4f} > tol {tol} changed={changed:.1%}"
+        elif max_changed is not None and changed > max_changed:
+            why_fail = f"changed={changed:.1%} > max_changed {max_changed:.1%} (mae={mae:.4f} within tol {tol})"
+        if why_fail is None:
+            gate = f"(tol {tol}" + (f", max_changed {max_changed:.1%})" if max_changed is not None else ")")
+            print(f"[TEST] visual.{name:<36} | PASS | mae={mae:.4f} {gate} changed={changed:.1%} ({secs:.0f}s)")
             passed += 1
         else:
-            print(f"[TEST] visual.{name:<36} | FAIL | mae={mae:.4f} > tol {tol} changed={changed:.1%}")
+            print(f"[TEST] visual.{name:<36} | FAIL | {why_fail}")
             print(f"         captured: {os.path.relpath(cap, ROOT)}")
             print(f"         diff    : {os.path.relpath(os.path.join(work, name + '.diff.png'), ROOT)}")
             print(f"         repro   : python3 tools/visual_tests.py --only {name}   (re-baseline: --update {name})")
