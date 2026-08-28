@@ -61,9 +61,11 @@ namespace UnturnedGodot
         Control _workshopPanel;      // Workshop submenu: Editor (PEI)
         Control _serversPanel;       // Multiplayer submenu: the server browser (MainMenuServers.cs)
 
-        // --- UG_MENUREAL: build the REAL extracted Menu_Base diorama (trees/barn/off-roader/props from the
-        //     release scene) instead of the single placeholder barn. Five framings so a --menushot sweep gives
-        //     five angles to pick the hero shot from. UG_MENUEYE/UG_MENULOOK ("x,y,z") override view 0. ---
+        // --- The REAL extracted Menu_Base diorama (trees/barn/off-roader/props from the release scene) is now the
+        //     DEFAULT. UG_MENUCLASSIC=1 falls back to the single placeholder barn -- kept as the escape hatch that
+        //     still runs if the extracted content ever fails to load. EVERY branch below reads the _menuReal FIELD
+        //     (never the env inline) so the switch can't half-flip and light the diorama with placeholder fog/sun.
+        //     Five framings so a --menushot sweep gives five angles. UG_MENUEYE/UG_MENULOOK ("x,y,z") override view 0. ---
         bool _menuReal;
         // The REAL retail menu camera anchors, extracted from the harness scene Menu.unity's named Transforms
         // (Title/Play/Survivors/Configuration/Workshop -> MenuUI.cs targetCameraTransform) into this diorama's
@@ -153,7 +155,9 @@ namespace UnturnedGodot
             // BEFORE BuildWorld: it now branches on this for the environment and the sun. It used to be set
             // further down, after BuildWorld had already run, so anything in BuildWorld reading the field
             // rather than the env var directly would silently take the placeholder path.
-            _menuReal = System.Environment.GetEnvironmentVariable("UG_MENUREAL") == "1";
+            // DEFAULT = real diorama; UG_MENUCLASSIC=1 is the opt-out to the placeholder barn. Invert-the-switch (not
+            // default-the-field) so one line decides it and all 9 branch points below read this field, never the env.
+            _menuReal = System.Environment.GetEnvironmentVariable("UG_MENUCLASSIC") != "1";
             BuildWorld();
             BuildUI();
             // --menushot / debug: open the Play submenu at load so a render captures it (UG_MENUOPEN=map|options|advanced)
@@ -207,7 +211,7 @@ namespace UnturnedGodot
             };
             // Fog gives the placeholder-barn exterior a pastoral haze, but the REAL menu (Menu_NoHoliday
             // RenderSettings m_Fog: 0) has NO fog -- inside the barn it reads as a glowing haze over everything.
-            if (System.Environment.GetEnvironmentVariable("UG_MENUREAL") != "1")
+            if (!_menuReal)
             {
                 env.SetFogEnabled(true);
                 env.FogDensity = 0.0012f;
@@ -257,7 +261,7 @@ namespace UnturnedGodot
             // interior fill for the PLACEHOLDER barn only: the roof occludes the sky so the inside would be a
             // black box, and a warm omni fakes the light. The real diorama uses its own 6 extracted lamps
             // (LoadMenuLamps) instead of this eyeballed fill -- source-accurate, not tuned by eye.
-            if (System.Environment.GetEnvironmentVariable("UG_MENUREAL") != "1")
+            if (!_menuReal)
                 AddChild(new OmniLight3D
                 {
                     Position = new Vector3(0f, 8.5f, 0f),
@@ -275,7 +279,7 @@ namespace UnturnedGodot
             };
             AddChild(ground);
 
-            // UG_MENUREAL: assemble the real extracted Menu_Base diorama instead of the single placeholder barn.
+            // Default path: assemble the real extracted Menu_Base diorama (placeholder barn only under UG_MENUCLASSIC).
             if (_menuReal) { LoadMenuScene(); LoadMenuLamps(); LoadMenuHero(); }
             else {
             // the hero barn -- real ripped Barn_0 (content/objects), flat 4x2 palette texture, nearest filter
