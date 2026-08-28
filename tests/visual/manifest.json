@@ -52,5 +52,11 @@
     "args": ["--vehicle={TMP}", "--night"],
     "env": { "UG_QUICK": "1", "UG_VSIDE": "2" },
     "capture": "rig_00.png",
+    "tolerance": 0.02 },
+
+  { "name": "menu.play",
+    "comment": "The default menu (first screen players see), Play anchor = most mid-tone so the diff can move over a night interior. Teeth-check the tolerance: drop one placement from menu_scene.json, confirm RED.",
+    "args": ["--menushot={TMP}"],
+    "capture": "menu_01.png",
     "tolerance": 0.02 }
 ]
