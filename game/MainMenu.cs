@@ -632,15 +632,16 @@ namespace UnturnedGodot
         void BuildPlayMenuPanel(CanvasLayer layer)
         {
             var box = SubPanel(layer, "PLAY", out var panel);
-            // Retail's MenuPlayUI order: Singleplayer, Servers, Connect, Bookmarks, Lobbies, Tutorial. Singleplayer +
-            // Servers(=Multiplayer) are wired; the other four ShowStub (they were RIPPED). Icons are the real ones from
-            // core.masterbundle. Playground has no retail equivalent -> last, reusing the singleplayer icon (it is one).
+            // Retail's MenuPlayUI order, top-to-bottom (verticalOffset only increments, so add order == visual order):
+            // Tutorial, Singleplayer, Servers, Connect, Bookmarks, Lobbies. Singleplayer + Servers are wired; the other
+            // four ShowStub (RIPPED). Real icons from core.masterbundle. Retail's label is "Servers" (ServersButtonText),
+            // not "Multiplayer" (master: make it accurate). Playground has no retail equivalent -> appended last.
+            SubRow(box, "tutorial",     "Tutorial",     "The new-player tutorial. (coming to Cow.0)",          () => ShowStub("Tutorial"));
             SubRow(box, "singleplayer", "Singleplayer", "Pick a map and play on your own.",                    TogglePlayPanel);
-            SubRow(box, "servers",      "Multiplayer",  "Browse and join servers. (retail: Servers)",          ToggleServersPanel);
+            SubRow(box, "servers",      "Servers",      "Browse and join servers.",                            ToggleServersPanel);
             SubRow(box, "connect",      "Connect",      "Direct-connect to a server by IP. (coming to Cow.0)", () => ShowStub("Connect"));
             SubRow(box, "bookmarks",    "Bookmarks",    "Your saved servers. (coming to Cow.0)",               () => ShowStub("Bookmarks"));
             SubRow(box, "lobbies",      "Lobbies",      "Steam friend lobbies. (coming to Cow.0)",             () => ShowStub("Lobbies"));
-            SubRow(box, "tutorial",     "Tutorial",     "The new-player tutorial. (coming to Cow.0)",          () => ShowStub("Tutorial"));
             SubRow(box, "singleplayer", "Playground",   "The gun range -- no retail equivalent.",              () => OnPlayground?.Invoke());
             AddBackRow(box);
             _playMenuPanel = panel;
