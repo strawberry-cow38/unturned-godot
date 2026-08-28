@@ -6805,8 +6805,11 @@ namespace UnturnedGodot
                 // menu opens anywhere else (it now opens on initialCamera, as retail does), and menu_00 then
                 // records the opening pose instead of Title. A harness whose first step silently does nothing
                 // is worse than one that fails, because its output still looks like an answer.
-                int[] switchAt = { 0, 20, 40, 60, 80 };
-                int[] shotAt = { 15, 35, 55, 75, 95 };
+                // UG_MENUSHOT_STEP frames per anchor (default 20 = quick stills). Set big (e.g. 90) + --write-movie to
+                // record a WALKTHROUGH: the opening initialCamera->Title drift then a glide+hold on each of the 5.
+                int step = int.TryParse(System.Environment.GetEnvironmentVariable("UG_MENUSHOT_STEP"), out var _mst) && _mst > 5 ? _mst : 20;
+                int[] switchAt = { 0, step, 2 * step, 3 * step, 4 * step };
+                int[] shotAt = { step - 5, 2 * step - 5, 3 * step - 5, 4 * step - 5, 5 * step - 5 };
                 if (_menuShotIdx < switchAt.Length && _frame == switchAt[_menuShotIdx]) _menuShotMenu.ShowTab(_menuShotIdx);
                 if (_menuShotIdx < shotAt.Length && _frame == shotAt[_menuShotIdx])
                 {
