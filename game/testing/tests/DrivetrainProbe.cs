@@ -95,6 +95,14 @@ namespace UnturnedGodot.Testing
                 {
                     stalledWindows = winBest <= prevWinBest * 1.01f ? stalledWindows + 1 : 0;
                     prevWinBest = winBest; winBest = 0f; winTicks = 0;
+                    // ⚠ LATENT SCALE-FRAGILITY (cow tools + tinyclaw 2026-08-28): this is a fixed-TIME plateau test
+                    // ("no >1% gain in 2×2s windows") on an ASYMPTOTIC approach whose time-constant scales with speed,
+                    // hence with TopSpeedBuff. It does NOT announce itself -- read fine at buff 1.6-2.0 and green on the
+                    // converged model today, but on a heavier / slower-creeping hull it cuts the run short BUFF-DEPENDENTLY
+                    // (measured: a Nyatools-model semi read 0.797 of speedMax at buff 1.3 vs 0.902 with the break lengthened).
+                    // SAME bug shape as the old 2s coastdown window that broke when the buff moved to 2.0. If you rescale
+                    // the buff or rework a hull and this starts under-measuring top speed, the fix is scale-invariant:
+                    // stop at a FRACTION of the achievable ceiling, or scale the window by the hull's own time constant.
                     if (stalledWindows >= 2) break; // two full windows with no real gain = actually plateaued
                 }
                 if (sp > 1f) { peakRpm = Mathf.Max(peakRpm, rpm); minRpmSeenMoving = Mathf.Min(minRpmSeenMoving, rpm); }
