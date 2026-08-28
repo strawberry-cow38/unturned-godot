@@ -819,7 +819,19 @@ namespace UnturnedGodot
         const float TorqueFallLo = 1.25f;    // quadratic falloff BELOW the peak (gentle)
         const float TorqueFallHi = 1.875f;   // ...and ABOVE it (steeper -- holding a gear past peak costs you)
         const float TorqueFloor  = 0.35f;    // an engine still pulls off-peak; it does not stop
-        const float TopSpeedBuff = 2.0f;     // strawberry: "a big thing is buffing top speeds", then 2026-08-24 "increase the cap for vehicle top speeds across the board" -- 1.6 -> 2.0
+        // UG_BUFF overrides this so the scale-invariance ACCEPTANCE TEST can drive the rescale from
+        // outside the build. A constant nobody can vary is a constant nobody can prove scale-invariant --
+        // and measured 2026-08-28, the drivetrain suite only passes in a narrow band around 2.0: the tank's
+        // coastdown climbs 3.84 / 4.39 / 4.64 across buff 1.3 / 2.0 / 2.5 against a fixed 4.0 limit, while
+        // at 1.3 the jeep instead fails "top speed clears the old hard cap". Two absolute thresholds
+        // failing in OPPOSITE directions. Vary this to see it.
+        static readonly float TopSpeedBuff = ParseBuff();
+        static float ParseBuff()
+        {
+            var e = System.Environment.GetEnvironmentVariable("UG_BUFF");
+            return (e != null && float.TryParse(e, System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out var f) && f > 0f) ? f : 2.0f;
+        }     // strawberry: "a big thing is buffing top speeds", then 2026-08-24 "increase the cap for vehicle top speeds across the board" -- 1.6 -> 2.0
         const float GearStep     = 1.35f;    // rpm drop per shift -> the gear COUNT falls out of the spread
         // FIRST-GEAR PEAK FORCE vs the old flat force. Raised 1.5 -> 4.0 alongside the top-speed cap
         // (strawberry 2026-08-24: "rebalance gears and engine power to fit"), and it is the ACCELERATION knob
