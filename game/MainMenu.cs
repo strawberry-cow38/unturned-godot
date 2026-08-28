@@ -464,11 +464,14 @@ namespace UnturnedGodot
                 var hero = RiggedCharacter.Build("res://content/rig.json", new Color(0.82f, 0.66f, 0.52f));
                 hero.Position = new Vector3(-2.951f, 0.087f, 2.129f);
                 AddChild(hero);
-                // Face the Survivors customization camera (retail frames the survivor there). The port's
-                // RiggedCharacter faces -Z at yaw 0, and Godot's LookAt points -Z at the target, so this turns the
-                // survivor toward that camera. UG_HEROYAW adds a fine-tune offset (deg).
+                // Face the Survivors customization camera (retail frames the survivor there). CAUTION: after the
+                // unity->godot z-negation the menu rig's visual FRONT is +Z, but Godot's LookAt aims a node's -Z at the
+                // target -- so LookAt pointed the survivor's BACK at the Survivors camera (caught in a render of that
+                // exact anchor; the old "-Z at yaw 0" note was wrong). Aim the +Z forward axis by yaw instead (yaw-only,
+                // so it stays upright). UG_HEROYAW fine-tunes (deg).
                 var svCam = new Vector3(RealViews[2].pos.X, hero.Position.Y, RealViews[2].pos.Z);
-                hero.LookAt(svCam, Vector3.Up);
+                var toCam = svCam - hero.Position;
+                hero.Rotation = new Vector3(0f, Mathf.Atan2(toCam.X, toCam.Z), 0f);
                 hero.RotateY(Mathf.DegToRad(ParseF(System.Environment.GetEnvironmentVariable("UG_HEROYAW"), 0f)));
                 hero.PlayLoop(hero.IdleClip);
                 GD.Print("[menu] placed Hero (RiggedCharacter, Idle_Stand)");
