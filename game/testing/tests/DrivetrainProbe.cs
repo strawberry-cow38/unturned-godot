@@ -171,10 +171,25 @@ namespace UnturnedGodot.Testing
             for (int i = 0; i < 400 && Mathf.Abs(v.LinearVelocity.Dot(-v.GlobalTransform.Basis.Z)) > top * 0.95f; i++)
             { v.Drive(1f, 0f, false); yield return Ticks(1); }
             float cHi0 = Mathf.Abs(v.LinearVelocity.Dot(-v.GlobalTransform.Basis.Z));
-            for (int i = 0; i < 100; i++) { v.Drive(0f, 0f, false); yield return Ticks(1); }
+            // Measured over a fixed FRACTIONAL SPEED BAND, not a fixed 2 s, and that distinction is the whole
+            // point. Averaging a decay over a fixed TIME is not scale-invariant: gearing re-solves so ratioTop
+            // ~ 1/speedMax while peakTorque ~ speedMax, so fTop -- and therefore dragK*speedMax^2, the aero
+            // force AT top speed -- is buff-INVARIANT, as is the speed-independent engine brake. The
+            // instantaneous decel at top speed does not move with the buff at all. But a faster hull sheds a
+            // smaller FRACTION of its speed in 2 s (measured 66% / 49% / 41% at buff 1.3 / 2.0 / 2.5), so it
+            // dwells nearer top speed where aero is strongest and the AVERAGE climbs while the physics stands
+            // still: 3.84 / 4.39 / 4.64 on the tank, walking through a fixed 4.0 limit that never moved.
+            // Over a fixed fraction of top speed instead, aero at k*top is dragK*(k*top)^2 = k^2*(fTop-rollK),
+            // invariant for any k -- so this number is buff-invariant BY CONSTRUCTION, and a fixed threshold
+            // against it is finally legitimate. The band also averages out contact noise that makes any single
+            // tick unusable (a one-tick tank sample reads 6.78 against a 4.39 mean).
+            float cBandTarget = cHi0 * 0.95f;
+            int cTicks = 0;
+            while (cTicks < 400 && Mathf.Abs(v.LinearVelocity.Dot(-v.GlobalTransform.Basis.Z)) > cBandTarget)
+            { v.Drive(0f, 0f, false); yield return Ticks(1); cTicks++; }
             float cHi1 = Mathf.Abs(v.LinearVelocity.Dot(-v.GlobalTransform.Basis.Z));
-            float decelHi = (cHi0 - cHi1) / (100f * Dt);
-            GD.Print($"[drv] {car}: coastdown {cHi0:0.00} -> {cHi1:0.00} m/s = {decelHi:0.00} m/s2 over 2 s");
+            float decelHi = cTicks > 0 ? (cHi0 - cHi1) / (cTicks * Dt) : 0f;
+            GD.Print($"[drv] {car}: coastdown {cHi0:0.00} -> {cHi1:0.00} m/s = {decelHi:0.00} m/s2 over the top 5% band ({cTicks} ticks)");
             // Lift-off deceleration has to be REAL but MODEST. It used to be 35% of full braking force --
             // ~1 g, which stopped the car from 72 km/h in two seconds for letting go of the key -- and that is
             // as much "no physics unless driving" as the static freeze was. A coasting car should roll.
@@ -183,7 +198,18 @@ namespace UnturnedGodot.Testing
             // on the jeep), not to pin a single value across the fleet: a tank has genuinely enormous rolling
             // resistance and sits near 3.8, an APC near 2.9, the jeep at 1.8. 4.0 still fails the old model on
             // every one of them, because the old coast brake was ~12x this one at the same revs.
-            T.Check($"...but coasting is not secretly a brake pedal ({decelHi:0.00} m/s2, was ~9.9)", decelHi < 4.0f);
+            // 7.0, re-derived 2026-08-28 for the speed-band metric, which reads HIGHER than the old fixed-2s
+            // average because it samples where aero is strongest instead of averaging down the whole decay.
+            // MEASURED across buff 1.3 / 2.0 / 2.5 -- the point being that these barely move, where the old
+            // metric walked the tank 3.84 -> 4.39 -> 4.64 straight through a 4.0 limit that never budged:
+            //     jeep 2.77 / 2.83 / 2.84   semi 1.93 / 2.09 / 1.95
+            //     tank 5.51 / 5.79 / 5.94   apc  4.32 / 4.46 / 4.52
+            // Worst case is the tank at 5.94, so 7.0 clears the fleet across the whole range with ~18% margin
+            // and still fails the old coast-brake model by a mile. The residual ~8% drift is NOT this metric:
+            // the band is taken off ACHIEVED top, which sits at a drifting fraction of speedMax (0.797/0.855/
+            // 0.779) because the gear solve quantises -- fixing that is the gear-fraction work, and when it
+            // lands this number should tighten further rather than need re-tuning.
+            T.Check($"...but coasting is not secretly a brake pedal ({decelHi:0.00} m/s2, was ~9.9)", decelHi < 7.0f);
         }
     }
 }
