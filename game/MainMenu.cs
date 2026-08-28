@@ -60,6 +60,8 @@ namespace UnturnedGodot
         Control _playPanel;          // Play submenu: PEI / PEI no-zombies (our real modes)
         Control _workshopPanel;      // Workshop submenu: Editor (PEI)
         Control _serversPanel;       // Multiplayer submenu: the server browser (MainMenuServers.cs)
+        Control _survivorsPanel;     // Survivors submenu: Character/Appearance/Group/Clothing (MenuSurvivorsUI)
+        Control _configPanel;        // Configuration submenu: Graphics/Display/Audio/Controls/Options (MenuConfigurationUI)
 
         // --- The REAL extracted Menu_Base diorama (trees/barn/off-roader/props from the release scene) is now the
         //     DEFAULT. UG_MENUCLASSIC=1 falls back to the single placeholder barn -- kept as the escape hatch that
@@ -165,6 +167,10 @@ namespace UnturnedGodot
             if (_open == "map" || _open == "play" || _open == "options" || _open == "advanced") TogglePlayPanel();
             if (_open == "servers") ToggleServersPanel();
             if (_open == "advanced") ToggleAdvanced();
+            if (_open == "playmenu")  TogglePlayMenu();        // Play submenu row list (Singleplayer/Multiplayer/Connect/Bookmarks/Lobbies/Tutorial)
+            if (_open == "survivors") ToggleSurvivorsPanel();  // Character/Appearance/Group/Clothing
+            if (_open == "config")    ToggleConfigPanel();     // Graphics/Display/Audio/Controls/Options
+            if (_open == "workshop")  ToggleWorkshopPanel();   // Editor + Browse/Submit/Localization/Spawns/Subscriptions/Docs/Tutorial
             if (_menuReal)
             {
                 // Open on initialCamera and let the slow deltaTime*1 pan carry us to Title, which is what
@@ -513,16 +519,18 @@ namespace UnturnedGodot
             // buttons; both are now inside Play, where retail keeps servers -- which also disposes of
             // the missing icon_multiplayer.png, since retail has no such button to give an icon to.
             MenuButton(layer, "play",          "Play",          170f, false, () => TogglePlayMenu());
-            MenuButton(layer, "survivors",     "Survivors",     230f, false, () => ShowStub("Survivors"));
+            MenuButton(layer, "survivors",     "Survivors",     230f, false, () => ToggleSurvivorsPanel());
             // Configuration -> the GRAPHICS panel (master asked for it here and in the pause menu). Retail's
             // Configuration menu is where graphics live, so this replaces the stub rather than adding a sixth button.
-            MenuButton(layer, "configuration", "Configuration", 290f, false, () => ToggleGraphicsPanel());
+            MenuButton(layer, "configuration", "Configuration", 290f, false, () => ToggleConfigPanel());
             MenuButton(layer, "workshop",      "Workshop",      350f, false, () => ToggleWorkshopPanel());
             MenuButton(layer, "exit",          "Exit",          -70f, true,  () => GetTree().Quit());
 
             BuildPlayMenuPanel(layer); // Play -> retail's Play MENU (Singleplayer / Multiplayer / Playground)
             BuildMapSelector(layer);   // Play > Singleplayer -> map selector + gameplay options (MainMenuPlay.cs)
             BuildServersPanel(layer);  // Multiplayer -> the server browser (MainMenuServers.cs)
+            BuildSurvivorsPanel(layer);// Survivors -> Character/Appearance/Group/Clothing (MenuSurvivorsUI)
+            BuildConfigPanel(layer);   // Configuration -> Graphics/Display/Audio/Controls/Options (MenuConfigurationUI)
             BuildWorkshopPanel(layer);
             BuildStubPanel(layer);
             BuildGraphicsPanel(layer);
@@ -558,6 +566,8 @@ namespace UnturnedGodot
             if (_graphicsPanel != null) _graphicsPanel.Visible = false;
             if (_workshopPanel != null) _workshopPanel.Visible = false;
             if (_serversPanel != null) _serversPanel.Visible = false;
+            if (_survivorsPanel != null) _survivorsPanel.Visible = false;
+            if (_configPanel != null) _configPanel.Visible = false;
         }
 
         // (no `tab` parameter: the camera framing is derived from which panel is OPEN, in _Process.
@@ -622,8 +632,16 @@ namespace UnturnedGodot
                 b.Pressed += () => go();
                 box.AddChild(b);
             }
+            // Retail's MenuPlayUI order: Singleplayer, Servers, Connect, Bookmarks, Lobbies, Tutorial. We wire the two
+            // with a backend (Singleplayer -> map selector, Servers -> browser); the other four are recovered as styled
+            // rows that ShowStub until they have one (they were RIPPED -- master: reimplement them following the style).
+            // Playground has no retail equivalent and stays last.
             Row("  Singleplayer", "Pick a map and play on your own.", TogglePlayPanel);
-            Row("  Multiplayer",  "Browse and join servers.",         ToggleServersPanel);
+            Row("  Multiplayer",  "Browse and join servers. (retail: Servers)", ToggleServersPanel);
+            Row("  Connect",      "Direct-connect to a server by IP. (coming to Cow.0)", () => ShowStub("Connect"));
+            Row("  Bookmarks",    "Your saved servers. (coming to Cow.0)",               () => ShowStub("Bookmarks"));
+            Row("  Lobbies",      "Steam friend lobbies. (coming to Cow.0)",             () => ShowStub("Lobbies"));
+            Row("  Tutorial",     "The new-player tutorial. (coming to Cow.0)",          () => ShowStub("Tutorial"));
             Row("  Playground",   "The gun range -- no retail equivalent.", () => OnPlayground?.Invoke());
             layer.AddChild(panel);
             _playMenuPanel = panel;
@@ -634,6 +652,73 @@ namespace UnturnedGodot
             bool show = !_playMenuPanel.Visible;
             HideAllPanels();
             _playMenuPanel.Visible = show;
+        }
+
+        // A styled submenu row matching the Play menu's (indented text, tooltip, 44px). Backend-less rows ShowStub.
+        Button SubRow(VBoxContainer box, string text, string tip, System.Action go)
+        {
+            var b = new Button { Text = "  " + text, CustomMinimumSize = new Vector2(300f, 44f), TooltipText = tip,
+                                 Alignment = HorizontalAlignment.Left };
+            b.AddThemeFontSizeOverride("font_size", 18);
+            b.Pressed += () => go();
+            box.AddChild(b);
+            return b;
+        }
+
+        VBoxContainer SubPanel(CanvasLayer layer, string title, out PanelContainer panel)
+        {
+            panel = new PanelContainer { Position = new Vector2(240f, 200f), Visible = false };
+            var margin = new MarginContainer();
+            foreach (var side in new[] { "margin_left", "margin_right", "margin_top", "margin_bottom" })
+                margin.AddThemeConstantOverride(side, 14);
+            panel.AddChild(margin);
+            var box = new VBoxContainer();
+            box.AddThemeConstantOverride("separation", 8);
+            margin.AddChild(box);
+            box.AddChild(Header(title, 24));
+            layer.AddChild(panel);
+            return box;
+        }
+
+        /// <summary>Retail's Survivors menu (MenuSurvivorsUI): Character / Appearance / Group / Clothing. Character
+        /// customization is unported, so all four are styled rows that ShowStub for now -- recovered from the old single
+        /// "coming to Cow.0" placeholder so the submenu reads as retail's four, not one empty stub (master: reimplement).</summary>
+        void BuildSurvivorsPanel(CanvasLayer layer)
+        {
+            var box = SubPanel(layer, "SURVIVORS", out var panel);
+            SubRow(box, "Character",  "Name + primary/secondary skin colours. (coming to Cow.0)", () => ShowStub("Character"));
+            SubRow(box, "Appearance", "Face, hair, beard. (coming to Cow.0)",                     () => ShowStub("Appearance"));
+            SubRow(box, "Group",      "Your group ID + colour. (coming to Cow.0)",                () => ShowStub("Group"));
+            SubRow(box, "Clothing",   "Shirt, pants, hat, backpack, mask, glasses. (coming to Cow.0)", () => ShowStub("Clothing"));
+            _survivorsPanel = panel;
+        }
+
+        void ToggleSurvivorsPanel()
+        {
+            bool show = !_survivorsPanel.Visible;
+            HideAllPanels();
+            _survivorsPanel.Visible = show;
+        }
+
+        /// <summary>Retail's Configuration (MenuConfigurationUI) is a fullscreen box of tabs: Graphics / Display / Audio
+        /// / Controls / Options. The port shipped only Graphics; the other four were RIPPED. Recovered as a submenu row
+        /// list matching the others -- Graphics opens the real GraphicsPanel, the rest ShowStub (master: reimplement).</summary>
+        void BuildConfigPanel(CanvasLayer layer)
+        {
+            var box = SubPanel(layer, "CONFIGURATION", out var panel);
+            SubRow(box, "Graphics", "Quality, resolution, view distance.",             ToggleGraphicsPanel);
+            SubRow(box, "Display",  "Window mode, VSync, FOV. (coming to Cow.0)",       () => ShowStub("Display"));
+            SubRow(box, "Audio",    "Master / music / effects volume. (coming to Cow.0)", () => ShowStub("Audio"));
+            SubRow(box, "Controls", "Keybinds + mouse sensitivity. (coming to Cow.0)",  () => ShowStub("Controls"));
+            SubRow(box, "Options",  "Language + gameplay toggles. (coming to Cow.0)",   () => ShowStub("Options"));
+            _configPanel = panel;
+        }
+
+        void ToggleConfigPanel()
+        {
+            bool show = !_configPanel.Visible;
+            HideAllPanels();
+            _configPanel.Visible = show;
         }
 
         void TogglePlayPanel()
@@ -679,6 +764,16 @@ namespace UnturnedGodot
             box.AddChild(head);
 
             box.AddChild(SubButton("Editor — Prince Edward Island", () => OnEditor?.Invoke()));
+            // Retail's MenuWorkshopUI also carries Browse / Submit / Localization / Spawns / Subscriptions / Docs /
+            // Tutorial. No Steam-workshop backend in the port, so these were RIPPED -- recovered as styled stubs so the
+            // submenu reads as retail's, not just the Editor (master: reimplement the ripped buttons following the style).
+            box.AddChild(SubButton("Browse Workshop  —  coming to Cow.0", () => ShowStub("Browse")));
+            box.AddChild(SubButton("Submit Content  —  coming to Cow.0",  () => ShowStub("Submit")));
+            box.AddChild(SubButton("Localization  —  coming to Cow.0",    () => ShowStub("Localization")));
+            box.AddChild(SubButton("Spawns Editor  —  coming to Cow.0",   () => ShowStub("Spawns")));
+            box.AddChild(SubButton("Subscriptions  —  coming to Cow.0",   () => ShowStub("Subscriptions")));
+            box.AddChild(SubButton("Docs  —  coming to Cow.0",            () => ShowStub("Docs")));
+            box.AddChild(SubButton("Tutorial  —  coming to Cow.0",        () => ShowStub("Tutorial")));
 
             box.AddChild(new HSeparator());
             box.AddChild(Dim("NEW MAP"));
@@ -792,8 +887,8 @@ namespace UnturnedGodot
             // lets the --menushot harness sweep the anchors regardless of panel state.
             _targetTab = _forceTab >= 0 ? _forceTab
                        : (_playMenuPanel?.Visible == true || _playPanel?.Visible == true || _serversPanel?.Visible == true) ? 1
-                       : _stubPanel?.Visible == true ? 2
-                       : _graphicsPanel?.Visible == true ? 3
+                       : (_survivorsPanel?.Visible == true || _stubPanel?.Visible == true) ? 2
+                       : (_configPanel?.Visible == true || _graphicsPanel?.Visible == true) ? 3
                        : _workshopPanel?.Visible == true ? 4
                        : 0;
             float d = (float)delta;
