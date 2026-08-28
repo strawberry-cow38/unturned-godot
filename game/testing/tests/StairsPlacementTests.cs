@@ -68,4 +68,53 @@ namespace UnturnedGodot.Testing
             eb.QueueFree();
         }
     }
+
+    // The bug every other stair test passed straight through: the tool substituted FloorY (the storey offset,
+    // 0 on the ground floor) for the raycast hit's WORLD Y. The editor stage sits at y = 2000, so every flight
+    // was placed 2000 below the building -- present, undoable, invisible. strawberry: "the stairs tool doesnt
+    // do anything."
+    //
+    // AddStairs was never wrong, which is exactly why testing AddStairs could not catch it. This drives
+    // PlaceStairsAt, the decision the tool actually makes.
+    public class StairsPlaceAtTheCursorNotTheStoreyOffset : GameTest
+    {
+        public override string Name => "buildtool.stairs_place_at_the_hit";
+
+        public override IEnumerable<Step> Run()
+        {
+            var eb = new EditorBuildings();
+            World.AddChild(eb);
+            yield return Step.Ticks(1);
+
+            // A hit far from the origin in BOTH the stage sense (y) and the plan sense (x/z), so a dropped
+            // component shows up as a large miss rather than rounding.
+            var hit = new Vector3(37f, 2000f, -14f);
+            int n = eb.PlaceStairsAt(hit, 0f);
+            yield return Step.Ticks(1);
+            T.Check($"a flight is emitted ({n})", n > 0);
+
+            float lowest = float.MaxValue, highest = float.MinValue;
+            int treads = 0;
+            foreach (var w in eb.Walls)
+                if (w.Kind == SurfaceKind.Stairs)
+                { treads++; lowest = Mathf.Min(lowest, w.Position.Y); highest = Mathf.Max(highest, w.Position.Y); }
+            T.Check($"treads exist ({treads})", treads == n && n > 0);
+            if (treads == 0) yield break;
+
+            // BREAK IT: pass FloorY instead of groundHit.Y -> lowest lands near 0 and this fails by ~2000.
+            T.Check($"the flight is built at the cursor's height, not the storey offset ({lowest:0.0})",
+                    lowest > hit.Y - 1f && lowest < hit.Y + EditorBuildings.StoreyHeight + 1f);
+            T.Check($"and it climbs one storey from there ({highest - lowest + WallOpenings.StairTreadThickness:0.00})",
+                    Mathf.Abs(highest + WallOpenings.StairTreadThickness * 0.5f - (hit.Y + EditorBuildings.StoreyHeight)) < 0.01f);
+
+            // The plan position is snapped, not discarded -- the other half of the same mistake.
+            float x = float.MaxValue, z = float.MaxValue;
+            foreach (var w in eb.Walls)
+                if (w.Kind == SurfaceKind.Stairs) { x = Mathf.Min(x, Mathf.Abs(w.Position.X - hit.X)); z = Mathf.Min(z, Mathf.Abs(w.Position.Z - hit.Z)); }
+            T.Check($"placed near the cursor in plan too (dx {x:0.0}, dz {z:0.0})",
+                    x <= WallOpenings.LatticeStep && z <= WallOpenings.LatticeStep);
+
+            eb.QueueFree();
+        }
+    }
 }

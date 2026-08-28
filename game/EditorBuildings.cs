@@ -836,9 +836,7 @@ namespace UnturnedGodot
                     // Snap the flight to the axis you are nearest to looking along. The camera can sit at any
                     // angle; a staircase that lands at 37 degrees meets no wall in the building.
                     float camYaw = _cam != null ? _cam.GlobalRotationDegrees.Y : 0f;
-                    float yaw = Mathf.Round(camYaw / 90f) * 90f;
-                    AddStairs(new Vector3(WallOpenings.SnapGrid(stp.X), FloorY,
-                                          WallOpenings.SnapGrid(stp.Z)), yaw);
+                    PlaceStairsAt(stp, camYaw);
                 }
                 return;
             }
@@ -2124,6 +2122,23 @@ namespace UnturnedGodot
             _editor?.PushUndo("foundation place", () => { foreach (var f in made) RemoveWall(f); });
             return made.Count;
         }
+
+        /// <summary>Drop a flight where the cursor met the floor. Split out of the click handler so the two
+        /// decisions it makes are testable without a camera and a raycast -- the first version of this was
+        /// wrong in a way every unit test still passed, because they called AddStairs with an origin instead
+        /// of going through the tool.
+        ///
+        /// USE THE HIT'S OWN Y. GroundOnFloor already returns the ground raised by FloorY + GroundClearance,
+        /// and the hit is in WORLD space -- the editor stage lives at y = 2000, off the map. Substituting
+        /// FloorY here (which is only the storey offset) discarded the stage height and put every flight 2000
+        /// below the building: placed, undoable, and completely invisible. Every other tool reads the hit
+        /// point; see the room tool's rp.Y.</summary>
+        /// <param name="groundHit">Point from GroundOnFloor, in world space, already at storey height.</param>
+        /// <param name="camYaw">Camera yaw; the flight snaps to the nearest 90 deg so it meets a wall.</param>
+        public int PlaceStairsAt(Vector3 groundHit, float camYaw)
+            => AddStairs(new Vector3(WallOpenings.SnapGrid(groundHit.X), groundHit.Y,
+                                     WallOpenings.SnapGrid(groundHit.Z)),
+                         Mathf.Round(camYaw / 90f) * 90f);
 
         /// <summary>A flight of stairs climbing exactly one storey, emitted as one flat tread per step.
         ///
