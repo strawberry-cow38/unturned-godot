@@ -461,17 +461,17 @@ namespace UnturnedGodot
         {
             try
             {
-                var hero = RiggedCharacter.Build("res://content/rig.json", new Color(0.82f, 0.66f, 0.52f));
+                // WITH the face_19 decal -- retail's menu survivor has a face, AND a faceless build is front/back
+                // symmetric, which is what made every "is it backward?" render un-callable.
+                var hero = RiggedCharacter.Build("res://content/rig.json", new Color(0.82f, 0.66f, 0.52f), false, null, "res://content/face_19.png");
                 hero.Position = new Vector3(-2.951f, 0.087f, 2.129f);
                 AddChild(hero);
-                // Face the Survivors customization camera (retail frames the survivor there). CAUTION: after the
-                // unity->godot z-negation the menu rig's visual FRONT is +Z, but Godot's LookAt aims a node's -Z at the
-                // target -- so LookAt pointed the survivor's BACK at the Survivors camera (caught in a render of that
-                // exact anchor; the old "-Z at yaw 0" note was wrong). Aim the +Z forward axis by yaw instead (yaw-only,
-                // so it stays upright). UG_HEROYAW fine-tunes (deg).
+                // Face the Survivors customization camera. RiggedCharacter's visual forward is -Z (skeleton import, same
+                // as gameplay's body.RotationDegrees.Y=yaw), and Godot LookAt aims a node's -Z at the target -- so this
+                // turns the survivor's face to that camera. The earlier "backward" reads were a mid-glide (non-settled)
+                // menushot camera plus the faceless blob, not the rig. UG_HEROYAW fine-tunes (deg).
                 var svCam = new Vector3(RealViews[2].pos.X, hero.Position.Y, RealViews[2].pos.Z);
-                var toCam = svCam - hero.Position;
-                hero.Rotation = new Vector3(0f, Mathf.Atan2(toCam.X, toCam.Z), 0f);
+                hero.LookAt(svCam, Vector3.Up);
                 hero.RotateY(Mathf.DegToRad(ParseF(System.Environment.GetEnvironmentVariable("UG_HEROYAW"), 0f)));
                 hero.PlayLoop(hero.IdleClip);
                 GD.Print("[menu] placed Hero (RiggedCharacter, Idle_Stand)");
