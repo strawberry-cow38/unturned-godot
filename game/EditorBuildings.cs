@@ -318,7 +318,7 @@ namespace UnturnedGodot
         /// <summary>Delete tool. Click a wall to remove it; drag along one to cut that span out of it.</summary>
         public bool DeleteDrawMode;
         WallSurface _cutWall;
-        float _cutFrom;
+        float _cutFrom, _cutFromV;
 
         /// <summary>Click the floor to drop a flight of stairs climbing to the storey above, facing away
         /// from the camera. Yaw snaps to 90 deg because buildings here are axis-aligned and a flight at 37
@@ -782,11 +782,22 @@ namespace UnturnedGodot
                     // a click deletes the wall; a drag takes out the span you dragged over
                     var w = _cutWall; _cutWall = null;
                     if (!IsInstanceValid(w)) return;
-                    float to = _cutFrom;
-                    if (PickWallAt(_cam.ProjectRayOrigin(mp), _cam.ProjectRayNormal(mp), out var same, out float u)
-                        && same == w) to = u;
+                    float to = _cutFrom, toV = _cutFromV;
+                    if (PickWallAt(_cam.ProjectRayOrigin(mp), _cam.ProjectRayNormal(mp), out var same, out float u, out float vv)
+                        && same == w) { to = u; toV = vv; }
                     var before = Snapshot();
-                    if (Mathf.Abs(to - _cutFrom) < 0.15f) RemoveWall(w);
+                    // A WALL cuts along its run: a span taken out of it splits it in two, which is what you
+                    // mean by deleting part of a wall. A FLAT surface cannot -- strip a floor full-width and
+                    // you have cut it in half, when what you wanted was a hole in the middle of it (a
+                    // stairwell, a light well). So on a slab the drag is a RECTANGLE, punched with the same
+                    // partition that makes doors and windows: WallOpenings.Solids already turns a surface
+                    // plus hole rectangles into boxes, and the collider comes from that same partition, so
+                    // the hole you see is the hole you fall through. No new geometry, and no CSG.
+                    bool flat = Mathf.Abs(Mathf.Wrap(w.RotationDegrees.X, -180f, 180f) + 90f) < 1f;
+                    if (Mathf.Abs(to - _cutFrom) < 0.15f && (!flat || Mathf.Abs(toV - _cutFromV) < 0.15f))
+                        RemoveWall(w);
+                    else if (flat && Mathf.Abs(toV - _cutFromV) >= 0.15f)
+                    { if (!PunchHole(w, _cutFrom, _cutFromV, to, toV)) return; }
                     else if (RemoveSpan(w, _cutFrom, to) == 0) return;
                     _editor?.PushUndo("wall cut", () => RestoreAll(before));
                 }
@@ -870,9 +881,9 @@ namespace UnturnedGodot
 
             if (DeleteDrawMode)
             {
-                if (PickWallAt(from, dir, out var dw, out float du))
+                if (PickWallAt(from, dir, out var dw, out float du, out float dv))
                 {
-                    _cutWall = dw; _cutFrom = du;
+                    _cutWall = dw; _cutFrom = du; _cutFromV = dv;
                     _selWall = null; _selOpening = -1; PositionHandles();
                 }
                 return;
@@ -1140,6 +1151,28 @@ namespace UnturnedGodot
         /// Openings travel with whichever piece still contains them, and one straddling the cut is dropped
         /// rather than clipped -- half a window is not a window, and silently resizing someone's door to fit
         /// a cut they made somewhere else is worse than removing it.</summary>
+        /// <summary>Carve a rectangle out of a flat surface -- deleting a SECTION of a floor rather than
+        /// slicing the whole slab in two. Implemented as an OPENING, so it goes through the same partition
+        /// that cuts doors and windows: the mesh and the collider are both generated from it, which is the
+        /// property the whole generate-don't-cut design exists for. A hole you can see and cannot fall
+        /// through is the bug a boolean would give you.</summary>
+        /// <returns>false if the rectangle was degenerate or entirely off the surface.</returns>
+        public bool PunchHole(WallSurface w, float u0, float v0, float u1, float v1)
+        {
+            if (w == null || !IsInstanceValid(w)) return false;
+            if (u0 > u1) (u0, u1) = (u1, u0);
+            if (v0 > v1) (v0, v1) = (v1, v0);
+            u0 = Mathf.Max(0f, u0); u1 = Mathf.Min(w.Length, u1);
+            v0 = Mathf.Max(0f, v0); v1 = Mathf.Min(w.Height, v1);
+            if (u1 - u0 < WallOpenings.MinOpening || v1 - v0 < WallOpenings.MinOpening) return false;
+            // Dragged over the whole slab: that is a delete, not a hole with nothing left round it.
+            if (u1 - u0 >= w.Length - WallOpenings.Eps && v1 - v0 >= w.Height - WallOpenings.Eps)
+            { RemoveWall(w); return true; }
+            w.Openings.Add(new WallOpening(u0, v0, u1 - u0, v1 - v0));
+            w.Rebuild();
+            return true;
+        }
+
         public int RemoveSpan(WallSurface w, float u0, float u1)
         {
             if (w == null || !IsInstanceValid(w)) return 0;
@@ -2285,8 +2318,14 @@ namespace UnturnedGodot
         }
 
         bool PickWallAt(Vector3 from, Vector3 dir, out WallSurface wall, out float u)
+            => PickWallAt(from, dir, out wall, out u, out _);
+
+        /// <summary>As PickWallAt, but also gives WHERE ACROSS the surface the ray landed. A wall only needs
+        /// u (cuts run along its length); a flat slab needs both, because "delete a section of the floor" is a
+        /// rectangle, not a full-width strip.</summary>
+        bool PickWallAt(Vector3 from, Vector3 dir, out WallSurface wall, out float u, out float v)
         {
-            wall = null; u = 0f;
+            wall = null; u = 0f; v = 0f;
             float best = float.MaxValue;
             foreach (var w in _walls)
             {
@@ -2294,7 +2333,7 @@ namespace UnturnedGodot
                 if (!w.RayToUVInside(from, dir, out float wu, out float wv)) continue;
                 float d = from.DistanceSquaredTo(w.UVToWorld(wu, wv));
                 if (d >= best) continue;
-                best = d; wall = w; u = wu;
+                best = d; wall = w; u = wu; v = wv;
             }
             return wall != null;
         }
