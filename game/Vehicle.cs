@@ -6412,8 +6412,17 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             // wheels looked frozen (the local rotation changed, but the world basis was pinned). Verified: node world-Y
             // rolls full circle, and once the manual spin is gone the mesh world-Y rolls with it. (fable diagnosis)
             // engine RPM + gears (source InteractableVehicle): rpm = |avg wheel rpm| * gear ratio, idle-floored, then auto-shift
-            float sum = 0f; foreach (var w in _wNodes) sum += Mathf.Abs(w.GetRpm());
-            float avgWheelRpm = _wNodes.Length > 0 ? sum / _wNodes.Length : 0f;
+            // Engine rpm must track ROAD SPEED, not a free-spinning airborne wheel. A driven wheel off the ground
+            // spins up under engine force; a plain mean over ALL wheels lets that lift the engine to the rev limiter,
+            // which cuts force and stalls the hull BELOW speedMax -- the airborne-wheels-lying-to-the-tach ceiling
+            // behind the semi topping at 0.827 (tinyclaw 2026-08-28). Average GROUNDED DRIVEN wheels only, so one
+            // spinning wheel can't carry the engine to redline. Fallbacks so it never /0: all driven (a full launch),
+            // then all wheels (no traction wheels at all -- shouldn't happen).
+            float sum = 0f; int rpmN = 0;
+            foreach (var w in _wNodes) if (w.UseAsTraction && w.IsInContact()) { sum += Mathf.Abs(w.GetRpm()); rpmN++; }
+            if (rpmN == 0) foreach (var w in _wNodes) if (w.UseAsTraction) { sum += Mathf.Abs(w.GetRpm()); rpmN++; }
+            if (rpmN == 0) { foreach (var w in _wNodes) sum += Mathf.Abs(w.GetRpm()); rpmN = _wNodes.Length; }
+            float avgWheelRpm = rpmN > 0 ? sum / rpmN : 0f;
             float ratio = CurrentGearRatio;
             // CLUTCH / TORQUE CONVERTER. Without one, engine rpm is a pure function of road speed -- which is
             // exactly what strawberry meant by "engine rpm = speed rn": a stopped car sits at idle making idle
