@@ -615,35 +615,17 @@ namespace UnturnedGodot
         /// Playground has no retail equivalent and lives here because it is a way to start playing.</summary>
         void BuildPlayMenuPanel(CanvasLayer layer)
         {
-            var panel = new PanelContainer { Position = new Vector2(240f, 200f), Visible = false };
-            var margin = new MarginContainer();
-            foreach (var side in new[] { "margin_left", "margin_right", "margin_top", "margin_bottom" })
-                margin.AddThemeConstantOverride(side, 14);
-            panel.AddChild(margin);
-            var box = new VBoxContainer();
-            box.AddThemeConstantOverride("separation", 8);
-            margin.AddChild(box);
-            box.AddChild(Header("PLAY", 24));
-            void Row(string text, string tip, System.Action go)
-            {
-                var b = new Button { Text = text, CustomMinimumSize = new Vector2(300f, 44f), TooltipText = tip,
-                                     Alignment = HorizontalAlignment.Left };
-                b.AddThemeFontSizeOverride("font_size", 18);
-                b.Pressed += () => go();
-                box.AddChild(b);
-            }
-            // Retail's MenuPlayUI order: Singleplayer, Servers, Connect, Bookmarks, Lobbies, Tutorial. We wire the two
-            // with a backend (Singleplayer -> map selector, Servers -> browser); the other four are recovered as styled
-            // rows that ShowStub until they have one (they were RIPPED -- master: reimplement them following the style).
-            // Playground has no retail equivalent and stays last.
-            Row("  Singleplayer", "Pick a map and play on your own.", TogglePlayPanel);
-            Row("  Multiplayer",  "Browse and join servers. (retail: Servers)", ToggleServersPanel);
-            Row("  Connect",      "Direct-connect to a server by IP. (coming to Cow.0)", () => ShowStub("Connect"));
-            Row("  Bookmarks",    "Your saved servers. (coming to Cow.0)",               () => ShowStub("Bookmarks"));
-            Row("  Lobbies",      "Steam friend lobbies. (coming to Cow.0)",             () => ShowStub("Lobbies"));
-            Row("  Tutorial",     "The new-player tutorial. (coming to Cow.0)",          () => ShowStub("Tutorial"));
-            Row("  Playground",   "The gun range -- no retail equivalent.", () => OnPlayground?.Invoke());
-            layer.AddChild(panel);
+            var box = SubPanel(layer, "PLAY", out var panel);
+            // Retail's MenuPlayUI order: Singleplayer, Servers, Connect, Bookmarks, Lobbies, Tutorial. Singleplayer +
+            // Servers(=Multiplayer) are wired; the other four ShowStub (they were RIPPED). Icons are the real ones from
+            // core.masterbundle. Playground has no retail equivalent -> last, reusing the singleplayer icon (it is one).
+            SubRow(box, "singleplayer", "Singleplayer", "Pick a map and play on your own.",                    TogglePlayPanel);
+            SubRow(box, "servers",      "Multiplayer",  "Browse and join servers. (retail: Servers)",          ToggleServersPanel);
+            SubRow(box, "connect",      "Connect",      "Direct-connect to a server by IP. (coming to Cow.0)", () => ShowStub("Connect"));
+            SubRow(box, "bookmarks",    "Bookmarks",    "Your saved servers. (coming to Cow.0)",               () => ShowStub("Bookmarks"));
+            SubRow(box, "lobbies",      "Lobbies",      "Steam friend lobbies. (coming to Cow.0)",             () => ShowStub("Lobbies"));
+            SubRow(box, "tutorial",     "Tutorial",     "The new-player tutorial. (coming to Cow.0)",          () => ShowStub("Tutorial"));
+            SubRow(box, "singleplayer", "Playground",   "The gun range -- no retail equivalent.",              () => OnPlayground?.Invoke());
             _playMenuPanel = panel;
         }
 
@@ -654,12 +636,15 @@ namespace UnturnedGodot
             _playMenuPanel.Visible = show;
         }
 
-        // A styled submenu row matching the Play menu's (indented text, tooltip, 44px). Backend-less rows ShowStub.
-        Button SubRow(VBoxContainer box, string text, string tip, System.Action go)
+        // A styled submenu row = retail's SleekButtonIcon (icon on the left + label), 50px tall. The icon PNGs are the
+        // real ones extracted from core.masterbundle (ui/menu/icons/...). Backend-less rows ShowStub.
+        Button SubRow(VBoxContainer box, string icon, string text, string tip, System.Action go)
         {
-            var b = new Button { Text = "  " + text, CustomMinimumSize = new Vector2(300f, 44f), TooltipText = tip,
-                                 Alignment = HorizontalAlignment.Left };
+            var b = new Button { Text = "   " + text, CustomMinimumSize = new Vector2(300f, 50f), TooltipText = tip,
+                                 Alignment = HorizontalAlignment.Left, ExpandIcon = false };
             b.AddThemeFontSizeOverride("font_size", 18);
+            string ip = G($"res://content/menu/icon_{icon}.png");
+            if (System.IO.File.Exists(ip)) { var img = new Image(); if (img.Load(ip) == Error.Ok) { img.Resize(32, 32, Image.Interpolation.Lanczos); b.Icon = ImageTexture.CreateFromImage(img); } }
             b.Pressed += () => go();
             box.AddChild(b);
             return b;
@@ -686,10 +671,10 @@ namespace UnturnedGodot
         void BuildSurvivorsPanel(CanvasLayer layer)
         {
             var box = SubPanel(layer, "SURVIVORS", out var panel);
-            SubRow(box, "Character",  "Name + primary/secondary skin colours. (coming to Cow.0)", () => ShowStub("Character"));
-            SubRow(box, "Appearance", "Face, hair, beard. (coming to Cow.0)",                     () => ShowStub("Appearance"));
-            SubRow(box, "Group",      "Your group ID + colour. (coming to Cow.0)",                () => ShowStub("Group"));
-            SubRow(box, "Clothing",   "Shirt, pants, hat, backpack, mask, glasses. (coming to Cow.0)", () => ShowStub("Clothing"));
+            SubRow(box, "character",  "Character",  "Name + primary/secondary skin colours. (coming to Cow.0)", () => ShowStub("Character"));
+            SubRow(box, "appearance", "Appearance", "Face, hair, beard. (coming to Cow.0)",                     () => ShowStub("Appearance"));
+            SubRow(box, "group",      "Group",      "Your group ID + colour. (coming to Cow.0)",                () => ShowStub("Group"));
+            SubRow(box, "clothing",   "Clothing",   "Shirt, pants, hat, backpack, mask, glasses. (coming to Cow.0)", () => ShowStub("Clothing"));
             _survivorsPanel = panel;
         }
 
@@ -706,11 +691,11 @@ namespace UnturnedGodot
         void BuildConfigPanel(CanvasLayer layer)
         {
             var box = SubPanel(layer, "CONFIGURATION", out var panel);
-            SubRow(box, "Graphics", "Quality, resolution, view distance.",             ToggleGraphicsPanel);
-            SubRow(box, "Display",  "Window mode, VSync, FOV. (coming to Cow.0)",       () => ShowStub("Display"));
-            SubRow(box, "Audio",    "Master / music / effects volume. (coming to Cow.0)", () => ShowStub("Audio"));
-            SubRow(box, "Controls", "Keybinds + mouse sensitivity. (coming to Cow.0)",  () => ShowStub("Controls"));
-            SubRow(box, "Options",  "Language + gameplay toggles. (coming to Cow.0)",   () => ShowStub("Options"));
+            SubRow(box, "graphics", "Graphics", "Quality, resolution, view distance.",             ToggleGraphicsPanel);
+            SubRow(box, "display",  "Display",  "Window mode, VSync, FOV. (coming to Cow.0)",       () => ShowStub("Display"));
+            SubRow(box, "audio",    "Audio",    "Master / music / effects volume. (coming to Cow.0)", () => ShowStub("Audio"));
+            SubRow(box, "controls", "Controls", "Keybinds + mouse sensitivity. (coming to Cow.0)",  () => ShowStub("Controls"));
+            SubRow(box, "options",  "Options",  "Language + gameplay toggles. (coming to Cow.0)",   () => ShowStub("Options"));
             _configPanel = panel;
         }
 
@@ -763,17 +748,16 @@ namespace UnturnedGodot
             head.AddThemeFontSizeOverride("font_size", 22);
             box.AddChild(head);
 
-            box.AddChild(SubButton("Editor — Prince Edward Island", () => OnEditor?.Invoke()));
-            // Retail's MenuWorkshopUI also carries Browse / Submit / Localization / Spawns / Subscriptions / Docs /
-            // Tutorial. No Steam-workshop backend in the port, so these were RIPPED -- recovered as styled stubs so the
-            // submenu reads as retail's, not just the Editor (master: reimplement the ripped buttons following the style).
-            box.AddChild(SubButton("Browse Workshop  —  coming to Cow.0", () => ShowStub("Browse")));
-            box.AddChild(SubButton("Submit Content  —  coming to Cow.0",  () => ShowStub("Submit")));
-            box.AddChild(SubButton("Localization  —  coming to Cow.0",    () => ShowStub("Localization")));
-            box.AddChild(SubButton("Spawns Editor  —  coming to Cow.0",   () => ShowStub("Spawns")));
-            box.AddChild(SubButton("Subscriptions  —  coming to Cow.0",   () => ShowStub("Subscriptions")));
-            box.AddChild(SubButton("Docs  —  coming to Cow.0",            () => ShowStub("Docs")));
-            box.AddChild(SubButton("Tutorial  —  coming to Cow.0",        () => ShowStub("Tutorial")));
+            // Retail's MenuWorkshopUI: Browse / Submit / Editor / Localization / Spawns / Subscriptions / Docs / Tutorial.
+            // Only Editor has a backend (our PEI map editor); the rest ShowStub (RIPPED). Icons from core.masterbundle.
+            SubRow(box, "browse",        "Browse Workshop", "Steam Workshop maps + items. (coming to Cow.0)",    () => ShowStub("Browse"));
+            SubRow(box, "submit",        "Submit Content",  "Upload your creations. (coming to Cow.0)",          () => ShowStub("Submit"));
+            SubRow(box, "editor",        "Editor",          "The Prince Edward Island map editor.",              () => OnEditor?.Invoke());
+            SubRow(box, "localization",  "Localization",    "Translate the game. (coming to Cow.0)",             () => ShowStub("Localization"));
+            SubRow(box, "spawns",        "Spawns Editor",   "Edit spawn tables. (coming to Cow.0)",              () => ShowStub("Spawns"));
+            SubRow(box, "subscriptions", "Subscriptions",   "Your subscribed Workshop items. (coming to Cow.0)", () => ShowStub("Subscriptions"));
+            SubRow(box, "docs",          "Docs",            "Modding documentation. (coming to Cow.0)",          () => ShowStub("Docs"));
+            SubRow(box, "tutorial",      "Tutorial",        "The new-player tutorial. (coming to Cow.0)",        () => ShowStub("Tutorial"));
 
             box.AddChild(new HSeparator());
             box.AddChild(Dim("NEW MAP"));
