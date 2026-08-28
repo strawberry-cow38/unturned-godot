@@ -62,6 +62,7 @@ namespace UnturnedGodot
         Control _serversPanel;       // Multiplayer submenu: the server browser (MainMenuServers.cs)
         Control _survivorsPanel;     // Survivors submenu: Character/Appearance/Group/Clothing (MenuSurvivorsUI)
         Control _configPanel;        // Configuration submenu: Graphics/Display/Audio/Controls/Options (MenuConfigurationUI)
+        readonly System.Collections.Generic.List<Button> _dashButtons = new();  // the 5 dashboard rows -- hidden while a submenu is open (retail CENTERS the submenu + replaces the dashboard)
 
         // --- The REAL extracted Menu_Base diorama (trees/barn/off-roader/props from the release scene) is now the
         //     DEFAULT. UG_MENUCLASSIC=1 falls back to the single placeholder barn -- kept as the escape hatch that
@@ -497,15 +498,20 @@ namespace UnturnedGodot
             var layer = new CanvasLayer { Layer = 50 };
             AddChild(layer);
 
-            // title wordmark, top-left (vanilla shows the Unturned logo here)
-            var title = new Label { Text = "UNTURNED", Position = new Vector2(22f, 40f) };
+            // title wordmark, CENTERED at the top -- retail's "Unturned" sits dead-centre (x~0.5), ours was hard-left
+            // at x~0.07 (master: make the ui accurate). Full-width anchor + centre-align holds at any resolution.
+            var title = new Label { Text = "UNTURNED", HorizontalAlignment = HorizontalAlignment.Center };
+            title.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.TopWide);
+            title.OffsetTop = 26f; title.OffsetBottom = 96f;
             title.AddThemeFontSizeOverride("font_size", 60);
             title.AddThemeColorOverride("font_color", new Color(0.95f, 0.94f, 0.90f));
             title.AddThemeColorOverride("font_shadow_color", new Color(0, 0, 0, 0.6f));
             title.AddThemeConstantOverride("shadow_offset_x", 2);
             title.AddThemeConstantOverride("shadow_offset_y", 2);
             layer.AddChild(title);
-            var tag = new Label { Text = "cow.0", Position = new Vector2(26f, 108f) };
+            var tag = new Label { Text = "cow.0", HorizontalAlignment = HorizontalAlignment.Center };
+            tag.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.TopWide);
+            tag.OffsetTop = 94f; tag.OffsetBottom = 124f;
             tag.AddThemeFontSizeOverride("font_size", 22);
             tag.AddThemeColorOverride("font_color", new Color(0.85f, 0.78f, 0.55f));
             layer.AddChild(tag);
@@ -542,8 +548,10 @@ namespace UnturnedGodot
         {
             // Same screen position as the other side panels, and the SAME GraphicsPanel builder the pause menu uses
             // -- the settings themselves live in GraphicsOptions, so the two views cannot drift apart.
-            _graphicsPanel = new PanelContainer { Position = new Vector2(240f, 150f), Visible = false };
-            ((PanelContainer)_graphicsPanel).AddChild(GraphicsPanel.Build(this, () => _graphicsPanel.Visible = false));
+            _graphicsPanel = new PanelContainer { Visible = false };
+            _graphicsPanel.SetAnchorsPreset(Control.LayoutPreset.Center);
+            _graphicsPanel.GrowHorizontal = Control.GrowDirection.Both; _graphicsPanel.GrowVertical = Control.GrowDirection.Both;
+            ((PanelContainer)_graphicsPanel).AddChild(GraphicsPanel.Build(this, BackToDashboard));   // close -> dashboard (it's hidden while this is up)
             layer.AddChild(_graphicsPanel);
         }
 
@@ -596,7 +604,15 @@ namespace UnturnedGodot
             b.AddThemeFontSizeOverride("font_size", 20);
             b.Pressed += () => onClick();   // camera follows which submenu is OPEN (see _Process), NOT hover
             layer.AddChild(b);
+            _dashButtons.Add(b);            // tracked so SetDashboardVisible() can hide the whole dashboard when a submenu opens
         }
+
+        // Retail centers each submenu and REPLACES the dashboard (MenuDashboardUI.close on open). Hide the 5 dashboard
+        // rows while a submenu is up; the submenu's Back row brings them back.
+        void SetDashboardVisible(bool v) { foreach (var b in _dashButtons) if (b != null) b.Visible = v; }
+
+        // Close whatever submenu is open and return to the dashboard (the submenu Back row + Exit-key path).
+        void BackToDashboard() { HideAllPanels(); SetDashboardVisible(true); }
 
         // Play -> the retail singleplayer map selector + per-map gameplay options lives in MainMenuPlay.cs
         // (BuildMapSelector assigns _playPanel), so TogglePlayPanel/ShowStub/ToggleWorkshopPanel still drive it.
@@ -626,14 +642,15 @@ namespace UnturnedGodot
             SubRow(box, "lobbies",      "Lobbies",      "Steam friend lobbies. (coming to Cow.0)",             () => ShowStub("Lobbies"));
             SubRow(box, "tutorial",     "Tutorial",     "The new-player tutorial. (coming to Cow.0)",          () => ShowStub("Tutorial"));
             SubRow(box, "singleplayer", "Playground",   "The gun range -- no retail equivalent.",              () => OnPlayground?.Invoke());
+            AddBackRow(box);
             _playMenuPanel = panel;
         }
 
         void TogglePlayMenu()
         {
-            bool show = !_playMenuPanel.Visible;
             HideAllPanels();
-            _playMenuPanel.Visible = show;
+            _playMenuPanel.Visible = true;
+            SetDashboardVisible(false);   // retail replaces the dashboard with the centered submenu; the Back row restores it
         }
 
         // A styled submenu row = retail's SleekButtonIcon (icon on the left + label), 50px tall. The icon PNGs are the
@@ -652,7 +669,12 @@ namespace UnturnedGodot
 
         VBoxContainer SubPanel(CanvasLayer layer, string title, out PanelContainer panel)
         {
-            panel = new PanelContainer { Position = new Vector2(240f, 200f), Visible = false };
+            // CENTERED on screen (retail's centerFrame at x/y scale 0.5), grows both ways from the centre anchor so the
+            // auto-sizing panel stays centred whatever its content height.
+            panel = new PanelContainer { Visible = false };
+            panel.SetAnchorsPreset(Control.LayoutPreset.Center);
+            panel.GrowHorizontal = Control.GrowDirection.Both;
+            panel.GrowVertical = Control.GrowDirection.Both;
             var margin = new MarginContainer();
             foreach (var side in new[] { "margin_left", "margin_right", "margin_top", "margin_bottom" })
                 margin.AddThemeConstantOverride(side, 14);
@@ -665,6 +687,9 @@ namespace UnturnedGodot
             return box;
         }
 
+        // Retail's per-submenu backButton (Exit icon) -> return to the dashboard. Added as the last row of each submenu.
+        void AddBackRow(VBoxContainer box) => SubRow(box, "exit", "Back", "Return to the main menu.", BackToDashboard);
+
         /// <summary>Retail's Survivors menu (MenuSurvivorsUI): Character / Appearance / Group / Clothing. Character
         /// customization is unported, so all four are styled rows that ShowStub for now -- recovered from the old single
         /// "coming to Cow.0" placeholder so the submenu reads as retail's four, not one empty stub (master: reimplement).</summary>
@@ -675,14 +700,15 @@ namespace UnturnedGodot
             SubRow(box, "appearance", "Appearance", "Face, hair, beard. (coming to Cow.0)",                     () => ShowStub("Appearance"));
             SubRow(box, "group",      "Group",      "Your group ID + colour. (coming to Cow.0)",                () => ShowStub("Group"));
             SubRow(box, "clothing",   "Clothing",   "Shirt, pants, hat, backpack, mask, glasses. (coming to Cow.0)", () => ShowStub("Clothing"));
+            AddBackRow(box);
             _survivorsPanel = panel;
         }
 
         void ToggleSurvivorsPanel()
         {
-            bool show = !_survivorsPanel.Visible;
             HideAllPanels();
-            _survivorsPanel.Visible = show;
+            _survivorsPanel.Visible = true;
+            SetDashboardVisible(false);
         }
 
         /// <summary>Retail's Configuration (MenuConfigurationUI) is a fullscreen box of tabs: Graphics / Display / Audio
@@ -696,14 +722,15 @@ namespace UnturnedGodot
             SubRow(box, "audio",    "Audio",    "Master / music / effects volume. (coming to Cow.0)", () => ShowStub("Audio"));
             SubRow(box, "controls", "Controls", "Keybinds + mouse sensitivity. (coming to Cow.0)",  () => ShowStub("Controls"));
             SubRow(box, "options",  "Options",  "Language + gameplay toggles. (coming to Cow.0)",   () => ShowStub("Options"));
+            AddBackRow(box);
             _configPanel = panel;
         }
 
         void ToggleConfigPanel()
         {
-            bool show = !_configPanel.Visible;
             HideAllPanels();
-            _configPanel.Visible = show;
+            _configPanel.Visible = true;
+            SetDashboardVisible(false);
         }
 
         void TogglePlayPanel()
@@ -715,6 +742,7 @@ namespace UnturnedGodot
             // failure HideAllPanels' own doc comment names as its reason for existing. Review 2026-08-16.
             HideAllPanels();
             _playPanel.Visible = show;
+            if (show) SetDashboardVisible(false);   // deeper screen replaces the dashboard too; its Back row restores it
             if (_advancedPanel != null) _advancedPanel.Visible = false;   // advanced starts collapsed each open
         }
 
@@ -724,6 +752,7 @@ namespace UnturnedGodot
             bool show = !_serversPanel.Visible;
             HideAllPanels();   // see TogglePlayPanel -- the hand-written list omitted the graphics panel
             _serversPanel.Visible = show;
+            if (show) SetDashboardVisible(false);   // deeper screen replaces the dashboard; its Back row restores it
             if (_playPanel != null) _playPanel.Visible = false;
             if (_stubPanel != null) _stubPanel.Visible = false;
             if (_workshopPanel != null) _workshopPanel.Visible = false;
@@ -740,7 +769,10 @@ namespace UnturnedGodot
         {
             // Anchored higher than before because the panel now grows with the saved-map list. At the old
             // y=410 a third map pushed the buttons off the bottom of the screen.
-            _workshopPanel = new PanelContainer { Position = new Vector2(240f, 150f), Visible = false };
+            _workshopPanel = new PanelContainer { Visible = false };
+            _workshopPanel.SetAnchorsPreset(Control.LayoutPreset.Center);   // centered like the other submenus
+            _workshopPanel.GrowHorizontal = Control.GrowDirection.Both;
+            _workshopPanel.GrowVertical = Control.GrowDirection.Both;
             var box = new VBoxContainer();
             box.AddThemeConstantOverride("separation", 10);
             ((PanelContainer)_workshopPanel).AddChild(box);
@@ -777,6 +809,8 @@ namespace UnturnedGodot
             _mapList.AddThemeConstantOverride("separation", 4);
             box.AddChild(_mapList);
 
+            box.AddChild(new HSeparator());
+            AddBackRow(box);
             layer.AddChild(_workshopPanel);
             RefreshMapList();
         }
@@ -830,19 +864,17 @@ namespace UnturnedGodot
 
         void ToggleWorkshopPanel()
         {
-            bool show = !_workshopPanel.Visible;
-            if (show) RefreshMapList();   // a map saved since the menu was built has to appear without a restart
-            HideAllPanels();   // see TogglePlayPanel
-            _workshopPanel.Visible = show;
-            if (_playPanel != null) _playPanel.Visible = false;
-            if (_stubPanel != null) _stubPanel.Visible = false;
-            if (_serversPanel != null) _serversPanel.Visible = false;
-            if (_advancedPanel != null) _advancedPanel.Visible = false;
+            RefreshMapList();   // a map saved since the menu was built has to appear without a restart
+            HideAllPanels();
+            _workshopPanel.Visible = true;
+            SetDashboardVisible(false);
         }
 
         void BuildStubPanel(CanvasLayer layer)
         {
-            _stubPanel = new PanelContainer { Position = new Vector2(240f, 200f), Visible = false };
+            _stubPanel = new PanelContainer { Visible = false };
+            _stubPanel.SetAnchorsPreset(Control.LayoutPreset.Center);
+            _stubPanel.GrowHorizontal = Control.GrowDirection.Both; _stubPanel.GrowVertical = Control.GrowDirection.Both;
             var box = new VBoxContainer();
             box.AddThemeConstantOverride("separation", 8);
             ((PanelContainer)_stubPanel).AddChild(box);
@@ -852,6 +884,8 @@ namespace UnturnedGodot
             var sub = new Label { Text = "not implemented yet — coming to Cow.0", Name = "sub" };
             sub.AddThemeColorOverride("font_color", new Color(0.8f, 0.8f, 0.8f));
             box.AddChild(sub);
+            box.AddChild(new HSeparator());
+            AddBackRow(box);   // the dashboard is hidden while the stub is up, so it needs its own way back
             layer.AddChild(_stubPanel);
         }
 

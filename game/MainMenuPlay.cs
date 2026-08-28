@@ -115,7 +115,9 @@ namespace UnturnedGodot
         void BuildMapSelector(CanvasLayer layer)
         {
             LoadMapSettings();   // restore persisted gameplay options so the rows below open on the saved values
-            var panel = new PanelContainer { Position = new Vector2(240f, 148f), Visible = false };
+            var panel = new PanelContainer { Visible = false };
+            panel.SetAnchorsPreset(Control.LayoutPreset.Center);   // centered like every other submenu
+            panel.GrowHorizontal = Control.GrowDirection.Both; panel.GrowVertical = Control.GrowDirection.Both;
             var margin = new MarginContainer();
             foreach (var s in new[] { "margin_left", "margin_right", "margin_top", "margin_bottom" })
                 margin.AddThemeConstantOverride(s, 14);
@@ -220,6 +222,9 @@ namespace UnturnedGodot
             play.AddThemeFontSizeOverride("font_size", 24);
             play.Pressed += PlaySelected;
             right.AddChild(play);
+            var backBtn = new Button { Text = "◄  Back", CustomMinimumSize = new Vector2(340f, 40f), Alignment = HorizontalAlignment.Left };
+            backBtn.Pressed += BackToDashboard;   // dashboard is hidden while this is up -> give it its own way out
+            right.AddChild(backBtn);
 
             layer.AddChild(panel);
             _playPanel = panel;   // reuse the existing Play-panel plumbing (toggle / mutual-hide)

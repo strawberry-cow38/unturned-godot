@@ -33,7 +33,9 @@ namespace UnturnedGodot
 
         void BuildServersPanel(CanvasLayer layer)
         {
-            var panel = new PanelContainer { Position = new Vector2(240f, 148f), Visible = false };
+            var panel = new PanelContainer { Visible = false };
+            panel.SetAnchorsPreset(Control.LayoutPreset.Center);   // centered like every other submenu
+            panel.GrowHorizontal = Control.GrowDirection.Both; panel.GrowVertical = Control.GrowDirection.Both;
             var margin = new MarginContainer();
             foreach (var s in new[] { "margin_left", "margin_right", "margin_top", "margin_bottom" })
                 margin.AddThemeConstantOverride(s, 14);
@@ -117,6 +119,9 @@ namespace UnturnedGodot
                 OnJoinServer?.Invoke(host, port);   // password collected but not yet part of the port handshake (follow-up)
             };
             right.AddChild(dcBtn);
+            var backBtn = new Button { Text = "◄  Back", CustomMinimumSize = new Vector2(0f, 40f), Alignment = HorizontalAlignment.Left };
+            backBtn.Pressed += BackToDashboard;   // dashboard is hidden while this is up -> give it its own way out
+            right.AddChild(backBtn);
 
             layer.AddChild(panel);
             _serversPanel = panel;
