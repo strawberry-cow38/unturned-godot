@@ -29,6 +29,7 @@ namespace UnturnedGodot
         // the player's side: another map you can pick and press PLAY on. The seed is exposed because it is the
         // whole point of a deterministic generator -- an island you liked is a number you can write down.
         bool _generateSelected;
+        bool _playgroundSelected;   // Playground picked in the map list -> PLAY runs the gun range, not a survival map
         int _genSeed = 1234;
         Control _genRow;
         LineEdit _genSeedEdit;
@@ -165,6 +166,16 @@ namespace UnturnedGodot
             genBtn.AddThemeColorOverride("font_color", new Color(0.92f, 0.86f, 0.62f));
             genBtn.Pressed += () => SelectGenerated();
             list.AddChild(genBtn);
+            var pgBtn = new Button
+            {
+                Text = "  ◎  Playground",   // gun range -- moved here from the Play submenu (master), its own map entry
+                CustomMinimumSize = new Vector2(342f, 48f),
+                Alignment = HorizontalAlignment.Left,
+            };
+            pgBtn.AddThemeFontSizeOverride("font_size", 16);
+            pgBtn.AddThemeColorOverride("font_color", new Color(0.92f, 0.86f, 0.62f));
+            pgBtn.Pressed += () => SelectPlayground();
+            list.AddChild(pgBtn);
             list.AddChild(new HSeparator());
             foreach (var m in OfficialMaps) list.AddChild(MapRow(m.name, m.key, m.playable, m.desc));
 
@@ -284,6 +295,7 @@ namespace UnturnedGodot
         void SelectGenerated()
         {
             _generateSelected = true;
+            _playgroundSelected = false;
             _selectedMap = GenerateMapName;
             _selectedPlayable = true;
             if (_previewName != null) _previewName.Text = GenerateMapName;
@@ -292,9 +304,23 @@ namespace UnturnedGodot
             if (_genRow != null) _genRow.Visible = true;
         }
 
+        // Playground -- master moved it out of the Play submenu into its own map here (the gun range, not a survival map).
+        void SelectPlayground()
+        {
+            _playgroundSelected = true;
+            _generateSelected = false;
+            _selectedMap = "Playground";
+            _selectedPlayable = true;
+            if (_previewName != null) _previewName.Text = "Playground";
+            if (_descLabel != null) _descLabel.Text = "The gun range -- an open sandbox to test weapons and mechanics. No survival, no map: just spawn in with everything.";
+            if (_previewImage != null) _previewImage.Texture = LoadTex("mappreview_playground.png");   // null if not shipped
+            if (_genRow != null) _genRow.Visible = false;
+        }
+
         void SelectMap(string name, string key, bool playable, string desc)
         {
             _generateSelected = false;
+            _playgroundSelected = false;
             if (_genRow != null) _genRow.Visible = false;
             _selectedMap = name;
             _selectedPlayable = playable;
@@ -350,6 +376,7 @@ namespace UnturnedGodot
         // permadeath are cosmetic for now -- the one wired option is Zombies.
         void PlaySelected()
         {
+            if (_playgroundSelected) { OnPlayground?.Invoke(); return; }   // the gun range, not a survival map
             if (_generateSelected)
             {
                 // Read the field rather than trusting _genSeed: TextChanged only fires on a parseable value, so
