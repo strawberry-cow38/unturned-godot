@@ -846,5 +846,15 @@ namespace UnturnedGodot
                 }
             }
         }
+
+        // harness hook: point the camera target at a tab and let _Process GLIDE there (no snap) -- for --menushot
+        // UG_MENUCLIP walkthrough recording. GlideTab(0) keeps _reachedTitle false so the opening pan stays the slow
+        // cinematic rate; GlideTab(1..4) lets _Process flip _reachedTitle and glide at the fast submenu rate.
+        public void GlideTab(int tab)
+        {
+            int n = _menuReal ? RealViews.Length : Anchors.Length;
+            _forceTab = Mathf.Clamp(tab, 0, n - 1);
+            _targetTab = _forceTab;
+        }
     }
 }

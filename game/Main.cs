@@ -6805,8 +6805,19 @@ namespace UnturnedGodot
                 // menu opens anywhere else (it now opens on initialCamera, as retail does), and menu_00 then
                 // records the opening pose instead of Title. A harness whose first step silently does nothing
                 // is worse than one that fails, because its output still looks like an answer.
-                // UG_MENUSHOT_STEP frames per anchor (default 20 = quick stills). Set big (e.g. 90) + --write-movie to
-                // record a WALKTHROUGH: the opening initialCamera->Title drift then a glide+hold on each of the 5.
+                // UG_MENUCLIP=1: record a GLIDE WALKTHROUGH instead of stills -- drive _forceTab WITHOUT the snap so
+                // _Process lerps between anchors (opening initialCamera->Title drift, then a glide+hold on each submenu).
+                // Pair with --write-movie; no stills taken. (ShowTab SNAPS -- deliberately, for exact-anchor goldens --
+                // so a big UG_MENUSHOT_STEP only spaces snapped stills further apart; it does NOT glide.)
+                if (System.Environment.GetEnvironmentVariable("UG_MENUCLIP") == "1")
+                {
+                    int[] glideAt = { 0, 140, 235, 330, 425 };   // Title (opening pan gets extra) then Play/Survivors/Config/Workshop
+                    if (_menuShotIdx < glideAt.Length && _frame == glideAt[_menuShotIdx]) { _menuShotMenu.GlideTab(_menuShotIdx); _menuShotIdx++; }
+                    if (_frame >= 525) GetTree().Quit();
+                    _frame++;
+                    return;
+                }
+                // UG_MENUSHOT_STEP frames per anchor (default 20). ShowTab SNAPS to each anchor, then a still is captured.
                 int step = int.TryParse(System.Environment.GetEnvironmentVariable("UG_MENUSHOT_STEP"), out var _mst) && _mst > 5 ? _mst : 20;
                 int[] switchAt = { 0, step, 2 * step, 3 * step, 4 * step };
                 int[] shotAt = { step - 5, 2 * step - 5, 3 * step - 5, 4 * step - 5, 5 * step - 5 };
