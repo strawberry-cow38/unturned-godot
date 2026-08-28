@@ -145,7 +145,17 @@ namespace UnturnedGodot.Testing
             // Read the un-buffed spec value from the vehicle rather than dividing SpeedMaxMps by the buff:
             // inverting the buff assumes the buff was applied, so on a build where it was NOT the reference
             // shrinks along with the car and the check passes on a slower car. It did exactly that.
-            float oldCap = v.SpecSpeedMaxForTest, needed = oldCap * 1.25f;
+            // 1.05, not 1.25. This asserts the OLD HARD CAP IS GONE -- the old model returned zero engine
+            // force at the un-buffed spec speed, so exceeding it at all was structurally impossible. That is
+            // a buff-INDEPENDENT claim, and 1.25 made it a buff-dependent one: achievable top is
+            // oldCap * buff * (achieved fraction), so requiring 1.25x demands buff*fraction > 1.25 and is
+            // simply unreachable below buff ~1.4. Measured at buff 1.3 the semi does 16.41 against a
+            // "needed" 17.50 and fails a check about a cap it has already cleared by 17%.
+            // The margin lost at high buff costs nothing: the equilibrium check below requires
+            // top > 0.80 * speedMax = 0.80 * oldCap * buff, which is far stronger than 1.05x for any
+            // buff above ~1.31. This check earns its place at LOW buff, where equilibrium is the weaker of
+            // the two. Between them the fleet is covered at every scale instead of only near 2.0.
+            float oldCap = v.SpecSpeedMaxForTest, needed = oldCap * 1.05f;
             // Print the THRESHOLD, not the raw cap. The old message read "16.30 vs 14.00" on a check that
             // actually required 17.50, so the failure looked like a passing comparison.
             T.Check($"top speed clears the old hard cap ({top:0.00} m/s, needs > {needed:0.00}, cap was {oldCap:0.00})",
