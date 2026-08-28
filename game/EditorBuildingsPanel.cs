@@ -14,7 +14,7 @@ namespace UnturnedGodot
     {
         readonly EditorBuildings _b;
         Button _draw;
-        Button _drawFloor, _drawRoof, _room, _del, _found;
+        Button _drawFloor, _drawRoof, _room, _del, _found, _stairs;
         CheckBox _glaze, _indestructible;
         Label _hpLbl;
         OptionButton _doorDrop;
@@ -99,7 +99,7 @@ namespace UnturnedGodot
             return list.ToArray();
         }
 
-        enum Tool { None, Wall, Room, Floor, Roof, Opening, Delete, Foundation }
+        enum Tool { None, Wall, Room, Floor, Roof, Opening, Delete, Foundation, Stairs }
 
         /// <summary>Exactly one tool is active. Selection used to be done by each button clearing the others
         /// by hand, in five places, and every one of them cleared a DIFFERENT subset -- the opening presets
@@ -114,6 +114,7 @@ namespace UnturnedGodot
             _b.SlabDrawMode = t == Tool.Floor || t == Tool.Roof;
             _b.DeleteDrawMode = t == Tool.Delete;
             _b.FoundationDrawMode = t == Tool.Foundation;
+            _b.StairsDrawMode = t == Tool.Stairs;
             if (t == Tool.Floor) _b.SlabDrawKind = SurfaceKind.Floor;
             if (t == Tool.Roof) _b.SlabDrawKind = SurfaceKind.Roof;
             _b.Arm(t == Tool.Opening ? archetype : -1);
@@ -123,6 +124,7 @@ namespace UnturnedGodot
             if (_drawFloor != null) _drawFloor.ButtonPressed = t == Tool.Floor;
             if (_drawRoof != null) _drawRoof.ButtonPressed = t == Tool.Roof;
             if (_del != null) _del.ButtonPressed = t == Tool.Delete;
+            if (_stairs != null) _stairs.ButtonPressed = t == Tool.Stairs;
             if (_found != null) _found.ButtonPressed = t == Tool.Foundation;
             for (int i = 0; i < _arch.Count; i++)
                 _arch[i].ButtonPressed = t == Tool.Opening && i == archetype;
@@ -170,6 +172,9 @@ namespace UnturnedGodot
             _found = ToolButton(second, EditorIcons.Glyph.Foundation, 44, "Draw foundation",
                                 "drag a rectangle — a skirt, no walls needed first",
                                 () => SetTool(_found.ButtonPressed ? Tool.Foundation : Tool.None));
+            _stairs = ToolButton(second, EditorIcons.Glyph.Stairs, 44, "Stairs",
+                                 "click the floor — a flight to the storey above, step count derived so it lands flush",
+                                 () => SetTool(_stairs.ButtonPressed ? Tool.Stairs : Tool.None));
             _del = ToolButton(second, EditorIcons.Glyph.Delete, 44, "Delete / cut",
                               "click a wall to remove it, or drag along one to cut a piece out",
                               () => SetTool(_del.ButtonPressed ? Tool.Delete : Tool.None));

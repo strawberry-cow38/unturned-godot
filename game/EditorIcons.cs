@@ -16,7 +16,7 @@ namespace UnturnedGodot
     {
         public enum Glyph
         {
-            Wall, Room, Floor, Roof, Foundation, Delete, Move,
+            Wall, Room, Floor, Roof, Foundation, Stairs, Delete, Move,
             Door, Window, TallWindow, Garage, Porch, Vent,
             Paint, Import, Bake,
         }
@@ -58,6 +58,17 @@ namespace UnturnedGodot
                     Quad(im, P(7), P(21), P(20), P(15), P(33), P(21), P(20), P(27), Ink);
                     Quad(im, P(7), P(21), P(20), P(27), P(20), P(31), P(7), P(25), Dim);
                     Quad(im, P(33), P(21), P(20), P(27), P(20), P(31), P(33), P(25), Dim);
+                    break;
+                case Glyph.Stairs:                 // three steps climbing to the right, seen from the side
+                    // Drawn as full-height risers rather than thin treads: at 32 px a stair of hairlines
+                    // reads as noise, and the silhouette is what makes it legible next to the slab glyph.
+                    Quad(im, P(8),  P(34), P(17), P(34), P(17), P(27), P(8),  P(27), Ink);
+                    Quad(im, P(17), P(34), P(26), P(34), P(26), P(20), P(17), P(20), Ink);
+                    Quad(im, P(26), P(34), P(34), P(34), P(34), P(13), P(26), P(13), Ink);
+                    // tread tops, so the steps read as surfaces you walk on rather than a bar chart
+                    Quad(im, P(8),  P(27), P(17), P(27), P(17), P(25), P(8),  P(25), Dim);
+                    Quad(im, P(17), P(20), P(26), P(20), P(26), P(18), P(17), P(18), Dim);
+                    Quad(im, P(26), P(13), P(34), P(13), P(34), P(11), P(26), P(11), Dim);
                     break;
                 case Glyph.Roof:                   // a gable
                     Tri(im, P(20), P(8), P(6), P(24), P(34), P(24), Ink);

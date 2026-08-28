@@ -304,5 +304,38 @@ namespace UnturnedSim
         /// metres of side face down there and essentially no bottom. Depth is bimodal, 5.00 or 6.00, median 6.
         /// So a foundation is a wall hanging under a wall, and needs no geometry of its own.</summary>
         public const float FoundationDepth = 6.0f;
+
+        // ---- STAIRS -------------------------------------------------------------------------------------
+        // A staircase is not a surface kind the mesh builder understands -- Rebuild() never reads Kind -- it is
+        // a GENERATOR that emits one flat tread per step, the same way a room emits four walls and an opening
+        // becomes four boxes. Everything here is derived so the run lands EXACTLY flush on the next storey:
+        // change DoorHeight and the stairs follow instead of ending half a step short.
+        //
+        // StairRiseTarget is a COMFORT target, not a divisor: the step count is round(storey / target) and the
+        // actual rise is storey / count, so the flight always closes on the floor above. 0.38 puts a step at
+        // roughly 18 cm against this kit's scale (DoorHeight 4.25 is a door, so a unit is about half a metre).
+        public const float StairRiseTarget = 0.38f;
+        // Default run from a target PITCH rather than a picked number: tan(32 deg) = 0.62 is a domestic
+        // staircase, so run = DoorHeight / 0.62 = 6.85, which snaps to two lattice steps. Snapping is what
+        // keeps a flight interoperable with the walls around it.
+        public const float StairPitchTangent = 0.62f;
+        public const float StairTreadThickness = 0.20f;   // matches TrimProfile: the kit's thin-plate dimension
+        public const float StairDefaultWidth = 3.0f;      // one lattice, and retail's commonest door width
+
+        /// <summary>Steps in a flight climbing <paramref name="rise"/>. At least two -- one "step" is a kerb,
+        /// not a staircase -- and derived so rise/count lands on the floor above exactly.</summary>
+        public static int StairSteps(float rise)
+            => System.Math.Max(2, (int)System.Math.Round(rise / StairRiseTarget));
+
+        /// <summary>Rise of ONE step in a flight climbing <paramref name="rise"/>. This is the number the
+        /// flush landing depends on, so it lives here where a test can reach it -- asserting it from a value
+        /// the test computed itself would be a tautology that passes against any generator at all.</summary>
+        public static float StairStepRise(float rise) => rise / StairSteps(rise);
+
+        /// <summary>Default horizontal run for a flight climbing <paramref name="rise"/>, snapped to the
+        /// lattice so it lines up with the walls it sits between.</summary>
+        public static float StairDefaultRun(float rise)
+            => System.Math.Max(LatticeStep,
+                   (float)System.Math.Round(rise / StairPitchTangent / LatticeStep) * LatticeStep);
     }
 }

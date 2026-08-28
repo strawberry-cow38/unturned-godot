@@ -250,6 +250,10 @@ namespace UnturnedGodot
         WallSurface _cutWall;
         float _cutFrom;
 
+        /// <summary>Click the floor to drop a flight of stairs climbing to the storey above, facing away
+        /// from the camera. Yaw snaps to 90 deg because buildings here are axis-aligned and a flight at 37
+        /// degrees lines up with nothing.</summary>
+        public bool StairsDrawMode;
         public bool SlabDrawMode;
         public SurfaceKind SlabDrawKind = SurfaceKind.Roof;
         WallSurface _drawingSlab;
@@ -265,7 +269,8 @@ namespace UnturnedGodot
 
         public bool Drawing => _drawing != null;
         public string ToolText => $"floor {ActiveFloor} (Q/E) · " + ToolName;
-        string ToolName => FoundationDrawMode ? "foundation: drag a rectangle"
+        string ToolName => StairsDrawMode ? $"stairs: click to drop a {WallOpenings.StairSteps(StoreyHeight)}-step flight to floor {ActiveFloor + 1}"
+                                : FoundationDrawMode ? "foundation: drag a rectangle"
                                 : DeleteDrawMode ? "delete: click a wall, or drag along one to cut a piece out"
                                 : SlabDrawMode ? (_drawingSlab != null ? $"drag the {SlabDrawKind.ToString().ToLower()} out — release to place" : $"{SlabDrawKind.ToString().ToLower()}: drag a rectangle")
                                 : WallDrawMode ? (_drawing != null ? "drag the wall out — release to place, Esc cancels" : "wall: press and drag")
@@ -820,6 +825,20 @@ namespace UnturnedGodot
                     var made = new List<WallSurface>(_room);
                     _editor?.PushUndo(_roomKind == SurfaceKind.Foundation ? "foundation draw" : "room place",
                                       () => { foreach (var w in made) RemoveWall(w); });
+                }
+                return;
+            }
+
+            if (StairsDrawMode)
+            {
+                if (GroundOnFloor(from, dir, out var stp))
+                {
+                    // Snap the flight to the axis you are nearest to looking along. The camera can sit at any
+                    // angle; a staircase that lands at 37 degrees meets no wall in the building.
+                    float camYaw = _cam != null ? _cam.GlobalRotationDegrees.Y : 0f;
+                    float yaw = Mathf.Round(camYaw / 90f) * 90f;
+                    AddStairs(new Vector3(WallOpenings.SnapGrid(stp.X), FloorY,
+                                          WallOpenings.SnapGrid(stp.Z)), yaw);
                 }
                 return;
             }
@@ -2103,6 +2122,52 @@ namespace UnturnedGodot
             }
             if (made.Count == 0) return 0;
             _editor?.PushUndo("foundation place", () => { foreach (var f in made) RemoveWall(f); });
+            return made.Count;
+        }
+
+        /// <summary>A flight of stairs climbing exactly one storey, emitted as one flat tread per step.
+        ///
+        /// A staircase is NOT a new shape for the mesh builder -- Rebuild() never reads Kind, every surface is
+        /// the same generated box -- so this is a generator, the way "draw room" emits four walls and an
+        /// opening becomes four boxes. That keeps stairs inside the generate-don't-cut design instead of
+        /// special-casing WallSurface.
+        ///
+        /// EVERYTHING IS DERIVED FROM StoreyHeight. The step count is round(storey / comfort target) and the
+        /// rise is then storey / count, so the top tread lands EXACTLY on the floor above -- change the storey
+        /// pitch and the flight follows rather than stopping a step short. Nothing here is a magic number that
+        /// has to be re-tuned when the kit is rescaled.
+        ///
+        /// Thickness is CENTRED on a surface (Rebuild uses +/- Thickness/2), so a tread whose walking surface
+        /// must sit at (i+1)*rise has its origin half a tread BELOW that.</summary>
+        /// <param name="origin">Foot of the flight, on the floor you are standing on.</param>
+        /// <param name="yawDeg">Direction the flight climbs in.</param>
+        /// <param name="run">Horizontal run; &lt;= 0 takes the derived default for this storey height.</param>
+        /// <param name="width">Tread width; &lt;= 0 takes the kit default.</param>
+        /// <returns>Number of treads emitted.</returns>
+        public int AddStairs(Vector3 origin, float yawDeg, float run = 0f, float width = 0f)
+        {
+            float rise = StoreyHeight;
+            int steps = WallOpenings.StairSteps(rise);
+            if (run <= 0f) run = WallOpenings.StairDefaultRun(rise);
+            if (width <= 0f) width = WallOpenings.StairDefaultWidth;
+            float stepRise = WallOpenings.StairStepRise(rise);   // exact: steps * stepRise == rise
+            float going = run / steps;
+            float tread = WallOpenings.StairTreadThickness;
+
+            // Depth recedes along local -Z, the same frame a drawn slab uses ("origin at (minX, y, maxZ), run
+            // along +X, depth along -Z"), rotated by the flight's yaw so it climbs where you pointed it.
+            float yaw = Mathf.DegToRad(yawDeg);
+            var back = new Vector3(-Mathf.Sin(yaw), 0f, -Mathf.Cos(yaw));   // local -Z in world space
+
+            var made = new List<WallSurface>();
+            for (int i = 0; i < steps; i++)
+            {
+                var p = origin + back * (i * going)
+                      + new Vector3(0f, (i + 1) * stepRise - tread * 0.5f, 0f);
+                made.Add(SpawnWall(p, yawDeg, width, tread, ActiveMaterial, null,
+                                   going, -90f, SurfaceKind.Stairs));
+            }
+            _editor?.PushUndo("stairs place", () => { foreach (var t in made) RemoveWall(t); });
             return made.Count;
         }
 

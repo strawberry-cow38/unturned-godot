@@ -11,7 +11,10 @@ namespace UnturnedSim
     /// same rule the opening archetypes follow. A floor is a wall lying down: the identical rectangle-minus-
     /// openings problem, so it goes through the identical partition, collider, palette and bake path, and a
     /// stairwell is an opening. Splitting them into separate types would buy a second copy of every bug.</summary>
-    public enum SurfaceKind { Wall, Floor, Roof, Foundation }
+    // Stairs is a LABEL, like every other kind -- Rebuild() never reads Kind. A flight is emitted as one
+    // flat tread surface per step by AddStairs; the kind is what lets the panel, the bake and a future
+    // "delete the whole flight" tell those treads from an ordinary floor.
+    public enum SurfaceKind { Wall, Floor, Roof, Foundation, Stairs }
 
     public sealed class WallPlan
     {
