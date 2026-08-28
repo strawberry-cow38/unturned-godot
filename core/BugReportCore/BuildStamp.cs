@@ -52,19 +52,58 @@ namespace UnturnedGodot.BugReport
         {
             var d = new DirectoryInfo(start);
             for (int i = 0; i < 6 && d != null; i++, d = d.Parent)
-                if (Directory.Exists(Path.Combine(d.FullName, ".git"))) return d.FullName;
+            {
+                string g = Path.Combine(d.FullName, ".git");
+                if (Directory.Exists(g) || File.Exists(g)) return d.FullName;   // File => a git WORKTREE (.git is a gitdir pointer, not a dir)
+            }
             return null;
+        }
+
+        // The real .git directory for `root`. Normally root/.git; in a WORKTREE root/.git is a FILE containing
+        // "gitdir: <path>" pointing at .../.git/worktrees/<name> -- follow it. Without this, worktree checkouts (this
+        // repo runs 10+) stamped game_commit "unknown", the exact failure BuildStamp exists to prevent.
+        static string GitDir(string root)
+        {
+            string g = Path.Combine(root, ".git");
+            if (Directory.Exists(g)) return g;
+            if (File.Exists(g))
+            {
+                string line = File.ReadAllText(g).Trim();
+                const string key = "gitdir:";
+                if (line.StartsWith(key))
+                {
+                    string p = line.Substring(key.Length).Trim();
+                    return Path.IsPathRooted(p) ? p : Path.GetFullPath(Path.Combine(root, p));
+                }
+            }
+            return g;   // fall through; callers guard with File.Exists
+        }
+
+        // The COMMON git dir holding the shared refs/packed-refs. A worktree's gitdir has a `commondir` file pointing
+        // back at the main .git (HEAD + index are worktree-local, but branch refs are shared); a normal checkout is
+        // its own common dir.
+        static string CommonDir(string gitDir)
+        {
+            string c = Path.Combine(gitDir, "commondir");
+            if (File.Exists(c))
+            {
+                string p = File.ReadAllText(c).Trim();
+                return Path.IsPathRooted(p) ? p : Path.GetFullPath(Path.Combine(gitDir, p));
+            }
+            return gitDir;
         }
 
         static string ReadHead(string root)
         {
-            string head = File.ReadAllText(Path.Combine(root, ".git", "HEAD")).Trim();
+            string gitDir = GitDir(root);
+            string common = CommonDir(gitDir);   // worktree HEAD is in gitDir; the branch ref it names is in the shared common dir
+            string head = File.ReadAllText(Path.Combine(gitDir, "HEAD")).Trim();
             if (!head.StartsWith("ref:")) return head;                    // detached HEAD is the sha itself
             string refPath = head.Substring(4).Trim();
-            string loose = Path.Combine(root, ".git", refPath.Replace('/', Path.DirectorySeparatorChar));
+            string loose = Path.Combine(common, refPath.Replace('/', Path.DirectorySeparatorChar));
             if (File.Exists(loose)) return File.ReadAllText(loose).Trim();
             // Packed refs: a freshly-cloned checkout has no loose ref file for its branch.
-            string packed = Path.Combine(root, ".git", "packed-refs");
+            string packed = Path.Combine(common, "packed-refs");
             if (!File.Exists(packed)) return null;
             foreach (string line in File.ReadAllLines(packed))
             {
@@ -81,8 +120,9 @@ namespace UnturnedGodot.BugReport
         {
             try
             {
-                string idx = Path.Combine(root, ".git", "index");
-                string headFile = Path.Combine(root, ".git", "HEAD");
+                string gitDir = GitDir(root);
+                string idx = Path.Combine(gitDir, "index");
+                string headFile = Path.Combine(gitDir, "HEAD");
                 return File.Exists(idx) && File.GetLastWriteTimeUtc(idx) > File.GetLastWriteTimeUtc(headFile);
             }
             catch { return false; }
