@@ -91,10 +91,19 @@ namespace UnturnedGodot
         /// show where my wall draw is gonna be".</summary>
         void UpdateGridFlag(Vector2 screen)
         {
-            if (_cam == null || !(WallDrawMode || RoomDrawMode || SlabDrawMode)) { HideGridFlag(); return; }
+            // Every tool that PLACES on the floor plane gets the flag, not just three of them -- foundation
+            // and stairs were drawing blind.
+            if (_cam == null || !(WallDrawMode || RoomDrawMode || SlabDrawMode || FoundationDrawMode || StairsDrawMode))
+            { HideGridFlag(); return; }
             var from = _cam.ProjectRayOrigin(screen);
             var dir = _cam.ProjectRayNormal(screen);
-            if (!GroundAt(from, dir, out var p)) { HideGridFlag(); return; }
+            // GroundOnFloor, NOT GroundAt. The flag showed where the cursor met the TERRAIN while every
+            // placement path lands at FloorY above it, so on any storey but the ground one the marker sat
+            // under the building and you were drawing blind -- strawberry: "the draw tool cursor doesnt
+            // change floors to show where ur drawing, it stays on ground level".
+            // Sharing the call is the point: the preview and the placement cannot disagree about height if
+            // they ask the same function, which a second copy of "+ FloorY" here would not guarantee.
+            if (!GroundOnFloor(from, dir, out var p)) { HideGridFlag(); return; }
             var snapped = new Vector3(WallOpenings.SnapGrid(p.X), p.Y, WallOpenings.SnapGrid(p.Z));
             if (_gridFlag == null)
             {
