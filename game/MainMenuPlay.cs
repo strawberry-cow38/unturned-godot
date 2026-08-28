@@ -124,75 +124,22 @@ namespace UnturnedGodot
                 margin.AddThemeConstantOverride(s, 14);
             panel.AddChild(margin);
             var cols = new HBoxContainer();
-            cols.AddThemeConstantOverride("separation", 18);
+            cols.AddThemeConstantOverride("separation", 16);
             margin.AddChild(cols);
 
-            // ---- left column: header + category tabs + scrollable map list
-            var left = new VBoxContainer { CustomMinimumSize = new Vector2(360f, 0f) };
-            left.AddThemeConstantOverride("separation", 8);
-            cols.AddChild(left);
-            left.AddChild(Header("SINGLEPLAYER", 24));
+            // Retail MenuPlaySingleplayerUI is THREE columns (tinyclaw's SDK coords, PositionScale_X=0.5 = offset from
+            // centre): LEFT = preview then Play / Difficulty / Config; CENTRE = the 4 tabs + the map list; RIGHT =
+            // selected-map name + description. The rest of the gameplay options live behind Config (retail's configButton).
 
-            var tabs = new HBoxContainer();
-            tabs.AddThemeConstantOverride("separation", 4);
-            left.AddChild(tabs);
-            string[] cats = { "Official", "Curated", "Workshop", "Misc" };
-            for (int i = 0; i < cats.Length; i++)
-            {
-                var tb = new Button { Text = cats[i], ToggleMode = true, ButtonPressed = i == 0, Disabled = i != 0 };
-                tb.AddThemeFontSizeOverride("font_size", 14);
-                tabs.AddChild(tb);
-            }
-
-            var scroll = new ScrollContainer
-            {
-                CustomMinimumSize = new Vector2(360f, 300f),
-                HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled,
-            };
-            left.AddChild(scroll);
-            var list = new VBoxContainer { CustomMinimumSize = new Vector2(342f, 0f) };
-            list.AddThemeConstantOverride("separation", 3);
-            scroll.AddChild(list);
-            // FIRST in the list, not appended after the official maps. Appended, it sat below Hawaii/Greece/
-            // A6 Polaris and therefore below the scroll fold -- present, and invisible to anyone who did not
-            // already know to look for it, which for a new feature is the same as absent.
-            var genBtn = new Button
-            {
-                Text = "  \u2699  " + GenerateMapName,
-                CustomMinimumSize = new Vector2(342f, 48f),
-                Alignment = HorizontalAlignment.Left,
-            };
-            genBtn.AddThemeFontSizeOverride("font_size", 16);
-            genBtn.AddThemeColorOverride("font_color", new Color(0.92f, 0.86f, 0.62f));
-            genBtn.Pressed += () => SelectGenerated();
-            list.AddChild(genBtn);
-            var pgBtn = new Button
-            {
-                Text = "  ◎  Playground",   // gun range -- moved here from the Play submenu (master), its own map entry
-                CustomMinimumSize = new Vector2(342f, 48f),
-                Alignment = HorizontalAlignment.Left,
-            };
-            pgBtn.AddThemeFontSizeOverride("font_size", 16);
-            pgBtn.AddThemeColorOverride("font_color", new Color(0.92f, 0.86f, 0.62f));
-            pgBtn.Pressed += () => SelectPlayground();
-            list.AddChild(pgBtn);
-            list.AddChild(new HSeparator());
-            foreach (var m in OfficialMaps) list.AddChild(MapRow(m.name, m.key, m.playable, m.desc));
-
-            // ---- right column: preview + name + desc + gameplay options + play
-            var right = new VBoxContainer { CustomMinimumSize = new Vector2(340f, 0f) };
-            right.AddThemeConstantOverride("separation", 7);
-            cols.AddChild(right);
-
-            var preview = new Panel { CustomMinimumSize = new Vector2(340f, 190f) };
+            // ---- LEFT column: preview, Play, Difficulty, Config
+            var lcol = new VBoxContainer { CustomMinimumSize = new Vector2(340f, 0f) };
+            lcol.AddThemeConstantOverride("separation", 7);
+            cols.AddChild(lcol);
+            var preview = new Panel { CustomMinimumSize = new Vector2(340f, 200f) };
             var pv = new StyleBoxFlat { BgColor = new Color(0.10f, 0.11f, 0.10f) };
             pv.SetBorderWidthAll(1);
             pv.BorderColor = new Color(0f, 0f, 0f, 0.5f);
             preview.AddThemeStyleboxOverride("panel", pv);
-            var pvlabel = new Label { Text = "MAP PREVIEW", HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
-            pvlabel.SetAnchorsPreset(Control.LayoutPreset.FullRect);
-            pvlabel.AddThemeColorOverride("font_color", new Color(0.4f, 0.4f, 0.4f));
-            preview.AddChild(pvlabel);   // fallback text behind the image (shows for maps with no preview art)
             _previewImage = new TextureRect
             {
                 StretchMode = TextureRect.StretchModeEnum.KeepAspectCovered,
@@ -201,41 +148,79 @@ namespace UnturnedGodot
             };
             _previewImage.SetAnchorsPreset(Control.LayoutPreset.FullRect);
             preview.AddChild(_previewImage);
-            right.AddChild(preview);
+            lcol.AddChild(preview);
+            var play = new Button { Text = "PLAY", CustomMinimumSize = new Vector2(340f, 46f) };
+            play.AddThemeFontSizeOverride("font_size", 22);
+            play.Pressed += PlaySelected;
+            lcol.AddChild(play);
+            lcol.AddChild(OptionRow("Difficulty", Difficulties, _optDifficulty, i => { _optDifficulty = i; SaveMapSettings(); }));
+            var cfgBox = new VBoxContainer { Visible = false };
+            cfgBox.AddThemeConstantOverride("separation", 5);
+            cfgBox.AddChild(OptionRow("Loot",       LootModes,   _optLoot,   i => { _optLoot = i; SaveMapSettings(); }));
+            cfgBox.AddChild(OptionRow("Day Cycle",  DayModes,    _optDay,    i => { _optDay = i; SaveMapSettings(); }));
+            cfgBox.AddChild(OptionRow("Combat",     CombatModes, _optCombat, i => { _optCombat = i; SaveMapSettings(); }));
+            cfgBox.AddChild(ToggleRow("Cheats",     _optCheats,     v => { _optCheats = v; SaveMapSettings(); }));
+            cfgBox.AddChild(ToggleRow("Permadeath", _optPermadeath, v => { _optPermadeath = v; SaveMapSettings(); }));
+            cfgBox.AddChild(AdvancedButton());
+            var cfgBtn = new Button { Text = "  Config", CustomMinimumSize = new Vector2(340f, 34f), Alignment = HorizontalAlignment.Left, ToggleMode = true };
+            cfgBtn.AddThemeFontSizeOverride("font_size", 15);
+            cfgBtn.Toggled += on => cfgBox.Visible = on;   // retail's configButton -> the gameplay config
+            lcol.AddChild(cfgBtn);
+            lcol.AddChild(cfgBox);
+            lcol.AddChild(BuildSeedRow());   // Generate Island's seed field (SelectGenerated shows _genRow)
+            var backBtn = new Button { Text = "\u25c4  Back", CustomMinimumSize = new Vector2(340f, 36f), Alignment = HorizontalAlignment.Left };
+            backBtn.Pressed += BackToDashboard;   // dashboard is hidden while this is up -> its own way out
+            lcol.AddChild(backBtn);
 
+            // ---- CENTRE column: category tabs + scrollable map list
+            var ccol = new VBoxContainer { CustomMinimumSize = new Vector2(420f, 0f) };
+            ccol.AddThemeConstantOverride("separation", 6);
+            cols.AddChild(ccol);
+            var tabs = new HBoxContainer();
+            tabs.AddThemeConstantOverride("separation", 3);
+            ccol.AddChild(tabs);
+            string[] cats = { "Official", "Curated", "Workshop", "Misc" };
+            for (int i = 0; i < cats.Length; i++)
+            {
+                var tb = new Button { Text = cats[i], ToggleMode = true, ButtonPressed = i == 0, Disabled = i != 0, CustomMinimumSize = new Vector2(100f, 40f) };
+                tb.AddThemeFontSizeOverride("font_size", 13);
+                tabs.AddChild(tb);
+            }
+            var scroll = new ScrollContainer { CustomMinimumSize = new Vector2(420f, 330f), HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled };
+            ccol.AddChild(scroll);
+            var list = new VBoxContainer { CustomMinimumSize = new Vector2(400f, 0f) };
+            list.AddThemeConstantOverride("separation", 3);
+            scroll.AddChild(list);
+            var genBtn = new Button { Text = "  \u2699  " + GenerateMapName, CustomMinimumSize = new Vector2(400f, 46f), Alignment = HorizontalAlignment.Left };
+            genBtn.AddThemeFontSizeOverride("font_size", 16);
+            genBtn.AddThemeColorOverride("font_color", new Color(0.92f, 0.86f, 0.62f));
+            genBtn.Pressed += () => SelectGenerated();
+            list.AddChild(genBtn);
+            var pgBtn = new Button { Text = "  \u25ce  Playground", CustomMinimumSize = new Vector2(400f, 46f), Alignment = HorizontalAlignment.Left };
+            pgBtn.AddThemeFontSizeOverride("font_size", 16);
+            pgBtn.AddThemeColorOverride("font_color", new Color(0.92f, 0.86f, 0.62f));
+            pgBtn.Pressed += () => SelectPlayground();
+            list.AddChild(pgBtn);
+            list.AddChild(new HSeparator());
+            foreach (var m in OfficialMaps) list.AddChild(MapRow(m.name, m.key, m.playable, m.desc));
+
+            // ---- RIGHT column: selected-map name + description
+            var rcol = new VBoxContainer { CustomMinimumSize = new Vector2(260f, 0f) };
+            rcol.AddThemeConstantOverride("separation", 7);
+            cols.AddChild(rcol);
             _previewName = new Label { Text = _selectedMap };
-            _previewName.AddThemeFontSizeOverride("font_size", 22);
+            _previewName.AddThemeFontSizeOverride("font_size", 20);
             _previewName.AddThemeColorOverride("font_color", new Color(0.95f, 0.94f, 0.9f));
-            right.AddChild(_previewName);
+            rcol.AddChild(_previewName);
             _descLabel = new Label
             {
                 Text = OfficialMaps[0].desc,
                 AutowrapMode = TextServer.AutowrapMode.WordSmart,
-                CustomMinimumSize = new Vector2(340f, 34f),
+                CustomMinimumSize = new Vector2(260f, 34f),
             };
             _descLabel.AddThemeColorOverride("font_color", new Color(0.78f, 0.78f, 0.78f));
             _descLabel.AddThemeFontSizeOverride("font_size", 14);
-            right.AddChild(_descLabel);
-            right.AddChild(BuildSeedRow());
-
-            right.AddChild(new HSeparator());
-            right.AddChild(Header("GAMEPLAY OPTIONS", 16));
-            right.AddChild(OptionRow("Difficulty", Difficulties, _optDifficulty, i => { _optDifficulty = i; SaveMapSettings(); }));
-            right.AddChild(OptionRow("Loot",       LootModes,    _optLoot,       i => { _optLoot = i; SaveMapSettings(); }));
-            right.AddChild(OptionRow("Day Cycle",  DayModes,     _optDay,        i => { _optDay = i; SaveMapSettings(); }));
-            right.AddChild(OptionRow("Combat",     CombatModes,  _optCombat,     i => { _optCombat = i; SaveMapSettings(); }));
-            right.AddChild(ToggleRow("Cheats",     _optCheats,     v => { _optCheats = v; SaveMapSettings(); }));
-            right.AddChild(ToggleRow("Permadeath", _optPermadeath, v => { _optPermadeath = v; SaveMapSettings(); }));
-            right.AddChild(AdvancedButton());   // reveals the full vanilla ModeConfigData options (MainMenuAdvanced.cs)
-
-            right.AddChild(new Control { CustomMinimumSize = new Vector2(0f, 6f) });   // spacer
-            var play = new Button { Text = "PLAY", CustomMinimumSize = new Vector2(340f, 52f) };
-            play.AddThemeFontSizeOverride("font_size", 24);
-            play.Pressed += PlaySelected;
-            right.AddChild(play);
-            var backBtn = new Button { Text = "◄  Back", CustomMinimumSize = new Vector2(340f, 40f), Alignment = HorizontalAlignment.Left };
-            backBtn.Pressed += BackToDashboard;   // dashboard is hidden while this is up -> give it its own way out
-            right.AddChild(backBtn);
+            rcol.AddChild(_descLabel);
 
             layer.AddChild(panel);
             _playPanel = panel;   // reuse the existing Play-panel plumbing (toggle / mutual-hide)
