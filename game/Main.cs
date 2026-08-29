@@ -1040,6 +1040,7 @@ namespace UnturnedGodot
             ev.Position = new Vector3(0f, ev.BaseLift, 0f);   // ground the stood-up car's base; set BEFORE AddChild so _Ready latches the base Y correctly
             AddChild(ev);
             // a simple humanoid "rider" parented to the car so it rides with the lift (visual: a player aboard the demo)
+            if (System.Environment.GetEnvironmentVariable("UG_ELEVNORIDER") != "1")
             {
                 var rider = new Node3D { Position = new Vector3(-0.05f, 0.15f, 0f) };   // INSIDE the car on the floor, not on the roof
                 ev.AddChild(rider);
@@ -1048,16 +1049,40 @@ namespace UnturnedGodot
                 rider.AddChild(new MeshInstance3D { Mesh = new CapsuleMesh { Radius = 0.32f, Height = 1.3f }, MaterialOverride = shirt, Position = new Vector3(0f, 0.9f, 0f) });   // torso + legs
                 rider.AddChild(new MeshInstance3D { Mesh = new SphereMesh { Radius = 0.22f, Height = 0.44f }, MaterialOverride = skin, Position = new Vector3(0f, 1.75f, 0f) });   // head
             }
-            ev.AutoCycle = System.Environment.GetEnvironmentVariable("UG_ELEVCYCLE") == "1";   // ride VIDEO: cycle up/down
-            if (System.Environment.GetEnvironmentVariable("UG_ELEVFAST") == "1") { ev.SpeedMul = 6f; ev.DwellTime = 0.2f; }   // fast up/down (for a GIF)
-            if (!ev.AutoCycle) ev.Call();   // else a single ride up (for a still)
-            var cam = new Camera3D { Current = true, Fov = 52f, Far = 2000f };
+            // FLOOR LANDINGS: a thin deck at each floor height, off to the +Z side of the -X doorway (so it doesn't
+            // block the door view), so the car visibly serves 3 floors as the buttons call it. Visual context only.
+            for (int f = 0; f < ev.Floors.Length; f++)
+            {
+                float fy = ev.Floors[f];   // world Y (the car is grounded at 0)
+                float shade = 0.30f + f * 0.06f;
+                AddChild(new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(5f, 0.25f, 4f) },
+                    Position = new Vector3(-4.6f, fy + 0.125f, 4.4f),
+                    MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(shade, shade, shade + 0.03f), Roughness = 1f } });
+                // EXTERNAL call button at this landing: summon the car to THIS floor (master: "external call buttons
+                // too"). Same ElevatorButton -> GoToFloor(f); WORLD-parented so it stays at the floor, doesn't ride.
+                var ecol = f == 0 ? new Color(0.35f, 0.85f, 0.45f) : f == ev.Floors.Length - 1 ? new Color(0.92f, 0.34f, 0.32f) : new Color(0.95f, 0.85f, 0.35f);
+                AddChild(new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(0.14f, 1.35f, 0.14f) },
+                    Position = new Vector3(-3.35f, fy + 0.92f, 3.0f),
+                    MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.18f, 0.18f, 0.2f), Roughness = 0.8f } });
+                var ext = ElevatorButton.Make(ev, f, ecol);
+                AddChild(ext);
+                ext.Position = new Vector3(-3.5f, fy + 1.4f, 3.0f);   // on the post face, turned to the -X approach (door/camera side)
+                ext.RotationDegrees = new Vector3(0f, 90f, 0f);
+            }
+            ev.AutoFloors = System.Environment.GetEnvironmentVariable("UG_ELEVFLOORS") == "1";   // multi-floor VIDEO: step 0->1->2->1->0 (buttons in action)
+            ev.AutoCycle = System.Environment.GetEnvironmentVariable("UG_ELEVCYCLE") == "1";      // ride VIDEO: 2-stop cycle up/down
+            if (System.Environment.GetEnvironmentVariable("UG_ELEVFAST") == "1") { ev.SpeedMul = 6f; ev.DwellTime = 0.2f; }   // fast (for a GIF)
+            var _sp = System.Environment.GetEnvironmentVariable("UG_ELEVSPEED"); if (!string.IsNullOrEmpty(_sp)) ev.SpeedMul = float.Parse(_sp);   // tune ride speed
+            var _dw = System.Environment.GetEnvironmentVariable("UG_ELEVDWELL"); if (!string.IsNullOrEmpty(_dw)) ev.DwellTime = float.Parse(_dw);   // tune per-floor dwell
+            bool hold = System.Environment.GetEnvironmentVariable("UG_ELEVHOLD") == "1";   // park at floor 0 (panel close-up still)
+            if (!ev.AutoFloors && !ev.AutoCycle && !hold) ev.Call();   // single ride up (still); AutoFloors/AutoCycle self-start from floor 0, UG_ELEVHOLD stays parked
+            var cam = new Camera3D { Current = true, Fov = 55f, Far = 2000f };
             AddChild(cam);
-            cam.Position = new Vector3(15f, 9f, 16f);
-            cam.LookAt(new Vector3(0f, 5.5f, 1.9f), Vector3.Up);   // pulled back to frame the whole ride (base -> top + rider + winch)
-            var _ec = System.Environment.GetEnvironmentVariable("UG_ELEVCAM");   // diag: "ex,ey,ez,tx,ty,tz" to inspect the car (e.g. from inside -> is it hollow?)
+            cam.Position = new Vector3(-14f, 7.5f, 2.5f);
+            cam.LookAt(new Vector3(0.5f, 4.2f, 0f), Vector3.Up);   // from the -X/door side: sees into the car (rider + button panel) across the floors
+            var _ec = System.Environment.GetEnvironmentVariable("UG_ELEVCAM");   // diag: "ex,ey,ez,tx,ty,tz"
             if (!string.IsNullOrEmpty(_ec)) { var a = _ec.Split(','); cam.Position = new Vector3(float.Parse(a[0]), float.Parse(a[1]), float.Parse(a[2])); cam.LookAt(new Vector3(float.Parse(a[3]), float.Parse(a[4]), float.Parse(a[5])), Vector3.Up); }
-            GD.Print("[elevatortest] Elevator_0 spawned + wired to F (Call); auto-Call at 0.4s. Set UG_SHOTTIME to catch it mid-ride.");
+            GD.Print("[elevatortest] Elevator + floor-button panel; UG_ELEVFLOORS=1 steps every floor. Set UG_SHOTTIME/--write-movie to capture.");
         }
 
         // --treetest=<birch|maple|pine>: a standing tree on the LEFT, a felled one on the RIGHT (visual hidden + a real

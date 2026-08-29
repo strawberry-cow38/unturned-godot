@@ -10,7 +10,9 @@ namespace UnturnedGodot
     public partial class Elevator : AnimatableBody3D
     {
         public static readonly StringName HitMeta = "elevator_hit";   // the look-ray finds THIS Elevator off its own body's meta (mirrors TVDevice.HitMeta)
-        const float Travel = 4.0f;    // metres between the down (bottom) and up (top) stops
+        public float[] Floors = { 0f, 4f, 8f };   // floor stop heights (metres above _baseY); a floor button calls GoToFloor(index)
+        float TopFloor => Floors[Floors.Length - 1];
+        int _curFloor;
         const float MoveSpeed = 1.6f; // vertical m/s -- an elevator, not a rocket
         float _baseY, _targetY;       // bottom-stop world Y, and where we're currently heading
         bool _up;                     // false = at/heading to bottom, true = top
@@ -21,6 +23,8 @@ namespace UnturnedGodot
         Vector3 _cableTopLocal;          // node-local point the rope attaches to (car top-centre)
         float _anchorY;                  // world Y the fixed top box hangs the rope from
         public bool AutoCycle;           // demo: auto-reverse at each stop after a dwell (for the ride video)
+        public bool AutoFloors;          // demo: step through EVERY floor in sequence (bounce 0->top->0) for the multi-floor render
+        int _seqDir = 1;                 // AutoFloors travel direction
         public float SpeedMul = 1f;      // demo: >1 speeds the car up (e.g. the fast up/down GIF)
         public float DwellTime = 1.5f;   // demo: dwell at each stop before reversing
         public float CarTopY;            // node-local Y of the car roof (a demo rider stands here)
@@ -53,6 +57,28 @@ namespace UnturnedGodot
             e.BaseLift = -ab.Position.Y;   // node Y needed to sit the car's base on the ground
             e._cableTopLocal = new Vector3(ab.Position.X + ab.Size.X * 0.5f, ab.Position.Y + ab.Size.Y, ab.Position.Z + ab.Size.Z * 0.5f);   // top-centre of the car -> the rope hangs from here
             e.CarTopY = ab.Position.Y + ab.Size.Y;   // car roof height (node-local)
+            // BUTTON PANEL on the +X back interior wall: a dark backing plate + one coloured floor button per stop,
+            // stacked in a column, faces turned to the -X doorway. THIS is the interactable now, not the whole car
+            // (master 2026-08-29). Parented to the car so the panel rides with it; ElevatorButton.Press -> GoToFloor.
+            {
+                float wallX = ab.Position.X + ab.Size.X;         // +X interior wall
+                float cz = ab.Position.Z + ab.Size.Z * 0.5f;     // centred across the car
+                int nf = e.Floors.Length;
+                float baseY = ab.Position.Y + 0.9f, stepY = 0.52f;
+                e.AddChild(new MeshInstance3D {
+                    Mesh = new BoxMesh { Size = new Vector3(0.08f, stepY * nf + 0.3f, 0.62f) },
+                    MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.1f, 0.1f, 0.12f), Roughness = 0.7f },
+                    Position = new Vector3(wallX - 0.5f, baseY + stepY * (nf - 1) * 0.5f, cz),
+                    CastShadow = GeometryInstance3D.ShadowCastingSetting.Off });
+                for (int f = 0; f < nf; f++)
+                {
+                    var col = f == 0 ? new Color(0.35f, 0.85f, 0.45f) : f == nf - 1 ? new Color(0.92f, 0.34f, 0.32f) : new Color(0.95f, 0.85f, 0.35f);
+                    var btn = ElevatorButton.Make(e, f, col);
+                    e.AddChild(btn);
+                    btn.Position = new Vector3(wallX - 0.57f, baseY + f * stepY, cz);
+                    btn.RotationDegrees = new Vector3(0f, 90f, 0f);   // turn the big button face to the -X doorway
+                }
+            }
             e.SetMeta(HitMeta, e);   // the look-ray hits this body -> reads the meta -> this Elevator
             return e;
         }
@@ -63,15 +89,22 @@ namespace UnturnedGodot
         // whether Position was set before AddChild or a Call arrives before _Ready ran.
         void LatchBase() { if (!_latched) { _baseY = GlobalPosition.Y; _targetY = _baseY; _latched = true; } }
 
-        /// <summary>F pressed while looking at the car: flip the destination between the bottom and top stops.</summary>
-        public void Call() { LatchBase(); _up = !_up; _targetY = _baseY + (_up ? Travel : 0f); }
+        /// <summary>Demo up/down (AutoCycle): flip the destination between the bottom floor and the top floor.</summary>
+        public void Call() { LatchBase(); _up = !_up; _targetY = _baseY + (_up ? TopFloor : 0f); }
+
+        /// <summary>A floor button was pressed: send the car to floor f (0 = bottom). Clamped to the floor list.</summary>
+        public void GoToFloor(int f) { LatchBase(); _curFloor = Mathf.Clamp(f, 0, Floors.Length - 1); _targetY = _baseY + Floors[_curFloor]; }
+
+        // demo (AutoFloors): advance one floor, bouncing at the ends -> 0,1,2,1,0,1,2,...
+        void StepFloor() { if (Floors.Length < 2) return; int n = _curFloor + _seqDir; if (n >= Floors.Length) { n = Floors.Length - 2; _seqDir = -1; } else if (n < 0) { n = 1; _seqDir = 1; } GoToFloor(n); }
 
         public override void _PhysicsProcess(double delta)
         {
             var p = GlobalPosition;
             if (Mathf.Abs(p.Y - _targetY) < 0.0005f)   // parked at a stop
             {
-                if (AutoCycle) { _dwell -= (float)delta; if (_dwell <= 0f) { _dwell = DwellTime; Call(); } }   // demo: dwell, then reverse
+                if (AutoFloors) { _dwell -= (float)delta; if (_dwell <= 0f) { _dwell = DwellTime; StepFloor(); } }   // demo: dwell, then step to the next floor
+                else if (AutoCycle) { _dwell -= (float)delta; if (_dwell <= 0f) { _dwell = DwellTime; Call(); } }   // demo: dwell, then reverse
                 return;
             }
             float ny = Mathf.MoveToward(p.Y, _targetY, MoveSpeed * SpeedMul * (float)delta);
@@ -86,7 +119,7 @@ namespace UnturnedGodot
         void BuildCable()
         {
             if (_topBox != null) return;
-            float carTopUp = _baseY + Travel + _cableTopLocal.Y;   // world Y of the car's top when fully raised
+            float carTopUp = _baseY + TopFloor + _cableTopLocal.Y;   // world Y of the car's top when at the top floor
             _anchorY = carTopUp + 0.5f;
             _topBox = new MeshInstance3D {
                 Mesh = new BoxMesh { Size = new Vector3(1.3f, 0.9f, 1.3f) },
