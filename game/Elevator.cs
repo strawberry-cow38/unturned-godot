@@ -16,6 +16,7 @@ namespace UnturnedGodot
         bool _up;                     // false = at/heading to bottom, true = top
         bool _latched;                // has _baseY been fixed to the spawn Y yet?
         MeshInstance3D _mi;
+        public float BaseLift;        // raise the node this far (metres) so the stood-up car's base rests on the ground
 
         /// <summary>Assemble the elevator from Elevator_0.obj (+ its vertex-colour texture), a box collider off the mesh
         /// AABB, and the HitMeta tag. The caller positions it; _Ready latches that as the bottom stop.</summary>
@@ -28,10 +29,15 @@ namespace UnturnedGodot
             var mat = new StandardMaterial3D { Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled, VertexColorUseAsAlbedo = true };
             string tp = dir + "Elevator_0_tex.png";
             if (Godot.FileAccess.FileExists(tp)) { var img = Image.LoadFromFile(tp); if (img != null) mat.AlbedoTexture = ImageTexture.CreateFromImage(img); }
-            e._mi = new MeshInstance3D { Mesh = mesh, MaterialOverride = mat };
+            // STAND IT UP: the extracted Elevator_0.obj lies on its side (its 5 m dimension runs along X). RotZ +90 puts
+            // that 5 m vertical so the car stands ~5 m tall with the door on its front face. Measured AABB was
+            // 5.0 x 4.4 x 3.9 (X wide, so tipped). Master 2026-08-29: "elevator laying on its back -- measure n check rotation".
+            var standUp = new Basis(Vector3.Back, Mathf.Pi * 0.5f);
+            e._mi = new MeshInstance3D { Mesh = mesh, MaterialOverride = mat, Basis = standUp };
             e.AddChild(e._mi);
-            Aabb ab = mesh.GetAabb();
+            Aabb ab = new Transform3D(standUp, Vector3.Zero) * mesh.GetAabb();   // bounds AFTER standing up
             e.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = ab.Size }, Position = ab.Position + ab.Size * 0.5f });
+            e.BaseLift = -ab.Position.Y;   // node Y needed to sit the car's base on the ground
             e.SetMeta(HitMeta, e);   // the look-ray hits this body -> reads the meta -> this Elevator
             return e;
         }

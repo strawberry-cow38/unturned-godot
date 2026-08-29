@@ -1036,7 +1036,7 @@ namespace UnturnedGodot
             AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-50f, -35f, 0f), LightEnergy = 1.1f });
             AddChild(new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(80f, 80f) }, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.34f, 0.40f, 0.30f), Roughness = 1f } });
             var ev = Elevator.Build();
-            ev.Position = new Vector3(0f, 2.2f, 0f);   // set BEFORE AddChild so _Ready latches the base Y correctly; +2.2 seats the AABB (min Y -2.2) base on the ground
+            ev.Position = new Vector3(0f, ev.BaseLift, 0f);   // ground the stood-up car's base; set BEFORE AddChild so _Ready latches the base Y correctly
             AddChild(ev);
             ev.Call();   // ride up immediately (F does this in-game); an offline UG_SHOTTIME capture then catches it in transit
             var cam = new Camera3D { Current = true, Fov = 52f, Far = 2000f };
