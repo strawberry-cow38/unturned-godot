@@ -34,6 +34,7 @@ namespace UnturnedGodot
         DoorPhase _phase = DoorPhase.Idle;   // Idle = parked with doors open; a call runs Closing -> Moving -> Opening -> Idle
         int _destFloor;                       // where a call is taking us (the car moves only once the doors are shut)
         float _door = 1f;                     // 0 = doors shut, 1 = doors open (start open at floor 0)
+        bool _forceShut;                      // diag (UG_ELEVDOORSHUT): freeze the doors closed for a fit-check still
         MeshInstance3D _doorL, _doorR;        // the two center-opening panels (children -> ride with the car)
         const float DoorClosedZ = 0.95f, DoorOpenZ = 2.0f;   // right-panel |Z|: shut (meets centre) vs open (slid aside); left = -that
         const float DoorSpeed = 1.6f;         // door travel in _door units/sec (~0.6s to open or shut)
@@ -100,11 +101,12 @@ namespace UnturnedGodot
             // when it stops"). Each panel's |Z| lerps DoorClosedZ (meet at centre) -> DoorOpenZ (slid aside).
             {
                 float doorX = ab.Position.X + 0.16f;   // just inside the -X face, sat in the frame
-                float panelW = 1.95f, panelH = 3.6f, panelT = 0.12f, cy = 2.075f;   // W spans the half-opening; H covers 0.30..3.85
+                float panelW = 1.95f, panelH = 2.48f, panelT = 0.12f, cy = 1.49f;   // W = half-opening; H fits the MEASURED door hole (Y 0.25..2.73, floor->lintel) so it seats seamlessly under the header
                 var dmat = new StandardMaterial3D { AlbedoColor = new Color(0.60f, 0.62f, 0.66f), Metallic = 0.35f, Roughness = 0.45f };
                 e._doorL = new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(panelT, panelH, panelW) }, MaterialOverride = dmat, Position = new Vector3(doorX, cy, -DoorClosedZ) };
                 e._doorR = new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(panelT, panelH, panelW) }, MaterialOverride = dmat, Position = new Vector3(doorX, cy, DoorClosedZ) };
                 e.AddChild(e._doorL); e.AddChild(e._doorR);
+                if (System.Environment.GetEnvironmentVariable("UG_ELEVDOORSHUT") == "1") { e._door = 0f; e._forceShut = true; }   // diag: park closed for a fit still
             }
             e.SetMeta(HitMeta, e);   // the look-ray hits this body -> reads the meta -> this Elevator
             return e;
@@ -134,6 +136,7 @@ namespace UnturnedGodot
 
         public override void _PhysicsProcess(double delta)
         {
+            if (_forceShut) { _door = 0f; UpdateDoors(); return; }   // diag: hold closed
             float dt = (float)delta;
             switch (_phase)
             {
@@ -182,16 +185,21 @@ namespace UnturnedGodot
             var hit = ss.IntersectRay(q);
             if (hit.Count > 0) { float fy = hit["position"].AsVector3().Y; GD.Print($"[elev-floor] floor {_curFloor}: elevator floor top world Y = {fy:0.000} (car base Y = {p.Y:0.000})"); }
             else GD.Print("[elev-floor] NO floor hit");
-            float zmin = 9f, zmax = -9f, ymin = 9f, ymax = -9f;
+            float zmin = 9f, zmax = -9f;
             for (float z = -2.5f; z <= 2.5f; z += 0.05f) {
                 var h = ss.IntersectRay(PhysicsRayQueryParameters3D.Create(p + new Vector3(-4f, 1.5f, z), p + new Vector3(4f, 1.5f, z), 1u << 10));
                 if (h.Count > 0 && h["position"].AsVector3().X - p.X > -2f) { zmin = Mathf.Min(zmin, z); zmax = Mathf.Max(zmax, z); }
             }
-            for (float y = 0f; y <= 4f; y += 0.05f) {
+            // DOOR opening HEIGHT: the CONTIGUOUS open span from the floor UP -- stops at the first solid (the lintel),
+            // so a clerestory/interior-ceiling gap ABOVE the header doesn't inflate it (that bug made the doors too tall).
+            float dBot = -1f, dTop = -1f;
+            for (float y = 0.1f; y <= 4f; y += 0.025f) {
                 var h = ss.IntersectRay(PhysicsRayQueryParameters3D.Create(p + new Vector3(-4f, y, 0f), p + new Vector3(4f, y, 0f), 1u << 10));
-                if (h.Count > 0 && h["position"].AsVector3().X - p.X > -2f) { ymin = Mathf.Min(ymin, y); ymax = Mathf.Max(ymax, y); }
+                bool open = h.Count > 0 && h["position"].AsVector3().X - p.X > -2f;
+                if (open) { if (dBot < 0f) dBot = y; dTop = y; }
+                else if (dBot >= 0f) break;   // was open, now solid => that's the lintel; the door opening ends here
             }
-            GD.Print($"[elev-door] opening Z [{zmin:0.00}, {zmax:0.00}] (w {zmax - zmin:0.00}), Y [{ymin:0.00}, {ymax:0.00}] (h {ymax - ymin:0.00})");
+            GD.Print($"[elev-door] opening Z [{zmin:0.00}, {zmax:0.00}] (w {zmax - zmin:0.00}); door Y [{dBot:0.00}, {dTop:0.00}] (h {dTop - dBot:0.00}) contiguous floor->lintel");
         }
 
         // COSMETIC winch (master 2026-08-29 "add a black rope with a gray box at the top of the lift's travel. purely
