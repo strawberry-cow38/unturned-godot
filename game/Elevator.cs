@@ -51,7 +51,7 @@ namespace UnturnedGodot
             // HOLLOW collider: a thin FLOOR slab (the car IS a hollow mesh, not a facade -- the 360 showed a doorway +
             // interior). A rider stands INSIDE on this floor and rides with the car, instead of on the roof off a solid
             // box. Walls are left to the mesh for now (add wall colliders if players walk out). Master 2026-08-29.
-            const float FloorT = 0.25f;
+            const float FloorT = 0.4f;   // thick enough that the collider TOP meets the car's real interior floor (~0.4 above the AABB base), so a rider stands flush with the floors/landings, not sunk into the frame
             e.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = new Vector3(ab.Size.X, FloorT, ab.Size.Z) },
                 Position = new Vector3(ab.Position.X + ab.Size.X * 0.5f, ab.Position.Y + FloorT * 0.5f, ab.Position.Z + ab.Size.Z * 0.5f) });
             e.BaseLift = -ab.Position.Y;   // node Y needed to sit the car's base on the ground

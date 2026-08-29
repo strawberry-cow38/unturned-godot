@@ -1055,8 +1055,9 @@ namespace UnturnedGodot
             {
                 float fy = ev.Floors[f];   // world Y (the car is grounded at 0)
                 float shade = 0.30f + f * 0.06f;
+                float landdy = 0f; { var _l = System.Environment.GetEnvironmentVariable("UG_ELEVLANDDY"); if (!string.IsNullOrEmpty(_l)) landdy = float.Parse(_l); }   // diag: nudge landing to find flush-with-car-floor
                 AddChild(new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(5f, 0.25f, 4f) },
-                    Position = new Vector3(-4.6f, fy + 0.125f, 4.4f),
+                    Position = new Vector3(-4.6f, fy + 0.275f + landdy, 4.4f),   // surface at fy+0.4 = the car's interior floor, so the car stops flush with each landing
                     MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(shade, shade, shade + 0.03f), Roughness = 1f } });
                 // EXTERNAL call button at this landing: summon the car to THIS floor (master: "external call buttons
                 // too"). Same ElevatorButton -> GoToFloor(f); WORLD-parented so it stays at the floor, doesn't ride.
@@ -1075,7 +1076,9 @@ namespace UnturnedGodot
             var _sp = System.Environment.GetEnvironmentVariable("UG_ELEVSPEED"); if (!string.IsNullOrEmpty(_sp)) ev.SpeedMul = float.Parse(_sp);   // tune ride speed
             var _dw = System.Environment.GetEnvironmentVariable("UG_ELEVDWELL"); if (!string.IsNullOrEmpty(_dw)) ev.DwellTime = float.Parse(_dw);   // tune per-floor dwell
             bool hold = System.Environment.GetEnvironmentVariable("UG_ELEVHOLD") == "1";   // park at floor 0 (panel close-up still)
-            if (!ev.AutoFloors && !ev.AutoCycle && !hold) ev.Call();   // single ride up (still); AutoFloors/AutoCycle self-start from floor 0, UG_ELEVHOLD stays parked
+            var _goto = System.Environment.GetEnvironmentVariable("UG_ELEVGOTO");   // diag: ride to floor N + park (measure car-vs-landing alignment)
+            if (!string.IsNullOrEmpty(_goto)) ev.GoToFloor(int.Parse(_goto));
+            else if (!ev.AutoFloors && !ev.AutoCycle && !hold) ev.Call();   // single ride up (still); AutoFloors/AutoCycle self-start from floor 0, UG_ELEVHOLD stays parked
             var cam = new Camera3D { Current = true, Fov = 55f, Far = 2000f };
             AddChild(cam);
             cam.Position = new Vector3(-14f, 7.5f, 2.5f);
