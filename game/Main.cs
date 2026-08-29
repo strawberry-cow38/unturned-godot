@@ -1049,6 +1049,7 @@ namespace UnturnedGodot
                 rider.AddChild(new MeshInstance3D { Mesh = new SphereMesh { Radius = 0.22f, Height = 0.44f }, MaterialOverride = skin, Position = new Vector3(0f, 1.75f, 0f) });   // head
             }
             ev.AutoCycle = System.Environment.GetEnvironmentVariable("UG_ELEVCYCLE") == "1";   // ride VIDEO: cycle up/down
+            if (System.Environment.GetEnvironmentVariable("UG_ELEVFAST") == "1") { ev.SpeedMul = 6f; ev.DwellTime = 0.2f; }   // fast up/down (for a GIF)
             if (!ev.AutoCycle) ev.Call();   // else a single ride up (for a still)
             var cam = new Camera3D { Current = true, Fov = 52f, Far = 2000f };
             AddChild(cam);

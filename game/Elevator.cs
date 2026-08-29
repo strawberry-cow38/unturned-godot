@@ -21,6 +21,8 @@ namespace UnturnedGodot
         Vector3 _cableTopLocal;          // node-local point the rope attaches to (car top-centre)
         float _anchorY;                  // world Y the fixed top box hangs the rope from
         public bool AutoCycle;           // demo: auto-reverse at each stop after a dwell (for the ride video)
+        public float SpeedMul = 1f;      // demo: >1 speeds the car up (e.g. the fast up/down GIF)
+        public float DwellTime = 1.5f;   // demo: dwell at each stop before reversing
         public float CarTopY;            // node-local Y of the car roof (a demo rider stands here)
         float _dwell = 1f;
 
@@ -69,10 +71,10 @@ namespace UnturnedGodot
             var p = GlobalPosition;
             if (Mathf.Abs(p.Y - _targetY) < 0.0005f)   // parked at a stop
             {
-                if (AutoCycle) { _dwell -= (float)delta; if (_dwell <= 0f) { _dwell = 1.5f; Call(); } }   // demo: dwell, then reverse
+                if (AutoCycle) { _dwell -= (float)delta; if (_dwell <= 0f) { _dwell = DwellTime; Call(); } }   // demo: dwell, then reverse
                 return;
             }
-            float ny = Mathf.MoveToward(p.Y, _targetY, MoveSpeed * (float)delta);
+            float ny = Mathf.MoveToward(p.Y, _targetY, MoveSpeed * SpeedMul * (float)delta);
             GlobalPosition = new Vector3(p.X, ny, p.Z);
             UpdateCable();
         }
