@@ -36,6 +36,7 @@ namespace UnturnedGodot
         float _door = 1f;                     // 0 = doors shut, 1 = doors open (start open at floor 0)
         bool _forceShut;                      // diag (UG_ELEVDOORSHUT): freeze the doors closed for a fit-check still
         MeshInstance3D _doorL, _doorR;        // the two center-opening panels (children -> ride with the car)
+        CollisionShape3D _doorColL, _doorColR;   // colliders that slide with the panels -> shut doors physically seal the front
         const float DoorClosedZ = 0.95f, DoorOpenZ = 2.0f;   // right-panel |Z|: shut (meets centre) vs open (slid aside); left = -that
         const float DoorSpeed = 1.6f;         // door travel in _door units/sec (~0.6s to open or shut)
 
@@ -63,6 +64,10 @@ namespace UnturnedGodot
             const float FloorT = 0.25f;   // collider TOP sits at the mesh's real interior floor (measured 0.25 above the AABB base via a trimesh raycast), so the rider + landings line up with the floor exactly
             e.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = new Vector3(ab.Size.X, FloorT, ab.Size.Z) },
                 Position = new Vector3(ab.Position.X + ab.Size.X * 0.5f, ab.Position.Y + FloorT * 0.5f, ab.Position.Z + ab.Size.Z * 0.5f) });
+            // SOLID SHELL: a trimesh off the real mesh gives the walls/roof/frame proper collision (the door hole stays
+            // open so a rider walks in/out); the flat slab above stays as the stand-on floor. Kinematic AnimatableBody3D
+            // + a slow vertical move = the standard moving-platform pattern, safe with a concave shape (master 2026-08-29).
+            e.AddChild(new CollisionShape3D { Shape = mesh.CreateTrimeshShape(), Basis = standUp });
             e.BaseLift = -ab.Position.Y;   // node Y needed to sit the car's base on the ground
             if (System.Environment.GetEnvironmentVariable("UG_ELEVMESHCOL") == "1")
             {   // diag: give the RAW mesh a trimesh collider on a private layer so a downward ray finds the TRUE interior-floor Y
@@ -106,6 +111,9 @@ namespace UnturnedGodot
                 e._doorL = new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(panelT, panelH, panelW) }, MaterialOverride = dmat, Position = new Vector3(doorX, cy, -DoorClosedZ) };
                 e._doorR = new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(panelT, panelH, panelW) }, MaterialOverride = dmat, Position = new Vector3(doorX, cy, DoorClosedZ) };
                 e.AddChild(e._doorL); e.AddChild(e._doorR);
+                e._doorColL = new CollisionShape3D { Shape = new BoxShape3D { Size = new Vector3(panelT, panelH, panelW) }, Position = new Vector3(doorX, cy, -DoorClosedZ) };
+                e._doorColR = new CollisionShape3D { Shape = new BoxShape3D { Size = new Vector3(panelT, panelH, panelW) }, Position = new Vector3(doorX, cy, DoorClosedZ) };
+                e.AddChild(e._doorColL); e.AddChild(e._doorColR);
                 if (System.Environment.GetEnvironmentVariable("UG_ELEVDOORSHUT") == "1") { e._door = 0f; e._forceShut = true; }   // diag: park closed for a fit still
             }
             e.SetMeta(HitMeta, e);   // the look-ray hits this body -> reads the meta -> this Elevator
@@ -173,6 +181,7 @@ namespace UnturnedGodot
             float z = Mathf.Lerp(DoorClosedZ, DoorOpenZ, _door);
             _doorL.Position = new Vector3(_doorL.Position.X, _doorL.Position.Y, -z);
             _doorR.Position = new Vector3(_doorR.Position.X, _doorR.Position.Y, z);
+            if (_doorColL != null) { _doorColL.Position = new Vector3(_doorColL.Position.X, _doorColL.Position.Y, -z); _doorColR.Position = new Vector3(_doorColR.Position.X, _doorColR.Position.Y, z); }
         }
 
         // diag (UG_ELEVMESHCOL): print the true interior-floor world Y + the door-frame opening bounds, once per park.
