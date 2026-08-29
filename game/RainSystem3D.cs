@@ -21,8 +21,8 @@ namespace UnturnedGodot
             {
                 ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
                 Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
-                AlbedoColor = new Color(0.86f, 0.91f, 1.0f, 0.38f),
-                BillboardMode = BaseMaterial3D.BillboardModeEnum.Particles,   // billboard that respects the per-particle angle (so the streaks can slant)
+                AlbedoColor = new Color(0.87f, 0.92f, 1.0f, 0.22f),
+                BillboardMode = BaseMaterial3D.BillboardModeEnum.Disabled,   // no billboard -> the velocity-aligned world tilt shows honestly
                 BillboardKeepScale = true,
                 CullMode = BaseMaterial3D.CullModeEnum.Disabled,
                 DisableReceiveShadows = true,
@@ -43,10 +43,10 @@ namespace UnturnedGodot
                 EmissionBoxExtents = new Vector3(16f, 2f, 16f),
                 Direction = new Vector3(0.12f, -1f, 0f),
                 Spread = 3f,
-                Gravity = new Vector3(2.5f, -22f, 0f),   // wind drift + a strong fall
+                Gravity = new Vector3(5f, -22f, 0f),   // stronger wind drift so the lean is visible
                 InitialVelocityMin = 10f, InitialVelocityMax = 14f,
                 ScaleAmountMin = 0.8f, ScaleAmountMax = 1.5f,
-                AngleMin = 13f, AngleMax = 17f,   // slant the streaks to the wind
+                ParticleFlagAlignY = true,   // align each streak's Y to its VELOCITY -> leans the way it actually falls
                 Emitting = true,
             };
             AddChild(_p);
