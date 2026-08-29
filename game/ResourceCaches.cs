@@ -48,6 +48,7 @@ namespace UnturnedGodot
             PlayerController.ClearCaches();
             Viewmodel.ClearCaches();
             GlassPane.ClearCaches();
+            GlassShards.ClearCaches();
             GD.Print("[caches] cleared all static resource caches (editor/map transition)");
         }
 
@@ -56,7 +57,7 @@ namespace UnturnedGodot
         public static int TotalCached =>
             ObjMesh.CachedCount + ImpactFx.CachedCount + DoorDeploy.CachedCount + EditorIcons.CachedCount
             + AttachmentMenu.CachedCount + RiggedCharacter.CachedCount + TVDevice.CachedCount
-            + InventoryUI.CachedCount + StoreShelf.CachedCount;
+            + InventoryUI.CachedCount + StoreShelf.CachedCount + GlassShards.CachedCount;
     }
 
     public static partial class ObjMesh
@@ -172,5 +173,15 @@ namespace UnturnedGodot
     public partial class GlassPane
     {
         internal static void ClearCaches() { _snd = null; _sndTried = false; }
+    }
+
+    public static partial class GlassShards
+    {
+        // The two retail remnant meshes, held in statics so a wall full of smashed windows loads them once.
+        // Registered here because that is the whole point of this file: a mesh built during an editor session
+        // and still referenced after the reload is the "textures are wrong after leaving the editor" shape.
+        // Missed on the way in -- the cache was added the same day and nothing forces a new one to be listed.
+        internal static int CachedCount => (_a != null ? 1 : 0) + (_b != null ? 1 : 0);
+        internal static void ClearCaches() { _a = null; _b = null; }
     }
 }

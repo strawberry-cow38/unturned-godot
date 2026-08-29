@@ -42,6 +42,26 @@ namespace UnturnedGodot.Testing.Tests
             T.Check("a cache still serves after being cleared (it refills, not just empties)",
                     again != null && ResourceCaches.TotalCached > 0);
 
+            ResourceCaches.ClearAll();
+
+            // A CACHE ADDED LATER IS THE ONE THAT GETS MISSED. GlassShards holds two retail meshes in statics
+            // and was NOT registered when it was written -- same day, and nothing in the build or the suite
+            // objects to a new static cache going unlisted. TotalCached counts only some of what ClearAll
+            // clears, so an unregistered cache is invisible here twice over: not cleared, and not counted.
+            //
+            // Driving it explicitly is the only way this file can speak for it.
+            var shards = GlassShards.Build(new Vector2(1.2f, 1.5f), Colors.White, 1234);
+            T.Check("shards built (needs the retail Glass_0/Glass_1 on disk)", shards != null);
+            if (shards != null)
+            {
+                shards.QueueFree();
+                int cached = ResourceCaches.TotalCached;
+                T.Check($"building shards populated a cache ({cached})", cached > 0);
+                ResourceCaches.ClearAll();
+                T.Check($"...and ClearAll drops it ({ResourceCaches.TotalCached})",
+                        ResourceCaches.TotalCached == 0);
+            }
+
             ResourceCaches.ClearAll();   // leave the shared boot as we found it
             yield break;
         }

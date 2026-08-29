@@ -16,7 +16,7 @@ namespace UnturnedGodot
     /// thick whose outlines both run from (-1,-1) to (1,-1) along one edge and then break upward in a ragged
     /// line -- Glass_0 keeps a tall piece on one side, Glass_1 a low band across. They are already remnants
     /// clinging to an edge, so they need placing, not modelling.</summary>
-    public static class GlassShards
+    public static partial class GlassShards
     {
         /// <summary>Half the opening, so opposite corners' shards meet in the middle at most and a whole
         /// pane is never reconstructed out of four quarters.</summary>
