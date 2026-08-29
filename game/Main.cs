@@ -1042,7 +1042,7 @@ namespace UnturnedGodot
             // a simple humanoid "rider" parented to the car so it rides with the lift (visual: a player aboard the demo)
             if (System.Environment.GetEnvironmentVariable("UG_ELEVNORIDER") != "1")
             {
-                var rider = new Node3D { Position = new Vector3(-0.05f, 0.15f, 0f) };   // INSIDE the car on the floor, not on the roof
+                var rider = new Node3D { Position = new Vector3(-0.05f, 0f, 0f) };   // INSIDE the car, feet on the interior floor (~0.25 above base)
                 ev.AddChild(rider);
                 var skin = new StandardMaterial3D { AlbedoColor = new Color(0.85f, 0.68f, 0.55f), Roughness = 1f };
                 var shirt = new StandardMaterial3D { AlbedoColor = new Color(0.25f, 0.45f, 0.75f), Roughness = 1f };
@@ -1057,8 +1057,9 @@ namespace UnturnedGodot
                 float shade = 0.30f + f * 0.06f;
                 float landdy = 0f; { var _l = System.Environment.GetEnvironmentVariable("UG_ELEVLANDDY"); if (!string.IsNullOrEmpty(_l)) landdy = float.Parse(_l); }   // diag: nudge landing to find flush-with-car-floor
                 AddChild(new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(5f, 0.25f, 4f) },
-                    Position = new Vector3(-4.6f, fy + 0.275f + landdy, 4.4f),   // surface at fy+0.4 = the car's interior floor, so the car stops flush with each landing
+                    Position = new Vector3(-4.6f, fy + 0.125f + landdy, 4.4f),   // surface at fy+0.25 = the car's MEASURED interior floor, so the car stops flush with each landing
                     MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(shade, shade, shade + 0.03f), Roughness = 1f } });
+                if (System.Environment.GetEnvironmentVariable("UG_ELEVMESHCOL") == "1") GD.Print($"[landing] floor {f}: landing top world Y = {fy + 0.125f + landdy + 0.125f:0.000}");   // diag alongside the mesh-floor raycast
                 // EXTERNAL call button at this landing: summon the car to THIS floor (master: "external call buttons
                 // too"). Same ElevatorButton -> GoToFloor(f); WORLD-parented so it stays at the floor, doesn't ride.
                 var ecol = f == 0 ? new Color(0.35f, 0.85f, 0.45f) : f == ev.Floors.Length - 1 ? new Color(0.92f, 0.34f, 0.32f) : new Color(0.95f, 0.85f, 0.35f);

@@ -29,6 +29,7 @@ namespace UnturnedGodot
         public float DwellTime = 1.5f;   // demo: dwell at each stop before reversing
         public float CarTopY;            // node-local Y of the car roof (a demo rider stands here)
         float _dwell = 1f;
+        bool _measureFloor;   // diag (UG_ELEVMESHCOL): raycast the real mesh once to print the true interior-floor world Y
 
         /// <summary>Assemble the elevator from Elevator_0.obj (+ its vertex-colour texture), a box collider off the mesh
         /// AABB, and the HitMeta tag. The caller positions it; _Ready latches that as the bottom stop.</summary>
@@ -51,10 +52,17 @@ namespace UnturnedGodot
             // HOLLOW collider: a thin FLOOR slab (the car IS a hollow mesh, not a facade -- the 360 showed a doorway +
             // interior). A rider stands INSIDE on this floor and rides with the car, instead of on the roof off a solid
             // box. Walls are left to the mesh for now (add wall colliders if players walk out). Master 2026-08-29.
-            const float FloorT = 0.4f;   // thick enough that the collider TOP meets the car's real interior floor (~0.4 above the AABB base), so a rider stands flush with the floors/landings, not sunk into the frame
+            const float FloorT = 0.25f;   // collider TOP sits at the mesh's real interior floor (measured 0.25 above the AABB base via a trimesh raycast), so the rider + landings line up with the floor exactly
             e.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = new Vector3(ab.Size.X, FloorT, ab.Size.Z) },
                 Position = new Vector3(ab.Position.X + ab.Size.X * 0.5f, ab.Position.Y + FloorT * 0.5f, ab.Position.Z + ab.Size.Z * 0.5f) });
             e.BaseLift = -ab.Position.Y;   // node Y needed to sit the car's base on the ground
+            if (System.Environment.GetEnvironmentVariable("UG_ELEVMESHCOL") == "1")
+            {   // diag: give the RAW mesh a trimesh collider on a private layer so a downward ray finds the TRUE interior-floor Y
+                var mc = new StaticBody3D { CollisionLayer = 1u << 10, CollisionMask = 0 };
+                mc.AddChild(new CollisionShape3D { Shape = mesh.CreateTrimeshShape(), Basis = standUp });
+                e.AddChild(mc);
+                e._measureFloor = true;
+            }
             e._cableTopLocal = new Vector3(ab.Position.X + ab.Size.X * 0.5f, ab.Position.Y + ab.Size.Y, ab.Position.Z + ab.Size.Z * 0.5f);   // top-centre of the car -> the rope hangs from here
             e.CarTopY = ab.Position.Y + ab.Size.Y;   // car roof height (node-local)
             // BUTTON PANEL on the +X back interior wall: a dark backing plate + one coloured floor button per stop,
@@ -103,6 +111,14 @@ namespace UnturnedGodot
             var p = GlobalPosition;
             if (Mathf.Abs(p.Y - _targetY) < 0.0005f)   // parked at a stop
             {
+                if (_measureFloor) { _measureFloor = false;
+                    var ss = GetWorld3D().DirectSpaceState;
+                    var q = PhysicsRayQueryParameters3D.Create(p + new Vector3(-0.05f, 2.0f, 0f), p + new Vector3(-0.05f, -0.5f, 0f));
+                    q.CollisionMask = 1u << 10;
+                    var hit = ss.IntersectRay(q);
+                    if (hit.Count > 0) { float fy = hit["position"].AsVector3().Y; GD.Print($"[elev-floor] floor {_curFloor}: elevator floor top world Y = {fy:0.000} (car base Y = {p.Y:0.000})"); }
+                    else GD.Print("[elev-floor] NO floor hit");
+                }
                 if (AutoFloors) { _dwell -= (float)delta; if (_dwell <= 0f) { _dwell = DwellTime; StepFloor(); } }   // demo: dwell, then step to the next floor
                 else if (AutoCycle) { _dwell -= (float)delta; if (_dwell <= 0f) { _dwell = DwellTime; Call(); } }   // demo: dwell, then reverse
                 return;
