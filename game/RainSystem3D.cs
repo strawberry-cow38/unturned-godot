@@ -16,16 +16,19 @@ namespace UnturnedGodot
 
         public override void _Ready()
         {
-            var quad = new QuadMesh { Size = new Vector2(0.014f, 0.8f) };   // a thin, tall streak
+            var quad = new QuadMesh { Size = new Vector2(0.014f, 0.62f) };   // a thin, tall streak
             quad.Material = new StandardMaterial3D
             {
                 ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
                 Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
-                AlbedoColor = new Color(0.85f, 0.90f, 1.0f, 0.60f),
-                BillboardMode = BaseMaterial3D.BillboardModeEnum.FixedY,   // stay vertical, turn around Y to face the camera
+                AlbedoColor = new Color(0.86f, 0.91f, 1.0f, 0.38f),
+                BillboardMode = BaseMaterial3D.BillboardModeEnum.Particles,   // billboard that respects the per-particle angle (so the streaks can slant)
                 BillboardKeepScale = true,
                 CullMode = BaseMaterial3D.CullModeEnum.Disabled,
                 DisableReceiveShadows = true,
+                DistanceFadeMode = BaseMaterial3D.DistanceFadeModeEnum.PixelAlpha,   // fade drops right at the lens so they don't read as fat bars
+                DistanceFadeMinDistance = 1.5f,
+                DistanceFadeMaxDistance = 3.2f,
             };
             _p = new CpuParticles3D
             {
@@ -43,6 +46,7 @@ namespace UnturnedGodot
                 Gravity = new Vector3(2.5f, -22f, 0f),   // wind drift + a strong fall
                 InitialVelocityMin = 10f, InitialVelocityMax = 14f,
                 ScaleAmountMin = 0.8f, ScaleAmountMax = 1.5f,
+                AngleMin = 13f, AngleMax = 17f,   // slant the streaks to the wind
                 Emitting = true,
             };
             AddChild(_p);
