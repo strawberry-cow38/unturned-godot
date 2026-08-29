@@ -32,7 +32,7 @@ float sheet(vec2 uv, float t, float dens, float speed, float len, float thick, f
     uv.x += uv.y * wind;                                     // wind slant
     vec2 g = vec2(uv.x * dens, uv.y * dens * 0.14);          // long cells -> streaky
     float phase = h21(vec2(floor(g.x), 5.2));
-    g.y += t * speed + phase * 31.0;                         // fall + per-column phase stagger
+    g.y += phase * 31.0 - t * speed;                         // -t so it falls DOWN (SCREEN_UV y=0 is top) + per-column phase stagger
     vec2 id = floor(g);
     float r = h21(id);
     float present = step(1.0 - fill * clamp(0.35 + intensity, 0.0, 1.0), r);   // more drops at higher intensity

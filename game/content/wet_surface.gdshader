@@ -21,13 +21,20 @@ float splashes(vec2 wxz, float t){
     for (int k = 0; k < 2; k++){
         float sc = (2.2 + float(k) * 3.3) * splash_scale;
         vec2 g = wxz * sc + float(k) * 21.0;
-        vec2 id = floor(g);
-        vec2 f = fract(g) - 0.5;
-        float seed = h21(id);
-        float life = fract(t * (0.65 + seed * 0.7) + seed);   // 0..1 ripple lifecycle
-        float rad = life * (0.26 + seed * 0.30);              // varied max radius -> not a uniform grid
-        float ring = smoothstep(0.055, 0.0, abs(length(f) - rad));   // thin ring at that radius
-        acc += ring * (1.0 - life) * step(0.38, seed) * (0.55 + seed * 0.45);   // fade out; vary brightness; not every cell fires
+        vec2 base = floor(g);
+        // Voronoi-style: scan the 3x3 neighbourhood, each cell has a JITTERED ripple source -> scattered, not a grid,
+        // and rings from neighbouring cells overlap freely (no cell-edge clipping).
+        for (int dy = -1; dy <= 1; dy++){
+            for (int dx = -1; dx <= 1; dx++){
+                vec2 id = base + vec2(float(dx), float(dy));
+                float seed = h21(id);
+                vec2 center = id + vec2(h21(id + 1.3), h21(id + 7.7));   // random source point inside the cell
+                float life = fract(t * (0.65 + seed * 0.7) + seed);     // 0..1 ripple lifecycle
+                float rad = life * (0.32 + seed * 0.40);                // varied max radius
+                float ring = smoothstep(0.06, 0.0, abs(length(g - center) - rad));
+                acc += ring * (1.0 - life) * step(0.40, seed) * (0.55 + seed * 0.45);   // fade out; vary brightness; not every cell fires
+            }
+        }
     }
     return acc;
 }
