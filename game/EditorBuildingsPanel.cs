@@ -129,6 +129,31 @@ namespace UnturnedGodot
 
         /// <summary>Light the button for whatever tool is actually live -- panel click, keyboard shortcut or
         /// a tool that disarmed itself. Reads the authority rather than remembering what it last set.</summary>
+        readonly System.Collections.Generic.List<(RoofKind K, Button B)> _shapeButtons = new();
+
+        void PickRoofShape(RoofKind k)
+        {
+            _b.ActiveRoofKind = k;
+            foreach (var (kk, btn) in _shapeButtons) btn.ButtonPressed = kk == k;
+            RetargetRoof();
+        }
+
+        /// <summary>Push the current shape and pitch onto the roof already standing, if there is one.
+        ///
+        /// Only the LAST roof: with no selection model, "the one you just made" is the only honest guess,
+        /// and silently re-pitching a roof on the other side of the plot would be worse than doing nothing.</summary>
+        void RetargetRoof()
+        {
+            var roof = _b.LastRoof;
+            if (roof == null) return;
+            var spec = roof.Spec;
+            spec.Kind = _b.ActiveRoofKind;
+            spec.PitchDeg = _b.ActiveRoofPitch;
+            if (_b.ModifyRoof(roof, spec) != null)
+                Say($"roof is now {_b.ActiveRoofKind.ToString().ToLowerInvariant()}"
+                    + (_b.ActiveRoofKind == RoofKind.Flat ? "" : $" at {_b.ActiveRoofPitch:0.#}°"));
+        }
+
         void SyncToolButtons()
         {
             var t = _b.Tool;
@@ -250,13 +275,34 @@ namespace UnturnedGodot
             IconAction(autos, EditorIcons.Glyph.Roof, 40, "Auto roof", "fit a roof over every wall",
                        () =>
                        {
-                           int n = _b.AddGableRoof(_b.ActiveRoofPitch);
-                           Say(n > 0 ? (_b.ActiveRoofPitch <= 0.1f ? "flat roof added"
-                                                                   : $"gable roof at {_b.ActiveRoofPitch:0.#}°")
+                           var made = _b.PlaceRoofOverWalls(_b.ActiveRoofKind, _b.ActiveRoofPitch);
+                           int n = made?.Count ?? 0;
+                           Say(n > 0 ? (_b.ActiveRoofKind == RoofKind.Flat ? "flat roof added"
+                                        : $"{_b.ActiveRoofKind.ToString().ToLowerInvariant()} roof at {_b.ActiveRoofPitch:0.#}°")
                                      : "draw some walls first");
                        });
             box.AddChild(Dim("AUTO-FIT"));
             box.AddChild(autos);
+
+            // ROOF SHAPE. Separate from the pitch, because they are separate questions -- a hip and a gable
+            // at 30 degrees are the same slope and a different building.
+            box.AddChild(Dim("ROOF SHAPE"));
+            var shapes = new GridContainer { Columns = 3 };
+            shapes.AddThemeConstantOverride("h_separation", 4);
+            var kinds = new (RoofKind K, EditorIcons.Glyph G, string Label, string Tip)[]
+            {
+                (RoofKind.Flat, EditorIcons.Glyph.Floor, "Flat", "a slab on the wall heads — 80% of retail"),
+                (RoofKind.Gable, EditorIcons.Glyph.Roof, "Gable", "two slopes to a ridge; the end walls close it"),
+                (RoofKind.Hip, EditorIcons.Glyph.RoofHip, "Hip", "four slopes, no gable ends — square gives a pyramid"),
+            };
+            foreach (var (k, g, label, tip) in kinds)
+            {
+                var kk = k;
+                var btn = ToolButton(shapes, g, 44, label, tip, () => PickRoofShape(kk));
+                btn.ButtonPressed = _b.ActiveRoofKind == kk;
+                _shapeButtons.Add((kk, btn));
+            }
+            box.AddChild(shapes);
 
             // Snapped to the measured retail pitches rather than free: those are where real roofs sit, and 0
             // (flat) is first because it is 80% of them.
@@ -272,6 +318,10 @@ namespace UnturnedGodot
             {
                 _b.ActiveRoofPitch = EditorBuildings.RoofPitches[Mathf.Clamp((int)v, 0, EditorBuildings.RoofPitches.Length - 1)];
                 _pitchLbl.Text = PitchText(_b.ActiveRoofPitch);
+                // AND RE-PITCH THE ROOF THAT IS ALREADY UP. This is the point of roofs being objects:
+                // strawberry_cow's complaint was that you place one, it is wrong, and your only move is to
+                // undo back past it. Moving the slider now changes the roof you are looking at.
+                RetargetRoof();
             };
             box.AddChild(pitch);
 

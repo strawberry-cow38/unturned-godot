@@ -2208,19 +2208,163 @@ namespace UnturnedGodot
         /// spans the whole footprint -- its apex sits at the WALL's midpoint. An L-shaped plan, an offset end
         /// wall or a diagonal one gets a triangle that misses the roof planes. The along/across-ridge
         /// classification is a 45-degree threshold, which is meaningless for a diagonal wall.</summary>
+        /// <summary>Roof everything drawn, gabled -- or flat if the pitch is off.
+        ///
+        /// The footprint used to be measured here as well as in the flat path, which is why a flat roof and a
+        /// gable over the same walls could disagree about where the eave was. One measurement now, in
+        /// RoofFootprint, which also owns the one thing that genuinely differs by kind: retail flat roofs sit
+        /// flush with the wall face and pitched ones overhang.</summary>
         public int AddGableRoof(float pitchDeg)
-        {
-            if (pitchDeg <= 0.1f) return AddSlab(SurfaceKind.Roof) != null ? 1 : 0;   // flat is a slab
-            pitchDeg = Mathf.Clamp(pitchDeg, 1f, 70f);
+            => PlaceRoofOverWalls(pitchDeg <= 0.1f ? RoofKind.Flat : RoofKind.Gable, pitchDeg)?.Count ?? 0;
 
+        /// <summary>Build a gable roof over an explicit footprint: two slopes meeting at a ridge, and the
+        /// walls that run across the ridge raised into gable ends to close it.
+        ///
+        /// Split out of AddGableRoof so the DRAG-RECT roof can use it. Drawing one slope at a time was me
+        /// exposing the primitive instead of the thing you want -- strawberry_cow: "why am i placing one
+        /// slope at a time instead of drawing a gable zone over a rect".</summary>
+        public int BuildGableOver(float minX, float maxX, float minZ, float maxZ, float topY,
+                                  float pitchDeg, int material, float maxWallThickness)
+            => PlaceRoof(new RoofSpec
+            {
+                Kind = RoofKind.Gable, MinX = minX, MaxX = maxX, MinZ = minZ, MaxZ = maxZ,
+                TopY = topY, PitchDeg = pitchDeg, Thickness = SlabThickness, Material = material, Texel = -1,
+            })?.Count ?? 0;
+
+        // ---- a roof is an OBJECT, not the surfaces it turned into --------------------------------------
+
+        /// <summary>A placed roof: what it IS, and what it currently exists as.
+        ///
+        /// strawberry_cow asked for more roof shapes AND for the ability to modify placed roofs, and those
+        /// are one job. Roofs used to be emitted straight into surfaces, so nothing recorded that six
+        /// surfaces and two raised walls were one roof -- changing the pitch meant undoing back past it and
+        /// redrawing, and adding shapes on top of that would have multiplied what was already wrong.
+        ///
+        /// Members are node references rather than indices because indices shift under every spawn and free.
+        /// Raised keeps each wall's PREVIOUS gable rise: a wall can carry an authored gable from an import,
+        /// so removing a roof has to put back what was there, not zero.</summary>
+        public sealed class PlacedRoof
+        {
+            public int Id;
+            public RoofSpec Spec;
+            public readonly List<WallSurface> Members = new();
+            public readonly List<(WallSurface W, float Prev)> Raised = new();
+            public int Count => Members.Count + Raised.Count;
+        }
+
+        readonly List<PlacedRoof> _roofs = new();
+        int _nextRoofId = 1;
+        public IReadOnlyList<PlacedRoof> Roofs => _roofs;
+        public PlacedRoof LastRoof => _roofs.Count > 0 ? _roofs[_roofs.Count - 1] : null;
+
+        /// <summary>Build a roof from its spec and remember it as one.</summary>
+        public PlacedRoof PlaceRoof(RoofSpec spec, int reuseId = 0, bool pushUndo = true)
+        {
+            var planes = RoofShapes.Planes(spec);
+            if (planes.Count == 0) return null;
+
+            var roof = new PlacedRoof { Id = reuseId > 0 ? reuseId : _nextRoofId++, Spec = spec };
+            foreach (var pl in planes)
+                roof.Members.Add(SpawnWall(new Vector3(pl.X, pl.Y, pl.Z), pl.YawDeg, pl.Length, spec.Thickness,
+                                           spec.Material, null, pl.Height, pl.PitchDeg, SurfaceKind.Roof,
+                                           0f, spec.Texel, pl.InsetL0, pl.InsetL1, pl.InsetR0, pl.InsetR1));
+
+            // Close the ends. A gable needs the walls across its ridge raised into triangles, plus a straight
+            // band where the roof reaches further out than the wall does; a hip closes its own ends and a
+            // flat roof has none, and RoofShapes owns which is which so this does not become a second place
+            // that knows the rule.
+            //
+            // A COPY of _walls: spawning a band appends to it, and mutating it mid-foreach throws.
+            foreach (var w in new List<WallSurface>(_walls))
+            {
+                if (!IsInstanceValid(w) || w.Kind != SurfaceKind.Wall) continue;
+                float yaw = Mathf.Wrap(w.RotationDegrees.Y, 0f, 180f);
+                bool runsAlongX = yaw < 45f || yaw > 135f;
+                if (!RoofShapes.WallGetsGable(spec, runsAlongX)) continue;
+
+                float triRise = RoofShapes.GableRiseForWall(spec, w.Length);
+                float band = RoofShapes.GableBandForWall(spec, w.Length);
+                if (band > 0.01f)
+                {
+                    // THE ROOF OWNS THIS WALL'S TOP NOW, so park whatever gable the wall was already
+                    // carrying. An imported building arrives with GableRise read off its mesh, and the band
+                    // is placed at the wall's HEAD -- so leaving the wall's own peak up stacks a second
+                    // triangle inside the first. Recorded rather than zeroed, so removing the roof gives the
+                    // import back instead of flattening a wall the roof never made.
+                    if (w.GableRise > 0.01f)
+                    {
+                        roof.Raised.Add((w, w.GableRise));
+                        w.GableRise = 0f;
+                        w.Rebuild();
+                    }
+                    // A separate surface rather than a taller wall: raising w.Height would COMPOUND on the
+                    // next roof build -- the same relative-vs-absolute trap that grew a pilaster on every
+                    // corner -- and the band wears the wall's own colour, which is what was asked for.
+                    roof.Members.Add(SpawnWall(w.Position + new Vector3(0f, w.Height, 0f), w.RotationDegrees.Y,
+                                               w.Length, w.Thickness, w.MaterialId, null, band,
+                                               w.RotationDegrees.X, SurfaceKind.Wall, triRise));
+                }
+                else
+                {
+                    roof.Raised.Add((w, w.GableRise));
+                    w.GableRise = triRise;
+                    w.Rebuild();
+                }
+            }
+
+            _roofs.Add(roof);
+            // ModifyRoof suppresses this: it removes and re-places, and two pushes for one edit means the
+            // first Ctrl+Z lands on a step that has already been undone and appears to do nothing.
+            if (pushUndo) _editor?.PushUndo($"{spec.Kind.ToString().ToLowerInvariant()} roof", () => RemoveRoof(roof));
+            return roof;
+        }
+
+        /// <summary>Take a placed roof away again, putting back the walls it raised.</summary>
+        public void RemoveRoof(PlacedRoof roof)
+        {
+            if (roof == null) return;
+            foreach (var m in roof.Members) RemoveWall(m);
+            foreach (var (w, prev) in roof.Raised)
+                if (IsInstanceValid(w)) { w.GableRise = prev; w.Rebuild(); }
+            roof.Members.Clear();
+            roof.Raised.Clear();
+            _roofs.Remove(roof);
+        }
+
+        /// <summary>Change a placed roof -- its pitch, its shape, its material -- and rebuild it in place.
+        ///
+        /// The rebuild is total rather than incremental, and that is deliberate: a roof is FULLY determined
+        /// by its spec, so re-deriving it is correct by construction, while patching the surfaces in place
+        /// would be a second implementation of the shape that has to agree with the first.
+        ///
+        /// It keeps the roof's Id, so a panel holding a selection still holds it afterwards.</summary>
+        public PlacedRoof ModifyRoof(PlacedRoof roof, RoofSpec spec)
+        {
+            if (roof == null) return null;
+            var before = roof.Spec;
+            int id = roof.Id;
+            RemoveRoof(roof);
+            var rebuilt = PlaceRoof(spec, id, pushUndo: false);
+            _editor?.PushUndo("edit roof", () =>
+            {
+                if (rebuilt != null) RemoveRoof(rebuilt);
+                PlaceRoof(before, id, pushUndo: false);
+            });
+            return rebuilt;
+        }
+
+        /// <summary>The eave footprint for a roof over everything drawn on this storey, and the wall head it
+        /// sits on. False when there are no walls to roof.</summary>
+        public bool RoofFootprint(RoofKind kind, out RoofSpec spec)
+        {
+            spec = default;
             float minX = float.MaxValue, maxX = float.MinValue, minZ = float.MaxValue, maxZ = float.MinValue;
-            float topY = float.MinValue;
-            int seen = 0, material = ActiveMaterial;
-            float maxWallThickness = WallOpenings.DefaultThickness;
+            float topY = float.MinValue, maxThickness = WallOpenings.DefaultThickness;
+            int material = ActiveMaterial, seen = 0;
             foreach (var w in _walls)
             {
                 if (!IsInstanceValid(w) || w.Kind != SurfaceKind.Wall) continue;
-                maxWallThickness = Mathf.Max(maxWallThickness, w.Thickness);
+                maxThickness = Mathf.Max(maxThickness, w.Thickness);
                 foreach (float u in new[] { 0f, w.Length })
                 {
                     var p = w.UVToWorld(u, 0f);
@@ -2231,93 +2375,31 @@ namespace UnturnedGodot
                 material = w.MaterialId;
                 seen++;
             }
-            if (seen == 0) return 0;
+            if (seen == 0) return false;
 
-            // flush with the outer wall face, same as a flat roof -- see AddSlab
-            float halfW = maxWallThickness * 0.5f + RoofOverhang;
-            minX -= halfW; maxX += halfW; minZ -= halfW; maxZ += halfW;
-
-            return BuildGableOver(minX, maxX, minZ, maxZ, topY, pitchDeg, material, maxWallThickness);
+            // Retail measures a FLAT roof flush with the wall face -- 24 of 26 buildings within 6 cm -- and
+            // strawberry_cow corrected my correction on it ("flat roofs SHOULDNT" overhang). A pitched one
+            // does overhang, so the grow differs by kind and the spec carries the result rather than the rule.
+            float grow = maxThickness * 0.5f + (kind == RoofKind.Flat ? 0f : RoofOverhang);
+            spec = new RoofSpec
+            {
+                Kind = kind, MinX = minX - grow, MaxX = maxX + grow, MinZ = minZ - grow, MaxZ = maxZ + grow,
+                TopY = topY, PitchDeg = ActiveRoofPitch, Thickness = SlabThickness,
+                Material = material, Texel = -1,
+            };
+            return true;
         }
 
-        /// <summary>Build a gable roof over an explicit footprint: two slopes meeting at a ridge, and the
-        /// walls that run across the ridge raised into gable ends to close it.
-        ///
-        /// Split out of AddGableRoof so the DRAG-RECT roof can use it. Drawing one slope at a time was me
-        /// exposing the primitive instead of the thing you want -- strawberry_cow: "why am i placing one
-        /// slope at a time instead of drawing a gable zone over a rect".</summary>
-        public int BuildGableOver(float minX, float maxX, float minZ, float maxZ, float topY,
-                                  float pitchDeg, int material, float maxWallThickness)
+        /// <summary>Which shape the roof buttons build. Flat is the default because it is what retail
+        /// overwhelmingly is -- 80% of the sloped-and-flat roof area across 52 sampled buildings.</summary>
+        public RoofKind ActiveRoofKind = RoofKind.Flat;
+
+        /// <summary>Roof everything drawn, in the shape asked for.</summary>
+        public PlacedRoof PlaceRoofOverWalls(RoofKind kind, float pitchDeg)
         {
-            pitchDeg = Mathf.Clamp(pitchDeg, 1f, 70f);
-            float spanX = maxX - minX, spanZ = maxZ - minZ;
-            bool ridgeAlongX = spanX >= spanZ;                 // the ridge runs the LONG way, as a roof does
-            float half = (ridgeAlongX ? spanZ : spanX) * 0.5f;
-            float th = Mathf.DegToRad(pitchDeg);
-            float rise = half * Mathf.Tan(th);
-            float slope = half / Mathf.Cos(th);
-            float pitchNode = pitchDeg - 90f;                  // -90 is flat; adding the pitch tilts it up
-
-            var made = new List<WallSurface>();
-            if (ridgeAlongX)
-            {
-                made.Add(SpawnWall(new Vector3(minX, topY, maxZ), 0f, spanX, SlabThickness, material, null, slope, pitchNode, SurfaceKind.Roof));
-                made.Add(SpawnWall(new Vector3(maxX, topY, minZ), 180f, spanX, SlabThickness, material, null, slope, pitchNode, SurfaceKind.Roof));
-            }
-            else
-            {
-                made.Add(SpawnWall(new Vector3(minX, topY, minZ), -90f, spanZ, SlabThickness, material, null, slope, pitchNode, SurfaceKind.Roof));
-                made.Add(SpawnWall(new Vector3(maxX, topY, maxZ), 90f, spanZ, SlabThickness, material, null, slope, pitchNode, SurfaceKind.Roof));
-            }
-
-            // Raise the walls that run ACROSS the ridge into gable ends. A wall parallel to the ridge stays
-            // flat-topped -- putting a peak on all four is the classic wrong-looking roof.
-            //
-            // The gable triangle's SLOPE has to be the roof's slope, which means it is set by the WALL's own
-            // half-length, not by the roof footprint's. Those differ the moment the roof overhangs, and
-            // setting GableRise = rise (the footprint's) made the triangle steeper than the roof it sits
-            // under: measured on a 9 m wall at 20 deg with a 0.75 m overhang, 3.01 deg steeper, meeting the
-            // roof only at the apex and opening a 0.27 m wedge of daylight along both sloped edges.
-            //
-            // What closes it is a straight band between the wall top and the triangle -- strawberry_cow's
-            // "the wall portion between the roof part and the actual walls". It is a separate surface rather
-            // than a taller wall because raising w.Height would COMPOUND on a second roof build (the same
-            // relative-vs-absolute trap that grew a pilaster on every corner), and because that band wears
-            // the wall's colour, which is what they asked for when the importer met the same shape.
-            float tanP = Mathf.Tan(th);
-            var raised = new List<(WallSurface W, float Prev)>();
-            var bands = new List<WallSurface>();
-            // A COPY: spawning a band appends to _walls, and mutating it mid-foreach throws. Same reason
-            // AddFoundation iterates a copy.
-            foreach (var w in new List<WallSurface>(_walls))
-            {
-                if (!IsInstanceValid(w) || w.Kind != SurfaceKind.Wall) continue;
-                float yaw = Mathf.Wrap(w.RotationDegrees.Y, 0f, 180f);
-                bool runsAlongX = yaw < 45f || yaw > 135f;
-                if (runsAlongX == ridgeAlongX) continue;       // parallel to the ridge: no gable
-                float triRise = w.Length * 0.5f * tanP;        // slope-matched to the roof above it
-                float band = rise - triRise;                   // 0 when the roof does not overhang this wall
-                if (band > 0.01f)
-                {
-                    bands.Add(SpawnWall(w.Position + new Vector3(0f, w.Height, 0f), w.RotationDegrees.Y,
-                                        w.Length, w.Thickness, w.MaterialId, null, band,
-                                        w.RotationDegrees.X, SurfaceKind.Wall, triRise));
-                }
-                else
-                {
-                    raised.Add((w, w.GableRise));
-                    w.GableRise = triRise;
-                    w.Rebuild();
-                }
-            }
-
-            _editor?.PushUndo("gable roof", () =>
-            {
-                foreach (var m in made) RemoveWall(m);
-                foreach (var b in bands) RemoveWall(b);
-                foreach (var (w, prev) in raised) if (IsInstanceValid(w)) { w.GableRise = prev; w.Rebuild(); }
-            });
-            return made.Count + raised.Count + bands.Count;
+            if (!RoofFootprint(kind, out var spec)) return null;
+            spec.PitchDeg = pitchDeg;
+            return PlaceRoof(spec);
         }
 
         /// <summary>Hang a foundation under every wall drawn: a hollow skirt, which is what retail is.
