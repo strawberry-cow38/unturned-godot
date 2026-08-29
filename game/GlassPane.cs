@@ -52,6 +52,19 @@ namespace UnturnedGodot
         // The shard colour: the pane's glass hue lightened toward white, so broken glass reads bright.
         // shards TRANSLUCENT (master 2026-08-09): glass fragments should read see-through, not solid glass-coloured chips.
         // Alpha 0.5 with the material's Alpha transparency -> the shard sprite becomes half-transparent (glassy).
+        /// <summary>The shard colour: the pane's hue lightened toward white, at 50% alpha.
+        ///
+        /// MEASURED 2026-08-29, because "50% transp on the WHOLE particle" is NOT what this achieves and
+        /// the file used to imply it did. Rendering the shatter twice -- once at this 0.5, once forced to
+        /// 1.0 -- changes 61% of the shard cluster, so the alpha IS applied (sky, ground, wall and HUD came
+        /// back pixel-identical between the two runs, so that is a real difference and not render noise).
+        ///
+        /// But 16-40 quads fan out of one pane and OVERLAP, and stacked alpha compounds: three layers of
+        /// 0.5 is 1 - 0.5^3 = 0.875. Measured ~0.9 effective where they pile up, so the cluster reads
+        /// nearly solid while every individual shard is correctly half-transparent.
+        ///
+        /// So if the CLUSTER needs to read 50%, the lever is Amount or this value -- not the material, and
+        /// not the transparency mode. Both of those are already right.</summary>
         static Color ShardTint(Color hue) => new Color(Mathf.Lerp(hue.R, 1f, 0.35f), Mathf.Lerp(hue.G, 1f, 0.35f), Mathf.Lerp(hue.B, 1f, 0.35f), 0.5f);
 
         public void TakeDamage(float amount)
