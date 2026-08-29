@@ -61,12 +61,12 @@ namespace UnturnedGodot
         static readonly string[] ServerGatedVerbs = { "give", "xp", "skill", "teleport", "tp", "toggleglobalpower", "globalpower", "grid" };
         // Verbs below the arg guard that are legal with NO argument. Keep this in step when adding one, or the
         // guard silently swallows it and the verb becomes unreachable from the console.
-        static readonly string[] NoArgVerbs = { "unarmed", "fridge", "fluid", "survival", "spawnmagnetablecontainer", "magcontainer", "heliphys", "procisland" };
+        static readonly string[] NoArgVerbs = { "unarmed", "fridge", "fluid", "survival", "spawnmagnetablecontainer", "magcontainer", "spawnelevator", "heliphys", "procisland" };
         bool _resultHooked;
 
         LineEdit _input;
         Label _log;
-        static readonly string[] Verbs = { "give", "vehicle", "spawnMagnetableContainer", "spawnheli", "spawntrain", "spawncrane", "spawncraneontrack", "spawncontainerflatbed", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "toggleGlobalPower", "toggleGlobalWater", "toggleBbat", "infFuel", "infAmmo", "wear", "unwear", "fluid", "date", "dateset", "whenBlackout", "triggerGlobalBrownout", "hurtmain", "killmain", "hurttail", "killtail", "profiler", "renderscale", "vertexlight", "weather", "fridge", "fill", "empty", "units", "simspeed", "time", "timeset", "timeadd", "timespeed", "daylength", "hitbox", "heliphys", "procisland" };
+        static readonly string[] Verbs = { "give", "vehicle", "spawnMagnetableContainer", "spawnheli", "spawntrain", "spawncrane", "spawncraneontrack", "spawncontainerflatbed", "spawnelevator", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "toggleGlobalPower", "toggleGlobalWater", "toggleBbat", "infFuel", "infAmmo", "wear", "unwear", "fluid", "date", "dateset", "whenBlackout", "triggerGlobalBrownout", "hurtmain", "killmain", "hurttail", "killtail", "profiler", "renderscale", "vertexlight", "weather", "fridge", "fill", "empty", "units", "simspeed", "time", "timeset", "timeadd", "timespeed", "daylength", "hitbox", "heliphys", "procisland" };
         static readonly EItemType[] ClothingTypes = { EItemType.SHIRT, EItemType.PANTS, EItemType.HAT, EItemType.VEST, EItemType.MASK, EItemType.GLASSES, EItemType.BACKPACK };
         readonly System.Collections.Generic.List<string> _history = new();
         int _histIdx;
@@ -631,6 +631,19 @@ namespace UnturnedGodot
                 var mc = MagnetableContainer.Spawn(Player?.GetParent() ?? GetTree().Root, deck.GlobalPosition);
                 deck.Load(mc);
                 Log("spawned a flatbed on the nearest track with a container loaded (crane can lift it off)");
+            }
+            else if (verb == "spawnelevator")
+            {
+                Vector3 eye = Player?.GlobalPosition ?? Vector3.Zero;
+                Vector3 outward = new Vector3(at.X - eye.X, 0f, at.Z - eye.Z);
+                outward = outward.LengthSquared() > 0.01f ? outward.Normalized() : Vector3.Forward;
+                Vector3 spot = at + outward * 4.5f;   // a few metres past the aim so the ~5 m car doesn't land on you
+                float gy = WorldTerrain != null ? WorldTerrain.SampleHeight(spot.X, spot.Z) : spot.Y;
+                var ev = Elevator.Build();
+                ev.RotationDegrees = new Vector3(0f, Mathf.RadToDeg(Mathf.Atan2(-outward.Z, outward.X)), 0f);   // -X door faces back toward you
+                ev.Position = new Vector3(spot.X, gy + ev.BaseLift, spot.Z);   // set BEFORE AddChild so _Ready latches _baseY at the ground
+                (Player?.GetParent() ?? GetTree().Root).AddChild(ev);
+                Log($"elevator {spot.DistanceTo(eye):0.#} m ahead -- walk in, look at a floor button + press F: doors shut, it rides, doors reopen. stops at ground / +4 / +8 m. (stand near the middle -- only the floor's solid.)");
             }
             else if (verb == "spawnmagnetablecontainer" || verb == "magcontainer")
             {
