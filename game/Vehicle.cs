@@ -1854,7 +1854,7 @@ namespace UnturnedGodot
             var ps = new CpuParticles3D { 
                 Emitting = false, Amount = amount, Lifetime = life, Direction = Vector3.Up, Spread = 25f,
                 InitialVelocityMin = vel * 0.6f, InitialVelocityMax = vel, Gravity = new Vector3(0f, 1.5f, 0f),
-                ScaleAmountMin = sizeMin, ScaleAmountMax = sizeMax, Color = c, Mesh = new QuadMesh { Size = Vector2.One, Material = mat },   // Size 1 -> ScaleAmount = the particle diameter in metres (src startSize)
+                ScaleAmountMin = sizeMin * ParticleFx.SizeScale, ScaleAmountMax = sizeMax * ParticleFx.SizeScale, Color = c, Mesh = new QuadMesh { Size = Vector2.One, Material = mat },   // Size 1 -> ScaleAmount = the particle diameter in metres (src startSize)
             };
             if (fire) { ps.AnimOffsetMax = 1f; ps.AnimSpeedMin = 5f; ps.AnimSpeedMax = 9f; }   // random start frame + flicker through the 4
             else { ps.AngleMin = -180f; ps.AngleMax = 180f; ps.AngularVelocityMin = -35f; ps.AngularVelocityMax = 35f; }   // SMOKE (not fire): random per-puff rotation + slow tumble (master)
@@ -6467,7 +6467,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                     Direction = Vector3.Up, Spread = 180f,
                     InitialVelocityMin = 0.02f, InitialVelocityMax = 0.14f,
                     Gravity = new Vector3(0f, -0.03f, 0f),
-                    ScaleAmountMin = 0.6f, ScaleAmountMax = 1.5f,
+                    ScaleAmountMin = 0.6f * ParticleFx.SizeScale, ScaleAmountMax = 1.5f * ParticleFx.SizeScale,
                     AngleMin = -180f, AngleMax = 180f,
                     CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
                     VisibilityRangeEnd = StreetLight.MoteCullRange,

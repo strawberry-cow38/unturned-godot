@@ -233,7 +233,7 @@ namespace UnturnedGodot
                     Gravity = new Vector3(0f, -7f * fx.Gravity, 0f),
                     // retail startSize reads oversized on our quads -> scale down so chips aren't big blocks; per-chip random
                     // ROLL + tumble (AngleMin/Max + AngularVelocity) so the billboards scatter instead of a uniform grid (VoX).
-                    ScaleAmountMin = fx.SizeMin * 0.45f, ScaleAmountMax = fx.SizeMax * 0.55f,
+                    ScaleAmountMin = fx.SizeMin * 0.45f * ParticleFx.SizeScale, ScaleAmountMax = fx.SizeMax * 0.55f * ParticleFx.SizeScale,
                     AngleMin = -180f, AngleMax = 180f, AngularVelocityMin = -400f, AngularVelocityMax = 400f,
                     EmissionShape = CpuParticles3D.EmissionShapeEnum.Box, EmissionBoxExtents = halfExt,
                     Mesh = new QuadMesh { Size = Vector2.One, Material = fmat },
@@ -258,7 +258,7 @@ namespace UnturnedGodot
                 Emitting = false, OneShot = true, Amount = n, Lifetime = 1.6f, Explosiveness = 1f, Randomness = 0.4f,   // fired AFTER positioning (below) -- physics-tick-safe (see the chip burst above)
                 Direction = Vector3.Up, Spread = 90f, InitialVelocityMin = 1.5f, InitialVelocityMax = 4.5f,
                 Gravity = new Vector3(0f, -9.8f, 0f),
-                ScaleAmountMin = radius * 0.07f, ScaleAmountMax = radius * 0.18f,
+                ScaleAmountMin = radius * 0.07f * ParticleFx.SizeScale, ScaleAmountMax = radius * 0.18f * ParticleFx.SizeScale,
                 AngleMin = -180f, AngleMax = 180f, AngularVelocityMin = -420f, AngularVelocityMax = 420f,
                 EmissionShape = CpuParticles3D.EmissionShapeEnum.Box, EmissionBoxExtents = halfExt,
                 Mesh = new BoxMesh { Size = Vector3.One, Material = debrisMat },

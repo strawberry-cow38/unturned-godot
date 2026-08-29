@@ -79,7 +79,7 @@ namespace UnturnedGodot
                     ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, Transparency = BaseMaterial3D.TransparencyEnum.Alpha,   // flat glass colour (not lit-dark) so the shards read as glass
                     BillboardMode = BaseMaterial3D.BillboardModeEnum.Particles,
                     CullMode = BaseMaterial3D.CullModeEnum.Disabled,
-                    AlbedoColor = ShardTint(_hue), AlbedoTexture = fx.Tex,   // shards COLOURED OFF THE PROP (the pane's glass hue, lightened) via AlbedoColor -- a reliable multiply, NOT the fragile per-particle vertex-colour buffer (master + tc)
+                    AlbedoColor = ShardTint(_hue),   // FLAT glass-hue shard at a clean UNIFORM 50% alpha (ShardTint a=0.5). No AlbedoTexture: the glass rubble sprite's soft alpha multiplied the 0.5 down to a faint, uneven shard -- master wanted "50% transp on the WHOLE particle" i.e. uniform across the quad. Colour still off the prop hue via AlbedoColor (master+tc reliable-multiply intent kept).
                 };
                 Vector3 halfExt = new Vector3(Mathf.Max(_half.X, 0.2f), Mathf.Max(_half.Y, 0.2f), 0.2f);   // emit across the pane's whole face
                 var ps = new CpuParticles3D { CastShadow = GeometryInstance3D.ShadowCastingSetting.Off, 
@@ -89,7 +89,7 @@ namespace UnturnedGodot
                     Direction = faceN, Spread = 85f,   // fan out of the pane face
                     InitialVelocityMin = fx.SpeedMin * 0.5f, InitialVelocityMax = fx.SpeedMax * 0.7f,
                     Gravity = new Vector3(0f, -7f * fx.Gravity, 0f),
-                    ScaleAmountMin = fx.SizeMin * 0.45f, ScaleAmountMax = fx.SizeMax * 0.55f,
+                    ScaleAmountMin = fx.SizeMin * 0.45f * ParticleFx.SizeScale, ScaleAmountMax = fx.SizeMax * 0.55f * ParticleFx.SizeScale,
                     AngleMin = -180f, AngleMax = 180f, AngularVelocityMin = -400f, AngularVelocityMax = 400f,
                     EmissionShape = CpuParticles3D.EmissionShapeEnum.Box, EmissionBoxExtents = halfExt,
                     Mesh = new QuadMesh { Size = Vector2.One, Material = fmat },

@@ -327,7 +327,7 @@ namespace UnturnedGodot
                 Direction = new Vector3(0f, 1f, -1f).Normalized(), Spread = 18f,
                 InitialVelocityMin = 4f, InitialVelocityMax = 9f,
                 Gravity = new Vector3(0f, -16f, 0f),
-                ScaleAmountMin = 0.03f, ScaleAmountMax = 0.07f, ScaleAmountCurve = fade,
+                ScaleAmountMin = 0.03f * ParticleFx.SizeScale, ScaleAmountMax = 0.07f * ParticleFx.SizeScale, ScaleAmountCurve = fade,
                 EmissionShape = CpuParticles3D.EmissionShapeEnum.Point,   // a POINT at one wheel's rail contact (Position set per-wheel in AddCar)
                 Mesh = new QuadMesh { Size = Vector2.One, Material = mat },
                 VisibilityAabb = new Aabb(new Vector3(-6f, -6f, -6f), new Vector3(12f, 12f, 12f)),

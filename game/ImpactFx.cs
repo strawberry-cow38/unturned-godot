@@ -107,7 +107,7 @@ namespace UnturnedGodot
                 Direction = up, Spread = 50f,   // cone spraying off the surface, back toward the shooter
                 InitialVelocityMin = metal ? 5f : 3f, InitialVelocityMax = metal ? 9f : 6f,
                 Gravity = new Vector3(0f, -9.8f, 0f),
-                ScaleAmountMin = metal ? 0.3f : 0.5f, ScaleAmountMax = metal ? 0.6f : 1.0f,   // reasonable chip size (bigger than source 0.25-0.5m for a readable cone, not huge)
+                ScaleAmountMin = (metal ? 0.3f : 0.5f) * ParticleFx.SizeScale, ScaleAmountMax = (metal ? 0.6f : 1.0f) * ParticleFx.SizeScale,   // reasonable chip size (bigger than source 0.25-0.5m for a readable cone, not huge)
                 Mesh = new QuadMesh { Size = Vector2.One, Material = mat },
                 VisibilityAabb = Guard,   // fast chips would otherwise be frustum-culled (no auto-AABB)
             };
@@ -143,7 +143,7 @@ namespace UnturnedGodot
                 Direction = Vector3.Up, Spread = big ? 18f : 45f,
                 InitialVelocityMin = big ? 8f : 3f, InitialVelocityMax = big ? 22f : 6f,
                 Gravity = new Vector3(0f, -9.8f, 0f),
-                ScaleAmountMin = 0.28f * scale, ScaleAmountMax = 0.5f * scale, ScaleAmountCurve = shrink,
+                ScaleAmountMin = 0.28f * scale * ParticleFx.SizeScale, ScaleAmountMax = 0.5f * scale * ParticleFx.SizeScale, ScaleAmountCurve = shrink,
                 AngleMin = -180f, AngleMax = 180f, AngularVelocityMin = -220f, AngularVelocityMax = 220f,
                 EmissionShape = CpuParticles3D.EmissionShapeEnum.Sphere, EmissionSphereRadius = 0.2f * scale,
                 Mesh = new QuadMesh { Size = Vector2.One, Material = mat },
@@ -179,7 +179,7 @@ namespace UnturnedGodot
                 Direction = -d, Spread = 60f,
                 InitialVelocityMin = 3f, InitialVelocityMax = 6f,
                 Gravity = new Vector3(0f, -9.8f, 0f),
-                ScaleAmountMin = 0.5f, ScaleAmountMax = 1.0f,
+                ScaleAmountMin = 0.5f * ParticleFx.SizeScale, ScaleAmountMax = 1.0f * ParticleFx.SizeScale,
                 Mesh = new QuadMesh { Size = Vector2.One, Material = mat },
                 VisibilityAabb = Guard,   // blood was culled the same way the debris was
             };

@@ -750,7 +750,7 @@ namespace UnturnedGodot
                 var mat = new ShaderMaterial { Shader = GD.Load<Shader>("res://content/torch_spark.gdshader") };
                 var spark = LoadTex("res://content/torch_spark.png");
                 if (spark != null) mat.SetShaderParameter("tex", spark);
-                var quad = new QuadMesh { Size = new Vector2(0.06f, 0.06f), Material = mat };   // spark size baked into the mesh (CpuParticles ScaleAmount doesn't scale the mesh here); ~source startSize 0.05-0.10
+                var quad = new QuadMesh { Size = new Vector2(0.06f * ParticleFx.SizeScale, 0.06f * ParticleFx.SizeScale), Material = mat };   // spark size baked into the mesh (CpuParticles ScaleAmount doesn't scale the mesh here); ~source startSize 0.05-0.10
                 // "Hit" node local pos in item.prefab = (-0.1359, 0.4719, 0) -> port frame (x,y,z)->(-x,y,-z) = (0.1359, 0.4719, 0) (the nozzle tip)
                 // Source ParticleSystem params (startSize 0.05-0.10, startSpeed 1-2, sphere r=0.25, gravity x1, lifetime 1s)
                 // are WORLD-scale; the viewmodel renders the torch at native model scale (the gun ~0.5 units in view), so the
