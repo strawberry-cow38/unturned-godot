@@ -381,7 +381,7 @@ namespace UnturnedGodot
         /// be holding RMB is worse than no shortcut. Pressing the live tool's key again returns to select, so
         /// one key both arms and disarms.</summary>
         /// <returns>true if the key was a tool key and has been handled.</returns>
-        public bool HandleToolKey(Key keycode)
+        public bool HandleToolKey(Key keycode, bool ctrl = false)
         {
             // Opening presets route through SelectTool like everything else. Setting _armed directly here was
             // the surviving half of the five-places bug: it left the room/wall/slab tool armed beside it.
@@ -398,6 +398,16 @@ namespace UnturnedGodot
             // only binds it to Jump, which is gameplay -- and it routes through SelectTool like every other
             // arming path so the one-tool-at-a-time invariant still holds.
             if (keycode == Key.Space) { SelectTool(BuildTool.None); ClearTransientVisuals(); return true; }
+
+            // Copy/paste a storey. Ctrl-modified so they cannot collide with the single-letter tool keys --
+            // V is the Foundation tool and must still be V, so these are checked FIRST and only when ctrl
+            // is down.
+            //
+            // The modifier is a PARAMETER rather than Input.IsKeyPressed(Key.Ctrl). Polling global input
+            // state from inside the key handler makes the binding untestable except by faking real input,
+            // and "does plain V still pick Foundation" is exactly the thing that breaks silently here.
+            if (ctrl && keycode == Key.C) { CopyFloor(); return true; }
+            if (ctrl && keycode == Key.V) { PasteFloor(); return true; }
 
             BuildTool want = keycode switch
             {
@@ -1052,7 +1062,7 @@ namespace UnturnedGodot
                     else { _selWall = null; HideSideGhost(); }
                     PositionHandles();
                 }
-                else if (HandleToolKey(k.Keycode)) { }
+                else if (HandleToolKey(k.Keycode, k.CtrlPressed)) { }
                 // Q/E RE-RESOLVE THE CURSOR. The ghost and the grid flag were refreshed only on mouse
                 // MOTION, so changing storey with the mouse still left them resolved against the old
                 // floor -- you would be drawing on floor 2 while the marker sat on floor 1 until you
@@ -1432,20 +1442,84 @@ namespace UnturnedGodot
             var plans = new List<WallPlan>();
             foreach (var w in _walls)
             {
-                if (!IsInstanceValid(w)) continue;
-                var pl = new WallPlan
-                {
-                    X = w.Position.X, Y = w.Position.Y, Z = w.Position.Z,
-                    Yaw = w.RotationDegrees.Y, Pitch = w.RotationDegrees.X, Kind = w.Kind,
-                    Length = w.Length, Height = w.Height, GableRise = w.GableRise, Texel = w.Texel,
-                    InsetL0 = w.InsetL0, InsetL1 = w.InsetL1, InsetR0 = w.InsetR0, InsetR1 = w.InsetR1,
-                    MaterialBack = w.MaterialIdBack, TexelBack = w.TexelBack,
-                    Thickness = w.Thickness, Material = w.MaterialId,
-                };
-                pl.Openings.AddRange(w.Openings);
-                plans.Add(pl);
+                var pl = PlanOf(w);   // shared with copy/paste: one definition of what a surface IS
+                if (pl != null) plans.Add(pl);
             }
             return plans;
+        }
+
+        // ---- copy / paste a storey --------------------------------------------------------------------
+
+        readonly List<WallPlan> _clipboard = new();
+        float _clipboardY;                      // the storey height the clipboard was taken FROM
+        public int ClipboardCount => _clipboard.Count;
+
+        /// <summary>Does this surface belong to the storey whose base is at <paramref name="y"/>?
+        ///
+        /// Half a storey either side, the same rule PlanOfActiveFloor uses -- one definition of "on this
+        /// floor", because two would drift and copy/paste would disagree with auto-fit about what a storey
+        /// contains.</summary>
+        bool OnStorey(WallSurface w, float y) => Mathf.Abs(w.Position.Y - y) <= StoreyHeight * 0.5f;
+
+        /// <summary>Copy everything on the active storey. strawberry_cow: "copy/paste floors".
+        ///
+        /// FOUNDATIONS ARE EXCLUDED. A foundation is a skirt driven DOWN into the ground from the wall
+        /// above it; pasted onto storey 3 it is six metres of wall hanging in mid-air. Everything else on
+        /// the storey comes -- walls, floors, roofs, stair treads -- because those are the thing you are
+        /// duplicating when you say "another floor like that one".</summary>
+        public int CopyFloor()
+        {
+            _clipboard.Clear();
+            _clipboardY = ActiveFloorY;
+            foreach (var w in _walls)
+            {
+                if (!IsInstanceValid(w) || w.Kind == SurfaceKind.Foundation) continue;
+                if (!OnStorey(w, _clipboardY)) continue;
+                var pl = PlanOf(w);
+                if (pl != null) _clipboard.Add(pl);
+            }
+            return _clipboard.Count;
+        }
+
+        /// <summary>Paste the clipboard onto the active storey, offset by the storey difference.
+        ///
+        /// ADDS rather than replaces. Pasting onto an occupied storey and silently deleting what was there
+        /// is not something Ctrl+Z makes acceptable -- you would lose work to a keystroke that reads like
+        /// "add". Duplicates are visible and undoable; a silent wipe is neither.
+        ///
+        /// Pasting onto the storey it was copied from is allowed and lands exactly on top -- that is a
+        /// no-op you can see and undo, not an error worth refusing.</summary>
+        public int PasteFloor()
+        {
+            if (_clipboard.Count == 0) return 0;
+            float dy = ActiveFloorY - _clipboardY;
+            var made = new List<WallSurface>();
+            foreach (var pl in _clipboard)
+                made.Add(SpawnWall(new Vector3(pl.X, pl.Y + dy, pl.Z), pl.Yaw, pl.Length, pl.Thickness,
+                                   pl.Material, pl.Openings, pl.Height, pl.Pitch, pl.Kind, pl.GableRise,
+                                   pl.Texel, pl.InsetL0, pl.InsetL1, pl.InsetR0, pl.InsetR1,
+                                   pl.MaterialBack, pl.TexelBack));
+            _editor?.PushUndo("paste floor", () => { foreach (var w in made) RemoveWall(w); });
+            return made.Count;
+        }
+
+        /// <summary>One surface as a WallPlan. Extracted from Snapshot so copy/paste and undo cannot drift
+        /// apart about what a surface IS -- a field added to WallSurface and remembered in only one of them
+        /// is a paste that silently drops it.</summary>
+        WallPlan PlanOf(WallSurface w)
+        {
+            if (!IsInstanceValid(w)) return null;
+            var pl = new WallPlan
+            {
+                X = w.Position.X, Y = w.Position.Y, Z = w.Position.Z,
+                Yaw = w.RotationDegrees.Y, Pitch = w.RotationDegrees.X, Kind = w.Kind,
+                Length = w.Length, Height = w.Height, GableRise = w.GableRise, Texel = w.Texel,
+                InsetL0 = w.InsetL0, InsetL1 = w.InsetL1, InsetR0 = w.InsetR0, InsetR1 = w.InsetR1,
+                MaterialBack = w.MaterialIdBack, TexelBack = w.TexelBack,
+                Thickness = w.Thickness, Material = w.MaterialId,
+            };
+            pl.Openings.AddRange(w.Openings);
+            return pl;
         }
 
         /// <summary>Put the stage back exactly as a Snapshot found it.</summary>
