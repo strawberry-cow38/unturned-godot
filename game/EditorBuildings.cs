@@ -280,6 +280,20 @@ namespace UnturnedGodot
         /// Q and E move down and up. They are the camera's ascend/descend while RMB-flying, and this input
         /// handler already returns early in that case, so the two never both fire.</summary>
         public int ActiveFloor;
+        /// <summary>Deepest basement. Four storeys down is deeper than anything retail has and still finite,
+        /// which is what stops hold-Q putting the stage somewhere you cannot fly back from.</summary>
+        public const int MinFloor = -4;
+        public const int MaxFloor = 12;
+
+        /// <summary>Move up or down a storey, clamped. Split out of the input handler so it is reachable from
+        /// a test -- the handler needs a live Editor and camera, which is how the keyboard path has twice now
+        /// been the untested half.
+        ///
+        /// NEGATIVE floors are BASEMENTS. A clamp at 0 was the only thing preventing them: FloorY is
+        /// ActiveFloor * StoreyHeight and handles negatives without complaint, and nothing else in the editor
+        /// assumes a non-negative storey. strawberry: "support for basements".</summary>
+        public void ChangeFloor(int delta)
+            => ActiveFloor = Mathf.Clamp(ActiveFloor + delta, MinFloor, MaxFloor);
         public static float StoreyHeight => WallOpenings.DoorHeight;
         public float FloorY => ActiveFloor * StoreyHeight;
 
@@ -338,7 +352,8 @@ namespace UnturnedGodot
         Vector3 _drawAnchor;
 
         public bool Drawing => _drawing != null;
-        public string ToolText => $"floor {ActiveFloor} (Q/E) · " + ToolName;
+        public string ToolText =>
+            $"{(ActiveFloor < 0 ? $"basement {-ActiveFloor}" : $"floor {ActiveFloor}")} (Q/E) · " + ToolName;
         string ToolName => StairsDrawMode ? $"stairs (T): click to drop a {WallOpenings.StairSteps(StoreyHeight)}-step flight to floor {ActiveFloor + 1}"
                                 : FoundationDrawMode ? "foundation (V): drag a rectangle"
                                 : DeleteDrawMode ? "delete (X): click a wall, or drag along one to cut a piece out"
@@ -861,8 +876,8 @@ namespace UnturnedGodot
                     PositionHandles();
                 }
                 else if (HandleToolKey(k.Keycode)) { }
-                else if (k.Keycode == Key.E) ActiveFloor = Mathf.Min(ActiveFloor + 1, 12);
-                else if (k.Keycode == Key.Q) ActiveFloor = Mathf.Max(ActiveFloor - 1, 0);
+                else if (k.Keycode == Key.E) ChangeFloor(+1);
+                else if (k.Keycode == Key.Q) ChangeFloor(-1);
                 // Ctrl+Z. The undo STACK was always here -- every wall, opening and edit pushes onto it --
                 // but the key was only ever bound in EditorObjects, so in Buildings mode there was nothing
                 // to press. An undo history nobody can reach is the same as no undo history.

@@ -88,4 +88,39 @@ namespace UnturnedGodot.Testing
             eb.QueueFree();
         }
     }
+
+    // Basements. strawberry: "support for basements" -- which was one clamp, but the thing worth ASSERTING is
+    // that a negative storey actually places BELOW the ground rather than merely being allowed as a number.
+    public class EditorBuildingsGoesBelowGround : GameTest
+    {
+        public override string Name => "buildtool.basements";
+
+        public override IEnumerable<Step> Run()
+        {
+            var eb = new EditorBuildings();
+            World.AddChild(eb);
+            yield return Step.Ticks(1);
+
+            eb.ActiveFloor = 0;
+            eb.ChangeFloor(-1);
+            // BREAK IT: clamp at 0 (the original) -> ActiveFloor stays 0 and FloorY stays 0.
+            T.Check($"Q goes below the ground floor ({eb.ActiveFloor})", eb.ActiveFloor == -1);
+            T.Check($"...and that is BELOW it, not just a label ({eb.FloorY:0.00})",
+                    eb.FloorY < -0.01f && Mathf.Abs(eb.FloorY + EditorBuildings.StoreyHeight) < 0.01f);
+
+            // A basement is a whole storey down, same pitch as an upper floor -- so a two-storey building
+            // with a basement spans exactly three storey heights.
+            eb.ChangeFloor(-1);
+            T.Check($"basements stack ({eb.FloorY:0.00})",
+                    Mathf.Abs(eb.FloorY + 2f * EditorBuildings.StoreyHeight) < 0.01f);
+
+            // Bounded, so hold-Q cannot walk the stage somewhere you can't fly back from.
+            for (int i = 0; i < 40; i++) eb.ChangeFloor(-1);
+            T.Check($"the descent is bounded ({eb.ActiveFloor})", eb.ActiveFloor == EditorBuildings.MinFloor);
+            for (int i = 0; i < 60; i++) eb.ChangeFloor(+1);
+            T.Check($"and the climb is too ({eb.ActiveFloor})", eb.ActiveFloor == EditorBuildings.MaxFloor);
+
+            eb.QueueFree();
+        }
+    }
 }
