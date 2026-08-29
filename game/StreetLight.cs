@@ -380,7 +380,7 @@ namespace UnturnedGodot
                     Direction = Vector3.Up, Spread = 180f,           // drift any which way, very slowly
                     InitialVelocityMin = 0.02f, InitialVelocityMax = 0.14f,
                     Gravity = new Vector3(0f, -0.03f, 0f),           // barely settling, so motes hang in the beam
-                    ScaleAmountMin = 0.6f, ScaleAmountMax = 1.5f,
+                    ScaleAmountMin = 0.6f * ParticleFx.SizeScale, ScaleAmountMax = 1.5f * ParticleFx.SizeScale,
                     AngleMin = -180f, AngleMax = 180f,   // random spin per mote so they don't all read as the same aligned square
                                                           // (the material billboards in Particles mode, which honours the angle)
                     CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,

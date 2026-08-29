@@ -2888,7 +2888,7 @@ namespace UnturnedGodot
         public void MeleeAttack(bool strong = false)
         {
             if (_meleeCd > 0f || _cam == null || _dead || _driving != null || _heldConsumable != null || (_invUI?.IsOpen ?? false)) return;
-            if (IsSwimming) return;   // no melee/punching while swimming (source PlayerEquipment: "No punching while swimming"; canUseUnderwater=false)
+            if (IsSwimming || _swimMeleeGrace > 0f) return;   // no melee/punching while swimming (source PlayerEquipment: "No punching while swimming"; canUseUnderwater=false). The grace also blocks a swing for a beat AFTER surfacing: a Fire click the engine buffers during the water->land transition arrives the frame after IsSwimming clears, which used to sneak a "queued" punch through on exit (master, intermittent).
             if (IsRepeatedMelee) return;   // Repeated tools (blowtorch/chainsaw) have NO weak/strong swing -- you don't punch with them; their use is the continuous LMB-hold (source UseableMelee.startPrimary/startSecondary)
             float staminaCost = strong ? (_melee?.Stamina ?? 0f) / 100f : 0f;   // only the STRONG (RMB) swing costs stamina; the WEAK (LMB) attack is free (master)
             if (staminaCost > 0f && Stamina < staminaCost) return;   // too winded for a strong swing
@@ -2907,6 +2907,7 @@ namespace UnturnedGodot
         }
 
         float _pendingMeleeHit = -1f; bool _pendingMeleeStrong;   // deferred melee hit: >0 = a swing is mid-flight, damage lands when it reaches 0
+        float _swimMeleeGrace; const float SwimMeleeGraceTime = 0.2f;   // >0 = surfaced within the last SwimMeleeGraceTime s -> melee still blocked, so a transition-buffered click can't fire a punch on water exit
         // The deferred melee hit -- runs when the swing connects (end of the anim); targets are re-evaluated NOW so a moving target can be missed.
         void ApplyMeleeHit(bool strong)
         {
@@ -7312,6 +7313,7 @@ namespace UnturnedGodot
             _sinceShot += (float)delta;
             TickInfiniteAmmo();
             if (_meleeCd > 0f) _meleeCd -= (float)delta;
+            if (IsSwimming) _swimMeleeGrace = SwimMeleeGraceTime; else if (_swimMeleeGrace > 0f) _swimMeleeGrace -= (float)delta;   // hold the grace full while swimming; decay it after surfacing (see MeleeAttack's swim gate)
             if (_pendingMeleeHit > 0f) { _pendingMeleeHit -= (float)delta; if (_pendingMeleeHit <= 0f) ApplyMeleeHit(_pendingMeleeStrong); }   // deferred melee damage lands at swing-end (master)
             if (_burstCd > 0f) _burstCd -= (float)delta;
             if (_grenadeCd > 0f) _grenadeCd -= (float)delta;

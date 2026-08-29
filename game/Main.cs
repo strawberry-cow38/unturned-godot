@@ -1051,7 +1051,28 @@ namespace UnturnedGodot
 
             var cam = new Camera3D { Fov = 36f, Far = 800f };
             AddChild(cam);
-            cam.LookAtFromPosition(new Vector3(0f, 15f, 62f), new Vector3(0f, 10f, 0f), Vector3.Up);
+            if (System.Environment.GetEnvironmentVariable("UG_REFLTEST") == "1")
+            {
+                // SHORELINE REFLECTION test: a water strip in FRONT of the trees (+Z toward the cam) + the planar
+                // reflection + a low grazing cam looking across the water at the standing tree, so it reflects.
+                Terrain.HasWater = true; Terrain.SeaLevelY = 0.05f;
+                // a wide seabed under the whole strip so the see-through water has ground beneath it, not sky
+                AddChild(new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(300f, 300f) }, Position = new Vector3(0f, -0.15f, 40f), MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.24f, 0.30f, 0.20f), Roughness = 1f } });
+                var wmat = new ShaderMaterial { Shader = GD.Load<Shader>("res://content/water.gdshader") };
+                var water = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(140f, 100f), SubdivideWidth = 70, SubdivideDepth = 50 }, Position = new Vector3(0f, 0.05f, 50f), MaterialOverride = wmat };
+                water.Layers = WaterReflection.WaterLayer;   // keep the water OUT of its own mirror pass (self-occlusion)
+                AddChild(water);
+                var refl = new WaterReflection(); AddChild(refl); refl.Setup(wmat, 0.05f, new Vector2I(1024, 1024));
+                cam.Fov = 55f;
+                // look DOWN across the water at the trees so the surface fills the frame; UG_REFLCAM="ex,ey,ez,tx,ty,tz" iterates without a rebuild
+                Vector3 _ce = new Vector3(0f, 5f, 68f), _ct = new Vector3(0f, 0.8f, 10f);
+                var _rc = System.Environment.GetEnvironmentVariable("UG_REFLCAM");
+                if (!string.IsNullOrEmpty(_rc)) { var _a = _rc.Split(','); _ce = new Vector3(float.Parse(_a[0]), float.Parse(_a[1]), float.Parse(_a[2])); _ct = new Vector3(float.Parse(_a[3]), float.Parse(_a[4]), float.Parse(_a[5])); }
+                cam.LookAtFromPosition(_ce, _ct, Vector3.Up);
+                GetWindow().Size = new Vector2I(1280, 800);
+            }
+            else
+                cam.LookAtFromPosition(new Vector3(0f, 15f, 62f), new Vector3(0f, 10f, 0f), Vector3.Up);
         }
 
         // Load a tree's parts (bark + leaves) from content/resources/<name>_<i>.obj as an upright Node3D at pos.
