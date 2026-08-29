@@ -21,6 +21,10 @@ uniform float detail_strength = 0.30; // fbm fine-ripple perturbation of the nor
 uniform vec4 sky_tint : source_color = vec4(0.52, 0.67, 0.86, 1.0);  // colour reflected at grazing angles (the sky)
 uniform float reflectivity = 0.45;    // how strongly the sky shows at grazing angles (Fresnel); lowered -> less white-out at grazing (master)
 uniform sampler2D depth_tex : hint_depth_texture, repeat_disable, filter_linear;
+uniform sampler2D reflection_tex : filter_linear;   // planar reflection buffer (mirror camera) -- WaterReflection.cs feeds it
+uniform bool reflection_on = false;                 // off until the reflection node wires the buffer in
+uniform bool reflection_debug = false;              // UG_REFLDEBUG: paint the raw reflection buffer onto the water (check mirror + UV)
+uniform float reflection_strength = 1.0;            // UG_REFLSTR: scale the reflection's blend-in for tuning
 
 varying vec3 v_wpos;     // world position of the displaced surface
 
@@ -116,7 +120,21 @@ void fragment() {
     // FRESNEL SKY REFLECTION: grazing angles reflect the sky, so the horizon brightens + the water reads as reflective
     // (real water isn't flat-dark edge-on). Uses the ripple-perturbed normal, so the reflection shimmers with the chop.
     float fres = pow(1.0 - clamp(dot(NORMAL, VIEW), 0.0, 1.0), 4.0);
-    vec3 water_col = mix(base, sky_tint.rgb, fres * reflectivity);
+    // REFLECTION: sample the planar-reflection buffer (mirror camera), UV perturbed by the wave normal so the
+    // reflection SHIMMERS with the chop. Where the buffer has coverage (alpha>0) that's a reflected tree/prop/
+    // building; where it's empty, fall back to the flat sky tint. Both are Fresnel-gated below, so the reflection
+    // only shows where the water reads edge-on -- top-down you see through, and it costs nothing there.
+    vec3 refl_src = sky_tint.rgb;
+    if (reflection_on) {
+        vec2 refl_uv = clamp(SCREEN_UV + wn.xz * 0.04 * lod, vec2(0.001), vec2(0.999));   // exact negative-det mirror -> sample straight by SCREEN_UV; wn.xz ripple-distorts. (UG_REFLLOOKAT fallback needs a Y-flip; not wired since the exact mirror is default.)
+        vec4 refl = texture(reflection_tex, refl_uv);
+        // the mirror SubViewport renders empty sky as bright/near-white (no environment in the buffer), so gate by
+        // DARKNESS instead of alpha: dark samples are reflected geometry (trees/props/ground) -> reflect them; bright
+        // samples are empty sky -> fall back to the flat sky tint (no white-out of the water).
+        float refl_geo = 1.0 - smoothstep(0.72, 0.90, dot(refl.rgb, vec3(0.3333)));
+        refl_src = mix(sky_tint.rgb, refl.rgb, refl_geo);
+    }
+    vec3 water_col = mix(base, refl_src, clamp(fres * reflectivity * reflection_strength, 0.0, 1.0));
     a = mix(a, 1.0, fres * reflectivity * 0.25);   // gentler opacity bump at grazing -> stays see-through low-angle (master)
 
     ALBEDO = mix(water_col, foam_color.rgb, foam);
@@ -125,4 +143,6 @@ void fragment() {
     ROUGHNESS = mix(rough_base, 0.9, foam);
     SPECULAR = 0.5;
     METALLIC = 0.0;
+    // UG_REFLDEBUG: overwrite the water with the raw reflection buffer to eyeball the mirror camera + UV alignment
+    if (reflection_on && reflection_debug) { ALBEDO = texture(reflection_tex, SCREEN_UV).rgb; ALPHA = 1.0; ROUGHNESS = 1.0; }
 }

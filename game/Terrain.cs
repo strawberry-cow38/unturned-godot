@@ -2054,7 +2054,16 @@ void fragment() {
                 water.Position = new Vector3(wcx, waterY, wcz);
                 // waves + crest foam (on the peaks) + depth-based shore foam at every coastline (master 2026-08-16)
                 water.MaterialOverride = new ShaderMaterial { Shader = GD.Load<Shader>("res://content/water.gdshader") };
+                water.Layers = WaterReflection.WaterLayer;   // keep the ocean OUT of its own mirror pass (self-occlusion)
                 terr.AddChild(water);
+                // PLANAR REFLECTION (WaterReflection.cs): a mirror-camera SubViewport feeds the shader's reflection_tex.
+                // Opt-in via UG_REFLECT=1 for now so on/off frametime is a clean A/B; flip to default-on once proven.
+                if (System.Environment.GetEnvironmentVariable("UG_REFLECT") == "1")
+                {
+                    var refl = new WaterReflection();
+                    terr.AddChild(refl);
+                    refl.Setup((ShaderMaterial)water.MaterialOverride, waterY, new Vector2I(1024, 1024));
+                }
                 // Bullets-only splash collider on a dedicated layer (bit9): the bullet raycast checks it, but player/
                 // vehicles don't mask bit9 so it never blocks movement/swimming. Shooting the ocean -> Water_Static splash.
                 var wbody = new StaticBody3D { CollisionLayer = 1u << 9, Position = water.Position };
