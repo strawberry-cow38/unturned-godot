@@ -27,6 +27,17 @@ namespace UnturnedGodot
             RenderingServer.GlobalShaderParameterAdd("rain_intensity", RenderingServer.GlobalShaderParameterType.Float, 0f);
         }
 
+        /// <summary>Zero the rain globals. They're process-wide and OUTLIVE a scene change (the Add is Nil-guarded
+        /// precisely so), so a scene left mid-storm would leave every wet_surface/terrain shader reading that last
+        /// wetness in whatever loads next -- and the menu has no WeatherManager to drive it back down (tinyclaw's
+        /// catch). Called from ResourceCaches.ClearAll (the scene-transition hook) + WeatherManager._ExitTree.</summary>
+        public static void ResetGlobals()
+        {
+            if (!_globalsRegistered) return;   // never registered -> nothing to reset (and Set on a missing global warns)
+            RenderingServer.GlobalShaderParameterSet("rain_wetness", 0f);
+            RenderingServer.GlobalShaderParameterSet("rain_intensity", 0f);
+        }
+
         public override void _Ready()
         {
             var quad = new QuadMesh { Size = new Vector2(0.014f, 0.62f) };   // a thin, tall streak

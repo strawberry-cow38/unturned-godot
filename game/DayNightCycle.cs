@@ -420,10 +420,36 @@ void sky() {
                 // bigger ABSOLUTE shift far out), which is exactly the ask -- no FogMode.Depth begin/end switch needed.
                 Env.FogDensity = Mathf.Lerp(0.003f, 0.0004f, noon) * (Overcast ? 2.4f : 1f);   // noon already "sunny isle" thin; night/overcast stay atmospheric but pushed back
                 Env.FogSkyAffect = Mathf.Lerp(0.4f, 0.15f, noon);   // sky stays clear/blue at noon, fogged at dawn/dusk/night
+
+                // STORM: master wants heavy weather to match the moody --raintest demo (grey overcast sky, thick fog,
+                // dim cool light). Blend the whole scene toward that by StormAmount (0..1, from the rain intensity) so
+                // light rain is only mildly grey and heavy is a full storm. Runs LAST -> supersedes the fair-weather env.
+                float storm = Mathf.Clamp(StormAmount, 0f, 1f);
+                if (storm > 0.001f)
+                {
+                    _skyMat.SetShaderParameter("sky_color", Grad(SkyTop).Lerp(new Color(0.35f, 0.39f, 0.45f), storm));
+                    _skyMat.SetShaderParameter("equator_color", Grad(SkyHorizon).Lerp(new Color(0.45f, 0.48f, 0.53f), storm));
+                    float ca = amb * Mathf.Lerp(1f, 0.32f, storm);   // grey the cloud BODY down (bright white -> dark storm grey)
+                    _skyMat.SetShaderParameter("ambient_ground", new Color(ca, ca, ca));
+                    _skyMat.SetShaderParameter("ambient_equator", new Color(ca, ca, ca));
+                    Color fairRim = new Color(0.8f, 0.6f, 0.4f).Lerp(new Color(0.05f, 0.06f, 0.10f), 1f - dayF);
+                    _skyMat.SetShaderParameter("cloud_rim_color", fairRim.Lerp(new Color(0.22f, 0.24f, 0.28f), storm));   // and the RIM -> storm clouds go dark grey, not bright white
+                    if (Sun != null)
+                    {
+                        Sun.LightEnergy *= Mathf.Lerp(1f, 0.35f, storm);                                     // storm dims the sun
+                        Sun.LightColor = Sun.LightColor.Lerp(new Color(0.72f, 0.76f, 0.84f), storm);         // and cools it
+                        _skyMat.SetShaderParameter("sun_color", Sun.LightColor);
+                    }
+                    Env.AmbientLightColor = Env.AmbientLightColor.Lerp(new Color(0.50f, 0.53f, 0.57f), storm);
+                    Env.FogLightColor = Env.FogLightColor.Lerp(new Color(0.50f, 0.54f, 0.60f), storm);       // grey-blue fog
+                    Env.FogDensity = Mathf.Lerp(Env.FogDensity, 0.008f, storm);                             // thick moody haze
+                    Env.FogSkyAffect = Mathf.Lerp(Env.FogSkyAffect, 0.6f, storm);                           // fog greys into the sky/horizon too
+                }
             }
         }
 
-        public bool Overcast;   // denser fog + greyer feel (a simple weather state)
+        public bool Overcast;   // denser fog + greyer feel (a simple weather state; map-editor toggle)
+        public float StormAmount;   // 0..1 storm intensity (WeatherManager sets it from the rain) -> blends the scene toward the moody overcast look in Apply(). Defaults 0 = fair weather, so editor/demos/golden are unchanged.
 
         internal static ImageTexture LoadTex(string res)
         {

@@ -84,7 +84,7 @@ namespace UnturnedGodot
             AddChild(_rain3d);
         }
 
-        public override void _ExitTree() { if (Current == this) Current = null; }
+        public override void _ExitTree() { if (Current == this) Current = null; RainSystem3D.ResetGlobals(); }   // a departing storm mustn't leave the wet globals stuck for the next scene (tinyclaw)
 
         /// <summary>Whether the camera is under a roof, polled at a few Hz rather than every frame.
         ///
@@ -134,7 +134,7 @@ namespace UnturnedGodot
             RenderingServer.GlobalShaderParameterSet("rain_intensity", rint);
             RenderingServer.GlobalShaderParameterSet("rain_wetness", rint);   // TODO: per-surface shelter so roofed floors stay dry
             if (Overlay != null) Overlay.Raining = false;   // the 3D rain replaces the 2D streak overlay
-            if (Cycle != null) Cycle.Overcast = a > 0.35f;   // the sky turns grey once the weather commits
+            if (Cycle != null) { Cycle.Overcast = a > 0.35f; Cycle.StormAmount = rint; }   // rint drives the moody storm-env blend (grey sky + fog + dim cool light) in DayNightCycle
 
             if (_dbgFrames < 8 && System.Environment.GetEnvironmentVariable("UG_WEATHER") != null)
             {
