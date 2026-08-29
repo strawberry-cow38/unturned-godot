@@ -1126,8 +1126,8 @@ namespace UnturnedGodot
             float inten = 1f; var _ri = System.Environment.GetEnvironmentVariable("UG_RAININT"); if (!string.IsNullOrEmpty(_ri)) inten = float.Parse(_ri);
             float wetv = inten; var _rw = System.Environment.GetEnvironmentVariable("UG_RAINWET"); if (!string.IsNullOrEmpty(_rw)) wetv = float.Parse(_rw);
             RenderingServer.GlobalShaderParameterSet("rain_wetness", wetv);
-            AddChild(new RainOverlay { Raining = true, Intensity = inten, RampDemo = System.Environment.GetEnvironmentVariable("UG_RAINRAMP") == "1" });
-            GD.Print($"[raintest] rain overlay intensity {inten:0.00}. UG_RAININT to vary, UG_RAINRAMP=1 sweeps it, UG_RAINCAM to move.");
+            AddChild(new RainSystem3D { Cam = cam, Intensity = inten });   // worldspace GPU-particle rain (geometry occludes it)
+            GD.Print($"[raintest] worldspace 3D rain, intensity {inten:0.00}. UG_RAININT / UG_RAINWET / UG_RAINCAM.");
         }
 
         // --treetest=<birch|maple|pine>: a standing tree on the LEFT, a felled one on the RIGHT (visual hidden + a real
