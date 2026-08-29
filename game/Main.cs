@@ -85,6 +85,7 @@ namespace UnturnedGodot
         float _perfT;   // UG_PERF: throttle the perf log
         bool _itemTest;   // --itemtest=ID,ID,... : drop those items as physics WorldItems onto a ground plane -> validate mesh/tex/scale/settle
         bool _doorAnim; ObjectDoor _doorAnimDoor; double _doorAnimElapsed; float _doorAnimToggle1At, _doorAnimToggle2At, _doorAnimDoneAt; bool _doorAnimToggle1Done, _doorAnimToggle2Done;   // --doortest UG_DOOR_ANIM=1: real-time DEFAULT->away->DEFAULT cycle for a --write-movie capture
+        WeatherManager _stormWm; double _stormT; float _stormStrikeAt = -1f; bool _stormStruck;   // --daynight UG_WEATHER + UG_STRIKE_AT=<s>: fire a lightning strike at t=s for the --write-movie storm demo
 
         public override void _Ready()
         {
@@ -6429,20 +6430,31 @@ namespace UnturnedGodot
                 if (wmode == "rain") wm.Sim.SetPerpetual(0);
                 else if (wmode == "heavy") wm.Sim.SetPerpetual(1);                      // density only, no flash
                 else if (wmode == "lightning") { wm.Sim.SetPerpetual(1); wm.Strike(); } // the flash, judged separately
+                // UG_STRIKE_AT=<seconds>: schedule ONE strike at t=s (for the --write-movie storm demo -> flash + thunder mid-clip)
+                var _saEnv = System.Environment.GetEnvironmentVariable("UG_STRIKE_AT");
+                if (!string.IsNullOrEmpty(_saEnv) && float.TryParse(_saEnv, out var _sa)) { _stormWm = wm; _stormStrikeAt = _sa; }
                 GD.Print($"[WEATHERSHOT] mode={wmode} stage={wm.Sim.Stage} blend={wm.Sim.BlendAlpha:0.00} active={wm.Sim.Active?.Name ?? "none"}");
             }
 
+            // when storming, the ground + boxes use the wet_surface shader (darken + raindrop splashes) for the full storm demo
+            ShaderMaterial StormWet(Color dry, float rough)
+            {
+                if (wmode == null) return null;
+                var m = new ShaderMaterial { Shader = GD.Load<Shader>("res://content/wet_surface.gdshader") };
+                m.SetShaderParameter("dry_albedo", dry); m.SetShaderParameter("dry_roughness", rough);
+                return m;
+            }
             var ground = new StaticBody3D { CollisionLayer = 1 << 0 };
             ground.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
             var gmesh = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(80, 80) } };
-            gmesh.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.32f, 0.36f, 0.30f) };
+            gmesh.MaterialOverride = (Material)StormWet(new Color(0.20f, 0.22f, 0.25f), 0.7f) ?? new StandardMaterial3D { AlbedoColor = new Color(0.32f, 0.36f, 0.30f) };
             ground.AddChild(gmesh);
             AddChild(ground);
 
             for (int i = 0; i < 5; i++)   // boxes to catch the light + cast shadows
             {
                 var b = new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(1f, 1.5f, 1f) } };
-                b.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.62f, 0.56f, 0.5f) };
+                b.MaterialOverride = (Material)StormWet(new Color(0.42f, 0.40f, 0.42f), 0.6f) ?? new StandardMaterial3D { AlbedoColor = new Color(0.62f, 0.56f, 0.5f) };
                 b.Position = new Vector3((i - 2) * 2.5f, 0.75f, -3f);
                 AddChild(b);
             }
@@ -7022,6 +7034,11 @@ namespace UnturnedGodot
             // capture gate -- a watchdog placed at that gate never runs for --vehicle/--rig/--menushot.
             if (_shotRequested != null && ShotWatchdogTripped()) return;
             if (_trAnim) StepTrainAnim((float)delta);   // --traintrack: drive the train along the curve
+            if (_stormWm != null && _stormStrikeAt >= 0f && !_stormStruck)   // --daynight storm demo: fire ONE strike at t=UG_STRIKE_AT for the movie
+            {
+                _stormT += delta;
+                if (_stormT >= _stormStrikeAt) { _stormStruck = true; _stormWm.Strike(); GD.Print($"[stormdemo] strike at t={_stormT:0.00}s"); }
+            }
             if (_doorAnim && _doorAnimDoor != null)   // --doortest UG_DOOR_ANIM=1: drive a real DEFAULT->away->DEFAULT cycle at REAL elapsed time (never fast-forwarded), so a --write-movie capture shows the actual retail-curve swing from the real default state (see BuildDoorTest for the timeline setup)
             {
                 _doorAnimElapsed += delta;
