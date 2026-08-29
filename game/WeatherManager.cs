@@ -80,6 +80,38 @@ namespace UnturnedGodot
 
         public override void _ExitTree() { if (Current == this) Current = null; }
 
+        /// <summary>Whether the camera is under a roof, polled at a few Hz rather than every frame.
+        ///
+        /// The rain overlay is SCREEN-SPACE, so without this it falls through ceilings -- stand in a
+        /// finished building in a storm and the streaks carry on across your view. strawberry_cow: "make
+        /// floors/roofs occlude rain."
+        ///
+        /// EASED, not switched. A hard cut at the threshold makes the whole screen flick between wet and dry
+        /// as you walk under a doorway, or as the camera crosses an opening; the ease turns that into a
+        /// short fade, which is also roughly what stepping under real cover looks like.
+        ///
+        /// Polled on a timer because a raycast per frame per viewer is exactly the "million rebuilds each
+        /// frame" cost strawberry_cow warned about, and shelter changes at walking pace.</summary>
+        float _shelter = 1f, _shelterPoll;
+        const float ShelterPollSeconds = 0.15f;
+        const float ShelterFadeSeconds = 0.35f;
+
+        float ShelterFactor(float dt)
+        {
+            var cam = GetViewport()?.GetCamera3D();
+            if (cam == null) return _shelter;
+
+            _shelterPoll -= dt;
+            if (_shelterPoll <= 0f)
+            {
+                _shelterPoll = ShelterPollSeconds;
+                _shelterTarget = ShelterProbe.IsSheltered(cam.GetWorld3D(), cam.GlobalPosition) ? 0f : 1f;
+            }
+            _shelter = Mathf.MoveToward(_shelter, _shelterTarget, dt / ShelterFadeSeconds);
+            return _shelter;
+        }
+        float _shelterTarget = 1f;
+
         public override void _Process(double delta)
         {
             if (Sim == null) return;
@@ -95,7 +127,7 @@ namespace UnturnedGodot
                 // by side -- both peak at blend 1.0). The assets do differ, so scale the streak density by the
                 // type's SEVERITY rather than inventing a number: Fog_Density is 0.7 for Default Rain and 1.0 for
                 // Heavy Rain, which is exactly the "how bad is this weather" axis the .asset already encodes.
-                Overlay.Intensity = a * Severity;
+                Overlay.Intensity = a * Severity * ShelterFactor((float)delta);
             }
             if (Cycle != null) Cycle.Overcast = a > 0.35f;   // the sky turns grey once the weather commits
 
