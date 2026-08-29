@@ -32,8 +32,8 @@ float splashes(vec2 wxz, float t, float amt){
                 float seed = h21(id);
                 vec2 center = id + vec2(h21(id + 1.3), h21(id + 7.7));   // random source point inside the cell
                 float life = fract(t * (0.65 + seed * 0.7) + seed);     // 0..1 ripple lifecycle
-                float rad = life * (0.32 + seed * 0.40);                // varied max radius
-                float ring = smoothstep(0.06, 0.0, abs(length(g - center) - rad));
+                float rad = life * (0.16 + seed * 0.20);                // small raindrop-impact radius (~0.22m), not big pond ripples
+                float ring = smoothstep(0.05, 0.0, abs(length(g - center) - rad));
                 acc += ring * (1.0 - life) * step(gate, seed) * (0.55 + seed * 0.45);   // fade out; vary brightness; density gated by rain intensity
             }
         }

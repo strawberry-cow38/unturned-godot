@@ -83,8 +83,8 @@ float rsplash(vec2 wxz, float t, float amt) {
                 float seed = chashv(id);
                 vec2 ctr = id + vec2(chashv(id + 1.3), chashv(id + 7.7));
                 float life = fract(t * (0.65 + seed * 0.7) + seed);
-                float rad = life * (0.32 + seed * 0.40);
-                float ring = smoothstep(0.06, 0.0, abs(length(g - ctr) - rad));
+                float rad = life * (0.16 + seed * 0.20);                  // small raindrop-impact rings (~0.22m), NOT big puddle ripples -- ground-level PEI showed 0.45m read as pond-ripples + too busy
+                float ring = smoothstep(0.05, 0.0, abs(length(g - ctr) - rad));
                 acc += ring * (1.0 - life) * step(gate, seed) * (0.55 + seed * 0.45);
             }
         }

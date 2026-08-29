@@ -4273,6 +4273,21 @@ namespace UnturnedGodot
             // (res.Player == null) so it early-returns regardless. gameDefault=false keeps the harnesses direct.
             AttachMpLoopback(res, gameDefault: _peiPlayable);
             if (res.Ready) _worldReady = true;   // async world fully built (terrain..trees) -> the --shot harness can now capture a loaded frame
+            // WEATHER on PEI: BuildFullWorld never attached a WeatherManager, so the `weather` console command did
+            // NOTHING in the real game (master 2026-08-29 "no weather manager on pei"). Attach it here on the REAL
+            // PEI clock so `weather rain|heavy|clear|lightning` drives the worldspace 3D rain + terrain wetness
+            // in-game. Null overlay -- the 3D rain replaced the 2D streaks. UG_WEATHER forces a perpetual state for
+            // render-verifying (same knob as the daynight demo).
+            if (res.DayNight != null && WeatherManager.Current == null)
+            {
+                var wm = WeatherManager.Attach(this, null, res.DayNight);
+                switch (System.Environment.GetEnvironmentVariable("UG_WEATHER"))
+                {
+                    case "rain": wm.Sim.SetPerpetual(0); break;
+                    case "heavy": wm.Sim.SetPerpetual(1); break;
+                    case "lightning": wm.Sim.SetPerpetual(1); wm.Strike(); break;
+                }
+            }
             // UG_MAPSHOT=<half-extent-metres>: a top-down ORTHOGRAPHIC map capture. Orthographic and axis-aligned on
             // purpose -- it makes world->pixel an exact linear mapping, so an overlay (signal positions, spawns,
             // whatever) lands where the thing actually is instead of being nudged into place by eye against a
