@@ -13,11 +13,24 @@ namespace UnturnedGodot
         public float Intensity = 1f;
         public float TopOffset = 10f;    // emit this far above the camera so drops fall PAST it
         CpuParticles3D _p;
+        StandardMaterial3D _mat;   // streak material -- alpha faded with Intensity in _Process (CpuParticles3D has no AmountRatio)
+
+        static bool _globalsRegistered;
+        /// <summary>Register the rain_wetness + rain_intensity global shader uniforms ONCE, process-wide. MUST run
+        /// before any material that reads them compiles, or that material dies (the GrassDisplacers lesson) -- so
+        /// BuildTerrainMaterial, WeatherManager, and the --raintest / --terrain harnesses all funnel through here.</summary>
+        public static void EnsureGlobals()
+        {
+            if (_globalsRegistered) return;
+            _globalsRegistered = true;
+            RenderingServer.GlobalShaderParameterAdd("rain_wetness", RenderingServer.GlobalShaderParameterType.Float, 0f);
+            RenderingServer.GlobalShaderParameterAdd("rain_intensity", RenderingServer.GlobalShaderParameterType.Float, 0f);
+        }
 
         public override void _Ready()
         {
             var quad = new QuadMesh { Size = new Vector2(0.014f, 0.62f) };   // a thin, tall streak
-            quad.Material = new StandardMaterial3D
+            _mat = new StandardMaterial3D
             {
                 ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
                 Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
@@ -30,10 +43,11 @@ namespace UnturnedGodot
                 DistanceFadeMinDistance = 1.5f,
                 DistanceFadeMaxDistance = 3.2f,
             };
+            quad.Material = _mat;
             _p = new CpuParticles3D
             {
                 Mesh = quad,
-                Amount = Mathf.Max(250, (int)(6500f * Mathf.Clamp(Intensity, 0.12f, 1f))),   // density tracks intensity
+                Amount = 6500,   // fixed pool; AmountRatio in _Process scales the LIVE count with Intensity (0..1, no restart)
                 Lifetime = 1.4f,
                 LocalCoords = false,        // fall in WORLD space, not with the camera
                 Preprocess = 1.6f,          // warm up so it's already raining on frame 0
@@ -55,6 +69,9 @@ namespace UnturnedGodot
         public override void _Process(double delta)
         {
             if (Cam != null && IsInstanceValid(Cam)) GlobalPosition = Cam.GlobalPosition + new Vector3(0f, TopOffset, 0f);
+            float i = Mathf.Clamp(Intensity, 0f, 1f);
+            if (_mat != null) _mat.AlbedoColor = new Color(0.80f, 0.86f, 0.96f, 0.14f * i);   // fade the streaks with the rain intensity
+            if (_p != null) { bool on = i > 0.02f; if (_p.Emitting != on) _p.Emitting = on; }   // stop simulating when clear
         }
     }
 }

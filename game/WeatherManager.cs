@@ -17,6 +17,7 @@ namespace UnturnedGodot
         public WeatherSim Sim { get; private set; }
         public RainOverlay Overlay;
         public DayNightCycle Cycle;
+        RainSystem3D _rain3d;   // worldspace 3D rain -- supersedes the 2D overlay streaks
 
         // The src schedules against `cycle` = the day length in seconds (default 3600). This port's day is much
         // shorter (DayNightCycle.DayLength, 120 s by default), and the honest thing is to feed the REAL day
@@ -76,6 +77,11 @@ namespace UnturnedGodot
             _flashRect.SetAnchorsPreset(Control.LayoutPreset.FullRect);
             _flashLayer.AddChild(_flashRect);
             AddChild(_flashLayer);
+
+            // WORLDSPACE 3D rain + the wetness/splash globals (registered before ANY wettable material -- see EnsureGlobals)
+            RainSystem3D.EnsureGlobals();
+            _rain3d = new RainSystem3D { Intensity = 0f };
+            AddChild(_rain3d);
         }
 
         public override void _ExitTree() { if (Current == this) Current = null; }
@@ -120,21 +126,20 @@ namespace UnturnedGodot
             Sim.Step(dt);
 
             float a = Sim.BlendAlpha;
-            if (Overlay != null)
-            {
-                Overlay.Raining = a > 0.001f;
-                // Blend alone made Default Rain and Heavy Rain render IDENTICALLY (caught by rendering them side
-                // by side -- both peak at blend 1.0). The assets do differ, so scale the streak density by the
-                // type's SEVERITY rather than inventing a number: Fog_Density is 0.7 for Default Rain and 1.0 for
-                // Heavy Rain, which is exactly the "how bad is this weather" axis the .asset already encodes.
-                Overlay.Intensity = a * Severity * ShelterFactor((float)delta);
-            }
+            // WORLDSPACE 3D rain (supersedes the 2D overlay streaks): drive its density + the wetness/splash globals
+            // off the weather. Severity (Fog_Density: 0.7 Default Rain / 1.0 Heavy) scales it so heavy looks heavier.
+            // NO shelter fade on the falling layer -- the 3D drops are occluded by geometry themselves (tc's note).
+            float rint = a * Severity;
+            if (_rain3d != null) { _rain3d.Cam = GetViewport()?.GetCamera3D(); _rain3d.Intensity = rint; }
+            RenderingServer.GlobalShaderParameterSet("rain_intensity", rint);
+            RenderingServer.GlobalShaderParameterSet("rain_wetness", rint);   // TODO: per-surface shelter so roofed floors stay dry
+            if (Overlay != null) Overlay.Raining = false;   // the 3D rain replaces the 2D streak overlay
             if (Cycle != null) Cycle.Overcast = a > 0.35f;   // the sky turns grey once the weather commits
 
             if (_dbgFrames < 8 && System.Environment.GetEnvironmentVariable("UG_WEATHER") != null)
             {
                 _dbgFrames++;
-                GD.Print($"[WDBG] f{_dbgFrames} stage={Sim.Stage} blend={a:0.000} severity={Severity:0.00} overlayIntensity={(Overlay?.Intensity ?? -1f):0.000} raining={Overlay?.Raining}");
+                GD.Print($"[WDBG] f{_dbgFrames} stage={Sim.Stage} blend={a:0.000} severity={Severity:0.00} rint={rint:0.000}");
             }
 
             TickLightning(dt);

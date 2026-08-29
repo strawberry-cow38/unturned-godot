@@ -298,6 +298,12 @@ namespace UnturnedGodot
             {
                 GetWindow().Size = new Vector2I(1280, 720);
                 _shotPath = shot;   // wire the general frame-6 capture (else --shot renders the movie forever + hangs)
+                // preview the terrain rain-wetness/splashes: UG_RAINWET / UG_RAININT (0..1) drive the shader's rain globals
+                RainSystem3D.EnsureGlobals();
+                var _trw = System.Environment.GetEnvironmentVariable("UG_RAINWET");
+                var _tri = System.Environment.GetEnvironmentVariable("UG_RAININT");
+                RenderingServer.GlobalShaderParameterSet("rain_wetness", string.IsNullOrEmpty(_trw) ? 0f : float.Parse(_trw));
+                RenderingServer.GlobalShaderParameterSet("rain_intensity", string.IsNullOrEmpty(_tri) ? 0f : float.Parse(_tri));
                 BuildTerrainTest();
                 return;
             }
@@ -1105,10 +1111,7 @@ namespace UnturnedGodot
             AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-55f, -40f, 0f), LightEnergy = 0.7f, LightColor = new Color(0.72f, 0.76f, 0.84f), ShadowEnabled = true });
             // WETNESS + SPLASHES: register the rain_wetness global (WeatherManager owns it in-game) + apply the wet
             // surface shader to the hard surfaces so up-facing faces darken/gloss + ripple as the rain soaks them.
-            if (RenderingServer.GlobalShaderParameterGet("rain_wetness").VariantType == Variant.Type.Nil)
-                RenderingServer.GlobalShaderParameterAdd("rain_wetness", RenderingServer.GlobalShaderParameterType.Float, 0f);
-            if (RenderingServer.GlobalShaderParameterGet("rain_intensity").VariantType == Variant.Type.Nil)
-                RenderingServer.GlobalShaderParameterAdd("rain_intensity", RenderingServer.GlobalShaderParameterType.Float, 0f);
+            RainSystem3D.EnsureGlobals();
             var wetShader = GD.Load<Shader>("res://content/wet_surface.gdshader");
             ShaderMaterial WetMat(Color dry, float rough) { var m = new ShaderMaterial { Shader = wetShader }; m.SetShaderParameter("dry_albedo", dry); m.SetShaderParameter("dry_roughness", rough); return m; }
             AddChild(new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(140f, 140f) }, MaterialOverride = WetMat(new Color(0.20f, 0.22f, 0.25f), 0.7f) });

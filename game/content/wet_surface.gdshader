@@ -19,9 +19,9 @@ float h21(vec2 p){ p = fract(p * vec2(127.32, 311.7)); p += dot(p, p + 34.53); r
 // surface reads as a field of overlapping raindrop impacts. Two octaves so it doesn't look grid-locked.
 float splashes(vec2 wxz, float t, float amt){
     float acc = 0.0;
-    float gate = 1.0 - clamp(amt, 0.0, 1.0) * 0.78;       // more rain -> lower threshold -> more impacts fire
+    float gate = 1.0 - clamp(amt, 0.0, 1.0) * 0.20;       // more rain -> lower threshold -> more impacts fire (kept SPARSE: heavy ~18%, drizzle ~7% of cells)
     for (int k = 0; k < 2; k++){
-        float sc = (2.2 + float(k) * 3.3) * splash_scale;
+        float sc = (1.6 + float(k) * 2.8) * splash_scale;   // larger cells -> fewer impacts per area
         vec2 g = wxz * sc + float(k) * 21.0;
         vec2 base = floor(g);
         // Voronoi-style: scan the 3x3 neighbourhood, each cell has a JITTERED ripple source -> scattered, not a grid,
