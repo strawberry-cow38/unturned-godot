@@ -31,6 +31,17 @@ namespace UnturnedGodot
 
         static List<Mat> _all;
         public static IReadOnlyList<Mat> All => _all ??= Load();
+
+        /// <summary>The raw palette rows, kept alongside the resolved Mats so the combo browser can work off
+        /// the same eight texels the renderer samples. Rebuilding them from Mat would mean converting Color
+        /// back to 0xRRGGBB and rounding twice, which is how two views of "the same" palette drift apart.
+        /// Populated by Load(); empty only when the table is missing entirely.</summary>
+        static List<WallPalette> _palettes = new();
+        public static IReadOnlyList<WallPalette> Palettes { get { _ = All; return _palettes; } }
+
+        static List<WallCombos.Combo> _combos;
+        /// <summary>Every distinct (palette, texel) swatch, for the editor's material browser.</summary>
+        public static IReadOnlyList<WallCombos.Combo> Combos => _combos ??= WallCombos.All(Palettes);
         public static int Count => All.Count;
         public static Mat At(int id) => All.Count == 0 ? Fallback() : All[Mathf.PosMod(id, All.Count)];
 
@@ -54,7 +65,9 @@ namespace UnturnedGodot
                 GD.PrintErr($"[walls] no wall_palettes.tsv at {path}; falling back to one flat colour");
                 return list;
             }
-            foreach (var pal in WallPalettes.Parse(System.IO.File.ReadAllLines(path)))
+            var parsed = WallPalettes.Parse(System.IO.File.ReadAllLines(path));
+            _palettes = parsed;
+            foreach (var pal in parsed)
             {
                 var m = new Mat { Name = pal.Name, WallTexel = pal.WallTexel, RevealTexel = pal.RevealTexel,
                                   RoofTexel = pal.RoofTexel, Thickness = pal.Thickness };

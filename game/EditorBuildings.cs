@@ -224,6 +224,7 @@ namespace UnturnedGodot
         /// in three places hid a bug from its own mutation test. Add new transient visuals HERE.</summary>
         public void ClearTransientVisuals()
         {
+            EndPaintPreview();   // a preview left up when the handles go becomes the saved colour
             _selWall = null;
             _selOpening = -1;
             if (_handles != null) foreach (var c in _handles.GetChildren()) c.QueueFree();
@@ -367,7 +368,7 @@ namespace UnturnedGodot
         /// the panel's SetTool was written to end that. It ended it ON THE PANEL -- the KEYBOARD still set
         /// _armed directly, so pressing 1-6 while the room tool was live left both armed, which is the exact
         /// bug the centralisation existed to kill. Both paths now come through here.</summary>
-        public enum BuildTool { None, Wall, Room, Floor, Roof, Foundation, Delete, Stairs, Opening }
+        public enum BuildTool { None, Wall, Room, Floor, Roof, Foundation, Delete, Stairs, Opening, Paint }
 
         /// <summary>The live tool, so the panel can light the right button when the KEYBOARD changed it --
         /// without which a shortcut leaves the UI lying about what is armed.</summary>
@@ -399,15 +400,15 @@ namespace UnturnedGodot
             // arming path so the one-tool-at-a-time invariant still holds.
             if (keycode == Key.Space) { SelectTool(BuildTool.None); ClearTransientVisuals(); return true; }
 
-            // Copy/paste a storey. Ctrl-modified so they cannot collide with the single-letter tool keys --
-            // V is the Foundation tool and must still be V, so these are checked FIRST and only when ctrl
-            // is down.
+            // DUPLICATE A STOREY. strawberry_cow: "ctrl d should dupe floors instead" -- one key rather
+            // than a copy and a paste, because duplicating upward is what you actually do with this and
+            // the two-step version made you change floor in the middle of it.
             //
-            // The modifier is a PARAMETER rather than Input.IsKeyPressed(Key.Ctrl). Polling global input
-            // state from inside the key handler makes the binding untestable except by faking real input,
-            // and "does plain V still pick Foundation" is exactly the thing that breaks silently here.
-            if (ctrl && keycode == Key.C) { CopyFloor(); return true; }
-            if (ctrl && keycode == Key.V) { PasteFloor(); return true; }
+            // D is unbound, so unlike the ctrl+C/ctrl+V pair this replaced there is no single-letter tool
+            // underneath it to steal. The modifier is still a PARAMETER rather than Input.IsKeyPressed:
+            // polling global input from inside the key handler makes every binding here untestable except
+            // by faking real input.
+            if (ctrl && keycode == Key.D) { DuplicateFloor(); return true; }
 
             BuildTool want = keycode switch
             {
@@ -417,6 +418,7 @@ namespace UnturnedGodot
                 Key.G => BuildTool.Roof,
                 Key.T => BuildTool.Stairs,
                 Key.V => BuildTool.Foundation,
+                Key.P => BuildTool.Paint,
                 Key.X => BuildTool.Delete,
                 _     => BuildTool.None,
             };
@@ -563,9 +565,122 @@ namespace UnturnedGodot
         {
             _selWall = w;
             _selOpening = -1;
+            bool flipped = SelectedBack != back;
             SelectedBack = back;
             if (w == null) HideSideGhost(); else ShowSideGhost(w, back);
             PositionHandles();
+
+            // FLIPPING SIDES MOVES THE PREVIEW. The paint tool previews onto whichever face is selected, so
+            // choosing the other face while the cursor sits still must repaint the other face -- otherwise
+            // the swatch you can see is on the front while the click lands on the back, and the two only
+            // disagree in the one situation where you are deliberately painting the two sides differently.
+            if (flipped && _paintHover != null)
+            {
+                var hovering = _paintHover;
+                EndPaintPreview();
+                PaintHover(hovering);
+            }
+        }
+
+        // ---- the paint tool ---------------------------------------------------------------------------
+        //
+        // strawberry_cow: "give a preview of all the building material combos, have them work as a paint
+        // tool, showing a preview of the material on the wall ur hovering."
+        //
+        // The browser list is WallCombos (core, L0-tested). What lives here is the part that touches live
+        // surfaces, and it has exactly one hazard worth the words: THE PREVIEW IS A REAL EDIT. There is no
+        // separate ghost material -- previewing means writing MaterialId onto the actual wall and rebuilding
+        // it, because that is the only way to see it lit, textured and in place, which is the entire ask.
+        //
+        // So the preview has to be invisible to everything that reads a surface for keeps. It hides in one
+        // place -- PlanOf -- rather than by remembering to end the preview before each save, snapshot, bake
+        // and undo capture. A rule with four call sites is a rule with four chances to forget.
+
+        WallSurface _paintHover;
+        int _paintWasMat, _paintWasTexel, _paintWasMatBack, _paintWasTexelBack;
+        bool _paintWasBack;
+
+        /// <summary>Which swatch the paint tool will apply. Index into WallMaterials.Combos.</summary>
+        public int ActiveCombo;
+        public WallSurface PaintPreviewTarget => IsInstanceValid(_paintHover) ? _paintHover : null;
+
+        /// <summary>Preview the active combo on a surface, undoing the previous preview first.
+        ///
+        /// Passing null (or moving off) restores and previews nothing, which is what makes this safe to call
+        /// every frame from the cursor update.</summary>
+        public void PaintHover(WallSurface w)
+        {
+            if (w == _paintHover) return;
+            EndPaintPreview();
+            if (w == null || !IsInstanceValid(w) || WallMaterials.Combos.Count == 0) return;
+
+            var c = WallMaterials.Combos[Mathf.PosMod(ActiveCombo, WallMaterials.Combos.Count)];
+            _paintHover = w;
+            _paintWasBack = SelectedBack;
+            _paintWasMat = w.MaterialId; _paintWasTexel = w.Texel;
+            _paintWasMatBack = w.MaterialIdBack; _paintWasTexelBack = w.TexelBack;
+            Apply(w, c, SelectedBack);
+        }
+
+        /// <summary>Put the previewed surface back exactly as it was. Restores the side that was PAINTED,
+        /// not the side selected now -- flipping front/back mid-hover otherwise leaves the first side
+        /// permanently painted while the code believes it cleaned up.</summary>
+        public void EndPaintPreview()
+        {
+            var w = _paintHover;
+            _paintHover = null;
+            if (w == null || !IsInstanceValid(w)) return;
+            w.MaterialId = _paintWasMat; w.Texel = _paintWasTexel;
+            w.MaterialIdBack = _paintWasMatBack; w.TexelBack = _paintWasTexelBack;
+            w.Rebuild();
+        }
+
+        static void Apply(WallSurface w, WallCombos.Combo c, bool back)
+        {
+            if (back) { w.MaterialIdBack = c.Material; w.TexelBack = c.Texel; }
+            else      { w.MaterialId = c.Material; w.Texel = c.Texel; }
+            w.Rebuild();
+        }
+
+        /// <summary>Commit the previewed combo for real, with undo.
+        ///
+        /// RESTORES BEFORE COMMITTING. The undo step has to capture the surface's TRUE colour, and while a
+        /// preview is up the surface is already wearing the new one -- so capturing in place would push an
+        /// undo that restores the preview, i.e. a Ctrl+Z that visibly does nothing. Then it previews again,
+        /// because the cursor has not moved and the hover should still be showing.</summary>
+        public bool PaintCommit()
+        {
+            var w = _paintHover;
+            if (w == null || !IsInstanceValid(w) || WallMaterials.Combos.Count == 0) return false;
+            bool back = _paintWasBack;
+            var c = WallMaterials.Combos[Mathf.PosMod(ActiveCombo, WallMaterials.Combos.Count)];
+
+            EndPaintPreview();
+            int wasMat = back ? w.MaterialIdBack : w.MaterialId;
+            int wasTexel = back ? w.TexelBack : w.Texel;
+            if (wasMat == c.Material && wasTexel == c.Texel) { PaintHover(w); return false; }
+
+            Apply(w, c, back);
+            _editor?.PushUndo(back ? "paint (back)" : "paint", () =>
+            {
+                if (!IsInstanceValid(w)) return;
+                if (back) { w.MaterialIdBack = wasMat; w.TexelBack = wasTexel; }
+                else      { w.MaterialId = wasMat; w.Texel = wasTexel; }
+                w.Rebuild();
+            });
+            PaintHover(w);
+            return true;
+        }
+
+        /// <summary>Step the swatch, re-previewing so the change is visible under the cursor immediately.</summary>
+        public void CycleCombo(int delta)
+        {
+            if (WallMaterials.Combos.Count == 0) return;
+            ActiveCombo = Mathf.PosMod(ActiveCombo + delta, WallMaterials.Combos.Count);
+            var w = _paintHover;
+            if (w == null) return;
+            EndPaintPreview();
+            PaintHover(w);
         }
 
         public void SetMaterial(WallSurface w, int id)
@@ -1461,19 +1576,22 @@ namespace UnturnedGodot
         /// contains.</summary>
         bool OnStorey(WallSurface w, float y) => Mathf.Abs(w.Position.Y - y) <= StoreyHeight * 0.5f;
 
-        /// <summary>Copy everything on the active storey. strawberry_cow: "copy/paste floors".
+        /// <summary>Copy the active storey. strawberry_cow: "make sure it only dupes walls + floor +
+        /// openings + stairs etc. no foundy or roof".
         ///
-        /// FOUNDATIONS ARE EXCLUDED. A foundation is a skirt driven DOWN into the ground from the wall
-        /// above it; pasted onto storey 3 it is six metres of wall hanging in mid-air. Everything else on
-        /// the storey comes -- walls, floors, roofs, stair treads -- because those are the thing you are
-        /// duplicating when you say "another floor like that one".</summary>
+        /// Walls (with their openings), floor slabs and stair treads come. FOUNDATIONS AND ROOFS DO NOT,
+        /// and for the same reason: both are the ENDS of a building rather than a storey of it. A
+        /// foundation is a skirt driven down into the ground, so pasted onto storey 3 it is six metres of
+        /// wall hanging in mid-air; a roof is the cap, so duplicating it upward buries one roof inside the
+        /// next storey's floor and leaves the building open at the top anyway.</summary>
         public int CopyFloor()
         {
             _clipboard.Clear();
             _clipboardY = ActiveFloorY;
             foreach (var w in _walls)
             {
-                if (!IsInstanceValid(w) || w.Kind == SurfaceKind.Foundation) continue;
+                if (!IsInstanceValid(w)) continue;
+                if (w.Kind == SurfaceKind.Foundation || w.Kind == SurfaceKind.Roof) continue;
                 if (!OnStorey(w, _clipboardY)) continue;
                 var pl = PlanOf(w);
                 if (pl != null) _clipboard.Add(pl);
@@ -1503,12 +1621,37 @@ namespace UnturnedGodot
             return made.Count;
         }
 
+        /// <summary>Copy the active storey and drop it on the one above, ending up there.
+        ///
+        /// It MOVES YOU UP. Duplicating a storey is what you do when you are building the next one, so
+        /// leaving the camera on the floor below means every dupe is followed by the same E press -- and
+        /// worse, the new storey is hidden behind the one you are still standing on, so it reads as having
+        /// done nothing at all.
+        ///
+        /// Returns 0 and stays put at the top of the stack rather than silently duplicating onto the storey
+        /// you are already on, which would stack a second copy inside the first.</summary>
+        public int DuplicateFloor()
+        {
+            int from = ActiveFloor;
+            if (CopyFloor() == 0) return 0;
+            ChangeFloor(+1);
+            if (ActiveFloor == from) return 0;              // already at MaxFloor
+            int n = PasteFloor();
+            if (n == 0) ChangeFloor(-1);
+            return n;
+        }
+
         /// <summary>One surface as a WallPlan. Extracted from Snapshot so copy/paste and undo cannot drift
         /// apart about what a surface IS -- a field added to WallSurface and remembered in only one of them
         /// is a paste that silently drops it.</summary>
         WallPlan PlanOf(WallSurface w)
         {
             if (!IsInstanceValid(w)) return null;
+
+            // THE PREVIEW NEVER LEAVES THE SCREEN. A hovered surface is really wearing the swatch, so every
+            // reader that persists or captures -- save, Snapshot, the bake, every undo push that goes
+            // through them -- would otherwise record a colour the user only hovered over. Substituting here
+            // covers all of them at once and cannot be forgotten at a call site.
             var pl = new WallPlan
             {
                 X = w.Position.X, Y = w.Position.Y, Z = w.Position.Z,
@@ -1519,6 +1662,15 @@ namespace UnturnedGodot
                 Thickness = w.Thickness, Material = w.MaterialId,
             };
             pl.Openings.AddRange(w.Openings);
+
+            // Overwrite the four colour fields with what the surface REALLY wears. Applied after the normal
+            // construction rather than as a separate branch so a field added to WallPlan is captured for the
+            // previewed surface too -- a second copy of this object is how the last four bugs in here got in.
+            if (w == _paintHover)
+            {
+                pl.Material = _paintWasMat; pl.Texel = _paintWasTexel;
+                pl.MaterialBack = _paintWasMatBack; pl.TexelBack = _paintWasTexelBack;
+            }
             return pl;
         }
 
@@ -1793,18 +1945,8 @@ namespace UnturnedGodot
             var plans = new List<WallPlan>();
             foreach (var w in _walls)
             {
-                if (!IsInstanceValid(w)) continue;
-                var pl = new WallPlan
-                {
-                    X = w.Position.X, Y = w.Position.Y, Z = w.Position.Z,
-                    Yaw = w.RotationDegrees.Y, Pitch = w.RotationDegrees.X, Kind = w.Kind,
-                    Length = w.Length, Height = w.Height, GableRise = w.GableRise, Texel = w.Texel,
-                    InsetL0 = w.InsetL0, InsetL1 = w.InsetL1, InsetR0 = w.InsetR0, InsetR1 = w.InsetR1,
-                    MaterialBack = w.MaterialIdBack, TexelBack = w.TexelBack,
-                    Thickness = w.Thickness, Material = w.MaterialId,
-                };
-                pl.Openings.AddRange(w.Openings);
-                plans.Add(pl);
+                var pl = PlanOf(w);          // the ONE definition of what a surface is; see PlanOf
+                if (pl != null) plans.Add(pl);
             }
             // An empty layout still writes: otherwise deleting your last wall and saving leaves the previous
             // file on disk, and the building you deleted comes back next time you open the map.
@@ -2110,18 +2252,8 @@ namespace UnturnedGodot
             var plans = new List<WallPlan>();
             foreach (var w in _walls)
             {
-                if (!IsInstanceValid(w)) continue;
-                var pl = new WallPlan
-                {
-                    X = w.Position.X, Y = w.Position.Y, Z = w.Position.Z,
-                    Yaw = w.RotationDegrees.Y, Pitch = w.RotationDegrees.X, Kind = w.Kind,
-                    Length = w.Length, Height = w.Height, GableRise = w.GableRise, Texel = w.Texel,
-                    InsetL0 = w.InsetL0, InsetL1 = w.InsetL1, InsetR0 = w.InsetR0, InsetR1 = w.InsetR1,
-                    MaterialBack = w.MaterialIdBack, TexelBack = w.TexelBack,
-                    Thickness = w.Thickness, Material = w.MaterialId,
-                };
-                pl.Openings.AddRange(w.Openings);
-                plans.Add(pl);
+                var pl = PlanOf(w);          // the ONE definition of what a surface is; see PlanOf
+                if (pl != null) plans.Add(pl);
             }
             return plans;
         }
