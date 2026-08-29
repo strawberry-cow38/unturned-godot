@@ -4,7 +4,8 @@
 shader_type spatial;
 render_mode diffuse_burley, specular_schlick_ggx;
 
-global uniform float rain_wetness;                       // 0 dry .. 1 soaked
+global uniform float rain_wetness;                       // 0 dry .. 1 soaked (surface darken/gloss)
+global uniform float rain_intensity;                     // 0 .. 1 -- drives the splash-impact density + brightness to MATCH the falling rain
 
 uniform vec3 dry_albedo : source_color = vec3(0.30, 0.32, 0.35);
 uniform float dry_roughness = 0.85;
@@ -16,8 +17,9 @@ float h21(vec2 p){ p = fract(p * vec2(127.32, 311.7)); p += dot(p, p + 34.53); r
 
 // Splash rings: tile world-XZ into cells; each cell fires an expanding-then-fading ring on its own phase, so the
 // surface reads as a field of overlapping raindrop impacts. Two octaves so it doesn't look grid-locked.
-float splashes(vec2 wxz, float t){
+float splashes(vec2 wxz, float t, float amt){
     float acc = 0.0;
+    float gate = 1.0 - clamp(amt, 0.0, 1.0) * 0.78;       // more rain -> lower threshold -> more impacts fire
     for (int k = 0; k < 2; k++){
         float sc = (2.2 + float(k) * 3.3) * splash_scale;
         vec2 g = wxz * sc + float(k) * 21.0;
@@ -32,7 +34,7 @@ float splashes(vec2 wxz, float t){
                 float life = fract(t * (0.65 + seed * 0.7) + seed);     // 0..1 ripple lifecycle
                 float rad = life * (0.32 + seed * 0.40);                // varied max radius
                 float ring = smoothstep(0.06, 0.0, abs(length(g - center) - rad));
-                acc += ring * (1.0 - life) * step(0.40, seed) * (0.55 + seed * 0.45);   // fade out; vary brightness; not every cell fires
+                acc += ring * (1.0 - life) * step(gate, seed) * (0.55 + seed * 0.45);   // fade out; vary brightness; density gated by rain intensity
             }
         }
     }
@@ -42,10 +44,12 @@ float splashes(vec2 wxz, float t){
 void vertex(){ world_pos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz; }
 
 void fragment(){
-    float wet = clamp(rain_wetness, 0.0, 1.0) * smoothstep(0.45, 0.80, NORMAL.y);   // only up-facing faces get wet
+    float upness = smoothstep(0.45, 0.80, NORMAL.y);       // only up-facing faces get wet + splashed
+    float wet = clamp(rain_wetness, 0.0, 1.0) * upness;
+    float rint = clamp(rain_intensity, 0.0, 1.0);
     vec3 alb = dry_albedo * mix(1.0, 0.58, wet);            // wet darkens the surface
     float rough = mix(dry_roughness, 0.10, wet);           // wet = smooth/glossy -> catches highlights + reflections
-    float sp = splashes(world_pos.xz, TIME) * wet;         // bright ripple crests
+    float sp = splashes(world_pos.xz, TIME, rint) * rint * upness;   // impact density + brightness track the falling rain
     ALBEDO = alb + sp * 0.38;
     ROUGHNESS = rough;
     METALLIC = wet * 0.1;

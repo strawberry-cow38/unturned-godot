@@ -1107,6 +1107,8 @@ namespace UnturnedGodot
             // surface shader to the hard surfaces so up-facing faces darken/gloss + ripple as the rain soaks them.
             if (RenderingServer.GlobalShaderParameterGet("rain_wetness").VariantType == Variant.Type.Nil)
                 RenderingServer.GlobalShaderParameterAdd("rain_wetness", RenderingServer.GlobalShaderParameterType.Float, 0f);
+            if (RenderingServer.GlobalShaderParameterGet("rain_intensity").VariantType == Variant.Type.Nil)
+                RenderingServer.GlobalShaderParameterAdd("rain_intensity", RenderingServer.GlobalShaderParameterType.Float, 0f);
             var wetShader = GD.Load<Shader>("res://content/wet_surface.gdshader");
             ShaderMaterial WetMat(Color dry, float rough) { var m = new ShaderMaterial { Shader = wetShader }; m.SetShaderParameter("dry_albedo", dry); m.SetShaderParameter("dry_roughness", rough); return m; }
             AddChild(new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(140f, 140f) }, MaterialOverride = WetMat(new Color(0.20f, 0.22f, 0.25f), 0.7f) });
@@ -1126,6 +1128,7 @@ namespace UnturnedGodot
             float inten = 1f; var _ri = System.Environment.GetEnvironmentVariable("UG_RAININT"); if (!string.IsNullOrEmpty(_ri)) inten = float.Parse(_ri);
             float wetv = inten; var _rw = System.Environment.GetEnvironmentVariable("UG_RAINWET"); if (!string.IsNullOrEmpty(_rw)) wetv = float.Parse(_rw);
             RenderingServer.GlobalShaderParameterSet("rain_wetness", wetv);
+            RenderingServer.GlobalShaderParameterSet("rain_intensity", inten);
             AddChild(new RainSystem3D { Cam = cam, Intensity = inten });   // worldspace GPU-particle rain (geometry occludes it)
             GD.Print($"[raintest] worldspace 3D rain, intensity {inten:0.00}. UG_RAININT / UG_RAINWET / UG_RAINCAM.");
         }
