@@ -140,9 +140,92 @@ namespace UnturnedSim.Tests
             Assert.That(RoomDesignations.ParseRoom("Conservatory"), Is.EqualTo(RoomKind.Unassigned),
                 "a kind this build has never heard of");
             Assert.That(RoomDesignations.ParseRoom(""), Is.EqualTo(RoomKind.Unassigned));
+            // AN ORDINAL IS NOT A NAME. Enum.TryParse accepts "3" and maps it to whichever member sits
+            // there, which would silently re-label every room the day the enum is reordered -- the exact
+            // thing persisting by name is supposed to prevent. It must NOT be honoured.
+            // BREAK IT: drop the IsName guard -> "3" becomes a real kind and this fails.
+            Assert.That(RoomDesignations.ParseRoom("3"), Is.EqualTo(RoomKind.Unassigned),
+                "an ordinal must not be accepted as a kind");
+            Assert.That(RoomDesignations.ParseBuilding("1"), Is.EqualTo(BuildingKind.Misc),
+                "same for building kinds");
             Assert.That(RoomDesignations.ParseBuilding("Industrial"), Is.EqualTo(BuildingKind.Industrial));
             Assert.That(RoomDesignations.ParseBuilding("nonsense"), Is.EqualTo(BuildingKind.Misc),
                 "buildings fall back to Misc, which is the catch-all the list already has");
+        }
+
+        // ---- persistence -------------------------------------------------------------------------
+
+        // Round-trip. The claim is not "a string contains the word Kitchen" -- it is that a save written
+        // now reads back as the same designations, because that is what makes a label survive a session.
+        [Test]
+        public void DesignationsRoundTripThroughTheSaveFormat()
+        {
+            var walls = new List<WallPlan> { new WallPlan { X = 1f, Y = 2f, Z = 3f, Length = 12f } };
+            var stored = new List<RoomDesignation>
+            {
+                new RoomDesignation(RoomKind.Kitchen, 6.5f, -3.25f),
+                new RoomDesignation(RoomKind.Garage, 20f, 4f),
+            };
+            string text = WallSave.Write(walls, BuildingKind.Industrial, stored);
+
+            var back = WallSave.Read(text.Split('\n'), out var building, out var rooms);
+            Assert.That(back.Count, Is.EqualTo(1), "the walls still load");
+            Assert.That(building, Is.EqualTo(BuildingKind.Industrial));
+            Assert.That(rooms.Count, Is.EqualTo(2));
+            Assert.That(rooms[0].Kind, Is.EqualTo(RoomKind.Kitchen));
+            Assert.That(rooms[0].X, Is.EqualTo(6.5f).Within(1e-3f));
+            Assert.That(rooms[0].Z, Is.EqualTo(-3.25f).Within(1e-3f), "a negative coordinate survives");
+            Assert.That(rooms[1].Kind, Is.EqualTo(RoomKind.Garage));
+        }
+
+        // EVERY SAVE WRITTEN BEFORE THIS EXISTED has no designation lines, so that is the DEFAULT path and
+        // not an edge case. It must load as a normal building with no labels, never as a failure.
+        [Test]
+        public void AFileWithNoDesignationLinesStillLoads()
+        {
+            string old = WallSave.Write(new List<WallPlan> { new WallPlan { X = 1f, Length = 6f } });
+            // Check DATA lines, not a substring of the whole file: the format-comment header always
+            // contains "# building <kind>", so a bare Contains matches the documentation and proves
+            // nothing about what was written. (That is exactly how the first version of this failed.)
+            foreach (string ln in old.Split('\n'))
+            {
+                Assert.That(ln.StartsWith("building "), Is.False, $"no building record: {ln}");
+                Assert.That(ln.StartsWith("room "), Is.False, $"no room record: {ln}");
+            }
+
+            var back = WallSave.Read(old.Split('\n'), out var building, out var rooms);
+            Assert.That(back.Count, Is.EqualTo(1));
+            Assert.That(building, Is.EqualTo(BuildingKind.Misc), "the catch-all, not a throw");
+            Assert.That(rooms, Is.Empty);
+        }
+
+        // A malformed room line costs THAT label, not the building. Same principle as an unknown kind.
+        // BREAK IT: parse coordinates with float.Parse -> the whole load throws on one bad line.
+        [Test]
+        public void AMalformedRoomLineDropsOnlyItself()
+        {
+            var lines = new List<string>
+            {
+                WallSave.Header,
+                "wall 0 0 0 0 12 0.7 0",
+                "room Kitchen notanumber 4",
+                "room Garage 8 9",
+            };
+            var back = WallSave.Read(lines, out _, out var rooms);
+            Assert.That(back.Count, Is.EqualTo(1), "the wall still loads");
+            Assert.That(rooms.Count, Is.EqualTo(1), "the good label survives");
+            Assert.That(rooms[0].Kind, Is.EqualTo(RoomKind.Garage));
+        }
+
+        // The old single-argument Read still works -- three callers depend on it.
+        [Test]
+        public void TheOriginalReadOverloadStillWorks()
+        {
+            string text = WallSave.Write(new List<WallPlan> { new WallPlan { Length = 9f } },
+                                         BuildingKind.Commercial,
+                                         new List<RoomDesignation> { new RoomDesignation(RoomKind.Shop, 1f, 2f) });
+            var back = WallSave.Read(text.Split('\n'));
+            Assert.That(back.Count, Is.EqualTo(1), "designation lines do not disturb the wall read");
         }
 
         [Test]

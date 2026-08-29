@@ -51,12 +51,29 @@ namespace UnturnedSim
 
         static string F(float v) => v.ToString("0.####", CultureInfo.InvariantCulture);
 
-        public static string Write(IEnumerable<WallPlan> walls)
+        /// <summary>Serialise walls, and OPTIONALLY the building's designation data.
+        ///
+        /// The designation lines are top-level and additive, so an older reader skips them (see the class
+        /// doc: unknown lines are skipped, not fatal) and loses only the labels rather than the building.
+        /// They are optional PARAMETERS rather than a new type so the three existing callers keep working
+        /// unchanged -- a save format is the expensive thing to change twice.</summary>
+        public static string Write(IEnumerable<WallPlan> walls,
+                                   BuildingKind? building = null,
+                                   IEnumerable<RoomDesignation> rooms = null)
         {
             var sb = new StringBuilder();
             sb.Append(Header).Append('\n');
             sb.Append("# wall <x> <y> <z> <yawDeg> <length> <thickness> <materialId> [height] [pitchDeg] [kind] [gableRise] [texel] [insetL0 insetL1 insetR0 insetR1] [matBack texelBack]\n");
             sb.Append("#   open <u> <v> <width> <height> <depth> <archetype> [glazed tint hp indestructible broken] [doorProp doorOpen]\n");
+            sb.Append("# building <kind>            -- Residential|Commercial|Industrial|Misc (the volume is DERIVED from the walls)\n");
+            sb.Append("# room <kind> <x> <z>        -- a designation ANCHORED at a point inside the room it labels\n");
+            // Kinds by NAME, never ordinal: the enums can gain or reorder members without re-labelling
+            // every existing save.
+            if (building.HasValue) sb.Append("building ").Append(building.Value.ToString()).Append('\n');
+            if (rooms != null)
+                foreach (var r in rooms)
+                    sb.Append("room ").Append(r.Kind.ToString()).Append(' ')
+                      .Append(F(r.X)).Append(' ').Append(F(r.Z)).Append('\n');
             if (walls != null)
                 foreach (var w in walls)
                 {
@@ -101,6 +118,21 @@ namespace UnturnedSim
         }
 
         public static List<WallPlan> Read(IEnumerable<string> lines)
+            => Read(lines, out _, out _);
+
+        /// <summary>Read walls AND designation data. A file with no designation lines yields Misc and an
+        /// empty list, which is exactly what every save written before this existed contains -- so the
+        /// old-file path is the default path, not a special case.</summary>
+        public static List<WallPlan> Read(IEnumerable<string> lines,
+                                          out BuildingKind building,
+                                          out List<RoomDesignation> rooms)
+        {
+            building = BuildingKind.Misc;
+            rooms = new List<RoomDesignation>();
+            return ReadInner(lines, ref building, rooms);
+        }
+
+        static List<WallPlan> ReadInner(IEnumerable<string> lines, ref BuildingKind building, List<RoomDesignation> rooms)
         {
             var outp = new List<WallPlan>();
             if (lines == null) return outp;
@@ -112,6 +144,20 @@ namespace UnturnedSim
                 if (line.Length == 0 || line[0] == '#') continue;
                 var p = line.Split((char[])null, StringSplitOptions.RemoveEmptyEntries);
 
+                if (p[0] == "building" && p.Length >= 2)
+                {
+                    building = RoomDesignations.ParseBuilding(p[1]);
+                    continue;
+                }
+                if (p[0] == "room" && p.Length >= 4)
+                {
+                    // A malformed coordinate drops THAT label, not the building -- same principle as an
+                    // unknown kind degrading to Unassigned.
+                    if (float.TryParse(p[2], NumberStyles.Float, CultureInfo.InvariantCulture, out float rx)
+                        && float.TryParse(p[3], NumberStyles.Float, CultureInfo.InvariantCulture, out float rz))
+                        rooms.Add(new RoomDesignation(RoomDesignations.ParseRoom(p[1]), rx, rz));
+                    continue;
+                }
                 if (p[0] == "wall" && p.Length >= 8)
                 {
                     var w = new WallPlan();

@@ -131,9 +131,27 @@ namespace UnturnedSim
         /// throwing: a save written by a newer editor with a kind this build has never heard of should lose
         /// that one label, not fail to load the building.</summary>
         public static RoomKind ParseRoom(string s)
-            => Enum.TryParse<RoomKind>(s, true, out var k) ? k : RoomKind.Unassigned;
+            => IsName(s) && Enum.TryParse<RoomKind>(s, true, out var k) ? k : RoomKind.Unassigned;
 
         public static BuildingKind ParseBuilding(string s)
-            => Enum.TryParse<BuildingKind>(s, true, out var k) ? k : BuildingKind.Misc;
+            => IsName(s) && Enum.TryParse<BuildingKind>(s, true, out var k) ? k : BuildingKind.Misc;
+
+        /// <summary>Reject anything numeric BEFORE handing it to Enum.TryParse.
+        ///
+        /// TryParse accepts an ordinal string -- "3" happily becomes whatever member sits at 3 -- which
+        /// quietly destroys the by-name guarantee this whole scheme rests on: a save written by ordinal
+        /// would round-trip perfectly today and silently RE-LABEL every room the day someone reorders or
+        /// inserts an enum member. Found by mutating the writer to emit ordinals and watching the
+        /// round-trip test stay green, which is the only way this shows up.
+        ///
+        /// Rejecting it means an ordinal save degrades to Unassigned -- visibly wrong at the point of
+        /// loading, instead of subtly wrong later.</summary>
+        static bool IsName(string s)
+        {
+            if (string.IsNullOrWhiteSpace(s)) return false;
+            foreach (char c in s)
+                if (char.IsLetter(c)) return true;      // a real name has at least one letter
+            return false;
+        }
     }
 }
