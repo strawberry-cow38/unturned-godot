@@ -18,9 +18,12 @@ namespace UnturnedGodot
         public RainOverlay Overlay;
         public DayNightCycle Cycle;
         RainSystem3D _rain3d;   // worldspace 3D rain -- supersedes the 2D overlay streaks
-        AudioStreamPlayer _thunder;      // global thunderclap one-shot (CC0, Kinoton/freesound), NOT via SoundBus so it never lures zombies
-        float _thunderCountdown = -1f;   // seconds until the pending boom (-1 = none). Ticks on REAL time so it fires even when the day clock is frozen (renders)
-        float _thunderVolDb;             // volume for the pending boom -- near strikes loud, far ones quiet
+        AudioStreamPlayer[] _thunderPool;   // a few plain players on Master (NOT SoundBus -> never lures zombies) so overlapping claps don't cut each other
+        AudioStream[] _thunderStreams;      // varied freesound samples: [0]=medium clap, [1]=sharp close crack, [2]=deep distant rumble
+        int _thunderPoolNext;               // round-robin index into the pool
+        float _thunderCountdown = -1f;      // seconds until the pending boom (-1 = none). Ticks on REAL time so it fires even when the day clock is frozen (renders)
+        float _thunderVolDb; int _thunderPick;      // volume + which stream the pending boom uses (near=loud sharp crack, far=quiet deep rumble)
+        int _flashesLeft; float _reflashIn = -1f;   // multi-stroke flicker: a strike can re-peak the flash 1-2 more times a few frames apart
 
         // The src schedules against `cycle` = the day length in seconds (default 3600). This port's day is much
         // shorter (DayNightCycle.DayLength, 120 s by default), and the honest thing is to feed the REAL day
@@ -45,7 +48,8 @@ namespace UnturnedGodot
         // almost white). A strike should read as a brief brightening through cloud, so: weaker peak, faster
         // decay. Numbers are a judgement call, not from the asset -- the .asset only says lightning EXISTS and
         // how often, never how bright.
-        const float FlashPeak = 0.22f, FlashDecay = 5.0f;
+        const float FlashPeak = 0.28f, FlashDecay = 5.0f;   // bitvox: slightly punchier (0.22->0.28) + a warm/yellow tint (below) instead of flat white
+        static readonly Color FlashColor = new(1.0f, 0.95f, 0.80f);   // warm pale-yellow lightning flash (bitvox: "a tiny bit more yellow")
 
         /// <summary>How heavy the ACTIVE weather type is, 0..1, taken from the asset's Fog_Density (Default Rain
         /// 0.7, Heavy Rain 1.0). Multiplies the streak density so heavy rain actually looks heavier.</summary>
@@ -86,14 +90,22 @@ namespace UnturnedGodot
             _rain3d = new RainSystem3D { Intensity = 0f };
             AddChild(_rain3d);
 
-            // THUNDER: a global one-shot that booms AFTER each lightning flash on a delay (light is instant, sound lags
-            // by distance). A plain AudioStreamPlayer on Master -- deliberately NOT SoundBus.Emit, so a thunderclap never
-            // lures zombies the way a gunshot does. CC0 sample by Kinoton (freesound.org 760216).
-            var tpath = ProjectSettings.GlobalizePath("res://content/thunder.wav");
-            if (System.IO.File.Exists(tpath))
+            // THUNDER: a few varied samples it picks from per strike -- a sharp clap for close hits, a deep rumble for
+            // distant ones (bitvox: "different matching sound effects"). Plain AudioStreamPlayers on Master, deliberately
+            // NOT SoundBus.Emit so a thunderclap never lures zombies the way a gunshot does. A pool so overlapping claps
+            // don't cut each other. freesound CC0/CC-BY: Kinoton #760216, hifijohn #242586, klankbeeld #322210.
+            string[] tf = { "thunder.wav", "thunder2.wav", "thunder3.wav" };
+            _thunderStreams = new AudioStream[tf.Length];
+            bool anyThunder = false;
+            for (int i = 0; i < tf.Length; i++)
             {
-                var ts = AudioStreamWav.LoadFromFile(tpath);
-                if (ts != null) { _thunder = new AudioStreamPlayer { Stream = ts, Bus = "Master" }; AddChild(_thunder); }
+                var tp = ProjectSettings.GlobalizePath("res://content/" + tf[i]);
+                if (System.IO.File.Exists(tp)) { _thunderStreams[i] = AudioStreamWav.LoadFromFile(tp); anyThunder |= _thunderStreams[i] != null; }
+            }
+            if (anyThunder)
+            {
+                _thunderPool = new AudioStreamPlayer[4];
+                for (int i = 0; i < _thunderPool.Length; i++) { _thunderPool[i] = new AudioStreamPlayer { Bus = "Master" }; AddChild(_thunderPool[i]); }
             }
         }
 
@@ -156,7 +168,7 @@ namespace UnturnedGodot
             }
 
             TickLightning(dt);
-            TickThunder((float)delta);   // REAL time -> the flash->boom gap is real seconds + still fires when the day clock is frozen (renders)
+            TickStrikeFx((float)delta);   // REAL time -> flash FADE + thunder gap run on wall-clock, so they don't stick/crawl when the day clock is frozen or time-scaled
         }
 
         void TickLightning(float dt)
@@ -176,37 +188,63 @@ namespace UnturnedGodot
                     _nextLightning = _rng.RandfRange(active.Value.MinLightningInterval, active.Value.MaxLightningInterval);
                 }
             }
+            // NB: the flash FADE is NOT here -- it moved to TickStrikeFx on real delta. This runs on the weather-scaled
+            // dt (= delta * Cycle.Speed), which is 0 when the day clock is frozen (renders) and slow when time-scaled,
+            // so a flash faded here would stick or crawl. Only the strike FREQUENCY belongs on the weather clock.
+        }
 
+        // The REAL-TIME consequences of a strike: the flash FADE and the delayed thunder. Both run on wall-clock delta,
+        // NOT the weather-scaled dt of TickLightning -- a lightning flash is a ~0.2s physical event, it must not speed up
+        // with the day clock or freeze when it's paused. cyc.Speed=0 in a render left the flash stuck full-on, which
+        // bitvox caught ("it lights up but stays lit up") and tinyclaw traced to `_flash -= dt*FlashDecay` at dt=0.
+        void TickStrikeFx(float dt)
+        {
+            // multi-stroke flicker: re-peak the flash a couple times a few frames apart (real lightning has return strokes)
+            if (_flashesLeft > 0)
+            {
+                _reflashIn -= dt;
+                if (_reflashIn <= 0f) { _flash = 1f; _flashesLeft--; _reflashIn = _flashesLeft > 0 ? _rng.RandfRange(0.05f, 0.15f) : -1f; }
+            }
             if (_flash > 0f)
             {
                 _flash = Mathf.Max(0f, _flash - dt * FlashDecay);
-                if (_flashRect != null) _flashRect.Color = new Color(1f, 1f, 1f, _flash * FlashPeak);
+                if (_flashRect != null) _flashRect.Color = new Color(FlashColor, _flash * FlashPeak);
+            }
+            if (_thunderCountdown >= 0f)
+            {
+                _thunderCountdown -= dt;
+                if (_thunderCountdown <= 0f) { _thunderCountdown = -1f; PlayThunder(_thunderPick, _thunderVolDb); }
             }
         }
 
-        // Count down the flash->boom gap on REAL time and fire the clap once. Separate from TickLightning because that
-        // runs on the weather-scaled clock (which is frozen at 0 in a render), and the thunder gap is real seconds.
-        void TickThunder(float dt)
+        // Play one clap on the next free pool player (round-robin so a fresh strike doesn't cut a still-rumbling one).
+        void PlayThunder(int pick, float volDb)
         {
-            if (_thunderCountdown < 0f) return;
-            _thunderCountdown -= dt;
-            if (_thunderCountdown <= 0f)
-            {
-                _thunderCountdown = -1f;
-                if (_thunder != null) { _thunder.VolumeDb = _thunderVolDb; _thunder.Play(); GD.Print($"[weather] thunder {_thunderVolDb:0.0}dB"); }
-            }
+            if (_thunderPool == null) return;
+            var stream = _thunderStreams[pick] ?? _thunderStreams[0] ?? _thunderStreams[1] ?? _thunderStreams[2];
+            if (stream == null) return;
+            var pl = _thunderPool[_thunderPoolNext];
+            _thunderPoolNext = (_thunderPoolNext + 1) % _thunderPool.Length;
+            pl.Stream = stream; pl.VolumeDb = volDb; pl.Play();
+            GD.Print($"[weather] thunder #{pick} {volDb:0.0}dB");
         }
 
         /// <summary>One lightning flash. Public so the console + tests can fire it without waiting 15-60 s.</summary>
         public void Strike()
         {
             _flash = 1f;
-            if (_flashRect != null) _flashRect.Color = new Color(1f, 1f, 1f, FlashPeak);
-            // schedule the thunderclap: a random flash->boom gap. Near strikes boom soon + loud, distant ones lag + quieter.
-            if (_thunder != null)
+            if (_flashRect != null) _flashRect.Color = new Color(FlashColor, FlashPeak);
+            float dist = _rng.Randf();   // 0 = right overhead, 1 = far off -- drives the flicker, the boom delay, and the sound
+            // multi-stroke flicker: close strikes flicker 2-3x, distant ones are a single flash
+            int strokes = dist < 0.4f ? (_rng.Randf() < 0.5f ? 3 : 2) : (dist < 0.72f && _rng.Randf() < 0.5f ? 2 : 1);
+            _flashesLeft = strokes - 1;
+            _reflashIn = _flashesLeft > 0 ? _rng.RandfRange(0.05f, 0.15f) : -1f;
+            // thunder: closer -> sooner + louder + a SHARP clap; farther -> later + quieter + a DEEP rumble
+            if (_thunderPool != null)
             {
-                _thunderCountdown = _rng.RandfRange(0.6f, 3.6f);
-                _thunderVolDb = Mathf.Lerp(0f, -16f, (_thunderCountdown - 0.6f) / 3.0f);
+                _thunderCountdown = Mathf.Lerp(0.24f, 2.4f, dist);   // bitvox: cut the flash->boom gap ~40% -- less accurate, more aesthetic
+                _thunderVolDb = Mathf.Lerp(0f, -18f, dist);
+                _thunderPick = dist < 0.4f ? 1 : (dist > 0.72f ? 2 : 0);   // 1=sharp crack, 2=deep rumble, 0=medium
             }
             GD.Print("[weather] lightning");
         }
