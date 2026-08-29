@@ -1103,13 +1103,19 @@ namespace UnturnedGodot
                 FogEnabled = true, FogDensity = 0.015f, FogLightColor = new Color(0.5f, 0.54f, 0.6f) };
             AddChild(new WorldEnvironment { Environment = env });
             AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-55f, -40f, 0f), LightEnergy = 0.7f, LightColor = new Color(0.72f, 0.76f, 0.84f), ShadowEnabled = true });
-            AddChild(new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(140f, 140f) }, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.20f, 0.22f, 0.25f), Roughness = 0.6f, Metallic = 0.1f } });
+            // WETNESS + SPLASHES: register the rain_wetness global (WeatherManager owns it in-game) + apply the wet
+            // surface shader to the hard surfaces so up-facing faces darken/gloss + ripple as the rain soaks them.
+            if (RenderingServer.GlobalShaderParameterGet("rain_wetness").VariantType == Variant.Type.Nil)
+                RenderingServer.GlobalShaderParameterAdd("rain_wetness", RenderingServer.GlobalShaderParameterType.Float, 0f);
+            var wetShader = GD.Load<Shader>("res://content/wet_surface.gdshader");
+            ShaderMaterial WetMat(Color dry, float rough) { var m = new ShaderMaterial { Shader = wetShader }; m.SetShaderParameter("dry_albedo", dry); m.SetShaderParameter("dry_roughness", rough); return m; }
+            AddChild(new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(140f, 140f) }, MaterialOverride = WetMat(new Color(0.20f, 0.22f, 0.25f), 0.7f) });
             for (int i = 0; i < 6; i++)
             {
                 float hgt = 2.5f + (i % 3);
                 AddChild(new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(3f, hgt, 3f) },
                     Position = new Vector3((i - 2.5f) * 5.2f, hgt * 0.5f, -6f - (i % 2) * 4f),
-                    MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.38f, 0.40f, 0.44f), Roughness = 0.7f } });
+                    MaterialOverride = WetMat(new Color(0.38f, 0.40f, 0.44f), 0.75f) });
             }
             var cam = new Camera3D { Current = true, Fov = 60f, Far = 500f };
             AddChild(cam);
@@ -1118,6 +1124,8 @@ namespace UnturnedGodot
             var _rc = System.Environment.GetEnvironmentVariable("UG_RAINCAM");
             if (!string.IsNullOrEmpty(_rc)) { var a = _rc.Split(','); cam.Position = new Vector3(float.Parse(a[0]), float.Parse(a[1]), float.Parse(a[2])); cam.LookAt(new Vector3(float.Parse(a[3]), float.Parse(a[4]), float.Parse(a[5])), Vector3.Up); }
             float inten = 1f; var _ri = System.Environment.GetEnvironmentVariable("UG_RAININT"); if (!string.IsNullOrEmpty(_ri)) inten = float.Parse(_ri);
+            float wetv = inten; var _rw = System.Environment.GetEnvironmentVariable("UG_RAINWET"); if (!string.IsNullOrEmpty(_rw)) wetv = float.Parse(_rw);
+            RenderingServer.GlobalShaderParameterSet("rain_wetness", wetv);
             AddChild(new RainOverlay { Raining = true, Intensity = inten, RampDemo = System.Environment.GetEnvironmentVariable("UG_RAINRAMP") == "1" });
             GD.Print($"[raintest] rain overlay intensity {inten:0.00}. UG_RAININT to vary, UG_RAINRAMP=1 sweeps it, UG_RAINCAM to move.");
         }
