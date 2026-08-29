@@ -103,7 +103,7 @@ namespace UnturnedGodot
 
             var dust = new CpuParticles3D { CastShadow = GeometryInstance3D.ShadowCastingSetting.Off, 
                 Emitting = false, OneShot = true, Explosiveness = 1f,   // FIX TEST: fired below AFTER AddChild+position. Set true in the ctor, the one-shot arms at construction; spawned inside a 50Hz physics tick the cycle can burn before the first _process -> fires empty -> no chips (decal still lands).
-                Amount = metal ? 28 : 20, Lifetime = 1.0f,   // a DENSE cone (master wants a visible cone of chips, not a brief flash)
+                Amount = ParticleFx.Amount(metal ? 28 : 20), Lifetime = 1.0f,   // a DENSE cone (master wants a visible cone of chips, not a brief flash)
                 Direction = up, Spread = 50f,   // cone spraying off the surface, back toward the shooter
                 InitialVelocityMin = metal ? 5f : 3f, InitialVelocityMax = metal ? 9f : 6f,
                 Gravity = new Vector3(0f, -9.8f, 0f),
@@ -139,7 +139,7 @@ namespace UnturnedGodot
             };
             var ps = new CpuParticles3D { CastShadow = GeometryInstance3D.ShadowCastingSetting.Off, 
                 Emitting = false, OneShot = true, Explosiveness = 1f, Randomness = 0.4f,   // fired below AFTER positioning -- Emitting=true in the ctor mis-fires inside a physics tick (see the debris burst)
-                Amount = big ? 96 : 10, Lifetime = big ? 2.5f : 1.0f,
+                Amount = ParticleFx.Amount(big ? 96 : 10), Lifetime = big ? 2.5f : 1.0f,
                 Direction = Vector3.Up, Spread = big ? 18f : 45f,
                 InitialVelocityMin = big ? 8f : 3f, InitialVelocityMax = big ? 22f : 6f,
                 Gravity = new Vector3(0f, -9.8f, 0f),
@@ -175,7 +175,7 @@ namespace UnturnedGodot
             if (_blood != null) { mat.AlbedoTexture = _blood; mat.ParticlesAnimHFrames = 4; mat.ParticlesAnimVFrames = 1; mat.ParticlesAnimLoop = false; }
             var ps = new CpuParticles3D { CastShadow = GeometryInstance3D.ShadowCastingSetting.Off, 
                 Emitting = false, OneShot = true, Explosiveness = 1f,   // fired below AFTER positioning (physics-tick-safe; see the debris burst)
-                Amount = 16, Lifetime = 1.0f,
+                Amount = ParticleFx.Amount(16), Lifetime = 1.0f,
                 Direction = -d, Spread = 60f,
                 InitialVelocityMin = 3f, InitialVelocityMax = 6f,
                 Gravity = new Vector3(0f, -9.8f, 0f),

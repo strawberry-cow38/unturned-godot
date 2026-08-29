@@ -756,7 +756,7 @@ namespace UnturnedGodot
                 // are WORLD-scale; the viewmodel renders the torch at native model scale (the gun ~0.5 units in view), so the
                 // raw values fill the screen. Scaled ~0.2x here so it reads as the game's small blue nozzle spark spray.
                 _torchSparks = new CpuParticles3D { CastShadow = GeometryInstance3D.ShadowCastingSetting.Off, 
-                    Emitting = false, Amount = 16, Lifetime = 0.6f, Mesh = quad,
+                    Emitting = false, Amount = ParticleFx.Amount(16), Lifetime = 0.6f, Mesh = quad,
                     Position = TorchNozzlePos(),                                // the NOZZLE head (top of the mesh); UG_TORCHPOS to tune
                     EmissionShape = CpuParticles3D.EmissionShapeEnum.Sphere, EmissionSphereRadius = 0.008f,   // tight point at the nozzle so sparks clearly originate there
                     Direction = new Vector3(0f, 1f, 0f), Spread = 45f,           // stream OUT the nozzle (up the torch axis) in a cone, not an omni cloud

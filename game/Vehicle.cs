@@ -508,7 +508,7 @@ namespace UnturnedGodot
                     {
                         // 0 at the smoke threshold -> 1 at destroyed, so the plume grows as it is worn down.
                         float t = Mathf.Clamp(1f - norm / RotorSmokeAt, 0f, 1f);
-                        smoke.Amount = Mathf.Max(2, Mathf.RoundToInt(Mathf.Lerp(maxAmount * 0.25f, maxAmount, t)));
+                        smoke.Amount = Mathf.Max(1, Mathf.RoundToInt(Mathf.Lerp(maxAmount * 0.25f, maxAmount, t) * ParticleFx.AmountScale));
                     }
                 }
                 if (fire != null && fire.Emitting != dead) fire.Emitting = dead;
@@ -1852,7 +1852,7 @@ namespace UnturnedGodot
                 mat.ParticlesAnimHFrames = 4; mat.ParticlesAnimVFrames = 1; mat.ParticlesAnimLoop = true;
             }
             var ps = new CpuParticles3D { 
-                Emitting = false, Amount = amount, Lifetime = life, Direction = Vector3.Up, Spread = 25f,
+                Emitting = false, Amount = ParticleFx.Amount(amount), Lifetime = life, Direction = Vector3.Up, Spread = 25f,
                 InitialVelocityMin = vel * 0.6f, InitialVelocityMax = vel, Gravity = new Vector3(0f, 1.5f, 0f),
                 ScaleAmountMin = sizeMin * ParticleFx.SizeScale, ScaleAmountMax = sizeMax * ParticleFx.SizeScale, Color = c, Mesh = new QuadMesh { Size = Vector2.One, Material = mat },   // Size 1 -> ScaleAmount = the particle diameter in metres (src startSize)
             };
@@ -6459,7 +6459,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                 var ab = mesh.GetAabb();
                 _headlightMotes = new CpuParticles3D { 
                     Position = new Vector3(0f, 0f, frontZ),
-                    Amount = StreetLight.MoteCount, Lifetime = 7f, Preprocess = 7f,   // start at steady state
+                    Amount = ParticleFx.Amount(StreetLight.MoteCount), Lifetime = 7f, Preprocess = 7f,   // start at steady state
                     Randomness = 1f, Emitting = false, Visible = false,
                     Mesh = new QuadMesh { Size = new Vector2(0.0495f, 0.0495f) },
                     EmissionShape = CpuParticles3D.EmissionShapeEnum.Points,

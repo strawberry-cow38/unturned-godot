@@ -1,3 +1,5 @@
+using Godot;
+
 namespace UnturnedGodot
 {
     /// <summary>Global particle tunables. SizeScale multiplies every emitter's particle size so all particles
@@ -5,5 +7,8 @@ namespace UnturnedGodot
     public static class ParticleFx
     {
         public const float SizeScale = 0.25f;
+        public const float AmountScale = 0.25f;   // master 2026-08-29: reduce particle COUNT to 25% too (density, separate from size)
+        /// <summary>Scale an emitter's particle count by AmountScale, never below 1.</summary>
+        public static int Amount(int n) => Mathf.Max(1, Mathf.RoundToInt(n * AmountScale));
     }
 }
