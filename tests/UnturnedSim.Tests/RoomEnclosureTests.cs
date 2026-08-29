@@ -387,6 +387,124 @@ namespace UnturnedSim.Tests
             Assert.That(srcs, Is.EqualTo(new List<int> { 0, 1, 2, 3 }));
         }
 
+        // ---- the floor that actually gets built --------------------------------------------------------
+
+        // A lone room's floor reaches the OUTER face of all four walls. Stopping on the centreline leaves the
+        // outer half of every doorway unfloored, which is a ledge you step off going out of the building --
+        // and is invisible from every angle except standing in the door.
+        //
+        // BREAK IT: return Decompose(room.Outline) unchanged -> 144, and every threshold is short by 0.35.
+        [Test]
+        public void AFloorReachesTheOuterFaceOfItsWalls()
+        {
+            var rooms = RoomEnclosure.Find(Square());
+            var floor = RoomEnclosure.FloorSlabs(rooms[0]);
+            Assert.That(floor.Count, Is.EqualTo(1));
+            Assert.That(floor[0].Area, Is.EqualTo(12.7f * 12.7f).Within(0.05f),
+                "12 m of room plus half a 0.7 wall on each of four sides");
+            Assert.That(floor[0].MinX, Is.EqualTo(-0.35f).Within(0.01f));
+            Assert.That(floor[0].MaxZ, Is.EqualTo(12.35f).Within(0.01f));
+        }
+
+        // The outward direction is a consequence of the winding, and getting it backwards SHRINKS the floor
+        // by the same amount instead -- which still produces a plausible rectangle and a plausible number.
+        //
+        // BREAK IT: use the left-hand normal -> 11.3 x 11.3, and the floor pulls away from every wall.
+        [Test]
+        public void AFloorGrowsOutwardNotInward()
+        {
+            var rooms = RoomEnclosure.Find(Square());
+            var floor = RoomEnclosure.FloorSlabs(rooms[0]);
+            Assert.That(floor[0].Area, Is.GreaterThan(rooms[0].Area), "the floor must cover MORE than the room");
+        }
+
+        // Two rooms either side of a partition stop on its centreline and meet there: each takes its half,
+        // the pair covers the wall exactly, and no two slabs overlap. Overlap here is two coplanar floors
+        // fighting for the same pixels down the length of the building.
+        //
+        // BREAK IT: ignore RoomEdge.Shared -> both floors cross the partition and overlap by a full 0.7.
+        [Test]
+        public void FloorsEitherSideOfAPartitionMeetOnItWithoutOverlapping()
+        {
+            var plan = Square();
+            plan.Add(S(6, 0, 6, 12, 4));
+
+            var all = new List<RoomEnclosure.RoomRect>();
+            foreach (var r in RoomEnclosure.Find(plan)) all.AddRange(RoomEnclosure.FloorSlabs(r));
+            Assert.That(all.Count, Is.EqualTo(2));
+
+            float sum = 0f;
+            foreach (var f in all) sum += f.Area;
+            Assert.That(sum, Is.EqualTo(12.7f * 12.7f).Within(0.05f),
+                "together they should cover the building's whole footprint exactly once");
+
+            float ox = Math.Min(all[0].MaxX, all[1].MaxX) - Math.Max(all[0].MinX, all[1].MinX);
+            float oz = Math.Min(all[0].MaxZ, all[1].MaxZ) - Math.Max(all[0].MinZ, all[1].MinZ);
+            Assert.That(ox <= 1e-3f || oz <= 1e-3f, Is.True, "the two floors overlap");
+        }
+
+        // An L-shaped room grows on its outside and NOT along the seam between its own two boxes. This is the
+        // case that decides where the growing has to happen: the long box has a side that is exterior wall
+        // for half its length and seam for the rest, so a per-box rule is wrong down half of it whichever
+        // answer it picks -- and "grow" overlaps the room's own two floors along the join.
+        //
+        // BREAK IT: grow each box's sides after decomposing -> the two pieces overlap by 0.35.
+        [Test]
+        public void AnLShapedFloorGrowsOnItsOutsideButNotOnItsOwnSeam()
+        {
+            var plan = new List<Seg>
+            {
+                S(0, 0, 12, 0, 0), S(12, 0, 12, 6, 1), S(12, 6, 6, 6, 2),
+                S(6, 6, 6, 12, 3), S(6, 12, 0, 12, 4), S(0, 12, 0, 0, 5),
+            };
+            var room = RoomEnclosure.Find(plan)[0];
+            var floor = RoomEnclosure.FloorSlabs(room);
+            Assert.That(floor.Count, Is.EqualTo(2));
+
+            float sum = 0f;
+            foreach (var f in floor) sum += f.Area;
+            // 12.7 x 12.7 outside, less the notch that grew inwards to 6 x 6.
+            Assert.That(sum, Is.EqualTo(12.7f * 12.7f - 36f).Within(0.05f));
+
+            var a = floor[0]; var b = floor[1];
+            float ox = Math.Min(a.MaxX, b.MaxX) - Math.Max(a.MinX, b.MinX);
+            float oz = Math.Min(a.MaxZ, b.MaxZ) - Math.Max(a.MinZ, b.MinZ);
+            Assert.That(ox <= 1e-3f || oz <= 1e-3f, Is.True, "the room's own two floors overlap on the seam");
+        }
+
+        // A wall SPLIT IN TWO still grows as one straight run. A tee anywhere along a wall cuts it into two
+        // edges, so the room's outline has a vertex in the middle of a straight side -- and that vertex has
+        // no corner to be computed from, because its two edges are parallel and never meet. Sliding it onto
+        // the offset line is the whole job; leaving it where it was puts a diagonal kink in the outline,
+        // which stops being rectilinear and yields no floor at all rather than a visibly wrong one.
+        //
+        // BREAK IT: keep the original vertex on a collinear run -> no slabs.
+        [Test]
+        public void AWallSplitByATeeStillGrowsAsOneStraightRun()
+        {
+            var plan = Square();
+            plan.Add(S(6, 0, 6, 4, 4));             // a stub, splitting the bottom wall in two
+
+            var room = RoomEnclosure.Find(plan)[0];
+            var floor = RoomEnclosure.FloorSlabs(room);
+            Assert.That(floor.Count, Is.EqualTo(1), "a split wall is still one straight side");
+            Assert.That(floor[0].Area, Is.EqualTo(12.7f * 12.7f).Within(0.05f));
+            Assert.That(floor[0].MinZ, Is.EqualTo(-0.35f).Within(0.01f),
+                "the vertex mid-run has to move out with the rest of its wall");
+        }
+
+        // A room shaped by boxes we cannot cover gets no floor rather than a wrong one.
+        [Test]
+        public void ADiagonalRoomGetsNoFloor()
+        {
+            var plan = new List<Seg>
+            {
+                S(0, 0, 12, 0, 0), S(12, 0, 12, 12, 1), S(12, 12, 4, 12, 2),
+                S(4, 12, 0, 8, 3), S(0, 8, 0, 0, 4),
+            };
+            Assert.That(RoomEnclosure.FloorSlabs(RoomEnclosure.Find(plan)[0]), Is.Empty);
+        }
+
         [Test]
         public void NothingAtAllIsNoRooms()
         {

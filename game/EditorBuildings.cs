@@ -329,6 +329,11 @@ namespace UnturnedGodot
             if (keycode >= Key.Key1 && keycode <= Key.Key6)
             { SelectTool(BuildTool.Opening, (int)(keycode - Key.Key1)); return true; }
 
+            // An ACTION rather than a tool: it does its work and arms nothing. It still lives here because
+            // HandleToolKey is the editor's one keyboard authority for build controls, and every time a
+            // control has been given its own entry point the shared rule has drifted out from under it.
+            if (keycode == Key.H) { AutoFitRooms(); return true; }
+
             BuildTool want = keycode switch
             {
                 Key.B => BuildTool.Wall,
@@ -2334,6 +2339,117 @@ namespace UnturnedGodot
             if (made.Count == 0) return 0;
             _editor?.PushUndo("foundation place", () => { foreach (var f in made) RemoveWall(f); });
             return made.Count;
+        }
+
+        // ---- automatic floors and foundations on enclosed rooms ---------------------------------------
+
+        /// <summary>The active storey's wall centrelines, in the plan space RoomEnclosure works in.
+        ///
+        /// CENTRELINES, and only walls -- slabs, foundations and stair treads are all WallSurfaces too, and
+        /// feeding a floor in as a wall would have the floor you just placed enclose a "room" of its own.
+        /// Source carries the index into _walls so a room can be mapped back to the surfaces bounding it.</summary>
+        public List<RoomEnclosure.PlanSegment> PlanOfActiveFloor()
+        {
+            var plan = new List<RoomEnclosure.PlanSegment>();
+            float y = ActiveFloorY;
+            for (int i = 0; i < _walls.Count; i++)
+            {
+                var w = _walls[i];
+                if (!IsInstanceValid(w) || w.Kind != SurfaceKind.Wall) continue;
+                if (Mathf.Abs(w.Position.Y - y) > StoreyHeight * 0.5f) continue;   // a different storey
+                var a = w.UVToWorld(0f, 0f);
+                var b = w.UVToWorld(w.Length, 0f);
+                plan.Add(new RoomEnclosure.PlanSegment(a.X, a.Z, b.X, b.Z, i, w.Thickness));
+            }
+            return plan;
+        }
+
+        /// <summary>Where the base of a wall on the active storey sits, in world space.</summary>
+        public float ActiveFloorY => StageOrigin.Y + FloorY + GroundClearance;
+
+        /// <summary>Floor every enclosed room on this storey, and foundation the walls that bound them.
+        /// strawberry_cow: "automatic foundations/floors on enclosed rooms".
+        ///
+        /// This is deliberately not "slab the bounding box", which is what the floor tool does: a bounding
+        /// box over an L-shaped building covers ground that has no walls round it, and over two separate
+        /// buildings it covers the gap between them. Enclosure is worked out per room, so a partition wall
+        /// gets you two floors that meet on it and a courtyard gets none.
+        ///
+        /// IDEMPOTENT, because this is a button and buttons get pressed twice. A room that already has a
+        /// floor is skipped rather than given a second one z-fighting with the first.
+        ///
+        /// Foundations only go in under the LOWEST walls -- if there is a storey below this one, its walls
+        /// are what need footing, not these.</summary>
+        /// <returns>How many surfaces were added.</returns>
+        public int AutoFitRooms(bool withFoundations = true)
+        {
+            var rooms = RoomEnclosure.Find(PlanOfActiveFloor());
+            if (rooms.Count == 0) return 0;
+
+            float y = ActiveFloorY;
+            var made = new List<WallSurface>();
+            var bounding = new List<int>();
+
+            foreach (var room in rooms)
+            {
+                foreach (int src in room.SourceWalls()) if (!bounding.Contains(src)) bounding.Add(src);
+                foreach (var r in RoomEnclosure.FloorSlabs(room))
+                {
+                    if (r.Width < 0.1f || r.Depth < 0.1f) continue;
+                    if (HasFloorAt((r.MinX + r.MaxX) * 0.5f, (r.MinZ + r.MaxZ) * 0.5f, y)) continue;
+                    made.Add(SpawnWall(new Vector3(r.MinX, y - SlabThickness * 0.5f, r.MaxZ), 0f,
+                                       r.Width, SlabThickness, ActiveMaterial, null,
+                                       r.Depth, -90f, SurfaceKind.Floor));
+                }
+            }
+
+            if (withFoundations && !AnyWallBelow(y))
+                foreach (int i in bounding)
+                {
+                    if (i < 0 || i >= _walls.Count) continue;
+                    var w = _walls[i];
+                    if (!IsInstanceValid(w) || w.Kind != SurfaceKind.Wall) continue;
+                    if (HasFoundationUnder(w)) continue;
+                    made.Add(SpawnWall(w.Position - new Vector3(0f, WallOpenings.FoundationDepth, 0f),
+                                       w.RotationDegrees.Y, w.Length, w.Thickness, w.MaterialId, null,
+                                       WallOpenings.FoundationDepth, w.RotationDegrees.X, SurfaceKind.Foundation));
+                }
+
+            if (made.Count == 0) return 0;
+            _editor?.PushUndo("auto floors", () => { foreach (var m in made) RemoveWall(m); });
+            return made.Count;
+        }
+
+        /// <summary>Is this spot already floored on this storey? Point-in-slab rather than an AABB overlap,
+        /// because two floors of a divided room legitimately touch and an overlap test would call the second
+        /// one a duplicate of the first.</summary>
+        bool HasFloorAt(float x, float z, float y)
+        {
+            foreach (var w in _walls)
+            {
+                if (!IsInstanceValid(w) || w.Kind != SurfaceKind.Floor) continue;
+                var box = SurfaceAabb(w);
+                if (y < box.Position.Y - 0.2f || y > box.End.Y + 0.2f) continue;
+                if (x > box.Position.X && x < box.End.X && z > box.Position.Z && z < box.End.Z) return true;
+            }
+            return false;
+        }
+
+        bool HasFoundationUnder(WallSurface wall)
+        {
+            var want = wall.Position - new Vector3(0f, WallOpenings.FoundationDepth, 0f);
+            foreach (var w in _walls)
+                if (IsInstanceValid(w) && w.Kind == SurfaceKind.Foundation
+                    && w.Position.DistanceTo(want) < 0.1f) return true;
+            return false;
+        }
+
+        bool AnyWallBelow(float y)
+        {
+            foreach (var w in _walls)
+                if (IsInstanceValid(w) && w.Kind == SurfaceKind.Wall
+                    && w.Position.Y < y - StoreyHeight * 0.5f) return true;
+            return false;
         }
 
         /// <summary>Drop a flight where the cursor met the floor. Split out of the click handler so the two

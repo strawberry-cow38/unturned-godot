@@ -229,7 +229,19 @@ namespace UnturnedGodot
             // right for a simple box and a guess you cannot argue with on an L-shaped plan.
             var autos = new GridContainer { Columns = 4 };
             autos.AddThemeConstantOverride("h_separation", 4);
-            IconAction(autos, EditorIcons.Glyph.Floor, 40, "Auto floor", "fit a slab under every wall",
+            // Rooms first, because it is the one that is usually right. The plain auto-floor below fits ONE
+            // slab to the bounding box of every wall on the stage, which is correct for a single box and
+            // wrong the moment the plan is L-shaped or there are two buildings -- so it stays, but second.
+            IconAction(autos, EditorIcons.Glyph.Room, 40, "Auto floor rooms (H)",
+                       "floor each ENCLOSED room, and foundation the walls round it",
+                       () =>
+                       {
+                           int n = _b.AutoFitRooms();
+                           Say(n > 0 ? $"{n} surface(s) fitted to enclosed rooms"
+                                     : "no enclosed rooms on this storey — close the walls first");
+                       });
+            IconAction(autos, EditorIcons.Glyph.Floor, 40, "Auto floor (whole plot)",
+                       "one slab over everything drawn — ignores rooms",
                        () => Say(_b.AddSlab(SurfaceKind.Floor) != null ? "floor added" : "draw some walls first"));
             IconAction(autos, EditorIcons.Glyph.Foundation, 40, "Auto foundation",
                        $"a skirt under every wall — retail sinks {WallOpenings.FoundationDepth:0.#} m",

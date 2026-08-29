@@ -87,6 +87,8 @@ namespace UnturnedSim
             /// at the outer face of an exterior one, which is the flush convention AddSlab already uses.
             /// Getting this backwards is not cosmetic -- it either overlaps two slabs or leaves a gap.</summary>
             public bool Shared;
+            /// <summary>Thickness of the wall this edge runs along, so a floor can be taken out to its face.</summary>
+            public float Thickness;
         }
 
         public sealed class Room
@@ -176,6 +178,7 @@ namespace UnturnedSim
                         A = nodes[ed.A],
                         B = nodes[ed.B],
                         Source = ed.Source,
+                        Thickness = ed.Thickness,
                         Shared = seenBy != null && seenBy.Count >= 2,
                     });
                 }
@@ -290,7 +293,7 @@ namespace UnturnedSim
 
         // ---- 2. weld the pieces into a graph -----------------------------------------------------------
 
-        struct Edge { public int A, B; public int Source; }
+        struct Edge { public int A, B; public int Source; public float Thickness; }
 
         /// <summary>Cluster piece ends into nodes, then place each node EXACTLY.
         ///
@@ -324,7 +327,7 @@ namespace UnturnedSim
                 bool dup = false;
                 foreach (var e in edges)
                     if ((e.A == a && e.B == b) || (e.A == b && e.B == a)) { dup = true; break; }
-                if (!dup) edges.Add(new Edge { A = a, B = b, Source = s.Source });
+                if (!dup) edges.Add(new Edge { A = a, B = b, Source = s.Source, Thickness = s.Thickness });
             }
 
             for (int i = 0; i < nodes.Count; i++)
@@ -540,6 +543,105 @@ namespace UnturnedSim
                     result.Add(new RoomRect { MinX = s.X0, MaxX = s.X1, MinZ = z0, MaxZ = z1 });
             }
             return result;
+        }
+
+        // ---- 5. take a floor out to the wall FACE where it should ------------------------------------
+
+        /// <summary>The floor of a room, as boxes -- grown so each side reaches the outer face of the wall
+        /// under it, and stopping dead on the centreline of any wall shared with the next room.
+        ///
+        /// Rooms are found on wall CENTRELINES, so a raw slab stops halfway into every wall. From inside the
+        /// room that looks perfect (the floor already runs under the wall to its middle) and it is exactly
+        /// right at a shared wall, where each room takes its half and the two floors meet. It is WRONG at an
+        /// exterior wall with a door in it: the opening pierces the whole thickness, so the outer half of the
+        /// threshold has no floor and you step off a ledge on the way out. That is the entire reason this
+        /// exists, and it shows from nowhere except the doorway.
+        ///
+        /// THE GROWING HAPPENS ON THE OUTLINE, BEFORE THE BOXES ARE CUT, and it has to. Growing each box
+        /// afterwards means asking whether a box's SIDE is a wall, and in an L-shaped room the long box has a
+        /// side that is wall for half its length and a seam against the other box for the rest -- so either
+        /// answer is wrong down half of it, and "grow" overlaps the two floors along the join. An outline
+        /// edge is all wall or no wall, which is a question with an answer.</summary>
+        public static List<RoomRect> FloorSlabs(Room room)
+        {
+            if (room == null || !room.IsRectilinear) return new List<RoomRect>();
+            return Decompose(InflateOutline(room));
+        }
+
+        struct OffsetLine { public float Px, Pz, Dx, Dz; }
+
+        /// <summary>The outline with every exterior edge pushed out to its wall's face.</summary>
+        static List<PlanPoint> InflateOutline(Room room)
+        {
+            var pts = room.Outline;
+            int n = pts.Count;
+            if (n < 3) return new List<PlanPoint>(pts);
+
+            var lines = new List<OffsetLine>(n);
+            for (int i = 0; i < n; i++)
+            {
+                var a = pts[i]; var b = pts[(i + 1) % n];
+                float dx = b.X - a.X, dz = b.Z - a.Z;
+                float len = MathF.Sqrt(dx * dx + dz * dz);
+                if (len < 1e-4f) { lines.Add(new OffsetLine { Px = a.X, Pz = a.Z, Dx = dx, Dz = dz }); continue; }
+                // An outline winds counter-clockwise, so its interior is on the LEFT of every edge and the
+                // outward normal is the right-hand one. Getting this backwards shrinks the floor instead.
+                float nx = dz / len, nz = -dx / len;
+                float off = OutwardForEdge(room, a, b);
+                lines.Add(new OffsetLine { Px = a.X + nx * off, Pz = a.Z + nz * off, Dx = dx, Dz = dz });
+            }
+
+            var ring = new List<PlanPoint>();
+            for (int i = 0; i < n; i++)
+            {
+                var prev = lines[(i - 1 + n) % n];
+                var cur = lines[i];
+                float den = prev.Dx * cur.Dz - prev.Dz * cur.Dx;
+                if (MathF.Abs(den) > 1e-6f)
+                {
+                    float t = ((cur.Px - prev.Px) * cur.Dz - (cur.Pz - prev.Pz) * cur.Dx) / den;
+                    Push(ring, new PlanPoint(prev.Px + prev.Dx * t, prev.Pz + prev.Dz * t));
+                }
+                else
+                {
+                    // A straight run split into two edges -- a wall cut by a tee, most often. If both halves
+                    // moved the same way the two offset lines are the same line and this is one vertex; if
+                    // they did not, the run steps and needs both.
+                    Push(ring, Project(prev, pts[i]));
+                    Push(ring, Project(cur, pts[i]));
+                }
+            }
+            return ring;
+        }
+
+        static void Push(List<PlanPoint> ring, PlanPoint p)
+        {
+            if (ring.Count > 0 && Same(ring[ring.Count - 1], p)) return;
+            if (ring.Count > 1 && Same(ring[0], p)) return;
+            ring.Add(p);
+        }
+
+        static PlanPoint Project(OffsetLine l, PlanPoint p)
+        {
+            float len2 = l.Dx * l.Dx + l.Dz * l.Dz;
+            if (len2 < 1e-8f) return new PlanPoint(l.Px, l.Pz);
+            float t = ((p.X - l.Px) * l.Dx + (p.Z - l.Pz) * l.Dz) / len2;
+            return new PlanPoint(l.Px + l.Dx * t, l.Pz + l.Dz * t);
+        }
+
+        /// <summary>Half the thickness of the wall this outline edge runs along, or zero when that wall is
+        /// shared with another room -- there the two floors meet on the centreline and neither grows.</summary>
+        static float OutwardForEdge(Room room, PlanPoint a, PlanPoint b)
+        {
+            var mid = new PlanPoint((a.X + b.X) * 0.5f, (a.Z + b.Z) * 0.5f);
+            foreach (var e in room.Edges)
+            {
+                if (e.Shared) continue;
+                var seg = new PlanSegment(e.A.X, e.A.Z, e.B.X, e.B.Z);
+                float t = ProjectParam(seg, mid, out float dist);
+                if (dist < AxisTolerance && t > -1e-3f && t < 1f + 1e-3f) return e.Thickness * 0.5f;
+            }
+            return 0f;
         }
 
         static bool SameSpans(List<(float Z0, float Z1)> a, List<(float Z0, float Z1)> b)
