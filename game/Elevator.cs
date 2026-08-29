@@ -29,10 +29,10 @@ namespace UnturnedGodot
             var mat = new StandardMaterial3D { Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled, VertexColorUseAsAlbedo = true };
             string tp = dir + "Elevator_0_tex.png";
             if (Godot.FileAccess.FileExists(tp)) { var img = Image.LoadFromFile(tp); if (img != null) mat.AlbedoTexture = ImageTexture.CreateFromImage(img); }
-            // STAND IT UP: the extracted Elevator_0.obj lies on its side (its 5 m dimension runs along X). RotZ +90 puts
-            // that 5 m vertical so the car stands ~5 m tall with the door on its front face. Measured AABB was
-            // 5.0 x 4.4 x 3.9 (X wide, so tipped). Master 2026-08-29: "elevator laying on its back -- measure n check rotation".
-            var standUp = new Basis(Vector3.Back, Mathf.Pi * 0.5f);
+            // ORIENT: the extracted Elevator_0.obj is tipped (measured AABB 5.0 x 4.4 x 3.9). Master's steer: the
+            // machinery housing that sat on the +Z 'front' face belongs on TOP -- RotX -90 rolls +Z up to +Y so the
+            // motor/winch sits atop the ~5 x 4.4 m car. Master 2026-08-29: "machinery on the front should be on top".
+            var standUp = new Basis(Vector3.Right, -Mathf.Pi * 0.5f);
             e._mi = new MeshInstance3D { Mesh = mesh, MaterialOverride = mat, Basis = standUp };
             e.AddChild(e._mi);
             Aabb ab = new Transform3D(standUp, Vector3.Zero) * mesh.GetAabb();   // bounds AFTER standing up
