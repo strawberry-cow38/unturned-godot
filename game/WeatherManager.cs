@@ -21,7 +21,7 @@ namespace UnturnedGodot
         AudioStreamPlayer[] _thunderPool;   // a few plain players on Master (NOT SoundBus -> never lures zombies) so overlapping claps don't cut each other
         AudioStream[] _thunderStreams;      // varied freesound samples: [0]=medium clap, [1]=sharp close crack, [2]=deep distant rumble
         int _thunderPoolNext;               // round-robin index into the pool
-        float _thunderCountdown = -1f;      // seconds until the pending boom (-1 = none). Ticks on REAL time so it fires even when the day clock is frozen (renders)
+        float _thunderCountdown = -1f;      // seconds until the pending boom (-1 = none). Ticks on the _Process FRAME delta so it fires even when the day clock is frozen (renders)
         float _thunderVolDb; int _thunderPick;      // volume + which stream the pending boom uses (near=loud sharp crack, far=quiet deep rumble)
         int _flashesLeft; float _reflashIn = -1f;   // multi-stroke flicker: a strike can re-peak the flash 1-2 more times a few frames apart
 
@@ -43,6 +43,7 @@ namespace UnturnedGodot
         CanvasLayer _flashLayer;
         RandomNumberGenerator _rng = new();
         int _dbgFrames;
+        float _lastRint = -1f;   // last rint pushed to the globals -- skip the per-frame GlobalShaderParameterSet when unchanged (tinyclaw)
         // Flash strength/decay. The first pass used 0.55 peak over ~0.3 s and the render showed it was not a
         // lightning flash at all -- it washed the whole frame to near-white (red crates came out pink, ground
         // almost white). A strike should read as a brief brightening through cloud, so: weaker peak, faster
@@ -151,13 +152,21 @@ namespace UnturnedGodot
             Sim.Step(dt);
 
             float a = Sim.BlendAlpha;
-            // WORLDSPACE 3D rain (supersedes the 2D overlay streaks): drive its density + the wetness/splash globals
+            // WORLDSPACE 3D rain (supersedes the 2D overlay streaks): drive its intensity + the wetness/splash globals
             // off the weather. Severity (Fog_Density: 0.7 Default Rain / 1.0 Heavy) scales it so heavy looks heavier.
-            // NO shelter fade on the falling layer -- the 3D drops are occluded by geometry themselves (tc's note).
             float rint = a * Severity;
-            if (_rain3d != null) { _rain3d.Cam = GetViewport()?.GetCamera3D(); _rain3d.Intensity = rint; }
-            RenderingServer.GlobalShaderParameterSet("rain_intensity", rint);
-            RenderingServer.GlobalShaderParameterSet("rain_wetness", rint);   // TODO: per-surface shelter so roofed floors stay dry
+            // Shelter fade on the FALLING rain: CpuParticles3D have no collision + spawn ~10m above the camera, so
+            // without this they fall straight through a roof and render around you INDOORS (tinyclaw's catch -- my
+            // earlier "geometry occludes the drops" was wrong, it only covers line of sight). ShelterFactor polls the
+            // up-raycast at a few Hz + eases. The wetness globals stay global for now (per-surface shelter = TODO).
+            float shelter = ShelterFactor((float)delta);
+            if (_rain3d != null) { _rain3d.Cam = GetViewport()?.GetCamera3D(); _rain3d.Intensity = rint * shelter; }
+            if (rint != _lastRint)   // push only on change -- else a fresh StringName per literal every frame forever, even in clear weather (tinyclaw)
+            {
+                _lastRint = rint;
+                RenderingServer.GlobalShaderParameterSet("rain_intensity", rint);
+                RenderingServer.GlobalShaderParameterSet("rain_wetness", rint);   // TODO: per-surface shelter so roofed floors stay dry
+            }
             if (Overlay != null) Overlay.Raining = false;   // the 3D rain replaces the 2D streak overlay
             if (Cycle != null) { Cycle.Overcast = a > 0.35f; Cycle.StormAmount = rint; }   // rint drives the moody storm-env blend (grey sky + fog + dim cool light) in DayNightCycle
 
@@ -168,7 +177,7 @@ namespace UnturnedGodot
             }
 
             TickLightning(dt);
-            TickStrikeFx((float)delta);   // REAL time -> flash FADE + thunder gap run on wall-clock, so they don't stick/crawl when the day clock is frozen or time-scaled
+            TickStrikeFx((float)delta);   // the _Process FRAME delta -> flash fade + thunder gap don't stick when the day clock is frozen; deterministic under --write-movie, NOT wall-clock (see TickStrikeFx)
         }
 
         void TickLightning(float dt)
@@ -188,15 +197,17 @@ namespace UnturnedGodot
                     _nextLightning = _rng.RandfRange(active.Value.MinLightningInterval, active.Value.MaxLightningInterval);
                 }
             }
-            // NB: the flash FADE is NOT here -- it moved to TickStrikeFx on real delta. This runs on the weather-scaled
-            // dt (= delta * Cycle.Speed), which is 0 when the day clock is frozen (renders) and slow when time-scaled,
-            // so a flash faded here would stick or crawl. Only the strike FREQUENCY belongs on the weather clock.
+            // NB: the flash FADE is NOT here -- it moved to TickStrikeFx on the _Process FRAME delta. This runs on the
+            // weather-scaled dt (= delta * Cycle.Speed), which is 0 when the day clock is frozen (renders) and slow when
+            // time-scaled, so a flash faded here would stick or crawl. Only the strike FREQUENCY belongs on the weather clock.
         }
 
-        // The REAL-TIME consequences of a strike: the flash FADE and the delayed thunder. Both run on wall-clock delta,
-        // NOT the weather-scaled dt of TickLightning -- a lightning flash is a ~0.2s physical event, it must not speed up
-        // with the day clock or freeze when it's paused. cyc.Speed=0 in a render left the flash stuck full-on, which
-        // bitvox caught ("it lights up but stays lit up") and tinyclaw traced to `_flash -= dt*FlashDecay` at dt=0.
+        // The per-strike consequences that must ignore the WEATHER clock: the flash FADE and the delayed thunder. Both
+        // run on the _Process FRAME delta, NOT TickLightning's dt (= delta*Cycle.Speed = 0 when the day clock is frozen).
+        // ⚠ NOT true wall-clock either (tinyclaw): under --write-movie delta is the fixed 1/fps step, so the flash decays
+        // over movie frames + renders identically offline; real elapsed time would fully decay it between two frames at
+        // lavapipe's ~0.4fps and it'd vanish from every demo. cyc.Speed=0 left it stuck full-on (bitvox "lights up but
+        // stays lit up"; tinyclaw traced it to `_flash -= dt*FlashDecay` at dt=0).
         void TickStrikeFx(float dt)
         {
             // multi-stroke flicker: re-peak the flash a couple times a few frames apart (real lightning has return strokes)

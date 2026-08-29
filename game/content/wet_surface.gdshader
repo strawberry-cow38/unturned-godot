@@ -44,12 +44,15 @@ float splashes(vec2 wxz, float t, float amt){
 void vertex(){ world_pos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz; }
 
 void fragment(){
-    float upness = smoothstep(0.45, 0.80, NORMAL.y);       // only up-facing faces get wet + splashed
+    // world normal -> upness is camera-independent (view-space NORMAL.y dried the surface on a steep look-down shot;
+    // the terrain shader already transforms to world space -- match it here so harness/demo surfaces don't dry on tilt).
+    float upness = smoothstep(0.45, 0.80, normalize((INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).xyz).y);
     float wet = clamp(rain_wetness, 0.0, 1.0) * upness;
     float rint = clamp(rain_intensity, 0.0, 1.0);
     vec3 alb = dry_albedo * mix(1.0, 0.58, wet);            // wet darkens the surface
     float rough = mix(dry_roughness, 0.10, wet);           // wet = smooth/glossy -> catches highlights + reflections
-    float sp = splashes(world_pos.xz, TIME, rint) * rint * upness;   // impact density + brightness track the falling rain
+    float sp = 0.0;
+    if (rint > 0.0) sp = splashes(world_pos.xz, TIME, rint) * rint * upness;   // gate the ~800-ALU voronoi -- zero in clear weather (tinyclaw)
     ALBEDO = alb + sp * 0.38;
     ROUGHNESS = rough;
     METALLIC = wet * 0.1;

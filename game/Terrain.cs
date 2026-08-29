@@ -116,15 +116,20 @@ void fragment() {
         // FADE to nothing at night instead of glowing nuclear (master). Real caustics are just focused sunlight.
         ALBEDO += caustic_tint * caust * caustic_strength * cfade;
     }
-    // RAIN: up-facing terrain soaks dark + glossy and shows raindrop-impact rings (globals set by WeatherManager)
-    vec3 wn = normalize((INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).xyz);   // world normal -> upness is camera-independent
-    float r_up = smoothstep(0.35, 0.75, wn.y);
-    float r_wet = clamp(rain_wetness, 0.0, 1.0) * r_up;
-    ALBEDO *= mix(1.0, 0.60, r_wet);                             // wet ground darkens
-    ROUGHNESS = mix(1.0, 0.55, r_wet);                           // DAMP, not mirror -- grass/dirt mustn't go wet-plastic glossy like asphalt
-    float r_int = clamp(rain_intensity, 0.0, 1.0);
-    ALBEDO += vec3(rsplash(wpos.xz, TIME, r_int) * r_int * r_up * 0.30);
-    SPECULAR = 0.5 + r_wet * 0.12;                               // subtle sheen only (no metallic -- terrain isn't metal)
+    // RAIN: up-facing terrain soaks dark + glossy and shows raindrop-impact rings (globals set by WeatherManager).
+    // GATED on the globals, like the caustics above -- rsplash is ~800 ALU/px and would run on every terrain fragment
+    // every frame in clear weather otherwise, for a result that's multiplied by zero (tinyclaw). Both globals sit at 0
+    // in fair weather, so the whole block skips and clear weather costs nothing.
+    if (rain_intensity > 0.0 || rain_wetness > 0.0) {
+        vec3 wn = normalize((INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).xyz);   // world normal -> upness is camera-independent
+        float r_up = smoothstep(0.35, 0.75, wn.y);
+        float r_wet = clamp(rain_wetness, 0.0, 1.0) * r_up;
+        ALBEDO *= mix(1.0, 0.60, r_wet);                             // wet ground darkens
+        ROUGHNESS = mix(1.0, 0.55, r_wet);                           // DAMP, not mirror -- grass/dirt mustn't go wet-plastic glossy like asphalt
+        float r_int = clamp(rain_intensity, 0.0, 1.0);
+        ALBEDO += vec3(rsplash(wpos.xz, TIME, r_int) * r_int * r_up * 0.30);
+        SPECULAR = 0.5 + r_wet * 0.12;                               // subtle sheen only (no metallic -- terrain isn't metal)
+    }
 }
 ";
 

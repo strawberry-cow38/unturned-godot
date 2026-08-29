@@ -74,7 +74,7 @@ void fragment(){
             _mat.SetShaderParameter("time", _t);
             _mat.SetShaderParameter("intensity", Raining ? Intensity : 0f);
             _rect.Visible = Raining;
-            if (Cycle != null) Cycle.Overcast = Raining;
+            if (Cycle != null && WeatherManager.Current == null) Cycle.Overcast = Raining;   // defer to WeatherManager when one exists -- else the two write Overcast with opposite values every frame, correct only by tree-add order (tinyclaw)
         }
     }
 }

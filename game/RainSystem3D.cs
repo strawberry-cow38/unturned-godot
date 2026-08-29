@@ -14,6 +14,7 @@ namespace UnturnedGodot
         public float TopOffset = 10f;    // emit this far above the camera so drops fall PAST it
         CpuParticles3D _p;
         StandardMaterial3D _mat;   // streak material -- alpha faded with Intensity in _Process (CpuParticles3D has no AmountRatio)
+        float _lastAlphaI = -1f;   // last intensity written to the material alpha -- skip the per-frame AlbedoColor churn when unchanged
 
         static bool _globalsRegistered;
         /// <summary>Register the rain_wetness + rain_intensity global shader uniforms ONCE, process-wide. MUST run
@@ -58,7 +59,7 @@ namespace UnturnedGodot
             _p = new CpuParticles3D
             {
                 Mesh = quad,
-                Amount = 6500,   // fixed pool; AmountRatio in _Process scales the LIVE count with Intensity (0..1, no restart)
+                Amount = 6500,   // FIXED pool -- CpuParticles3D has NO AmountRatio, so _Process fades the material ALPHA with Intensity, not the count. Constant per-frame cost while raining: a deliberate trade for a gap-free intensity blend (resizing the pool at runtime restarts the emitter and pops the rain). (tinyclaw flagged the old comment's AmountRatio claim as false.)
                 Lifetime = 1.4f,
                 LocalCoords = false,        // fall in WORLD space, not with the camera
                 Preprocess = 1.6f,          // warm up so it's already raining on frame 0
@@ -81,7 +82,7 @@ namespace UnturnedGodot
         {
             if (Cam != null && IsInstanceValid(Cam)) GlobalPosition = Cam.GlobalPosition + new Vector3(0f, TopOffset, 0f);
             float i = Mathf.Clamp(Intensity, 0f, 1f);
-            if (_mat != null) _mat.AlbedoColor = new Color(0.80f, 0.86f, 0.96f, 0.14f * i);   // fade the streaks with the rain intensity
+            if (_mat != null && i != _lastAlphaI) { _lastAlphaI = i; _mat.AlbedoColor = new Color(0.80f, 0.86f, 0.96f, 0.14f * i); }   // fade the streaks with the rain intensity (only rewrite on change)
             if (_p != null) { bool on = i > 0.02f; if (_p.Emitting != on) _p.Emitting = on; }   // stop simulating when clear
         }
     }
