@@ -135,12 +135,41 @@ namespace UnturnedGodot
         /// that placed on a single click with NO preview at all -- you clicked and found out. Built from
         /// StairTreadOrigins, the same layout AddStairs uses, so it cannot promise a staircase somewhere the
         /// real one will not go. Red when it would land inside something.</summary>
+        /// <summary>Where a flight actually lands for a cursor hit, snapped in the FLIGHT'S OWN frame.
+        ///
+        /// A flight is anchored at its origin CORNER (SpawnWall's local box is X 0..Length, and the -90
+        /// pitch lays Height out along -Z), so its footprint is exactly one lattice WIDE by run/lattice
+        /// tiles LONG -- 3 x 6 at the kit's storey, i.e. a 2x1 tile block.
+        ///
+        /// The old snap put the origin on lattice JOINTS in world X and Z, which steps by 3 along an axis
+        /// the staircase occupies 6 of: consecutive positions then OVERLAP by a whole tile, and the flight
+        /// never sits on the 2x1 block it fills. Snapping the run axis by RUN and the width axis by WIDTH
+        /// makes the snap unit the staircase's own footprint. strawberry: "it should snap to the 2x1 full
+        /// tiles of the staircase".
+        ///
+        /// Yaw-aware because the run axis is the flight's, not the world's -- snapping world Z by the run
+        /// would be right facing north and wrong facing east.</summary>
+        public static Vector3 SnapStairOrigin(Vector3 hit, float yawDeg, float run, float width)
+        {
+            float yaw = Mathf.DegToRad(yawDeg);
+            var right = new Vector3(Mathf.Cos(yaw), 0f, -Mathf.Sin(yaw));    // local +X, the WIDTH axis
+            var back = new Vector3(-Mathf.Sin(yaw), 0f, -Mathf.Cos(yaw));    // local -Z, the RUN axis
+            if (run <= 0f) run = WallOpenings.LatticeStep;
+            if (width <= 0f) width = WallOpenings.StairDefaultWidth;
+            float u = Mathf.Round((hit.X * right.X + hit.Z * right.Z) / width) * width;
+            float v = Mathf.Round((hit.X * back.X + hit.Z * back.Z) / run) * run;
+            var p = right * u + back * v;
+            return new Vector3(p.X, hit.Y, p.Z);
+        }
+
         void UpdateStairGhost(Vector3 groundHit, float camYaw)
         {
             float yaw = Mathf.Round(camYaw / 90f) * 90f;
-            var origin = new Vector3(WallOpenings.SnapGrid(groundHit.X), groundHit.Y,
-                                     WallOpenings.SnapGrid(groundHit.Z));
-            float run = WallOpenings.StairDefaultRun(StoreyHeight);
+            float runG = WallOpenings.StairDefaultRun(StoreyHeight);
+            // SAME snap as PlaceStairsAt, via the same function. The ghost used to hand-roll its own
+            // SnapGrid pair, which is how a preview comes to promise a position the click does not honour.
+            var origin = SnapStairOrigin(groundHit, yaw, runG, WallOpenings.StairDefaultWidth);
+            float run = runG;
             int steps = WallOpenings.StairSteps(StoreyHeight);
             float going = run / steps, width = WallOpenings.StairDefaultWidth;
 
@@ -183,6 +212,23 @@ namespace UnturnedGodot
 
         void HideStairGhost() { if (_stairGhost != null) _stairGhost.Visible = false; }
 
+        /// <summary>Drop every TRANSIENT visual this tool owns: the selection, its handles, the stair
+        /// ghost and the grid flag.
+        ///
+        /// ONE authority, because the callers keep multiplying -- entering play mode, deleting the
+        /// selected wall, Space-to-deselect -- and each one that hand-rolls its own list forgets a
+        /// different member. That is not hypothetical: the tool-arming rule was hand-written in five
+        /// places and drifted twice before it was centralised, and the same week a gable gate written
+        /// in three places hid a bug from its own mutation test. Add new transient visuals HERE.</summary>
+        public void ClearTransientVisuals()
+        {
+            _selWall = null;
+            _selOpening = -1;
+            if (_handles != null) foreach (var c in _handles.GetChildren()) c.QueueFree();
+            HideStairGhost();
+            HideGridFlag();
+        }
+
         void UpdateGridFlag(Vector2 screen)
         {
             // Every tool that PLACES on the floor plane gets the flag, not just three of them -- foundation
@@ -220,6 +266,17 @@ namespace UnturnedGodot
         }
 
         void HideGridFlag() { if (_gridFlag != null) _gridFlag.Visible = false; }
+
+        /// <summary>Re-resolve every cursor-follower at the CURRENT mouse position: the placement ghost
+        /// and the grid flag. One method because two callers now need it -- mouse motion and the Q/E
+        /// storey keys -- and a second hand-written copy is how the flag came to sit on the wrong floor
+        /// in the first place.</summary>
+        void RefreshCursor()
+        {
+            var mp = GetViewport().GetMousePosition();
+            UpdateGhost(mp);
+            UpdateGridFlag(mp);
+        }
 
         /// <summary>Which retail preset this opening is currently sitting on, or null if it is between
         /// them. Naming the preset is the point -- "3.31 x 2.97" means nothing, "window" does.</summary>
@@ -333,6 +390,12 @@ namespace UnturnedGodot
             // HandleToolKey is the editor's one keyboard authority for build controls, and every time a
             // control has been given its own entry point the shared rule has drifted out from under it.
             if (keycode == Key.H) { AutoFitRooms(); return true; }
+
+            // SPACE WIPES THE TOOL. strawberry: "pressing space should 'wipe' the selected tool, and just
+            // be a pure selector until you get it 'dirty' again." Space is free in the editor -- Keybinds
+            // only binds it to Jump, which is gameplay -- and it routes through SelectTool like every other
+            // arming path so the one-tool-at-a-time invariant still holds.
+            if (keycode == Key.Space) { SelectTool(BuildTool.None); ClearTransientVisuals(); return true; }
 
             BuildTool want = keycode switch
             {
@@ -607,7 +670,10 @@ namespace UnturnedGodot
             if (w == null || !IsInstanceValid(w)) return;
             _pickToWall.Remove(w.BodyRid);
             _walls.Remove(w);
-            if (_selWall == w) { _selWall = null; _selOpening = -1; }
+            // Handles are drawn FOR the selected wall, so clearing the reference is not enough -- they
+            // are rebuilt by PositionHandles and nothing else triggered it, leaving a deleted wall's
+            // handles floating over empty space until the next unrelated selection change.
+            if (_selWall == w) { _selWall = null; _selOpening = -1; PositionHandles(); }
             w.QueueFree();
         }
 
@@ -957,7 +1023,7 @@ namespace UnturnedGodot
                 else if (_drawing != null) StretchDraw(GetViewport().GetMousePosition());
                 else if (_room.Count > 0) StretchRoom(GetViewport().GetMousePosition());
                 else if (_drawingSlab != null) StretchSlab(GetViewport().GetMousePosition());
-                else { UpdateGhost(GetViewport().GetMousePosition()); UpdateGridFlag(GetViewport().GetMousePosition()); }
+                else RefreshCursor();
             }
             else if (ev is InputEventKey { Pressed: true, Echo: false } k)
             {
@@ -976,8 +1042,13 @@ namespace UnturnedGodot
                     PositionHandles();
                 }
                 else if (HandleToolKey(k.Keycode)) { }
-                else if (k.Keycode == Key.E) ChangeFloor(+1);
-                else if (k.Keycode == Key.Q) ChangeFloor(-1);
+                // Q/E RE-RESOLVE THE CURSOR. The ghost and the grid flag were refreshed only on mouse
+                // MOTION, so changing storey with the mouse still left them resolved against the old
+                // floor -- you would be drawing on floor 2 while the marker sat on floor 1 until you
+                // happened to jiggle the mouse. strawberry: "q & e should force a cursor position
+                // update, even if the mouse doesnt move".
+                else if (k.Keycode == Key.E) { ChangeFloor(+1); RefreshCursor(); }
+                else if (k.Keycode == Key.Q) { ChangeFloor(-1); RefreshCursor(); }
                 // Ctrl+Z. The undo STACK was always here -- every wall, opening and edit pushes onto it --
                 // but the key was only ever bound in EditorObjects, so in Buildings mode there was nothing
                 // to press. An undo history nobody can reach is the same as no undo history.
@@ -2547,9 +2618,12 @@ namespace UnturnedGodot
         /// <param name="groundHit">Point from GroundOnFloor, in world space, already at storey height.</param>
         /// <param name="camYaw">Camera yaw; the flight snaps to the nearest 90 deg so it meets a wall.</param>
         public int PlaceStairsAt(Vector3 groundHit, float camYaw)
-            => AddStairs(new Vector3(WallOpenings.SnapGrid(groundHit.X), groundHit.Y,
-                                     WallOpenings.SnapGrid(groundHit.Z)),
-                         Mathf.Round(camYaw / 90f) * 90f);
+        {
+            float yaw = Mathf.Round(camYaw / 90f) * 90f;
+            float run = WallOpenings.StairDefaultRun(StoreyHeight);
+            float width = WallOpenings.StairDefaultWidth;
+            return AddStairs(SnapStairOrigin(groundHit, yaw, run, width), yaw, run, width);
+        }
 
         /// <summary>A flight of stairs climbing exactly one storey, emitted as one flat tread per step.
         ///

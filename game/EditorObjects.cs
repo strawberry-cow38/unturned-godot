@@ -539,6 +539,11 @@ namespace UnturnedGodot
             TopLevel = true,   // we drive its world transform from the selected object directly
         };
 
+        /// <summary>Drop the selection and everything drawn FOR it -- the gizmo and the outline markers.
+        /// The buildings tool has the twin of this; both are called from one place on entering play mode
+        /// so a new transient visual is added in exactly one file, not remembered in three callers.</summary>
+        public void ClearTransientVisuals() => Select(null);
+
         void RefreshMarkers()   // selection changed: one yellow outline per selected object
         {
             foreach (var m in _markers) m.QueueFree();

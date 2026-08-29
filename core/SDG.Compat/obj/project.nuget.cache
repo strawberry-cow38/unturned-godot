@@ -1,8 +1,8 @@
 {
   "version": 2,
-  "dgSpecHash": "/U7A2azrvX0=",
+  "dgSpecHash": "9bUaFDHzm9M=",
   "success": true,
-  "projectFilePath": "/home/ec2-user/ug-nightly-wt/core/SDG.Compat/SDG.Compat.csproj",
+  "projectFilePath": "/home/ec2-user/ug-editor-wt/core/SDG.Compat/SDG.Compat.csproj",
   "expectedPackageFiles": [],
   "logs": []
 }

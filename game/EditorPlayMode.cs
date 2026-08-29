@@ -84,6 +84,12 @@ namespace UnturnedGodot
             _editor.AddChild(_player);
             _player.GlobalPosition = ComputeSpawn();   // _Ready makes its FP camera Current + captures the mouse
 
+            // Handles, selection outlines and the gizmo are EDITOR furniture; they were still drawn over
+            // the game because EnterPlay only hid the UI layer, which does not own them. strawberry:
+            // "kill all handles, selection boxes etc when going into play mode".
+            _buildings?.ClearTransientVisuals();
+            _editor.Objects?.ClearTransientVisuals();
+
             if (_buildings != null) _buildings.Active = false;                             // stop the build tool eating input
             if (_flyCam != null) { _flyCam.SetProcess(false); _flyCam.SetProcessUnhandledInput(false); }
             SetEditorUiVisible(false);
