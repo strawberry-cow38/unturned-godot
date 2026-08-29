@@ -10,34 +10,49 @@ namespace UnturnedGodot
         public DayNightCycle Cycle;
         public bool Raining = true;
         public float Intensity = 1f;
+        public bool RampDemo;   // demo: oscillate Intensity light<->heavy to show off varying intensity
 
         ColorRect _rect;
         ShaderMaterial _mat;
         float _t;
 
+        // Layered parallax rain: 4 sheets of falling streaks at increasing size/speed (far thin+dense+slow ->
+        // near fat+sparse+fast) skewed by `wind`, with per-column phase stagger + per-drop jitter/brightness so it
+        // never tiles. `intensity` (0 drizzle .. 1 downpour) scales density + opacity. Splashes/wetness are separate
+        // world-space passes; this is just the airborne rain (master 2026-08-29: nice, swag, pretty, performant).
         const string RainShader = @"
 shader_type canvas_item;
 uniform float time;
 uniform float intensity = 1.0;
-float hash(vec2 p){ return fract(sin(dot(p, vec2(41.3, 289.1))) * 43758.5453); }
+uniform float wind = 0.14;                                   // horizontal slant of the streaks
+uniform vec3 rain_tint : source_color = vec3(0.80, 0.86, 0.98);
+float h21(vec2 p){ p = fract(p * vec2(127.32, 311.7)); p += dot(p, p + 34.53); return fract(p.x * p.y); }
+// one parallax sheet of falling streaks
+float sheet(vec2 uv, float t, float dens, float speed, float len, float thick, float fill){
+    uv.x += uv.y * wind;                                     // wind slant
+    vec2 g = vec2(uv.x * dens, uv.y * dens * 0.14);          // long cells -> streaky
+    float phase = h21(vec2(floor(g.x), 5.2));
+    g.y += phase * 31.0 - t * speed;                         // -t so it falls DOWN (SCREEN_UV y=0 is top) + per-column phase stagger
+    vec2 id = floor(g);
+    float r = h21(id);
+    float present = step(1.0 - fill * clamp(0.35 + intensity, 0.0, 1.0), r);   // more drops at higher intensity
+    float fx = fract(g.x) - 0.5 + (r - 0.5) * 0.55;          // x jitter within the column
+    float lx = smoothstep(thick, 0.0, abs(fx));             // thin bright core
+    float fy = fract(g.y);
+    float head = smoothstep(0.0, 0.04, fy);
+    float tail = 1.0 - smoothstep(len * (0.6 + r * 0.4), 1.0, fy);
+    return present * lx * head * tail * (0.4 + r * 0.6);
+}
 void fragment(){
     vec2 uv = SCREEN_UV;
     float a = 0.0;
-    for(int i = 0; i < 3; i++){
-        float fi = float(i);
-        float cols = 90.0 + fi * 55.0;          // more, finer streaks in front layers
-        float x = uv.x * cols;
-        float col = floor(x);
-        float fx = fract(x);
-        float lineMask = smoothstep(0.40, 0.5, fx) * (1.0 - smoothstep(0.5, 0.60, fx));
-        float rnd = hash(vec2(col, fi * 7.0));
-        if(hash(vec2(col + 31.0, fi)) < 0.55) continue;    // gaps between drops
-        float speed = 1.4 + fi * 0.9 + rnd * 0.6;
-        float y = fract(uv.y * (2.0 + fi) - time * speed + rnd);   // -time so the dash falls DOWN (SCREEN_UV y=0 is top)
-        float drop = smoothstep(0.0, 0.02, y) * (1.0 - smoothstep(0.02, 0.22, y));   // a falling dash
-        a += lineMask * drop * (0.30 - fi * 0.06);
-    }
-    COLOR = vec4(0.80, 0.85, 0.95, clamp(a, 0.0, 1.0) * intensity);
+    a += sheet(uv + 3.0,  time, 66.0, 1.2, 0.80, 0.040, 0.35) * 0.14;   // far, thin, faint
+    a += sheet(uv + 9.0,  time, 44.0, 1.9, 0.66, 0.055, 0.35) * 0.18;
+    a += sheet(uv + 17.0, time, 28.0, 2.8, 0.52, 0.075, 0.30) * 0.22;   // near
+    a += sheet(uv + 27.0, time, 17.0, 4.0, 0.42, 0.100, 0.28) * 0.24;   // nearest
+    a = clamp(a, 0.0, 1.0);
+    float alpha = a * (0.30 + intensity * 0.40);
+    COLOR = vec4(rain_tint, clamp(alpha, 0.0, 1.0) * clamp(intensity, 0.0, 1.0));
 }";
 
         public override void _Ready()
@@ -55,6 +70,7 @@ void fragment(){
         public override void _Process(double delta)
         {
             _t += (float)delta;
+            if (RampDemo) Intensity = 0.15f + 0.85f * (0.5f + 0.5f * Mathf.Sin(_t * 0.8f));   // light <-> heavy sweep
             _mat.SetShaderParameter("time", _t);
             _mat.SetShaderParameter("intensity", Raining ? Intensity : 0f);
             _rect.Visible = Raining;

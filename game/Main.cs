@@ -113,6 +113,7 @@ namespace UnturnedGodot
             bool wallDemo = false;
             bool clockTest = false;
             bool elevatorTest = false;
+            bool rainTest = false;
             bool play = false, demo = false, netdemo = false, server = false, dedicated = false, client = false, smoke = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, lightTest = false, trafficTest = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, playground = false, objects = false, peidrive = false, craftmenu = false, stationtest = false, editorMode = false, impactTest = false, doorGallery = false, lampTest = false, beamTest = false, impTest = false, treeSweep = false, bakeLods = false, bakeLodsDry = false, netobserve = false, zombieTier = false, zflow = false, zhunt = false, zkill = false, zsound = false, zface = false, zpath = false;
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
@@ -129,6 +130,7 @@ namespace UnturnedGodot
                 else if (arg.StartsWith("--animaltest=")) { animaltest = arg["--animaltest=".Length..]; _shotRequested = animaltest; }   // one animal rig posed as if walking -Z, to measure the RigYawFix (UG_ANIMALYAW spins it)
                 else if (arg.StartsWith("--treetest=")) { treetest = arg["--treetest=".Length..]; _shotRequested = treetest; }   // standing tree beside a felled one (its dropped logs) -> render the harvest
                 else if (arg == "--elevatortest") { elevatorTest = true; _shotRequested = "elevator"; }   // Elevator_0 wired to ride up/down on F; auto-Calls so an offline UG_SHOTTIME catches it mid-ride
+                else if (arg == "--raintest") { rainTest = true; _shotRequested = "rain"; }   // rain-visuals showcase: overcast ground + boxes + the RainOverlay (UG_RAININT / UG_RAINCAM)
                 else if (arg == "--trainshow") trainshow = "1";   // assemble train_cargo_0 from its extracted pieces for a 3/4 shot
                 else if (arg == "--traintrack") traintrack = "1";   // ride the train along a curved test track
                 else if (arg.StartsWith("--slingtest=")) { slingtest = arg["--slingtest=".Length..]; _shotRequested = slingtest; }
@@ -435,6 +437,7 @@ namespace UnturnedGodot
             if (animaltest != null) { GetWindow().Size = new Vector2I(1000, 720); _shotPath = shot; BuildAnimalTest(animaltest); return; }
             if (treetest != null) { GetWindow().Size = new Vector2I(1280, 800); _shotPath = shot; BuildTreeTest(treetest); return; }
             if (elevatorTest) { GetWindow().Size = new Vector2I(1280, 800); _shotPath = shot; BuildElevatorTest(); return; }
+            if (rainTest) { GetWindow().Size = new Vector2I(1280, 800); _shotPath = shot; BuildRainTest(); return; }
             if (trainshow != null) { GetWindow().Size = new Vector2I(1600, 720); BuildTrainShow(); return; }
             if (traintrack != null) { GetWindow().Size = new Vector2I(1600, 900); BuildTrainTrack(); return; }
 
@@ -1087,6 +1090,44 @@ namespace UnturnedGodot
             var _ec = System.Environment.GetEnvironmentVariable("UG_ELEVCAM");   // diag: "ex,ey,ez,tx,ty,tz"
             if (!string.IsNullOrEmpty(_ec)) { var a = _ec.Split(','); cam.Position = new Vector3(float.Parse(a[0]), float.Parse(a[1]), float.Parse(a[2])); cam.LookAt(new Vector3(float.Parse(a[3]), float.Parse(a[4]), float.Parse(a[5])), Vector3.Up); }
             GD.Print("[elevatortest] Elevator + floor-button panel; UG_ELEVFLOORS=1 steps every floor. Set UG_SHOTTIME/--write-movie to capture.");
+        }
+
+        // --raintest: a showcase scene for the rain visuals -- overcast ground + hard-surface boxes + the RainOverlay.
+        // UG_RAININT sets intensity (0..1), UG_RAINCAM="ex,ey,ez,tx,ty,tz" moves the camera. Master 2026-08-29: a nice,
+        // pretty, performant rain shader (varying intensity; splashes + wetness land in later passes).
+        void BuildRainTest()
+        {
+            var env = new Godot.Environment {
+                BackgroundMode = Godot.Environment.BGMode.Color, BackgroundColor = new Color(0.42f, 0.46f, 0.52f),
+                AmbientLightSource = Godot.Environment.AmbientSource.Color, AmbientLightColor = new Color(0.5f, 0.53f, 0.57f), AmbientLightEnergy = 0.75f,
+                FogEnabled = true, FogDensity = 0.015f, FogLightColor = new Color(0.5f, 0.54f, 0.6f) };
+            AddChild(new WorldEnvironment { Environment = env });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-55f, -40f, 0f), LightEnergy = 0.7f, LightColor = new Color(0.72f, 0.76f, 0.84f), ShadowEnabled = true });
+            // WETNESS + SPLASHES: register the rain_wetness global (WeatherManager owns it in-game) + apply the wet
+            // surface shader to the hard surfaces so up-facing faces darken/gloss + ripple as the rain soaks them.
+            if (RenderingServer.GlobalShaderParameterGet("rain_wetness").VariantType == Variant.Type.Nil)
+                RenderingServer.GlobalShaderParameterAdd("rain_wetness", RenderingServer.GlobalShaderParameterType.Float, 0f);
+            var wetShader = GD.Load<Shader>("res://content/wet_surface.gdshader");
+            ShaderMaterial WetMat(Color dry, float rough) { var m = new ShaderMaterial { Shader = wetShader }; m.SetShaderParameter("dry_albedo", dry); m.SetShaderParameter("dry_roughness", rough); return m; }
+            AddChild(new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(140f, 140f) }, MaterialOverride = WetMat(new Color(0.20f, 0.22f, 0.25f), 0.7f) });
+            for (int i = 0; i < 6; i++)
+            {
+                float hgt = 2.5f + (i % 3);
+                AddChild(new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(3f, hgt, 3f) },
+                    Position = new Vector3((i - 2.5f) * 5.2f, hgt * 0.5f, -6f - (i % 2) * 4f),
+                    MaterialOverride = WetMat(new Color(0.38f, 0.40f, 0.44f), 0.75f) });
+            }
+            var cam = new Camera3D { Current = true, Fov = 60f, Far = 500f };
+            AddChild(cam);
+            cam.Position = new Vector3(0f, 3.2f, 13f);
+            cam.LookAt(new Vector3(0f, 2f, -6f), Vector3.Up);
+            var _rc = System.Environment.GetEnvironmentVariable("UG_RAINCAM");
+            if (!string.IsNullOrEmpty(_rc)) { var a = _rc.Split(','); cam.Position = new Vector3(float.Parse(a[0]), float.Parse(a[1]), float.Parse(a[2])); cam.LookAt(new Vector3(float.Parse(a[3]), float.Parse(a[4]), float.Parse(a[5])), Vector3.Up); }
+            float inten = 1f; var _ri = System.Environment.GetEnvironmentVariable("UG_RAININT"); if (!string.IsNullOrEmpty(_ri)) inten = float.Parse(_ri);
+            float wetv = inten; var _rw = System.Environment.GetEnvironmentVariable("UG_RAINWET"); if (!string.IsNullOrEmpty(_rw)) wetv = float.Parse(_rw);
+            RenderingServer.GlobalShaderParameterSet("rain_wetness", wetv);
+            AddChild(new RainSystem3D { Cam = cam, Intensity = inten });   // worldspace GPU-particle rain (geometry occludes it)
+            GD.Print($"[raintest] worldspace 3D rain, intensity {inten:0.00}. UG_RAININT / UG_RAINWET / UG_RAINCAM.");
         }
 
         // --treetest=<birch|maple|pine>: a standing tree on the LEFT, a felled one on the RIGHT (visual hidden + a real
