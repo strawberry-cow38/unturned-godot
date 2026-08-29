@@ -4,50 +4,51 @@ using SDG.Unturned;
 
 namespace UnturnedGodot.Testing
 {
-    // L1 for weather: the scheduler itself is covered engine-free (WeatherSimTests), so these guard the wiring
-    // only the engine can answer -- that the sim actually reaches the rain overlay and the day/night overcast
-    // flag, and that lightning is gated to the weather that carries it.
+    // L1 for weather: the scheduler itself is covered engine-free (WeatherSimTests), so these guard the wiring only
+    // the engine can answer -- that the sim actually reaches the RAIN INTENSITY the visuals scale off, the day/night
+    // overcast flag, and that lightning is gated to the weather that carries it.
+    //
+    // NOTE: the 2D RainOverlay these once pinned was RETIRED for the worldspace 3D rain (RainSystem3D + the
+    // rain_wetness/rain_intensity globals). WeatherManager now forces Overlay.Raining=false and drives everything off
+    // `RainVisualIntensity` (= BlendAlpha x Severity = "rint"), so the tests assert THAT, not the dead overlay -- and
+    // they pass a null overlay, exactly as the real PEI attach does.
 
-    // Forcing rain drives the overlay; clearing it turns the overlay back off.
-    public class WeatherDrivesOverlay : GameTest
+    // Forcing rain drives the rain intensity; clearing it zeroes it.
+    public class WeatherDrivesRain : GameTest
     {
-        public override string Name => "weather.drives_overlay";
+        public override string Name => "weather.drives_rain";
         public override IEnumerable<Step> Run()
         {
             var dn = new DayNightCycle { DayLength = 120f, VisualsEnabled = false };
             World.AddChild(dn);
-            var overlay = new RainOverlay { Cycle = dn, Raining = false };
-            World.AddChild(overlay);
-            var wm = WeatherManager.Attach(World, overlay, dn, seed: 12345);
+            var wm = WeatherManager.Attach(World, null, dn, seed: 12345);   // null overlay -- the 3D rain replaced the 2D one
             yield return Ticks(2);
 
-            T.Check("starts dry (no coin-flip rain at world build any more)", !overlay.Raining);
+            T.Check($"starts dry (rint {wm.RainVisualIntensity:0.000})", wm.RainVisualIntensity <= 0.001f);
 
             wm.Sim.ForecastImmediately(0);   // Default Rain
-            yield return Ticks(2);
-            // 20 s fade-in: a couple of ticks in, it should be raining but nowhere near full
-            T.Check($"overlay switched on as the weather starts (intensity {overlay.Intensity:0.000})", overlay.Raining);
-            T.Check("still fading in, not slammed to full", overlay.Intensity < 0.9f);
+            // Wait for the fade-in to visibly begin. A fixed couple of ticks doesn't clear a threshold on this port's
+            // fast/short active window (rint reads ~0 for the first frames), so poll rather than assume a tick count.
+            yield return Until(() => wm.RainVisualIntensity > 0.05f, 30);
+            T.Check($"rain fades in as the weather starts (rint {wm.RainVisualIntensity:0.000})", wm.RainVisualIntensity > 0.05f);
 
-            // run out the fade-in. PEI's active window (0.05-0.15 cycles) is SHORTER than the asset's 20 s
-            // fade-in on this port's 120 s day, so the ramps get proportionally split and the peak lands at the
-            // middle of the shower -- wait for the peak rather than assuming a fixed tick count.
+            // run out the fade-in. PEI's active window (0.05-0.15 cycles) is SHORTER than the asset's 20 s fade-in on
+            // this port's 120 s day, so the peak lands mid-shower -- wait for the peak rather than a fixed tick count.
             yield return Until(() => wm.Sim.BlendAlpha > 0.9f, 25);
-            // Default Rain's severity is its asset Fog_Density 0.7, so a fully-committed LIGHT shower tops out
-            // around 0.7 -- not 1.0. Heavy Rain is the one that reaches full (asserted below).
-            T.Check($"light rain settles near its 0.7 severity (intensity {overlay.Intensity:0.00})",
-                    overlay.Intensity > 0.6f && overlay.Intensity < 0.8f);
+            // Default Rain's severity is its asset Fog_Density 0.7, so a fully-committed LIGHT shower tops out ~0.7,
+            // not 1.0 -- Heavy Rain is the one that reaches full (asserted in weather.lightning_gating).
+            T.Check($"light rain settles near its 0.7 severity (rint {wm.RainVisualIntensity:0.00})",
+                    wm.RainVisualIntensity > 0.6f && wm.RainVisualIntensity < 0.8f);
             T.Check("day/night flipped to overcast", dn.Overcast);
 
             wm.Sim.Clear();
             yield return Ticks(2);
-            T.Check("clearing the weather turns the overlay off", !overlay.Raining && overlay.Intensity <= 0.001f);
+            T.Check($"clearing the weather zeroes the rain (rint {wm.RainVisualIntensity:0.000})", wm.RainVisualIntensity <= 0.001f);
             T.Check("overcast released", !dn.Overcast);
         }
     }
 
-    // Lightning belongs to Heavy Rain only (Default Rain's .asset has no Has_Lightning), and a strike must
-    // actually reach the screen.
+    // Lightning belongs to Heavy Rain only (Default Rain's .asset has no Has_Lightning), and a strike must survive.
     public class WeatherLightningGating : GameTest
     {
         public override string Name => "weather.lightning_gating";
@@ -55,9 +56,7 @@ namespace UnturnedGodot.Testing
         {
             var dn = new DayNightCycle { DayLength = 120f, VisualsEnabled = false };
             World.AddChild(dn);
-            var overlay = new RainOverlay { Cycle = dn, Raining = false };
-            World.AddChild(overlay);
-            var wm = WeatherManager.Attach(World, overlay, dn, seed: 999);
+            var wm = WeatherManager.Attach(World, null, dn, seed: 999);
             yield return Ticks(2);
 
             T.Check("Default Rain carries no lightning (matches DefaultRain.asset)", !WeatherSim.PeiTypes()[0].HasLightning);
@@ -72,11 +71,11 @@ namespace UnturnedGodot.Testing
             T.Check("heavy rain pulls the fishing bite interval down (0.8 at full)",
                     WeatherManager.FishBiteInterval < 0.95f);
 
-            // the gap the render caught: heavy rain must actually LOOK heavier than light rain, not just carry
-            // different scalars. Severity comes from the assets' Fog_Density (0.7 vs 1.0).
-            float heavyIntensity = overlay.Intensity;
-            T.Check($"heavy rain renders denser than light rain ({heavyIntensity:0.00} vs light's ~0.70)",
-                    heavyIntensity > 0.9f);
+            // heavy rain must actually be denser than light rain, not just carry different scalars. Severity comes
+            // from the assets' Fog_Density (0.7 vs 1.0), so heavy reaches full rint where light topped out ~0.7.
+            // (This is the check that used to PASS off the retired overlay's stuck 1f default -- now it reads rint.)
+            T.Check($"heavy rain reaches full intensity, denser than light's ~0.70 (rint {wm.RainVisualIntensity:0.00})",
+                    wm.RainVisualIntensity > 0.9f);
             T.Check("severity is the asset value, not an invented one", Mathf.Abs(wm.Severity - 1.0f) < 0.01f);
 
             wm.Strike();   // don't wait 15-60 s for a natural one
@@ -93,9 +92,7 @@ namespace UnturnedGodot.Testing
         {
             var dn = new DayNightCycle { DayLength = 120f, VisualsEnabled = false };
             World.AddChild(dn);
-            var overlay = new RainOverlay { Cycle = dn, Raining = false };
-            World.AddChild(overlay);
-            var wm = WeatherManager.Attach(World, overlay, dn, seed: 77);
+            var wm = WeatherManager.Attach(World, null, dn, seed: 77);
             yield return Ticks(2);
 
             T.Check("`weather heavy` is accepted", wm.ApplyCommand("heavy"));

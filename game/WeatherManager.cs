@@ -21,8 +21,10 @@ namespace UnturnedGodot
         AudioStreamPlayer[] _thunderPool;   // a few plain players on Master (NOT SoundBus -> never lures zombies) so overlapping claps don't cut each other
         AudioStream[] _thunderStreams;      // varied freesound samples: [0]=medium clap, [1]=sharp close crack, [2]=deep distant rumble
         int _thunderPoolNext;               // round-robin index into the pool
-        float _thunderCountdown = -1f;      // seconds until the pending boom (-1 = none). Ticks on the _Process FRAME delta so it fires even when the day clock is frozen (renders)
-        float _thunderVolDb; int _thunderPick;      // volume + which stream the pending boom uses (near=loud sharp crack, far=quiet deep rumble)
+        // Pending booms QUEUE, not a single slot -- a fresh strike inside the last one's flash→boom gap must NOT cancel
+        // it (reachable via `weather lightning` spam or the demo's UG_STRIKE_AT clustering; tinyclaw). Each entry ticks
+        // on the _Process FRAME delta so it fires even when the day clock is frozen (renders).
+        readonly System.Collections.Generic.List<(float t, float vol, int pick)> _pendingThunder = new();
         int _flashesLeft; float _reflashIn = -1f;   // multi-stroke flicker: a strike can re-peak the flash 1-2 more times a few frames apart
 
         // The src schedules against `cycle` = the day length in seconds (default 3600). This port's day is much
@@ -59,6 +61,9 @@ namespace UnturnedGodot
 
         public bool IsRaining => Sim != null && Sim.IsRaining;
         public float RainIntensity => Sim?.BlendAlpha ?? 0f;
+        /// <summary>rint (0..1): the value the rain density, wetness, splashes and storm sky all scale off --
+        /// BlendAlpha x Severity. This is what the retired 2D overlay's Intensity used to carry.</summary>
+        public float RainVisualIntensity => RainIntensity * Severity;
         /// <summary>Multiplier other systems apply to a fishing bite interval (< 1 = bites sooner).</summary>
         public static float FishBiteInterval => Current?.Sim?.FishBiteIntervalMultiplier ?? 1f;
 
@@ -238,10 +243,12 @@ namespace UnturnedGodot
                 _flash *= Mathf.Exp(-dt * FlashDecay);   // EXPONENTIAL decay + natural tail (Fable) -- reads like light dying in cloud, not a linear ramp
                 if (_flash < 0.003f) _flash = 0f;         // the sky + overlay are driven from _flash in _Process
             }
-            if (_thunderCountdown >= 0f)
+            for (int i = _pendingThunder.Count - 1; i >= 0; i--)   // tick every pending boom; fire + remove the ready ones (backwards for safe removal)
             {
-                _thunderCountdown -= dt;
-                if (_thunderCountdown <= 0f) { _thunderCountdown = -1f; PlayThunder(_thunderPick, _thunderVolDb); }
+                var p = _pendingThunder[i];
+                p.t -= dt;
+                if (p.t <= 0f) { PlayThunder(p.pick, p.vol); _pendingThunder.RemoveAt(i); }
+                else _pendingThunder[i] = p;
             }
         }
 
@@ -270,12 +277,9 @@ namespace UnturnedGodot
             _flashesLeft = strokes - 1;
             _reflashIn = _flashesLeft > 0 ? _rng.RandfRange(0.04f, 0.10f) : -1f;
             // thunder: closer -> sooner + louder + a SHARP clap; farther -> later + quieter + a DEEP rumble
+            // queue this strike's boom: flash→boom gap cut ~40% (bitvox); sample by distance (near=sharp crack, far=deep rumble)
             if (_thunderPool != null)
-            {
-                _thunderCountdown = Mathf.Lerp(0.24f, 2.4f, dist);   // bitvox: cut the flash->boom gap ~40% -- less accurate, more aesthetic
-                _thunderVolDb = Mathf.Lerp(0f, -18f, dist);
-                _thunderPick = dist < 0.4f ? 1 : (dist > 0.72f ? 2 : 0);   // 1=sharp crack, 2=deep rumble, 0=medium
-            }
+                _pendingThunder.Add((Mathf.Lerp(0.24f, 2.4f, dist), Mathf.Lerp(0f, -18f, dist), dist < 0.4f ? 1 : (dist > 0.72f ? 2 : 0)));
             GD.Print("[weather] lightning");
         }
 

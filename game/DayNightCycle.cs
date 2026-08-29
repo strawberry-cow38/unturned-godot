@@ -172,7 +172,13 @@ void sky() {
         // brightest where the view aligns with the strike, shaped by cloud density so it reveals structure instead of
         // flat-brightening. Rim pushed harder than body -> backlit silhouette reads as 'lit from within'. Zero cost off.
         if (lightning_flash > 0.001) {
-            float dirW = pow(clamp(dot(normalize(vec3(viewDir.x, 0.0, viewDir.z)), lightning_dir), 0.0, 1.0) * 0.5 + 0.5, 3.0);
+            // ⚠ zenith guard: normalize(vec3(0)) is NaN looking straight up, and the azimuth pinwheels around it.
+            // Fade the directional term out as the view approaches vertical (tinyclaw) -- kills the NaN AND the pinwheel.
+            vec2 vxz = vec2(viewDir.x, viewDir.z);
+            float vlen = length(vxz);
+            float zdamp = smoothstep(0.0, 0.15, vlen);
+            vec3 vdir = vlen > 1e-5 ? vec3(vxz.x, 0.0, vxz.y) / vlen : lightning_dir;
+            float dirW = pow(clamp(dot(vdir, lightning_dir), 0.0, 1.0) * 0.5 + 0.5, 3.0) * zdamp;
             float shaped = lightning_flash * dirW * macroAlpha * (1.0 - cloudsSmall * 0.4);
             cloudBodyColor += lightning_tint * shaped * 1.6;
             cRimColor += lightning_tint * shaped * 2.4;
