@@ -89,6 +89,100 @@ namespace UnturnedGodot
         /// going to land BEFORE you commit to it. The grid is 3 m and invisible until something lands on it,
         /// which made placement feel like a guess. strawberry_cow: "a visual flag that follows the grid to
         /// show where my wall draw is gonna be".</summary>
+        Node3D _stairGhost;
+        readonly List<MeshInstance3D> _stairGhostTreads = new();
+
+        /// <summary>World-space bounds of a surface, built from its OWN dimensions rather than a rendered
+        /// AABB: a WallSurface is a Node3D, and its mesh child's bounds would miss the openings partition and
+        /// go stale mid-drag. Local box is X 0..Length, Y 0..Height, Z +/-Thickness/2 -- the same frame
+        /// Rebuild generates in.</summary>
+        static Aabb SurfaceAabb(WallSurface w)
+        {
+            float t = w.Thickness * 0.5f;
+            var xf = w.GlobalTransform;
+            var lo = new Vector3(float.MaxValue, float.MaxValue, float.MaxValue);
+            var hi = new Vector3(float.MinValue, float.MinValue, float.MinValue);
+            for (int i = 0; i < 8; i++)
+            {
+                var c = xf * new Vector3((i & 1) == 0 ? 0f : w.Length,
+                                         (i & 2) == 0 ? 0f : w.Height,
+                                         (i & 4) == 0 ? -t : t);
+                lo = new Vector3(Mathf.Min(lo.X, c.X), Mathf.Min(lo.Y, c.Y), Mathf.Min(lo.Z, c.Z));
+                hi = new Vector3(Mathf.Max(hi.X, c.X), Mathf.Max(hi.Y, c.Y), Mathf.Max(hi.Z, c.Z));
+            }
+            return new Aabb(lo, hi - lo);
+        }
+
+        /// <summary>Does this box already contain something? Used to warn, NOT to refuse -- strawberry chose
+        /// "warn red", and refusing would fight you every time you deliberately run a partition into a wall.
+        /// An AABB test is deliberate: the ghost is a warning, and a warning that costs a physics query per
+        /// mouse-move to be exact about a corner nobody is looking at is the wrong trade.</summary>
+        public bool WouldOverlap(Aabb box, WallSurface ignore = null)
+        {
+            foreach (var w in _walls)
+            {
+                if (!IsInstanceValid(w) || w == ignore) continue;
+                var world = SurfaceAabb(w);
+                // Shrink slightly: surfaces are MEANT to touch at corners and along shared edges, and a test
+                // that flags every neighbouring wall as an overlap is a light that is always on.
+                world = world.Grow(-0.05f);
+                if (world.Size.X > 0f && world.Intersects(box)) return true;
+            }
+            return false;
+        }
+
+        /// <summary>Translucent preview of the flight the stairs tool would drop. Stairs were the one tool
+        /// that placed on a single click with NO preview at all -- you clicked and found out. Built from
+        /// StairTreadOrigins, the same layout AddStairs uses, so it cannot promise a staircase somewhere the
+        /// real one will not go. Red when it would land inside something.</summary>
+        void UpdateStairGhost(Vector3 groundHit, float camYaw)
+        {
+            float yaw = Mathf.Round(camYaw / 90f) * 90f;
+            var origin = new Vector3(WallOpenings.SnapGrid(groundHit.X), groundHit.Y,
+                                     WallOpenings.SnapGrid(groundHit.Z));
+            float run = WallOpenings.StairDefaultRun(StoreyHeight);
+            int steps = WallOpenings.StairSteps(StoreyHeight);
+            float going = run / steps, width = WallOpenings.StairDefaultWidth;
+
+            if (_stairGhost == null) { _stairGhost = new Node3D { Name = "StairGhost" }; AddChild(_stairGhost); }
+            _stairGhost.Visible = true;
+
+            var boxes = new List<Vector3>(StairTreadOrigins(origin, yaw));
+            bool clash = false;
+            for (int i = 0; i < boxes.Count; i++)
+            {
+                if (i >= _stairGhostTreads.Count)
+                {
+                    var mi = new MeshInstance3D
+                    {
+                        Mesh = new BoxMesh(),
+                        MaterialOverride = new StandardMaterial3D
+                        {
+                            Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
+                            ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
+                            NoDepthTest = true,
+                        },
+                    };
+                    _stairGhost.AddChild(mi);
+                    _stairGhostTreads.Add(mi);
+                }
+                var t = _stairGhostTreads[i];
+                ((BoxMesh)t.Mesh).Size = new Vector3(width, WallOpenings.StairTreadThickness, going);
+                t.Visible = true;
+                t.GlobalPosition = boxes[i];
+                t.GlobalRotationDegrees = new Vector3(0f, yaw, 0f);
+                if (WouldOverlap(new Aabb(boxes[i] - new Vector3(width, WallOpenings.StairTreadThickness, going) * 0.5f,
+                                          new Vector3(width, WallOpenings.StairTreadThickness, going)))) clash = true;
+            }
+            for (int i = boxes.Count; i < _stairGhostTreads.Count; i++) _stairGhostTreads[i].Visible = false;
+
+            var tint = clash ? new Color(1f, 0.25f, 0.2f, 0.55f) : new Color(0.35f, 0.9f, 1f, 0.4f);
+            foreach (var t in _stairGhostTreads)
+                if (t.MaterialOverride is StandardMaterial3D m) m.AlbedoColor = tint;
+        }
+
+        void HideStairGhost() { if (_stairGhost != null) _stairGhost.Visible = false; }
+
         void UpdateGridFlag(Vector2 screen)
         {
             // Every tool that PLACES on the floor plane gets the flag, not just three of them -- foundation
@@ -103,7 +197,8 @@ namespace UnturnedGodot
             // change floors to show where ur drawing, it stays on ground level".
             // Sharing the call is the point: the preview and the placement cannot disagree about height if
             // they ask the same function, which a second copy of "+ FloorY" here would not guarantee.
-            if (!GroundOnFloor(from, dir, out var p)) { HideGridFlag(); return; }
+            if (!GroundOnFloor(from, dir, out var p)) { HideGridFlag(); HideStairGhost(); return; }
+            if (StairsDrawMode) UpdateStairGhost(p, _cam.GlobalRotationDegrees.Y); else HideStairGhost();
             var snapped = new Vector3(WallOpenings.SnapGrid(p.X), p.Y, WallOpenings.SnapGrid(p.Z));
             if (_gridFlag == null)
             {
@@ -2277,6 +2372,26 @@ namespace UnturnedGodot
         /// <param name="run">Horizontal run; &lt;= 0 takes the derived default for this storey height.</param>
         /// <param name="width">Tread width; &lt;= 0 takes the kit default.</param>
         /// <returns>Number of treads emitted.</returns>
+        /// <summary>Where each tread of a flight goes. ONE derivation, consumed by both AddStairs and the
+        /// placement ghost -- so the preview cannot show you a staircase in a different place from the one
+        /// you get, which is precisely how the draw cursor came to sit on the ground while walls landed a
+        /// storey up. Sharing the function is the guarantee; a second copy of the arithmetic is not.</summary>
+        public static IEnumerable<Vector3> StairTreadOrigins(Vector3 origin, float yawDeg, float run = 0f,
+                                                             float width = 0f)
+        {
+            float rise = StoreyHeight;
+            int steps = WallOpenings.StairSteps(rise);
+            if (run <= 0f) run = WallOpenings.StairDefaultRun(rise);
+            float stepRise = WallOpenings.StairStepRise(rise);
+            float going = run / steps;
+            float tread = WallOpenings.StairTreadThickness;
+            float yaw = Mathf.DegToRad(yawDeg);
+            var back = new Vector3(-Mathf.Sin(yaw), 0f, -Mathf.Cos(yaw));   // local -Z in world space
+            for (int i = 0; i < steps; i++)
+                yield return origin + back * (i * going)
+                           + new Vector3(0f, (i + 1) * stepRise - tread * 0.5f, 0f);
+        }
+
         public int AddStairs(Vector3 origin, float yawDeg, float run = 0f, float width = 0f)
         {
             float rise = StoreyHeight;
@@ -2293,13 +2408,9 @@ namespace UnturnedGodot
             var back = new Vector3(-Mathf.Sin(yaw), 0f, -Mathf.Cos(yaw));   // local -Z in world space
 
             var made = new List<WallSurface>();
-            for (int i = 0; i < steps; i++)
-            {
-                var p = origin + back * (i * going)
-                      + new Vector3(0f, (i + 1) * stepRise - tread * 0.5f, 0f);
+            foreach (var p in StairTreadOrigins(origin, yawDeg, run, width))
                 made.Add(SpawnWall(p, yawDeg, width, tread, ActiveMaterial, null,
                                    going, -90f, SurfaceKind.Stairs));
-            }
             _editor?.PushUndo("stairs place", () => { foreach (var t in made) RemoveWall(t); });
             return made.Count;
         }

@@ -123,4 +123,56 @@ namespace UnturnedGodot.Testing
             eb.QueueFree();
         }
     }
+
+    // Overlap warning behind the placement ghosts. strawberry asked for "prevent placing overlapping stuff,
+    // showing the ghost as red", then chose WARN rather than refuse -- so this is about the signal being
+    // TRUSTWORTHY, not about blocking anything.
+    //
+    // The failure mode that matters is a light that is always on: surfaces are MEANT to touch along shared
+    // edges and at corners, and a naive AABB test flags every neighbouring wall. A warning that fires on
+    // correct building is one people learn to ignore, which is worse than no warning.
+    public class EditorBuildingsWarnsOnRealOverlapOnly : GameTest
+    {
+        public override string Name => "buildtool.overlap_warning";
+
+        public override IEnumerable<Step> Run()
+        {
+            var eb = new EditorBuildings();
+            World.AddChild(eb);
+            yield return Step.Ticks(1);
+
+            var w = eb.AddWall(new Vector3(0f, 0f, 0f), 0f, 12f);
+            yield return Step.Ticks(1);
+            T.Check("a wall exists to clash with", GodotObject.IsInstanceValid(w));
+
+            // Squarely inside the wall's run, at its height: a real clash.
+            var inside = new Aabb(new Vector3(4f, 1f, -0.2f), new Vector3(2f, 2f, 0.4f));
+            T.Check("a box inside the wall clashes", eb.WouldOverlap(inside));
+
+            // Well clear of it: no warning. BREAK IT: drop the Intersects test and everything clashes.
+            var away = new Aabb(new Vector3(40f, 1f, 40f), new Vector3(2f, 2f, 2f));
+            T.Check("a box well away does not", !eb.WouldOverlap(away));
+
+            // ABOVE it -- the wall is one storey tall, so the next floor up must not read as a clash, or
+            // building a second storey warns on every single piece.
+            var upstairs = new Aabb(new Vector3(4f, EditorBuildings.StoreyHeight + 0.5f, -0.2f),
+                                    new Vector3(2f, 2f, 0.4f));
+            T.Check("the storey above is not a clash", !eb.WouldOverlap(upstairs));
+
+            // A HAIR of interpenetration, which is what corner solving actually produces -- walls are
+            // extended to cross their neighbour's centreline, so adjoining pieces genuinely overlap by
+            // millimetres. This is the always-on-light case, and note that EXACT edge-touching would pass
+            // regardless (Godot's Aabb.Intersects is false for surfaces that merely meet), so testing that
+            // would prove nothing about the tolerance.
+            // BREAK IT: remove the Grow(-0.05f) and this fails.
+            var hair = new Aabb(new Vector3(11.98f, 0f, -0.2f), new Vector3(3f, 2f, 0.4f));
+            T.Check("a neighbour overlapping by a hair is not a clash", !eb.WouldOverlap(hair));
+
+            // And a surface never clashes with ITSELF when asked to ignore it -- otherwise dragging an
+            // existing wall would light up red against its own old position.
+            T.Check("a surface can be excluded", !eb.WouldOverlap(inside, w));
+
+            eb.QueueFree();
+        }
+    }
 }
