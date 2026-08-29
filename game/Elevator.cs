@@ -17,6 +17,9 @@ namespace UnturnedGodot
         bool _latched;                // has _baseY been fixed to the spawn Y yet?
         MeshInstance3D _mi;
         public float BaseLift;        // raise the node this far (metres) so the stood-up car's base rests on the ground
+        MeshInstance3D _topBox, _rope;   // cosmetic winch: gray box fixed at the top of travel + a black rope down to the car
+        Vector3 _cableTopLocal;          // node-local point the rope attaches to (car top-centre)
+        float _anchorY;                  // world Y the fixed top box hangs the rope from
 
         /// <summary>Assemble the elevator from Elevator_0.obj (+ its vertex-colour texture), a box collider off the mesh
         /// AABB, and the HitMeta tag. The caller positions it; _Ready latches that as the bottom stop.</summary>
@@ -38,11 +41,12 @@ namespace UnturnedGodot
             Aabb ab = new Transform3D(standUp, Vector3.Zero) * mesh.GetAabb();   // bounds AFTER standing up
             e.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = ab.Size }, Position = ab.Position + ab.Size * 0.5f });
             e.BaseLift = -ab.Position.Y;   // node Y needed to sit the car's base on the ground
+            e._cableTopLocal = new Vector3(ab.Position.X + ab.Size.X * 0.5f, ab.Position.Y + ab.Size.Y, ab.Position.Z + ab.Size.Z * 0.5f);   // top-centre of the car -> the rope hangs from here
             e.SetMeta(HitMeta, e);   // the look-ray hits this body -> reads the meta -> this Elevator
             return e;
         }
 
-        public override void _Ready() { LatchBase(); }
+        public override void _Ready() { LatchBase(); BuildCable(); }
 
         // Fix the bottom stop to wherever we were spawned, the FIRST time we're readied OR called -- so it never matters
         // whether Position was set before AddChild or a Call arrives before _Ready ran.
@@ -57,6 +61,39 @@ namespace UnturnedGodot
             if (Mathf.Abs(p.Y - _targetY) < 0.0005f) return;   // parked at a stop -> nothing to do
             float ny = Mathf.MoveToward(p.Y, _targetY, MoveSpeed * (float)delta);
             GlobalPosition = new Vector3(p.X, ny, p.Z);
+            UpdateCable();
+        }
+
+        // COSMETIC winch (master 2026-08-29 "add a black rope with a gray box at the top of the lift's travel. purely
+        // cosmetic."): a gray housing fixed at the top of travel + a black rope from it down to the car's top. Both are
+        // TopLevel so they DON'T ride with the car; the rope is restretched between the (moving) car top and the (fixed)
+        // box each physics tick, so it spools shorter as the car rises. No collision, no function.
+        void BuildCable()
+        {
+            if (_topBox != null) return;
+            float carTopUp = _baseY + Travel + _cableTopLocal.Y;   // world Y of the car's top when fully raised
+            _anchorY = carTopUp + 0.5f;
+            _topBox = new MeshInstance3D {
+                Mesh = new BoxMesh { Size = new Vector3(1.3f, 0.9f, 1.3f) },
+                MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.55f, 0.55f, 0.57f), Roughness = 0.9f },
+                TopLevel = true, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off };
+            AddChild(_topBox);
+            _topBox.GlobalPosition = new Vector3(GlobalPosition.X + _cableTopLocal.X, _anchorY + 0.45f, GlobalPosition.Z + _cableTopLocal.Z);
+            _rope = new MeshInstance3D {
+                Mesh = new CylinderMesh { TopRadius = 0.035f, BottomRadius = 0.035f, Height = 1f, RadialSegments = 6 },
+                MaterialOverride = new StandardMaterial3D { AlbedoColor = Colors.Black, Roughness = 1f },
+                TopLevel = true, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off };
+            AddChild(_rope);
+            UpdateCable();
+        }
+
+        void UpdateCable()
+        {
+            if (_rope == null) return;
+            Vector3 top = GlobalPosition + _cableTopLocal;   // node isn't rotated (only its mesh child is), so a plain add gives the world car-top
+            float len = Mathf.Max(0.02f, _anchorY - top.Y);
+            _rope.GlobalPosition = new Vector3(top.X, (top.Y + _anchorY) * 0.5f, top.Z);
+            _rope.Scale = new Vector3(1f, len, 1f);   // CylinderMesh height 1 -> Y-scale = rope length
         }
 
         /// <summary>Whole-car white look outline on gain, same affordance the TV/lamp/monitor use (an interaction with
