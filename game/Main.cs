@@ -111,6 +111,7 @@ namespace UnturnedGodot
             bool containerTest = false; string containerTestName = null;
             bool wallDemo = false;
             bool clockTest = false;
+            bool elevatorTest = false;
             bool play = false, demo = false, netdemo = false, server = false, dedicated = false, client = false, smoke = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, lightTest = false, trafficTest = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, playground = false, objects = false, peidrive = false, craftmenu = false, stationtest = false, editorMode = false, impactTest = false, doorGallery = false, lampTest = false, beamTest = false, impTest = false, treeSweep = false, bakeLods = false, bakeLodsDry = false, netobserve = false, zombieTier = false, zflow = false, zhunt = false, zkill = false, zsound = false, zface = false, zpath = false;
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
@@ -126,6 +127,7 @@ namespace UnturnedGodot
                 else if (arg.StartsWith("--proptest=")) { proptest = arg["--proptest=".Length..]; _shotRequested = proptest; }
                 else if (arg.StartsWith("--animaltest=")) { animaltest = arg["--animaltest=".Length..]; _shotRequested = animaltest; }   // one animal rig posed as if walking -Z, to measure the RigYawFix (UG_ANIMALYAW spins it)
                 else if (arg.StartsWith("--treetest=")) { treetest = arg["--treetest=".Length..]; _shotRequested = treetest; }   // standing tree beside a felled one (its dropped logs) -> render the harvest
+                else if (arg == "--elevatortest") { elevatorTest = true; _shotRequested = "elevator"; }   // Elevator_0 wired to ride up/down on F; auto-Calls so an offline UG_SHOTTIME catches it mid-ride
                 else if (arg == "--trainshow") trainshow = "1";   // assemble train_cargo_0 from its extracted pieces for a 3/4 shot
                 else if (arg == "--traintrack") traintrack = "1";   // ride the train along a curved test track
                 else if (arg.StartsWith("--slingtest=")) { slingtest = arg["--slingtest=".Length..]; _shotRequested = slingtest; }
@@ -431,6 +433,7 @@ namespace UnturnedGodot
             }
             if (animaltest != null) { GetWindow().Size = new Vector2I(1000, 720); _shotPath = shot; BuildAnimalTest(animaltest); return; }
             if (treetest != null) { GetWindow().Size = new Vector2I(1280, 800); _shotPath = shot; BuildTreeTest(treetest); return; }
+            if (elevatorTest) { GetWindow().Size = new Vector2I(1280, 800); _shotPath = shot; BuildElevatorTest(); return; }
             if (trainshow != null) { GetWindow().Size = new Vector2I(1600, 720); BuildTrainShow(); return; }
             if (traintrack != null) { GetWindow().Size = new Vector2I(1600, 900); BuildTrainTrack(); return; }
 
@@ -1020,6 +1023,27 @@ namespace UnturnedGodot
             }
             else
                 cam.LookAtFromPosition(new Vector3(0f, 9f, 0f), Vector3.Zero, new Vector3(0f, 0f, -1f));   // TOP-DOWN, unambiguous: -Z(travel, RED) to top, +X(BLUE) right
+        }
+
+        // --elevatortest: the Elevator_0 prop wired as an interactive lift (look at it + F rides it up/down). It
+        // auto-Calls a beat after spawn so an offline UG_SHOTTIME capture catches it in transit. Master 2026-08-29:
+        // "theres an elevator prop -- wire it to move up/down on an interaction."
+        void BuildElevatorTest()
+        {
+            AddChild(new WorldEnvironment { Environment = new Godot.Environment {
+                BackgroundMode = Godot.Environment.BGMode.Color, BackgroundColor = new Color(0.5f, 0.62f, 0.78f),
+                AmbientLightSource = Godot.Environment.AmbientSource.Color, AmbientLightColor = new Color(0.62f, 0.63f, 0.66f), AmbientLightEnergy = 0.7f } });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-50f, -35f, 0f), LightEnergy = 1.1f });
+            AddChild(new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(80f, 80f) }, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.34f, 0.40f, 0.30f), Roughness = 1f } });
+            var ev = Elevator.Build();
+            ev.Position = new Vector3(0f, 2.2f, 0f);   // set BEFORE AddChild so _Ready latches the base Y correctly; +2.2 seats the AABB (min Y -2.2) base on the ground
+            AddChild(ev);
+            ev.Call();   // ride up immediately (F does this in-game); an offline UG_SHOTTIME capture then catches it in transit
+            var cam = new Camera3D { Current = true, Fov = 52f, Far = 2000f };
+            AddChild(cam);
+            cam.Position = new Vector3(11f, 6f, 11f);
+            cam.LookAt(new Vector3(0f, 4f, 1.9f), Vector3.Up);
+            GD.Print("[elevatortest] Elevator_0 spawned + wired to F (Call); auto-Call at 0.4s. Set UG_SHOTTIME to catch it mid-ride.");
         }
 
         // --treetest=<birch|maple|pine>: a standing tree on the LEFT, a felled one on the RIGHT (visual hidden + a real

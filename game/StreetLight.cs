@@ -365,7 +365,7 @@ namespace UnturnedGodot
                 };
                 _motes = new CpuParticles3D { 
                     Position = under,
-                    Amount = MoteCount,
+                    Amount = ParticleFx.Amount(MoteCount),
                     Lifetime = 7f,
                     Preprocess = 7f,   // start at STEADY STATE. Amount/Lifetime = 2 motes a second, so without this a
                                        // lamp sits visibly empty for a full 7s every time night falls or it comes into
