@@ -18,6 +18,9 @@ namespace UnturnedGodot
         public RainOverlay Overlay;
         public DayNightCycle Cycle;
         RainSystem3D _rain3d;   // worldspace 3D rain -- supersedes the 2D overlay streaks
+        AudioStreamPlayer _thunder;      // global thunderclap one-shot (CC0, Kinoton/freesound), NOT via SoundBus so it never lures zombies
+        float _thunderCountdown = -1f;   // seconds until the pending boom (-1 = none). Ticks on REAL time so it fires even when the day clock is frozen (renders)
+        float _thunderVolDb;             // volume for the pending boom -- near strikes loud, far ones quiet
 
         // The src schedules against `cycle` = the day length in seconds (default 3600). This port's day is much
         // shorter (DayNightCycle.DayLength, 120 s by default), and the honest thing is to feed the REAL day
@@ -82,6 +85,16 @@ namespace UnturnedGodot
             RainSystem3D.EnsureGlobals();
             _rain3d = new RainSystem3D { Intensity = 0f };
             AddChild(_rain3d);
+
+            // THUNDER: a global one-shot that booms AFTER each lightning flash on a delay (light is instant, sound lags
+            // by distance). A plain AudioStreamPlayer on Master -- deliberately NOT SoundBus.Emit, so a thunderclap never
+            // lures zombies the way a gunshot does. CC0 sample by Kinoton (freesound.org 760216).
+            var tpath = ProjectSettings.GlobalizePath("res://content/thunder.wav");
+            if (System.IO.File.Exists(tpath))
+            {
+                var ts = AudioStreamWav.LoadFromFile(tpath);
+                if (ts != null) { _thunder = new AudioStreamPlayer { Stream = ts, Bus = "Master" }; AddChild(_thunder); }
+            }
         }
 
         public override void _ExitTree() { if (Current == this) Current = null; RainSystem3D.ResetGlobals(); }   // a departing storm mustn't leave the wet globals stuck for the next scene (tinyclaw)
@@ -143,6 +156,7 @@ namespace UnturnedGodot
             }
 
             TickLightning(dt);
+            TickThunder((float)delta);   // REAL time -> the flash->boom gap is real seconds + still fires when the day clock is frozen (renders)
         }
 
         void TickLightning(float dt)
@@ -170,11 +184,30 @@ namespace UnturnedGodot
             }
         }
 
+        // Count down the flash->boom gap on REAL time and fire the clap once. Separate from TickLightning because that
+        // runs on the weather-scaled clock (which is frozen at 0 in a render), and the thunder gap is real seconds.
+        void TickThunder(float dt)
+        {
+            if (_thunderCountdown < 0f) return;
+            _thunderCountdown -= dt;
+            if (_thunderCountdown <= 0f)
+            {
+                _thunderCountdown = -1f;
+                if (_thunder != null) { _thunder.VolumeDb = _thunderVolDb; _thunder.Play(); GD.Print($"[weather] thunder {_thunderVolDb:0.0}dB"); }
+            }
+        }
+
         /// <summary>One lightning flash. Public so the console + tests can fire it without waiting 15-60 s.</summary>
         public void Strike()
         {
             _flash = 1f;
             if (_flashRect != null) _flashRect.Color = new Color(1f, 1f, 1f, FlashPeak);
+            // schedule the thunderclap: a random flash->boom gap. Near strikes boom soon + loud, distant ones lag + quieter.
+            if (_thunder != null)
+            {
+                _thunderCountdown = _rng.RandfRange(0.6f, 3.6f);
+                _thunderVolDb = Mathf.Lerp(0f, -16f, (_thunderCountdown - 0.6f) / 3.0f);
+            }
             GD.Print("[weather] lightning");
         }
 
