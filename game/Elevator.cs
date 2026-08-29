@@ -30,6 +30,13 @@ namespace UnturnedGodot
         public float CarTopY;            // node-local Y of the car roof (a demo rider stands here)
         float _dwell = 1f;
         bool _measureFloor;   // diag (UG_ELEVMESHCOL): raycast the real mesh once to print the true interior-floor world Y
+        enum DoorPhase { Idle, Closing, Moving, Opening }
+        DoorPhase _phase = DoorPhase.Idle;   // Idle = parked with doors open; a call runs Closing -> Moving -> Opening -> Idle
+        int _destFloor;                       // where a call is taking us (the car moves only once the doors are shut)
+        float _door = 1f;                     // 0 = doors shut, 1 = doors open (start open at floor 0)
+        MeshInstance3D _doorL, _doorR;        // the two center-opening panels (children -> ride with the car)
+        const float DoorClosedZ = 0.95f, DoorOpenZ = 2.0f;   // right-panel |Z|: shut (meets centre) vs open (slid aside); left = -that
+        const float DoorSpeed = 1.6f;         // door travel in _door units/sec (~0.6s to open or shut)
 
         /// <summary>Assemble the elevator from Elevator_0.obj (+ its vertex-colour texture), a box collider off the mesh
         /// AABB, and the HitMeta tag. The caller positions it; _Ready latches that as the bottom stop.</summary>
@@ -87,45 +94,104 @@ namespace UnturnedGodot
                     btn.RotationDegrees = new Vector3(0f, 90f, 0f);   // turn the big button face to the -X doorway
                 }
             }
+            // SLIDING DOORS on the -X front: two center-opening panels covering the measured opening (Z +-1.85, Y
+            // 0.30..3.85). Children -> they ride with the car; the phase machine shuts them before it moves + opens
+            // them when it stops (master 2026-08-29 "double sliding door... closes before the elevator moves and opens
+            // when it stops"). Each panel's |Z| lerps DoorClosedZ (meet at centre) -> DoorOpenZ (slid aside).
+            {
+                float doorX = ab.Position.X + 0.16f;   // just inside the -X face, sat in the frame
+                float panelW = 1.95f, panelH = 3.6f, panelT = 0.12f, cy = 2.075f;   // W spans the half-opening; H covers 0.30..3.85
+                var dmat = new StandardMaterial3D { AlbedoColor = new Color(0.60f, 0.62f, 0.66f), Metallic = 0.35f, Roughness = 0.45f };
+                e._doorL = new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(panelT, panelH, panelW) }, MaterialOverride = dmat, Position = new Vector3(doorX, cy, -DoorClosedZ) };
+                e._doorR = new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(panelT, panelH, panelW) }, MaterialOverride = dmat, Position = new Vector3(doorX, cy, DoorClosedZ) };
+                e.AddChild(e._doorL); e.AddChild(e._doorR);
+            }
             e.SetMeta(HitMeta, e);   // the look-ray hits this body -> reads the meta -> this Elevator
             return e;
         }
 
-        public override void _Ready() { LatchBase(); BuildCable(); }
+        public override void _Ready() { LatchBase(); BuildCable(); UpdateDoors(); }
 
         // Fix the bottom stop to wherever we were spawned, the FIRST time we're readied OR called -- so it never matters
         // whether Position was set before AddChild or a Call arrives before _Ready ran.
         void LatchBase() { if (!_latched) { _baseY = GlobalPosition.Y; _targetY = _baseY; _latched = true; } }
 
         /// <summary>Demo up/down (AutoCycle): flip the destination between the bottom floor and the top floor.</summary>
-        public void Call() { LatchBase(); _up = !_up; _targetY = _baseY + (_up ? TopFloor : 0f); }
+        public void Call() { LatchBase(); _up = !_up; GoToFloor(_up ? Floors.Length - 1 : 0); }
 
-        /// <summary>A floor button was pressed: send the car to floor f (0 = bottom). Clamped to the floor list.</summary>
-        public void GoToFloor(int f) { LatchBase(); _curFloor = Mathf.Clamp(f, 0, Floors.Length - 1); _targetY = _baseY + Floors[_curFloor]; }
+        /// <summary>A floor button was pressed: shut the doors, ride to floor f (0 = bottom), reopen. Clamped to the list.</summary>
+        public void GoToFloor(int f)
+        {
+            LatchBase();
+            int nf = Mathf.Clamp(f, 0, Floors.Length - 1);
+            if (nf == _curFloor && _phase == DoorPhase.Idle) return;   // already parked here, doors open
+            _destFloor = nf;
+            _phase = DoorPhase.Closing;   // shut the doors first; the car only moves once they're closed
+        }
 
         // demo (AutoFloors): advance one floor, bouncing at the ends -> 0,1,2,1,0,1,2,...
         void StepFloor() { if (Floors.Length < 2) return; int n = _curFloor + _seqDir; if (n >= Floors.Length) { n = Floors.Length - 2; _seqDir = -1; } else if (n < 0) { n = 1; _seqDir = 1; } GoToFloor(n); }
 
         public override void _PhysicsProcess(double delta)
         {
-            var p = GlobalPosition;
-            if (Mathf.Abs(p.Y - _targetY) < 0.0005f)   // parked at a stop
+            float dt = (float)delta;
+            switch (_phase)
             {
-                if (_measureFloor) { _measureFloor = false;
-                    var ss = GetWorld3D().DirectSpaceState;
-                    var q = PhysicsRayQueryParameters3D.Create(p + new Vector3(-0.05f, 2.0f, 0f), p + new Vector3(-0.05f, -0.5f, 0f));
-                    q.CollisionMask = 1u << 10;
-                    var hit = ss.IntersectRay(q);
-                    if (hit.Count > 0) { float fy = hit["position"].AsVector3().Y; GD.Print($"[elev-floor] floor {_curFloor}: elevator floor top world Y = {fy:0.000} (car base Y = {p.Y:0.000})"); }
-                    else GD.Print("[elev-floor] NO floor hit");
+                case DoorPhase.Closing:   // shut the doors, THEN release the car to move
+                    _door = Mathf.MoveToward(_door, 0f, DoorSpeed * dt);
+                    if (_door <= 0.02f) { _curFloor = _destFloor; _targetY = _baseY + Floors[_destFloor]; _phase = DoorPhase.Moving; }
+                    break;
+                case DoorPhase.Moving:   // doors shut -> ride to the target floor
+                {
+                    var p = GlobalPosition;
+                    float ny = Mathf.MoveToward(p.Y, _targetY, MoveSpeed * SpeedMul * dt);
+                    GlobalPosition = new Vector3(p.X, ny, p.Z);
+                    UpdateCable();
+                    if (Mathf.Abs(ny - _targetY) < 0.0005f) _phase = DoorPhase.Opening;
+                    break;
                 }
-                if (AutoFloors) { _dwell -= (float)delta; if (_dwell <= 0f) { _dwell = DwellTime; StepFloor(); } }   // demo: dwell, then step to the next floor
-                else if (AutoCycle) { _dwell -= (float)delta; if (_dwell <= 0f) { _dwell = DwellTime; Call(); } }   // demo: dwell, then reverse
-                return;
+                case DoorPhase.Opening:   // arrived -> open the doors
+                    _door = Mathf.MoveToward(_door, 1f, DoorSpeed * dt);
+                    if (_door >= 0.98f) _phase = DoorPhase.Idle;
+                    break;
+                default:   // Idle: parked with doors open -> one-shot measurement + demo stepping
+                    if (_measureFloor) { _measureFloor = false; MeasureFloorAndDoor(); }
+                    if (AutoFloors) { _dwell -= dt; if (_dwell <= 0f) { _dwell = DwellTime; StepFloor(); } }   // demo: dwell, then next floor
+                    else if (AutoCycle) { _dwell -= dt; if (_dwell <= 0f) { _dwell = DwellTime; Call(); } }     // demo: dwell, then reverse
+                    break;
             }
-            float ny = Mathf.MoveToward(p.Y, _targetY, MoveSpeed * SpeedMul * (float)delta);
-            GlobalPosition = new Vector3(p.X, ny, p.Z);
-            UpdateCable();
+            UpdateDoors();
+        }
+
+        // Slide the two panels: |Z| lerps DoorClosedZ (meet at centre) -> DoorOpenZ (aside) by _door (0 shut, 1 open).
+        void UpdateDoors()
+        {
+            if (_doorL == null) return;
+            float z = Mathf.Lerp(DoorClosedZ, DoorOpenZ, _door);
+            _doorL.Position = new Vector3(_doorL.Position.X, _doorL.Position.Y, -z);
+            _doorR.Position = new Vector3(_doorR.Position.X, _doorR.Position.Y, z);
+        }
+
+        // diag (UG_ELEVMESHCOL): print the true interior-floor world Y + the door-frame opening bounds, once per park.
+        void MeasureFloorAndDoor()
+        {
+            var p = GlobalPosition;
+            var ss = GetWorld3D().DirectSpaceState;
+            var q = PhysicsRayQueryParameters3D.Create(p + new Vector3(-0.05f, 2.0f, 0f), p + new Vector3(-0.05f, -0.5f, 0f));
+            q.CollisionMask = 1u << 10;
+            var hit = ss.IntersectRay(q);
+            if (hit.Count > 0) { float fy = hit["position"].AsVector3().Y; GD.Print($"[elev-floor] floor {_curFloor}: elevator floor top world Y = {fy:0.000} (car base Y = {p.Y:0.000})"); }
+            else GD.Print("[elev-floor] NO floor hit");
+            float zmin = 9f, zmax = -9f, ymin = 9f, ymax = -9f;
+            for (float z = -2.5f; z <= 2.5f; z += 0.05f) {
+                var h = ss.IntersectRay(PhysicsRayQueryParameters3D.Create(p + new Vector3(-4f, 1.5f, z), p + new Vector3(4f, 1.5f, z), 1u << 10));
+                if (h.Count > 0 && h["position"].AsVector3().X - p.X > -2f) { zmin = Mathf.Min(zmin, z); zmax = Mathf.Max(zmax, z); }
+            }
+            for (float y = 0f; y <= 4f; y += 0.05f) {
+                var h = ss.IntersectRay(PhysicsRayQueryParameters3D.Create(p + new Vector3(-4f, y, 0f), p + new Vector3(4f, y, 0f), 1u << 10));
+                if (h.Count > 0 && h["position"].AsVector3().X - p.X > -2f) { ymin = Mathf.Min(ymin, y); ymax = Mathf.Max(ymax, y); }
+            }
+            GD.Print($"[elev-door] opening Z [{zmin:0.00}, {zmax:0.00}] (w {zmax - zmin:0.00}), Y [{ymin:0.00}, {ymax:0.00}] (h {ymax - ymin:0.00})");
         }
 
         // COSMETIC winch (master 2026-08-29 "add a black rope with a gray box at the top of the lift's travel. purely
