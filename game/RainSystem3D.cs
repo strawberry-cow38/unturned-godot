@@ -21,7 +21,7 @@ namespace UnturnedGodot
             {
                 ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
                 Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
-                AlbedoColor = new Color(0.87f, 0.92f, 1.0f, 0.22f),
+                AlbedoColor = new Color(0.80f, 0.86f, 0.96f, 0.14f),
                 BillboardMode = BaseMaterial3D.BillboardModeEnum.Disabled,   // no billboard -> the velocity-aligned world tilt shows honestly
                 BillboardKeepScale = true,
                 CullMode = BaseMaterial3D.CullModeEnum.Disabled,
