@@ -49,8 +49,9 @@ namespace UnturnedGodot
         // almost white). A strike should read as a brief brightening through cloud, so: weaker peak, faster
         // decay. Numbers are a judgement call, not from the asset -- the .asset only says lightning EXISTS and
         // how often, never how bright.
-        const float FlashPeak = 0.28f, FlashDecay = 5.0f;   // bitvox: slightly punchier (0.22->0.28) + a warm/yellow tint (below) instead of flat white
-        static readonly Color FlashColor = new(1.0f, 0.95f, 0.80f);   // warm pale-yellow lightning flash (bitvox: "a tiny bit more yellow")
+        const float FlashPeak = 0.09f, FlashDecay = 7.0f;   // overlay peak is LOW (additive supporting layer) -- the sky cloud-flash is the main event now; FlashDecay = EXPONENTIAL envelope rate
+        Vector3 _strikeDir = Vector3.Forward;   // XZ azimuth of the current strike -> the sky glows on that side
+        float _strikeDist;                      // 0 overhead .. 1 far -> warms the flash tint (distant strikes redder, Fable)
 
         /// <summary>How heavy the ACTIVE weather type is, 0..1, taken from the asset's Fog_Density (Default Rain
         /// 0.7, Heavy Rain 1.0). Multiplies the streak density so heavy rain actually looks heavier.</summary>
@@ -79,9 +80,12 @@ namespace UnturnedGodot
             AddToGroup("weather");   // the dev console finds it here
             _rng.Randomize();
 
-            // lightning flash: a white full-screen rect above the rain overlay, alpha driven by _flash
+            // lightning flash overlay: a full-screen rect, ADDITIVE (Fable) -- brightens the frame instead of alpha-
+            // washing it to white (the old white-over-frame dragged red crates to pink). SUPPORTING layer only now; the
+            // sky cloud-flash carries the strike. Hidden until it fires so a transparent rect doesn't rasterise.
             _flashLayer = new CanvasLayer { Layer = 90 };
-            _flashRect = new ColorRect { Color = new Color(1f, 1f, 1f, 0f), MouseFilter = Control.MouseFilterEnum.Ignore };
+            _flashRect = new ColorRect { Color = new Color(1f, 1f, 1f, 0f), MouseFilter = Control.MouseFilterEnum.Ignore, Visible = false,
+                Material = new CanvasItemMaterial { BlendMode = CanvasItemMaterial.BlendModeEnum.Add } };
             _flashRect.SetAnchorsPreset(Control.LayoutPreset.FullRect);
             _flashLayer.AddChild(_flashRect);
             AddChild(_flashLayer);
@@ -178,6 +182,18 @@ namespace UnturnedGodot
 
             TickLightning(dt);
             TickStrikeFx((float)delta);   // the _Process FRAME delta -> flash fade + thunder gap don't stick when the day clock is frozen; deterministic under --write-movie, NOT wall-clock (see TickStrikeFx)
+            // Apply the flash envelope to the VISUALS: the sky cloud-flash (main event, via DayNightCycle) + a low
+            // additive screen lift. Tint warms as it fades + with distance (Fable). _flash can exceed 1 on the bright
+            // re-pulse -> brighter cloud glow; the overlay alpha is clamped so it stays a supporting lift.
+            if (Cycle != null) Cycle.LightningFlash = _flash;   // cheap field write; DayNightCycle.Apply guards the shader push
+            if (_flash > 0.001f)
+            {
+                float warmth = Mathf.Clamp((1f - Mathf.Clamp(_flash, 0f, 1f)) * 0.55f + _strikeDist * 0.5f, 0f, 1f);
+                Color ltint = new Color(1f, 0.98f, 0.94f).Lerp(new Color(1f, 0.90f, 0.72f), warmth);
+                if (Cycle != null) { Cycle.LightningTint = ltint; Cycle.LightningDir = _strikeDir; }
+                if (_flashRect != null) { if (!_flashRect.Visible) _flashRect.Visible = true; _flashRect.Color = new Color(ltint, Mathf.Min(_flash, 1.2f) * FlashPeak); }
+            }
+            else if (_flashRect != null && _flashRect.Visible) _flashRect.Visible = false;
         }
 
         void TickLightning(float dt)
@@ -210,16 +226,17 @@ namespace UnturnedGodot
         // stays lit up"; tinyclaw traced it to `_flash -= dt*FlashDecay` at dt=0).
         void TickStrikeFx(float dt)
         {
-            // multi-stroke flicker: re-peak the flash a couple times a few frames apart (real lightning has return strokes)
+            // multi-stroke flicker: re-peak the flash a couple times a few frames apart (real lightning has return
+            // strokes). The re-pulses are BRIGHTER than the first (Fable: the second pulse should be the brightest).
             if (_flashesLeft > 0)
             {
                 _reflashIn -= dt;
-                if (_reflashIn <= 0f) { _flash = 1f; _flashesLeft--; _reflashIn = _flashesLeft > 0 ? _rng.RandfRange(0.05f, 0.15f) : -1f; }
+                if (_reflashIn <= 0f) { _flash = 1.3f; _flashesLeft--; _reflashIn = _flashesLeft > 0 ? _rng.RandfRange(0.04f, 0.10f) : -1f; }
             }
             if (_flash > 0f)
             {
-                _flash = Mathf.Max(0f, _flash - dt * FlashDecay);
-                if (_flashRect != null) _flashRect.Color = new Color(FlashColor, _flash * FlashPeak);
+                _flash *= Mathf.Exp(-dt * FlashDecay);   // EXPONENTIAL decay + natural tail (Fable) -- reads like light dying in cloud, not a linear ramp
+                if (_flash < 0.003f) _flash = 0f;         // the sky + overlay are driven from _flash in _Process
             }
             if (_thunderCountdown >= 0f)
             {
@@ -243,13 +260,15 @@ namespace UnturnedGodot
         /// <summary>One lightning flash. Public so the console + tests can fire it without waiting 15-60 s.</summary>
         public void Strike()
         {
-            _flash = 1f;
-            if (_flashRect != null) _flashRect.Color = new Color(FlashColor, FlashPeak);
-            float dist = _rng.Randf();   // 0 = right overhead, 1 = far off -- drives the flicker, the boom delay, and the sound
+            _flash = 0.9f;   // first pulse moderate; the flicker re-pulses go brighter (Fable). Applied to the sky + overlay in _Process.
+            float dist = _rng.Randf();   // 0 = right overhead, 1 = far off -- drives the flicker, the boom delay, the sound, and the tint warmth
+            _strikeDist = dist;
+            float az = _rng.Randf() * Mathf.Tau;   // random sky azimuth -> the cloud glow + horizon lift land on ONE side of the sky
+            _strikeDir = new Vector3(Mathf.Cos(az), 0f, Mathf.Sin(az));
             // multi-stroke flicker: close strikes flicker 2-3x, distant ones are a single flash
             int strokes = dist < 0.4f ? (_rng.Randf() < 0.5f ? 3 : 2) : (dist < 0.72f && _rng.Randf() < 0.5f ? 2 : 1);
             _flashesLeft = strokes - 1;
-            _reflashIn = _flashesLeft > 0 ? _rng.RandfRange(0.05f, 0.15f) : -1f;
+            _reflashIn = _flashesLeft > 0 ? _rng.RandfRange(0.04f, 0.10f) : -1f;
             // thunder: closer -> sooner + louder + a SHARP clap; farther -> later + quieter + a DEEP rumble
             if (_thunderPool != null)
             {

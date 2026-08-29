@@ -97,6 +97,9 @@ uniform sampler2D clouds_tex : repeat_enable, filter_linear;
 uniform vec3 cloud_rim_color : source_color;
 uniform float cloud_intensity;
 uniform vec4 cloud_params;        // R: macro cutoff, G: macro saturation
+uniform float lightning_flash;                   // 0..1+ strike envelope (WeatherManager drives it via DayNightCycle; 0 = skip the whole block)
+uniform vec3 lightning_tint : source_color;      // warm-white flash colour
+uniform vec3 lightning_dir;                      // unit XZ azimuth of the strike -- one part of the sky carries the glow
 
 void sky() {
     vec3 viewDir = EYEDIR;
@@ -164,6 +167,17 @@ void sky() {
         vec3 cRimColor = ambient_equator + equator_color + cloud_rim_color;
         cRimColor = mix(cRimColor, sun_color, sunFactor);
         cRimColor = mix(cRimColor, moon_color, moonFactor * 0.25);
+
+        // LIGHTNING (Fable's pick): light the cloud layer from WITHIN. One azimuth of the sky carries the flash,
+        // brightest where the view aligns with the strike, shaped by cloud density so it reveals structure instead of
+        // flat-brightening. Rim pushed harder than body -> backlit silhouette reads as 'lit from within'. Zero cost off.
+        if (lightning_flash > 0.001) {
+            float dirW = pow(clamp(dot(normalize(vec3(viewDir.x, 0.0, viewDir.z)), lightning_dir), 0.0, 1.0) * 0.5 + 0.5, 3.0);
+            float shaped = lightning_flash * dirW * macroAlpha * (1.0 - cloudsSmall * 0.4);
+            cloudBodyColor += lightning_tint * shaped * 1.6;
+            cRimColor += lightning_tint * shaped * 2.4;
+            col += lightning_tint * lightning_flash * dirW * 0.08;   // small horizon lift so the clear sky under the clouds participates
+        }
 
         float cloudsBodyAlpha = clamp(macroAlpha + macroAlpha * cloudsMedium + macroAlpha * cloudsSmall, 0.0, 1.0);
         float cloudsAlpha = cloudsBodyAlpha * clamp(viewDir.y * 2.0, 0.0, 1.0);
@@ -401,6 +415,15 @@ void sky() {
                 _skyMat.SetShaderParameter("ambient_ground", new Color(amb, amb, amb));
                 _skyMat.SetShaderParameter("ambient_equator", new Color(amb, amb, amb));
                 _skyMat.SetShaderParameter("cloud_rim_color", new Color(0.8f, 0.6f, 0.4f).Lerp(new Color(0.05f, 0.06f, 0.10f), 1f - dayF));
+                // lightning cloud-flash uniforms -- WeatherManager drives these; pushed only while flashing (+ one frame
+                // to switch off), not every idle frame. 0 flash = the sky-shader block skips (no-WM/golden stays 0).
+                if (LightningFlash > 0.001f || _lightningActive)
+                {
+                    _lightningActive = LightningFlash > 0.001f;
+                    _skyMat.SetShaderParameter("lightning_flash", LightningFlash);
+                    _skyMat.SetShaderParameter("lightning_tint", LightningTint);
+                    _skyMat.SetShaderParameter("lightning_dir", LightningDir);
+                }
 
                 Env.AmbientLightColor = Grad(Amb);
                 // depth fog tinted to the horizon -- thin at noon, thick at dawn/dusk/night (extra when Overcast)
@@ -450,6 +473,12 @@ void sky() {
 
         public bool Overcast;   // denser fog + greyer feel (a simple weather state; map-editor toggle)
         public float StormAmount;   // 0..1 storm intensity (WeatherManager sets it from the rain) -> blends the scene toward the moody overcast look in Apply(). Defaults 0 = fair weather, so editor/demos/golden are unchanged.
+        // Lightning flash on the CLOUD LAYER (Fable's pick). WeatherManager sets these; Apply() pushes them to the sky
+        // shader IN the same writer so there's no two-writer fight. Default flash 0 -> the shader block skips (golden safe).
+        public float LightningFlash;
+        public Color LightningTint = new(1f, 0.96f, 0.85f);
+        public Vector3 LightningDir = Vector3.Forward;
+        bool _lightningActive;   // push the sky lightning uniforms only while flashing (+ one frame to switch off), not every idle frame
 
         internal static ImageTexture LoadTex(string res)
         {
