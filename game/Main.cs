@@ -13,6 +13,7 @@ namespace UnturnedGodot
         const string GateGuid = "fb9428c7b8df82e4eb9642dacfaf9567"; // Aprix_Mask_0, ripped from core.masterbundle
 
         string _shotPath; float _shotElapsed;   // UG_SHOTTIME: capture at an elapsed-time target (real-time frame counts drift off fixed-fps -- tinyclaw)
+        Camera3D _orbitCam; Vector3 _orbitCenter; float _orbitR, _orbitAngle;   // UG_PROPSPIN: 360 turntable camera orbit for the prop-showcase movie
         Deployable _spotDbg;    // UG_WIRETEST: spotlight, probed for lamp-lit state at the shot frame
         Vector3 _vAim; bool _vHave;   // first real (Police/Fire/Ambulance) vehicle, for the demo cam
         // Unturned install root -> Maps\<name>. The real map terrain (Landscape heightmaps) is read live from a local
@@ -1038,11 +1039,23 @@ namespace UnturnedGodot
             var ev = Elevator.Build();
             ev.Position = new Vector3(0f, ev.BaseLift, 0f);   // ground the stood-up car's base; set BEFORE AddChild so _Ready latches the base Y correctly
             AddChild(ev);
-            ev.Call();   // ride up immediately (F does this in-game); an offline UG_SHOTTIME capture then catches it in transit
+            // a simple humanoid "rider" parented to the car so it rides with the lift (visual: a player aboard the demo)
+            {
+                var rider = new Node3D { Position = new Vector3(-0.05f, 0.15f, 0f) };   // INSIDE the car on the floor, not on the roof
+                ev.AddChild(rider);
+                var skin = new StandardMaterial3D { AlbedoColor = new Color(0.85f, 0.68f, 0.55f), Roughness = 1f };
+                var shirt = new StandardMaterial3D { AlbedoColor = new Color(0.25f, 0.45f, 0.75f), Roughness = 1f };
+                rider.AddChild(new MeshInstance3D { Mesh = new CapsuleMesh { Radius = 0.32f, Height = 1.3f }, MaterialOverride = shirt, Position = new Vector3(0f, 0.9f, 0f) });   // torso + legs
+                rider.AddChild(new MeshInstance3D { Mesh = new SphereMesh { Radius = 0.22f, Height = 0.44f }, MaterialOverride = skin, Position = new Vector3(0f, 1.75f, 0f) });   // head
+            }
+            ev.AutoCycle = System.Environment.GetEnvironmentVariable("UG_ELEVCYCLE") == "1";   // ride VIDEO: cycle up/down
+            if (!ev.AutoCycle) ev.Call();   // else a single ride up (for a still)
             var cam = new Camera3D { Current = true, Fov = 52f, Far = 2000f };
             AddChild(cam);
-            cam.Position = new Vector3(11f, 6f, 11f);
-            cam.LookAt(new Vector3(0f, 4f, 1.9f), Vector3.Up);
+            cam.Position = new Vector3(15f, 9f, 16f);
+            cam.LookAt(new Vector3(0f, 5.5f, 1.9f), Vector3.Up);   // pulled back to frame the whole ride (base -> top + rider + winch)
+            var _ec = System.Environment.GetEnvironmentVariable("UG_ELEVCAM");   // diag: "ex,ey,ez,tx,ty,tz" to inspect the car (e.g. from inside -> is it hollow?)
+            if (!string.IsNullOrEmpty(_ec)) { var a = _ec.Split(','); cam.Position = new Vector3(float.Parse(a[0]), float.Parse(a[1]), float.Parse(a[2])); cam.LookAt(new Vector3(float.Parse(a[3]), float.Parse(a[4]), float.Parse(a[5])), Vector3.Up); }
             GD.Print("[elevatortest] Elevator_0 spawned + wired to F (Call); auto-Call at 0.4s. Set UG_SHOTTIME to catch it mid-ride.");
         }
 
@@ -2856,6 +2869,7 @@ namespace UnturnedGodot
             string tp = dir + name + "_tex.png";
             if (System.IO.File.Exists(tp)) { var img = new Image(); if (img.Load(tp) == Error.Ok) { img.GenerateMipmaps(); mat.AlbedoTexture = ImageTexture.CreateFromImage(img); } }
             var propMi = new MeshInstance3D { Mesh = mesh, MaterialOverride = mat };
+            { var _pr = System.Environment.GetEnvironmentVariable("UG_PROPROT"); if (!string.IsNullOrEmpty(_pr)) { var a = _pr.Split(','); propMi.RotationDegrees = new Vector3(float.Parse(a[0]), float.Parse(a[1]), float.Parse(a[2])); } }   // UG_PROPROT: reorient the prop (e.g. the elevator's stand-up) for the showcase
             AddChild(propMi);
             // UG_LIVE=1: also attach whatever DEVICE this prop carries, so the diagnostic can show the animated thing
             // rather than the static mesh. Added for the patient monitor, whose whole point is that its screen moves.
@@ -2891,6 +2905,7 @@ namespace UnturnedGodot
                               : _camMode == "top"   ? new Vector3(0f, r * 2.4f, r * 0.001f)
                               : new Vector3(r * 1.15f, r * 0.85f, r * 1.15f));
             cam.LookAt(c, _camMode == "top" ? Vector3.Back : Vector3.Up);
+            if (System.Environment.GetEnvironmentVariable("UG_PROPSPIN") == "1") { _orbitCam = cam; _orbitCenter = propMi.Transform.Basis * c; _orbitR = r * 1.7f; }   // 360 turntable movie
             GD.Print($"[PROPTEST] {name} aabb size={aabb.Size} center={c}");
         }
 
@@ -6893,6 +6908,7 @@ namespace UnturnedGodot
 
         public override void _Process(double delta)
         {
+            if (_orbitCam != null && IsInstanceValid(_orbitCam)) { _orbitAngle += (float)delta * 0.7f; _orbitCam.Position = _orbitCenter + new Vector3(Mathf.Cos(_orbitAngle) * _orbitR, _orbitR * 0.42f, Mathf.Sin(_orbitAngle) * _orbitR); _orbitCam.LookAt(_orbitCenter, Vector3.Up); }   // UG_PROPSPIN: 360 turntable orbit for the prop-showcase movie
             if (_zflowMode) { _zflowT += delta; UpdateZflowDots(); if (_zflowT >= 40.0) ZflowReport(); return; }   // zombie phase-2 verify owns the frame
             if (_zhMode) { _zhT += delta; if (_zhT >= 6.0) ZhuntReport(); return; }                               // zombie phase-3 verify owns the frame
             if (_zkMode) { _zkT += delta; _zkFrame++; if (_zkFrame > 60 && _zkFrame % 15 == 0) _zkPlayer?.Fire(); if (_zkT >= 14.0) ZkillReport(); return; }   // phase-3b: pace shots so recoil recovers between them

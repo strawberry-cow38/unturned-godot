@@ -20,6 +20,9 @@ namespace UnturnedGodot
         MeshInstance3D _topBox, _rope;   // cosmetic winch: gray box fixed at the top of travel + a black rope down to the car
         Vector3 _cableTopLocal;          // node-local point the rope attaches to (car top-centre)
         float _anchorY;                  // world Y the fixed top box hangs the rope from
+        public bool AutoCycle;           // demo: auto-reverse at each stop after a dwell (for the ride video)
+        public float CarTopY;            // node-local Y of the car roof (a demo rider stands here)
+        float _dwell = 1f;
 
         /// <summary>Assemble the elevator from Elevator_0.obj (+ its vertex-colour texture), a box collider off the mesh
         /// AABB, and the HitMeta tag. The caller positions it; _Ready latches that as the bottom stop.</summary>
@@ -39,9 +42,15 @@ namespace UnturnedGodot
             e._mi = new MeshInstance3D { Mesh = mesh, MaterialOverride = mat, Basis = standUp };
             e.AddChild(e._mi);
             Aabb ab = new Transform3D(standUp, Vector3.Zero) * mesh.GetAabb();   // bounds AFTER standing up
-            e.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = ab.Size }, Position = ab.Position + ab.Size * 0.5f });
+            // HOLLOW collider: a thin FLOOR slab (the car IS a hollow mesh, not a facade -- the 360 showed a doorway +
+            // interior). A rider stands INSIDE on this floor and rides with the car, instead of on the roof off a solid
+            // box. Walls are left to the mesh for now (add wall colliders if players walk out). Master 2026-08-29.
+            const float FloorT = 0.25f;
+            e.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = new Vector3(ab.Size.X, FloorT, ab.Size.Z) },
+                Position = new Vector3(ab.Position.X + ab.Size.X * 0.5f, ab.Position.Y + FloorT * 0.5f, ab.Position.Z + ab.Size.Z * 0.5f) });
             e.BaseLift = -ab.Position.Y;   // node Y needed to sit the car's base on the ground
             e._cableTopLocal = new Vector3(ab.Position.X + ab.Size.X * 0.5f, ab.Position.Y + ab.Size.Y, ab.Position.Z + ab.Size.Z * 0.5f);   // top-centre of the car -> the rope hangs from here
+            e.CarTopY = ab.Position.Y + ab.Size.Y;   // car roof height (node-local)
             e.SetMeta(HitMeta, e);   // the look-ray hits this body -> reads the meta -> this Elevator
             return e;
         }
@@ -58,7 +67,11 @@ namespace UnturnedGodot
         public override void _PhysicsProcess(double delta)
         {
             var p = GlobalPosition;
-            if (Mathf.Abs(p.Y - _targetY) < 0.0005f) return;   // parked at a stop -> nothing to do
+            if (Mathf.Abs(p.Y - _targetY) < 0.0005f)   // parked at a stop
+            {
+                if (AutoCycle) { _dwell -= (float)delta; if (_dwell <= 0f) { _dwell = 1.5f; Call(); } }   // demo: dwell, then reverse
+                return;
+            }
             float ny = Mathf.MoveToward(p.Y, _targetY, MoveSpeed * (float)delta);
             GlobalPosition = new Vector3(p.X, ny, p.Z);
             UpdateCable();
