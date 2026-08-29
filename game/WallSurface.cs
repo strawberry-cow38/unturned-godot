@@ -267,6 +267,13 @@ namespace UnturnedGodot
         /// still right, just move it" from "this one has to be remade". Rebuild runs on every mouse move.</summary>
         readonly List<(int Op, float W, float H, int Tint, float Hp, bool Ind)> _paneSpec = new();
 
+        // Remnants for openings whose glass is GONE. Pooled and spec-keyed exactly like the panes above,
+        // because the failure they are avoiding is the same one: Rebuild runs on every edit, and rebuilding
+        // four mesh instances per broken window per keystroke is the "million rebuilds each frame"
+        // strawberry_cow warned about.
+        readonly List<Node3D> _shards = new();
+        readonly List<(int Op, float W, float H, int Tint)> _shardSpec = new();
+
         /// <summary>0xRRGGBB -> Color. 0 means UNSET rather than black, so a tint of pure black is not
         /// expressible; that is a deliberate trade for keeping the save token a single int, and black glass
         /// is not a thing anyone has asked for. Everything else in the 24-bit space round-trips.</summary>
@@ -416,6 +423,81 @@ namespace UnturnedGodot
                 else { _panes.Add(pane); _paneSpec.Add(spec); }
                 AddChild(pane);
                 pane.Position = new Vector3(o.U + o.Width * 0.5f, o.V + o.Height * 0.5f, 0f);
+            }
+
+            RebuildShards();
+        }
+
+        /// <summary>Jagged remnants for every opening that was glazed and is now broken.
+        ///
+        /// Driven off the SAME GlassBroken flag the shatter path writes, so authoring a broken window in the
+        /// editor and shooting one out in play converge on one appearance -- and neither needs a byte of new
+        /// save data, because the flag already persists.</summary>
+        void RebuildShards()
+        {
+            for (int i = _shards.Count - 1; i >= 0; i--)
+                if (!IsInstanceValid(_shards[i])) { _shards.RemoveAt(i); _shardSpec.RemoveAt(i); }
+
+            var want = new List<int>();
+            for (int i = 0; i < Openings.Count; i++)
+                if (Openings[i].Glazed && Openings[i].GlassBroken) want.Add(i);
+
+            while (_shards.Count > want.Count)
+            {
+                var last = _shards[_shards.Count - 1];
+                _shards.RemoveAt(_shards.Count - 1);
+                _shardSpec.RemoveAt(_shardSpec.Count - 1);
+                if (IsInstanceValid(last)) { RemoveChild(last); last.QueueFree(); }
+            }
+
+            for (int k = 0; k < want.Count; k++)
+            {
+                var o = Openings[want[k]];
+                var spec = (want[k], o.Width, o.Height, o.GlassTint);
+                if (k < _shards.Count && _shardSpec[k] == spec)
+                {
+                    _shards[k].Position = new Vector3(o.U + o.Width * 0.5f, o.V + o.Height * 0.5f, 0f);
+                    continue;
+                }
+                var node = GlassShards.Build(new Vector2(o.Width, o.Height),
+                                             o.GlassTint != 0 ? TintFromRgb(o.GlassTint) : GlassPane.DefaultHue,
+                                             ShardSeed(o));
+                if (node == null) continue;      // content missing: lose the shards, not the building
+
+                if (k < _shards.Count)
+                {
+                    var old = _shards[k];
+                    if (IsInstanceValid(old)) { RemoveChild(old); old.QueueFree(); }
+                    _shards[k] = node; _shardSpec[k] = spec;
+                }
+                else { _shards.Add(node); _shardSpec.Add(spec); }
+                AddChild(node);
+                // NAMED PER OPENING, and named AFTER AddChild. Two broken windows on one wall both wanted
+                // the name "GlassShards", and Godot silently discards a colliding name and substitutes a
+                // generated one -- the second node came out as "@Node3D@46". Nothing broke, but anything
+                // looking the shards up by name found one of the two, which is how the test for this first
+                // reported four shards where there were eight.
+                node.Name = $"GlassShards_{want[k]}";
+                node.Position = new Vector3(o.U + o.Width * 0.5f, o.V + o.Height * 0.5f, 0f);
+            }
+        }
+
+        /// <summary>A per-opening seed derived from its own geometry, so which shard shape lands in which
+        /// corner is stable across rebuild, save and load without storing anything.
+        ///
+        /// Quantised before hashing: U and V survive a text round trip as decimals, and seeding off raw
+        /// floats would reshuffle every window the first time a save was reloaded -- a building that looks
+        /// different after reopening it, for no reason the user did.</summary>
+        static int ShardSeed(WallOpening o)
+        {
+            unchecked
+            {
+                int h = 17;
+                h = h * 31 + Mathf.RoundToInt(o.U * 100f);
+                h = h * 31 + Mathf.RoundToInt(o.V * 100f);
+                h = h * 31 + Mathf.RoundToInt(o.Width * 100f);
+                h = h * 31 + Mathf.RoundToInt(o.Height * 100f);
+                return h;
             }
         }
 

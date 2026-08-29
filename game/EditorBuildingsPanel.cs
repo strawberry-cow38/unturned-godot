@@ -15,7 +15,7 @@ namespace UnturnedGodot
         readonly EditorBuildings _b;
         Button _draw;
         Button _drawFloor, _drawRoof, _room, _del, _found, _stairs;
-        CheckBox _glaze, _indestructible;
+        CheckBox _glaze, _indestructible, _broken;
         Label _hpLbl;
         OptionButton _doorDrop;
 
@@ -30,7 +30,8 @@ namespace UnturnedGodot
         // What the glass controls were last shown as, so _Process only touches them when something changed.
         // Writing ButtonPressed every frame would re-enter the Toggled handler and push an undo step per
         // frame -- the control would fight the user for the checkbox.
-        (WallSurface W, int I, bool G, bool Ind, string Door, bool CanDoor) _glassShown = (null, -2, false, false, "\0", false);
+        (WallSurface W, int I, bool G, bool Ind, string Door, bool CanDoor, bool Broken, bool CanBreak)
+            _glassShown = (null, -2, false, false, "\0", false, false, false);
 
         /// <summary>Make the glass controls show the SELECTED opening. Without this they keep displaying the
         /// last thing that was set, and this file's own rule about the material dropdown applies: a control
@@ -46,11 +47,18 @@ namespace UnturnedGodot
             var o = has ? w.Openings[i] : default;
             bool glazed = has ? o.Glazed : (_b.GlazeNew ?? true);
             bool ind = has ? o.GlassIndestructible : _b.ActiveGlassIndestructible;
+            // Broken is a state of GLASS, so the control is meaningless without it -- BreakGlass refuses on
+            // an unglazed opening, and a checkbox you can tick that does nothing is worse than a greyed one.
+            bool broken = has && o.Glazed && o.GlassBroken;
+            bool canBreak = has && o.Glazed;
             // A door only goes in a floor-pinned opening, so the dropdown greys out on a window rather than
             // silently accepting a door that PlannedOpening/SetOpeningDoor would never show.
             string door = has ? o.DoorProp : _b.ActiveDoorProp;
             bool canDoor = !has || EditorBuildings.Archetypes[Mathf.PosMod(o.Archetype, EditorBuildings.Archetypes.Length)].FloorPinned;
-            var now = (has ? w : null, has ? i : -1, glazed, ind, door, canDoor);
+            // `broken` and `canBreak` belong in the CHANGE KEY, not just in the refresh below. Left out,
+            // the checkbox renders once and then never moves -- shooting a window out, or hitting "smash
+            // every window", would leave the panel showing the opposite of the truth.
+            var now = (has ? w : null, has ? i : -1, glazed, ind, door, canDoor, broken, canBreak);
             if (now == _glassShown) return;
             _glassShown = now;
             if (_doorDrop != null)
@@ -66,6 +74,7 @@ namespace UnturnedGodot
             // straight back onto the opening and push an undo step for a change nobody made.
             _glaze?.SetPressedNoSignal(glazed);
             _indestructible?.SetPressedNoSignal(ind);
+            if (_broken != null) { _broken.SetPressedNoSignal(broken); _broken.Disabled = !canBreak; }
             if (_hpLbl != null) _hpLbl.Text = HpText(has ? (o.GlassHp > 0f ? o.GlassHp : 1f) : _b.ActiveGlassHp);
         }
 
@@ -369,6 +378,23 @@ namespace UnturnedGodot
                 else _b.GlazeNew = on;                 // no selection -> this is the default for the next one
             };
             box.AddChild(_glaze);
+
+            // The broken-glass preset. A checkbox for the selected opening plus a whole-building button,
+            // because a derelict is why you want this and clicking thirty windows is not a preset.
+            _broken = new CheckBox { Text = "smashed (shards in the corners)", FocusMode = FocusModeEnum.None };
+            _broken.Toggled += on =>
+            {
+                if (HasSelectedOpening) _b.BreakGlass(_b.SelectedWall, _b.SelectedOpening, on);
+            };
+            box.AddChild(_broken);
+
+            var smashAll = new Button { Text = "smash every window", FocusMode = FocusModeEnum.None };
+            smashAll.Pressed += () => _b.BreakAllGlass();
+            box.AddChild(smashAll);
+
+            var repairAll = new Button { Text = "repair every window", FocusMode = FocusModeEnum.None };
+            repairAll.Pressed += () => _b.BreakAllGlass(false);
+            box.AddChild(repairAll);
 
             _indestructible = new CheckBox { Text = "indestructible", FocusMode = FocusModeEnum.None };
             _indestructible.Toggled += on =>

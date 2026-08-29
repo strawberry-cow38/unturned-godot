@@ -91,8 +91,19 @@ namespace UnturnedGodot
         /// going to land BEFORE you commit to it. The grid is 3 m and invisible until something lands on it,
         /// which made placement feel like a guess. strawberry_cow: "a visual flag that follows the grid to
         /// show where my wall draw is gonna be".</summary>
-        Node3D _stairGhost;
-        readonly List<MeshInstance3D> _stairGhostTreads = new();
+        PlacementGhost _ghostBoxes;
+        /// <summary>The one ghost. Public so tests can read what a tool is promising without a camera and
+        /// without rendering -- the ghost is node state, and node state is the half of this a headless run
+        /// CAN see. What it cannot see is whether the thing is legible on screen.</summary>
+        public PlacementGhost Ghosts
+        {
+            get
+            {
+                if (_ghostBoxes == null || !IsInstanceValid(_ghostBoxes))
+                { _ghostBoxes = new PlacementGhost { Name = "PlacementGhost" }; AddChild(_ghostBoxes); }
+                return _ghostBoxes;
+            }
+        }
 
         /// <summary>World-space bounds of a surface, built from its OWN dimensions rather than a rendered
         /// AABB: a WallSurface is a Node3D, and its mesh child's bounds would miss the openings partition and
@@ -120,10 +131,17 @@ namespace UnturnedGodot
         /// An AABB test is deliberate: the ghost is a warning, and a warning that costs a physics query per
         /// mouse-move to be exact about a corner nobody is looking at is the wrong trade.</summary>
         public bool WouldOverlap(Aabb box, WallSurface ignore = null)
+            => WouldOverlap(box, ignore, null);
+
+        /// <summary>As above, but able to ignore SEVERAL surfaces. The room tool draws four walls at once
+        /// and a foundation drags out a ring, so "ignore the thing being drawn" is not one object -- and a
+        /// clash check that counts the drawing against itself is red from the first pixel of every drag.</summary>
+        public bool WouldOverlap(Aabb box, WallSurface ignore, ICollection<WallSurface> alsoIgnore)
         {
             foreach (var w in _walls)
             {
                 if (!IsInstanceValid(w) || w == ignore) continue;
+                if (alsoIgnore != null && alsoIgnore.Contains(w)) continue;
                 var world = SurfaceAabb(w);
                 // Shrink slightly: surfaces are MEANT to touch at corners and along shared edges, and a test
                 // that flags every neighbouring wall as an overlap is a light that is always on.
@@ -164,7 +182,19 @@ namespace UnturnedGodot
             return new Vector3(p.X, hit.Y, p.Z);
         }
 
-        void UpdateStairGhost(Vector3 groundHit, float camYaw)
+        /// <summary>Start a wall drag at a point: drop the minimum wall and hold it as the one being
+        /// stretched. The mouse-press path and the tests both come through here, which is the same reason
+        /// SelectSide and AddWall are shaped this way -- a test that reproduces the press by hand is a test
+        /// of its own reproduction.</summary>
+        public WallSurface BeginWallDraw(Vector3 p)
+        {
+            _drawAnchor = p;
+            _selWall = null; _selOpening = -1; PositionHandles();
+            _drawing = AddWall(p, 0f, WallOpenings.LatticeStep);
+            return _drawing;
+        }
+
+        public void UpdateStairGhost(Vector3 groundHit, float camYaw)
         {
             float yaw = Mathf.Round(camYaw / 90f) * 90f;
             float runG = WallOpenings.StairDefaultRun(StoreyHeight);
@@ -175,44 +205,17 @@ namespace UnturnedGodot
             int steps = WallOpenings.StairSteps(StoreyHeight);
             float going = run / steps, width = WallOpenings.StairDefaultWidth;
 
-            if (_stairGhost == null) { _stairGhost = new Node3D { Name = "StairGhost" }; AddChild(_stairGhost); }
-            _stairGhost.Visible = true;
-
-            var boxes = new List<Vector3>(StairTreadOrigins(origin, yaw));
-            bool clash = false;
-            for (int i = 0; i < boxes.Count; i++)
-            {
-                if (i >= _stairGhostTreads.Count)
-                {
-                    var mi = new MeshInstance3D
-                    {
-                        Mesh = new BoxMesh(),
-                        MaterialOverride = new StandardMaterial3D
-                        {
-                            Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
-                            ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
-                            NoDepthTest = true,
-                        },
-                    };
-                    _stairGhost.AddChild(mi);
-                    _stairGhostTreads.Add(mi);
-                }
-                var t = _stairGhostTreads[i];
-                ((BoxMesh)t.Mesh).Size = new Vector3(width, WallOpenings.StairTreadThickness, going);
-                t.Visible = true;
-                t.GlobalPosition = boxes[i];
-                t.GlobalRotationDegrees = new Vector3(0f, yaw, 0f);
-                if (WouldOverlap(new Aabb(boxes[i] - new Vector3(width, WallOpenings.StairTreadThickness, going) * 0.5f,
-                                          new Vector3(width, WallOpenings.StairTreadThickness, going)))) clash = true;
-            }
-            for (int i = boxes.Count; i < _stairGhostTreads.Count; i++) _stairGhostTreads[i].Visible = false;
-
-            var tint = clash ? new Color(1f, 0.25f, 0.2f, 0.55f) : new Color(0.35f, 0.9f, 1f, 0.4f);
-            foreach (var t in _stairGhostTreads)
-                if (t.MaterialOverride is StandardMaterial3D m) m.AlbedoColor = tint;
+            // Fed to the SHARED ghost, like every other tool. This used to own a pool, a tint pair
+            // and its own clash loop; four more copies of that was the obvious way to give the other tools
+            // a ghost, and the wrong one.
+            var boxes = new List<PlacementGhost.Box>();
+            foreach (var c in StairTreadOrigins(origin, yaw))
+                boxes.Add(new PlacementGhost.Box(c, new Vector3(width, WallOpenings.StairTreadThickness, going), yaw));
+            Ghosts.Show(boxes, b => WouldOverlap(b));
         }
 
-        void HideStairGhost() { if (_stairGhost != null) _stairGhost.Visible = false; }
+        /// <summary>Every tool feeds one ghost now, so there is one place to put it away.</summary>
+        void HidePlacementGhost() { if (_ghostBoxes != null && IsInstanceValid(_ghostBoxes)) _ghostBoxes.HideAll(); }
 
         /// <summary>Drop every TRANSIENT visual this tool owns: the selection, its handles, the stair
         /// ghost and the grid flag.
@@ -228,7 +231,7 @@ namespace UnturnedGodot
             _selWall = null;
             _selOpening = -1;
             if (_handles != null) foreach (var c in _handles.GetChildren()) c.QueueFree();
-            HideStairGhost();
+            HidePlacementGhost();
             HideGridFlag();
         }
 
@@ -236,8 +239,7 @@ namespace UnturnedGodot
         {
             // Every tool that PLACES on the floor plane gets the flag, not just three of them -- foundation
             // and stairs were drawing blind.
-            if (_cam == null || !(WallDrawMode || RoomDrawMode || SlabDrawMode || FoundationDrawMode || StairsDrawMode))
-            { HideGridFlag(); return; }
+            if (_cam == null) { HideGridFlag(); HidePlacementGhost(); return; }
             var from = _cam.ProjectRayOrigin(screen);
             var dir = _cam.ProjectRayNormal(screen);
             // GroundOnFloor, NOT GroundAt. The flag showed where the cursor met the TERRAIN while every
@@ -246,8 +248,17 @@ namespace UnturnedGodot
             // change floors to show where ur drawing, it stays on ground level".
             // Sharing the call is the point: the preview and the placement cannot disagree about height if
             // they ask the same function, which a second copy of "+ FloorY" here would not guarantee.
-            if (!GroundOnFloor(from, dir, out var p)) { HideGridFlag(); HideStairGhost(); return; }
-            if (StairsDrawMode) UpdateStairGhost(p, _cam.GlobalRotationDegrees.Y); else HideStairGhost();
+            if (!GroundOnFloor(from, dir, out var p)) { HideGridFlag(); HidePlacementGhost(); return; }
+            // THE GHOST DECIDES FOR ITSELF whether any tool wants one, and this runs before the armed-tool
+            // guard below rather than after it. Putting a second "is a tool armed" test in front of it left
+            // the disarmed case reachable only through THIS function -- so deleting the teardown here was a
+            // mutation that survived a green suite, because the tests drive UpdatePlacementGhost directly.
+            // One authority, one path, one thing to get wrong.
+            if (StairsDrawMode) UpdateStairGhost(p, _cam.GlobalRotationDegrees.Y);
+            else UpdatePlacementGhost(p, _cam.GlobalRotationDegrees.Y);
+
+            if (!(WallDrawMode || RoomDrawMode || SlabDrawMode || FoundationDrawMode || StairsDrawMode))
+            { HideGridFlag(); return; }
             var snapped = new Vector3(WallOpenings.SnapGrid(p.X), p.Y, WallOpenings.SnapGrid(p.Z));
             if (_gridFlag == null)
             {
@@ -266,6 +277,78 @@ namespace UnturnedGodot
             }
             _gridFlag.GlobalPosition = snapped + new Vector3(0f, 1.1f, 0f);
             _gridFlag.Visible = true;
+        }
+
+        /// <summary>The preview for every drag tool that is not stairs. strawberry_cow: "give everything
+        /// that doesnt have a ghost a ghost."
+        ///
+        /// TWO STATES, and the second is the one that was missing everywhere. Before you press, the ghost is
+        /// the SMALLEST thing the tool can place -- one lattice step -- because that is literally what a
+        /// press-and-release gives you, and a preview at some invented default size would promise a
+        /// footprint the click does not honour. Once you are dragging, the real surface already exists and
+        /// is visible, so the ghost tracks IT: not to show the shape, which you can see, but to answer
+        /// "does this land inside something", which you cannot.
+        ///
+        /// It never tints the surface being drawn. That is a live object headed for the save file, and
+        /// colouring it to signal a clash is the same mistake as the paint preview -- an edit made for the
+        /// screen that persistence has no way to tell apart from a choice.</summary>
+        public void UpdatePlacementGhost(Vector3 groundHit, float camYaw)
+        {
+            var drawn = DrawnSurfaces();
+            if (drawn.Count > 0)
+            {
+                var live = new List<PlacementGhost.Box>();
+                foreach (var w in drawn)
+                {
+                    var a = SurfaceAabb(w);
+                    if (a.Size.X <= 0f) continue;
+                    live.Add(new PlacementGhost.Box(a.Position + a.Size * 0.5f, a.Size));
+                }
+                Ghosts.Show(live, b => WouldOverlap(b, null, drawn));
+                return;
+            }
+
+            float step = WallOpenings.LatticeStep;
+            var at = new Vector3(WallOpenings.SnapGrid(groundHit.X), groundHit.Y, WallOpenings.SnapGrid(groundHit.Z));
+            float yaw = Mathf.Snapped(camYaw, 15f);
+            var box = new List<PlacementGhost.Box>();
+
+            if (WallDrawMode)
+                // A wall grows from its start CORNER along its own +X, so the minimum wall sits half a step
+                // along that axis from the cursor rather than centred on it.
+                box.Add(new PlacementGhost.Box(
+                    at + Rotated(new Vector3(step * 0.5f, StoreyHeight * 0.5f, 0f), yaw),
+                    new Vector3(step, StoreyHeight, NewWallThickness), yaw));
+            else if (RoomDrawMode)
+                box.Add(new PlacementGhost.Box(at + new Vector3(0f, StoreyHeight * 0.5f, 0f),
+                                               new Vector3(step, StoreyHeight, step)));
+            else if (FoundationDrawMode)
+                // Downward: a foundation is a skirt driven into the ground, so previewing it above the
+                // floor line would point at the wrong half of the building.
+                box.Add(new PlacementGhost.Box(at - new Vector3(0f, WallOpenings.FoundationDepth * 0.5f, 0f),
+                                               new Vector3(step, WallOpenings.FoundationDepth, step)));
+            else if (SlabDrawMode)
+                box.Add(new PlacementGhost.Box(at, new Vector3(step, SlabThickness, step)));
+            else { Ghosts.HideAll(); return; }
+
+            Ghosts.Show(box, b => WouldOverlap(b));
+        }
+
+        static Vector3 Rotated(Vector3 v, float yawDeg)
+        {
+            float c = Mathf.Cos(Mathf.DegToRad(yawDeg)), sn = Mathf.Sin(Mathf.DegToRad(yawDeg));
+            return new Vector3(v.X * c + v.Z * sn, v.Y, -v.X * sn + v.Z * c);
+        }
+
+        /// <summary>Whatever the active tool is part-way through drawing. One accessor because every caller
+        /// that hand-rolled "is something being drawn" got a different subset of the three.</summary>
+        HashSet<WallSurface> DrawnSurfaces()
+        {
+            var set = new HashSet<WallSurface>();
+            if (_drawing != null && IsInstanceValid(_drawing)) set.Add(_drawing);
+            if (_drawingSlab != null && IsInstanceValid(_drawingSlab)) set.Add(_drawingSlab);
+            if (_room != null) foreach (var w in _room) if (w != null && IsInstanceValid(w)) set.Add(w);
+            return set;
         }
 
         void HideGridFlag() { if (_gridFlag != null) _gridFlag.Visible = false; }
@@ -888,6 +971,52 @@ namespace UnturnedGodot
             _editor?.PushUndo("door", () => Restore(w, before));
         }
 
+        /// <summary>Smash or un-smash one opening's glass. strawberry_cow: "broken glass preset, places the
+        /// glass shard props in the corners of an opening."
+        ///
+        /// Only means anything on a GLAZED opening -- broken is a state of glass, not of a hole, and marking
+        /// an unglazed opening broken would render nothing while claiming something. HasGlass already
+        /// encodes that (`Glazed && !GlassBroken`); this refuses rather than storing a flag that contradicts
+        /// it, because a save carrying broken-but-never-glazed is a state no other code path can produce.</summary>
+        public bool BreakGlass(WallSurface w, int index, bool broken = true)
+        {
+            if (w == null || !IsInstanceValid(w) || index < 0 || index >= w.Openings.Count) return false;
+            if (!w.Openings[index].Glazed) return false;
+            if (w.Openings[index].GlassBroken == broken) return false;
+            SetOpeningGlass(w, index, broken: broken);
+            return true;
+        }
+
+        /// <summary>THE PRESET: smash every window in the building at once. A derelict is the reason anyone
+        /// wants this, and clicking thirty openings one at a time is not a preset.
+        ///
+        /// ONE undo step for the whole sweep, not thirty. Thirty would mean thirty Ctrl+Z presses to get
+        /// back, which is the same complaint that put undo on the whole-building recolour.</summary>
+        public int BreakAllGlass(bool broken = true)
+        {
+            var touched = new List<(WallSurface W, WallOpening[] Before)>();
+            int n = 0;
+            foreach (var w in _walls)
+            {
+                if (!IsInstanceValid(w)) continue;
+                WallOpening[] before = null;
+                for (int i = 0; i < w.Openings.Count; i++)
+                {
+                    var o = w.Openings[i];
+                    if (!o.Glazed || o.GlassBroken == broken) continue;
+                    before ??= w.Openings.ToArray();
+                    o.GlassBroken = broken;
+                    w.Openings[i] = o;
+                    n++;
+                }
+                if (before != null) { touched.Add((w, before)); w.Rebuild(); }
+            }
+            if (n == 0) return 0;      // no-op: an undo step here makes Ctrl+Z look broken
+            _editor?.PushUndo(broken ? "break all glass" : "repair all glass",
+                              () => { foreach (var t in touched) Restore(t.W, t.Before); });
+            return n;
+        }
+
         /// <summary>Flip glazing on the selected opening. Bound to a key + the panel button.</summary>
         public void ToggleGlass(WallSurface w, int index)
         {
@@ -1269,9 +1398,7 @@ namespace UnturnedGodot
                 if (_drawing == null)
                 {
                     if (!GroundOnFloor(from, dir, out var p)) return;
-                    _drawAnchor = p;
-                    _selWall = null; _selOpening = -1; PositionHandles();
-                    _drawing = AddWall(p, 0f, WallOpenings.LatticeStep);
+                    BeginWallDraw(p);
                 }
                 // press starts it; the release handler commits it
                 return;
@@ -3102,6 +3229,17 @@ namespace UnturnedGodot
             _ghost.GlobalTransform = new Transform3D(best.GlobalTransform.Basis,
                 best.UVToWorld(o.U + o.Width * 0.5f, o.V + o.Height * 0.5f)
                 + best.GlobalTransform.Basis.Z.Normalized() * (best.Thickness * 0.5f + 0.02f));
+
+            // RED WHEN IT WOULD NOT GO IN. strawberry_cow: "showing the ghost as red". The opening tool had
+            // a ghost from the start but it was always the same blue, so the one thing it could not tell you
+            // was the one thing the placement actually refuses -- AddOpening drops a request that overlaps an
+            // existing hole, silently, and you click and nothing happens.
+            //
+            // Asks WallOpenings.Overlaps, the same predicate AddOpening rejects on, rather than a second
+            // rule that agrees with it today.
+            bool clash = WallOpenings.Overlaps(o, best.Openings);
+            if (_ghost.MaterialOverride is StandardMaterial3D gm)
+                gm.AlbedoColor = clash ? new Color(1f, 0.25f, 0.2f, 0.5f) : new Color(0.35f, 0.8f, 1f, 0.35f);
             _ghost.Visible = true;
             ShowReadout(best, o);
         }
