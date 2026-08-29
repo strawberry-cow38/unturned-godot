@@ -8,7 +8,7 @@ namespace UnturnedGodot
     // (UnityPy mesh.export() = raw Unity coords). Converts to Godot: negate Z + reverse
     // winding, matching the terrain's (x,y,z)->(x,y,-z) convention. UVs are V-flipped
     // (Unity V-up -> Godot V-down).
-    public static class ObjMesh
+    public static partial class ObjMesh
     {
         static float F(string s) => float.Parse(s, CultureInfo.InvariantCulture);
         // diagnostic: UG_CONV env var switches the Unity->Godot mesh convention to hunt the mirror.

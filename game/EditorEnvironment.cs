@@ -51,10 +51,14 @@ namespace UnturnedGodot
             {
                 switch (k.Keycode)
                 {
-                    case Key.Comma: _dayNight.Time = Mathf.Wrap(_dayNight.Time - 0.02f, 0f, 1f); _dayNight.Apply(); break;   // scrub time back (source timeSlider)
-                    case Key.Period: _dayNight.Time = Mathf.Wrap(_dayNight.Time + 0.02f, 0f, 1f); _dayNight.Apply(); break;   // scrub time forward
-                    case Key.O: _dayNight.Overcast = !_dayNight.Overcast; _dayNight.Apply(); break;                            // toggle overcast (source snow/rain toggle)
+                    case Key.Comma: _dayNight.Time = Mathf.Wrap(_dayNight.Time - 0.02f, 0f, 1f); _dayNight.Apply(); _editor.MarkDirty(); break;   // scrub time back (source timeSlider)
+                    case Key.Period: _dayNight.Time = Mathf.Wrap(_dayNight.Time + 0.02f, 0f, 1f); _dayNight.Apply(); _editor.MarkDirty(); break;   // scrub time forward
+                    case Key.O: _dayNight.Overcast = !_dayNight.Overcast; _dayNight.Apply(); _editor.MarkDirty(); break;                            // toggle overcast (source snow/rain toggle)
                 }
+                // MarkDirty EXPLICITLY, because this is the one tool that changes SAVED state without pushing
+                // an undo step, and dirty-tracking otherwise rides on PushUndo. No undo here is deliberate --
+                // scrubbing time is reversible with the same key, so an undo step per keypress would be noise --
+                // but "not undoable" must not mean "not saved", which is what it meant until this line.
             }
         }
 

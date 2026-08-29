@@ -14,6 +14,14 @@
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
   </PropertyGroup>
   <ItemGroup>
+    <!-- ONE implementation of the name/picture rules, shared by LINKING the file rather than referencing
+         the assembly. ProfileRules depends on nothing but System, so a link costs no extra DLL in the
+         single-file publish. The alternative, a second copy of the rules living in the launcher, is how the
+         launcher ends up telling a player their name is fine when the server is about to rewrite it. -->
+    <Compile Include="..\core\UnturnedSim\ProfileRules.cs" Link="ProfileRules.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="Avalonia" Version="11.3.18" />
     <PackageReference Include="Avalonia.Desktop" Version="11.3.18" />
     <PackageReference Include="Avalonia.Themes.Fluent" Version="11.3.18" />

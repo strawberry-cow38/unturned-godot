@@ -7,7 +7,7 @@ namespace UnturnedGodot
     // shared; bind-pose (T-pose) skinned geometry, scaled to ~1.8 m, feet at y=0. Build(tint) tints per team
     // (players blue/orange, zombies green). Double-sided since the skinned mesh winds opposite the props.
     // (Skin texture + skeleton animation are the next layers.)
-    public static class CharacterModel
+    public static partial class CharacterModel
     {
         static Mesh _mesh;
         static float _scale = 1f, _footOffset = 0f;

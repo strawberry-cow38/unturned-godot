@@ -144,7 +144,9 @@ namespace UnturnedNet.Tests
             // be equipped into a hand slot and equip_to_hand_slot fails on a rule it is not testing. The real
             // eaglefire.dat is `Slot Primary`, and ALL 88 shipped .dats declare a Slot (54 Gun + 34 Melee) -- a
             // holsterable item with no slot type does not exist outside this fixture. Review 2026-08-16.
-            Assets.add(new ItemAsset { id = RifleId, itemName = "Eaglefire", size_x = 4, size_y = 2, type = EItemType.GUN, slot = ESlotType.PRIMARY });
+            // gunName + gunAmmoMax matter as of v16: CommandGunState refuses an item that is not a gun, and clamps
+            // the client's ammo claim against the gun's real capacity. The real eaglefire.dat is Ammo_Max 30.
+            Assets.add(new ItemAsset { id = RifleId, itemName = "Eaglefire", size_x = 4, size_y = 2, type = EItemType.GUN, slot = ESlotType.PRIMARY, gunName = "eaglefire", gunAmmoMax = 30 });
             Assets.add(new ItemAsset { id = LogId, itemName = "Log", size_x = 1, size_y = 1, guid = "fixture-log" });
             Assets.add(new ItemAsset { id = PlankId, itemName = "Plank", size_x = 1, size_y = 1, guid = "fixture-plank" });
             Assets.add(new ItemAsset { id = GasCanId, itemName = "Portable Gas Can", size_x = 2, size_y = 2, fuelCapacity = 100f });   // A2: a fuel container the pump fills

@@ -61,7 +61,12 @@ namespace UnturnedGodot
         /// would double-fire across a frame.</summary>
         public bool Matches(InputEvent e) => IsMouse
             ? e is InputEventMouseButton mb && mb.ButtonIndex == Mouse
-            : e is InputEventKey k && k.PhysicalKeycode == Key;
+            // `Key != Key.None` is load-bearing, not defensive. Without it an UNBOUND bind degenerates to
+            // `k.PhysicalKeycode == Key.None`, i.e. == 0 -- and a synthetic or IME-sourced InputEventKey that
+            // sets only Keycode leaves PhysicalKeycode at 0, so the unbound action would swallow it. That makes
+            // an unbound control a WILDCARD rather than inert. `Pressed` above already guards this; Matches
+            // did not, and the two must agree about what "unbound" means.
+            : Key != Key.None && e is InputEventKey k && k.PhysicalKeycode == Key;
 
         public string Label
         {
@@ -94,8 +99,17 @@ namespace UnturnedGodot
         public static Bind Parse(string s)
         {
             if (string.IsNullOrEmpty(s) || s.Length < 3) return default;
-            if (!int.TryParse(s[2..], out int v)) return default;
-            return s[0] == 'm' ? new Bind((MouseButton)v) : new Bind((Key)v);
+            // Check the SEPARATOR and the tag, not just the number. Without this any first char that is not
+            // 'm' fell through to the key branch, so a corrupt "x:65" silently became Key.A -- a plausible
+            // binding rather than the fallback-to-default the caller in Load() promises.
+            if (s[1] != ':' || (s[0] != 'k' && s[0] != 'm')) return default;
+            // long, not int: Godot's Key and MouseButton are long-backed, and Enum.IsDefined throws rather
+            // than returning false when the boxed value's type does not match the enum's underlying type.
+            if (!long.TryParse(s[2..], out long v) || v <= 0) return default;   // v<=0: 0 is None, negatives are unreachable
+            if (s[0] == 'm') return System.Enum.IsDefined(typeof(MouseButton), (long)(MouseButton)v) ? new Bind((MouseButton)v) : default;
+            // An undefined Key value passes `IsBound` (it only tests != None) and would be STORED, giving a row
+            // that reads as bound and an action that can never fire, with nothing offering a way out.
+            return System.Enum.IsDefined(typeof(Key), (long)(Key)v) ? new Bind((Key)v) : default;
         }
     }
 
@@ -127,10 +141,16 @@ namespace UnturnedGodot
             [GameAction.Reload] = new Bind(Key.R),
             [GameAction.Firemode] = new Bind(Key.V),
             [GameAction.Melee] = new Bind(Key.G),
-            [GameAction.Grenade] = new Bind(Key.H),
+            [GameAction.Grenade] = new Bind(Key.None),   // UNBOUND (strawberry 2026-08-24). Not deleted: the action still
+                                                        // exists, so it appears in the rebind menu as "—" and anyone who
+                                                        // wants it can put it back. Deleting the action would remove the
+                                                        // ability to bind it at all, which is a different request.
             [GameAction.Interact] = new Bind(Key.F),
             [GameAction.AttachMenu] = new Bind(Key.T),          // hold to open the weapon-attachment menu (code reality; supersedes the guessed Inspect)
-            [GameAction.ToggleFirstPerson] = new Bind(Key.K),   // moved off H so Grenade(H) stops being dead code (fp-toggle + grenade were both H)
+            [GameAction.ToggleFirstPerson] = new Bind(Key.H),   // BACK ON H (strawberry 2026-08-24: "H should be 3p by default").
+                                                                // It had been moved to K precisely because H was double-booked with
+                                                                // Grenade; unbinding Grenade above is what frees H to come back, so
+                                                                // these two changes are one change and neither works alone.
             [GameAction.Flashlight] = new Bind(Key.B),          // held tactical light (source TACTICAL key) -- a GameAction so ConflictWith can SEE B, not a hidden literal in the chain
             [GameAction.Inventory] = new Bind(Key.Tab),
             [GameAction.Map] = new Bind(Key.M),
@@ -276,12 +296,26 @@ namespace UnturnedGodot
 
         public static void Save()
         {
+            // A test that rebinds anything must not reach the developer's real user://keybinds.cfg. This was
+            // not hypothetical: Set() calls Save() unconditionally, so a single rebind assertion permanently
+            // overwrote the config of whoever ran the suite.
+            if (_testMode) return;
             try
             {
                 var cfg = new ConfigFile();
                 foreach (var kv in Current)
                     cfg.SetValue("binds", kv.Key.ToString(), kv.Value.Serialize());
-                cfg.Save(ConfigPath);
+
+                // Temp-and-rename, matching StructureManager's save (game/StructureManager.cs:569-575). A plain
+                // cfg.Save(ConfigPath) truncates the file in place before a byte lands; a crash or power loss
+                // mid-write leaves ConfigFile a partial document, and Load() (below) treats ANY parse error as
+                // "no valid config" and falls back to pure defaults -- so a torn write costs the player all 36
+                // customised bindings, not just the one they were making when the machine went down.
+                string tmp = ConfigPath + ".tmp";
+                var err = cfg.Save(tmp);
+                if (err != Error.Ok) { GD.PushWarning($"[keybinds] save (tmp) failed: {err}"); return; }
+                err = DirAccess.RenameAbsolute(ProjectSettings.GlobalizePath(tmp), ProjectSettings.GlobalizePath(ConfigPath));
+                if (err != Error.Ok) GD.PushWarning($"[keybinds] save rename failed: {err}");
             }
             catch (System.Exception e) { GD.PushWarning($"[keybinds] could not save: {e.Message}"); }
         }
@@ -300,11 +334,23 @@ namespace UnturnedGodot
             return sb.ToString();
         }
 
-        // Test hook: point the table at a known state without touching the developer's real config.
+        static bool _testMode;
+
+        /// <summary>Test hook: put the table in a KNOWN state and stop it touching the developer's real config.
+        ///
+        /// The previous version cleared Current and set `_loaded = false`, which did the OPPOSITE of what its
+        /// comment claimed: the next Get() saw !_loaded and called Load(), which read the real
+        /// user://keybinds.cfg off disk. So a developer with a customised Jump key ran a different suite from
+        /// CI, and the failure would look like a product bug rather than a harness one.
+        ///
+        /// Now: load the defaults directly, mark loaded so nothing re-reads disk, and latch _testMode so Save()
+        /// is a no-op for the rest of the process.</summary>
         public static void ResetForTests()
         {
+            _testMode = true;
             Current.Clear();
-            _loaded = false;
+            foreach (var kv in Defaults) Current[kv.Key] = kv.Value;
+            _loaded = true;
         }
     }
 }

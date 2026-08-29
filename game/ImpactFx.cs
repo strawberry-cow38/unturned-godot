@@ -14,7 +14,7 @@ namespace UnturnedGodot
     //
     // Surf -> source impact effect: concrete/metal/wood same-named; grass=foliage, dirt/sand=gravel; water = the lit
     // droplet splash; flesh (a player/zombie hit) = the Flesh_Dynamic blood sheet via Blood().
-    public static class ImpactFx
+    public static partial class ImpactFx
     {
         // A burst big enough that a fast particle never leaves it -> the auto-AABB frustum cull can't hide the effect.
         // (This single missing line is why hard-surface + blood impacts "didn't exist" on screen.)
@@ -101,8 +101,7 @@ namespace UnturnedGodot
             if (itex != null) mat.AlbedoTexture = itex;
             if (sheet) { mat.ParticlesAnimHFrames = 4; mat.ParticlesAnimVFrames = 1; mat.ParticlesAnimLoop = true; }   // LOOP (not clamp): a chip's anim value can drift past the last frame -> with Loop=false it clamped onto the blank past-the-end frame instead of a chip
 
-            var dust = new CpuParticles3D
-            {
+            var dust = new CpuParticles3D { CastShadow = GeometryInstance3D.ShadowCastingSetting.Off, 
                 Emitting = false, OneShot = true, Explosiveness = 1f,   // FIX TEST: fired below AFTER AddChild+position. Set true in the ctor, the one-shot arms at construction; spawned inside a 50Hz physics tick the cycle can burn before the first _process -> fires empty -> no chips (decal still lands).
                 Amount = metal ? 28 : 20, Lifetime = 1.0f,   // a DENSE cone (master wants a visible cone of chips, not a brief flash)
                 Direction = up, Spread = 50f,   // cone spraying off the surface, back toward the shooter
@@ -138,8 +137,7 @@ namespace UnturnedGodot
                 AlbedoColor = new Color(0.82f, 0.9f, 1f), AlbedoTexture = DebrisTex(Surf.Water),
                 TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest,
             };
-            var ps = new CpuParticles3D
-            {
+            var ps = new CpuParticles3D { CastShadow = GeometryInstance3D.ShadowCastingSetting.Off, 
                 Emitting = false, OneShot = true, Explosiveness = 1f, Randomness = 0.4f,   // fired below AFTER positioning -- Emitting=true in the ctor mis-fires inside a physics tick (see the debris burst)
                 Amount = big ? 96 : 10, Lifetime = big ? 2.5f : 1.0f,
                 Direction = Vector3.Up, Spread = big ? 18f : 45f,
@@ -175,8 +173,7 @@ namespace UnturnedGodot
                 CullMode = BaseMaterial3D.CullModeEnum.Disabled,
             };
             if (_blood != null) { mat.AlbedoTexture = _blood; mat.ParticlesAnimHFrames = 4; mat.ParticlesAnimVFrames = 1; mat.ParticlesAnimLoop = false; }
-            var ps = new CpuParticles3D
-            {
+            var ps = new CpuParticles3D { CastShadow = GeometryInstance3D.ShadowCastingSetting.Off, 
                 Emitting = false, OneShot = true, Explosiveness = 1f,   // fired below AFTER positioning (physics-tick-safe; see the debris burst)
                 Amount = 16, Lifetime = 1.0f,
                 Direction = -d, Spread = 60f,

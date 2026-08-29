@@ -89,12 +89,116 @@ namespace UnturnedGodot
         /// going to land BEFORE you commit to it. The grid is 3 m and invisible until something lands on it,
         /// which made placement feel like a guess. strawberry_cow: "a visual flag that follows the grid to
         /// show where my wall draw is gonna be".</summary>
+        Node3D _stairGhost;
+        readonly List<MeshInstance3D> _stairGhostTreads = new();
+
+        /// <summary>World-space bounds of a surface, built from its OWN dimensions rather than a rendered
+        /// AABB: a WallSurface is a Node3D, and its mesh child's bounds would miss the openings partition and
+        /// go stale mid-drag. Local box is X 0..Length, Y 0..Height, Z +/-Thickness/2 -- the same frame
+        /// Rebuild generates in.</summary>
+        static Aabb SurfaceAabb(WallSurface w)
+        {
+            float t = w.Thickness * 0.5f;
+            var xf = w.GlobalTransform;
+            var lo = new Vector3(float.MaxValue, float.MaxValue, float.MaxValue);
+            var hi = new Vector3(float.MinValue, float.MinValue, float.MinValue);
+            for (int i = 0; i < 8; i++)
+            {
+                var c = xf * new Vector3((i & 1) == 0 ? 0f : w.Length,
+                                         (i & 2) == 0 ? 0f : w.Height,
+                                         (i & 4) == 0 ? -t : t);
+                lo = new Vector3(Mathf.Min(lo.X, c.X), Mathf.Min(lo.Y, c.Y), Mathf.Min(lo.Z, c.Z));
+                hi = new Vector3(Mathf.Max(hi.X, c.X), Mathf.Max(hi.Y, c.Y), Mathf.Max(hi.Z, c.Z));
+            }
+            return new Aabb(lo, hi - lo);
+        }
+
+        /// <summary>Does this box already contain something? Used to warn, NOT to refuse -- strawberry chose
+        /// "warn red", and refusing would fight you every time you deliberately run a partition into a wall.
+        /// An AABB test is deliberate: the ghost is a warning, and a warning that costs a physics query per
+        /// mouse-move to be exact about a corner nobody is looking at is the wrong trade.</summary>
+        public bool WouldOverlap(Aabb box, WallSurface ignore = null)
+        {
+            foreach (var w in _walls)
+            {
+                if (!IsInstanceValid(w) || w == ignore) continue;
+                var world = SurfaceAabb(w);
+                // Shrink slightly: surfaces are MEANT to touch at corners and along shared edges, and a test
+                // that flags every neighbouring wall as an overlap is a light that is always on.
+                world = world.Grow(-0.05f);
+                if (world.Size.X > 0f && world.Intersects(box)) return true;
+            }
+            return false;
+        }
+
+        /// <summary>Translucent preview of the flight the stairs tool would drop. Stairs were the one tool
+        /// that placed on a single click with NO preview at all -- you clicked and found out. Built from
+        /// StairTreadOrigins, the same layout AddStairs uses, so it cannot promise a staircase somewhere the
+        /// real one will not go. Red when it would land inside something.</summary>
+        void UpdateStairGhost(Vector3 groundHit, float camYaw)
+        {
+            float yaw = Mathf.Round(camYaw / 90f) * 90f;
+            var origin = new Vector3(WallOpenings.SnapGrid(groundHit.X), groundHit.Y,
+                                     WallOpenings.SnapGrid(groundHit.Z));
+            float run = WallOpenings.StairDefaultRun(StoreyHeight);
+            int steps = WallOpenings.StairSteps(StoreyHeight);
+            float going = run / steps, width = WallOpenings.StairDefaultWidth;
+
+            if (_stairGhost == null) { _stairGhost = new Node3D { Name = "StairGhost" }; AddChild(_stairGhost); }
+            _stairGhost.Visible = true;
+
+            var boxes = new List<Vector3>(StairTreadOrigins(origin, yaw));
+            bool clash = false;
+            for (int i = 0; i < boxes.Count; i++)
+            {
+                if (i >= _stairGhostTreads.Count)
+                {
+                    var mi = new MeshInstance3D
+                    {
+                        Mesh = new BoxMesh(),
+                        MaterialOverride = new StandardMaterial3D
+                        {
+                            Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
+                            ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
+                            NoDepthTest = true,
+                        },
+                    };
+                    _stairGhost.AddChild(mi);
+                    _stairGhostTreads.Add(mi);
+                }
+                var t = _stairGhostTreads[i];
+                ((BoxMesh)t.Mesh).Size = new Vector3(width, WallOpenings.StairTreadThickness, going);
+                t.Visible = true;
+                t.GlobalPosition = boxes[i];
+                t.GlobalRotationDegrees = new Vector3(0f, yaw, 0f);
+                if (WouldOverlap(new Aabb(boxes[i] - new Vector3(width, WallOpenings.StairTreadThickness, going) * 0.5f,
+                                          new Vector3(width, WallOpenings.StairTreadThickness, going)))) clash = true;
+            }
+            for (int i = boxes.Count; i < _stairGhostTreads.Count; i++) _stairGhostTreads[i].Visible = false;
+
+            var tint = clash ? new Color(1f, 0.25f, 0.2f, 0.55f) : new Color(0.35f, 0.9f, 1f, 0.4f);
+            foreach (var t in _stairGhostTreads)
+                if (t.MaterialOverride is StandardMaterial3D m) m.AlbedoColor = tint;
+        }
+
+        void HideStairGhost() { if (_stairGhost != null) _stairGhost.Visible = false; }
+
         void UpdateGridFlag(Vector2 screen)
         {
-            if (_cam == null || !(WallDrawMode || RoomDrawMode || SlabDrawMode)) { HideGridFlag(); return; }
+            // Every tool that PLACES on the floor plane gets the flag, not just three of them -- foundation
+            // and stairs were drawing blind.
+            if (_cam == null || !(WallDrawMode || RoomDrawMode || SlabDrawMode || FoundationDrawMode || StairsDrawMode))
+            { HideGridFlag(); return; }
             var from = _cam.ProjectRayOrigin(screen);
             var dir = _cam.ProjectRayNormal(screen);
-            if (!GroundAt(from, dir, out var p)) { HideGridFlag(); return; }
+            // GroundOnFloor, NOT GroundAt. The flag showed where the cursor met the TERRAIN while every
+            // placement path lands at FloorY above it, so on any storey but the ground one the marker sat
+            // under the building and you were drawing blind -- strawberry: "the draw tool cursor doesnt
+            // change floors to show where ur drawing, it stays on ground level".
+            // Sharing the call is the point: the preview and the placement cannot disagree about height if
+            // they ask the same function, which a second copy of "+ FloorY" here would not guarantee.
+            if (!GroundOnFloor(from, dir, out var p)) { HideGridFlag(); HideStairGhost(); return; }
+            if (StairsDrawMode) UpdateStairGhost(p, _cam.GlobalRotationDegrees.Y); else HideStairGhost();
             var snapped = new Vector3(WallOpenings.SnapGrid(p.X), p.Y, WallOpenings.SnapGrid(p.Z));
             if (_gridFlag == null)
             {
@@ -192,7 +296,73 @@ namespace UnturnedGodot
         public IReadOnlyList<WallSurface> Walls => _walls;
         public WallSurface SelectedWall => _selWall;
         public int SelectedOpening => _selOpening;
+        /// <summary>Which opening preset is armed, or -1. Exposed so the panel can light the right preset
+        /// button when the KEYBOARD armed it -- it used to remember what it last set, which is how the UI and
+        /// the editor got to disagree.</summary>
+        public int ArmedArchetype => _armed;
+
         public void Arm(int archetype) { _armed = archetype; if (archetype < 0) { HideGhost(); HideReadout(); } }
+
+        /// <summary>Which tool is live. ONE authority for a rule that has already drifted here once: tool
+        /// selection used to be five hand-written "clear the others", each clearing a different subset, and
+        /// the panel's SetTool was written to end that. It ended it ON THE PANEL -- the KEYBOARD still set
+        /// _armed directly, so pressing 1-6 while the room tool was live left both armed, which is the exact
+        /// bug the centralisation existed to kill. Both paths now come through here.</summary>
+        public enum BuildTool { None, Wall, Room, Floor, Roof, Foundation, Delete, Stairs, Opening }
+
+        /// <summary>The live tool, so the panel can light the right button when the KEYBOARD changed it --
+        /// without which a shortcut leaves the UI lying about what is armed.</summary>
+        public BuildTool Tool { get; private set; } = BuildTool.None;
+
+        /// <summary>Tool selection from the keyboard. Split out of _UnhandledInput so it can be DRIVEN by a
+        /// test: the handler itself needs a live Editor and a camera, which is exactly how the last version of
+        /// this went untested -- the rule was right in SelectTool and the caller bypassed it anyway.
+        ///
+        /// Deliberately NOT on WASD: those fly the camera, and a tool that fires only when you happen not to
+        /// be holding RMB is worse than no shortcut. Pressing the live tool's key again returns to select, so
+        /// one key both arms and disarms.</summary>
+        /// <returns>true if the key was a tool key and has been handled.</returns>
+        public bool HandleToolKey(Key keycode)
+        {
+            // Opening presets route through SelectTool like everything else. Setting _armed directly here was
+            // the surviving half of the five-places bug: it left the room/wall/slab tool armed beside it.
+            if (keycode >= Key.Key1 && keycode <= Key.Key6)
+            { SelectTool(BuildTool.Opening, (int)(keycode - Key.Key1)); return true; }
+
+            // An ACTION rather than a tool: it does its work and arms nothing. It still lives here because
+            // HandleToolKey is the editor's one keyboard authority for build controls, and every time a
+            // control has been given its own entry point the shared rule has drifted out from under it.
+            if (keycode == Key.H) { AutoFitRooms(); return true; }
+
+            BuildTool want = keycode switch
+            {
+                Key.B => BuildTool.Wall,
+                Key.R => BuildTool.Room,
+                Key.F => BuildTool.Floor,
+                Key.G => BuildTool.Roof,
+                Key.T => BuildTool.Stairs,
+                Key.V => BuildTool.Foundation,
+                Key.X => BuildTool.Delete,
+                _     => BuildTool.None,
+            };
+            if (want == BuildTool.None) return false;
+            SelectTool(Tool == want ? BuildTool.None : want);
+            return true;
+        }
+
+        public void SelectTool(BuildTool t, int archetype = -1)
+        {
+            Tool = t;
+            WallDrawMode = t == BuildTool.Wall;
+            RoomDrawMode = t == BuildTool.Room;
+            SlabDrawMode = t == BuildTool.Floor || t == BuildTool.Roof;
+            DeleteDrawMode = t == BuildTool.Delete;
+            FoundationDrawMode = t == BuildTool.Foundation;
+            StairsDrawMode = t == BuildTool.Stairs;
+            if (t == BuildTool.Floor) SlabDrawKind = SurfaceKind.Floor;
+            if (t == BuildTool.Roof) SlabDrawKind = SurfaceKind.Roof;
+            Arm(t == BuildTool.Opening ? archetype : -1);
+        }
 
         /// <summary>The palette new walls are drawn with. A retail "material" is only a choice of eight flat
         /// colours -- there are no textures on these buildings -- so this is an index, not an asset.</summary>
@@ -210,6 +380,20 @@ namespace UnturnedGodot
         /// Q and E move down and up. They are the camera's ascend/descend while RMB-flying, and this input
         /// handler already returns early in that case, so the two never both fire.</summary>
         public int ActiveFloor;
+        /// <summary>Deepest basement. Four storeys down is deeper than anything retail has and still finite,
+        /// which is what stops hold-Q putting the stage somewhere you cannot fly back from.</summary>
+        public const int MinFloor = -4;
+        public const int MaxFloor = 12;
+
+        /// <summary>Move up or down a storey, clamped. Split out of the input handler so it is reachable from
+        /// a test -- the handler needs a live Editor and camera, which is how the keyboard path has twice now
+        /// been the untested half.
+        ///
+        /// NEGATIVE floors are BASEMENTS. A clamp at 0 was the only thing preventing them: FloorY is
+        /// ActiveFloor * StoreyHeight and handles negatives without complaint, and nothing else in the editor
+        /// assumes a non-negative storey. strawberry: "support for basements".</summary>
+        public void ChangeFloor(int delta)
+            => ActiveFloor = Mathf.Clamp(ActiveFloor + delta, MinFloor, MaxFloor);
         public static float StoreyHeight => WallOpenings.DoorHeight;
         public float FloorY => ActiveFloor * StoreyHeight;
 
@@ -248,8 +432,12 @@ namespace UnturnedGodot
         /// <summary>Delete tool. Click a wall to remove it; drag along one to cut that span out of it.</summary>
         public bool DeleteDrawMode;
         WallSurface _cutWall;
-        float _cutFrom;
+        float _cutFrom, _cutFromV;
 
+        /// <summary>Click the floor to drop a flight of stairs climbing to the storey above, facing away
+        /// from the camera. Yaw snaps to 90 deg because buildings here are axis-aligned and a flight at 37
+        /// degrees lines up with nothing.</summary>
+        public bool StairsDrawMode;
         public bool SlabDrawMode;
         public SurfaceKind SlabDrawKind = SurfaceKind.Roof;
         WallSurface _drawingSlab;
@@ -264,11 +452,13 @@ namespace UnturnedGodot
         Vector3 _drawAnchor;
 
         public bool Drawing => _drawing != null;
-        public string ToolText => $"floor {ActiveFloor} (Q/E) · " + ToolName;
-        string ToolName => FoundationDrawMode ? "foundation: drag a rectangle"
-                                : DeleteDrawMode ? "delete: click a wall, or drag along one to cut a piece out"
-                                : SlabDrawMode ? (_drawingSlab != null ? $"drag the {SlabDrawKind.ToString().ToLower()} out — release to place" : $"{SlabDrawKind.ToString().ToLower()}: drag a rectangle")
-                                : WallDrawMode ? (_drawing != null ? "drag the wall out — release to place, Esc cancels" : "wall: press and drag")
+        public string ToolText =>
+            $"{(ActiveFloor < 0 ? $"basement {-ActiveFloor}" : $"floor {ActiveFloor}")} (Q/E) · " + ToolName;
+        string ToolName => StairsDrawMode ? $"stairs (T): click to drop a {WallOpenings.StairSteps(StoreyHeight)}-step flight to floor {ActiveFloor + 1}"
+                                : FoundationDrawMode ? "foundation (V): drag a rectangle"
+                                : DeleteDrawMode ? "delete (X): click a wall, or drag along one to cut a piece out"
+                                : SlabDrawMode ? (_drawingSlab != null ? $"drag the {SlabDrawKind.ToString().ToLower()} out — release to place" : $"{SlabDrawKind.ToString().ToLower()} ({(SlabDrawKind == SurfaceKind.Roof ? "G" : "F")}): drag a rectangle")
+                                : WallDrawMode ? (_drawing != null ? "drag the wall out — release to place, Esc cancels" : "wall (B): press and drag")
                                 : _armed >= 0 ? $"placing {Archetypes[Mathf.PosMod(_armed, Archetypes.Length)].Name}"
                                 : "select";
 
@@ -707,11 +897,22 @@ namespace UnturnedGodot
                     // a click deletes the wall; a drag takes out the span you dragged over
                     var w = _cutWall; _cutWall = null;
                     if (!IsInstanceValid(w)) return;
-                    float to = _cutFrom;
-                    if (PickWallAt(_cam.ProjectRayOrigin(mp), _cam.ProjectRayNormal(mp), out var same, out float u)
-                        && same == w) to = u;
+                    float to = _cutFrom, toV = _cutFromV;
+                    if (PickWallAt(_cam.ProjectRayOrigin(mp), _cam.ProjectRayNormal(mp), out var same, out float u, out float vv)
+                        && same == w) { to = u; toV = vv; }
                     var before = Snapshot();
-                    if (Mathf.Abs(to - _cutFrom) < 0.15f) RemoveWall(w);
+                    // A WALL cuts along its run: a span taken out of it splits it in two, which is what you
+                    // mean by deleting part of a wall. A FLAT surface cannot -- strip a floor full-width and
+                    // you have cut it in half, when what you wanted was a hole in the middle of it (a
+                    // stairwell, a light well). So on a slab the drag is a RECTANGLE, punched with the same
+                    // partition that makes doors and windows: WallOpenings.Solids already turns a surface
+                    // plus hole rectangles into boxes, and the collider comes from that same partition, so
+                    // the hole you see is the hole you fall through. No new geometry, and no CSG.
+                    bool flat = Mathf.Abs(Mathf.Wrap(w.RotationDegrees.X, -180f, 180f) + 90f) < 1f;
+                    if (Mathf.Abs(to - _cutFrom) < 0.15f && (!flat || Mathf.Abs(toV - _cutFromV) < 0.15f))
+                        RemoveWall(w);
+                    else if (flat && Mathf.Abs(toV - _cutFromV) >= 0.15f)
+                    { if (!PunchHole(w, _cutFrom, _cutFromV, to, toV)) return; }
                     else if (RemoveSpan(w, _cutFrom, to) == 0) return;
                     _editor?.PushUndo("wall cut", () => RestoreAll(before));
                 }
@@ -774,9 +975,9 @@ namespace UnturnedGodot
                     else { _selWall = null; HideSideGhost(); }
                     PositionHandles();
                 }
-                else if (k.Keycode >= Key.Key1 && k.Keycode <= Key.Key6) _armed = (int)(k.Keycode - Key.Key1);
-                else if (k.Keycode == Key.E) ActiveFloor = Mathf.Min(ActiveFloor + 1, 12);
-                else if (k.Keycode == Key.Q) ActiveFloor = Mathf.Max(ActiveFloor - 1, 0);
+                else if (HandleToolKey(k.Keycode)) { }
+                else if (k.Keycode == Key.E) ChangeFloor(+1);
+                else if (k.Keycode == Key.Q) ChangeFloor(-1);
                 // Ctrl+Z. The undo STACK was always here -- every wall, opening and edit pushes onto it --
                 // but the key was only ever bound in EditorObjects, so in Buildings mode there was nothing
                 // to press. An undo history nobody can reach is the same as no undo history.
@@ -795,9 +996,9 @@ namespace UnturnedGodot
 
             if (DeleteDrawMode)
             {
-                if (PickWallAt(from, dir, out var dw, out float du))
+                if (PickWallAt(from, dir, out var dw, out float du, out float dv))
                 {
-                    _cutWall = dw; _cutFrom = du;
+                    _cutWall = dw; _cutFrom = du; _cutFromV = dv;
                     _selWall = null; _selOpening = -1; PositionHandles();
                 }
                 return;
@@ -820,6 +1021,18 @@ namespace UnturnedGodot
                     var made = new List<WallSurface>(_room);
                     _editor?.PushUndo(_roomKind == SurfaceKind.Foundation ? "foundation draw" : "room place",
                                       () => { foreach (var w in made) RemoveWall(w); });
+                }
+                return;
+            }
+
+            if (StairsDrawMode)
+            {
+                if (GroundOnFloor(from, dir, out var stp))
+                {
+                    // Snap the flight to the axis you are nearest to looking along. The camera can sit at any
+                    // angle; a staircase that lands at 37 degrees meets no wall in the building.
+                    float camYaw = _cam != null ? _cam.GlobalRotationDegrees.Y : 0f;
+                    PlaceStairsAt(stp, camYaw);
                 }
                 return;
             }
@@ -1053,6 +1266,28 @@ namespace UnturnedGodot
         /// Openings travel with whichever piece still contains them, and one straddling the cut is dropped
         /// rather than clipped -- half a window is not a window, and silently resizing someone's door to fit
         /// a cut they made somewhere else is worse than removing it.</summary>
+        /// <summary>Carve a rectangle out of a flat surface -- deleting a SECTION of a floor rather than
+        /// slicing the whole slab in two. Implemented as an OPENING, so it goes through the same partition
+        /// that cuts doors and windows: the mesh and the collider are both generated from it, which is the
+        /// property the whole generate-don't-cut design exists for. A hole you can see and cannot fall
+        /// through is the bug a boolean would give you.</summary>
+        /// <returns>false if the rectangle was degenerate or entirely off the surface.</returns>
+        public bool PunchHole(WallSurface w, float u0, float v0, float u1, float v1)
+        {
+            if (w == null || !IsInstanceValid(w)) return false;
+            if (u0 > u1) (u0, u1) = (u1, u0);
+            if (v0 > v1) (v0, v1) = (v1, v0);
+            u0 = Mathf.Max(0f, u0); u1 = Mathf.Min(w.Length, u1);
+            v0 = Mathf.Max(0f, v0); v1 = Mathf.Min(w.Height, v1);
+            if (u1 - u0 < WallOpenings.MinOpening || v1 - v0 < WallOpenings.MinOpening) return false;
+            // Dragged over the whole slab: that is a delete, not a hole with nothing left round it.
+            if (u1 - u0 >= w.Length - WallOpenings.Eps && v1 - v0 >= w.Height - WallOpenings.Eps)
+            { RemoveWall(w); return true; }
+            w.Openings.Add(new WallOpening(u0, v0, u1 - u0, v1 - v0));
+            w.Rebuild();
+            return true;
+        }
+
         public int RemoveSpan(WallSurface w, float u0, float u1)
         {
             if (w == null || !IsInstanceValid(w)) return 0;
@@ -1973,19 +2208,163 @@ namespace UnturnedGodot
         /// spans the whole footprint -- its apex sits at the WALL's midpoint. An L-shaped plan, an offset end
         /// wall or a diagonal one gets a triangle that misses the roof planes. The along/across-ridge
         /// classification is a 45-degree threshold, which is meaningless for a diagonal wall.</summary>
+        /// <summary>Roof everything drawn, gabled -- or flat if the pitch is off.
+        ///
+        /// The footprint used to be measured here as well as in the flat path, which is why a flat roof and a
+        /// gable over the same walls could disagree about where the eave was. One measurement now, in
+        /// RoofFootprint, which also owns the one thing that genuinely differs by kind: retail flat roofs sit
+        /// flush with the wall face and pitched ones overhang.</summary>
         public int AddGableRoof(float pitchDeg)
-        {
-            if (pitchDeg <= 0.1f) return AddSlab(SurfaceKind.Roof) != null ? 1 : 0;   // flat is a slab
-            pitchDeg = Mathf.Clamp(pitchDeg, 1f, 70f);
+            => PlaceRoofOverWalls(pitchDeg <= 0.1f ? RoofKind.Flat : RoofKind.Gable, pitchDeg)?.Count ?? 0;
 
+        /// <summary>Build a gable roof over an explicit footprint: two slopes meeting at a ridge, and the
+        /// walls that run across the ridge raised into gable ends to close it.
+        ///
+        /// Split out of AddGableRoof so the DRAG-RECT roof can use it. Drawing one slope at a time was me
+        /// exposing the primitive instead of the thing you want -- strawberry_cow: "why am i placing one
+        /// slope at a time instead of drawing a gable zone over a rect".</summary>
+        public int BuildGableOver(float minX, float maxX, float minZ, float maxZ, float topY,
+                                  float pitchDeg, int material, float maxWallThickness)
+            => PlaceRoof(new RoofSpec
+            {
+                Kind = RoofKind.Gable, MinX = minX, MaxX = maxX, MinZ = minZ, MaxZ = maxZ,
+                TopY = topY, PitchDeg = pitchDeg, Thickness = SlabThickness, Material = material, Texel = -1,
+            })?.Count ?? 0;
+
+        // ---- a roof is an OBJECT, not the surfaces it turned into --------------------------------------
+
+        /// <summary>A placed roof: what it IS, and what it currently exists as.
+        ///
+        /// strawberry_cow asked for more roof shapes AND for the ability to modify placed roofs, and those
+        /// are one job. Roofs used to be emitted straight into surfaces, so nothing recorded that six
+        /// surfaces and two raised walls were one roof -- changing the pitch meant undoing back past it and
+        /// redrawing, and adding shapes on top of that would have multiplied what was already wrong.
+        ///
+        /// Members are node references rather than indices because indices shift under every spawn and free.
+        /// Raised keeps each wall's PREVIOUS gable rise: a wall can carry an authored gable from an import,
+        /// so removing a roof has to put back what was there, not zero.</summary>
+        public sealed class PlacedRoof
+        {
+            public int Id;
+            public RoofSpec Spec;
+            public readonly List<WallSurface> Members = new();
+            public readonly List<(WallSurface W, float Prev)> Raised = new();
+            public int Count => Members.Count + Raised.Count;
+        }
+
+        readonly List<PlacedRoof> _roofs = new();
+        int _nextRoofId = 1;
+        public IReadOnlyList<PlacedRoof> Roofs => _roofs;
+        public PlacedRoof LastRoof => _roofs.Count > 0 ? _roofs[_roofs.Count - 1] : null;
+
+        /// <summary>Build a roof from its spec and remember it as one.</summary>
+        public PlacedRoof PlaceRoof(RoofSpec spec, int reuseId = 0, bool pushUndo = true)
+        {
+            var planes = RoofShapes.Planes(spec);
+            if (planes.Count == 0) return null;
+
+            var roof = new PlacedRoof { Id = reuseId > 0 ? reuseId : _nextRoofId++, Spec = spec };
+            foreach (var pl in planes)
+                roof.Members.Add(SpawnWall(new Vector3(pl.X, pl.Y, pl.Z), pl.YawDeg, pl.Length, spec.Thickness,
+                                           spec.Material, null, pl.Height, pl.PitchDeg, SurfaceKind.Roof,
+                                           0f, spec.Texel, pl.InsetL0, pl.InsetL1, pl.InsetR0, pl.InsetR1));
+
+            // Close the ends. A gable needs the walls across its ridge raised into triangles, plus a straight
+            // band where the roof reaches further out than the wall does; a hip closes its own ends and a
+            // flat roof has none, and RoofShapes owns which is which so this does not become a second place
+            // that knows the rule.
+            //
+            // A COPY of _walls: spawning a band appends to it, and mutating it mid-foreach throws.
+            foreach (var w in new List<WallSurface>(_walls))
+            {
+                if (!IsInstanceValid(w) || w.Kind != SurfaceKind.Wall) continue;
+                float yaw = Mathf.Wrap(w.RotationDegrees.Y, 0f, 180f);
+                bool runsAlongX = yaw < 45f || yaw > 135f;
+                if (!RoofShapes.WallGetsGable(spec, runsAlongX)) continue;
+
+                float triRise = RoofShapes.GableRiseForWall(spec, w.Length);
+                float band = RoofShapes.GableBandForWall(spec, w.Length);
+                if (band > 0.01f)
+                {
+                    // THE ROOF OWNS THIS WALL'S TOP NOW, so park whatever gable the wall was already
+                    // carrying. An imported building arrives with GableRise read off its mesh, and the band
+                    // is placed at the wall's HEAD -- so leaving the wall's own peak up stacks a second
+                    // triangle inside the first. Recorded rather than zeroed, so removing the roof gives the
+                    // import back instead of flattening a wall the roof never made.
+                    if (w.GableRise > 0.01f)
+                    {
+                        roof.Raised.Add((w, w.GableRise));
+                        w.GableRise = 0f;
+                        w.Rebuild();
+                    }
+                    // A separate surface rather than a taller wall: raising w.Height would COMPOUND on the
+                    // next roof build -- the same relative-vs-absolute trap that grew a pilaster on every
+                    // corner -- and the band wears the wall's own colour, which is what was asked for.
+                    roof.Members.Add(SpawnWall(w.Position + new Vector3(0f, w.Height, 0f), w.RotationDegrees.Y,
+                                               w.Length, w.Thickness, w.MaterialId, null, band,
+                                               w.RotationDegrees.X, SurfaceKind.Wall, triRise));
+                }
+                else
+                {
+                    roof.Raised.Add((w, w.GableRise));
+                    w.GableRise = triRise;
+                    w.Rebuild();
+                }
+            }
+
+            _roofs.Add(roof);
+            // ModifyRoof suppresses this: it removes and re-places, and two pushes for one edit means the
+            // first Ctrl+Z lands on a step that has already been undone and appears to do nothing.
+            if (pushUndo) _editor?.PushUndo($"{spec.Kind.ToString().ToLowerInvariant()} roof", () => RemoveRoof(roof));
+            return roof;
+        }
+
+        /// <summary>Take a placed roof away again, putting back the walls it raised.</summary>
+        public void RemoveRoof(PlacedRoof roof)
+        {
+            if (roof == null) return;
+            foreach (var m in roof.Members) RemoveWall(m);
+            foreach (var (w, prev) in roof.Raised)
+                if (IsInstanceValid(w)) { w.GableRise = prev; w.Rebuild(); }
+            roof.Members.Clear();
+            roof.Raised.Clear();
+            _roofs.Remove(roof);
+        }
+
+        /// <summary>Change a placed roof -- its pitch, its shape, its material -- and rebuild it in place.
+        ///
+        /// The rebuild is total rather than incremental, and that is deliberate: a roof is FULLY determined
+        /// by its spec, so re-deriving it is correct by construction, while patching the surfaces in place
+        /// would be a second implementation of the shape that has to agree with the first.
+        ///
+        /// It keeps the roof's Id, so a panel holding a selection still holds it afterwards.</summary>
+        public PlacedRoof ModifyRoof(PlacedRoof roof, RoofSpec spec)
+        {
+            if (roof == null) return null;
+            var before = roof.Spec;
+            int id = roof.Id;
+            RemoveRoof(roof);
+            var rebuilt = PlaceRoof(spec, id, pushUndo: false);
+            _editor?.PushUndo("edit roof", () =>
+            {
+                if (rebuilt != null) RemoveRoof(rebuilt);
+                PlaceRoof(before, id, pushUndo: false);
+            });
+            return rebuilt;
+        }
+
+        /// <summary>The eave footprint for a roof over everything drawn on this storey, and the wall head it
+        /// sits on. False when there are no walls to roof.</summary>
+        public bool RoofFootprint(RoofKind kind, out RoofSpec spec)
+        {
+            spec = default;
             float minX = float.MaxValue, maxX = float.MinValue, minZ = float.MaxValue, maxZ = float.MinValue;
-            float topY = float.MinValue;
-            int seen = 0, material = ActiveMaterial;
-            float maxWallThickness = WallOpenings.DefaultThickness;
+            float topY = float.MinValue, maxThickness = WallOpenings.DefaultThickness;
+            int material = ActiveMaterial, seen = 0;
             foreach (var w in _walls)
             {
                 if (!IsInstanceValid(w) || w.Kind != SurfaceKind.Wall) continue;
-                maxWallThickness = Mathf.Max(maxWallThickness, w.Thickness);
+                maxThickness = Mathf.Max(maxThickness, w.Thickness);
                 foreach (float u in new[] { 0f, w.Length })
                 {
                     var p = w.UVToWorld(u, 0f);
@@ -1996,93 +2375,31 @@ namespace UnturnedGodot
                 material = w.MaterialId;
                 seen++;
             }
-            if (seen == 0) return 0;
+            if (seen == 0) return false;
 
-            // flush with the outer wall face, same as a flat roof -- see AddSlab
-            float halfW = maxWallThickness * 0.5f + RoofOverhang;
-            minX -= halfW; maxX += halfW; minZ -= halfW; maxZ += halfW;
-
-            return BuildGableOver(minX, maxX, minZ, maxZ, topY, pitchDeg, material, maxWallThickness);
+            // Retail measures a FLAT roof flush with the wall face -- 24 of 26 buildings within 6 cm -- and
+            // strawberry_cow corrected my correction on it ("flat roofs SHOULDNT" overhang). A pitched one
+            // does overhang, so the grow differs by kind and the spec carries the result rather than the rule.
+            float grow = maxThickness * 0.5f + (kind == RoofKind.Flat ? 0f : RoofOverhang);
+            spec = new RoofSpec
+            {
+                Kind = kind, MinX = minX - grow, MaxX = maxX + grow, MinZ = minZ - grow, MaxZ = maxZ + grow,
+                TopY = topY, PitchDeg = ActiveRoofPitch, Thickness = SlabThickness,
+                Material = material, Texel = -1,
+            };
+            return true;
         }
 
-        /// <summary>Build a gable roof over an explicit footprint: two slopes meeting at a ridge, and the
-        /// walls that run across the ridge raised into gable ends to close it.
-        ///
-        /// Split out of AddGableRoof so the DRAG-RECT roof can use it. Drawing one slope at a time was me
-        /// exposing the primitive instead of the thing you want -- strawberry_cow: "why am i placing one
-        /// slope at a time instead of drawing a gable zone over a rect".</summary>
-        public int BuildGableOver(float minX, float maxX, float minZ, float maxZ, float topY,
-                                  float pitchDeg, int material, float maxWallThickness)
+        /// <summary>Which shape the roof buttons build. Flat is the default because it is what retail
+        /// overwhelmingly is -- 80% of the sloped-and-flat roof area across 52 sampled buildings.</summary>
+        public RoofKind ActiveRoofKind = RoofKind.Flat;
+
+        /// <summary>Roof everything drawn, in the shape asked for.</summary>
+        public PlacedRoof PlaceRoofOverWalls(RoofKind kind, float pitchDeg)
         {
-            pitchDeg = Mathf.Clamp(pitchDeg, 1f, 70f);
-            float spanX = maxX - minX, spanZ = maxZ - minZ;
-            bool ridgeAlongX = spanX >= spanZ;                 // the ridge runs the LONG way, as a roof does
-            float half = (ridgeAlongX ? spanZ : spanX) * 0.5f;
-            float th = Mathf.DegToRad(pitchDeg);
-            float rise = half * Mathf.Tan(th);
-            float slope = half / Mathf.Cos(th);
-            float pitchNode = pitchDeg - 90f;                  // -90 is flat; adding the pitch tilts it up
-
-            var made = new List<WallSurface>();
-            if (ridgeAlongX)
-            {
-                made.Add(SpawnWall(new Vector3(minX, topY, maxZ), 0f, spanX, SlabThickness, material, null, slope, pitchNode, SurfaceKind.Roof));
-                made.Add(SpawnWall(new Vector3(maxX, topY, minZ), 180f, spanX, SlabThickness, material, null, slope, pitchNode, SurfaceKind.Roof));
-            }
-            else
-            {
-                made.Add(SpawnWall(new Vector3(minX, topY, minZ), -90f, spanZ, SlabThickness, material, null, slope, pitchNode, SurfaceKind.Roof));
-                made.Add(SpawnWall(new Vector3(maxX, topY, maxZ), 90f, spanZ, SlabThickness, material, null, slope, pitchNode, SurfaceKind.Roof));
-            }
-
-            // Raise the walls that run ACROSS the ridge into gable ends. A wall parallel to the ridge stays
-            // flat-topped -- putting a peak on all four is the classic wrong-looking roof.
-            //
-            // The gable triangle's SLOPE has to be the roof's slope, which means it is set by the WALL's own
-            // half-length, not by the roof footprint's. Those differ the moment the roof overhangs, and
-            // setting GableRise = rise (the footprint's) made the triangle steeper than the roof it sits
-            // under: measured on a 9 m wall at 20 deg with a 0.75 m overhang, 3.01 deg steeper, meeting the
-            // roof only at the apex and opening a 0.27 m wedge of daylight along both sloped edges.
-            //
-            // What closes it is a straight band between the wall top and the triangle -- strawberry_cow's
-            // "the wall portion between the roof part and the actual walls". It is a separate surface rather
-            // than a taller wall because raising w.Height would COMPOUND on a second roof build (the same
-            // relative-vs-absolute trap that grew a pilaster on every corner), and because that band wears
-            // the wall's colour, which is what they asked for when the importer met the same shape.
-            float tanP = Mathf.Tan(th);
-            var raised = new List<(WallSurface W, float Prev)>();
-            var bands = new List<WallSurface>();
-            // A COPY: spawning a band appends to _walls, and mutating it mid-foreach throws. Same reason
-            // AddFoundation iterates a copy.
-            foreach (var w in new List<WallSurface>(_walls))
-            {
-                if (!IsInstanceValid(w) || w.Kind != SurfaceKind.Wall) continue;
-                float yaw = Mathf.Wrap(w.RotationDegrees.Y, 0f, 180f);
-                bool runsAlongX = yaw < 45f || yaw > 135f;
-                if (runsAlongX == ridgeAlongX) continue;       // parallel to the ridge: no gable
-                float triRise = w.Length * 0.5f * tanP;        // slope-matched to the roof above it
-                float band = rise - triRise;                   // 0 when the roof does not overhang this wall
-                if (band > 0.01f)
-                {
-                    bands.Add(SpawnWall(w.Position + new Vector3(0f, w.Height, 0f), w.RotationDegrees.Y,
-                                        w.Length, w.Thickness, w.MaterialId, null, band,
-                                        w.RotationDegrees.X, SurfaceKind.Wall, triRise));
-                }
-                else
-                {
-                    raised.Add((w, w.GableRise));
-                    w.GableRise = triRise;
-                    w.Rebuild();
-                }
-            }
-
-            _editor?.PushUndo("gable roof", () =>
-            {
-                foreach (var m in made) RemoveWall(m);
-                foreach (var b in bands) RemoveWall(b);
-                foreach (var (w, prev) in raised) if (IsInstanceValid(w)) { w.GableRise = prev; w.Rebuild(); }
-            });
-            return made.Count + raised.Count + bands.Count;
+            if (!RoofFootprint(kind, out var spec)) return null;
+            spec.PitchDeg = pitchDeg;
+            return PlaceRoof(spec);
         }
 
         /// <summary>Hang a foundation under every wall drawn: a hollow skirt, which is what retail is.
@@ -2103,6 +2420,196 @@ namespace UnturnedGodot
             }
             if (made.Count == 0) return 0;
             _editor?.PushUndo("foundation place", () => { foreach (var f in made) RemoveWall(f); });
+            return made.Count;
+        }
+
+        // ---- automatic floors and foundations on enclosed rooms ---------------------------------------
+
+        /// <summary>The active storey's wall centrelines, in the plan space RoomEnclosure works in.
+        ///
+        /// CENTRELINES, and only walls -- slabs, foundations and stair treads are all WallSurfaces too, and
+        /// feeding a floor in as a wall would have the floor you just placed enclose a "room" of its own.
+        /// Source carries the index into _walls so a room can be mapped back to the surfaces bounding it.</summary>
+        public List<RoomEnclosure.PlanSegment> PlanOfActiveFloor()
+        {
+            var plan = new List<RoomEnclosure.PlanSegment>();
+            float y = ActiveFloorY;
+            for (int i = 0; i < _walls.Count; i++)
+            {
+                var w = _walls[i];
+                if (!IsInstanceValid(w) || w.Kind != SurfaceKind.Wall) continue;
+                if (Mathf.Abs(w.Position.Y - y) > StoreyHeight * 0.5f) continue;   // a different storey
+                var a = w.UVToWorld(0f, 0f);
+                var b = w.UVToWorld(w.Length, 0f);
+                plan.Add(new RoomEnclosure.PlanSegment(a.X, a.Z, b.X, b.Z, i, w.Thickness));
+            }
+            return plan;
+        }
+
+        /// <summary>Where the base of a wall on the active storey sits, in world space.</summary>
+        public float ActiveFloorY => StageOrigin.Y + FloorY + GroundClearance;
+
+        /// <summary>Floor every enclosed room on this storey, and foundation the walls that bound them.
+        /// strawberry_cow: "automatic foundations/floors on enclosed rooms".
+        ///
+        /// This is deliberately not "slab the bounding box", which is what the floor tool does: a bounding
+        /// box over an L-shaped building covers ground that has no walls round it, and over two separate
+        /// buildings it covers the gap between them. Enclosure is worked out per room, so a partition wall
+        /// gets you two floors that meet on it and a courtyard gets none.
+        ///
+        /// IDEMPOTENT, because this is a button and buttons get pressed twice. A room that already has a
+        /// floor is skipped rather than given a second one z-fighting with the first.
+        ///
+        /// Foundations only go in under the LOWEST walls -- if there is a storey below this one, its walls
+        /// are what need footing, not these.</summary>
+        /// <returns>How many surfaces were added.</returns>
+        public int AutoFitRooms(bool withFoundations = true)
+        {
+            var rooms = RoomEnclosure.Find(PlanOfActiveFloor());
+            if (rooms.Count == 0) return 0;
+
+            float y = ActiveFloorY;
+            var made = new List<WallSurface>();
+            var bounding = new List<int>();
+
+            foreach (var room in rooms)
+            {
+                foreach (int src in room.SourceWalls()) if (!bounding.Contains(src)) bounding.Add(src);
+                foreach (var r in RoomEnclosure.FloorSlabs(room))
+                {
+                    if (r.Width < 0.1f || r.Depth < 0.1f) continue;
+                    if (HasFloorAt((r.MinX + r.MaxX) * 0.5f, (r.MinZ + r.MaxZ) * 0.5f, y)) continue;
+                    made.Add(SpawnWall(new Vector3(r.MinX, y - SlabThickness * 0.5f, r.MaxZ), 0f,
+                                       r.Width, SlabThickness, ActiveMaterial, null,
+                                       r.Depth, -90f, SurfaceKind.Floor));
+                }
+            }
+
+            if (withFoundations && !AnyWallBelow(y))
+                foreach (int i in bounding)
+                {
+                    if (i < 0 || i >= _walls.Count) continue;
+                    var w = _walls[i];
+                    if (!IsInstanceValid(w) || w.Kind != SurfaceKind.Wall) continue;
+                    if (HasFoundationUnder(w)) continue;
+                    made.Add(SpawnWall(w.Position - new Vector3(0f, WallOpenings.FoundationDepth, 0f),
+                                       w.RotationDegrees.Y, w.Length, w.Thickness, w.MaterialId, null,
+                                       WallOpenings.FoundationDepth, w.RotationDegrees.X, SurfaceKind.Foundation));
+                }
+
+            if (made.Count == 0) return 0;
+            _editor?.PushUndo("auto floors", () => { foreach (var m in made) RemoveWall(m); });
+            return made.Count;
+        }
+
+        /// <summary>Is this spot already floored on this storey? Point-in-slab rather than an AABB overlap,
+        /// because two floors of a divided room legitimately touch and an overlap test would call the second
+        /// one a duplicate of the first.</summary>
+        bool HasFloorAt(float x, float z, float y)
+        {
+            foreach (var w in _walls)
+            {
+                if (!IsInstanceValid(w) || w.Kind != SurfaceKind.Floor) continue;
+                var box = SurfaceAabb(w);
+                if (y < box.Position.Y - 0.2f || y > box.End.Y + 0.2f) continue;
+                if (x > box.Position.X && x < box.End.X && z > box.Position.Z && z < box.End.Z) return true;
+            }
+            return false;
+        }
+
+        bool HasFoundationUnder(WallSurface wall)
+        {
+            var want = wall.Position - new Vector3(0f, WallOpenings.FoundationDepth, 0f);
+            foreach (var w in _walls)
+                if (IsInstanceValid(w) && w.Kind == SurfaceKind.Foundation
+                    && w.Position.DistanceTo(want) < 0.1f) return true;
+            return false;
+        }
+
+        bool AnyWallBelow(float y)
+        {
+            foreach (var w in _walls)
+                if (IsInstanceValid(w) && w.Kind == SurfaceKind.Wall
+                    && w.Position.Y < y - StoreyHeight * 0.5f) return true;
+            return false;
+        }
+
+        /// <summary>Drop a flight where the cursor met the floor. Split out of the click handler so the two
+        /// decisions it makes are testable without a camera and a raycast -- the first version of this was
+        /// wrong in a way every unit test still passed, because they called AddStairs with an origin instead
+        /// of going through the tool.
+        ///
+        /// USE THE HIT'S OWN Y. GroundOnFloor already returns the ground raised by FloorY + GroundClearance,
+        /// and the hit is in WORLD space -- the editor stage lives at y = 2000, off the map. Substituting
+        /// FloorY here (which is only the storey offset) discarded the stage height and put every flight 2000
+        /// below the building: placed, undoable, and completely invisible. Every other tool reads the hit
+        /// point; see the room tool's rp.Y.</summary>
+        /// <param name="groundHit">Point from GroundOnFloor, in world space, already at storey height.</param>
+        /// <param name="camYaw">Camera yaw; the flight snaps to the nearest 90 deg so it meets a wall.</param>
+        public int PlaceStairsAt(Vector3 groundHit, float camYaw)
+            => AddStairs(new Vector3(WallOpenings.SnapGrid(groundHit.X), groundHit.Y,
+                                     WallOpenings.SnapGrid(groundHit.Z)),
+                         Mathf.Round(camYaw / 90f) * 90f);
+
+        /// <summary>A flight of stairs climbing exactly one storey, emitted as one flat tread per step.
+        ///
+        /// A staircase is NOT a new shape for the mesh builder -- Rebuild() never reads Kind, every surface is
+        /// the same generated box -- so this is a generator, the way "draw room" emits four walls and an
+        /// opening becomes four boxes. That keeps stairs inside the generate-don't-cut design instead of
+        /// special-casing WallSurface.
+        ///
+        /// EVERYTHING IS DERIVED FROM StoreyHeight. The step count is round(storey / comfort target) and the
+        /// rise is then storey / count, so the top tread lands EXACTLY on the floor above -- change the storey
+        /// pitch and the flight follows rather than stopping a step short. Nothing here is a magic number that
+        /// has to be re-tuned when the kit is rescaled.
+        ///
+        /// Thickness is CENTRED on a surface (Rebuild uses +/- Thickness/2), so a tread whose walking surface
+        /// must sit at (i+1)*rise has its origin half a tread BELOW that.</summary>
+        /// <param name="origin">Foot of the flight, on the floor you are standing on.</param>
+        /// <param name="yawDeg">Direction the flight climbs in.</param>
+        /// <param name="run">Horizontal run; &lt;= 0 takes the derived default for this storey height.</param>
+        /// <param name="width">Tread width; &lt;= 0 takes the kit default.</param>
+        /// <returns>Number of treads emitted.</returns>
+        /// <summary>Where each tread of a flight goes. ONE derivation, consumed by both AddStairs and the
+        /// placement ghost -- so the preview cannot show you a staircase in a different place from the one
+        /// you get, which is precisely how the draw cursor came to sit on the ground while walls landed a
+        /// storey up. Sharing the function is the guarantee; a second copy of the arithmetic is not.</summary>
+        public static IEnumerable<Vector3> StairTreadOrigins(Vector3 origin, float yawDeg, float run = 0f,
+                                                             float width = 0f)
+        {
+            float rise = StoreyHeight;
+            int steps = WallOpenings.StairSteps(rise);
+            if (run <= 0f) run = WallOpenings.StairDefaultRun(rise);
+            float stepRise = WallOpenings.StairStepRise(rise);
+            float going = run / steps;
+            float tread = WallOpenings.StairTreadThickness;
+            float yaw = Mathf.DegToRad(yawDeg);
+            var back = new Vector3(-Mathf.Sin(yaw), 0f, -Mathf.Cos(yaw));   // local -Z in world space
+            for (int i = 0; i < steps; i++)
+                yield return origin + back * (i * going)
+                           + new Vector3(0f, (i + 1) * stepRise - tread * 0.5f, 0f);
+        }
+
+        public int AddStairs(Vector3 origin, float yawDeg, float run = 0f, float width = 0f)
+        {
+            float rise = StoreyHeight;
+            int steps = WallOpenings.StairSteps(rise);
+            if (run <= 0f) run = WallOpenings.StairDefaultRun(rise);
+            if (width <= 0f) width = WallOpenings.StairDefaultWidth;
+            float stepRise = WallOpenings.StairStepRise(rise);   // exact: steps * stepRise == rise
+            float going = run / steps;
+            float tread = WallOpenings.StairTreadThickness;
+
+            // Depth recedes along local -Z, the same frame a drawn slab uses ("origin at (minX, y, maxZ), run
+            // along +X, depth along -Z"), rotated by the flight's yaw so it climbs where you pointed it.
+            float yaw = Mathf.DegToRad(yawDeg);
+            var back = new Vector3(-Mathf.Sin(yaw), 0f, -Mathf.Cos(yaw));   // local -Z in world space
+
+            var made = new List<WallSurface>();
+            foreach (var p in StairTreadOrigins(origin, yawDeg, run, width))
+                made.Add(SpawnWall(p, yawDeg, width, tread, ActiveMaterial, null,
+                                   going, -90f, SurfaceKind.Stairs));
+            _editor?.PushUndo("stairs place", () => { foreach (var t in made) RemoveWall(t); });
             return made.Count;
         }
 
@@ -2135,8 +2642,14 @@ namespace UnturnedGodot
         }
 
         bool PickWallAt(Vector3 from, Vector3 dir, out WallSurface wall, out float u)
+            => PickWallAt(from, dir, out wall, out u, out _);
+
+        /// <summary>As PickWallAt, but also gives WHERE ACROSS the surface the ray landed. A wall only needs
+        /// u (cuts run along its length); a flat slab needs both, because "delete a section of the floor" is a
+        /// rectangle, not a full-width strip.</summary>
+        bool PickWallAt(Vector3 from, Vector3 dir, out WallSurface wall, out float u, out float v)
         {
-            wall = null; u = 0f;
+            wall = null; u = 0f; v = 0f;
             float best = float.MaxValue;
             foreach (var w in _walls)
             {
@@ -2144,7 +2657,7 @@ namespace UnturnedGodot
                 if (!w.RayToUVInside(from, dir, out float wu, out float wv)) continue;
                 float d = from.DistanceSquaredTo(w.UVToWorld(wu, wv));
                 if (d >= best) continue;
-                best = d; wall = w; u = wu;
+                best = d; wall = w; u = wu; v = wv;
             }
             return wall != null;
         }

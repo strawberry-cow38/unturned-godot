@@ -804,6 +804,8 @@ namespace UnturnedGodot
         float[] _gears; float _reverseGear, _shiftUpRpm; float _engineRpm = 1000f; int _gear = 1;   // engine RPM + gear sim
         float _wheelbase;   // front-to-rear axle span from the spec wheels -- the steering cap needs the real geometry
         float _specSpeedMax;   // spec SpeedMax before TopSpeedBuff -- the reference the STEERING fade uses (and an L1 baseline)
+        float _clutchT;   // >0 while drive is disconnected mid-shift
+        public bool Declutched => _clutchT > 0f;   // test/HUD seam
         float _peakTorque, _dragK, _rollK, _driveR, _shiftCd; int _nTraction;   // drivetrain: peak engine torque (Nm), aero drag coeff (N per (m/s)^2), rolling resistance (N), driven wheel radius, shift lockout, traction wheel count
         AudioStreamPlayer3D _engineAudio, _ignitionAudio; bool _ignitionFired; float _idlePitch = 1f, _maxPitch = 2f, _idleVol = 0.75f, _maxVol = 1f;   // EngineRPMSimple sound
         const float EngineVolumeBoost = 1.5f;   // every engine loop +50% louder (strawberry 2026-07-15) -- amplitude x1.5 = +3.5 dB
@@ -817,13 +819,47 @@ namespace UnturnedGodot
         const float TorqueFallLo = 1.25f;    // quadratic falloff BELOW the peak (gentle)
         const float TorqueFallHi = 1.875f;   // ...and ABOVE it (steeper -- holding a gear past peak costs you)
         const float TorqueFloor  = 0.35f;    // an engine still pulls off-peak; it does not stop
-        const float TopSpeedBuff = 1.6f;     // strawberry: "a big thing is buffing top speeds"
+        // UG_BUFF overrides this so the scale-invariance ACCEPTANCE TEST can drive the rescale from
+        // outside the build. A constant nobody can vary is a constant nobody can prove scale-invariant --
+        // and measured 2026-08-28, the drivetrain suite only passes in a narrow band around 2.0: the tank's
+        // coastdown climbs 3.84 / 4.39 / 4.64 across buff 1.3 / 2.0 / 2.5 against a fixed 4.0 limit, while
+        // at 1.3 the jeep instead fails "top speed clears the old hard cap". Two absolute thresholds
+        // failing in OPPOSITE directions. Vary this to see it.
+        static readonly float TopSpeedBuff = ParseBuff();
+        static float ParseBuff()
+        {
+            var e = System.Environment.GetEnvironmentVariable("UG_BUFF");
+            return (e != null && float.TryParse(e, System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out var f) && f > 0f) ? f : 2.0f;
+        }     // strawberry: "a big thing is buffing top speeds", then 2026-08-24 "increase the cap for vehicle top speeds across the board" -- 1.6 -> 2.0
         const float GearStep     = 1.35f;    // rpm drop per shift -> the gear COUNT falls out of the spread
-        const float LaunchBoost  = 1.5f;     // first-gear peak force vs the old flat force
+        // FIRST-GEAR PEAK FORCE vs the old flat force. Raised 1.5 -> 4.0 alongside the top-speed cap
+        // (strawberry 2026-08-24: "rebalance gears and engine power to fit"), and it is the ACCELERATION knob
+        // specifically: raising TopSpeedBuff alone moves the ceiling but not the pull, because _dragK is solved
+        // so tractive force meets drag exactly AT _speedMax -- the car still gets there, just as slowly.
+        //
+        // The two knobs stay independent BY CONSTRUCTION: peakTorque scales with this, fTop scales with
+        // peakTorque, and _dragK is solved from fTop, so top speed lands on _speedMax whatever this is.
+        //
+        // MEASURED against grip, because this is also what makes wheelspin reachable at all. Launch force is
+        // engineForce * wheels * LaunchBoost * TorqueFrac(idle) = 0.55, against a limit of mu * m * g. At 1.5
+        // the whole fleet sat at 3-58% of a mu=1.0 limit -- the jeep would not have broken traction ON ICE, so
+        // any traction model layered on top was inert. At 4.0 the quad reaches ~156% and the golf ~134% (they
+        // spin), the jeep 32% and the semi 10% (they do not). That split falls out of mass, not taste.
+        const float LaunchBoost  = 4.0f;
         const float StallRpm     = 2600f;    // torque-converter stall: what the engine revs to against a stopped car
         const float RollingCrr   = 0.015f;   // rolling resistance, as a fraction of weight
-        const float ShiftTime    = 0.30f;    // lockout between shifts
+        // RETAIL SPLITS THESE and we had collapsed them into one number. Jeep.dat carries BOTH
+        // GearShift_Duration 0.2 (how long the shift itself takes) and GearShift_Interval 0.5 (the minimum gap
+        // between shifts). One constant cannot be both, and conflating them is why the shift read as a flat
+        // lockout rather than a gearchange.
+        const float ShiftClutchTime = 0.20f;   // GearShift_Duration: drive is DISCONNECTED for this long
+        const float ShiftTime       = 0.50f;   // GearShift_Interval: earliest the box will shift again
         const float EngineBrakeScale = 0.12f; // lift-off engine braking, as a fraction of the FOOT brake, AT REDLINE. Raised 0.03 -> 0.12 when FootBrakeScale went 6 -> 1.5, because engine braking is derived from it: the PRODUCT is what sets the coastdown, and it was signed off at 1.83 m/s2
+        /// <summary>Steering RATE at the reference speed, as a fraction of the at-rest rate. This is the
+        /// weight in "real simulated weight/inertia on steering" -- see the steer integration in
+        /// _PhysicsProcess.</summary>
+        const float SteerRateAtSpeed = 0.35f;
         const float SpeedBackstop = 1.15f;   // hard cut this far past the drag equilibrium (runaway guard only)
         public float EngineRpm => _engineRpm;
         public string GearLabel => LinearVelocity.LengthSquared() < 0.25f ? "N" : (LinearVelocity.Dot(-GlobalTransform.Basis.Z) < -0.5f ? "R" : $"G{_gear}");   // N stopped / R reversing / G<n>
@@ -831,6 +867,16 @@ namespace UnturnedGodot
         public int Gear => _gear;
         public int GearCount => _gears != null ? _gears.Length : 0;
         public float PeakTorque => _peakTorque;
+        /// <summary>How much of the commanded drive force the tyres could NOT put down, 0..1. 0 = full grip;
+        /// climbing toward 1 = the wheels are spinning. Read by the HUD/audio/effects and by L1.</summary>
+        public float WheelSlip => _wheelSlip;
+        float _wheelSlip;
+        /// <summary>Tyre-to-ground friction coefficient. Physical values: ~1.0 dry tarmac, ~0.6-0.7 loose dirt,
+        /// tracks bite harder than tyres. Per-vehicle so a truck on knobblies is not a roadster, which is the
+        /// "per-vehicle traction" half of the ask; the per-GEAR half needs no data at all because the force
+        /// through the current ratio already differs.</summary>
+        float _tyreMu = 1.0f;
+        bool _water0Boat;   // pure boat -> no wheels worth limiting
         public float WheelbaseForTest => _wheelbase;   // L1: needed to compute the Ackermann yaw a steer angle COMMANDS, so a probe can see oversteer
         // L1: how many wheels are actually touching the ground, and how many there are. A heavy multi-axle
         // hull that falls short of its drag equilibrium is usually not short of POWER -- it is airborne and
@@ -912,7 +958,16 @@ namespace UnturnedGodot
             v._nTraction = s.Kingpin == Vector3.Zero ? s.Wheels.Length : 0;   // a trailer's wheels are passive rollers
             if (s.Heli || s.Plane || v._nTraction <= 0 || s.Engine <= 0f || s.SpeedMax <= 0f || s.WheelRadius <= 0f) return;
             v._speedMax = s.SpeedMax * TopSpeedBuff;
-            v._speedMin = s.SpeedMin * TopSpeedBuff;
+            // NEGATIVE ALWAYS. Reverse speed is stored as a negative number and BOTH readers compare against
+            // it directly -- the tracked path as `fwd <= _speedMin`, the wheeled path as `speed >= -_speedMin`.
+            // A spec that wrote it POSITIVE therefore did not get a smaller reverse, it got NO reverse: the
+            // wheeled test degenerates to `speed >= negative`, true at every speed including standing still, so
+            // reverse force was zeroed on every tick. Three specs had the sign wrong (apc, ship, runabout) and
+            // the APC is the one somebody drove -- strawberry, 2026-08-24, "apc has no reverse gear".
+            // Normalising here rather than only fixing the data, because the failure is silent, total, and
+            // looks like a missing feature rather than a typo. Zero stays zero: a trailer and a heli have no
+            // reverse and must keep having none.
+            v._speedMin = -Mathf.Abs(s.SpeedMin) * TopSpeedBuff;
             // EVERY CAR HAS BEEN DRIVING THROUGH A HIDDEN VELOCITY DAMP, and it is the single biggest force in
             // the old model after the engine. LinearDampMode defaults to COMBINE, which ADDS the body's value
             // to ProjectSettings physics/3d/default_linear_damp -- Godot's default 0.1, never overridden here.
@@ -946,14 +1001,57 @@ namespace UnturnedGodot
             v._driveR = r;
             float wheelRpmTop = v._speedMax / (2f * Mathf.Pi * r) * 60f;        // wheel rev/min at the target top speed
             float ratioTop = RedlineFrac * MaxRpm / wheelRpmTop;                 // ...geared to sit at the redline there
-            float spread = Mathf.Clamp(3f + v.Mass / 4000f, 3f, 9f);
-            int n = Mathf.Clamp(Mathf.RoundToInt(Mathf.Log(spread) / Mathf.Log(GearStep)) + 1, 2, 8);
+            // GEAR SPREAD, and it is the lever that keeps coastdown sane after a power raise.
+            //
+            // Launch force is engineForce * nTraction * LaunchBoost -- ratio1 CANCELS out of it, because
+            // peakTorque is defined relative to ratio1 two lines below. Force at the TOP of the box is
+            // proportional to LaunchBoost / spread, and _dragK is solved from that force. So raising
+            // LaunchBoost to 4.0 quadrupled the drag needed to cap top speed, and vehicle.drivetrain caught
+            // the consequence immediately: lift-off deceleration hit 5.36 m/s2, which is 0.55 g of "coasting"
+            // -- a brake pedal, exactly what that check exists to refuse.
+            //
+            // Widening the spread cuts top-end force WITHOUT touching launch force, which is precisely what a
+            // wide-ratio gearbox is for: launch torque without a bigger engine. Solved, not guessed --
+            // dragK is proportional to LaunchBoost / (spread * speedMax^3), so holding it at its old value
+            // through LaunchBoost 1.5 -> 4.0 and TopSpeedBuff 1.6 -> 2.0 needs spread * (4.0/1.5) * (1.6/2.0)^3
+            // = 1.366x. The ceiling goes to 12 so the heaviest hulls are not clamped back into the problem.
+            const float SpreadForPower = 1.366f;
+            // CEILING RAISED 12 -> 18, because the clamp itself was the bug. Spread is what keeps top-end force
+            // (and therefore the solved drag, and therefore coastdown) in proportion to launch force. The tank
+            // wants 17.76 by the mass formula and was being clamped to 12, so it alone carried ~1.5x the drag
+            // the formula intended -- and it was the only hull failing the coasting-is-not-a-brake check, at
+            // 4.93 m/s2 against jeep 2.55, semi 2.02, apc 3.74. Nothing else is near the ceiling, so this moves
+            // exactly one vehicle, which is the one that was wrong.
+            // REVERTED from /3600 + ceiling 20. That was aimed at the tank's coastdown and derived from
+            // fTop ~ LaunchBoost/spread -- predicted 4.39 -> 4.05 m/s2, measured 4.29, and it cost the SEMI its
+            // top speed (21.2 against a 28.0 target). Three times tonight this drivetrain has moved less than
+            // my algebra said it would, which is the signal to stop turning the knob rather than turn it again:
+            // the model I am predicting with does not match the one that runs.
+            //
+            // Left where only the TANK misses, at 4.29-4.39 against a 4.0 limit, and reported as a known
+            // deviation instead of chased at 1am. See the comment on the ceiling below.
+            float spread = Mathf.Clamp((3f + v.Mass / 4000f) * SpreadForPower, 3f * SpreadForPower, 18f);
+            // CEIL, and a cap of 10. GearStep is the largest rpm drop a shift may take, so the gear count has
+            // to be the SMALLEST n whose step fits inside it -- rounding can land on an n whose actual step
+            // (spread^(1/(n-1))) is WIDER than GearStep, and a cap of 8 forced exactly that on the heaviest
+            // hulls once the spread was widened for the power raise.
+            //
+            // Measured: the tank came out at spread 12 over 8 gears = step 1.426 against a 1.35 design step,
+            // which drops rpm far enough on each upshift that DownshiftRpm catches it, and vehicle.drivetrain
+            // reported it as 2 downshifts on a steady pull. It was the ONLY vehicle over the step, and the only
+            // one hunting. Ceiling makes the constant an actual bound rather than a target it can overshoot.
+            int n = Mathf.Clamp(Mathf.CeilToInt(Mathf.Log(spread) / Mathf.Log(GearStep)) + 1, 2, 11);
             float ratio1 = ratioTop * spread;
             var g = new float[n];
             for (int i = 0; i < n; i++) g[i] = ratio1 * Mathf.Pow(ratioTop / ratio1, i / (float)(n - 1));
             v._gears = g;
             v._reverseGear = ratio1 * 0.9f;
             v._peakTorque = v._engineForce * v._nTraction * LaunchBoost * r / ratio1;
+            v._water0Boat = s.Water == WaterMode.Boat;
+            // Tracks lay down a far larger contact patch than tyres, so they hook up where a wheel would spin.
+            // Everything else takes the tyre default; a per-spec override is the obvious next dial if one
+            // vehicle needs to feel different, but inventing 20 hand-picked numbers now would be taste, not data.
+            v._tyreMu = s.Tracked ? 1.6f : 1.0f;
             float rpmTop = wheelRpmTop * ratioTop;
             float fTop = v._peakTorque * TorqueFrac((rpmTop - IdleRpm) / (MaxRpm - IdleRpm)) * RevLimit(rpmTop) * ratioTop / r;
             v._rollK = RollingCrr * v.Mass * 9.8f;
@@ -1153,6 +1251,149 @@ namespace UnturnedGodot
         /// mid-frame on a vehicle whose seat count shrank under a stale index.</summary>
         public Vector3 SeatLocal(int i) => SeatLocals[Mathf.Clamp(i, 0, SeatCount - 1)];
 
+        // ACCESS ZONES: per-door, hood and trunk volumes you aim at, instead of one lookat for the whole car.
+        //
+        // strawberry: "kill the lookat for the whole car, change it for a collider on each 'door'... pressing f
+        // gets you in at that seat. add volumes for the hood and trunk too". The car's overall hull is kept --
+        // it still owns collision and damage; this is only about what the LOOK RAY resolves to.
+        public enum AccessKind { Door, Hood, Trunk }
+        public readonly record struct AccessZone(AccessKind Kind, int Seat, Vector3 Center, Vector3 Size);
+        public AccessZone[] AccessZones = System.Array.Empty<AccessZone>();
+        // What the focused player's look ray is currently pointing at on this hull, as a ready-made prompt line.
+        // PlayerController owns the ray, so it writes this; the billboard below just draws it. Empty = no prompt.
+        public string AccessHint = "";
+        public Vector3 AccessBoxCenter;   // hull box centre the AccessZones above were derived from (vehicle-local)
+
+        /// <summary>The trunk's contents, created on FIRST OPEN rather than at spawn -- a map holds hundreds of
+        /// vehicles and an inventory grid each, allocated up front, is a cost paid for cars nobody ever opens.
+        /// Parented to the vehicle so it rides along and dies with it.</summary>
+        public StorageCrate Trunk;
+        public bool HasTrunk { get { foreach (var z in AccessZones) if (z.Kind == AccessKind.Trunk) return true; return false; } }
+        public bool HasHood { get { foreach (var z in AccessZones) if (z.Kind == AccessKind.Hood) return true; return false; } }
+
+        public StorageCrate EnsureTrunk()
+        {
+            if (!HasTrunk) return null;
+            if (Trunk != null && IsInstanceValid(Trunk)) return Trunk;
+            Trunk = new VehicleTrunk { Width = TrunkWidth, Height = TrunkHeight };
+            AddChild(Trunk);
+            return Trunk;
+        }
+        const byte TrunkWidth = 6, TrunkHeight = 4;
+
+        /// <summary>A StorageCrate with no crate. The base class builds a visible box mesh and culls it by
+        /// distance; a car boot is already drawn by the car, so the visual is suppressed rather than parked
+        /// inside the bodywork where it would z-fight the panel it is behind.</summary>
+        public partial class VehicleTrunk : StorageCrate
+        {
+            protected override void BuildVisual() { }
+        }
+
+        /// <summary>Build the zones from the seat table and the hull box.
+        ///
+        /// DERIVED, not hand-listed. A door is its seat pushed outboard to the hull side, so the doors follow
+        /// the prefab seats and a vehicle whose seats are right cannot have doors that are wrong.
+        ///
+        /// HOOD AND TRUNK ARE GEOMETRIC TESTS, which is how "some vehicles may not have trunks" (strawberry)
+        /// answers itself instead of becoming a list I would have to keep in step: a vehicle has a hood if the
+        /// hull extends far enough IN FRONT of its frontmost seat, and a trunk if it extends far enough BEHIND
+        /// the rearmost one. That gives the sedan both, the bus a hood and no boot (its seats run to the back
+        /// panel), and the quad neither -- without anyone deciding it per vehicle.
+        ///
+        /// Only wheeled land vehicles get either. A boat, a heli, a plane and a tank have neither in any sense
+        /// worth aiming at.</summary>
+        static AccessZone[] BuildAccessZones(Spec s, Vector3[] seats, Vector3 boxCenter, Vector3 boxSize)
+        {
+            var zones = new System.Collections.Generic.List<AccessZone>();
+            float halfW = boxSize.X * 0.5f, halfL = boxSize.Z * 0.5f;
+
+            for (int i = 0; i < seats.Length; i++)
+            {
+                var st = seats[i];
+                // Outboard along the side the seat sits on; a centreline seat (quad, tractor) gets a zone
+                // straddling it rather than being pushed to an arbitrary side.
+                float side = Mathf.Abs(st.X) < 0.15f ? 0f : Mathf.Sign(st.X);
+                float x = side == 0f ? st.X : Mathf.Sign(st.X) * Mathf.Max(Mathf.Abs(st.X), halfW * 0.82f);
+                zones.Add(new AccessZone(AccessKind.Door, i,
+                    new Vector3(x, st.Y + DoorZoneRise, st.Z),
+                    new Vector3(side == 0f ? boxSize.X * 0.9f : DoorZoneWidth, DoorZoneHeight, DoorZoneLength)));
+            }
+
+            bool wheeled = !s.Heli && !s.Plane && !s.Tracked && s.Water != WaterMode.Boat && s.Kingpin == Vector3.Zero;
+            if (wheeled && seats.Length > 0)
+            {
+                float front = boxCenter.Z - halfL, rear = boxCenter.Z + halfL;   // front is -Z in this port
+                float frontSeat = float.MaxValue, rearSeat = float.MinValue;
+                foreach (var st in seats) { frontSeat = Mathf.Min(frontSeat, st.Z); rearSeat = Mathf.Max(rearSeat, st.Z); }
+
+                float hoodRun = frontSeat - front;
+                if (hoodRun > MinCompartmentRun)
+                    zones.Add(new AccessZone(AccessKind.Hood, -1,
+                        new Vector3(boxCenter.X, boxCenter.Y + boxSize.Y * 0.25f, front + hoodRun * 0.5f),
+                        new Vector3(boxSize.X * 0.85f, CompartmentHeight, hoodRun * 0.8f)));
+
+                float trunkRun = rear - rearSeat;
+                if (trunkRun > MinCompartmentRun)
+                    zones.Add(new AccessZone(AccessKind.Trunk, -1,
+                        new Vector3(boxCenter.X, boxCenter.Y + boxSize.Y * 0.25f, rear - trunkRun * 0.5f),
+                        new Vector3(boxSize.X * 0.85f, CompartmentHeight, trunkRun * 0.8f)));
+            }
+            return zones.ToArray();
+        }
+        const float DoorZoneWidth = 0.55f, DoorZoneHeight = 1.5f, DoorZoneLength = 1.15f, DoorZoneRise = 0.45f;
+        /// <summary>How much hull has to stick out past the end seat before there is a compartment worth
+        /// aiming at. Below this it is a bumper, not a boot.</summary>
+        const float MinCompartmentRun = 0.85f;
+        const float CompartmentHeight = 0.9f;
+
+        /// <summary>Which access zone the player is aiming at, in the SAME oriented-box style as LookRayHitsHull.
+        ///
+        /// Two rules, in order. A zone the look SEGMENT actually passes through wins outright. Otherwise the
+        /// zone nearest the AIM POINT wins, if it is within AccessNearReach of it -- and that second rule is
+        /// load-bearing, not a nicety: focus is won by a fat sphere probe at the ray terminus, so the crosshair
+        /// routinely sits on hull that no zone box contains (a wheel arch, the roof, the gap between two doors).
+        /// A strict segment test alone answers "no zone" for most of the car and every one of those frames
+        /// silently degrades to the driver's seat, which is the whole behaviour this replaced.
+        ///
+        /// Beyond that reach it genuinely returns false and the caller falls back to the hull, so a vehicle with
+        /// no zones at all (boat, heli, tank, trailer) focuses exactly the way it always did.</summary>
+        public bool ResolveAccess(Vector3 from, Vector3 to, out AccessZone hit)
+        {
+            hit = default;
+            if (AccessZones.Length == 0) return false;
+            var inv = GlobalTransform.AffineInverse();
+            Vector3 lf = inv * from, lt = inv * to;
+            float bestHit = float.MaxValue, bestNear = float.MaxValue;
+            AccessZone near = default;
+            bool found = false, anyNear = false;
+            foreach (var z in AccessZones)
+            {
+                var aabb = new Aabb(z.Center - z.Size * 0.5f, z.Size);
+                if (aabb.IntersectsSegment(lf, lt))
+                {
+                    float d = lf.DistanceSquaredTo(z.Center);   // ray through two zones -> the one nearer the eye
+                    if (d < bestHit) { bestHit = d; hit = z; found = true; }
+                    continue;
+                }
+                float nd = PointBoxDistSq(lt, aabb);
+                if (nd < bestNear) { bestNear = nd; near = z; anyNear = true; }
+            }
+            if (found) return true;
+            if (anyNear && bestNear <= AccessNearReach * AccessNearReach) { hit = near; return true; }
+            return false;
+        }
+        /// <summary>How far off a zone the crosshair may sit and still count as aiming at it. Wide enough to
+        /// cover the unclaimed hull between zones, short enough that the roof of a bus still means "no zone".</summary>
+        const float AccessNearReach = 1.5f;
+        static float PointBoxDistSq(Vector3 p, Aabb b)
+        {
+            Vector3 mn = b.Position, mx = b.End;
+            float dx = Mathf.Max(Mathf.Max(mn.X - p.X, 0f), p.X - mx.X);
+            float dy = Mathf.Max(Mathf.Max(mn.Y - p.Y, 0f), p.Y - mx.Y);
+            float dz = Mathf.Max(Mathf.Max(mn.Z - p.Z, 0f), p.Z - mx.Z);
+            return dx * dx + dy * dy + dz * dz;
+        }
+
         /// <summary>Where the 3rd-person BODY sits for a given seat.
         ///
         /// Seat 0 keeps SeatOffset, which is the prefab's Seat_0 plus a hand-tuned rise that puts the driver in
@@ -1283,11 +1524,17 @@ namespace UnturnedGodot
         AudioStreamPlayer3D _sirenAudio;   // looping siren clip while the emergency lightbar's on (master)
         Node3D _steerPivot; Vector3 _steerAxis;   // steering wheel model (source Objects/Steer): rotates by the steer angle around the disc normal
         const float BatteryBurnRate = 20f;   // source batteryBurnRate default (headlights drain while on, EBatteryMode.Burn)
+        const float SirenBurnRate = 35f;     // the lightbar is a heavier draw than the headlamps: two flashing omnis + the siren loop
+        const float BatteryChargeRate = 40f; // alternator. 40/s = a flat battery back to full in ~250s of running -- "somewhat slowly" (strawberry_cow 2026-08-24)
+        const float BatteryStartMin = 400f;  // 4% -- below this the starter only clicks. Non-zero on purpose: a battery that dies at exactly 0 lets you crank it forever on the last drop
         // Bumper roadkill (source Bumper.OnTriggerEnter + VehicleAsset ParseFloat defaults): a moving vehicle damages a
         // character its front bumper touches. dmg = floor(baseDamage * speed); speed = clamp(fwdVel * mult, -10, 10),
         // ignored below the threshold. None of the stock vehicles override these in their .dat, so the defaults hold.
         // (enemy targeting removed with the zombie system: OnBumperHit's only wired branch was zombies -- see there.)
         const float BumperMult = 1f, BumperThreshold = 3f, BumperPlayerDmg = 10f, BumperSelfMult = 1f;
+        // The zombie bumper constant (15f) went with main's removal of the zombie game layer, but the
+        // ANIMAL roadkill path still needs a number. Same measured value, under a name that is now true.
+        const float BumperAnimalDmg = 15f;
         const float CrashPropThreshold = 4f, CrashPropDmgPerSpeed = 18f, CrashPropMaxDmg = 500f;   // vehicle -> destructible prop: min impact speed to break, dmg per m/s, cap
         const float HornAlertRadius = 32f;   // source InteractableVehicle.tellHorn: AlertTool.alert(pos, 32) -> earshot-radius, unused (no listener wired up currently)
         public bool HeadlightsOn => _headlightsOn;
@@ -1604,8 +1851,7 @@ namespace UnturnedGodot
                 mat.EmissionEnabled = true; mat.Emission = new Color(1f, 0.4f, 0.05f); mat.EmissionEnergyMultiplier = 2.5f;
                 mat.ParticlesAnimHFrames = 4; mat.ParticlesAnimVFrames = 1; mat.ParticlesAnimLoop = true;
             }
-            var ps = new CpuParticles3D
-            {
+            var ps = new CpuParticles3D { 
                 Emitting = false, Amount = amount, Lifetime = life, Direction = Vector3.Up, Spread = 25f,
                 InitialVelocityMin = vel * 0.6f, InitialVelocityMax = vel, Gravity = new Vector3(0f, 1.5f, 0f),
                 ScaleAmountMin = sizeMin, ScaleAmountMax = sizeMax, Color = c, Mesh = new QuadMesh { Size = Vector2.One, Material = mat },   // Size 1 -> ScaleAmount = the particle diameter in metres (src startSize)
@@ -1630,7 +1876,8 @@ namespace UnturnedGodot
         }
 
         // source Bumper.OnTriggerEnter: the front bumper roadkills a character it drives into. Damage scales with impact
-        // speed (clamped at 10) x a per-target base damage; the vehicle takes a little self-damage per hit too.
+        // speed (clamped at 10) x the base BumperZombieDamage; the vehicle takes a little self-damage per hit too.
+        public bool Parked => _parked;   // exposed for the net tests: "exit parked the car" is now the assertion, since exit no longer touches the engine
         public void Wake() { Freeze = false; Sleeping = false; _asleep = false; _parked = false; }   // resume dynamic physics (rammed or re-driven)
         // vehicle crash -> authoritative destructible break, through the SAME seam the heli rotors already use
         // (Vehicle.NetDamageObject, declared once above -- main had added it for rotors while this branch was adding
@@ -1649,16 +1896,140 @@ namespace UnturnedGodot
             }
         }
         public bool HasSiren => _sirenMat0 != null;   // only emergency vehicles (police/fire/ambulance) have a lightbar
-        public void ToggleSiren() { if (HasSiren) _sirenOn = !_sirenOn; }   // master: ctrl toggles the siren/lightbar while driving
+        public void ToggleSiren() { if (HasSiren && (Battery > 0f || _sirenOn)) _sirenOn = !_sirenOn; }   // master: ctrl toggles the siren/lightbar while driving. A flat battery can't power it -- but you can always switch it OFF
+
+        /// <summary>Can the starter turn it over? A flat battery clicks and nothing happens.
+        ///
+        /// The threshold is above zero deliberately: at exactly 0 the player can keep cranking on the last drop
+        /// forever, which reads as the starter being broken rather than the battery being flat.</summary>
+        public bool CanStartEngine => !OnFire && Battery >= BatteryStartMin;
+
+        /// <summary>Start it if the battery can. Returns whether it caught.
+        ///
+        /// Here rather than at the call sites because there are already two of them (driver enters, passenger
+        /// moves to the driver seat) and a third would silently skip the rule -- the gate belongs with the
+        /// battery it reads, not with each person who asks.</summary>
+        public bool TryStartEngine()
+        {
+            if (EngineOn || !CanStartEngine) return false;
+            EngineOn = true;
+            // Ground vehicles fire the ignition one-shot here. Aircraft do NOT: StepHeli/StepPlane drive
+            // _ignitionAudio off the rotor spin-up, where the clip's LENGTH is the spin-up gate, and firing it
+            // from here as well would play it twice and desync that gate from the sound it is derived from.
+            if (!_heli && _ignitionAudio != null && !_ignitionAudio.Playing) _ignitionAudio.Play();
+            return true;
+        }
+
+        /// <summary>Kill the engine. Separate from TryStartEngine so the caller says which it means -- a single
+        /// Toggle() at the call site turns a mis-read state into the opposite action.</summary>
+        public void StopEngine() => EngineOn = false;
+
+        /// <summary>Driver's ignition switch. Returns the state it ended in.
+        ///
+        /// The engine is NOT tied to occupancy any more (strawberry_cow 2026-08-24): a car you get into is off
+        /// until you start it, and stays running when you get out. So this is the only thing that starts or
+        /// stops one, and every caller has to be a driver -- the seat check lives at the call site because only
+        /// the caller knows who is asking.</summary>
+        public bool ToggleEngine()
+        {
+            if (EngineOn) StopEngine(); else TryStartEngine();
+            return EngineOn;
+        }
+
+        // IMPACT DAMAGE MASS SCALE (strawberry_cow 2026-08-24: "speed + vehicle weight based").
+        //
+        // Normalised against the JEEP so the existing, tuned roadkill numbers stay exactly where they were: the
+        // jeep scales by 1.0 and everything else is relative to it. Picking an absolute kg->damage constant
+        // instead would have silently re-tuned every zombie hit that is already correct.
+        //
+        // sqrt, not linear. Momentum is linear in mass, but a 40 t semi is ~44x the jeep and a linear term makes
+        // it one-shot a building from walking pace, which is not a difficulty knob so much as a different game.
+        // sqrt(44) ~ 6.6x is heavy enough that a truck plainly outweighs a hatchback without the number running
+        // away. Capped anyway, because the cap is what stops a future 200 t vehicle from being a bug report.
+        const float ImpactRefMass = 900f;      // the jeep, the vehicle every existing bumper constant was tuned on
+        const float ImpactMassCapX = 4f;       // heaviest thing hits 4x the jeep, not 6.6x
+        const float ImpactVehicleDmg = 9f;     // per (m/s * massScale) into another vehicle
+        const float ImpactPropDmg = 22f;       // into a deployable/prop -- higher, because props are meant to lose to a car
+        const float ImpactSelfProp = 0.35f;    // share of the dealt damage the CAR takes back off a prop
+
+        /// <summary>How much heavier-than-a-jeep this vehicle hits. See ImpactRefMass for why it is sqrt+capped.</summary>
+        float ImpactMassScale => Mathf.Min(ImpactMassCapX, Mathf.Sqrt(Mathf.Max(1f, Mass) / ImpactRefMass));
+
+        /// <summary>Closing speed against a thing we hit, in m/s, along our forward axis.
+        ///
+        /// RELATIVE, not absolute: two cars going the same way at 30 m/s that touch have barely collided, and
+        /// using our own speed there would total both of them. A static prop has zero velocity, so this reduces
+        /// to our own speed for everything that cannot move.</summary>
+        float ClosingSpeed(Node3D other)
+        {
+            // Live velocities on BOTH sides, deliberately -- _recentTopSpeed is an absolute own-speed peak and
+            // has no relative equivalent, so substituting it here would overstate two cars travelling together.
+            // The honest cost: a very fast car-on-car hit that ContinuousCd resolves over several ticks reads
+            // low, the same way aircraft impacts did before the peak existed. Under-reading is the safe
+            // direction for a damage number; over-reading would total cars that merely brushed.
+            var theirs = other is RigidBody3D rb ? rb.LinearVelocity : Vector3.Zero;
+            return (LinearVelocity - theirs).Dot(-GlobalTransform.Basis.Z);
+        }
 
         void OnBumperHit(Node3D body)
         {
             if (_exploded || _parked) return;
-            // (enemy targeting removed with the zombie system -- this was the only body type wired here.)
-            // NOTE: source Bumper also roadkills Players ("Player" tag -> BumperPlayerDamage) and Animals (Animal on the
-            // "Agent" tag -> BumperAnimalDamage). No player/animal targets share a scene in the port yet, so neither
-            // path is wired + tested here; add those branches (using BumperMult/BumperThreshold/BumperPlayerDmg/
-            // BumperSelfMult above) when those entities co-exist.
+
+            // Peak, not instantaneous: BodyEntered can arrive a tick or two after ContinuousCd started
+            // resolving the contact, by which point LinearVelocity has already been bled down and the hit reads
+            // as a gentle nudge. Sign comes from the live velocity, magnitude from the peak.
+            float fwdNow = LinearVelocity.Dot(-GlobalTransform.Basis.Z);
+            float fwd = Mathf.Sign(fwdNow) * Mathf.Max(Mathf.Abs(fwdNow), _recentTopSpeed);
+            float massScale = ImpactMassScale;
+
+            // ZOMBIE branch dropped in the 2026-08-29 merge: main deleted game/ZombieController.cs
+            // with the zombie game layer. The player / animal / vehicle-vs-vehicle roadkill below is
+            // independent of it and is kept. Restore this branch with the class if zombies come back.
+
+            // PLAYERS and ANIMALS. The old comment here said these were unwired because no such target shared a
+            // scene with a vehicle yet -- that stopped being true, and source Bumper hits both.
+            if (body is PlayerController p)
+            {
+                float speed = Mathf.Clamp(fwd * BumperMult, -10f, 10f);
+                if (speed < BumperThreshold) return;
+                p.TakeDamage(Mathf.Floor(BumperPlayerDmg * speed * massScale), GlobalPosition);
+                TakeDamage(2f * BumperSelfMult);
+                return;
+            }
+            if (body is AnimalAgent a)
+            {
+                float speed = Mathf.Clamp(fwd * BumperMult, -10f, 10f);
+                if (speed < BumperThreshold) return;
+                a.DamageHit(Mathf.Floor(BumperAnimalDmg * speed * massScale), a.GlobalPosition, -GlobalTransform.Basis.Z);
+                TakeDamage(2f * BumperSelfMult);
+                return;
+            }
+
+            // VEHICLE vs VEHICLE. Damage BOTH, each by the OTHER's mass -- a jeep hitting a parked semi should
+            // come off worse than the semi does. Only the mover applies it (the closing-speed gate below is
+            // signed), so a symmetric head-on still resolves once per car rather than four times.
+            if (body is Vehicle other && !other._exploded)
+            {
+                float closing = ClosingSpeed(other);
+                if (closing < BumperThreshold) return;
+                float ours = ImpactVehicleDmg * closing * massScale;
+                float theirs = ImpactVehicleDmg * closing * other.ImpactMassScale;
+                other.TakeDamage(Mathf.Floor(ours));    // we hit them with OUR weight
+                TakeDamage(Mathf.Floor(theirs));        // they resist with THEIRS
+                GD.Print($"[RAM] {DisplayName} -> {other.DisplayName} closing={closing:0.0} dealt={ours:0} taken={theirs:0}");
+                return;
+            }
+
+            // DESTRUCTIBLES. Deployables and glass both expose TakeDamage; walk up from the collider because the
+            // body that reports the contact is usually a child StaticBody of the thing that owns the health.
+            for (Node n = body; n != null; n = n.GetParent())
+            {
+                float closing = ClosingSpeed(body);
+                if (closing < BumperThreshold) break;
+                float dmg = Mathf.Floor(ImpactPropDmg * closing * massScale);
+                if (n is Deployable dep) { dep.TakeDamage(dmg); TakeDamage(dmg * ImpactSelfProp); return; }
+                if (n is GlassPane gp)   { gp.TakeDamage(dmg);  TakeDamage(dmg * ImpactSelfProp * 0.25f); return; }   // glass barely scratches the car
+            }
         }
 
         /// <summary>Where this vehicle was last shot FROM, in world space, and when. Recorded for every vehicle
@@ -1833,40 +2204,50 @@ namespace UnturnedGodot
         // SORTED BY SEAT INDEX at extraction. The prefab returns them in tree order, which is NOT index order
         // (the sedan hands back Seat_3 before Seat_2), and unsorted they would silently seat the driver in the
         // back of half the fleet.
+        /// <summary>Seat positions, VERBATIM from the retail prefabs (tools/vehicle_seats.json, dumped by
+        /// tools/dump_vehicle_seats.py). strawberry: "get all the CORRECT seating positions for all vehicles
+        /// from the source and implement."
+        ///
+        /// Mostly they already were -- diffed against the extraction, 20 of the 25 entries matched to 5 mm and
+        /// the other 5 differed only by 2-decimal rounding. What the diff DID find:
+        ///   - the TANK had no entry at all, so it fell through to a single default seat and its gunner sat on
+        ///     the driver;
+        ///   - the OTTER's seats were Z-NEGATED against the prefab (+1.23/+0.41 against -1.318/-0.504), which
+        ///     put the pilot behind the passenger and facing the tail.
+        ///
+        /// SORTED BY SEAT INDEX. The prefab returns them in TREE order -- the ambulance dumps Seat_3, Seat_2,
+        /// Seat_4 -- so taking the file's order seats the driver in the back.</summary>
         static readonly System.Collections.Generic.Dictionary<string, Vector3[]> SeatTable = new()
         {
-            ["jeep"] = new[] { new Vector3(-0.50f, 0.05f, -0.12f), new Vector3(0.50f, 0.05f, -0.12f), new Vector3(-0.50f, 0.05f, 1.40f), new Vector3(0.50f, 0.05f, 1.40f) },
-            ["quad"] = new[] { new Vector3(0f, 0.16f, 0.56f), new Vector3(0f, 0.44f, 1.65f) },
-            ["bus"] = new[] { new Vector3(-0.80f, -0.08f, -2.65f), new Vector3(-0.80f, -0.08f, -1.06f), new Vector3(0.80f, -0.08f, -1.06f), new Vector3(-0.80f, -0.08f, 0.45f), new Vector3(0.80f, -0.08f, 0.45f), new Vector3(-0.80f, -0.08f, 1.87f), new Vector3(0.80f, -0.08f, 1.87f), new Vector3(-0.80f, -0.08f, 3.37f), new Vector3(0.80f, -0.08f, 3.37f), new Vector3(0f, -0.08f, 3.37f) },
-            ["sedan"] = new[] { new Vector3(-0.50f, -0.08f, -0.62f), new Vector3(0.50f, -0.08f, -0.62f), new Vector3(-0.50f, -0.08f, 0.77f), new Vector3(0.50f, -0.08f, 0.77f) },
-            ["hatchback"] = new[] { new Vector3(-0.50f, -0.08f, -0.30f), new Vector3(0.50f, -0.08f, -0.30f), new Vector3(-0.50f, -0.08f, 1.24f), new Vector3(0.50f, -0.08f, 1.24f) },
-            ["humvee"] = new[] { new Vector3(-0.50f, -0.03f, -0.48f), new Vector3(0.50f, -0.03f, -0.48f), new Vector3(-0.50f, -0.03f, 0.86f), new Vector3(0.50f, -0.03f, 0.86f) },
-            ["roadster"] = new[] { new Vector3(-0.50f, -0.08f, 0.33f), new Vector3(0.50f, -0.08f, 0.33f) },
-            ["ambulance"] = new[] { new Vector3(-0.50f, 0.02f, -1.40f), new Vector3(0.50f, 0.02f, -1.40f), new Vector3(-0.60f, 0.05f, 0.14f), new Vector3(0.60f, 0.05f, 0.14f), new Vector3(0f, 0.05f, 1.71f) },
-            ["firetruck"] = new[] { new Vector3(-0.50f, 0.19f, -2.40f), new Vector3(0.50f, 0.19f, -2.40f) },
-            ["tractor"] = new[] { new Vector3(0f, 0.59f, 1.10f) },
-            ["ural"] = new[] { new Vector3(-0.50f, 0.06f, -1.30f), new Vector3(0.50f, 0.06f, -1.30f), new Vector3(-0.62f, 0.06f, 0.44f), new Vector3(0.62f, 0.06f, 0.44f), new Vector3(-0.62f, 0.06f, 1.44f), new Vector3(0.62f, 0.06f, 1.44f), new Vector3(-0.62f, 0.06f, 2.44f), new Vector3(0.62f, 0.06f, 2.44f) },
-            ["police"] = new[] { new Vector3(-0.50f, -0.08f, -0.62f), new Vector3(0.50f, -0.08f, -0.62f), new Vector3(-0.50f, -0.08f, 0.77f), new Vector3(0.50f, -0.08f, 0.77f) },
-            ["offroader"] = new[] { new Vector3(-0.50f, 0.05f, -0.12f), new Vector3(0.50f, 0.05f, -0.12f), new Vector3(-0.50f, 0.05f, 1.40f), new Vector3(0.50f, 0.05f, 1.40f) },
-            ["truck"] = new[] { new Vector3(-0.50f, 0.05f, -0.59f), new Vector3(0.50f, 0.05f, -0.59f), new Vector3(-0.60f, 0.05f, 1.19f), new Vector3(0.60f, 0.05f, 1.19f), new Vector3(0f, 0.05f, 1.71f) },
-            ["van"] = new[] { new Vector3(-0.50f, 0.05f, -0.73f), new Vector3(0.50f, 0.05f, -0.73f), new Vector3(-0.60f, 0.05f, 1.19f), new Vector3(0.60f, 0.05f, 1.19f), new Vector3(0f, 0.05f, 1.71f) },
-            ["golf"] = new[] { new Vector3(-0.50f, -0.08f, -0.35f), new Vector3(0.50f, -0.08f, -0.35f), new Vector3(-0.50f, -0.08f, 0.77f), new Vector3(0.50f, -0.08f, 0.77f) },
-            ["runabout"] = new[] { new Vector3(-0.50f, 0.06f, -0.76f), new Vector3(0.50f, 0.06f, -0.76f), new Vector3(-0.50f, 0.06f, 0.90f), new Vector3(0.50f, 0.06f, 0.90f) },
-            ["apc"] = new[] { new Vector3(-0.80f, -0.01f, -1.84f), new Vector3(0.80f, -0.01f, -1.84f), new Vector3(-1.00f, -0.01f, -0.03f), new Vector3(1.00f, -0.01f, -0.03f), new Vector3(-1.00f, -0.01f, 0.97f), new Vector3(1.00f, -0.01f, 0.97f), new Vector3(-1.00f, -0.01f, 1.97f), new Vector3(1.00f, -0.01f, 1.97f) },
-            // Helicopters. The Hind's driver seat is the one BEHIND and ABOVE -- a Mi-24 flies from the rear
-            // cockpit with the gunner in the nose, and the extracted indices say exactly that (Seat_0 y0.79
-            // z-1.96, Seat_1 y0.10 z-3.68). Worth stating because it looks like an off-by-one until you know.
-            ["huey"] = new[] { new Vector3(-0.62f, 0.10f, -1.96f), new Vector3(0.62f, 0.10f, -1.96f), new Vector3(-1.26f, -0.12f, -0.42f), new Vector3(1.26f, -0.12f, -0.42f) },
-            ["hind"] = new[] { new Vector3(0f, 0.79f, -1.96f), new Vector3(0f, 0.10f, -3.68f), new Vector3(0.50f, 0.08f, 0.26f), new Vector3(-0.50f, 0.08f, 0.26f), new Vector3(-0.50f, 0.08f, 1.48f), new Vector3(0.50f, 0.08f, 1.48f) },
-            ["orca"] = new[] { new Vector3(-0.61f, -0.08f, -0.30f), new Vector3(0.60f, -0.08f, -0.30f), new Vector3(-0.61f, -0.08f, 0.88f), new Vector3(0.60f, -0.08f, 0.88f), new Vector3(1.50f, -0.24f, 2.66f), new Vector3(-1.50f, -0.24f, 2.66f) },
-            ["skycrane"] = new[] { new Vector3(0f, 0.10f, -2.84f) },
-            ["hummingbird"] = new[] { new Vector3(-0.62f, 0.10f, -1.96f), new Vector3(0.62f, 0.10f, -1.96f), new Vector3(-1.26f, -0.12f, -0.42f), new Vector3(1.26f, -0.12f, -0.42f) },
-            // No retail prefab: the minicopter is procedural and VoX asked for exactly one seat on it
-            // (2026-08-16, "only 1 seat on the minicopter"); the scoutcopter keeps its pair.
-            ["minicopter"] = new[] { new Vector3(0f, 0.32f, 0.10f) },
-            ["scoutcopter"] = new[] { new Vector3(-0.34f, 0.32f, 0.10f), new Vector3(0.34f, 0.32f, 0.10f) },
-        };
+            ["jeep"] = new[] { new Vector3(-0.500f, 0.050f, -0.116f), new Vector3(0.500f, 0.050f, -0.116f), new Vector3(-0.500f, 0.050f, 1.404f), new Vector3(0.500f, 0.050f, 1.404f) },   // jeep: 4 seats, verbatim from the prefab
+            ["quad"] = new[] { new Vector3(-0.000f, 0.163f, 0.557f), new Vector3(-0.000f, 0.439f, 1.645f) },   // quad: 2 seats, verbatim from the prefab
+            ["bus"] = new[] { new Vector3(-0.800f, -0.081f, -2.651f), new Vector3(-0.800f, -0.081f, -1.056f), new Vector3(0.800f, -0.081f, -1.056f), new Vector3(-0.800f, -0.081f, 0.449f), new Vector3(0.800f, -0.081f, 0.449f), new Vector3(-0.800f, -0.081f, 1.866f), new Vector3(0.800f, -0.081f, 1.866f), new Vector3(-0.800f, -0.081f, 3.366f), new Vector3(0.800f, -0.081f, 3.366f), new Vector3(0.000f, -0.081f, 3.366f) },   // bus: 10 seats, verbatim from the prefab
+            ["sedan"] = new[] { new Vector3(-0.500f, -0.079f, -0.625f), new Vector3(0.500f, -0.079f, -0.625f), new Vector3(-0.500f, -0.079f, 0.772f), new Vector3(0.500f, -0.079f, 0.772f) },   // sedan: 4 seats, verbatim from the prefab
+            ["hatchback"] = new[] { new Vector3(-0.500f, -0.079f, -0.299f), new Vector3(0.500f, -0.079f, -0.299f), new Vector3(-0.500f, -0.079f, 1.240f), new Vector3(0.500f, -0.079f, 1.240f) },   // hatchback: 4 seats, verbatim from the prefab
+            ["humvee"] = new[] { new Vector3(-0.500f, -0.033f, -0.480f), new Vector3(0.500f, -0.033f, -0.480f), new Vector3(-0.500f, -0.033f, 0.858f), new Vector3(0.500f, -0.033f, 0.858f) },   // humvee: 4 seats, verbatim from the prefab
+            ["roadster"] = new[] { new Vector3(-0.500f, -0.079f, 0.331f), new Vector3(0.500f, -0.079f, 0.331f) },   // roadster: 2 seats, verbatim from the prefab
+            ["ambulance"] = new[] { new Vector3(-0.500f, 0.020f, -1.400f), new Vector3(0.500f, 0.020f, -1.400f), new Vector3(-0.603f, 0.051f, 0.138f), new Vector3(0.603f, 0.051f, 0.138f), new Vector3(0.000f, 0.051f, 1.707f) },   // ambulance: 5 seats, verbatim from the prefab
+            ["firetruck"] = new[] { new Vector3(-0.500f, 0.193f, -2.396f), new Vector3(0.500f, 0.193f, -2.396f) },   // firetruck: 2 seats, verbatim from the prefab
+            ["tractor"] = new[] { new Vector3(0.000f, 0.587f, 1.100f) },   // tractor_0: 1 seats, verbatim from the prefab
+            ["ural"] = new[] { new Vector3(-0.500f, 0.055f, -1.302f), new Vector3(0.500f, 0.055f, -1.302f), new Vector3(-0.617f, 0.055f, 0.444f), new Vector3(0.617f, 0.055f, 0.444f), new Vector3(-0.617f, 0.055f, 1.444f), new Vector3(0.617f, 0.055f, 1.444f), new Vector3(-0.617f, 0.055f, 2.444f), new Vector3(0.617f, 0.055f, 2.444f) },   // ural: 8 seats, verbatim from the prefab
+            ["police"] = new[] { new Vector3(-0.500f, -0.079f, -0.625f), new Vector3(0.500f, -0.079f, -0.625f), new Vector3(-0.500f, -0.079f, 0.772f), new Vector3(0.500f, -0.079f, 0.772f) },   // police: 4 seats, verbatim from the prefab
+            ["offroader"] = new[] { new Vector3(-0.500f, 0.050f, -0.116f), new Vector3(0.500f, 0.050f, -0.116f), new Vector3(-0.500f, 0.050f, 1.404f), new Vector3(0.500f, 0.050f, 1.404f) },   // off_roader: 4 seats, verbatim from the prefab
+            ["truck"] = new[] { new Vector3(-0.500f, 0.051f, -0.593f), new Vector3(0.500f, 0.051f, -0.593f), new Vector3(-0.603f, 0.051f, 1.188f), new Vector3(0.603f, 0.051f, 1.188f), new Vector3(0.000f, 0.051f, 1.707f) },   // truck: 5 seats, verbatim from the prefab
+            ["van"] = new[] { new Vector3(-0.500f, 0.051f, -0.731f), new Vector3(0.500f, 0.051f, -0.731f), new Vector3(-0.603f, 0.051f, 1.188f), new Vector3(0.603f, 0.051f, 1.188f), new Vector3(0.000f, 0.051f, 1.707f) },   // van: 5 seats, verbatim from the prefab
+            ["golf"] = new[] { new Vector3(-0.500f, -0.079f, -0.350f), new Vector3(0.500f, -0.079f, -0.350f), new Vector3(-0.500f, -0.079f, 0.772f), new Vector3(0.500f, -0.079f, 0.772f) },   // vw_golf: 4 seats, verbatim from the prefab
+            ["runabout"] = new[] { new Vector3(-0.500f, 0.062f, -0.758f), new Vector3(0.500f, 0.062f, -0.758f), new Vector3(-0.500f, 0.062f, 0.898f), new Vector3(0.500f, 0.062f, 0.898f) },   // runabout: 4 seats, verbatim from the prefab
+            ["apc"] = new[] { new Vector3(-0.800f, -0.015f, -1.845f), new Vector3(0.800f, -0.015f, -1.845f), new Vector3(-1.002f, -0.015f, -0.028f), new Vector3(1.002f, -0.015f, -0.028f), new Vector3(-1.002f, -0.015f, 0.972f), new Vector3(1.002f, -0.015f, 0.972f), new Vector3(-1.002f, -0.015f, 1.972f), new Vector3(1.002f, -0.015f, 1.972f) },   // apc: 8 seats, verbatim from the prefab
+            ["huey"] = new[] { new Vector3(-0.625f, 0.096f, -1.958f), new Vector3(0.625f, 0.096f, -1.958f), new Vector3(-1.261f, -0.120f, -0.423f), new Vector3(1.261f, -0.120f, -0.423f) },   // huey: 4 seats, verbatim from the prefab
+            ["hind"] = new[] { new Vector3(-0.000f, 0.790f, -1.960f), new Vector3(0.000f, 0.095f, -3.677f), new Vector3(0.500f, 0.080f, 0.260f), new Vector3(-0.500f, 0.080f, 0.260f), new Vector3(-0.500f, 0.080f, 1.480f), new Vector3(0.500f, 0.080f, 1.480f) },   // hind: 6 seats, verbatim from the prefab
+            ["orca"] = new[] { new Vector3(-0.610f, -0.079f, -0.299f), new Vector3(0.600f, -0.079f, -0.299f), new Vector3(-0.609f, -0.080f, 0.876f), new Vector3(0.601f, -0.080f, 0.876f), new Vector3(1.500f, -0.240f, 2.656f), new Vector3(-1.500f, -0.240f, 2.660f) },   // orca: 6 seats, verbatim from the prefab
+            ["skycrane"] = new[] { new Vector3(0.000f, 0.096f, -2.844f) },   // skycrane: 1 seats, verbatim from the prefab
+            ["hummingbird"] = new[] { new Vector3(-0.625f, 0.096f, -1.958f), new Vector3(0.625f, 0.096f, -1.958f), new Vector3(-1.261f, -0.120f, -0.423f), new Vector3(1.261f, -0.120f, -0.423f) },   // hummingbird_police: 4 seats, verbatim from the prefab
 
+            ["minicopter"] = new[] { new Vector3(0f, 0.32f, 0.10f) },
+
+            ["scoutcopter"] = new[] { new Vector3(-0.34f, 0.32f, 0.10f), new Vector3(0.34f, 0.32f, 0.10f) },
+            ["tank"] = new[] { new Vector3(0.000f, 0.192f, -2.711f), new Vector3(0.000f, 0.000f, -0.000f) },   // tank: 2 seats, verbatim from the prefab
+        };
         static Vector3 SeatOf(string name) => name switch
         {
             "Sedan" => new Vector3(-0.50f, -0.04f, -0.566f),
@@ -2402,7 +2783,7 @@ namespace UnturnedGodot
             Body = "runabout_body.txt", Water = WaterMode.Boat,
             Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", WheelRadius = 0.3f,   // unused (no wheels) but non-null for safety
             Palette = "runabout_palette.png", DefaultPaints = new[] { "#e8e8ea" },   // paintable hull (Texture_Paintable) + its fixed detail texels via PaintMat
-            Engine = 600f, SteerMax = 0f, SteerMin = 0f, SpeedMax = 16f, SpeedMin = 8f, Brake = 0f,   // boat: propulsion is BoatThrust, not wheel EngineForce
+            Engine = 600f, SteerMax = 0f, SteerMin = 0f, SpeedMax = 16f, SpeedMin = -8f, Brake = 0f,   // boat: propulsion is BoatThrust, not wheel EngineForce
             BoxSize = new Vector3(2.8f, 1.6f, 9.0f), BoxCenter = new Vector3(0f, 0.1f, -0.3f),   // hull box (mesh x±1.5, y-0.85..2.1, z-4.94..4.37)
             ForwardGears = new[] { 1f }, ReverseGear = 1f, ShiftUpRpm = 5000f,
             Sound = "engine_medium.ogg", IdlePitch = 1.0f, MaxPitch = 2.0f, IdleVolume = 0.7f, MaxVolume = 1.0f,   // outboard motor loop
@@ -2427,7 +2808,7 @@ namespace UnturnedGodot
             Body = "ship_body.txt", Water = WaterMode.Boat,
             Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", WheelRadius = 0.3f,   // unused (no wheels), non-null for safety
             Palette = "ship_palette.png", RandomHueGray = true,   // orange hull-BOTTOM texel (3,1) flagged paintable (alpha 0) -> random colour per spawn (master); the other texels keep the ship's own albedo
-            Engine = 600f, SteerMax = 0f, SteerMin = 0f, SpeedMax = 12f, SpeedMin = 6f, Brake = 0f,   // boat: BoatThrust propels + rudder-yaws; a touch slower than the runabout (it's a SHIP)
+            Engine = 600f, SteerMax = 0f, SteerMin = 0f, SpeedMax = 12f, SpeedMin = -6f, Brake = 0f,   // boat: BoatThrust propels + rudder-yaws; a touch slower than the runabout (it's a SHIP)
             BoxSize = new Vector3(20f, 11f, 66f), BoxCenter = new Vector3(0f, 5.5f, 0f),   // hull collision box (mesh x±11, z±33.75, keel y0); covers the lower hull -> 4 corner buoys at the keel, COM low
             // 1:1 HULL, cut into pieces that are each genuinely convex. Every bound below is MEASURED off
             // ship_body.txt's own vertex planes, not eyeballed: the hull reaches full beam (x +-12) at y=8 and
@@ -2531,7 +2912,7 @@ namespace UnturnedGodot
             Body = "apc_body.txt", Water = WaterMode.Amphibious,
             Wheel = "apc_wheel.txt", WheelTex = "jeep_wheel_albedo.png", WheelRadius = 0.74f,   // REAL APC wheel (Wheel_LOD0 ripped): radius 0.74 (was a too-small 0.55 jeep wheel); tire albedo reused
             Palette = "apc_palette.png", DefaultPaints = new[] { "#5a6650" },   // Texture_MilitaryPaintable: olive paintable hull. NO grille (strawberry) -- headlights/taillights are the real separate Parts meshes below, not palette texels
-            Engine = 700f, SteerMax = 24f, SteerMin = 12f, SpeedMax = 12f, SpeedMin = 6f, Brake = 35f,
+            Engine = 700f, SteerMax = 24f, SteerMin = 12f, SpeedMax = 12f, SpeedMin = -6f, Brake = 35f,
             BoxSize = new Vector3(3.6f, 1.8f, 7.7f), BoxCenter = new Vector3(0f, 0.6f, 0f),   // hull (mesh x±1.83 y-0.27..2.31 z-4..3.72)
             ForwardGears = new[] { 18f, 10f }, ReverseGear = 8f, ShiftUpRpm = 4000f,
             Sound = "engine_medium.ogg", IdlePitch = 0.9f, MaxPitch = 1.8f, IdleVolume = 0.8f, MaxVolume = 1.0f,
@@ -3037,7 +3418,6 @@ namespace UnturnedGodot
             ForwardGears = new[] { 1f }, ReverseGear = 1f, ShiftUpRpm = 5000f,
             Sound = "engine_plane.ogg", IgnitionSound = "otter_ignition.ogg", IdlePitch = 0.9f, MaxPitch = 1.9f, IdleVolume = 0.8f, MaxVolume = 1.0f,   // the REAL shared prop-plane engine loop + the Otter's own ignition
             Fuel = 1750f, Health = 800f, Name = "Otter",
-            Seats = new[] { new Vector3(0f, 0.62f, 1.23f), new Vector3(0f, 0.62f, 0.41f) },   // pilot + passenger (from the prefab)
             DriverEye = new Vector3(0f, 1.5f, 1.0f),
         };
         public static Vehicle BuildOtter(int variant = 0) => Build(_otter, variant, "otter");
@@ -3702,7 +4082,7 @@ namespace UnturnedGodot
             // curve, power stops being a mass-proportional constant and starts being an engine.
             float massScale = v.Mass / GlobalMass;
             v._engineForce = s.Engine * massScale; v._steerMax = s.SteerMax; v._steerMin = s.SteerMin;
-            v._speedMax = s.SpeedMax; v._speedMin = s.SpeedMin; v._brakeForce = s.Brake * massScale;
+            v._speedMax = s.SpeedMax; v._speedMin = -Mathf.Abs(s.SpeedMin); v._brakeForce = s.Brake * massScale;   // negative always -- see SetupDrivetrain
 if (s.Wheels != null && s.Wheels.Length > 1)
             {
                 float zmin = float.MaxValue, zmax = float.MinValue;
@@ -3753,6 +4133,12 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             // keeps a margin so the cap binds before the envelope does.
             v._heliLiftCap = s.Heli && s.HeliThrust > 0.01f
                 ? Mathf.Max(1f, (9.8f + HeliHeaveDamp * s.HeliClimbMax * 0.9f) / s.HeliThrust) : 1f;
+            // TUNNELLING (strawberry_cow 2026-08-24: "cars arent colliding with some smaller props").
+            // Only helis and planes had ContinuousCd; a car did not. At 30 m/s on the 50 Hz tick a car advances
+            // 0.6 m PER STEP, so any prop thinner than that -- a fence post, a sign, a bollard -- can sit
+            // entirely between two positions and never generate a contact. That matches the symptom exactly:
+            // it is the SMALL props that go through, because small props are the thin ones.
+            v.ContinuousCd = true;
             if (s.Heli)
             {
                 // A helicopter is flown, not suspended. Damping here is AERODYNAMIC, not friction, and the
@@ -3992,6 +4378,8 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             // hand-tuned driver spot. The fallback matters -- semi and trailer have no bundle prefab to extract
             // from, and a null here would crash every seat lookup rather than degrading to one seat.
             v.SeatLocals = s.Seats ?? (SeatTable.TryGetValue(specKey, out var st) ? st : new[] { v.SeatOffset });
+            v.AccessZones = BuildAccessZones(s, v.SeatLocals, s.BoxCenter, s.BoxSize);
+            v.AccessBoxCenter = s.BoxCenter;   // the frame the zones were laid out in; a test needs it to know which way is 'outboard' of a given zone
 
             // TURRETS. Two nested pivots per mount -- yaw about the vehicle's up, pitch inside it -- with each
             // mesh baked at its own origin, so rotating a node swings only its own geometry. Built even when no
@@ -4149,6 +4537,36 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                 // FALL BACK rather than ship a vehicle with NO collision: an empty band list would otherwise be a
                 // silent hole you drive through the world in.
                 if (made == 0) v.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = s.BoxSize }, Position = s.BoxCenter });
+            }
+            else if (bodyMesh != null && !ForceBoxHull
+                     && System.Environment.GetEnvironmentVariable("UG_BOXHULL") != "1")
+            {
+                // 1:1 HULL FOR EVERY VEHICLE (strawberry_cow 2026-08-24: "give all vehicles the 1:1 hitbox vs
+                // model visual treatment that the ship got"). Same machinery the ship uses -- decompose the body
+                // mesh into convex hulls -- just no longer opt-in per spec. It runs on _Ready and is cached by
+                // key, so VHACD runs once per vehicle TYPE, not per spawn.
+                //
+                // LOOSER SETTINGS THAN THE SHIP, deliberately. Hers are 48 hulls at 0.02 concavity because the
+                // thing being captured is a deckhouse full of steps and voids that a box filled in. A car body
+                // is nearly convex; asking for the same fidelity would spend a lot of VHACD time and a lot of
+                // shapes to describe a wedge. Those numbers live on the spec key below, so the cache cannot
+                // serve a ship's hulls to a hatchback or the reverse.
+                //
+                // The WHEELS are safe: Spec.Body and Spec.Wheel are separate meshes, so the chassis mesh being
+                // decomposed contains no wheel geometry to collide with the ground.
+                //
+                // UG_BOXHULL=1 reverts every vehicle to the old single box, matching the UG_SHIPBOX seam. This
+                // is a handling change, not a visual one -- a 1:1 hull follows the real underside where a box
+                // was clamped clear of it -- so there needs to be one switch that puts it back.
+                v._decomposeMesh = bodyMesh;
+                v._decomposeKey = $"body|{s.Body}|{s.Name}";
+                v._decomposeCars = true;
+                // Keep the box as well: it is the belly-pan. A decomposition of a chassis with a hollow
+                // underside gives hulls that hug the floorpan and leave the gap between the axles open, and a
+                // car that drops into its own wheel arch on a kerb is worse than one whose hitbox is slightly
+                // generous. The convex hulls ADD fidelity to the sides and roofline; they do not replace the
+                // floor.
+                v.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = s.BoxSize }, Position = s.BoxCenter });
             }
             else v.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = s.BoxSize }, Position = s.BoxCenter });
             var roof = RoofBox(s.Name);   // source 2nd body box (roof slab): the port only had the main box, so the roof had no collision (master); jeep/quad/tractor are open, no roof
@@ -5355,6 +5773,62 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             // it sits above the drag equilibrium and below the MP envelope, and in normal driving never fires.
             if (throttle > 0f && speed >= _speedMax * SpeedBackstop) eng = 0f;
             if (throttle < 0f && speed >= -_speedMin) eng = 0f;   // cap reverse at -Speed_Min (7)
+            // THE CLUTCH (strawberry_cow 2026-08-24: "a somewhat real clutch engine power disconnect when
+            // shifting up/down"). While the shift is in progress the drive is DISCONNECTED, so the car coasts
+            // through the gearchange and picks up again in the new ratio.
+            //
+            // This is what makes a shift felt rather than merely logged: previously _shiftCd was purely a
+            // lockout on shifting AGAIN and power was never interrupted, so the only cue was a cosmetic jolt.
+            // Momentum carries the car, drag still acts, and on an upshift at redline the loss of thrust is
+            // exactly the pause a real box has.
+            //
+            // Eased in and out rather than a hard gate: a step to zero force and back is an impulse the
+            // suspension answers with a nod, which reads as a bug rather than a gearchange.
+            // Read only -- Drive() has no delta; the timer ticks in _PhysicsProcess beside _shiftCd, which is
+            // the one place that already owns the shift clock.
+            if (_clutchT > 0f)
+            {
+                float k = Mathf.Clamp(_clutchT / ShiftClutchTime, 0f, 1f);
+                eng *= 1f - Mathf.Sin(k * Mathf.Pi);   // 1 -> 0 -> 1 across the shift, zero drive at its midpoint
+            }
+            // TRACTION LIMIT -- the tyre can only pass so much force to the ground, and past that it spins.
+            //
+            // strawberry asked for grip/wheelspin and per-vehicle-per-gear traction. It could not be built
+            // until now: measured against mu * m * g the whole fleet was using 3-58% of available grip at
+            // launch, so a limit would have been a no-op on every vehicle (the jeep would not have spun ON
+            // ICE). Raising LaunchBoost to 4.0 is what put the light vehicles over the line.
+            //
+            // CLAMPS THE FORCE, does not touch WheelFrictionSlip. That parameter is Godot's COMBINED lateral +
+            // longitudinal grip, so using it to limit wheelspin would tax cornering by exactly as much -- which
+            // is the trap that made this look impossible the first time I costed it. Clamping the drive force
+            // leaves the cornering model completely alone.
+            //
+            // PER-GEAR FALLS OUT, no per-gear table needed: the force arriving here is already the torque curve
+            // through the current ratio, so first gear asks for several times what fifth does against the same
+            // limit. Spins in 1st, grips in 5th, because that is what the arithmetic says.
+            //
+            // Load is weight / wheels ON THE GROUND. No longitudinal-transfer term, deliberately: every wheel
+            // on these vehicles is a drive wheel (UseAsTraction is set for all of them unless it is a trailer),
+            // so transfer moves load BETWEEN driven wheels and the total available traction does not change.
+            // Adding a transfer term here would be arithmetic that changes nothing.
+            _wheelSlip = 0f;
+            if (_peakTorque > 0f && _nTraction > 0 && !_water0Boat)
+            {
+                int onGround = 0;
+                if (_wNodes != null) foreach (var w in _wNodes) if (w != null && w.IsInContact()) onGround++;
+                if (onGround > 0)
+                {
+                    // Both sides are NEWTONS. Writing this against Mass alone (kg) is the unit slip I already
+                    // made once today on this same model, and it read as a plausible 3.5x grip figure.
+                    float gripPerWheel = _tyreMu * (Mass * _gravityMag / onGround);
+                    float demanded = Mathf.Abs(eng);
+                    if (demanded > gripPerWheel && demanded > 0.01f)
+                    {
+                        _wheelSlip = (demanded - gripPerWheel) / demanded;   // 0 = gripping, ->1 = all slip
+                        eng = Mathf.Sign(eng) * gripPerWheel;
+                    }
+                }
+            }
             EngineForce = -eng;   // NEGATE: Godot drives this rig +Z for positive force, so W(throttle+1) was going backward
             // STEERING FADES AGAINST THE SPEC TOP SPEED, NOT THE BUFFED ONE. This fade is a function of ROAD
             // SPEED -- how much lock you get at 12 m/s should not depend on how fast the car can eventually
@@ -5375,13 +5849,20 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             // its own 2.89 m wheelbase, so it TRACKS the steering angle and grip was never the limit. The
             // steering angle is the whole story: 14 deg at 15 m/s asks for a 2 g corner and the tyres took it.
             //
-            // A real car cannot do that -- the front tyres let go first. Rather than model breakaway, cap the
-            // angle to the one that would ASK for MaxLatAccel: tan(delta) = wheelbase * a / v^2. That
-            // self-limits at any speed, leaves low-speed manoeuvring untouched (below ~10 m/s the cap sits
-            // above _steerMax), and makes the limit a physical quantity rather than another tuned lerp.
+            // THE CAP IS GONE (strawberry_cow 2026-08-24: "the turning circle for cars right now is massive",
+            // and before that, twice: "i want real simulated weight/inertia on steering, not a hard clamp").
+            //
+            // It capped the steer angle to whatever would ask for MaxLatAccel -- tan(delta) = wheelbase*a/v^2 --
+            // which is cheap and self-limiting and was an invisible hand on the player's steering wheel. It is
+            // also, measured, the entire cause of the wide circle: removing it and changing NOTHING else takes
+            // the jeep's full-lock radius from 27.9 m to 11.7 m. 11.7 is the Ackermann radius for its 2.89 m
+            // wheelbase at the 14 deg it has faded to by then, i.e. the car now tracks its own steering angle
+            // instead of being held off it.
+            //
+            // What the cap bought was stopping a 2 g corner. That is a real thing to want and this gives it
+            // back -- but the way to buy it is tyres that run out of grip, not a limiter on the input, and that
+            // is what was asked for twice. Steer_Max/Steer_Min stay exactly retail's (Jeep.dat: 28 and 14).
             float angle = Mathf.Lerp(_steerMax, _steerMin, t);
-            if (_wheelbase > 0f && speed > 2f)
-                angle = Mathf.Min(angle, Mathf.Max(MinSteerDeg, Mathf.RadToDeg(Mathf.Atan(_wheelbase * MaxLatAccel / (speed * speed)))));
             _steerTarget = -steer * angle;   // smoothed toward in _PhysicsProcess (not snapped) via the AnimatedSteeringAngle-style ramp
             // SPACE = handbrake (locks hard); S-into-forward-motion = foot brake. Both far stronger than the old raw .dat Brake.
             _handbraking = handbrake;   // remembered so the car freezes (no jitter) when stopped with the handbrake held
@@ -5976,8 +6457,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                     DisableReceiveShadows = true,
                 };
                 var ab = mesh.GetAabb();
-                _headlightMotes = new CpuParticles3D
-                {
+                _headlightMotes = new CpuParticles3D { 
                     Position = new Vector3(0f, 0f, frontZ),
                     Amount = StreetLight.MoteCount, Lifetime = 7f, Preprocess = 7f,   // start at steady state
                     Randomness = 1f, Emitting = false, Visible = false,
@@ -6271,7 +6751,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                         // car would read as a car with broken parts it does not own.
                         _info.SetBar(3, MainRotorNorm, RotorBarColor(MainRotorNorm), _heli);
                         _info.SetBar(4, TailRotorNorm, RotorBarColor(TailRotorNorm), _heli);
-                        _info.SetPrompt("", _outlineColor);
+                        _info.SetPrompt(AccessHint, _outlineColor);
                     }
                 }
             }
@@ -6444,12 +6924,13 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             {
                 float fwd = Mathf.Abs(LinearVelocity.Dot(-GlobalTransform.Basis.Z));
                 if (_shiftCd > 0f) _shiftCd -= (float)delta;
+                if (_clutchT > 0f) _clutchT = Mathf.Max(0f, _clutchT - (float)delta);   // the clutch re-engages on its own clock, shorter than the shift interval
                 if (fwd < 1.0f) _gear = 1;   // rolled to a stop -> back into first, ready to launch
                 else if (_shiftCd <= 0f && !_exploded && !_husk)
                 {
                     if (_engineRpm >= RedlineFrac * MaxRpm && _gear < _gears.Length)
                     {
-                        _gear++; _shiftCd = ShiftTime;
+                        _gear++; _shiftCd = ShiftTime; _clutchT = ShiftClutchTime;
                         // The jolt is a VERTICAL hitch + pitch nod you FEEL but that does NOT touch the fore-aft
                         // speed: a fore-aft impulse used to dip the speed back under the old band's shift point
                         // and re-downshift instantly, sticking the box in a shift loop (master caught it). That
@@ -6457,7 +6938,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                         ApplyCentralImpulse(Vector3.Up * Mass * 0.22f);
                         ApplyTorqueImpulse(GlobalTransform.Basis.X * Mass * 0.5f);
                     }
-                    else if (_gear > 1 && _engineRpm <= DownshiftRpm(_gear)) { _gear--; _shiftCd = ShiftTime; }
+                    else if (_gear > 1 && _engineRpm <= DownshiftRpm(_gear)) { _gear--; _shiftCd = ShiftTime; _clutchT = ShiftClutchTime; }   // downshifts declutch too: the box does not care which way it went
                 }
             }
             if (_engineAudio != null)   // EngineRPMSimple: pitch + volume by RPM while running; silent when off (exited)
@@ -6490,10 +6971,27 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             if (EngineOn && Fuel > 0f && !InfiniteFuel)   // source simulateBurnFuel: burn fuelBurnRate/sec while the engine runs (dev infFuel skips the drain)
                 Fuel = Mathf.Max(0f, Fuel - FuelBurn * (float)delta);
             if (EngineOn && FuelMax > 0f && Fuel <= 0f) EngineOn = false;   // ran DRY (or entered an empty car) -> cut the engine; Drive gates on EngineOn so it coasts to a stop. Refuel (gas can / pump) + re-enter to restart (master)
-            if (_headlightsOn)   // source: headlights burn the battery (EBatteryMode.Burn); die when it's empty
+            // BATTERY (strawberry_cow 2026-08-24). Running engine = alternator: the drain stops and the battery
+            // recharges slowly. Engine off = the electrics eat it, and at flat everything electrical dies.
+            if (EngineOn)
             {
-                Battery = Mathf.Max(0f, Battery - BatteryBurnRate * (float)delta);
-                if (Battery <= 0f) SetHeadlights(false);
+                // Charge even with the lights on. A real alternator outruns the lamps, and the alternative --
+                // netting the two -- means a car idling with its headlights on never recovers, which is the
+                // opposite of what a running engine should do for you.
+                Battery = Mathf.Min(BatteryMax, Battery + BatteryChargeRate * (float)delta);
+            }
+            else
+            {
+                if (_headlightsOn) Battery = Mathf.Max(0f, Battery - BatteryBurnRate * (float)delta);   // source: headlights burn the battery (EBatteryMode.Burn)
+                if (_sirenOn) Battery = Mathf.Max(0f, Battery - SirenBurnRate * (float)delta);
+            }
+            if (Battery <= 0f)
+            {
+                // Everything electrical goes with it, the same way the headlights already did. SetHeadlights is
+                // guarded because it re-touches materials and the mote emitter, and this runs every tick once a
+                // battery is flat -- which for a parked wreck is the rest of the session.
+                if (_headlightsOn) SetHeadlights(false);
+                _sirenOn = false;
             }
             if (_alarmed && !_exploded)   // "alarmed" car (master): proximity (player) or damage sets off a ~30s honk+lights blip loop. NOT on a wreck -- Explode clears the state, and this guard means even a re-arm can't relight a corpse
             {
@@ -6542,7 +7040,15 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             // collision/ram damage (source isVulnerableToBumper): a sudden horizontal deceleration = a crash. Horizontal only, so the spawn drop doesn't count.
             float curSpeed = new Vector2(LinearVelocity.X, LinearVelocity.Z).Length();
             float decel = _prevSpeed - curSpeed;
-            if (!_parked && !_exploded && _prevSpeed > 5f && decel > 200f * (float)delta) TakeDamage(decel * 20f);   // >200 m/s^2 = a crash (braking is ~8); full-speed hit ~250 dmg
+            // The DECAYING PEAK, not last tick's speed -- carried over from the aircraft path, which learned it
+            // the hard way (see StepHeli): with ContinuousCd the solver bleeds a fast impact off across several
+            // ticks, so by the tick the deceleration is big enough to trip the gate, _prevSpeed has already
+            // fallen well below the real approach speed. Cars were exempt from that only because they had no
+            // ContinuousCd. Turning it on above without this would have quietly HALVED crash damage -- a fix
+            // for one bug paying for itself by breaking a neighbour.
+            _recentTopSpeed = Mathf.Max(curSpeed, _recentTopSpeed - (float)delta * 6f);
+            if (!_parked && !_exploded && _recentTopSpeed > 5f && decel > 200f * (float)delta)
+                TakeDamage(_recentTopSpeed * 20f);   // >200 m/s^2 = a crash (braking is ~8); full-speed hit ~250 dmg
             _prevSpeed = curSpeed;
             if (_smoke != null) _smoke.Emitting = _burnTime < 60f && (_exploded || Health < SmokeHealth);   // source updateFires: smoke_1 at health < 200 (or exploded); OFF once the wreck fire is out at 60s (master)
             if (_smoke0 != null) _smoke0.Emitting = _exploded || Health < HeavySmokeHealth;   // source updateFires: smoke_0 (heavy) at health < 100 (or exploded)
@@ -6588,7 +7094,24 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             if (_deadTimer > 0f) { _deadTimer -= (float)delta; if (_deadTimer <= 0f) Explode(); }   // source EXPLODE: 4s after health 0
 
             // steering smoothing (source: AnimatedSteeringAngle = MoveTowards(target, SteeringAngleTurnSpeed*dt)) -- no instant snap
-            _steerAngle = Mathf.MoveToward(_steerAngle, _steerTarget, _steerTurnSpeed * (float)delta);
+            //
+            // ...AND THE RATE FALLS WITH ROAD SPEED. strawberry, 2026-08-24: "steering is way too sensitive
+            // now", after the lateral-acceleration cap came out. The cap is NOT going back in -- they rejected
+            // it twice ("real simulated weight/intertia on steering, not a hard clamp"), and removing it is the
+            // measured reason the jeep's full-lock circle went 27.9 m -> 11.7 m, which was the other complaint.
+            //
+            // So the lever is the RATE, not the limit: quick at rest (parking), heavy at speed. That is inertia
+            // rather than a clamp -- full lock stays reachable at any speed, it just costs time to wind on,
+            // which is what a loaded steering system actually feels like. Max angle, turning circle and the
+            // existing ANGLE fade are all untouched.
+            //
+            // Keyed to _specSpeedMax, the PRE-buff top speed, for the same reason the angle fade is: how heavy
+            // the wheel feels at 12 m/s must not depend on how fast the car can eventually go -- and
+            // TopSpeedBuff has now moved twice.
+            float steerRef2 = _specSpeedMax > 0f ? _specSpeedMax : _speedMax;
+            float steerLoad = steerRef2 > 0f ? Mathf.Clamp(LinearVelocity.Length() / steerRef2, 0f, 1f) : 0f;
+            float steerRate = _steerTurnSpeed * Mathf.Lerp(1f, SteerRateAtSpeed, steerLoad);
+            _steerAngle = Mathf.MoveToward(_steerAngle, _steerTarget, steerRate * (float)delta);
             Steering = Mathf.DegToRad(_steerAngle);
             if (_steerPivot != null) _steerPivot.Basis = new Basis(_steerAxis, Mathf.DegToRad(_steerAngle));   // steering wheel model turns 1:1 with the steer angle (source line 4020, AnimatedSteeringAngle)
             CarryDeckRiders((float)delta);   // MOVING DECK: carry anything standing on us. Outside ApplyWaterPhysics
@@ -6655,6 +7178,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
         public static bool ForceBoxHull;
 
         Mesh _decomposeMesh;   // set at build; turned into collision shapes on _Ready (VHACD needs a scene tree)
+        bool _decomposeCars;   // this is an ordinary vehicle body, not the ship's deckhouse -> cheaper VHACD settings
         static readonly System.Collections.Generic.Dictionary<string, Godot.Collections.Array<Shape3D>> _decomposeCache = new();
         string _decomposeKey;
         public int DebugDecomposedHulls;   // test seam: how many convex hulls the decomposition produced
@@ -6675,13 +7199,21 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                 // Tight, because the whole point is not to fill in the deckhouse's steps and voids. At the
                 // defaults (24 hulls / 0.15 concavity) VHACD merged it down to 8 hulls and only got the
                 // invisible-wall count from 633 to 527 -- barely better than the hand-cut bands it replaced.
-                var settings = new MeshConvexDecompositionSettings
-                {
-                    MaxConvexHulls = 48,
-                    MaxConcavity = 0.02f,
-                    MaxNumVerticesPerConvexHull = 24,
-                    Resolution = 50000,
-                };
+                var settings = _decomposeCars
+                    ? new MeshConvexDecompositionSettings   // ordinary vehicle: a near-convex shell, cheap to describe
+                    {
+                        MaxConvexHulls = 12,
+                        MaxConcavity = 0.08f,
+                        MaxNumVerticesPerConvexHull = 16,
+                        Resolution = 10000,
+                    }
+                    : new MeshConvexDecompositionSettings
+                    {
+                        MaxConvexHulls = 48,
+                        MaxConcavity = 0.02f,
+                        MaxNumVerticesPerConvexHull = 24,
+                        Resolution = 50000,
+                    };
                 mi.CreateMultipleConvexCollisions(settings);
                 // The generated StaticBody3D is a child of the MESH INSTANCE, not a sibling of it -- harvesting
                 // from the vehicle's own children found nothing and reported "hulls harvested: 0" while the
@@ -7009,6 +7541,27 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             // The engine is cut EVERY tick it is under, not once on entry: otherwise the driver simply restarts it
             // and drives on along the seabed, which is the behaviour this exists to remove.
             EngineOn = false;
+
+            // The ELECTRICS drown with it (strawberry_cow 2026-08-24). Same every-tick reasoning as the engine:
+            // clearing these once on entry lets the driver flick the headlights back on while submerged, and the
+            // alarm re-arms itself on its own timer regardless of anyone touching it.
+            //
+            // The alarm matters most of the three. Its blip loop re-lights the lamps and honks every 0.5s on its
+            // own clock, so a car alarm going off underwater keeps flashing and sounding forever -- exactly the
+            // failure the explode path documents at the _alarmed reset above, arrived at from a different
+            // direction. Kill the state, not just the output, or the loop simply re-creates it.
+            // SetHeadlights, not `_headlightsOn = false`. The flag is not what lights the lamps -- SetHeadlights
+            // is the only thing that touches _headlights.Visible, the beam mesh and the lens emission, so
+            // clearing the field alone leaves a submerged car glowing with its headlight shafts still drawn and
+            // only the boolean saying otherwise.
+            if (_headlightsOn) SetHeadlights(false);   // guarded: this runs EVERY physics tick while under, and SetHeadlights re-touches materials + the mote emitter
+            _sirenOn = false;                     // polled per-frame by the lightbar block (:6499), so the flag IS the switch here
+            if (_sirenAudio != null && _sirenAudio.Playing) _sirenAudio.Stop();
+            _alarmed = false; _alarmTimer = 0f; _alarmBlip = 0f; _alarmLit = false;
+            // Taillights are deliberately NOT set here: :6513 recomputes them every frame from EngineOn and
+            // _headlightsOn, both of which are now false, so they follow on their own. Forcing the field would be
+            // overwritten next frame anyway, and writing code that the next tick undoes is how a fix gets
+            // credited for something it is not doing.
 
             // Trapped air holds it up, then escapes. Linear bleed rather than a curve -- the interesting moment is
             // WHEN it starts going down, and a curve only makes that harder to predict without looking different.

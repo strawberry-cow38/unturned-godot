@@ -33,6 +33,7 @@ namespace UnturnedGodot.Net
         public const byte SystemAnimals = 15;       // wildlife (deer/pig/cow) puppets (A5). AnimalReplication.cs
         public const byte SystemDestructibles = 16; // destructible props (rubble) alive-bitmap keyed by deterministic placement index -- the ResourceReplication(12) shape for objects (DestructibleReplication.cs). IN EnableSyncCheck (authored, cross-checkable).
         public const byte SystemInteractables = 17; // doors + beds: open/locked/owner state, server-authoritative (InteractableReplication.cs). Deadzones need no system -- their effect is damage the server already replicates through SystemVitals(13).
+        public const byte SystemProfiles = 18;      // display name + avatar hash per player (ProfileReplication.cs). Everyone-visible, unlike skills: the point is that other players see it. The avatar BYTES do not ride the snapshot -- only a 64-bit content hash does, and the image goes out once per (peer, hash) as EventAvatarData.
         public const byte SystemSyncCheck = 255;    // hardening: rolling per-system StateHash block for desync detection, composed LAST
                                                     // when SnapshotComposer.EnableSyncCheck is on; never a real system id (reserved)
 
@@ -99,6 +100,38 @@ namespace UnturnedGodot.Net
         /// loopback server and echoes the stale magazine back -- "unload a mag, move anything, the rounds
         /// go back in".</summary>
         public const byte CommandMagLoad = 39;     // a worn slot -> the grid
+        /// <summary>The client's gun state for one grid address (v16). NINE fields on Item -- gunAmmo,
+        /// gunChambered, gunFiremode, gunMagId, gunAttach and the four per-slot attachment ids -- are written
+        /// ONLY by the client (SaveGunState, AttachmentFit) and had no server-side writer at all, so the
+        /// server's copy of each sat at its constructor default for the life of the session. WriteJar dutifully
+        /// sent that default back on every owner echo, which is why the wire tests were green: the field
+        /// round-trips perfectly, it is the SOURCE that was never populated.
+        ///
+        /// It only shows once the grid moves, because a move is a request -- the client does not touch its own
+        /// grid, it repaints from the echo -- and the echo replaces every jar with a fresh Item carrying the
+        /// server's -1. RestoreGunState reads -1 as "no saved state" and leaves LoadGun's factory defaults
+        /// standing, so the magazine comes back FULL (strawberry: "sometimes ammo magically refills into guns
+        /// after some combo of equip/dequip/moving around between primary slot/inv"). The fitted sight, the
+        /// attach mask, the loaded mag and the fire mode all reset on the same echo.
+        ///
+        /// Client-asserted, server-clamped, exactly like ReloadSwapCommand's SpentAmount: the server has no gun
+        /// simulation to derive ammo from, so the honest thing is to take the client's number and cap it at the
+        /// magazine's real capacity. The worst a lying client gets is the full magazine it could have reloaded
+        /// to anyway.</summary>
+        public const byte CommandGunState = 40;
+        /// <summary>The autodrink toggle for the item at (Page,X,Y) (v16). Same class of bug as CommandGunState
+        /// and found by the same audit: Item.autoDrink is on the wire, is written only by InventoryUI's toggle,
+        /// and has no server-side writer at all -- so the server's copy is the `= true` field initialiser
+        /// forever and the next owner echo turns the toggle back ON. A player who deliberately switched
+        /// autodrink OFF on their clean water gets it drunk automatically after their next inventory drag, which
+        /// looks like the toggle simply not working rather than like a replication fault.</summary>
+        public const byte CommandSetAutoDrink = 41;
+        /// <summary>Client -> server on join: display name + profile picture (strawberry 2026-08-26). BOTH
+        /// are untrusted input that every other client renders, so the server re-runs ProfileRules on the
+        /// name and publishes its OWN answer, and validates the PNG header without decoding it. See
+        /// ProfileRules for the threat model -- the short version is that Godot's RichTextLabel renders
+        /// BBCode, so a name is a place someone can put [img]https://attacker/x[/img].</summary>
+        public const byte CommandSetProfile = 42;
 
         // EventRegistry id space (server -> client, ReliableOrdered)
         public const byte EventJoinSnapshot = 1;   // the join-time FULL snapshot rides the reliable channel (§2.2: fragmentation is safe there)
@@ -136,6 +169,7 @@ namespace UnturnedGodot.Net
         public const byte EventObjectRestored = 33;    // destructible props: the Rubble_Reset respawn -- alive-bit back on by index
         public const byte EventDoorState = 34;         // SP/MP unify: a door's authoritative open+locked state (both bits, so a lock is visible to everyone rather than only to the server)
         public const byte EventBedClaimed = 35;        // SP/MP unify: a bed's owner changed (0 = released); the loser of a re-claim gets its own event
+        public const byte EventAvatarData = 36;        // the bytes behind an avatar hash, sent once per (peer, hash) on the reliable channel -- the snapshot carries only the hash, because a PNG per player per tick is not a snapshot
     }
 
     /// <summary>

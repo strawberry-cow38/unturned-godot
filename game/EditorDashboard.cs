@@ -15,10 +15,11 @@ namespace UnturnedGodot
         EditorObjectBrowser _browser;   // the Objects-tab palette (shown only in Objects mode)
         EditorTerrainPanel _terrainPanel;   // the Terrain-tab tool buttons (shown only in Terrain mode)
         EditorSpawnsPanel _spawnsPanel;     // the Spawns-tab tool buttons (shown only in Spawns mode)
-        EditorRoadsPanel _roadsPanel;       // the road/rail tool buttons (shown only in Environment mode)
+        EditorRoadsPanel _roadsPanel;       // the road/rail AND river tool buttons (shown only in Environment mode)
         EditorBuildingsPanel _buildPanel;   // the Level-tab building tool (shares the tab with the browser)
         readonly Dictionary<EEditorMode, Button> _tabs = new();
-        Label _toast; double _toastT;                       // transient centered message (source EditorUI.message / EEditorMessage)
+        Label _toast; double _toastT;
+        Button _exitBtn; bool _exitArmed; double _exitArmT;   // two-step exit while there is unsaved work                       // transient centered message (source EditorUI.message / EEditorMessage)
         Control _pause;                                     // ESC pause overlay (source EditorPauseUI, slim: Resume/Save/Exit)
         bool _visObjects = true, _visRoads = true, _visFoliage = true;   // F1/F2/F3 level-visibility toggles (source EditorLevelVisibilityUI)
         Label _hover;                                       // object-under-cursor readout (source EditorObjects hover hint)
@@ -51,7 +52,22 @@ namespace UnturnedGodot
             save.Pressed += () => Editor?.Save();
             right.AddChild(save);
             var exit = new Button { Text = "Exit", CustomMinimumSize = new Vector2(90f, 40f) };
-            exit.Pressed += () => OnExit?.Invoke();
+            // TWO-STEP EXIT WHEN DIRTY. Leaving on a single click with unsaved work is the most common way an
+            // afternoon disappears, and it is silent. The first press arms and says what is at stake; the
+            // second within 4s leaves anyway, so this costs a deliberate quitter one extra click and never
+            // blocks them. Not a modal: a modal here would need focus handling the rest of this UI does not do.
+            exit.Pressed += () =>
+            {
+                if (Editor != null && Editor.WouldLoseWork && !_exitArmed)
+                {
+                    _exitArmed = true; _exitArmT = 4.0;
+                    exit.Text = "Exit anyway?";
+                    ShowMessage($"Unsaved changes ({Editor.SecondsSinceSave:0}s). Ctrl+S to save, or press Exit again to discard.", 4.0);
+                    return;
+                }
+                OnExit?.Invoke();
+            };
+            _exitBtn = exit;
             right.AddChild(exit);
 
             // bottom-left: status + controls help
@@ -94,7 +110,7 @@ namespace UnturnedGodot
             if (Editor?.Buildings != null) { _buildPanel = new EditorBuildingsPanel(Editor.Buildings); AddChild(_buildPanel); }
             if (Editor?.TerrainEd != null) { _terrainPanel = new EditorTerrainPanel(Editor.TerrainEd); AddChild(_terrainPanel); }
             if (Editor?.Spawns != null) { _spawnsPanel = new EditorSpawnsPanel(Editor.Spawns); AddChild(_spawnsPanel); }
-            if (Editor?.RoadDrawEd != null || Editor?.RoadsEd != null) { _roadsPanel = new EditorRoadsPanel(Editor.RoadDrawEd, Editor.RoadsEd); AddChild(_roadsPanel); }
+            if (Editor?.RoadDrawEd != null || Editor?.RoadsEd != null || Editor?.RiverEd != null) { _roadsPanel = new EditorRoadsPanel(Editor.RoadDrawEd, Editor.RoadsEd, Editor.RiverEd); AddChild(_roadsPanel); }
             if (Editor != null) Editor.ModeChanged += _ => Refresh();
             Refresh();
         }
@@ -117,6 +133,18 @@ namespace UnturnedGodot
         {
             if (_toast == null) return;
             _toast.Text = msg; _toast.Visible = true; _toastT = dur;
+        }
+
+        /// <summary>Global key reference, on ? or Shift+F1. The per-tool hints in the status line only cover the
+        /// ACTIVE tool -- the session-wide keys (save, undo, the visibility toggles) were written down nowhere on
+        /// screen, so the only way to learn them was to be told or to read the source.</summary>
+        void ShowHelp()
+        {
+            ShowMessage(
+                "Ctrl+S save   ·   Ctrl+Z undo   ·   F1/F2/F3 show-hide objects/roads/foliage   ·   Esc menu\n" +
+                "RMB-drag fly   ·   WASD move   ·   E/Q up-down   ·   scroll speed\n" +
+                "Tools: R draw road · Shift+R legacy pave · V river   ·   per-tool keys are in the status bar",
+                7.0);
         }
 
         void TogglePause(bool? on = null) { if (_pause != null) _pause.Visible = on ?? !_pause.Visible; }
@@ -159,11 +187,15 @@ namespace UnturnedGodot
             else if (k.Keycode == Key.F1) { _visObjects = !_visObjects; Editor?.Objects?.SetVisible(_visObjects); ShowMessage($"Objects: {(_visObjects ? "shown" : "hidden")}"); GetViewport().SetInputAsHandled(); }   // level-visibility toggles (source EditorLevelVisibilityUI F1-F9)
             else if (k.Keycode == Key.F2) { _visRoads = !_visRoads; Editor?.RoadsEd?.SetVisible(_visRoads); ShowMessage($"Roads: {(_visRoads ? "shown" : "hidden")}"); GetViewport().SetInputAsHandled(); }
             else if (k.Keycode == Key.F3) { _visFoliage = !_visFoliage; Editor?.Objects?.SetFoliageVisible(_visFoliage); ShowMessage($"Foliage: {(_visFoliage ? "shown" : "hidden")}"); GetViewport().SetInputAsHandled(); }
+            else if (k.Keycode == Key.F1 && Input.IsKeyPressed(Key.Shift)) { ShowHelp(); GetViewport().SetInputAsHandled(); }
+            else if (k.Keycode == Key.Slash && Input.IsKeyPressed(Key.Shift)) { ShowHelp(); GetViewport().SetInputAsHandled(); }   // "?"
+
         }
 
         public override void _Process(double delta)
         {
             if (_toast != null && _toast.Visible) { _toastT -= delta; if (_toastT <= 0.0) _toast.Visible = false; }   // expire the message toast
+            if (_exitArmed) { _exitArmT -= delta; if (_exitArmT <= 0.0) { _exitArmed = false; if (_exitBtn != null) _exitBtn.Text = "Exit"; } }   // disarm, so a stale arm cannot swallow a later deliberate click
             if (_hover != null) { var hn = Editor?.Objects?.HoverName; _hover.Visible = !string.IsNullOrEmpty(hn); _hover.Text = hn; }   // object-under-cursor readout
             if (Editor == null || _status == null) return;
             float spd = Editor.Camera?.Speed ?? 0f;
@@ -172,11 +204,23 @@ namespace UnturnedGodot
             bool bld = Editor.Mode == EEditorMode.Buildings;
             string obj = Editor.Mode == EEditorMode.Level ? $"   ·   LMB place/select · drag box-select · Shift multi · {gm} gizmo (T) · Ctrl+C/V dup · Ctrl+B/N align · Del · F focus · Ctrl-snap {Editor.Objects?.GizmoSnapLabel} (. cycles)" : "";
             string build = bld && Editor.Buildings != null
-                ? $"   ·   {Editor.Buildings.ToolText} · 1-6 preset · drag an edge to resize · Del removes · Esc cancels · {Editor.Buildings.Walls.Count} walls" : "";
+                // The tool keys are listed because until they were, there were none -- every switch was a trip
+                // to the panel. A shortcut nobody is told about is the same as no shortcut.
+                ? $"   ·   {Editor.Buildings.ToolText} · B wall R room F floor G roof T stairs V foundation X delete · H auto-floor rooms · 1-6 preset · Q/E storey · drag an edge to resize · Del removes · Esc cancels · {Editor.Buildings.Walls.Count} walls" : "";
             string spawn = Editor.Mode == EEditorMode.Spawns && Editor.Spawns != null ? $"   ·   Tab category · 1=add 2=remove · {Editor.Spawns.ModeText} · ,/. rot · [/] radius · V alt · T type · {Editor.Spawns.Count} spawns" : "";
-            string envs = Editor.Mode == EEditorMode.Environment && Editor.Environment != null ? $"   ·   ,/. time · O overcast · {Editor.Environment.ModeText}{(Editor.RoadDrawEd != null ? $"   ·   {Editor.RoadDrawEd.ModeText}" : "")}{(Editor.RoadsEd is { Paving: true } ? $"   ·   {Editor.RoadsEd.ModeText}" : "")}" : "";
+            string envs = Editor.Mode == EEditorMode.Environment && Editor.Environment != null ? $"   ·   ,/. time · O overcast · {Editor.Environment.ModeText}{(Editor.RoadDrawEd != null ? $"   ·   {Editor.RoadDrawEd.ModeText}" : "")}{(Editor.RoadsEd is { Paving: true } ? $"   ·   {Editor.RoadsEd.ModeText}" : "")}{(Editor.RiverEd != null ? $"   ·   {Editor.RiverEd.ModeText}" : "")}{(Editor.FoliageEd != null ? $"   ·   FOLIAGE {Editor.FoliageEd.ModeText} · LMB paint · Alt+LMB erase placed · Alt+Shift+LMB erase baked" : "")}" : "";
             string terr = Editor.Mode == EEditorMode.Terrain && Editor.TerrainEd != null ? $"   ·   LMB raise · Shift+LMB lower · [/] radius · ,/. strength · {Editor.TerrainEd.ModeText}" : "";
-            _status.Text = $"{Editor.Mode}   ·   RMB fly · WASD · E/Q up-down · scroll = speed (×{spd:0}){obj}{build}{spawn}{envs}{terr}   ·   map: {Editor.MapName}";
+            // UNSAVED indicator. Nothing used to tell you there were unsaved changes, so the only way to find
+            // out was to lose them. Shows the AGE of the unsaved work, not just a dot -- "unsaved" alone is easy
+            // to stop seeing, whereas a number that keeps climbing is not.
+            string save = Editor.IsDirty
+                ? $"   ·   ● UNSAVED {Editor.SecondsSinceSave:0}s (Ctrl+S)"
+                : $"   ·   {Editor.LastSaveLabel}";
+            _status.Text = $"{Editor.Mode}   ·   RMB fly · WASD · E/Q up-down · scroll = speed (×{spd:0}){obj}{build}{spawn}{envs}{terr}   ·   map: {Editor.MapName}{save}";
+            if (_status != null)
+                _status.AddThemeColorOverride("font_color", Editor.IsDirty
+                    ? new Color(1f, 0.82f, 0.35f)        // amber while unsaved
+                    : new Color(0.9f, 0.95f, 0.9f));
         }
     }
 }

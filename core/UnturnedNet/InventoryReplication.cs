@@ -184,6 +184,87 @@ namespace UnturnedGodot.Net
         }
     }
 
+    /// <summary>The client-owned gun state for the item at (Page,X,Y) -- see ReplicationIds.CommandGunState
+    /// for why the server needs telling at all. Id is carried so a command that arrives after the player has
+    /// moved something else into that cell lands on nothing rather than stamping a rifle's magazine onto a can
+    /// of beans; the address alone is not an identity.
+    ///
+    /// The four per-slot attachment ids ride along with the mask. They are the same class of field (client-only
+    /// writer, no server writer) and they die on the same echo, so splitting them into their own command would
+    /// mean two commands that must not be reordered against each other for one logical state.
+    ///
+    /// gunChamberedType is NOT here: it is a string, this stack has no string primitive, and ReadJar already
+    /// re-derives it from the loaded magazine id.</summary>
+    public struct GunStateCommand
+    {
+        public byte Page, X, Y;
+        public ushort Id;            // the gun's item id -- identity, so a stale address cannot stamp the wrong item
+        public short Ammo;
+        public bool Chambered;
+        public sbyte Firemode;
+        public int MagId;
+        public int Attach;           // the viewmodel's attach mask
+        public int Sight, Barrel, Grip, Tactical;
+        public bool AttachSeeded;
+
+        public void Write(NetPakWriter w)
+        {
+            w.WriteUInt8(Page); w.WriteUInt8(X); w.WriteUInt8(Y);
+            w.WriteUInt16(Id);
+            w.WriteInt16(Ammo);
+            w.WriteBit(Chambered);
+            w.WriteInt8(Firemode);
+            w.WriteInt32(MagId);
+            w.WriteInt32(Attach);
+            w.WriteInt32(Sight); w.WriteInt32(Barrel); w.WriteInt32(Grip); w.WriteInt32(Tactical);
+            w.WriteBit(AttachSeeded);
+        }
+
+        public static bool TryRead(NetPakReader r, out GunStateCommand cmd)
+        {
+            cmd = default;
+            if (!r.ReadUInt8(out byte p) || !r.ReadUInt8(out byte x) || !r.ReadUInt8(out byte y)) return false;
+            if (!r.ReadUInt16(out ushort id)) return false;
+            if (!r.ReadInt16(out short ammo)) return false;
+            if (!r.ReadBit(out bool ch)) return false;
+            if (!r.ReadInt8(out sbyte fm)) return false;
+            if (!r.ReadInt32(out int mag)) return false;
+            if (!r.ReadInt32(out int att)) return false;
+            if (!r.ReadInt32(out int sight) || !r.ReadInt32(out int barrel)
+                || !r.ReadInt32(out int grip) || !r.ReadInt32(out int tac)) return false;
+            if (!r.ReadBit(out bool seeded)) return false;
+            cmd = new GunStateCommand
+            {
+                Page = p, X = x, Y = y, Id = id, Ammo = ammo, Chambered = ch, Firemode = fm,
+                MagId = mag, Attach = att, Sight = sight, Barrel = barrel, Grip = grip, Tactical = tac,
+                AttachSeeded = seeded,
+            };
+            return true;
+        }
+    }
+
+    /// <summary>Set the autodrink flag on the item at (Page,X,Y). Id is identity, as in GunStateCommand: an
+    /// address alone would let a command that arrives after a swap set the flag on whatever landed there.</summary>
+    public struct SetAutoDrinkCommand
+    {
+        public byte Page, X, Y;
+        public ushort Id;
+        public bool AutoDrink;
+        public void Write(NetPakWriter w)
+        {
+            w.WriteUInt8(Page); w.WriteUInt8(X); w.WriteUInt8(Y); w.WriteUInt16(Id); w.WriteBit(AutoDrink);
+        }
+        public static bool TryRead(NetPakReader r, out SetAutoDrinkCommand cmd)
+        {
+            cmd = default;
+            if (!r.ReadUInt8(out byte p) || !r.ReadUInt8(out byte x) || !r.ReadUInt8(out byte y)) return false;
+            if (!r.ReadUInt16(out ushort id)) return false;
+            if (!r.ReadBit(out bool on)) return false;
+            cmd = new SetAutoDrinkCommand { Page = p, X = x, Y = y, Id = id, AutoDrink = on };
+            return true;
+        }
+    }
+
     /// <summary>Wear the garment at (Page,X,Y) into clothing slot Slot (an EItemType). The displaced garment, if
     /// any, goes back to the grid -- the server does the whole swap, because doing half of it locally is what made
     /// a dragged-on backpack un-equip itself on the next echo.</summary>

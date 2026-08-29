@@ -14,7 +14,7 @@ namespace UnturnedGodot
     {
         readonly EditorBuildings _b;
         Button _draw;
-        Button _drawFloor, _drawRoof, _room, _del, _found;
+        Button _drawFloor, _drawRoof, _room, _del, _found, _stairs;
         CheckBox _glaze, _indestructible;
         Label _hpLbl;
         OptionButton _doorDrop;
@@ -39,6 +39,7 @@ namespace UnturnedGodot
         /// every other readout in this editor is polled the same way.</summary>
         public override void _Process(double delta)
         {
+            SyncToolButtons();
             var w = _b.SelectedWall;
             int i = _b.SelectedOpening;
             bool has = w != null && IsInstanceValid(w) && i >= 0 && i < w.Openings.Count;
@@ -99,7 +100,7 @@ namespace UnturnedGodot
             return list.ToArray();
         }
 
-        enum Tool { None, Wall, Room, Floor, Roof, Opening, Delete, Foundation }
+        enum Tool { None, Wall, Room, Floor, Roof, Opening, Delete, Foundation, Stairs }
 
         /// <summary>Exactly one tool is active. Selection used to be done by each button clearing the others
         /// by hand, in five places, and every one of them cleared a DIFFERENT subset -- the opening presets
@@ -107,26 +108,66 @@ namespace UnturnedGodot
         /// next click did whichever the input handler reached first. strawberry_cow: "prevent multiple tools
         /// being selected at once, ie wall and an opening." One place that sets all of them is the only way
         /// this stays true as tools get added.</summary>
+        /// <summary>Panel clicks set the tool THROUGH EditorBuildings, which owns it. The panel used to set
+        /// the six mode flags itself, which meant the keyboard could put the editor in a state the buttons
+        /// disagreed with -- press 1 with the room tool live and both were armed, with the room button still
+        /// lit. Button state is now SYNCED from the live tool in _Process instead of being set here, so
+        /// however the tool changed, the UI tells the truth about it.</summary>
         void SetTool(Tool t, int archetype = -1)
-        {
-            _b.WallDrawMode = t == Tool.Wall;
-            _b.RoomDrawMode = t == Tool.Room;
-            _b.SlabDrawMode = t == Tool.Floor || t == Tool.Roof;
-            _b.DeleteDrawMode = t == Tool.Delete;
-            _b.FoundationDrawMode = t == Tool.Foundation;
-            if (t == Tool.Floor) _b.SlabDrawKind = SurfaceKind.Floor;
-            if (t == Tool.Roof) _b.SlabDrawKind = SurfaceKind.Roof;
-            _b.Arm(t == Tool.Opening ? archetype : -1);
+            => _b.SelectTool(t switch
+            {
+                Tool.Wall       => EditorBuildings.BuildTool.Wall,
+                Tool.Room       => EditorBuildings.BuildTool.Room,
+                Tool.Floor      => EditorBuildings.BuildTool.Floor,
+                Tool.Roof       => EditorBuildings.BuildTool.Roof,
+                Tool.Foundation => EditorBuildings.BuildTool.Foundation,
+                Tool.Delete     => EditorBuildings.BuildTool.Delete,
+                Tool.Stairs     => EditorBuildings.BuildTool.Stairs,
+                Tool.Opening    => EditorBuildings.BuildTool.Opening,
+                _               => EditorBuildings.BuildTool.None,
+            }, archetype);
 
-            if (_draw != null) _draw.ButtonPressed = t == Tool.Wall;
-            if (_room != null) _room.ButtonPressed = t == Tool.Room;
-            if (_drawFloor != null) _drawFloor.ButtonPressed = t == Tool.Floor;
-            if (_drawRoof != null) _drawRoof.ButtonPressed = t == Tool.Roof;
-            if (_del != null) _del.ButtonPressed = t == Tool.Delete;
-            if (_found != null) _found.ButtonPressed = t == Tool.Foundation;
-            for (int i = 0; i < _arch.Count; i++)
-                _arch[i].ButtonPressed = t == Tool.Opening && i == archetype;
+        /// <summary>Light the button for whatever tool is actually live -- panel click, keyboard shortcut or
+        /// a tool that disarmed itself. Reads the authority rather than remembering what it last set.</summary>
+        readonly System.Collections.Generic.List<(RoofKind K, Button B)> _shapeButtons = new();
+
+        void PickRoofShape(RoofKind k)
+        {
+            _b.ActiveRoofKind = k;
+            foreach (var (kk, btn) in _shapeButtons) btn.ButtonPressed = kk == k;
+            RetargetRoof();
         }
+
+        /// <summary>Push the current shape and pitch onto the roof already standing, if there is one.
+        ///
+        /// Only the LAST roof: with no selection model, "the one you just made" is the only honest guess,
+        /// and silently re-pitching a roof on the other side of the plot would be worse than doing nothing.</summary>
+        void RetargetRoof()
+        {
+            var roof = _b.LastRoof;
+            if (roof == null) return;
+            var spec = roof.Spec;
+            spec.Kind = _b.ActiveRoofKind;
+            spec.PitchDeg = _b.ActiveRoofPitch;
+            if (_b.ModifyRoof(roof, spec) != null)
+                Say($"roof is now {_b.ActiveRoofKind.ToString().ToLowerInvariant()}"
+                    + (_b.ActiveRoofKind == RoofKind.Flat ? "" : $" at {_b.ActiveRoofPitch:0.#}°"));
+        }
+
+        void SyncToolButtons()
+        {
+            var t = _b.Tool;
+            if (_draw != null)      _draw.ButtonPressed      = t == EditorBuildings.BuildTool.Wall;
+            if (_room != null)      _room.ButtonPressed      = t == EditorBuildings.BuildTool.Room;
+            if (_drawFloor != null) _drawFloor.ButtonPressed = t == EditorBuildings.BuildTool.Floor;
+            if (_drawRoof != null)  _drawRoof.ButtonPressed  = t == EditorBuildings.BuildTool.Roof;
+            if (_del != null)       _del.ButtonPressed       = t == EditorBuildings.BuildTool.Delete;
+            if (_stairs != null)    _stairs.ButtonPressed    = t == EditorBuildings.BuildTool.Stairs;
+            if (_found != null)     _found.ButtonPressed     = t == EditorBuildings.BuildTool.Foundation;
+            for (int i = 0; i < _arch.Count; i++)
+                _arch[i].ButtonPressed = t == EditorBuildings.BuildTool.Opening && i == _b.ArmedArchetype;
+        }
+
         readonly System.Collections.Generic.List<Button> _arch = new();
         Label _thickLbl;
 
@@ -170,6 +211,9 @@ namespace UnturnedGodot
             _found = ToolButton(second, EditorIcons.Glyph.Foundation, 44, "Draw foundation",
                                 "drag a rectangle — a skirt, no walls needed first",
                                 () => SetTool(_found.ButtonPressed ? Tool.Foundation : Tool.None));
+            _stairs = ToolButton(second, EditorIcons.Glyph.Stairs, 44, "Stairs",
+                                 "click the floor — a flight to the storey above, step count derived so it lands flush",
+                                 () => SetTool(_stairs.ButtonPressed ? Tool.Stairs : Tool.None));
             _del = ToolButton(second, EditorIcons.Glyph.Delete, 44, "Delete / cut",
                               "click a wall to remove it, or drag along one to cut a piece out",
                               () => SetTool(_del.ButtonPressed ? Tool.Delete : Tool.None));
@@ -210,7 +254,19 @@ namespace UnturnedGodot
             // right for a simple box and a guess you cannot argue with on an L-shaped plan.
             var autos = new GridContainer { Columns = 4 };
             autos.AddThemeConstantOverride("h_separation", 4);
-            IconAction(autos, EditorIcons.Glyph.Floor, 40, "Auto floor", "fit a slab under every wall",
+            // Rooms first, because it is the one that is usually right. The plain auto-floor below fits ONE
+            // slab to the bounding box of every wall on the stage, which is correct for a single box and
+            // wrong the moment the plan is L-shaped or there are two buildings -- so it stays, but second.
+            IconAction(autos, EditorIcons.Glyph.Room, 40, "Auto floor rooms (H)",
+                       "floor each ENCLOSED room, and foundation the walls round it",
+                       () =>
+                       {
+                           int n = _b.AutoFitRooms();
+                           Say(n > 0 ? $"{n} surface(s) fitted to enclosed rooms"
+                                     : "no enclosed rooms on this storey — close the walls first");
+                       });
+            IconAction(autos, EditorIcons.Glyph.Floor, 40, "Auto floor (whole plot)",
+                       "one slab over everything drawn — ignores rooms",
                        () => Say(_b.AddSlab(SurfaceKind.Floor) != null ? "floor added" : "draw some walls first"));
             IconAction(autos, EditorIcons.Glyph.Foundation, 40, "Auto foundation",
                        $"a skirt under every wall — retail sinks {WallOpenings.FoundationDepth:0.#} m",
@@ -219,13 +275,34 @@ namespace UnturnedGodot
             IconAction(autos, EditorIcons.Glyph.Roof, 40, "Auto roof", "fit a roof over every wall",
                        () =>
                        {
-                           int n = _b.AddGableRoof(_b.ActiveRoofPitch);
-                           Say(n > 0 ? (_b.ActiveRoofPitch <= 0.1f ? "flat roof added"
-                                                                   : $"gable roof at {_b.ActiveRoofPitch:0.#}°")
+                           var made = _b.PlaceRoofOverWalls(_b.ActiveRoofKind, _b.ActiveRoofPitch);
+                           int n = made?.Count ?? 0;
+                           Say(n > 0 ? (_b.ActiveRoofKind == RoofKind.Flat ? "flat roof added"
+                                        : $"{_b.ActiveRoofKind.ToString().ToLowerInvariant()} roof at {_b.ActiveRoofPitch:0.#}°")
                                      : "draw some walls first");
                        });
             box.AddChild(Dim("AUTO-FIT"));
             box.AddChild(autos);
+
+            // ROOF SHAPE. Separate from the pitch, because they are separate questions -- a hip and a gable
+            // at 30 degrees are the same slope and a different building.
+            box.AddChild(Dim("ROOF SHAPE"));
+            var shapes = new GridContainer { Columns = 3 };
+            shapes.AddThemeConstantOverride("h_separation", 4);
+            var kinds = new (RoofKind K, EditorIcons.Glyph G, string Label, string Tip)[]
+            {
+                (RoofKind.Flat, EditorIcons.Glyph.Floor, "Flat", "a slab on the wall heads — 80% of retail"),
+                (RoofKind.Gable, EditorIcons.Glyph.Roof, "Gable", "two slopes to a ridge; the end walls close it"),
+                (RoofKind.Hip, EditorIcons.Glyph.RoofHip, "Hip", "four slopes, no gable ends — square gives a pyramid"),
+            };
+            foreach (var (k, g, label, tip) in kinds)
+            {
+                var kk = k;
+                var btn = ToolButton(shapes, g, 44, label, tip, () => PickRoofShape(kk));
+                btn.ButtonPressed = _b.ActiveRoofKind == kk;
+                _shapeButtons.Add((kk, btn));
+            }
+            box.AddChild(shapes);
 
             // Snapped to the measured retail pitches rather than free: those are where real roofs sit, and 0
             // (flat) is first because it is 80% of them.
@@ -241,6 +318,10 @@ namespace UnturnedGodot
             {
                 _b.ActiveRoofPitch = EditorBuildings.RoofPitches[Mathf.Clamp((int)v, 0, EditorBuildings.RoofPitches.Length - 1)];
                 _pitchLbl.Text = PitchText(_b.ActiveRoofPitch);
+                // AND RE-PITCH THE ROOF THAT IS ALREADY UP. This is the point of roofs being objects:
+                // strawberry_cow's complaint was that you place one, it is wrong, and your only move is to
+                // undo back past it. Moving the slider now changes the roof you are looking at.
+                RetargetRoof();
             };
             box.AddChild(pitch);
 

@@ -43,6 +43,7 @@ namespace UnturnedGodot
         public System.Collections.Generic.List<FixtureRecord> Fixtures;   // A3: world power fixtures (Circuit_0 grid sources) recorded by WorldBuilder -- ServerPlaced under consume, direct-Attached otherwise
         public System.Collections.Generic.List<(string mesh, int table, bool display, string label, Vector3 pos, float yaw)> Containers;   // A1: world-build container manifest -> ContainerNetSync registers each as a server-owned fixture + stocks its grid
         bool _localInventoryAdopted;
+        bool _profileSent;   // the local player's name + picture, sent once the loopback session is Connected
         uint _teleportSeq;   // last server teleport adopted onto the local node (see TickLocal step 1b)   // P1b: latches the one-time initial owner-grid pull (ClientWorldSession.SpawnShell:456-457)
 
         public MemNetwork Net { get; private set; }
@@ -186,6 +187,10 @@ namespace UnturnedGodot
                 Player.NetDropItem = (page, x, y) => Client.SendDropItem(page, x, y);
                 Player.NetFitAttachment = (page, x, y, id) => Client.SendFitAttachment(page, x, y, id);
                 Player.NetConsume = (page, x, y) => Client.SendConsume(page, x, y);
+                Player.NetSetAutoDrink = (page, x, y, id, on) => Client.SendSetAutoDrink(page, x, y, id, on);
+                Player.NetGunState = (page, x, y, it) => Client.SendGunState(page, x, y, it.id, (short)it.gunAmmo, it.gunChambered,
+                    (sbyte)it.gunFiremode, it.gunMagId, it.gunAttach, it.gunSightId, it.gunBarrelId, it.gunGripId,
+                    it.gunTacticalId, it.gunAttachSeeded);
                 Player.NetReloadSwap = (page, x, y, sid, samt) => Client.SendReloadSwap(page, x, y, sid, samt);
                 Player.NetWearClothing = (page, x, y, slot) => Client.SendWearClothing(page, x, y, slot);
                 Player.NetUnwearClothing = slot => Client.SendUnwearClothing(slot);
@@ -372,6 +377,11 @@ namespace UnturnedGodot
             Net.Tick();
             Client.Tick();
             if (Client.State != NetSessionState.Connected || Player == null || !IsInstanceValid(Player)) return;
+
+            // Singleplayer is a join too. The loopback server runs the same profile validation as a dedicated
+            // one, so the local player's name and picture take the SAME path here as over a real wire -- which
+            // is also what makes them verifiable without two machines.
+            if (!_profileSent) { _profileSent = true; Client.SendSetProfile(PlayerProfile.Name, PlayerProfile.AvatarPng); }
 
             // P1b: the one-time initial owner-grid pull (ClientWorldSession.SpawnShell:456-457). The
             // ReplicaUpdated subscription re-adopts every echo AFTER this; this catches the join snapshot's

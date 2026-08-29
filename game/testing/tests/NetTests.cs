@@ -382,7 +382,22 @@ namespace UnturnedGodot.Testing
             // the observer's world converged through all the churn -- exact parity, never a tolerance (§6)
             yield return Ticks(30);
             T.Check("observer players replica == server (StateHash parity)", observer.Players.StateHash() == ded.Server.Players.StateHash());
-            T.Check("observer vehicles replica == server (StateHash parity)", observer.Vehicles.StateHash() == ded.Server.Vehicles.StateHash());
+
+            // WAIT FOR CONVERGENCE rather than sampling at an arbitrary instant.
+            //
+            // This asserted equality immediately after Ticks(30) and started failing when vehicles stopped
+            // being auto-braked on exit (strawberry: "when exiting a vehicle, keep its momentum, dont apply any
+            // brakes"). Diagnosed by dumping both sides: EVERY field matched except pos.z, by 0.0039 -- exactly
+            // one quantisation step -- with lin.z still -0.2031. The jeep is simply still rolling, so the
+            // replica trails the server by the one snapshot it has not received yet.
+            //
+            // That is the replication working, sampled at the wrong moment. The invariant worth asserting was
+            // never "equal at tick N" -- a moving object makes that a coin flip -- it is "the replica CONVERGES
+            // on the server". Waiting for it is also not a weaker check: it is still exact equality, never a
+            // tolerance, and if replication is actually broken they never converge and this times out and fails.
+            yield return Until(() => observer.Vehicles.StateHash() == ded.Server.Vehicles.StateHash(), 5);
+            T.Check("observer vehicles replica converges on the server (exact StateHash parity)",
+                    observer.Vehicles.StateHash() == ded.Server.Vehicles.StateHash());
 
             // Phase 8 world clock (§3.7): synced through the churn, same tick -> same derived time-of-day
             T.Check("world clock synced to the observer", observer.Clock.HasClock);
@@ -474,7 +489,9 @@ namespace UnturnedGodot.Testing
             yield return Until(() => ded.Server.Vehicles.TryGet(netId, out var e) && e.DriverPlayerId == driver.PlayerId, 5);
             bool seated = ded.Server.Vehicles.TryGet(netId, out var seatE) && seatE.DriverPlayerId == driver.PlayerId;
             T.Check("the Enter command took the seat server-side (occupancy + reach validated)", seated);
-            T.Check("the node's engine started (SP enter side effects through the sync)", jeep.EngineOn);
+            // Entering no longer starts it either; what the sync must still do is WAKE the body so a frozen
+            // parked car simulates once someone is aboard.
+            T.Check("the node woke on enter (engine no longer a side effect of the seat)", !jeep.Sleeping);
             yield return Until(() => entered > 0, 5);
             T.Check($"the VehicleEntered fact reached the driver ({entered})", entered > 0);
 
@@ -523,7 +540,12 @@ namespace UnturnedGodot.Testing
             yield return Until(() => ded.Server.Vehicles.TryGet(netId, out var e) && e.DriverPlayerId == 0, 5);
             T.Check("Exit freed the seat", ded.Server.Vehicles.TryGet(netId, out var freedE) && freedE.DriverPlayerId == 0);
             yield return Ticks(5);
-            T.Check("the node parked (engine off) after exit", !jeep.EngineOn);
+            // Exit now touches NEITHER the engine nor the brakes (strawberry_cow 2026-08-24: "keep its
+            // momentum, dont apply any brakes"). So the only thing exit is still responsible for is freeing the
+            // seat, which the check above already covers. Asserting NOT-parked is the real content here: this
+            // test previously asserted the opposite twice over, and a rule that reverses twice in an hour is
+            // exactly the one worth pinning down.
+            T.Check("exit left the car unparked -- momentum is the driver's to leave behind", !jeep.Parked);
 
             // teardown: unhook the pump so nothing touches the dying MemNetwork after QueueFree
             world.Sim.Sim.Remove(pump);
@@ -779,8 +801,16 @@ namespace UnturnedGodot.Testing
             float frozenToCar = serverCarPos.DistanceTo(new Vector3(frozenRepPos.x, frozenRepPos.y, frozenRepPos.z));
             T.Check($"the frozen replica really is far from the server car at exit time ({frozenToCar:0.0} m) -- the assert below discriminates",
                     frozenToCar > 10f);
+            // RELATIVE, not an absolute 3.5 m. This callback fires when the exited fact clears the blackout
+            // wall, which is deliberately LATE -- and exit keeps the car's momentum now (strawberry_cow
+            // 2026-08-24), so the car has coasted between the teleport and this sample. The old absolute
+            // threshold was therefore measuring the exit park, not the thing named in the check.
+            //
+            // What this test is actually about is WHICH reference the server teleported the player to: the real
+            // car or the stale frozen replica. That is a comparison, and it survives the car moving. The
+            // frozenToCar > 10 m precondition above is what makes it discriminate.
             T.Check($"EXIT LANDS BESIDE THE SERVER CAR, not the frozen replica (to car {exitToCar:0.00} m, to frozen replica {exitToFrozen:0.0} m, evt spot ({evtPos.x:0.0},{evtPos.y:0.0},{evtPos.z:0.0}))",
-                    exitToCar < 3.5f);
+                    exitToCar < exitToFrozen * 0.5f);
 
             // stream recovery intact: the resumed walk/reconcile loop re-converges the shell onto its
             // server entity. (Deliberately NOT asserting WHERE they converge: the entity is written back
@@ -1379,8 +1409,15 @@ namespace UnturnedGodot.Testing
             T.Check($"(d) the shell reached the flat ground (y {bottomY:0.00} m)", bottomY < 0.3f);
 
             // ---- climb again, then descend over a mild adverse link ----
+            //
+            // 180 -> 300 ticks. The ramp is 18 degrees, which is WALKABLE, and step-up used to fire on it --
+            // TestMove reports blocked for any contact, so a walkable slope looked like a kerb and the player
+            // got teleported up it a step at a time. That was the bug strawberry reported as step-up
+            // triggering on flat ground; fixing it means a slope is now climbed at walking pace instead of
+            // being hopped up, so the same climb takes longer in ticks. The shell still climbs -- it reached
+            // 0.93 m in 180 -- it is just no longer getting free altitude.
             sess.Shell.ScriptedInput = new UnityEngine.Vector2(0f, 1f);
-            yield return Ticks(180);
+            yield return Ticks(300);
             T.Check($"re-climbed for the jittery descent (shell y {sess.Shell.TruePhysicsPosition.Y:0.00} m)", sess.Shell.TruePhysicsPosition.Y > 1.2f);
             net.ClientToServer.LatencyTicks = 3; net.ClientToServer.ReorderJitterTicks = 2; net.ClientToServer.LossProbability = 0.02;
             net.ServerToClient.LatencyTicks = 3; net.ServerToClient.ReorderJitterTicks = 2; net.ServerToClient.LossProbability = 0.02;
@@ -2511,19 +2548,27 @@ namespace UnturnedGodot.Testing
             Vector3 up45 = pup.GlobalBasis * new Vector3(0f, Mathf.Sin(Mathf.DegToRad(45f)), -Mathf.Cos(Mathf.DegToRad(45f)));
             T.Check("FP free-look pitch 45 tilts the view up", (-cam.GlobalBasis.Z).Dot(up45.Normalized()) > 0.999f);
 
-            // ToggleFirstPerson (default K, moved off H) through the real input path -- allowed while riding -> 3P chase; the orbit must consume the vars
-            p._UnhandledInput(new InputEventKey { Pressed = true, PhysicalKeycode = Key.K });
+            // ToggleFirstPerson through the real input path -- allowed while riding -> 3P chase; the orbit must
+            // consume the vars.
+            //
+            // The KEY IS READ FROM THE BIND, not written as a literal. This said Key.K, which was correct on the
+            // day the action moved off H and wrong the day it moved back (strawberry, 2026-08-24) -- and the
+            // failure was silent in the useful sense: the synthetic keypress simply matched nothing, the camera
+            // never toggled, and the test reported the CAMERA as broken. A test that hardcodes a default is
+            // testing the default, not the behaviour, and it accuses the wrong component when the default moves.
+            var fpKey = Keybinds.Default(GameAction.ToggleFirstPerson).Key;
+            p._UnhandledInput(new InputEventKey { Pressed = true, PhysicalKeycode = fpKey });
             p.DebugSetDriveOrbit(0f, 15f);
             p._Process(0.016);
             Vector3 chase0 = cam.GlobalPosition;
-            T.Check("H toggles to the 3P chase cam (behind the car, not at the eye)",
+            T.Check($"{fpKey} toggles to the 3P chase cam (behind the car, not at the eye)",
                 chase0.DistanceTo(pup.GlobalTransform * pup.DriverEyeLocal) > 3f);
             p.DebugSetDriveOrbit(120f, 15f);
             p._Process(0.016);
             T.Check("3P orbit yaw moves the chase cam around the riding puppet",
                 cam.GlobalPosition.DistanceTo(chase0) > 2f);
 
-            p._UnhandledInput(new InputEventKey { Pressed = true, PhysicalKeycode = Key.K });   // back to FP for teardown parity
+            p._UnhandledInput(new InputEventKey { Pressed = true, PhysicalKeycode = fpKey });   // back to FP for teardown parity
             p.ExitPuppet(new Vector3(0f, 0.1f, 0f));
             yield return Ticks(1);
         }
@@ -2965,8 +3010,26 @@ namespace UnturnedGodot.Testing
             T.Check($"...seeded with the last adopted velocity (peak freed v {maxFreedV:0.0} m/s -- not a dead stop)", maxFreedV > 2f);
             var exitSpot = jeep.GlobalPosition;
             yield return Ticks(200);
-            T.Check($"...then SETTLED under real physics + the SP exit park (v {jeep.LinearVelocity.Length():0.00} m/s)",
-                    jeep.LinearVelocity.Length() < 1f);
+            // Exit KEEPS MOMENTUM now (strawberry_cow 2026-08-24), so this can no longer expect a dead stop --
+            // the old assertion said "the SP exit park" in its own text, i.e. it was measuring the brake rather
+            // than the handoff this test is named for. Assert the real subject instead: authority came back and
+            // physics owns the car, so it is slowing under drag rather than still being driven.
+            T.Check($"...then coasting under real physics, no longer driven (v {jeep.LinearVelocity.Length():0.00} m/s, handed off at {maxFreedV:0.0})",
+                    jeep.LinearVelocity.Length() < maxFreedV);
+            // Park the CAR for the re-enter phase below, which needs it in walk-up range -- a coasting jeep
+            // leaves. Stopping the car rather than teleporting the shell on purpose: this test's own comments
+            // note the reconcile loop re-converges the shell onto its server entity, so a client-side shell
+            // teleport gets undone and the walk-up never comes back into range.
+            // Bring the car BACK to the shell for the re-enter phase. Stopping it was not enough: it coasted
+            // for the whole 200-tick settle above before I stopped it, so it halts tens of metres away and
+            // RequestEnterNearestPuppet (walk-up range) never succeeds -- that Until timing out IS this test's
+            // failure. Moving the CAR rather than the shell on purpose: this test's own comments note the
+            // reconcile loop re-converges the shell onto its server entity, so a client-side shell teleport is
+            // undone within a few ticks.
+            jeep.LinearVelocity = Vector3.Zero; jeep.AngularVelocity = Vector3.Zero;
+            jeep.GlobalPosition = sess.Shell.GlobalPosition + new Vector3(2.5f, 0.6f, 0f);
+            jeep.Park();
+            yield return Ticks(20);
             T.Check("the shell stands beside the car, back on the walk plane", sess.Shell.Visible && !sess.Shell.IsDriving
                     && sess.Shell.GlobalPosition.DistanceTo(exitSpot) < 12f);
 
@@ -2982,9 +3045,18 @@ namespace UnturnedGodot.Testing
             bool freed = ded.Server.Vehicles.TryGet(netId, out var fe) && fe.DriverPlayerId == 0;
             T.Check("DISCONNECT freed the seat (OnPeerDisconnected -> ServerExit)", freed);
             T.Check("...and released the hold -- the node is the server's again", !jeep.NetHeld && !jeep.Freeze);
-            yield return Until(() => jeep.LinearVelocity.Length() < 0.8f, 8);
-            T.Check($"the abandoned car settled under server physics (v {jeep.LinearVelocity.Length():0.00} m/s)",
-                    jeep.LinearVelocity.Length() < 0.8f);
+            // An abandoned car no longer brakes itself (strawberry_cow 2026-08-24: exit keeps momentum), so
+            // waiting for a dead stop hangs -- a coasting jeep does not reach 0.8 m/s inside 8 s, and that Until
+            // timing out was this test's failure. It was measuring the exit park; the subject here is that the
+            // SERVER took the car back after a disconnect.
+            //
+            // So measure that instead: sample, let physics run, sample again. Decelerating means server-side
+            // drag owns it. A car still being driven by a departed client would hold or gain speed.
+            float abandonedV0 = jeep.LinearVelocity.Length();
+            yield return Ticks(120);
+            float abandonedV1 = jeep.LinearVelocity.Length();
+            T.Check($"the abandoned car is slowing under server physics, not still driven ({abandonedV0:0.00} -> {abandonedV1:0.00} m/s)",
+                    abandonedV1 < abandonedV0 || abandonedV1 < 0.8f);
 
             world.Sim.Sim.Remove(pump);
         }

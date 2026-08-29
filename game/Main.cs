@@ -98,7 +98,9 @@ namespace UnturnedGodot
                 DisplayServer.WindowSetVsyncMode(DisplayServer.VSyncMode.Disabled);
                 GD.Print($"[display] vsync -> {DisplayServer.WindowGetVsyncMode()}");
             }
-            string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null, drivetest = null, proptest = null, magnettest = null, animrig = null, rottest = null, itemtest = null, croptest = null, menuShot = null, clothtest = null, boattest = null, slingtest = null, trainshow = null, traintrack = null, ammoRadial = null, animaltest = null, treetest = null;
+            string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null, drivetest = null, proptest = null, magnettest = null, animrig = null, rottest = null, itemtest = null, navShot = null, croptest = null, menuShot = null, clothtest = null, boattest = null, slingtest = null, trainshow = null, traintrack = null, ammoRadial = null, animaltest = null, treetest = null, profileShot = null;
+            bool zperf = false;
+            bool zbody = false;
             bool deployTest = false, barricadeTest = false, barricadePlay = false;
             bool wearcloth = false;
             bool skillsui = false;
@@ -140,6 +142,7 @@ namespace UnturnedGodot
                 else if (arg == "--skillsui") skillsui = true;   // render the skills menu (showcase/validate the SkillsUI)
                 else if (arg.StartsWith("--itemtest=")) itemtest = arg["--itemtest=".Length..];   // drop a row of loot items (ids) as physics WorldItems -> validate real mesh/tex/scale/settle
                 else if (arg.StartsWith("--ammoradial=")) { ammoRadial = arg["--ammoradial=".Length..]; _shotRequested = ammoRadial; }   // open the R-hold shotgun ammo radial (mock 12ga choices) -> screenshot the picker UI
+                else if (arg.StartsWith("--profileshot=")) { profileShot = arg["--profileshot=".Length..]; _shotRequested = profileShot; }   // two nameplates -- a valid 128px pfp and a refused one -> verify the render + the missing-texture fallback
                 else if (arg.StartsWith("--animrig=")) { animrig = arg["--animrig=".Length..]; _shotRequested = animrig; }   // build a rigged animal (content/NAME_rig.json) at rest + 3/4 cam -> validate the static pose stands
                 else if (arg.StartsWith("--rottest=")) rottest = arg["--rottest=".Length..];   // place ONE prop with the placement euler (UG_EULER) under a rotation convention (UG_ROTCONV) -> hunt the upside-down
                 else if (arg.StartsWith("--bakeicon=")) bakeIcon = arg["--bakeicon=".Length..];   // MODEL[:ALBEDO] -> icon PNG (needs --shot=OUT)
@@ -485,6 +488,15 @@ namespace UnturnedGodot
                 _shotPath = shot;
                 _itemTest = true;
                 BuildItemTest(itemtest);
+                return;
+            }
+
+            if (profileShot != null)   // nameplates: name + profile picture over two rigged bodies -> eyeball the render
+            {
+                GetWindow().Size = new Vector2I(1280, 720);
+                _shotPath = profileShot;
+                SDG.Unturned.ItemCatalog.RegisterAll();
+                BuildProfilePlateDemo();
                 return;
             }
 
@@ -3840,6 +3852,81 @@ namespace UnturnedGodot
             GD.Print($"[ITEMTEST] dropped {parts.Length} items: {ids}");
         }
 
+        // --profileshot=OUT: two rigged bodies wearing real Nameplates -- one with a VALID 128x128 picture that
+        // travels the real client-side acceptance path (ClientAcceptAvatar -> DecodeAvatar), and one whose
+        // picture is refused, so the missing-texture checkerboard is in the same frame as the thing it stands
+        // in for. This verifies the RENDER; the wire path is covered by ProfileReplicationTests, and a
+        // screenshot is not evidence about networking.
+        void BuildProfilePlateDemo()
+        {
+            // Ambient, not just a key light: a DirectionalLight alone leaves the rig's unlit faces pure black,
+            // which makes the bodies read as silhouettes and the shot useless for judging anything but the plate.
+            var env = new Godot.Environment
+            {
+                BackgroundMode = Godot.Environment.BGMode.Color,
+                BackgroundColor = new Color(0.10f, 0.12f, 0.16f),
+                AmbientLightSource = Godot.Environment.AmbientSource.Color,
+                AmbientLightColor = new Color(0.55f, 0.58f, 0.66f),
+                AmbientLightEnergy = 1.0f,
+            };
+            AddChild(new WorldEnvironment { Environment = env });
+            AddChild(new DirectionalLight3D { Rotation = new Vector3(Mathf.DegToRad(-40f), Mathf.DegToRad(35f), 0f), LightEnergy = 1.4f });
+
+            var repl = new UnturnedGodot.Net.PlayerProfileReplication();
+            byte[] good = MakeDemoAvatarPng();
+            ulong hash = SDG.Unturned.ProfileRules.AvatarHash(good);
+            bool accepted = repl.ClientAcceptAvatar(hash, good);   // the REAL acceptance path: header re-check + hash recompute
+            GD.Print($"[PROFILESHOT] avatar accepted by the client path: {accepted} ({good.Length} bytes)");
+
+            void Place(float x, string name, byte[] png)
+            {
+                var body = UnturnedGodot.RiggedCharacter.Build("res://content/rig.json", new Color(0.82f, 0.66f, 0.52f));
+                if (body == null) { GD.Print("[PROFILESHOT] rig.json failed to load"); return; }
+                body.PlayLoop("Idle");
+                body.Position = new Vector3(x, 0f, 0f);
+                AddChild(body);
+                var plate = UnturnedGodot.Nameplate.Attach(body);
+                plate?.Set(name, png);
+                GD.Print($"[PROFILESHOT] '{name}' plate: text='{plate?.DebugText}' missingTexture={plate?.DebugShowingMissingTexture}");
+            }
+
+            // Far enough apart that the two plates cannot overlap -- a screenshot where the names run into
+            // each other cannot answer "does the name render correctly", which is the only thing it is for.
+            Place(-1.6f, "strawberry_cow", good);
+            // The SAME bytes with the wrong dimensions: refused everywhere, so the plate falls back.
+            Place(1.6f, "no_picture_set", MakeWrongSizePng());
+
+            var cam = new Camera3D { Current = true, Fov = 45f };
+            AddChild(cam);
+            cam.Position = new Vector3(0f, 1.6f, 5.2f);
+            cam.LookAt(new Vector3(0f, 1.35f, 0f), Vector3.Up);
+        }
+
+        /// <summary>A recognisable 128x128 PNG built in-process: a claw-red field with a lighter diagonal, so
+        /// the screenshot shows something that is obviously A PICTURE rather than a flat swatch that could be
+        /// a fallback colour.</summary>
+        static byte[] MakeDemoAvatarPng()
+        {
+            const int n = SDG.Unturned.ProfileRules.AvatarPixels;
+            var img = Image.CreateEmpty(n, n, false, Image.Format.Rgb8);
+            for (int y = 0; y < n; y++)
+                for (int x = 0; x < n; x++)
+                {
+                    bool stripe = ((x + y) / 12) % 2 == 0;
+                    bool ring = System.Math.Abs((x - n / 2) * (x - n / 2) + (y - n / 2) * (y - n / 2) - 2200) < 700;
+                    img.SetPixel(x, y, ring ? new Color(1f, 0.95f, 0.6f)
+                                            : stripe ? new Color(0.85f, 0.18f, 0.30f) : new Color(0.55f, 0.10f, 0.20f));
+                }
+            return img.SavePngToBuffer();
+        }
+
+        static byte[] MakeWrongSizePng()
+        {
+            var img = Image.CreateEmpty(64, 64, false, Image.Format.Rgb8);
+            img.Fill(new Color(0.2f, 0.7f, 0.4f));
+            return img.SavePngToBuffer();
+        }
+
         // --ammoradial=OUT: open the R-hold shotgun ammo radial with mock 12ga choices (buckshot + slug) over a dim
         // backdrop + screenshot it, so the picker UI can be eyeballed without a live gun. The general frame-6 capture
         // (armed via _shotPath) saves + quits.
@@ -4282,6 +4369,7 @@ namespace UnturnedGodot
             AddChild(rf);
             var roadsEd = new EditorRoads(editor, cam, rf); editor.AddChild(roadsEd); editor.RoadsEd = roadsEd;
             var roadDrawEd = new EditorRoadDraw(editor, cam, rf); editor.AddChild(roadDrawEd); editor.RoadDrawEd = roadDrawEd;   // R = draw, Shift+R = legacy nodes
+            var riverEd = new EditorRiver(editor, cam, terr); editor.AddChild(riverEd); editor.RiverEd = riverEd;   // V = carve river (spline tool, sits with the road tools)
             editor.AddChild(new EditorDashboard { Editor = editor, OnExit = ReturnToMenu });
             var play = new EditorPlayMode();   // playtest button -- custom maps get it too, not just PEI
             editor.AddChild(play);
@@ -4957,6 +5045,7 @@ namespace UnturnedGodot
             }
             var roadsEd = new EditorRoads(editor, cam, rf);   // LEGACY node paving under the Environment tab (Shift+R)
             var roadDrawEd = new EditorRoadDraw(editor, cam, rf); editor.AddChild(roadDrawEd); editor.RoadDrawEd = roadDrawEd;   // draw-a-road/rail (R)
+            var riverEd = new EditorRiver(editor, cam, res.Terr); editor.AddChild(riverEd); editor.RiverEd = riverEd;   // V = carve river (spline tool, sits with the road tools)
             editor.AddChild(roadsEd);
             editor.RoadsEd = roadsEd;
             editor.AddChild(new EditorDashboard { Editor = editor, OnExit = ReturnToMenu });
@@ -5088,6 +5177,12 @@ namespace UnturnedGodot
         void ReturnToMenu()
         {
             Input.MouseMode = Input.MouseModeEnum.Visible;
+            // Static caches are NOT in the node tree, so ReloadCurrentScene does not touch them and the next
+            // map gets served resources built during the editor session -- the "every texture is purple/black/
+            // white after leaving the editor" report. Clear BEFORE the reload, while this scene still owns them.
+            // The warmup that this drops re-runs by itself: the reload re-enters the default boot above, which
+            // calls Warmup.Begin. Clear on the way out, warm on the way in.
+            ResourceCaches.ClearAll();
             GetTree().ReloadCurrentScene();
         }
 

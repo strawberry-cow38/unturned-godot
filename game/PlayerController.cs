@@ -129,6 +129,12 @@ namespace UnturnedGodot
             return _cam.GlobalTransform;
         }
         public Transform3D DebugEye => _cam?.GlobalTransform ?? Transform3D.Identity;
+        // The focus the look scan ACTUALLY resolved, so a test can assert which part of a car the crosshair
+        // won rather than inferring it from what F happened to do. Reading the zone alone would not have caught
+        // the first version of this: the zone maths was right and simply never ran.
+        public Vehicle DebugFocusVehicle => _focusVehicle;
+        public bool DebugFocusAccessValid => _focusAccessValid;
+        public Vehicle.AccessZone DebugFocusAccess => _focusAccess;
 
         /// <summary>Swing at the structure piece under the crosshair. Returns true if one was hit, so the melee
         /// chain stops there rather than also swinging at whatever is behind it. A blowtorch repairs instead of
@@ -221,6 +227,10 @@ namespace UnturnedGodot
         bool _craneMagPrev;   // Shift edge-detect: energise/de-energise the hoist magnet
         Vehicle _driving; bool _fp = true;   // vehicle being driven + camera mode: true = 1st person (spawn default, strawberry), false = 3rd; H toggles (on foot + driving)
         float _driveCamYaw, _driveCamPitch = 15f;   // 3rd-person driving orbit: mouse yaws/pitches the chase cam around the car (master)
+        /// <summary>Seated look limits, taken from retail PlayerLook (clampYaw / clampPitch) rather than
+        /// invented: a DRIVING seat clamps yaw to +/-160, any other seat to +/-90, and a seated pitch to
+        /// MIN_ANGLE_SIT 60 / MAX_ANGLE_SIT 120 against a 0..180 scale where 90 is level -- +/-30 for us.</summary>
+        const float DriverYawLimit = 160f, PassengerYawLimit = 90f, SeatedPitchLimit = 30f;
         // FP RIDE free-look (#37, MP only): mouse yaw/pitch of the view in VEHICLE-LOCAL space while seated on a
         // puppet in first person (real Unturned lets you look around while driving; the fixed forward gaze made the
         // default MP ride cam feel stuck). At (0, FpRideGazePitchDeg) this reproduces the SP fixed gaze exactly --
@@ -352,6 +362,12 @@ namespace UnturnedGodot
         ShelfItemBody _focusShelfItem;   // the SHELF display item being looked at (glowing, F to grab straight off the shelf)
         StoreShelf _focusShelf;          // the shelf being looked at (whole-shelf outline) -- the shelf of the focused item
         Vehicle _focusVehicle;  // the vehicle the player is LOOKING AT (outlined + info panel), enter target for E
+        /// <summary>WHICH PART of it -- the door (and so which seat), the hood, or the trunk. strawberry:
+        /// "kill the lookat for the whole car, change it for a collider on each 'door'... pressing f gets you
+        /// in at that seat." Invalid means the ray hit the HULL but no zone, which is how a boat/heli/tank
+        /// keeps the whole-vehicle behaviour it has always had.</summary>
+        Vehicle.AccessZone _focusAccess;
+        bool _focusAccessValid;
         Train _focusTrain;      // the train the player is LOOKING AT (loco outlined; F boards it) -- not a Vehicle, own scan
         Train _focusCouplerTrain; int _focusCouplerIdx = -1;   // the coupler the player is looking at (rope outlined; F uncouples there)
         Deployable _focusDeployable;  // the placed deployable (generator) the player is LOOKING AT (outlined + HP/fuel billboard)
@@ -475,6 +491,8 @@ namespace UnturnedGodot
         void UpdateLookFocus()
         {
             WorldItem hitItem = null; Vehicle hitVeh = null; Deployable hitDeploy = null; GasPump hitGasPump = null; GridPowerSource hitGrid = null; FluidContainer hitFluid = null;
+            // which door/hood/trunk of the focused vehicle the ray found
+            Vehicle.AccessZone hitAccess = default; bool hitAccessValid = false;
             Door hitDoor = null; Bed hitBed = null; ObjectDoor hitObjectDoor = null; TVDevice hitTV = null; NoteBody hitNote = null;
             HeartMonitor hitMonitor = null;   // patient monitor under the ray -> F toggles it
             LampLight hitLamp = null;         // standing/desk lamp under the ray -> F on/off + outline
@@ -483,7 +501,13 @@ namespace UnturnedGodot
             Train hitTrain = null;   // train loco under the look-ray (own scan; not in ResolveFocus)
             Train hitCT = null; int hitCI = -1;   // train + coupler index under the look-ray
             bool rayTerminal = false, rayShelfItem = false;   // did the RAY claim the target, and was it a shelf item? (see the arbitration below)
-            if (!_dead && _driving == null && _riding == null && _cam != null && Input.MouseMode == Input.MouseModeEnum.Captured)
+            // The captured-mouse gate is a gameplay condition: the scan only means anything while the player is
+            // actually looking around. Headless REFUSES to capture (MouseMode stays Visible no matter what a test
+            // sets), so L1 cannot reach this scan at all without a seam -- and the alternative, testing
+            // Vehicle.ResolveAccess on its own, is precisely the check that passed against the build where the
+            // zone code was never called. Default off; any suite that sets it must clear it (see l1 leaked globals).
+            if (!_dead && _driving == null && _riding == null && _cam != null
+                && (Input.MouseMode == Input.MouseModeEnum.Captured || DebugForceLookScan))
             {
                 var space = GetWorld3D().DirectSpaceState;
                 // THIRD person traces from the SHOULDER, straight down the look axis (strawberry) -- see ShoulderWorld
@@ -590,7 +614,8 @@ namespace UnturnedGodot
                         if (node is Vehicle vv && IsInstanceValid(vv))
                         {
                             float d = vv.GlobalPosition.DistanceSquaredTo(from);
-                            if (d < maxD && d < bestV && vv.LookRayHitsHull(from, _lookEnd)) { bestV = d; hitVeh = vv; }   // cheap distance gate before the tight per-hull (oriented-box) test -- no world-AABB bloat / cross-vehicle overlap (strawberry)
+                            if (d >= maxD || d >= bestV) continue;   // cheap distance gate before the tight oriented-box tests
+                            if (vv.LookRayHitsHull(from, _lookEnd)) { bestV = d; hitVeh = vv; }
                         }
                 }
                 // TRAIN look-focus (not in ResolveFocus -- a train is a lone rail vehicle): when nothing else won,
@@ -630,12 +655,24 @@ namespace UnturnedGodot
                 _focusItem = hitItem;
                 _focusItem?.SetFocused(true);
             }
+            // WHICH PART of the winning car, resolved once here rather than inside any one of the paths that can
+            // win it. The first cut of this lived in the no-collider fallback loop below and so only ran when
+            // NOTHING else won the frame -- but a car you are stood in front of has a real hull collider and wins
+            // on the sphere probe above, so the zone code never ran and every press fell through to seat 0. The
+            // vehicle is final by this point no matter which path found it; that is the only correct place to ask.
+            // DebugLookOrigin is the `from` the scan above actually traced with -- the SHOULDER in 3rd person,
+            // which is NOT the camera. Re-deriving it from _cam here would test a different ray to the one that won.
+            hitAccessValid = hitVeh != null && IsInstanceValid(hitVeh) && hitVeh.ResolveAccess(DebugLookOrigin, _lookEnd, out hitAccess);
+            _focusAccess = hitAccess; _focusAccessValid = hitAccessValid;   // updated every frame: same car, different door
             if (hitVeh != _focusVehicle)
             {
-                if (IsInstanceValid(_focusVehicle)) _focusVehicle.SetLookFocused(false);
+                if (IsInstanceValid(_focusVehicle)) { _focusVehicle.AccessHint = ""; _focusVehicle.SetLookFocused(false); }
                 _focusVehicle = hitVeh;
                 _focusVehicle?.SetLookFocused(true);
             }
+            // Zone prompt. The whole point of splitting the hull into door/hood/trunk volumes is that the player
+            // can tell which one they have BEFORE pressing the key, so the billboard names it every frame.
+            if (_focusVehicle != null && IsInstanceValid(_focusVehicle)) _focusVehicle.AccessHint = AccessPrompt(_focusVehicle);
             if (hitDeploy != _focusDeployable)
             {
                 if (IsInstanceValid(_focusDeployable)) _focusDeployable.SetLookFocused(false);
@@ -3488,6 +3525,14 @@ namespace UnturnedGodot
         // version broke: the next inventory move echoed the server's untouched magazine back.
         public System.Action<byte, byte, byte, ushort, byte, byte, byte, ushort, bool> NetMagLoad;
         public System.Action<byte, byte, byte> NetConsume;           // (page,x,y) -> Client.SendConsume (server deletes the item; vitals stay client-led until the vitals split)
+        /// <summary>(page,x,y,item) -> Client.SendGunState. The client is the ONLY writer of a gun's
+        /// ammo/chamber/mag/firemode/attachments, and it used to be the only holder of them too: the server's
+        /// copy of all nine fields sat at its constructor default forever, and the owner echo sent that default
+        /// back over the top of the real one. Invisible until the grid moves, because a move is a request and
+        /// the client repaints from the echo -- which is why "fire it, holster it, take it out again" was fine
+        /// and "fire it, then drag it anywhere" handed back a full magazine.</summary>
+        public System.Action<byte, byte, byte, SDG.Unturned.Item> NetGunState;
+        public System.Action<byte, byte, byte, ushort, bool> NetSetAutoDrink;   // (page,x,y,id,on) -> Client.SendSetAutoDrink
         public System.Action<byte, byte, byte, ushort, byte> NetReloadSwap;   // (page,x,y, spentId,spentAmount) -> Client.SendReload (server spends the fresh mag + returns the spent one)
         public System.Action<byte, byte, byte, byte> NetWearClothing;     // (page,x,y, EItemType slot) -> Client.SendWearClothing (server does the whole swap)
         public System.Action<byte> NetUnwearClothing;                     // (EItemType slot) -> Client.SendUnwearClothing
@@ -3648,6 +3693,7 @@ namespace UnturnedGodot
         public bool RequestMoveItem(byte page0, byte x0, byte y0, byte page1, byte x1, byte y1, byte rot1)
         {
             if (NetMoveItem == null) return false;
+            FlushGunState(force: true);   // the server must own the gun state BEFORE it owns the move
             NetMoveItem(page0, x0, y0, page1, x1, y1, rot1);
             return true;
         }
@@ -3657,7 +3703,18 @@ namespace UnturnedGodot
         public bool RequestEquipItem(byte fromPage, byte x, byte y, byte slot)
         {
             if (NetEquipItem == null) return false;
+            FlushGunState(force: true);   // the server must own the gun state BEFORE it owns the move
             NetEquipItem(fromPage, x, y, slot);
+            return true;
+        }
+
+        /// <summary>Toggle autodrink on the item at (page,x,y). Routed through the server when the bag is
+        /// server-owned, for the same reason every other grid mutation is: a local-only flip is handed straight
+        /// back by the next owner echo. Returns false when there is no wire, so the caller does it locally.</summary>
+        public bool RequestSetAutoDrink(byte page, byte x, byte y, ushort id, bool on)
+        {
+            if (NetSetAutoDrink == null || !InventoryIsServerOwned) return false;
+            NetSetAutoDrink(page, x, y, id, on);
             return true;
         }
 
@@ -3666,6 +3723,7 @@ namespace UnturnedGodot
         public bool RequestDropItem(byte page, byte x, byte y)
         {
             if (NetDropItem == null) return false;
+            FlushGunState(force: true);   // the server must own the gun state BEFORE it owns the move
             NetDropItem(page, x, y);
             return true;
         }
@@ -3819,17 +3877,113 @@ namespace UnturnedGodot
         }
 
         const float StepHeight = 0.5f;   // curbs/thresholds up to this high are stepped over (master: stop snagging on sidewalks; bumped 0.4->0.5)
+        const float MinStepHeight = 0.07f;   // below this it is ground noise, not a threshold -- see StepUp
         // If the horizontal motion is blocked at foot level but clear a step higher, raise onto the step; FloorSnapLength then
         // pulls us back down onto it. Reused by both the player and zombies (source has stair/ledge handling in PlayerMovement).
+        // Camera-only smoothing for the step (strawberry_cow 2026-08-24: "reads as a slope instead of a
+        // teleport"). The BODY still moves instantly -- it has to, because the whole point of the step is to be
+        // un-blocked before MoveAndSlide runs this tick, and easing the collider upward over several frames
+        // would leave it clipped into the curb for those frames. What the player actually complains about is the
+        // VIEW jumping, so the view is what gets eased: the camera keeps the old eye height and catches up.
+        //
+        // This is the standard stair-smoothing trick for exactly that reason. Physics is unchanged and
+        // authoritative; only the thing looking at it lags.
+        float _stepSmooth;                 // metres the camera is still BELOW the body after a step
+        // CONSTANT RATE, not exponential decay (strawberry 2026-08-27: "a smooth ramp, not a sharp step").
+        // Decay is asymptotic -- it never arrives, and worse, its SPEED scales with what is left, so a 5 cm
+        // curb and a 50 cm crate both take the same time to settle and the small one reads as sluggish. At a
+        // fixed m/s the settle time is proportional to the step, which is what "ramp" actually means.
+        const float StepSmoothRate = 4f;   // m/s. 0.5 m clears in 0.125 s, a 5 cm lip in 12 ms.
+        float _stepChatterCd;              // see StepUp: suppresses SMALL repeat steps only, never stair risers
+        // Test observability. The defect being fixed is invisible from the outside -- a step that lifts 12.5 cm
+        // for a 2 cm lip ends up at the same PLACE as one that lifts 2 cm, because FloorSnapLength drags it
+        // back down. Only the rise itself distinguishes them, so the rise is what the tests read.
+        public int StepUpCount;            // steps actually taken
+        public float LastStepRise;         // metres of the last step
+
         void StepUp(float delta, bool grounded)
         {
+            if (_stepChatterCd > 0f) _stepChatterCd -= delta;
             if (!grounded) return;
             Vector3 motion = new Vector3(Velocity.X, 0f, Velocity.Z) * delta;
             if (motion.LengthSquared() < 1e-6f) return;
             if (!TestMove(GlobalTransform, motion)) return;   // not blocked at foot level
-            var raised = new Transform3D(GlobalTransform.Basis, GlobalPosition + Vector3.Up * StepHeight);
-            if (TestMove(raised, motion)) return;             // blocked even raised: a wall, not a step
-            GlobalPosition += Vector3.Up * StepHeight;
+
+            // MEASURE the step, don't search for it.
+            //
+            // The old code asked TestMove "what is the smallest lift that stops the sweep being blocked", by
+            // sampling StepHeight/4. Two things were wrong with that. The sampling was coarse enough that its
+            // smallest answer was 0.125 m, which made the `need < MinStepHeight` guard under it unreachable --
+            // dead code guarding against a value the sampler could not produce. And the question itself is the
+            // wrong one: a capsule has a ROUNDED bottom, so the sweep stops being blocked while the feet are
+            // still below the obstacle's top. Lifting by that amount clears the sweep and then fails to mount
+            // -- MoveAndSlide pushes back out and FloorSnapLength drops you, which is a jolt with no progress.
+            //
+            // So: cast down onto the surface AHEAD and rise to meet it. That gives the exact height, needs no
+            // search, and answers "is there anything to stand on" and "how high is it" with one query.
+            var space = GetWorld3D().DirectSpaceState;
+            // Past the obstacle, not under our own feet -- and past it by the SWEEP's reach, not just the
+            // capsule's. TestMove reports blocked for the swept motion, so contact happens up to |motion|
+            // before the capsule surface touches; a probe offset by the radius alone lands INSIDE the thing
+            // that blocked us and reads its top as the landing surface.
+            Vector3 ahead = motion.Normalized() * (_capsule.Radius + motion.Length() + 0.05f);
+            Vector3 probe = GlobalPosition + ahead;
+            var down = PhysicsRayQueryParameters3D.Create(
+                probe + Vector3.Up * (StepHeight + 0.05f), probe - Vector3.Up * 0.05f);
+            down.CollisionMask = CollisionMask;
+            down.Exclude = new Godot.Collections.Array<Rid> { GetRid() };
+            var landing = space.IntersectRay(down);
+            if (landing.Count == 0) return;   // nothing to stand on within a step: a ledge, not a stair
+
+            float need = ((Vector3)landing["position"]).Y - GlobalPosition.Y;
+            if (need <= MinStepHeight || need > StepHeight) return;
+
+            // A WALKABLE SLOPE IS NOT A STEP -- and the test has to be about SHAPE, not gradient.
+            //
+            // The obvious test is "is the average gradient steeper than FloorMaxAngle". It cannot work here.
+            // FloorMaxAngle is 55 degrees, and the probe reaches ~0.47 m: a 0.30 m curb across that distance
+            // is a 33-degree average, comfortably walkable. Every step is a walkable gradient when measured
+            // over a step-sized distance, so gradient tells a curb and a ramp apart not at all. (An earlier
+            // version of this compared `need` against |motion| * tan(FloorMaxAngle) -- a threshold measured
+            // over one tick's travel against a rise measured over the probe distance. Two different baselines,
+            // so the comparison was meaningless in whichever direction it happened to fall.)
+            //
+            // What separates them is the FACE we are walking into. Cast a short ray forward at ankle height:
+            // a ramp's face there IS the ramp surface, whose normal is walkable; a curb's is a vertical riser.
+            // This is the "check a surface you can name" fix -- the old guard used hit.GetNormal(), the normal
+            // of the first thing the capsule TOUCHED, which on a capsule is usually an EDGE (a terrain triangle
+            // boundary, the lip of a curb) whose normal is neither the ground nor the riser and reads steep on
+            // ground you could have walked. That was the false-trigger source.
+            Vector3 ankle = GlobalPosition + Vector3.Up * 0.05f;
+            var faceQ = PhysicsRayQueryParameters3D.Create(
+                ankle, ankle + motion.Normalized() * (_capsule.Radius + motion.Length() + 0.05f));
+            faceQ.CollisionMask = CollisionMask;
+            faceQ.Exclude = new Godot.Collections.Array<Rid> { GetRid() };
+            var face = space.IntersectRay(faceQ);
+            if (face.Count == 0) return;   // nothing solid at ankle height: an overhang, or already clear
+            float faceAngle = Mathf.Acos(Mathf.Clamp(((Vector3)face["normal"]).Dot(Vector3.Up), -1f, 1f));
+            if (faceAngle <= FloorMaxAngle) return;   // walkable face: a slope, MoveAndSlide's job
+
+            // And the surface we would land ON has to be one we can stand on -- the face test above only says
+            // the thing in our way is a riser, not that its top is level enough to hold us.
+            var landNormal = (Vector3)landing["normal"];
+            if (Mathf.Acos(Mathf.Clamp(landNormal.Dot(Vector3.Up), -1f, 1f)) > FloorMaxAngle) return;
+
+            // Finally: is the raised body actually free to move? Everything above describes the floor; this is
+            // the only thing that rules out an overhang or a wall with a ledge painted on it.
+            var raised = new Transform3D(GlobalTransform.Basis, GlobalPosition + Vector3.Up * (need + 0.02f));
+            if (TestMove(raised, motion)) return;
+
+            // CHATTER GUARD. Size-gated, not a flat cooldown: a flat one would have to be shorter than the time
+            // to cross one stair tread (0.25 m at a 6 m/s sprint is 40 ms) to avoid breaking staircases, which
+            // makes it useless. Real risers are 0.15-0.30 m and terrain chatter is small, so only SMALL repeat
+            // steps are suppressed and a staircase never sees this.
+            if (_stepChatterCd > 0f && need < 2f * MinStepHeight) return;
+            _stepChatterCd = 0.1f;
+
+            GlobalPosition += Vector3.Up * need;
+            StepUpCount++; LastStepRise = need;
+            _stepSmooth = Mathf.Min(StepHeight, _stepSmooth + need);   // clamped: a stair RUN must not stack into the camera sinking through the floor
         }
 
 
@@ -3875,7 +4029,76 @@ namespace UnturnedGodot
         string _chamberedAmmoType;  // the bullet TYPE of the loaded rounds / chamber (FMJ/AP/HP), from the loaded mag; persisted (master) -- opens the door for AP/HP/FMJ loads
         SDG.Unturned.Item _heldItem;   // the inventory/world Item backing the held gun -> where its ammo/firemode/mag PERSIST (master)
         // Mirror the held gun's live state onto its backing item so it survives hands<->inventory<->drop (source: equipment.state).
-        void SaveGunState() { if (_heldItem != null && Gun != null) { _heldItem.gunAmmo = Ammo; _heldItem.gunChambered = _chambered; _heldItem.gunChamberedType = _chamberedAmmoType; _heldItem.gunFiremode = (int)_firemode; _heldItem.gunMagId = _loadedMagId; if (_viewmodel != null && _viewmodel.IsGunViewmodel) _heldItem.gunAttach = _viewmodel.GetAttachMask(); } }   // only save the attach mask from the GUN's own viewmodel -- a consumable/fists viewmodel returns 0 and would wipe the gun's attachments (strawberry)
+        void SaveGunState() { if (_heldItem != null && Gun != null) { _heldItem.gunAmmo = Ammo; _heldItem.gunChambered = _chambered; _heldItem.gunChamberedType = _chamberedAmmoType; _heldItem.gunFiremode = (int)_firemode; _heldItem.gunMagId = _loadedMagId; if (_viewmodel != null && _viewmodel.IsGunViewmodel) _heldItem.gunAttach = _viewmodel.GetAttachMask(); MarkGunStateDirty(); } }   // only save the attach mask from the GUN's own viewmodel -- a consumable/fists viewmodel returns 0 and would wipe the gun's attachments (strawberry)
+        // Telling the server what the client just wrote. COALESCED, not sent per SaveGunState: SaveGunState runs
+        // on every shot, and one reliable-ordered datagram per shot is exactly the head-of-line stutter v10 was
+        // written to remove. A 0.25s floor bounds a firefight to 4 sends/sec, and every point where the state is
+        // about to leave the client's hands -- any grid mutation request -- forces an immediate flush so the
+        // move cannot race it. The item AND its address are captured at save time, not read at flush time:
+        // holstering clears _heldItem, and the flush that matters most is the one right after that.
+        const double GunStateFlushEvery = 0.25;
+        bool _gunStateDirty;
+        double _gunStateFlushCd;
+        int _gunStatePage = -1; byte _gunStateX, _gunStateY;
+        SDG.Unturned.Item _gunStateItem;
+
+        /// <summary>Where the held item actually IS, found by object identity rather than read off _heldPage.
+        ///
+        /// _heldPage is not usable here. EquipFromLocation calls NoteHeldFrom(newPage,newX,newY) BEFORE
+        /// EquipItemAsset, and EquipHeldGun's first act is SaveGunState() on the OUTGOING gun -- so at the moment
+        /// the outgoing gun's state is saved, _heldPage already names the INCOMING gun's cell. Pairing the two
+        /// would flush one gun's magazine onto another gun's address; with two identical rifles the server's id
+        /// check would not even catch it. The grid is seven small pages, and this runs on a save, not a frame.</summary>
+        bool TryFindItemAddress(SDG.Unturned.Item item, out int page, out byte x, out byte y)
+        {
+            page = -1; x = y = 0;
+            if (item == null || Inventory == null) return false;
+            for (int p = 0; p < Inventory.items.Length && p < PlayerInventory.PAGES; p++)
+            {
+                var pg = Inventory.items[p];
+                for (byte i = 0; i < pg.getItemCount(); i++)
+                {
+                    var jar = pg.getItem(i);
+                    if (jar != null && ReferenceEquals(jar.item, item)) { page = p; x = jar.x; y = jar.y; return true; }
+                }
+            }
+            return false;
+        }
+
+        void MarkGunStateDirty()
+        {
+            if (_heldItem == null) return;
+            if (!TryFindItemAddress(_heldItem, out int page, out byte x, out byte y)) return;   // not in the grid (a world pickup in flight) -> no address to name
+            // ONE pending slot, so a save for a DIFFERENT gun must push the current one out first or it is simply
+            // lost. That is not a rare race: swapping weapons saves the outgoing gun and then, a few ticks later,
+            // the incoming one -- inside the 0.25s coalescing window -- so the outgoing gun's magazine would be
+            // dropped every single time you switched weapons, which is exactly when you have just spent it.
+            // Coalescing is still doing its job: repeated saves for the SAME gun (every shot) collapse.
+            if (_gunStateDirty && !ReferenceEquals(_gunStateItem, _heldItem)) FlushGunState(force: true);
+            _gunStateItem = _heldItem; _gunStatePage = page; _gunStateX = x; _gunStateY = y;
+            _gunStateDirty = true;
+        }
+
+        /// <summary>Push the pending gun state to the server. force skips the rate floor -- use it wherever a
+        /// grid mutation is about to be requested, so the server applies the state BEFORE it moves the item.</summary>
+        public void FlushGunState(bool force = false)
+        {
+            if (!_gunStateDirty || NetGunState == null || !InventoryIsServerOwned) return;
+            if (!force && _gunStateFlushCd > 0) return;
+            if (_gunStateItem == null || _gunStatePage < 0 || _gunStatePage >= PlayerInventory.PAGES) { _gunStateDirty = false; return; }
+            NetGunState((byte)_gunStatePage, _gunStateX, _gunStateY, _gunStateItem);
+            _gunStateDirty = false;
+            _gunStateFlushCd = GunStateFlushEvery;
+        }
+
+        void TickGunStateFlush(double delta)
+        {
+            if (_gunStateFlushCd > 0) _gunStateFlushCd -= delta;
+            FlushGunState();
+        }
+
+        public bool DebugGunStatePending => _gunStateDirty;   // test seam: did a save actually queue a send
+
         void RestoreGunState(SDG.Unturned.Item item)
         {
             if (item == null || item.gunAmmo < 0) return;   // a fresh gun with no saved state keeps its LoadGun defaults
@@ -4413,7 +4636,11 @@ namespace UnturnedGodot
             // TrySwitchSeat(0) was refused: a jeep nobody can steer. The vehicle-explosion path never showed it
             // because DriveVehicle calls ExitVehicle() (which frees the seat) BEFORE applying the damage.
             // Review 2026-08-16.
-            if (v != null) { v.OccupiedSeats.Remove(_seatIndex); v.EngineOn = false; v.Park(); GlobalPosition = ClampExitSpot(v.GlobalPosition + v.GlobalTransform.Basis.X * 2.4f + Vector3.Up * 1.0f); }
+            // NO Park (strawberry_cow 2026-08-24: "when exiting a vehicle, keep its momentum, dont apply any
+            // brakes"). Leaving a moving car now leaves it MOVING -- it coasts, rolls downhill, and keeps
+            // whatever the driver gave it. The engine is likewise untouched. Bailing out of a rolling truck is a
+            // thing you can do to yourself on purpose now.
+            if (v != null) { v.OccupiedSeats.Remove(_seatIndex); GlobalPosition = ClampExitSpot(v.GlobalPosition + v.GlobalTransform.Basis.X * 2.4f + Vector3.Up * 1.0f); }
             _seatIndex = 0;
             if (Hud != null) Hud.Vehicle = null;
             foreach (var c in FindChildren("*", "CollisionShape3D", true, false))
@@ -4816,6 +5043,10 @@ namespace UnturnedGodot
             if (_ridingTrain != null)   // RIDING A TRAIN: self-contained input (H = 1P/3P cam, mouse orbits the 3P chase). F-exit + rest use the normal chain below; no vehicle/MP paths touched.
             {
                 if (Keybinds.JustPressed(GameAction.ToggleFirstPerson, @event)) { _fp = !_fp; GetViewport().SetInputAsHandled(); return; }
+                // N = ignition, the SAME key as a car. Echo:false for the same reason: holding it must not flap
+                // the engine. A train has one seat, so there is no driver check to make here. Stays LITERAL for
+                // the same reason G/L/Ctrl do -- vehicle-aux, not in the v1 rebind set.
+                if (@event is InputEventKey { Pressed: true, Echo: false, Keycode: Key.N }) { _ridingTrain.ToggleEngine(); GetViewport().SetInputAsHandled(); return; }
                 if (@event is InputEventMouseButton { ButtonIndex: MouseButton.Left } mb) { if (mb.Pressed) _ridingTrain.Honk(); GetViewport().SetInputAsHandled(); return; }   // LMB = press-to-honk (one-shot, master)
                 if (@event is InputEventMouseButton { ButtonIndex: MouseButton.Right } rmbT) { if (rmbT.Pressed) _ridingTrain.ToggleHeadlights(); GetViewport().SetInputAsHandled(); return; }   // RMB = toggle headlights (master), like vehicles
                 if (@event is InputEventMouseMotion tmm && Input.MouseMode == Input.MouseModeEnum.Captured)
@@ -4837,7 +5068,7 @@ namespace UnturnedGodot
                     GetViewport().SetInputAsHandled();
                     return;
                 }
-                bool allowedKey = @event is InputEventKey { Pressed: true } dk && (Keybinds.Matches(GameAction.Interact, @event) || Keybinds.Matches(GameAction.ToggleFirstPerson, @event) || dk.Keycode == Key.G || dk.Keycode == Key.L || dk.Keycode == Key.Ctrl || dk.Keycode == Key.Escape);   // Interact = exit; ToggleFirstPerson = cam; G = landing gear (retract-gear planes); L lights, Ctrl siren, Esc pause. G/L/Ctrl stay literal -- vehicle-aux, hardcoded in v1. (ROOT CAUSE of "G does nothing while flying": this allow-list gated G out before the gear handler saw it -- master 2026-08-18)
+                bool allowedKey = @event is InputEventKey { Pressed: true } dk && (Keybinds.Matches(GameAction.Interact, @event) || Keybinds.Matches(GameAction.ToggleFirstPerson, @event) || dk.Keycode == Key.G || dk.Keycode == Key.L || dk.Keycode == Key.Ctrl || dk.Keycode == Key.N || dk.Keycode == Key.Escape);   // Interact = exit; ToggleFirstPerson = cam; G = landing gear (retract-gear planes); L lights, Ctrl siren, N ignition, Esc pause. G/L/Ctrl/N stay literal -- vehicle-aux, hardcoded in v1. (ROOT CAUSE of "G does nothing while flying": this allow-list gated G out before the gear handler saw it -- master 2026-08-18)
                 bool allowedMouse = @event is InputEventMouseButton { ButtonIndex: MouseButton.Left or MouseButton.Right };
                 bool camOrbit = @event is InputEventMouseMotion;   // mouse MOTION must pass through -> it orbits the 3rd-person chase cam (this guard was silently eating it, so the cam sat fixed) (strawberry 2026-07-15)
                 if (!allowedKey && !allowedMouse && !camOrbit) return;
@@ -4867,7 +5098,7 @@ namespace UnturnedGodot
                     _driveCamYaw -= mm.Relative.X * MouseSensitivity;
                     _driveCamPitch = Mathf.Clamp(_driveCamPitch + mm.Relative.Y * MouseSensitivity, -25f, 70f);   // inverted Y: mouse up -> cam tilts down (strawberry)
                 }
-                else if (_riding != null || DrivingPredicted || IsPassenger)   // FP free-look: the mouse turns the VIEW while the driver steers (real Unturned). MP ride, Part A predicted driving, or ANY passenger seat -- a passenger who cannot look around cannot use the weapon they are allowed to hold. The SP DRIVER keeps the fixed gaze over the hood.
+                else if (_riding != null || _driving != null)   // FP free-look: the mouse turns the VIEW while the vehicle steers (retail). Now includes the SP DRIVER, who used to be the one seat pinned facing the hood.
                 {
                     // WRAPPED to (-180, 180]. The camera consumes this through a Basis, which is periodic and so
                     // never cared -- but AimTurret CLAMPS it against the mount's traverse limits, and an unwrapped
@@ -4877,6 +5108,27 @@ namespace UnturnedGodot
                     // Recovering needed ~240 deg of mouse travel before the gun moved at all. Review 2026-08-16.
                     _rideLookYaw = Mathf.Wrap(_rideLookYaw - mm.Relative.X * MouseSensitivity, -180f, 180f);
                     _rideLookPitch = Mathf.Clamp(_rideLookPitch - mm.Relative.Y * MouseSensitivity, -89f, 89f);   // same Y convention as on-foot look: mouse up -> look up
+
+                    // RETAIL SEATED LOOK LIMITS (PlayerLook.clampYaw / clampPitch), read from the source rather
+                    // than guessed. Retail stores pitch as 0..180 with 90 level and clamps a seated player to
+                    // MIN_ANGLE_SIT 60 / MAX_ANGLE_SIT 120, i.e. +/-30 from level; our pitch is already
+                    // level-relative, so it is a straight +/-30.
+                    //
+                    // Yaw differs by SEAT, which is the detail that makes it feel right: a DRIVER gets +/-160
+                    // (you can look back over either shoulder, but never quite straight behind), a passenger
+                    // +/-90. A turret seat is exempt -- its own traverse limits already own the yaw, and
+                    // clamping here would fight them.
+                    // A TURRET SEAT IS EXEMPT: AimTurret already clamps to the mount's own traverse limits, and a
+                    // second clamp here would fight them -- the gunner's view would stop before the gun did.
+                    bool turretSeat = false;
+                    if (_driving?.Turrets != null)
+                        foreach (var td in _driving.Turrets) if (td != null && td.Seat == _seatIndex) { turretSeat = true; break; }
+                    if (!turretSeat)
+                    {
+                        float yawLim = (_driving != null && _seatIndex == 0) ? DriverYawLimit : PassengerYawLimit;
+                        _rideLookYaw = Mathf.Clamp(_rideLookYaw, -yawLim, yawLim);
+                        _rideLookPitch = Mathf.Clamp(_rideLookPitch, -SeatedPitchLimit, SeatedPitchLimit);
+                    }
                 }
                 else if (_driving == null && _riding == null)
                 {
@@ -4978,6 +5230,12 @@ namespace UnturnedGodot
             {
                 if (_driving != null && _driving.HasSiren) _driving.ToggleSiren();   // Ctrl while driving an emergency vehicle: toggle siren/lightbar (master)
             }
+            // N = IGNITION (strawberry_cow 2026-08-24). DRIVER ONLY: a passenger reaching over and killing the
+            // engine is not a feature. Echo:false so holding N cannot flap the engine on and off at key-repeat.
+            else if (@event is InputEventKey { Pressed: true, Echo: false, Keycode: Key.N })
+            {
+                if (_driving != null && _seatIndex == 0) _driving.ToggleEngine();
+            }
             else if (Keybinds.JustPressed(GameAction.Interact, @event))   // Interact (default F, moved off E): exit/hitch/pickup/enter/harvest/open-crate; nothing to interact -> inspect the held weapon. Echo:false so HOLDING it can't double-fire the hitch toggle.
             {
                 if (_noteReader != null && _noteReader.IsOpen) _noteReader.Close();   // F while a note is open -> close it first (same as Esc)
@@ -4989,7 +5247,13 @@ namespace UnturnedGodot
                 else if (TryToggleHitch()) { }                             // on foot at a trailer hitch: couple / uncouple
                 else if (_focusShelfItem != null || _focusItem != null) TryPickup();   // looking at a SHELF item or a dropped item: grab it (shelf item takes priority in TryPickup)
                 else if (RequestPickupFocusedPuppet()) { }                 // MP: looking at a REPLICATED dropped item -> ask the server for it (like SP, a focused item wins over a nearby vehicle)
-                else if (_focusVehicle != null && IsInstanceValid(_focusVehicle) && !_focusVehicle.IsWreck && !_focusVehicle.IsTrailer) EnterVehicle(_focusVehicle); // looking at a LIVE, drivable vehicle: get in (a wreck is salvaged with LMB; a trailer is towed, not driven)
+                else if (_focusVehicle != null && IsInstanceValid(_focusVehicle) && !_focusVehicle.IsWreck && !_focusVehicle.IsTrailer)
+                {
+                    // WHAT you are aiming at now decides what F does, instead of one action for the whole car.
+                    if (_focusAccessValid && _focusAccess.Kind == Vehicle.AccessKind.Trunk) OpenVehicleTrunk(_focusVehicle);
+                    else if (_focusAccessValid && _focusAccess.Kind == Vehicle.AccessKind.Hood) OpenVehicleHood(_focusVehicle);
+                    else EnterVehicle(_focusVehicle, _focusAccessValid ? _focusAccess.Seat : -1);   // a door -> THAT seat; no zone -> the old first-free behaviour
+                }
                 else if (RequestEnterNearestPuppet()) { }                  // MP shell near a REPLICATED vehicle: ask the server for the seat (C6; false in SP -- no puppets)
                 else if (_focusCouplerTrain != null && IsInstanceValid(_focusCouplerTrain)) _focusCouplerTrain.Uncouple(_focusCouplerIdx);   // LOOKING at a coupler: F splits the train there (master)
                 else if (_focusTrain != null && IsInstanceValid(_focusTrain)) BoardTrain(_focusTrain);   // LOOKING at a train loco: board it (outlined affordance, master)
@@ -5057,7 +5321,8 @@ namespace UnturnedGodot
             else if (Keybinds.JustPressed(GameAction.Melee, @event))
                 MeleeAttack();        // dedicated melee swing (default G) at a zombie in reach
             else if (Keybinds.JustPressed(GameAction.Grenade, @event))
-                ThrowGrenade();       // throw a grenade (default H) -- reachable now that fp-toggle moved to ToggleFirstPerson
+                ThrowGrenade();       // UNBOUND by default (strawberry 2026-08-24) -- JustPressed is false for an unbound
+                                      // action, so this is dormant rather than deleted, and binding it in the menu revives it
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.P, Echo: false })
             {
                 WorldItem.ShowLabels = !WorldItem.ShowLabels;                       // P: toggle ALL item ESP name tags
@@ -6305,13 +6570,16 @@ namespace UnturnedGodot
             // The eye height is lerped whether or not the first-person camera is the one being drawn: in third person
             // nothing reads _cam.Position any more, but the BULLETS still come out of the eyes, so it has to keep up.
             _eyeHeight = Mathf.Lerp(_eyeHeight, EyeHeight, Mathf.Min(1f, 4f * (float)delta));
+            // Exponential decay, not MoveToward: a linear catch-up arrives with a visible corner where it stops,
+            // which is the same abruptness in a different place. This eases out.
+            _stepSmooth = Mathf.MoveToward(_stepSmooth, 0f, StepSmoothRate * (float)delta);
             if (_cam != null && !_dead && _driving == null && _riding == null && _ridingTrain == null && _ridingCrane == null)   // while driving/riding, the drive cam above owns the view
             {
                 if (_ugFp) _fp = true;   // render harness (UG_FP=1): force 1st-person so the FP viewmodel is captured
                 if (_fp)
                 {
                     // FP: the camera SITS at the eyes (PlayerLook.heightLook 1.75/1.2/0.35, lerped 4/s), pitched by the mouse
-                    _cam.Position = new Vector3(0f, _eyeHeight, 0f);
+                    _cam.Position = new Vector3(0f, _eyeHeight - _stepSmooth, 0f);   // sit where the eyes WERE, catching up over ~0.13 s
                     var look = Basis.FromEuler(new Vector3(Mathf.DegToRad(_pitchDeg), 0f, 0f), EulerOrder.Yxz);   // flinch left-multiplies the look
                     _cam.Basis = new Basis(_flinch) * look;
                 }
@@ -6339,7 +6607,17 @@ namespace UnturnedGodot
                 // The seat you are ACTUALLY in (strawberry 2026-08-16: "make the different seats actually move the
                 // player's seated position") -- previously every occupant was drawn in the driver's seat, so
                 // switching seats moved the camera and left the body behind the wheel.
-                _body.GlobalTransform = _driving.GlobalTransform * new Transform3D(Basis.Identity, _driving.SeatBodyLocal(_seatIndex));
+                // INTERPOLATED, not the raw physics transform (strawberry: "apply interp to the seated player
+                // position"). The vehicle is a rigid body stepped at the physics rate; reading GlobalTransform
+                // here samples whatever the last physics tick left, so at any framerate above the physics rate
+                // the body sat still for some frames and jumped on others -- while the car MESH beside it was
+                // being interpolated by Godot and moving smoothly. The occupant juddered against his own
+                // vehicle.
+                //
+                // The driving camera already reads the interpolated transform for exactly this reason. Using
+                // the same source here is what puts the body, the car and the view in one frame of reference
+                // rather than two.
+                _body.GlobalTransform = _driving.GetGlobalTransformInterpolated() * new Transform3D(Basis.Identity, _driving.SeatBodyLocal(_seatIndex));
                 // The DRIVER mimes a wheel; a passenger must not, or the back seats all sit there steering an
                 // invisible car -- and it reads worse now they are holding a rifle while doing it.
                 _body.PlayLoop(_seatIndex == 0
@@ -6561,6 +6839,7 @@ namespace UnturnedGodot
             if (ctrl && sk && !_jogSPrev) _ridingTrain.Jog(-1);  // Ctrl+S: back one carriage
             _jogWPrev = ctrl && w; _jogSPrev = ctrl && sk;
             float throttle = ctrl ? 0f : ((w ? 1f : 0f) - (sk ? 1f : 0f));   // plain W/S = continuous throttle; Ctrl held = jog only
+            if (Mathf.Abs(throttle) > 0.01f) _ridingTrain.TryStartEngine();   // reaching for the throttle starts it, same as a car; self-gates so this is a no-op once running
             _ridingTrain.Drive(throttle, delta);
             if (_ridingTrain.Loco != null) GlobalPosition = _ridingTrain.Loco.GlobalPosition;
         }
@@ -6609,7 +6888,47 @@ namespace UnturnedGodot
             GlobalPosition = _ridingCrane.GlobalPosition;
         }
 
-        public void EnterVehicle(Vehicle v)
+        /// <summary>Open the boot. Its grid is created on first open and lives on the vehicle, so what you
+        /// leave in a car is still there when you come back to it.</summary>
+        void OpenVehicleTrunk(Vehicle v)
+        {
+            var trunk = v.EnsureTrunk();
+            if (trunk == null) return;   // no boot on this hull -- the zone would not exist, but belt and braces
+            OpenCrate(trunk);
+        }
+
+        /// <summary>Open the bonnet. A DUMMY mechanics panel for now (strawberry: "hood opens a dummy
+        /// 'mechanics' ui") -- it reads the vehicle's real state rather than inventing numbers, so when it
+        /// grows into repair/parts it is already pointed at the right data.</summary>
+        void OpenVehicleHood(Vehicle v)
+        {
+            _mechanicsUI ??= new MechanicsPanel();
+            if (_mechanicsUI.GetParent() == null) AddChild(_mechanicsUI);
+            _mechanicsUI.Show(v);
+            Input.MouseMode = Input.MouseModeEnum.Visible;
+        }
+        MechanicsPanel _mechanicsUI;
+
+        // Prompt line for the access zone currently under the crosshair. Mirrors the F dispatch exactly --
+        // if this says "open trunk", F opens the trunk. A hull hit with no zone falls back to the plain enter
+        // prompt, which is what boats/helis/tanks/trailers (no zones built) always show.
+        string AccessPrompt(Vehicle v)
+        {
+            if (_driving != null || _riding != null) return "";
+            string key = Keybinds.Get(GameAction.Interact).Label;
+            if (!_focusAccessValid) return v.SeatCount > 0 ? $"[{key}] enter" : "";
+            switch (_focusAccess.Kind)
+            {
+                case Vehicle.AccessKind.Trunk: return $"[{key}] open trunk";
+                case Vehicle.AccessKind.Hood:  return $"[{key}] open hood";
+                default:
+                    int seat = _focusAccess.Seat;
+                    string who = seat == 0 ? "driver" : $"seat {seat + 1}";
+                    return v.SeatFree(seat) ? $"[{key}] enter ({who})" : $"{who} occupied";
+            }
+        }
+
+        public void EnterVehicle(Vehicle v, int seat = -1)
         {
             if (v.NetDriverId != 0) return;   // MP §3.6: a remote player holds the seat (single driver) -- never set in pure SP, so the direct path is unchanged
             if (v.NetClientPredicted) { _rideLookYaw = 0f; _rideLookPitch = FpRideGazePitchDeg; }   // Part A free-look starts at the classic forward gaze, like EnterPuppet (#37)
@@ -6617,12 +6936,16 @@ namespace UnturnedGodot
             // Take the driver's seat when it is free, otherwise the first seat that is. Entering a full vehicle
             // is refused above; this only picks WHICH seat, so walking up to a car someone is already driving
             // puts you beside them rather than bouncing you off it.
-            _seatIndex = 0;
+            // AIMED AT A DOOR -> THAT SEAT, if it is free and real. Otherwise the old rule: the driver's seat
+            // when it is free, else the first that is. The fallback matters -- aiming at an occupied door
+            // should still put you in the car rather than bouncing you off it.
+            _seatIndex = (seat >= 0 && seat < v.SeatCount && v.SeatFree(seat)) ? seat : 0;
             while (_seatIndex < v.SeatCount && !v.SeatFree(_seatIndex)) _seatIndex++;
             if (_seatIndex >= v.SeatCount) { _driving = null; return; }   // every seat taken
             v.OccupiedSeats.Add(_seatIndex);
             _burstLeft = 0;                                    // entering a vehicle cancels an in-progress burst (no resume on exit)
-            if (_seatIndex == 0) v.EngineOn = !v.OnFire;       // only the driver starts it (source) -- a burnt/on-fire car stays dead (master)
+            // ENTERING NO LONGER STARTS IT (strawberry_cow 2026-08-24): the engine is its own state now, so a
+            // car you climb into is however you left it. N / throttle / the speedo click are the ignition.
             if (Hud != null) Hud.Vehicle = v;                  // show the vehicle status box (fuel/health/battery)
             // Passengers KEEP their weapon (strawberry 2026-08-16: "passengers can hold weapons") -- only the
             // driver has their hands full.
@@ -6651,7 +6974,8 @@ namespace UnturnedGodot
             // Vacating the driver's seat shuts it down and brakes, exactly as stepping out does: nobody is
             // holding the wheel, and a car that keeps its throttle while the driver climbs into the back is a
             // runaway rather than a feature. Taking the seat starts it again.
-            if (wasDriver && want != 0) { v.EngineOn = false; v.Park(); }
+            // moving to a passenger seat no longer brakes it either -- same rule, and a car that stopped dead
+            // because you climbed into the back would be stranger than one that keeps rolling.
             // Deliberately does NOT Wake() the vehicle. I added that here and on entry, reasoning that a settled
             // car would be frozen solid -- it is not: Drive/DriveHeli clear the parked flag on any input and the
             // settle rule releases the freeze the next physics frame, so waking here bought nothing. It cost
@@ -6659,7 +6983,7 @@ namespace UnturnedGodot
             // threshold, so clearing it the instant someone sits down leaves an occupied, stationary vehicle
             // permanently live -- floaty and bouncing, worst on something heavy. strawberry reported exactly
             // that on the tank within the hour.
-            else if (!wasDriver && want == 0) v.EngineOn = !v.OnFire;
+            // (sliding into the driver's seat does not start it either -- same reason as entering)
 
             // Hands full in the driver's seat; a passenger gets their weapon back (strawberry: "passengers can
             // hold weapons").
@@ -6673,7 +6997,7 @@ namespace UnturnedGodot
             if (v != null) v.OccupiedSeats.Remove(_seatIndex);
             // Only the driver leaving shuts it down. A passenger hopping out of a moving car must not kill the
             // engine and park it underneath the person still driving.
-            if (v != null && _seatIndex == 0) { v.EngineOn = false; v.Park(); }   // stop burning fuel + brake so it doesn't roll away
+            // no Park here either: momentum is the driver's to leave behind (see ExitVehicle)
             _seatIndex = 0;
             if (Hud != null) Hud.Vehicle = null;               // hide the vehicle status box
             if (v != null) GlobalPosition = ClampExitSpot(v.GlobalPosition + v.GlobalTransform.Basis.X * 2.4f + Vector3.Up * 1.0f);
@@ -6692,7 +7016,7 @@ namespace UnturnedGodot
         public void ExitVehicleAt(Vector3 exitPos)
         {
             var v = _driving; _driving = null;
-            if (v != null) { v.OccupiedSeats.Remove(_seatIndex); v.EngineOn = false; }   // free the seat -- see EjectFromVehicleOnDeath
+            if (v != null) v.OccupiedSeats.Remove(_seatIndex);   // free the seat -- see EjectFromVehicleOnDeath. Dying does not reach over and turn the key either
             _seatIndex = 0;
             if (Hud != null) Hud.Vehicle = null;               // hide the vehicle status box
             GlobalPosition = exitPos;
@@ -6749,6 +7073,19 @@ namespace UnturnedGodot
                 steer = (Keybinds.Pressed(GameAction.MoveRight) ? 1f : 0f) - (Keybinds.Pressed(GameAction.MoveLeft) ? 1f : 0f);
             }
             bool handbrake = !UiInputBlocked && Keybinds.Pressed(GameAction.VehicleHandbrake);
+
+            // THROTTLE STARTS IT (strawberry_cow 2026-08-24): reaching for the gas on a dead car turns the key.
+            //
+            // ScriptedDrive counts. The first version of this excluded it, reasoning that a test rig or the MP
+            // input path "must not silently hot-wire a car nobody started" -- which sounded careful and was
+            // wrong: on those paths ScriptedDrive IS the player holding W, relayed from a client or a harness,
+            // not a synthetic bypass. Excluding it meant the shell held full throttle against a dead engine and
+            // five MP driving tests failed with "the car didn't move".
+            //
+            // TryStartEngine self-gates on EngineOn, the flat battery and OnFire, so this runs every physics tick
+            // while the throttle is held and is a no-op on all but the first.
+            if (_seatIndex == 0 && Mathf.Abs(throttle) > 0.01f) _driving.TryStartEngine();
+
             // FIXED WING (master 2026-08-17): W/S throttle, A/D tail rudder, mouse L/R = roll, mouse up/down =
             // pitch (the SAME virtual stick the heli uses, captured in _Input with the plane's own invert-Y
             // toggle). Hold Ctrl -> ground/taxi mode: lift is cut so it drops onto its floats/wheels and drives
@@ -6840,8 +7177,44 @@ namespace UnturnedGodot
             // is their OWN seat plus the same rise, or everyone in the bus looks out of the driver's window.
             var eye = _seatIndex == 0 ? _driving.DriverEyeLocal
                                       : _driving.SeatLocal(_seatIndex) + new Vector3(0f, PassengerEyeRise, 0f);
+            eye += DriverPeekOffset();
             PositionVehicleCam(vt, eye, size);
         }
+
+        /// <summary>The driver's eye slides sideways as they look around -- retail's "peek out of the window".
+        ///
+        /// strawberry was right and my first read was wrong: I went looking for a LEAN, found PlayerAnimator
+        /// zeroing lean in DRIVING/SITTING, and concluded retail had nothing. It is not a lean -- it is a
+        /// camera OFFSET DRIVEN BY YAW, in PlayerLook, and only for the DRIVING stance:
+        ///
+        ///     if (yaw &gt; 0) localPosition -> up*(heightLook+vOff) - left*(yaw/360)
+        ///     else          localPosition -> up*(heightLook+vOff) - left*(yaw/240)
+        ///     ...both Lerped at 4*dt
+        ///
+        /// ASYMMETRIC ON PURPOSE, and that asymmetry is the whole feel: looking LEFT offsets by yaw/240 and
+        /// looking right only by yaw/360, so the driver leans much further out of their own window than across
+        /// the cab. At retail's +/-160 yaw limit that is 0.67 m left against 0.44 m right.
+        ///
+        /// Our yaw sign is the mirror of retail's -- MEASURED, not assumed: a Basis about +Y is CCW, so
+        /// _rideLookYaw = +90 points the view down -X, which is LEFT. Hence the negated offset and the swapped
+        /// divisors. Getting that backwards would put the driver's head out of the passenger window, and it
+        /// would look deliberate.</summary>
+        Vector3 DriverPeekOffset()
+        {
+            float target = 0f;
+            if (_fp && _driving != null && _seatIndex == 0)
+            {
+                // _rideLookYaw > 0 is looking LEFT for us, which is retail's yaw < 0 branch: the wider /240.
+                float div = _rideLookYaw > 0f ? PeekDivisorOwnSide : PeekDivisorAcrossCab;
+                target = -_rideLookYaw / div;
+            }
+            // Lerp at 4/s, retail's own smoothing rate for this, so the head eases out rather than snapping.
+            _peekX = Mathf.Lerp(_peekX, target, Mathf.Min(1f, 4f * (float)GetProcessDeltaTime()));
+            return Mathf.Abs(_peekX) < 0.001f ? Vector3.Zero : new Vector3(_peekX, 0f, 0f);
+        }
+        float _peekX;                              // metres of lateral eye offset, vehicle-local (+X = right)
+        const float PeekDivisorOwnSide = 240f;     // looking out of the driver's OWN window: the bigger lean
+        const float PeekDivisorAcrossCab = 360f;   // ...and across the cab: less
 
         // C6 ride mode: the same cam anchored on the replicated puppet (no trailer towing over the wire in v1)
         void PositionRideCam(Transform3D vt) => PositionVehicleCam(vt, _riding.DriverEyeLocal, _fp ? 0f : _riding.MeshSize);
@@ -6906,6 +7279,9 @@ namespace UnturnedGodot
         public override void _PhysicsProcess(double delta)
         {
             using var _prof = Prof.Scope("PlayerController.phys");
+            // BEFORE every early return below (driving, riding, NetHold): you can hold a gun in a car, and a
+            // pending gun state that only flushes while on foot is a pending gun state that is sometimes lost.
+            if (!NetAvatar) TickGunStateFlush(delta);
             if (_pdieTest > 0) { _pdieTest -= delta; if (_pdieTest <= 0) { _pdieTest = -1; TakeDamage(9999f); } }
             // below-map kill: Unturned Level.isPointWithinValidHeight = y in [-1024,1024]; fall past the map floor -> die + respawn (covers driving too)
             if (!NetAvatar && !_dead && GlobalPosition.Y < -1030f) { GD.Print("[oob] fell below the map -> killed"); TakeDamage(9999f); }   // NetAvatar: TakeDamage is a no-op (invulnerable) -- gate here too so a pathological fall can't spam the log every tick
@@ -7162,6 +7538,8 @@ namespace UnturnedGodot
         /// <summary>Where the interaction trace actually started this frame. Recorded in UpdateLookFocus for the same
         /// reason as the shot seam: a test that recomputes the origin agrees with a wrong one. Only written while the
         /// mouse is captured, since that is the only time UpdateLookFocus runs -- use LookTrace() to ask directly.</summary>
+        public Vector3 DebugLookEnd => _lookEnd;   // where the eye-ray actually stopped, so a test can see what it aimed at
+        public static bool DebugForceLookScan;   // L1 only: stand in for a captured mouse, which headless will not grant
         public Vector3 DebugLookOrigin { get; private set; }
         public Vector3 DebugLookDir { get; private set; }
 

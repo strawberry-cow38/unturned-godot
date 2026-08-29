@@ -116,6 +116,7 @@ namespace UnturnedGodot
                 AddChild(cell.Mmi);
                 ts.Cells[key] = cell;
             }
+            JournalCell(type, cell);   // journal BEFORE the add, so undo restores the cell without it
             cell.Xf.Add(xf);
             cell.Manual.Add(manual);
             Rebuild(cell);
@@ -124,6 +125,44 @@ namespace UnturnedGodot
 
         /// <summary>Remove instances of `type` within `radius` of `centre`. `manual`/`baked` select which
         /// populations are eligible -- retail's ManuallyPlaced / Baked / All filter. Returns how many went.</summary>
+        // ---- FOLIAGE STROKE JOURNAL ----
+        // The brush paints and erases every FRAME while the mouse is held, so undo has to be per STROKE. A
+        // capture-what-was-removed API only covers erasing; a paint has nothing to hand back. Journalling the
+        // CELL instead covers both directions with one mechanism: the first time a stroke touches a cell, its
+        // full contents are copied, and undo puts those contents back. Cells are 96m and a stroke is
+        // radius-bounded, so this is a handful of cells, and every call is a null check when not recording.
+        System.Collections.Generic.Dictionary<(string, Cell), (System.Collections.Generic.List<Transform3D>, System.Collections.Generic.List<bool>)> _strokeCells;
+
+        public void BeginFoliageStroke() =>
+            _strokeCells = new System.Collections.Generic.Dictionary<(string, Cell), (System.Collections.Generic.List<Transform3D>, System.Collections.Generic.List<bool>)>();
+
+        /// <summary>Close the stroke and return the restore, or null when it touched nothing — the caller uses
+        /// null to avoid pushing an empty undo step that the next Ctrl+Z would silently consume.</summary>
+        public System.Action EndFoliageStroke()
+        {
+            var j = _strokeCells; _strokeCells = null;
+            if (j == null || j.Count == 0) return null;
+            return () =>
+            {
+                foreach (var kv in j)
+                {
+                    var cell = kv.Key.Item2;
+                    cell.Xf.Clear(); cell.Xf.AddRange(kv.Value.Item1);
+                    cell.Manual.Clear(); cell.Manual.AddRange(kv.Value.Item2);
+                    Rebuild(cell);
+                }
+            };
+        }
+
+        void JournalCell(string type, Cell cell)
+        {
+            if (_strokeCells == null) return;
+            var k = (type, cell);
+            if (_strokeCells.ContainsKey(k)) return;
+            _strokeCells[k] = (new System.Collections.Generic.List<Transform3D>(cell.Xf),
+                               new System.Collections.Generic.List<bool>(cell.Manual));
+        }
+
         public int RemoveInSphere(string type, Vector3 centre, float radius, bool manual, bool baked)
         {
             if (!_authoring.TryGetValue(type, out var ts) || (!manual && !baked)) return 0;
@@ -136,6 +175,7 @@ namespace UnturnedGodot
                 {
                     if (cell.Xf[i].Origin.DistanceSquaredTo(centre) > r2) continue;
                     if (cell.Manual[i] ? !manual : !baked) continue;
+                    JournalCell(type, cell);
                     cell.Xf.RemoveAt(i); cell.Manual.RemoveAt(i);
                     removed++; dirty = true;
                 }

@@ -11,9 +11,10 @@ namespace UnturnedGodot
     //      the plan's 25 Hz; a frozen parked car dirty-checks to zero delta bytes);
     //   2. applies the current REMOTE driver's held DriveInput to the node through the SAME Vehicle.Drive
     //      call the SP shell uses -- one drive seam, no second physics path;
-    //   3. mirrors enter/exit side effects onto the node (EngineOn+Wake on enter, EngineOff+Park on exit --
-    //      the SP EnterVehicle/ExitVehicle effects) and stamps Vehicle.NetDriverId so the local direct
-    //      path can't take an occupied seat;
+    //   3. mirrors enter/exit side effects onto the node (Wake on enter, Park on exit -- the SP
+    //      EnterVehicle/ExitVehicle effects) and stamps Vehicle.NetDriverId so the local direct
+    //      path can't take an occupied seat. The ENGINE is not among them: it is its own state now and
+    //      replicates through FlagEngineOn, so entering does not start it and exiting does not stop it;
     //   4. publishes the LISTEN-SERVER local player's direct-path enter/exit as entity occupancy, so remote
     //      Enter commands validate against it (the entity's DriverPlayerId is the one occupancy truth);
     //   5. reconciles removals (a despawned wreck node retires its entity + ejects any driver).
@@ -184,8 +185,13 @@ namespace UnturnedGodot
                     {
                         t.AppliedRemoteDriver = driver;
                         v.NetDriverId = driver;
-                        v.EngineOn = true;
-                        v.Wake();
+                        // NO EngineOn = true here any more (strawberry_cow 2026-08-24). The engine stopped being
+                        // a side effect of occupancy in SP, and mirroring the OLD rule here would leave the same
+                        // key meaning two different things depending on whether you were hosting. The real state
+                        // arrives over the wire -- FlagEngineOn is already replicated below -- so the node
+                        // follows whatever the driving client actually did, which is strictly better than
+                        // guessing from the seat.
+                        v.Wake();   // still wake it: a frozen parked body must simulate once someone is aboard, engine or not
                         // B11: a remote driver taking a rope-end vehicle DROPS the rope. A client-auth/held
                         // vehicle can't stay a tow end -- the host's tow spring (Vehicle.UpdateTow) would fight
                         // the adopted transform. OnAttachTow's not-remote-driven validate blocks NEW ties on a
@@ -217,6 +223,12 @@ namespace UnturnedGodot
                     else
                     {
                         _server.Vehicles.TryGetInput(t.NetId, out var inp);   // held-input model / pre-predict window: none yet = coast
+                        // Throttle starts the engine here too. The rule is "reaching for the gas turns the key",
+                        // and it must not depend on WHOSE hand is on the gas -- this is the same seam the local
+                        // shell drives through, just with the axes arriving over the wire. Without it, removing
+                        // the enter-starts-it side effect above left a remote driver holding full throttle
+                        // against a dead engine. Self-gates on EngineOn/battery/fire, so it is a no-op once running.
+                        if (Mathf.Abs(inp.Throttle) > 0.01f) v.TryStartEngine();
                         v.Drive(inp.Throttle, inp.Steer, inp.Handbrake);
                     }
                 }
@@ -224,7 +236,9 @@ namespace UnturnedGodot
                 {
                     t.AppliedRemoteDriver = 0;
                     v.NetDriverId = 0;
-                    v.EngineOn = false;
+                    // Engine deliberately UNTOUCHED on exit: it stays as the driver left it, same as SP. Park()
+                    // below still holds the car so it cannot roll away -- that was always the brake's job, not
+                    // the engine's.
                     if (t.Held)
                     {
                         // Part A handoff: authority returns to the server exactly as retail
@@ -235,7 +249,9 @@ namespace UnturnedGodot
                                      fe != null ? new Vector3(fe.AngVel.x, fe.AngVel.y, fe.AngVel.z) : Vector3.Zero);
                     }
                     v.NetGhost(false);
-                    if (!v.Exploded) v.Park();   // never Park a wreck -- it would kill the explosion tumble
+                    // Park removed here too, so a remote driver leaving behaves like a local one: the car keeps
+                    // its momentum. One rule on both paths -- the same reason the engine stopped being a seat
+                    // side effect. (The old wreck guard is moot now that nothing parks.)
                 }
 
                 if (t.Held)

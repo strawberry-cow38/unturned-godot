@@ -26,6 +26,10 @@ namespace UnturnedGodot.Net
         public long ReloadsRejected;        // no magazine at that address / not a magazine
         public long ClothingApplied;
         public long ClothingRejected;       // empty cell / wrong item type for that slot / no room for the displaced garment
+        public long AutoDrinkApplied;
+        public long AutoDrinkRejected;      // empty cell / a different item at that address
+        public long GunStatesApplied;       // the client's gun state landed on the server's copy of that item
+        public long GunStatesRejected;      // empty cell / a different item at that address (a stale client grid)
         public long ConsoleApplied;
         public long ConsoleRejected;        // unknown verb / cheats disabled / bad args
     }
@@ -296,6 +300,24 @@ namespace UnturnedGodot.Net
                 validate: (sender, cmd) => _inventories.TryGet(sender, out _)
                                            && cmd.MagPage < PlayerInventory.PAGES
                                            && cmd.RoundPage < PlayerInventory.PAGES);
+
+            commands.Register<SetAutoDrinkCommand>(ReplicationIds.CommandSetAutoDrink, SetAutoDrinkCommand.TryRead,
+                (sender, cmd) =>
+                {
+                    var inv = SenderInventory(sender);
+                    var pg = inv?.items[cmd.Page];
+                    byte ix = pg?.getIndex(cmd.X, cmd.Y) ?? byte.MaxValue;
+                    var jr = ix == byte.MaxValue ? null : pg.getItem(ix);
+                    if (jr?.item == null || jr.item.id != cmd.Id) { Diag.AutoDrinkRejected++; return; }
+                    jr.item.autoDrink = cmd.AutoDrink;
+                    Diag.AutoDrinkApplied++;
+                    pg.raiseStateUpdated();
+                },
+                validate: (sender, cmd) => _inventories.TryGet(sender, out _) && cmd.Page < PlayerInventory.PAGES);
+
+            commands.Register<GunStateCommand>(ReplicationIds.CommandGunState, GunStateCommand.TryRead,
+                OnGunState,
+                validate: (sender, cmd) => _inventories.TryGet(sender, out _) && cmd.Page < PlayerInventory.PAGES);
 
             commands.Register<FitAttachmentCommand>(ReplicationIds.CommandFitAttachment, FitAttachmentCommand.TryRead,
                 OnFitAttachment,
@@ -667,6 +689,57 @@ namespace UnturnedGodot.Net
             roundJar.item.amount--;
             if (roundJar.item.amount <= 0) roundPage.removeItem(roundIndex);
             Diag.MagLoadsApplied++;
+        }
+
+        /// <summary>Adopt the client's gun state onto the server's copy of that item, so the owner echo carries
+        /// it back through a move instead of overwriting it with a default the server never populated. See
+        /// ReplicationIds.CommandGunState for the failure this exists to stop.
+        ///
+        /// The one clamp that matters is the ammo count, and it is the same clamp OnReload already applies to
+        /// ReloadSwapCommand.SpentAmount: the server owns no gun simulation, so it cannot verify the number,
+        /// only cap it at what a legitimate reload of the loaded magazine could have produced. Everything else
+        /// here is cosmetic or is itself validated elsewhere (fitting an attachment still has to spend the item
+        /// through CommandFitAttachment -- this only records which slot the client says is filled).</summary>
+        void OnGunState(ushort sender, GunStateCommand cmd)
+        {
+            var inv = SenderInventory(sender);
+            var page = inv?.items[cmd.Page];
+            byte index = page?.getIndex(cmd.X, cmd.Y) ?? byte.MaxValue;
+            var jar = index == byte.MaxValue ? null : page.getItem(index);
+            if (jar?.item == null || jar.item.id != cmd.Id) { Diag.GunStatesRejected++; return; }
+
+            var gun = Assets.find(cmd.Id);
+            if (gun?.gunName == null) { Diag.GunStatesRejected++; return; }   // only a gun has gun state
+
+            // Capacity of the magazine the client says is loaded, +1 for a chambered round. An unknown or
+            // unloaded mag falls back to the gun's own Ammo_Max, which is what CapForMag does client-side.
+            var mag = cmd.MagId > 0 && cmd.MagId <= ushort.MaxValue ? Assets.find((ushort)cmd.MagId) : null;
+            int cap = (mag != null && mag.magOverridesCapacity && mag.magCapacity > 0)
+                ? mag.magCapacity                                  // a reservoir mag (the 100-round drum) overrides the gun
+                : gun.gunAmmoMax;
+            // gunAmmoMax is 0 when the gun's .dat did not parse, and clamping to 0 would confiscate the player's
+            // magazine over a content problem. Fall back to the loaded mag's own capacity, then to leaving the
+            // count alone -- a missing catalogue entry is a reason to stop clamping, not a reason to punish.
+            if (cap <= 0) cap = mag != null && mag.magCapacity > 0 ? mag.magCapacity : int.MaxValue - 1;
+            if (cmd.Chambered) cap += 1;
+
+            var item = jar.item;
+            item.gunAmmo = (int)Mathf.Clamp(cmd.Ammo, -1, cap);   // -1 stays meaningful: "this gun has never been held"
+            item.gunChambered = cmd.Chambered;
+            item.gunFiremode = cmd.Firemode;
+            item.gunMagId = cmd.MagId;
+            item.gunAttach = cmd.Attach;
+            item.gunSightId = cmd.Sight;
+            item.gunBarrelId = cmd.Barrel;
+            item.gunGripId = cmd.Grip;
+            item.gunTacticalId = cmd.Tactical;
+            item.gunAttachSeeded = cmd.AttachSeeded;
+            // The chambered round's type is re-derived from the loaded mag on the client's side of ReadJar; keep
+            // the server's copy consistent with what it will send, rather than leaving a stale string behind.
+            item.gunChamberedType = cmd.Chambered && cmd.MagId > 0 && cmd.MagId <= ushort.MaxValue
+                ? Assets.find((ushort)cmd.MagId)?.ammoType : null;
+            Diag.GunStatesApplied++;
+            page.raiseStateUpdated();   // the echo only re-sends a page it knows changed
         }
 
         void OnFitAttachment(ushort sender, FitAttachmentCommand cmd)

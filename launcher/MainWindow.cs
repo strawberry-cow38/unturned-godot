@@ -7,6 +7,8 @@ using Avalonia.Controls.Primitives;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Threading;
+using Avalonia.Platform.Storage;
+using SDG.Unturned;   // ProfileRules -- linked in, see the csproj
 
 // The launcher window. Code-only Avalonia. Owns the whole flow: resolve tools -> clone/refresh -> show current vs
 // latest build -> Update (force pull + build + import) or Play (launch game with a debug console). All git/dotnet/godot
@@ -26,7 +28,8 @@ public class MainWindow : Window
     // published launcher.version is GREATER than this. I shipped the report-key field without bumping it,
     // so nobody's launcher updated and the field simply did not exist for them. The code change is only
     // half of a launcher change; the other half is this number plus the release.
-    const int LauncherVersion = 11;   // v11: Report key row (paste once) -> bugreport_key.txt -> UG_BUGREPORT_KEY for the game
+    const int LauncherVersion = 12;   // v12: Profile row -- username.txt + profile.png (squished to 128x128 on pick) -> UG_USERNAME / UG_PROFILE_PNG for the game
+    // v11: Report key row (paste once) -> bugreport_key.txt -> UG_BUGREPORT_KEY for the game
     // v10: on branch-list refresh, prune local refs (remote-tracking + local branches) for branches deleted on the remote -- guarded so an unreachable remote never wipes refs
     const string VersionUrl = "https://github.com/strawberry-cow38/unturned-godot/releases/download/launcher/launcher.version";
     const string ExeUrl = "https://github.com/strawberry-cow38/unturned-godot/releases/download/launcher/UnturnedGodotLauncher-win-x64.exe";
@@ -46,6 +49,9 @@ public class MainWindow : Window
     readonly TextBlock _latestLabel = new() { TextWrapping = TextWrapping.Wrap };
     readonly TextBlock _status = new() { Foreground = Brushes.Gray };
     readonly TextBox _log;
+    readonly TextBox _nameBox = new() { Width = 200, Watermark = "your name in game", FontSize = 13, MaxLength = 64 };
+    readonly TextBlock _nameStatus = new() { VerticalAlignment = VerticalAlignment.Center, FontSize = 12 };
+    readonly Avalonia.Controls.Image _pfpPreview = new() { Width = 40, Height = 40, VerticalAlignment = VerticalAlignment.Center };
     readonly TextBox _keyBox = new() { Width = 260, Watermark = "paste key, then Save", FontSize = 13 };
     readonly TextBlock _keyStatus = new() { VerticalAlignment = VerticalAlignment.Center, FontSize = 12 };
     readonly Button _action = new() { MinWidth = 150, MinHeight = 44, HorizontalAlignment = HorizontalAlignment.Right, FontSize = 16, IsEnabled = false };
@@ -139,9 +145,33 @@ public class MainWindow : Window
         };
         RefreshKeyStatus();
 
-        var grid = new Grid { RowDefinitions = new RowDefinitions("Auto,Auto,Auto,Auto,Auto,Auto,*,Auto"), Margin = new Avalonia.Thickness(16) };
+        // ---- profile: the name and picture other players see --------------------------------------
+        // Same one-small-file-per-setting shape as Branch, the Unturned folder and the report key above.
+        _nameStatus.Foreground = new SolidColorBrush(Color.Parse("#7a828c"));
+        var saveName = new Button { Content = "Save", MinWidth = 70 };
+        saveName.Click += (_, _) => SaveUsername(_nameBox.Text ?? "");
+        var pickPfp = new Button { Content = "Picture...", MinWidth = 90 };
+        pickPfp.Click += async (_, _) => await PickProfilePictureAsync();
+        var profileRow = new StackPanel
+        {
+            Orientation = Avalonia.Layout.Orientation.Horizontal, Spacing = 8,
+            Margin = new Avalonia.Thickness(0, 8, 0, 0),
+            Children =
+            {
+                new TextBlock { Text = "Profile:", Foreground = new SolidColorBrush(Color.Parse("#7a828c")), VerticalAlignment = VerticalAlignment.Center, FontSize = 13 },
+                _nameBox,
+                saveName,
+                pickPfp,
+                _pfpPreview,
+                _nameStatus,
+            },
+        };
+        _nameBox.Text = LoadUsername();
+        RefreshProfileStatus();
+
+        var grid = new Grid { RowDefinitions = new RowDefinitions("Auto,Auto,Auto,Auto,Auto,Auto,Auto,*,Auto"), Margin = new Avalonia.Thickness(16) };
         void Row(Control c, int r) { Grid.SetRow(c, r); grid.Children.Add(c); }
-        Row(header, 0); Row(sub, 1); Row(branchRow, 2); Row(keyRow, 3); Row(buildBox, 4); Row(logHeader, 5); Row(_log, 6); Row(footer, 7);
+        Row(header, 0); Row(sub, 1); Row(branchRow, 2); Row(profileRow, 3); Row(keyRow, 4); Row(buildBox, 5); Row(logHeader, 6); Row(_log, 7); Row(footer, 8);
         return grid;
     }
 
@@ -391,6 +421,15 @@ public class MainWindow : Window
             // The game reads this from its CHILD PROCESS environment -- it lives for the life of the game
             // and does not persist into a shell someone later screenshots. Empty is a working state: the
             // report still files, unauthenticated.
+            // Who the player is, for every server they join this session. Both are plain strings/paths, and
+            // both are validated again by the game and then by the server -- the launcher is a convenience,
+            // never the security boundary.
+            string username = LoadUsername();
+            Environment.SetEnvironmentVariable("UG_USERNAME", username.Length > 0 ? username : null);
+            Environment.SetEnvironmentVariable("UG_PROFILE_PNG", File.Exists(ProfilePngConfig) ? ProfilePngConfig : null);
+            Log(username.Length > 0 ? $"Profile: {username}{(File.Exists(ProfilePngConfig) ? " (+picture)" : "")}"
+                                    : "(no name set -- joining as " + ProfileRules.FallbackName + ")");
+
             string reportKey = LoadReportKey();
             Environment.SetEnvironmentVariable("UG_BUGREPORT_KEY", reportKey.Length > 0 ? reportKey : null);
             if (reportKey.Length == 0) Log("(no report key set — bug reports will file anonymously)");
@@ -585,6 +624,95 @@ public class MainWindow : Window
     void SaveBranch(string b) { try { File.WriteAllText(BranchConfig, b); } catch (Exception ex) { Log("(couldn't save branch: " + ex.Message + ")"); } }
 
     // ---- Unturned install resolution (the game reads its real map terrain from here via UG_UNTURNED_DIR) ----
+    // ---- profile: username + picture ---------------------------------------------------------------
+    // Two files beside the launcher, handed to the game as environment variables on launch -- the same route
+    // UG_UNTURNED_DIR and UG_BUGREPORT_KEY take. The game reads them and nothing else, so a build launched
+    // without the launcher still runs; it just has no name, and ProfileRules supplies the fallback.
+
+    string UsernameConfig => Path.Combine(_baseDir, "username.txt");
+    string ProfilePngConfig => Path.Combine(_baseDir, "profile.png");
+
+    string LoadUsername()
+    {
+        try { return File.Exists(UsernameConfig) ? File.ReadAllText(UsernameConfig).Trim() : ""; }
+        catch { return ""; }
+    }
+
+    void SaveUsername(string raw)
+    {
+        // Sanitised HERE with the same ProfileRules the server runs, and the box is REWRITTEN to the result.
+        // Showing the player the name they will actually get is the whole reason the launcher links that file
+        // instead of keeping its own idea of what a name is -- otherwise someone types a name, sees it
+        // accepted, and is quietly renamed the first time they join.
+        string clean = ProfileRules.SanitizeName(raw, out bool changed);
+        try
+        {
+            File.WriteAllText(UsernameConfig, clean);
+            _nameBox.Text = clean;
+            Log(changed ? $"Name saved as \"{clean}\" (adjusted -- brackets, invisible characters and control codes are not allowed in a name)"
+                        : $"Name saved as \"{clean}\"");
+        }
+        catch (Exception ex) { Log("(couldn't save the name: " + ex.Message + ")"); }
+        RefreshProfileStatus();
+    }
+
+    async Task PickProfilePictureAsync()
+    {
+        try
+        {
+            var files = await StorageProvider.OpenFilePickerAsync(new Avalonia.Platform.Storage.FilePickerOpenOptions
+            {
+                Title = "Choose a profile picture",
+                AllowMultiple = false,
+                FileTypeFilter = new[]
+                {
+                    new Avalonia.Platform.Storage.FilePickerFileType("Images")
+                    {
+                        Patterns = new[] { "*.png", "*.jpg", "*.jpeg", "*.bmp", "*.webp" },
+                    },
+                },
+            });
+            if (files == null || files.Count == 0) return;
+            string src = files[0].Path?.LocalPath;
+            if (string.IsNullOrEmpty(src)) { Log("(that file isn't on the local disk -- copy it locally first)"); return; }
+
+            // SQUISHED, not letterboxed or cropped: 128x128 exactly, whatever shape went in. That is what the
+            // game and the server both require, and doing it here means the wire never carries anything else.
+            using (var src128 = new Avalonia.Media.Imaging.Bitmap(src))
+            using (var scaled = src128.CreateScaledBitmap(new Avalonia.PixelSize(128, 128),
+                                                          Avalonia.Media.Imaging.BitmapInterpolationMode.HighQuality))
+            using (var outFile = File.Create(ProfilePngConfig))
+                scaled.Save(outFile);
+
+            // Then check our own output with the same validator the server will use. If this ever fails, the
+            // resize wrote something the game would refuse, and the player should hear it now rather than
+            // discover a checkerboard over their head in game.
+            var verdict = ProfileRules.CheckAvatarPng(File.ReadAllBytes(ProfilePngConfig));
+            if (verdict != ProfileRules.AvatarVerdict.Ok)
+            {
+                Log($"!! the resized picture came out unusable ({ProfileRules.Explain(verdict)}) -- not saved");
+                try { File.Delete(ProfilePngConfig); } catch { }
+            }
+            else Log($"Profile picture set (squished to 128x128, {new FileInfo(ProfilePngConfig).Length / 1024f:0.0} KB)");
+        }
+        catch (Exception ex) { Log("(couldn't use that picture: " + ex.Message + ")"); }
+        RefreshProfileStatus();
+    }
+
+    void RefreshProfileStatus()
+    {
+        string name = LoadUsername();
+        bool hasPfp = File.Exists(ProfilePngConfig);
+        _nameStatus.Text = name.Length == 0
+            ? "no name set -- you'll join as " + ProfileRules.FallbackName
+            : (hasPfp ? "" : "no picture set");
+        try
+        {
+            _pfpPreview.Source = hasPfp ? new Avalonia.Media.Imaging.Bitmap(ProfilePngConfig) : null;
+        }
+        catch { _pfpPreview.Source = null; }
+    }
+
     string UnturnedDirConfig => Path.Combine(_baseDir, "unturned_dir.txt");
 
     // a usable Unturned install = it has the PEI map terrain the default play mode loads.

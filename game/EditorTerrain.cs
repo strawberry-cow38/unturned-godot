@@ -16,7 +16,14 @@ namespace UnturnedGodot
         const uint TerrainLayer = 1u << 0;
         Node3D _ring, _rampMarker;
         float _radius = 28f, _strength = 20f;
-        public enum EBrush { Raise, Lower, Flatten, Smooth, Ramp }   // source Devkit heightmap modes (ADJUST±/FLATTEN/SMOOTH/RAMP)
+        // Dig/Fill are ours, not Devkit's: retail cuts holes with placed hole VOLUMES rather than a brush, but a
+        // volume needs a gizmo, a transform and a persisted object list, and the brush is the same interaction the
+        // rest of this editor already uses. The stored result is identical either way -- a per-quad mask.
+        // RIVER used to be a brush here. It moved to EditorRiver under the Environment tab on 2026-08-24
+        // (strawberry_cow: "why isnt the river tool under the same area as the road spline tools. why does it
+        // use the terrain brush circle? it just places single nodes") -- carving is a terrain operation, but
+        // the TOOL is a spline tool, and parking it here gave it a brush radius ring and no curve preview.
+        public enum EBrush { Raise, Lower, Flatten, Smooth, Ramp, Dig, Fill }   // source Devkit heightmap modes (ADJUST±/FLATTEN/SMOOTH/RAMP) + hole brushes
         EBrush _brush = EBrush.Raise;
         bool _paint;   // false = height sculpt, true = Materials splat-paint
         int _layer;    // 0-7 splat layer to paint
@@ -38,7 +45,7 @@ namespace UnturnedGodot
             }
             return DefaultLayerNames;
         }
-        public static readonly string[] BrushNames = { "Raise", "Lower", "Flatten", "Smooth", "Ramp" };
+        public static readonly string[] BrushNames = { "Raise", "Lower", "Flatten", "Smooth", "Ramp", "Dig hole", "Fill hole" };
 
         // --- accessors for the EditorTerrainPanel buttons/sliders ---
         public bool Painting => _paint;
@@ -54,7 +61,9 @@ namespace UnturnedGodot
 
         public string ModeText => _paint
             ? $"PAINT {LayerNames[_layer]} · radius {_radius:0}m"
-            : $"{BrushNames[(int)_brush]}{(_brush == EBrush.Ramp ? " (click begin, click end)" : "")} · radius {_radius:0}m · strength {_strength:0}";
+            : _brush == EBrush.Dig || _brush == EBrush.Fill
+                ? $"{BrushNames[(int)_brush]} · radius {_radius:0}m"   // strength is meaningless for a boolean mask; showing it invites fiddling with a number that does nothing
+                : $"{BrushNames[(int)_brush]}{(_brush == EBrush.Ramp ? " (click begin, click end)" : "")} · radius {_radius:0}m · strength {_strength:0}";
         string SavePath => ProjectSettings.GlobalizePath("res://content/terrain/") + $"editor_{_editor.MapName}_heightmap.bin";
 
         public int Save()
@@ -102,7 +111,7 @@ namespace UnturnedGodot
             _ring.Position = pt + Vector3.Up * 0.5f;
             _ring.Scale = new Vector3(_radius, 1f, _radius);
             _ring.Visible = true;
-            if (_terr == null || _brush == EBrush.Ramp || !Input.IsMouseButtonPressed(MouseButton.Left)) return;   // ramp is click-based (below), not held
+            if (_terr == null || _brush == EBrush.Ramp || !Input.IsMouseButtonPressed(MouseButton.Left)) return;   // ramp is click-begin/click-end (below), not held
             float dt = (float)d;
             if (_paint) { _terr.PaintSplat(pt.X, pt.Z, _radius, _layer); return; }
             switch (_brush)   // source-accurate held-drag: applies every frame, dt-scaled
@@ -111,7 +120,19 @@ namespace UnturnedGodot
                 case EBrush.Lower: _terr.EditHeight(pt.X, pt.Z, _radius, -_strength * dt); break;
                 case EBrush.Flatten: _terr.EditFlatten(pt.X, pt.Z, _radius, Mathf.Clamp(_strength * dt * 0.15f, 0.01f, 1f)); break;
                 case EBrush.Smooth: _terr.EditSmooth(pt.X, pt.Z, _radius, Mathf.Clamp(_strength * dt * 0.15f, 0.01f, 1f)); break;
+                // No dt: a quad is dug or it is not. Strength has no meaning here either, hence the ModeText split.
+                case EBrush.Dig: _terr.EditHoles(pt.X, pt.Z, _radius, true); break;
+                case EBrush.Fill: _terr.EditHoles(pt.X, pt.Z, _radius, false); break;
             }
+        }
+
+        /// <summary>Close the sculpt journal and register it as one undo step. Pushes NOTHING when the stroke
+        /// touched no cells -- a click that missed the terrain would otherwise leave an empty step on the stack,
+        /// and the next Ctrl+Z would silently consume it and appear to do nothing.</summary>
+        void PushSculptUndo(string label)
+        {
+            var restore = _terr?.EndSculptStroke();
+            if (restore != null) _editor?.PushUndo(label, restore);
         }
 
         public override void _UnhandledInput(InputEvent ev)
@@ -122,9 +143,25 @@ namespace UnturnedGodot
                 if (mb.Pressed && _brush == EBrush.Ramp && !_paint && !Editor.PointerOverUI(this) && RaycastTerrain(GetViewport().GetMousePosition(), out var rp))
                 {
                     if (!_rampArmed) { _rampBegin = rp; _rampArmed = true; _rampMarker.Position = rp + Vector3.Up * 0.5f; _rampMarker.Visible = true; }   // first click: begin
-                    else { _terr.EditRamp(_rampBegin, rp, _radius); _rampArmed = false; _rampMarker.Visible = false; }                                     // second click: grade begin->end
+                    else
+                    {
+                        // A ramp is one click-pair, not a drag, so its stroke opens and closes right here.
+                        _terr.BeginSculptStroke();
+                        _terr.EditRamp(_rampBegin, rp, _radius);
+                        PushSculptUndo("ramp");
+                        _rampArmed = false; _rampMarker.Visible = false;
+                    }
                 }
-                else if (!mb.Pressed && !_paint && _brush != EBrush.Ramp) _terr.FlushColliders();   // held-drag stroke end: rebuild the touched chunks' colliders
+                // UNDO IS PER STROKE, not per frame. The brushes apply every frame while held, so opening the
+                // journal on PRESS and closing it on RELEASE makes one Ctrl+Z rewind the whole drag -- which is
+                // what a person means by "undo that". Paint strokes are excluded: they write the splat map, not
+                // the heightmap, and the journal only covers heights and holes.
+                else if (mb.Pressed && !_paint && _brush != EBrush.Ramp && !Editor.PointerOverUI(this)) _terr.BeginSculptStroke();
+                else if (!mb.Pressed && !_paint && _brush != EBrush.Ramp)
+                {
+                    PushSculptUndo(BrushNames[(int)_brush].ToLowerInvariant());
+                    _terr.FlushColliders();   // held-drag stroke end: rebuild the touched chunks' colliders
+                }
             }
             else if (ev is InputEventKey { Pressed: true, Echo: false } k)   // keyboard shortcuts (buttons are the primary UI now)
             {
@@ -132,7 +169,9 @@ namespace UnturnedGodot
                 {
                     case Key.P: _paint = !_paint; _rampArmed = false; break;
                     case Key.L: if (_paint) _layer = (_layer + 1) % 8; break;
-                    case Key.M: if (!_paint) { _brush = (EBrush)(((int)_brush + 1) % 5); _rampArmed = false; } break;
+                    // BrushNames.Length, not a literal: this was `% 5` and adding Dig/Fill left them reachable
+                    // from the panel but not from the key, which reads as "the hole brush is broken".
+                    case Key.M: if (!_paint) { _brush = (EBrush)(((int)_brush + 1) % BrushNames.Length); _rampArmed = false; } break;
                     case Key.Bracketleft: _radius = Mathf.Max(6f, _radius - 4f); break;
                     case Key.Bracketright: _radius = Mathf.Min(140f, _radius + 4f); break;
                     case Key.Comma: _strength = Mathf.Max(1f, _strength - 2f); break;

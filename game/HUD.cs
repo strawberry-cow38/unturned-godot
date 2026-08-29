@@ -218,6 +218,7 @@ namespace UnturnedGodot
             _vehRpmGear.HorizontalAlignment = HorizontalAlignment.Right; _vehRpmGear.MouseFilter = Control.MouseFilterEnum.Ignore;
             _vehBox.AddChild(_vehRpmGear);
 
+
             _vehFuel = AddVehBar(45, "icon_fuel.png", CY);        // fuel = COLOR_Y (yellow)
             _vehHealth = AddVehBar(75, "icon_health.png", CR);    // health = COLOR_R (red)
             _vehBattery = AddVehBar(105, "icon_stamina.png", CY); // battery = COLOR_Y, "Stamina" icon (source)
@@ -438,20 +439,31 @@ namespace UnturnedGodot
             bool inVeh = Vehicle != null;
             bool inRail = !inVeh && Train != null && IsInstanceValid(Train);   // riding a train: same box, no fuel/health/battery rows
             _vehBox.Visible = inVeh || inRail;
-            foreach (var (ic, bg) in _vehRows) { ic.Visible = inVeh; bg.Visible = inVeh; }   // trains have none of the three gauges
-            _vehBox.OffsetTop = inRail ? -140f : -210f;                                       // shrink the box to just title + speed for a train
+            // Trains carry fuel/battery/engine now, so they get the gauge rows too -- only HEALTH stays hidden,
+            // because a consist has no single hull HP to show.
+            foreach (var (ic, bg) in _vehRows) { ic.Visible = inVeh || inRail; bg.Visible = inVeh || inRail; }
+            if (inRail && _vehRows.Count >= 2) { _vehRows[1].icon.Visible = false; _vehRows[1].bg.Visible = false; }   // row 1 = health
+            _vehBox.OffsetTop = -210f;   // full-height box either way now that a train has gauges to show
             if (inVeh)
             {
                 _vehFuel.AnchorRight = Mathf.Clamp(Vehicle.FuelNorm, 0f, 1f);
                 _vehHealth.AnchorRight = Mathf.Clamp(Vehicle.HealthNorm, 0f, 1f);
                 _vehBattery.AnchorRight = Mathf.Clamp(Vehicle.BatteryNorm, 0f, 1f);
                 _vehTitle.Text = Vehicle.DisplayName;
-                _vehRpmGear.Text = $"{Vehicle.LinearVelocity.Length() * 2.23694f:0} mph · {Vehicle.EngineRpm:0} rpm · {Vehicle.GearLabel}";   // MPH speedometer + rpm + gear (master)
+                _vehRpmGear.Text = Vehicle.EngineOn
+                    ? $"{Vehicle.LinearVelocity.Length() * 2.23694f:0} mph · {Vehicle.EngineRpm:0} rpm · {Vehicle.GearLabel}"   // MPH speedometer + rpm + gear (master)
+                    // Engine off is now a state you can sit in, so the cluster has to SAY so -- otherwise a
+                    // stopped car reads as "0 mph, 0 rpm" and looks broken rather than switched off.
+                    : (Vehicle.CanStartEngine ? "engine off · N or gas to start" : "engine off · battery flat");
             }
             else if (inRail)
             {
                 _vehTitle.Text = Train.DisplayName;
-                _vehRpmGear.Text = $"{Train.SpeedMps * 2.23694f:0} mph";   // trains: just the speedo (no gears/rpm)
+                _vehFuel.AnchorRight = Mathf.Clamp(Train.FuelNorm, 0f, 1f);
+                _vehBattery.AnchorRight = Mathf.Clamp(Train.BatteryNorm, 0f, 1f);
+                _vehRpmGear.Text = Train.EngineOn
+                    ? $"{Train.SpeedMps * 2.23694f:0} mph"   // trains: just the speedo (no gears/rpm)
+                    : (Train.CanStartEngine ? "engine off · N or throttle to start" : "engine off · no fuel or flat battery");
             }
         }
 
