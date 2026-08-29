@@ -41,6 +41,8 @@ namespace UnturnedGodot
         double _undoHeld = -1.0, _undoNext;
 
         Node3D _handles;
+        MeshInstance3D _grid;        // the lattice; drawn at stage Y=0.02 and moved to the ACTIVE storey
+        readonly List<StaticBody3D> _stairRamps = new();   // invisible walk-up ramps, one per flight
         MeshInstance3D _ghost;                 // translucent preview of the armed opening
         MeshInstance3D _gridFlag;              // where the next draw will start
         Label3D _readout;                      // the size billboard shown while dragging
@@ -455,8 +457,17 @@ namespace UnturnedGodot
         /// NEGATIVE floors are BASEMENTS. A clamp at 0 was the only thing preventing them: FloorY is
         /// ActiveFloor * StoreyHeight and handles negatives without complaint, and nothing else in the editor
         /// assumes a non-negative storey. strawberry: "support for basements".</summary>
+        /// <summary>Put the lattice on the ACTIVE storey. The grid is stage furniture built once at
+        /// Y=0.02, so it sat on the ground floor forever while everything you placed went to FloorY --
+        /// on any storey but the first you were drawing against a grid that was not where the walls
+        /// would land. strawberry: "add the grid moving up/down a floor when q/e-ing".</summary>
+        void PositionGrid()
+        {
+            if (_grid != null) _grid.Position = new Vector3(0f, FloorY, 0f);
+        }
+
         public void ChangeFloor(int delta)
-            => ActiveFloor = Mathf.Clamp(ActiveFloor + delta, MinFloor, MaxFloor);
+            { ActiveFloor = Mathf.Clamp(ActiveFloor + delta, MinFloor, MaxFloor); PositionGrid(); }
         public static float StoreyHeight => WallOpenings.DoorHeight;
         public float FloorY => ActiveFloor * StoreyHeight;
 
@@ -1685,12 +1696,14 @@ namespace UnturnedGodot
                 st.AddVertex(new Vector3(-Half, Y, x)); st.AddVertex(new Vector3(Half, Y, x));
             }
             var grid = new MeshInstance3D { Mesh = st.Commit() };
+            _grid = grid;   // kept so it can follow the active storey -- see PositionGrid
             grid.MaterialOverride = new StandardMaterial3D
             {
                 AlbedoColor = new Color(0.42f, 0.46f, 0.42f),
                 ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
             };
             _stage.AddChild(grid);
+            PositionGrid();   // the stage can be built while a storey is already selected
         }
 
         // ---- persistence -------------------------------------------------------------------------------
@@ -2664,6 +2677,84 @@ namespace UnturnedGodot
                            + new Vector3(0f, (i + 1) * stepRise - tread * 0.5f, 0f);
         }
 
+        /// <summary>Cut the flight's footprint out of any FLOOR it climbs through, and give it a smooth
+        /// invisible ramp. Both are the same idea: a staircase owns more space than its treads.
+        ///
+        /// THE CUT. Without it the flight arrives at a solid ceiling -- you climb into the underside of the
+        /// slab above and stop. The hole is the footprint plus a small margin, carved through PunchHole so it
+        /// rides the same opening partition that cuts doors and windows, which is what keeps the collider and
+        /// the mesh agreeing (a hole you can see and cannot walk through is exactly the bug that partition
+        /// exists to make impossible).
+        ///
+        /// THE RAMP. Treads are boxes, so walking up them means a character controller climbing N separate
+        /// steps and catching on every nose. An invisible ramp lying on the tread noses gives one continuous
+        /// surface to slide up. Collision ONLY -- no mesh -- because the treads are what you should see, and
+        /// on the STAIRS layer so it moves and deletes with the flight rather than becoming loose furniture.
+        /// strawberry: "add an invisible ramp to the staircase, to enable smoother movement".</summary>
+        /// <returns>How many floors were cut.</returns>
+        public int FitStairsToStructure(Vector3 origin, float yawDeg, float run, float width)
+        {
+            float rise = StoreyHeight;
+            float yaw = Mathf.DegToRad(yawDeg);
+            var back = new Vector3(-Mathf.Sin(yaw), 0f, -Mathf.Cos(yaw));
+            var right = new Vector3(Mathf.Cos(yaw), 0f, -Mathf.Sin(yaw));
+
+            // ---- the invisible ramp -------------------------------------------------------------------
+            // Lies on the tread NOSES: from the foot at origin to the top tread's walking surface, which is
+            // exactly one storey up and one run back. Half a tread of lift so it rests on the noses rather
+            // than cutting through them.
+            var foot = origin + back * (run * 0.5f) + right * (width * 0.5f)
+                     + new Vector3(0f, rise * 0.5f + WallOpenings.StairTreadThickness * 0.5f, 0f);
+            float slope = Mathf.Sqrt(run * run + rise * rise);
+            var ramp = new StaticBody3D { Name = "StairRamp" };
+            var shape = new CollisionShape3D
+            {
+                Shape = new BoxShape3D { Size = new Vector3(width, WallOpenings.StairTreadThickness, slope) },
+            };
+            ramp.AddChild(shape);
+            AddChild(ramp);
+            ramp.GlobalPosition = foot;
+            // Pitch so the box lies along the flight: atan(rise/run) about the flight's lateral axis.
+            ramp.GlobalRotation = new Vector3(Mathf.Atan2(rise, run), yaw, 0f);
+            _stairRamps.Add(ramp);
+
+            // ---- cut the floor above ------------------------------------------------------------------
+            // The flight's plan footprint, grown slightly so the opening clears the treads rather than
+            // touching them exactly (Aabb contact is a coin-flip and a hole flush with the tread reads as
+            // a seam you can catch on).
+            const float Margin = 0.25f;
+            var a = origin;
+            var b = origin + back * run + right * width;
+            float minX = Mathf.Min(a.X, b.X) - Margin, maxX = Mathf.Max(a.X, b.X) + Margin;
+            float minZ = Mathf.Min(a.Z, b.Z) - Margin, maxZ = Mathf.Max(a.Z, b.Z) + Margin;
+            float topY = origin.Y + rise;
+
+            int cut = 0;
+            foreach (var w in new List<WallSurface>(_walls))
+            {
+                if (!IsInstanceValid(w) || w.Kind != SurfaceKind.Floor) continue;
+                var box = SurfaceAabb(w);
+                // Only the slab this flight actually arrives at: its top must sit within half a storey of
+                // the landing. A floor two storeys up is not this staircase's problem.
+                if (Mathf.Abs(box.End.Y - topY) > rise * 0.5f) continue;
+                if (box.End.X < minX || box.Position.X > maxX || box.End.Z < minZ || box.Position.Z > maxZ) continue;
+
+                // Corners in the slab's own UV space. A floor is a wall lying down, so its U/V are the plan
+                // axes -- take all four and bound them, since yaw makes which-is-which change.
+                float u0 = float.MaxValue, v0 = float.MaxValue, u1 = float.MinValue, v1 = float.MinValue;
+                bool ok = true;
+                foreach (var c in new[] { new Vector3(minX, box.End.Y, minZ), new Vector3(maxX, box.End.Y, minZ),
+                                          new Vector3(minX, box.End.Y, maxZ), new Vector3(maxX, box.End.Y, maxZ) })
+                {
+                    if (!w.WorldToUV(c, out float u, out float v)) { ok = false; break; }
+                    u0 = Mathf.Min(u0, u); u1 = Mathf.Max(u1, u);
+                    v0 = Mathf.Min(v0, v); v1 = Mathf.Max(v1, v);
+                }
+                if (ok && PunchHole(w, u0, v0, u1, v1)) cut++;
+            }
+            return cut;
+        }
+
         public int AddStairs(Vector3 origin, float yawDeg, float run = 0f, float width = 0f)
         {
             float rise = StoreyHeight;
@@ -2683,7 +2774,16 @@ namespace UnturnedGodot
             foreach (var p in StairTreadOrigins(origin, yawDeg, run, width))
                 made.Add(SpawnWall(p, yawDeg, width, tread, ActiveMaterial, null,
                                    going, -90f, SurfaceKind.Stairs));
-            _editor?.PushUndo("stairs place", () => { foreach (var t in made) RemoveWall(t); });
+            int rampsBefore = _stairRamps.Count;
+            FitStairsToStructure(origin, yawDeg, run, width);
+            var mine = _stairRamps.GetRange(rampsBefore, _stairRamps.Count - rampsBefore);
+            _editor?.PushUndo("stairs place", () =>
+            {
+                foreach (var t in made) RemoveWall(t);
+                // The ramp is not a WallSurface, so RemoveWall never sees it -- undo has to take it
+                // explicitly or an invisible collider outlives the stairs that justified it.
+                foreach (var r in mine) { if (IsInstanceValid(r)) r.QueueFree(); _stairRamps.Remove(r); }
+            });
             return made.Count;
         }
 

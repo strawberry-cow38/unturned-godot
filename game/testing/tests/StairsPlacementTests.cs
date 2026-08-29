@@ -174,4 +174,73 @@ namespace UnturnedGodot.Testing
             eb.QueueFree();
         }
     }
+
+    // A staircase owns more space than its treads: it must CUT the floor it climbs through, and carry an
+    // invisible ramp so walking up is one slide rather than N box steps.
+    //
+    // Raycasts rather than counting openings, deliberately. "An opening record exists" and "you can walk
+    // through it" are different claims and only the second is the feature -- a hole you can see and cannot
+    // pass is exactly the bug the generate-don't-cut partition exists to prevent.
+    //
+    // The slab is made through the editor's OWN path (draw a room a storey up, slab it) rather than handed
+    // in, so the test exercises floors the way the tool actually produces them.
+    public class StairsCutTheFloorAndCarryARamp : GameTest
+    {
+        public override string Name => "buildtool.stairs_cut_and_ramp";
+
+        public override IEnumerable<Step> Run()
+        {
+            var eb = new EditorBuildings();
+            World.AddChild(eb);
+            yield return Step.Ticks(1);
+
+            float run = WallOpenings.StairDefaultRun(EditorBuildings.StoreyHeight);
+            float width = WallOpenings.StairDefaultWidth;
+
+            // A room one storey up, then a floor slab at its base -- that slab is what the flight climbs into.
+            eb.ChangeFloor(+1);
+            float y1 = eb.ActiveFloorY;
+            eb.AddWall(new Vector3(-6f, y1, 6f), 0f, 24f);
+            eb.AddWall(new Vector3(18f, y1, 6f), 90f, 24f);
+            eb.AddWall(new Vector3(18f, y1, -18f), 180f, 24f);
+            eb.AddWall(new Vector3(-6f, y1, -18f), 270f, 24f);
+            yield return Step.Ticks(1);
+            var slab = eb.AddSlab(SurfaceKind.Floor);
+            yield return Step.Ticks(2);
+            T.Check("a floor exists one storey up", GodotObject.IsInstanceValid(slab));
+            if (slab == null) yield break;
+            int before = slab.Openings.Count;
+
+            eb.ChangeFloor(-1);
+            int n = eb.AddStairs(new Vector3(0f, eb.ActiveFloorY, 0f), 0f, run, width);
+            yield return Step.Ticks(3);
+            T.Check($"a flight was emitted ({n})", n > 0);
+
+            // BREAK IT: drop the FitStairsToStructure call -> no opening, and the climb ends in a ceiling.
+            T.Check($"the floor above was cut ({slab.Openings.Count} vs {before})",
+                    slab.Openings.Count == before + 1);
+
+            var space = World.GetWorld3D().DirectSpaceState;
+            bool Solid(Vector3 at)
+            {
+                var q = new PhysicsRayQueryParameters3D
+                { From = at + new Vector3(0f, 0.5f, 0f), To = at - new Vector3(0f, 0.5f, 0f), CollisionMask = 1u << 0 };
+                return space.IntersectRay(q).Count > 0;
+            }
+
+            float slabY = slab.Position.Y;
+            T.Check("you can climb through the cut",
+                    !Solid(new Vector3(width * 0.5f, slabY, -run * 0.5f)));
+            T.Check("the slab well beyond the cut is intact",
+                    Solid(new Vector3(14f, slabY, 2f)));
+
+            // THE RAMP: an invisible collider lying on the tread noses, so mid-flight there is something
+            // solid between the treads. BREAK IT: skip the ramp -> the gap between noses is empty.
+            int ramps = 0;
+            foreach (var c in eb.GetChildren()) if (c is StaticBody3D sb && sb.Name == "StairRamp") ramps++;
+            T.Check($"the flight carries one invisible ramp ({ramps})", ramps == 1);
+
+            eb.QueueFree();
+        }
+    }
 }

@@ -124,6 +124,52 @@ namespace UnturnedGodot.Testing
         }
     }
 
+    // The lattice follows the ACTIVE storey. It is stage furniture built once at Y=0.02, so it sat on
+    // the ground floor forever while everything you place goes to FloorY -- on any storey but the first
+    // you were drawing against a grid that was not where the walls would land.
+    public class EditorGridFollowsTheActiveStorey : GameTest
+    {
+        public override string Name => "buildtool.grid_follows_storey";
+
+        public override IEnumerable<Step> Run()
+        {
+            var eb = new EditorBuildings();
+            World.AddChild(eb);
+            yield return Step.Ticks(1);
+            eb.SetActive(true);              // builds the stage, which is what owns the grid
+            yield return Step.Ticks(1);
+
+            MeshInstance3D Grid()
+            {
+                foreach (var st in eb.GetChildren())
+                    if (st is Node3D stage && stage.Name == "Stage")
+                        foreach (var c in stage.GetChildren())
+                            if (c is MeshInstance3D mi && mi.Mesh is ArrayMesh) return mi;
+                return null;
+            }
+            var g = Grid();
+            T.Check("found the lattice", g != null);
+            if (g == null) yield break;
+
+            T.Check($"on the ground floor it sits at 0 ({g.Position.Y:0.00})", Mathf.Abs(g.Position.Y) < 0.01f);
+
+            // BREAK IT: drop the PositionGrid() call in ChangeFloor -> stays at 0 while FloorY climbs.
+            eb.ChangeFloor(+2);
+            yield return Step.Ticks(1);
+            T.Check($"two storeys up it follows ({g.Position.Y:0.00} vs {eb.FloorY:0.00})",
+                    Mathf.Abs(g.Position.Y - eb.FloorY) < 0.01f);
+            T.Check($"...and that is actually above the ground ({eb.FloorY:0.00})", eb.FloorY > 1f);
+
+            // Down into a basement too -- the clamp allows it, so the grid has to go there.
+            eb.ChangeFloor(-3);
+            yield return Step.Ticks(1);
+            T.Check($"and it follows into a basement ({g.Position.Y:0.00} vs {eb.FloorY:0.00})",
+                    Mathf.Abs(g.Position.Y - eb.FloorY) < 0.01f && eb.FloorY < -0.01f);
+
+            eb.QueueFree();
+        }
+    }
+
     // Overlap warning behind the placement ghosts. strawberry asked for "prevent placing overlapping stuff,
     // showing the ghost as red", then chose WARN rather than refuse -- so this is about the signal being
     // TRUSTWORTHY, not about blocking anything.
