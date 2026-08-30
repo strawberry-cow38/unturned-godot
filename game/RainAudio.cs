@@ -67,7 +67,7 @@ namespace UnturnedGodot
             float heavyTgt = Mathf.Lerp(-20f, -3f, heavyAmt);
 
             float shelterDb = Mathf.Lerp(-7f, 0f, shelter);   // the roof cuts direct rain a touch; the low-pass does the muffle
-            float duckDb = Mathf.Lerp(-9f, 0f, duck);         // pre-dip for a thunderclap
+            float duckDb = Mathf.Lerp(-20f, 0f, duck);        // pre-dip for a thunderclap -- DEEP (was -9): a -26dB clap under a -22dB bed only lifts the sum ~1.5dB, so the rain has to get well out of the way for the crack to read (tinyclaw)
 
             _lightDb = SlewLayer(_light, _lightDb, rint > 0.02f ? lightTgt + shelterDb + duckDb : -80f, dt);
             _heavyDb = SlewLayer(_heavy, _heavyDb, heavyAmt > 0.02f ? heavyTgt + shelterDb + duckDb : -80f, dt);

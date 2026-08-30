@@ -193,7 +193,7 @@ namespace UnturnedGodot
                 var pt = _pendingThunder[i];
                 if (pt.t < 0.6f)
                 {
-                    float depth = Mathf.Lerp(0.35f, 0.85f, Mathf.Clamp((pt.vol + 3f) / -15f, 0f, 1f));   // vol -3=close/loud -> deep dip, -18=far/quiet -> shallow (matches the -3..-18 range below)
+                    float depth = Mathf.Lerp(0.35f, 0.85f, Mathf.Clamp((pt.vol + 2f) / -8f, 0f, 1f));   // vol -2=close/loud -> deep dip, -10=far/quiet -> shallow (matches the -2..-10 range below)
                     duckTarget = Mathf.Min(duckTarget, Mathf.Lerp(depth, 1f, pt.t / 0.6f));
                 }
             }
@@ -301,7 +301,7 @@ namespace UnturnedGodot
             // thunder: closer -> sooner + louder + a SHARP clap; farther -> later + quieter + a DEEP rumble
             // queue this strike's boom: flash→boom gap cut ~40% (bitvox); sample by distance (near=sharp crack, far=deep rumble)
             if (_thunderPool != null)
-                _pendingThunder.Add((Mathf.Lerp(0.24f, 2.4f, dist), Mathf.Lerp(-3f, -18f, dist), dist < 0.4f ? 1 : (dist > 0.72f ? 2 : 0)));   // near strike caps at -3dB, not 0 -- a 0dB close crack summed with heavy rain (which peaks ~-0.4dBFS) clips Master (tinyclaw finding 10)
+                _pendingThunder.Add((Mathf.Lerp(0.24f, 2.4f, dist), Mathf.Lerp(-2f, -10f, dist), dist < 0.4f ? 1 : (dist > 0.72f ? 2 : 0)));   // vol range COMPRESSED to -2..-10 (was -3..-18): a far strike 18dB under a near one just reads as absent, not far (tinyclaw). -2 near = punchy without clipping the ducked rain
             GD.Print("[weather] lightning");
         }
 
