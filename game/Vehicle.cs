@@ -1581,6 +1581,7 @@ namespace UnturnedGodot
         struct Spec
         {
             public string Body, Wheel, WheelTex, Palette, GlassMesh, MissileMesh, SteerMesh;   // Palette = paintable palette; WheelTex = wheel albedo; GlassMesh = translucent canopy overlay (jet)
+            public Color? GlassTint;   // GlassMesh albedo+alpha; null = the jet's golden canopy. Cars use GlassPane.DefaultHue so vehicle glass matches the building editor's windows.
             public bool RetractGear;   // JET: wheels tuck up into the fuselage when airborne (retract pivots + struts)
             public WaterMode Water;   // Car (default) = land only; Boat = floats+water-drives (no useful wheels); Amphibious = land wheels + float/water-drive when its hull is in the sea
             public Vector3[] Buoys;   // hull buoyancy points (local space, Godot); null = auto 4 bottom corners of BoxSize. Boats/amphibious float via a spring at each toward SeaLevelY
@@ -2423,6 +2424,7 @@ namespace UnturnedGodot
         {
             Mass = 1500f,   // kerb mass, kg
             Body = "sedan_body.txt", Wheel = "sedan_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "sedan_palette.png",
+            GlassMesh = "sedan_glass.txt", GlassTint = new Color(0.62f, 0.73f, 0.78f, 0.26f),   // window panes fitted to the greenhouse apertures; tint = GlassPane.DefaultHue @ its 0.26 alpha (strawberry: "the same glass as windows in the building editor")
             RandomHueGray = true,   // source RandomHueOrGrayscale -> our curated CarColors
             WheelRadius = 0.6f, Engine = 700f, SteerMax = 28f, SteerMin = 14f, SpeedMax = 16.5f, SpeedMin = -6f, Brake = 32f,
             BoxSize = new Vector3(2.5f, 0.916f, 5.656f), BoxCenter = new Vector3(0f, 0.548f, -0.063f),   // source BoxCollider (Z negated)
@@ -3587,6 +3589,24 @@ namespace UnturnedGodot
         /// <summary>Parse a content .obj if it is present, else null. Generated content (the extracted Huey
         /// rotors) must not be a hard build dependency -- a checkout that has not run the extractor should
         /// still get a flyable machine, not a crash or an invisible rotor.</summary>
+        /// <summary>Translucent glass laid over a vehicle: the jet's canopy, and road-car windows.
+        /// Lives here rather than in BuildPlaneModel because a car never goes through the plane builder --
+        /// setting Spec.GlassMesh on the sedan silently did nothing until this moved out (tinyclaw 2026-08-30:
+        /// caught by rendering it opaque red as a positive control and seeing 94 changed pixels, all of them HUD).</summary>
+        static void AddGlassOverlay(Vehicle v, Spec s)
+        {
+            if (s.GlassMesh == null) return;
+            var gm = LoadOptionalObj(s.GlassMesh);
+            if (gm == null) return;
+            var glassMat = new StandardMaterial3D
+            {
+                AlbedoColor = s.GlassTint ?? new Color(0.78f, 0.62f, 0.30f, 0.40f),   // default = the jet's golden canopy, ~40% opaque
+                Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
+                Metallic = 0.35f, Roughness = 0.10f, CullMode = BaseMaterial3D.CullModeEnum.Disabled,
+            };
+            v.AddChild(new MeshInstance3D { Name = "Glass", Mesh = gm, MaterialOverride = glassMat, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off });
+        }
+
         static Mesh LoadOptionalObj(string file)
         {
             string abs = ProjectSettings.GlobalizePath($"res://content/{file}");
@@ -3866,20 +3886,7 @@ namespace UnturnedGodot
 
             // ---- CANOPY GLASS (jet): the LOD's closed cockpit cap (fighterjet_canopy.txt) re-laid over the open
             // cockpit as TRANSLUCENT golden glass (master: "take the golden opaque one from the LOD, give it transparency").
-            if (s.GlassMesh != null)
-            {
-                var gm = LoadOptionalObj(s.GlassMesh);
-                if (gm != null)
-                {
-                    var glassMat = new StandardMaterial3D
-                    {
-                        AlbedoColor = new Color(0.78f, 0.62f, 0.30f, 0.40f),   // golden tint, ~40% opaque
-                        Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
-                        Metallic = 0.35f, Roughness = 0.10f, CullMode = BaseMaterial3D.CullModeEnum.Disabled,
-                    };
-                    v.AddChild(new MeshInstance3D { Name = "Canopy", Mesh = gm, MaterialOverride = glassMat, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off });   // canopy mesh is now built windscreen-forward + fitted -> no runtime yaw needed
-                }
-            }
+            AddGlassOverlay(v, s);   // jet canopy; cars use the same path (see the helper)
 
             if (s.MissileMesh != null)
             {
@@ -4457,6 +4464,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             {
                 v._bodyMesh = new MeshInstance3D { Name = "Body", Mesh = bodyMesh, MaterialOverride = bodyMat };
                 v.AddChild(v._bodyMesh);
+                if (!s.Plane) AddGlassOverlay(v, s);   // road-car windows (the plane builder adds its own canopy)
             }
             if (s.Tracked) { v.MuzzleLocal = s.Muzzle; BuildTankExtras(v, s, bodyMat); }   // tank: treads + turret/gun aim pivots on top of the shared hull/wheel/collision path
             if (legMesh != null)   // the landing legs as a sibling MeshInstance sharing the body material -> toggled with the coupling (visible when parked, hidden when towed)
