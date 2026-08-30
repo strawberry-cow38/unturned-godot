@@ -1114,8 +1114,8 @@ namespace UnturnedGodot
             // surface shader to the hard surfaces so up-facing faces darken/gloss + ripple as the rain soaks them.
             RainSystem3D.EnsureGlobals();
             var wetShader = GD.Load<Shader>("res://content/wet_surface.gdshader");
-            ShaderMaterial WetMat(Color dry, float rough) { var m = new ShaderMaterial { Shader = wetShader }; m.SetShaderParameter("dry_albedo", dry); m.SetShaderParameter("dry_roughness", rough); return m; }
-            AddChild(new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(140f, 140f) }, MaterialOverride = WetMat(new Color(0.20f, 0.22f, 0.25f), 0.7f) });
+            ShaderMaterial WetMat(Color dry, float rough, float impact = 1f) { var m = new ShaderMaterial { Shader = wetShader }; m.SetShaderParameter("dry_albedo", dry); m.SetShaderParameter("dry_roughness", rough); m.SetShaderParameter("impact_amount", impact); return m; }
+            AddChild(new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(140f, 140f) }, MaterialOverride = WetMat(new Color(0.20f, 0.22f, 0.25f), 0.7f, impact: 0f) });   // GROUND = wetness only, no impacts (master: impacts on props, not terrain)
             for (int i = 0; i < 6; i++)
             {
                 float hgt = 2.5f + (i % 3);

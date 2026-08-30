@@ -10,6 +10,8 @@ global uniform float rain_intensity;                     // 0 .. 1 -- drives the
 uniform vec3 dry_albedo : source_color = vec3(0.30, 0.32, 0.35);
 uniform float dry_roughness = 0.85;
 uniform float splash_scale = 1.0;                        // world-space frequency of the ripple cells
+uniform float impact_amount : hint_range(0.0, 1.0) = 1.0;    // 0 = wetness only, NO splash impacts (terrain-like ground); 1 = full impacts (props). Master: gate impacts to solid props, not terrain.
+uniform float impact_opacity : hint_range(0.0, 1.0) = 0.18;  // splash brightness/opacity -- LOW so impacts read as subtle wet glints, not paint (master: more transparent; was a hard 0.38)
 
 varying vec3 world_pos;
 
@@ -30,11 +32,14 @@ float splashes(vec2 wxz, float t, float amt){
             for (int dx = -1; dx <= 1; dx++){
                 vec2 id = base + vec2(float(dx), float(dy));
                 float seed = h21(id);
-                vec2 center = id + vec2(h21(id + 1.3), h21(id + 7.7));   // random source point inside the cell
-                float life = fract(t * (0.65 + seed * 0.7) + seed);     // 0..1 ripple lifecycle
-                float rad = life * (0.16 + seed * 0.20);                // small raindrop-impact radius (~0.22m), not big pond ripples
+                float tt = t * (0.65 + seed * 0.7) + seed;              // rate stays on the STATIC seed -- per-cycle rate feeds back into cyc + stutters the lifecycle (tinyclaw)
+                float cyc = floor(tt);                                  // WHICH ripple this cell is on (not where within it)
+                float life = fract(tt);                                 // 0..1 within that ripple
+                vec2 q = id + cyc * 13.7;                               // re-roll the cell's randomness each cycle
+                vec2 center = id + vec2(h21(q + 1.3), h21(q + 7.7));    // splash point MOVES every cycle -> scattered, not frozen at one spot per cell (master: impacts looked fixed)
+                float rad = life * (0.16 + seed * 0.20);               // small raindrop-impact radius (~0.22m), not big pond ripples
                 float ring = smoothstep(0.05, 0.0, abs(length(g - center) - rad));
-                acc += ring * (1.0 - life) * step(gate, seed) * (0.55 + seed * 0.45);   // fade out; vary brightness; density gated by rain intensity
+                acc += ring * (1.0 - life) * step(gate, h21(q)) * (0.55 + seed * 0.45);   // WHICH cells fire also re-rolls per cycle (was static seed -> same ~18% forever)
             }
         }
     }
@@ -52,8 +57,8 @@ void fragment(){
     vec3 alb = dry_albedo * mix(1.0, 0.58, wet);            // wet darkens the surface
     float rough = mix(dry_roughness, 0.10, wet);           // wet = smooth/glossy -> catches highlights + reflections
     float sp = 0.0;
-    if (rint > 0.0) sp = splashes(world_pos.xz, TIME, rint) * rint * upness;   // gate the ~800-ALU voronoi -- zero in clear weather (tinyclaw)
-    ALBEDO = alb + sp * 0.38;
+    if (rint > 0.0 && impact_amount > 0.0) sp = splashes(world_pos.xz, TIME, rint) * rint * upness * impact_amount;   // gate the ~800-ALU voronoi -- zero in clear weather OR on impact-disabled surfaces (terrain)
+    ALBEDO = alb + sp * impact_opacity;
     ROUGHNESS = rough;
     METALLIC = wet * 0.1;
     SPECULAR = 0.5 + wet * 0.45;

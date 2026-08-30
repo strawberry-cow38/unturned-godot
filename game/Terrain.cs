@@ -67,30 +67,6 @@ float caustics(vec2 p, float t) {
     float a = cfbm(p + vec2(t, t * 0.4)), b = cfbm(p * 1.31 + vec2(-t * 0.7, t * 0.55) + 17.3);
     return pow(clamp(1.0 - abs(a - b) * 4.0, 0.0, 1.0), 4.0);
 }
-// --- rain: raindrop-impact splash rings (3x3 jittered voronoi; matches wet_surface.gdshader), density gated by rain_intensity.
-// Uses chashv (the precision-robust hash defined above), NOT wet_surface's h21: terrain wpos.xz reach the hundreds/
-// thousands where h21's fract(p*127.0) loses precision -- the same reason the caustics above switched to chashv. ---
-float rsplash(vec2 wxz, float t, float amt) {
-    float acc = 0.0;
-    float gate = 1.0 - clamp(amt, 0.0, 1.0) * 0.20;            // heavy ~18% / drizzle ~7% of cells fire (kept sparse -- master)
-    for (int k = 0; k < 2; k++) {
-        float sc = 1.6 + float(k) * 2.8;
-        vec2 g = wxz * sc + float(k) * 21.0;
-        vec2 bs = floor(g);
-        for (int dy = -1; dy <= 1; dy++) {
-            for (int dx = -1; dx <= 1; dx++) {
-                vec2 id = bs + vec2(float(dx), float(dy));
-                float seed = chashv(id);
-                vec2 ctr = id + vec2(chashv(id + 1.3), chashv(id + 7.7));
-                float life = fract(t * (0.65 + seed * 0.7) + seed);
-                float rad = life * (0.16 + seed * 0.20);                  // small raindrop-impact rings (~0.22m), NOT big puddle ripples -- ground-level PEI showed 0.45m read as pond-ripples + too busy
-                float ring = smoothstep(0.05, 0.0, abs(length(g - ctr) - rad));
-                acc += ring * (1.0 - life) * step(gate, seed) * (0.55 + seed * 0.45);
-            }
-        }
-    }
-    return acc;
-}
 void fragment() {
     vec4 w0 = texture(splat0, UV);
     vec4 w1 = texture(splat1, UV);
@@ -126,8 +102,7 @@ void fragment() {
         float r_wet = clamp(rain_wetness, 0.0, 1.0) * r_up;
         ALBEDO *= mix(1.0, 0.60, r_wet);                             // wet ground darkens
         ROUGHNESS = mix(1.0, 0.55, r_wet);                           // DAMP, not mirror -- grass/dirt mustn't go wet-plastic glossy like asphalt
-        float r_int = clamp(rain_intensity, 0.0, 1.0);
-        ALBEDO += vec3(rsplash(wpos.xz, TIME, r_int) * r_int * r_up * 0.30);
+        // NO splash impacts on terrain (master: gate impacts to solid PROPS, not terrain) -- terrain just soaks dark + damps.
         SPECULAR = 0.5 + r_wet * 0.12;                               // subtle sheen only (no metallic -- terrain isn't metal)
     }
 }
