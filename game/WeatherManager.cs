@@ -189,7 +189,10 @@ namespace UnturnedGodot
             if (_rainMatAudio != null) { _rainMatAudio.Intensity = rint; _rainMatAudio.Cam = GetViewport()?.GetCamera3D(); }
             // muffle under a roof OR a tree canopy. NOTE: only the roof `shelter` fades the 3D rain globally (above) --
             // a canopy instead cuts a LOCAL hole in the streak shader (rain_canopy), so rain still falls outside it.
-            if (_rainAudio != null) { _rainAudio.Intensity = rint; _rainAudio.Shelter = Mathf.Min(shelter, _rainMatAudio?.CanopyShelter ?? 1f); }
+            // The 900Hz/-7dB/24dB-oct shelter curve is ROOF-correct + deliberate; a permeable CANOPY must NOT pull that
+            // same lever as hard as concrete (master: muffle too strong). So cap its reach: a tree only ever takes Shelter
+            // to 0.7 (a slight top-off), a solid roof still all the way to 0 (full muffle). Two knobs, tunable apart. (tinyclaw)
+            if (_rainAudio != null) { _rainAudio.Intensity = rint; _rainAudio.Shelter = Mathf.Min(shelter, Mathf.Lerp(1f, 0.7f, 1f - (_rainMatAudio?.CanopyShelter ?? 1f))); }
 
             if (_dbgFrames < 8 && System.Environment.GetEnvironmentVariable("UG_WEATHER") != null)
             {

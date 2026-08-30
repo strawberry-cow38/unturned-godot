@@ -64,7 +64,7 @@ namespace UnturnedGodot
             float heavyAmt = Mathf.Clamp((rint - 0.5f) / 0.5f, 0f, 1f);
             float heavyTgt = Mathf.Lerp(-26f, -9f, heavyAmt);   // -6dB global trim to match the light bed
 
-            float shelterDb = Mathf.Lerp(-7f, 0f, shelter);   // the roof cuts direct rain a touch; the low-pass does the muffle
+            float shelterDb = Mathf.Lerp(-7f, 0f, shelter);   // the roof cuts direct rain a touch; the low-pass does the muffle. Depth is ROOF-correct -- a permeable CANOPY is softened by capping its Shelter contribution in WeatherManager (tinyclaw), not by weakening this shared curve.
 
             // NO thunder duck (master dropped it): the claps clear the rain bed by ~8-9dB on their own, so dipping the
             // rain under them was pure impact-polish that read as a mixer glitch. Rain level tracks intensity + shelter only.
@@ -73,7 +73,7 @@ namespace UnturnedGodot
 
             // shelter low-pass: sweep the cutoff in LOG domain (a linear sweep sounds like a wah) -- ~20kHz open
             // outdoors, ~900Hz fully under cover. Change-guarded so it's not rewritten every idle frame.
-            float cut = Mathf.Exp(Mathf.Lerp(Mathf.Log(20500f), Mathf.Log(900f), 1f - shelter));
+            float cut = Mathf.Exp(Mathf.Lerp(Mathf.Log(20500f), Mathf.Log(900f), 1f - shelter));   // 900Hz floor is ROOF-correct (a solid roof muffles hard); a permeable CANOPY never reaches it -- its Shelter is capped in WeatherManager so it only takes the top off
             if (_lp != null && Mathf.Abs(cut - _lastCut) > 1f) { _lastCut = cut; _lp.CutoffHz = cut; }
         }
 
