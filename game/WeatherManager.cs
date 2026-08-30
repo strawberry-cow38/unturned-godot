@@ -18,8 +18,7 @@ namespace UnturnedGodot
         public RainOverlay Overlay;
         public DayNightCycle Cycle;
         RainSystem3D _rain3d;   // worldspace 3D rain -- supersedes the 2D overlay streaks
-        RainAudio _rainAudio;   // layered rain soundscape (Rain bus, shelter low-pass, thunder duck)
-        float _rainDuck = 1f;   // rain pre-dip: 1 = normal .. <1 = dipped ahead of a thunderclap
+        RainAudio _rainAudio;   // layered rain soundscape (Rain bus, shelter low-pass)
         AudioStreamPlayer[] _thunderPool;   // a few plain players on Master (NOT SoundBus -> never lures zombies) so overlapping claps don't cut each other
         AudioStream[] _thunderStreams;      // varied freesound samples: [0]=medium clap, [1]=sharp close crack, [2]=deep distant rumble
         int _thunderPoolNext;               // round-robin index into the pool
@@ -182,24 +181,9 @@ namespace UnturnedGodot
             }
             if (Overlay != null) Overlay.Raining = false;   // the 3D rain replaces the 2D streak overlay
             if (Cycle != null) { Cycle.Overcast = a > 0.35f; Cycle.StormAmount = rint; }   // rint drives the moody storm-env blend (grey sky + fog + dim cool light) in DayNightCycle
-            // rain audio: layered soundscape off the same rint + shelter, PRE-DIPPED ahead of a thunderclap so the crack
-            // lands in a hole (scripted duck, deterministic -- the boom's countdown is queued). ⚠ ASYMMETRIC slew: dip
-            // fast, recover SLOW (~2s) -- a fast release pops the rain back BEFORE the clap even sounds (thunder.wav
-            // onsets ~0.5s after Play), which is the pumping the dip exists to kill (tinyclaw/fable). Depth scales with
-            // the clap's volume so a distant rumble doesn't get the same hole as an overhead crack.
-            float duckTarget = 1f;
-            for (int i = 0; i < _pendingThunder.Count; i++)
-            {
-                var pt = _pendingThunder[i];
-                if (pt.t < 0.6f)
-                {
-                    float depth = Mathf.Lerp(0.35f, 0.85f, Mathf.Clamp((pt.vol + 0.5f) / -8f, 0f, 1f));   // vol -0.5=close/loud -> deep dip, -8.5=far/quiet -> shallow (matches the -0.5..-8.5 range below)
-                    duckTarget = Mathf.Min(duckTarget, Mathf.Lerp(depth, 1f, pt.t / 0.6f));
-                }
-            }
-            float duckRate = duckTarget < _rainDuck ? (float)delta / 0.06f : (float)delta / 2.0f;   // fast attack, slow release
-            _rainDuck = Mathf.MoveToward(_rainDuck, duckTarget, duckRate);
-            if (_rainAudio != null) { _rainAudio.Intensity = rint; _rainAudio.Shelter = shelter; _rainAudio.Duck = _rainDuck; }
+            // rain audio: layered soundscape off the same rint + shelter. NO thunder duck -- master dropped it (the claps
+            // already clear the rain bed by ~8-9dB on their own, so dipping the rain under them read as a mixer glitch).
+            if (_rainAudio != null) { _rainAudio.Intensity = rint; _rainAudio.Shelter = shelter; }
 
             if (_dbgFrames < 8 && System.Environment.GetEnvironmentVariable("UG_WEATHER") != null)
             {

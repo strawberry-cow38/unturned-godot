@@ -15,7 +15,6 @@ namespace UnturnedGodot
     {
         public float Intensity;    // rint 0..1 (WeatherManager drives it)
         public float Shelter = 1f; // 1 = open sky .. 0 = fully under a roof (WeatherManager drives it)
-        public float Duck = 1f;    // 1 = normal .. <1 = pre-dipped so a thunderclap lands in a hole (WeatherManager drives it)
 
         AudioStreamPlayer _light, _heavy;
         AudioEffectLowPassFilter _lp;
@@ -57,7 +56,6 @@ namespace UnturnedGodot
         {
             float rint = Mathf.Clamp(Intensity, 0f, 1f);
             float shelter = Mathf.Clamp(Shelter, 0f, 1f);
-            float duck = Mathf.Clamp(Duck, 0f, 1f);
             float dt = (float)delta;
 
             // LIGHT bed: audible from the first drop, up to full by ~half intensity (light rain IS mostly this layer).
@@ -67,10 +65,11 @@ namespace UnturnedGodot
             float heavyTgt = Mathf.Lerp(-26f, -9f, heavyAmt);   // -6dB global trim to match the light bed
 
             float shelterDb = Mathf.Lerp(-7f, 0f, shelter);   // the roof cuts direct rain a touch; the low-pass does the muffle
-            float duckDb = Mathf.Lerp(-4f, 0f, duck);         // pre-dip for a thunderclap -- SUBTLE now (was -20): with the rain -6dB lower + claps +15%, there's already a ~15dB clap-to-bed gap, so a big dip just reads as a broken mixer (master heard it; Fable's brief: keep under ~4dB)
 
-            _lightDb = SlewLayer(_light, _lightDb, rint > 0.02f ? lightTgt + shelterDb + duckDb : -80f, dt);
-            _heavyDb = SlewLayer(_heavy, _heavyDb, heavyAmt > 0.02f ? heavyTgt + shelterDb + duckDb : -80f, dt);
+            // NO thunder duck (master dropped it): the claps clear the rain bed by ~8-9dB on their own, so dipping the
+            // rain under them was pure impact-polish that read as a mixer glitch. Rain level tracks intensity + shelter only.
+            _lightDb = SlewLayer(_light, _lightDb, rint > 0.02f ? lightTgt + shelterDb : -80f, dt);
+            _heavyDb = SlewLayer(_heavy, _heavyDb, heavyAmt > 0.02f ? heavyTgt + shelterDb : -80f, dt);
 
             // shelter low-pass: sweep the cutoff in LOG domain (a linear sweep sounds like a wah) -- ~20kHz open
             // outdoors, ~900Hz fully under cover. Change-guarded so it's not rewritten every idle frame.
@@ -78,7 +77,7 @@ namespace UnturnedGodot
             if (_lp != null && Mathf.Abs(cut - _lastCut) > 1f) { _lastCut = cut; _lp.CutoffHz = cut; }
         }
 
-        // SLEW the volume toward the goal (~180 dB/s) so a layer coming in, going out, or ducking ramps instead of
+        // SLEW the volume toward the goal (~180 dB/s) so a layer coming in or going out ramps instead of
         // stepping (a 55 dB jump in one frame is an audible click; the light loop's first sample is -3.7 dBFS). Only
         // Stop() when genuinely silent. Start at a RANDOM offset so every shower isn't the same excerpt.
         static float SlewLayer(AudioStreamPlayer pl, float cur, float goal, float dt)
