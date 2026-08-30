@@ -61,7 +61,7 @@ namespace UnturnedGodot
         static readonly string[] ServerGatedVerbs = { "give", "xp", "skill", "teleport", "tp", "toggleglobalpower", "globalpower", "grid" };
         // Verbs below the arg guard that are legal with NO argument. Keep this in step when adding one, or the
         // guard silently swallows it and the verb becomes unreachable from the console.
-        static readonly string[] NoArgVerbs = { "unarmed", "fridge", "fluid", "survival", "spawnmagnetablecontainer", "magcontainer", "spawnelevator", "heliphys", "procisland" };
+        static readonly string[] NoArgVerbs = { "unarmed", "fridge", "fluid", "survival", "spawnmagnetablecontainer", "magcontainer", "spawnelevator", "heliphys", "procisland", "credits" };
         bool _resultHooked;
 
         LineEdit _input;
@@ -771,10 +771,11 @@ namespace UnturnedGodot
             }
             else if (verb == "credits")
             {
-                // CC-BY assets (freesound thunder etc.) require in-game attribution -- prints the shipped CREDITS.md.
+                // CC-BY assets (freesound thunder, klankbeeld) require in-game attribution. ⚠ Log REPLACES the label
+                // text, so print the WHOLE file in ONE call -- line-by-line would leave only the last line on screen,
+                // which is exactly where the CC-BY entry that legally must be shown was hiding.
                 var cp = ProjectSettings.GlobalizePath("res://content/CREDITS.md");
-                if (System.IO.File.Exists(cp)) { foreach (var line in System.IO.File.ReadAllLines(cp)) if (line.Trim().Length > 0) Log(line); }
-                else Log("no credits file");
+                Log(System.IO.File.Exists(cp) ? System.IO.File.ReadAllText(cp).Trim() : "no credits file");
             }
             else if (verb == "unarmed")
             {

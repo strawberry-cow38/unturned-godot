@@ -65,7 +65,7 @@ namespace UnturnedGodot
         public float RainIntensity => Sim?.BlendAlpha ?? 0f;
         /// <summary>rint (0..1): the value the rain density, wetness, splashes and storm sky all scale off --
         /// BlendAlpha x Severity. This is what the retired 2D overlay's Intensity used to carry.</summary>
-        public float RainVisualIntensity => RainIntensity * Severity;
+        public float Rain3DIntensity => _rain3d?.Intensity ?? 0f;   // the ACTUAL 3D-rain input (rint x shelter) RainSystem3D fades the rain off. Tests assert THIS, not a parallel re-derivation of rint (tinyclaw finding 3).
         /// <summary>Multiplier other systems apply to a fishing bite interval (< 1 = bites sooner).</summary>
         public static float FishBiteInterval => Current?.Sim?.FishBiteIntervalMultiplier ?? 1f;
 
@@ -182,12 +182,23 @@ namespace UnturnedGodot
             }
             if (Overlay != null) Overlay.Raining = false;   // the 3D rain replaces the 2D streak overlay
             if (Cycle != null) { Cycle.Overcast = a > 0.35f; Cycle.StormAmount = rint; }   // rint drives the moody storm-env blend (grey sky + fog + dim cool light) in DayNightCycle
-            // rain audio: the layered soundscape off the same rint + shelter, pre-dipped ahead of a thunderclap so the
-            // crack lands in a hole (Fable: scripted duck, deterministic -- the boom's countdown is already queued).
+            // rain audio: layered soundscape off the same rint + shelter, PRE-DIPPED ahead of a thunderclap so the crack
+            // lands in a hole (scripted duck, deterministic -- the boom's countdown is queued). ⚠ ASYMMETRIC slew: dip
+            // fast, recover SLOW (~2s) -- a fast release pops the rain back BEFORE the clap even sounds (thunder.wav
+            // onsets ~0.5s after Play), which is the pumping the dip exists to kill (tinyclaw/fable). Depth scales with
+            // the clap's volume so a distant rumble doesn't get the same hole as an overhead crack.
             float duckTarget = 1f;
             for (int i = 0; i < _pendingThunder.Count; i++)
-                if (_pendingThunder[i].t < 0.6f) duckTarget = Mathf.Min(duckTarget, Mathf.Lerp(0.35f, 1f, _pendingThunder[i].t / 0.6f));
-            _rainDuck = Mathf.MoveToward(_rainDuck, duckTarget, (float)delta / 0.12f);
+            {
+                var pt = _pendingThunder[i];
+                if (pt.t < 0.6f)
+                {
+                    float depth = Mathf.Lerp(0.35f, 0.85f, Mathf.Clamp((pt.vol + 3f) / -15f, 0f, 1f));   // vol -3=close/loud -> deep dip, -18=far/quiet -> shallow (matches the -3..-18 range below)
+                    duckTarget = Mathf.Min(duckTarget, Mathf.Lerp(depth, 1f, pt.t / 0.6f));
+                }
+            }
+            float duckRate = duckTarget < _rainDuck ? (float)delta / 0.06f : (float)delta / 2.0f;   // fast attack, slow release
+            _rainDuck = Mathf.MoveToward(_rainDuck, duckTarget, duckRate);
             if (_rainAudio != null) { _rainAudio.Intensity = rint; _rainAudio.Shelter = shelter; _rainAudio.Duck = _rainDuck; }
 
             if (_dbgFrames < 8 && System.Environment.GetEnvironmentVariable("UG_WEATHER") != null)
@@ -290,7 +301,7 @@ namespace UnturnedGodot
             // thunder: closer -> sooner + louder + a SHARP clap; farther -> later + quieter + a DEEP rumble
             // queue this strike's boom: flash→boom gap cut ~40% (bitvox); sample by distance (near=sharp crack, far=deep rumble)
             if (_thunderPool != null)
-                _pendingThunder.Add((Mathf.Lerp(0.24f, 2.4f, dist), Mathf.Lerp(0f, -18f, dist), dist < 0.4f ? 1 : (dist > 0.72f ? 2 : 0)));
+                _pendingThunder.Add((Mathf.Lerp(0.24f, 2.4f, dist), Mathf.Lerp(-3f, -18f, dist), dist < 0.4f ? 1 : (dist > 0.72f ? 2 : 0)));   // near strike caps at -3dB, not 0 -- a 0dB close crack summed with heavy rain (which peaks ~-0.4dBFS) clips Master (tinyclaw finding 10)
             GD.Print("[weather] lightning");
         }
 

@@ -9,11 +9,14 @@ namespace UnturnedGodot.Testing
     // overcast flag, and that lightning is gated to the weather that carries it.
     //
     // NOTE: the 2D RainOverlay these once pinned was RETIRED for the worldspace 3D rain (RainSystem3D + the
-    // rain_wetness/rain_intensity globals). WeatherManager now forces Overlay.Raining=false and drives everything off
-    // `RainVisualIntensity` (= BlendAlpha x Severity = "rint"), so the tests assert THAT, not the dead overlay -- and
-    // they pass a null overlay, exactly as the real PEI attach does.
+    // rain_wetness/rain_intensity globals). WeatherManager forces Overlay.Raining=false and drives the 3D rain off
+    // `rint` (= BlendAlpha x Severity). ⚠ These assert `wm.Rain3DIntensity` -- the ACTUAL value RainSystem3D consumes
+    // to fade the rain (WeatherManager writes `_rain3d.Intensity = rint * shelter`; shelter reads 1 with no camera in
+    // a headless test, so this equals rint here). It is NOT a parallel getter: zero the driving `rint` and this reads
+    // 0 and the tests go red -- which is the point (tinyclaw finding 3: the old `RainVisualIntensity` re-derived rint
+    // on its own, so a dead output path still passed). A null overlay is passed, exactly as the real PEI attach does.
 
-    // Forcing rain drives the rain intensity; clearing it zeroes it.
+    // Forcing rain drives the real rain input; heavy is denser than light IN THE SAME RUN; clearing it zeroes it.
     public class WeatherDrivesRain : GameTest
     {
         public override string Name => "weather.drives_rain";
@@ -24,26 +27,34 @@ namespace UnturnedGodot.Testing
             var wm = WeatherManager.Attach(World, null, dn, seed: 12345);   // null overlay -- the 3D rain replaced the 2D one
             yield return Ticks(2);
 
-            T.Check($"starts dry (rint {wm.RainVisualIntensity:0.000})", wm.RainVisualIntensity <= 0.001f);
+            T.Check($"starts dry (rint {wm.Rain3DIntensity:0.000})", wm.Rain3DIntensity <= 0.001f);
 
             wm.Sim.ForecastImmediately(0);   // Default Rain
             // Wait for the fade-in to visibly begin. A fixed couple of ticks doesn't clear a threshold on this port's
             // fast/short active window (rint reads ~0 for the first frames), so poll rather than assume a tick count.
-            yield return Until(() => wm.RainVisualIntensity > 0.05f, 30);
-            T.Check($"rain fades in as the weather starts (rint {wm.RainVisualIntensity:0.000})", wm.RainVisualIntensity > 0.05f);
+            yield return Until(() => wm.Rain3DIntensity > 0.05f, 30);
+            T.Check($"rain fades in as the weather starts (rint {wm.Rain3DIntensity:0.000})", wm.Rain3DIntensity > 0.05f);
 
             // run out the fade-in. PEI's active window (0.05-0.15 cycles) is SHORTER than the asset's 20 s fade-in on
             // this port's 120 s day, so the peak lands mid-shower -- wait for the peak rather than a fixed tick count.
             yield return Until(() => wm.Sim.BlendAlpha > 0.9f, 25);
             // Default Rain's severity is its asset Fog_Density 0.7, so a fully-committed LIGHT shower tops out ~0.7,
-            // not 1.0 -- Heavy Rain is the one that reaches full (asserted in weather.lightning_gating).
-            T.Check($"light rain settles near its 0.7 severity (rint {wm.RainVisualIntensity:0.00})",
-                    wm.RainVisualIntensity > 0.6f && wm.RainVisualIntensity < 0.8f);
+            // not 1.0 -- Heavy Rain is the one that reaches full.
+            T.Check($"light rain settles near its 0.7 severity (rint {wm.Rain3DIntensity:0.00})",
+                    wm.Rain3DIntensity > 0.6f && wm.Rain3DIntensity < 0.8f);
             T.Check("day/night flipped to overcast", dn.Overcast);
+
+            // Escalate light -> HEAVY in the SAME run and prove heavy is genuinely denser. Nothing else compares the
+            // two within one run; the old heavy check just asserted >0.9, which its own neighbours already implied.
+            float lightRint = wm.Rain3DIntensity;
+            wm.Sim.ForecastImmediately(1);   // Heavy Rain (severity 1.0)
+            yield return Until(() => wm.Rain3DIntensity > lightRint + 0.15f, 30);
+            T.Check($"heavy rain is denser than light in the same run ({wm.Rain3DIntensity:0.00} > {lightRint:0.00})",
+                    wm.Rain3DIntensity > lightRint + 0.15f);
 
             wm.Sim.Clear();
             yield return Ticks(2);
-            T.Check($"clearing the weather zeroes the rain (rint {wm.RainVisualIntensity:0.000})", wm.RainVisualIntensity <= 0.001f);
+            T.Check($"clearing the weather zeroes the rain (rint {wm.Rain3DIntensity:0.000})", wm.Rain3DIntensity <= 0.001f);
             T.Check("overcast released", !dn.Overcast);
         }
     }
@@ -71,11 +82,8 @@ namespace UnturnedGodot.Testing
             T.Check("heavy rain pulls the fishing bite interval down (0.8 at full)",
                     WeatherManager.FishBiteInterval < 0.95f);
 
-            // heavy rain must actually be denser than light rain, not just carry different scalars. Severity comes
-            // from the assets' Fog_Density (0.7 vs 1.0), so heavy reaches full rint where light topped out ~0.7.
-            // (This is the check that used to PASS off the retired overlay's stuck 1f default -- now it reads rint.)
-            T.Check($"heavy rain reaches full intensity, denser than light's ~0.70 (rint {wm.RainVisualIntensity:0.00})",
-                    wm.RainVisualIntensity > 0.9f);
+            // heavy rain reaches full intensity at the ACTUAL 3D-rain input (severity 1.0 vs light's 0.7).
+            T.Check($"heavy rain reaches full intensity (rint {wm.Rain3DIntensity:0.00})", wm.Rain3DIntensity > 0.9f);
             T.Check("severity is the asset value, not an invented one", Mathf.Abs(wm.Severity - 1.0f) < 0.01f);
 
             wm.Strike();   // don't wait 15-60 s for a natural one

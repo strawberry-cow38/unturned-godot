@@ -178,7 +178,7 @@ void sky() {
             float vlen = length(vxz);
             float zdamp = smoothstep(0.0, 0.15, vlen);
             vec3 vdir = vlen > 1e-5 ? vec3(vxz.x, 0.0, vxz.y) / vlen : lightning_dir;
-            float dirW = pow(clamp(dot(vdir, lightning_dir), 0.0, 1.0) * 0.5 + 0.5, 3.0) * zdamp;
+            float dirW = mix(0.125, pow(clamp(dot(vdir, lightning_dir), 0.0, 1.0) * 0.5 + 0.5, 3.0), zdamp);   // fade to the isotropic FLOOR, not zero -> the flash still lights clouds overhead (tinyclaw); pinwheel still dead
             float shaped = lightning_flash * dirW * macroAlpha * (1.0 - cloudsSmall * 0.4);
             cloudBodyColor += lightning_tint * shaped * 1.6;
             cRimColor += lightning_tint * shaped * 2.4;
