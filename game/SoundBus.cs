@@ -1,4 +1,5 @@
 using Godot;
+using UnturnedSim;
 
 namespace UnturnedGodot
 {
@@ -27,9 +28,26 @@ namespace UnturnedGodot
         public static System.Action<Vector3, float> OnNoise;
 
         // Emit a sound at (pos, loudness). loudness<=0 is silent (e.g. suppressed / not moving).
+        //
+        // RAIN MASKS IT. bitvox approved rain as a stealth window: "make sure it is pretty limited, not a
+        // free pass". The rule lives in UnturnedSim.NoiseMasking so the numbers are arguable in a test
+        // rather than in the game; the short version is that it subtracts a distance instead of scaling
+        // one, so heavy rain takes about a quarter off moving and a tenth off shooting.
+        //
+        // APPLIED HERE, at the one choke point every call site already funnels through -- footsteps,
+        // gunshots, horns, doors. Putting it at the call sites instead would mean six copies of a rule that
+        // has to agree, and the ones added later would not have it at all.
+        //
+        // Reads WeatherManager.Current rather than a field something has to remember to update: no static
+        // weather state to leak across a scene reload, and in multiplayer the SERVER's own weather governs,
+        // which is the side actually running the hearing check.
         public static void Emit(SceneTree tree, Vector3 pos, float loudness)
         {
             if (tree == null || loudness <= 0f) return;
+            var wm = WeatherManager.Current;
+            if (wm != null && GodotObject.IsInstanceValid(wm))
+                loudness = NoiseMasking.Carry(loudness, wm.RainIntensity * wm.Severity);
+            if (loudness <= 0f) return;
             OnNoise?.Invoke(pos, loudness);
         }
     }
