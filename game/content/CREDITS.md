@@ -31,3 +31,15 @@ Two seamless-looped rain beds; intensity crossfades between them (light bed → 
     baked to a seamless 2 s-crossfaded loop, RMS-matched to −24 dBFS.
 - **rain_heavy.wav** ← **AdrianoAnjos** — "Heavy rain pouring with water stream on concrete" — **CC0 1.0** — https://freesound.org/people/AdrianoAnjos/sounds/616446/ (2026-08-29)
   - **Modified:** baked to a seamless 2 s-crossfaded loop, RMS-matched to −24 dBFS.
+
+## Rain on materials → `rain_metal_roof.wav`, `rain_tarp.wav`, `rain_car.wav`, `rain_foliage.wav`
+
+Positional rain-on-material layers (RainMaterialAudio): the nearest prop of each material emits its own rain sound
+from itself within a radius. All **CC0 1.0**. Sourced + baked by tinyclaw — trimmed to a steady window, equal-power
+crossfade looped, loudness-matched to −24 dBFS. (Canvas + glass takes dropped per master; `rain_tarp` currently uses
+the wood-deck take, pending master's canvas-vs-wood call.)
+
+- **rain_metal_roof.wav** ← **Froggerbottom** — "Rain and tin roof" — **CC0 1.0** — https://freesound.org/s/607074/ (2026-08-30)
+- **rain_tarp.wav** ← **buzkill** — "Rain Wood Deck Furniture Nighttime Coastal" — **CC0 1.0** — https://freesound.org/s/824671/ (2026-08-30)
+- **rain_car.wav** ← **jankooiker** — "Rain from inside car" — **CC0 1.0** — https://freesound.org/s/237941/ (2026-08-30)
+- **rain_foliage.wav** ← **bone666138** — "Rain in Trees" — **CC0 1.0** — https://freesound.org/s/655311/ (2026-08-30)

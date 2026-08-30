@@ -115,6 +115,7 @@ namespace UnturnedGodot
             bool clockTest = false;
             bool elevatorTest = false;
             bool rainTest = false;
+            bool rainMatTest = false;
             bool play = false, demo = false, netdemo = false, server = false, dedicated = false, client = false, smoke = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, lightTest = false, trafficTest = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, playground = false, objects = false, peidrive = false, craftmenu = false, stationtest = false, editorMode = false, impactTest = false, doorGallery = false, lampTest = false, beamTest = false, impTest = false, treeSweep = false, bakeLods = false, bakeLodsDry = false, netobserve = false, zombieTier = false, zflow = false, zhunt = false, zkill = false, zsound = false, zface = false, zpath = false;
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
@@ -132,6 +133,7 @@ namespace UnturnedGodot
                 else if (arg.StartsWith("--treetest=")) { treetest = arg["--treetest=".Length..]; _shotRequested = treetest; }   // standing tree beside a felled one (its dropped logs) -> render the harvest
                 else if (arg == "--elevatortest") { elevatorTest = true; _shotRequested = "elevator"; }   // Elevator_0 wired to ride up/down on F; auto-Calls so an offline UG_SHOTTIME catches it mid-ride
                 else if (arg == "--raintest") { rainTest = true; _shotRequested = "rain"; }   // rain-visuals showcase: overcast ground + boxes + the RainOverlay (UG_RAININT / UG_RAINCAM)
+                else if (arg == "--rainmattest") rainMatTest = true;   // positional rain-on-material audio: a tree w/ collider under heavy rain, cam nearby -> the foliage emitter homes to it (UG_RAINMATDBG logs)
                 else if (arg == "--trainshow") trainshow = "1";   // assemble train_cargo_0 from its extracted pieces for a 3/4 shot
                 else if (arg == "--traintrack") traintrack = "1";   // ride the train along a curved test track
                 else if (arg.StartsWith("--slingtest=")) { slingtest = arg["--slingtest=".Length..]; _shotRequested = slingtest; }
@@ -445,6 +447,7 @@ namespace UnturnedGodot
             if (treetest != null) { GetWindow().Size = new Vector2I(1280, 800); _shotPath = shot; BuildTreeTest(treetest); return; }
             if (elevatorTest) { GetWindow().Size = new Vector2I(1280, 800); _shotPath = shot; BuildElevatorTest(); return; }
             if (rainTest) { GetWindow().Size = new Vector2I(1280, 800); _shotPath = shot; BuildRainTest(); return; }
+            if (rainMatTest) { GetWindow().Size = new Vector2I(1280, 720); BuildRainMatTest(); return; }
             if (trainshow != null) { GetWindow().Size = new Vector2I(1600, 720); BuildTrainShow(); return; }
             if (traintrack != null) { GetWindow().Size = new Vector2I(1600, 900); BuildTrainTrack(); return; }
 
@@ -1135,6 +1138,49 @@ namespace UnturnedGodot
             RenderingServer.GlobalShaderParameterSet("rain_intensity", inten);
             AddChild(new RainSystem3D { Cam = cam, Intensity = inten });   // worldspace GPU-particle rain (geometry occludes it)
             GD.Print($"[raintest] worldspace 3D rain, intensity {inten:0.00}. UG_RAININT / UG_RAINWET / UG_RAINCAM.");
+        }
+
+        // --rainmattest: positional rain-on-material audio proof. A pine (visual + a TreeTrunk collider on the world
+        // layer) under HEAVY rain, camera parked ~5 m away -> RainMaterialAudio's foliage emitter homes to the trunk and
+        // plays rain-on-foliage FROM it; the offline AVI captures the 3D-panned result. UG_RAINMATDBG logs what it finds.
+        void BuildRainMatTest()
+        {
+            var env = new Godot.Environment {
+                BackgroundMode = Godot.Environment.BGMode.Color, BackgroundColor = new Color(0.42f, 0.46f, 0.52f),
+                AmbientLightSource = Godot.Environment.AmbientSource.Color, AmbientLightColor = new Color(0.5f, 0.53f, 0.57f), AmbientLightEnergy = 0.75f,
+                FogEnabled = true, FogDensity = 0.012f, FogLightColor = new Color(0.5f, 0.54f, 0.6f) };
+            AddChild(new WorldEnvironment { Environment = env });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-55f, -40f, 0f), LightEnergy = 0.7f, ShadowEnabled = true });
+            RainSystem3D.EnsureGlobals();
+            var ground = new StaticBody3D { CollisionLayer = 1u << 0 };
+            ground.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
+            AddChild(ground);
+            AddChild(new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(80f, 80f) }, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.22f, 0.24f, 0.26f), Roughness = 0.7f } });
+
+            // TREE at (-4,0,0): the visual + a TreeTrunk (StaticBody3D) with a cylinder collider on the world layer, so
+            // the material-audio sphere query finds it (a bare-constructed TreeTrunk has no collider -- ResourceField
+            // adds one when it places the real ones).
+            string dir = ProjectSettings.GlobalizePath("res://content/resources/");
+            AddChild(LoadTreeVisual(dir, "Pine_0", new Vector3(-4f, 0f, 0f)));
+            var trunk = new TreeTrunk { TreeName = "Pine_0", ResDir = dir, LogItem = 41 };
+            trunk.CollisionLayer = 1u << 0;
+            trunk.AddChild(new CollisionShape3D { Shape = new CylinderShape3D { Radius = 0.6f, Height = 9f }, Position = new Vector3(0f, 4.5f, 0f) });
+            AddChild(trunk); trunk.Position = new Vector3(-4f, 0f, 0f);
+
+            var dn = new DayNightCycle { DayLength = 120f, Time = 0.5f, Speed = 0f, VisualsEnabled = false };
+            AddChild(dn);
+            var wm = WeatherManager.Attach(this, null, dn, seed: 1);
+            wm.Sim.SetPerpetual(1);   // heavy rain -> full rint -> the material emitters run
+
+            var cam = new Camera3D { Current = true, Fov = 62f };
+            AddChild(cam);
+            cam.Position = new Vector3(-4f, 3f, 22f);   // START 22 m out -- past the 16 m radius, so the foliage is silent
+            cam.LookAt(new Vector3(-4f, 3.5f, 0f), Vector3.Up);   // AFTER AddChild -- LookAt needs the node in the tree
+            // walk IN to 4 m over the clip: the foliage fades up as the camera crosses into the tree's radius, so the
+            // positional read is AUDIBLE, not just asserted.
+            var tw = CreateTween();
+            tw.TweenProperty(cam, "position", new Vector3(-4f, 2.5f, 4f), 5.0);
+            GD.Print("[rainmattest] pine at (-4,0,0), cam walks 22m -> 4m over 5s, heavy rain -> foliage fades in");
         }
 
         // --treetest=<birch|maple|pine>: a standing tree on the LEFT, a felled one on the RIGHT (visual hidden + a real

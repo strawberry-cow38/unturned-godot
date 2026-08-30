@@ -19,6 +19,7 @@ namespace UnturnedGodot
         public DayNightCycle Cycle;
         RainSystem3D _rain3d;   // worldspace 3D rain -- supersedes the 2D overlay streaks
         RainAudio _rainAudio;   // layered rain soundscape (Rain bus, shelter low-pass)
+        RainMaterialAudio _rainMatAudio;   // positional rain-on-material: nearest car/tree/... emits its own rain sound within a radius
         AudioStreamPlayer[] _thunderPool;   // a few plain players on Master (NOT SoundBus -> never lures zombies) so overlapping claps don't cut each other
         AudioStream[] _thunderStreams;      // varied freesound samples: [0]=medium clap, [1]=sharp close crack, [2]=deep distant rumble
         int _thunderPoolNext;               // round-robin index into the pool
@@ -102,6 +103,8 @@ namespace UnturnedGodot
             AddChild(_rain3d);
             _rainAudio = new RainAudio();
             AddChild(_rainAudio);
+            _rainMatAudio = new RainMaterialAudio();
+            AddChild(_rainMatAudio);
 
             // THUNDER: a few varied samples it picks from per strike -- a sharp clap for close hits, a deep rumble for
             // distant ones (bitvox: "different matching sound effects"). Plain AudioStreamPlayers on Master, deliberately
@@ -184,6 +187,7 @@ namespace UnturnedGodot
             // rain audio: layered soundscape off the same rint + shelter. NO thunder duck -- master dropped it (the claps
             // already clear the rain bed by ~8-9dB on their own, so dipping the rain under them read as a mixer glitch).
             if (_rainAudio != null) { _rainAudio.Intensity = rint; _rainAudio.Shelter = shelter; }
+            if (_rainMatAudio != null) { _rainMatAudio.Intensity = rint; _rainMatAudio.Cam = GetViewport()?.GetCamera3D(); }
 
             if (_dbgFrames < 8 && System.Environment.GetEnvironmentVariable("UG_WEATHER") != null)
             {
