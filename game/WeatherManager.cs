@@ -18,6 +18,8 @@ namespace UnturnedGodot
         public RainOverlay Overlay;
         public DayNightCycle Cycle;
         RainSystem3D _rain3d;   // worldspace 3D rain -- supersedes the 2D overlay streaks
+        RainAudio _rainAudio;   // layered rain soundscape (Rain bus, shelter low-pass, thunder duck)
+        float _rainDuck = 1f;   // rain pre-dip: 1 = normal .. <1 = dipped ahead of a thunderclap
         AudioStreamPlayer[] _thunderPool;   // a few plain players on Master (NOT SoundBus -> never lures zombies) so overlapping claps don't cut each other
         AudioStream[] _thunderStreams;      // varied freesound samples: [0]=medium clap, [1]=sharp close crack, [2]=deep distant rumble
         int _thunderPoolNext;               // round-robin index into the pool
@@ -99,6 +101,8 @@ namespace UnturnedGodot
             RainSystem3D.EnsureGlobals();
             _rain3d = new RainSystem3D { Intensity = 0f };
             AddChild(_rain3d);
+            _rainAudio = new RainAudio();
+            AddChild(_rainAudio);
 
             // THUNDER: a few varied samples it picks from per strike -- a sharp clap for close hits, a deep rumble for
             // distant ones (bitvox: "different matching sound effects"). Plain AudioStreamPlayers on Master, deliberately
@@ -178,6 +182,13 @@ namespace UnturnedGodot
             }
             if (Overlay != null) Overlay.Raining = false;   // the 3D rain replaces the 2D streak overlay
             if (Cycle != null) { Cycle.Overcast = a > 0.35f; Cycle.StormAmount = rint; }   // rint drives the moody storm-env blend (grey sky + fog + dim cool light) in DayNightCycle
+            // rain audio: the layered soundscape off the same rint + shelter, pre-dipped ahead of a thunderclap so the
+            // crack lands in a hole (Fable: scripted duck, deterministic -- the boom's countdown is already queued).
+            float duckTarget = 1f;
+            for (int i = 0; i < _pendingThunder.Count; i++)
+                if (_pendingThunder[i].t < 0.6f) duckTarget = Mathf.Min(duckTarget, Mathf.Lerp(0.35f, 1f, _pendingThunder[i].t / 0.6f));
+            _rainDuck = Mathf.MoveToward(_rainDuck, duckTarget, (float)delta / 0.12f);
+            if (_rainAudio != null) { _rainAudio.Intensity = rint; _rainAudio.Shelter = shelter; _rainAudio.Duck = _rainDuck; }
 
             if (_dbgFrames < 8 && System.Environment.GetEnvironmentVariable("UG_WEATHER") != null)
             {
