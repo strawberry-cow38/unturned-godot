@@ -186,8 +186,10 @@ namespace UnturnedGodot
             if (Cycle != null) { Cycle.Overcast = a > 0.35f; Cycle.StormAmount = rint; }   // rint drives the moody storm-env blend (grey sky + fog + dim cool light) in DayNightCycle
             // rain audio: layered soundscape off the same rint + shelter. NO thunder duck -- master dropped it (the claps
             // already clear the rain bed by ~8-9dB on their own, so dipping the rain under them read as a mixer glitch).
-            if (_rainAudio != null) { _rainAudio.Intensity = rint; _rainAudio.Shelter = shelter; }
             if (_rainMatAudio != null) { _rainMatAudio.Intensity = rint; _rainMatAudio.Cam = GetViewport()?.GetCamera3D(); }
+            // muffle under a roof OR a tree canopy. NOTE: only the roof `shelter` fades the 3D rain globally (above) --
+            // a canopy instead cuts a LOCAL hole in the streak shader (rain_canopy), so rain still falls outside it.
+            if (_rainAudio != null) { _rainAudio.Intensity = rint; _rainAudio.Shelter = Mathf.Min(shelter, _rainMatAudio?.CanopyShelter ?? 1f); }
 
             if (_dbgFrames < 8 && System.Environment.GetEnvironmentVariable("UG_WEATHER") != null)
             {

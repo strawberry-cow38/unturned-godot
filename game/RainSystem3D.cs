@@ -13,7 +13,7 @@ namespace UnturnedGodot
         public float Intensity = 1f;
         public float TopOffset = 10f;    // emit this far above the camera so drops fall PAST it
         CpuParticles3D _p;
-        StandardMaterial3D _mat;   // streak material -- alpha faded with Intensity in _Process (CpuParticles3D has no AmountRatio)
+        ShaderMaterial _mat;   // streak material (rain_streak.gdshader) -- alpha_base faded with Intensity; canopy shadow via the rain_canopy global
         float _lastAlphaI = -1f;   // last intensity written to the material alpha -- skip the per-frame AlbedoColor churn when unchanged
 
         static bool _globalsRegistered;
@@ -26,6 +26,7 @@ namespace UnturnedGodot
             _globalsRegistered = true;
             RenderingServer.GlobalShaderParameterAdd("rain_wetness", RenderingServer.GlobalShaderParameterType.Float, 0f);
             RenderingServer.GlobalShaderParameterAdd("rain_intensity", RenderingServer.GlobalShaderParameterType.Float, 0f);
+            RenderingServer.GlobalShaderParameterAdd("rain_canopy", RenderingServer.GlobalShaderParameterType.Vec4, new Vector4(0f, 0f, 1f, 0f));   // xy=canopy XZ, z=radius, w=strength (0=none): the local rain shadow under trees
         }
 
         /// <summary>Zero the rain globals. They're process-wide and OUTLIVE a scene change (the Add is Nil-guarded
@@ -37,24 +38,15 @@ namespace UnturnedGodot
             if (!_globalsRegistered) return;   // never registered -> nothing to reset (and Set on a missing global warns)
             RenderingServer.GlobalShaderParameterSet("rain_wetness", 0f);
             RenderingServer.GlobalShaderParameterSet("rain_intensity", 0f);
+            RenderingServer.GlobalShaderParameterSet("rain_canopy", new Vector4(0f, 0f, 1f, 0f));
         }
 
         public override void _Ready()
         {
             var quad = new QuadMesh { Size = new Vector2(0.014f, 0.62f) };   // a thin, tall streak
-            _mat = new StandardMaterial3D
-            {
-                ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
-                Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
-                AlbedoColor = new Color(0.80f, 0.86f, 0.96f, 0.14f),
-                BillboardMode = BaseMaterial3D.BillboardModeEnum.Disabled,   // no billboard -> the velocity-aligned world tilt shows honestly
-                BillboardKeepScale = true,
-                CullMode = BaseMaterial3D.CullModeEnum.Disabled,
-                DisableReceiveShadows = true,
-                DistanceFadeMode = BaseMaterial3D.DistanceFadeModeEnum.PixelAlpha,   // fade drops right at the lens so they don't read as fat bars
-                DistanceFadeMinDistance = 1.5f,
-                DistanceFadeMaxDistance = 3.2f,
-            };
+            _mat = new ShaderMaterial { Shader = GD.Load<Shader>("res://content/rain_streak.gdshader") };
+            _mat.SetShaderParameter("tint", new Vector3(0.80f, 0.86f, 0.96f));
+            _mat.SetShaderParameter("alpha_base", 0.14f);   // = 0.14 * intensity, driven in _Process; the velocity-aligned world tilt comes from ParticleFlagAlignY below (not a billboard)
             quad.Material = _mat;
             _p = new CpuParticles3D
             {
@@ -82,7 +74,7 @@ namespace UnturnedGodot
         {
             if (Cam != null && IsInstanceValid(Cam)) GlobalPosition = Cam.GlobalPosition + new Vector3(0f, TopOffset, 0f);
             float i = Mathf.Clamp(Intensity, 0f, 1f);
-            if (_mat != null && i != _lastAlphaI) { _lastAlphaI = i; _mat.AlbedoColor = new Color(0.80f, 0.86f, 0.96f, 0.14f * i); }   // fade the streaks with the rain intensity (only rewrite on change)
+            if (_mat != null && i != _lastAlphaI) { _lastAlphaI = i; _mat.SetShaderParameter("alpha_base", 0.14f * i); }   // fade the streaks with the rain intensity (only rewrite on change)
             if (_p != null) { bool on = i > 0.02f; if (_p.Emitting != on) _p.Emitting = on; }   // stop simulating when clear
         }
     }

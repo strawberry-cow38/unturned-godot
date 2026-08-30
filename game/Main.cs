@@ -1179,7 +1179,7 @@ namespace UnturnedGodot
             // walk IN to 4 m over the clip: the foliage fades up as the camera crosses into the tree's radius, so the
             // positional read is AUDIBLE, not just asserted.
             var tw = CreateTween();
-            tw.TweenProperty(cam, "position", new Vector3(-4f, 2.5f, 4f), 5.0);
+            tw.TweenProperty(cam, "position", new Vector3(-4f, 2.4f, 2.5f), 5.0);   // end WELL under the canopy so the rain hole reads
             GD.Print("[rainmattest] pine at (-4,0,0), cam walks 22m -> 4m over 5s, heavy rain -> foliage fades in");
         }
 

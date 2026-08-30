@@ -16,8 +16,10 @@ namespace UnturnedGodot
     {
         public float Intensity;   // rint 0..1 (WeatherManager drives it)
         public Camera3D Cam;      // listener position (the player camera)
+        public float CanopyShelter = 1f;   // 1 = open sky .. 0 = under the nearest canopy's centre (WeatherManager reads it for the muffle)
 
         const float Radius = 16f;         // "a radius where the material sound is produced from" (master) -- audible range per prop
+        const float PineRadius = 28f;     // pines carry a bigger canopy -> a wider foliage radius (master: expand the pine's foliage rain radius)
         const float PollSeconds = 0.25f;  // re-scan for the nearest material prop 4x/sec (props don't teleport; cheap)
 
         AudioStreamPlayer3D _car, _foliage;   // one emitter per material, re-homed to the nearest prop of that material
@@ -47,7 +49,7 @@ namespace UnturnedGodot
         public override void _Process(double delta)
         {
             float rint = Mathf.Clamp(Intensity, 0f, 1f);
-            if (rint < 0.02f || Cam == null) { Silence(_car); Silence(_foliage); return; }
+            if (rint < 0.02f || Cam == null) { Silence(_car); Silence(_foliage); RenderingServer.GlobalShaderParameterSet("rain_canopy", new Vector4(0f, 0f, 1f, 0f)); CanopyShelter = 1f; return; }
             _poll -= (float)delta;
             if (_poll > 0f) return;
             _poll = PollSeconds;
@@ -58,24 +60,38 @@ namespace UnturnedGodot
             // one sphere query for everything nearby on the world layer, classified by node type -> nearest per material
             var q = new PhysicsShapeQueryParameters3D
             {
-                Shape = new SphereShape3D { Radius = Radius },
+                Shape = new SphereShape3D { Radius = PineRadius },   // widest radius (pines); per-emitter MaxDistance attenuates the rest
                 Transform = new Transform3D(Basis.Identity, at),
                 CollisionMask = 1u << 0, CollideWithBodies = true, CollideWithAreas = false,
             };
             var hits = space.IntersectShape(q, 48);
             Vector3? carPos = null, folPos = null;
             float carD = float.MaxValue, folD = float.MaxValue;
+            TreeTrunk folTree = null;
             foreach (var h in hits)
             {
                 if (h["collider"].As<GodotObject>() is not Node3D n) continue;
                 float d = n.GlobalPosition.DistanceTo(at);
                 if (FindAncestor<Vehicle>(n) != null) { if (d < carD) { carD = d; carPos = n.GlobalPosition; } }
-                else if (FindAncestor<TreeTrunk>(n) != null) { if (d < folD) { folD = d; folPos = n.GlobalPosition; } }
+                else { var tt = FindAncestor<TreeTrunk>(n); if (tt != null && d < folD) { folD = d; folPos = n.GlobalPosition; folTree = tt; } }
             }
+            // pine foliage reaches further than other trees (master: expand the pine's radius only)
+            bool pine = folTree?.TreeName?.Contains("Pine") ?? false;
+            if (_foliage != null) { float fr = pine ? PineRadius : Radius; _foliage.MaxDistance = fr; _foliage.UnitSize = fr * 0.6f; }
+            // canopy rain shadow + shelter: the nearest tree's leaves occlude the rain BELOW them (the streak shader reads
+            // rain_canopy) and muffle the sound while you're under -- but the rain still falls OUTSIDE the canopy circle.
+            if (folPos is Vector3 fp)
+            {
+                float cr = pine ? 6f : 4f;   // canopy shadow radius (pines broader)
+                RenderingServer.GlobalShaderParameterSet("rain_canopy", new Vector4(fp.X, fp.Z, cr, 1f));
+                float dc = new Vector2(at.X - fp.X, at.Z - fp.Z).Length();
+                CanopyShelter = Mathf.Clamp(dc / cr, 0f, 1f);   // 0 = under the centre (occluded + muffled) .. 1 = outside
+            }
+            else { RenderingServer.GlobalShaderParameterSet("rain_canopy", new Vector4(0f, 0f, 1f, 0f)); CanopyShelter = 1f; }
             Drive(_car, carPos, rint);
             Drive(_foliage, folPos, rint);
             if (System.Environment.GetEnvironmentVariable("UG_RAINMATDBG") != null)
-                GD.Print($"[rainmat] car={carPos.HasValue}({carD:0.0}m) foliage={folPos.HasValue}({folD:0.0}m) rint={rint:0.00}");
+                GD.Print($"[rainmat] car={carPos.HasValue}({carD:0.0}m) foliage={folPos.HasValue}({folD:0.0}m) canopyShelter={CanopyShelter:0.00} rint={rint:0.00}");
         }
 
         static T FindAncestor<T>(Node n) where T : Node { for (; n != null; n = n.GetParent()) if (n is T t) return t; return null; }
