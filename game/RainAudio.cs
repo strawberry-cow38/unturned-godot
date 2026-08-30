@@ -61,13 +61,13 @@ namespace UnturnedGodot
             float dt = (float)delta;
 
             // LIGHT bed: audible from the first drop, up to full by ~half intensity (light rain IS mostly this layer).
-            float lightTgt = Mathf.Lerp(-22f, 0f, Mathf.Clamp(rint / 0.5f, 0f, 1f));
+            float lightTgt = Mathf.Lerp(-28f, -6f, Mathf.Clamp(rint / 0.5f, 0f, 1f));   // -6dB global trim (master: rain falling sound too loud)
             // HEAVY roar: only joins past ~0.5 rint (Default Rain tops out at 0.7, so heavy rain gets its own voice).
             float heavyAmt = Mathf.Clamp((rint - 0.5f) / 0.5f, 0f, 1f);
-            float heavyTgt = Mathf.Lerp(-20f, -3f, heavyAmt);
+            float heavyTgt = Mathf.Lerp(-26f, -9f, heavyAmt);   // -6dB global trim to match the light bed
 
             float shelterDb = Mathf.Lerp(-7f, 0f, shelter);   // the roof cuts direct rain a touch; the low-pass does the muffle
-            float duckDb = Mathf.Lerp(-20f, 0f, duck);        // pre-dip for a thunderclap -- DEEP (was -9): a -26dB clap under a -22dB bed only lifts the sum ~1.5dB, so the rain has to get well out of the way for the crack to read (tinyclaw)
+            float duckDb = Mathf.Lerp(-4f, 0f, duck);         // pre-dip for a thunderclap -- SUBTLE now (was -20): with the rain -6dB lower + claps +15%, there's already a ~15dB clap-to-bed gap, so a big dip just reads as a broken mixer (master heard it; Fable's brief: keep under ~4dB)
 
             _lightDb = SlewLayer(_light, _lightDb, rint > 0.02f ? lightTgt + shelterDb + duckDb : -80f, dt);
             _heavyDb = SlewLayer(_heavy, _heavyDb, heavyAmt > 0.02f ? heavyTgt + shelterDb + duckDb : -80f, dt);
