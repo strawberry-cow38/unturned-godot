@@ -58,6 +58,22 @@ The Science_3 patient monitor's heartbeat blip and flatline tone.
   click — of the 7 discontinuities measured in the first posted preview, all 7 were the flatline's wrap and
   none were in the beep.
 
+### `game/content/thunder.wav`, `thunder2.wav`, `thunder3.wav`, `rain_light.wav`, `rain_heavy.wav`
+
+The storm weather system's thunder claps and rain beds. Full per-file licence, source URLs, and modification
+notes live in the shipped ledger `game/content/CREDITS.md` (which the in-game `credits` console command prints
+verbatim); this entry is the canonical mirror so the two ledgers reference each other rather than drift apart.
+
+- **Source:** freesound.org — thunder: Kinoton #760216, hifijohn #242586, klankbeeld #322210; rain: _lynks
+  #595717 (light bed), AdrianoAnjos #616446 (heavy roar).
+- **Licence:** all **CC0 1.0** (https://creativecommons.org/publicdomain/zero/1.0/) EXCEPT klankbeeld #322210
+  "Deep thunder clap 03", which is **CC BY 4.0** (https://creativecommons.org/licenses/by/4.0/) — attributed as
+  the licence requires in the shipped ledger and reachable in-game via `credits`.
+- **Derivation:** thunder samples trimmed to transient+tail and peak-normalised (`thunder.wav` also had ~0.5 s
+  of lead silence cut so the boom lands on the scheduled flash-to-thunder delay); rain beds baked to seamless
+  2 s-crossfaded loops and RMS-matched to −24 dBFS, with `rain_light` high-passed at 120 Hz first (its source is
+  ~92% sub-250 Hz and reads as wind unfiltered).
+
 Note for anyone adding audio here: files dropped into `content/` have never been through the Godot editor's
 import step, so they have no `.import` sidecar and `GD.Load`/`res://` returns **null** for them — silently, with
 no error, which presents as "the sound is quiet". Load them off disk instead, the way everything else at runtime

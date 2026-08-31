@@ -85,6 +85,7 @@ namespace UnturnedGodot
         float _perfT;   // UG_PERF: throttle the perf log
         bool _itemTest;   // --itemtest=ID,ID,... : drop those items as physics WorldItems onto a ground plane -> validate mesh/tex/scale/settle
         bool _doorAnim; ObjectDoor _doorAnimDoor; double _doorAnimElapsed; float _doorAnimToggle1At, _doorAnimToggle2At, _doorAnimDoneAt; bool _doorAnimToggle1Done, _doorAnimToggle2Done;   // --doortest UG_DOOR_ANIM=1: real-time DEFAULT->away->DEFAULT cycle for a --write-movie capture
+        WeatherManager _stormWm; double _stormT; float[] _stormStrikes; int _stormStrikeIdx;   // --daynight UG_WEATHER + UG_STRIKE_AT=<s,s,s>: fire lightning strikes at those times for the --write-movie storm demo
 
         public override void _Ready()
         {
@@ -114,6 +115,7 @@ namespace UnturnedGodot
             bool clockTest = false;
             bool elevatorTest = false;
             bool rainTest = false;
+            bool rainMatTest = false;
             bool play = false, demo = false, netdemo = false, server = false, dedicated = false, client = false, smoke = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, lightTest = false, trafficTest = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, playground = false, objects = false, peidrive = false, craftmenu = false, stationtest = false, editorMode = false, impactTest = false, doorGallery = false, lampTest = false, beamTest = false, impTest = false, treeSweep = false, bakeLods = false, bakeLodsDry = false, netobserve = false, zombieTier = false, zflow = false, zhunt = false, zkill = false, zsound = false, zface = false, zpath = false;
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
@@ -131,6 +133,7 @@ namespace UnturnedGodot
                 else if (arg.StartsWith("--treetest=")) { treetest = arg["--treetest=".Length..]; _shotRequested = treetest; }   // standing tree beside a felled one (its dropped logs) -> render the harvest
                 else if (arg == "--elevatortest") { elevatorTest = true; _shotRequested = "elevator"; }   // Elevator_0 wired to ride up/down on F; auto-Calls so an offline UG_SHOTTIME catches it mid-ride
                 else if (arg == "--raintest") { rainTest = true; _shotRequested = "rain"; }   // rain-visuals showcase: overcast ground + boxes + the RainOverlay (UG_RAININT / UG_RAINCAM)
+                else if (arg == "--rainmattest") rainMatTest = true;   // positional rain-on-material audio: a tree w/ collider under heavy rain, cam nearby -> the foliage emitter homes to it (UG_RAINMATDBG logs)
                 else if (arg == "--trainshow") trainshow = "1";   // assemble train_cargo_0 from its extracted pieces for a 3/4 shot
                 else if (arg == "--traintrack") traintrack = "1";   // ride the train along a curved test track
                 else if (arg.StartsWith("--slingtest=")) { slingtest = arg["--slingtest=".Length..]; _shotRequested = slingtest; }
@@ -298,6 +301,12 @@ namespace UnturnedGodot
             {
                 GetWindow().Size = new Vector2I(1280, 720);
                 _shotPath = shot;   // wire the general frame-6 capture (else --shot renders the movie forever + hangs)
+                // preview the terrain rain-wetness/splashes: UG_RAINWET / UG_RAININT (0..1) drive the shader's rain globals
+                RainSystem3D.EnsureGlobals();
+                var _trw = System.Environment.GetEnvironmentVariable("UG_RAINWET");
+                var _tri = System.Environment.GetEnvironmentVariable("UG_RAININT");
+                RenderingServer.GlobalShaderParameterSet("rain_wetness", string.IsNullOrEmpty(_trw) ? 0f : float.Parse(_trw));
+                RenderingServer.GlobalShaderParameterSet("rain_intensity", string.IsNullOrEmpty(_tri) ? 0f : float.Parse(_tri));
                 BuildTerrainTest();
                 return;
             }
@@ -438,6 +447,7 @@ namespace UnturnedGodot
             if (treetest != null) { GetWindow().Size = new Vector2I(1280, 800); _shotPath = shot; BuildTreeTest(treetest); return; }
             if (elevatorTest) { GetWindow().Size = new Vector2I(1280, 800); _shotPath = shot; BuildElevatorTest(); return; }
             if (rainTest) { GetWindow().Size = new Vector2I(1280, 800); _shotPath = shot; BuildRainTest(); return; }
+            if (rainMatTest) { GetWindow().Size = new Vector2I(1280, 720); BuildRainMatTest(); return; }
             if (trainshow != null) { GetWindow().Size = new Vector2I(1600, 720); BuildTrainShow(); return; }
             if (traintrack != null) { GetWindow().Size = new Vector2I(1600, 900); BuildTrainTrack(); return; }
 
@@ -1105,13 +1115,10 @@ namespace UnturnedGodot
             AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-55f, -40f, 0f), LightEnergy = 0.7f, LightColor = new Color(0.72f, 0.76f, 0.84f), ShadowEnabled = true });
             // WETNESS + SPLASHES: register the rain_wetness global (WeatherManager owns it in-game) + apply the wet
             // surface shader to the hard surfaces so up-facing faces darken/gloss + ripple as the rain soaks them.
-            if (RenderingServer.GlobalShaderParameterGet("rain_wetness").VariantType == Variant.Type.Nil)
-                RenderingServer.GlobalShaderParameterAdd("rain_wetness", RenderingServer.GlobalShaderParameterType.Float, 0f);
-            if (RenderingServer.GlobalShaderParameterGet("rain_intensity").VariantType == Variant.Type.Nil)
-                RenderingServer.GlobalShaderParameterAdd("rain_intensity", RenderingServer.GlobalShaderParameterType.Float, 0f);
+            RainSystem3D.EnsureGlobals();
             var wetShader = GD.Load<Shader>("res://content/wet_surface.gdshader");
-            ShaderMaterial WetMat(Color dry, float rough) { var m = new ShaderMaterial { Shader = wetShader }; m.SetShaderParameter("dry_albedo", dry); m.SetShaderParameter("dry_roughness", rough); return m; }
-            AddChild(new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(140f, 140f) }, MaterialOverride = WetMat(new Color(0.20f, 0.22f, 0.25f), 0.7f) });
+            ShaderMaterial WetMat(Color dry, float rough, float impact = 1f) { var m = new ShaderMaterial { Shader = wetShader }; m.SetShaderParameter("dry_albedo", dry); m.SetShaderParameter("dry_roughness", rough); m.SetShaderParameter("impact_amount", impact); return m; }
+            AddChild(new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(140f, 140f) }, MaterialOverride = WetMat(new Color(0.20f, 0.22f, 0.25f), 0.7f, impact: 0f) });   // GROUND = wetness only, no impacts (master: impacts on props, not terrain)
             for (int i = 0; i < 6; i++)
             {
                 float hgt = 2.5f + (i % 3);
@@ -1131,6 +1138,49 @@ namespace UnturnedGodot
             RenderingServer.GlobalShaderParameterSet("rain_intensity", inten);
             AddChild(new RainSystem3D { Cam = cam, Intensity = inten });   // worldspace GPU-particle rain (geometry occludes it)
             GD.Print($"[raintest] worldspace 3D rain, intensity {inten:0.00}. UG_RAININT / UG_RAINWET / UG_RAINCAM.");
+        }
+
+        // --rainmattest: positional rain-on-material audio proof. A pine (visual + a TreeTrunk collider on the world
+        // layer) under HEAVY rain, camera parked ~5 m away -> RainMaterialAudio's foliage emitter homes to the trunk and
+        // plays rain-on-foliage FROM it; the offline AVI captures the 3D-panned result. UG_RAINMATDBG logs what it finds.
+        void BuildRainMatTest()
+        {
+            var env = new Godot.Environment {
+                BackgroundMode = Godot.Environment.BGMode.Color, BackgroundColor = new Color(0.42f, 0.46f, 0.52f),
+                AmbientLightSource = Godot.Environment.AmbientSource.Color, AmbientLightColor = new Color(0.5f, 0.53f, 0.57f), AmbientLightEnergy = 0.75f,
+                FogEnabled = true, FogDensity = 0.012f, FogLightColor = new Color(0.5f, 0.54f, 0.6f) };
+            AddChild(new WorldEnvironment { Environment = env });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-55f, -40f, 0f), LightEnergy = 0.7f, ShadowEnabled = true });
+            RainSystem3D.EnsureGlobals();
+            var ground = new StaticBody3D { CollisionLayer = 1u << 0 };
+            ground.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
+            AddChild(ground);
+            AddChild(new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(80f, 80f) }, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.22f, 0.24f, 0.26f), Roughness = 0.7f } });
+
+            // TREE at (-4,0,0): the visual + a TreeTrunk (StaticBody3D) with a cylinder collider on the world layer, so
+            // the material-audio sphere query finds it (a bare-constructed TreeTrunk has no collider -- ResourceField
+            // adds one when it places the real ones).
+            string dir = ProjectSettings.GlobalizePath("res://content/resources/");
+            AddChild(LoadTreeVisual(dir, "Pine_0", new Vector3(-4f, 0f, 0f)));
+            var trunk = new TreeTrunk { TreeName = "Pine_0", ResDir = dir, LogItem = 41 };
+            trunk.CollisionLayer = 1u << 0;
+            trunk.AddChild(new CollisionShape3D { Shape = new CylinderShape3D { Radius = 0.6f, Height = 9f }, Position = new Vector3(0f, 4.5f, 0f) });
+            AddChild(trunk); trunk.Position = new Vector3(-4f, 0f, 0f);
+
+            var dn = new DayNightCycle { DayLength = 120f, Time = 0.5f, Speed = 0f, VisualsEnabled = false };
+            AddChild(dn);
+            var wm = WeatherManager.Attach(this, null, dn, seed: 1);
+            wm.Sim.SetPerpetual(1);   // heavy rain -> full rint -> the material emitters run
+
+            var cam = new Camera3D { Current = true, Fov = 62f };
+            AddChild(cam);
+            cam.Position = new Vector3(-4f, 3f, 22f);   // START 22 m out -- past the 16 m radius, so the foliage is silent
+            cam.LookAt(new Vector3(-4f, 3.5f, 0f), Vector3.Up);   // AFTER AddChild -- LookAt needs the node in the tree
+            // walk IN to 4 m over the clip: the foliage fades up as the camera crosses into the tree's radius, so the
+            // positional read is AUDIBLE, not just asserted.
+            var tw = CreateTween();
+            tw.TweenProperty(cam, "position", new Vector3(-4f, 2.4f, 2.5f), 5.0);   // end WELL under the canopy so the rain hole reads
+            GD.Print("[rainmattest] pine at (-4,0,0), cam walks 22m -> 4m over 5s, heavy rain -> foliage fades in");
         }
 
         // --treetest=<birch|maple|pine>: a standing tree on the LEFT, a felled one on the RIGHT (visual hidden + a real
@@ -4270,6 +4320,21 @@ namespace UnturnedGodot
             // (res.Player == null) so it early-returns regardless. gameDefault=false keeps the harnesses direct.
             AttachMpLoopback(res, gameDefault: _peiPlayable);
             if (res.Ready) _worldReady = true;   // async world fully built (terrain..trees) -> the --shot harness can now capture a loaded frame
+            // WEATHER on PEI: BuildFullWorld never attached a WeatherManager, so the `weather` console command did
+            // NOTHING in the real game (master 2026-08-29 "no weather manager on pei"). Attach it here on the REAL
+            // PEI clock so `weather rain|heavy|clear|lightning` drives the worldspace 3D rain + terrain wetness
+            // in-game. Null overlay -- the 3D rain replaced the 2D streaks. UG_WEATHER forces a perpetual state for
+            // render-verifying (same knob as the daynight demo).
+            if (res.DayNight != null && WeatherManager.Current == null)
+            {
+                var wm = WeatherManager.Attach(this, null, res.DayNight);
+                switch (System.Environment.GetEnvironmentVariable("UG_WEATHER"))
+                {
+                    case "rain": wm.Sim.SetPerpetual(0); break;
+                    case "heavy": wm.Sim.SetPerpetual(1); break;
+                    case "lightning": wm.Sim.SetPerpetual(1); wm.Strike(); break;
+                }
+            }
             // UG_MAPSHOT=<half-extent-metres>: a top-down ORTHOGRAPHIC map capture. Orthographic and axis-aligned on
             // purpose -- it makes world->pixel an exact linear mapping, so an overlay (signal positions, spawns,
             // whatever) lands where the thing actually is instead of being nudged into place by eye against a
@@ -6411,20 +6476,36 @@ namespace UnturnedGodot
                 if (wmode == "rain") wm.Sim.SetPerpetual(0);
                 else if (wmode == "heavy") wm.Sim.SetPerpetual(1);                      // density only, no flash
                 else if (wmode == "lightning") { wm.Sim.SetPerpetual(1); wm.Strike(); } // the flash, judged separately
+                // UG_STRIKE_AT=<s,s,s>: schedule strikes at those times (for the --write-movie storm demo -> flashes + thunder mid-clip)
+                var _saEnv = System.Environment.GetEnvironmentVariable("UG_STRIKE_AT");
+                if (!string.IsNullOrEmpty(_saEnv))
+                {
+                    var _times = new System.Collections.Generic.List<float>();
+                    foreach (var _p in _saEnv.Split(',')) if (float.TryParse(_p.Trim(), out var _v)) _times.Add(_v);
+                    if (_times.Count > 0) { _stormWm = wm; _stormStrikes = _times.ToArray(); }
+                }
                 GD.Print($"[WEATHERSHOT] mode={wmode} stage={wm.Sim.Stage} blend={wm.Sim.BlendAlpha:0.00} active={wm.Sim.Active?.Name ?? "none"}");
             }
 
+            // when storming, the ground + boxes use the wet_surface shader (darken + raindrop splashes) for the full storm demo
+            ShaderMaterial StormWet(Color dry, float rough)
+            {
+                if (wmode == null) return null;
+                var m = new ShaderMaterial { Shader = GD.Load<Shader>("res://content/wet_surface.gdshader") };
+                m.SetShaderParameter("dry_albedo", dry); m.SetShaderParameter("dry_roughness", rough);
+                return m;
+            }
             var ground = new StaticBody3D { CollisionLayer = 1 << 0 };
             ground.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
             var gmesh = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(80, 80) } };
-            gmesh.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.32f, 0.36f, 0.30f) };
+            gmesh.MaterialOverride = (Material)StormWet(new Color(0.20f, 0.22f, 0.25f), 0.7f) ?? new StandardMaterial3D { AlbedoColor = new Color(0.32f, 0.36f, 0.30f) };
             ground.AddChild(gmesh);
             AddChild(ground);
 
             for (int i = 0; i < 5; i++)   // boxes to catch the light + cast shadows
             {
                 var b = new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(1f, 1.5f, 1f) } };
-                b.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.62f, 0.56f, 0.5f) };
+                b.MaterialOverride = (Material)StormWet(new Color(0.42f, 0.40f, 0.42f), 0.6f) ?? new StandardMaterial3D { AlbedoColor = new Color(0.62f, 0.56f, 0.5f) };
                 b.Position = new Vector3((i - 2) * 2.5f, 0.75f, -3f);
                 AddChild(b);
             }
@@ -7004,6 +7085,11 @@ namespace UnturnedGodot
             // capture gate -- a watchdog placed at that gate never runs for --vehicle/--rig/--menushot.
             if (_shotRequested != null && ShotWatchdogTripped()) return;
             if (_trAnim) StepTrainAnim((float)delta);   // --traintrack: drive the train along the curve
+            if (_stormWm != null && _stormStrikes != null && _stormStrikeIdx < _stormStrikes.Length)   // --daynight storm demo: fire each UG_STRIKE_AT strike at its time
+            {
+                _stormT += delta;
+                if (_stormT >= _stormStrikes[_stormStrikeIdx]) { _stormWm.Strike(); GD.Print($"[stormdemo] strike {_stormStrikeIdx} at t={_stormT:0.00}s"); _stormStrikeIdx++; }
+            }
             if (_doorAnim && _doorAnimDoor != null)   // --doortest UG_DOOR_ANIM=1: drive a real DEFAULT->away->DEFAULT cycle at REAL elapsed time (never fast-forwarded), so a --write-movie capture shows the actual retail-curve swing from the real default state (see BuildDoorTest for the timeline setup)
             {
                 _doorAnimElapsed += delta;
