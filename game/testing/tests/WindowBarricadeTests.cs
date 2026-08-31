@@ -69,4 +69,58 @@ namespace UnturnedGodot.Testing
             if (b1 != null && GodotObject.IsInstanceValid(b1)) b1.QueueFree();
         }
     }
+
+    // The BAKED path: a window barricade snapping to a WindowOpeningMarker. A baked building has NO WallSurface at
+    // runtime, so the placer projects onto markers (loaded from the opening sidecar into the "window_openings" group).
+    // Same front/back face + one-per-face slot behaviour as the live-wall path.
+    public sealed class WindowBarricadeBakedTests : GameTest
+    {
+        public override string Name => "barricade.window_snap_baked";
+        public override double TimeoutSimSeconds => 30;
+
+        static Camera3D CamLookingAt(Node parent, Vector3 pos, Vector3 target)
+        {
+            var cam = new Camera3D();
+            parent.AddChild(cam);
+            cam.GlobalPosition = pos;
+            cam.LookAt(target, Vector3.Up);
+            return cam;
+        }
+
+        public override IEnumerable<Step> Run()
+        {
+            var prop = new Node3D();   // stand-in for a placed baked-building prop root
+            World.AddChild(prop);
+            var marker = new WindowOpeningMarker { HalfWidth = 0.75f, HalfHeight = 0.75f, HalfThickness = 0.25f };
+            prop.AddChild(marker);     // identity basis: +Z normal, +X width, +Y height
+            marker.Position = new Vector3(0f, 1.75f, 0f);
+            yield return Ticks(2);     // _Ready -> AddToGroup("window_openings")
+
+            var placer = new BarricadePlacer();
+            World.AddChild(placer);
+            placer.SetDef(DeployableDef.WindowBarricade);
+            Vector3 centre = marker.GlobalPosition;
+
+            var camFront = CamLookingAt(World, centre + Vector3.Back * 3f, centre);   // +Z side
+            yield return Ticks(1);
+            bool v1 = placer.Aim(camFront);
+            T.Check($"snaps to the BAKED marker, not a wall (valid={v1}, marker={placer.SnappedMarker != null}, wall={placer.SnappedWall != null})", v1 && placer.SnappedMarker == marker && placer.SnappedWall == null);
+            T.Check($"...on the +Z face ({placer.SnappedFace})", placer.SnappedFace == 1);
+
+            var b1 = Barricade.PlaceInWindowMarker(marker, 1, placer.Point, placer.Yaw, placer.WindowScale, DeployableDef.WindowBarricade);
+            yield return Ticks(1);
+            T.Check("the barricade spawned under the marker's prop root", b1 != null && b1.GetParent() == prop);
+
+            yield return Ticks(1);
+            bool v2 = placer.Aim(camFront);
+            T.Check("re-aiming the same face is now INVALID -- baked slot filled", !v2);
+
+            var camBack = CamLookingAt(World, centre + Vector3.Forward * 3f, centre);   // -Z side
+            yield return Ticks(1);
+            bool v3 = placer.Aim(camBack);
+            T.Check($"the opposite face is still placeable ({placer.SnappedFace})", v3 && placer.SnappedFace == -1);
+
+            placer.QueueFree(); prop.QueueFree();
+        }
+    }
 }

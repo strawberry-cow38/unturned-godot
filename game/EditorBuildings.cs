@@ -2155,6 +2155,7 @@ namespace UnturnedGodot
             var norms = new List<Vector3>();
             var uvs = new List<Vector2>();
             var tris = new List<int>();
+            var openingLines = new List<string>();   // window-opening markers baked alongside the geometry -> BarricadeMount.Window on baked props
 
             foreach (var w in _walls)
             {
@@ -2184,6 +2185,20 @@ namespace UnturnedGodot
                     }
                     foreach (int idx in mi2) tris.Add(b + idx);
                 }
+                // WINDOW-OPENING MARKERS: record each window opening's plane (centre + normal + width axis + half-extents)
+                // in the SAME building-local .obj space as the verts above, so a baked prop (which has NO WallSurface at
+                // runtime) can still host window barricades. Window = sill'd + not a door -- the exact predicate
+                // BarricadePlacer.AimWindow uses on live walls. Uses the live corner-solved w, so centres match the mesh.
+                var wxf = w.GlobalTransform;
+                foreach (var o in w.Openings)
+                {
+                    if (o.V <= UnturnedSim.WallOpenings.Eps || o.HasDoor) continue;
+                    Vector3 c = ToObj(wxf * new Vector3(o.U + o.Width * 0.5f, o.V + o.Height * 0.5f, 0f) - StageOrigin);
+                    Vector3 n = ToObj(wxf.Basis.Z.Normalized());     // wall normal (+Z) -> .obj space
+                    Vector3 ax = ToObj(wxf.Basis.X.Normalized());    // wall width axis (+X) -> .obj space
+                    openingLines.Add(System.FormattableString.Invariant(
+                        $"opening {c.X:R} {c.Y:R} {c.Z:R} {n.X:R} {n.Y:R} {n.Z:R} {ax.X:R} {ax.Y:R} {ax.Z:R} {o.Width * 0.5f:R} {o.Height * 0.5f:R} {w.Thickness * 0.5f:R}"));
+                }
             }
             if (verts.Count == 0 || tris.Count == 0) return null;
 
@@ -2211,6 +2226,7 @@ namespace UnturnedGodot
                 // building-local, and there is no un-bake path yet -- so re-editing a baked building currently
                 // goes through the lossy mesh importer while this lossless file sits next to it unused.
                 System.IO.File.WriteAllText(BuildingSourcePath(name), WallSave.Write(plans));
+                if (openingLines.Count > 0) System.IO.File.WriteAllText(dir + name + "_openings.txt", string.Join("\n", openingLines) + "\n");   // window-opening markers -> window barricades on the baked prop
                 RegisterBaked(name);
             }
             catch (System.Exception e) { GD.PrintErr($"[editor-buildings] bake failed: {e.Message}"); return null; }

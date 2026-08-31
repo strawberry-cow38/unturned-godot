@@ -53,5 +53,19 @@ namespace UnturnedGodot
             d.SetMeta("ug_wb_face", face);
             return d;
         }
+
+        // Baked-prop variant: place a window barricade snapped to a WindowOpeningMarker (a baked building has NO
+        // WallSurface). Parented onto the marker's PROP root + stamped with the marker id + face (read back by
+        // BarricadePlacer.MarkerSlotFilled); uses the ghost transform AimWindow already computed (point/yaw/scale).
+        public static Deployable PlaceInWindowMarker(WindowOpeningMarker marker, int face, Vector3 point, float yawDeg, Vector3 windowScale, DeployableDef def, SDG.Unturned.Item backing = null)
+        {
+            var host = (Node)marker.GetParent() ?? marker;
+            var d = Deployable.Spawn(host, def, point, yawDeg, backing);
+            d.GlobalTransform = new Transform3D(DeployableDef.StandBasis(yawDeg) * Basis.FromScale(windowScale), point);
+            d.AddToGroup("barricades");
+            d.SetMeta("ug_wb_marker", (long)marker.GetInstanceId());
+            d.SetMeta("ug_wb_face", face);
+            return d;
+        }
     }
 }

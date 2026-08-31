@@ -43,8 +43,10 @@ namespace UnturnedGodot
         // each side. _windowScale fits the panel to the opening. The spawn (Barricade.PlaceInWindow) reads these back.
         public WallSurface SnappedWall { get; private set; }
         public int SnappedOpening { get; private set; } = -1;
+        public WindowOpeningMarker SnappedMarker { get; private set; }   // baked-prop case: the marker the ghost is on (SnappedWall null then)
         public int SnappedFace { get; private set; }
         Vector3 _windowScale = Vector3.One;
+        public Vector3 WindowScale => _windowScale;   // the per-opening panel scale, frozen with the placement (PlayerController)
 
         // Attachment predicate (world point, surface normal, hit collider) -> can a barricade mount here? At merge:
         //   placer.CanAttach = StructureManager.BarricadeAttachHook;   // NOT Instance.CanAttach -- see that method
@@ -180,37 +182,75 @@ namespace UnturnedGodot
         // valid only if it's really a window (sill'd, not a door) and that inside/outside slot is still empty.
         bool AimWindow(Camera3D cam)
         {
-            SnappedWall = null; SnappedOpening = -1;
+            SnappedWall = null; SnappedOpening = -1; SnappedMarker = null;
             Vector3 from = cam.GlobalPosition, dir = -cam.GlobalTransform.Basis.Z;
             float best = float.MaxValue;
+            Vector3 bC = default, bN = default; float bHW = 0f, bHH = 0f, bHT = 0f;   // best opening: centre, normal, half-width/height/thickness
+
+            // LIVE walls (editor / play-mode): UV-project onto each WallSurface, find the window opening the ray lands in.
             foreach (var node in GetTree().GetNodesInGroup("walls"))
             {
                 if (node is not WallSurface wall) continue;
                 if (!wall.RayToUVInside(from, dir, out float u, out float v)) continue;
-                int oi = wall.OpeningAt(u, v);
-                if (oi < 0) continue;
+                int oi = wall.OpeningAt(u, v); if (oi < 0) continue;
                 var o = wall.Openings[oi];
-                if (o.V <= UnturnedSim.WallOpenings.Eps || o.HasDoor) continue;   // window = sill'd + not a door (doors are floor-pinned V~0 or carry a leaf)
+                if (o.V <= UnturnedSim.WallOpenings.Eps || o.HasDoor) continue;   // window = sill'd + not a door
                 Vector3 c = wall.UVToWorld(o.U + o.Width * 0.5f, o.V + o.Height * 0.5f);
                 float d = from.DistanceTo(c);
-                if (d <= Def.Range && d < best) { best = d; SnappedWall = wall; SnappedOpening = oi; }
+                if (d <= Def.Range && d < best)
+                {
+                    best = d; SnappedWall = wall; SnappedOpening = oi; SnappedMarker = null;
+                    bC = c; bN = wall.GlobalTransform.Basis.Z.Normalized();
+                    bHW = o.Width * 0.5f; bHH = o.Height * 0.5f; bHT = wall.Thickness * 0.5f;
+                }
             }
-            if (SnappedWall == null)   // not on a window opening -> invalid; park the ghost out along the ray
+            // BAKED props (real map): no WallSurface -> ray ∩ each WindowOpeningMarker's plane, within its extents.
+            foreach (var node in GetTree().GetNodesInGroup("window_openings"))
+            {
+                if (node is not WindowOpeningMarker m) continue;
+                Vector3 c = m.WorldCentre, n = m.WorldNormal;
+                float denom = n.Dot(dir); if (Mathf.Abs(denom) < 1e-6f) continue;
+                float t = n.Dot(c - from) / denom; if (t < 0f) continue;
+                Vector3 rel = from + dir * t - c;
+                if (Mathf.Abs(rel.Dot(m.WorldWidthAxis)) > m.HalfWidth || Mathf.Abs(rel.Dot(m.WorldHeightAxis)) > m.HalfHeight) continue;
+                float d = from.DistanceTo(c);
+                if (d <= Def.Range && d < best)
+                {
+                    best = d; SnappedMarker = m; SnappedWall = null; SnappedOpening = -1;
+                    bC = c; bN = n; bHW = m.HalfWidth; bHH = m.HalfHeight; bHT = m.HalfThickness;
+                }
+            }
+
+            if (SnappedWall == null && SnappedMarker == null)   // not on a window -> invalid; park the ghost out along the ray
             {
                 Valid = false; Normal = Vector3.Up; _windowScale = Vector3.One;
                 Point = from + dir * Def.Range; Yaw = 0f; Apply(); return false;
             }
-            var op = SnappedWall.Openings[SnappedOpening];
-            Vector3 wn = SnappedWall.GlobalTransform.Basis.Z.Normalized();
-            Vector3 center = SnappedWall.UVToWorld(op.U + op.Width * 0.5f, op.V + op.Height * 0.5f);
-            SnappedFace = (from - center).Dot(wn) >= 0f ? 1 : -1;          // the face the camera is on
-            Normal = wn * SnappedFace;
+            SnappedFace = (from - bC).Dot(bN) >= 0f ? 1 : -1;              // the face the camera is on
+            Normal = bN * SnappedFace;
             Yaw = YawFacing(Normal);
-            Point = center + Normal * (SnappedWall.Thickness * 0.5f + Def.Size.Y * 0.5f + 0.005f);   // seat the panel flat ON the aimed WALL FACE (half-wall + half-panel + hair), not embedded in the wall's thickness
-            _windowScale = new Vector3(op.Width / Def.Size.X, 1f, op.Height / Def.Size.Z);   // fit the flat frame (X=width, Z=height) to the opening
-            Valid = !SlotFilled(SnappedWall, SnappedOpening, SnappedFace);  // one barricade per face
+            Point = bC + Normal * (bHT + Def.Size.Y * 0.5f + 0.005f);      // seat the panel flat ON the aimed face (half-wall + half-panel + hair)
+            _windowScale = new Vector3(bHW * 2f / Def.Size.X, 1f, bHH * 2f / Def.Size.Z);   // fit the flat frame (X=width, Z=height) to the opening
+            Valid = !SlotTaken();                                         // one barricade per face
             Apply();
             return Valid;
+        }
+
+        // The one-per-face slot check over whichever host the snap came from (a live wall, or a baked marker's prop).
+        bool SlotTaken() => SnappedWall != null ? SlotFilled(SnappedWall, SnappedOpening, SnappedFace)
+                          : SnappedMarker != null && MarkerSlotFilled(SnappedMarker, SnappedFace);
+
+        // Baked case: a placed window barricade is a child of the marker's PROP root, stamped with the marker's id + face.
+        public static bool MarkerSlotFilled(WindowOpeningMarker marker, int face)
+        {
+            var host = marker.GetParent();
+            if (host == null) return false;
+            long id = (long)marker.GetInstanceId();
+            foreach (var c in host.GetChildren())
+                if (c.HasMeta("ug_wb_marker") && (long)c.GetMeta("ug_wb_marker") == id
+                    && c.HasMeta("ug_wb_face") && (int)c.GetMeta("ug_wb_face") == face)
+                    return true;
+            return false;
         }
 
         // One window barricade per opening face. A placed panel is parented onto its WallSurface + stamped with the

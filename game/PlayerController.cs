@@ -2370,6 +2370,7 @@ namespace UnturnedGodot
         Vector3 _placePoint; float _placeYaw;   // target FROZEN at click -> the object drops there even if you look away
         Vector3 _placeNormal = Vector3.Up;      // the surface normal frozen with them: a wall barricade's whole orientation
         WallSurface _placeWall; int _placeOpening = -1; int _placeFace;   // Window mount: the opening + face frozen at click (a window barricade spawns INTO the opening, not at a raw point)
+        WindowOpeningMarker _placeMarker; Vector3 _placeWindowScale = Vector3.One;   // Window mount, baked-prop case: the marker + fitted panel scale frozen at click
                                                 // hangs off it, and re-deriving it at drop time would read the surface the
                                                 // player is looking at THEN, not the one they clicked
         const float PlaceTime = 0.45f;  // src UseableBarricade builds over the Use-clip length; a short stand-in here
@@ -2571,6 +2572,7 @@ namespace UnturnedGodot
             if (!_placer.Aim(_cam)) return;   // only from a VALID (blue) spot
             _placePoint = _placer.Point; _placeYaw = _placer.Yaw; _placeNormal = _placer.Normal;   // FROZEN at click (strawberry: don't drift with the mouse)
             _placeWall = _placer.SnappedWall; _placeOpening = _placer.SnappedOpening; _placeFace = _placer.SnappedFace;   // Window mount: freeze which opening + face we snapped to
+            _placeMarker = _placer.SnappedMarker; _placeWindowScale = _placer.WindowScale;   // baked-prop case: freeze the marker + the fitted panel scale
             _viewmodel?.PlayDeployUse();   // arms play the src "Use" place motion; the object drops when it finishes
             float useLen = _viewmodel?.DeployUseLength() ?? 0f;
             _placeTimer = useLen > 0f ? useLen : PlaceTime;   // build over the Use-clip length (src useTime), else the short stand-in
@@ -2660,8 +2662,10 @@ namespace UnturnedGodot
                     // A non-Floor def is a SURFACE barricade: it has to be re-seated against the frozen normal, and
                     // Deployable.Spawn only knows how to stand things up on the ground. Floor defs (every existing
                     // deployable -- generators, crates, charges) take the original path unchanged.
-                    if (_deployable.Mount == BarricadeMount.Window && _placeWall != null && IsInstanceValid(_placeWall))
-                        Barricade.PlaceInWindow(_placeWall, _placeOpening, _placeFace, _deployable, backing: _deployItem);   // a window barricade snaps INTO the frozen opening + face
+                    if (_deployable.Mount == BarricadeMount.Window && _placeMarker != null && IsInstanceValid(_placeMarker))
+                        Barricade.PlaceInWindowMarker(_placeMarker, _placeFace, _placePoint, _placeYaw, _placeWindowScale, _deployable, backing: _deployItem);   // baked prop: snap onto the frozen marker
+                    else if (_deployable.Mount == BarricadeMount.Window && _placeWall != null && IsInstanceValid(_placeWall))
+                        Barricade.PlaceInWindow(_placeWall, _placeOpening, _placeFace, _deployable, backing: _deployItem);   // live wall: snap INTO the frozen opening + face
                     else if (_deployable.Mount != BarricadeMount.Floor)
                         Barricade.PlaceOnSurface(GetParent(), _deployable, _placePoint, _placeNormal, _placeYaw, backing: _deployItem);
                     else

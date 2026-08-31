@@ -283,6 +283,7 @@ namespace UnturnedGodot
             // nodes under a root at the origin, and here the root carries the placement and the gizmo drags it.
             float yawDeg = Mathf.RadToDeg(Mathf.Atan2(-rot.X.Z, rot.X.X));
             var smart = SmartProps.AttachEditor(root, name, mainMi, mat, pos, yawDeg, Dir, _doorCatalog, _doorMeshCache);
+            WindowMarkers.Attach(root, name, Dir);   // baked window openings -> window-barricade snap targets on this prop (no-op if it has no _openings.txt)
 
             // The collider comes off the ORIGINAL mesh, not mainMi's -- a device carves its lens/screen/hands out
             // of the visual mesh, and collision should still cover the whole prop (the world loader does the same).
