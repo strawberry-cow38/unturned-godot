@@ -7524,6 +7524,10 @@ namespace UnturnedGodot
                             _vehCam.GlobalPosition = vt.Origin - fwd * cd + Vector3.Up * (3.2f + cd * 0.15f);
                             _vehCam.LookAt(vt.Origin + Vector3.Up * 0.7f - fwd * (cd * 0.5f), Vector3.Up);   // aim at the rig's midpoint so both cab + trailer rear are framed
                         }
+                        // UG_CAMYAW/UG_CAMPITCH orbit this shot too. ApplyCamOrbit was only wired to the rig
+                        // path, so --vehicle silently ignored it and a 12-angle sweep rendered 12 identical
+                        // frames -- which looks exactly like "the geometry is symmetric".
+                        ApplyCamOrbit(_vehCam, vt.Origin + Vector3.Up * 1.0f);
                     }
                 }
                 if (_driveTest && _dtPlayer != null)

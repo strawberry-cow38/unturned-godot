@@ -29,6 +29,12 @@ from collections import deque
 SRC = sys.argv[1] if len(sys.argv) > 1 else 'game/content/sedan_body.txt'
 OUT = sys.argv[2] if len(sys.argv) > 2 else 'game/content/sedan_glass.txt'
 STEP, INSET, INSET_F = 0.03, 0.004, 0.045
+# The traced span runs first-open-cell..last-open-cell, so every edge stops up to a grid step SHORT
+# of the real aperture and you get a gap of daylight all the way round the glass. Real glazing sits
+# in a seal and tucks UNDER the frame, so grow each pane outward past the opening; the frame hides
+# the overlap, and the pane is inset behind it so the overlap cannot z-fight. (strawberry 2026-08-31:
+# "theres a gap around all of the windows".)
+GROW = 0.055
 
 V, F = [], []
 for ln in open(SRC):
@@ -100,8 +106,10 @@ for c in range(cur):
     rows = []
     for i in range(sub.shape[0]):
         js = np.where(m[i])[0]
-        if len(js) >= 2: rows.append((ysb[i], zs[js.min()], zs[js.max()]))
-    if len(rows) >= 2: comps.append(rows)
+        if len(js) >= 2: rows.append((ysb[i], zs[js.min()] - GROW, zs[js.max()] + GROW))
+    if len(rows) >= 2:
+        rows = [(rows[0][0] - GROW, rows[0][1], rows[0][2])] + rows + [(rows[-1][0] + GROW, rows[-1][1], rows[-1][2])]
+        comps.append(rows)
 comps.sort(key=lambda r: (min(x[1] for x in r) + max(x[2] for x in r)) / 2)   # rear -> front
 for n, rows in enumerate(comps):
     which = 'rear' if n == 0 and len(comps) > 1 else ('front' if n == len(comps) - 1 else f'mid{n}')
@@ -155,8 +163,9 @@ for take_max, label in ((True, 'windshield'), (False, 'rear')):
         if not runs: continue
         r = max(runs, key=len)
         if us[r[-1]] - us[r[0]] < 0.25: continue
-        rows.append((vs[iv], us[r[0]], us[r[-1]]))
+        rows.append((vs[iv], us[r[0]] - GROW, us[r[-1]] + GROW))
     if len(rows) < 2: print(f"  !! {label}: aperture too small"); continue
+    rows = [(rows[0][0] - GROW, rows[0][1], rows[0][2])] + rows + [(rows[-1][0] + GROW, rows[-1][1], rows[-1][2])]
     qs = []
     for k in range(len(rows) - 1):
         v1, a1, b1 = rows[k]; v2, a2, b2 = rows[k + 1]

@@ -2476,7 +2476,6 @@ namespace UnturnedGodot
         {
             Mass = 2400f,   // kerb mass, kg
             Body = "humvee_body.txt", Wheel = "humvee_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "humvee_palette.png",
-            GlassMesh = "humvee_glass.txt", GlassTint = new Color(0.62f, 0.73f, 0.78f, 0.26f),   // panes derived from this body by tools/gen_vehicle_glass.py
             DefaultPaints = new[] { "#475e83", "#a69884", "#437c44", "#495631" },   // src .dat DefaultPaintColors = the 4 faction paints (#475e83 Coalition / #a69884 Desert / #437c44 Forest / #495631 Russia), random pick per spawn
             WheelRadius = 0.6f, Engine = 680f, SteerMax = 24f, SteerMin = 12f, SpeedMax = 14f, SpeedMin = -6f, Brake = 40f,
             BoxSize = new Vector3(2.5f, 1.032f, 5.029f), BoxCenter = new Vector3(0f, 0.605f, -0.018f),
@@ -3659,9 +3658,19 @@ namespace UnturnedGodot
             return best;
         }
 
+        /// <summary>UG_GLASSDEBUG=1 -- one flat opaque colour per pane. strawberry 2026-08-31 asked for this
+        /// to BE the check ("bright colors per pane, from multiple angles so you are sure you are covering with
+        /// no overlap"), so it lives here rather than as a patch someone re-applies each time. Unshaded, so the
+        /// colour is the same at every angle and a gap round the frame reads as body colour rather than shading.</summary>
+        static readonly Color[] GlassDebugColors = {
+            new Color(1f, 0.2f, 1f),    new Color(0.1f, 1f, 1f),   new Color(0.25f, 0.45f, 1f),
+            new Color(1f, 0.15f, 0.15f), new Color(1f, 0.95f, 0.1f), new Color(0.15f, 1f, 0.25f),
+        };
+
         static void AddGlassOverlay(Vehicle v, Spec s)
         {
             if (s.GlassMesh == null) return;
+            bool dbg = System.Environment.GetEnvironmentVariable("UG_GLASSDEBUG") == "1";
             var glassMat = new StandardMaterial3D
             {
                 AlbedoColor = s.GlassTint ?? new Color(0.78f, 0.62f, 0.30f, 0.40f),   // default = the jet's golden canopy, ~40% opaque
@@ -3673,7 +3682,12 @@ namespace UnturnedGodot
             {
                 var m = LoadOptionalObjQuiet($"{base_}_{label}.txt");
                 if (m == null) continue;
-                var mi = new MeshInstance3D { Name = $"Glass_{label}", Mesh = m, MaterialOverride = glassMat,
+                var mat = glassMat;
+                if (dbg) mat = new StandardMaterial3D {
+                    AlbedoColor = GlassDebugColors[v._glassNodes.Count % GlassDebugColors.Length],
+                    ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
+                    CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+                var mi = new MeshInstance3D { Name = $"Glass_{label}", Mesh = m, MaterialOverride = mat,
                                               CastShadow = GeometryInstance3D.ShadowCastingSetting.Off };
                 v.AddChild(mi);
                 v._glassNodes.Add(mi); v._glassLabels.Add(label);
