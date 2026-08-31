@@ -175,7 +175,24 @@ for take_max, label in ((True, 'rear'), (False, 'windshield')):
         if js: e.append((y, zs[max(js)] if take_max else zs[min(js)]))
     if len(e) < 3: continue
     e = np.array(e)
-    m_, c_ = np.linalg.lstsq(np.vstack([e[:, 0], np.ones(len(e))]).T, e[:, 1], rcond=None)[0]
+    def _fit(pts):
+        return np.linalg.lstsq(np.vstack([pts[:, 0], np.ones(len(pts))]).T, pts[:, 1], rcond=None)[0]
+    m_, c_ = _fit(e)
+    # ROBUST REFIT. The trace walks every row of the cabin band, and the rows below the window sill
+    # see the body BEHIND the opening, not its frame. On the pickup 32 of 36 samples sat at exactly
+    # z=+0.353 (a dead-vertical rear window) and 4 sill rows at +0.563 -- and least-squares, which has
+    # no notion of an outlier, tilted the pane 6.6 deg off vertical through them. strawberry: "the rear
+    # glass should be perfectly vertical, not sloped like a windshield".
+    # Drop samples whose residual is large against the MAD of the residuals, then refit. This leaves a
+    # genuinely raked screen alone (its residuals are small and evenly spread) and is a property of the
+    # sample spread rather than a constant picked to make one truck look right.
+    for _ in range(2):
+        r = e[:, 1] - (m_ * e[:, 0] + c_)
+        mad = np.median(np.abs(r - np.median(r))) * 1.4826
+        keep = np.abs(r - np.median(r)) <= max(3.0 * mad, STEP)   # STEP floor: MAD is 0 for a flat frame
+        if keep.sum() < 3 or keep.all(): break
+        e = e[keep]; m_, c_ = _fit(e)
+    if abs(m_) < 1e-3: m_ = 0.0        # a fit that came out flat IS vertical; don't carry float dust
     nrm = np.array([0.0, -m_, 1.0]); nrm /= np.linalg.norm(nrm)
     if not take_max: nrm = -nrm
     ax = np.array([1.0, 0.0, 0.0])                      # in-plane: across the car
