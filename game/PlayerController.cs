@@ -2369,6 +2369,7 @@ namespace UnturnedGodot
         float _placeTimer;              // >0 while the brief place gesture runs; the object drops at 0
         Vector3 _placePoint; float _placeYaw;   // target FROZEN at click -> the object drops there even if you look away
         Vector3 _placeNormal = Vector3.Up;      // the surface normal frozen with them: a wall barricade's whole orientation
+        WallSurface _placeWall; int _placeOpening = -1; int _placeFace;   // Window mount: the opening + face frozen at click (a window barricade spawns INTO the opening, not at a raw point)
                                                 // hangs off it, and re-deriving it at drop time would read the surface the
                                                 // player is looking at THEN, not the one they clicked
         const float PlaceTime = 0.45f;  // src UseableBarricade builds over the Use-clip length; a short stand-in here
@@ -2569,6 +2570,7 @@ namespace UnturnedGodot
             if (_placer == null || _deployable == null || _placeTimer > 0f || _dead) return;
             if (!_placer.Aim(_cam)) return;   // only from a VALID (blue) spot
             _placePoint = _placer.Point; _placeYaw = _placer.Yaw; _placeNormal = _placer.Normal;   // FROZEN at click (strawberry: don't drift with the mouse)
+            _placeWall = _placer.SnappedWall; _placeOpening = _placer.SnappedOpening; _placeFace = _placer.SnappedFace;   // Window mount: freeze which opening + face we snapped to
             _viewmodel?.PlayDeployUse();   // arms play the src "Use" place motion; the object drops when it finishes
             float useLen = _viewmodel?.DeployUseLength() ?? 0f;
             _placeTimer = useLen > 0f ? useLen : PlaceTime;   // build over the Use-clip length (src useTime), else the short stand-in
@@ -2658,7 +2660,9 @@ namespace UnturnedGodot
                     // A non-Floor def is a SURFACE barricade: it has to be re-seated against the frozen normal, and
                     // Deployable.Spawn only knows how to stand things up on the ground. Floor defs (every existing
                     // deployable -- generators, crates, charges) take the original path unchanged.
-                    if (_deployable.Mount != BarricadeMount.Floor)
+                    if (_deployable.Mount == BarricadeMount.Window && _placeWall != null && IsInstanceValid(_placeWall))
+                        Barricade.PlaceInWindow(_placeWall, _placeOpening, _placeFace, _deployable, backing: _deployItem);   // a window barricade snaps INTO the frozen opening + face
+                    else if (_deployable.Mount != BarricadeMount.Floor)
                         Barricade.PlaceOnSurface(GetParent(), _deployable, _placePoint, _placeNormal, _placeYaw, backing: _deployItem);
                     else
                         Deployable.Spawn(GetParent(), _deployable, _placePoint, _placeYaw, _deployItem);   // backing item restores a picked-up generator's fuel + HP

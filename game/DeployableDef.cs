@@ -187,6 +187,17 @@ namespace UnturnedGodot
             Offset = 0.05f, Radius = 0.6f, Range = 5f, Health = 300f, Fuel = 0f,
         };
 
+        // The window barricade -- a planked panel that snaps INTO a building-editor window opening, one on each face
+        // (inside + outside), sized to the opening at placement. Placeable ONLY when the reticle is on a window opening
+        // (BarricadeMount.Window; BarricadePlacer.AimWindow UV-projects onto the wall plane since a hole has no collider).
+        // Base Size is a nominal window; the placer scales it per-opening. id 9122 (9120/9121 taken). (master 2026-08-31)
+        public static readonly DeployableDef WindowBarricade = new()
+        {
+            Id = 9122, Name = "Window Barricade", ProcBox = true, Mount = BarricadeMount.Window, PlaceSound = "metalplacement",
+            Size = new Vector3(1.0f, 0.08f, 1.2f),   // flat frame: X width, Y thickness (facing axis), Z height -- scaled to fit each opening
+            Offset = 0.06f, Radius = 0.5f, Range = 5f, Health = 200f, Fuel = 0f,
+        };
+
         // --- Switch (custom): power in one side, out the other, gated by an F-toggle. A 0-watt relay Consumer (IN) + a
         //     Passthrough (OUT); PowerConducting = the toggle state, so OFF kills the passthrough = no downstream power.
         //     Remembers its state; a state light on top reads green (on) / red (off). ---
@@ -432,7 +443,7 @@ namespace UnturnedGodot
         public static readonly DeployableDef[] All = { Generator, Spotlight, Splitter2, Splitter3, Splitter4, Combiner2, Battery, Switch, WindTurbine, GridSource, GasPump,
             FluidTank, WaterSource, FluidSplitter, FluidCombiner, FluidPumpDef, FluidValve, Refinery, Sluice, WaterInlet, WaterOutlet, Purifier, Refrigerator, Landmine, Spike, Charge, Barbedwire,
             DoorBirch, DoorMaple, DoorPine, GateBirch, GateMaple, GatePine, HatchBirch, HatchMaple, HatchPine,
-            DoorMetal, GateMetal, HatchMetal, Workbench, Campfire, ChemistryLab, Kiln, Loom, OvenBrick, OvenElectric, SewingTable, SpinningWheel };
+            DoorMetal, GateMetal, HatchMetal, Workbench, Campfire, ChemistryLab, Kiln, Loom, OvenBrick, OvenElectric, SewingTable, SpinningWheel, WindowBarricade };
         public static DeployableDef ById(ushort id) => id switch
         {
             1101 => Landmine,
@@ -480,6 +491,7 @@ namespace UnturnedGodot
             9119 => WaterInlet,
             9120 => WaterOutlet,
             9121 => Purifier,
+            9122 => WindowBarricade,
             9130 => Refrigerator,
             9200 => GridSource,
             9201 => GasPump,

@@ -119,6 +119,8 @@ namespace UnturnedGodot
 
         public override void _Ready()
         {
+            AddToGroup("walls");   // play-mode registry: BarricadePlacer's Window mount enumerates this group to find the
+                                   // window opening the player aims at -- a window HOLE has no collider, so a raycast can't hit it
             _mesh = new MeshInstance3D { Name = "Mesh" };
             AddChild(_mesh);
             _trimMesh = new MeshInstance3D { Name = "TrimMesh" };

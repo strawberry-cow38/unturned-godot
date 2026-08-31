@@ -11,6 +11,9 @@ namespace UnturnedGodot
         Floor,   // generic barricades (crate/generator/sign-post): upward surfaces only (normal.y >= 0.01), upright, free player yaw (UseableBarricade.cs:805)
         Wall,    // wall-mount (storage/sign/cage/torch): near-vertical surfaces only (|normal.y| < 0.1), UPRIGHT + yaw snapped to face out of the wall (UseableBarricade.cs:1397,1400)
         Sticky,  // charge/note/clock: ANY surface, lies fully flush — all 3 axes follow the normal (UseableBarricade.cs:1483-1494)
+        Window,  // window barricade: snaps INTO a building-editor window opening (UV-projected onto the wall plane, NOT
+                 // raycast -- the hole has no collider), one per inside/outside face, sized to the opening; ONLY placeable
+                 // when the reticle is on a window opening. No retail analogue -- master 2026-08-31.
     }
 
     // The placement ghost for a held BARRICADE — a deployable that mounts on a STRUCTURE surface (wall / floor /
@@ -34,6 +37,14 @@ namespace UnturnedGodot
         public Vector3 Normal { get; private set; } = Vector3.Up;  // the hit surface normal
         public float Yaw { get; private set; }                 // the final yaw fed to StandBasis (player aim for Floor; wall-facing for Wall)
         public float YawOffset;   // R accumulates here: manual spin about the mount axis (src input_y, UseableBarricade.cs:2041)
+
+        // Window mount state: the opening the ghost is snapped to (SnappedOpening = -1 when not on a window). SnappedFace
+        // is +1 (the wall's +Z face) or -1 (the -Z face) -- whichever side the camera is on -- so one barricade goes on
+        // each side. _windowScale fits the panel to the opening. The spawn (Barricade.PlaceInWindow) reads these back.
+        public WallSurface SnappedWall { get; private set; }
+        public int SnappedOpening { get; private set; } = -1;
+        public int SnappedFace { get; private set; }
+        Vector3 _windowScale = Vector3.One;
 
         // Attachment predicate (world point, surface normal, hit collider) -> can a barricade mount here? At merge:
         //   placer.CanAttach = StructureManager.BarricadeAttachHook;   // NOT Instance.CanAttach -- see that method
@@ -122,6 +133,7 @@ namespace UnturnedGodot
         public bool Aim(Camera3D cam)
         {
             if (Def == null || cam == null) return false;
+            if (Mount == BarricadeMount.Window) return AimWindow(cam);   // window barricade UV-projects onto openings (the hole has no collider to raycast)
             float aimYaw = Mathf.RadToDeg(cam.GlobalRotation.Y) + YawOffset;
             var space = GetWorld3D().DirectSpaceState;
             Vector3 from = cam.GlobalPosition, dir = -cam.GlobalTransform.Basis.Z;
@@ -154,6 +166,63 @@ namespace UnturnedGodot
             }
             Apply();
             return Valid;
+        }
+
+        // The ghost/placed transform for the current mount. Window = stood-up + faced like a Wall mount, but scaled to
+        // fit the opening and seated at the opening centre + face standoff (Point), not a raycast hit + MountOrigin lift.
+        Transform3D GhostTransform() => Mount == BarricadeMount.Window
+            ? new Transform3D(DeployableDef.StandBasis(Yaw) * Basis.FromScale(_windowScale), Point)
+            : new Transform3D(MountBasis(Mount, Normal, Yaw, Def != null && Def.Upright), MountOrigin());
+
+        // Window mount aim -- a window HOLE has no collider, so a raycast sails straight through it. Enumerate the live
+        // WallSurface nodes ("walls" group), UV-project the camera ray onto each wall plane, and find the OPENING the
+        // ray lands in. Snap the panel flush into that opening on the face the camera is on, sized to the opening;
+        // valid only if it's really a window (sill'd, not a door) and that inside/outside slot is still empty.
+        bool AimWindow(Camera3D cam)
+        {
+            SnappedWall = null; SnappedOpening = -1;
+            Vector3 from = cam.GlobalPosition, dir = -cam.GlobalTransform.Basis.Z;
+            float best = float.MaxValue;
+            foreach (var node in GetTree().GetNodesInGroup("walls"))
+            {
+                if (node is not WallSurface wall) continue;
+                if (!wall.RayToUVInside(from, dir, out float u, out float v)) continue;
+                int oi = wall.OpeningAt(u, v);
+                if (oi < 0) continue;
+                var o = wall.Openings[oi];
+                if (o.V <= UnturnedSim.WallOpenings.Eps || o.HasDoor) continue;   // window = sill'd + not a door (doors are floor-pinned V~0 or carry a leaf)
+                Vector3 c = wall.UVToWorld(o.U + o.Width * 0.5f, o.V + o.Height * 0.5f);
+                float d = from.DistanceTo(c);
+                if (d <= Def.Range && d < best) { best = d; SnappedWall = wall; SnappedOpening = oi; }
+            }
+            if (SnappedWall == null)   // not on a window opening -> invalid; park the ghost out along the ray
+            {
+                Valid = false; Normal = Vector3.Up; _windowScale = Vector3.One;
+                Point = from + dir * Def.Range; Yaw = 0f; Apply(); return false;
+            }
+            var op = SnappedWall.Openings[SnappedOpening];
+            Vector3 wn = SnappedWall.GlobalTransform.Basis.Z.Normalized();
+            Vector3 center = SnappedWall.UVToWorld(op.U + op.Width * 0.5f, op.V + op.Height * 0.5f);
+            SnappedFace = (from - center).Dot(wn) >= 0f ? 1 : -1;          // the face the camera is on
+            Normal = wn * SnappedFace;
+            Yaw = YawFacing(Normal);
+            Point = center + Normal * Def.Offset;                          // seat just proud of the aimed face
+            _windowScale = new Vector3(op.Width / Def.Size.X, 1f, op.Height / Def.Size.Z);   // fit the flat frame (X=width, Z=height) to the opening
+            Valid = !SlotFilled(SnappedWall, SnappedOpening, SnappedFace);  // one barricade per face
+            Apply();
+            return Valid;
+        }
+
+        // One window barricade per opening face. A placed panel is parented onto its WallSurface + stamped with the
+        // opening index + face (see Barricade.PlaceInWindow), so scan the wall's children for a match -- the two faces
+        // sit ~10 cm apart, too close for a clearance sphere to tell them apart.
+        public static bool SlotFilled(WallSurface wall, int opening, int face)
+        {
+            foreach (var c in wall.GetChildren())
+                if (c.HasMeta("ug_wb_opening") && (int)c.GetMeta("ug_wb_opening") == opening
+                    && c.HasMeta("ug_wb_face") && (int)c.GetMeta("ug_wb_face") == face)
+                    return true;
+            return false;
         }
 
         // Without StructureManager wired, accept a hit on a structure piece or terrain/ground, but never stack a
@@ -200,7 +269,7 @@ namespace UnturnedGodot
         void Apply()
         {
             if (_ghost == null) return;
-            _ghost.GlobalTransform = new Transform3D(MountBasis(Mount, Normal, Yaw, Def != null && Def.Upright), MountOrigin());
+            _ghost.GlobalTransform = GhostTransform();
             _ghost.MaterialOverride = Valid ? DeployablePlacer.ValidMat : DeployablePlacer.InvalidMat;
             if (_arrowMat != null) { var c = Valid ? ConnectionPort.ArrowBlue : ConnectionPort.ArrowRed; c.A = 0.92f; _arrowMat.AlbedoColor = c; }
         }
@@ -217,7 +286,7 @@ namespace UnturnedGodot
             Valid = true; Point = point; Normal = normal.Normalized(); Yaw = yaw;
             if (_ghost == null) return;
             _ghost.Visible = true;
-            _ghost.GlobalTransform = new Transform3D(MountBasis(Mount, Normal, Yaw, Def != null && Def.Upright), MountOrigin());
+            _ghost.GlobalTransform = GhostTransform();
             _ghost.MaterialOverride = DeployablePlacer.ValidMat;
             if (_arrowMat != null) { var c = ConnectionPort.ArrowBlue; c.A = 0.92f; _arrowMat.AlbedoColor = c; }
         }

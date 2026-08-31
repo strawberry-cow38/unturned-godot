@@ -33,5 +33,25 @@ namespace UnturnedGodot
             d.AddToGroup("barricades");   // a surface barricade (still a "deployable" too — look-at / repair target it either way)
             return d;
         }
+
+        // Place a window barricade INTO a building-editor window opening, on one face (inside/outside). Spawned as a
+        // CHILD of the WallSurface + stamped with the opening index + face, so BarricadePlacer.SlotFilled sees that
+        // slot as taken; scaled to the opening (flat X=width, Z=height) and seated just proud of the aimed face.
+        // Reuses Deployable.Spawn for the full body/health/salvage/net lifecycle, same as PlaceOnSurface. (master 2026-08-31)
+        public static Deployable PlaceInWindow(WallSurface wall, int openingIndex, int face, DeployableDef def, SDG.Unturned.Item backing = null)
+        {
+            var op = wall.Openings[openingIndex];
+            Vector3 wn = wall.GlobalTransform.Basis.Z.Normalized() * face;                // outward from the aimed face
+            Vector3 center = wall.UVToWorld(op.U + op.Width * 0.5f, op.V + op.Height * 0.5f);
+            Vector3 seat = center + wn * def.Offset;                                       // just proud of the face
+            float yaw = BarricadePlacer.YawFacing(wn);
+            var d = Deployable.Spawn(wall, def, seat, yaw, backing);                       // full lifecycle (HP/damage/salvage/net)
+            var scale = new Vector3(op.Width / def.Size.X, 1f, op.Height / def.Size.Z);    // fit the panel to the opening
+            d.GlobalTransform = new Transform3D(DeployableDef.StandBasis(yaw) * Basis.FromScale(scale), seat);
+            d.AddToGroup("barricades");
+            d.SetMeta("ug_wb_opening", openingIndex);   // the slot this fills; BarricadePlacer.SlotFilled reads these back
+            d.SetMeta("ug_wb_face", face);
+            return d;
+        }
     }
 }
