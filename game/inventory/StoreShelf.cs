@@ -229,6 +229,15 @@ namespace UnturnedGodot
                 var mi = new MeshInstance3D { Mesh = shellMesh, MaterialOverride = ShelfMat(), Basis = _upright };
                 AddChild(mi);
                 mi.CreateTrimeshCollision();   // solid shelf on the world layer: the player collides with the actual geometry (spine/tiers); the look-ray still passes through the open gaps to reach items
+                // CreateTrimeshCollision() defaults backface_collision = false, so the shell is ONE-SIDED: a body
+                // shoved into the shelf (a vehicle pushing the player against it) tunnels through instead of being
+                // stopped -- the same one-sided-trimesh class as the river-chunk terrain fix. Two-side the generated
+                // shape so it catches from both faces. (tinyclaw 2026-08-31)
+                foreach (var _child in mi.GetChildren())
+                    if (_child is StaticBody3D _shelfBody)
+                        foreach (var _bc in _shelfBody.GetChildren())
+                            if (_bc is CollisionShape3D _sc && _sc.Shape is ConcavePolygonShape3D _cps)
+                                _cps.BackfaceCollision = true;
                 _shelfGlow = OutlineOverlay.MakeOutline(mesh, new Transform3D(_upright, Vector3.Zero));   // whole-shelf outline silhouette (hidden until looked at)
                 AddChild(_shelfGlow);
                 // Interior glow: a fridge/cooler lights up inside when opened (master). A subtle omni at the interior
