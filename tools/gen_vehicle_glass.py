@@ -26,8 +26,16 @@ Writes <out_base>_<label>.txt per pane: windshield, rear, l_front, r_front, l_re
 import sys, os, numpy as np
 from collections import deque
 
-SRC = sys.argv[1] if len(sys.argv) > 1 else 'game/content/sedan_body.txt'
-OUT = sys.argv[2] if len(sys.argv) > 2 else 'game/content/sedan_glass.txt'
+# --skip=a,b  drops panes the DERIVATION finds but the vehicle should not have. The tool reads
+# geometry, and geometry cannot tell you that a fire engine's rear window is not a thing anyone wants
+# glazed (strawberry 2026-08-31). Kept as an explicit argument rather than a table in here, so the
+# reason lives in the caller and no vehicle gets silently special-cased.
+_args = [a for a in sys.argv[1:] if not a.startswith('--')]
+SKIP = set()
+for a in sys.argv[1:]:
+    if a.startswith('--skip='): SKIP |= {x.strip() for x in a[7:].split(',') if x.strip()}
+SRC = _args[0] if len(_args) > 0 else 'game/content/sedan_body.txt'
+OUT = _args[1] if len(_args) > 1 else 'game/content/sedan_glass.txt'
 STEP, INSET, INSET_F = 0.03, 0.004, 0.045
 # The traced span runs first-open-cell..last-open-cell, so every edge stops up to a grid step SHORT
 # of the real aperture and you get a gap of daylight all the way round the glass. Real glazing sits
@@ -217,6 +225,8 @@ for _lbl in ('windshield', 'rear', 'l_front', 'r_front', 'l_rear', 'r_rear',
              'l_mid1', 'r_mid1', 'l_mid2', 'r_mid2'):
     _f = f"{base}_{_lbl}.txt"
     if os.path.exists(_f): os.remove(_f)
+panes = [(l, q) for l, q in panes if l not in SKIP]
+if SKIP: print(f"  skipped by request: {', '.join(sorted(SKIP))}")
 for label, quads in panes:
     verts, faces = [], []
     for q in quads:
