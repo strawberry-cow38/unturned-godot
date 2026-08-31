@@ -123,4 +123,36 @@ namespace UnturnedGodot.Testing
             placer.QueueFree(); prop.QueueFree();
         }
     }
+
+    // Hold-F removal (master): a window barricade is a Deployable, so the look-at ray (world layer) finds it and hold-F
+    // picks it up like any deployable -- inherited, no new code. This pins the two things that could still bite: the
+    // look-at ray actually RESOLVES the placed panel to a Deployable, and removing it FREES the slot (re-boardable).
+    public sealed class WindowBarricadeRemoveTests : GameTest
+    {
+        public override string Name => "barricade.window_remove";
+        public override double TimeoutSimSeconds => 30;
+
+        public override IEnumerable<Step> Run()
+        {
+            var wall = new WallSurface { Length = 6f, Height = 3f, Thickness = 0.5f };
+            wall.Openings.Add(new UnturnedSim.WallOpening(2.5f, 1.0f, 1.5f, 1.5f));   // a window
+            World.AddChild(wall);
+            yield return Ticks(2);
+
+            var b1 = Barricade.PlaceInWindow(wall, 0, 1, DeployableDef.WindowBarricade);
+            yield return Ticks(2);
+            T.Check("the +Z slot is filled after placing", BarricadePlacer.SlotFilled(wall, 0, 1));
+
+            // the look-at ray that drives F (world layer) must resolve the panel to a Deployable -> hold-F target
+            Vector3 bpos = b1.GlobalPosition;
+            var rq = PhysicsRayQueryParameters3D.Create(bpos + Vector3.Back * 2f, bpos + Vector3.Forward * 0.5f);
+            rq.CollisionMask = 1u << 0;
+            var hit = World.GetWorld3D().DirectSpaceState.IntersectRay(rq);
+            T.Check("the look-at ray resolves the panel to a Deployable (so F picks it up)", hit.Count > 0 && hit["collider"].As<GodotObject>() is Deployable);
+
+            b1.Pickup();   // exactly what hold-F triggers (PickupDeployable -> Deployable.Pickup)
+            yield return Ticks(2);
+            T.Check("...and after removal the +Z slot is FREE again (re-boardable)", !BarricadePlacer.SlotFilled(wall, 0, 1));
+        }
+    }
 }
