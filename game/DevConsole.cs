@@ -66,7 +66,7 @@ namespace UnturnedGodot
 
         LineEdit _input;
         Label _log;
-        static readonly string[] Verbs = { "give", "vehicle", "spawnMagnetableContainer", "spawnheli", "spawntrain", "spawncrane", "spawncraneontrack", "spawncontainerflatbed", "spawnelevator", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "toggleGlobalPower", "toggleGlobalWater", "toggleBbat", "infFuel", "infAmmo", "wear", "unwear", "fluid", "date", "dateset", "whenBlackout", "triggerGlobalBrownout", "hurtmain", "killmain", "hurttail", "killtail", "profiler", "renderscale", "vertexlight", "weather", "credits", "fridge", "fill", "empty", "units", "simspeed", "time", "timeset", "timeadd", "timespeed", "daylength", "hitbox", "heliphys", "procisland" };
+        static readonly string[] Verbs = { "give", "vehicle", "spawnMagnetableContainer", "spawnheli", "spawntrain", "spawncrane", "spawncraneontrack", "spawncontainerflatbed", "spawnelevator", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "toggleGlobalPower", "toggleGlobalWater", "toggleBbat", "infFuel", "infAmmo", "wear", "unwear", "fluid", "date", "dateset", "whenBlackout", "triggerGlobalBrownout", "hurtmain", "killmain", "hurttail", "killtail", "kill", "profiler", "renderscale", "vertexlight", "weather", "credits", "fridge", "fill", "empty", "units", "simspeed", "time", "timeset", "timeadd", "timespeed", "daylength", "hitbox", "heliphys", "procisland" };
         static readonly EItemType[] ClothingTypes = { EItemType.SHIRT, EItemType.PANTS, EItemType.HAT, EItemType.VEST, EItemType.MASK, EItemType.GLASSES, EItemType.BACKPACK };
         readonly System.Collections.Generic.List<string> _history = new();
         int _histIdx;
@@ -203,6 +203,19 @@ namespace UnturnedGodot
                 else heli.DamageMainRotor(heli.MainRotorHealth * 0.5f + 1f);
                 Log($"{verb}: main {heli.MainRotorHealth:0} ({heli.MainRotorNorm * 100f:0}%), tail {heli.TailRotorHealth:0} ({heli.TailRotorNorm * 100f:0}%)"
                     + (heli.MainRotorDead ? " -- MAIN DEAD, no lift" : "") + (heli.TailRotorDead ? " -- TAIL DEAD, spinning" : ""));
+                return;
+            }
+
+            // kill  -- suicide the local player (debug). Routes through the normal damage path (TakeDamage -> Die)
+            // so the death cam + 3.5s respawn fire exactly like any lethal hit, instead of teleporting HP to 0
+            // behind the vitals system's back. No-arg, so it sits above the arg guard with the heli rotor commands.
+            // In MP, TakeDamage forwards to the server damage sink (server owns death), so this stays correct there.
+            if (verb == "kill")
+            {
+                if (Player == null) { Log("kill: no player"); return; }
+                if (Player.IsDead) { Log("kill: you're already dead"); return; }
+                Player.TakeDamage(9999f);   // 9999 = the game's standard instant-kill (OOB fall PlayerController:7314, --pdie, riding-explosion all use it) -> Health <= 0 -> Die()
+                Log("kill: you died");
                 return;
             }
 
@@ -567,6 +580,26 @@ namespace UnturnedGodot
                            ?? Vehicle.SpecNames.FirstOrDefault(n => n.StartsWith(arg, System.StringComparison.OrdinalIgnoreCase));
                 if (name == null) { Log($"no vehicle '{arg}' (try: {string.Join(", ", Vehicle.SpecNames)})"); return; }
                 var v = Vehicle.BuildByName(name, (int)(GD.Randi() % 8));
+                // Keep the drop clear of the player: `at` is the look-point, so looking down near your own feet
+                // makes a multi-ton RigidBody vehicle materialize overlapping the player capsule, and the first
+                // tick's depenetration then shoves the player straight DOWN through the thin terrain collider to
+                // the -1030 kill plane. Push the spawn out to a safe radius (re-grounding its Y) so it never
+                // overlaps the player. (master 2026-08-31: "vehicles push you through the ground when spawned above")
+                if (Player != null)
+                {
+                    Vector3 pp = Player.GlobalPosition;
+                    var flat = new Vector2(at.X - pp.X, at.Z - pp.Z);
+                    const float clear = 6f;   // > longest common car half-length + player radius + margin
+                    if (flat.LengthSquared() < clear * clear)
+                    {
+                        Vector2 dir = flat.Length() > 0.05f ? flat.Normalized()
+                                    : new Vector2(-Player.GlobalTransform.Basis.Z.X, -Player.GlobalTransform.Basis.Z.Z);
+                        if (dir.LengthSquared() < 0.01f) dir = Vector2.Right;   // looking dead-vertical -> just shove it to world +X
+                        dir = dir.Normalized();
+                        float nx = pp.X + dir.X * clear, nz = pp.Z + dir.Y * clear;
+                        at = new Vector3(nx, Terrain.Active?.SurfaceHeightWorld(nx, nz) ?? at.Y, nz);   // drop from the real ground, not the old look-point Y
+                    }
+                }
                 (Player?.GetParent() ?? GetTree().Root).AddChild(v);
                 // A wheeled vehicle is DROPPED and lets its suspension sort out the landing. A helicopter has no
                 // suspension: seat it exactly on its skids instead, or it either bangs down from 1.5 m or spawns

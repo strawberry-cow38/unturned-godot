@@ -77,4 +77,88 @@ namespace UnturnedGodot.Testing
             }
         }
     }
+
+    // `kill` is a NO-ARG verb -- the exact shape the guard above swallows silently. It lives above the arg guard
+    // with the heli rotor commands, and this drives the REAL dispatch to prove it reaches the player and triggers
+    // death, rather than being eaten and looking like "the console doesn't recognize the command" (strawberry's
+    // phrasing when spawnMagnetableContainer was swallowed the same way).
+    public sealed class ConsoleKillTests : GameTest
+    {
+        public override string Name => "console.kill";
+        public override double TimeoutSimSeconds => 60;
+
+        public override IEnumerable<Step> Run()
+        {
+            Rigs.Ground(World);
+            var p = Rigs.Player(World, new Vector3(0f, 1f, 0f));
+            var console = new DevConsole { Player = p };
+            World.AddChild(console);
+            yield return Ticks(2);
+
+            T.Check($"the player starts alive (health {p.Health:0.#})", !p.IsDead);
+
+            console.RunForTest("kill");
+            yield return Ticks(2);
+            T.Check("`kill` (no-arg) actually kills the player -- not swallowed by the arg guard", p.IsDead);
+
+            console.QueueFree();
+        }
+    }
+
+    // Vehicles used to drop onto the console's look-point, so looking down at your own feet dropped a multi-ton
+    // RigidBody straight onto the player capsule; the first-tick depenetration then shoved the player DOWN through
+    // the thin terrain collider to the -1030 kill plane (strawberry 2026-08-31). The fix pushes the spawn out to a
+    // clear radius. Teeth: the geometry check below fails outright if the vehicle is dropped on top of the player.
+    public sealed class VehicleSpawnNoTunnelTests : GameTest
+    {
+        public override string Name => "vehicle.spawn_clear_of_player";
+        public override double TimeoutSimSeconds => 60;
+
+        static Vehicle FindVehicle(Node root)
+        {
+            if (root is Vehicle v) return v;
+            foreach (var c in root.GetChildren()) { var f = FindVehicle(c); if (f != null) return f; }
+            return null;
+        }
+
+        public override IEnumerable<Step> Run()
+        {
+            var terrain = Terrain.CreateFlat(6, 6, withCollider: true);
+            World.AddChild(terrain);
+            yield return Ticks(2);
+            float groundY = terrain.SurfaceHeightWorld(0f, 0f);
+            var p = Rigs.Player(World, new Vector3(0f, groundY + 1f, 0f));
+            var console = new DevConsole { Player = p };
+            World.AddChild(console);
+
+            // Look straight down so LookPoint() lands on the player's own feet -- the exact repro.
+            PlayerController.DebugForceLookScan = true;
+            p.DebugSetPitch(-88f);
+            yield return Ticks(4);
+
+            Vector3 lp = p.LookPoint();
+            float look = new Vector2(lp.X - p.GlobalPosition.X, lp.Z - p.GlobalPosition.Z).Length();
+            T.Check($"precondition: the look-point sits on top of the player ({look:0.#} m)", look < 4f);
+
+            float startY = p.GlobalPosition.Y;
+            console.RunForTest("veh offroader");   // a heavy 4-door; its drop used to tunnel the player
+            yield return Ticks(4);
+
+            var veh = FindVehicle(World);
+            T.Check("a vehicle was spawned", veh != null);
+            if (veh != null)
+            {
+                float d = new Vector2(veh.GlobalPosition.X - p.GlobalPosition.X, veh.GlobalPosition.Z - p.GlobalPosition.Z).Length();
+                T.Check($"it spawned CLEAR of the player ({d:0.#} m), not dropped on top of them", d > 4f);
+            }
+
+            yield return Ticks(36);   // let the drop land + the solver settle
+            T.Check($"the player was not shoved through the terrain (y {startY:0.#} -> {p.GlobalPosition.Y:0.#})", p.GlobalPosition.Y > groundY - 3f);
+            T.Check("...nor killed by an out-of-bounds fall", !p.IsDead);
+
+            PlayerController.DebugForceLookScan = false;
+            if (veh != null && GodotObject.IsInstanceValid(veh)) veh.QueueFree();
+            console.QueueFree();
+        }
+    }
 }

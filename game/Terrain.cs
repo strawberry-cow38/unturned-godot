@@ -1696,7 +1696,12 @@ void fragment() {
                     tris.Add(v10); tris.Add(v01); tris.Add(v11);
                 }
             if (tris.Count == 0) { cs.Shape = null; return; }
-            cs.Shape = new ConcavePolygonShape3D { Data = tris.ToArray() };
+            // BackfaceCollision so a body shoved past this ONE-SIDED river/hole surface (e.g. a heavy vehicle
+            // depenetrating the player downward) is caught by the back face and pushed back out instead of
+            // tunnelling into the -1030 void. The heightfield path is already solid both ways; this trimesh
+            // fallback was the one genuinely THIN patch the "terrain collision is very thin" report bit on. It
+            // stays a surface (holes are cut out as absent quads), so two-siding it traps nothing. (master 2026-08-31)
+            cs.Shape = new ConcavePolygonShape3D { Data = tris.ToArray(), BackfaceCollision = true };
             // Absolute world positions above -> the shape must NOT carry the heightfield path's scale/offset.
             cs.Scale = Vector3.One;
             cs.Position = Vector3.Zero;
