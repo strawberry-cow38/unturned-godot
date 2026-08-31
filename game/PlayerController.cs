@@ -6007,10 +6007,26 @@ namespace UnturnedGodot
                         // rotors' bullet colliders, everything else is airframe. Rotor damage does NOT also
                         // damage the hull -- shooting a tail rotor off should ground the machine by breaking
                         // the thing that keeps it straight, not by chipping away at its HP.
-                        var part = veh.ResolveHitPart(point);
-                        if (part == Vehicle.HeliPart.MainRotor) veh.DamageMainRotor(b.VehicleDamage);
-                        else if (part == Vehicle.HeliPart.TailRotor) veh.DamageTailRotor(b.VehicleDamage);
-                        else veh.TakeDamage(b.VehicleDamage);
+                        // GLASS FIRST: a round through a window breaks the pane and stops there. Resolved from the
+                        // impact point rather than a per-pane collider -- the panes sit inside the hull's own
+                        // collider, so adding six more bodies would put them in every physics query the car takes
+                        // part in for a hit the bullet path can already locate.
+                        int gpane = veh.ResolveHitGlass(point);
+                        bool tookGlass = gpane >= 0 && veh.BreakGlass(gpane);
+                        if (tookGlass)
+                        {
+                            // NOT an early return: this runs inside StepBullets' `for (i = _bullets.Count-1; ...)`,
+                            // so returning would abandon every other bullet in flight this frame -- a shotgun would
+                            // lose its remaining pellets the moment one pellet found a window.
+                            GD.Print($"[glass] {veh.DisplayName} {Vehicle.GlassPaneDisplay(veh.GlassLabel(gpane))} shattered");
+                        }
+                        else
+                        {
+                            var part = veh.ResolveHitPart(point);
+                            if (part == Vehicle.HeliPart.MainRotor) veh.DamageMainRotor(b.VehicleDamage);
+                            else if (part == Vehicle.HeliPart.TailRotor) veh.DamageTailRotor(b.VehicleDamage);
+                            else veh.TakeDamage(b.VehicleDamage);
+                        }
                         // WHERE THE SHOT CAME FROM, not where it landed (strawberry: "it will track the position
                         // that you shot it from"). b.Origin is the muzzle this round actually left, which is the
                         // answer to "where were you standing" -- the impact point is on the aircraft itself and

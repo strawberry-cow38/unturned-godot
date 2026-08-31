@@ -3589,22 +3589,105 @@ namespace UnturnedGodot
         /// <summary>Parse a content .obj if it is present, else null. Generated content (the extracted Huey
         /// rotors) must not be a hard build dependency -- a checkout that has not run the extractor should
         /// still get a flyable machine, not a crash or an invisible rotor.</summary>
-        /// <summary>Translucent glass laid over a vehicle: the jet's canopy, and road-car windows.
+        /// <summary>Window panes, one node each so they break independently.
+        ///
         /// Lives here rather than in BuildPlaneModel because a car never goes through the plane builder --
         /// setting Spec.GlassMesh on the sedan silently did nothing until this moved out (tinyclaw 2026-08-30:
-        /// caught by rendering it opaque red as a positive control and seeing 94 changed pixels, all of them HUD).</summary>
+        /// caught by rendering it opaque red as a positive control and seeing 94 changed pixels, all HUD).
+        ///
+        /// The mesh is split per pane by tools/gen_vehicle_glass.py into `<base>_<label>.txt`. A vehicle whose
+        /// generator found no side apertures simply has fewer files; the loader skips what is absent, so a spec
+        /// can name GlassMesh without every pane existing.</summary>
+        public static readonly string[] GlassPaneLabels = { "windshield", "rear", "l_front", "r_front", "l_rear", "r_rear" };
+        public static string GlassPaneDisplay(string label) => label switch
+        {
+            "windshield" => "windscreen", "rear" => "rear window",
+            "l_front" => "left front", "r_front" => "right front",
+            "l_rear" => "left rear",  "r_rear" => "right rear", _ => label,
+        };
+
+        readonly System.Collections.Generic.List<MeshInstance3D> _glassNodes = new();
+        readonly System.Collections.Generic.List<string> _glassLabels = new();
+        bool[] _glassBroken = System.Array.Empty<bool>();
+
+        public int GlassCount => _glassNodes.Count;
+        public string GlassLabel(int i) => (uint)i < (uint)_glassLabels.Count ? _glassLabels[i] : "";
+        public bool IsGlassBroken(int i) => (uint)i < (uint)_glassBroken.Length && _glassBroken[i];
+        public int GlassBrokenCount { get { int n = 0; foreach (var b in _glassBroken) if (b) n++; return n; } }
+
+        /// <summary>Break a pane. Deliberately does NOT self-heal: the pane stays gone until RepairGlass, which
+        /// is what strawberry asked for ("doesnt respawn unless 'fixed' in the vehicle mechanics ui").</summary>
+        public bool BreakGlass(int i)
+        {
+            if ((uint)i >= (uint)_glassNodes.Count || _glassBroken[i]) return false;
+            _glassBroken[i] = true;
+            if (GodotObject.IsInstanceValid(_glassNodes[i])) _glassNodes[i].Visible = false;
+            return true;
+        }
+
+        public bool RepairGlass(int i)
+        {
+            if ((uint)i >= (uint)_glassNodes.Count || !_glassBroken[i]) return false;
+            _glassBroken[i] = false;
+            if (GodotObject.IsInstanceValid(_glassNodes[i])) _glassNodes[i].Visible = true;
+            return true;
+        }
+
+        /// <summary>Which INTACT pane a world-space hit landed on, or -1. Same shape as ResolveHitPart: the
+        /// bullet path already has the impact point, so no extra colliders are needed on the glass (a collider
+        /// per pane would join every physics query the car takes part in).</summary>
+        public int ResolveHitGlass(Vector3 world, float tol = 0.28f)
+        {
+            int best = -1; float bestD = tol;
+            for (int i = 0; i < _glassNodes.Count; i++)
+            {
+                if (_glassBroken[i] || !GodotObject.IsInstanceValid(_glassNodes[i])) continue;
+                var mi = _glassNodes[i];
+                var local = mi.GlobalTransform.AffineInverse() * world;
+                var box = mi.GetAabb().Grow(tol);
+                if (!box.HasPoint(local)) continue;
+                float d = local.DistanceTo(mi.GetAabb().GetCenter());
+                if (d < bestD || best < 0) { best = i; bestD = d; }
+            }
+            return best;
+        }
+
         static void AddGlassOverlay(Vehicle v, Spec s)
         {
             if (s.GlassMesh == null) return;
-            var gm = LoadOptionalObj(s.GlassMesh);
-            if (gm == null) return;
             var glassMat = new StandardMaterial3D
             {
                 AlbedoColor = s.GlassTint ?? new Color(0.78f, 0.62f, 0.30f, 0.40f),   // default = the jet's golden canopy, ~40% opaque
                 Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
                 Metallic = 0.35f, Roughness = 0.10f, CullMode = BaseMaterial3D.CullModeEnum.Disabled,
             };
-            v.AddChild(new MeshInstance3D { Name = "Glass", Mesh = gm, MaterialOverride = glassMat, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off });
+            string base_ = s.GlassMesh.EndsWith(".txt") ? s.GlassMesh[..^4] : s.GlassMesh;
+            foreach (var label in GlassPaneLabels)
+            {
+                var m = LoadOptionalObjQuiet($"{base_}_{label}.txt");
+                if (m == null) continue;
+                var mi = new MeshInstance3D { Name = $"Glass_{label}", Mesh = m, MaterialOverride = glassMat,
+                                              CastShadow = GeometryInstance3D.ShadowCastingSetting.Off };
+                v.AddChild(mi);
+                v._glassNodes.Add(mi); v._glassLabels.Add(label);
+            }
+            if (v._glassNodes.Count == 0)   // no per-pane files -- fall back to a single mesh (the jet's canopy)
+            {
+                var gm = LoadOptionalObj(s.GlassMesh);
+                if (gm == null) return;
+                var mi = new MeshInstance3D { Name = "Glass", Mesh = gm, MaterialOverride = glassMat,
+                                              CastShadow = GeometryInstance3D.ShadowCastingSetting.Off };
+                v.AddChild(mi);
+                v._glassNodes.Add(mi); v._glassLabels.Add("canopy");
+            }
+            v._glassBroken = new bool[v._glassNodes.Count];
+        }
+
+        /// <summary>LoadOptionalObj without the "missing" print -- probing per-pane files, absence is normal.</summary>
+        static Mesh LoadOptionalObjQuiet(string file)
+        {
+            string abs = ProjectSettings.GlobalizePath($"res://content/{file}");
+            return System.IO.File.Exists(abs) ? ContentProvider.ParseObj($"res://content/{file}") : null;
         }
 
         static Mesh LoadOptionalObj(string file)

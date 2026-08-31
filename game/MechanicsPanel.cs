@@ -13,6 +13,9 @@ namespace UnturnedGodot
         Vehicle _v;
         Label _body;
         Control _root;
+        VBoxContainer _glassBox;
+        Label _glassTitle;
+        readonly System.Collections.Generic.List<(Button btn, Label lbl, int idx)> _glassRows = new();
 
         public override void _Ready()
         {
@@ -49,7 +52,15 @@ namespace UnturnedGodot
             _body.AddThemeFontSizeOverride("font_size", 16);
             col.AddChild(_body);
 
-            var hint = new Label { Text = "nothing to turn yet — F or Esc to close", HorizontalAlignment = HorizontalAlignment.Center, Modulate = new Color(1, 1, 1, 0.5f) };
+            _glassTitle = new Label { Text = "GLAZING" };
+            _glassTitle.AddThemeFontSizeOverride("font_size", 18);
+            col.AddChild(_glassTitle);
+
+            _glassBox = new VBoxContainer();
+            _glassBox.AddThemeConstantOverride("separation", 4);
+            col.AddChild(_glassBox);
+
+            var hint = new Label { Text = "F or Esc to close", HorizontalAlignment = HorizontalAlignment.Center, Modulate = new Color(1, 1, 1, 0.5f) };
             hint.AddThemeFontSizeOverride("font_size", 13);
             col.AddChild(hint);
         }
@@ -58,7 +69,37 @@ namespace UnturnedGodot
         {
             _v = v;
             Visible = true;
+            BuildGlassRows();
             Refresh();
+        }
+
+        /// <summary>One row per pane, built ONCE per open. Refresh() runs every frame from _Process, so building
+        /// the buttons there would replace them between a press and its release and the click would never land.</summary>
+        void BuildGlassRows()
+        {
+            foreach (var c in _glassBox.GetChildren()) c.QueueFree();
+            _glassRows.Clear();
+            if (_v == null) return;
+            for (int i = 0; i < _v.GlassCount; i++)
+            {
+                int idx = i;   // capture per row, not the loop variable
+                var row = new HBoxContainer();
+                row.AddThemeConstantOverride("separation", 8);
+                var lbl = new Label { Text = "", CustomMinimumSize = new Vector2(210, 0) };
+                lbl.AddThemeFontSizeOverride("font_size", 15);
+                var btn = new Button { Text = "fix", CustomMinimumSize = new Vector2(70, 0) };
+                btn.AddThemeFontSizeOverride("font_size", 14);
+                btn.Pressed += () =>
+                {
+                    if (_v != null && IsInstanceValid(_v) && _v.RepairGlass(idx))
+                        GD.Print($"[mechanics] repaired {Vehicle.GlassPaneDisplay(_v.GlassLabel(idx))} on {_v.DisplayName}");
+                };
+                row.AddChild(lbl); row.AddChild(btn);
+                _glassBox.AddChild(row);
+                _glassRows.Add((btn, lbl, idx));
+            }
+            _glassTitle.Visible = _v.GlassCount > 0;
+            _glassBox.Visible = _v.GlassCount > 0;
         }
 
         public new void Hide() { Visible = false; _v = null; }
@@ -76,7 +117,17 @@ namespace UnturnedGodot
                 $"battery     {_v.Battery:0}\n" +
                 $"gears       {_v.GearCount}\n" +
                 $"seats       {_v.SeatCount}\n" +
-                $"trunk       {(_v.HasTrunk ? "yes" : "none")}";
+                $"trunk       {(_v.HasTrunk ? "yes" : "none")}\n" +
+                $"glass       {_v.GlassCount - _v.GlassBrokenCount} / {_v.GlassCount} intact";
+
+            foreach (var (btn, lbl, idx) in _glassRows)
+            {
+                if (!IsInstanceValid(btn)) continue;
+                bool broken = _v.IsGlassBroken(idx);
+                lbl.Text = $"{Vehicle.GlassPaneDisplay(_v.GlassLabel(idx)),-14} {(broken ? "SHATTERED" : "intact")}";
+                lbl.Modulate = broken ? new Color(1f, 0.55f, 0.5f) : new Color(1, 1, 1, 0.75f);
+                btn.Disabled = !broken;   // nothing to fix on an intact pane
+            }
         }
 
         public override void _Process(double delta) { if (Visible) Refresh(); }
