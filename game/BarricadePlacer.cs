@@ -206,7 +206,7 @@ namespace UnturnedGodot
             SnappedFace = (from - center).Dot(wn) >= 0f ? 1 : -1;          // the face the camera is on
             Normal = wn * SnappedFace;
             Yaw = YawFacing(Normal);
-            Point = center + Normal * Def.Offset;                          // seat just proud of the aimed face
+            Point = center + Normal * (SnappedWall.Thickness * 0.5f + Def.Size.Y * 0.5f + 0.005f);   // seat the panel flat ON the aimed WALL FACE (half-wall + half-panel + hair), not embedded in the wall's thickness
             _windowScale = new Vector3(op.Width / Def.Size.X, 1f, op.Height / Def.Size.Z);   // fit the flat frame (X=width, Z=height) to the opening
             Valid = !SlotFilled(SnappedWall, SnappedOpening, SnappedFace);  // one barricade per face
             Apply();

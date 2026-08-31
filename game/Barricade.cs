@@ -43,7 +43,7 @@ namespace UnturnedGodot
             var op = wall.Openings[openingIndex];
             Vector3 wn = wall.GlobalTransform.Basis.Z.Normalized() * face;                // outward from the aimed face
             Vector3 center = wall.UVToWorld(op.U + op.Width * 0.5f, op.V + op.Height * 0.5f);
-            Vector3 seat = center + wn * def.Offset;                                       // just proud of the face
+            Vector3 seat = center + wn * (wall.Thickness * 0.5f + def.Size.Y * 0.5f + 0.005f);   // panel sits flat ON the wall FACE (half-wall + half-panel + hair), not in the centre plane
             float yaw = BarricadePlacer.YawFacing(wn);
             var d = Deployable.Spawn(wall, def, seat, yaw, backing);                       // full lifecycle (HP/damage/salvage/net)
             var scale = new Vector3(op.Width / def.Size.X, 1f, op.Height / def.Size.Z);    // fit the panel to the opening

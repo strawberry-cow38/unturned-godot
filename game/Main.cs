@@ -116,6 +116,7 @@ namespace UnturnedGodot
             bool elevatorTest = false;
             bool rainTest = false;
             bool rainMatTest = false;
+            bool windowBarrTest = false;
             bool play = false, demo = false, netdemo = false, server = false, dedicated = false, client = false, smoke = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, lightTest = false, trafficTest = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, playground = false, objects = false, peidrive = false, craftmenu = false, stationtest = false, editorMode = false, impactTest = false, doorGallery = false, lampTest = false, beamTest = false, impTest = false, treeSweep = false, bakeLods = false, bakeLodsDry = false, netobserve = false, zombieTier = false, zflow = false, zhunt = false, zkill = false, zsound = false, zface = false, zpath = false;
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
@@ -134,6 +135,7 @@ namespace UnturnedGodot
                 else if (arg == "--elevatortest") { elevatorTest = true; _shotRequested = "elevator"; }   // Elevator_0 wired to ride up/down on F; auto-Calls so an offline UG_SHOTTIME catches it mid-ride
                 else if (arg == "--raintest") { rainTest = true; _shotRequested = "rain"; }   // rain-visuals showcase: overcast ground + boxes + the RainOverlay (UG_RAININT / UG_RAINCAM)
                 else if (arg == "--rainmattest") rainMatTest = true;   // positional rain-on-material audio: a tree w/ collider under heavy rain, cam nearby -> the foliage emitter homes to it (UG_RAINMATDBG logs)
+                else if (arg == "--windowbarrtest") windowBarrTest = true;   // window-barricade visual: a wall+window with a barricade on each face (inside + outside)
                 else if (arg == "--trainshow") trainshow = "1";   // assemble train_cargo_0 from its extracted pieces for a 3/4 shot
                 else if (arg == "--traintrack") traintrack = "1";   // ride the train along a curved test track
                 else if (arg.StartsWith("--slingtest=")) { slingtest = arg["--slingtest=".Length..]; _shotRequested = slingtest; }
@@ -448,6 +450,7 @@ namespace UnturnedGodot
             if (elevatorTest) { GetWindow().Size = new Vector2I(1280, 800); _shotPath = shot; BuildElevatorTest(); return; }
             if (rainTest) { GetWindow().Size = new Vector2I(1280, 800); _shotPath = shot; BuildRainTest(); return; }
             if (rainMatTest) { GetWindow().Size = new Vector2I(1280, 720); BuildRainMatTest(); return; }
+            if (windowBarrTest) { GetWindow().Size = new Vector2I(1280, 720); _shotPath = shot; BuildWindowBarrTest(); return; }
             if (trainshow != null) { GetWindow().Size = new Vector2I(1600, 720); BuildTrainShow(); return; }
             if (traintrack != null) { GetWindow().Size = new Vector2I(1600, 900); BuildTrainTrack(); return; }
 
@@ -1181,6 +1184,36 @@ namespace UnturnedGodot
             var tw = CreateTween();
             tw.TweenProperty(cam, "position", new Vector3(-4f, 2.4f, 2.5f), 5.0);   // end WELL under the canopy so the rain hole reads
             GD.Print("[rainmattest] pine at (-4,0,0), cam walks 22m -> 4m over 5s, heavy rain -> foliage fades in");
+        }
+
+        // --windowbarrtest: window-barricade visual proof. A drawn wall with one window opening + a WindowBarricade
+        // placed on EACH face (inside + outside) via Barricade.PlaceInWindow, seen from a 3/4 angle so both the fit
+        // (panel scaled to the opening) and the two-sided placement read. Still: `--shot=P` + UG_SHOTTIME.
+        void BuildWindowBarrTest()
+        {
+            AddChild(new WorldEnvironment { Environment = new Godot.Environment {
+                BackgroundMode = Godot.Environment.BGMode.Color, BackgroundColor = new Color(0.52f, 0.60f, 0.70f),
+                AmbientLightSource = Godot.Environment.AmbientSource.Color, AmbientLightColor = new Color(0.45f, 0.45f, 0.5f), AmbientLightEnergy = 1.0f,
+            } });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-50f, -35f, 0f), LightEnergy = 1.1f, ShadowEnabled = true });
+            var ground = new StaticBody3D();
+            ground.AddChild(new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(24f, 24f) } });
+            ground.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
+            AddChild(ground);
+
+            var wall = new WallSurface { Length = 6f, Height = 3f, Thickness = 0.5f, Position = new Vector3(-3f, 0f, 0f) };
+            wall.Openings.Add(new UnturnedSim.WallOpening(2.5f, 1.0f, 1.5f, 1.5f));   // one window, centre ~ (0.25, 1.75, 0)
+            AddChild(wall);
+            Callable.From(() => {   // after the wall's _Ready (transform + Rebuild + "walls" group)
+                var _b1 = Barricade.PlaceInWindow(wall, 0, 1, DeployableDef.WindowBarricade);    // +Z (outside) face
+                var _b2 = Barricade.PlaceInWindow(wall, 0, -1, DeployableDef.WindowBarricade);   // -Z (inside) face
+                GD.Print($"[windowbarrtest] barricades boarding both faces of the window ({_b1?.GlobalPosition}, {_b2?.GlobalPosition})");
+            }).CallDeferred();
+
+            var cam = new Camera3D { Current = true, Fov = 55f };
+            AddChild(cam);
+            cam.GlobalPosition = new Vector3(2.6f, 2.4f, 4.2f);
+            cam.LookAt(new Vector3(0.25f, 1.6f, 0f), Vector3.Up);
         }
 
         // --treetest=<birch|maple|pine>: a standing tree on the LEFT, a felled one on the RIGHT (visual hidden + a real
