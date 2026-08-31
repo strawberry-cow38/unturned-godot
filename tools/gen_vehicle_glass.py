@@ -1,30 +1,34 @@
 #!/usr/bin/env python3
-"""Generate window glass panes for a vehicle body mesh (sedan_glass.txt).
+"""Generate window glass panes for a vehicle body mesh, deriving every constant from THAT body.
 
-WHY THIS EXISTS: the greenhouse is modelled as watertight solid pillars + a roof slab, so the
-windows are GAPS BETWEEN geometry, not holes IN a surface -- a boundary-edge test finds 4 edges on
-the whole body and would tell you the car has no windows. So we raycast instead and take the
-regions you can actually see through.
+strawberry 2026-08-31: "derive it from each vehicle's window opening. vehicles are each
+fundamentally different." Nothing here is tuned to a particular car -- the beltline, the side
+plane, the cabin band and both raked apertures are measured off the mesh handed in.
 
-  side windows : cast along X over a (y,z) grid, flood-fill the see-through cells, and keep only
-                 components that do NOT touch the grid edge (one that does is running off the
-                 frame into open air, not a window). Trace each component ROW BY ROW so the pane
-                 follows the A/C-pillar slant instead of being a bounding rectangle.
-  windshield   : cast along Z but count hits only inside that window's own z band -- an unbanded
-  / rear glass   ray is open only where windshield AND rear are both open, whose intersection is a
-                 rectangle and loses the shape. Emit ONE quad on the least-squares rake plane: the
-                 rake is linear to ~21mm (windshield) / ~34mm (rear) against a 30mm grid step, and
-                 a strip of ~26 thin alpha quads visibly BANDS whatever is behind it.
+WHY RAYCASTS AND NOT TOPOLOGY: a greenhouse is modelled as watertight solid pillars plus a roof
+slab, so the windows are gaps BETWEEN geometry, not holes IN a surface. A boundary-edge test finds
+4 edges on a whole sedan and would report that the car has no windows.
 
-Panes are inset inside the frame so the pillars occlude the glass, not the reverse.
-Usage: python3 tools/gen_vehicle_glass.py [body.txt] [out.txt]
+  beltline    scan y-slices; the greenhouse is where the body's z-extent collapses (the cabin is
+              much shorter than the hood+boot). Taken as the first slice under a fraction of the
+              full extent, which is a shape fact rather than a number for one car.
+  side glass  cast along X over (y,z); flood-fill the see-through cells; keep only components that
+              do NOT touch the scan edge -- one that does is running off into open air, not a
+              window. Trace each ROW so the pane follows the pillar slant instead of being a box.
+  raked glass cast along the PANE'S OWN NORMAL, not along Z. A front-to-back ray finds where you can
+              see through the entire cabin, which is the intersection of the windscreen and rear
+              apertures -- a rectangle that loses both shapes, and whose corners clip the A-pillar
+              because a z-ray threads past a slanted pillar where the raked pane cannot.
+
+Usage: python3 tools/gen_vehicle_glass.py <body.txt> <out_base.txt>
+Writes <out_base>_<label>.txt per pane: windshield, rear, l_front, r_front, l_rear, r_rear.
 """
-import sys, numpy as np
+import sys, os, numpy as np
 from collections import deque
 
 SRC = sys.argv[1] if len(sys.argv) > 1 else 'game/content/sedan_body.txt'
 OUT = sys.argv[2] if len(sys.argv) > 2 else 'game/content/sedan_glass.txt'
-STEP, XS, INSET, XW, INSET_F, XF = 0.03, 1.230, 0.004, 0.940, 0.045, 1.25
+STEP, INSET, INSET_F = 0.03, 0.004, 0.045
 
 V, F = [], []
 for ln in open(SRC):
@@ -37,22 +41,44 @@ for ln in open(SRC):
 V = np.array(V); T = V[np.array(F)]
 A, B, C = T[:, 0], T[:, 1], T[:, 2]; E1, E2 = B - A, C - A
 
-def hits(o, d):
+def nhits(o, d, tmax=None):
+    """Triangles crossed along the ray. tmax bounds it to a segment, which is what "can I reach this
+    point from outside" needs -- an unbounded ray also counts everything BEHIND the target."""
     d = d / np.linalg.norm(d); P = np.cross(d, E2); det = (E1 * P).sum(1)
     ok = np.abs(det) > 1e-9; inv = np.where(ok, 1.0 / np.where(ok, det, 1), 0)
     Tv = o - A; u = (Tv * P).sum(1) * inv; Q = np.cross(Tv, E1)
     v = (d * Q).sum(1) * inv; t = (E2 * Q).sum(1) * inv
     m = ok & (u >= -1e-6) & (v >= -1e-6) & (u + v <= 1 + 1e-6) & (t > 1e-4)
-    return o[2] + t[m] if d[2] else m.sum()
+    if tmax is not None: m &= (t < tmax)
+    return int(m.sum())
 
-ys = np.arange(1.00, 2.25, STEP); zs = np.arange(-1.70, 1.95, STEP)
-g = np.array([[hits(np.array([-6.0, y, z]), np.array([1.0, 0, 0])) for z in zs] for y in ys])
+# ---- 1. BELTLINE + CABIN BAND, from the body's own silhouette.
+ylo, yhi = V[:, 1].min(), V[:, 1].max()
+slices = []
+for y in np.arange(ylo, yhi, 0.05):
+    m = (V[:, 1] >= y) & (V[:, 1] < y + 0.05)
+    if m.sum() < 3: continue
+    slices.append((y, np.ptp(V[m, 2]), np.abs(V[m, 0]).max()))
+if not slices: sys.exit("no geometry")
+full_z = max(s[1] for s in slices)
+cabin = [s for s in slices if s[1] < full_z * 0.72]        # greenhouse: markedly shorter than the body
+cabin = [s for s in cabin if s[0] > (ylo + yhi) * 0.5]     # ...and in the upper half, not the floor pan
+if not cabin: sys.exit("no greenhouse found (no slice is much shorter than the body)")
+belt = min(s[0] for s in cabin)
+roof = max(s[0] for s in cabin) + 0.05
+XS = max(s[2] for s in cabin)                              # side plane = widest point of the cabin
+band_lo, band_hi = belt + 0.06, roof - 0.06
+print(f"  derived: belt {belt:.2f}  roof {roof:.2f}  cabin band {band_lo:.2f}..{band_hi:.2f}  side |x| {XS:.2f}")
 
-panes = []   # (label, quads)
+ys = np.arange(band_lo - 0.10, band_hi + 0.10, STEP)
+zs = np.arange(V[:, 2].min() - 0.1, V[:, 2].max() + 0.1, STEP)
+g = np.array([[nhits(np.array([-(XS + 5), y, z]), np.array([1.0, 0, 0])) for z in zs] for y in ys])
 
-def quad(qs, a, b, c, d): qs.append([a, b, c, d])
+panes = []
+def add(label, quads): panes.append((label, quads))
 
-band = (ys > 1.11) & (ys < 1.92); ysb = ys[band]; sub = (g == 0)[band]
+# ---- 2. SIDE GLASS: enclosed see-through components, traced per row.
+band = (ys > band_lo) & (ys < band_hi); ysb = ys[band]; sub = (g == 0)[band]
 lab = -np.ones(sub.shape, int); cur = 0
 for i in range(sub.shape[0]):
     for j in range(sub.shape[1]):
@@ -65,57 +91,91 @@ for i in range(sub.shape[0]):
                 if 0 <= na < sub.shape[0] and 0 <= nb < sub.shape[1] and sub[na, nb] and lab[na, nb] < 0:
                     lab[na, nb] = cur; q.append((na, nb))
         cur += 1
+comps = []
 for c in range(cur):
     m = lab == c
-    if m.sum() < 40: continue
+    if m.sum() < 30: continue
     zi = np.where(m)[1]
     if zi.min() == 0 or zi.max() == sub.shape[1] - 1: continue
     rows = []
     for i in range(sub.shape[0]):
         js = np.where(m[i])[0]
         if len(js) >= 2: rows.append((ysb[i], zs[js.min()], zs[js.max()]))
-    if len(rows) < 2: continue
-    zmid = (min(r[1] for r in rows) + max(r[2] for r in rows)) / 2
-    which = 'rear' if zmid < 0.2 else 'front'
+    if len(rows) >= 2: comps.append(rows)
+comps.sort(key=lambda r: (min(x[1] for x in r) + max(x[2] for x in r)) / 2)   # rear -> front
+for n, rows in enumerate(comps):
+    which = 'rear' if n == 0 and len(comps) > 1 else ('front' if n == len(comps) - 1 else f'mid{n}')
     for sx, side in ((+1, 'r'), (-1, 'l')):
         qs = []; x = sx * (XS - INSET)
         for k in range(len(rows) - 1):
             y1, a1, b1 = rows[k]; y2, a2, b2 = rows[k + 1]
-            quad(qs, np.array([x, y1, a1]), np.array([x, y1, b1]),
-                     np.array([x, y2, b2]), np.array([x, y2, a2]))
-        panes.append((f"{side}_{which}", qs))
+            qs.append([np.array([x, y1, a1]), np.array([x, y1, b1]),
+                       np.array([x, y2, b2]), np.array([x, y2, a2])])
+        add(f"{side}_{which}", qs)
 
+# ---- 3. RAKED GLASS: fit the pillar edge, then re-scan ALONG THE PANE'S OWN NORMAL.
 solid = g > 0
-for zr, take_max, label in (((0.80, 1.80), True, 'windshield'), ((-1.80, -0.60), False, 'rear')):
+zmid = (zs[0] + zs[-1]) / 2
+for take_max, label in ((True, 'windshield'), (False, 'rear')):
     e = []
     for i, y in enumerate(ys):
-        if not (1.11 < y < 1.92): continue
-        js = [j for j, z in enumerate(zs) if zr[0] <= z <= zr[1] and solid[i, j]]
+        if not (band_lo < y < band_hi): continue
+        js = [j for j, z in enumerate(zs) if solid[i, j] and ((z > zmid) if take_max else (z < zmid))]
         if js: e.append((y, zs[max(js)] if take_max else zs[min(js)]))
-    if len(e) < 2: continue
+    if len(e) < 3: continue
     e = np.array(e)
     m_, c_ = np.linalg.lstsq(np.vstack([e[:, 0], np.ones(len(e))]).T, e[:, 1], rcond=None)[0]
-    ylo, yhi = e[:, 0].min(), e[:, 0].max(); zlo, zhi = m_ * ylo + c_, m_ * yhi + c_
     nrm = np.array([0.0, -m_, 1.0]); nrm /= np.linalg.norm(nrm)
-    off = -nrm * INSET_F * (1.0 if take_max else -1.0)
+    if not take_max: nrm = -nrm
+    ax = np.array([1.0, 0.0, 0.0])                      # in-plane: across the car
+    ay = np.cross(nrm, ax); ay /= np.linalg.norm(ay)    # in-plane: up the rake
+    org = np.array([0.0, e[:, 0].mean(), m_ * e[:, 0].mean() + c_])
+    us = np.arange(-XS, XS + 1e-9, STEP)
+    vs = np.arange(-(band_hi - band_lo), (band_hi - band_lo), STEP)
+    open_ = np.zeros((len(vs), len(us)), bool)
+    for iv, vv in enumerate(vs):
+        for iu, uu in enumerate(us):
+            p = org + ax * uu + ay * vv
+            if not (band_lo - 0.05 < p[1] < band_hi + 0.05): continue
+            # From OUTSIDE the car along -nrm, stopping AT the plane: "is this point of the pane
+            # reachable from outside without passing through bodywork". Casting from p - nrm*4 starts
+            # inside the cabin and shoots out through the floor, which finds nothing anywhere.
+            # Test at the pane's ACTUAL inset position, not on the fitted plane: the fit passes through
+            # the pillar's front face, so a point exactly on it hits the pillar at t == tmax and the
+            # comparison drops it -- the pillars vanish and the "aperture" becomes the whole car width.
+            pt = p - nrm * INSET_F
+            open_[iv, iu] = nhits(pt + nrm * 4.0, -nrm, tmax=4.0 - 1e-3) == 0
+    if not open_.any(): print(f"  !! {label}: no aperture along its normal"); continue
+    rows = []
+    for iv in range(len(vs)):
+        js = np.where(open_[iv])[0]
+        if len(js) < 2: continue
+        runs = np.split(js, np.where(np.diff(js) != 1)[0] + 1)
+        runs = [r for r in runs if r[0] > 0 and r[-1] < len(us) - 1]   # must be FRAMED both sides
+        if not runs: continue
+        r = max(runs, key=len)
+        if us[r[-1]] - us[r[0]] < 0.25: continue
+        rows.append((vs[iv], us[r[0]], us[r[-1]]))
+    if len(rows) < 2: print(f"  !! {label}: aperture too small"); continue
     qs = []
-    quad(qs, np.array([-XW, ylo, zlo]) + off, np.array([XW, ylo, zlo]) + off,
-             np.array([XW, yhi, zhi]) + off, np.array([-XW, yhi, zhi]) + off)
-    panes.append((label, qs))
+    for k in range(len(rows) - 1):
+        v1, a1, b1 = rows[k]; v2, a2, b2 = rows[k + 1]
+        P = lambda u, v: org + ax * u + ay * v - nrm * INSET_F
+        qs.append([P(a1, v1), P(b1, v1), P(b2, v2), P(a2, v2)])
+    add(label, qs)
+    print(f"  {label}: {len(rows)} rows, width {max(b - a for _, a, b in rows):.2f}")
 
-import os
 base = OUT[:-4] if OUT.endswith('.txt') else OUT
 for label, quads in panes:
-    verts = []; faces = []
+    verts, faces = [], []
     for q in quads:
         b = len(verts) + 1; verts.extend(q)
         faces.append((b, b + 1, b + 2)); faces.append((b, b + 2, b + 3))
-    path = f"{base}_{label}.txt"
-    with open(path, 'w') as fh:
+    with open(f"{base}_{label}.txt", 'w') as fh:
         fh.write(f"# GENERATED by tools/gen_vehicle_glass.py -- pane '{label}'. Do not hand-edit.\n")
         fh.write("# One file per pane so each breaks independently (Vehicle.GlassPaneLabels).\n")
         fh.write(f"g {label}\n")
         for v in verts: fh.write(f"v {v[0]:.6f} {v[1]:.6f} {v[2]:.6f}\n")
         for f in faces: fh.write(f"f {f[0]} {f[1]} {f[2]}\n")
-    print(f"  {label:<12} {len(quads):>3} quads -> {os.path.basename(path)}")
+    print(f"  {label:<12} {len(quads):>3} quads -> {os.path.basename(base)}_{label}.txt")
 print(f"{len(panes)} panes")

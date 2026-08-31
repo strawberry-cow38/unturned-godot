@@ -88,6 +88,24 @@ namespace UnturnedGodot.Testing
             yield return Ticks(20);
             T.Check($"a quad has no glass and still builds ({quad.GlassCount})", quad.GlassCount == 0);
             T.Check("...and resolves no glass hit", quad.ResolveHitGlass(quad.GlobalPosition) < 0);
+
+            // ---- 8. THE PANES ARE DERIVED PER BODY, not copied off the sedan. strawberry: "vehicles are each
+            // fundamentally different". A 2-door roadster must not get the 4-door sedan's six panes -- if every
+            // car came back with an identical set, the generator would be emitting a template and this whole
+            // pass would be decoration.
+            var road = Vehicle.BuildByName("roadster");
+            World.AddChild(road); road.GlobalPosition = new Vector3(100f, 1.2f, 0f);
+            var vanv = Vehicle.BuildByName("van");
+            World.AddChild(vanv); vanv.GlobalPosition = new Vector3(120f, 1.2f, 0f);
+            yield return Ticks(20);
+            T.Check($"the roadster is glazed ({road.GlassCount} panes)", road.GlassCount > 0);
+            T.Check($"the van is glazed ({vanv.GlassCount} panes)", vanv.GlassCount > 0);
+            T.Check($"...and a 2-door roadster has FEWER panes than the 4-door sedan ({road.GlassCount} < {car.GlassCount})",
+                    road.GlassCount < car.GlassCount);
+            var roadLabels = new List<string>();
+            for (int i = 0; i < road.GlassCount; i++) roadLabels.Add(road.GlassLabel(i));
+            T.Check($"...and its set differs from the sedan's ({string.Join(",", roadLabels)})",
+                    !roadLabels.SequenceEqual(labels));
         }
     }
 }
