@@ -49,6 +49,7 @@ namespace UnturnedGodot
             Viewmodel.ClearCaches();
             GlassPane.ClearCaches();
             GlassShards.ClearCaches();
+            RainSystem3D.ResetGlobals();   // rain_wetness/rain_intensity are process-wide + outlive the scene -> zero them so the next scene/menu isn't stuck wet (tinyclaw)
             GD.Print("[caches] cleared all static resource caches (editor/map transition)");
         }
 

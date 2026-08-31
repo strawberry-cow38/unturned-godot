@@ -49,6 +49,8 @@ uniform float tileWorld = 16.0;
 uniform float sea_level = 25.6;                                  // world-Y of the ocean surface -> caustics show only below it
 uniform vec3 caustic_tint : source_color = vec3(0.55, 0.9, 1.0);
 uniform float caustic_strength = 0.15;   // toned down 70% (master)
+global uniform float rain_wetness;                              // 0..1 wet soak (WeatherManager drives it) -> darken + gloss up-facing terrain
+global uniform float rain_intensity;                           // 0..1 raindrop-impact splash density/brightness
 varying vec3 wpos;
 void vertex() { wpos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz; }
 // --- caustics: gradient (Perlin) noise so the web is smooth, not blocky; projected in world XZ onto underwater terrain ---
@@ -90,6 +92,19 @@ void fragment() {
         // FADE to nothing at night instead of glowing nuclear (master). Real caustics are just focused sunlight.
         ALBEDO += caustic_tint * caust * caustic_strength * cfade;
     }
+    // RAIN: up-facing terrain soaks dark + glossy and shows raindrop-impact rings (globals set by WeatherManager).
+    // GATED on the globals, like the caustics above -- rsplash is ~800 ALU/px and would run on every terrain fragment
+    // every frame in clear weather otherwise, for a result that's multiplied by zero (tinyclaw). Both globals sit at 0
+    // in fair weather, so the whole block skips and clear weather costs nothing.
+    if (rain_intensity > 0.0 || rain_wetness > 0.0) {
+        vec3 wn = normalize((INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).xyz);   // world normal -> upness is camera-independent
+        float r_up = smoothstep(0.35, 0.75, wn.y);
+        float r_wet = clamp(rain_wetness, 0.0, 1.0) * r_up;
+        ALBEDO *= mix(1.0, 0.60, r_wet);                             // wet ground darkens
+        ROUGHNESS = mix(1.0, 0.55, r_wet);                           // DAMP, not mirror -- grass/dirt mustn't go wet-plastic glossy like asphalt
+        // NO splash impacts on terrain (master: gate impacts to solid PROPS, not terrain) -- terrain just soaks dark + damps.
+        SPECULAR = 0.5 + r_wet * 0.12;                               // subtle sheen only (no metallic -- terrain isn't metal)
+    }
 }
 ";
 
@@ -107,6 +122,7 @@ void fragment() {
             var arr = new Texture2DArray();
             if (arr.CreateFromImages(imgs) != Error.Ok) return null;
 
+            RainSystem3D.EnsureGlobals();   // the shader reads the rain_wetness/rain_intensity globals -- they MUST exist before it compiles
             var mat = new ShaderMaterial { Shader = new Shader { Code = TERRAIN_SHADER } };
             mat.SetShaderParameter("albedos", arr);
             mat.SetShaderParameter("splat0", splat0);
