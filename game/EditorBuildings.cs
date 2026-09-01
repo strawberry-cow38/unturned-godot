@@ -428,6 +428,10 @@ namespace UnturnedGodot
         /// flag that separates door/garage/porch from window/vent.</summary>
         public string ActiveDoorProp;
 
+        /// <summary>Pre-barricade style stamped on new openings; None = leave it open (default). NOT gated to
+        /// floor-pinned openings -- any opening (window or doorway) can start boarded. (master 2026-09-01)</summary>
+        public WallBarricade ActiveBarricade;
+
         public void Setup(Editor editor, Camera3D cam, EditorCamera flyCam)
         {
             _editor = editor; _cam = cam; _flyCam = flyCam;
@@ -911,6 +915,7 @@ namespace UnturnedGodot
             o.GlassHp = ActiveGlassHp;
             o.GlassIndestructible = ActiveGlassIndestructible;
             if (a.FloorPinned) o.DoorProp = ActiveDoorProp;   // door/garage/porch can carry one; a window cannot
+            o.Barricade = ActiveBarricade;                    // any opening can start pre-barricaded (master 2026-09-01)
             return WallOpenings.Clamp(o, w.Length, w.Height, w.Openings);
         }
 
@@ -969,6 +974,21 @@ namespace UnturnedGodot
             w.Openings[index] = o;
             w.Rebuild();
             _editor?.PushUndo("door", () => Restore(w, before));
+        }
+
+        /// <summary>Set (or clear with None) one opening's PRE-BARRICADE style (master 2026-09-01). Same shape as
+        /// SetOpeningDoor -- undoable, no-ops when unchanged -- so a pre-barricade rides an opening exactly like the
+        /// door + glass do. Unlike a door it is NOT gated to floor-pinned openings: a boarded WINDOW is the point.</summary>
+        public void SetOpeningBarricade(WallSurface w, int index, WallBarricade type)
+        {
+            if (w == null || !IsInstanceValid(w) || index < 0 || index >= w.Openings.Count) return;
+            var before = w.Openings.ToArray();
+            var o = w.Openings[index];
+            if (o.Barricade == type) return;                // no-op: an undo step here makes Ctrl+Z look broken
+            o.Barricade = type;
+            w.Openings[index] = o;
+            w.Rebuild();
+            _editor?.PushUndo("barricade", () => Restore(w, before));
         }
 
         /// <summary>Smash or un-smash one opening's glass. strawberry_cow: "broken glass preset, places the
@@ -2192,12 +2212,15 @@ namespace UnturnedGodot
                 var wxf = w.GlobalTransform;
                 foreach (var o in w.Openings)
                 {
-                    if (o.V <= UnturnedSim.WallOpenings.Eps || o.HasDoor) continue;
+                    // A marker per WINDOW (so manual barricades can snap on the baked prop) OR per PRE-BARRICADED opening
+                    // of any kind (so it auto-spawns its boards at load) -- a pre-barricaded doorway/door needs one too.
+                    bool isWindow = o.V > UnturnedSim.WallOpenings.Eps && !o.HasDoor;
+                    if (!isWindow && !o.HasBarricade) continue;
                     Vector3 c = ToObj(wxf * new Vector3(o.U + o.Width * 0.5f, o.V + o.Height * 0.5f, 0f) - StageOrigin);
                     Vector3 n = ToObj(wxf.Basis.Z.Normalized());     // wall normal (+Z) -> .obj space
                     Vector3 ax = ToObj(wxf.Basis.X.Normalized());    // wall width axis (+X) -> .obj space
                     openingLines.Add(System.FormattableString.Invariant(
-                        $"opening {c.X:R} {c.Y:R} {c.Z:R} {n.X:R} {n.Y:R} {n.Z:R} {ax.X:R} {ax.Y:R} {ax.Z:R} {o.Width * 0.5f:R} {o.Height * 0.5f:R} {w.Thickness * 0.5f:R}"));
+                        $"opening {c.X:R} {c.Y:R} {c.Z:R} {n.X:R} {n.Y:R} {n.Z:R} {ax.X:R} {ax.Y:R} {ax.Z:R} {o.Width * 0.5f:R} {o.Height * 0.5f:R} {w.Thickness * 0.5f:R} {o.Barricade}"));
                 }
             }
             if (verts.Count == 0 || tris.Count == 0) return null;

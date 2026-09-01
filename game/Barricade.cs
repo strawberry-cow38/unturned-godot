@@ -72,5 +72,15 @@ namespace UnturnedGodot
             d.SetMeta("ug_wb_face", face);
             return d;
         }
+
+        // Map a sim-level WallBarricade (engine-free, carried on a building-editor opening) to the game DeployableDef
+        // whose WindowBarricadeMesh style it drives; null for None. (master 2026-09-01: pre-barricaded openings.)
+        public static DeployableDef DefFor(UnturnedSim.WallBarricade t) => t switch
+        {
+            UnturnedSim.WallBarricade.Planks => DeployableDef.WindowBarricade,
+            UnturnedSim.WallBarricade.Bars   => DeployableDef.WindowBars,
+            UnturnedSim.WallBarricade.Plate  => DeployableDef.WindowPlate,
+            _ => null,
+        };
     }
 }

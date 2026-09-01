@@ -12,8 +12,24 @@ namespace UnturnedGodot
     {
         public float HalfWidth, HalfHeight;   // opening half-extents along the marker's local X (width) / Y (height)
         public float HalfThickness;           // half the wall's thickness -> the barricade seats on the FACE, not the centre plane
+        public UnturnedSim.WallBarricade PreBarricade;   // != None -> this opening was baked already-boarded (master 2026-09-01)
+        bool _preSpawned;
 
         public override void _Ready() => AddToGroup("window_openings");
+
+        // Spawn the baked-in pre-barricade panel on the +Z face (once). Deferred from WindowMarkers.Attach so the prop
+        // root is positioned first -> WorldCentre/WorldNormal are final. Computes the same seat AimWindow does for a marker.
+        public void SpawnPreBarricade()
+        {
+            if (_preSpawned || PreBarricade == UnturnedSim.WallBarricade.None) return;
+            var def = Barricade.DefFor(PreBarricade);
+            if (def == null) return;
+            _preSpawned = true;
+            Vector3 nrm = WorldNormal;   // +1 = the outside (+Z) face
+            var scale = new Vector3(HalfWidth * 2f / def.Size.X, 1f, HalfHeight * 2f / def.Size.Z);
+            Vector3 point = WorldCentre + nrm * (HalfThickness + def.Size.Y * 0.5f + 0.005f);
+            Barricade.PlaceInWindowMarker(this, 1, point, BarricadePlacer.YawFacing(nrm), scale, def);
+        }
 
         public Vector3 WorldCentre => GlobalPosition;
         public Vector3 WorldNormal => GlobalTransform.Basis.Z.Normalized();   // marker local +Z faces out of the wall
@@ -25,13 +41,13 @@ namespace UnturnedGodot
     // parse the per-name file once into a cache, attach fresh child nodes at every placement.
     public static class WindowMarkers
     {
-        static readonly Dictionary<string, List<float[]>> _cache = new();
+        static readonly Dictionary<string, List<(float[] F, UnturnedSim.WallBarricade Barr)>> _cache = new();
 
         public static void Attach(Node3D root, string name, string dir)
         {
             if (!_cache.TryGetValue(name, out var rows))
             {
-                rows = new List<float[]>();
+                rows = new List<(float[], UnturnedSim.WallBarricade)>();
                 string path = dir + name + "_openings.txt";
                 if (System.IO.File.Exists(path))
                     foreach (var line in System.IO.File.ReadAllLines(path))
@@ -41,19 +57,22 @@ namespace UnturnedGodot
                         var f = new float[12]; bool ok = true;
                         for (int i = 0; i < 12; i++)
                             ok &= float.TryParse(p[i + 1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out f[i]);
-                        if (ok) rows.Add(f);
+                        var barr = UnturnedSim.WallBarricade.None;
+                        if (p.Length >= 14) System.Enum.TryParse(p[13], true, out barr);   // optional trailing pre-barricade style; an old 12-float file -> None
+                        if (ok) rows.Add((f, barr));
                     }
                 _cache[name] = rows;
             }
-            foreach (var f in rows)
+            foreach (var (f, barr) in rows)
             {
                 Vector3 c = new(f[0], f[1], f[2]);
                 Vector3 n = new Vector3(f[3], f[4], f[5]).Normalized();   // +Z (out of the wall)
                 Vector3 ax = new Vector3(f[6], f[7], f[8]).Normalized();  // +X (width)
                 Vector3 up = n.Cross(ax).Normalized();                    // +Y (height) = Z x X, right-handed
-                var m = new WindowOpeningMarker { HalfWidth = f[9], HalfHeight = f[10], HalfThickness = f[11], TopLevel = false };
+                var m = new WindowOpeningMarker { HalfWidth = f[9], HalfHeight = f[10], HalfThickness = f[11], PreBarricade = barr, TopLevel = false };
                 m.Transform = new Transform3D(new Basis(ax, up, n), c);   // LOCAL: the file is in the prop's own .obj space
                 root.AddChild(m);
+                if (barr != UnturnedSim.WallBarricade.None) Callable.From(m.SpawnPreBarricade).CallDeferred();   // spawn after the prop root is positioned -> world transform final
             }
         }
 

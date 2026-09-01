@@ -18,6 +18,16 @@ namespace UnturnedGodot
         CheckBox _glaze, _indestructible, _broken;
         Label _hpLbl;
         OptionButton _doorDrop;
+        OptionButton _barrDrop;
+
+        // Pre-barricade choices for the dropdown (master 2026-09-01): none + the three window-barricade styles.
+        static readonly (string Label, UnturnedSim.WallBarricade Type)[] BarricadeOpts =
+        {
+            ("none", UnturnedSim.WallBarricade.None),
+            ("wood planks", UnturnedSim.WallBarricade.Planks),
+            ("metal bars", UnturnedSim.WallBarricade.Bars),
+            ("metal plate", UnturnedSim.WallBarricade.Plate),
+        };
 
         /// <summary>The glass controls edit the SELECTED opening when there is one and set the default for the
         /// next placement when there is not. Asked in one place so the four controls cannot disagree about
@@ -30,8 +40,8 @@ namespace UnturnedGodot
         // What the glass controls were last shown as, so _Process only touches them when something changed.
         // Writing ButtonPressed every frame would re-enter the Toggled handler and push an undo step per
         // frame -- the control would fight the user for the checkbox.
-        (WallSurface W, int I, bool G, bool Ind, string Door, bool CanDoor, bool Broken, bool CanBreak)
-            _glassShown = (null, -2, false, false, "\0", false, false, false);
+        (WallSurface W, int I, bool G, bool Ind, string Door, bool CanDoor, bool Broken, bool CanBreak, UnturnedSim.WallBarricade Barr)
+            _glassShown = (null, -2, false, false, "\0", false, false, false, UnturnedSim.WallBarricade.None);
 
         /// <summary>Make the glass controls show the SELECTED opening. Without this they keep displaying the
         /// last thing that was set, and this file's own rule about the material dropdown applies: a control
@@ -55,10 +65,11 @@ namespace UnturnedGodot
             // silently accepting a door that PlannedOpening/SetOpeningDoor would never show.
             string door = has ? o.DoorProp : _b.ActiveDoorProp;
             bool canDoor = !has || EditorBuildings.Archetypes[Mathf.PosMod(o.Archetype, EditorBuildings.Archetypes.Length)].FloorPinned;
+            UnturnedSim.WallBarricade barr = has ? o.Barricade : _b.ActiveBarricade;   // pre-barricade: any opening can carry it (no floor-pinned gate)
             // `broken` and `canBreak` belong in the CHANGE KEY, not just in the refresh below. Left out,
             // the checkbox renders once and then never moves -- shooting a window out, or hitting "smash
             // every window", would leave the panel showing the opposite of the truth.
-            var now = (has ? w : null, has ? i : -1, glazed, ind, door, canDoor, broken, canBreak);
+            var now = (has ? w : null, has ? i : -1, glazed, ind, door, canDoor, broken, canBreak, barr);
             if (now == _glassShown) return;
             _glassShown = now;
             if (_doorDrop != null)
@@ -69,6 +80,12 @@ namespace UnturnedGodot
                 int want = 0;
                 for (int d = 0; d < DoorProps.Length; d++) if (DoorProps[d].Prop == door) { want = d; break; }
                 if (_doorDrop.Selected != want) _doorDrop.Select(want);   // Select() does NOT fire ItemSelected, so this cannot write back
+            }
+            if (_barrDrop != null)
+            {
+                int wantB = 0;
+                for (int d = 0; d < BarricadeOpts.Length; d++) if (BarricadeOpts[d].Type == barr) { wantB = d; break; }
+                if (_barrDrop.Selected != wantB) _barrDrop.Select(wantB);   // Select() doesn't fire ItemSelected -> no write-back
             }
             // SetPressedNoSignal, not ButtonPressed: assigning it fires Toggled, which would write the value
             // straight back onto the opening and push an undo step for a change nobody made.
@@ -458,6 +475,21 @@ namespace UnturnedGodot
                 else _b.ActiveDoorProp = prop;
             };
             box.AddChild(_doorDrop);
+
+            // ---- pre-barricade -------------------------------------------------------------------------
+            // Same double duty as glass/door: boards the SELECTED opening, or sets what the next one gets. NOT greyed
+            // on a window (unlike the door) -- any opening can start boarded, a boarded-up window being the whole point.
+            box.AddChild(new HSeparator());
+            box.AddChild(Dim("PRE-BARRICADE — spawn the opening already boarded"));
+            _barrDrop = new OptionButton { CustomMinimumSize = new Vector2(240, 0), FocusMode = FocusModeEnum.None };
+            foreach (var (label, _) in BarricadeOpts) _barrDrop.AddItem(label);
+            _barrDrop.ItemSelected += id =>
+            {
+                var type = BarricadeOpts[Mathf.Clamp((int)id, 0, BarricadeOpts.Length - 1)].Type;
+                if (HasSelectedOpening) _b.SetOpeningBarricade(_b.SelectedWall, _b.SelectedOpening, type);
+                else _b.ActiveBarricade = type;
+            };
+            box.AddChild(_barrDrop);
 
             box.AddChild(new HSeparator());
             box.AddChild(Dim("Material — a retail palette"));

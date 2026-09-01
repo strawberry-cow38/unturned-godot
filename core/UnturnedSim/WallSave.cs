@@ -64,7 +64,7 @@ namespace UnturnedSim
             var sb = new StringBuilder();
             sb.Append(Header).Append('\n');
             sb.Append("# wall <x> <y> <z> <yawDeg> <length> <thickness> <materialId> [height] [pitchDeg] [kind] [gableRise] [texel] [insetL0 insetL1 insetR0 insetR1] [matBack texelBack]\n");
-            sb.Append("#   open <u> <v> <width> <height> <depth> <archetype> [glazed tint hp indestructible broken] [doorProp doorOpen]\n");
+            sb.Append("#   open <u> <v> <width> <height> <depth> <archetype> [glazed tint hp indestructible broken] [doorProp doorOpen] [barr <style>]\n");
             sb.Append("# building <kind>            -- Residential|Commercial|Industrial|Misc (the volume is DERIVED from the walls)\n");
             sb.Append("# room <kind> <x> <z>        -- a designation ANCHORED at a point inside the room it labels\n");
             // Kinds by NAME, never ordinal: the enums can gain or reorder members without re-labelling
@@ -111,6 +111,11 @@ namespace UnturnedSim
                         if (o.HasDoor)
                             sb.Append(' ').Append(o.DoorProp)
                               .Append(' ').Append(o.DoorOpen ? '1' : '0');
+                        // pre-barricade: a KEYED token ("barr <style>") rather than another positional trailing block,
+                        // so it never depends on the glass/door blocks being written first (the slide-hazard the code
+                        // above warns about). An old reader just skips the two unknown trailing tokens.
+                        if (o.HasBarricade)
+                            sb.Append(" barr ").Append(o.Barricade.ToString());
                         sb.Append('\n');
                     }
                 }
@@ -209,6 +214,10 @@ namespace UnturnedSim
                     // door: trailing after the glazing block, same optional-block rule
                     if (p.Length >= 14 && int.TryParse(p[13], out int dop))
                     { op.DoorProp = p[12]; op.DoorOpen = dop != 0; }
+                    // pre-barricade: a KEYED "barr <style>" token, found by scanning (position-independent, so it
+                    // reads back whether or not the glass/door blocks are present); an unknown style -> None.
+                    int bi = System.Array.IndexOf(p, "barr");
+                    if (bi >= 0 && bi + 1 < p.Length) System.Enum.TryParse(p[bi + 1], true, out op.Barricade);
                     cur.Openings.Add(op);
                 }
                 // anything else: a newer editor's field. Skip it and keep the building.

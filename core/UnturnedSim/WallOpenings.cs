@@ -3,6 +3,11 @@ using System.Collections.Generic;
 
 namespace UnturnedSim
 {
+    /// <summary>Which pre-barricade a building-editor opening spawns already-boarded: none, or one of the three
+    /// window-barricade styles (master 2026-09-01). Engine-free enum so UnturnedSim stays Godot-free; the game maps
+    /// it to the DeployableDef (Barricade.DefFor). Names match WindowBarricadeStyle so the save token is legible.</summary>
+    public enum WallBarricade { None, Planks, Bars, Plate }
+
     /// <summary>A rectangular opening in a wall, in the wall's own 2D plane space.
     ///
     /// Everything is a rectangle plus a depth. There is no Door type and no Window type -- an archetype is a
@@ -58,13 +63,20 @@ namespace UnturnedSim
 
         public bool HasDoor => !string.IsNullOrEmpty(DoorProp);
 
+        // ---- a PRE-BARRICADE in the hole (master 2026-09-01) --------------------------------------------
+        // Same optional-per-opening shape as glass + door (the opening owns it, no second list to keep in step):
+        // which window-barricade style, if any, this opening spawns already-boarded. Placed on the OUTSIDE (+Z)
+        // face by WallSurface.RebuildBarricades (and the baked marker). A pre-barricaded DOOR reads as barricaded.
+        public WallBarricade Barricade;
+        public bool HasBarricade => Barricade != WallBarricade.None;
+
         public float U1 => U + Width;
         public float V1 => V + Height;
 
         public WallOpening(float u, float v, float w, float h, float depth = 999f, int archetype = 0)
         { U = u; V = v; Width = w; Height = h; Depth = depth; Archetype = archetype;
           Glazed = false; GlassTint = 0; GlassHp = 0f; GlassIndestructible = false; GlassBroken = false;
-          DoorProp = null; DoorOpen = false; }
+          DoorProp = null; DoorOpen = false; Barricade = WallBarricade.None; }
 
         /// <summary>This opening moved/resized to (u,v,w,h), keeping EVERYTHING ELSE.
         ///

@@ -1260,6 +1260,24 @@ namespace UnturnedGodot
                 return;
             }
 
+            // UG_WBPRE=1 -> one wall whose openings were PRE-BARRICADED in the editor (opening.Barricade set): a boarded
+            // window (planks), a boarded door (bars, over a real door), a boarded window (plate) -> the abandoned-building
+            // result RebuildBarricades produces from the editor's per-opening choice (master 2026-09-01).
+            if (System.Environment.GetEnvironmentVariable("UG_WBPRE") != null)
+            {
+                float dh = UnturnedSim.WallOpenings.DoorHeight;
+                var wall = new WallSurface { Length = 9f, Height = dh, Thickness = 0.5f, Position = new Vector3(-4.5f, 0f, 0f) };
+                wall.Openings.Add(new UnturnedSim.WallOpening(1.0f, 1.2f, 1.6f, 1.5f) { Barricade = UnturnedSim.WallBarricade.Planks });                          // boarded window
+                wall.Openings.Add(new UnturnedSim.WallOpening(3.5f, 0f, 2.0f, dh - 0.6f) { DoorProp = "Door_Pine", Barricade = UnturnedSim.WallBarricade.Bars });  // boarded door
+                wall.Openings.Add(new UnturnedSim.WallOpening(6.4f, 1.2f, 1.6f, 1.5f) { Barricade = UnturnedSim.WallBarricade.Plate });                           // boarded window
+                AddChild(wall);
+                var camp = new Camera3D { Current = true, Fov = 60f };
+                AddChild(camp);
+                camp.GlobalPosition = new Vector3(1.5f, 2.6f, 9.5f);
+                camp.LookAt(new Vector3(0f, 1.8f, 0f), Vector3.Up);
+                return;
+            }
+
             // three walls side by side, each with a centred window boarded on the +Z (camera) face by a different
             // style -> one render proves all three looks + their fit. left = wooden planks, mid = metal bars, right = metal plate.
             (float cx, DeployableDef def, string label)[] cells = {

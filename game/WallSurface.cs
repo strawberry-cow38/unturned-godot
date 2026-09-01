@@ -257,6 +257,7 @@ namespace UnturnedGodot
             }
             RebuildGlass();
             RebuildDoors();
+            RebuildBarricades();
         }
 
         // ---- glazing -----------------------------------------------------------------------------------
@@ -296,6 +297,14 @@ namespace UnturnedGodot
         /// trail of them, and QueueFree defers so the stale ones stay hittable for the rest of the frame.</summary>
         readonly List<(int Op, string Prop, float W, float H)> _doorSpec = new();
 
+        // ---- a PRE-BARRICADE in an opening (master 2026-09-01) -----------------------------------------
+        // Same owns-it-on-the-opening + pooled-so-a-per-mouse-move-Rebuild-doesn't-respawn shape as the doors above.
+        // A pre-barricade is a REAL window barricade (Barricade.PlaceInWindow -> a Deployable, shootable/removable),
+        // spawned on the +Z (outside) face; the spec keys on the opening's geometry + style, so a moved/resized/retyped
+        // opening remakes its panel (the mesh is built to size) while an untouched one is left in place.
+        readonly List<Node3D> _barricades = new();
+        readonly List<(int Op, WallBarricade Type, float U, float V, float W, float H)> _barrSpec = new();
+
         void RebuildDoors()
         {
             for (int i = _doors.Count - 1; i >= 0; i--)
@@ -334,6 +343,44 @@ namespace UnturnedGodot
                 }
                 else { _doors.Add(made); _doorSpec.Add(spec); }
                 PlaceDoor(made, o);
+            }
+        }
+
+        // Spawn a window-barricade panel on each opening that carries one (Barricade != None), on the +Z face, as a
+        // real Deployable via Barricade.PlaceInWindow. Pooled + spec-keyed like RebuildDoors so a per-mouse-move
+        // Rebuild reuses an unchanged panel instead of respawning a trail of them.
+        void RebuildBarricades()
+        {
+            for (int i = _barricades.Count - 1; i >= 0; i--)
+                if (!IsInstanceValid(_barricades[i])) { _barricades.RemoveAt(i); _barrSpec.RemoveAt(i); }
+
+            var want = new List<int>();
+            for (int i = 0; i < Openings.Count; i++)
+                if (Openings[i].HasBarricade) want.Add(i);
+
+            while (_barricades.Count > want.Count)
+            {
+                var last = _barricades[_barricades.Count - 1];
+                _barricades.RemoveAt(_barricades.Count - 1);
+                _barrSpec.RemoveAt(_barrSpec.Count - 1);
+                if (IsInstanceValid(last)) { RemoveChild(last); last.QueueFree(); }
+            }
+
+            for (int k = 0; k < want.Count; k++)
+            {
+                var o = Openings[want[k]];
+                var spec = (want[k], o.Barricade, o.U, o.V, o.Width, o.Height);
+                if (k < _barricades.Count && _barrSpec[k].Equals(spec)) continue;   // unchanged -> leave the panel (don't respawn every Rebuild)
+                var def = Barricade.DefFor(o.Barricade);
+                if (def == null) continue;
+                var made = Barricade.PlaceInWindow(this, want[k], 1, def);   // +1 = the OUTSIDE (+Z) face
+                if (k < _barricades.Count)
+                {
+                    var old2 = _barricades[k];
+                    if (IsInstanceValid(old2)) { RemoveChild(old2); old2.QueueFree(); }
+                    _barricades[k] = made; _barrSpec[k] = spec;
+                }
+                else { _barricades.Add(made); _barrSpec.Add(spec); }
             }
         }
 

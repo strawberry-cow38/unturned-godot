@@ -256,4 +256,83 @@ namespace UnturnedGodot.Testing
             placer.QueueFree();
         }
     }
+
+    // PRE-BARRICADED openings (master 2026-09-01): a building-editor opening can carry a WallBarricade style, so it
+    // spawns already-boarded. Pins (1) it round-trips the WallSave format via the keyed token, next to glass/door on
+    // the SAME opening (the collision the keyed form avoids), and (2) WallSurface.Rebuild spawns/retypes/clears it.
+    public sealed class WindowBarricadePreplacedTests : GameTest
+    {
+        public override string Name => "barricade.preplaced";
+        public override double TimeoutSimSeconds => 30;
+
+        public override IEnumerable<Step> Run()
+        {
+            // (1) save round-trip: one opening carrying glass AND a pre-barricade -> the keyed "barr" token survives
+            // beside the positional glass block without either clobbering the other.
+            var plan = new UnturnedSim.WallPlan { Length = 6f, Thickness = 0.5f, Height = 3f };
+            plan.Openings.Add(new UnturnedSim.WallOpening(2.5f, 1.0f, 1.5f, 1.5f) { Glazed = true, GlassTint = 0x88ccff, Barricade = UnturnedSim.WallBarricade.Bars });
+            var back = UnturnedSim.WallSave.Read(UnturnedSim.WallSave.Write(new[] { plan }).Split('\n'));
+            T.Check("save round-trips the pre-barricade style", back.Count == 1 && back[0].Openings.Count == 1 && back[0].Openings[0].Barricade == UnturnedSim.WallBarricade.Bars);
+            T.Check("...without clobbering the glass on the same opening", back[0].Openings[0].Glazed && back[0].Openings[0].GlassTint == 0x88ccff);
+
+            // (2) rebuild: an opening with a pre-barricade spawns a real barricade on the +Z (outside) face
+            var wall = new WallSurface { Length = 6f, Height = 3f, Thickness = 0.5f };
+            wall.Openings.Add(new UnturnedSim.WallOpening(2.5f, 1.0f, 1.5f, 1.5f) { Barricade = UnturnedSim.WallBarricade.Planks });
+            World.AddChild(wall);
+            yield return Ticks(3);   // _Ready -> Rebuild -> RebuildBarricades
+            T.Check("a pre-barricaded opening spawns a barricade on the +Z face", BarricadePlacer.SlotFilled(wall, 0, 1));
+            T.Check("...and only that face (single outside panel)", !BarricadePlacer.SlotFilled(wall, 0, -1));
+
+            // retype -> the panel is remade (still barricaded)
+            var o = wall.Openings[0]; o.Barricade = UnturnedSim.WallBarricade.Plate; wall.Openings[0] = o;
+            wall.Rebuild();
+            yield return Ticks(2);
+            T.Check("retyping the opening keeps it barricaded (+Z)", BarricadePlacer.SlotFilled(wall, 0, 1));
+
+            // clear -> removed
+            o = wall.Openings[0]; o.Barricade = UnturnedSim.WallBarricade.None; wall.Openings[0] = o;
+            wall.Rebuild();
+            yield return Ticks(2);
+            T.Check("clearing the pre-barricade removes it", !BarricadePlacer.SlotFilled(wall, 0, 1));
+
+            wall.QueueFree();
+        }
+    }
+
+    // A BAKED pre-barricade (master 2026-09-01): a baked prop has no WallSurface, so a pre-barricaded opening rides a
+    // WindowOpeningMarker carrying its style; the marker auto-spawns the panel on load (deferred in WindowMarkers.Attach).
+    // Tests that spawn directly (the deferred call is just a positioning wrapper) + that it's idempotent.
+    public sealed class WindowBarricadePreplacedBakedTests : GameTest
+    {
+        public override string Name => "barricade.preplaced_baked";
+        public override double TimeoutSimSeconds => 30;
+
+        static int CountBarricades(Node n)
+        {
+            int c = 0;
+            foreach (var ch in n.GetChildren()) if (ch is Deployable d && d.IsInGroup("barricades")) c++;
+            return c;
+        }
+
+        public override IEnumerable<Step> Run()
+        {
+            var prop = new Node3D();   // stand-in for a placed baked-building prop root
+            World.AddChild(prop);
+            var marker = new WindowOpeningMarker { HalfWidth = 0.75f, HalfHeight = 0.75f, HalfThickness = 0.25f, PreBarricade = UnturnedSim.WallBarricade.Plate };
+            prop.AddChild(marker);
+            marker.Position = new Vector3(0f, 1.75f, 0f);
+            yield return Ticks(2);   // _Ready -> group
+            T.Check("unbarricaded until the marker spawns it", !BarricadePlacer.MarkerSlotFilled(marker, 1));
+
+            marker.SpawnPreBarricade();
+            yield return Ticks(1);
+            T.Check("SpawnPreBarricade boards the +Z face (baked pre-barricade)", BarricadePlacer.MarkerSlotFilled(marker, 1));
+
+            marker.SpawnPreBarricade();   // idempotent -- the _preSpawned guard stops a second panel
+            yield return Ticks(1);
+            T.Check("calling it again does not double-board", CountBarricades(prop) == 1);
+
+            prop.QueueFree();
+        }
+    }
 }
