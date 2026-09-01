@@ -3855,25 +3855,14 @@ namespace UnturnedGodot
         /// <summary>Split a wheel into (tire, rim) at the widest EMPTY radial band in its outer half -- the gap
         /// the modeller left between rim edge and tread. Derived per mesh rather than a fixed fraction: measured
         /// across all 11 wheel meshes the tire is 17-24% of the verts on road wheels but 64% on the tank, so a
-        /// hardcoded ratio would cut the tank's road wheel in half and a road car's tire off its rim.</summary>
+        /// hardcoded ratio would cut a road tire off its rim and saw the tank's road wheel in half. Confirmed
+        /// against the albedo through the UVs: on the sedan r 0.05-0.46 samples grey metal and r 0.56-0.61
+        /// samples black rubber, with the seam in the empty band at 0.51.</summary>
         static (ArrayMesh tire, ArrayMesh rim) SplitWheelRadial(Mesh src)
         {
             if (src == null || src.GetSurfaceCount() == 0) return (null, null);
-            var arrays = src.SurfaceGetArrays(0);
-            var verts = arrays[(int)Mesh.ArrayType.Vertex].AsVector3Array();
+            var verts = src.SurfaceGetArrays(0)[(int)Mesh.ArrayType.Vertex].AsVector3Array();
             if (verts.Length < 6) return (null, null);
-            // UVs MUST be carried across. Rebuilding with position+normal only drops them, and every vertex
-            // then samples the same texel -- which on this wheel's 4x4 palette atlas is the dark rubber cell,
-            // so the RIM rendered black. The geometry was correct the whole time; it had simply lost the grey
-            // that makes it read as metal, and the author's verdict was "u removed the wheel rim model, and
-            // kept the tire". Losing a UV looks exactly like splitting the mesh in the wrong place.
-            var uvVar = arrays[(int)Mesh.ArrayType.TexUV];
-            Vector2[] uvs = uvVar.VariantType != Variant.Type.Nil ? uvVar.AsVector2Array() : null;
-            if (uvs != null && uvs.Length != verts.Length) uvs = null;
-            var idxVar = arrays[(int)Mesh.ArrayType.Index];
-            int[] idx;
-            if (idxVar.VariantType != Variant.Type.Nil) idx = idxVar.AsInt32Array();
-            else { idx = new int[verts.Length]; for (int i = 0; i < idx.Length; i++) idx[i] = i; }
 
             Vector3 c = Vector3.Zero;
             foreach (var q in verts) c += q;
@@ -3895,35 +3884,11 @@ namespace UnturnedGodot
             }
             if (gap < 0.02f) return (null, null);   // no seam worth cutting -- a solid wheel (train), leave it whole
 
-            var stT = new SurfaceTool(); stT.Begin(Mesh.PrimitiveType.Triangles);
-            var stR = new SurfaceTool(); stR.Begin(Mesh.PrimitiveType.Triangles);
-            int nT = 0, nR = 0;
-            for (int t = 0; t + 2 < idx.Length; t += 3)
-            {
-                var a = verts[idx[t]]; var b = verts[idx[t + 1]]; var d = verts[idx[t + 2]];
-                // ANY vertex past the seam puts the triangle in the TIRE, and the reason is both visual and
-                // physical. No vertex sits inside the seam gap, but triangles SPAN it -- the sidewall panels
-                // bridging rim edge to tread. Classifying by centroid sent alternating ones to opposite halves
-                // (the rim rendered as a spiky star). Requiring ALL THREE fixed that but handed every bridge to
-                // the rim, so the rim kept spikes reaching out into the tire and the tread ring lost its inner
-                // face -- visible the moment both halves were flat-coloured, and read to the vehicle's author as
-                // "u removed the wheel rim model, and kept the tire".
-                // ANY leaves the rim ending cleanly at the seam and gives the tire its sidewall, which is also
-                // what physically leaves the car: a blown tire takes its sidewall, it does not shed a tread band
-                // and leave the walls standing.
-                bool isTire = Rad(a) > split || Rad(b) > split || Rad(d) > split;
-                var st = isTire ? stT : stR;
-                var n = (b - a).Cross(d - a).Normalized();
-                for (int k = 0; k < 3; k++)
-                {
-                    int vi = idx[t + k];
-                    st.SetNormal(n);
-                    if (uvs != null) st.SetUV(uvs[vi]);
-                    st.AddVertex(verts[vi]);
-                }
-                if (isTire) nT++; else nR++;
-            }
-            return (nT > 0 ? stT.Commit() : null, nR > 0 ? stR.Commit() : null);
+            // ANY vertex past the seam puts the triangle in the TIRE. 52 of the sedan wheel's 370 triangles
+            // genuinely span the gap (the sidewall panels bridging rim edge to tread), so no assignment leaves
+            // both halves clean -- but a blown tire takes its sidewall with it, and this way the rim ends at
+            // the seam instead of keeping spikes that reach into the tread.
+            return SplitMeshBy(src, (p0, p1, p2) => Rad(p0) > split || Rad(p1) > split || Rad(p2) > split);
         }
 
         // Tire test hooks -- the nodes and the wheel physics are private, and the point of the tire checks is
@@ -3946,48 +3911,70 @@ namespace UnturnedGodot
         }
         public Node3D LampLightForTest(int i) => (uint)i < (uint)_lampLights.Count ? _lampLights[i] : null;
 
-        /// <summary>Split a mesh into its x&lt;0 and x&gt;=0 halves by triangle centroid, so a two-lamp lens mesh
-        /// becomes a left lamp and a right lamp. Returns (left, right); either may be null.</summary>
-        static (ArrayMesh, ArrayMesh) SplitMeshByX(Mesh src)
+        /// <summary>Split a mesh in two by a per-triangle predicate, carrying EVERY vertex attribute the
+        /// source actually has rather than a hand-picked subset.
+        ///
+        /// Both earlier splits rebuilt with position+normal, then position+normal+UV, each time by listing the
+        /// attributes someone remembered. Dropping UVs made a rim sample one texel and render as rubber;
+        /// RECOMPUTING normals as flat face normals threw away the 398 authored vertex normals the .obj ships
+        /// and ContentProvider is careful to preserve, which lit the bare rim inside out and moved a visual
+        /// golden (jeep_vside 0.0017 -> 0.0023) that I had written off as a harmless side effect of splitting.
+        /// A list of attributes is a list you can be one short of, so this copies whatever is present and
+        /// computes nothing. Anything added to these meshes later comes along without a code change here.</summary>
+        static (ArrayMesh a, ArrayMesh b) SplitMeshBy(Mesh src, System.Func<Vector3, Vector3, Vector3, bool> intoA)
         {
             if (src == null || src.GetSurfaceCount() == 0) return (null, null);
             var arrays = src.SurfaceGetArrays(0);
             var verts = arrays[(int)Mesh.ArrayType.Vertex].AsVector3Array();
             if (verts.Length < 3) return (null, null);
-            var uvVar = arrays[(int)Mesh.ArrayType.TexUV];   // see SplitWheelRadial: dropping these loses the texture
-            Vector2[] uvs = uvVar.VariantType != Variant.Type.Nil ? uvVar.AsVector2Array() : null;
-            if (uvs != null && uvs.Length != verts.Length) uvs = null;
+
+            Vector3[] Norms()  { var v = arrays[(int)Mesh.ArrayType.Normal];  return v.VariantType != Variant.Type.Nil ? v.AsVector3Array() : null; }
+            Vector2[] UVs()    { var v = arrays[(int)Mesh.ArrayType.TexUV];   return v.VariantType != Variant.Type.Nil ? v.AsVector2Array() : null; }
+            Vector2[] UV2s()   { var v = arrays[(int)Mesh.ArrayType.TexUV2];  return v.VariantType != Variant.Type.Nil ? v.AsVector2Array() : null; }
+            Color[]   Cols()   { var v = arrays[(int)Mesh.ArrayType.Color];   return v.VariantType != Variant.Type.Nil ? v.AsColorArray() : null; }
+            float[]   Tans()   { var v = arrays[(int)Mesh.ArrayType.Tangent]; return v.VariantType != Variant.Type.Nil ? v.AsFloat32Array() : null; }
+            var nrm = Norms(); var uv = UVs(); var uv2 = UV2s(); var col = Cols(); var tan = Tans();
+            if (nrm != null && nrm.Length != verts.Length) nrm = null;
+            if (uv  != null && uv.Length  != verts.Length) uv  = null;
+            if (uv2 != null && uv2.Length != verts.Length) uv2 = null;
+            if (col != null && col.Length != verts.Length) col = null;
+            if (tan != null && tan.Length != verts.Length * 4) tan = null;
+
             var idxVar = arrays[(int)Mesh.ArrayType.Index];
             int[] idx;
-            if (idxVar.VariantType != Variant.Type.Nil)
-            {
-                idx = idxVar.AsInt32Array();
-            }
-            else
-            {
-                idx = new int[verts.Length];
-                for (int i = 0; i < idx.Length; i++) idx[i] = i;
-            }
-            var stL = new SurfaceTool(); stL.Begin(Mesh.PrimitiveType.Triangles);
-            var stR = new SurfaceTool(); stR.Begin(Mesh.PrimitiveType.Triangles);
-            int nL = 0, nR = 0;
+            if (idxVar.VariantType != Variant.Type.Nil) idx = idxVar.AsInt32Array();
+            else { idx = new int[verts.Length]; for (int i = 0; i < idx.Length; i++) idx[i] = i; }
+
+            var stA = new SurfaceTool(); stA.Begin(Mesh.PrimitiveType.Triangles);
+            var stB = new SurfaceTool(); stB.Begin(Mesh.PrimitiveType.Triangles);
+            int nA = 0, nB = 0;
             for (int t = 0; t + 2 < idx.Length; t += 3)
             {
-                var a = verts[idx[t]]; var b = verts[idx[t + 1]]; var c = verts[idx[t + 2]];
-                bool left = (a.X + b.X + c.X) / 3f < 0f;
-                var st = left ? stL : stR;
-                var n = (b - a).Cross(c - a).Normalized();
+                var p0 = verts[idx[t]]; var p1 = verts[idx[t + 1]]; var p2 = verts[idx[t + 2]];
+                bool a = intoA(p0, p1, p2);
+                var st = a ? stA : stB;
                 for (int k = 0; k < 3; k++)
                 {
                     int vi = idx[t + k];
-                    st.SetNormal(n);
-                    if (uvs != null) st.SetUV(uvs[vi]);
+                    // Order matters to SurfaceTool: every attribute must be set BEFORE AddVertex.
+                    if (nrm != null) st.SetNormal(nrm[vi]);
+                    if (uv  != null) st.SetUV(uv[vi]);
+                    if (uv2 != null) st.SetUV2(uv2[vi]);
+                    if (col != null) st.SetColor(col[vi]);
+                    if (tan != null) st.SetTangent(new Plane(tan[vi * 4], tan[vi * 4 + 1], tan[vi * 4 + 2], tan[vi * 4 + 3]));
                     st.AddVertex(verts[vi]);
                 }
-                if (left) nL++; else nR++;
+                if (a) nA++; else nB++;
             }
-            return (nL > 0 ? stL.Commit() : null, nR > 0 ? stR.Commit() : null);
+            // Only generate normals if the source genuinely had none -- never override authored ones.
+            if (nrm == null) { if (nA > 0) stA.GenerateNormals(); if (nB > 0) stB.GenerateNormals(); }
+            return (nA > 0 ? stA.Commit() : null, nB > 0 ? stB.Commit() : null);
         }
+
+        /// <summary>Left/right halves of a lens mesh, by triangle centroid x. Delegates the actual rebuild to
+        /// SplitMeshBy so the halves keep whatever the source carried.</summary>
+        static (ArrayMesh, ArrayMesh) SplitMeshByX(Mesh src)
+            => SplitMeshBy(src, (p0, p1, p2) => (p0.X + p1.X + p2.X) / 3f < 0f);
 
         public int ResolveHitGlass(Vector3 world, float tol = 0.28f)
         {

@@ -50,6 +50,12 @@ namespace UnturnedGodot.Testing
                 var vt = arr[(int)Mesh.ArrayType.Vertex].AsVector3Array();
                 bool hasUV = uv.VariantType != Variant.Type.Nil && uv.AsVector2Array().Length == vt.Length;
                 T.Check($"the {what} half keeps its UVs ({(hasUV ? "yes" : "DROPPED")})", hasUV);
+                // Normals too, and specifically the AUTHORED ones. Recomputing them flat lit the bare rim
+                // inside out and moved visual.vehicle.jeep_vside from 0.0017 to 0.0023 -- which I had reported
+                // as a harmless side effect of splitting rather than recognised as a defect.
+                var nv = arr[(int)Mesh.ArrayType.Normal];
+                bool hasN = nv.VariantType != Variant.Type.Nil && nv.AsVector3Array().Length == vt.Length;
+                T.Check($"the {what} half keeps per-vertex normals ({(hasN ? "yes" : "DROPPED")})", hasN);
             }
 
             float stockFric = car.WheelFrictionForTest(0);
