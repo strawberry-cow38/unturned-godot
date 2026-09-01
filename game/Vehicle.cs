@@ -3609,12 +3609,20 @@ namespace UnturnedGodot
         /// The mesh is split per pane by tools/gen_vehicle_glass.py into `<base>_<label>.txt`. A vehicle whose
         /// generator found no side apertures simply has fewer files; the loader skips what is absent, so a spec
         /// can name GlassMesh without every pane existing.</summary>
-        public static readonly string[] GlassPaneLabels = { "windshield", "rear", "l_front", "r_front", "l_rear", "r_rear" };
+        // Mid panes APPENDED, not inserted in front-to-back order: the index into this array is the pane
+        // id used by ResolveHitGlass, the break/repair calls and the mechanics-panel rows, so inserting
+        // would silently renumber every existing vehicle's panes. A long body (bus, and any future coach or
+        // articulated rig) derives more than one side aperture per flank; without these four labels the
+        // generator's l_mid1/r_mid1/l_mid2/r_mid2 files were written to disk and then never loaded.
+        public static readonly string[] GlassPaneLabels = { "windshield", "rear", "l_front", "r_front", "l_rear", "r_rear",
+                                                            "l_mid1", "r_mid1", "l_mid2", "r_mid2" };
         public static string GlassPaneDisplay(string label) => label switch
         {
             "windshield" => "windscreen", "rear" => "rear window",
             "l_front" => "left front", "r_front" => "right front",
-            "l_rear" => "left rear",  "r_rear" => "right rear", _ => label,
+            "l_rear" => "left rear",  "r_rear" => "right rear",
+            "l_mid1" => "left mid 1", "r_mid1" => "right mid 1",
+            "l_mid2" => "left mid 2", "r_mid2" => "right mid 2", _ => label,
         };
 
         readonly System.Collections.Generic.List<MeshInstance3D> _glassNodes = new();
@@ -3667,9 +3675,14 @@ namespace UnturnedGodot
         /// to BE the check ("bright colors per pane, from multiple angles so you are sure you are covering with
         /// no overlap"), so it lives here rather than as a patch someone re-applies each time. Unshaded, so the
         /// colour is the same at every angle and a gap round the frame reads as body colour rather than shading.</summary>
+        // One per entry in GlassPaneLabels. The list must not be SHORTER than that array: the index wraps
+        // with %, so a 10-pane bus drawn from 6 colours repeats two of them, and a repeated colour is
+        // exactly what this check exists to rule out -- you cannot tell an overlap from a neighbour.
         static readonly Color[] GlassDebugColors = {
             new Color(1f, 0.2f, 1f),    new Color(0.1f, 1f, 1f),   new Color(0.25f, 0.45f, 1f),
             new Color(1f, 0.15f, 0.15f), new Color(1f, 0.95f, 0.1f), new Color(0.15f, 1f, 0.25f),
+            new Color(1f, 0.55f, 0f),   new Color(0.6f, 0.2f, 1f), new Color(1f, 1f, 1f),
+            new Color(0.1f, 0.35f, 0.2f),
         };
 
         static void AddGlassOverlay(Vehicle v, Spec s)
