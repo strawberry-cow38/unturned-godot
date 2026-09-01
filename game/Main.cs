@@ -1217,6 +1217,30 @@ namespace UnturnedGodot
                 return;
             }
 
+            // UG_WBSIZES=1 -> three DIFFERENT opening sizes (small square / wide / tall), each a different style,
+            // to prove the panels fit the opening + re-tile (more bars on the wide one, taller on the tall one).
+            if (System.Environment.GetEnvironmentVariable("UG_WBSIZES") != null)
+            {
+                (float cx, float ow, float oh, float ov, DeployableDef def)[] sizes = {
+                    (-4.2f, 1.0f, 1.0f, 1.2f, DeployableDef.WindowBarricade),   // small square, planks
+                    ( 0f,   2.4f, 1.1f, 1.3f, DeployableDef.WindowBars),        // WIDE, bars (more bars)
+                    ( 4.4f, 1.1f, 2.2f, 0.5f, DeployableDef.WindowPlate),       // TALL, plate
+                };
+                foreach (var (cx, ow, oh, ov, def) in sizes)
+                {
+                    var wall = new WallSurface { Length = ow + 1.4f, Height = 3.2f, Thickness = 0.5f, Position = new Vector3(cx - (0.7f + ow * 0.5f), 0f, 0f) };
+                    wall.Openings.Add(new UnturnedSim.WallOpening(0.7f, ov, ow, oh));
+                    AddChild(wall);
+                    var d = def;
+                    Callable.From(() => { var b = Barricade.PlaceInWindow(wall, 0, 1, d); GD.Print($"[windowbarrtest] {d.Name} on {ow}x{oh} window -> {b?.GlobalPosition}"); }).CallDeferred();
+                }
+                var camz = new Camera3D { Current = true, Fov = 60f };
+                AddChild(camz);
+                camz.GlobalPosition = new Vector3(1.2f, 2.9f, 10f);
+                camz.LookAt(new Vector3(0f, 1.55f, 0f), Vector3.Up);
+                return;
+            }
+
             // three walls side by side, each with a centred window boarded on the +Z (camera) face by a different
             // style -> one render proves all three looks + their fit. left = wooden planks, mid = metal bars, right = metal plate.
             (float cx, DeployableDef def, string label)[] cells = {
