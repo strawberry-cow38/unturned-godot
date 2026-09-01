@@ -32,8 +32,21 @@ from collections import deque
 # reason lives in the caller and no vehicle gets silently special-cased.
 _args = [a for a in sys.argv[1:] if not a.startswith('--')]
 SKIP = set()
+BAND = None
 for a in sys.argv[1:]:
     if a.startswith('--skip='): SKIP |= {x.strip() for x in a[7:].split(',') if x.strip()}
+    # --band=lo,hi overrides the derived greenhouse band. The silhouette rule below infers the cabin
+    # from the body's own outline, which works on anything car-shaped but has no signal on a BOX: a bus
+    # never narrows at the waist, so the rule latches onto where the roof tapers and lands above the
+    # glass. Measured on the bus, the openings run to y 1.88 while the rule returned 1.81..2.74 -- a 7cm
+    # overlap, and panes 0.14m tall against a sedan's 0.86m.
+    # Two auto-corrections were tried and both made it worse (one never fired because a ray over the
+    # roofline hits nothing and that read as "open"; the second latched onto the roof hatch and produced
+    # zero panes). So this is an explicit argument rather than a cleverer heuristic: the caller states the
+    # band it measured, the same way --skip states a fact geometry cannot know.
+    elif a.startswith('--band='):
+        _b = [float(x) for x in a[7:].split(',')]
+        BAND = (min(_b), max(_b))
 SRC = _args[0] if len(_args) > 0 else 'game/content/sedan_body.txt'
 OUT = _args[1] if len(_args) > 1 else 'game/content/sedan_glass.txt'
 STEP, INSET, INSET_F = 0.03, 0.004, 0.045
@@ -82,6 +95,10 @@ belt = min(s[0] for s in cabin)
 roof = max(s[0] for s in cabin) + 0.05
 XS = max(s[2] for s in cabin)                              # side plane = widest point of the cabin
 band_lo, band_hi = belt + 0.06, roof - 0.06
+if BAND is not None:
+    band_lo, band_hi = BAND
+    belt, roof = band_lo - 0.06, band_hi + 0.06
+    print(f"  band OVERRIDDEN by --band: {band_lo:.2f}..{band_hi:.2f}")
 print(f"  derived: belt {belt:.2f}  roof {roof:.2f}  cabin band {band_lo:.2f}..{band_hi:.2f}  side |x| {XS:.2f}")
 
 # ---- 1b. CAB Z-SPAN. The greenhouse sits over ONE stretch of the body. A pickup is the case that

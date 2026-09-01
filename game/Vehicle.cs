@@ -2402,6 +2402,7 @@ namespace UnturnedGodot
         {
             Mass = 12000f,   // kerb mass, kg
             Body = "bus_body.txt", Wheel = "bus_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "bus_palette.png",
+            GlassMesh = "bus_glass.txt", GlassTint = new Color(0.62f, 0.73f, 0.78f, 0.26f),   // 12 side panes; band measured, see tools/gen_vehicle_glass.py --band
             DefaultPaints = new[] { "#d4d4d4" },   // source .dat: single near-white default
             WheelRadius = 0.6f, Engine = 780f, SteerMax = 24f, SteerMin = 12f, SpeedMax = 12f, SpeedMin = -6f, Brake = 24f,
             BoxSize = new Vector3(3.0f, 1.018f, 7.964f), BoxCenter = new Vector3(0f, 0.361f, 0.281f),   // source BoxCollider
@@ -3615,14 +3616,17 @@ namespace UnturnedGodot
         // articulated rig) derives more than one side aperture per flank; without these four labels the
         // generator's l_mid1/r_mid1/l_mid2/r_mid2 files were written to disk and then never loaded.
         public static readonly string[] GlassPaneLabels = { "windshield", "rear", "l_front", "r_front", "l_rear", "r_rear",
-                                                            "l_mid1", "r_mid1", "l_mid2", "r_mid2" };
+                                                            "l_mid1", "r_mid1", "l_mid2", "r_mid2",
+                                                            "l_mid3", "r_mid3", "l_mid4", "r_mid4" };
         public static string GlassPaneDisplay(string label) => label switch
         {
             "windshield" => "windscreen", "rear" => "rear window",
             "l_front" => "left front", "r_front" => "right front",
             "l_rear" => "left rear",  "r_rear" => "right rear",
             "l_mid1" => "left mid 1", "r_mid1" => "right mid 1",
-            "l_mid2" => "left mid 2", "r_mid2" => "right mid 2", _ => label,
+            "l_mid2" => "left mid 2", "r_mid2" => "right mid 2",
+            "l_mid3" => "left mid 3", "r_mid3" => "right mid 3",
+            "l_mid4" => "left mid 4", "r_mid4" => "right mid 4", _ => label,
         };
 
         readonly System.Collections.Generic.List<MeshInstance3D> _glassNodes = new();
@@ -3682,7 +3686,8 @@ namespace UnturnedGodot
             new Color(1f, 0.2f, 1f),    new Color(0.1f, 1f, 1f),   new Color(0.25f, 0.45f, 1f),
             new Color(1f, 0.15f, 0.15f), new Color(1f, 0.95f, 0.1f), new Color(0.15f, 1f, 0.25f),
             new Color(1f, 0.55f, 0f),   new Color(0.6f, 0.2f, 1f), new Color(1f, 1f, 1f),
-            new Color(0.1f, 0.35f, 0.2f),
+            new Color(0.1f, 0.35f, 0.2f), new Color(0.5f, 0.9f, 0.1f), new Color(0.9f, 0.4f, 0.6f),
+            new Color(0.2f, 0.2f, 0.6f), new Color(0.7f, 0.7f, 0.2f),
         };
 
         static void AddGlassOverlay(Vehicle v, Spec s)
