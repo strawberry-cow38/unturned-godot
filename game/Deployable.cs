@@ -239,6 +239,19 @@ namespace UnturnedGodot
             return d;
         }
 
+        // Replace the body mesh with a procedural one built to a specific size, and re-fit the collider to match.
+        // The window barricades use this: their look (planks/bars/plate) + size depend on the opening, known only
+        // at placement, so Spawn's generic ProcBox is swapped out here (and the collider box resized) instead of
+        // stretching a unit mesh by a non-uniform node scale. `_mesh` is updated so char-on-explode still targets it.
+        public void SetWindowMesh(MeshInstance3D root, Vector3 colliderBoxSize)
+        {
+            if (_mesh != null && IsInstanceValid(_mesh)) { RemoveChild(_mesh); _mesh.QueueFree(); }
+            _mesh = root;
+            AddChild(root);
+            foreach (var c in GetChildren())
+                if (c is CollisionShape3D cs && cs.Shape is BoxShape3D bx) { bx.Size = colliderBoxSize; cs.Position = Vector3.Zero; break; }
+        }
+
         static void CollectMeshes(Node n, System.Collections.Generic.List<MeshInstance3D> list)
         {
             foreach (var c in n.GetChildren())

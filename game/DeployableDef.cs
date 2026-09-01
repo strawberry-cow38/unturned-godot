@@ -26,6 +26,7 @@ namespace UnturnedGodot
         public bool IsStorage;        // a placeable storage container with its own IPowerDevice consumer port (the fridge): spawns via FridgeDeploy, not a plain Deployable body
         public bool Upright;          // build the mesh already-vertical (skip the flat->stand-up rotation) -- for procedural models like the turbine
         public BarricadeMount Mount = BarricadeMount.Floor;   // which surface family this places on: Floor (ground, default) / Wall / Sticky. BarricadePlacer + Barricade read this so a barricade def carries its own mount rule.
+        public WindowBarricadeStyle WindowStyle = WindowBarricadeStyle.Planks;   // Mount==Window only: which procedural panel WindowBarricadeMesh builds (planks / bars / plate)
         public string PlaceSound;  // src .dat PlacementAudioClip stem (content/sounds/<stem>.wav) played when planted; null = silent
         public string HoldMesh, HoldAlbedo;   // content/<mesh>.obj + palette for the 1st-person carry model (item.prefab); null -> EmptyHands fallback (ghost only)
         public bool ShatterOnDeath;   // true -> explodes into flying debris + vanishes (no salvageable husk, drops nothing); false -> charred blowtorch-salvageable wreck
@@ -187,15 +188,35 @@ namespace UnturnedGodot
             Offset = 0.05f, Radius = 0.6f, Range = 5f, Health = 300f, Fuel = 0f,
         };
 
-        // The window barricade -- a planked panel that snaps INTO a building-editor window opening, one on each face
-        // (inside + outside), sized to the opening at placement. Placeable ONLY when the reticle is on a window opening
-        // (BarricadeMount.Window; BarricadePlacer.AimWindow UV-projects onto the wall plane since a hole has no collider).
-        // Base Size is a nominal window; the placer scales it per-opening. id 9122 (9120/9121 taken). (master 2026-08-31)
+        // The WINDOW BARRICADES -- panels that snap INTO a building-editor window opening, one on each face (inside +
+        // outside), each built PROCEDURALLY + sized to the opening at placement (WindowBarricadeMesh). Placeable ONLY
+        // when the reticle is on a window opening (BarricadeMount.Window; BarricadePlacer.AimWindow UV-projects onto the
+        // wall plane since a hole has no collider). Three styles with HP tiered off their type (master 2026-09-01):
+        //   wooden planks  -- boards nailed over the hole, has GAPS, flimsiest      (Health 150, wood sound)
+        //   metal bars     -- a welded grille of vertical bars, tougher but GAPS    (Health 300)
+        //   metal plate    -- one solid slab, full coverage, tankiest              (Health 500)
+        // Base Size is a nominal window (Size.Y = nominal panel thickness, used by the AimWindow standoff); the real
+        // mesh + collider are fitted per-opening. ids 9122 (planks) / 9123 (bars) / 9124 (plate).
         public static readonly DeployableDef WindowBarricade = new()
         {
-            Id = 9122, Name = "Window Barricade", ProcBox = true, Mount = BarricadeMount.Window, PlaceSound = "metalplacement",
-            Size = new Vector3(1.0f, 0.08f, 1.2f),   // flat frame: X width, Y thickness (facing axis), Z height -- scaled to fit each opening
-            Offset = 0.06f, Radius = 0.5f, Range = 5f, Health = 200f, Fuel = 0f,
+            Id = 9122, Name = "Wooden Barricade", ProcBox = true, Mount = BarricadeMount.Window, PlaceSound = "woodplacement",
+            WindowStyle = WindowBarricadeStyle.Planks,
+            Size = new Vector3(1.0f, 0.08f, 1.2f),   // flat frame: X width, Y thickness (facing axis), Z height -- fitted to each opening
+            Offset = 0.06f, Radius = 0.5f, Range = 5f, Health = 150f, Fuel = 0f,
+        };
+        public static readonly DeployableDef WindowBars = new()
+        {
+            Id = 9123, Name = "Metal Bar Barricade", ProcBox = true, Mount = BarricadeMount.Window, PlaceSound = "metalplacement",
+            WindowStyle = WindowBarricadeStyle.Bars,
+            Size = new Vector3(1.0f, 0.08f, 1.2f),
+            Offset = 0.06f, Radius = 0.5f, Range = 5f, Health = 300f, Fuel = 0f,
+        };
+        public static readonly DeployableDef WindowPlate = new()
+        {
+            Id = 9124, Name = "Metal Plate Barricade", ProcBox = true, Mount = BarricadeMount.Window, PlaceSound = "metalplacement",
+            WindowStyle = WindowBarricadeStyle.Plate,
+            Size = new Vector3(1.0f, 0.08f, 1.2f),
+            Offset = 0.06f, Radius = 0.5f, Range = 5f, Health = 500f, Fuel = 0f,
         };
 
         // --- Switch (custom): power in one side, out the other, gated by an F-toggle. A 0-watt relay Consumer (IN) + a
@@ -443,7 +464,7 @@ namespace UnturnedGodot
         public static readonly DeployableDef[] All = { Generator, Spotlight, Splitter2, Splitter3, Splitter4, Combiner2, Battery, Switch, WindTurbine, GridSource, GasPump,
             FluidTank, WaterSource, FluidSplitter, FluidCombiner, FluidPumpDef, FluidValve, Refinery, Sluice, WaterInlet, WaterOutlet, Purifier, Refrigerator, Landmine, Spike, Charge, Barbedwire,
             DoorBirch, DoorMaple, DoorPine, GateBirch, GateMaple, GatePine, HatchBirch, HatchMaple, HatchPine,
-            DoorMetal, GateMetal, HatchMetal, Workbench, Campfire, ChemistryLab, Kiln, Loom, OvenBrick, OvenElectric, SewingTable, SpinningWheel, WindowBarricade };
+            DoorMetal, GateMetal, HatchMetal, Workbench, Campfire, ChemistryLab, Kiln, Loom, OvenBrick, OvenElectric, SewingTable, SpinningWheel, WindowBarricade, WindowBars, WindowPlate };
         public static DeployableDef ById(ushort id) => id switch
         {
             1101 => Landmine,
@@ -492,6 +513,8 @@ namespace UnturnedGodot
             9120 => WaterOutlet,
             9121 => Purifier,
             9122 => WindowBarricade,
+            9123 => WindowBars,
+            9124 => WindowPlate,
             9130 => Refrigerator,
             9200 => GridSource,
             9201 => GasPump,

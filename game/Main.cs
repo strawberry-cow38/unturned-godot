@@ -1201,19 +1201,45 @@ namespace UnturnedGodot
             ground.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
             AddChild(ground);
 
-            var wall = new WallSurface { Length = 6f, Height = 3f, Thickness = 0.5f, Position = new Vector3(-3f, 0f, 0f) };
-            wall.Openings.Add(new UnturnedSim.WallOpening(2.5f, 1.0f, 1.5f, 1.5f));   // one window, centre ~ (0.25, 1.75, 0)
-            AddChild(wall);
-            Callable.From(() => {   // after the wall's _Ready (transform + Rebuild + "walls" group)
-                var _b1 = Barricade.PlaceInWindow(wall, 0, 1, DeployableDef.WindowBarricade);    // +Z (outside) face
-                var _b2 = Barricade.PlaceInWindow(wall, 0, -1, DeployableDef.WindowBarricade);   // -Z (inside) face
-                GD.Print($"[windowbarrtest] barricades boarding both faces of the window ({_b1?.GlobalPosition}, {_b2?.GlobalPosition})");
-            }).CallDeferred();
+            // UG_WBSTYLE=planks|bars|plate -> a single style, camera close, for tuning the look.
+            string wbOne = System.Environment.GetEnvironmentVariable("UG_WBSTYLE");
+            if (wbOne != null)
+            {
+                var def = wbOne.Contains("bar") ? DeployableDef.WindowBars : wbOne.Contains("plate") ? DeployableDef.WindowPlate : DeployableDef.WindowBarricade;
+                var w1 = new WallSurface { Length = 3f, Height = 3f, Thickness = 0.5f, Position = new Vector3(-1.5f, 0f, 0f) };
+                w1.Openings.Add(new UnturnedSim.WallOpening(0.8f, 1.0f, 1.4f, 1.5f));
+                AddChild(w1);
+                Callable.From(() => Barricade.PlaceInWindow(w1, 0, 1, def)).CallDeferred();
+                var camc = new Camera3D { Current = true, Fov = 42f };
+                AddChild(camc);
+                camc.GlobalPosition = new Vector3(0.15f, 1.68f, 3.4f);   // near straight-on -> judge the true tilt, not perspective
+                camc.LookAt(new Vector3(0f, 1.66f, 0.15f), Vector3.Up);
+                return;
+            }
 
-            var cam = new Camera3D { Current = true, Fov = 55f };
+            // three walls side by side, each with a centred window boarded on the +Z (camera) face by a different
+            // style -> one render proves all three looks + their fit. left = wooden planks, mid = metal bars, right = metal plate.
+            (float cx, DeployableDef def, string label)[] cells = {
+                (-4f, DeployableDef.WindowBarricade, "planks"),
+                ( 0f, DeployableDef.WindowBars,      "bars"),
+                ( 4f, DeployableDef.WindowPlate,     "plate"),
+            };
+            foreach (var (cx, def, label) in cells)
+            {
+                var wall = new WallSurface { Length = 3f, Height = 3f, Thickness = 0.5f, Position = new Vector3(cx - 1.5f, 0f, 0f) };
+                wall.Openings.Add(new UnturnedSim.WallOpening(0.8f, 1.0f, 1.4f, 1.5f));   // centred window (U centre = 1.5 -> world X = cx)
+                AddChild(wall);
+                var d = def; var l = label;
+                Callable.From(() => {   // after the wall's _Ready (transform + Rebuild + "walls" group)
+                    var b = Barricade.PlaceInWindow(wall, 0, 1, d);    // +Z (outside/camera) face
+                    GD.Print($"[windowbarrtest] {l}: HP={d.Health} at {b?.GlobalPosition}");
+                }).CallDeferred();
+            }
+
+            var cam = new Camera3D { Current = true, Fov = 58f };
             AddChild(cam);
-            cam.GlobalPosition = new Vector3(2.6f, 2.4f, 4.2f);
-            cam.LookAt(new Vector3(0.25f, 1.6f, 0f), Vector3.Up);
+            cam.GlobalPosition = new Vector3(2.0f, 2.6f, 8.6f);
+            cam.LookAt(new Vector3(0f, 1.5f, 0f), Vector3.Up);
         }
 
         // --treetest=<birch|maple|pine>: a standing tree on the LEFT, a felled one on the RIGHT (visual hidden + a real

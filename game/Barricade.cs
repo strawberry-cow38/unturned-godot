@@ -43,11 +43,12 @@ namespace UnturnedGodot
             var op = wall.Openings[openingIndex];
             Vector3 wn = wall.GlobalTransform.Basis.Z.Normalized() * face;                // outward from the aimed face
             Vector3 center = wall.UVToWorld(op.U + op.Width * 0.5f, op.V + op.Height * 0.5f);
-            Vector3 seat = center + wn * (wall.Thickness * 0.5f + def.Size.Y * 0.5f + 0.005f);   // panel sits flat ON the wall FACE (half-wall + half-panel + hair), not in the centre plane
+            var meshRoot = WindowBarricadeMesh.Build(def.WindowStyle, op.Width, op.Height, out Vector3 colSize, out float thick);   // planks/bars/plate, built to THIS opening
+            Vector3 seat = center + wn * (wall.Thickness * 0.5f + thick * 0.5f + 0.005f);   // panel sits flat ON the wall FACE (half-wall + half-panel + hair), not in the centre plane
             float yaw = BarricadePlacer.YawFacing(wn);
             var d = Deployable.Spawn(wall, def, seat, yaw, backing);                       // full lifecycle (HP/damage/salvage/net)
-            var scale = new Vector3(op.Width / def.Size.X, 1f, op.Height / def.Size.Z);    // fit the panel to the opening
-            d.GlobalTransform = new Transform3D(DeployableDef.StandBasis(yaw) * Basis.FromScale(scale), seat);
+            d.SetWindowMesh(meshRoot, colSize);                                            // swap the ProcBox for the fitted panel + resize the collider
+            d.GlobalTransform = new Transform3D(DeployableDef.StandBasis(yaw), seat);      // no node scale: the mesh is already opening-sized (no shear/flatten)
             d.AddToGroup("barricades");
             d.SetMeta("ug_wb_opening", openingIndex);   // the slot this fills; BarricadePlacer.SlotFilled reads these back
             d.SetMeta("ug_wb_face", face);
@@ -60,8 +61,12 @@ namespace UnturnedGodot
         public static Deployable PlaceInWindowMarker(WindowOpeningMarker marker, int face, Vector3 point, float yawDeg, Vector3 windowScale, DeployableDef def, SDG.Unturned.Item backing = null)
         {
             var host = (Node)marker.GetParent() ?? marker;
+            float w = def.Size.X * windowScale.X;   // AimWindow's fitted scale = (2*halfW/Size.X, 1, 2*halfH/Size.Z) -> recover the opening size
+            float h = def.Size.Z * windowScale.Z;
+            var meshRoot = WindowBarricadeMesh.Build(def.WindowStyle, w, h, out Vector3 colSize, out float _);   // planks/bars/plate, built to the baked opening
             var d = Deployable.Spawn(host, def, point, yawDeg, backing);
-            d.GlobalTransform = new Transform3D(DeployableDef.StandBasis(yawDeg) * Basis.FromScale(windowScale), point);
+            d.SetWindowMesh(meshRoot, colSize);
+            d.GlobalTransform = new Transform3D(DeployableDef.StandBasis(yawDeg), point);   // no node scale: the mesh is already opening-sized
             d.AddToGroup("barricades");
             d.SetMeta("ug_wb_marker", (long)marker.GetInstanceId());
             d.SetMeta("ug_wb_face", face);

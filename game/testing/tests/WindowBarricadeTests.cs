@@ -155,4 +155,37 @@ namespace UnturnedGodot.Testing
             T.Check("...and after removal the +Z slot is FREE again (re-boardable)", !BarricadePlacer.SlotFilled(wall, 0, 1));
         }
     }
+
+    // The three STYLES (master 2026-09-01): wooden planks / metal bars / metal plate, each a distinct procedural
+    // mesh built to the opening, with HP tiered off its type. Pins the tier order + registration (so a fat-fingered
+    // HP or a missing ById case is caught) and that every style actually places -- on a WIDE window, which the old
+    // unit-box node-scale would have sheared/flattened but the built-to-size mesh handles.
+    public sealed class WindowBarricadeStylesTests : GameTest
+    {
+        public override string Name => "barricade.window_styles";
+        public override double TimeoutSimSeconds => 30;
+
+        public override IEnumerable<Step> Run()
+        {
+            var planks = DeployableDef.WindowBarricade; var bars = DeployableDef.WindowBars; var plate = DeployableDef.WindowPlate;
+            T.Check($"planks = wooden, HP {planks.Health} (flimsiest)", planks.WindowStyle == WindowBarricadeStyle.Planks && Mathf.IsEqualApprox(planks.Health, 150f));
+            T.Check($"bars = metal grille, HP {bars.Health} (mid)", bars.WindowStyle == WindowBarricadeStyle.Bars && Mathf.IsEqualApprox(bars.Health, 300f));
+            T.Check($"plate = solid metal, HP {plate.Health} (tankiest)", plate.WindowStyle == WindowBarricadeStyle.Plate && Mathf.IsEqualApprox(plate.Health, 500f));
+            T.Check("HP strictly tiers off type: planks < bars < plate", planks.Health < bars.Health && bars.Health < plate.Health);
+            T.Check("all three resolve via ById (equip/deploy can reach them)", DeployableDef.ById(9122) == planks && DeployableDef.ById(9123) == bars && DeployableDef.ById(9124) == plate);
+
+            foreach (var def in new[] { planks, bars, plate })
+            {
+                var wall = new WallSurface { Length = 4f, Height = 3f, Thickness = 0.5f };
+                wall.Openings.Add(new UnturnedSim.WallOpening(1.0f, 1.0f, 2.0f, 1.4f));   // a WIDE (2.0 x 1.4) window -> a non-square fit
+                World.AddChild(wall);
+                yield return Ticks(2);
+                var b = Barricade.PlaceInWindow(wall, 0, 1, def);
+                yield return Ticks(1);
+                T.Check($"{def.Name} places into the window (mesh built + parented + a barricade)", b != null && b.GetParent() == wall && b.IsInGroup("barricades"));
+                wall.QueueFree();
+                yield return Ticks(1);
+            }
+        }
+    }
 }
