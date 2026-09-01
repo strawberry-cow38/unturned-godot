@@ -55,6 +55,7 @@ namespace UnturnedGodot
         bool _vmAimed; int _vmAimStart; int _vmSettle;
         bool _vmAttach; AttachmentMenu _am; bool _vmSightSet;   // --attach : hold the T attachment menu open for the render; UG_SIGHT=<mesh.txt> mounts a specific sight/scope for a demo
         bool _vehTest; Vehicle _veh; Camera3D _vehCam; int _vehVariant; bool _night, _demo, _crash, _chain, _hitch, _backunder, _pivots; Vehicle _buTrailer; int _buCoupledFrame = 999999;   // --vehicle=DIR [--variant=N] [--night] [--demo] [--crash] [--chain] [--hitch] [--backunder] [--pivots]
+        bool _lampFxDone;   // UG_LAMPBREAK/UG_LAMPS apply once per run
         bool _planeTest;   // UG_PLANETEST (with --boattest --gun=otter): scripted fixed-wing flight (throttle/pitch/roll injected) to verify the flight model in a render
         int _heliPhase, _heliPhaseTick;   // UG_HELITEST maneuver sequence: 0 climb, 1 cruise, 2 turn, 3 slide, 4 recover
         bool _heliTest;    // UG_HELITEST (with --vehicle --gun=minicopter|huey): scripted ROTARY flight -- see the loop in _PhysicsProcess for why this exists
@@ -7613,6 +7614,20 @@ namespace UnturnedGodot
                         // UG_CAMYAW/UG_CAMPITCH orbit this shot too. ApplyCamOrbit was only wired to the rig
                         // path, so --vehicle silently ignored it and a 12-angle sweep rendered 12 identical
                         // frames -- which looks exactly like "the geometry is symmetric".
+                        // UG_LAMPS=on : switch the head/taillights on for the shot.
+                        // UG_LAMPBREAK=headlight_l,taillight_r : shoot those lamps out first, so a render can show
+                        // a dead lamp NEXT TO a lit one -- the only way to see that a break is per side and that a
+                        // shot-out lens stays dark when the lights come on.
+                        if (!_lampFxDone && _veh != null)   // once, not every frame: this sits in the per-frame camera block
+                        {
+                            _lampFxDone = true;
+                            var lb = System.Environment.GetEnvironmentVariable("UG_LAMPBREAK");
+                            if (!string.IsNullOrEmpty(lb))
+                                foreach (var want in lb.Split(','))
+                                    for (int li = 0; li < _veh.LampCount; li++)
+                                        if (_veh.LampLabel(li) == want.Trim()) _veh.BreakLamp(li);
+                            if (System.Environment.GetEnvironmentVariable("UG_LAMPS") == "on") _veh.SetLightsForTest(true);
+                        }
                         ApplyCamOrbit(_vehCam, vt.Origin + Vector3.Up * 1.0f);
                     }
                 }

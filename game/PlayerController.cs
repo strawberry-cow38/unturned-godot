@@ -6022,10 +6022,23 @@ namespace UnturnedGodot
                         }
                         else
                         {
-                            var part = veh.ResolveHitPart(point);
-                            if (part == Vehicle.HeliPart.MainRotor) veh.DamageMainRotor(b.VehicleDamage);
-                            else if (part == Vehicle.HeliPart.TailRotor) veh.DamageTailRotor(b.VehicleDamage);
-                            else veh.TakeDamage(b.VehicleDamage);
+                            // LAMPS next, same idea and the same no-collider reason as the glass above. Tried
+                            // after glass so a round through a window is never stolen by a lamp behind it; the
+                            // two barely overlap in space, but the greenhouse is the bigger target and should win
+                            // the tie. A lamp takes the round instead of the hull, so headlights are worth aiming
+                            // at rather than just another way to chip HP.
+                            int lamp = veh.ResolveHitLamp(point);
+                            if (lamp >= 0 && veh.BreakLamp(lamp))
+                            {
+                                GD.Print($"[lamp] {veh.DisplayName} {Vehicle.LampDisplay(veh.LampLabel(lamp))} shot out");
+                            }
+                            else
+                            {
+                                var part = veh.ResolveHitPart(point);
+                                if (part == Vehicle.HeliPart.MainRotor) veh.DamageMainRotor(b.VehicleDamage);
+                                else if (part == Vehicle.HeliPart.TailRotor) veh.DamageTailRotor(b.VehicleDamage);
+                                else veh.TakeDamage(b.VehicleDamage);
+                            }
                         }
                         // WHERE THE SHOT CAME FROM, not where it landed (strawberry: "it will track the position
                         // that you shot it from"). b.Origin is the muzzle this round actually left, which is the

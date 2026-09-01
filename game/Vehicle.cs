@@ -1506,7 +1506,7 @@ namespace UnturnedGodot
         public float FuelNorm => FuelMax > 0f ? Fuel / FuelMax : 0f;
         public float HealthNorm => HealthMax > 0f ? Health / HealthMax : 0f;
         public float BatteryNorm => Battery / BatteryMax;
-        Node3D _headlights; bool _headlightsOn; StandardMaterial3D _headlightMat;
+        Node3D _headlights; bool _headlightsOn; StandardMaterial3D _headlightMat; Node3D _headlightFill;
         MeshInstance3D _headlightBeam;
         // Lamp tint, decided by the lens SHAPE. Round lamps read as older/halogen and go considerably warmer than
         // rectangular ones (strawberry). Derived from the hull the beam already computes -- a hexagonal outline IS
@@ -3659,6 +3659,147 @@ namespace UnturnedGodot
         /// <summary>Which INTACT pane a world-space hit landed on, or -1. Same shape as ResolveHitPart: the
         /// bullet path already has the impact point, so no extra colliders are needed on the glass (a collider
         /// per pane would join every physics query the car takes part in).</summary>
+        // ---- SHOOTABLE LAMPS (strawberry 2026-09-01: "shoot out headlights and tail lights. they simply
+        // stay off when broken, can be repaired from the mechanics ui like the windows can.")
+        // Modelled per SIDE, not per fixture, so one lucky round does not kill both headlights. The lens
+        // mesh ships as ONE mesh covering both lamps, so it is split by vertex x at build time into a left
+        // and a right MeshInstance3D with their own materials -- a shared material cannot glow on one side
+        // and not the other.
+        readonly System.Collections.Generic.List<MeshInstance3D> _lampNodes = new();   // the lens half
+        readonly System.Collections.Generic.List<StandardMaterial3D> _lampMats = new();
+        readonly System.Collections.Generic.List<Node3D> _lampLights = new();          // the emitter to hide
+        readonly System.Collections.Generic.List<string> _lampLabels = new();
+        bool[] _lampBroken = System.Array.Empty<bool>();
+
+        public static readonly string[] LampLabels = { "headlight_l", "headlight_r", "taillight_l", "taillight_r" };
+        public static string LampDisplay(string label) => label switch
+        {
+            "headlight_l" => "left headlight",  "headlight_r" => "right headlight",
+            "taillight_l" => "left taillight",  "taillight_r" => "right taillight", _ => label,
+        };
+        public int LampCount => _lampNodes.Count;
+        public string LampLabel(int i) => (uint)i < (uint)_lampLabels.Count ? _lampLabels[i] : "";
+        public bool IsLampBroken(int i) => (uint)i < (uint)_lampBroken.Length && _lampBroken[i];
+        public int LampBrokenCount { get { int n = 0; foreach (var b in _lampBroken) if (b) n++; return n; } }
+        public bool IsHeadlightSideBroken(bool left)
+        {
+            for (int i = 0; i < _lampLabels.Count; i++)
+                if (_lampLabels[i] == (left ? "headlight_l" : "headlight_r")) return _lampBroken[i];
+            return false;
+        }
+
+        /// <summary>Shoot a lamp out. No self-heal -- it stays dead until RepairLamp, same contract as glass.</summary>
+        public bool BreakLamp(int i)
+        {
+            if ((uint)i >= (uint)_lampNodes.Count || _lampBroken[i]) return false;
+            _lampBroken[i] = true;
+            ApplyLampState();
+            return true;
+        }
+
+        public bool RepairLamp(int i)
+        {
+            if ((uint)i >= (uint)_lampNodes.Count || !_lampBroken[i]) return false;
+            _lampBroken[i] = false;
+            ApplyLampState();
+            return true;
+        }
+
+        /// <summary>Re-apply every lamp's visual from its broken flag AND the current on/off state. Called on
+        /// break, on repair, and from SetHeadlights/SetTaillights -- so a lamp shot out while the lights are
+        /// OFF still stays dark when they are switched on, which is the whole point of the feature.</summary>
+        void ApplyLampState()
+        {
+            for (int i = 0; i < _lampNodes.Count; i++)
+            {
+                bool dead = _lampBroken[i];
+                bool head = _lampLabels[i].StartsWith("headlight");
+                bool lit = !dead && (head ? _headlightsOn : _taillightsOn);
+                if (GodotObject.IsInstanceValid(_lampLights[i])) _lampLights[i].Visible = lit;
+                if (_lampMats[i] != null)
+                {
+                    _lampMats[i].EmissionEnabled = lit;
+                    if (lit)
+                    {
+                        _lampMats[i].Emission = head ? _lampTint : new Color(0.56f, 0.13f, 0.13f);
+                        _lampMats[i].EmissionEnergyMultiplier = 2f;
+                    }
+                    // A shot-out lens reads as broken even in daylight, when nothing is emitting anyway.
+                    _lampMats[i].AlbedoColor = dead
+                        ? new Color(0.12f, 0.12f, 0.12f)
+                        : (head ? new Color(0.94f, 0.89f, 0.73f) : new Color(0.42f, 0.06f, 0.06f));
+                }
+            }
+            // The beam is ONE volume merged from both lenses (BuildHeadlightBeam), so it cannot be half of
+            // itself. With either headlight out, hide it and let the surviving SpotLight3D light the road --
+            // a full-width shaft leaving a dead lamp is a worse lie than no shaft.
+            if (_headlightBeam != null)
+                _headlightBeam.Visible = _headlightsOn && !IsHeadlightSideBroken(true) && !IsHeadlightSideBroken(false);
+            if (_headlightFill != null)
+                _headlightFill.Visible = _headlightsOn && !(IsHeadlightSideBroken(true) && IsHeadlightSideBroken(false));
+        }
+
+        /// <summary>Nearest lamp lens to a world point, or -1. Same no-collider approach as ResolveHitGlass:
+        /// lamps are tiny, so a generous tolerance is what makes them hittable at all.</summary>
+        public int ResolveHitLamp(Vector3 world, float tol = 0.42f)
+        {
+            int best = -1; float bestD = tol * tol;
+            for (int i = 0; i < _lampNodes.Count; i++)
+            {
+                if (_lampBroken[i] || !GodotObject.IsInstanceValid(_lampNodes[i])) continue;
+                var mi = _lampNodes[i];
+                var c = mi.GlobalTransform * mi.GetAabb().GetCenter();
+                float d = c.DistanceSquaredTo(world);
+                if (d < bestD) { bestD = d; best = i; }
+            }
+            return best;
+        }
+
+        // Test hooks. SetHeadlights/SetTaillights are private and the public ToggleHeadlights is gated on the
+        // alarm and on Battery, so a test driving the real toggle would be asserting on those gates rather than
+        // on lamp state. These reach the same code path with the gates satisfied.
+        public void SetLightsForTest(bool on)
+        {
+            if (on && Battery <= 0f) Battery = 50f;
+            SetHeadlights(on);
+            SetTaillights(on);
+        }
+        public Node3D LampLightForTest(int i) => (uint)i < (uint)_lampLights.Count ? _lampLights[i] : null;
+
+        /// <summary>Split a mesh into its x&lt;0 and x&gt;=0 halves by triangle centroid, so a two-lamp lens mesh
+        /// becomes a left lamp and a right lamp. Returns (left, right); either may be null.</summary>
+        static (ArrayMesh, ArrayMesh) SplitMeshByX(Mesh src)
+        {
+            if (src == null || src.GetSurfaceCount() == 0) return (null, null);
+            var arrays = src.SurfaceGetArrays(0);
+            var verts = arrays[(int)Mesh.ArrayType.Vertex].AsVector3Array();
+            if (verts.Length < 3) return (null, null);
+            var idxVar = arrays[(int)Mesh.ArrayType.Index];
+            int[] idx;
+            if (idxVar.VariantType != Variant.Type.Nil)
+            {
+                idx = idxVar.AsInt32Array();
+            }
+            else
+            {
+                idx = new int[verts.Length];
+                for (int i = 0; i < idx.Length; i++) idx[i] = i;
+            }
+            var stL = new SurfaceTool(); stL.Begin(Mesh.PrimitiveType.Triangles);
+            var stR = new SurfaceTool(); stR.Begin(Mesh.PrimitiveType.Triangles);
+            int nL = 0, nR = 0;
+            for (int t = 0; t + 2 < idx.Length; t += 3)
+            {
+                var a = verts[idx[t]]; var b = verts[idx[t + 1]]; var c = verts[idx[t + 2]];
+                bool left = (a.X + b.X + c.X) / 3f < 0f;
+                var st = left ? stL : stR;
+                var n = (b - a).Cross(c - a).Normalized();
+                foreach (var q in new[] { a, b, c }) { st.SetNormal(n); st.AddVertex(q); }
+                if (left) nL++; else nR++;
+            }
+            return (nL > 0 ? stL.Commit() : null, nR > 0 ? stR.Commit() : null);
+        }
+
         public int ResolveHitGlass(Vector3 world, float tol = 0.28f)
         {
             int best = -1; float bestD = tol;
@@ -4606,15 +4747,49 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             }
             if (hlMesh != null)   // the REAL baked headlight lenses as their own mesh -> cream, and emit on 'L' like a car (SetHeadlights drives _headlightMat)
             {
-                var hlMat = new StandardMaterial3D { AlbedoColor = new Color(0.94f, 0.89f, 0.73f), Metallic = 0f, Roughness = 0.5f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
-                v.AddChild(new MeshInstance3D { Name = "Headlights", Mesh = hlMesh, MaterialOverride = hlMat });
-                v._headlightMat = hlMat;
+                // Split per side so each lamp can be shot out on its own. _headlightMat still points at one
+                // of the halves so existing callers that poke it keep working; ApplyLampState drives both.
+                var (hlL, hlR) = SplitMeshByX(hlMesh);
+                if (hlL != null || hlR != null)
+                {
+                    foreach (var (half, label) in new[] { (hlL, "headlight_l"), (hlR, "headlight_r") })
+                    {
+                        if (half == null) continue;
+                        var m = new StandardMaterial3D { AlbedoColor = new Color(0.94f, 0.89f, 0.73f), Metallic = 0f, Roughness = 0.5f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+                        var mi = new MeshInstance3D { Name = $"Lamp_{label}", Mesh = half, MaterialOverride = m };
+                        v.AddChild(mi);
+                        v._lampNodes.Add(mi); v._lampMats.Add(m); v._lampLights.Add(null); v._lampLabels.Add(label);
+                        v._headlightMat ??= m;
+                    }
+                }
+                else   // un-splittable (all one side) -- keep the old single-mesh behaviour rather than lose the lenses
+                {
+                    var hlMat = new StandardMaterial3D { AlbedoColor = new Color(0.94f, 0.89f, 0.73f), Metallic = 0f, Roughness = 0.5f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+                    v.AddChild(new MeshInstance3D { Name = "Headlights", Mesh = hlMesh, MaterialOverride = hlMat });
+                    v._headlightMat = hlMat;
+                }
             }
             if (tlMesh != null)   // the REAL baked RED taillights as their own mesh -> _taillightMat, so they glow while driven / on brake (trailer: driven by the cab pass-through). No added blocks -> no dupe (strawberry)
             {
-                var tlMat = new StandardMaterial3D { AlbedoColor = new Color(0.42f, 0.06f, 0.06f), Metallic = 0f, Roughness = 0.5f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
-                v.AddChild(new MeshInstance3D { Name = "Taillights", Mesh = tlMesh, MaterialOverride = tlMat });
-                v._taillightMat = tlMat;
+                var (tlL, tlR) = SplitMeshByX(tlMesh);
+                if (tlL != null || tlR != null)
+                {
+                    foreach (var (half, label) in new[] { (tlL, "taillight_l"), (tlR, "taillight_r") })
+                    {
+                        if (half == null) continue;
+                        var m = new StandardMaterial3D { AlbedoColor = new Color(0.42f, 0.06f, 0.06f), Metallic = 0f, Roughness = 0.5f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+                        var mi = new MeshInstance3D { Name = $"Lamp_{label}", Mesh = half, MaterialOverride = m };
+                        v.AddChild(mi);
+                        v._lampNodes.Add(mi); v._lampMats.Add(m); v._lampLights.Add(null); v._lampLabels.Add(label);
+                        v._taillightMat ??= m;
+                    }
+                }
+                else
+                {
+                    var tlMat = new StandardMaterial3D { AlbedoColor = new Color(0.42f, 0.06f, 0.06f), Metallic = 0f, Roughness = 0.5f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+                    v.AddChild(new MeshInstance3D { Name = "Taillights", Mesh = tlMesh, MaterialOverride = tlMat });
+                    v._taillightMat = tlMat;
+                }
             }
 
             // source BoxCollider hull (Godot space), not the mesh AABB (which wrongly included the roll bar) --
@@ -4875,6 +5050,34 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                     // has to be built from the single lens the mesh ships. Handled apart from the flat-coloured
                     // car parts because the colour depends on which SIDE each copy lands on.
                     if (s.Heli && txt.Contains("taillights")) { v.BuildNavLights(txt); continue; }
+
+                    // SHOOTABLE LAMPS: a car's headlight/taillight part ships as ONE mesh covering both lamps,
+                    // so split it per side and hang each half as its own MeshInstance3D with its own material.
+                    // A shared material cannot glow on one side and not the other, which is what "shoot out the
+                    // left headlight" requires. The BEAM is still built from the WHOLE mesh -- it is one merged
+                    // volume spanning both lenses, and building it from a half would narrow the shaft.
+                    if (!s.Heli && (txt.Contains("headlight") || txt.Contains("taillight")))
+                    {
+                        bool isHead = txt.Contains("headlight");
+                        var full = ContentProvider.ParseObj($"res://content/{txt}");
+                        if (isHead && full != null) v.BuildHeadlightBeam(full);
+                        var (lhalf, rhalf) = SplitMeshByX(full);
+                        if (lhalf != null && rhalf != null)   // BOTH halves, or it is not a per-side pair
+                        {
+                            foreach (var (half, side) in new[] { (lhalf, "l"), (rhalf, "r") })
+                            {
+                                string label = (isHead ? "headlight_" : "taillight_") + side;
+                                var lm = SolidMat(color);
+                                var lmi = new MeshInstance3D { Name = $"Lamp_{label}", Mesh = half, MaterialOverride = lm };
+                                v.AddChild(lmi);
+                                v._lampNodes.Add(lmi); v._lampMats.Add(lm); v._lampLights.Add(null); v._lampLabels.Add(label);
+                            }
+                            if (isHead) v._headlightMat ??= v._lampMats[^1]; else v._taillightMat ??= v._lampMats[^1];
+                            continue;
+                        }
+                        // Un-splittable (a single centred lamp, e.g. a bike) -- fall through to the old one-mesh path.
+                    }
+
                     var pm = SolidMat(color);
                     // Named after its source file so the scene tree is readable and, more usefully, so a test can
                     // ASK for a specific part instead of guessing which unnamed MeshInstance3D is the turret.
@@ -4937,12 +5140,19 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                     var hs = new SpotLight3D { Position = p, SpotRange = 45f, SpotAngle = 25f, SpotAngleAttenuation = 1.3f, LightColor = warm, LightEnergy = 9f };
                     hs.AddToGroup("dynlight");   // spills onto the FP gun (light-scan)
                     v._headlights.AddChild(hs);
+                    // Bind the emitter to the lens half on the same side, so shooting that lens kills THIS beam.
+                    // Matched by the spot's own x sign rather than array order: SpotPos is authored per vehicle
+                    // and nothing guarantees element 0 is the left one.
+                    string want = p.X < 0f ? "headlight_l" : "headlight_r";
+                    int li = v._lampLabels.IndexOf(want);
+                    if (li >= 0 && v._lampLights[li] == null) v._lampLights[li] = hs;
                 }
                 if (s.OmniPos != Vector3.Zero)   // omni fill is OPTIONAL (OmniPos Zero = spots only) -- the semi drops it, its center glow read as a weird third headlight (strawberry)
                 {
                     var hfill = new OmniLight3D { Position = s.OmniPos + Vector3.Up * 0.5f, OmniRange = 28f, LightColor = warm, LightEnergy = 0.8f };   // dim soft fill (raised above the seats so it doesn't glare)
                     hfill.AddToGroup("dynlight");
                     v._headlights.AddChild(hfill);
+                    v._headlightFill = hfill;   // centre fill belongs to NEITHER side; killed only when both lamps are out
                 }
                 v.AddChild(v._headlights);
             }
@@ -4952,9 +5162,21 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                 var red = new Color(0.996f, 0f, 0f);
                 v._taillights = new Node3D { Visible = false };
                 foreach (var p in s.TailPos)
-                    v._taillights.AddChild(new SpotLight3D { Position = p, RotationDegrees = new Vector3(0f, 180f, 0f), SpotRange = 3f, SpotAngle = 72f, SpotAngleAttenuation = 0.6f, LightColor = red, LightEnergy = 2.2f });   // WIDE + SHORT diffuse red glow, not a focused red-headlight beam (SpotRange 6->3, SpotAngle 35->72, soft edge) (strawberry)
+                {
+                    var ts = new SpotLight3D { Position = p, RotationDegrees = new Vector3(0f, 180f, 0f), SpotRange = 3f, SpotAngle = 72f, SpotAngleAttenuation = 0.6f, LightColor = red, LightEnergy = 2.2f };
+                    v._taillights.AddChild(ts);
+                    string wantT = p.X < 0f ? "taillight_l" : "taillight_r";
+                    int ti = v._lampLabels.IndexOf(wantT);
+                    if (ti >= 0 && v._lampLights[ti] == null) v._lampLights[ti] = ts;
+                }   // WIDE + SHORT diffuse red glow, not a focused red-headlight beam (SpotRange 6->3, SpotAngle 35->72, soft edge) (strawberry)
                 v.AddChild(v._taillights);
             }
+
+            // Lamps are registered across two passes (lens meshes, then the emitters), so the broken array is
+            // sized here, once both are in. Sizing it at the lens pass would leave a shorter array than the
+            // label list and every IsLampBroken would silently read false.
+            v._lampBroken = new bool[v._lampNodes.Count];
+            if (v._lampNodes.Count > 0) v.ApplyLampState();
 
             if (s.Horn != null)   // horn: one-shot the .dat HornAudioClip (a shared CarHorn) on LMB
             {
@@ -6520,6 +6742,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             if (_headlights != null) _headlights.Visible = _headlightsOn;
             if (_headlightBeam != null) _headlightBeam.Visible = _headlightsOn;
             ApplyHeadlightMotes();
+            if (_lampNodes.Count > 0) { ApplyLampState(); return; }   // per-side lamps own the emission
             if (_headlightMat != null)   // source: lamp emission = colour*2 when lit, off otherwise
             {
                 _headlightMat.EmissionEnabled = _headlightsOn;
@@ -6685,6 +6908,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
         {
             _taillightsOn = on;
             if (_taillights != null) _taillights.Visible = on;
+            if (_lampNodes.Count > 0) { ApplyLampState(); return; }   // per-side lamps own the emission
             if (_taillightMat != null)
             {
                 _taillightMat.EmissionEnabled = on;
