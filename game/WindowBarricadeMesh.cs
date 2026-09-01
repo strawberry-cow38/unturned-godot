@@ -68,9 +68,9 @@ namespace UnturnedGodot
         //     bars. Tough but there are GAPS (mid HP tier). Bar count scales with the opening width. ---
         static MeshInstance3D BuildBars(float w, float h, out Vector3 colliderSize, out float thickness)
         {
-            const float t = 0.05f; thickness = t;
-            const float barW = 0.035f, railH = 0.06f;
-            int n = Mathf.Clamp(Mathf.RoundToInt(w / 0.20f), 3, 9);
+            const float t = 0.07f; thickness = t;
+            const float barW = 0.065f, railH = 0.09f;   // chunky bars (master: thicker) + a beefier frame to match
+            int n = Mathf.Clamp(Mathf.RoundToInt(w / 0.24f), 3, 8);
             var st = new SurfaceTool(); st.Begin(Mesh.PrimitiveType.Triangles);
             AddBox(st, new Vector3(0f, 0f,  h * 0.5f - railH * 0.5f), new Vector3(w * 1.02f, t, railH), Basis.Identity);   // top rail
             AddBox(st, new Vector3(0f, 0f, -h * 0.5f + railH * 0.5f), new Vector3(w * 1.02f, t, railH), Basis.Identity);   // bottom rail
@@ -79,7 +79,7 @@ namespace UnturnedGodot
             {
                 float fx = n == 1 ? 0.5f : i / (float)(n - 1);
                 float x = -span * 0.5f + fx * span;
-                AddBox(st, new Vector3(x, 0f, 0f), new Vector3(barW, t * 0.9f, h), Basis.Identity);
+                AddBox(st, new Vector3(x, 0f, 0f), new Vector3(barW, t, h), Basis.Identity);   // full-depth solid bars
             }
             colliderSize = new Vector3(w * 1.02f, t, h);
             return new MeshInstance3D { Mesh = st.Commit(), MaterialOverride = BarMetalMat() };
