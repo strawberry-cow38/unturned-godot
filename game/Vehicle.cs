@@ -3862,6 +3862,14 @@ namespace UnturnedGodot
             var arrays = src.SurfaceGetArrays(0);
             var verts = arrays[(int)Mesh.ArrayType.Vertex].AsVector3Array();
             if (verts.Length < 6) return (null, null);
+            // UVs MUST be carried across. Rebuilding with position+normal only drops them, and every vertex
+            // then samples the same texel -- which on this wheel's 4x4 palette atlas is the dark rubber cell,
+            // so the RIM rendered black. The geometry was correct the whole time; it had simply lost the grey
+            // that makes it read as metal, and the author's verdict was "u removed the wheel rim model, and
+            // kept the tire". Losing a UV looks exactly like splitting the mesh in the wrong place.
+            var uvVar = arrays[(int)Mesh.ArrayType.TexUV];
+            Vector2[] uvs = uvVar.VariantType != Variant.Type.Nil ? uvVar.AsVector2Array() : null;
+            if (uvs != null && uvs.Length != verts.Length) uvs = null;
             var idxVar = arrays[(int)Mesh.ArrayType.Index];
             int[] idx;
             if (idxVar.VariantType != Variant.Type.Nil) idx = idxVar.AsInt32Array();
@@ -3893,15 +3901,26 @@ namespace UnturnedGodot
             for (int t = 0; t + 2 < idx.Length; t += 3)
             {
                 var a = verts[idx[t]]; var b = verts[idx[t + 1]]; var d = verts[idx[t + 2]];
-                // ALL THREE verts must be past the seam, not the centroid. The sidewall triangles that bridge
-                // rim to tread straddle it, and centroid classification sends alternating ones to opposite
-                // halves -- which leaves the rim as a spiky star with every other sidewall triangle missing
-                // rather than a disc. Requiring all three keeps a straddling triangle with the RIM, so the rim
-                // stays solid and only pure-tread geometry is removed.
-                bool isTire = Rad(a) > split && Rad(b) > split && Rad(d) > split;
+                // ANY vertex past the seam puts the triangle in the TIRE, and the reason is both visual and
+                // physical. No vertex sits inside the seam gap, but triangles SPAN it -- the sidewall panels
+                // bridging rim edge to tread. Classifying by centroid sent alternating ones to opposite halves
+                // (the rim rendered as a spiky star). Requiring ALL THREE fixed that but handed every bridge to
+                // the rim, so the rim kept spikes reaching out into the tire and the tread ring lost its inner
+                // face -- visible the moment both halves were flat-coloured, and read to the vehicle's author as
+                // "u removed the wheel rim model, and kept the tire".
+                // ANY leaves the rim ending cleanly at the seam and gives the tire its sidewall, which is also
+                // what physically leaves the car: a blown tire takes its sidewall, it does not shed a tread band
+                // and leave the walls standing.
+                bool isTire = Rad(a) > split || Rad(b) > split || Rad(d) > split;
                 var st = isTire ? stT : stR;
                 var n = (b - a).Cross(d - a).Normalized();
-                foreach (var q in new[] { a, b, d }) { st.SetNormal(n); st.AddVertex(q); }
+                for (int k = 0; k < 3; k++)
+                {
+                    int vi = idx[t + k];
+                    st.SetNormal(n);
+                    if (uvs != null) st.SetUV(uvs[vi]);
+                    st.AddVertex(verts[vi]);
+                }
                 if (isTire) nT++; else nR++;
             }
             return (nT > 0 ? stT.Commit() : null, nR > 0 ? stR.Commit() : null);
@@ -3935,6 +3954,9 @@ namespace UnturnedGodot
             var arrays = src.SurfaceGetArrays(0);
             var verts = arrays[(int)Mesh.ArrayType.Vertex].AsVector3Array();
             if (verts.Length < 3) return (null, null);
+            var uvVar = arrays[(int)Mesh.ArrayType.TexUV];   // see SplitWheelRadial: dropping these loses the texture
+            Vector2[] uvs = uvVar.VariantType != Variant.Type.Nil ? uvVar.AsVector2Array() : null;
+            if (uvs != null && uvs.Length != verts.Length) uvs = null;
             var idxVar = arrays[(int)Mesh.ArrayType.Index];
             int[] idx;
             if (idxVar.VariantType != Variant.Type.Nil)
@@ -3955,7 +3977,13 @@ namespace UnturnedGodot
                 bool left = (a.X + b.X + c.X) / 3f < 0f;
                 var st = left ? stL : stR;
                 var n = (b - a).Cross(c - a).Normalized();
-                foreach (var q in new[] { a, b, c }) { st.SetNormal(n); st.AddVertex(q); }
+                for (int k = 0; k < 3; k++)
+                {
+                    int vi = idx[t + k];
+                    st.SetNormal(n);
+                    if (uvs != null) st.SetUV(uvs[vi]);
+                    st.AddVertex(verts[vi]);
+                }
                 if (left) nL++; else nR++;
             }
             return (nL > 0 ? stL.Commit() : null, nR > 0 ? stR.Commit() : null);
@@ -5151,11 +5179,20 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                 // explosion-debris path (which hides _wMeshes[i] and reads its position/scale) keeps working
                 // untouched -- hiding the parent takes the tread with it.
                 var (tireMesh, rimMesh) = s.Tracked || s.Plane ? (null, null) : SplitWheelRadial(wheelMesh);
-                var mi = new MeshInstance3D { Mesh = rimMesh ?? wheelMesh, MaterialOverride = wheelMat, Scale = new Vector3((x < 0 ? -1f : 1f) * wscale, wscale, wscale) };
+                var _rimDbg = System.Environment.GetEnvironmentVariable("UG_TIREDEBUG") == "1" && tireMesh != null;
+                var mi = new MeshInstance3D { Mesh = rimMesh ?? wheelMesh,
+                    MaterialOverride = _rimDbg
+                        ? new StandardMaterial3D { AlbedoColor = new Color(0.1f, 1f, 1f), ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded }
+                        : wheelMat,
+                    Scale = new Vector3((x < 0 ? -1f : 1f) * wscale, wscale, wscale) };
                 w.AddChild(mi);
                 if (tireMesh != null)
                 {
-                    var tn = new MeshInstance3D { Name = $"Tire{i}", Mesh = tireMesh, MaterialOverride = wheelMat };
+                    var _tireDbg = System.Environment.GetEnvironmentVariable("UG_TIREDEBUG") == "1";
+                    var tn = new MeshInstance3D { Name = $"Tire{i}", Mesh = tireMesh,
+                        MaterialOverride = _tireDbg
+                            ? new StandardMaterial3D { AlbedoColor = new Color(1f, 0.15f, 0.9f), ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded }
+                            : wheelMat };
                     mi.AddChild(tn);   // inherits the rim's flip+scale, so it lines up with no second transform
                     v._tireNodes.Add(tn);
                 }

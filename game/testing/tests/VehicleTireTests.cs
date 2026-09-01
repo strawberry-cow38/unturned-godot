@@ -38,6 +38,20 @@ namespace UnturnedGodot.Testing
             if (tire0 == null || rim0 == null) yield break;
             T.Check("both visible while inflated", tire0.Visible && rim0.Visible);
 
+            // ---- 2b. THE SPLIT HALVES KEEP THEIR UVs. Rebuilding a mesh with position+normal only drops the
+            // texture coordinates, and every vertex then samples one texel -- on this wheel's 4x4 palette atlas
+            // that is the dark rubber cell, so the RIM rendered black and read as "you kept the tire". The
+            // geometry was correct throughout. Every check in this file passed while that was broken, because
+            // a lost UV is invisible to anything that asks about position, count, or state.
+            foreach (var (m, what) in new[] { (tire0.Mesh, "tire"), (rim0.Mesh, "rim") })
+            {
+                var arr = m.SurfaceGetArrays(0);
+                var uv = arr[(int)Mesh.ArrayType.TexUV];
+                var vt = arr[(int)Mesh.ArrayType.Vertex].AsVector3Array();
+                bool hasUV = uv.VariantType != Variant.Type.Nil && uv.AsVector2Array().Length == vt.Length;
+                T.Check($"the {what} half keeps its UVs ({(hasUV ? "yes" : "DROPPED")})", hasUV);
+            }
+
             float stockFric = car.WheelFrictionForTest(0);
             float stockRad = car.WheelRadiusForTest(0);
             T.Check($"the wheel has real stock grip to lose ({stockFric:F2})", stockFric > 0.1f);
