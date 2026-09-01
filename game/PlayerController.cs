@@ -6028,9 +6028,19 @@ namespace UnturnedGodot
                             // the tie. A lamp takes the round instead of the hull, so headlights are worth aiming
                             // at rather than just another way to chip HP.
                             int lamp = veh.ResolveHitLamp(point);
+                            int tire = lamp >= 0 ? -1 : veh.ResolveHitTire(point);
                             if (lamp >= 0 && veh.BreakLamp(lamp))
                             {
                                 GD.Print($"[lamp] {veh.DisplayName} {Vehicle.LampDisplay(veh.LampLabel(lamp))} shot out");
+                            }
+                            else if (tire >= 0 && veh.PopTire(tire))
+                            {
+                                // The tire eats the round like glass and lamps do. Wheels sit low and outboard,
+                                // well away from the lamp lenses, so the order between them rarely decides
+                                // anything -- but lamps are checked first because their tolerance is a flat
+                                // radius while a tire's scales with the wheel, and a bus wheel's would otherwise
+                                // reach up and swallow shots aimed at the headlight above it.
+                                GD.Print($"[tire] {veh.DisplayName} {Vehicle.TireDisplay(tire, veh.TireCount)} blown out");
                             }
                             else
                             {

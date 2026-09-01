@@ -492,6 +492,26 @@ namespace UnturnedGodot
             if (_strikeAudio != null) _strikeAudio.Play();
         }
 
+        /// <summary>Sparks fly only when a bare rim is actually SCRUBBING: popped, touching ground, and moving.
+        /// Gated on the wheel's own contact rather than the body's speed so a car airborne over a jump stops
+        /// throwing sparks from a wheel touching nothing, and so a popped wheel that happens to be off the
+        /// ground on a camber stays quiet while the others spark.</summary>
+        void UpdateTireSparks()
+        {
+            if (_tireSparks == null) return;
+            float v2 = LinearVelocity.LengthSquared();
+            for (int i = 0; i < _tireSparks.Length; i++)
+            {
+                var fx = _tireSparks[i];
+                if (fx == null || !GodotObject.IsInstanceValid(fx)) continue;
+                bool scrub = i < _tirePopped.Length && _tirePopped[i]
+                             && v2 > 4f                                   // ~2 m/s: rolling, not creeping
+                             && _wNodes != null && i < _wNodes.Length
+                             && _wNodes[i] != null && _wNodes[i].IsInContact();
+                if (fx.Emitting != scrub) fx.Emitting = scrub;
+            }
+        }
+
         void UpdateRotorFx()
         {
             if (_rotorFxExtinguished) return;   // the wreck has cooled; leave it cold
@@ -3755,6 +3775,147 @@ namespace UnturnedGodot
             return best;
         }
 
+        // ---- SHOOTABLE TIRES (strawberry 2026-09-01: "shoot tires, pops the actual tire part of the wheel
+        // model, leaving the rim, driving when missing tire(s) affects handling, causes sparks from the
+        // damaged wheel when driving on it. can be replaced by the mechanics ui.")
+        readonly System.Collections.Generic.List<MeshInstance3D> _tireNodes = new();   // outer ring only
+        bool[] _tirePopped = System.Array.Empty<bool>();
+        float[] _tireFricRef = System.Array.Empty<float>();   // stock grip, to restore on replace
+        float[] _tireRadRef = System.Array.Empty<float>();
+        CpuParticles3D[] _tireSparks;
+
+        public int TireCount => _tireNodes.Count;
+        public bool IsTirePopped(int i) => (uint)i < (uint)_tirePopped.Length && _tirePopped[i];
+        public int TirePoppedCount { get { int n = 0; foreach (var b in _tirePopped) if (b) n++; return n; } }
+        public static string TireDisplay(int i, int n)
+        {
+            if (n < 4) return $"wheel {i + 1}";
+            bool front = i < 2;   // wheel order is authored front pair first on every road spec
+            return (i % 2 == 0 ? "left " : "right ") + (front ? "front tire" : "rear tire");
+        }
+
+        /// <summary>Blow a tire off. The rim stays -- it is a separate MeshInstance3D -- and the wheel keeps
+        /// rolling on it with far less grip and a smaller radius, which is what "affects handling" means here
+        /// rather than an abstract penalty.</summary>
+        public bool PopTire(int i)
+        {
+            if ((uint)i >= (uint)_tireNodes.Count || _tirePopped[i]) return false;
+            _tirePopped[i] = true;
+            if (GodotObject.IsInstanceValid(_tireNodes[i])) _tireNodes[i].Visible = false;
+            ApplyTirePhysics(i);
+            return true;
+        }
+
+        public bool RepairTire(int i)
+        {
+            if ((uint)i >= (uint)_tireNodes.Count || !_tirePopped[i]) return false;
+            _tirePopped[i] = false;
+            if (GodotObject.IsInstanceValid(_tireNodes[i])) _tireNodes[i].Visible = true;
+            ApplyTirePhysics(i);
+            return true;
+        }
+
+        /// <summary>Push one wheel's grip and radius from its popped flag. Both are restored from the values
+        /// captured at build, never recomputed -- the stock numbers are tuned per vehicle (a trailer's wheels
+        /// are deliberately low-grip), so a popped-then-fixed wheel must come back to ITS OWN figure and not to
+        /// a shared constant.</summary>
+        void ApplyTirePhysics(int i)
+        {
+            if (_wNodes == null || (uint)i >= (uint)_wNodes.Length) return;
+            var w = _wNodes[i];
+            if (w == null || !GodotObject.IsInstanceValid(w)) return;
+            if (_tirePopped[i])
+            {
+                w.WheelFrictionSlip = _tireFricRef[i] * 0.35f;   // bare steel on tarmac: it still bites, it just slides
+                w.WheelRadius = _tireRadRef[i] * 0.78f;          // riding on the rim -> that corner drops
+            }
+            else
+            {
+                w.WheelFrictionSlip = _tireFricRef[i];
+                w.WheelRadius = _tireRadRef[i];
+            }
+        }
+
+        /// <summary>Nearest wheel to a world point, or -1. Tolerance is the wheel's own radius rather than a
+        /// constant, so a bus tire is not harder to hit than a hatchback's.</summary>
+        public int ResolveHitTire(Vector3 world, float slack = 0.22f)
+        {
+            int best = -1; float bestD = float.MaxValue;
+            for (int i = 0; i < _tireNodes.Count; i++)
+            {
+                if (_tirePopped[i] || !GodotObject.IsInstanceValid(_tireNodes[i])) continue;
+                var c = _tireNodes[i].GlobalPosition;
+                float tol = (_tireRadRef.Length > i ? _tireRadRef[i] : 0.35f) + slack;
+                float d = c.DistanceSquaredTo(world);
+                if (d < tol * tol && d < bestD) { bestD = d; best = i; }
+            }
+            return best;
+        }
+
+        /// <summary>Split a wheel into (tire, rim) at the widest EMPTY radial band in its outer half -- the gap
+        /// the modeller left between rim edge and tread. Derived per mesh rather than a fixed fraction: measured
+        /// across all 11 wheel meshes the tire is 17-24% of the verts on road wheels but 64% on the tank, so a
+        /// hardcoded ratio would cut the tank's road wheel in half and a road car's tire off its rim.</summary>
+        static (ArrayMesh tire, ArrayMesh rim) SplitWheelRadial(Mesh src)
+        {
+            if (src == null || src.GetSurfaceCount() == 0) return (null, null);
+            var arrays = src.SurfaceGetArrays(0);
+            var verts = arrays[(int)Mesh.ArrayType.Vertex].AsVector3Array();
+            if (verts.Length < 6) return (null, null);
+            var idxVar = arrays[(int)Mesh.ArrayType.Index];
+            int[] idx;
+            if (idxVar.VariantType != Variant.Type.Nil) idx = idxVar.AsInt32Array();
+            else { idx = new int[verts.Length]; for (int i = 0; i < idx.Length; i++) idx[i] = i; }
+
+            Vector3 c = Vector3.Zero;
+            foreach (var q in verts) c += q;
+            c /= verts.Length;
+            float Rad(Vector3 q) => Mathf.Sqrt((q.Y - c.Y) * (q.Y - c.Y) + (q.Z - c.Z) * (q.Z - c.Z));   // wheels spin about X
+            float rMax = 0f;
+            foreach (var q in verts) rMax = Mathf.Max(rMax, Rad(q));
+            if (rMax <= 0f) return (null, null);
+
+            var rs = new System.Collections.Generic.List<float>();
+            foreach (var q in verts) rs.Add(Rad(q));
+            rs.Sort();
+            float gap = 0f, split = 0f;
+            for (int i = 0; i + 1 < rs.Count; i++)
+            {
+                if (rs[i] < 0.35f * rMax) continue;   // ignore the hub's own spokes
+                float g = rs[i + 1] - rs[i];
+                if (g > gap) { gap = g; split = (rs[i] + rs[i + 1]) * 0.5f; }
+            }
+            if (gap < 0.02f) return (null, null);   // no seam worth cutting -- a solid wheel (train), leave it whole
+
+            var stT = new SurfaceTool(); stT.Begin(Mesh.PrimitiveType.Triangles);
+            var stR = new SurfaceTool(); stR.Begin(Mesh.PrimitiveType.Triangles);
+            int nT = 0, nR = 0;
+            for (int t = 0; t + 2 < idx.Length; t += 3)
+            {
+                var a = verts[idx[t]]; var b = verts[idx[t + 1]]; var d = verts[idx[t + 2]];
+                // ALL THREE verts must be past the seam, not the centroid. The sidewall triangles that bridge
+                // rim to tread straddle it, and centroid classification sends alternating ones to opposite
+                // halves -- which leaves the rim as a spiky star with every other sidewall triangle missing
+                // rather than a disc. Requiring all three keeps a straddling triangle with the RIM, so the rim
+                // stays solid and only pure-tread geometry is removed.
+                bool isTire = Rad(a) > split && Rad(b) > split && Rad(d) > split;
+                var st = isTire ? stT : stR;
+                var n = (b - a).Cross(d - a).Normalized();
+                foreach (var q in new[] { a, b, d }) { st.SetNormal(n); st.AddVertex(q); }
+                if (isTire) nT++; else nR++;
+            }
+            return (nT > 0 ? stT.Commit() : null, nR > 0 ? stR.Commit() : null);
+        }
+
+        // Tire test hooks -- the nodes and the wheel physics are private, and the point of the tire checks is
+        // to assert on the REAL wheel numbers rather than on the popped flag that is supposed to drive them.
+        public MeshInstance3D TireNodeForTest(int i) => (uint)i < (uint)_tireNodes.Count ? _tireNodes[i] : null;
+        public MeshInstance3D RimNodeForTest(int i) => _wMeshes != null && (uint)i < (uint)_wMeshes.Length ? _wMeshes[i] : null;
+        public float WheelFrictionForTest(int i) => _wNodes != null && (uint)i < (uint)_wNodes.Length && _wNodes[i] != null ? _wNodes[i].WheelFrictionSlip : 0f;
+        public float WheelRadiusForTest(int i) => _wNodes != null && (uint)i < (uint)_wNodes.Length && _wNodes[i] != null ? _wNodes[i].WheelRadius : 0f;
+        public CpuParticles3D TireSparksForTest(int i) => _tireSparks != null && (uint)i < (uint)_tireSparks.Length ? _tireSparks[i] : null;
+        public bool WheelInContactForTest(int i) => _wNodes != null && (uint)i < (uint)_wNodes.Length && _wNodes[i] != null && _wNodes[i].IsInContact();
+
         // Test hooks. SetHeadlights/SetTaillights are private and the public ToggleHeadlights is gated on the
         // alarm and on Battery, so a test driving the real toggle would be asserting on those gates rather than
         // on lamp state. These reach the same code path with the gates satisfied.
@@ -4985,8 +5146,19 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                     SuspensionStiffness = (s.Plane ? 30f : 55f) * loadScale, SuspensionMaxForce = suspMaxF, DampingCompression = s.Plane ? 7f : 3.5f, DampingRelaxation = s.Plane ? 8f : 4.2f, WheelFrictionSlip = s.Tracked ? TankWheelSlip : (s.Kingpin != Vector3.Zero ? 1.5f : s.Plane ? 2.0f : 6.0f),   // PLANE: softer + heavily-damped gear + lower friction slip so the narrow fuselage wheels do not CHATTER into a yaw wobble on rough terrain (master 2026-08-18)
                 };
                 // left wheels: flip the mesh so the tread faces outward
-                var mi = new MeshInstance3D { Mesh = wheelMesh, MaterialOverride = wheelMat, Scale = new Vector3((x < 0 ? -1f : 1f) * wscale, wscale, wscale) };
+                // SHOOTABLE TIRES: hang the tread as its OWN MeshInstance3D, a child of the rim mesh, so popping
+                // it hides the tread and leaves the rim turning. Child-of-rim rather than a sibling so the
+                // explosion-debris path (which hides _wMeshes[i] and reads its position/scale) keeps working
+                // untouched -- hiding the parent takes the tread with it.
+                var (tireMesh, rimMesh) = s.Tracked || s.Plane ? (null, null) : SplitWheelRadial(wheelMesh);
+                var mi = new MeshInstance3D { Mesh = rimMesh ?? wheelMesh, MaterialOverride = wheelMat, Scale = new Vector3((x < 0 ? -1f : 1f) * wscale, wscale, wscale) };
                 w.AddChild(mi);
+                if (tireMesh != null)
+                {
+                    var tn = new MeshInstance3D { Name = $"Tire{i}", Mesh = tireMesh, MaterialOverride = wheelMat };
+                    mi.AddChild(tn);   // inherits the rim's flip+scale, so it lines up with no second transform
+                    v._tireNodes.Add(tn);
+                }
                 v.AddChild(w);
                 v._wNodes[i] = w; v._wMeshes[i] = mi;
                 if (s.RetractGear)   // RETRACTABLE GEAR: hide the suspension-driven wheel; put the visual (strut + wheel) on a hinge PIVOT at the belly that folds up when airborne. VehicleWheel3D stays for physics.
@@ -5002,6 +5174,36 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                     v._gearPivots[i] = pivot;
                     if (z < 0f) { v._gearAxis[i] = Vector3.Right; v._gearAng[i] = -85f; }          // nose gear (forward, z<0): folds AFT about X
                     else { v._gearAxis[i] = Vector3.Right; v._gearAng[i] = 95f; }                             // main gear (fuselage, F-15): folds FORWARD + up into the belly about X -> X stays 0.85 so it clears the wing missiles (master 2026-08-18)
+                }
+            }
+
+            // Tire state, sized once the wheel loop has run. The reference grip/radius are captured HERE rather
+            // than recomputed on repair: they are tuned per vehicle (a trailer's wheels are deliberately
+            // low-friction), so a fixed tire must return to its own figure, not a shared constant.
+            v._tirePopped = new bool[v._tireNodes.Count];
+            v._tireFricRef = new float[v._tireNodes.Count];
+            v._tireRadRef = new float[v._tireNodes.Count];
+            for (int ti = 0; ti < v._tireNodes.Count && ti < v._wNodes.Length; ti++)
+            {
+                if (v._wNodes[ti] == null) continue;
+                v._tireFricRef[ti] = v._wNodes[ti].WheelFrictionSlip;
+                v._tireRadRef[ti] = v._wNodes[ti].WheelRadius;
+            }
+            // Sparks off a bare rim, one emitter per wheel, parked at the CONTACT PATCH rather than the hub --
+            // steel grinding tarmac throws from where it touches, and a plume at the axle reads as an engine
+            // fire. Continuous while rolling, unlike the one-shot blade strikes: this is a state you are driving
+            // in, not an event.
+            if (v._tireNodes.Count > 0)
+            {
+                v._tireSparks = new CpuParticles3D[v._tireNodes.Count];
+                for (int ti = 0; ti < v._tireNodes.Count && ti < v._wNodes.Length; ti++)
+                {
+                    if (v._wNodes[ti] == null) continue;
+                    var fx = MakeSmoke("veh_fire.png", new Color(1f, 0.82f, 0.38f), 0.22f, 4.2f, 12, true, 0.05f, 0.16f);
+                    fx.Position = v._wNodes[ti].Position - new Vector3(0f, v._tireRadRef[ti] * 0.78f, 0f);
+                    fx.Emitting = false;
+                    v.AddChild(fx);
+                    v._tireSparks[ti] = fx;
                 }
             }
 
@@ -7081,6 +7283,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             if (_turretCd != null)
                 for (int i = 0; i < _turretCd.Length; i++)
                     if (_turretCd[i] > 0f) _turretCd[i] = Mathf.Max(0f, _turretCd[i] - (float)delta);
+            UpdateTireSparks();
             if (_lookFocused && _info != null)   // keep the info billboard at the cabin + live (before any perf early-return)
             {
                 _info.GlobalPosition = GlobalPosition + Vector3.Up * InfoH;

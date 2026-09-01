@@ -7627,6 +7627,10 @@ namespace UnturnedGodot
                                     for (int li = 0; li < _veh.LampCount; li++)
                                         if (_veh.LampLabel(li) == want.Trim()) _veh.BreakLamp(li);
                             if (System.Environment.GetEnvironmentVariable("UG_LAMPS") == "on") _veh.SetLightsForTest(true);
+                            var tp = System.Environment.GetEnvironmentVariable("UG_TIREPOP");   // e.g. "0,3"
+                            if (!string.IsNullOrEmpty(tp))
+                                foreach (var w in tp.Split(','))
+                                    if (int.TryParse(w.Trim(), out var wi)) _veh.PopTire(wi);
                         }
                         ApplyCamOrbit(_vehCam, vt.Origin + Vector3.Up * 1.0f);
                     }

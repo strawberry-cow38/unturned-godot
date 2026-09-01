@@ -19,6 +19,9 @@ namespace UnturnedGodot
         VBoxContainer _lampBox;
         Label _lampTitle;
         readonly System.Collections.Generic.List<(Button btn, Label lbl, int idx)> _lampRows = new();
+        VBoxContainer _tireBox;
+        Label _tireTitle;
+        readonly System.Collections.Generic.List<(Button btn, Label lbl, int idx)> _tireRows = new();
 
         public override void _Ready()
         {
@@ -71,6 +74,14 @@ namespace UnturnedGodot
             _lampBox.AddThemeConstantOverride("separation", 4);
             col.AddChild(_lampBox);
 
+            _tireTitle = new Label { Text = "TIRES" };
+            _tireTitle.AddThemeFontSizeOverride("font_size", 18);
+            col.AddChild(_tireTitle);
+
+            _tireBox = new VBoxContainer();
+            _tireBox.AddThemeConstantOverride("separation", 4);
+            col.AddChild(_tireBox);
+
             var hint = new Label { Text = "F or Esc to close", HorizontalAlignment = HorizontalAlignment.Center, Modulate = new Color(1, 1, 1, 0.5f) };
             hint.AddThemeFontSizeOverride("font_size", 13);
             col.AddChild(hint);
@@ -82,6 +93,7 @@ namespace UnturnedGodot
             Visible = true;
             BuildGlassRows();
             BuildLampRows();
+            BuildTireRows();
             Refresh();
         }
 
@@ -143,6 +155,34 @@ namespace UnturnedGodot
             _lampBox.Visible = _v.LampCount > 0;
         }
 
+        /// <summary>One row per wheel. Same once-per-open rule as the panes and lamps.</summary>
+        void BuildTireRows()
+        {
+            foreach (var c in _tireBox.GetChildren()) c.QueueFree();
+            _tireRows.Clear();
+            if (_v == null) return;
+            for (int i = 0; i < _v.TireCount; i++)
+            {
+                int idx = i;
+                var row = new HBoxContainer();
+                row.AddThemeConstantOverride("separation", 8);
+                var lbl = new Label { Text = "", CustomMinimumSize = new Vector2(210, 0) };
+                lbl.AddThemeFontSizeOverride("font_size", 15);
+                var btn = new Button { Text = "replace", CustomMinimumSize = new Vector2(70, 0) };
+                btn.AddThemeFontSizeOverride("font_size", 14);
+                btn.Pressed += () =>
+                {
+                    if (_v != null && IsInstanceValid(_v) && _v.RepairTire(idx))
+                        GD.Print($"[mechanics] replaced {Vehicle.TireDisplay(idx, _v.TireCount)} on {_v.DisplayName}");
+                };
+                row.AddChild(lbl); row.AddChild(btn);
+                _tireBox.AddChild(row);
+                _tireRows.Add((btn, lbl, idx));
+            }
+            _tireTitle.Visible = _v.TireCount > 0;
+            _tireBox.Visible = _v.TireCount > 0;
+        }
+
         public new void Hide() { Visible = false; _v = null; }
         public bool IsOpen => Visible;
 
@@ -160,7 +200,8 @@ namespace UnturnedGodot
                 $"seats       {_v.SeatCount}\n" +
                 $"trunk       {(_v.HasTrunk ? "yes" : "none")}\n" +
                 $"glass       {_v.GlassCount - _v.GlassBrokenCount} / {_v.GlassCount} intact\n" +
-                $"lamps       {_v.LampCount - _v.LampBrokenCount} / {_v.LampCount} working";
+                $"lamps       {_v.LampCount - _v.LampBrokenCount} / {_v.LampCount} working\n" +
+                $"tires       {_v.TireCount - _v.TirePoppedCount} / {_v.TireCount} inflated";
 
             foreach (var (btn, lbl, idx) in _glassRows)
             {
@@ -178,6 +219,15 @@ namespace UnturnedGodot
                 lbl.Text = $"{Vehicle.LampDisplay(_v.LampLabel(idx)),-16} {(dead ? "SHOT OUT" : "working")}";
                 lbl.Modulate = dead ? new Color(1f, 0.55f, 0.5f) : new Color(1, 1, 1, 0.75f);
                 btn.Disabled = !dead;
+            }
+
+            foreach (var (btn, lbl, idx) in _tireRows)
+            {
+                if (!IsInstanceValid(btn)) continue;
+                bool flat = _v.IsTirePopped(idx);
+                lbl.Text = $"{Vehicle.TireDisplay(idx, _v.TireCount),-16} {(flat ? "BLOWN" : "ok")}";
+                lbl.Modulate = flat ? new Color(1f, 0.55f, 0.5f) : new Color(1, 1, 1, 0.75f);
+                btn.Disabled = !flat;
             }
         }
 
