@@ -58,12 +58,12 @@ namespace UnturnedGodot.Testing
             bool v3 = placer.Aim(camBack);
             T.Check($"the opposite (inside) face is still placeable (valid={v3}, face={placer.SnappedFace})", v3 && placer.SnappedFace == -1);
 
-            // aiming at the DOOR opening (floor-pinned) is NOT a window -> invalid
+            // aiming at the DOORWAY (opening 0, floor-pinned + empty) is now ALSO barricadable (master 2026-09-01: doors too)
             Vector3 doorCentre = wall.UVToWorld(0.5f + 0.75f, 1.25f);
             var camDoor = CamLookingAt(World, doorCentre + Vector3.Back * 3f, doorCentre);
             yield return Ticks(1);
             bool v4 = placer.Aim(camDoor);
-            T.Check("a floor-pinned DOOR opening is not a window -> invalid", !v4);
+            T.Check($"an empty doorway is barricadable too, not just windows (opening {placer.SnappedOpening}, valid={v4})", v4 && placer.SnappedOpening == 0);
 
             placer.QueueFree();
             if (b1 != null && GodotObject.IsInstanceValid(b1)) b1.QueueFree();
@@ -186,6 +186,74 @@ namespace UnturnedGodot.Testing
                 wall.QueueFree();
                 yield return Ticks(1);
             }
+        }
+    }
+
+    // Barricading DOORS (master 2026-09-01): the barricade now snaps to doored openings too, and a door with a
+    // barricade on EITHER face is "barricaded" -> PlayerController blocks its open + reddens the outline. This pins
+    // the runtime facts behind that: the placer accepts a doored opening, and the door->opening link
+    // (WallSurface.OpeningIndexForDoorHost) + SlotFilled together identify a barricaded door (what ObjectDoorBarricaded uses).
+    public sealed class WindowBarricadeDoorTests : GameTest
+    {
+        public override string Name => "barricade.door_barricade";
+        public override double TimeoutSimSeconds => 30;
+
+        static ObjectDoor FindDoor(Node n)
+        {
+            foreach (var c in n.GetChildren())
+            {
+                if (c is ObjectDoor d) return d;
+                var r = FindDoor(c);
+                if (r != null) return r;
+            }
+            return null;
+        }
+
+        static Camera3D CamLookingAt(Node parent, Vector3 pos, Vector3 target)
+        {
+            var cam = new Camera3D();
+            parent.AddChild(cam);
+            cam.GlobalPosition = pos;
+            cam.LookAt(target, Vector3.Up);
+            return cam;
+        }
+
+        public override IEnumerable<Step> Run()
+        {
+            float dh = UnturnedSim.WallOpenings.DoorHeight;
+            var wall = new WallSurface { Length = 8f, Height = dh, Thickness = 0.5f };
+            wall.Openings.Add(new UnturnedSim.WallOpening(1.0f, 1.0f, 1.5f, 1.5f));                                  // opening 0: a window
+            wall.Openings.Add(new UnturnedSim.WallOpening(4.0f, 0f, 2.5f, dh - 0.5f) { DoorProp = "Door_Pine" });   // opening 1: a DOORED doorway
+            World.AddChild(wall);
+            yield return Ticks(3);   // _Ready -> Rebuild + RebuildDoors (spawns the door) + AddToGroup("walls")
+
+            // 1) the placer now SNAPS to the doored opening (filter relaxed -- doors are barricadable, not just windows)
+            var placer = new BarricadePlacer();
+            World.AddChild(placer);
+            placer.SetDef(DeployableDef.WindowBarricade);
+            Vector3 dCentre = wall.UVToWorld(4.0f + 1.25f, (dh - 0.5f) * 0.5f);
+            var cam = CamLookingAt(World, dCentre + Vector3.Back * 3f, dCentre);
+            yield return Ticks(1);
+            bool vDoor = placer.Aim(cam);
+            T.Check($"the placer snaps to the DOORED opening (valid={vDoor}, opening={placer.SnappedOpening})", vDoor && placer.SnappedOpening == 1);
+
+            // 2) place a barricade on the +Z face of the doored opening; SlotFilled sees it on that face only
+            var b = Barricade.PlaceInWindow(wall, 1, 1, DeployableDef.WindowBarricade);
+            yield return Ticks(1);
+            T.Check("a barricade sits on the doored opening's +Z face", b != null && BarricadePlacer.SlotFilled(wall, 1, 1));
+            T.Check("...and the -Z (inside) face is still free", !BarricadePlacer.SlotFilled(wall, 1, -1));
+
+            // 3) the door->opening link: the spawned door maps back to opening 1 (what ObjectDoorBarricaded resolves)
+            var od = FindDoor(wall);
+            T.Check("a functional door spawned in the doored opening", od != null);
+            if (od != null && od.GetParent() is Node3D host)
+                T.Check($"the door host maps back to its opening index ({wall.OpeningIndexForDoorHost(host)} == 1)", wall.OpeningIndexForDoorHost(host) == 1);
+
+            // 4) tearing the barricade off frees the door again (re-openable)
+            if (b != null) { b.Pickup(); yield return Ticks(2); }
+            T.Check("removing the barricade frees the door (+Z slot clear)", !BarricadePlacer.SlotFilled(wall, 1, 1));
+
+            placer.QueueFree();
         }
     }
 }

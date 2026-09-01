@@ -194,7 +194,8 @@ namespace UnturnedGodot
                 if (!wall.RayToUVInside(from, dir, out float u, out float v)) continue;
                 int oi = wall.OpeningAt(u, v); if (oi < 0) continue;
                 var o = wall.Openings[oi];
-                if (o.V <= UnturnedSim.WallOpenings.Eps || o.HasDoor) continue;   // window = sill'd + not a door
+                // ANY opening is barricadable (master 2026-09-01): windows, empty doorways, AND doored openings.
+                // A barricade over a doored opening blocks the door's interaction ("Door is barricaded") -- see PlayerController.
                 Vector3 c = wall.UVToWorld(o.U + o.Width * 0.5f, o.V + o.Height * 0.5f);
                 float d = from.DistanceTo(c);
                 if (d <= Def.Range && d < best)

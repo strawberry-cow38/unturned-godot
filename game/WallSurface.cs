@@ -337,6 +337,15 @@ namespace UnturnedGodot
             }
         }
 
+        /// <summary>The opening index a placed door sits in, given its HOST node (= a focused ObjectDoor's
+        /// GetParent()). Reads the _doors/_doorSpec mapping RebuildDoors keeps exact; -1 if the host isn't one
+        /// of ours. Lets barricade code ask "is the door in opening N barricaded?" (master 2026-09-01).</summary>
+        public int OpeningIndexForDoorHost(Node3D host)
+        {
+            int k = _doors.IndexOf(host);
+            return k >= 0 ? _doorSpec[k].Op : -1;
+        }
+
         /// <summary>Sit the door in its hole, in WALL-LOCAL space. DoorDeploy places into world space for a
         /// standalone drop, so the host's own transform is overwritten here rather than passing a world point
         /// in -- the wall may be rotated, pitched, or lying down as a floor, and the hole's u/v is the only

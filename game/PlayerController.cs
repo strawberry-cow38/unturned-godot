@@ -695,6 +695,11 @@ namespace UnturnedGodot
                 _focusObjectDoor = hitObjectDoor;
                 _focusObjectDoor?.SetLookFocused(true);
             }
+            // a barricaded door: flag its outline RED while looked at -- set per-frame because OutlineOverlay re-reads
+            // WorldItem.FocusColor every frame, while SetLookFocused only claims White on a focus-CHANGE. The
+            // "Door is barricaded" line fires on the F-press (below); the red rim is the passive "can't open this" tell.
+            if (_focusObjectDoor != null && IsInstanceValid(_focusObjectDoor) && ObjectDoorBarricaded(_focusObjectDoor))
+                WorldItem.FocusColor = Colors.Red;
             if (hitBed != _focusBed)
             {
                 if (IsInstanceValid(_focusBed)) _focusBed.SetLookFocused(false);
@@ -1642,6 +1647,8 @@ namespace UnturnedGodot
 
         Door _fHeldDoor;              // the door F is being held on -> hold to lock/unlock
         float _doorLockTimer;
+        const float BarricadedMsgTime = 1.5f;   // how long "Door is barricaded" lingers after you try to open a barricaded door
+        float _barricadedDoorMsg;                // seconds left to show that line (set on the F-press; ticked down in _Process)
 
         /// <summary>Lock or unlock a door as this player. Public for the same reason the other Request*
         /// helpers are: the hold path needs a captured mouse, which a headless test cannot have.</summary>
@@ -4572,6 +4579,17 @@ namespace UnturnedGodot
             return d.Toggle();
         }
 
+        // A placed door is BARRICADED if a window-barricade panel fills EITHER face of its opening -> it won't open
+        // (F says "Door is barricaded") and its look-outline goes red. Only doored openings on a live WallSurface
+        // qualify; a standalone deployable door (parented to the world, not a wall) never is. (master 2026-09-01)
+        bool ObjectDoorBarricaded(ObjectDoor d)
+        {
+            if (d == null || !IsInstanceValid(d) || d.GetParent() is not Node3D host) return false;
+            if (host.GetParent() is not WallSurface w) return false;
+            int oi = w.OpeningIndexForDoorHost(host);
+            return oi >= 0 && (BarricadePlacer.SlotFilled(w, oi, 1) || BarricadePlacer.SlotFilled(w, oi, -1));
+        }
+
         /// <summary>Claim a bed as this player's respawn point, releasing whichever they held.</summary>
         public bool RequestClaimBed(Bed b)
         {
@@ -5284,7 +5302,11 @@ namespace UnturnedGodot
                 }
                 else if (_focusFluid != null && IsInstanceValid(_focusFluid)) { _fHeldFluid = _focusFluid; _fluidPickupTimer = 0f; }   // hold F on a placed fluid device -> pick it up (UpdateFluidPickup)
                 else if (_focusDoor != null && IsInstanceValid(_focusDoor)) { _fHeldDoor = _focusDoor; _doorLockTimer = 0f; }   // looking at a door: F starts a HOLD -> lock/unlock (UpdateDoorLockHold); a quick TAP opens/closes it (fired on release)
-                else if (_focusObjectDoor != null && IsInstanceValid(_focusObjectDoor)) RequestToggleObjectDoor(_focusObjectDoor);   // looking at an openable prop door (fridge): F toggles it directly, no hold/lock semantics for this MVP (unlike a building Door)
+                else if (_focusObjectDoor != null && IsInstanceValid(_focusObjectDoor))   // looking at an openable prop door (fridge / doorway door): F toggles it directly (no hold/lock semantics, unlike a building Door)
+                {
+                    if (ObjectDoorBarricaded(_focusObjectDoor)) _barricadedDoorMsg = BarricadedMsgTime;   // boards on either face -> blocked; flash "Door is barricaded" (asserted below, after UpdateFluidPickup clears the shared HUD each frame) (master 2026-09-01)
+                    else RequestToggleObjectDoor(_focusObjectDoor);
+                }
                 else if (_focusTV != null && IsInstanceValid(_focusTV)) _focusTV.Toggle();   // looking at a TV: F toggles it on/off (per-TV state)
                 else if (_focusLamp != null && IsInstanceValid(_focusLamp)) _focusLamp.Toggle();   // looking at a standing/desk lamp: F toggles it on/off
                 else if (_focusElevButton != null && IsInstanceValid(_focusElevButton)) _focusElevButton.Press();   // looking at a floor button: F sends the car to that floor (the button panel is the interactable now, not the car)
@@ -6537,6 +6559,7 @@ namespace UnturnedGodot
             UpdateDeployPickup((float)delta);   // hold-F to pick a placed deployable back up (its wires disconnect)
             UpdateFluidPickup((float)delta);    // hold-F to pick a placed fluid device back up (its hoses/power wire disconnect)
             UpdateDoorLockHold((float)delta);   // hold-F on a door you own to lock/unlock it (a tap opens/closes)
+            if (_barricadedDoorMsg > 0f) { _barricadedDoorMsg -= (float)delta; if (_fHeldFluid == null && _fHeldDoor == null) FluidPickupHudSet("Door is barricaded"); }   // re-assert AFTER UpdateFluidPickup (which blanks the shared HUD each idle frame) so the "can't open" line stays up for its window
             UpdateFluidContainerHud((float)delta);   // held fluid container: show its contents + [LMB] sip / [RMB] fill hint (strawberry)
             if (HoldingFisher) TickFishing((float)delta);   // rod out: charge gauge + bite timer + bobber flight/bob + line
 

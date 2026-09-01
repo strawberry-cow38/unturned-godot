@@ -1241,6 +1241,25 @@ namespace UnturnedGodot
                 return;
             }
 
+            // UG_WBDOOR=1 -> two DOORED openings: left a plain door, right the same door boarded over (planks on the
+            // near face) -> shows the barricade fits a full-height doorway + sits proud of the door (master 2026-09-01).
+            if (System.Environment.GetEnvironmentVariable("UG_WBDOOR") != null)
+            {
+                float dh = UnturnedSim.WallOpenings.DoorHeight;
+                foreach (var (px, barr) in new[] { (-2.3f, false), (2.3f, true) })
+                {
+                    var wall = new WallSurface { Length = 3.6f, Height = dh, Thickness = 0.5f, Position = new Vector3(px - 1.8f, 0f, 0f) };
+                    wall.Openings.Add(new UnturnedSim.WallOpening(0.8f, 0f, 2.0f, dh - 0.6f) { DoorProp = "Door_Pine" });
+                    AddChild(wall);
+                    if (barr) { var w2 = wall; Callable.From(() => Barricade.PlaceInWindow(w2, 0, 1, DeployableDef.WindowBarricade)).CallDeferred(); }
+                }
+                var camd = new Camera3D { Current = true, Fov = 60f };
+                AddChild(camd);
+                camd.GlobalPosition = new Vector3(1.6f, 2.3f, 8f);
+                camd.LookAt(new Vector3(0f, 1.9f, 0f), Vector3.Up);
+                return;
+            }
+
             // three walls side by side, each with a centred window boarded on the +Z (camera) face by a different
             // style -> one render proves all three looks + their fit. left = wooden planks, mid = metal bars, right = metal plate.
             (float cx, DeployableDef def, string label)[] cells = {
