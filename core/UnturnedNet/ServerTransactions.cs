@@ -32,6 +32,8 @@ namespace UnturnedGodot.Net
         public long GunStatesRejected;      // empty cell / a different item at that address (a stale client grid)
         public long ConsoleApplied;
         public long ConsoleRejected;        // unknown verb / cheats disabled / bad args
+        public long DeathDrops;             // deaths that emptied a bag onto the ground (0 items carried still counts)
+        public long DeathDropItems;         // world items those deaths created (grid items + worn clothing)
     }
 
     /// <summary>
@@ -587,6 +589,75 @@ namespace UnturnedGodot.Net
             var fwd = new Vector3(-Mathf.Sin(yawRad), 0f, -Mathf.Cos(yawRad));
             var origin = (p?.Pos ?? Vector3.zero) + fwd * 1.2f + new Vector3(0f, 1.0f, 0f);
             SpawnWorldItem(jar.item, origin, fwd * 2.5f + new Vector3(0f, 2f, 0f));
+        }
+
+        /// <summary>DEATH DROP (strawberry 2026-09-02: "your items are kept after death instead of dropping on
+        /// the ground"). Everything the player CARRIED becomes a real world item at the death spot: both hand
+        /// slots, the pockets, every clothing page, then the worn clothing itself -- retail's
+        /// Lose_Items/Lose_Clothes default. Each lands as a WorldItemReplication entity + a WorldItemSpawned
+        /// broadcast, so every client (the victim included) materializes it through its WorldItemReplicaView and
+        /// anyone can pick it up through the ordinary PickupItem command. Nothing is deleted: the Item objects
+        /// move from the grid onto the ground with their state (ammo, attachments, fuel, fluid, quality) intact.
+        ///
+        /// ORDER MATTERS: pages before clothes. Taking a bag off resizes its page to 0x0 and DISCARDS whatever
+        /// was in it (PlayerInventory.Resize) -- unwearing first would silently destroy the backpack's contents.
+        /// STORAGE (7) and AREA (8) are external containers, not the player: an open crate's page is saved back
+        /// into the crate and CLOSED (releasing the one-opener lock a corpse would otherwise hold forever).
+        ///
+        /// Placement: a flat ring at the feet, no toss. Command-spawned entities have no server-side physics node
+        /// to settle them (WorldItemNetSync only tracks nodes), so a lofted item would hover where it spawned.
+        /// Returns the number of world items created. Called from ServerCombat.PlayerDied (wired in
+        /// NetWorldServer) -- the single death path, so bullets, fall, zombies, starvation and OOB all drop.</summary>
+        public int DropInventoryOnDeath(ushort playerId)
+        {
+            var inv = SenderInventory(playerId);
+            if (inv == null) return 0;
+
+            // an open crate is not yours to drop: save its page back and release the lock (the client's
+            // StorageClosed lands so its STORAGE tab shuts, exactly as a CloseStorage command would)
+            uint openCrate = _inventories.TryGet(playerId, out var entry) ? entry.OpenCrateId : 0;
+            if (openCrate != 0 && _inventories.ServerCloseStorage(playerId, _tick()))
+                _sendTo(playerId, NetMessagePak.Pack(ReplicationIds.EventStorageClosed, new StorageClosedEvent { NetId = openCrate }.Write));
+
+            var feet = _players.TryGetByOwner(playerId, out var p) ? p.Pos : Vector3.zero;
+            int n = 0;
+            for (byte page = 0; page < PlayerInventory.STORAGE; page++)
+            {
+                var pg = inv.items[page];
+                while (pg.getItemCount() > 0)
+                {
+                    byte last = (byte)(pg.getItemCount() - 1);
+                    var jar = pg.getItem(last);
+                    pg.removeItem(last);
+                    if (jar?.item == null) continue;
+                    SpawnWorldItem(jar.item, DeathDropSpot(feet, n), Vector3.zero);
+                    n++;
+                }
+            }
+            foreach (var slot in DeathDropClothingOrder)
+            {
+                var worn = WornIn(inv, slot);
+                if (worn == null) continue;
+                Wear(inv, slot, null);
+                SpawnWorldItem(worn, DeathDropSpot(feet, n), Vector3.zero);
+                n++;
+            }
+            _inventories.ServerMarkDirty(playerId);   // removeItem dirtied the pages; the bare worn-slot writes did not
+            Diag.DeathDrops++;
+            Diag.DeathDropItems += n;
+            return n;
+        }
+
+        static readonly EItemType[] DeathDropClothingOrder =
+            { EItemType.HAT, EItemType.GLASSES, EItemType.MASK, EItemType.VEST, EItemType.BACKPACK, EItemType.SHIRT, EItemType.PANTS };
+
+        /// <summary>The i-th drop's spot: a golden-angle spiral of 0.45-0.95 m around the feet, 5 cm up so an
+        /// item sits on flat ground rather than in it. Deterministic (no RNG) so the L0 parity checks hold.</summary>
+        static Vector3 DeathDropSpot(Vector3 feet, int i)
+        {
+            float ang = i * 2.399963f;                       // golden angle in radians -- no two of the first dozens overlap
+            float r = 0.45f + 0.5f * (i % 4) / 3f;
+            return feet + new Vector3(Mathf.Cos(ang) * r, 0.05f, Mathf.Sin(ang) * r);
         }
 
         void OnPickupItem(ushort sender, PickupItemCommand cmd)

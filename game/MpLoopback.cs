@@ -175,6 +175,13 @@ namespace UnturnedGodot
                     if (Server.Inventories.TryGet(peer.PlayerId, out var inv))
                         PlayerController.PopulateSpawnKit(inv.Inventory);   // clothes only: no starter kit (strawberry 2026-08-16)
                 };
+                // A new life gets the same outfit back (2026-09-02): death drops the worn clothes with everything
+                // else, and the clothes are the grid -- verbatim from DedicatedServer, see the note there.
+                Server.Combat.PlayerRespawned += (pid, tick) =>
+                {
+                    if (Server.Inventories.TryGet(pid, out var inv))
+                        PlayerController.PopulateSpawnKit(inv.Inventory);
+                };
                 // SEAMS (verbatim from ClientWorldSession.SpawnShell:441-445): the local player's grid/consume/
                 //     craft actions route as INTENT over the wire. Each is null in default SP/loopback, so the
                 //     direct mutation stays byte-identical; SETTING it makes PlayerController take the wire

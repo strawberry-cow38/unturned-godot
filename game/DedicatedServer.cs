@@ -122,6 +122,16 @@ namespace UnturnedGodot
                 if (Server.Inventories.TryGet(peer.PlayerId, out var inv))
                     PlayerController.PopulateSpawnKit(inv.Inventory);   // clothes ONLY -- see below
             };
+            // A NEW LIFE GETS THE SAME OUTFIT (2026-09-02). Death now drops everything -- the worn clothes
+            // included, and the clothes ARE the grid -- so a respawn re-issues the spawn kit exactly as a
+            // join does (retail re-applies the character's default clothing on every spawn). Fires inside
+            // ServerCombat.Respawn, before this tick's inventory commit, so the shirt and pants ride the
+            // same owner echo as the revive.
+            Server.Combat.PlayerRespawned += (pid, tick) =>
+            {
+                if (Server.Inventories.TryGet(pid, out var inv))
+                    PlayerController.PopulateSpawnKit(inv.Inventory);
+            };
             // Phase 6: the transactional slice's def tables -- the same DeployableDef/blueprint data every
             // client build carries (content-hash-matched), feeding placement validation + the server solve.
             DeployableNetSchema.RegisterAll(Server.Deployables.Schema);

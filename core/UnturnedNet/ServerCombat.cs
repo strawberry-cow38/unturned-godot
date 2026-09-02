@@ -350,6 +350,7 @@ namespace UnturnedGodot.Net
             // seam falls back to a plain ServerTeleport when the owner isn't client-driven (bystander/loopback).
             if (RepositionOwner == null || !RepositionOwner(cs.OwnerPlayerId, where, tick))
                 _players.ServerTeleport(cs.OwnerPlayerId, where, tick);
+            PlayerRespawned?.Invoke(cs.OwnerPlayerId, tick);   // a new life gets the spawn outfit back (the death drop took the old one)
             var evt = new PlayerRespawnedEvent { PlayerId = cs.OwnerPlayerId };
             _broadcast(NetMessagePak.Pack(ReplicationIds.EventPlayerRespawned, evt.Write));
         }
@@ -608,6 +609,7 @@ namespace UnturnedGodot.Net
             cs.RespawnAtTick = tick + RespawnDelayTicks;
             _players.ServerClearInput(victim);   // a corpse stops consuming its held-keys input
             if (attacker != 0 && attacker != victim) CreditKill(attacker, tick);
+            PlayerDied?.Invoke(victim, tick);    // the death drop lands here -- its spawn facts go out before the death fact
             var evt = new PlayerDiedEvent { Victim = victim, Killer = attacker == victim ? (ushort)0 : attacker };
             _broadcast(NetMessagePak.Pack(ReplicationIds.EventPlayerDied, evt.Write));
         }
@@ -616,6 +618,23 @@ namespace UnturnedGodot.Net
         /// bullet/melee/grenade/PvP all funnel through CreditKill. The host decides the award; unset = no
         /// coupling.</summary>
         public Action<ushort> KillCredited;
+
+        /// <summary>Death seam (victim, tick): fires INSIDE the one death path (ApplyPlayerDamage -- bullets,
+        /// melee, grenades, and everything queued through DamagePlayerExternal: fall, OOB, zombies, blasts,
+        /// starvation, deadzones) after the entity is marked dead and BEFORE the PlayerDied broadcast, so any
+        /// facts the handler emits (the death drop's WorldItemSpawned events) reach clients ahead of the
+        /// death they explain. NetWorldServer wires this to ServerTransactions.DropInventoryOnDeath: until
+        /// 2026-09-02 nothing was wired here at all and a dead player's bag simply came back with them
+        /// (strawberry: "your items are kept after death instead of dropping on the ground"). Unset = the old
+        /// keep-inventory behaviour, which is what every pre-existing L0 combat harness asserts against.</summary>
+        public Action<ushort, long> PlayerDied;
+
+        /// <summary>Respawn seam (player, tick): fires inside Respawn after the entity is revived and
+        /// repositioned, BEFORE the PlayerRespawned broadcast and before this tick's inventory commit -- so
+        /// a handler that re-grants the spawn outfit (DedicatedServer / MpLoopback, the same clothes the
+        /// join seeding hands out) rides the same tick's owner echo as the revive. Game-side because the kit
+        /// itself (PlayerController.PopulateSpawnKit) is catalog data core/ cannot see.</summary>
+        public Action<ushort, long> PlayerRespawned;
 
         void CreditKill(ushort playerId, long tick)
         {

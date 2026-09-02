@@ -154,6 +154,10 @@ namespace UnturnedGodot.Net
                 Interactables.TryGetSpawn(pid, out var bedSpawn, out _) ? bedSpawn + Vector3.up * 0.5f : (Vector3?)null;
             Transactions.IsSeated = VehicleHost.IsDriver;   // console teleport rejects seated senders (the seat teleport owns the entity, #27)
             Combat.KillCredited = killer => { if (KillExperience > 0) Transactions.AwardXp(killer, KillExperience); };
+            // DEATH DROPS EVERYTHING (strawberry 2026-09-02). The one death path in ServerCombat had never
+            // touched the inventory, so a corpse kept its bag and stood back up with it. Wired in core so
+            // every host (dedicated, loopback SP, the L0 harness) gets it -- there is no game-side death.
+            Combat.PlayerDied = (victim, tick) => Transactions.DropInventoryOnDeath(victim);
             // B5 (SP/MP-unify): server-authoritative fine vitals. HP is NEVER owned by the vitals sim -- each
             // tick ServerStep re-seeds Sim.Health from the single HP authority (CombatState.HealthExact) and
             // routes the delta OUT: starvation loss through the queued DamagePlayerExternal env sink (death-
