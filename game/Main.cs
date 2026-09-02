@@ -7378,6 +7378,7 @@ namespace UnturnedGodot
                 if (_playableClient)   // --connect= (C3): the predicted first-person shell -- its camera is the view once the join snapshot seeds the spawn
                 {
                     AddChild(new ClientWorldSession { Host = _connectHost, Port = _connectPort != 0 ? _connectPort : PortEnv(), Driver = res.Sim, Sun = res.Sun, Env = res.Env,
+                                                      PlayerName = PlayerProfile.Name,   // the HANDSHAKE name (what others see until SetProfile lands, and if it never does) -- was the field default "player" for every real joiner
                                                       DayNight = res.DayNight, Resources = res.Resources, Destructibles = res.Destructibles,   // C5: the world-state views drive these + rubble
                                                       Terr = res.Terr,                                       // C6: terrain-snaps the vehicle-exit spot (§7 risk 6)
                                                       ApplyServerHoliday = res.ApplyHoliday });              // P3: the deferred holiday content builds with the SERVER's holiday at Accept

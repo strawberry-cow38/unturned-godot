@@ -304,7 +304,8 @@ namespace UnturnedGodot.Net
             {
                 if (!Profiles.ServerClaimAvatarSend(peer.PlayerId, hash)) continue;
                 message ??= NetMessagePak.Pack(ReplicationIds.EventAvatarData,
-                                               new AvatarDataEvent { Hash = hash, Png = png }.Write);
+                                               new AvatarDataEvent { Hash = hash, Png = png }.Write,
+                                               bufferSize: png.Length + 64);   // the PNG is the payload: size the buffer to it (Pack would grow to it anyway)
                 peer.SendReliable(message);   // packed ONCE for the whole fan-out, not per recipient
             }
         }
@@ -313,7 +314,8 @@ namespace UnturnedGodot.Net
         {
             if (hash == 0 || png == null || !Profiles.ServerClaimAvatarSend(peer.PlayerId, hash)) return;
             peer.SendReliable(NetMessagePak.Pack(ReplicationIds.EventAvatarData,
-                                                 new AvatarDataEvent { Hash = hash, Png = png }.Write));
+                                                 new AvatarDataEvent { Hash = hash, Png = png }.Write,
+                                                bufferSize: png.Length + 64));
         }
 
         public void BroadcastEvent(byte[] message)
@@ -687,14 +689,16 @@ namespace UnturnedGodot.Net
         /// player sees the name they will actually get; the server does not rely on that and re-runs it.</summary>
         public bool SendSetProfile(string name, byte[] avatarPng)
             => SendCommand(ReplicationIds.CommandSetProfile,
-                           new SetProfileCommand { Name = ProfileRules.SanitizeName(name), AvatarPng = avatarPng }.Write);
+                           new SetProfileCommand { Name = ProfileRules.SanitizeName(name), AvatarPng = avatarPng }.Write,
+                           bufferSize: ProfileBufferSize(avatarPng));
 
         /// <summary>Send a profile WITHOUT the client-side sanitise -- what a modified client, or one written
         /// by someone who read the wire format, would send. Exists so a test can prove the SERVER's pass is
         /// what protects everyone, rather than proving the client politely sanitised its own input.</summary>
         public bool SendRawProfileForTest(string name, byte[] avatarPng)
             => SendCommand(ReplicationIds.CommandSetProfile,
-                           new SetProfileCommand { Name = name, AvatarPng = avatarPng }.Write);
+                           new SetProfileCommand { Name = name, AvatarPng = avatarPng }.Write,
+                           bufferSize: ProfileBufferSize(avatarPng));
 
         public NetSessionState State => Session.State;
         public ushort PlayerId => Session.PlayerId;
@@ -869,10 +873,15 @@ namespace UnturnedGodot.Net
         // ---- Phase 6 transactional commands (all ReliableOrdered -- §2.3). Each returns false when not
         // connected (nothing sent); results come back as owner-block snapshots and/or events. ----
 
-        bool SendCommand(byte commandId, System.Action<SDG.NetPak.NetPakWriter> write)
+        /// <summary>The profile command is the one command whose payload is a FILE (a 128x128 PNG, up to
+        /// ProfileRules.MaxAvatarBytes): name + length + bytes, with room for the wire framing. Pack grows
+        /// to fit regardless; sizing it up front just skips the 256 -> 1K -> 4K -> ... retries.</summary>
+        static int ProfileBufferSize(byte[] avatarPng) => (avatarPng?.Length ?? 0) + 4 * ProfileRules.MaxNameChars + 64;
+
+        bool SendCommand(byte commandId, System.Action<SDG.NetPak.NetPakWriter> write, int bufferSize = 256)
         {
             if (Session.State != NetSessionState.Connected) return false;
-            Session.SendReliable(NetMessagePak.Pack(commandId, write));
+            Session.SendReliable(NetMessagePak.Pack(commandId, write, bufferSize));
             return true;
         }
 

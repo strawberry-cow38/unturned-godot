@@ -59,6 +59,76 @@ namespace UnturnedNet.Tests
         static string NameSeenBy(NetWorldClient viewer, ushort ofPlayer)
             => viewer.Profiles.TryGet(ofPlayer, out var e) ? e.Name : null;
 
+        /// <summary>A 128x128 PNG the SIZE a real one is. Png() above is structurally valid but 69 bytes -- one
+        /// zlib'd row of a flat colour -- and that is why the wire bug lived for as long as it did: nothing in
+        /// this suite ever sent a picture that could not fit in NetMessagePak's 256-byte default buffer, while
+        /// no picture a launcher can produce ever could (the smallest flat-colour 128x128 is ~361 bytes; a real
+        /// photo squished to 128x128 is 15-60 KB). The validator is header-only and never inflates the IDAT, so
+        /// its payload can be incompressible pseudo-random bytes of whatever length the test needs.</summary>
+        static byte[] RealSizedPng(int idatBytes, int seed)
+        {
+            var ms = new MemoryStream();
+            ms.Write(new byte[] { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A });
+            var ihdr = new byte[13];
+            WriteBE32(ihdr, 0, 128); WriteBE32(ihdr, 4, 128);
+            ihdr[8] = 8; ihdr[9] = 6;
+            Chunk(ms, "IHDR", ihdr);
+            var idat = new byte[idatBytes];
+            new Random(seed).NextBytes(idat);
+            Chunk(ms, "IDAT", idat);
+            Chunk(ms, "IEND", Array.Empty<byte>());
+            return ms.ToArray();
+        }
+
+        [Test]
+        public void a_real_sized_picture_and_the_name_beside_it_reach_the_other_player()
+        {
+            // THE LIVE BUG (strawberry 2026-09-02: "custom names and pfps arent showing on the server"). Every
+            // joiner with a picture rendered as "player" + the checkerboard: SetProfileCommand (name, then
+            // u32 length, then the bytes) was packed into NetMessagePak's 256-byte default buffer, WriteBytes
+            // overflowed and wrote NOTHING, Pack shipped the truncated message anyway, the server's TryRead
+            // failed on the missing bytes and CommandRegistry dropped the WHOLE command as malformed --
+            // name included. The 69-byte Png() in the test above fits, so the suite never saw it.
+            //
+            // TEETH: with the 256-byte truncation back (NetMessagePak.Pack not growing, SendSetProfile not
+            // sizing), the NAME assertion fails first -- exactly the symptom -- and MalformedRejected is 1.
+            var h = new TransactionalHarness(8899).Connected("a", "b");
+            var a = h.Clients[0];
+            var b = h.Clients[1];
+            var png = RealSizedPng(idatBytes: 24 * 1024, seed: 7);   // a 24 KB photo -- mid-range for a squished 128x128
+            Assert.That(ProfileRules.CheckAvatarPng(png), Is.EqualTo(ProfileRules.AvatarVerdict.Ok), "fixture: the validator accepts it (header-only)");
+            Assert.That(png.Length, Is.GreaterThan(256 * 4), "fixture: far bigger than the default pack buffer AND its first growth step");
+
+            Assert.That(a.SendSetProfile("strawberry_cow", png), Is.True);
+            Assert.That(h.StepUntil(() => NameSeenBy(b, a.PlayerId) == "strawberry_cow"), Is.True,
+                $"b never saw a's NAME -- the whole command was dropped with the picture (seed={h.Net.Seed}, malformed={h.Server.Commands.Diag.MalformedRejected})");
+            Assert.That(h.Server.Commands.Diag.MalformedRejected, Is.EqualTo(0), "the server parsed the command whole -- nothing was truncated on the way in");
+
+            Assert.That(h.StepUntil(() => b.Profiles.TryGetAvatar(a.PlayerId, out _)), Is.True,
+                $"b never received a's picture (seed={h.Net.Seed})");
+            Assert.That(b.Profiles.TryGetAvatar(a.PlayerId, out var got), Is.True);
+            Assert.That(got, Is.EqualTo(png), "all 24 KB arrived unchanged (the server->client AvatarData event grew too)");
+        }
+
+        [Test]
+        public void the_largest_allowed_picture_reaches_the_other_player()
+        {
+            // The cap is the contract: a picture the validator ACCEPTS must also SEND. 64 KB minus framing.
+            var h = new TransactionalHarness(8898).Connected("a", "b");
+            var a = h.Clients[0];
+            var b = h.Clients[1];
+            var png = RealSizedPng(idatBytes: ProfileRules.MaxAvatarBytes - 8 - 25 - 12 - 12, seed: 11);
+            Assert.That(png.Length, Is.LessThanOrEqualTo(ProfileRules.MaxAvatarBytes), "fixture: exactly at the cap");
+            Assert.That(ProfileRules.CheckAvatarPng(png), Is.EqualTo(ProfileRules.AvatarVerdict.Ok), "fixture: the validator accepts it");
+
+            Assert.That(a.SendSetProfile("edge", png), Is.True);
+            Assert.That(h.StepUntil(() => b.Profiles.TryGetAvatar(a.PlayerId, out _), maxTicks: 800), Is.True,
+                $"b never received the cap-sized picture (seed={h.Net.Seed}, malformed={h.Server.Commands.Diag.MalformedRejected})");
+            Assert.That(b.Profiles.TryGetAvatar(a.PlayerId, out var got), Is.True);
+            Assert.That(got, Is.EqualTo(png));
+            Assert.That(NameSeenBy(b, a.PlayerId), Is.EqualTo("edge"));
+        }
+
         [Test]
         public void a_name_and_a_picture_reach_the_other_player()
         {
