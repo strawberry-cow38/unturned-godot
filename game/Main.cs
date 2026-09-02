@@ -4349,17 +4349,16 @@ namespace UnturnedGodot
                 AddChild(zroot);
                 Color red = new(1f, 0.22f, 0.22f), yel = new(1f, 0.82f, 0.2f), blu = new(0.32f, 0.62f, 1f);
                 StandardMaterial3D ZMat(Color c) => new() { AlbedoColor = new Color(c.R, c.G, c.B, 0.32f), Transparency = BaseMaterial3D.TransparencyEnum.Alpha, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
-                if (_paStance == 3)   // PRONE: the body lies FLAT along its facing (-Z) -> zones run forward: legs back, torso mid, head front, all low
+                // EXACT boxes measured off the SKINNED mesh per stance (center + size, x/y/z)
+                void Box(float cy, float cz, float sx, float sy, float sz, Color c) => zroot.AddChild(new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(sx, sy, sz) }, Position = new Vector3(0f, cy, cz), MaterialOverride = ZMat(c) });
+                switch (_paStance)
                 {
-                    void HZ(float z0, float z1, float w, float h, Color c) => zroot.AddChild(new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(w, h, z1 - z0) }, Position = new Vector3(0f, 0.26f, (z0 + z1) * 0.5f), MaterialOverride = ZMat(c) });
-                    HZ(-0.55f, -0.02f, 0.46f, 0.46f, red);   // head forward at skullZ ~ -0.25 (rig faces -Z)
-                    HZ(-0.02f, 0.45f, 0.56f, 0.44f, yel);    // torso
-                    HZ(0.45f, 0.92f, 0.5f, 0.42f, blu);      // legs back toward footZ ~ +0.70
-                }
-                else
-                {
-                    void VZ(float y0, float y1, Color c) => zroot.AddChild(new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(2f * zr, y1 - y0, 2f * zr * 0.72f) }, Position = new Vector3(0f, (y0 + y1) * 0.5f, 0f), MaterialOverride = ZMat(c) });
-                    VZ(zhm, ztop, red); VZ(ztm, zhm, yel); VZ(0f, ztm, blu);
+                    case 2:  // CROUCH
+                        Box(1.27f, -0.31f, 0.40f, 0.61f, 0.47f, red); Box(0.69f, -0.09f, 1.76f, 0.95f, 0.79f, yel); Box(0.26f, 0.22f, 0.81f, 0.66f, 1.03f, blu); break;
+                    case 3:  // PRONE
+                        Box(0.66f, -0.36f, 0.40f, 0.60f, 0.47f, red); Box(0.22f, -0.36f, 1.28f, 0.56f, 1.39f, yel); Box(0.20f, 0.78f, 0.81f, 0.38f, 0.59f, blu); break;
+                    default: // STAND
+                        Box(1.68f, -0.01f, 0.40f, 0.56f, 0.40f, red); Box(1.05f, -0.01f, 1.63f, 0.90f, 0.40f, yel); Box(0.28f, -0.01f, 0.81f, 0.60f, 0.40f, blu); break;
                 }
                 // fixed side legend so the labels never cover the body
                 void Lg(float y, Color c, string t) => AddChild(new Label3D { Text = t, Position = new Vector3(1.7f, y, 0f), Modulate = c, FontSize = 92, PixelSize = 0.0042f, Billboard = BaseMaterial3D.BillboardModeEnum.Enabled, NoDepthTest = true, OutlineSize = 12 });
@@ -7500,13 +7499,28 @@ namespace UnturnedGodot
                     _paRig.LeanDeg = _paLean;
                     _paRig.SetLocomotion(0f, hst);
                     _paRig.Tick(delta);
-                    if (!_paMeasured && _paT > 1.2f && _paRig.Skeleton != null)
+                    if (!_paMeasured && _paT > 1.2f && _paRig.Skeleton != null && _paRig.Body?.Mesh is ArrayMesh am)
                     {
                         _paMeasured = true;
                         var sk = _paRig.Skeleton;
-                        float B(string n, bool z = false) { int i = sk.FindBone(n); if (i < 0) return -9f; var o = sk.GetBoneGlobalPose(i).Origin; return z ? o.Z : o.Y; }
-                        var ab = _paRig.Body != null ? _paRig.Body.GetAabb() : new Aabb();
-                        GD.Print($"[measure] st={_paStance} skullY={B("Skull"):0.00} spineY={B("Spine"):0.00} footY={B("Left_Foot"):0.00} skullZ={B("Skull", true):0.00} footZ={B("Left_Foot", true):0.00} aabbY=[{ab.Position.Y:0.00}..{ab.End.Y:0.00}] aabbZ=[{ab.Position.Z:0.00}..{ab.End.Z:0.00}]");
+                        var arr = am.SurfaceGetArrays(0);
+                        var verts = (Vector3[])arr[(int)Mesh.ArrayType.Vertex];
+                        var bones = (int[])arr[(int)Mesh.ArrayType.Bones];   // 4 SKIN-SLOT indices per vert (NOT skeleton bones -- tinyclaw)
+                        var skin = _paRig.Body.Skin;
+                        int bc = skin.GetBindCount();
+                        var parts = new System.Collections.Generic.Dictionary<string, Aabb>();
+                        for (int i = 0; i < verts.Length; i++)
+                        {
+                            int slot = bones[i * 4];
+                            if (slot < 0 || slot >= bc) continue;
+                            int b = skin.GetBindBone(slot); if (b < 0) b = sk.FindBone(skin.GetBindName(slot));   // slot -> skeleton bone
+                            if (b < 0) continue;
+                            var p = sk.GetBoneGlobalPose(b) * skin.GetBindPose(slot) * verts[i];   // correct GPU skinning: pose * bindpose * v
+                            string bn = sk.GetBoneName(b);
+                            string grp = bn.Contains("Skull") ? "HEAD" : ((bn.Contains("Leg") || bn.Contains("Foot") || bn.Contains("Hip") || bn.Contains("Knee")) ? "LEGS" : "TORSO");
+                            parts[grp] = parts.TryGetValue(grp, out var ab) ? ab.Expand(p) : new Aabb(p, Vector3.Zero);
+                        }
+                        foreach (var g in new[] { "HEAD", "TORSO", "LEGS" }) if (parts.TryGetValue(g, out var a)) GD.Print($"[mesh] st={_paStance} {g} Y=[{a.Position.Y:0.00}..{a.End.Y:0.00}] X=[{a.Position.X:0.00}..{a.End.X:0.00}] Z=[{a.Position.Z:0.00}..{a.End.Z:0.00}]");
                     }
                     return;
                 }
