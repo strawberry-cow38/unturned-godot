@@ -110,9 +110,9 @@ namespace UnturnedGodot.Net
         {
             switch (stance)
             {
-                case 2: radius = 0.46f; top = 1.30f; headMin = 1.00f; torsoMin = 0.50f; break;   // CROUCH: body folds to ~0.72x, wider stance
-                case 3: radius = 0.50f; top = 0.52f; headMin = 0.34f; torsoMin = 0.18f; break;    // PRONE: flat + low (a vertical-cylinder approx of the lying body)
-                default: radius = 0.40f; top = 1.82f; headMin = 1.50f; torsoMin = 0.76f; break;   // STAND/SPRINT
+                case 2: radius = 0.34f; top = 1.30f; headMin = 1.00f; torsoMin = 0.46f; break;   // CROUCH: skull bone 0.91, head cube ~1.0-1.30
+                case 3: radius = 0.32f; top = 0.50f; headMin = 0.32f; torsoMin = 0.16f; break;    // PRONE: low (the along-body head/torso/leg split is horizontal -- viz uses the Z ranges)
+                default: radius = 0.28f; top = 1.82f; headMin = 1.44f; torsoMin = 0.68f; break;   // STAND: skull bone 1.32 but the head CUBE sits ~1.44-1.82; body ~0.56 wide x 0.4 deep
             }
         }
         const float ZombieZoneRadius = 0.4f;      // ZombieController capsule radius

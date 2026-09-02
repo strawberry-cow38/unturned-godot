@@ -65,7 +65,7 @@ namespace UnturnedGodot
         bool _driveTest, _swarm, _drivethru, _nade, _grassTest; PlayerController _dtPlayer;      // --drivetest=DIR [--swarm|--drivethru|--nade] : enter/drive a jeep; swarm = mob it; drivethru = loud drive wakes zombies; nade = grenade the parked car. _grassTest (UG_GRASSTEST=1): a lawn + overhead cam, jeep stays parked -> verify grass displacement
         bool _fireTest; PlayerController _ftPlayer; int _ftFrame;   // --firetest [--supp] : player fires downrange -- viewmodel / tracer / ADS / impact test rig
         bool _paActive; RiggedCharacter _paRig; float _paT; bool _paHit; bool _paGun;   // --puppetanim: drive a player rig idle->walk->run (SetLocomotion+Tick, like RemotePlayers). UG_PAHITBOX: PvP damage zones + idle. UG_PAGUN: gun-hold, and its own hold->ADS->lean sequence
-        byte _paStance; float _paLean;   // UG_PASTANCE=stand/crouch/prone/lean holds that pose under the hitbox overlay
+        byte _paStance; float _paLean; bool _paMeasured;   // UG_PASTANCE=stand/crouch/prone/lean holds that pose under the hitbox overlay; dumps the rig's bone Y/Z once posed
         bool _peiPlay; PlayerController _peiPlayer; int _peiFrame;   // --peiplay : drive a jeep on real PEI
         int _tpFrame; double _tpPrims, _tpDraws, _tpMs; int _tpN;   // --- UG_TERRPERF terrain cost probe
         PlayerController _pdPlayer; int _pdFireT;   // --peidrive on-foot player -> UG_AUTOFIRE terrain-impact verification
@@ -4351,10 +4351,10 @@ namespace UnturnedGodot
                 StandardMaterial3D ZMat(Color c) => new() { AlbedoColor = new Color(c.R, c.G, c.B, 0.32f), Transparency = BaseMaterial3D.TransparencyEnum.Alpha, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
                 if (_paStance == 3)   // PRONE: the body lies FLAT along its facing (-Z) -> zones run forward: legs back, torso mid, head front, all low
                 {
-                    void HZ(float z0, float z1, float w, Color c) => zroot.AddChild(new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(w, 0.42f, z1 - z0) }, Position = new Vector3(0f, 0.24f, (z0 + z1) * 0.5f), MaterialOverride = ZMat(c) });
-                    HZ(-1.05f, -0.55f, 0.5f, red);   // head is forward = -Z (rig faces -Z)
-                    HZ(-0.55f, 0.3f, 0.62f, yel);
-                    HZ(0.3f, 1.0f, 0.52f, blu);
+                    void HZ(float z0, float z1, float w, float h, Color c) => zroot.AddChild(new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(w, h, z1 - z0) }, Position = new Vector3(0f, 0.26f, (z0 + z1) * 0.5f), MaterialOverride = ZMat(c) });
+                    HZ(-0.55f, -0.02f, 0.46f, 0.46f, red);   // head forward at skullZ ~ -0.25 (rig faces -Z)
+                    HZ(-0.02f, 0.45f, 0.56f, 0.44f, yel);    // torso
+                    HZ(0.45f, 0.92f, 0.5f, 0.42f, blu);      // legs back toward footZ ~ +0.70
                 }
                 else
                 {
@@ -7500,6 +7500,14 @@ namespace UnturnedGodot
                     _paRig.LeanDeg = _paLean;
                     _paRig.SetLocomotion(0f, hst);
                     _paRig.Tick(delta);
+                    if (!_paMeasured && _paT > 1.2f && _paRig.Skeleton != null)
+                    {
+                        _paMeasured = true;
+                        var sk = _paRig.Skeleton;
+                        float B(string n, bool z = false) { int i = sk.FindBone(n); if (i < 0) return -9f; var o = sk.GetBoneGlobalPose(i).Origin; return z ? o.Z : o.Y; }
+                        var ab = _paRig.Body != null ? _paRig.Body.GetAabb() : new Aabb();
+                        GD.Print($"[measure] st={_paStance} skullY={B("Skull"):0.00} spineY={B("Spine"):0.00} footY={B("Left_Foot"):0.00} skullZ={B("Skull", true):0.00} footZ={B("Left_Foot", true):0.00} aabbY=[{ab.Position.Y:0.00}..{ab.End.Y:0.00}] aabbZ=[{ab.Position.Z:0.00}..{ab.End.Z:0.00}]");
+                    }
                     return;
                 }
                 if (_paGun)   // shouldered hold (0-1.6) -> ADS (1.6-3.2) -> lean right (3.2-4.8) -> lean left (4.8+); same AimBlend/LeanDeg the local 3p body uses
