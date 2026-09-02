@@ -218,6 +218,16 @@ namespace UnturnedGodot
 
         // The full placed world (terrain + Objects.dat + spawns). syncLoad skips every frame-yield so the
         // whole build runs synchronously inside one _Ready (the dedicated server uses this).
+        /// <summary>Zombies off switch (master 2026-09-02: "add back the ability to toggle zombies off on
+        /// singleplayer"). The old noZombies parameter went out with the zombie rewrite -- see the note in
+        /// ItemStateMoveLoopbackTests -- and UG_DEDICATED_NOZOMBIES went with it, so BOTH the singleplayer
+        /// world and the dedicated server lost the toggle. One env var covers both: a spawn the world never
+        /// makes cannot be streamed, ticked or replicated, so there is no second place to switch off.
+        /// Default is ON -- an unset variable spawns zombies exactly as before.</summary>
+        public static bool ZombiesDisabled =>
+            System.Environment.GetEnvironmentVariable("UG_NOZOMBIES") == "1"
+            || System.Environment.GetEnvironmentVariable("UG_DEDICATED_NOZOMBIES") == "1";   // the old dedicated name still works
+
         public static async System.Threading.Tasks.Task<WorldBuildResult> BuildFullWorld(
             Node root, WorldMode mode, string mapRoot, string mapPlace,
             bool syncLoad, string activeHoliday)
@@ -1546,6 +1556,8 @@ namespace UnturnedGodot
                 // ZOMBIES (rewrite -- docs/ZOMBIE_REDESIGN.md): the chunked, flow-field horde streamed on the player off
                 // PEI's real Spawns/Animals.dat points. Only the ~64 nearest the player ever fully simulate (HOT bodies);
                 // the rest are cheap chunk data / frozen. Sight-chase + sound-lure targeting.
+                if (ZombiesDisabled) GD.Print("[world] zombies OFF (UG_NOZOMBIES=1)");
+                else
                 {
                     await Phase("Zombies");
                     var zf = new ZombieChunkField { Player = player, Terr = terr };
@@ -1975,7 +1987,8 @@ namespace UnturnedGodot
 
             // ZOMBIES (rewrite -- docs/ZOMBIE_REDESIGN.md): the chunked flow-field horde, streamed on the player off the
             // real Animals.dat spawns. Only the ~64 near you fully simulate; sight-chase + sound-lure.
-            { var zf = new ZombieChunkField { Player = player, Terr = terr }; root.AddChild(zf); zf.LoadFromPei(mapRoot); }
+            if (ZombiesDisabled) GD.Print("[world] zombies OFF (UG_NOZOMBIES=1)");
+            else { var zf = new ZombieChunkField { Player = player, Terr = terr }; root.AddChild(zf); zf.LoadFromPei(mapRoot); }
             result.Ready = true;
             return result;
         }
