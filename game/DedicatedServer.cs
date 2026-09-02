@@ -29,6 +29,12 @@ namespace UnturnedGodot
         public Node WorldRoot;
         public string MapRoot;                       // optional: loads the 19 nav pockets as relevancy cells (§2.6)
         public string ActiveHoliday = "NONE";        // P3 (wire v6): the holiday THIS world was built with -- rides the Accept so joiners build the same holiday-gated props/colliders
+        // --- Arena server (strawberry 2026-09-02) -------------------------------------------------
+        public bool Arena = false;                                   // arena server: players spawn on the POI ring, and the match gates on player count
+        public System.Collections.Generic.List<(Godot.Vector3 Pos, float Yaw)> ArenaSpawns;   // generated at boot by BuildDedicated; null = fall back to Spawns/Players.dat
+        public int ArenaMinPlayers = 2;                              // "wait for >1 player before starting"
+        public bool MatchLive { get; private set; }                  // false until ArenaMinPlayers are connected
+        // ------------------------------------------------------------------------------------------
         public bool SurvivalDrain = false;           // B5 (SP/MP-unify): server-authoritative hunger/thirst + starvation + passive regen. OFF by default = SP byte-identical coarse-HP path (strawberry runs survival off); flip on for a survival server.
         public System.Collections.Generic.List<FixtureRecord> Fixtures;   // A3: world power fixtures (Circuit_0 grid sources) recorded by WorldBuilder -> ServerPlaced into the deployable graph at boot (mains OFF)
         public System.Collections.Generic.List<(string mesh, int table, bool display, string label, Godot.Vector3 pos, float yaw)> Containers;   // A1: world-build container manifest -> ContainerNetSync registers each as a server-owned fixture + stocks its grid
@@ -51,6 +57,20 @@ namespace UnturnedGodot
 
         long _lastStatusTick;
         UdpServerTransport _statusTransport;   // browser status-query responder; fed the live player count each tick
+
+        // Recomputed on every join/leave. Symmetric on purpose: falling back under the threshold returns the
+        // server to WAITING rather than leaving PvP armed for a lone player with nobody to fight. There is no
+        // round/win logic yet, so "one player left" is not a victory here -- it is an empty arena.
+        internal void UpdateMatchState()
+        {
+            if (!Arena || Server == null) return;
+            int n = Server.Session.Peers.Count;
+            bool live = n >= ArenaMinPlayers;
+            if (live == MatchLive && Server.Combat.PvPEnabled == live) return;
+            MatchLive = live;
+            Server.Combat.PvPEnabled = live;
+            GD.Print($"[ARENA] match {(live ? "LIVE" : "WAITING")} -- {n} player{(n == 1 ? "" : "s")} connected, need {ArenaMinPlayers}");
+        }
 
         public override void _Ready()
         {
@@ -161,6 +181,31 @@ namespace UnturnedGodot
                         var pick = spawns[(playerId - 1) % spawns.Count];
                         return new UnityEngine.Vector3(pick.x, Terr.SampleHeight(pick.x, pick.z) + 1.5f, pick.z);
                     };
+            }
+
+            // Arena: land joiners on the generated arena ring rather than the map's Players.dat spawns. Set AFTER
+            // the C2 block above so it wins, and only when spawns actually generated -- a POI that produced none
+            // must fall back to the real spawns rather than drop everyone on the origin.
+            if (Arena && ArenaSpawns != null && ArenaSpawns.Count > 0)
+            {
+                var ring = ArenaSpawns;
+                Server.SpawnProvider = playerId =>
+                {
+                    var pick = ring[(playerId - 1) % ring.Count];
+                    return new UnityEngine.Vector3(pick.Pos.X, pick.Pos.Y, pick.Pos.Z);
+                };
+                GD.Print($"[ARENA] spawn ring armed ({ring.Count} points)");
+            }
+
+            // The match gate. "Wait for >1 player before starting" has to MEAN something, and on a server whose
+            // clients own their own movement the one thing the server can withhold is damage -- so the gate rides
+            // ServerCombat.PvPEnabled. Below the threshold nobody can hurt anybody; at the threshold the match goes
+            // live. A gate that only printed a line would be one no test could fail on.
+            if (Arena)
+            {
+                Server.Session.PeerConnected += _ => UpdateMatchState();
+                Server.Session.PeerDisconnected += (_, __) => UpdateMatchState();
+                UpdateMatchState();   // a server that boots empty starts HELD, it does not default to live
             }
 
             Driver.Sim.Add(new DelegateSimStep((tick, dt) => Server.TickSimulation(), "net.server.sim"));

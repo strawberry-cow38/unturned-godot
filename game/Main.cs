@@ -5685,44 +5685,8 @@ namespace UnturnedGodot
             var res = await WorldBuilder.BuildFullWorld(this, WorldMode.Editor, _mapRoot, _mapPlace, syncLoad: true, ActiveHoliday());
             var terr = res.Terr;
             if (terr == null) { GD.PrintErr("[arena] no PEI terrain (no local map?) -- can't place spawns"); _worldReady = true; return; }
-            var pois = MapNodes.Locations;
-            if (pois.Count == 0) { GD.PrintErr("[arena] no POIs in nodes.tsv"); _worldReady = true; return; }
-            int idx = 0;
-            if (!string.IsNullOrEmpty(poiArg))
-            {
-                string want = poiArg.Replace(" ", "").ToLowerInvariant();
-                int f = pois.FindIndex(p => p.Name.Replace(" ", "").ToLowerInvariant().Contains(want));
-                if (f >= 0) idx = f;
-            }
-            else { int f = pois.FindIndex(p => p.Name.Contains("Charlottetown")); if (f >= 0) idx = f; }   // default: the big central town
-            var poi = pois[idx];
-            Vector3 node = new Vector3(poi.Pos.X, terr.SampleHeight(poi.Pos.X, poi.Pos.Z), poi.Pos.Z);
-
-            // the POI's ACTUAL extent = the bounding box of its real buildings (the "editor_loaded_object" group, one per
-            // placed Objects.dat prop) clustered near the node point -- NOT a circle round the label.
-            var buildings = new System.Collections.Generic.List<Node3D>();
-            foreach (var b in GetTree().GetNodesInGroup(ColliderBudget.Group))
-                if (b is StaticBody3D sb && (sb.CollisionLayer & WorldLayers.World) != 0) buildings.Add(sb);   // large SOLID buildings only (bit 0), not fences/rocks/small props
-            float link = ArenaMode.LinkDist;
-            { var re = System.Environment.GetEnvironmentVariable("UG_ARENALINK"); if (re != null && float.TryParse(re, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var rr)) link = rr; }
-            ArenaMode.PoiBounds(node, buildings, link, out var centre, out var halfX, out var halfZ, out int near);
-
-            // in-wall test: a standing box at the candidate overlapping a solid structure (WorldLayers.World) -> rejected
-            var space = GetViewport()?.World3D?.DirectSpaceState;
-            var probe = new BoxShape3D { Size = new Vector3(1.0f, 1.8f, 1.0f) };
-            System.Func<Vector3, bool> inWall = pos =>
-            {
-                if (space == null) return false;
-                var q = new PhysicsShapeQueryParameters3D
-                {
-                    Shape = probe, Transform = new Transform3D(Basis.Identity, pos + Vector3.Up * 0.9f),
-                    CollisionMask = WorldLayers.World, CollideWithBodies = true, CollideWithAreas = false,
-                };
-                return space.IntersectShape(q, 1).Count > 0;
-            };
-
-            var spawns = ArenaMode.GenerateSpawns(centre, halfX, halfZ, terr, inWall, ArenaMode.SpawnCount);
-            GD.Print($"[arena] POI '{poi.Name}': connected town = {near} buildings -> extent ~{halfX * 2:0}x{halfZ * 2:0}m, {spawns.Count}/{ArenaMode.SpawnCount} spawns (land + clear of walls)");
+            var spawns = ComputeArenaRing(terr, poiArg, out var centre, out var halfX, out var halfZ, out var poiName, out var inWall);
+            if (spawns == null) { _worldReady = true; return; }
             int n = 0;
             foreach (var (pos, yaw) in spawns) { AddArenaMarker(pos, new Color(0.15f, 0.95f, 1f), $"{++n}"); GD.Print($"[arena]   spawn {n}: ({pos.X:0},{pos.Y:0},{pos.Z:0})"); }
             AddArenaMarker(centre, new Color(1f, 0.25f, 0.85f), "C");
@@ -7230,6 +7194,58 @@ namespace UnturnedGodot
         // no camera/HUD/viewmodel/local player) + a NetServerSession over UdpServerTransport. The world's
         // SimDriver ticks the whole thing at 50 Hz with replication registered LAST (§2.5). syncLoad: a
         // server has no loading screen to paint -- block until the world stands, then start serving.
+        // The arena play area, computed once and shared. The --arenaspawns debug render exists so the ring can be
+        // eyeballed BEFORE a server uses it, which is only worth anything if the server uses this same code -- two
+        // copies of the geometry would drift and only one of them is ever looked at.
+        // Returns null (with the reason logged) when the world cannot support an arena.
+        System.Collections.Generic.List<(Vector3 Pos, float Yaw)> ComputeArenaRing(
+            Terrain terr, string poiArg, out Vector3 centre, out float halfX, out float halfZ, out string poiName,
+            out System.Func<Vector3, bool> inWallOut)
+        {
+            centre = Vector3.Zero; halfX = 0f; halfZ = 0f; poiName = null; inWallOut = _ => false;
+            if (terr == null) { GD.PrintErr("[arena] no PEI terrain (no local map?) -- can't place spawns"); return null; }
+            var pois = MapNodes.Locations;
+            if (pois.Count == 0) { GD.PrintErr("[arena] no POIs in nodes.tsv"); return null; }
+            int idx = 0;
+            if (!string.IsNullOrEmpty(poiArg))
+            {
+                string want = poiArg.Replace(" ", "").ToLowerInvariant();
+                int f = pois.FindIndex(p => p.Name.Replace(" ", "").ToLowerInvariant().Contains(want));
+                if (f >= 0) idx = f;
+            }
+            else { int f = pois.FindIndex(p => p.Name.Contains("Charlottetown")); if (f >= 0) idx = f; }   // default: the big central town
+            var poi = pois[idx]; poiName = poi.Name;
+            Vector3 node = new Vector3(poi.Pos.X, terr.SampleHeight(poi.Pos.X, poi.Pos.Z), poi.Pos.Z);
+
+            // the POI's ACTUAL extent = the bounding box of its real buildings clustered near the node point.
+            var buildings = new System.Collections.Generic.List<Node3D>();
+            foreach (var b in GetTree().GetNodesInGroup(ColliderBudget.Group))
+                if (b is StaticBody3D sb && (sb.CollisionLayer & WorldLayers.World) != 0) buildings.Add(sb);
+            float link = ArenaMode.LinkDist;
+            { var re = System.Environment.GetEnvironmentVariable("UG_ARENALINK"); if (re != null && float.TryParse(re, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var rr)) link = rr; }
+            ArenaMode.PoiBounds(node, buildings, link, out centre, out halfX, out halfZ, out int near);
+
+            // in-wall test: a standing box at the candidate overlapping a solid structure -> rejected.
+            var space = GetViewport()?.World3D?.DirectSpaceState;
+            if (space == null) GD.PrintErr("[arena] no physics space -- spawns are NOT wall-rejected this run");
+            var probe = new BoxShape3D { Size = new Vector3(1.0f, 1.8f, 1.0f) };
+            System.Func<Vector3, bool> inWall = pos =>
+            {
+                if (space == null) return false;
+                var q = new PhysicsShapeQueryParameters3D
+                {
+                    Shape = probe, Transform = new Transform3D(Basis.Identity, pos + Vector3.Up * 0.9f),
+                    CollisionMask = WorldLayers.World, CollideWithBodies = true, CollideWithAreas = false,
+                };
+                return space.IntersectShape(q, 1).Count > 0;
+            };
+
+            inWallOut = inWall;   // the caller reuses the SAME probe for gun drops -- a second one would disagree
+            var ring = ArenaMode.GenerateSpawns(centre, halfX, halfZ, terr, inWall, ArenaMode.SpawnCount);
+            GD.Print($"[arena] POI '{poi.Name}': connected town = {near} buildings -> extent ~{halfX * 2:0}x{halfZ * 2:0}m, {ring.Count}/{ArenaMode.SpawnCount} spawns (land + clear of walls)");
+            return ring;
+        }
+
         async void BuildDedicated()
         {
             // async void swallows exceptions silently -- a bad map path used to leave the server dead with no
@@ -7239,7 +7255,28 @@ namespace UnturnedGodot
                 string holiday = ActiveHoliday();   // P3: ONE decision -- the world builds with it AND it rides the Accept (joiners build the same collision set)
                 var res = await WorldBuilder.BuildFullWorld(this, WorldMode.Dedicated, _mapRoot, _mapPlace,
                     syncLoad: true, activeHoliday: holiday);
-                AddChild(new DedicatedServer { Port = PortEnv(), Driver = res.Sim, Terr = res.Terr,   // Terr: server grenades bounce on real terrain height (Phase 5)
+
+                // UG_ARENA=1 turns this into an arena server: players spawn on the POI ring instead of the map's
+                // Players.dat points, and the match holds until UG_ARENAMIN (default 2) are connected. Off by
+                // default, so every existing dedicated boot and every test harness is byte-identical.
+                bool arena = System.Environment.GetEnvironmentVariable("UG_ARENA") == "1";
+                System.Collections.Generic.List<(Vector3 Pos, float Yaw)> arenaRing = null;
+                int arenaMin = 2;
+                Vector3 arenaCentre = Vector3.Zero; float arenaHalfX = 0f, arenaHalfZ = 0f;
+                System.Func<Vector3, bool> arenaInWall = _ => false;
+                { var e = System.Environment.GetEnvironmentVariable("UG_ARENAMIN"); if (e != null && int.TryParse(e, out var m) && m > 0) arenaMin = m; }
+                if (arena)
+                {
+                    arenaRing = ComputeArenaRing(res.Terr, System.Environment.GetEnvironmentVariable("UG_ARENAPOI"),
+                                                 out arenaCentre, out arenaHalfX, out arenaHalfZ, out var arenaPoi, out arenaInWall);
+                    if (arenaRing == null || arenaRing.Count == 0)
+                        GD.PrintErr("[ARENA] no spawn ring generated -- falling back to the map's Players.dat spawns");
+                    else
+                        GD.Print($"[ARENA] arena server on '{arenaPoi}': {arenaRing.Count} spawns, holding until {arenaMin} players");
+                }
+
+                AddChild(new DedicatedServer { Port = PortEnv(), Driver = res.Sim, Terr = res.Terr,
+                    Arena = arena, ArenaSpawns = arenaRing, ArenaMinPlayers = arenaMin,   // Terr: server grenades bounce on real terrain height (Phase 5)
                     DayNight = res.DayNight, Resources = res.Resources, Destructibles = res.Destructibles, MapRoot = _mapRoot,   // Phase 8: tick-derived clock + resource bitmap + rubble + nav-pocket relevancy cells (§3.7/§2.6)
                     Deadzones = res.Deadzones,                                                       // SP/MP unify: the contaminated volumes get copied into the server's own hazard step
                     Fixtures = res.Fixtures,                                                         // A3: server-place the Circuit_0 grid-power sources into the deployable graph (mains OFF)
@@ -7247,6 +7284,13 @@ namespace UnturnedGodot
                     RemoteAvatars = true,                                                            // C2: remote peers get real avatar bodies (real spawns/collision/jump) on this world
                     ActiveHoliday = holiday,                                                         // P3 (wire v6): joiners build THIS holiday's props/colliders
                     AllowCheats = System.Environment.GetEnvironmentVariable("UG_DEDICATED_NOCHEATS") != "1" });   // test server: give/xp/skill console cheats ON (useful for testing); set UG_DEDICATED_NOCHEATS=1 to lock them off, no code change (review C1 toggle)
+                // GUN RAIN is the arena's loot model -- no normal loot, guns churn on the ground. NOTE: no
+                // ItemCatalog.RegisterAll() here, unlike the --arenaspawns debug path. WorldBuilder already
+                // registered the catalog during this build (WorldBuilder.cs:1617/1929) and RegisterAll CLEARS the
+                // asset table first, so re-running it on a live server would blank the assets out from under it.
+                if (arena && arenaRing != null && arenaRing.Count > 0)
+                    AddChild(new ArenaGuns { Terr = res.Terr, Centre = arenaCentre, HalfX = arenaHalfX, HalfZ = arenaHalfZ, InWall = arenaInWall, Target = 40 });
+
                 _worldReady = res.Ready;
                 GD.Print($"[DEDICATED] world up (terrain={(res.Terr != null ? "real map" : "fallback plane")}); listening on udp {PortEnv()}");
             }
