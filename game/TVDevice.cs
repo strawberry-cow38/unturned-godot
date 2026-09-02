@@ -1587,7 +1587,6 @@ namespace UnturnedGodot
 
         public void HubTick(double delta)   // PERF: hub-ticked at 30 Hz (was a per-frame engine callback; see TickHub)
         {
-            using var _prof = Prof.Scope("TVDevice");
             // The WHOLE feed, not just the plug half. This used to poll PlugPowered alone and rely on the mains
             // arriving as a push -- DayNightCycle sweeps the "tvdevices" group on a grid change. That works for the
             // scheduled blackout and for nothing else: `toggleGlobalPower` from the console, or any other caller of

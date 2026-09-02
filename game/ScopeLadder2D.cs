@@ -23,7 +23,6 @@ namespace UnturnedGodot
 
         public override void _Process(double delta)
         {
-            using var _prof = Prof.Scope("ScopeLadder2D");   // the other expression-bodied callback the pass missed
             QueueRedraw();
         }
 

@@ -562,7 +562,6 @@ namespace UnturnedGodot
         // reading the settled values.
         public override void _PhysicsProcess(double delta)
         {
-            using var _prof = Prof.Scope("DeployablePhys");
             if (Def == null) return;
 
             if (Def.IsSwitch || (Def.Fuel > 0f && !Def.IsBattery))   // remote control: a side trigger fed >=1w SETS on/off (master); triggers draw 0w. A switch flips its gate; a generator flips _powered -> its startup/cooldown ramp.
@@ -613,7 +612,6 @@ namespace UnturnedGodot
 
         public override void _Process(double delta)
         {
-            using var _prof = Prof.Scope("Deployable");
             // TRAP (landmine): proximity-armed. Watch for a victim inside TrapTrigger, then detonate. Throttled to ~5 Hz
             // -- a mine is cheap, but N mines x M targets EVERY frame is exactly the _PhysicsProcess-shaped cost we just
             // spent a day chasing (historically M was zombies; a proximity trap doesn't need per-frame resolution

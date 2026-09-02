@@ -6504,7 +6504,6 @@ namespace UnturnedGodot
 
         public void ProcessTick(double delta)   // PERF: engine callback taken by a TickProxy child (see TickProxy); body unchanged
         {
-            using var _prof = Prof.Scope("PlayerController");
             if (NetAvatar) return;   // per-frame work is all client-side (render interp, look focus, recoil drain, cam) -- none of it on a server avatar
             // R-HOLD ammo radial (shotguns): open the picker once R is held past the threshold (frees the mouse so its
             // cursor angle selects a wedge). PlayerController owns the close + mouse recapture, so a gun swap while it's
@@ -6569,7 +6568,7 @@ namespace UnturnedGodot
             if (_riding != null && !_dead && IsInstanceValid(_riding))   // C6 riding: chase the dead-reckoned puppet (it moves per-FRAME in VehicleReplicaView, no physics interp to sample)
                 PositionRideCam(_riding.GlobalTransform);
             OutlineOverlay.DrivingSuppress = _driving != null || _riding != null;   // in a vehicle: nothing focusable -> kill the outline overlay's per-frame 2nd cull + dilate (the 3p-cam POI fps drop, strawberry)
-            { ulong _t = Time.GetTicksUsec(); UpdateLookFocus(); Prof.Add("lookat", _t); }   // eye-ray -> focus the item you're aiming at
+            UpdateLookFocus();   // eye-ray -> focus the item you're aiming at
             UpdateWireLook();                                                                 // wire tool: look at a connection cube -> highlight + info readout
             UpdateHoseLook();                                                                 // hose tool: look at a fluid port -> highlight + info + drive the route preview
             UpdateRopeLook();                                                                 // rope tool: look at a vehicle tow node -> highlight + drive the tie preview
@@ -6579,7 +6578,7 @@ namespace UnturnedGodot
             UpdateWireArrows();                                                               // wire tool: show in/out arrows on every connection point (blue avail / red occupied)
             UpdateHoseArrows();                                                               // hose tool: show in/out arrows on every fluid port (mirror)
             if (_showLookHulls) UpdateLookHullViz();                                          // I-toggle: rebuild the look-hull wireframes
-            { ulong _t = Time.GetTicksUsec(); UpdateSalvage((float)delta); Prof.Add("salvage", _t); }   // wreck salvage prompt + blowtorch teardown
+            UpdateSalvage((float)delta);   // wreck salvage prompt + blowtorch teardown
             UpdateDeployPickup((float)delta);   // hold-F to pick a placed deployable back up (its wires disconnect)
             UpdateFluidPickup((float)delta);    // hold-F to pick a placed fluid device back up (its hoses/power wire disconnect)
             UpdateDoorLockHold((float)delta);   // hold-F on a door you own to lock/unlock it (a tap opens/closes)
@@ -7360,7 +7359,6 @@ namespace UnturnedGodot
 
         public void PhysicsTick(double delta)   // PERF: engine callback taken by a TickProxy child (see TickProxy); body unchanged
         {
-            using var _prof = Prof.Scope("PlayerController.phys");
             // BEFORE every early return below (driving, riding, NetHold): you can hold a gun in a car, and a
             // pending gun state that only flushes while on foot is a pending gun state that is sometimes lost.
             if (!NetAvatar) TickGunStateFlush(delta);

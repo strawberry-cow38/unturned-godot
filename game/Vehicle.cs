@@ -7334,7 +7334,6 @@ if (s.Wheels != null && s.Wheels.Length > 1)
         bool _interpOff;   // PERF: physics interpolation opted out while parked (see PhysicsTick)
         public void PhysicsTick(double delta)   // was _PhysicsProcess; body unchanged below the interpolation gate
         {
-            using var _prof = Prof.Scope("Vehicle.phys");
             // PERF (ETW 2026-09-02, measured with a notification histogram): with physics_interpolation on,
             // VehicleBody3D::_update_process_mode enables INTERNAL_PROCESS on ITSELF just to interpolate the wheel
             // visuals, so all 88 PEI cars took NOTIFICATION_INTERNAL_PROCESS every rendered frame -- and every one of

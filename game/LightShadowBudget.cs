@@ -105,7 +105,6 @@ namespace UnturnedGodot
 
         public override void _Process(double delta)
         {
-            using var _prof = Prof.Scope("LightShadowBudget");
             _clock += (float)delta;
             if (_clock < Interval) return;
             _clock = 0f;

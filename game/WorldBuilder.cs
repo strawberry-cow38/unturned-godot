@@ -1807,7 +1807,6 @@ namespace UnturnedGodot
             root.AddChild(new FpsCounter());   // top-right yellow FPS counter (master 2026-07-11)
             { var hmL = new CanvasLayer { Layer = 98 }; hmL.AddChild(new HitmarkerHUD()); root.AddChild(hmL); }   // hit / headshot markers (master)
             { var pause = new PauseMenu(); root.AddChild(pause); player.PauseMenu = pause; }               // ESC menu (parity with BuildPlayable)
-            root.AddChild(new Profiler());   // perf overlay, console `profiler` (parity)
             { var attach = new AttachmentMenu(); root.AddChild(attach); player.AttachMenu = attach; }       // T weapon-attachment menu -- was never wired in PEI drive, so T did nothing (broken since PEI map)
             { var ammo = new AmmoRadial(); root.AddChild(ammo); player.AmmoRadial = ammo; }                 // R-hold -> shotgun ammo-type picker (buckshot / slug)
         }

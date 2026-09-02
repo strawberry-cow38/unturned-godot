@@ -298,7 +298,6 @@ namespace UnturnedGodot
 
         public virtual void HubTick(double delta)   // PERF: hub-ticked at 30 Hz (was a per-frame engine callback; see TickHub)
         {
-            using var _prof = Prof.Scope("FluidContainer");
             // a powered pump with fluid moving through it VIBRATES its motor drum (strawberry: powered AND flowing, not
             // just powered). Idle / unpowered / dry -> the drum sits still at its base position.
             if (_pumpDrum != null && GodotObject.IsInstanceValid(_pumpDrum))

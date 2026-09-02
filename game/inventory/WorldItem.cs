@@ -439,19 +439,15 @@ namespace UnturnedGodot
                         if (LosCompare && _hitPts.Length >= 9)
                         {
                             bool other = Scan(order == null ? Los3 : null);
-                            Prof.Count("los_checked", 1);
-                            if (other != show) Prof.Count("los_DISAGREE", 1);
                         }
                         // How many of the nine we actually spend. Break-on-first-clear means a VISIBLE item is
                         // 1 and an occluded one is 9, so rays-per-call is the number that says whether cutting
                         // the sample count is worth anything or is a rounding error. Measure, then decide.
-                        Prof.Count("los_rays", _rays);
                     }
                 }
                 if (Visible != show) Visible = show;   // hide the whole prop when occluded/behind -- physics keeps running so it still settles
                 _shown = show;
                 if (!show && _glow != null && _glow.Visible) _glow.Visible = false;
-                Prof.Add("item_LOS", _pt);
             }
         }
     }

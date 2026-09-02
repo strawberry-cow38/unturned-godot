@@ -30,7 +30,6 @@ namespace UnturnedGodot
         // re-anchors on drift, which per-tick vs per-frame does not change.
         public override void _PhysicsProcess(double delta)
         {
-            using var _prof = Prof.Scope("WorldStateViews.phys");
             if (Client == null || DayNight == null || !GodotObject.IsInstanceValid(DayNight)) return;
             if (!Client.Clock.HasClock || Client.Applier.LastAppliedServerTick <= 0) return;
             if (Client.Clock.DayLengthSeconds > 0f) DayNight.DayLength = Client.Clock.DayLengthSeconds;
@@ -61,7 +60,6 @@ namespace UnturnedGodot
 
         public override void _PhysicsProcess(double delta)
         {
-            using var _prof = Prof.Scope("WorldStateViews.phys");
             if (Client == null || Field == null || !GodotObject.IsInstanceValid(Field)) return;
             if (Client.Resources.Version == _appliedVersion) return;
             _appliedVersion = Client.Resources.Version;
@@ -91,7 +89,6 @@ namespace UnturnedGodot
 
         public override void _PhysicsProcess(double delta)
         {
-            using var _prof = Prof.Scope("WorldStateViews.phys");
             if (Client == null || Field == null) return;
             if (Client.Destructibles.Version == _appliedVersion) return;
             _appliedVersion = Client.Destructibles.Version;
@@ -127,7 +124,6 @@ namespace UnturnedGodot
 
         public override void _PhysicsProcess(double delta)
         {
-            using var _prof = Prof.Scope("WorldStateViews.phys");
             if (Client == null) return;
             if (Client.InteractableState.Version == _appliedVersion) return;
             _appliedVersion = Client.InteractableState.Version;

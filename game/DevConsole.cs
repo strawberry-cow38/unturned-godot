@@ -244,20 +244,6 @@ namespace UnturnedGodot
             // are free for vehicle seats (strawberry 2026-08-16). Above the arg guard because every one of
             // them is a bare no-arg toggle. (zshadows/freezerigs -- the old F5/F6 zombie-rig dev tools --
             // removed with the zombie system.)
-            if (verb is "profiler" or "fps")
-            {
-                var pr = Profiler.Instance;
-                if (pr == null) { Log("profiler: no profiler in this scene"); return; }
-                Log($"profiler overlay {(pr.ToggleOverlay() ? "ON" : "OFF")}");
-                return;
-            }
-            if (verb is "renderscale" or "res3d")
-            {
-                var pr = Profiler.Instance;
-                if (pr == null) { Log("renderscale: no profiler in this scene"); return; }
-                Log($"3D render scale -> {pr.CycleRenderScale():0.##}x");
-                return;
-            }
             // (zshadows / freezerigs+animcut commands removed with the zombie system: they toggled
             // ZombieDirector's rig shadow casting and ZombieAnimCut's frozen-rig overlay, both gone.)
 

@@ -255,7 +255,6 @@ namespace UnturnedGodot
 
         public void HubTick(double delta)   // PERF: hub-ticked at 10 Hz (was a per-frame engine callback; see TickHub)
         {
-            using var _prof = Prof.Scope("TrafficLight");
             if (_broken || Frozen) return;
             float t = ClockSeconds();
             Phase p;

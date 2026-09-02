@@ -59,7 +59,6 @@ namespace UnturnedGodot
         public override void _ExitTree() { TickHub.Remove(this); }
         public void HubTick(double delta)   // PERF: hub-ticked at 2 Hz (was a per-frame engine callback; see TickHub)
         {
-            using var _prof = Prof.Scope("ClockDevice");
             if (!GodotObject.IsInstanceValid(_body)) { QueueFree(); return; }   // the clock mesh was destroyed -> destroy the hands with it (master)
             bool clockShown = _body.IsVisibleInTree();
             if (Visible != clockShown) Visible = clockShown;                     // hands appear/vanish WITH the dial -- the destructible break HIDES the mesh (doesn't free it), a reset re-shows it

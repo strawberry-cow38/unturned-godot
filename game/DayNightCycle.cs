@@ -205,7 +205,6 @@ void sky() {
 
         public override void _Process(double delta)
         {
-            using var _prof = Prof.Scope("DayNightCycle");
             if (!ExternalTime) Advance((float)delta * Speed / DayLength);   // Speed = the console timeSpeed multiplier
             if (VisualsEnabled) { Apply(); DriveStreetlights((float)delta); DriveMoteFade(); }
             DriveBlackout();   // gameplay (sets the grid flag) -> runs even headless/server, unlike the visual sweep
