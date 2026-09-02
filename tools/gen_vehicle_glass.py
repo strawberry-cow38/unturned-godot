@@ -26,8 +26,29 @@ Writes <out_base>_<label>.txt per pane: windshield, rear, l_front, r_front, l_re
 import sys, os, numpy as np
 from collections import deque
 
-SRC = sys.argv[1] if len(sys.argv) > 1 else 'game/content/sedan_body.txt'
-OUT = sys.argv[2] if len(sys.argv) > 2 else 'game/content/sedan_glass.txt'
+# --skip=a,b  drops panes the DERIVATION finds but the vehicle should not have. The tool reads
+# geometry, and geometry cannot tell you that a fire engine's rear window is not a thing anyone wants
+# glazed (strawberry 2026-08-31). Kept as an explicit argument rather than a table in here, so the
+# reason lives in the caller and no vehicle gets silently special-cased.
+_args = [a for a in sys.argv[1:] if not a.startswith('--')]
+SKIP = set()
+BAND = None
+for a in sys.argv[1:]:
+    if a.startswith('--skip='): SKIP |= {x.strip() for x in a[7:].split(',') if x.strip()}
+    # --band=lo,hi overrides the derived greenhouse band. The silhouette rule below infers the cabin
+    # from the body's own outline, which works on anything car-shaped but has no signal on a BOX: a bus
+    # never narrows at the waist, so the rule latches onto where the roof tapers and lands above the
+    # glass. Measured on the bus, the openings run to y 1.88 while the rule returned 1.81..2.74 -- a 7cm
+    # overlap, and panes 0.14m tall against a sedan's 0.86m.
+    # Two auto-corrections were tried and both made it worse (one never fired because a ray over the
+    # roofline hits nothing and that read as "open"; the second latched onto the roof hatch and produced
+    # zero panes). So this is an explicit argument rather than a cleverer heuristic: the caller states the
+    # band it measured, the same way --skip states a fact geometry cannot know.
+    elif a.startswith('--band='):
+        _b = [float(x) for x in a[7:].split(',')]
+        BAND = (min(_b), max(_b))
+SRC = _args[0] if len(_args) > 0 else 'game/content/sedan_body.txt'
+OUT = _args[1] if len(_args) > 1 else 'game/content/sedan_glass.txt'
 STEP, INSET, INSET_F = 0.03, 0.004, 0.045
 # The traced span runs first-open-cell..last-open-cell, so every edge stops up to a grid step SHORT
 # of the real aperture and you get a gap of daylight all the way round the glass. Real glazing sits
@@ -74,7 +95,32 @@ belt = min(s[0] for s in cabin)
 roof = max(s[0] for s in cabin) + 0.05
 XS = max(s[2] for s in cabin)                              # side plane = widest point of the cabin
 band_lo, band_hi = belt + 0.06, roof - 0.06
+if BAND is not None:
+    band_lo, band_hi = BAND
+    belt, roof = band_lo - 0.06, band_hi + 0.06
+    print(f"  band OVERRIDDEN by --band: {band_lo:.2f}..{band_hi:.2f}")
 print(f"  derived: belt {belt:.2f}  roof {roof:.2f}  cabin band {band_lo:.2f}..{band_hi:.2f}  side |x| {XS:.2f}")
+
+# ---- 1b. CAB Z-SPAN. The greenhouse sits over ONE stretch of the body. A pickup is the case that
+# breaks a whole-body scan: a tall cab between a LOW nose and a LOW bed. Tracing the frontmost solid
+# across every z at cabin height then picks up the NOSE on the rows just above the beltline and the
+# real windscreen on the rows above, and the least-squares plane splits the difference -- it leaves
+# the cab entirely and hangs the pane in open air over the bonnet. So keep only the z where the body
+# actually reaches greenhouse height, which is a shape fact like the beltline above.
+# Span by FIRST..LAST qualifying slice, never a contiguous run: these are low-poly bodies, most thin
+# z-slices hold no vertices at all, and treating "no vertices here" as "cab ends here" cut the sedan
+# greenhouse to 0.8 m and dropped four of its six panes.
+zres = 0.10
+need = belt + 0.55 * (roof - belt)
+zq = [z0 for z0 in np.arange(V[:, 2].min(), V[:, 2].max(), zres)
+      if ((V[:, 2] >= z0) & (V[:, 2] < z0 + zres)).sum() >= 1
+      and V[(V[:, 2] >= z0) & (V[:, 2] < z0 + zres), 1].max() >= need]
+if not zq: sys.exit("no cab: no z-slice reaches greenhouse height")
+cab_z0, cab_z1 = min(zq) - 0.20, max(zq) + zres + 0.20
+print(f"  cab z-span {cab_z0:.2f}..{cab_z1:.2f}  (body z {V[:,2].min():.2f}..{V[:,2].max():.2f})")
+# Applied to the RAKED fit only. Narrowing the side-glass grid to the cab makes the front and rear
+# side apertures touch the scan edge, and the 'must not run off into open air' test then discards
+# them -- measured: it cost the golf both rear side panes and moved its rear screen 0.59 m.
 
 ys = np.arange(band_lo - 0.10, band_hi + 0.10, STEP)
 zs = np.arange(V[:, 2].min() - 0.1, V[:, 2].max() + 0.1, STEP)
@@ -110,9 +156,16 @@ for c in range(cur):
     if len(rows) >= 2:
         rows = [(rows[0][0] - GROW, rows[0][1], rows[0][2])] + rows + [(rows[-1][0] + GROW, rows[-1][1], rows[-1][2])]
         comps.append(rows)
-comps.sort(key=lambda r: (min(x[1] for x in r) + max(x[2] for x in r)) / 2)   # rear -> front
+comps.sort(key=lambda r: (min(x[1] for x in r) + max(x[2] for x in r)) / 2)   # ascending z = FRONT -> rear
 for n, rows in enumerate(comps):
-    which = 'rear' if n == 0 and len(comps) > 1 else ('front' if n == len(comps) - 1 else f'mid{n}')
+    # ...and since front is -z, the LOWEST-z component is the front door glass. This was inverted too.
+    # A 2-door has ONE side aperture and it is the DOOR glass, i.e. 'front'. Falling through to the
+    # n == len-1 branch names it 'rear', which then coexists with a stale l_front from an earlier run
+    # and the car reports six panes with two of them phantom.
+    if len(comps) == 1:      which = 'front'
+    elif n == 0:             which = 'front'
+    elif n == len(comps) - 1: which = 'rear'
+    else:                    which = f'mid{n}'
     for sx, side in ((+1, 'r'), (-1, 'l')):
         qs = []; x = sx * (XS - INSET)
         for k in range(len(rows) - 1):
@@ -123,16 +176,40 @@ for n, rows in enumerate(comps):
 
 # ---- 3. RAKED GLASS: fit the pillar edge, then re-scan ALONG THE PANE'S OWN NORMAL.
 solid = g > 0
-zmid = (zs[0] + zs[-1]) / 2
-for take_max, label in ((True, 'windshield'), (False, 'rear')):
+zmid = (cab_z0 + cab_z1) / 2           # split front/rear about the CAB, not the whole body
+# FRONT IS -Z on every vehicle in this game -- verified against the specs, not assumed: every
+# SpotPos (headlights) sits at negative z and every TailPos at positive z, all 11 road cars.
+# So the frontmost aperture is the MINIMUM z. take_max=True walks the +z end, which is the REAR
+# screen. The geometry was always fitted correctly per aperture; only the two labels were
+# swapped -- which is not cosmetic, because a shot that breaks 'windshield' was breaking the
+# rear window, and Vehicle.ResolveHitGlass maps a hit to a pane by name.
+for take_max, label in ((True, 'rear'), (False, 'windshield')):
     e = []
     for i, y in enumerate(ys):
         if not (band_lo < y < band_hi): continue
-        js = [j for j, z in enumerate(zs) if solid[i, j] and ((z > zmid) if take_max else (z < zmid))]
+        js = [j for j, z in enumerate(zs)
+              if solid[i, j] and cab_z0 <= z <= cab_z1 and ((z > zmid) if take_max else (z < zmid))]
         if js: e.append((y, zs[max(js)] if take_max else zs[min(js)]))
     if len(e) < 3: continue
     e = np.array(e)
-    m_, c_ = np.linalg.lstsq(np.vstack([e[:, 0], np.ones(len(e))]).T, e[:, 1], rcond=None)[0]
+    def _fit(pts):
+        return np.linalg.lstsq(np.vstack([pts[:, 0], np.ones(len(pts))]).T, pts[:, 1], rcond=None)[0]
+    m_, c_ = _fit(e)
+    # ROBUST REFIT. The trace walks every row of the cabin band, and the rows below the window sill
+    # see the body BEHIND the opening, not its frame. On the pickup 32 of 36 samples sat at exactly
+    # z=+0.353 (a dead-vertical rear window) and 4 sill rows at +0.563 -- and least-squares, which has
+    # no notion of an outlier, tilted the pane 6.6 deg off vertical through them. strawberry: "the rear
+    # glass should be perfectly vertical, not sloped like a windshield".
+    # Drop samples whose residual is large against the MAD of the residuals, then refit. This leaves a
+    # genuinely raked screen alone (its residuals are small and evenly spread) and is a property of the
+    # sample spread rather than a constant picked to make one truck look right.
+    for _ in range(2):
+        r = e[:, 1] - (m_ * e[:, 0] + c_)
+        mad = np.median(np.abs(r - np.median(r))) * 1.4826
+        keep = np.abs(r - np.median(r)) <= max(3.0 * mad, STEP)   # STEP floor: MAD is 0 for a flat frame
+        if keep.sum() < 3 or keep.all(): break
+        e = e[keep]; m_, c_ = _fit(e)
+    if abs(m_) < 1e-3: m_ = 0.0        # a fit that came out flat IS vertical; don't carry float dust
     nrm = np.array([0.0, -m_, 1.0]); nrm /= np.linalg.norm(nrm)
     if not take_max: nrm = -nrm
     ax = np.array([1.0, 0.0, 0.0])                      # in-plane: across the car
@@ -175,6 +252,15 @@ for take_max, label in ((True, 'windshield'), (False, 'rear')):
     print(f"  {label}: {len(rows)} rows, width {max(b - a for _, a, b in rows):.2f}")
 
 base = OUT[:-4] if OUT.endswith('.txt') else OUT
+# Clear this vehicle's old panes first. Pane files are per-label, so a run that derives FEWER panes
+# than the last one leaves the extras on disk and Vehicle loads them: the roadster reported 6 panes,
+# 2 of them from a previous naming scheme, and the count assertion was the only thing that noticed.
+for _lbl in ('windshield', 'rear', 'l_front', 'r_front', 'l_rear', 'r_rear',
+             'l_mid1', 'r_mid1', 'l_mid2', 'r_mid2'):
+    _f = f"{base}_{_lbl}.txt"
+    if os.path.exists(_f): os.remove(_f)
+panes = [(l, q) for l, q in panes if l not in SKIP]
+if SKIP: print(f"  skipped by request: {', '.join(sorted(SKIP))}")
 for label, quads in panes:
     verts, faces = [], []
     for q in quads:

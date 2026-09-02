@@ -39,6 +39,31 @@ namespace UnturnedGodot.Testing
             foreach (var ch in car.GetChildren()) if (ch is MeshInstance3D mi && mi.Name.ToString().StartsWith("Glass_")) nodes++;
             T.Check($"...each pane is a real MeshInstance3D child ({nodes})", nodes == car.GlassCount);
 
+            // ---- 1b. THE LABELS POINT THE RIGHT WAY ROUND. Front is -Z on every vehicle here: all 11 road
+            // specs put SpotPos (headlights) at negative z and TailPos at positive. The generator took the
+            // MAXIMUM z as the windscreen, so every car shipped with 'windshield' naming its REAR window and
+            // 'l_front' naming the rear door glass. The three checks above cannot see that -- they only ask
+            // whether the labels exist, and they exist either way. It is not cosmetic: ResolveHitGlass maps a
+            // hit to a pane by index, so a round through the windscreen was breaking the rear window, and the
+            // mechanics-panel "fix" button repaired the wrong pane.
+            var wsN = car.GetNodeOrNull<MeshInstance3D>("Glass_windshield");
+            var rrN = car.GetNodeOrNull<MeshInstance3D>("Glass_rear");
+            if (wsN != null && rrN != null)
+            {
+                float wz = wsN.Position.Z + wsN.GetAabb().GetCenter().Z;
+                float rz = rrN.Position.Z + rrN.GetAabb().GetCenter().Z;
+                T.Check($"the windscreen sits FORWARD of the rear window (ws {wz:F2} < rear {rz:F2})", wz < rz);
+                T.Check($"...and on the front half of the car (ws z {wz:F2} < 0)", wz < 0f);
+            }
+            var lfN = car.GetNodeOrNull<MeshInstance3D>("Glass_l_front");
+            var lrN = car.GetNodeOrNull<MeshInstance3D>("Glass_l_rear");
+            if (lfN != null && lrN != null)
+            {
+                float fz = lfN.Position.Z + lfN.GetAabb().GetCenter().Z;
+                float rz2 = lrN.Position.Z + lrN.GetAabb().GetCenter().Z;
+                T.Check($"the front door glass sits forward of the rear door glass ({fz:F2} < {rz2:F2})", fz < rz2);
+            }
+
             // ---- 2. ALL INTACT AT SPAWN.
             T.Check($"a fresh car has no broken glass ({car.GlassBrokenCount})", car.GlassBrokenCount == 0);
 

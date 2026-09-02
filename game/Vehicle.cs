@@ -492,6 +492,26 @@ namespace UnturnedGodot
             if (_strikeAudio != null) _strikeAudio.Play();
         }
 
+        /// <summary>Sparks fly only when a bare rim is actually SCRUBBING: popped, touching ground, and moving.
+        /// Gated on the wheel's own contact rather than the body's speed so a car airborne over a jump stops
+        /// throwing sparks from a wheel touching nothing, and so a popped wheel that happens to be off the
+        /// ground on a camber stays quiet while the others spark.</summary>
+        void UpdateTireSparks()
+        {
+            if (_tireSparks == null) return;
+            float v2 = LinearVelocity.LengthSquared();
+            for (int i = 0; i < _tireSparks.Length; i++)
+            {
+                var fx = _tireSparks[i];
+                if (fx == null || !GodotObject.IsInstanceValid(fx)) continue;
+                bool scrub = i < _tirePopped.Length && _tirePopped[i]
+                             && v2 > 4f                                   // ~2 m/s: rolling, not creeping
+                             && _wNodes != null && i < _wNodes.Length
+                             && _wNodes[i] != null && _wNodes[i].IsInContact();
+                if (fx.Emitting != scrub) fx.Emitting = scrub;
+            }
+        }
+
         void UpdateRotorFx()
         {
             if (_rotorFxExtinguished) return;   // the wreck has cooled; leave it cold
@@ -1506,7 +1526,7 @@ namespace UnturnedGodot
         public float FuelNorm => FuelMax > 0f ? Fuel / FuelMax : 0f;
         public float HealthNorm => HealthMax > 0f ? Health / HealthMax : 0f;
         public float BatteryNorm => Battery / BatteryMax;
-        Node3D _headlights; bool _headlightsOn; StandardMaterial3D _headlightMat;
+        Node3D _headlights; bool _headlightsOn; StandardMaterial3D _headlightMat; Node3D _headlightFill;
         MeshInstance3D _headlightBeam;
         // Lamp tint, decided by the lens SHAPE. Round lamps read as older/halogen and go considerably warmer than
         // rectangular ones (strawberry). Derived from the hull the beam already computes -- a hexagonal outline IS
@@ -2402,6 +2422,7 @@ namespace UnturnedGodot
         {
             Mass = 12000f,   // kerb mass, kg
             Body = "bus_body.txt", Wheel = "bus_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "bus_palette.png",
+            GlassMesh = "bus_glass.txt", GlassTint = new Color(0.62f, 0.73f, 0.78f, 0.26f),   // 12 side panes; band measured, see tools/gen_vehicle_glass.py --band
             DefaultPaints = new[] { "#d4d4d4" },   // source .dat: single near-white default
             WheelRadius = 0.6f, Engine = 780f, SteerMax = 24f, SteerMin = 12f, SpeedMax = 12f, SpeedMin = -6f, Brake = 24f,
             BoxSize = new Vector3(3.0f, 1.018f, 7.964f), BoxCenter = new Vector3(0f, 0.361f, 0.281f),   // source BoxCollider
@@ -2476,6 +2497,7 @@ namespace UnturnedGodot
         {
             Mass = 2400f,   // kerb mass, kg
             Body = "humvee_body.txt", Wheel = "humvee_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "humvee_palette.png",
+            GlassMesh = "humvee_glass.txt", GlassTint = new Color(0.62f, 0.73f, 0.78f, 0.26f),   // panes derived from this body by tools/gen_vehicle_glass.py
             DefaultPaints = new[] { "#475e83", "#a69884", "#437c44", "#495631" },   // src .dat DefaultPaintColors = the 4 faction paints (#475e83 Coalition / #a69884 Desert / #437c44 Forest / #495631 Russia), random pick per spawn
             WheelRadius = 0.6f, Engine = 680f, SteerMax = 24f, SteerMin = 12f, SpeedMax = 14f, SpeedMin = -6f, Brake = 40f,
             BoxSize = new Vector3(2.5f, 1.032f, 5.029f), BoxCenter = new Vector3(0f, 0.605f, -0.018f),
@@ -2527,6 +2549,7 @@ namespace UnturnedGodot
         {
             Mass = 3600f,   // kerb mass, kg
             Body = "ambulance_body.txt", Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "ambulance_palette.png",
+            GlassMesh = "ambulance_glass.txt", GlassTint = new Color(0.62f, 0.73f, 0.78f, 0.26f),   // panes derived from this body by tools/gen_vehicle_glass.py
             DefaultPaints = new[] { "#e8e8e8" },   // white ambulance
             WheelRadius = 0.6f, Engine = 700f, SteerMax = 28f, SteerMin = 14f, SpeedMax = 15.5f, SpeedMin = -6.5f, Brake = 32f,
             BoxSize = new Vector3(2.5f, 2.0f, 5.0f), BoxCenter = new Vector3(0f, 1.0f, 0f),   // tall van (compound BoxCollider -> one encompassing box)
@@ -2554,6 +2577,7 @@ namespace UnturnedGodot
         {
             Mass = 12000f,   // kerb mass, kg
             Body = "firetruck_body.txt", Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "firetruck_palette.png",
+            GlassMesh = "firetruck_glass.txt", GlassTint = new Color(0.62f, 0.73f, 0.78f, 0.26f),   // panes derived from this body by tools/gen_vehicle_glass.py
             DefaultPaints = new[] { "#b81c1c" },   // red firetruck
             WheelRadius = 0.6f, Engine = 800f, SteerMax = 48f, SteerMin = 24f, SpeedMax = 14.5f, SpeedMin = -6f, Brake = 32f,
             BoxSize = new Vector3(2.5f, 2.0f, 7.0f), BoxCenter = new Vector3(0f, 1.0f, 0f),
@@ -2585,6 +2609,7 @@ namespace UnturnedGodot
         {
             Mass = 4000f,   // kerb mass, kg
             Body = "tractor_body.txt", Wheel = "tractor_wheel_front.txt", WheelTex = "tractor_wheel_albedo.png", Palette = "tractor_palette.png",
+            GlassMesh = "tractor_glass.txt", GlassTint = new Color(0.62f, 0.73f, 0.78f, 0.26f),   // panes derived from this body by tools/gen_vehicle_glass.py
             DefaultPaints = new[] { "#3f7d2f" },   // green tractor
             WheelRadius = 0.90f, WheelRadii = new[] { 0.90f, 0.90f, 1.05f, 1.05f },   // src Tractor_0 Tire WheelCollider radii: 0.90 front / 1.05 rear (the real yellow tractor wheel model)
             Engine = 620f, SteerMax = 24f, SteerMin = 12f, SpeedMax = 10f, SpeedMin = -5f, Brake = 24f,
@@ -2693,6 +2718,7 @@ namespace UnturnedGodot
         {
             Mass = 2300f,   // kerb mass, kg
             Body = "truck_body.txt", Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "truck_palette.png",
+            GlassMesh = "truck_glass.txt", GlassTint = new Color(0.62f, 0.73f, 0.78f, 0.26f),   // panes derived from this body by tools/gen_vehicle_glass.py
             RandomHueGray = true,
             WheelRadius = 0.6f, Engine = 600f, SteerMax = 24f, SteerMin = 12f, SpeedMax = 13.5f, SpeedMin = -6f, Brake = 40f,
             BoxSize = new Vector3(2.5f, 1.046f, 4.522f), BoxCenter = new Vector3(0f, 0.612f, 0.029f),
@@ -3618,12 +3644,23 @@ namespace UnturnedGodot
         /// The mesh is split per pane by tools/gen_vehicle_glass.py into `<base>_<label>.txt`. A vehicle whose
         /// generator found no side apertures simply has fewer files; the loader skips what is absent, so a spec
         /// can name GlassMesh without every pane existing.</summary>
-        public static readonly string[] GlassPaneLabels = { "windshield", "rear", "l_front", "r_front", "l_rear", "r_rear" };
+        // Mid panes APPENDED, not inserted in front-to-back order: the index into this array is the pane
+        // id used by ResolveHitGlass, the break/repair calls and the mechanics-panel rows, so inserting
+        // would silently renumber every existing vehicle's panes. A long body (bus, and any future coach or
+        // articulated rig) derives more than one side aperture per flank; without these four labels the
+        // generator's l_mid1/r_mid1/l_mid2/r_mid2 files were written to disk and then never loaded.
+        public static readonly string[] GlassPaneLabels = { "windshield", "rear", "l_front", "r_front", "l_rear", "r_rear",
+                                                            "l_mid1", "r_mid1", "l_mid2", "r_mid2",
+                                                            "l_mid3", "r_mid3", "l_mid4", "r_mid4" };
         public static string GlassPaneDisplay(string label) => label switch
         {
             "windshield" => "windscreen", "rear" => "rear window",
             "l_front" => "left front", "r_front" => "right front",
-            "l_rear" => "left rear",  "r_rear" => "right rear", _ => label,
+            "l_rear" => "left rear",  "r_rear" => "right rear",
+            "l_mid1" => "left mid 1", "r_mid1" => "right mid 1",
+            "l_mid2" => "left mid 2", "r_mid2" => "right mid 2",
+            "l_mid3" => "left mid 3", "r_mid3" => "right mid 3",
+            "l_mid4" => "left mid 4", "r_mid4" => "right mid 4", _ => label,
         };
 
         readonly System.Collections.Generic.List<MeshInstance3D> _glassNodes = new();
@@ -3656,6 +3693,303 @@ namespace UnturnedGodot
         /// <summary>Which INTACT pane a world-space hit landed on, or -1. Same shape as ResolveHitPart: the
         /// bullet path already has the impact point, so no extra colliders are needed on the glass (a collider
         /// per pane would join every physics query the car takes part in).</summary>
+        // ---- SHOOTABLE LAMPS (strawberry 2026-09-01: "shoot out headlights and tail lights. they simply
+        // stay off when broken, can be repaired from the mechanics ui like the windows can.")
+        // Modelled per SIDE, not per fixture, so one lucky round does not kill both headlights. The lens
+        // mesh ships as ONE mesh covering both lamps, so it is split by vertex x at build time into a left
+        // and a right MeshInstance3D with their own materials -- a shared material cannot glow on one side
+        // and not the other.
+        readonly System.Collections.Generic.List<MeshInstance3D> _lampNodes = new();   // the lens half
+        readonly System.Collections.Generic.List<StandardMaterial3D> _lampMats = new();
+        readonly System.Collections.Generic.List<Node3D> _lampLights = new();          // the emitter to hide
+        readonly System.Collections.Generic.List<string> _lampLabels = new();
+        bool[] _lampBroken = System.Array.Empty<bool>();
+
+        public static readonly string[] LampLabels = { "headlight_l", "headlight_r", "taillight_l", "taillight_r" };
+        public static string LampDisplay(string label) => label switch
+        {
+            "headlight_l" => "left headlight",  "headlight_r" => "right headlight",
+            "taillight_l" => "left taillight",  "taillight_r" => "right taillight", _ => label,
+        };
+        public int LampCount => _lampNodes.Count;
+        public string LampLabel(int i) => (uint)i < (uint)_lampLabels.Count ? _lampLabels[i] : "";
+        public bool IsLampBroken(int i) => (uint)i < (uint)_lampBroken.Length && _lampBroken[i];
+        public int LampBrokenCount { get { int n = 0; foreach (var b in _lampBroken) if (b) n++; return n; } }
+        public bool IsHeadlightSideBroken(bool left)
+        {
+            for (int i = 0; i < _lampLabels.Count; i++)
+                if (_lampLabels[i] == (left ? "headlight_l" : "headlight_r")) return _lampBroken[i];
+            return false;
+        }
+
+        /// <summary>Shoot a lamp out. No self-heal -- it stays dead until RepairLamp, same contract as glass.</summary>
+        public bool BreakLamp(int i)
+        {
+            if ((uint)i >= (uint)_lampNodes.Count || _lampBroken[i]) return false;
+            _lampBroken[i] = true;
+            ApplyLampState();
+            return true;
+        }
+
+        public bool RepairLamp(int i)
+        {
+            if ((uint)i >= (uint)_lampNodes.Count || !_lampBroken[i]) return false;
+            _lampBroken[i] = false;
+            ApplyLampState();
+            return true;
+        }
+
+        /// <summary>Re-apply every lamp's visual from its broken flag AND the current on/off state. Called on
+        /// break, on repair, and from SetHeadlights/SetTaillights -- so a lamp shot out while the lights are
+        /// OFF still stays dark when they are switched on, which is the whole point of the feature.</summary>
+        void ApplyLampState()
+        {
+            for (int i = 0; i < _lampNodes.Count; i++)
+            {
+                bool dead = _lampBroken[i];
+                bool head = _lampLabels[i].StartsWith("headlight");
+                bool lit = !dead && (head ? _headlightsOn : _taillightsOn);
+                if (GodotObject.IsInstanceValid(_lampLights[i])) _lampLights[i].Visible = lit;
+                if (_lampMats[i] != null)
+                {
+                    _lampMats[i].EmissionEnabled = lit;
+                    if (lit)
+                    {
+                        _lampMats[i].Emission = head ? _lampTint : new Color(0.56f, 0.13f, 0.13f);
+                        _lampMats[i].EmissionEnergyMultiplier = 2f;
+                    }
+                    // A shot-out lens reads as broken even in daylight, when nothing is emitting anyway.
+                    _lampMats[i].AlbedoColor = dead
+                        ? new Color(0.12f, 0.12f, 0.12f)
+                        : (head ? new Color(0.94f, 0.89f, 0.73f) : new Color(0.42f, 0.06f, 0.06f));
+                }
+            }
+            // The beam is ONE volume merged from both lenses (BuildHeadlightBeam), so it cannot be half of
+            // itself. With either headlight out, hide it and let the surviving SpotLight3D light the road --
+            // a full-width shaft leaving a dead lamp is a worse lie than no shaft.
+            if (_headlightBeam != null)
+                _headlightBeam.Visible = _headlightsOn && !IsHeadlightSideBroken(true) && !IsHeadlightSideBroken(false);
+            if (_headlightFill != null)
+                _headlightFill.Visible = _headlightsOn && !(IsHeadlightSideBroken(true) && IsHeadlightSideBroken(false));
+        }
+
+        /// <summary>Nearest lamp lens to a world point, or -1. Same no-collider approach as ResolveHitGlass:
+        /// lamps are tiny, so a generous tolerance is what makes them hittable at all.</summary>
+        public int ResolveHitLamp(Vector3 world, float tol = 0.42f)
+        {
+            int best = -1; float bestD = tol * tol;
+            for (int i = 0; i < _lampNodes.Count; i++)
+            {
+                if (_lampBroken[i] || !GodotObject.IsInstanceValid(_lampNodes[i])) continue;
+                var mi = _lampNodes[i];
+                var c = mi.GlobalTransform * mi.GetAabb().GetCenter();
+                float d = c.DistanceSquaredTo(world);
+                if (d < bestD) { bestD = d; best = i; }
+            }
+            return best;
+        }
+
+        // ---- SHOOTABLE TIRES (strawberry 2026-09-01: "shoot tires, pops the actual tire part of the wheel
+        // model, leaving the rim, driving when missing tire(s) affects handling, causes sparks from the
+        // damaged wheel when driving on it. can be replaced by the mechanics ui.")
+        readonly System.Collections.Generic.List<MeshInstance3D> _tireNodes = new();   // outer ring only
+        bool[] _tirePopped = System.Array.Empty<bool>();
+        float[] _tireFricRef = System.Array.Empty<float>();   // stock grip, to restore on replace
+        float[] _tireRadRef = System.Array.Empty<float>();
+        CpuParticles3D[] _tireSparks;
+
+        public int TireCount => _tireNodes.Count;
+        public bool IsTirePopped(int i) => (uint)i < (uint)_tirePopped.Length && _tirePopped[i];
+        public int TirePoppedCount { get { int n = 0; foreach (var b in _tirePopped) if (b) n++; return n; } }
+        public static string TireDisplay(int i, int n)
+        {
+            if (n < 4) return $"wheel {i + 1}";
+            bool front = i < 2;   // wheel order is authored front pair first on every road spec
+            return (i % 2 == 0 ? "left " : "right ") + (front ? "front tire" : "rear tire");
+        }
+
+        /// <summary>Blow a tire off. The rim stays -- it is a separate MeshInstance3D -- and the wheel keeps
+        /// rolling on it with far less grip and a smaller radius, which is what "affects handling" means here
+        /// rather than an abstract penalty.</summary>
+        public bool PopTire(int i)
+        {
+            if ((uint)i >= (uint)_tireNodes.Count || _tirePopped[i]) return false;
+            _tirePopped[i] = true;
+            if (GodotObject.IsInstanceValid(_tireNodes[i])) _tireNodes[i].Visible = false;
+            ApplyTirePhysics(i);
+            return true;
+        }
+
+        public bool RepairTire(int i)
+        {
+            if ((uint)i >= (uint)_tireNodes.Count || !_tirePopped[i]) return false;
+            _tirePopped[i] = false;
+            if (GodotObject.IsInstanceValid(_tireNodes[i])) _tireNodes[i].Visible = true;
+            ApplyTirePhysics(i);
+            return true;
+        }
+
+        /// <summary>Push one wheel's grip and radius from its popped flag. Both are restored from the values
+        /// captured at build, never recomputed -- the stock numbers are tuned per vehicle (a trailer's wheels
+        /// are deliberately low-grip), so a popped-then-fixed wheel must come back to ITS OWN figure and not to
+        /// a shared constant.</summary>
+        void ApplyTirePhysics(int i)
+        {
+            if (_wNodes == null || (uint)i >= (uint)_wNodes.Length) return;
+            var w = _wNodes[i];
+            if (w == null || !GodotObject.IsInstanceValid(w)) return;
+            if (_tirePopped[i])
+            {
+                w.WheelFrictionSlip = _tireFricRef[i] * 0.35f;   // bare steel on tarmac: it still bites, it just slides
+                w.WheelRadius = _tireRadRef[i] * 0.78f;          // riding on the rim -> that corner drops
+            }
+            else
+            {
+                w.WheelFrictionSlip = _tireFricRef[i];
+                w.WheelRadius = _tireRadRef[i];
+            }
+        }
+
+        /// <summary>Nearest wheel to a world point, or -1. Tolerance is the wheel's own radius rather than a
+        /// constant, so a bus tire is not harder to hit than a hatchback's.</summary>
+        public int ResolveHitTire(Vector3 world, float slack = 0.22f)
+        {
+            int best = -1; float bestD = float.MaxValue;
+            for (int i = 0; i < _tireNodes.Count; i++)
+            {
+                if (_tirePopped[i] || !GodotObject.IsInstanceValid(_tireNodes[i])) continue;
+                var c = _tireNodes[i].GlobalPosition;
+                float tol = (_tireRadRef.Length > i ? _tireRadRef[i] : 0.35f) + slack;
+                float d = c.DistanceSquaredTo(world);
+                if (d < tol * tol && d < bestD) { bestD = d; best = i; }
+            }
+            return best;
+        }
+
+        /// <summary>Split a wheel into (tire, rim) at the widest EMPTY radial band in its outer half -- the gap
+        /// the modeller left between rim edge and tread. Derived per mesh rather than a fixed fraction: measured
+        /// across all 11 wheel meshes the tire is 17-24% of the verts on road wheels but 64% on the tank, so a
+        /// hardcoded ratio would cut a road tire off its rim and saw the tank's road wheel in half. Confirmed
+        /// against the albedo through the UVs: on the sedan r 0.05-0.46 samples grey metal and r 0.56-0.61
+        /// samples black rubber, with the seam in the empty band at 0.51.</summary>
+        static (ArrayMesh tire, ArrayMesh rim) SplitWheelRadial(Mesh src)
+        {
+            if (src == null || src.GetSurfaceCount() == 0) return (null, null);
+            var verts = src.SurfaceGetArrays(0)[(int)Mesh.ArrayType.Vertex].AsVector3Array();
+            if (verts.Length < 6) return (null, null);
+
+            Vector3 c = Vector3.Zero;
+            foreach (var q in verts) c += q;
+            c /= verts.Length;
+            float Rad(Vector3 q) => Mathf.Sqrt((q.Y - c.Y) * (q.Y - c.Y) + (q.Z - c.Z) * (q.Z - c.Z));   // wheels spin about X
+            float rMax = 0f;
+            foreach (var q in verts) rMax = Mathf.Max(rMax, Rad(q));
+            if (rMax <= 0f) return (null, null);
+
+            var rs = new System.Collections.Generic.List<float>();
+            foreach (var q in verts) rs.Add(Rad(q));
+            rs.Sort();
+            float gap = 0f, split = 0f;
+            for (int i = 0; i + 1 < rs.Count; i++)
+            {
+                if (rs[i] < 0.35f * rMax) continue;   // ignore the hub's own spokes
+                float g = rs[i + 1] - rs[i];
+                if (g > gap) { gap = g; split = (rs[i] + rs[i + 1]) * 0.5f; }
+            }
+            if (gap < 0.02f) return (null, null);   // no seam worth cutting -- a solid wheel (train), leave it whole
+
+            // ANY vertex past the seam puts the triangle in the TIRE. 52 of the sedan wheel's 370 triangles
+            // genuinely span the gap (the sidewall panels bridging rim edge to tread), so no assignment leaves
+            // both halves clean -- but a blown tire takes its sidewall with it, and this way the rim ends at
+            // the seam instead of keeping spikes that reach into the tread.
+            return SplitMeshBy(src, (p0, p1, p2) => Rad(p0) > split || Rad(p1) > split || Rad(p2) > split);
+        }
+
+        // Tire test hooks -- the nodes and the wheel physics are private, and the point of the tire checks is
+        // to assert on the REAL wheel numbers rather than on the popped flag that is supposed to drive them.
+        public MeshInstance3D TireNodeForTest(int i) => (uint)i < (uint)_tireNodes.Count ? _tireNodes[i] : null;
+        public MeshInstance3D RimNodeForTest(int i) => _wMeshes != null && (uint)i < (uint)_wMeshes.Length ? _wMeshes[i] : null;
+        public float WheelFrictionForTest(int i) => _wNodes != null && (uint)i < (uint)_wNodes.Length && _wNodes[i] != null ? _wNodes[i].WheelFrictionSlip : 0f;
+        public float WheelRadiusForTest(int i) => _wNodes != null && (uint)i < (uint)_wNodes.Length && _wNodes[i] != null ? _wNodes[i].WheelRadius : 0f;
+        public CpuParticles3D TireSparksForTest(int i) => _tireSparks != null && (uint)i < (uint)_tireSparks.Length ? _tireSparks[i] : null;
+        public bool WheelInContactForTest(int i) => _wNodes != null && (uint)i < (uint)_wNodes.Length && _wNodes[i] != null && _wNodes[i].IsInContact();
+
+        // Test hooks. SetHeadlights/SetTaillights are private and the public ToggleHeadlights is gated on the
+        // alarm and on Battery, so a test driving the real toggle would be asserting on those gates rather than
+        // on lamp state. These reach the same code path with the gates satisfied.
+        public void SetLightsForTest(bool on)
+        {
+            if (on && Battery <= 0f) Battery = 50f;
+            SetHeadlights(on);
+            SetTaillights(on);
+        }
+        public Node3D LampLightForTest(int i) => (uint)i < (uint)_lampLights.Count ? _lampLights[i] : null;
+
+        /// <summary>Split a mesh in two by a per-triangle predicate, carrying EVERY vertex attribute the
+        /// source actually has rather than a hand-picked subset.
+        ///
+        /// Both earlier splits rebuilt with position+normal, then position+normal+UV, each time by listing the
+        /// attributes someone remembered. Dropping UVs made a rim sample one texel and render as rubber;
+        /// RECOMPUTING normals as flat face normals threw away the 398 authored vertex normals the .obj ships
+        /// and ContentProvider is careful to preserve, which lit the bare rim inside out and moved a visual
+        /// golden (jeep_vside 0.0017 -> 0.0023) that I had written off as a harmless side effect of splitting.
+        /// A list of attributes is a list you can be one short of, so this copies whatever is present and
+        /// computes nothing. Anything added to these meshes later comes along without a code change here.</summary>
+        static (ArrayMesh a, ArrayMesh b) SplitMeshBy(Mesh src, System.Func<Vector3, Vector3, Vector3, bool> intoA)
+        {
+            if (src == null || src.GetSurfaceCount() == 0) return (null, null);
+            var arrays = src.SurfaceGetArrays(0);
+            var verts = arrays[(int)Mesh.ArrayType.Vertex].AsVector3Array();
+            if (verts.Length < 3) return (null, null);
+
+            Vector3[] Norms()  { var v = arrays[(int)Mesh.ArrayType.Normal];  return v.VariantType != Variant.Type.Nil ? v.AsVector3Array() : null; }
+            Vector2[] UVs()    { var v = arrays[(int)Mesh.ArrayType.TexUV];   return v.VariantType != Variant.Type.Nil ? v.AsVector2Array() : null; }
+            Vector2[] UV2s()   { var v = arrays[(int)Mesh.ArrayType.TexUV2];  return v.VariantType != Variant.Type.Nil ? v.AsVector2Array() : null; }
+            Color[]   Cols()   { var v = arrays[(int)Mesh.ArrayType.Color];   return v.VariantType != Variant.Type.Nil ? v.AsColorArray() : null; }
+            float[]   Tans()   { var v = arrays[(int)Mesh.ArrayType.Tangent]; return v.VariantType != Variant.Type.Nil ? v.AsFloat32Array() : null; }
+            var nrm = Norms(); var uv = UVs(); var uv2 = UV2s(); var col = Cols(); var tan = Tans();
+            if (nrm != null && nrm.Length != verts.Length) nrm = null;
+            if (uv  != null && uv.Length  != verts.Length) uv  = null;
+            if (uv2 != null && uv2.Length != verts.Length) uv2 = null;
+            if (col != null && col.Length != verts.Length) col = null;
+            if (tan != null && tan.Length != verts.Length * 4) tan = null;
+
+            var idxVar = arrays[(int)Mesh.ArrayType.Index];
+            int[] idx;
+            if (idxVar.VariantType != Variant.Type.Nil) idx = idxVar.AsInt32Array();
+            else { idx = new int[verts.Length]; for (int i = 0; i < idx.Length; i++) idx[i] = i; }
+
+            var stA = new SurfaceTool(); stA.Begin(Mesh.PrimitiveType.Triangles);
+            var stB = new SurfaceTool(); stB.Begin(Mesh.PrimitiveType.Triangles);
+            int nA = 0, nB = 0;
+            for (int t = 0; t + 2 < idx.Length; t += 3)
+            {
+                var p0 = verts[idx[t]]; var p1 = verts[idx[t + 1]]; var p2 = verts[idx[t + 2]];
+                bool a = intoA(p0, p1, p2);
+                var st = a ? stA : stB;
+                for (int k = 0; k < 3; k++)
+                {
+                    int vi = idx[t + k];
+                    // Order matters to SurfaceTool: every attribute must be set BEFORE AddVertex.
+                    if (nrm != null) st.SetNormal(nrm[vi]);
+                    if (uv  != null) st.SetUV(uv[vi]);
+                    if (uv2 != null) st.SetUV2(uv2[vi]);
+                    if (col != null) st.SetColor(col[vi]);
+                    if (tan != null) st.SetTangent(new Plane(tan[vi * 4], tan[vi * 4 + 1], tan[vi * 4 + 2], tan[vi * 4 + 3]));
+                    st.AddVertex(verts[vi]);
+                }
+                if (a) nA++; else nB++;
+            }
+            // Only generate normals if the source genuinely had none -- never override authored ones.
+            if (nrm == null) { if (nA > 0) stA.GenerateNormals(); if (nB > 0) stB.GenerateNormals(); }
+            return (nA > 0 ? stA.Commit() : null, nB > 0 ? stB.Commit() : null);
+        }
+
+        /// <summary>Left/right halves of a lens mesh, by triangle centroid x. Delegates the actual rebuild to
+        /// SplitMeshBy so the halves keep whatever the source carried.</summary>
+        static (ArrayMesh, ArrayMesh) SplitMeshByX(Mesh src)
+            => SplitMeshBy(src, (p0, p1, p2) => (p0.X + p1.X + p2.X) / 3f < 0f);
+
         public int ResolveHitGlass(Vector3 world, float tol = 0.28f)
         {
             int best = -1; float bestD = tol;
@@ -3676,9 +4010,15 @@ namespace UnturnedGodot
         /// to BE the check ("bright colors per pane, from multiple angles so you are sure you are covering with
         /// no overlap"), so it lives here rather than as a patch someone re-applies each time. Unshaded, so the
         /// colour is the same at every angle and a gap round the frame reads as body colour rather than shading.</summary>
+        // One per entry in GlassPaneLabels. The list must not be SHORTER than that array: the index wraps
+        // with %, so a 10-pane bus drawn from 6 colours repeats two of them, and a repeated colour is
+        // exactly what this check exists to rule out -- you cannot tell an overlap from a neighbour.
         static readonly Color[] GlassDebugColors = {
             new Color(1f, 0.2f, 1f),    new Color(0.1f, 1f, 1f),   new Color(0.25f, 0.45f, 1f),
             new Color(1f, 0.15f, 0.15f), new Color(1f, 0.95f, 0.1f), new Color(0.15f, 1f, 0.25f),
+            new Color(1f, 0.55f, 0f),   new Color(0.6f, 0.2f, 1f), new Color(1f, 1f, 1f),
+            new Color(0.1f, 0.35f, 0.2f), new Color(0.5f, 0.9f, 0.1f), new Color(0.9f, 0.4f, 0.6f),
+            new Color(0.2f, 0.2f, 0.6f), new Color(0.7f, 0.7f, 0.2f),
         };
 
         static void AddGlassOverlay(Vehicle v, Spec s)
@@ -4597,15 +4937,49 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             }
             if (hlMesh != null)   // the REAL baked headlight lenses as their own mesh -> cream, and emit on 'L' like a car (SetHeadlights drives _headlightMat)
             {
-                var hlMat = new StandardMaterial3D { AlbedoColor = new Color(0.94f, 0.89f, 0.73f), Metallic = 0f, Roughness = 0.5f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
-                v.AddChild(new MeshInstance3D { Name = "Headlights", Mesh = hlMesh, MaterialOverride = hlMat });
-                v._headlightMat = hlMat;
+                // Split per side so each lamp can be shot out on its own. _headlightMat still points at one
+                // of the halves so existing callers that poke it keep working; ApplyLampState drives both.
+                var (hlL, hlR) = SplitMeshByX(hlMesh);
+                if (hlL != null || hlR != null)
+                {
+                    foreach (var (half, label) in new[] { (hlL, "headlight_l"), (hlR, "headlight_r") })
+                    {
+                        if (half == null) continue;
+                        var m = new StandardMaterial3D { AlbedoColor = new Color(0.94f, 0.89f, 0.73f), Metallic = 0f, Roughness = 0.5f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+                        var mi = new MeshInstance3D { Name = $"Lamp_{label}", Mesh = half, MaterialOverride = m };
+                        v.AddChild(mi);
+                        v._lampNodes.Add(mi); v._lampMats.Add(m); v._lampLights.Add(null); v._lampLabels.Add(label);
+                        v._headlightMat ??= m;
+                    }
+                }
+                else   // un-splittable (all one side) -- keep the old single-mesh behaviour rather than lose the lenses
+                {
+                    var hlMat = new StandardMaterial3D { AlbedoColor = new Color(0.94f, 0.89f, 0.73f), Metallic = 0f, Roughness = 0.5f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+                    v.AddChild(new MeshInstance3D { Name = "Headlights", Mesh = hlMesh, MaterialOverride = hlMat });
+                    v._headlightMat = hlMat;
+                }
             }
             if (tlMesh != null)   // the REAL baked RED taillights as their own mesh -> _taillightMat, so they glow while driven / on brake (trailer: driven by the cab pass-through). No added blocks -> no dupe (strawberry)
             {
-                var tlMat = new StandardMaterial3D { AlbedoColor = new Color(0.42f, 0.06f, 0.06f), Metallic = 0f, Roughness = 0.5f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
-                v.AddChild(new MeshInstance3D { Name = "Taillights", Mesh = tlMesh, MaterialOverride = tlMat });
-                v._taillightMat = tlMat;
+                var (tlL, tlR) = SplitMeshByX(tlMesh);
+                if (tlL != null || tlR != null)
+                {
+                    foreach (var (half, label) in new[] { (tlL, "taillight_l"), (tlR, "taillight_r") })
+                    {
+                        if (half == null) continue;
+                        var m = new StandardMaterial3D { AlbedoColor = new Color(0.42f, 0.06f, 0.06f), Metallic = 0f, Roughness = 0.5f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+                        var mi = new MeshInstance3D { Name = $"Lamp_{label}", Mesh = half, MaterialOverride = m };
+                        v.AddChild(mi);
+                        v._lampNodes.Add(mi); v._lampMats.Add(m); v._lampLights.Add(null); v._lampLabels.Add(label);
+                        v._taillightMat ??= m;
+                    }
+                }
+                else
+                {
+                    var tlMat = new StandardMaterial3D { AlbedoColor = new Color(0.42f, 0.06f, 0.06f), Metallic = 0f, Roughness = 0.5f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+                    v.AddChild(new MeshInstance3D { Name = "Taillights", Mesh = tlMesh, MaterialOverride = tlMat });
+                    v._taillightMat = tlMat;
+                }
             }
 
             // source BoxCollider hull (Godot space), not the mesh AABB (which wrongly included the roll bar) --
@@ -4801,8 +5175,28 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                     SuspensionStiffness = (s.Plane ? 30f : 55f) * loadScale, SuspensionMaxForce = suspMaxF, DampingCompression = s.Plane ? 7f : 3.5f, DampingRelaxation = s.Plane ? 8f : 4.2f, WheelFrictionSlip = s.Tracked ? TankWheelSlip : (s.Kingpin != Vector3.Zero ? 1.5f : s.Plane ? 2.0f : 6.0f),   // PLANE: softer + heavily-damped gear + lower friction slip so the narrow fuselage wheels do not CHATTER into a yaw wobble on rough terrain (master 2026-08-18)
                 };
                 // left wheels: flip the mesh so the tread faces outward
-                var mi = new MeshInstance3D { Mesh = wheelMesh, MaterialOverride = wheelMat, Scale = new Vector3((x < 0 ? -1f : 1f) * wscale, wscale, wscale) };
+                // SHOOTABLE TIRES: hang the tread as its OWN MeshInstance3D, a child of the rim mesh, so popping
+                // it hides the tread and leaves the rim turning. Child-of-rim rather than a sibling so the
+                // explosion-debris path (which hides _wMeshes[i] and reads its position/scale) keeps working
+                // untouched -- hiding the parent takes the tread with it.
+                var (tireMesh, rimMesh) = s.Tracked || s.Plane ? (null, null) : SplitWheelRadial(wheelMesh);
+                var _rimDbg = System.Environment.GetEnvironmentVariable("UG_TIREDEBUG") == "1" && tireMesh != null;
+                var mi = new MeshInstance3D { Mesh = rimMesh ?? wheelMesh,
+                    MaterialOverride = _rimDbg
+                        ? new StandardMaterial3D { AlbedoColor = new Color(0.1f, 1f, 1f), ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded }
+                        : wheelMat,
+                    Scale = new Vector3((x < 0 ? -1f : 1f) * wscale, wscale, wscale) };
                 w.AddChild(mi);
+                if (tireMesh != null)
+                {
+                    var _tireDbg = System.Environment.GetEnvironmentVariable("UG_TIREDEBUG") == "1";
+                    var tn = new MeshInstance3D { Name = $"Tire{i}", Mesh = tireMesh,
+                        MaterialOverride = _tireDbg
+                            ? new StandardMaterial3D { AlbedoColor = new Color(1f, 0.15f, 0.9f), ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded }
+                            : wheelMat };
+                    mi.AddChild(tn);   // inherits the rim's flip+scale, so it lines up with no second transform
+                    v._tireNodes.Add(tn);
+                }
                 v.AddChild(w);
                 v._wNodes[i] = w; v._wMeshes[i] = mi;
                 if (s.RetractGear)   // RETRACTABLE GEAR: hide the suspension-driven wheel; put the visual (strut + wheel) on a hinge PIVOT at the belly that folds up when airborne. VehicleWheel3D stays for physics.
@@ -4818,6 +5212,36 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                     v._gearPivots[i] = pivot;
                     if (z < 0f) { v._gearAxis[i] = Vector3.Right; v._gearAng[i] = -85f; }          // nose gear (forward, z<0): folds AFT about X
                     else { v._gearAxis[i] = Vector3.Right; v._gearAng[i] = 95f; }                             // main gear (fuselage, F-15): folds FORWARD + up into the belly about X -> X stays 0.85 so it clears the wing missiles (master 2026-08-18)
+                }
+            }
+
+            // Tire state, sized once the wheel loop has run. The reference grip/radius are captured HERE rather
+            // than recomputed on repair: they are tuned per vehicle (a trailer's wheels are deliberately
+            // low-friction), so a fixed tire must return to its own figure, not a shared constant.
+            v._tirePopped = new bool[v._tireNodes.Count];
+            v._tireFricRef = new float[v._tireNodes.Count];
+            v._tireRadRef = new float[v._tireNodes.Count];
+            for (int ti = 0; ti < v._tireNodes.Count && ti < v._wNodes.Length; ti++)
+            {
+                if (v._wNodes[ti] == null) continue;
+                v._tireFricRef[ti] = v._wNodes[ti].WheelFrictionSlip;
+                v._tireRadRef[ti] = v._wNodes[ti].WheelRadius;
+            }
+            // Sparks off a bare rim, one emitter per wheel, parked at the CONTACT PATCH rather than the hub --
+            // steel grinding tarmac throws from where it touches, and a plume at the axle reads as an engine
+            // fire. Continuous while rolling, unlike the one-shot blade strikes: this is a state you are driving
+            // in, not an event.
+            if (v._tireNodes.Count > 0)
+            {
+                v._tireSparks = new CpuParticles3D[v._tireNodes.Count];
+                for (int ti = 0; ti < v._tireNodes.Count && ti < v._wNodes.Length; ti++)
+                {
+                    if (v._wNodes[ti] == null) continue;
+                    var fx = MakeSmoke("veh_fire.png", new Color(1f, 0.82f, 0.38f), 0.22f, 4.2f, 12, true, 0.05f, 0.16f);
+                    fx.Position = v._wNodes[ti].Position - new Vector3(0f, v._tireRadRef[ti] * 0.78f, 0f);
+                    fx.Emitting = false;
+                    v.AddChild(fx);
+                    v._tireSparks[ti] = fx;
                 }
             }
 
@@ -4866,6 +5290,34 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                     // has to be built from the single lens the mesh ships. Handled apart from the flat-coloured
                     // car parts because the colour depends on which SIDE each copy lands on.
                     if (s.Heli && txt.Contains("taillights")) { v.BuildNavLights(txt); continue; }
+
+                    // SHOOTABLE LAMPS: a car's headlight/taillight part ships as ONE mesh covering both lamps,
+                    // so split it per side and hang each half as its own MeshInstance3D with its own material.
+                    // A shared material cannot glow on one side and not the other, which is what "shoot out the
+                    // left headlight" requires. The BEAM is still built from the WHOLE mesh -- it is one merged
+                    // volume spanning both lenses, and building it from a half would narrow the shaft.
+                    if (!s.Heli && (txt.Contains("headlight") || txt.Contains("taillight")))
+                    {
+                        bool isHead = txt.Contains("headlight");
+                        var full = ContentProvider.ParseObj($"res://content/{txt}");
+                        if (isHead && full != null) v.BuildHeadlightBeam(full);
+                        var (lhalf, rhalf) = SplitMeshByX(full);
+                        if (lhalf != null && rhalf != null)   // BOTH halves, or it is not a per-side pair
+                        {
+                            foreach (var (half, side) in new[] { (lhalf, "l"), (rhalf, "r") })
+                            {
+                                string label = (isHead ? "headlight_" : "taillight_") + side;
+                                var lm = SolidMat(color);
+                                var lmi = new MeshInstance3D { Name = $"Lamp_{label}", Mesh = half, MaterialOverride = lm };
+                                v.AddChild(lmi);
+                                v._lampNodes.Add(lmi); v._lampMats.Add(lm); v._lampLights.Add(null); v._lampLabels.Add(label);
+                            }
+                            if (isHead) v._headlightMat ??= v._lampMats[^1]; else v._taillightMat ??= v._lampMats[^1];
+                            continue;
+                        }
+                        // Un-splittable (a single centred lamp, e.g. a bike) -- fall through to the old one-mesh path.
+                    }
+
                     var pm = SolidMat(color);
                     // Named after its source file so the scene tree is readable and, more usefully, so a test can
                     // ASK for a specific part instead of guessing which unnamed MeshInstance3D is the turret.
@@ -4928,12 +5380,19 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                     var hs = new SpotLight3D { Position = p, SpotRange = 45f, SpotAngle = 25f, SpotAngleAttenuation = 1.3f, LightColor = warm, LightEnergy = 9f };
                     hs.AddToGroup("dynlight");   // spills onto the FP gun (light-scan)
                     v._headlights.AddChild(hs);
+                    // Bind the emitter to the lens half on the same side, so shooting that lens kills THIS beam.
+                    // Matched by the spot's own x sign rather than array order: SpotPos is authored per vehicle
+                    // and nothing guarantees element 0 is the left one.
+                    string want = p.X < 0f ? "headlight_l" : "headlight_r";
+                    int li = v._lampLabels.IndexOf(want);
+                    if (li >= 0 && v._lampLights[li] == null) v._lampLights[li] = hs;
                 }
                 if (s.OmniPos != Vector3.Zero)   // omni fill is OPTIONAL (OmniPos Zero = spots only) -- the semi drops it, its center glow read as a weird third headlight (strawberry)
                 {
                     var hfill = new OmniLight3D { Position = s.OmniPos + Vector3.Up * 0.5f, OmniRange = 28f, LightColor = warm, LightEnergy = 0.8f };   // dim soft fill (raised above the seats so it doesn't glare)
                     hfill.AddToGroup("dynlight");
                     v._headlights.AddChild(hfill);
+                    v._headlightFill = hfill;   // centre fill belongs to NEITHER side; killed only when both lamps are out
                 }
                 v.AddChild(v._headlights);
             }
@@ -4943,9 +5402,21 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                 var red = new Color(0.996f, 0f, 0f);
                 v._taillights = new Node3D { Visible = false };
                 foreach (var p in s.TailPos)
-                    v._taillights.AddChild(new SpotLight3D { Position = p, RotationDegrees = new Vector3(0f, 180f, 0f), SpotRange = 3f, SpotAngle = 72f, SpotAngleAttenuation = 0.6f, LightColor = red, LightEnergy = 2.2f });   // WIDE + SHORT diffuse red glow, not a focused red-headlight beam (SpotRange 6->3, SpotAngle 35->72, soft edge) (strawberry)
+                {
+                    var ts = new SpotLight3D { Position = p, RotationDegrees = new Vector3(0f, 180f, 0f), SpotRange = 3f, SpotAngle = 72f, SpotAngleAttenuation = 0.6f, LightColor = red, LightEnergy = 2.2f };
+                    v._taillights.AddChild(ts);
+                    string wantT = p.X < 0f ? "taillight_l" : "taillight_r";
+                    int ti = v._lampLabels.IndexOf(wantT);
+                    if (ti >= 0 && v._lampLights[ti] == null) v._lampLights[ti] = ts;
+                }   // WIDE + SHORT diffuse red glow, not a focused red-headlight beam (SpotRange 6->3, SpotAngle 35->72, soft edge) (strawberry)
                 v.AddChild(v._taillights);
             }
+
+            // Lamps are registered across two passes (lens meshes, then the emitters), so the broken array is
+            // sized here, once both are in. Sizing it at the lens pass would leave a shorter array than the
+            // label list and every IsLampBroken would silently read false.
+            v._lampBroken = new bool[v._lampNodes.Count];
+            if (v._lampNodes.Count > 0) v.ApplyLampState();
 
             if (s.Horn != null)   // horn: one-shot the .dat HornAudioClip (a shared CarHorn) on LMB
             {
@@ -6511,6 +6982,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             if (_headlights != null) _headlights.Visible = _headlightsOn;
             if (_headlightBeam != null) _headlightBeam.Visible = _headlightsOn;
             ApplyHeadlightMotes();
+            if (_lampNodes.Count > 0) { ApplyLampState(); return; }   // per-side lamps own the emission
             if (_headlightMat != null)   // source: lamp emission = colour*2 when lit, off otherwise
             {
                 _headlightMat.EmissionEnabled = _headlightsOn;
@@ -6676,6 +7148,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
         {
             _taillightsOn = on;
             if (_taillights != null) _taillights.Visible = on;
+            if (_lampNodes.Count > 0) { ApplyLampState(); return; }   // per-side lamps own the emission
             if (_taillightMat != null)
             {
                 _taillightMat.EmissionEnabled = on;
@@ -6848,6 +7321,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             if (_turretCd != null)
                 for (int i = 0; i < _turretCd.Length; i++)
                     if (_turretCd[i] > 0f) _turretCd[i] = Mathf.Max(0f, _turretCd[i] - (float)delta);
+            UpdateTireSparks();
             if (_lookFocused && _info != null)   // keep the info billboard at the cabin + live (before any perf early-return)
             {
                 _info.GlobalPosition = GlobalPosition + Vector3.Up * InfoH;
