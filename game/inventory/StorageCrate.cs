@@ -23,6 +23,28 @@ namespace UnturnedGodot
             return c;
         }
 
+        // PERF (ETW 2026-09-02): every container with a `_Process` override cost a native->managed transition + a
+        // StringName walk of the whole class chain per frame (StoreShelf/Refrigerator ~19% of the main thread on PEI,
+        // 419 containers). Containers register here and are ticked from ONE node (TickHub) at 4 Hz instead.
+        static readonly System.Collections.Generic.List<StorageCrate> _live = new();
+        static double _tickAcc;
+        public override void _EnterTree() { _live.Add(this); TickHub.Ensure(this); }
+        public override void _ExitTree() { _live.Remove(this); }
+        protected virtual void Tick(double delta) { }
+        public static void TickAll(double delta)
+        {
+            _tickAcc += delta;
+            if (_tickAcc < 0.25) return;
+            double dt = _tickAcc; _tickAcc = 0;
+            for (int i = _live.Count - 1; i >= 0; i--)
+            {
+                var c = _live[i];
+                if (!GodotObject.IsInstanceValid(c)) { _live.RemoveAt(i); continue; }
+                if (!c.CanProcess()) continue;   // honour pause / ProcessMode exactly like the old per-node callback
+                c.Tick(dt);
+            }
+        }
+
         public override void _Ready()
         {
             AddToGroup("crates");
@@ -114,7 +136,7 @@ namespace UnturnedGodot
 
         // Sync the per-item `preserved` flag so BOTH the spoilage sweep and the inv-UI snowflake see it. Set on FOOD in
         // the grid while powered; clear it on anything that LEFT the fridge (else it'd never spoil again anywhere).
-        public override void _Process(double delta)
+        protected override void Tick(double delta)   // hub-ticked (4 Hz) -- was a per-frame _Process
         {
             bool powered = Preserves;
             var current = new System.Collections.Generic.HashSet<Item>();

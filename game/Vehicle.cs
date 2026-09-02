@@ -6872,6 +6872,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
 
         public override void _ExitTree()   // a despawned/unloaded car drops its rope (either end) so no dangling TowedBy/Towing ref survives
         {
+            _live.Remove(this);
             if (Towing != null || TowedBy != null) DetachTow();
             if (_magnet != null) StowSling();   // a despawned/wrecked crane must not leave an orphan magnet hanging in the sky
         }
@@ -7313,7 +7314,22 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             QueueFree();
         }
 
-        public override void _PhysicsProcess(double delta)
+        // PERF (ETW 2026-09-02): 88 parked cars x (_Process + _PhysicsProcess) = ~25% of the main thread, nearly all of it
+        // GodotSharp dispatch (StringName walk of Vehicle->VehicleBody3D->...->GodotObject per call). The physics tick is
+        // now driven from ONE node (TickHub._PhysicsProcess -> PhysicsTickAll), same phase, one dispatch instead of 88.
+        static readonly System.Collections.Generic.List<Vehicle> _live = new();
+        public override void _EnterTree() { _live.Add(this); TickHub.Ensure(this); }
+        public static void PhysicsTickAll(double delta)
+        {
+            for (int i = _live.Count - 1; i >= 0; i--)
+            {
+                var v = _live[i];
+                if (!GodotObject.IsInstanceValid(v)) { _live.RemoveAt(i); continue; }
+                if (!v.CanProcess()) continue;   // honour pause / ProcessMode exactly like the old per-node callback
+                v.PhysicsTick(delta);
+            }
+        }
+        public void PhysicsTick(double delta)   // was _PhysicsProcess; body unchanged
         {
             using var _prof = Prof.Scope("Vehicle.phys");
             // Turret cycle timers. Ticked BEFORE the perf early-returns below, so a turret does not jam because
@@ -7789,6 +7805,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
         /// repeat for every ship that spawns.</summary>
         public override void _Ready()
         {
+            SetProcess(_water != WaterMode.Car);   // PERF: _Process is boat-only (wake); a car paid the dispatch to early-return
             base._Ready();
             GrassDisplacers.Register(this, GrassDisplacers.VehicleRadius);   // master: a driven vehicle flattens grass in a wide swath under + around it
             if (_decomposeMesh == null || ForceBoxHull) return;

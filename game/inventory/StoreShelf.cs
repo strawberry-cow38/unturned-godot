@@ -613,7 +613,7 @@ namespace UnturnedGodot
             }
         }
 
-        public override void _Process(double delta)   // poll the grid ~2x/s; SyncDisplay only touches CHANGED cells (stable)
+        protected override void Tick(double delta)   // hub-ticked -- poll the grid ~2x/s; SyncDisplay only touches CHANGED cells (stable)
         {
             if (!ShowItems) return;
             _syncT += (float)delta;
