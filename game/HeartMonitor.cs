@@ -121,10 +121,10 @@ namespace UnturnedGodot
             var mesh = st.Commit();
 
             _mat = new ShaderMaterial { Shader = GD.Load<Shader>("res://content/ecg.gdshader") };
-            _mat.SetShaderParameter("time_s", 0f);
-            _mat.SetShaderParameter("alive", _alive ? 1f : 0f);
-            _mat.SetShaderParameter("lit", 0f);
-            _mat.SetShaderParameter("period", DebugPeriod);
+            _mat.SetShaderParameter(Sn.time_s, 0f);
+            _mat.SetShaderParameter(Sn.alive, _alive ? 1f : 0f);
+            _mat.SetShaderParameter(Sn.lit, 0f);
+            _mat.SetShaderParameter(Sn.period, DebugPeriod);
 
             // THE OFF STATE IS A MATERIAL SWAP, NOT A HIDE (strawberry: "remove the base ecg prop's graph when the
             // screen is off, should be the green line").
@@ -186,8 +186,8 @@ namespace UnturnedGodot
         {
             if (_alive == alive) return;
             _alive = alive;
-            _mat?.SetShaderParameter("alive", alive ? 1f : 0f);
-            _mat?.SetShaderParameter("period", DebugPeriod);
+            _mat?.SetShaderParameter(Sn.alive, alive ? 1f : 0f);
+            _mat?.SetShaderParameter(Sn.period, DebugPeriod);
             _lastBeat = -1f;   // don't carry a half-finished beat across the change
         }
 
@@ -222,7 +222,7 @@ namespace UnturnedGodot
             // The quad stays DRAWN either way -- see Build(). Hiding it would put the prop's own green trace back on
             // screen, which is the bug this replaced.
             if (_screen != null) _screen.MaterialOverride = want ? (Material)_mat : _offMat;
-            _mat?.SetShaderParameter("lit", want ? 1f : 0f);
+            _mat?.SetShaderParameter(Sn.lit, want ? 1f : 0f);
             if (!want) _audio?.Stop();
         }
 
@@ -245,7 +245,7 @@ namespace UnturnedGodot
             // not merely the sound. Handed over already wrapped into [0, period), which is all the shader's
             // fract(time_s / period) needs and keeps it away from the float-resolution cliff a long uptime creates.
             float per = DebugPeriod;
-            _mat?.SetShaderParameter("time_s", (float)Mathf.PosMod(GlobalSeconds, per));
+            _mat?.SetShaderParameter(Sn.time_s, (float)Mathf.PosMod(GlobalSeconds, per));
 
             // The sag is a square stutter on the picture level, not a fade: mains droop stutters.
             if (_brownoutLeft > 0f)
@@ -253,8 +253,8 @@ namespace UnturnedGodot
                 _brownoutLeft -= (float)delta;
                 _brownoutPhase += (float)delta * BrownoutHz;
                 float f = Mathf.PosMod(_brownoutPhase, 1f) < 0.5f ? 1f - BrownoutDepth : 1f;
-                _mat?.SetShaderParameter("sag", f);
-                if (_brownoutLeft <= 0f) { _brownoutLeft = 0f; _brownoutPhase = 0f; _mat?.SetShaderParameter("sag", 1f); }
+                _mat?.SetShaderParameter(Sn.sag, f);
+                if (_brownoutLeft <= 0f) { _brownoutLeft = 0f; _brownoutPhase = 0f; _mat?.SetShaderParameter(Sn.sag, 1f); }
             }
 
             // The beep fires when the sweep passes the R spike, so the sound is ON the visible beat rather than merely

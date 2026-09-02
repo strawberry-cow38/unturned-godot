@@ -341,20 +341,20 @@ void sky() {
         {
             if (_skyMat != null || Env == null) return;
             _skyMat = new ShaderMaterial { Shader = new Shader { Code = SkyShaderCode } };
-            _skyMat.SetShaderParameter("clouds_tex", LoadTex("res://content/sky_clouds.png"));
-            _skyMat.SetShaderParameter("stars_tex", LoadTex("res://content/sky_stars.png"));
+            _skyMat.SetShaderParameter(Sn.clouds_tex, LoadTex("res://content/sky_clouds.png"));
+            _skyMat.SetShaderParameter(Sn.stars_tex, LoadTex("res://content/sky_stars.png"));
             // constants straight from Skybox.mat
-            _skyMat.SetShaderParameter("ambient_ground", new Color(0.8f, 0.8f, 0.8f));
-            _skyMat.SetShaderParameter("ambient_equator", new Color(0.8f, 0.8f, 0.8f));
-            _skyMat.SetShaderParameter("sun_inner", 0.995f);        // _SunInnerThreshold
-            _skyMat.SetShaderParameter("sun_outer", 0.993f);        // _SunOuterThreshold
-            _skyMat.SetShaderParameter("stars_cutoff", 0.0f);       // _StarsCutoff
-            _skyMat.SetShaderParameter("moon_light_direction", new Vector3(0f, -1f, 0f));
-            _skyMat.SetShaderParameter("moon_color", new Color(0.749f, 0.804f, 0.808f));
-            _skyMat.SetShaderParameter("sqr_moon_radius", 0.01f);   // _SqrMoonRadius
-            _skyMat.SetShaderParameter("cloud_rim_color", new Color(0.8f, 0.6f, 0.4f));
-            _skyMat.SetShaderParameter("cloud_intensity", 1.0f);    // _CloudIntensity
-            _skyMat.SetShaderParameter("cloud_params", new Vector4(0.6f, 10f, 0f, 0f));  // _CloudParams
+            _skyMat.SetShaderParameter(Sn.ambient_ground, new Color(0.8f, 0.8f, 0.8f));
+            _skyMat.SetShaderParameter(Sn.ambient_equator, new Color(0.8f, 0.8f, 0.8f));
+            _skyMat.SetShaderParameter(Sn.sun_inner, 0.995f);        // _SunInnerThreshold
+            _skyMat.SetShaderParameter(Sn.sun_outer, 0.993f);        // _SunOuterThreshold
+            _skyMat.SetShaderParameter(Sn.stars_cutoff, 0.0f);       // _StarsCutoff
+            _skyMat.SetShaderParameter(Sn.moon_light_direction, new Vector3(0f, -1f, 0f));
+            _skyMat.SetShaderParameter(Sn.moon_color, new Color(0.749f, 0.804f, 0.808f));
+            _skyMat.SetShaderParameter(Sn.sqr_moon_radius, 0.01f);   // _SqrMoonRadius
+            _skyMat.SetShaderParameter(Sn.cloud_rim_color, new Color(0.8f, 0.6f, 0.4f));
+            _skyMat.SetShaderParameter(Sn.cloud_intensity, 1.0f);    // _CloudIntensity
+            _skyMat.SetShaderParameter(Sn.cloud_params, new Vector4(0.6f, 10f, 0f, 0f));  // _CloudParams
             _sky = new Sky { SkyMaterial = _skyMat };
             Env.BackgroundMode = Godot.Environment.BGMode.Sky;
             Env.Sky = _sky;
@@ -407,28 +407,28 @@ void sky() {
             {
                 EnsureSky();
                 // day/night colours + sun/moon directions drive the ported sky shader
-                _skyMat.SetShaderParameter("sky_color", Grad(SkyTop));
-                _skyMat.SetShaderParameter("equator_color", Grad(SkyHorizon));
-                _skyMat.SetShaderParameter("ground_color", Grad(Ground));
-                _skyMat.SetShaderParameter("sun_direction", sunDir);
-                _skyMat.SetShaderParameter("moon_direction", -sunDir);    // moon rides opposite the sun
-                _skyMat.SetShaderParameter("sun_color", Sun != null ? Sun.LightColor : Colors.White);
+                _skyMat.SetShaderParameter(Sn.sky_color, Grad(SkyTop));
+                _skyMat.SetShaderParameter(Sn.equator_color, Grad(SkyHorizon));
+                _skyMat.SetShaderParameter(Sn.ground_color, Grad(Ground));
+                _skyMat.SetShaderParameter(Sn.sun_direction, sunDir);
+                _skyMat.SetShaderParameter(Sn.moon_direction, -sunDir);    // moon rides opposite the sun
+                _skyMat.SetShaderParameter(Sn.sun_color, Sun != null ? Sun.LightColor : Colors.White);
                 // Day->night factor from the sun's height (1 = day, 0 = night). ambient_ground/equator + cloud_rim_color were
                 // CONSTANTS (bright 0.8), so the clouds (cloudBodyColor = ambient_ground + cloud_rim_color) GLOWED at night.
                 // Darken them with the sun so night clouds go dim blue-grey (master: clouds shouldn't glow at night).
                 float dayF = Mathf.Clamp(-sunDir.Y * 1.0f + 0.15f, 0f, 1f);
                 float amb = Mathf.Lerp(0.05f, 0.8f, dayF);
-                _skyMat.SetShaderParameter("ambient_ground", new Color(amb, amb, amb));
-                _skyMat.SetShaderParameter("ambient_equator", new Color(amb, amb, amb));
-                _skyMat.SetShaderParameter("cloud_rim_color", new Color(0.8f, 0.6f, 0.4f).Lerp(new Color(0.05f, 0.06f, 0.10f), 1f - dayF));
+                _skyMat.SetShaderParameter(Sn.ambient_ground, new Color(amb, amb, amb));
+                _skyMat.SetShaderParameter(Sn.ambient_equator, new Color(amb, amb, amb));
+                _skyMat.SetShaderParameter(Sn.cloud_rim_color, new Color(0.8f, 0.6f, 0.4f).Lerp(new Color(0.05f, 0.06f, 0.10f), 1f - dayF));
                 // lightning cloud-flash uniforms -- WeatherManager drives these; pushed only while flashing (+ one frame
                 // to switch off), not every idle frame. 0 flash = the sky-shader block skips (no-WM/golden stays 0).
                 if (LightningFlash > 0.001f || _lightningActive)
                 {
                     _lightningActive = LightningFlash > 0.001f;
-                    _skyMat.SetShaderParameter("lightning_flash", LightningFlash);
-                    _skyMat.SetShaderParameter("lightning_tint", LightningTint);
-                    _skyMat.SetShaderParameter("lightning_dir", LightningDir);
+                    _skyMat.SetShaderParameter(Sn.lightning_flash, LightningFlash);
+                    _skyMat.SetShaderParameter(Sn.lightning_tint, LightningTint);
+                    _skyMat.SetShaderParameter(Sn.lightning_dir, LightningDir);
                 }
 
                 Env.AmbientLightColor = Grad(Amb);
@@ -456,18 +456,18 @@ void sky() {
                 float storm = Mathf.Clamp(StormAmount, 0f, 1f);
                 if (storm > 0.001f)
                 {
-                    _skyMat.SetShaderParameter("sky_color", Grad(SkyTop).Lerp(new Color(0.35f, 0.39f, 0.45f), storm));
-                    _skyMat.SetShaderParameter("equator_color", Grad(SkyHorizon).Lerp(new Color(0.45f, 0.48f, 0.53f), storm));
+                    _skyMat.SetShaderParameter(Sn.sky_color, Grad(SkyTop).Lerp(new Color(0.35f, 0.39f, 0.45f), storm));
+                    _skyMat.SetShaderParameter(Sn.equator_color, Grad(SkyHorizon).Lerp(new Color(0.45f, 0.48f, 0.53f), storm));
                     float ca = amb * Mathf.Lerp(1f, 0.32f, storm);   // grey the cloud BODY down (bright white -> dark storm grey)
-                    _skyMat.SetShaderParameter("ambient_ground", new Color(ca, ca, ca));
-                    _skyMat.SetShaderParameter("ambient_equator", new Color(ca, ca, ca));
+                    _skyMat.SetShaderParameter(Sn.ambient_ground, new Color(ca, ca, ca));
+                    _skyMat.SetShaderParameter(Sn.ambient_equator, new Color(ca, ca, ca));
                     Color fairRim = new Color(0.8f, 0.6f, 0.4f).Lerp(new Color(0.05f, 0.06f, 0.10f), 1f - dayF);
-                    _skyMat.SetShaderParameter("cloud_rim_color", fairRim.Lerp(new Color(0.22f, 0.24f, 0.28f), storm));   // and the RIM -> storm clouds go dark grey, not bright white
+                    _skyMat.SetShaderParameter(Sn.cloud_rim_color, fairRim.Lerp(new Color(0.22f, 0.24f, 0.28f), storm));   // and the RIM -> storm clouds go dark grey, not bright white
                     if (Sun != null)
                     {
                         Sun.LightEnergy *= Mathf.Lerp(1f, 0.35f, storm);                                     // storm dims the sun
                         Sun.LightColor = Sun.LightColor.Lerp(new Color(0.72f, 0.76f, 0.84f), storm);         // and cools it
-                        _skyMat.SetShaderParameter("sun_color", Sun.LightColor);
+                        _skyMat.SetShaderParameter(Sn.sun_color, Sun.LightColor);
                     }
                     Env.AmbientLightColor = Env.AmbientLightColor.Lerp(new Color(0.50f, 0.53f, 0.57f), storm);
                     Env.FogLightColor = Env.FogLightColor.Lerp(new Color(0.50f, 0.54f, 0.60f), storm);       // grey-blue fog

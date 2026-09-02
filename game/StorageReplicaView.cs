@@ -28,13 +28,14 @@ namespace UnturnedGodot
             node = null; return false;
         }
 
+        readonly HashSet<uint> _seen = new();
         public override void _PhysicsProcess(double delta)
         {
             if (Client == null) return;
             var parent = GetParent();
             if (parent == null) return;
 
-            var seen = new HashSet<uint>();
+            _seen.Clear(); var seen = _seen;   // PERF: reused per step (was a fresh HashSet every physics tick)
             foreach (var e in Client.Containers.All)
             {
                 seen.Add(e.NetIdValue);
