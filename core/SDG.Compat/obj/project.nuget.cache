@@ -1,8 +1,8 @@
 {
   "version": 2,
-  "dgSpecHash": "9bUaFDHzm9M=",
+  "dgSpecHash": "SOX2ykByHUk=",
   "success": true,
-  "projectFilePath": "/home/ec2-user/ug-editor-wt/core/SDG.Compat/SDG.Compat.csproj",
+  "projectFilePath": "/home/ec2-user/ug-hitbox-wt/core/SDG.Compat/SDG.Compat.csproj",
   "expectedPackageFiles": [],
   "logs": []
 }

@@ -4345,24 +4345,54 @@ namespace UnturnedGodot
                 // the EXACT server damage zones for this stance (ServerCombat.PlayerHitZones -- the same the hit test uses),
                 // rolled with the lean so the boxes track the tilted body.
                 UnturnedGodot.Net.ServerCombat.PlayerHitZones(_paStance, out float zr, out float ztop, out float zhm, out float ztm);
-                var zroot = new Node3D { RotationDegrees = new Vector3(0f, 0f, -_paLean) };
+                var zroot = new Node3D();
                 AddChild(zroot);
-                Color red = new(1f, 0.22f, 0.22f), yel = new(1f, 0.82f, 0.2f), blu = new(0.32f, 0.62f, 1f);
-                StandardMaterial3D ZMat(Color c) => new() { AlbedoColor = new Color(c.R, c.G, c.B, 0.32f), Transparency = BaseMaterial3D.TransparencyEnum.Alpha, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+                // A lean pivots at the SPINE bone (rig.json bone 1, y 0.735) and rolls only the spine chain --
+                // Spine and Left_Hip are SIBLINGS off the Skeleton root, so TorsoPoseModifier tilts head/torso/arms
+                // while the legs stay planted. Rotating the whole stack about the origin (the old -_paLean on zroot)
+                // was wrong twice over: mirrored in sign, and it tilted the leg box off the legs it was covering.
+                var leanN = new Node3D { Position = new Vector3(0f, 0.735f, 0f), RotationDegrees = new Vector3(0f, 0f, _paLean) };
+                zroot.AddChild(leanN);
+                Color red = new(1f, 0.22f, 0.22f), yel = new(1f, 0.82f, 0.2f), blu = new(0.32f, 0.62f, 1f), grn = new(0.36f, 0.95f, 0.45f);
+                StandardMaterial3D ZMat(Color c) => new() { AlbedoColor = new Color(c.R, c.G, c.B, 0.42f), Transparency = BaseMaterial3D.TransparencyEnum.Alpha, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
                 // EXACT boxes measured off the SKINNED mesh per stance (center + size, x/y/z)
-                void Box(float cy, float cz, float sx, float sy, float sz, Color c) => zroot.AddChild(new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(sx, sy, sz) }, Position = new Vector3(0f, cy, cz), MaterialOverride = ZMat(c) });
+                // upper:true -> under the lean pivot (head/torso/arms); false -> planted with the legs.
+                void Box(float cx, float cy, float cz, float sx, float sy, float sz, Color c, bool upper = true) =>
+                    (upper ? leanN : zroot).AddChild(new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(sx, sy, sz) }, Position = new Vector3(cx, upper ? cy - 0.735f : cy, cz), MaterialOverride = ZMat(c) });
+                // FOUR regions (strawberry 2026-09-02): torso is the Spine CORE only, arms are their own x0.6 region
+                // per side. Every number below is the per-part AABB printed by the [mesh] measurement pass in
+                // _Process -- skinned verts grouped by the bone their SKIN SLOT resolves to, per stance. Nothing eyeballed.
                 switch (_paStance)
                 {
-                    case 2:  // CROUCH
-                        Box(1.27f, -0.31f, 0.40f, 0.61f, 0.47f, red); Box(0.69f, -0.09f, 1.76f, 0.95f, 0.79f, yel); Box(0.26f, 0.22f, 0.81f, 0.66f, 1.03f, blu); break;
-                    case 3:  // PRONE
-                        Box(0.66f, -0.36f, 0.40f, 0.60f, 0.47f, red); Box(0.22f, -0.36f, 1.28f, 0.56f, 1.39f, yel); Box(0.20f, 0.78f, 0.81f, 0.38f, 0.59f, blu); break;
-                    default: // STAND
-                        Box(1.68f, -0.01f, 0.40f, 0.56f, 0.40f, red); Box(1.05f, -0.01f, 1.63f, 0.90f, 0.40f, yel); Box(0.28f, -0.01f, 0.81f, 0.60f, 0.40f, blu); break;
+                    case 2:  // CROUCH -- arms up to the torso top (1.16); legs already overlap the torso bottom, no gap
+                        Box( 0f,     1.265f, -0.305f, 0.40f, 0.61f, 0.47f, red);
+                        Box( 0f,     0.765f, -0.085f, 1.12f, 0.79f, 0.79f, yel);
+                        Box(-0.620f, 0.695f, -0.085f, 0.44f, 0.93f, 0.57f, grn);
+                        Box( 0.675f, 0.685f, -0.085f, 0.49f, 0.95f, 0.65f, grn);
+                        Box( 0.005f, 0.260f,  0.215f, 0.81f, 0.66f, 1.03f, blu, upper: false); break;
+                    case 3:  // PRONE -- body is along Z, so the gaps close in Z: arms back to the torso front face
+                             // (-0.46), legs forward to the torso back face (0.34)
+                        Box( 0f,     0.660f, -0.355f, 0.40f, 0.60f, 0.47f, red);
+                        Box( 0f,     0.260f, -0.060f, 1.12f, 0.48f, 0.80f, yel);
+                        Box(-0.425f, 0.170f, -0.755f, 0.43f, 0.46f, 0.59f, grn);
+                        Box( 0.425f, 0.170f, -0.755f, 0.43f, 0.46f, 0.59f, grn);
+                        Box( 0.005f, 0.200f,  0.705f, 0.81f, 0.38f, 0.73f, blu, upper: false); break;
+                    default: // STAND -- arms up to the torso top (1.50) to cover the shoulders, legs up to the
+                             // torso bottom (0.75). A per-part AABB leaves gaps between regions; hit zones must TILE.
+                        Box( 0f,     1.680f, -0.010f, 0.40f, 0.56f, 0.40f, red);
+                        Box( 0f,     1.125f, -0.010f, 1.12f, 0.75f, 0.38f, yel);
+                        Box(-0.605f, 1.050f, -0.010f, 0.41f, 0.90f, 0.40f, grn);
+                        Box( 0.605f, 1.050f, -0.010f, 0.43f, 0.90f, 0.40f, grn);
+                        Box( 0.005f, 0.365f, -0.005f, 0.81f, 0.77f, 0.39f, blu, upper: false); break;
                 }
                 // fixed side legend so the labels never cover the body
-                void Lg(float y, Color c, string t) => AddChild(new Label3D { Text = t, Position = new Vector3(1.7f, y, 0f), Modulate = c, FontSize = 92, PixelSize = 0.0042f, Billboard = BaseMaterial3D.BillboardModeEnum.Enabled, NoDepthTest = true, OutlineSize = 12 });
-                Lg(1.55f, red, "HEAD  x2.0"); Lg(1.2f, yel, "TORSO  x1.0"); Lg(0.85f, blu, "LEGS  x0.6");
+                // The old legend sat at x=1.7,z=0 and DID cover the body from the default camera (verified in a
+                // render), which is exactly what makes a fit look wrong. Offset it along the camera-right vector
+                // (~0.49,0,-0.85 for UG_PACAM 0) and shrink it so it sits clear beside the model.
+                // Legend heights ride the stance's camera target, or prone (target y 0.32) pushes them off the top.
+                float lgB = _paStance == 3 ? 0.32f : (_paStance == 2 ? 0.68f : 0.98f);
+                void Lg(float dy, Color c, string t) => AddChild(new Label3D { Text = t, Position = new Vector3(0.72f, lgB + dy, -1.25f), Modulate = c, FontSize = 68, PixelSize = 0.0022f, Billboard = BaseMaterial3D.BillboardModeEnum.Enabled, NoDepthTest = true, OutlineSize = 10 });
+                Lg(0.74f, red, "HEAD  x2.0"); Lg(0.50f, yel, "TORSO  x1.0"); Lg(0.26f, grn, "ARMS  x0.6"); Lg(0.02f, blu, "LEGS  x0.6");
             }
             var cam = new Camera3D { Current = true, Fov = 42f, Far = 200f };
             AddChild(cam);
@@ -4372,9 +4402,9 @@ namespace UnturnedGodot
                 "1" => new Vector3(9.2f, 1.5f, 0.4f),
                 "2" => new Vector3(0.5f, 1.6f, 9.2f),
                 "3" => new Vector3(5.6f, 0.95f, 5.6f),
-                _ => new Vector3(8.0f, 2.4f, 4.6f),
+                _ => new Vector3(7.2f, 2.60f, 4.15f),
             };
-            float look = _paStance == 3 ? 0.3f : (_paStance == 2 ? 0.62f : 0.85f);   // lower target for crouch/prone
+            float look = _paStance == 3 ? 0.32f : (_paStance == 2 ? 0.68f : 0.98f);   // lower target for crouch/prone
             cam.LookAt(new Vector3(0f, look, 0f), Vector3.Up);
             _paActive = true;
             GD.Print("[puppetanim] driving idle->walk->run via SetLocomotion+Tick");
@@ -7517,10 +7547,14 @@ namespace UnturnedGodot
                             if (b < 0) continue;
                             var p = sk.GetBoneGlobalPose(b) * skin.GetBindPose(slot) * verts[i];   // correct GPU skinning: pose * bindpose * v
                             string bn = sk.GetBoneName(b);
-                            string grp = bn.Contains("Skull") ? "HEAD" : ((bn.Contains("Leg") || bn.Contains("Foot") || bn.Contains("Hip") || bn.Contains("Knee")) ? "LEGS" : "TORSO");
+                            // ARMS are their own region now (strawberry 2026-09-02: "arms into their own region, same mult as legs"),
+                            // so TORSO is the Spine core alone -- the wide box that used to swallow the arms is what made the fit wrong.
+                            string grp = bn.Contains("Skull") ? "HEAD"
+                                : ((bn.Contains("Leg") || bn.Contains("Foot") || bn.Contains("Hip") || bn.Contains("Knee")) ? "LEGS"
+                                : ((bn.Contains("Shoulder") || bn.Contains("Arm") || bn.Contains("Hand") || bn.Contains("Hook")) ? (bn.StartsWith("Left") ? "ARM_L" : "ARM_R") : "TORSO"));
                             parts[grp] = parts.TryGetValue(grp, out var ab) ? ab.Expand(p) : new Aabb(p, Vector3.Zero);
                         }
-                        foreach (var g in new[] { "HEAD", "TORSO", "LEGS" }) if (parts.TryGetValue(g, out var a)) GD.Print($"[mesh] st={_paStance} {g} Y=[{a.Position.Y:0.00}..{a.End.Y:0.00}] X=[{a.Position.X:0.00}..{a.End.X:0.00}] Z=[{a.Position.Z:0.00}..{a.End.Z:0.00}]");
+                        foreach (var g in new[] { "HEAD", "TORSO", "ARM_L", "ARM_R", "LEGS" }) if (parts.TryGetValue(g, out var a)) GD.Print($"[mesh] st={_paStance} lean={_paLean:0} {g} Y=[{a.Position.Y:0.00}..{a.End.Y:0.00}] X=[{a.Position.X:0.00}..{a.End.X:0.00}] Z=[{a.Position.Z:0.00}..{a.End.Z:0.00}]");
                     }
                     return;
                 }

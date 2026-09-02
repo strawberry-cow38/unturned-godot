@@ -1,8 +1,8 @@
 {
   "version": 2,
-  "dgSpecHash": "xCYKj+MuFFM=",
+  "dgSpecHash": "YyJ3zVBruUU=",
   "success": true,
-  "projectFilePath": "/home/ec2-user/ug-editor-wt/core/SDG.NetPak/SDG.NetPak.csproj",
+  "projectFilePath": "/home/ec2-user/ug-hitbox-wt/core/SDG.NetPak/SDG.NetPak.csproj",
   "expectedPackageFiles": [],
   "logs": []
 }
