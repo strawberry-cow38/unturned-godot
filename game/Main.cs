@@ -45,6 +45,8 @@ namespace UnturnedGodot
         string _glassShotDir;                        // --glassshot=DIR : eyeline orbit of ONE parked vehicle, per-pane glass colours
         Camera3D _glassCam; float _glassRadius = 6.5f; float _glassEye = 1.70f;
         System.Collections.Generic.List<MeshInstance3D> _glassPanes;
+        bool _hullOverlayDone; bool _glassRadiusSet;
+        System.Collections.Generic.List<MeshInstance3D> _bodyMeshes;
         static readonly Color[] PaneColors = {   // deliberately NO magenta: that is the body colour
             new Color(0.1f, 1f, 1f),     new Color(1f, 0.15f, 0.15f), new Color(1f, 0.95f, 0.1f),
             new Color(0.15f, 1f, 0.25f), new Color(1f, 0.55f, 0f),    new Color(0.25f, 0.45f, 1f),
@@ -1769,7 +1771,7 @@ namespace UnturnedGodot
             floor.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
             AddChild(floor);
 
-            { var r = System.Environment.GetEnvironmentVariable("UG_GLASSRADIUS"); if (r != null && float.TryParse(r, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var rr)) _glassRadius = rr; }
+            { var r = System.Environment.GetEnvironmentVariable("UG_GLASSRADIUS"); if (r != null && float.TryParse(r, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var rr)) { _glassRadius = rr; _glassRadiusSet = true; } }
             { var e = System.Environment.GetEnvironmentVariable("UG_GLASSEYE");    if (e != null && float.TryParse(e, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var ee)) _glassEye = ee; }
 
             _veh = Vehicle.BuildByName(type, 0);
@@ -1784,16 +1786,20 @@ namespace UnturnedGodot
                 ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
             int painted = 0, panes = 0;
             _glassPanes = new System.Collections.Generic.List<MeshInstance3D>();
+            _bodyMeshes = new System.Collections.Generic.List<MeshInstance3D>();
             void Paint(Node n)
             {
                 if (n is MeshInstance3D mi)
                 {
                     if (mi.Name.ToString().StartsWith("Glass_") || mi.Name.ToString() == "Glass") { panes++; _glassPanes.Add(mi); }
-                    else { mi.MaterialOverride = bodyMat; painted++; }
+                    else { mi.MaterialOverride = bodyMat; painted++; _bodyMeshes.Add(mi); }
                 }
                 foreach (var c in n.GetChildren()) Paint(c);
             }
             Paint(_veh);
+            if (System.Environment.GetEnvironmentVariable("UG_GLASSDIAG") == "1")
+                foreach (var mi in _bodyMeshes)
+                { var a = mi.GetAabb(); GD.Print($"[mesh] {mi.Name,-26} size=({a.Size.X,7:0.00},{a.Size.Y,6:0.00},{a.Size.Z,7:0.00}) pos=({mi.Position.X,6:0.00},{mi.Position.Y,6:0.00},{mi.Position.Z,6:0.00})"); }
             // Colour the panes MYSELF rather than leaning on UG_GLASSDEBUG: its palette starts at
             // (1,0.2,1), the same magenta as the body above, so every vehicle's windscreen was
             // invisible against the bodywork and I read a van's REAR window (seen through the empty
@@ -1822,10 +1828,36 @@ namespace UnturnedGodot
             PlaceGlassCam(0);
         }
 
+        // A headlight's beam cone is a MeshInstance like any other and it is 15.4 x 14.0 m on a sedan --
+        // six times the car. Merged into the bounds it put the orbit 40 m out and shrank every vehicle to
+        // a speck, which is how a fixed radius that was merely wrong became an auto radius that was wrong
+        // by more. Light volumes are not the vehicle's shape, so they are not in its bounds.
+        static bool IsLightVolume(MeshInstance3D mi)
+        {
+            string n = mi.Name.ToString();
+            return n.Contains("Beam") || n.Contains("Halo") || n.Contains("Glow") || n.StartsWith("GlassShotFloor");
+        }
+
+        // The vehicle's own visible bounds, in world space.
+        Aabb VehicleBounds()
+        {
+            var box = new Aabb(); bool first = true;
+            void Grow(Node n)
+            {
+                if (n is MeshInstance3D mi && mi.Mesh != null && !IsLightVolume(mi))
+                { var a = mi.GlobalTransform * mi.GetAabb(); if (first) { box = a; first = false; } else box = box.Merge(a); }
+                foreach (var ch in n.GetChildren()) Grow(ch);
+            }
+            if (_veh != null) Grow(_veh);
+            return first ? new Aabb(Vector3.Zero, new Vector3(4f, 2f, 4f)) : box;
+        }
+        Vector3 VehicleCentre() { var b = VehicleBounds(); return new Vector3(b.GetCenter().X, 0f, b.GetCenter().Z); }
+        float VehicleSpan() { var b = VehicleBounds(); return Mathf.Max(b.Size.X, b.Size.Z); }
+
         // Aim at the centre of the panes themselves: the frame is only useful if the glass is IN it.
         Vector3 GlassAim()
         {
-            if (_glassPanes == null || _glassPanes.Count == 0) return new Vector3(0f, 1.05f, 0f);
+            if (_glassPanes == null || _glassPanes.Count == 0) { var b = VehicleBounds(); return b.GetCenter(); }
             var sum = Vector3.Zero; int n = 0;
             foreach (var mi in _glassPanes) { if (!GodotObject.IsInstanceValid(mi)) continue; sum += mi.GlobalTransform * mi.GetAabb().GetCenter(); n++; }
             return n == 0 ? new Vector3(0f, 1.05f, 0f) : sum / n;
@@ -1836,7 +1868,13 @@ namespace UnturnedGodot
         {
             if (_glassCam == null) return;
             float yaw = GlassShotYaws[Mathf.Clamp(i, 0, GlassShotYaws.Length - 1)] * Mathf.Pi / 180f;
-            _glassCam.Position = new Vector3(Mathf.Sin(yaw) * _glassRadius, _glassEye, Mathf.Cos(yaw) * _glassRadius);
+            // Orbit the VEHICLE, not the world origin, at a radius set by how big it is. Fixed 6.5 m
+            // about (0,0,0) is fine for a sedan and wrong for anything long: a semi spans z -2.6..4.5,
+            // so its cab sat 1 m off the pivot and every "front" shot was an oblique of the chassis.
+            // I read that as a broken windscreen pane and nearly reported it as one.
+            var c = VehicleCentre();
+            float r = _glassRadiusSet ? _glassRadius : Mathf.Max(6.5f, VehicleSpan() * 1.15f);
+            _glassCam.Position = new Vector3(c.X + Mathf.Sin(yaw) * r, _glassEye, c.Z + Mathf.Cos(yaw) * r);
             _glassCam.LookAt(GlassAim(), Vector3.Up);
             if (System.Environment.GetEnvironmentVariable("UG_GLASSDIAG") == "1")
             {
@@ -8286,7 +8324,54 @@ namespace UnturnedGodot
                             im.BlendRect(g, new Rect2I(Vector2I.Zero, g.GetSize()), Vector2I.Zero);
                         }
                     }
-                    if (_glassShotDir != null) { /* captured at yaw _rigShot */ }
+                    // UG_SHOWHULL=1: draw the vehicle's ACTUAL collision shapes over it, from the same eight
+                    // angles. Built here rather than at spawn because the convex decomposition runs on the
+                    // vehicle's _Ready, so at build time there is nothing yet to draw. Wireframe, so the body
+                    // stays readable underneath and any hull standing PROUD of the model is the visible part.
+                    if (_glassShotDir != null && !_hullOverlayDone
+                        && System.Environment.GetEnvironmentVariable("UG_SHOWHULL") == "1" && _veh != null)
+                    {
+                        _hullOverlayDone = true;
+                        var hullMat = new StandardMaterial3D { AlbedoColor = new Color(0.1f, 1f, 0.2f),
+                            ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded };
+                        int drawn = 0;
+                        void DrawShapes(Node n)
+                        {
+                            foreach (var c in n.GetChildren())
+                            {
+                                if (c is CollisionShape3D cs && cs.Shape != null)
+                                {
+                                    // UG_HULLKIND=convex draws ONLY the decomposed hulls, =box only the
+                                    // fitted boxes. Rendered against the body silhouette that separates
+                                    // "the model's own shape, captured" from "the brick bolted around it".
+                                    string kind = System.Environment.GetEnvironmentVariable("UG_HULLKIND");
+                                    bool isConvex = cs.Shape is ConvexPolygonShape3D;
+                                    if (kind == "convex" && !isConvex) continue;
+                                    if (kind == "box" && isConvex) continue;
+                                    var dm = cs.Shape.GetDebugMesh();
+                                    if (dm != null)
+                                    {
+                                        var wire = new MeshInstance3D { Mesh = dm, MaterialOverride = hullMat };
+                                        _veh.AddChild(wire);
+                                        wire.GlobalTransform = cs.GlobalTransform;
+                                        drawn++;
+                                        var a = cs.Shape.GetDebugMesh().GetAabb();
+                                        GD.Print($"[hull] {cs.GetParent().Name}/{cs.Name} {cs.Shape.GetType().Name} " +
+                                                 $"pos=({cs.Position.X,6:0.00},{cs.Position.Y,6:0.00},{cs.Position.Z,7:0.00}) size=({a.Size.X,5:0.00},{a.Size.Y,5:0.00},{a.Size.Z,5:0.00})");
+                                    }
+                                }
+                                if (c is not MeshInstance3D) DrawShapes(c);
+                            }
+                        }
+                        DrawShapes(_veh);
+                        // UG_HULLONLY=1 hides the model so the frame is the HULL's silhouette alone.
+                        // Rendered against the body-only pass from the identical camera, the pixels that
+                        // are hull-and-not-body are exactly where the hitbox stands proud of the car --
+                        // a number, rather than me judging an overlay by eye.
+                        if (System.Environment.GetEnvironmentVariable("UG_HULLONLY") == "1")
+                            foreach (var mi in _bodyMeshes) if (GodotObject.IsInstanceValid(mi)) mi.Visible = false;
+                        GD.Print($"[hull] {drawn} collision shapes drawn");
+                    }
                     string p = $"{_rigDir}/rig_{_rigShot:D2}.png";
                     im.SavePng(p);
                     GD.Print($"[RIG] saved {p} (frame {_frame})");
