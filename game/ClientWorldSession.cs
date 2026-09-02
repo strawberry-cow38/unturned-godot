@@ -471,11 +471,16 @@ namespace UnturnedGodot
             // AdoptReplicatedVitals cannot fire a LOCAL death that would fight the server clock. Server-owned
             // fall/OOB for this owner are DERIVED from its state claims; its local TakeDamage stays a no-op.
             shell.ExpectServerVitals();
-            // D1: spawn holding the EAGLEFIRE (demo-inventory primary slot) -- the server validates every
-            // shot as the default Eaglefire profile (ServerCombat), so client + server agree on rate/ammo;
-            // a faster demo gun would get half its shots silently rate-rejected and feel broken. Per-gun
-            // server profiles are the deferred Phase 6 equip seam.
-            shell.EquipHotbar(1);
+            // SPAWN UNARMED -- the same call the SP world build makes (WorldBuilder.BuildFullWorld, "Player" phase). This was
+            // EquipHotbar(1) from the D1 days when the demo kit put an Eaglefire in the primary slot. The spawn
+            // kit has been clothes-only since 2026-08-16, so slot 1 is EMPTY here, and EquipFromLocation on an
+            // empty slot with nothing in hand returns without touching the viewmodel -- which left the one
+            // PlayerController._Ready builds by default: `new Viewmodel { GunName = "eaglefire" }` with NO Gun
+            // loaded and NO backing item. That is the "phantom eaglefire" every joiner saw in their hands on the
+            // dedicated server (strawberry 2026-09-02): a rifle you could look at but not fire, reload or drop,
+            // that existed on no grid anywhere. EquipUnarmed replaces it with the fists viewmodel outright.
+            // Per-gun server shot profiles remain the deferred Phase 6 equip seam (ServerCombat.DefaultGun).
+            shell.EquipUnarmed();
             if (Sun != null && Env != null) shell.LinkWorldLighting(Sun, Env);   // FP gun takes the world day/night sun + ambient
             shell.GlobalPosition = new Vector3(me.Pos.x, me.Pos.y, me.Pos.z);
             shell.RotationDegrees = new Vector3(0f, me.YawDegrees, 0f);
