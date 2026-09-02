@@ -4328,6 +4328,11 @@ namespace UnturnedGodot
             if (_paRig == null) { GD.PrintErr("[puppetanim] rig build failed"); GetTree().Quit(1); return; }
             AddChild(_paRig);
             _paRig.PlayLoop("Idle_Stand");
+            if (System.Environment.GetEnvironmentVariable("UG_PAGUN") == "1")
+            {
+                _paRig.AttachGun("eaglefire");    // gun mesh on Right_Hook + upper-body gun layer -> held while the legs run locomotion/stance
+                _paRig.EnableGunLayer();
+            }
             var cam = new Camera3D { Current = true, Fov = 42f, Far = 200f };
             AddChild(cam);
             cam.Position = new Vector3(8.0f, 2.4f, 4.6f);   // 3/4-side, pulled back to frame the WHOLE body head->feet
