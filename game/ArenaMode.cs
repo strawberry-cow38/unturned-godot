@@ -108,6 +108,31 @@ namespace UnturnedGodot
             return outp;
         }
 
+        // Random valid GUN-DROP spots across the arena (the mode has no normal loot -- guns rain at spots like these over
+        // the match): random points in the box, on land, clear of walls, spaced >= ~10 m apart. Seeded for a reproducible
+        // debug shot; the live match reseeds per drop so drops vary through the round.
+        public static List<Vector3> GunDropPositions(Vector3 centre, float halfX, float halfZ, Terrain terr,
+                                                     System.Func<Vector3, bool> inWall, int count, uint seed)
+        {
+            var pts = new List<Vector3>();
+            uint s = seed | 1u;
+            for (int tries = 0; tries < count * 60 && pts.Count < count; tries++)
+            {
+                s ^= s << 13; s ^= s >> 17; s ^= s << 5; float fx = (s % 2000u) / 1000f - 1f;
+                s ^= s << 13; s ^= s >> 17; s ^= s << 5; float fz = (s % 2000u) / 1000f - 1f;
+                float x = centre.X + fx * halfX, z = centre.Z + fz * halfZ;
+                if (terr != null && Terrain.IsWater(terr.SampleDominantLayer(x, z))) continue;   // not in the sea
+                float y = terr != null ? terr.SampleHeight(x, z) : centre.Y;
+                var p = new Vector3(x, y, z);
+                if (inWall != null && inWall(p)) continue;                                       // not inside a building
+                bool tooClose = false;
+                foreach (var q in pts) { float dx = q.X - p.X, dz = q.Z - p.Z; if (dx * dx + dz * dz < 100f) { tooClose = true; break; } }
+                if (tooClose) continue;
+                pts.Add(p);
+            }
+            return pts;
+        }
+
         static float HSqr(Vector3 a, Vector3 b) { float dx = a.X - b.X, dz = a.Z - b.Z; return dx * dx + dz * dz; }
     }
 }

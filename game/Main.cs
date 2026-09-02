@@ -5624,6 +5624,21 @@ namespace UnturnedGodot
             AddArenaMarker(centre, new Color(1f, 0.25f, 0.85f), "C");
             AddArenaBorder(centre, halfX, halfZ, terr);   // the arena play-area boundary (the POI extent), on the ground
 
+            // GUN DROPS: the arena has NO normal loot -- guns rain at random valid spots over the match. Show a sample of
+            // those spots (orange 'G' markers) + a real gun pickup at each, so both the distribution and that guns
+            // actually spawn read in one shot.
+            SDG.Unturned.ItemCatalog.RegisterAll();
+            var guns = new System.Collections.Generic.List<ushort>();
+            foreach (var a in SDG.Unturned.Assets.all()) if (a != null && a.gunName != null) guns.Add(a.id);
+            var gunDrops = ArenaMode.GunDropPositions(centre, halfX, halfZ, terr, inWall, 18, 0xA5E1u);
+            uint gs = 0x51EEu;
+            foreach (var gp in gunDrops)
+            {
+                if (guns.Count > 0) { gs ^= gs << 13; gs ^= gs >> 17; gs ^= gs << 5; WorldItem.Spawn(this, new SDG.Unturned.Item(guns[(int)(gs % (uint)guns.Count)]), gp + Vector3.Up * 0.6f); }
+                AddArenaMarker(gp, new Color(1f, 0.55f, 0.08f), "G");
+            }
+            GD.Print($"[arena] {gunDrops.Count} gun-drop spots ({guns.Count} gun types available)");
+
             float span = Mathf.Max(halfX, halfZ);
             var cam = new Camera3D { Current = true, Fov = 60f, Far = 8000f };
             AddChild(cam);
