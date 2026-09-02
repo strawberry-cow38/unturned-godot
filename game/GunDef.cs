@@ -307,79 +307,6 @@ namespace UnturnedGodot
                                                   // must not draw the fattest streak in the game
         };
 
-        // PvP per-hit damage matched to the REAL retail Unturned figures (master: "match it to the real figures"),
-        // keyed by item ID. Pulled straight from each gun's retail <Gun>.dat Player_Damage on the box. This is an OVERLAY
-        // applied at load -- the faithful port .dats (which mostly dropped Player_Damage, leaving every gun on a flat
-        // fallback) are untouched. Retail balances per-GUN, not per-caliber (same caliber varies: 12ga Bluntforce 40 vs
-        // Determinator 17), so this is a per-gun table, not the caliber curve I first guessed.
-        // SHOTGUN NOTE: retail Player_Damage is PER PELLET, and pellet count comes from the LOADED SHELL
-        // (ItemMagazineAsset.pellets -- buckshot spreads, slug/beanbag = 1), NOT the gun. So EVERY shotgun value below is
-        // the retail per-pellet number; per-shot = value x the shell's pellets. (My earlier ÷8 on the 20ga was a misread
-        // -- I read the gun's Pellets FALLBACK, not the shell.) ⚠ the shell pellet counts in ItemCatalog (12ga buckshot 9,
-        // 20ga 18) EXCEED retail (6, 8); THAT -- not these per-pellet numbers -- is what would make a point-blank shell
-        // hit for ~700. Flagged to master.
-        public static readonly System.Collections.Generic.Dictionary<int, float> PlayerDamageByGunId = new()
-        {
-            [4] = 40f,    // eaglefire (5.56)
-            [363] = 40f,  // maplestrike
-            [116] = 40f,  // honeybadger
-            [1037] = 40f, // heartbreaker
-            [1488] = 40f, // swissgewehr
-            [1362] = 43f, // augewehr
-            [1375] = 43f, // fusilaut
-            [1377] = 43f, // nightraider
-            [132] = 17f,  // dragonfang
-            [122] = 37f,  // zubeknakov (7.62x39 AK)
-            [1018] = 60f, // sabertooth (7.62x51)
-            [1364] = 9f,  // fury (7.62x51, high RPM)
-            [109] = 80f,  // hawkhound
-            [129] = 65f,  // snayperskya (7.62x54R)
-            [126] = 11f,  // nykorev (7.62x54R MG)
-            [101] = 80f,  // schofield (7.62x54R rifle)
-            [18] = 99f,   // timberwolf (.338)
-            [297] = 99f,  // grizzly (.50)
-            [1382] = 99f, // ekho (.50)
-            [1394] = 35f, // hmg (.50 MG)
-            [300] = 99f,  // shadowstalker (railgun)
-            [1441] = 50f, // shadowstalkermk2
-            [1000] = 70f, // matamorez (9x39)
-            [484] = 23f,  // sportshot (.22)
-            [107] = 50f,  // ace (.44)
-            [488] = 80f,  // desert_falcon (.44)
-            [1447] = 30f, // scalar (.45)
-            [1021] = 32f, // avenger (.45)
-            [97] = 24f,   // colt (.45)
-            [1481] = 30f, // empire (.45)
-            [1039] = 24f, // kryzkarek (9x18)
-            [1041] = 22f, // yuri (9x18)
-            [1476] = 27f, // luger (9x19)
-            [99] = 25f,   // cobra (9x19)
-            [1360] = 32f, // teklowvka (9x19)
-            [1027] = 24f, // viper (9x19)
-            [1369] = 20f, // bulldog (9x19)
-            [1477] = 30f, // mp40 (9x19)
-            [1379] = 33f, // card (7.62x25)
-            [1024] = 20f, // peacemaker (5.7x28)
-            [355] = 60f,  // bow_birch
-            [353] = 60f,  // bow_maple
-            [356] = 60f,  // bow_pine
-            [357] = 80f,  // bow_compound
-            [346] = 80f,  // crossbow
-            [479] = 80f,  // rifle_birch (5.56 sniper)
-            [474] = 80f,  // rifle_maple
-            [480] = 80f,  // rifle_pine
-            [1165] = 19f, // nailgun
-            [1337] = 15f, // paintballgun
-            [519] = 200f, // launcher_rocket (direct impact; blast is separate)
-            // shotguns -- retail Player_Damage is PER PELLET (see SHOTGUN NOTE above):
-            [1484] = 30f, // bane (12ga, single projectile in this port)
-            [1366] = 35f, // vonya
-            [1480] = 17f, // determinator
-            [112] = 40f,  // bluntforce
-            [1436] = 43f, // quadbarrel
-            [380] = 40f,  // masterkey (20ga buckshot, retail per-pellet)
-            [1143] = 50f, // sawed_off (20ga buckshot, retail per-pellet)
-        };
 
         public static GunDef FromDatText(string datText)
         {
@@ -449,7 +376,10 @@ namespace UnturnedGodot
             g.RechamberAfterShotCount = d.ParseInt32("RechamberAfterShotCount", defaultRechamber);
             g.RechamberAfterShotDelay = d.ParseFloat("RechamberAfterShotDelay", 0.25f);   // source default 0.25s
             ComputeBallistics(g, d);
-            if (int.TryParse(g.Id, out var gid) && PlayerDamageByGunId.TryGetValue(gid, out var realPd)) g.PlayerDamage = realPd;   // master: match PvP damage to the REAL retail figures
+            // REBALANCE (master 2026-09-02): the per-caliber Damage + ballistics are kept as-is; the one change is that
+            // buckshot carries further -> DOUBLE the shotgun falloff END (12ga 45->90, 20ga 38->76). The earlier retail
+            // Player_Damage overlay was removed ("ignore retail. we are doing a rebalance").
+            if (g.CaliberName == "12 Gauge" || g.CaliberName == "20 Gauge") g.FalloffEnd *= 2f;
             return g;
         }
 
