@@ -15,6 +15,10 @@ namespace UnturnedGodot
     {
         // per-map gameplay config. Zombies is REAL (-> PlaySelected); the rest are cosmetic for now.
         int _optDifficulty = 1;   // 0 Easy / 1 Normal / 2 Hard      (dummy)
+        int _optZombies    = 0;   // 0 Normal / 1 Off  -- REAL: applied in PlaySelected. The row and its wiring
+                                  // both went out with the zombie rewrite, leaving the "Zombies is REAL" comment
+                                  // below describing a control that no longer existed anywhere (master: "where
+                                  // is the toggle?"). Restored as a VISIBLE row, not buried behind Config.
         int _optLoot       = 1;   // 0 Sparse / 1 Normal / 2 Abundant (dummy)
         int _optDay        = 1;   // 0 Short / 1 Default / 2 Long / 3 Endless Day (dummy)
         int _optCombat     = 0;   // 0 PvE / 1 PvP                    (dummy)
@@ -44,6 +48,7 @@ namespace UnturnedGodot
         static readonly string[] LootModes    = { "Sparse", "Normal", "Abundant" };
         static readonly string[] DayModes     = { "Short", "Default", "Long", "Endless Day" };
         static readonly string[] CombatModes  = { "PvE", "PvP" };
+        static readonly string[] ZombieModes  = { "Normal", "Off" };
 
         // The per-map gameplay options above are plain fields that reset to their defaults every launch. Persist
         // them to user:// (Godot's writable per-user dir -- survives restart AND works in an exported build, unlike
@@ -55,6 +60,7 @@ namespace UnturnedGodot
             var cfg = new ConfigFile();
             if (cfg.Load(MapSettingsPath) != Error.Ok) return;   // nothing saved yet -> keep defaults
             _optDifficulty = cfg.GetValue("map", "difficulty", _optDifficulty).AsInt32();
+            _optZombies    = Mathf.Clamp(cfg.GetValue("map", "zombies", _optZombies).AsInt32(), 0, ZombieModes.Length - 1);   // a pre-rewrite config can hold 2 ("New Zombies"), which no longer exists
             _optLoot       = cfg.GetValue("map", "loot",       _optLoot).AsInt32();
             _optDay        = cfg.GetValue("map", "day",        _optDay).AsInt32();
             _optCombat     = cfg.GetValue("map", "combat",     _optCombat).AsInt32();
@@ -66,6 +72,7 @@ namespace UnturnedGodot
         {
             var cfg = new ConfigFile();
             cfg.SetValue("map", "difficulty", _optDifficulty);
+            cfg.SetValue("map", "zombies",    _optZombies);
             cfg.SetValue("map", "loot",       _optLoot);
             cfg.SetValue("map", "day",        _optDay);
             cfg.SetValue("map", "combat",     _optCombat);
@@ -154,6 +161,7 @@ namespace UnturnedGodot
             play.Pressed += PlaySelected;
             lcol.AddChild(play);
             lcol.AddChild(OptionRow("Difficulty", Difficulties, _optDifficulty, i => { _optDifficulty = i; SaveMapSettings(); }));
+            lcol.AddChild(OptionRow("Zombies", ZombieModes, _optZombies, i => { _optZombies = i; SaveMapSettings(); }));
             var cfgBox = new VBoxContainer { Visible = false };
             cfgBox.AddThemeConstantOverride("separation", 5);
             cfgBox.AddChild(OptionRow("Loot",       LootModes,   _optLoot,   i => { _optLoot = i; SaveMapSettings(); }));
@@ -319,7 +327,13 @@ namespace UnturnedGodot
         // labeled left/right value cycler (retail SleekButtonState). onChange fires with the new index.
         Control OptionRow(string label, string[] values, int initial, System.Action<int> onChange)
         {
-            int idx = initial;
+            // CLAMP. map_settings.cfg outlives the schema that wrote it: this box had zombies=2 saved from
+            // when the row offered three modes (Normal / No Zombies / New Zombies), the row was later deleted,
+            // and the value sat in the config. Restoring a two-value row then indexed [2] and threw
+            // IndexOutOfRangeException before the menu finished building. Every OptionRow reads a persisted
+            // int, so the guard belongs here rather than at one call site -- any row whose value list ever
+            // shrinks has the same trap waiting.
+            int idx = values.Length == 0 ? 0 : Mathf.Clamp(initial, 0, values.Length - 1);
             var row = new HBoxContainer { CustomMinimumSize = new Vector2(340f, 32f) };
             row.AddThemeConstantOverride("separation", 6);
             var name = new Label { Text = label, CustomMinimumSize = new Vector2(110f, 0f), VerticalAlignment = VerticalAlignment.Center };
@@ -361,6 +375,9 @@ namespace UnturnedGodot
         // permadeath are cosmetic for now -- the one wired option is Zombies.
         void PlaySelected()
         {
+            // Apply the one REAL gameplay option before any world build starts. WorldBuilder guards the SPAWN,
+            // so this has to be set before the build, not after.
+            WorldBuilder.ZombiesOverride = _optZombies == 1;
             if (_playgroundSelected) { OnPlayground?.Invoke(); return; }   // the gun range, not a survival map
             if (_generateSelected)
             {

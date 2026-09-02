@@ -224,9 +224,14 @@ namespace UnturnedGodot
         /// world and the dedicated server lost the toggle. One env var covers both: a spawn the world never
         /// makes cannot be streamed, ticked or replicated, so there is no second place to switch off.
         /// Default is ON -- an unset variable spawns zombies exactly as before.</summary>
+        /// <summary>Set by the main menu's Zombies row before it launches a map; null = fall back to the env
+        /// vars. The menu is the toggle a PLAYER has (master: "where is the toggle?" -- an env var is not one),
+        /// the env vars are the toggle a SERVER has.</summary>
+        public static bool? ZombiesOverride;
+
         public static bool ZombiesDisabled =>
-            System.Environment.GetEnvironmentVariable("UG_NOZOMBIES") == "1"
-            || System.Environment.GetEnvironmentVariable("UG_DEDICATED_NOZOMBIES") == "1";   // the old dedicated name still works
+            ZombiesOverride ?? (System.Environment.GetEnvironmentVariable("UG_NOZOMBIES") == "1"
+                             || System.Environment.GetEnvironmentVariable("UG_DEDICATED_NOZOMBIES") == "1");   // the old dedicated name still works
 
         public static async System.Threading.Tasks.Task<WorldBuildResult> BuildFullWorld(
             Node root, WorldMode mode, string mapRoot, string mapPlace,

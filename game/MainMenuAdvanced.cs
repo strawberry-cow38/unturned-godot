@@ -85,6 +85,21 @@ namespace UnturnedGodot
         {
             if (_advancedPanel == null) return;
             _advancedPanel.Visible = !_advancedPanel.Visible;
+            // Only grab input while it is open, so Esc keeps its normal meaning everywhere else in the menu.
+            SetProcessInput(_advancedPanel.Visible);
+        }
+
+        // Esc closes it too -- the second way out. A close button alone is one control away from the same trap
+        // if a later layout change ever covers it.
+        public override void _Input(InputEvent e)
+        {
+            if (_advancedPanel == null || !_advancedPanel.Visible) return;
+            if (e is InputEventKey k && k.Pressed && !k.Echo && k.Keycode == Key.Escape)
+            {
+                _advancedPanel.Visible = false;
+                SetProcessInput(false);
+                GetViewport().SetInputAsHandled();
+            }
         }
 
         // the full-config overlay: every vanilla ModeConfigData field, grouped by category, 2 columns, scrollable.
@@ -104,6 +119,17 @@ namespace UnturnedGodot
             var head = Header("ADVANCED — FULL GAMEPLAY CONFIG", 20);
             head.Position = new Vector2(16f, 12f);
             advPanel.AddChild(head);
+
+            // A CLOSE BUTTON, because the panel is deliberately sized to cover the map panel and the only other
+            // way out was the Advanced button UNDERNEATH it (master: "its also impossible to close the advanced
+            // menu"). A toggle whose off-switch is covered by the thing it toggles is a one-way door.
+            var close = new Button { Text = "✕", Flat = true };
+            close.AnchorLeft = 1f; close.AnchorRight = 1f; close.AnchorTop = 0f; close.AnchorBottom = 0f;
+            close.OffsetLeft = -52f; close.OffsetTop = 8f; close.OffsetRight = -12f; close.OffsetBottom = 44f;
+            close.AddThemeFontSizeOverride("font_size", 22);
+            close.TooltipText = "Close (Esc)";
+            close.Pressed += ToggleAdvanced;
+            advPanel.AddChild(close);
             var note = new Label { Text = "every vanilla ModeConfigData option (per-difficulty). controls are placeholders — the live ones are in the map panel.", Position = new Vector2(16f, 40f) };
             note.AddThemeFontSizeOverride("font_size", 12);
             note.AddThemeColorOverride("font_color", new Color(0.7f, 0.7f, 0.7f));
