@@ -5621,11 +5621,12 @@ namespace UnturnedGodot
             int n = 0;
             foreach (var (pos, yaw) in spawns) { AddArenaMarker(pos, new Color(0.15f, 0.95f, 1f), $"{++n}"); GD.Print($"[arena]   spawn {n}: ({pos.X:0},{pos.Y:0},{pos.Z:0})"); }
             AddArenaMarker(centre, new Color(1f, 0.25f, 0.85f), "C");
+            AddArenaBorder(centre, halfX, halfZ, terr);   // the arena play-area boundary (the POI extent), on the ground
 
             float span = Mathf.Max(halfX, halfZ);
             var cam = new Camera3D { Current = true, Fov = 60f, Far = 8000f };
             AddChild(cam);
-            cam.GlobalPosition = centre + new Vector3(0f, span * 2.3f + 40f, span * 0.35f);   // steep top-down framing the whole footprint
+            cam.GlobalPosition = centre + new Vector3(0f, span * 2.7f + 45f, span * 0.22f);   // steep top-down framing the whole border
             cam.LookAt(centre, Vector3.Up);
             _worldReady = true;   // capture can now fire (loaded world + markers in frame)
         }
@@ -5639,6 +5640,24 @@ namespace UnturnedGodot
             AddChild(new MeshInstance3D { Mesh = new CylinderMesh { TopRadius = 0.6f, BottomRadius = 0.6f, Height = 12f }, MaterialOverride = mat, Position = groundPos + Vector3.Up * 6f });   // pillar
             AddChild(new MeshInstance3D { Mesh = new SphereMesh { Radius = 2.2f }, MaterialOverride = mat, Position = groundPos + Vector3.Up * 13.5f });                                        // cap ball
             AddChild(new Label3D { Text = label, FontSize = 128, PixelSize = 0.08f, Modulate = col, Billboard = BaseMaterial3D.BillboardModeEnum.Enabled, NoDepthTest = true, Position = groundPos + Vector3.Up * 17f });
+        }
+
+        // The arena play-area boundary = the POI extent box, drawn as a bright emissive fence that FOLLOWS the terrain
+        // (posts sampled to ground height along each edge) so the whole rectangle reads even over undulating ground.
+        void AddArenaBorder(Vector3 centre, float halfX, float halfZ, Terrain terr)
+        {
+            var col = new Color(1f, 0.82f, 0.1f);
+            var mat = new StandardMaterial3D { AlbedoColor = col, EmissionEnabled = true, Emission = col, EmissionEnergyMultiplier = 1.8f, ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+            const int segs = 44;
+            for (int e = 0; e < 4; e++)
+                for (int i = 0; i <= segs; i++)
+                {
+                    float t = i / (float)segs;
+                    float x = e < 2 ? centre.X - halfX + t * halfX * 2f : centre.X + (e == 2 ? -halfX : halfX);
+                    float z = e < 2 ? centre.Z + (e == 0 ? -halfZ : halfZ) : centre.Z - halfZ + t * halfZ * 2f;
+                    float y = terr != null ? terr.SampleHeight(x, z) : centre.Y;
+                    AddChild(new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(1.1f, 5f, 1.1f) }, MaterialOverride = mat, Position = new Vector3(x, y + 2f, z) });
+                }
         }
 
 
