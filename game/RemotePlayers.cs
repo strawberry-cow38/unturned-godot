@@ -75,7 +75,15 @@ namespace UnturnedGodot
                     float inst = new Vector2(d.X, d.Z).Length() / (float)delta;
                     av.Speed = Mathf.Lerp(av.Speed, inst, 1f - Mathf.Exp(-8f * (float)delta));
                 }
-                av.Body.SetLocomotion(av.Speed);
+                // v18: the replicated stance code (0 STAND / 1 SPRINT / 2 CROUCH / 3 PRONE) -> crouch/prone poses, not just standing.
+                var stance = e.Stance switch
+                {
+                    1 => SDG.Unturned.EPlayerStance.SPRINT,
+                    2 => SDG.Unturned.EPlayerStance.CROUCH,
+                    3 => SDG.Unturned.EPlayerStance.PRONE,
+                    _ => SDG.Unturned.EPlayerStance.STAND,
+                };
+                av.Body.SetLocomotion(av.Speed, stance);
                 av.Body.Tick(delta);   // advance the rig, exactly like the local 3p body (PlayerController) -- required once the gun layer puts _ap in Manual; harmless no-op while gun-less
 
                 // dress from the replicated appearance (cross-keyed by OwnerPlayerId); re-dress only on a change

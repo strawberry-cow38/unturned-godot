@@ -332,6 +332,10 @@ namespace UnturnedGodot.Net
             // ring (NetWorldClient.AckCombat) so it stops re-including them.
             public ushort LastProcessedCombatSeq { get; internal set; }
             public long LastChangedTick { get; internal set; }
+            /// <summary>v18 (mp-puppet-pose): the owner's stance as the packed 0-3 code (0 STAND, 1 SPRINT, 2 CROUCH,
+            /// 3 PRONE -- the MoveInput.Buttons stance bits), so a remote client can drive the 3p puppet's crouch/prone
+            /// pose instead of showing everyone standing. Set from CurrentInput each drive tick.</summary>
+            public byte Stance { get; internal set; }
 
             // server-only integration state; null on client replicas
             internal PlayerMovementSim Sim;
@@ -437,9 +441,11 @@ namespace UnturnedGodot.Net
                 var input = e.CurrentInput;
                 var newPos = IntegrateFlat(e.Sim, in input, e.Pos, dt);
                 float newYaw = NetQuantization.QuantizeDegrees(input.YawDegrees, NetQuantization.YawBits);
-                bool changed = newPos != e.Pos || newYaw != e.YawDegrees || input.Seq != e.LastProcessedInputSeq;
+                byte newStance = (byte)((input.Buttons >> 1) & 0x3);   // v18: MoveInput stance bits (StanceShift 1, mask 0b11)
+                bool changed = newPos != e.Pos || newYaw != e.YawDegrees || input.Seq != e.LastProcessedInputSeq || newStance != e.Stance;
                 e.Pos = newPos;
                 e.YawDegrees = newYaw;
+                e.Stance = newStance;
                 e.LastProcessedInputSeq = input.Seq;
                 if (changed) e.LastChangedTick = tick;
             }
@@ -473,9 +479,13 @@ namespace UnturnedGodot.Net
             e.ExternallyDriven = true;
             var newPos = Quantize(pos);
             float newYaw = NetQuantization.QuantizeDegrees(yawDegrees, NetQuantization.YawBits);
-            bool changed = newPos != e.Pos || newYaw != e.YawDegrees || lastProcessedInputSeq != e.LastProcessedInputSeq;
+            // v18: the owner-authority transform stream carries no stance, but the owner's MoveInput stream still flows
+            // (ServerQueueInput -> CurrentInput), so read the stance from there.
+            byte newStance = e.HasInput ? (byte)((e.CurrentInput.Buttons >> 1) & 0x3) : e.Stance;
+            bool changed = newPos != e.Pos || newYaw != e.YawDegrees || lastProcessedInputSeq != e.LastProcessedInputSeq || newStance != e.Stance;
             e.Pos = newPos;
             e.YawDegrees = newYaw;
+            e.Stance = newStance;
             e.LastProcessedInputSeq = lastProcessedInputSeq;
             if (changed) e.LastChangedTick = tick;
         }
@@ -614,6 +624,7 @@ namespace UnturnedGodot.Net
             w.WriteDegrees(e.YawDegrees, NetQuantization.YawBits);
             w.WriteUInt16(e.LastProcessedInputSeq);
             w.WriteUInt16(e.LastProcessedCombatSeq);   // v10 (mp-event-coalesce): the combat ack rides beside the input ack
+            w.WriteUInt8(e.Stance);   // v18 (mp-puppet-pose): the stance code, so a remote 3p puppet can crouch/prone
         }
 
         static bool ReadEntity(NetPakReader r, out PlayerEntity e)
@@ -627,6 +638,7 @@ namespace UnturnedGodot.Net
             if (!r.ReadDegrees(out float yaw, NetQuantization.YawBits)) return false;
             if (!r.ReadUInt16(out ushort seq)) return false;
             if (!r.ReadUInt16(out ushort combatSeq)) return false;   // v10 (mp-event-coalesce): the combat ack
+            if (!r.ReadUInt8(out byte stance)) return false;   // v18 (mp-puppet-pose): the stance code
             e = new PlayerEntity
             {
                 NetIdValue = id,
@@ -635,6 +647,7 @@ namespace UnturnedGodot.Net
                 YawDegrees = yaw,
                 LastProcessedInputSeq = seq,
                 LastProcessedCombatSeq = combatSeq,
+                Stance = stance,
             };
             return true;
         }
