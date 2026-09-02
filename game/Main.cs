@@ -64,7 +64,7 @@ namespace UnturnedGodot
         readonly System.Collections.Generic.List<(Node3D mark, Vehicle veh, Vector3 local)> _pivotMarks = new();   // --pivots: arrow markers pinned to each coupling point
         bool _driveTest, _swarm, _drivethru, _nade, _grassTest; PlayerController _dtPlayer;      // --drivetest=DIR [--swarm|--drivethru|--nade] : enter/drive a jeep; swarm = mob it; drivethru = loud drive wakes zombies; nade = grenade the parked car. _grassTest (UG_GRASSTEST=1): a lawn + overhead cam, jeep stays parked -> verify grass displacement
         bool _fireTest; PlayerController _ftPlayer; int _ftFrame;   // --firetest [--supp] : player fires downrange -- viewmodel / tracer / ADS / impact test rig
-        bool _paActive; RiggedCharacter _paRig; float _paT;   // --puppetanim: drive a player rig idle->walk->run (SetLocomotion+Tick, exactly like RemotePlayers) -> prove the puppet locomotion animates
+        bool _paActive; RiggedCharacter _paRig; float _paT; bool _paHit; bool _paGun;   // --puppetanim: drive a player rig idle->walk->run (SetLocomotion+Tick, like RemotePlayers). UG_PAHITBOX: PvP damage zones + idle. UG_PAGUN: gun-hold, and its own hold->ADS->lean sequence
         bool _peiPlay; PlayerController _peiPlayer; int _peiFrame;   // --peiplay : drive a jeep on real PEI
         int _tpFrame; double _tpPrims, _tpDraws, _tpMs; int _tpN;   // --- UG_TERRPERF terrain cost probe
         PlayerController _pdPlayer; int _pdFireT;   // --peidrive on-foot player -> UG_AUTOFIRE terrain-impact verification
@@ -4333,6 +4333,25 @@ namespace UnturnedGodot
                 _paRig.AttachGun("eaglefire");    // gun mesh on Right_Hook + upper-body gun layer -> held while the legs run locomotion/stance
                 _paRig.EnableGunLayer("Eaglefire_Aim");
                 _paRig.SetGunOverlay("Eaglefire_Equip", 1f, loop: false);   // play the equip -> holds its end = the READY HOLD (shouldered), exactly like the local 3p body (PlayerController:6734)
+                _paGun = true;   // -> the hold -> ADS -> lean-right -> lean-left sequence in _Process
+            }
+            if (System.Environment.GetEnvironmentVariable("UG_PAHITBOX") == "1")
+            {
+                _paHit = true;   // hold idle so the zones overlay a standing body
+                // the ACTUAL server PvP damage zones (ServerCombat.cs: hit relY >= 1.45 -> HeadMult 2.0, >= 0.78 -> TorsoMult 1.0, else LegMult 0.6)
+                void Zone(float y0, float y1, Color c, string label)
+                {
+                    AddChild(new MeshInstance3D
+                    {
+                        Mesh = new BoxMesh { Size = new Vector3(0.85f, y1 - y0, 0.62f) },
+                        Position = new Vector3(0f, (y0 + y1) * 0.5f, 0f),
+                        MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(c.R, c.G, c.B, 0.34f), Transparency = BaseMaterial3D.TransparencyEnum.Alpha, CullMode = BaseMaterial3D.CullModeEnum.Disabled },
+                    });
+                    AddChild(new Label3D { Text = label, Position = new Vector3(0.85f, (y0 + y1) * 0.5f, 0f), Modulate = c, FontSize = 110, PixelSize = 0.0035f, Billboard = BaseMaterial3D.BillboardModeEnum.Enabled, NoDepthTest = true });
+                }
+                Zone(1.45f, 1.9f, new Color(1f, 0.22f, 0.22f), "HEAD  x2.0");
+                Zone(0.78f, 1.45f, new Color(1f, 0.82f, 0.2f), "TORSO  x1.0");
+                Zone(0f, 0.78f, new Color(0.32f, 0.62f, 1f), "LEGS  x0.6");
             }
             var cam = new Camera3D { Current = true, Fov = 42f, Far = 200f };
             AddChild(cam);
@@ -7455,6 +7474,15 @@ namespace UnturnedGodot
             if (_paActive && _paRig != null && IsInstanceValid(_paRig))
             {
                 _paT += (float)delta;
+                if (_paHit) { _paRig.SetLocomotion(0f, SDG.Unturned.EPlayerStance.STAND); _paRig.Tick(delta); return; }   // hitbox viz: stand still under the zone overlay
+                if (_paGun)   // shouldered hold (0-1.6) -> ADS (1.6-3.2) -> lean right (3.2-4.8) -> lean left (4.8+); same AimBlend/LeanDeg the local 3p body uses
+                {
+                    _paRig.AimBlend = (_paT >= 1.6f && _paT < 3.2f) ? 1f : 0f;
+                    _paRig.LeanDeg = _paT < 3.2f ? 0f : (_paT < 4.8f ? 22f : -22f);
+                    _paRig.SetLocomotion(0f, SDG.Unturned.EPlayerStance.STAND);
+                    _paRig.Tick(delta);
+                    return;
+                }
                 // the full locomotion range the puppet can drive: idle -> walk -> run -> crouch-walk -> prone-crawl,
                 // all via the SAME SetLocomotion(speed, stance) + Tick the local 3p body + RemotePlayers use.
                 float spd; SDG.Unturned.EPlayerStance st;
