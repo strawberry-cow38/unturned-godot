@@ -7319,8 +7319,10 @@ if (s.Wheels != null && s.Wheels.Length > 1)
         // now driven from ONE node (TickHub._PhysicsProcess -> PhysicsTickAll), same phase, one dispatch instead of 88.
         static readonly System.Collections.Generic.List<Vehicle> _live = new();
         public override void _EnterTree() { _live.Add(this); TickHub.Ensure(this); }
+        public static long PhysicsTickAllCalls;   // wiring probe for tests: proves the hub reaches this every physics tick
         public static void PhysicsTickAll(double delta)
         {
+            PhysicsTickAllCalls++;
             for (int i = _live.Count - 1; i >= 0; i--)
             {
                 var v = _live[i];
