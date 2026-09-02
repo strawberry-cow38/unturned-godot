@@ -3577,10 +3577,24 @@ namespace UnturnedGodot
 
             p.OutlineColor = ItemTool.RarityColorUI(s.Rarity);   // match the real vehicle's look-at rim colour (line 931)
             p.SetNameLabel(s.Name, p.OutlineColor);              // look-at name tag (hidden until focused), like the real Vehicle's InfoBillboard title
-            // look-detection collider (client-only): the vehicle-layer box (bit 5) so the player's look-ray/sphere finds
-            // the puppet and outlines it. CollisionMask 0 + NO bit 0 -> it never blocks movement (player mask is bit0|bit6)
-            // and it isn't the physics body the SP car is; detection only, mirroring the real vehicle's bit-5 hull.
-            var focusBody = new StaticBody3D { CollisionLayer = 1u << 5, CollisionMask = 0 };
+            // The puppet's hull (client-only): a StaticBody3D box on the SAME layers the real Vehicle body carries --
+            // bit 0 (the world/solid layer a VehicleBody3D sits on by default) + bit 5 (the vehicle layer the look-ray,
+            // bullets and the tow scan probe). CollisionMask 0: it is placed, never pushed.
+            //
+            // Until 2026-09-02 this was bit 5 ALONE, by design ("detection only, it never blocks movement") -- and that
+            // design was the bug strawberry reported as "no collisions for vehicles on the server". On a --connect client
+            // EVERY vehicle except the one you drive is this puppet (the Client world build never calls
+            // SpawnPeiVehicles; only VehicleReplicaView materializes cars), the shell's CollisionMask is bit0|bit6
+            // (PlayerController._Ready), and bit0|bit6 against bit5 is zero: players walked through every car, and the
+            // locally driven Vehicle (mask bit0|bit8) drove through every parked one. Singleplayer never saw it because
+            // its cars are real VehicleBody3Ds carrying bit 0. The server was innocent: under client-authoritative
+            // position it adopts the client's claim inside a speed envelope and never re-solves geometry, so "can I
+            // walk into a car" is decided entirely by what the CLIENT's world contains -- which was a ghost.
+            // Bit 0 makes the puppet what the real car is to the world: solid to the shell, to the local car's wheels,
+            // and to the LOS/bullet rays -- parity with SP. It is still repositioned per render frame (a StaticBody3D
+            // teleport), so a moving remote car BLOCKS a standing player rather than shoving them; that is the
+            // remaining gap, not this one.
+            var focusBody = new StaticBody3D { CollisionLayer = (1u << 0) | (1u << 5), CollisionMask = 0 };
             focusBody.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = s.BoxSize }, Position = s.BoxCenter });
             p.AddChild(focusBody);
             return p;
