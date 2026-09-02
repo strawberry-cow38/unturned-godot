@@ -312,9 +312,12 @@ namespace UnturnedGodot
         // applied at load -- the faithful port .dats (which mostly dropped Player_Damage, leaving every gun on a flat
         // fallback) are untouched. Retail balances per-GUN, not per-caliber (same caliber varies: 12ga Bluntforce 40 vs
         // Determinator 17), so this is a per-gun table, not the caliber curve I first guessed.
-        // SHOTGUN NOTE: retail Player_Damage is PER PELLET. Our port fires masterkey/sawed_off as 8 pellets, so those two
-        // are divided by 8 here (per-shot total stays ~retail); the 12-ga guns fire a single projectile in this port
-        // (a pre-existing buckshot gap) so they take the retail number directly.
+        // SHOTGUN NOTE: retail Player_Damage is PER PELLET, and pellet count comes from the LOADED SHELL
+        // (ItemMagazineAsset.pellets -- buckshot spreads, slug/beanbag = 1), NOT the gun. So EVERY shotgun value below is
+        // the retail per-pellet number; per-shot = value x the shell's pellets. (My earlier ÷8 on the 20ga was a misread
+        // -- I read the gun's Pellets FALLBACK, not the shell.) ⚠ the shell pellet counts in ItemCatalog (12ga buckshot 9,
+        // 20ga 18) EXCEED retail (6, 8); THAT -- not these per-pellet numbers -- is what would make a point-blank shell
+        // hit for ~700. Flagged to master.
         public static readonly System.Collections.Generic.Dictionary<int, float> PlayerDamageByGunId = new()
         {
             [4] = 40f,    // eaglefire (5.56)
@@ -374,8 +377,8 @@ namespace UnturnedGodot
             [1480] = 17f, // determinator
             [112] = 40f,  // bluntforce
             [1436] = 43f, // quadbarrel
-            [380] = 5f,   // masterkey (20ga: retail 40 / 8 pellets)
-            [1143] = 6f,  // sawed_off (20ga: retail 50 / 8 pellets)
+            [380] = 40f,  // masterkey (20ga buckshot, retail per-pellet)
+            [1143] = 50f, // sawed_off (20ga buckshot, retail per-pellet)
         };
 
         public static GunDef FromDatText(string datText)
