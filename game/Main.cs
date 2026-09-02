@@ -4331,7 +4331,8 @@ namespace UnturnedGodot
             if (System.Environment.GetEnvironmentVariable("UG_PAGUN") == "1")
             {
                 _paRig.AttachGun("eaglefire");    // gun mesh on Right_Hook + upper-body gun layer -> held while the legs run locomotion/stance
-                _paRig.EnableGunLayer();
+                _paRig.EnableGunLayer("Eaglefire_Aim");
+                _paRig.SetGunOverlay("Eaglefire_Equip", 1f, loop: false);   // play the equip -> holds its end = the READY HOLD (shouldered), exactly like the local 3p body (PlayerController:6734)
             }
             var cam = new Camera3D { Current = true, Fov = 42f, Far = 200f };
             AddChild(cam);
