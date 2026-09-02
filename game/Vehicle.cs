@@ -2290,6 +2290,7 @@ namespace UnturnedGodot
         {
             Mass = 1700f,   // kerb mass, kg
             Body = "jeep_body.txt", Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "jeep_palette.png",
+            GlassMesh = "jeep_glass.txt", GlassTint = new Color(0.62f, 0.73f, 0.78f, 0.26f),   // panes derived from this body by tools/gen_vehicle_glass.py -- open-bodied: a windscreen and nothing else (--skip=rear; the tub has no back window)
             DefaultPaints = new[] { "#475e83", "#a69884", "#437c44", "#495631" },   // src .dat DefaultPaintColors = the 4 faction paints (#475e83 Coalition / #a69884 Desert / #437c44 Forest / #495631 Russia), random pick per spawn
             WheelRadius = 0.6f, Engine = 600f, SteerMax = 28f, SteerMin = 14f, SpeedMax = 12.5f, SpeedMin = -7f, Brake = 32f,
             BoxSize = new Vector3(2.5f, 1.046f, 4.522f), BoxCenter = new Vector3(0f, 0.612f, 0.029f),   // source BoxCollider
@@ -5059,7 +5060,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                 // is a handling change, not a visual one -- a 1:1 hull follows the real underside where a box
                 // was clamped clear of it -- so there needs to be one switch that puts it back.
                 v._decomposeMesh = bodyMesh;
-                v._decomposeKey = $"body|{s.Body}|{s.Name}";
+                v._decomposeKey = $"body|{s.Body}|{s.Name}|{System.Environment.GetEnvironmentVariable("UG_CARHULLS")}|{System.Environment.GetEnvironmentVariable("UG_CARCONCAVITY")}";
                 v._decomposeCars = true;
                 // Keep the box as well: it is the belly-pan. A decomposition of a chassis with a hollow
                 // underside gives hulls that hug the floorpan and leave the gap between the axles open, and a
@@ -7799,11 +7800,18 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                 // Tight, because the whole point is not to fill in the deckhouse's steps and voids. At the
                 // defaults (24 hulls / 0.15 concavity) VHACD merged it down to 8 hulls and only got the
                 // invisible-wall count from 633 to 527 -- barely better than the hand-cut bands it replaced.
+                // UG_CARHULLS / UG_CARCONCAVITY override the car numbers so the fidelity of the hitbox
+                // against the model can be SWEPT and measured, rather than argued about. They change
+                // the shapes, so the cache key below carries them too.
+                int carHulls = int.TryParse(System.Environment.GetEnvironmentVariable("UG_CARHULLS"), out var _ch) ? _ch : 12;
+                float carConc = float.TryParse(System.Environment.GetEnvironmentVariable("UG_CARCONCAVITY"),
+                                               System.Globalization.NumberStyles.Float,
+                                               System.Globalization.CultureInfo.InvariantCulture, out var _cc) ? _cc : 0.08f;
                 var settings = _decomposeCars
                     ? new MeshConvexDecompositionSettings   // ordinary vehicle: a near-convex shell, cheap to describe
                     {
-                        MaxConvexHulls = 12,
-                        MaxConcavity = 0.08f,
+                        MaxConvexHulls = (uint)carHulls,
+                        MaxConcavity = carConc,
                         MaxNumVerticesPerConvexHull = 16,
                         Resolution = 10000,
                     }
