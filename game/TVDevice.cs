@@ -578,6 +578,8 @@ namespace UnturnedGodot
 
         /// <summary>Join the power graph. Deferred out of <see cref="Make"/> because Make runs BEFORE the device is in
         /// the tree (the world builder parents it afterwards), and the lazy PowerManager spawn needs a SceneTree.</summary>
+        public override void _EnterTree() { TickHub.Add(this, HubTick, 30f); }
+        public override void _ExitTree() { TickHub.Remove(this); }
         public override void _Ready()
         {
             AddToGroup("deployables");   // PowerNet gathers this group by IPowerDevice, not by the concrete Deployable
@@ -1583,7 +1585,7 @@ namespace UnturnedGodot
             if (_coneMat != null) _coneMat.AlbedoColor = new Color(Spill, ConeAlpha * k * f * lum);
         }
 
-        public override void _Process(double delta)
+        public void HubTick(double delta)   // PERF: hub-ticked at 30 Hz (was a per-frame engine callback; see TickHub)
         {
             using var _prof = Prof.Scope("TVDevice");
             // The WHOLE feed, not just the plug half. This used to poll PlugPowered alone and rely on the mains

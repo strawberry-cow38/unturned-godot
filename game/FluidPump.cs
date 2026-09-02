@@ -51,9 +51,9 @@ namespace UnturnedGodot
             AddToGroup("deployables");   // PowerNet reads this group (keyed on IPowerDevice)
         }
 
-        public override void _Process(double delta)
+        public override void HubTick(double delta)   // PERF: via FluidContainer's hub registration
         {
-            base._Process(delta);   // FluidContainer drives the motor-drum vibration
+            base.HubTick(delta);   // FluidContainer drives the motor-drum vibration
             // a wired >=1w sense on a trigger remotely enables/disables the pump (mirror of the generator's remote start/stop)
             if (_onTrigger != null && GodotObject.IsInstanceValid(_onTrigger) && _onTrigger.Live >= 1f) _remoteOn = true;
             else if (_offTrigger != null && GodotObject.IsInstanceValid(_offTrigger) && _offTrigger.Live >= 1f) _remoteOn = false;

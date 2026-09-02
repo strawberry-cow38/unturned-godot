@@ -55,7 +55,9 @@ namespace UnturnedGodot
             return dev;
         }
 
-        public override void _Process(double delta)
+        public override void _EnterTree() { TickHub.Add(this, HubTick, 2f); }
+        public override void _ExitTree() { TickHub.Remove(this); }
+        public void HubTick(double delta)   // PERF: hub-ticked at 2 Hz (was a per-frame engine callback; see TickHub)
         {
             using var _prof = Prof.Scope("ClockDevice");
             if (!GodotObject.IsInstanceValid(_body)) { QueueFree(); return; }   // the clock mesh was destroyed -> destroy the hands with it (master)

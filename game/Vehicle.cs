@@ -7331,9 +7331,26 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                 v.PhysicsTick(delta);
             }
         }
-        public void PhysicsTick(double delta)   // was _PhysicsProcess; body unchanged
+        bool _interpOff;   // PERF: physics interpolation opted out while parked (see PhysicsTick)
+        public void PhysicsTick(double delta)   // was _PhysicsProcess; body unchanged below the interpolation gate
         {
             using var _prof = Prof.Scope("Vehicle.phys");
+            // PERF (ETW 2026-09-02, measured with a notification histogram): with physics_interpolation on,
+            // VehicleBody3D::_update_process_mode enables INTERNAL_PROCESS on ITSELF just to interpolate the wheel
+            // visuals, so all 88 PEI cars took NOTIFICATION_INTERNAL_PROCESS every rendered frame -- and every one of
+            // those walked the whole C# dispatch chain (~10% of the main thread, parked). Interpolation only matters
+            // while the body moves, so a car at rest with the engine off and nothing roped to it opts out; it opts
+            // back in the physics step it starts moving, is started, towed, or net-held (before any visible motion).
+            {
+                bool wantInterp = EngineOn || NetHeld || Towing != null || TowedBy != null
+                    || LinearVelocity.LengthSquared() > 0.0025f || AngularVelocity.LengthSquared() > 0.0025f;
+                if (wantInterp == _interpOff)
+                {
+                    _interpOff = !wantInterp;
+                    PhysicsInterpolationMode = wantInterp ? PhysicsInterpolationModeEnum.Inherit : PhysicsInterpolationModeEnum.Off;
+                    if (wantInterp) ResetPhysicsInterpolation();   // the stored "previous" xform is from opt-out time; without this the first interpolated frame smears from there (tinyclaw; same lesson as Main.cs's teleport reset)
+                }
+            }
             // Turret cycle timers. Ticked BEFORE the perf early-returns below, so a turret does not jam because
             // its vehicle happened to be far enough away to skip a frame of simulation.
             if (_turretCd != null)

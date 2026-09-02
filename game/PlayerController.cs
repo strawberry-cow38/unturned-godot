@@ -4931,6 +4931,7 @@ namespace UnturnedGodot
 
         public override void _Ready()
         {
+            TickProxy.Attach(this, ProcessTick, PhysicsTick);   // PERF: see TickProxy -- the engine dispatches to a 2-method node instead of walking this class's ~360-method table 4x per frame
             AddToGroup("players");     // so vehicle explosions (+ future area effects) can find nearby players
             // AN NPC HIND'S ROUNDS GO THROUGH THE REAL BULLET SYSTEM. NpcHeli raises a delegate rather than
             // calling in directly, so the AI does not have to know how a shot is drawn or resolved -- it gets
@@ -6501,7 +6502,7 @@ namespace UnturnedGodot
             RenderingServer.GlobalShaderParameterSet(GrassDisplacers.CountParam, cnt);
         }
 
-        public override void _Process(double delta)
+        public void ProcessTick(double delta)   // PERF: engine callback taken by a TickProxy child (see TickProxy); body unchanged
         {
             using var _prof = Prof.Scope("PlayerController");
             if (NetAvatar) return;   // per-frame work is all client-side (render interp, look focus, recoil drain, cam) -- none of it on a server avatar
@@ -7357,7 +7358,7 @@ namespace UnturnedGodot
             }
         }
 
-        public override void _PhysicsProcess(double delta)
+        public void PhysicsTick(double delta)   // PERF: engine callback taken by a TickProxy child (see TickProxy); body unchanged
         {
             using var _prof = Prof.Scope("PlayerController.phys");
             // BEFORE every early return below (driving, riding, NetHold): you can hold a gun in a car, and a

@@ -173,6 +173,52 @@ namespace UnturnedGodot
             { _ap.Play(name, -1, speed); }
         }
 
+        // ---- PERF: never leave a manually-advanced player parked on a FINISHED clip ----
+        // Measured 2026-09-02 (ETW + stopwatch + the caches_cleared signal): the 1P arms cost ~0.7 ms per frame with
+        // NOTHING playing. Godot's AnimationPlayer, once a non-looping clip has reached its end, re-enters the end on
+        // every manual advance() (_process_playback_data: prev_pos <= end && next_pos == end) and _blend_post_process
+        // then calls _clear_caches() -- so the next advance rebuilds the track cache over the WHOLE library (this rig
+        // shares one library of ~640 clips / 23k tracks). A 1-clip player on the same skeleton: 0.4 us. The cure is to
+        // hold the end POSE with a looping 1-key clip instead of sitting on the finished one: pixel-identical, the
+        // cache stays valid, and a plain advance is cheap. Two ways a player ends up parked: a clip finishing
+        // (animation_finished -> ParkOnHold) and the Snap* helpers (Play + Seek-to-end never signals -> play the hold
+        // directly). Same trap, same fix for the 3P gun overlay (_gunAp) on every player body.
+        string HoldOf(AnimationPlayer ap, string clip)
+        {
+            if (ap == null || string.IsNullOrEmpty(clip) || _lib == null) return null;
+            string hold = clip + "__hold";
+            if (ap.HasAnimation(hold)) return hold;
+            if (!ap.HasAnimation(clip)) return null;
+            var src = ap.GetAnimation(clip);
+            double end = src.Length;
+            var a = new Animation { Length = 0.1f, LoopMode = Animation.LoopModeEnum.Linear };
+            for (int t = 0; t < src.GetTrackCount(); t++)
+            {
+                var type = src.TrackGetType(t);
+                switch (type)
+                {
+                    case Animation.TrackType.Position3D: { int k = a.AddTrack(type); a.TrackSetPath(k, src.TrackGetPath(t)); a.PositionTrackInsertKey(k, 0.0, src.PositionTrackInterpolate(t, end)); break; }
+                    case Animation.TrackType.Rotation3D: { int k = a.AddTrack(type); a.TrackSetPath(k, src.TrackGetPath(t)); a.RotationTrackInsertKey(k, 0.0, src.RotationTrackInterpolate(t, end)); break; }
+                    case Animation.TrackType.Scale3D:    { int k = a.AddTrack(type); a.TrackSetPath(k, src.TrackGetPath(t)); a.ScaleTrackInsertKey(k, 0.0, src.ScaleTrackInterpolate(t, end)); break; }
+                    case Animation.TrackType.Value:      { int k = a.AddTrack(type); a.TrackSetPath(k, src.TrackGetPath(t)); a.TrackInsertKey(k, 0.0, src.ValueTrackInterpolate(t, end)); a.ValueTrackSetUpdateMode(k, src.ValueTrackGetUpdateMode(t)); break; }
+                    default: break;   // method/audio/bezier/blend-shape tracks carry nothing to hold
+                }
+            }
+            _lib.AddAnimation(hold, a);   // shared library -> every player of this rig sees it from now on
+            return hold;
+        }
+        void ParkOnHold(AnimationPlayer ap, StringName finished)
+        {
+            if (ap == null || ap.CallbackModeProcess != AnimationMixer.AnimationCallbackModeProcess.Manual) return;   // engine-driven players stop processing on finish by themselves
+            string f = finished.ToString();
+            if (f.EndsWith("__hold")) return;
+            string h = HoldOf(ap, f);
+            if (h != null) ap.Play(h);
+        }
+        void OnApFinished(StringName anim) => ParkOnHold(_ap, anim);
+        void OnGunApFinished(StringName anim) => ParkOnHold(_gunAp, anim);
+        static string BaseClip(string s) => s != null && s.EndsWith("__hold") ? s.Substring(0, s.Length - 6) : s;
+
         // Scale locomotion playback rate (1 = the clip's authored speed). ZombieBody matches the shamble cycle to the
         // actual travel speed with this so the feet don't skate backward (foot-slide / moonwalk) when the body moves
         // faster than the clip's natural stride. Set per-frame; cheap (no re-Play, so it never restarts the cycle).
@@ -184,6 +230,8 @@ namespace UnturnedGodot
         {
             if (_ap != null && !string.IsNullOrEmpty(name) && _ap.HasAnimation(name))
             {
+                string h = HoldOf(_ap, name);   // PERF: a looping 1-key end pose instead of parking on the finished clip (see HoldOf)
+                if (h != null) { _ap.Play(h); return; }
                 _ap.Play(name);
                 _ap.Seek(_ap.GetAnimation(name).Length, true);
             }
@@ -322,6 +370,10 @@ namespace UnturnedGodot
             if (_flashT > 0f) { _flashT -= (float)delta; if (_flashT <= 0f && _flash != null && IsInstanceValid(_flash)) _flash.Visible = false; }
             if (_ap != null && _ap.CallbackModeProcess == AnimationMixer.AnimationCallbackModeProcess.Manual)
             {
+                // PERF: a player that has never played anything (or was explicitly stopped) has no pose to refresh and no
+                // aim blend to layer -- skip the advance. (Finished clips park on a looping hold instead, see HoldOf, so
+                // in steady state the players are always "playing" and a plain advance stays cheap.)
+                if (!_ap.IsPlaying() && AimBlend <= 0.0001f && !(_gunLayer && _gunAp != null && _gunAp.IsPlaying())) return;
                 _ap.Advance(delta);   // base pose: locomotion (full-body 3P) or equip/hold (1P arms), manually driven
                 if (_gunLayer && _gunAp != null && Skeleton != null)
                 {
@@ -578,6 +630,7 @@ namespace UnturnedGodot
             _gunAp = new AnimationPlayer { Name = "GunAnim" };
             AddChild(_gunAp);
             _gunAp.AddAnimationLibrary("", _lib);
+            _gunAp.AnimationFinished += OnGunApFinished;   // PERF: see HoldOf
             _gunAp.CallbackModeProcess = AnimationMixer.AnimationCallbackModeProcess.Manual;
             string[] lower = { "Skeleton", "Left_Hip", "Left_Leg", "Left_Foot", "Right_Hip", "Right_Leg", "Right_Foot" };
             var idx = new List<int>();
@@ -617,10 +670,12 @@ namespace UnturnedGodot
         {
             if (_gunAp == null || string.IsNullOrEmpty(clip) || !_gunAp.HasAnimation(clip)) return;
             _gunAp.GetAnimation(clip).LoopMode = Animation.LoopModeEnum.None;
+            string h = HoldOf(_gunAp, clip);   // PERF: see HoldOf -- a Seek-to-end player re-clears its caches every advance
+            if (h != null) { _gunAp.Play(h); return; }
             _gunAp.Play(clip); _gunAp.Seek(_gunAp.GetAnimation(clip).Length, true);
         }
 
-        public string GunOverlayClip => _gunAp?.CurrentAnimation ?? "";
+        public string GunOverlayClip => BaseClip(_gunAp?.CurrentAnimation ?? "");
         /// <summary>The looping locomotion/seated clip currently held (test seam).</summary>
         public string CurrentLoopClip => _loco ?? "";
         public bool GunLayerOn => _gunLayer;
@@ -951,6 +1006,7 @@ namespace UnturnedGodot
             }
             ap.AddAnimationLibrary("", built.lib);
             root._ap = ap;
+            ap.AnimationFinished += root.OnApFinished;   // PERF: park on a looping hold instead of the finished clip (see HoldOf)
             root._lib = built.lib;   // kept so a lazily-created gun-overlay AnimationPlayer (3P) can share the same clips
             root.ClipNames = built.names;
             root._rag = rig.ragdoll;

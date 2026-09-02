@@ -44,10 +44,12 @@ namespace UnturnedGodot
         public void SetBroken(bool broken)
         {
             Visible = !broken;
-            SetProcess(!broken);   // no point rippling/swivelling a hidden cloth
+            TickHub.Remove(this); if (!broken && IsInsideTree()) TickHub.Add(this, HubTick, 20f);   // no point rippling/swivelling a hidden cloth
         }
 
-        public override void _Process(double delta)
+        public override void _EnterTree() { TickHub.Add(this, HubTick, 20f); }
+        public override void _ExitTree() { TickHub.Remove(this); }
+        public void HubTick(double delta)   // PERF: hub-ticked at 20 Hz (was a per-frame engine callback; see TickHub)
         {
             if (_mat == null || _pivot == null) return;
             Vector3 wp = GlobalTransform.Origin;                                    // the placed flag's world position = wind sample point

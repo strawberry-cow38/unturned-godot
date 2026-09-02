@@ -22,7 +22,34 @@ namespace UnturnedGodot
             _inst = new TickHub { Name = "TickHub" };
             tree.Root.CallDeferred(Node.MethodName.AddChild, _inst);
         }
-        public override void _Process(double delta) => StorageCrate.TickAll(delta);
+        // Generic registrations: any node hands the hub a tick delegate + a rate. Ticked from _Process at most `hz`
+        // times a second with the accumulated delta, skipped while the node's own CanProcess() is false (pause /
+        // ProcessMode), dropped automatically once the node is freed.
+        struct Entry { public Node Node; public System.Action<double> Tick; public double Period, Acc; }
+        static readonly System.Collections.Generic.List<Entry> _ticks = new();
+        public static void Add(Node node, System.Action<double> tick, float hz)
+        {
+            Ensure(node);
+            _ticks.Add(new Entry { Node = node, Tick = tick, Period = hz > 0f ? 1.0 / hz : 0.0 });
+        }
+        public static void Remove(Node node)
+        {
+            for (int i = _ticks.Count - 1; i >= 0; i--) if (_ticks[i].Node == node) _ticks.RemoveAt(i);
+        }
+        public override void _Process(double delta)
+        {
+            StorageCrate.TickAll(delta);
+            for (int i = _ticks.Count - 1; i >= 0; i--)
+            {
+                var e = _ticks[i];
+                if (!GodotObject.IsInstanceValid(e.Node)) { _ticks.RemoveAt(i); continue; }
+                e.Acc += delta;
+                if (e.Acc < e.Period) { _ticks[i] = e; continue; }
+                double dt = e.Acc; e.Acc = 0.0; _ticks[i] = e;
+                if (!e.Node.CanProcess()) continue;
+                e.Tick(dt);
+            }
+        }
         public override void _PhysicsProcess(double delta) => Vehicle.PhysicsTickAll(delta);
     }
 }

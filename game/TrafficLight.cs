@@ -162,6 +162,8 @@ namespace UnturnedGodot
             _ => null,
         };
 
+        public override void _EnterTree() { TickHub.Add(this, HubTick, 10f); }
+        public override void _ExitTree() { TickHub.Remove(this); }
         public override void _Ready()
         {
             AddToGroup("traffic_lights");
@@ -251,7 +253,7 @@ namespace UnturnedGodot
         float _dyingT, _stutterT;
         bool _stutterShow = true;
 
-        public override void _Process(double delta)
+        public void HubTick(double delta)   // PERF: hub-ticked at 10 Hz (was a per-frame engine callback; see TickHub)
         {
             using var _prof = Prof.Scope("TrafficLight");
             if (_broken || Frozen) return;

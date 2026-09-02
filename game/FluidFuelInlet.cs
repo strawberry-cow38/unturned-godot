@@ -35,9 +35,9 @@ namespace UnturnedGodot
             if (GetTree() != null && GetTree().GetNodesInGroup("fluid_managers").Count == 0) GetParent()?.AddChild(new FluidManager());
         }
 
-        public override void _Process(double delta)
+        public override void HubTick(double delta)   // PERF: via FluidContainer's hub registration
         {
-            base._Process(delta);
+            base.HubTick(delta);
             if (_gen != null && GodotObject.IsInstanceValid(_gen)) GlobalPosition = _gen.GlobalPosition + Offset;   // track the gen (TopLevel -> world Y-up)
         }
 
