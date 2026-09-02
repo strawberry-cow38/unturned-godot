@@ -307,6 +307,43 @@ namespace UnturnedGodot
                                                   // must not draw the fattest streak in the game
         };
 
+        // PvP damage is a property of the CARTRIDGE, not the gun (master: "rebalance all guns in line with the ballistics
+        // of the 5.56 guns, depending on caliber"). Every gun of a caliber shares this per-bullet PLAYER damage; they
+        // still differ by RPM / recoil / range / mag. Anchored to 5.56 = 40 (retail eaglefire, and the old flat default
+        // every gun was silently using). Shotgun values are PER PELLET. This is an OVERLAY applied at load, NOT an edit to
+        // the faithful .dat data -- tune the whole PvP TTK curve here in one place. ~body-shots-to-kill @100HP in comments.
+        public static readonly System.Collections.Generic.Dictionary<string, float> PlayerDamageByCaliber = new()
+        {
+            [".22 LR"] = 15f,                 // 7
+            ["9x18mm Makarov"] = 20f,         // 5
+            ["9x19mm Parabellum"] = 22f,      // 5
+            ["7.62x25mm Tokarev"] = 24f,      // 5
+            ["5.7x28mm"] = 26f,               // 4
+            [".45 ACP"] = 30f,                // 4
+            [".44 Magnum"] = 45f,             // 3   (heavy revolver)
+            ["5.56x45mm NATO"] = 40f,         // 3   ANCHOR
+            [".300 AAC Blackout"] = 42f,      // 3
+            ["9x39mm"] = 44f,                 // 3   (heavy subsonic)
+            ["7.62x39mm"] = 47f,              // 3   (AK)
+            ["7.62x51mm NATO"] = 60f,         // 2   (.308 battle rifle)
+            ["7.62x54mmR"] = 65f,             // 2
+            [".338 Lapua Magnum"] = 85f,      // 2
+            [".50 BMG"] = 99f,                // 2   (near one-shot)
+            ["Railgun Slug"] = 101f,          // 1   (railgun sniper -> one-shot body)
+            ["12 Gauge"] = 14f,               // PER PELLET (buckshot -> lethal at range 0, falls off with spread)
+            ["20 Gauge"] = 7f,                // PER PELLET
+            ["Arrow"] = 50f,                  // 2   (bows)
+            ["Bolt"] = 55f,                   // 2   (crossbow)
+            ["Nail"] = 12f,                   // 9   (nailgun, weak)
+            ["Paintball"] = 3f,               // joke
+            // Rocket: explosive, not a bullet -> keeps its .dat blast profile (no entry -> falls back).
+        };
+
+        /// <summary>Per-caliber PvP damage from the table above; `fallback` (the gun's own .dat value) for an untabled
+        /// caliber like Rocket. Trims the caliber name so a ".50 BMG " data typo still matches.</summary>
+        public static float PlayerDamageFor(string caliberName, float fallback)
+            => caliberName != null && PlayerDamageByCaliber.TryGetValue(caliberName.Trim(), out var dmg) ? dmg : fallback;
+
         public static GunDef FromDatText(string datText)
         {
             IDatDictionary d = new DatParser().Parse(datText);
@@ -375,6 +412,7 @@ namespace UnturnedGodot
             g.RechamberAfterShotCount = d.ParseInt32("RechamberAfterShotCount", defaultRechamber);
             g.RechamberAfterShotDelay = d.ParseFloat("RechamberAfterShotDelay", 0.25f);   // source default 0.25s
             ComputeBallistics(g, d);
+            g.PlayerDamage = PlayerDamageFor(g.CaliberName, g.PlayerDamage);   // master: rebalance PvP damage by caliber (5.56-anchored overlay)
             return g;
         }
 

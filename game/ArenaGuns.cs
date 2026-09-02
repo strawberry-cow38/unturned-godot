@@ -31,16 +31,25 @@ namespace UnturnedGodot
             {
                 if (a == null) continue;
                 if (a.gunName != null) _gunIds.Add(a.id);
-                // scope pool: SIGHT-type, not the gun-specific iron sights, and only ones with a real ripped mesh so the
-                // fitted optic actually renders when the picked-up gun is aimed (a model-less sight would ADS to nothing).
+                // scope pool: SIGHT-type with a real ripped mesh (so the fitted optic actually renders when the gun is
+                // aimed -- a model-less sight would ADS to nothing), EXCLUDING iron sights and the 1x electronic optics
+                // (master: "remove holo, red dot" -> magnified SCOPES only).
                 else if (a.type == SDG.Unturned.EItemType.SIGHT && a.itemName != null
-                         && !a.itemName.Contains("Iron", System.StringComparison.OrdinalIgnoreCase)
-                         && AttachmentFit.MeshFor(a.id) != null)
+                         && AttachmentFit.MeshFor(a.id) != null
+                         && !IsNonScope(a.itemName))
                     _scopeIds.Add(a.id);
             }
             _mat ??= new StandardMaterial3D { AlbedoColor = new Color(1f, 0.55f, 0.08f), EmissionEnabled = true, Emission = new Color(1f, 0.55f, 0.08f), EmissionEnergyMultiplier = 1.8f, ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
             for (int guard = 0; _guns.Count < Target && guard < Target * 5; guard++) TrySpawn();   // seed the ground full at match start (retry: a dense town rejects many points); _Process then churns
             GD.Print($"[arenaguns] guns={_gunIds.Count} scopes={_scopeIds.Count} seeded={_guns.Count}");
+        }
+
+        // iron sights + the 1x electronic optics (Dot / Halo / Kobra red-dot) -> not "scopes"; master wants magnified only
+        static readonly string[] _nonScope = { "Iron", "Dot", "Halo", "Holo", "Kobra" };
+        static bool IsNonScope(string name)
+        {
+            foreach (var w in _nonScope) if (name.Contains(w, System.StringComparison.OrdinalIgnoreCase)) return true;
+            return false;
         }
 
         uint Rand() { _rng ^= _rng << 13; _rng ^= _rng >> 17; _rng ^= _rng << 5; return _rng; }
