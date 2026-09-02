@@ -5597,10 +5597,11 @@ namespace UnturnedGodot
             // the POI's ACTUAL extent = the bounding box of its real buildings (the "editor_loaded_object" group, one per
             // placed Objects.dat prop) clustered near the node point -- NOT a circle round the label.
             var buildings = new System.Collections.Generic.List<Node3D>();
-            foreach (var b in GetTree().GetNodesInGroup("editor_loaded_object")) if (b is Node3D n3) buildings.Add(n3);
-            float cluster = ArenaMode.ClusterRadius;
-            { var re = System.Environment.GetEnvironmentVariable("UG_ARENARADIUS"); if (re != null && float.TryParse(re, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var rr)) cluster = rr; }
-            ArenaMode.PoiBounds(node, buildings, cluster, out var centre, out var halfX, out var halfZ, out int near);
+            foreach (var b in GetTree().GetNodesInGroup(ColliderBudget.Group))
+                if (b is StaticBody3D sb && (sb.CollisionLayer & WorldLayers.World) != 0) buildings.Add(sb);   // large SOLID buildings only (bit 0), not fences/rocks/small props
+            float link = ArenaMode.LinkDist;
+            { var re = System.Environment.GetEnvironmentVariable("UG_ARENALINK"); if (re != null && float.TryParse(re, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var rr)) link = rr; }
+            ArenaMode.PoiBounds(node, buildings, link, out var centre, out var halfX, out var halfZ, out int near);
 
             // in-wall test: a standing box at the candidate overlapping a solid structure (WorldLayers.World) -> rejected
             var space = GetViewport()?.World3D?.DirectSpaceState;
@@ -5617,7 +5618,7 @@ namespace UnturnedGodot
             };
 
             var spawns = ArenaMode.GenerateSpawns(centre, halfX, halfZ, terr, inWall, ArenaMode.SpawnCount);
-            GD.Print($"[arena] POI '{poi.Name}': {near} buildings near -> extent ~{halfX * 2:0}x{halfZ * 2:0}m, {spawns.Count}/{ArenaMode.SpawnCount} spawns (land + clear of walls)");
+            GD.Print($"[arena] POI '{poi.Name}': connected town = {near} buildings -> extent ~{halfX * 2:0}x{halfZ * 2:0}m, {spawns.Count}/{ArenaMode.SpawnCount} spawns (land + clear of walls)");
             int n = 0;
             foreach (var (pos, yaw) in spawns) { AddArenaMarker(pos, new Color(0.15f, 0.95f, 1f), $"{++n}"); GD.Print($"[arena]   spawn {n}: ({pos.X:0},{pos.Y:0},{pos.Z:0})"); }
             AddArenaMarker(centre, new Color(1f, 0.25f, 0.85f), "C");

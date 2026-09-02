@@ -10,29 +10,60 @@ namespace UnturnedGodot
     public static class ArenaMode
     {
         public const int SpawnCount = 8;
-        public const float SpawnRadius = 60f;      // fallback half-extent when a POI has no clustered buildings
-        public const float ClusterRadius = 140f;   // buildings within this of the POI node point define its real extent
+        public const float SpawnRadius = 60f;   // fallback half-extent when a POI has no clustered buildings
+        public const float LinkDist = 55f;         // buildings within this of the cluster join it -> the CONNECTED town
+        public const float MaxTownRadius = 320f;   // the flood-fill never leaves this radius of the node (safety vs prop chains)
 
-        // The POI's REAL extent: the XZ bounding box of the placed buildings (the "editor_loaded_object" group) within
-        // clusterRadius of the node point. Falls back to a default box centred on the node if the POI has no buildings.
-        public static void PoiBounds(Vector3 node, IEnumerable<Node3D> buildings, float clusterRadius,
+        // The POI's REAL extent = the tight TOWN CORE: (1) density-filter to the PACKED buildings (each core one has
+        // >= MinNeighbours within DenseRadius, so the roadside sprawl + outlying farms drop out), then (2) flood-fill the
+        // core cluster nearest the node + bound it. Tracks the town's actual shape/centre -- ignoring the node LABEL being
+        // offset from the buildings, and ignoring disconnected districts across town.
+        public static void PoiBounds(Vector3 node, IReadOnlyList<Node3D> buildings, float linkDist,
                                      out Vector3 centre, out float halfX, out float halfZ, out int count)
         {
-            float minX = float.MaxValue, maxX = float.MinValue, minZ = float.MaxValue, maxZ = float.MinValue;
-            count = 0; float cr2 = clusterRadius * clusterRadius;
-            foreach (var b in buildings)
+            // buildings in the POI's neighbourhood
+            var near = new List<Vector3>();
+            float max2 = MaxTownRadius * MaxTownRadius;
+            foreach (var b in buildings) { var p = b.GlobalPosition; float dx = p.X - node.X, dz = p.Z - node.Z; if (dx * dx + dz * dz <= max2) near.Add(p); }
+            // 1) DENSITY: a building is CORE only if it has >= MinNeighbours others within DenseRadius. The town CENTRE
+            //    packs buildings far tighter than the roadside sprawl / outlying farms, so this isolates the real core.
+            const int MinNeighbours = 5; const float DenseRadius = 28f;
+            float dense2 = DenseRadius * DenseRadius;
+            var core = new List<Vector3>();
+            for (int i = 0; i < near.Count; i++)
             {
-                var p = b.GlobalPosition;
-                float dx = p.X - node.X, dz = p.Z - node.Z;
-                if (dx * dx + dz * dz > cr2) continue;
-                minX = Mathf.Min(minX, p.X); maxX = Mathf.Max(maxX, p.X);
-                minZ = Mathf.Min(minZ, p.Z); maxZ = Mathf.Max(maxZ, p.Z);
-                count++;
+                int nb = 0;
+                for (int j = 0; j < near.Count && nb < MinNeighbours; j++)
+                {
+                    if (i == j) continue;
+                    float dx = near[i].X - near[j].X, dz = near[i].Z - near[j].Z;
+                    if (dx * dx + dz * dz <= dense2) nb++;
+                }
+                if (nb >= MinNeighbours) core.Add(near[i]);
             }
-            if (count == 0) { centre = node; halfX = halfZ = SpawnRadius; return; }   // no buildings -> default box
+            if (core.Count == 0) { count = 0; centre = node; halfX = halfZ = SpawnRadius; return; }   // sparse POI -> default box
+            // 2) CONNECTED: flood-fill the core cluster containing the node's nearest core building (core buildings within
+            //    linkDist link), so a SECOND dense district across town doesn't stretch the box onto empty ground between them.
+            int seed = 0; float bestD = float.MaxValue;
+            for (int i = 0; i < core.Count; i++) { float dx = core[i].X - node.X, dz = core[i].Z - node.Z, d = dx * dx + dz * dz; if (d < bestD) { bestD = d; seed = i; } }
+            float link2 = linkDist * linkDist;
+            var inC = new bool[core.Count]; var stack = new Stack<int>(); stack.Push(seed); inC[seed] = true;
+            float minX = float.MaxValue, maxX = float.MinValue, minZ = float.MaxValue, maxZ = float.MinValue;
+            count = 0;
+            while (stack.Count > 0)
+            {
+                var pi = core[stack.Pop()]; count++;
+                minX = Mathf.Min(minX, pi.X); maxX = Mathf.Max(maxX, pi.X); minZ = Mathf.Min(minZ, pi.Z); maxZ = Mathf.Max(maxZ, pi.Z);
+                for (int j = 0; j < core.Count; j++)
+                {
+                    if (inC[j]) continue;
+                    float dx = pi.X - core[j].X, dz = pi.Z - core[j].Z;
+                    if (dx * dx + dz * dz <= link2) { inC[j] = true; stack.Push(j); }
+                }
+            }
             centre = new Vector3((minX + maxX) * 0.5f, node.Y, (minZ + maxZ) * 0.5f);
-            halfX = Mathf.Max((maxX - minX) * 0.5f + 6f, 22f);   // pad the footprint slightly; a floor for a one-building POI
-            halfZ = Mathf.Max((maxZ - minZ) * 0.5f + 6f, 22f);
+            halfX = Mathf.Max((maxX - minX) * 0.5f + 12f, 25f);   // small margin so the border sits just outside the core buildings
+            halfZ = Mathf.Max((maxZ - minZ) * 0.5f + 12f, 25f);
         }
 
         // `count` spawns spread across the POI footprint [centre ± half], on the ground, NEVER on water or inside a wall
