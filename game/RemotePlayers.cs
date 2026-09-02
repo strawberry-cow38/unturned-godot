@@ -20,6 +20,7 @@ namespace UnturnedGodot
         sealed class Av
         {
             public RiggedCharacter Body; public PlayerInventory Inv; public PlayerClothingController Clothing; public ulong AppSig;
+            public float Speed;          // smoothed horizontal glide speed -> idle/walk/run locomotion (the puppet used to be a frozen Idle pose)
             public Nameplate Plate;      // name + profile picture over the head
             public string PlateName;     // what the plate currently reads -- rebuild only on a change
             public ulong PlateAvatar = ulong.MaxValue;   // and which avatar hash it is showing (MaxValue = never set)
@@ -59,8 +60,23 @@ namespace UnturnedGodot
                     av.Body.Position = target;
                     _avatars[e.OwnerPlayerId] = av;
                 }
-                av.Body.Position = av.Body.Position.DistanceTo(target) > SnapDistance ? target : av.Body.Position.Lerp(target, a);
+                Vector3 prev = av.Body.Position;
+                bool snap = prev.DistanceTo(target) > SnapDistance;
+                av.Body.Position = snap ? target : prev.Lerp(target, a);
                 av.Body.Rotation = new Vector3(0f, Mathf.DegToRad(e.YawDegrees), 0f);
+
+                // LOCOMOTION (master: real 3p rigs, not frozen dummies): the puppet's own horizontal glide velocity
+                // tracks the remote player's speed in steady chase, so feed its magnitude to the SAME SetLocomotion the
+                // local 3p body uses (PlayerController) -> idle/walk/run by speed. Skip the teleport frame so a snap
+                // can't flash a sprint. (Stance + the held-gun layer need the Buttons/gun surfaced on the replica -- next.)
+                if (!snap && delta > 0.0)
+                {
+                    Vector3 d = av.Body.Position - prev;
+                    float inst = new Vector2(d.X, d.Z).Length() / (float)delta;
+                    av.Speed = Mathf.Lerp(av.Speed, inst, 1f - Mathf.Exp(-8f * (float)delta));
+                }
+                av.Body.SetLocomotion(av.Speed);
+                av.Body.Tick(delta);   // advance the rig, exactly like the local 3p body (PlayerController) -- required once the gun layer puts _ap in Manual; harmless no-op while gun-less
 
                 // dress from the replicated appearance (cross-keyed by OwnerPlayerId); re-dress only on a change
                 if (Client.CombatState.TryGet(e.OwnerPlayerId, out var ce))
