@@ -7449,9 +7449,15 @@ namespace UnturnedGodot
             if (_paActive && _paRig != null && IsInstanceValid(_paRig))
             {
                 _paT += (float)delta;
-                // idle (0-2s) -> walk (2-4.5s) -> run (4.5s+); same SetLocomotion + Tick the puppet uses.
-                float spd = _paT < 2f ? 0f : (_paT < 4.5f ? 1.6f : 4.8f);
-                _paRig.SetLocomotion(spd);
+                // the full locomotion range the puppet can drive: idle -> walk -> run -> crouch-walk -> prone-crawl,
+                // all via the SAME SetLocomotion(speed, stance) + Tick the local 3p body + RemotePlayers use.
+                float spd; SDG.Unturned.EPlayerStance st;
+                if (_paT < 1.6f) { spd = 0f; st = SDG.Unturned.EPlayerStance.STAND; }       // idle
+                else if (_paT < 3.2f) { spd = 1.6f; st = SDG.Unturned.EPlayerStance.STAND; } // walk
+                else if (_paT < 4.8f) { spd = 4.8f; st = SDG.Unturned.EPlayerStance.STAND; } // run
+                else if (_paT < 6.4f) { spd = 1.2f; st = SDG.Unturned.EPlayerStance.CROUCH; }// crouch-walk
+                else { spd = 0.8f; st = SDG.Unturned.EPlayerStance.PRONE; }                  // prone crawl
+                _paRig.SetLocomotion(spd, st);
                 _paRig.Tick(delta);
             }
             if (_peiPlay && _peiPlayer != null)
