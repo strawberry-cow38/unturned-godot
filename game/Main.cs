@@ -64,6 +64,7 @@ namespace UnturnedGodot
         readonly System.Collections.Generic.List<(Node3D mark, Vehicle veh, Vector3 local)> _pivotMarks = new();   // --pivots: arrow markers pinned to each coupling point
         bool _driveTest, _swarm, _drivethru, _nade, _grassTest; PlayerController _dtPlayer;      // --drivetest=DIR [--swarm|--drivethru|--nade] : enter/drive a jeep; swarm = mob it; drivethru = loud drive wakes zombies; nade = grenade the parked car. _grassTest (UG_GRASSTEST=1): a lawn + overhead cam, jeep stays parked -> verify grass displacement
         bool _fireTest; PlayerController _ftPlayer; int _ftFrame;   // --firetest [--supp] : player fires downrange -- viewmodel / tracer / ADS / impact test rig
+        bool _paActive; RiggedCharacter _paRig; float _paT;   // --puppetanim: drive a player rig idle->walk->run (SetLocomotion+Tick, exactly like RemotePlayers) -> prove the puppet locomotion animates
         bool _peiPlay; PlayerController _peiPlayer; int _peiFrame;   // --peiplay : drive a jeep on real PEI
         int _tpFrame; double _tpPrims, _tpDraws, _tpMs; int _tpN;   // --- UG_TERRPERF terrain cost probe
         PlayerController _pdPlayer; int _pdFireT;   // --peidrive on-foot player -> UG_AUTOFIRE terrain-impact verification
@@ -119,6 +120,7 @@ namespace UnturnedGodot
             bool windowBarrTest = false;
             string arenaSpawns = null;   // --arenaspawns[=POIname] : debug-render the 8 arena spawn points in a POI (master 2026-09-02)
             bool play = false, demo = false, netdemo = false, server = false, dedicated = false, client = false, smoke = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, lightTest = false, trafficTest = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, playground = false, objects = false, peidrive = false, craftmenu = false, stationtest = false, editorMode = false, impactTest = false, doorGallery = false, lampTest = false, beamTest = false, impTest = false, treeSweep = false, bakeLods = false, bakeLodsDry = false, netobserve = false, zombieTier = false, zflow = false, zhunt = false, zkill = false, zsound = false, zface = false, zpath = false;
+            bool puppetAnim = false;   // --puppetanim: prove RemotePlayers locomotion animates
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
                 if (arg.StartsWith("--catalog=")) catalog = arg["--catalog=".Length..];
@@ -155,6 +157,7 @@ namespace UnturnedGodot
                 else if (arg.StartsWith("--ammoradial=")) { ammoRadial = arg["--ammoradial=".Length..]; _shotRequested = ammoRadial; }   // open the R-hold shotgun ammo radial (mock 12ga choices) -> screenshot the picker UI
                 else if (arg.StartsWith("--profileshot=")) { profileShot = arg["--profileshot=".Length..]; _shotRequested = profileShot; }   // two nameplates -- a valid 128px pfp and a refused one -> verify the render + the missing-texture fallback
                 else if (arg.StartsWith("--animrig=")) { animrig = arg["--animrig=".Length..]; _shotRequested = animrig; }   // build a rigged animal (content/NAME_rig.json) at rest + 3/4 cam -> validate the static pose stands
+                else if (arg == "--puppetanim") puppetAnim = true;   // drive a player rig idle->walk->run -> prove RemotePlayers locomotion animates (movie)
                 else if (arg.StartsWith("--rottest=")) rottest = arg["--rottest=".Length..];   // place ONE prop with the placement euler (UG_EULER) under a rotation convention (UG_ROTCONV) -> hunt the upside-down
                 else if (arg.StartsWith("--bakeicon=")) bakeIcon = arg["--bakeicon=".Length..];   // MODEL[:ALBEDO] -> icon PNG (needs --shot=OUT)
                 else if (arg.StartsWith("--rig=")) { rig = arg["--rig=".Length..]; _shotRequested = rig; }
@@ -545,6 +548,7 @@ namespace UnturnedGodot
                 BuildAnimRig(animrig);
                 return;
             }
+            if (puppetAnim) { GetWindow().Size = new Vector2I(720, 960); BuildPuppetAnim(); return; }   // idle->walk->run movie (no _shotPath -> --write-movie captures the whole run)
 
             if (rottest != null)   // place ONE prop under a candidate placement-rotation convention -> find the upright one
             {
@@ -4306,6 +4310,32 @@ namespace UnturnedGodot
             GD.Print($"[ANIMRIG] {name} body aabb size={aabb.Size} center={c} bones={rc.Skeleton?.GetBoneCount()}");
         }
 
+        // --puppetanim: prove the RemotePlayers locomotion drive animates. A player rig.json body driven idle->walk->run
+        // via SetLocomotion(speed) + Tick(delta) -- the exact calls RemotePlayers makes each frame -- over a --write-movie run.
+        void BuildPuppetAnim()
+        {
+            var env = new Godot.Environment
+            {
+                BackgroundMode = Godot.Environment.BGMode.Color,
+                BackgroundColor = new Color(0.30f, 0.34f, 0.40f),
+                AmbientLightSource = Godot.Environment.AmbientSource.Color,
+                AmbientLightColor = new Color(0.80f, 0.80f, 0.80f), AmbientLightEnergy = 1.0f,
+            };
+            AddChild(new WorldEnvironment { Environment = env });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-50f, -40f, 0f), LightEnergy = 1.3f });
+            AddChild(new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(30f, 30f) }, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.20f, 0.22f, 0.26f) } });   // ground
+            _paRig = RiggedCharacter.Build("res://content/rig.json", new Color(0.82f, 0.66f, 0.52f));
+            if (_paRig == null) { GD.PrintErr("[puppetanim] rig build failed"); GetTree().Quit(1); return; }
+            AddChild(_paRig);
+            _paRig.PlayLoop("Idle_Stand");
+            var cam = new Camera3D { Current = true, Fov = 42f, Far = 200f };
+            AddChild(cam);
+            cam.Position = new Vector3(8.0f, 2.4f, 4.6f);   // 3/4-side, pulled back to frame the WHOLE body head->feet
+            cam.LookAt(new Vector3(0f, 0.85f, 0f), Vector3.Up);
+            _paActive = true;
+            GD.Print("[puppetanim] driving idle->walk->run via SetLocomotion+Tick");
+        }
+
         // --rottest=NAME: place one prop under a candidate placement-rotation convention (UG_ROTCONV 0-3) with a chosen
         // euler (UG_EULER="ex,ey,ez", default = the PEI lighthouse's 270,194,0) + RGB axes, to hunt the upside-down.
         void BuildRotTest(string name)
@@ -7416,6 +7446,14 @@ namespace UnturnedGodot
                 GD.Print($"[perf] fps={Engine.GetFramesPerSecond()} physicsMs={physMs:0.0} processMs={procMs:0.0} draws={Performance.GetMonitor(Performance.Monitor.RenderTotalDrawCallsInFrame)}");
             }
             if (_fireTest && _ftPlayer != null) { _ftFrame++; if (System.Environment.GetEnvironmentVariable("UG_LEAN") is string _ln && _ln.Length > 0 && _ftFrame >= 8) _ftPlayer.ScriptedLean = int.Parse(_ln);   /* UG_LEAN=1 lean left / -1 right: verify the 1P viewmodel rolls with the lean */ if (System.Environment.GetEnvironmentVariable("UG_MOVE") == "1" && _ftFrame >= 8) _ftPlayer.ScriptedInput = new UnityEngine.Vector2(0f, 1f);   /* UG_MOVE=1: walk forward -> verify the viewmodel movement-sway tilt */ if (System.Environment.GetEnvironmentVariable("UG_ADS") == "1") { if (_ftFrame >= 40) _ftPlayer.ForceAim(true); } else if (System.Environment.GetEnvironmentVariable("UG_TRACERANGLE") == "1") { if (_ftFrame >= 45 && _ftFrame % 10 == 0) _ftPlayer.DebugFireAngled(-28f); } else if (_ftFrame >= 60 && _ftFrame % 15 == 0) _ftPlayer.Fire(); }   // own counter; UG_ADS: hold ADS; UG_TRACERANGLE: fire tracers 38deg across the view so the stretched streak is seen side-on
+            if (_paActive && _paRig != null && IsInstanceValid(_paRig))
+            {
+                _paT += (float)delta;
+                // idle (0-2s) -> walk (2-4.5s) -> run (4.5s+); same SetLocomotion + Tick the puppet uses.
+                float spd = _paT < 2f ? 0f : (_paT < 4.5f ? 1.6f : 4.8f);
+                _paRig.SetLocomotion(spd);
+                _paRig.Tick(delta);
+            }
             if (_peiPlay && _peiPlayer != null)
             {
                 _peiFrame++;
