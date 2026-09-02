@@ -65,6 +65,7 @@ namespace UnturnedGodot
         bool _driveTest, _swarm, _drivethru, _nade, _grassTest; PlayerController _dtPlayer;      // --drivetest=DIR [--swarm|--drivethru|--nade] : enter/drive a jeep; swarm = mob it; drivethru = loud drive wakes zombies; nade = grenade the parked car. _grassTest (UG_GRASSTEST=1): a lawn + overhead cam, jeep stays parked -> verify grass displacement
         bool _fireTest; PlayerController _ftPlayer; int _ftFrame;   // --firetest [--supp] : player fires downrange -- viewmodel / tracer / ADS / impact test rig
         bool _paActive; RiggedCharacter _paRig; float _paT; bool _paHit; bool _paGun;   // --puppetanim: drive a player rig idle->walk->run (SetLocomotion+Tick, like RemotePlayers). UG_PAHITBOX: PvP damage zones + idle. UG_PAGUN: gun-hold, and its own hold->ADS->lean sequence
+        byte _paStance; float _paLean;   // UG_PASTANCE=stand/crouch/prone/lean holds that pose under the hitbox overlay
         bool _peiPlay; PlayerController _peiPlayer; int _peiFrame;   // --peiplay : drive a jeep on real PEI
         int _tpFrame; double _tpPrims, _tpDraws, _tpMs; int _tpN;   // --- UG_TERRPERF terrain cost probe
         PlayerController _pdPlayer; int _pdFireT;   // --peidrive on-foot player -> UG_AUTOFIRE terrain-impact verification
@@ -4337,26 +4338,45 @@ namespace UnturnedGodot
             }
             if (System.Environment.GetEnvironmentVariable("UG_PAHITBOX") == "1")
             {
-                _paHit = true;   // hold idle so the zones overlay a standing body
-                // the ACTUAL server PvP damage zones (ServerCombat.cs: hit relY >= 1.45 -> HeadMult 2.0, >= 0.78 -> TorsoMult 1.0, else LegMult 0.6)
-                void Zone(float y0, float y1, Color c, string label)
+                _paHit = true;   // hold the chosen stance under the zone overlay
+                string sv = System.Environment.GetEnvironmentVariable("UG_PASTANCE") ?? "stand";
+                _paStance = sv == "crouch" ? (byte)2 : (sv == "prone" ? (byte)3 : (byte)0);
+                _paLean = sv == "lean" ? 24f : 0f;
+                // the EXACT server damage zones for this stance (ServerCombat.PlayerHitZones -- the same the hit test uses),
+                // rolled with the lean so the boxes track the tilted body.
+                UnturnedGodot.Net.ServerCombat.PlayerHitZones(_paStance, out float zr, out float ztop, out float zhm, out float ztm);
+                var zroot = new Node3D { RotationDegrees = new Vector3(0f, 0f, -_paLean) };
+                AddChild(zroot);
+                Color red = new(1f, 0.22f, 0.22f), yel = new(1f, 0.82f, 0.2f), blu = new(0.32f, 0.62f, 1f);
+                StandardMaterial3D ZMat(Color c) => new() { AlbedoColor = new Color(c.R, c.G, c.B, 0.32f), Transparency = BaseMaterial3D.TransparencyEnum.Alpha, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+                if (_paStance == 3)   // PRONE: the body lies FLAT along its facing (-Z) -> zones run forward: legs back, torso mid, head front, all low
                 {
-                    AddChild(new MeshInstance3D
-                    {
-                        Mesh = new BoxMesh { Size = new Vector3(0.85f, y1 - y0, 0.62f) },
-                        Position = new Vector3(0f, (y0 + y1) * 0.5f, 0f),
-                        MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(c.R, c.G, c.B, 0.34f), Transparency = BaseMaterial3D.TransparencyEnum.Alpha, CullMode = BaseMaterial3D.CullModeEnum.Disabled },
-                    });
-                    AddChild(new Label3D { Text = label, Position = new Vector3(0.85f, (y0 + y1) * 0.5f, 0f), Modulate = c, FontSize = 110, PixelSize = 0.0035f, Billboard = BaseMaterial3D.BillboardModeEnum.Enabled, NoDepthTest = true });
+                    void HZ(float z0, float z1, float w, Color c) => zroot.AddChild(new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(w, 0.42f, z1 - z0) }, Position = new Vector3(0f, 0.24f, (z0 + z1) * 0.5f), MaterialOverride = ZMat(c) });
+                    HZ(-1.05f, -0.55f, 0.5f, red);   // head is forward = -Z (rig faces -Z)
+                    HZ(-0.55f, 0.3f, 0.62f, yel);
+                    HZ(0.3f, 1.0f, 0.52f, blu);
                 }
-                Zone(1.45f, 1.9f, new Color(1f, 0.22f, 0.22f), "HEAD  x2.0");
-                Zone(0.78f, 1.45f, new Color(1f, 0.82f, 0.2f), "TORSO  x1.0");
-                Zone(0f, 0.78f, new Color(0.32f, 0.62f, 1f), "LEGS  x0.6");
+                else
+                {
+                    void VZ(float y0, float y1, Color c) => zroot.AddChild(new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(2f * zr, y1 - y0, 2f * zr * 0.72f) }, Position = new Vector3(0f, (y0 + y1) * 0.5f, 0f), MaterialOverride = ZMat(c) });
+                    VZ(zhm, ztop, red); VZ(ztm, zhm, yel); VZ(0f, ztm, blu);
+                }
+                // fixed side legend so the labels never cover the body
+                void Lg(float y, Color c, string t) => AddChild(new Label3D { Text = t, Position = new Vector3(1.7f, y, 0f), Modulate = c, FontSize = 92, PixelSize = 0.0042f, Billboard = BaseMaterial3D.BillboardModeEnum.Enabled, NoDepthTest = true, OutlineSize = 12 });
+                Lg(1.55f, red, "HEAD  x2.0"); Lg(1.2f, yel, "TORSO  x1.0"); Lg(0.85f, blu, "LEGS  x0.6");
             }
             var cam = new Camera3D { Current = true, Fov = 42f, Far = 200f };
             AddChild(cam);
-            cam.Position = new Vector3(8.0f, 2.4f, 4.6f);   // 3/4-side, pulled back to frame the WHOLE body head->feet
-            cam.LookAt(new Vector3(0f, 0.85f, 0f), Vector3.Up);
+            string camv = System.Environment.GetEnvironmentVariable("UG_PACAM") ?? "0";   // 0 3/4-front, 1 side, 2 front, 3 low-3/4
+            cam.Position = camv switch
+            {
+                "1" => new Vector3(9.2f, 1.5f, 0.4f),
+                "2" => new Vector3(0.5f, 1.6f, 9.2f),
+                "3" => new Vector3(5.6f, 0.95f, 5.6f),
+                _ => new Vector3(8.0f, 2.4f, 4.6f),
+            };
+            float look = _paStance == 3 ? 0.3f : (_paStance == 2 ? 0.62f : 0.85f);   // lower target for crouch/prone
+            cam.LookAt(new Vector3(0f, look, 0f), Vector3.Up);
             _paActive = true;
             GD.Print("[puppetanim] driving idle->walk->run via SetLocomotion+Tick");
         }
@@ -7474,7 +7494,14 @@ namespace UnturnedGodot
             if (_paActive && _paRig != null && IsInstanceValid(_paRig))
             {
                 _paT += (float)delta;
-                if (_paHit) { _paRig.SetLocomotion(0f, SDG.Unturned.EPlayerStance.STAND); _paRig.Tick(delta); return; }   // hitbox viz: stand still under the zone overlay
+                if (_paHit)   // hitbox viz: hold the chosen stance + lean under the zone overlay
+                {
+                    var hst = _paStance == 2 ? SDG.Unturned.EPlayerStance.CROUCH : (_paStance == 3 ? SDG.Unturned.EPlayerStance.PRONE : SDG.Unturned.EPlayerStance.STAND);
+                    _paRig.LeanDeg = _paLean;
+                    _paRig.SetLocomotion(0f, hst);
+                    _paRig.Tick(delta);
+                    return;
+                }
                 if (_paGun)   // shouldered hold (0-1.6) -> ADS (1.6-3.2) -> lean right (3.2-4.8) -> lean left (4.8+); same AimBlend/LeanDeg the local 3p body uses
                 {
                     _paRig.AimBlend = (_paT >= 1.6f && _paT < 3.2f) ? 1f : 0f;

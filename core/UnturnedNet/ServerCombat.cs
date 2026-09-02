@@ -101,6 +101,20 @@ namespace UnturnedGodot.Net
         const float PlayerZoneTopY = 1.8f;
         const float PlayerHeadMinY = 1.45f;
         const float PlayerTorsoMinY = 0.78f;
+
+        /// <summary>Stance-adaptive player hit geometry (master: match the model + adapt to crouch/crawl). The server is
+        /// headless, so these approximate the POSED rig per stance -- radius + total height + the head/torso relY splits,
+        /// all above the feet. Shared with the client hitbox viz so what the shooter sees is what the server tests.
+        /// stance: 0/1 STAND/SPRINT, 2 CROUCH, 3 PRONE.</summary>
+        public static void PlayerHitZones(byte stance, out float radius, out float top, out float headMin, out float torsoMin)
+        {
+            switch (stance)
+            {
+                case 2: radius = 0.46f; top = 1.30f; headMin = 1.00f; torsoMin = 0.50f; break;   // CROUCH: body folds to ~0.72x, wider stance
+                case 3: radius = 0.50f; top = 0.52f; headMin = 0.34f; torsoMin = 0.18f; break;    // PRONE: flat + low (a vertical-cylinder approx of the lying body)
+                default: radius = 0.40f; top = 1.82f; headMin = 1.50f; torsoMin = 0.76f; break;   // STAND/SPRINT
+            }
+        }
         const float ZombieZoneRadius = 0.4f;      // ZombieController capsule radius
         const float ZombieHeadFrac = 0.82f;       // ZombieController.IsHeadshot: top ~18% of the collider
         public const int RespawnDelayTicks = 175; // 3.5 s -- the SP death-cam timer
@@ -351,7 +365,7 @@ namespace UnturnedGodot.Net
                 int hitKind = 0;   // 0 none, 1 player, 2 zombie, 3 world
                 ushort hitPlayer = 0;
                 ZombieReplication.ZombieEntity hitZombie = null;
-                float hitRelY = 0f, hitTop = 0f;
+                float hitRelY = 0f, hitTop = 0f, hitHeadMin = PlayerHeadMinY, hitTorsoMin = PlayerTorsoMinY;   // per-hit zone splits (stance-adaptive)
                 Vector3 worldPoint = default;
                 int hitDestructible = -1;
 
@@ -360,8 +374,9 @@ namespace UnturnedGodot.Net
                     {
                         if (pe.OwnerPlayerId == b.Shooter) continue;
                         if (_state.TryGet(pe.OwnerPlayerId, out var vs) && !vs.Alive) continue;
-                        if (SegmentHitsCylinder(b.Pos, next, pe.Pos, PlayerZoneRadius, PlayerZoneTopY, out float t, out float relY) && t < bestT)
-                        { bestT = t; hitKind = 1; hitPlayer = pe.OwnerPlayerId; hitRelY = relY; hitTop = PlayerZoneTopY; }
+                        PlayerHitZones(pe.Stance, out float pr, out float ptop, out float phm, out float ptm);   // stance-adaptive: crouch/prone shrink the cylinder + lower the splits
+                        if (SegmentHitsCylinder(b.Pos, next, pe.Pos, pr, ptop, out float t, out float relY) && t < bestT)
+                        { bestT = t; hitKind = 1; hitPlayer = pe.OwnerPlayerId; hitRelY = relY; hitTop = ptop; hitHeadMin = phm; hitTorsoMin = ptm; }
                     }
                 if (ZombieHost != null)
                     foreach (var ze in _zombies.All)
@@ -386,10 +401,10 @@ namespace UnturnedGodot.Net
                     {
                         case 1:
                         {
-                            float mult = hitRelY >= PlayerHeadMinY ? b.Gun.HeadMult : (hitRelY >= PlayerTorsoMinY ? b.Gun.TorsoMult : b.Gun.LegMult);
+                            float mult = hitRelY >= hitHeadMin ? b.Gun.HeadMult : (hitRelY >= hitTorsoMin ? b.Gun.TorsoMult : b.Gun.LegMult);
                             float dmg = b.Gun.PlayerDamage * mult;
                             ApplyPlayerDamage(hitPlayer, dmg, b.Shooter, tick, out bool killed);
-                            SendHitConfirm(b.Shooter, b.Seq, HitTargetKind.Player, hitPlayer, dmg, killed, hitRelY >= PlayerHeadMinY);
+                            SendHitConfirm(b.Shooter, b.Seq, HitTargetKind.Player, hitPlayer, dmg, killed, hitRelY >= hitHeadMin);
                             BroadcastImpact(point, ImpactSurface.Flesh);
                             Diag.BulletHitsPlayer++;
                             break;
