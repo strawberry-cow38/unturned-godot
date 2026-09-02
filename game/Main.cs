@@ -117,6 +117,7 @@ namespace UnturnedGodot
             bool rainTest = false;
             bool rainMatTest = false;
             bool windowBarrTest = false;
+            string arenaSpawns = null;   // --arenaspawns[=POIname] : debug-render the 8 arena spawn points in a POI (master 2026-09-02)
             bool play = false, demo = false, netdemo = false, server = false, dedicated = false, client = false, smoke = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, lightTest = false, trafficTest = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, playground = false, objects = false, peidrive = false, craftmenu = false, stationtest = false, editorMode = false, impactTest = false, doorGallery = false, lampTest = false, beamTest = false, impTest = false, treeSweep = false, bakeLods = false, bakeLodsDry = false, netobserve = false, zombieTier = false, zflow = false, zhunt = false, zkill = false, zsound = false, zface = false, zpath = false;
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
@@ -224,6 +225,7 @@ namespace UnturnedGodot
                 }
                 else if (arg == "--playground") playground = true;   // GUN PLAYGROUND: flat lane + player-shaped dummies at 10/25/50/100/200/300 m, floating damage numbers
                 else if (arg == "--peiplay") peiplay = true;     // player standing/walking on real PEI terrain (with colliders)
+                else if (arg.StartsWith("--arenaspawns")) arenaSpawns = arg.Contains('=') ? arg.Split('=', 2)[1] : "";   // arena: debug-render the 8 spawns in a POI (=name, else default)
                 else if (arg == "--invdemo") invdemo = true;
                 else if (arg == "--invsel") { invdemo = true; invsel = true; }
                 else if (arg == "--invequip") { invdemo = true; invequip = true; }
@@ -394,6 +396,13 @@ namespace UnturnedGodot
 
 
             if (playground) { WorldBuilder.BuildPlaygroundWorld(this); return; }
+            if (arenaSpawns != null)   // --arenaspawns[=POI]: debug-render the 8 arena spawns in a POI (master: eyeball placement)
+            {
+                GetWindow().Size = new Vector2I(1280, 720);
+                _shotPath = shot;
+                BuildArenaSpawns(arenaSpawns);
+                return;
+            }
             if (peiplay)   // drop the player onto real PEI terrain (colliders on) + walk -> the whole session's work on an actual map
             {
                 GetWindow().Size = System.Environment.GetEnvironmentVariable("UG_FUELCAN") == "1" ? new Vector2I(1600, 900) : new Vector2I(1280, 720);   // crisper capture for the gas-can viewmodel check
@@ -5559,6 +5568,56 @@ namespace UnturnedGodot
             var res = WorldBuilder.BuildPeiPlayWorld(this, MapDir("PEI"));
             _peiPlayer = res.Player;
             AttachMpLoopback(res, gameDefault: true);   // P6a: --peiplay is a real SP GAME entry -> consuming listen-server by default (--direct opts out)
+        }
+
+        // --arenaspawns[=POI]: build the PEI world, pick a POI, generate the 8 arena spawns, drop bright markers + an
+        // angled top-down camera -> a --shot debug view so spawn placement (spread / water / buildings) can be eyeballed.
+        // Set UG_SHOTTIME ~7 so the world loads first; UG_ARENARADIUS overrides the ring radius.
+        void BuildArenaSpawns(string poiArg)
+        {
+            // JUST the terrain (no player/buildings/audio) -> a clean debug shot; the splat colours already show land vs
+            // water, which is what spawn placement needs judging against. (Building context can be layered in later.)
+            var terr = Terrain.LoadMapMerged(MapDir("PEI") + "/Landscape/Heightmaps", withCollider: false);
+            if (terr == null) { GD.PrintErr("[arena] no PEI terrain (no local map?) -- can't place spawns"); return; }
+            AddChild(terr);
+            AddChild(new WorldEnvironment { Environment = new Godot.Environment {
+                BackgroundMode = Godot.Environment.BGMode.Color, BackgroundColor = new Color(0.5f, 0.6f, 0.72f),
+                AmbientLightSource = Godot.Environment.AmbientSource.Color, AmbientLightColor = new Color(0.62f, 0.62f, 0.64f), AmbientLightEnergy = 1.0f } });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-55f, -40f, 0f), LightEnergy = 1.1f });
+            var pois = MapNodes.Locations;
+            if (pois.Count == 0) { GD.PrintErr("[arena] no POIs in nodes.tsv"); return; }
+            int idx = 0;
+            if (!string.IsNullOrEmpty(poiArg))
+            {
+                string want = poiArg.Replace(" ", "").ToLowerInvariant();
+                int f = pois.FindIndex(p => p.Name.Replace(" ", "").ToLowerInvariant().Contains(want));
+                if (f >= 0) idx = f;
+            }
+            else { int f = pois.FindIndex(p => p.Name.Contains("Charlottetown")); if (f >= 0) idx = f; }   // default: the big central town
+            var poi = pois[idx];
+            Vector3 centre = new Vector3(poi.Pos.X, terr.SampleHeight(poi.Pos.X, poi.Pos.Z), poi.Pos.Z);
+            float radius = ArenaMode.SpawnRadius;
+            { var re = System.Environment.GetEnvironmentVariable("UG_ARENARADIUS"); if (re != null && float.TryParse(re, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var rr)) radius = rr; }
+            var spawns = ArenaMode.GenerateSpawns(centre, terr, ArenaMode.SpawnCount, radius);
+            GD.Print($"[arena] POI '{poi.Name}' @ ({centre.X:0},{centre.Z:0}) r={radius} -> {spawns.Count}/{ArenaMode.SpawnCount} spawns");
+            int n = 0;
+            foreach (var (pos, yaw) in spawns) { AddArenaMarker(pos, new Color(0.15f, 0.95f, 1f), $"{++n}"); GD.Print($"[arena]   spawn {n}: ({pos.X:0},{pos.Y:0},{pos.Z:0})"); }
+            AddArenaMarker(centre, new Color(1f, 0.25f, 0.85f), "C");   // POI centre
+            var cam = new Camera3D { Current = true, Fov = 60f, Far = 6000f };
+            AddChild(cam);
+            cam.GlobalPosition = centre + new Vector3(0f, radius * 2f + 25f, radius * 0.3f);   // steep near-top-down so the spread reads clearly
+            cam.LookAt(centre, Vector3.Up);
+        }
+
+        // A bright emissive spawn marker: a flat ground disc (reads from top-down) + a tall pillar (3D presence) + a
+        // floating billboarded number, so the 8 spawns + the POI centre 'C' are all legible in one debug shot.
+        void AddArenaMarker(Vector3 groundPos, Color col, string label)
+        {
+            var mat = new StandardMaterial3D { AlbedoColor = col, EmissionEnabled = true, Emission = col, EmissionEnergyMultiplier = 1.8f, ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded };
+            AddChild(new MeshInstance3D { Mesh = new CylinderMesh { TopRadius = 4f, BottomRadius = 4f, Height = 0.3f }, MaterialOverride = mat, Position = groundPos + Vector3.Up * 0.2f });      // ground disc
+            AddChild(new MeshInstance3D { Mesh = new CylinderMesh { TopRadius = 0.6f, BottomRadius = 0.6f, Height = 12f }, MaterialOverride = mat, Position = groundPos + Vector3.Up * 6f });   // pillar
+            AddChild(new MeshInstance3D { Mesh = new SphereMesh { Radius = 2.2f }, MaterialOverride = mat, Position = groundPos + Vector3.Up * 13.5f });                                        // cap ball
+            AddChild(new Label3D { Text = label, FontSize = 128, PixelSize = 0.08f, Modulate = col, Billboard = BaseMaterial3D.BillboardModeEnum.Enabled, NoDepthTest = true, Position = groundPos + Vector3.Up * 17f });
         }
 
 
