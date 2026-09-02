@@ -5573,19 +5573,16 @@ namespace UnturnedGodot
         // --arenaspawns[=POI]: build the PEI world, pick a POI, generate the 8 arena spawns, drop bright markers + an
         // angled top-down camera -> a --shot debug view so spawn placement (spread / water / buildings) can be eyeballed.
         // Set UG_SHOTTIME ~7 so the world loads first; UG_ARENARADIUS overrides the ring radius.
-        void BuildArenaSpawns(string poiArg)
+        async void BuildArenaSpawns(string poiArg)
         {
-            // JUST the terrain (no player/buildings/audio) -> a clean debug shot; the splat colours already show land vs
-            // water, which is what spawn placement needs judging against. (Building context can be layered in later.)
-            var terr = Terrain.LoadMapMerged(MapDir("PEI") + "/Landscape/Heightmaps", withCollider: false);
-            if (terr == null) { GD.PrintErr("[arena] no PEI terrain (no local map?) -- can't place spawns"); return; }
-            AddChild(terr);
-            AddChild(new WorldEnvironment { Environment = new Godot.Environment {
-                BackgroundMode = Godot.Environment.BGMode.Color, BackgroundColor = new Color(0.5f, 0.6f, 0.72f),
-                AmbientLightSource = Godot.Environment.AmbientSource.Color, AmbientLightColor = new Color(0.62f, 0.62f, 0.64f), AmbientLightEnergy = 1.0f } });
-            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-55f, -40f, 0f), LightEnergy = 1.1f });
+            // The REAL collidered world (Editor mode = full Objects.dat props + colliders, but NO player/HUD/loot/zombies)
+            // so spawns are based on the town's ACTUAL buildings AND overlap-tested against the walls. (master 2026-09-02)
+            _worldBuild = true;   // the --shot capture waits for _worldReady (set at the end) -> it fires on a loaded frame
+            var res = await WorldBuilder.BuildFullWorld(this, WorldMode.Editor, _mapRoot, _mapPlace, syncLoad: true, ActiveHoliday());
+            var terr = res.Terr;
+            if (terr == null) { GD.PrintErr("[arena] no PEI terrain (no local map?) -- can't place spawns"); _worldReady = true; return; }
             var pois = MapNodes.Locations;
-            if (pois.Count == 0) { GD.PrintErr("[arena] no POIs in nodes.tsv"); return; }
+            if (pois.Count == 0) { GD.PrintErr("[arena] no POIs in nodes.tsv"); _worldReady = true; return; }
             int idx = 0;
             if (!string.IsNullOrEmpty(poiArg))
             {
@@ -5595,18 +5592,42 @@ namespace UnturnedGodot
             }
             else { int f = pois.FindIndex(p => p.Name.Contains("Charlottetown")); if (f >= 0) idx = f; }   // default: the big central town
             var poi = pois[idx];
-            Vector3 centre = new Vector3(poi.Pos.X, terr.SampleHeight(poi.Pos.X, poi.Pos.Z), poi.Pos.Z);
-            float radius = ArenaMode.SpawnRadius;
-            { var re = System.Environment.GetEnvironmentVariable("UG_ARENARADIUS"); if (re != null && float.TryParse(re, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var rr)) radius = rr; }
-            var spawns = ArenaMode.GenerateSpawns(centre, terr, ArenaMode.SpawnCount, radius);
-            GD.Print($"[arena] POI '{poi.Name}' @ ({centre.X:0},{centre.Z:0}) r={radius} -> {spawns.Count}/{ArenaMode.SpawnCount} spawns");
+            Vector3 node = new Vector3(poi.Pos.X, terr.SampleHeight(poi.Pos.X, poi.Pos.Z), poi.Pos.Z);
+
+            // the POI's ACTUAL extent = the bounding box of its real buildings (the "editor_loaded_object" group, one per
+            // placed Objects.dat prop) clustered near the node point -- NOT a circle round the label.
+            var buildings = new System.Collections.Generic.List<Node3D>();
+            foreach (var b in GetTree().GetNodesInGroup("editor_loaded_object")) if (b is Node3D n3) buildings.Add(n3);
+            float cluster = ArenaMode.ClusterRadius;
+            { var re = System.Environment.GetEnvironmentVariable("UG_ARENARADIUS"); if (re != null && float.TryParse(re, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var rr)) cluster = rr; }
+            ArenaMode.PoiBounds(node, buildings, cluster, out var centre, out var halfX, out var halfZ, out int near);
+
+            // in-wall test: a standing box at the candidate overlapping a solid structure (WorldLayers.World) -> rejected
+            var space = GetViewport()?.World3D?.DirectSpaceState;
+            var probe = new BoxShape3D { Size = new Vector3(1.0f, 1.8f, 1.0f) };
+            System.Func<Vector3, bool> inWall = pos =>
+            {
+                if (space == null) return false;
+                var q = new PhysicsShapeQueryParameters3D
+                {
+                    Shape = probe, Transform = new Transform3D(Basis.Identity, pos + Vector3.Up * 0.9f),
+                    CollisionMask = WorldLayers.World, CollideWithBodies = true, CollideWithAreas = false,
+                };
+                return space.IntersectShape(q, 1).Count > 0;
+            };
+
+            var spawns = ArenaMode.GenerateSpawns(centre, halfX, halfZ, terr, inWall, ArenaMode.SpawnCount);
+            GD.Print($"[arena] POI '{poi.Name}': {near} buildings near -> extent ~{halfX * 2:0}x{halfZ * 2:0}m, {spawns.Count}/{ArenaMode.SpawnCount} spawns (land + clear of walls)");
             int n = 0;
             foreach (var (pos, yaw) in spawns) { AddArenaMarker(pos, new Color(0.15f, 0.95f, 1f), $"{++n}"); GD.Print($"[arena]   spawn {n}: ({pos.X:0},{pos.Y:0},{pos.Z:0})"); }
-            AddArenaMarker(centre, new Color(1f, 0.25f, 0.85f), "C");   // POI centre
-            var cam = new Camera3D { Current = true, Fov = 60f, Far = 6000f };
+            AddArenaMarker(centre, new Color(1f, 0.25f, 0.85f), "C");
+
+            float span = Mathf.Max(halfX, halfZ);
+            var cam = new Camera3D { Current = true, Fov = 60f, Far = 8000f };
             AddChild(cam);
-            cam.GlobalPosition = centre + new Vector3(0f, radius * 2f + 25f, radius * 0.3f);   // steep near-top-down so the spread reads clearly
+            cam.GlobalPosition = centre + new Vector3(0f, span * 2.3f + 40f, span * 0.35f);   // steep top-down framing the whole footprint
             cam.LookAt(centre, Vector3.Up);
+            _worldReady = true;   // capture can now fire (loaded world + markers in frame)
         }
 
         // A bright emissive spawn marker: a flat ground disc (reads from top-down) + a tall pillar (3D presence) + a
