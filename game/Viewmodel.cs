@@ -45,6 +45,37 @@ namespace UnturnedGodot
         // it in the right hand (lefties get localScale.x=-1, PlayerAnimator:1613 — a mirror, not a shift).
         // Y is the eye-alignment + the source -0.45 vertical drop (PlayerAnimator:1431, gun sits low).
         Vector3 _armsPos = new Vector3(0f, -1.75f, 0.12f);
+        // DRIVING ARMS (strawberry 2026-09-03 "get the 1p viewmodel for steering wheels"): behind the wheel in 1P the arms play the
+        // body's Idle_Drive and the rig is slid so its SKULL sits on the viewmodel camera -- the world camera sits on the seated
+        // body's skull (PlayerController.SeatedEyeLocal), so the hands land where the seated body's hands are: on the real wheel.
+        public bool Driving { get; private set; }
+        bool _poseDrive;   // UG_POSE=drive (render harness): enter driving arms once the rig exists
+        int _vmSkull = -1;
+        public void SetDriving(bool on)
+        {
+            if (on == Driving || _arms == null) return;
+            Driving = on;
+            if (on)
+            {
+                if (_arms.ClipLength("Idle_Drive") > 0f) { _arms.SetClipLoop("Idle_Drive", true); _arms.PlayLoop("Idle_Drive"); }
+                if (_gun != null && Godot.GodotObject.IsInstanceValid(_gun)) _gun.Visible = false;   // no rifle floating over the dashboard
+            }
+            else
+            {
+                if (_gun != null && Godot.GodotObject.IsInstanceValid(_gun)) _gun.Visible = true;
+                _arms.Position = _armsPos;
+                _arms.Play(_holdClip);   // back to the item's ready hold
+            }
+        }
+        void SetDrivingDeferred() => SetDriving(true);
+        Vector3 DrivingArmsPos()
+        {
+            var skel = _arms?.Skeleton; if (skel == null) return _armsPos;
+            if (_vmSkull < 0) { _vmSkull = skel.FindBone("Skull"); if (_vmSkull < 0) return _armsPos; }
+            var head = skel.GetBoneGlobalPose(_vmSkull).Origin;
+            if (head.LengthSquared() < 0.01f) return _armsPos;
+            return -(head + new Vector3(0f, 0.16f, -0.10f));   // same head-base -> eyes offset as PlayerController.SeatedEyeFromSkull
+        }
         // NOTE: guns are oriented by riding the animated hand-bone HOLD pose (see the gun branch in _Process), which is
         // source-accurate -- each gun's own <Gun>_Equip anim poses a pistol vs a rifle. An earlier per-gun "hold pitch"
         // hack (magic +12deg on pistols) was removed once the bone-hold path handled it for real.
@@ -332,6 +363,7 @@ namespace UnturnedGodot
             {
                 if (_pz == "sprint") { _stance = EPlayerStance.SPRINT; _moving = true; }
                 else if (_pz == "safe") _safe = true;
+                else if (_pz == "drive") _poseDrive = true;   // driving arms (Idle_Drive, skull on the camera) for the --vm render
             }
 
             _arms = RiggedCharacter.Build("res://content/rig.json", new Color(0.82f, 0.66f, 0.52f), armsOnly: true);
@@ -339,6 +371,7 @@ namespace UnturnedGodot
             {
                 _cam.AddChild(_arms);
                 _arms.Position = _armsPos;
+                if (_poseDrive) CallDeferred(nameof(SetDrivingDeferred));
                 _arms.SetClipLoop("Gun_Equip", false);   // equip plays ONCE and holds the ready pose
                 _arms.SetClipLoop("Gun_Reload", false);  // reload plays ONCE (the clip returns the hands to ready)
                 // per-gun reload clip ({Gun}_Reload, extracted from that gun's animations.prefab); fall back to Gun_Reload
@@ -1340,7 +1373,7 @@ namespace UnturnedGodot
                 Vector3 mCam = _cam.ToLocal(_sight.GlobalPosition);   // aim hook, camera-local
                 hipPos -= mCam * _aimAlpha;                           // slide arms so the aim hook -> camera origin
             }
-            _arms.Position = hipPos + vmOffset + TuneOffset;   // + the live uniform tune offset (ESC sliders); per-gun offsets removed
+            _arms.Position = Driving ? DrivingArmsPos() : hipPos + vmOffset + TuneOffset;   // driving: skull on the camera; else + the live uniform tune offset (ESC sliders)
             // ARMS ROTATION = input inertia + scope sway. Applied to the arms ROOT rather than to the gun model,
             // because the source rotates the viewmodel CAMERA and our arms hang rigidly off that camera -- rotating
             // the gun alone would swing the barrel out of the hands. Recoil rotation stays on the gun (it is a

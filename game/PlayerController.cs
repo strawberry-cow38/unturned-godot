@@ -6942,12 +6942,18 @@ namespace UnturnedGodot
         {
             if (_viewmodel != null)
             {
-                _viewmodel.SetShown(_fp && _driving == null && _riding == null && !_dead);   // FP gun arms: first-person on foot only
+                bool drivingArms = _fp && _driving != null && _seatIndex == 0 && !_driving.IsHeli && !_driving.IsPlane && !_dead;   // behind a WHEEL in 1P: hands on it
+                _viewmodel.SetDriving(drivingArms);
+                _viewmodel.SetShown((_fp && _driving == null && _riding == null && !_dead) || drivingArms);   // FP gun arms on foot, driving arms at the wheel
                 _viewmodel.LeanRoll = _leanAngle;   // 1P lean tilt: hand the already-lerped/obstruct-snapped roll to the viewmodel (its SubViewport can't inherit the camera pivot's roll)
             }
             if (_body == null) return;
             _body.Visible = !_fp && !_dead;   // dead -> the corpse ragdoll handles the body
-            if (_fp || _dead) { return; }
+            if (_dead) return;
+            // SEATED in first person the body still gets posed + animated (invisible): the 1P vehicle camera sits on ITS eyes now
+            // (strawberry 2026-09-03: "if it was exactly where the model's eyes would be, and the pm invisible, would be perfect"),
+            // so the skull bone has to be where the seated clip puts it. On foot in 1P nothing reads the body -> skip as before.
+            if (_fp && _driving == null && (_riding == null || !IsInstanceValid(_riding))) return;
             if (_driving != null)   // in the driver seat (best-effort idle pose)
             {
                 // The seat you are ACTUALLY in (strawberry 2026-08-16: "make the different seats actually move the
@@ -7539,8 +7545,9 @@ namespace UnturnedGodot
             }
             // Driver keeps the tuned DriverEyeLocal (tall cabs sit higher to clear the hood); a passenger's eye
             // is their OWN seat plus the same rise, or everyone in the bus looks out of the driver's window.
-            var eye = _seatIndex == 0 ? _driving.DriverEyeLocal
-                                      : _driving.SeatLocal(_seatIndex) + new Vector3(0f, PassengerEyeRise, 0f);
+            var eyeFallback = _seatIndex == 0 ? _driving.DriverEyeLocal
+                                              : _driving.SeatLocal(_seatIndex) + new Vector3(0f, PassengerEyeRise, 0f);
+            var eye = SeatedEyeLocal(_driving.SeatBodyLocal(_seatIndex), eyeFallback);   // the seated model's own eyes (per seat), not a per-vehicle hand number
             eye += DriverPeekOffset();
             if ((_driving.IsHeli || _driving.IsPlane) && !Input.IsKeyPressed(Key.Alt) && (_flyLookYaw != 0f || _flyLookPitch != 0f))
             {
@@ -7592,7 +7599,23 @@ namespace UnturnedGodot
         const float PeekDivisorAcrossCab = 360f;   // ...and across the cab: less
 
         // C6 ride mode: the same cam anchored on the replicated puppet (no trailer towing over the wire in v1)
-        void PositionRideCam(Transform3D vt) => PositionVehicleCam(vt, _riding.DriverEyeLocal, _fp ? 0f : _riding.MeshSize);
+        void PositionRideCam(Transform3D vt) => PositionVehicleCam(vt, SeatedEyeLocal(_riding.SeatOffset, _riding.DriverEyeLocal), _fp ? 0f : _riding.MeshSize);
+
+        /// <summary>1P eye for a seat: where the seated 3P body's SKULL bone is (skeleton space == vehicle space here, the body is
+        /// placed with an identity basis at SeatBodyLocal), plus the eyes' offset from the head base. The body is invisible in 1P
+        /// but still posed by the seated clip (UpdateBody), so this tracks Idle_Drive/Idle_Sit exactly. Falls back to the old
+        /// per-vehicle DriverEyeLocal until the skeleton has a pose.</summary>
+        Vector3 SeatedEyeLocal(Vector3 seatBodyLocal, Vector3 fallback)
+        {
+            var skel = _body?.Skeleton;
+            if (skel == null) return fallback;
+            if (_skullBone < 0) { _skullBone = skel.FindBone("Skull"); if (_skullBone < 0) return fallback; }
+            var head = skel.GetBoneGlobalPose(_skullBone).Origin;
+            if (head.LengthSquared() < 0.01f) return fallback;   // rest not applied yet
+            return seatBodyLocal + head + SeatedEyeFromSkull;
+        }
+        int _skullBone = -1;
+        static readonly Vector3 SeatedEyeFromSkull = new Vector3(0f, 0.16f, -0.10f);   // head base -> eyes: up + forward (rig faces -Z like the vehicle)
 
         /// <summary>Chase-cam collision (strawberry 2026-09-03 "give the 3p vehicle camera collision with terrain, props etc."):
         /// one ray from the look target out to the wanted eye against WORLD + PROPS (layers 0 + 6). Vehicles (layer 5) and
