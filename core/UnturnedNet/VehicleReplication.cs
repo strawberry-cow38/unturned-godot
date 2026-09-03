@@ -25,6 +25,12 @@ namespace UnturnedGodot.Net
         public const byte FlagSiren = 1 << 3;
         public const byte FlagBraking = 1 << 4;
         public const byte FlagExploded = 1 << 5;
+        /// <summary>This car is one of the ~5% that HAS an alarm. It was a coin flip PER CLIENT at spawn, so
+        /// no two players agreed about which cars were even alarmed. Rolled once, by whoever owns the car.</summary>
+        public const byte FlagAlarmed = 1 << 6;
+        /// <summary>...and it is sounding right now, so everybody hears the same car rather than only
+        /// whoever happened to walk past it.</summary>
+        public const byte FlagAlarming = 1 << 7;
 
         // scalar wire ranges (WriteClampedFloat int/frac bits) -- generous vs the .dat maxima
         // (fuel <= 3000, health <= 1000, battery <= 10000; see Vehicle.cs specs)
@@ -76,6 +82,12 @@ namespace UnturnedGodot.Net
 
             public bool Exploded => (Flags & FlagExploded) != 0;
             public bool EngineOn => (Flags & FlagEngineOn) != 0;
+            public bool Headlights => (Flags & FlagHeadlights) != 0;
+            public bool Taillights => (Flags & FlagTaillights) != 0;
+            public bool Siren => (Flags & FlagSiren) != 0;
+            public bool Braking => (Flags & FlagBraking) != 0;
+            public bool Alarmed => (Flags & FlagAlarmed) != 0;
+            public bool Alarming => (Flags & FlagAlarming) != 0;
 
             /// <summary>Steer as a signed angle for puppet dressing (the wire wraps into [0,360)).</summary>
             public float SteerSigned => SteerDegrees > 180f ? SteerDegrees - 360f : SteerDegrees;

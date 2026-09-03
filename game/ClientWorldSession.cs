@@ -419,6 +419,8 @@ namespace UnturnedGodot
                               | (v.HeadlightsOn ? VehicleReplication.FlagHeadlights : 0)
                               | (v.TaillightsOn ? VehicleReplication.FlagTaillights : 0)
                               | (v.SirenOn ? VehicleReplication.FlagSiren : 0)
+                              | (v.AlarmedForTest ? VehicleReplication.FlagAlarmed : 0)
+                              | (v.AlarmActiveForTest ? VehicleReplication.FlagAlarming : 0)
                               | (v.BrakingNow ? VehicleReplication.FlagBraking : 0));
             Client.SendVehicleState(_ridingNetId, ToU(v.GlobalPosition), new UnityEngine.Vector3(euler.X, euler.Y, euler.Z),
                 ToU(v.LinearVelocity), ToU(v.AngularVelocity), v.SteerAngleDegrees,

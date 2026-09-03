@@ -37,6 +37,59 @@ namespace UnturnedGodot
         public bool Exploded;   // review #10: mirrored from the replicated entity by VehicleReplicaView each tick
         public bool TowScannable => !Exploded;   // exclude WRECKS, matching SP Vehicle.TowScannable = !Exploded (server re-validates, but the client must not highlight/attempt-tie a wreck)
 
+        // ---- COSMETICS FROM THE WIRE (strawberry 2026-09-03 "car alarms clientside") -----------------
+        // The flags byte has always carried headlights / taillights / siren / braking / exploded, both
+        // publishers wrote it, and NOTHING read it: on every screen but the driver's, a car was dark and
+        // silent however it was being driven. These are the lens materials split out of the body at build
+        // time (BuildPuppetByName), plus the horn a car alarm needs to be heard at all.
+        public StandardMaterial3D HeadlightMat, TaillightMat;
+        static readonly Color LampTint = new(0.97f, 0.96f, 0.83f);          // Vehicle._lampTint
+        static readonly Color TailGlow = new(0.56f, 0.13f, 0.13f);
+        public AudioStreamPlayer3D HornAudio;
+        bool _head, _tail, _alarming; float _blip;
+
+        /// <summary>Mirror the replicated cosmetic state. Visual and audible only -- a puppet has no physics,
+        /// no battery and no alarm timer of its own; it is told what the owning side already decided.</summary>
+        public void ApplyReplicatedFlags(bool headlights, bool taillights, bool braking, bool alarming)
+        {
+            // An alarming car owns its own lights, blinking them with the horn, exactly as the real one does.
+            if (_alarming != alarming) { _alarming = alarming; _blip = 0f; if (!alarming) { SetHead(headlights); SetTail(taillights); } }
+            if (_alarming) return;
+            SetHead(headlights);
+            SetTail(taillights || braking);   // brake lights ride the same lenses, brighter, as they do on the real car
+        }
+
+        /// <summary>Runs the alarm's blink+honk loop while the flag is set. Driven per-frame by
+        /// VehicleReplicaView, which is where the puppet's other per-frame work already lives.</summary>
+        public void TickAlarm(float dt)
+        {
+            if (!_alarming) return;
+            _blip += dt;
+            bool on = ((int)(_blip / 0.5f) & 1) == 0;   // 0.5 s on / 0.5 s off, the real loop's cadence
+            if (on != _head) { SetHead(on); SetTail(on); if (on) Honk(); }
+        }
+
+        void SetHead(bool on)
+        {
+            _head = on;
+            if (HeadlightMat == null) return;
+            HeadlightMat.EmissionEnabled = on;
+            if (on) { HeadlightMat.Emission = LampTint; HeadlightMat.EmissionEnergyMultiplier = 2f; }
+        }
+        void SetTail(bool on)
+        {
+            _tail = on;
+            if (TaillightMat == null) return;
+            TaillightMat.EmissionEnabled = on;
+            if (on) { TaillightMat.Emission = TailGlow; TaillightMat.EmissionEnergyMultiplier = 2f; }
+        }
+        void Honk()
+        {
+            if (HornAudio == null || !GodotObject.IsInstanceValid(HornAudio)) return;
+            HornAudio.PitchScale = 0.97f + GD.Randf() * 0.06f;   // the real horn varies slightly per honk
+            HornAudio.Play();
+        }
+
         MeshInstance3D _towFrontNub, _towRearNub;
         static MeshInstance3D MakeTowNub(Color c, Vector3 pos)
         {
