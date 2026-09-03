@@ -1501,12 +1501,25 @@ void fragment() {
             var av = new Panel { Position = new Vector2(10, 10), Size = new Vector2(56, 56) };
             StyleBox(av, UI_TAB_OFF);
             badge.AddChild(av);
+            if (PlayerProfile.HasAvatar)   // the launcher's picture (UG_PROFILE_PNG, already size/format-checked by PlayerProfile) fills the square
+            {
+                var img = new Image();
+                if (img.LoadPngFromBuffer(PlayerProfile.AvatarPng) == Error.Ok)
+                {
+                    // ExpandMode BEFORE Size: with the default expand mode the 128 px texture clamps the control's minimum size, and a
+                    // Size set first stays 128 (the picture spilled out of the 56 px square in the first render).
+                    var pic = new TextureRect { ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize, StretchMode = TextureRect.StretchModeEnum.Scale, MouseFilter = Control.MouseFilterEnum.Ignore };
+                    pic.Texture = ImageTexture.CreateFromImage(img);
+                    pic.Position = new Vector2(2, 2); pic.Size = new Vector2(52, 52);
+                    av.AddChild(pic);
+                }
+            }
             // Survivor + faction/rank[rep], vertically CENTERED as a block in the badge (master 2026-08-26).
             var textCol = new VBoxContainer { Position = new Vector2(78, 0), Size = new Vector2(CHARW - 16 - 78 - 40, 76) };
             textCol.Alignment = BoxContainer.AlignmentMode.Center; textCol.AddThemeConstantOverride("separation", 0);
             textCol.MouseFilter = Control.MouseFilterEnum.Ignore;
             badge.AddChild(textCol);
-            var uname = new Label { Text = "Survivor" };
+            var uname = new Label { Text = string.IsNullOrEmpty(PlayerProfile.Name) ? "Survivor" : PlayerProfile.Name };   // the launcher name (UG_USERNAME); "Survivor" only when none is set
             uname.AddThemeColorOverride("font_color", UITheme.Accent); uname.AddThemeFontSizeOverride("font_size", 28);   // yellow username
             textCol.AddChild(uname);
             var fac = new Label { Text = "Neutral [0]" };
@@ -1783,7 +1796,7 @@ void fragment() {
             if (_charBox != null)
             {
                 _charBox.Size = new Vector2(CHARW, Mathf.Max(600f, vp.Y - NAVH - 2 * MARGIN));   // fill the height below the navbar
-                if (_weaponRow != null) _weaponRow.Position = new Vector2(12, _charBox.Size.Y - CELL - (HEADER - 6) - MARGIN - 155);   // lifted ABOVE the layer-12 vitals (~180px up from the panel bottom) so they don't collide (master 2026-08-26)
+                if (_weaponRow != null) _weaponRow.Position = new Vector2(12, _charBox.Size.Y - CELL - (HEADER - 6) - MARGIN - 215);   // master 2026-09-03: "move primary and secondary up a bit so they are above the vitals bars" (was -155: the slots touched the bars)   // lifted ABOVE the layer-12 vitals (~180px up from the panel bottom) so they don't collide (master 2026-08-26)
                 // rotation slider + cosmetic buttons sit in the reserved COSMH strip just above the weapon slots
                 if (_cosmeticRow != null) _cosmeticRow.Position = new Vector2(0, _charBox.Size.Y - CELL - (HEADER - 6) - MARGIN - COSMH);
 
