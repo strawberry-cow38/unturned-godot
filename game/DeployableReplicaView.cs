@@ -22,6 +22,7 @@ namespace UnturnedGodot
         readonly Dictionary<uint, Deployable> _nodes = new();
         readonly Dictionary<uint, GridPowerSource> _grids = new();   // A3: server-placed grid-power SOURCE fixtures (a GridPowerSource node, not a Deployable body)
         readonly Dictionary<uint, GasPump> _gaspumps = new();        // A2: server-placed gas-pump fixtures (a GasPump node, not a Deployable body)
+        readonly Dictionary<uint, Refrigerator> _fridges = new();    // placed STORAGE devices (a Refrigerator/StorageCrate, not a Deployable body)
         readonly Dictionary<uint, Wire> _wires = new();
 
         public int NodeCount => _nodes.Count;
@@ -72,6 +73,20 @@ namespace UnturnedGodot
                     pump.FillPercent = e.Fuel;   // the replicated 0..100 percent of the shared station tank
                     continue;
                 }
+                if (def.IsStorage)
+                {
+                    // A placed STORAGE device is a Refrigerator (a StorageCrate), not a plain Deployable body
+                    // -- the same split FridgeDeploy makes on the singleplayer path. Its NetId is what the
+                    // shell's F-open addresses, and the server registered a crate under that very id when it
+                    // was placed, so opening it needs nothing else.
+                    if (!_fridges.TryGetValue(e.NetIdValue, out var fridge) || !IsInstanceValid(fridge))
+                    {
+                        fridge = Refrigerator.Spawn(parent, new Vector3(e.Pos.x, e.Pos.y, e.Pos.z), yawDeg: e.YawDegrees);
+                        fridge.NetId = e.NetIdValue;
+                        _fridges[e.NetIdValue] = fridge;
+                    }
+                    continue;
+                }
                 if (!_nodes.TryGetValue(e.NetIdValue, out var node) || !IsInstanceValid(node))
                 {
                     node = Deployable.Spawn(parent, def, new Vector3(e.Pos.x, e.Pos.y, e.Pos.z), e.YawDegrees);
@@ -83,6 +98,7 @@ namespace UnturnedGodot
                 node.NetSetPowered(e.ToggledOn);
             }
             RetireMissing(_nodes, seen, node => { if (IsInstanceValid(node)) node.QueueFree(); });
+            RetireMissing(_fridges, seen, f => { if (IsInstanceValid(f)) f.QueueFree(); });
             RetireMissing(_grids, seen, grid => { if (IsInstanceValid(grid)) grid.QueueFree(); PowerNet.MarkDirty(); });
             RetireMissing(_gaspumps, seen, pump => { if (IsInstanceValid(pump)) pump.QueueFree(); PowerNet.MarkDirty(); });
 

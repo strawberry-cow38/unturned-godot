@@ -417,6 +417,16 @@ namespace UnturnedGodot.Net
 
         public bool TryGetCrate(uint netId, out CrateEntry crate) => _crates.TryGetValue(netId, out crate);
 
+        /// <summary>Drop a crate and shut anyone who is standing in it. Map containers live for the session,
+        /// so nothing needed this until a PLACED container could be salvaged or picked up -- leaving the grid
+        /// behind would keep its contents addressable by a NetId with no object left to stand next to.</summary>
+        public void ServerRemoveCrate(uint netId, long tick)
+        {
+            if (!_crates.Remove(netId)) return;
+            foreach (var kv in _byOwner)
+                if (kv.Value.OpenCrateId == netId) ServerCloseStorage(kv.Key, tick);
+        }
+
         // ---- server side ----
 
         public PlayerEntry ServerAdd(ushort ownerPlayerId, long tick)

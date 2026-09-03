@@ -46,6 +46,12 @@ namespace UnturnedGodot.Net
         public DeployablePortSpec[] Ports = System.Array.Empty<DeployablePortSpec>();
         public ushort SalvageItemId; // what a blowtorched wreck breaks into (Deployable.Salvage; 0 = nothing)
         public byte SalvageCount;
+        /// <summary>A placeable STORAGE device (the fridge) carries its own grid: 0x0 = not storage. The
+        /// dimensions live on the def table rather than the wire, like every other def fact, so both ends
+        /// agree from the content hash. A placed one registers a crate under its OWN NetId, which is all
+        /// the existing F-open path needs -- ServerOpenStorage is keyed by crate id and does not care
+        /// whether that id came from a map fixture or a deployable.</summary>
+        public byte StorageWidth, StorageHeight;
     }
 
     /// <summary>Instance-scoped def registry (no static state -- test isolation for free).</summary>

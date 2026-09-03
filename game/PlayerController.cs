@@ -2598,9 +2598,14 @@ namespace UnturnedGodot
                 _placeTimer -= dt;
                 if (_placeTimer <= 0f)
                 {
-                    if (_deployable.IsStorage)   // STORAGE device (fridge): spawn a Refrigerator LOCALLY (rides the ghost/place flow; device MP replication = fast-follow)
+                    if (_deployable.IsStorage)   // STORAGE device (fridge): singleplayer spawns a Refrigerator LOCALLY here
                     {
-                        FridgeDeploy.SpawnFor(_deployable, GetParent(), _placePoint, _placeYaw);
+                        // ...but NOT in MP any more. The fridge is a replicated deployable now, so the server
+                        // places it and DeployableReplicaView materializes it for everybody INCLUDING the
+                        // placer. Spawning locally as well would leave the placer looking at two fridges in
+                        // the same spot -- one real and shared, one a ghost only he can see and only he can
+                        // open, since the server's crate is keyed to the replicated NetId.
+                        if (NetPlaceDeployable == null) FridgeDeploy.SpawnFor(_deployable, GetParent(), _placePoint, _placeYaw);
                         PlayPlaceSound(_deployable.PlaceSound, _placePoint);
                         GD.Print($"[storage] placed {_deployable.Name} at {_placePoint}");
                         if (_deployItem != null && Inventory != null)
@@ -2608,7 +2613,8 @@ namespace UnturnedGodot
                             ushort id = _deployItem.id;
                             if (NetPlaceDeployable != null)
                             {   // net seam active (loopback/MP): the SERVER spends the item -- OnPlaceDeployable removes it,
-                                // then ServerPlace no-ops the storage id (filtered from the schema) so NO phantom replica spawns.
+                                // and now ALSO places the storage device for real and registers its grid (it is in the
+                                // schema as of the fridge-replication change; it used to be filtered out and no-op).
                                 // SKIP the local mutation (P1 invariant): else the owner-inventory re-adopt would restore the
                                 // item (the dupe-on-any-inv-move bug fluid hit -- strawberry). Predict the echo.
                                 NetPlaceDeployable(_deployable.Id, _placePoint, _placeYaw);
