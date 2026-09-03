@@ -227,6 +227,10 @@ namespace UnturnedGodot
                 // per-tick HP adoption itself rides TickLocal (mirrors the owner-inventory adoption there).
                 Client.PlayerDied += e => { if (e.Victim == Client.PlayerId && Player != null && IsInstanceValid(Player)) Player.NetDie(); };
                 Client.PlayerRespawned += e => { if (e.PlayerId == Client.PlayerId && Player != null && IsInstanceValid(Player)) Player.NetRespawn(reposition: true); };
+                // The death screen's Respawn buttons. Singleplayer IS this listen-server, so "the server owns the
+                // respawn clock" must not mean "the player cannot ask" -- it just means the ask goes through it.
+                if (Player != null && IsInstanceValid(Player))
+                    Player.NetRequestRespawn = () => Server.Combat.ServerRequestRespawn(Client.PlayerId, Server.Session.CurrentTick);
                 // P3b (SP/MP-unify): the loopback host shell is the listen-server's OWN authority (not a follower
                 // body, not a client-auth claim stream), so its LOCAL environmental damage (blast, fall, OOB --
                 // originally also zombie melee/acid) has nowhere to go under P3a's NetVitalsAdopted no-op. Route it to the server

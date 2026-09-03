@@ -4573,6 +4573,14 @@ namespace UnturnedGodot
 
         bool _dead;
         double _deathTimer;
+        DeathScreen _deathScreen;   // null on a NetAvatar shell and in headless harnesses -- see the respawn gate
+        /// <summary>Set by the session that owns the respawn clock (MpLoopback) so the death screen's buttons
+        /// can ASK for a respawn instead of being disabled. Singleplayer runs on the loopback listen-server, so
+        /// without this the buttons are dead in exactly the mode the game is normally played in -- which is what
+        /// the first render of this screen showed: "waiting for the server to respawn you", in SP.</summary>
+        public System.Action NetRequestRespawn;
+        bool _respawnForceRandom;   // the button's bed-or-map choice, held across the server round trip
+        float _deathOrbit;          // radians travelled around the corpse since Die()
         RiggedCharacter _corpse;
 
         // Zombie melee lands here; on death, drop a ragdoll corpse + third-person death-cam, then respawn.
@@ -4706,8 +4714,27 @@ namespace UnturnedGodot
             _viewmodel?.SetShown(false);   // no gun in the death-cam
             if (_cam != null)
             {
-                _cam.TopLevel = true;   // hold the death-cam still in world space while the body flops
+                _cam.TopLevel = true;   // hold the death-cam in WORLD space while the body flops -- the orbit below drives it
                 _cam.LookAtFromPosition(GlobalPosition + new Vector3(2.2f, 2.2f, 2.8f), GlobalPosition - new Vector3(0f, 0.6f, 0f), Vector3.Up);
+            }
+            // Start the orbit where that fixed shot already was, so the camera drifts on from the first frame
+            // instead of snapping to some other side of the body.
+            _deathOrbit = Mathf.Atan2(2.2f, 2.8f);
+
+            // The death screen. NOT built for a NetAvatar shell (a remote player's body is not a viewer) and not
+            // in a headless harness, which never reaches here with a viewport; the respawn gate below keys off
+            // its absence to keep the old 3.5 s self-respawn for exactly those cases.
+            if (!NetAvatar)
+            {
+                if (_deathScreen == null || !IsInstanceValid(_deathScreen))
+                {
+                    _deathScreen = new DeathScreen();
+                    _deathScreen.OnRespawnRandom = () => RequestRespawn(forceRandom: true);
+                    _deathScreen.OnRespawnBed = () => RequestRespawn(forceRandom: false);   // Respawn already prefers a claimed bed
+                    AddChild(_deathScreen);
+                }
+                // Only a REMOTE server leaves the buttons dead: on the loopback we can ask it to respawn us.
+                _deathScreen.ShowDeath(Bed.TryGetSpawn(PlayerId, out _, out _), _serverOwnedRespawn && NetRequestRespawn == null);
             }
         }
 
@@ -4763,9 +4790,36 @@ namespace UnturnedGodot
             Visible = true;
         }
 
-        void Respawn(bool reposition = true)
+        /// <summary>A death-screen button. On a server-clocked session the revive has to come FROM the server
+        /// (its PlayerRespawnedEvent drives NetRespawn), so the bed-or-map choice is parked here and consumed by
+        /// Respawn when that event lands; locally it just respawns. The screen hides either way, so a player who
+        /// pressed a button never sits looking at one that appears to have done nothing.</summary>
+        void RequestRespawn(bool forceRandom)
+        {
+            _respawnForceRandom = forceRandom;
+            if (_deathScreen != null && IsInstanceValid(_deathScreen)) _deathScreen.HideDeath();
+            if (_serverOwnedRespawn && NetRequestRespawn != null) { NetRequestRespawn(); return; }
+            Respawn(forceRandomSpawn: forceRandom);
+        }
+
+        /// <summary>Swing the death-cam slowly around the corpse. Tracks the RAGDOLL, not the death position:
+        /// retail's throw sends the body several metres, and a camera orbiting the spot where you were shot ends
+        /// up circling empty ground with the corpse off-screen. Falls back to the shell while the ragdoll is
+        /// still being built.</summary>
+        void OrbitDeathCam(float delta)
+        {
+            if (_cam == null || !IsInstanceValid(_cam)) return;
+            Vector3 focus = (_corpse != null && IsInstanceValid(_corpse) ? _corpse.GlobalPosition : GlobalPosition) + new Vector3(0f, 0.6f, 0f);
+            _deathOrbit += delta * 0.22f;   // ~12.6 deg/s: a full circuit in ~29 s, slow enough to read as a hold
+            const float radius = 3.6f, height = 2.0f;
+            var eye = focus + new Vector3(Mathf.Sin(_deathOrbit) * radius, height, Mathf.Cos(_deathOrbit) * radius);
+            _cam.LookAtFromPosition(eye, focus, Vector3.Up);
+        }
+
+        void Respawn(bool reposition = true, bool forceRandomSpawn = false)
         {
             _dead = false;
+            if (_deathScreen != null && IsInstanceValid(_deathScreen)) _deathScreen.HideDeath();   // also recaptures the mouse
             Health = MaxHealth;
             _netAdoptedHealth = MaxHealth;   // P3a: keep the adopted pin in sync with the fresh HP (the server's coarse Health is 100 on respawn too) so the next UpdateVitals doesn't yank it back down
             Stamina = Food = Water = 1f; Infection = 0f; Bleeding = false; Broken = false;   // fresh vitals on respawn
@@ -4775,7 +4829,12 @@ namespace UnturnedGodot
             {
                 // P3a: the client-auth MP shell skips this -- the server's recov teleport owns the move to
                 // SpawnPos (a GlobalPosition write would be overwritten by the next state claim).
-                Vector3 target = Bed.TryGetSpawn(PlayerId, out var bedSpawn, out _) ? bedSpawn + Vector3.Up * 0.5f : PickRandomSpawn();   // no claimed bed -> a fresh RANDOM map spawn (strawberry 2026-08-23), not the fixed initial point
+                // forceRandomSpawn is the death screen's "Respawn" button choosing the map over your bed; without
+                // it that button and "Respawn at Bed" would do the same thing for anyone who owns a bed.
+                bool wantRandom = forceRandomSpawn || _respawnForceRandom;
+                Vector3 target = !wantRandom && Bed.TryGetSpawn(PlayerId, out var bedSpawn, out _)
+                    ? bedSpawn + Vector3.Up * 0.5f
+                    : PickRandomSpawn();   // no claimed bed -> a fresh RANDOM map spawn (strawberry 2026-08-23), not the fixed initial point
                 GlobalPosition = target;
                 // ...and reset the render-interp snapshots, for the reason TeleportTo documents: the next
                 // 50 Hz tick restores GlobalPosition from _interpCurr, which still holds the pre-death spot,
@@ -4784,6 +4843,7 @@ namespace UnturnedGodot
                 _interpPrev = _interpCurr = target;
             }
             Velocity = Vector3.Zero;
+            _respawnForceRandom = false;
             _corpse?.QueueFree(); _corpse = null;
             _clothing?.Refresh();   // re-sync the worn clothing onto the (persistent) body after death (source re-applies thirdClothes on spawn)
             _viewmodel?.SetShown(true);
@@ -7525,7 +7585,12 @@ namespace UnturnedGodot
                 // P3a: while server-owned, the SERVER owns the 3.5 s respawn clock -- NetRespawn() drives the
                 // revive off PlayerRespawnedEvent; the local timer must not self-respawn (it would fight the
                 // server, respawning early / at the wrong place). Default SP keeps its local timer verbatim.
-                if (_deathTimer <= 0 && !_serverOwnedRespawn) Respawn();
+                OrbitDeathCam((float)delta);
+                // With a death screen up the player CHOOSES when to come back, so the 3.5 s self-respawn must not
+                // fire underneath them. It still does when there is no screen: a NetAvatar shell and every
+                // headless harness rely on that timer, and silently changing their behaviour to add UI would be
+                // the wrong trade.
+                if (_deathTimer <= 0 && !_serverOwnedRespawn && (_deathScreen == null || !IsInstanceValid(_deathScreen))) Respawn();
                 return;
             }
             if (_fireCd > 0f) _fireCd -= (float)delta;
