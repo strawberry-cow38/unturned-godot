@@ -582,6 +582,7 @@ namespace UnturnedGodot
         public override void _ExitTree() { TickHub.Remove(this); }
         public override void _Ready()
         {
+            if (_lit && _tone != null && !_tone.Playing) _tone.Play();   // see Refresh: the tone could not start before the set entered the tree
             AddToGroup("deployables");   // PowerNet gathers this group by IPowerDevice, not by the concrete Deployable
             if (GetTree() is SceneTree tr && tr.GetNodesInGroup("powermgr").Count == 0)
             {
@@ -1293,7 +1294,7 @@ namespace UnturnedGodot
                 if (_screen != null) _screen.Visible = true;
                 if (_light != null) _light.Visible = true;
                 if (_cone != null) _cone.Visible = true;
-                _tone?.Play();
+                if (_tone != null && _tone.IsInsideTree()) _tone.Play();   // Build() refreshes before the set is in the tree: Play() there only logs "Playback can only happen when a node is inside the scene tree" (7x per PEI load); _Ready starts a lit set's tone instead
                 ApplyTint();
             }
             else
