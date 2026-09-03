@@ -123,6 +123,10 @@ namespace UnturnedGodot.Net
         /// PendingSave, and returns the line to show the admin. Null on a server with no persistence, and the
         /// `wipe` verb says so rather than reporting a success it did not have.</summary>
         public Func<string> WipeSaveHandler;
+        /// <summary>Installed alongside WipeSaveHandler: write the world out NOW. A normal admin action before a
+        /// restart -- the autosave is on a timer, so without this the only way to be sure a save is current is to
+        /// wait for it. It is also what makes the save path testable in a real world at all.</summary>
+        public Func<string> SaveNowHandler;
 
         readonly PlayerReplication _players;
         readonly PlayerCombatReplication _combat;
@@ -1130,6 +1134,14 @@ namespace UnturnedGodot.Net
             // teardown is a desync rather than a wipe. So the verb says exactly what it did and what is still
             // standing -- a wipe that silently left the current world in place would be the worse failure.
             // Sits BELOW the AllowCheats gate on purpose: it is the most destructive verb here.
+            if (verb == "save")
+            {
+                if (SaveNowHandler == null) { Diag.ConsoleRejected++; return "no save is configured on this server"; }
+                string r = SaveNowHandler();
+                Diag.ConsoleApplied++;
+                return r;
+            }
+
             if (verb == "wipe")
             {
                 if (WipeSaveHandler == null) { Diag.ConsoleRejected++; return "no save is configured on this server"; }

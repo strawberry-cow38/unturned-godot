@@ -58,15 +58,20 @@ namespace UnturnedGodot
         // loopback) -- it routes over the console plane like the cheats, but it's a legit mechanic the server runs
         // BEFORE its AllowCheats gate. The early toggleGlobalPower branch below does the routing; membership here
         // documents that the local process-global flip only happens on the pure-direct SP path (RemoteClient == null).
-        static readonly string[] ServerGatedVerbs = { "give", "xp", "skill", "teleport", "tp", "toggleglobalpower", "globalpower", "grid" };
+        // `save` and `wipe` live entirely on the HOST (WorldSaveDriver owns the file), so they always route to
+        // the server -- on a joined client and on the consuming loopback alike, which is what singleplayer is.
+        static readonly string[] ServerGatedVerbs = { "give", "xp", "skill", "teleport", "tp", "toggleglobalpower", "globalpower", "grid", "save", "wipe" };
         // Verbs below the arg guard that are legal with NO argument. Keep this in step when adding one, or the
         // guard silently swallows it and the verb becomes unreachable from the console.
-        static readonly string[] NoArgVerbs = { "unarmed", "fridge", "fluid", "survival", "spawnmagnetablecontainer", "magcontainer", "spawnelevator", "heliphys", "procisland", "credits" };
+        // save/wipe take no argument. Missing from here they are swallowed by the arg guard and read as "the
+        // console does not know that command" -- which is exactly what `wipe` did from the day it shipped, and
+        // the note above this list warns about. Found by running the verb rather than by reading it.
+        static readonly string[] NoArgVerbs = { "unarmed", "fridge", "fluid", "survival", "spawnmagnetablecontainer", "magcontainer", "spawnelevator", "heliphys", "procisland", "credits", "save", "wipe" };
         bool _resultHooked;
 
         LineEdit _input;
         Label _log;
-        static readonly string[] Verbs = { "give", "vehicle", "spawnMagnetableContainer", "spawnheli", "spawntrain", "spawncrane", "spawncraneontrack", "spawncontainerflatbed", "spawnelevator", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "toggleGlobalPower", "toggleGlobalWater", "toggleBbat", "infFuel", "infAmmo", "wear", "unwear", "fluid", "date", "dateset", "whenBlackout", "triggerGlobalBrownout", "hurtmain", "killmain", "hurttail", "killtail", "kill", "profiler", "renderscale", "vertexlight", "weather", "credits", "fridge", "fill", "empty", "units", "simspeed", "time", "timeset", "timeadd", "timespeed", "daylength", "hitbox", "heliphys", "procisland" };
+        static readonly string[] Verbs = { "give", "vehicle", "spawnMagnetableContainer", "spawnheli", "spawntrain", "spawncrane", "spawncraneontrack", "spawncontainerflatbed", "spawnelevator", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "save", "wipe", "toggleGlobalPower", "toggleGlobalWater", "toggleBbat", "infFuel", "infAmmo", "wear", "unwear", "fluid", "date", "dateset", "whenBlackout", "triggerGlobalBrownout", "hurtmain", "killmain", "hurttail", "killtail", "kill", "profiler", "renderscale", "vertexlight", "weather", "credits", "fridge", "fill", "empty", "units", "simspeed", "time", "timeset", "timeadd", "timespeed", "daylength", "hitbox", "heliphys", "procisland" };
         static readonly EItemType[] ClothingTypes = { EItemType.SHIRT, EItemType.PANTS, EItemType.HAT, EItemType.VEST, EItemType.MASK, EItemType.GLASSES, EItemType.BACKPACK };
         readonly System.Collections.Generic.List<string> _history = new();
         int _histIdx;

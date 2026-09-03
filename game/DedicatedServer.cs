@@ -270,6 +270,7 @@ namespace UnturnedGodot
             Save = new WorldSaveDriver(Server, System.IO.Path.GetFileName((MapRoot ?? "world").TrimEnd('/')), DayNight);
             GD.Print("[SAVE] " + Save.LoadIntoWorld());
             Server.Transactions.WipeSaveHandler = () => Save.Wipe();
+            Server.Transactions.SaveNowHandler = () => Save.SaveNowReport();
             Driver.Sim.Add(new DelegateSimStep((tick, dt) => Save.Tick(dt), "net.save.autosave"));
             Driver.Sim.Add(new DelegateSimStep((tick, dt) => Replicate(tick), "net.server.replicate"));   // LAST (MP_PLAN §2.5)
         }

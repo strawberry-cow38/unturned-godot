@@ -375,6 +375,7 @@ namespace UnturnedGodot
             Save = new WorldSaveDriver(Server, MapId, DayNight);
             GD.Print("[SAVE] " + Save.LoadIntoWorld());
             Server.Transactions.WipeSaveHandler = () => Save.Wipe();
+            Server.Transactions.SaveNowHandler = () => Save.SaveNowReport();
             Driver.Sim.Add(new DelegateSimStep((t, dt) => Save.Tick(dt), "net.save.autosave"));
             Driver.Sim.Add(new DelegateSimStep((t, dt) => Server.TickReplication(), "net.server.replicate"));   // LAST (§2.5)
             GD.Print($"[MPLOOPBACK] listen-server up over MemTransport (content {NetContent.Hash:X16})");

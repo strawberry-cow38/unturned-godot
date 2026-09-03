@@ -132,6 +132,12 @@ namespace UnturnedGodot
         /// <summary>Delete the save and forget it. The LIVE world is left standing on purpose -- see the note on
         /// the `wipe` verb in ServerTransactions.RunConsole -- so the returned line says that plainly instead of
         /// letting an admin believe the running server has already been cleared.</summary>
+        /// <summary>The `save` console verb: write now and say where it went, or why it did not. A normal admin
+        /// action before a restart, since the autosave is on a timer -- and the only way to exercise this path in
+        /// a real world, which is how the console plumbing for it turned out to be broken.</summary>
+        public string SaveNowReport()
+            => SaveNow() ? $"saved to {_path}" : $"save FAILED (see the log) -- {_path}";
+
         public string Wipe()
         {
             _server.PendingSave = null;
