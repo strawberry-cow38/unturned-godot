@@ -41,7 +41,12 @@ namespace UnturnedGodot.Net
         [System.ThreadStatic] static NetPakWriter _w;
         [System.ThreadStatic] static NetPakReader _r;
         static NetPakWriter Writer() => _w ??= new NetPakWriter { buffer = new byte[8] };
-        static NetPakReader Reader() => _r ??= new NetPakReader();
+        static NetPakReader Reader()
+        {
+            var r = _r ??= new NetPakReader();
+            r.Reset();   // SetBufferSegment only swaps the buffer; without this the read index/scratch carry over, the 3rd call reads past the 8-byte buffer, and from then on every read fails quietly (value 0). Shipped that way in 6e19565b for ~an hour -- never again.
+            return r;
+        }
 
         public static float QuantizeClampedFloat(float value, int intBits, int fracBits)
         {
