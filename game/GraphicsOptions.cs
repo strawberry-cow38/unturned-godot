@@ -147,6 +147,42 @@ namespace UnturnedGodot
 
         /// <summary>Apply everything to the live renderer. Safe to call with no window (the L1 harness runs headless),
         /// which is why each step guards rather than assuming a viewport exists.</summary>
+        // ---- MULTITHREADED RENDERER (restart required). Godot reads rendering/driver/threads/thread_model ONCE at boot,
+        // but honours an override.cfg beside project.godot (source runs) / the executable (exports) at the next start.
+        // The toggle writes exactly that one key and the row says "(restart)" until the running process matches.
+        // Measured 2026-09-03 on the 4080S: +26% on the CPU-bound idle scene; Godot 4.6 calls the separate render
+        // thread experimental, so it ships as an opt-in (master: "an option that requires restart").
+        public const string ThreadModelKey = "rendering/driver/threads/thread_model";
+        public static bool RenderThreadActive => ProjectSettings.GetSetting(ThreadModelKey, 1).AsInt32() == 2;   // what THIS process booted with
+        static bool? _renderThreadWanted;
+        public static bool RenderThreadWanted { get => _renderThreadWanted ?? RenderThreadActive; private set => _renderThreadWanted = value; }
+        public static string RenderThreadLabel => (RenderThreadWanted ? "Multi" : "Single") + (RenderThreadWanted != RenderThreadActive ? " (restart)" : "");
+        static string OverridePath => OS.HasFeature("template")
+            ? System.IO.Path.Combine(System.IO.Path.GetDirectoryName(OS.GetExecutablePath()) ?? ".", "override.cfg")   // exported build: res:// is a read-only pack
+            : ProjectSettings.GlobalizePath("res://override.cfg");
+        public static void SetRenderThreadWanted(bool on)
+        {
+            RenderThreadWanted = on;
+            try
+            {
+                string path = OverridePath;
+                var lines = System.IO.File.Exists(path) ? new System.Collections.Generic.List<string>(System.IO.File.ReadAllLines(path)) : new System.Collections.Generic.List<string>();
+                lines.RemoveAll(l => l.TrimStart().StartsWith("driver/threads/thread_model"));   // ours; anything else in the file is left alone
+                if (on)
+                {
+                    int sec = lines.FindIndex(l => l.Trim() == "[rendering]");
+                    if (sec < 0) { if (lines.Count > 0 && lines[lines.Count - 1].Trim() != "") lines.Add(""); lines.Add("[rendering]"); sec = lines.Count - 1; }
+                    lines.Insert(sec + 1, "driver/threads/thread_model=2");
+                }
+                for (int i = lines.Count - 1; i >= 0; i--)   // drop a [rendering] header we emptied
+                    if (lines[i].Trim() == "[rendering]" && (i + 1 >= lines.Count || lines[i + 1].Trim() == "" || lines[i + 1].TrimStart().StartsWith("["))) lines.RemoveAt(i);
+                if (lines.TrueForAll(l => l.Trim() == "")) { if (System.IO.File.Exists(path)) System.IO.File.Delete(path); }
+                else System.IO.File.WriteAllLines(path, lines);
+                GD.Print($"[graphics] render thread -> {(on ? "multi" : "single")} on next start ({path})");
+            }
+            catch (System.Exception e) { GD.PrintErr($"[graphics] could not write override.cfg: {e.Message}"); }
+        }
+
         public static void ApplyAll(Node ctx)
         {
             ApplyAA(ctx);

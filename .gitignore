@@ -60,3 +60,7 @@ __pycache__/
 game/content/objects/editor_*.txt
 game/content/terrain/editor_*_heightmap.bin
 game/content/spawns/
+
+# per-machine engine overrides written by the in-game graphics options (render thread toggle)
+game/override.cfg
+override.cfg

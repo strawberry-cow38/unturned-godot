@@ -47,6 +47,10 @@ namespace UnturnedGodot
                 () => { GraphicsOptions.DrawDistance = GraphicsOptions.Next(GraphicsOptions.DrawOrder, GraphicsOptions.DrawDistance);
                         GraphicsOptions.ApplyRenderDistance(ctx?.GetTree()?.Root); });
 
+            Row(vbox, "Render thread (restart)",   // Single / Multi; "(restart)" on the value until the running process matches (see GraphicsOptions.SetRenderThreadWanted)
+                () => GraphicsOptions.RenderThreadLabel,
+                () => GraphicsOptions.SetRenderThreadWanted(!GraphicsOptions.RenderThreadWanted));
+
             var ctrlTitle = new Label { Text = "CONTROLS", HorizontalAlignment = HorizontalAlignment.Center };
             ctrlTitle.AddThemeFontSizeOverride("font_size", 22);
             vbox.AddChild(ctrlTitle);
