@@ -95,6 +95,12 @@ namespace UnturnedGodot.Net
             public float Fuel { get; set; }
             public bool ToggledOn { get; set; }
             public bool OnFire { get; set; }
+            /// <summary>True for a deployable the MAP BUILD makes on every boot -- a grid source, a gas pump,
+            /// anything with a FixtureKind. It is written to the save ONLY so wires can still reference it and
+            /// so its toggle state carries; on load it is MATCHED to the existing one by position, never placed.
+            /// Recreating these is what put two grid sources in one world: the map made one, the save made
+            /// another on top of it, and both answered to "is the mains on".</summary>
+            public bool IsMapFixture { get; set; }
             /// <summary>Contents, for a deployable that carries a storage grid (a fridge). Null when it has none.
             /// Attached to the OWNER rather than filed in a crate list of its own, because the crate is
             /// registered under the deployable's NetId -- which changes on load.</summary>
@@ -301,6 +307,11 @@ namespace UnturnedGodot.Net
             {
                 int saveId = save.Deployables.Count;
                 saveIdByNetId[d.NetIdValue] = saveId;
+                // A FixtureKind means the map build makes this one every boot. It still goes in the file --
+                // wires reference it by SaveId and its toggle state matters -- but flagged, so ApplyWorld
+                // matches it to the existing one instead of placing a second.
+                bool isFixture = host.Deployables.Schema.TryGet(d.DefId, out var sdef)
+                                 && sdef.FixtureKind != FixtureKind.None;
                 var ds = new DeployableSave
                 {
                     SaveId = saveId,
@@ -310,6 +321,7 @@ namespace UnturnedGodot.Net
                     YawDegrees = d.YawDegrees,
                     Health = d.Health, Fuel = d.Fuel,
                     ToggledOn = d.ToggledOn, OnFire = d.OnFire,
+                    IsMapFixture = isFixture,
                 };
                 // A storage deployable's grid is registered under the deployable's OWN NetId, so this finds a
                 // placed fridge's contents with no separate bookkeeping.
@@ -610,10 +622,39 @@ namespace UnturnedGodot.Net
         public void ApplyWorld(NetWorldServer host, long tick)
         {
             // ---- RECREATED: player-placed things that do not exist until this puts them back ----
+            // The mains bool first, as the coarse answer for every GridSource. The per-fixture toggles in the
+            // block below then refine it -- that order matters, because the reverse flattens a world where one
+            // source is on and another is off back onto a single bit.
+            ApplyGlobalPower(host, tick);
+
             var netIdBySaveId = new Dictionary<int, uint>();
+
+            // Map fixtures come back as the ones the map build ALREADY made: matched by quantised position,
+            // not placed. They still enter netIdBySaveId, so a wire a player ran from their base to the mains
+            // reconnects to the real source rather than being dropped for having a dangling end.
+            if (Deployables.Exists(d => d != null && d.IsMapFixture))
+            {
+                var fixtureAt = new Dictionary<(int, int, int), uint>();
+                foreach (var e in host.Deployables.All)
+                {
+                    if (!host.Deployables.Schema.TryGet(e.DefId, out var fd) || fd.FixtureKind == FixtureKind.None) continue;
+                    Quantize(e.Pos, out int fx, out int fy, out int fz);
+                    fixtureAt[(fx, fy, fz)] = e.NetIdValue;
+                }
+                foreach (var ds in Deployables)
+                {
+                    if (ds == null || !ds.IsMapFixture) continue;
+                    Quantize(new Vector3(ds.X, ds.Y, ds.Z), out int qx, out int qy, out int qz);
+                    if (!fixtureAt.TryGetValue((qx, qy, qz), out uint existing)) continue;   // map changed under the save
+                    netIdBySaveId[ds.SaveId] = existing;
+                    host.Deployables.ServerSetScalars(existing, ds.Health, ds.Fuel, ds.OnFire, tick);
+                    host.Deployables.ServerToggle(existing, ds.ToggledOn, tick);
+                }
+            }
+
             foreach (var ds in Deployables)
             {
-                if (ds == null) continue;
+                if (ds == null || ds.IsMapFixture) continue;   // handled above -- placing one here is the duplicate bug
                 // Owner is a NAME in the file. It resolves only if that player happens to be connected; the
                 // usual case at world load is nobody is, so the piece comes back unowned. See DeployableSave.
                 ushort owner = FindOnlinePlayerId(host, ds.OwnerName);
@@ -658,8 +699,6 @@ namespace UnturnedGodot.Net
             }
 
             // ---- OVERLAID: modifications to what the map build already made ----
-            ApplyGlobalPower(host, tick);
-
             int vi = 0;
             foreach (var v in host.Vehicles.All)
             {
