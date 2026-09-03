@@ -71,7 +71,7 @@ namespace UnturnedGodot
 
         LineEdit _input;
         Label _log;
-        static readonly string[] Verbs = { "give", "vehicle", "spawnMagnetableContainer", "spawnheli", "spawntrain", "spawncrane", "spawncraneontrack", "spawncontainerflatbed", "spawnelevator", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "save", "wipe", "hurttest", "toggleGlobalPower", "toggleGlobalWater", "toggleBbat", "infFuel", "infAmmo", "wear", "unwear", "fluid", "date", "dateset", "whenBlackout", "triggerGlobalBrownout", "hurtmain", "killmain", "hurttail", "killtail", "kill", "profiler", "renderscale", "vertexlight", "weather", "credits", "fridge", "fill", "empty", "units", "simspeed", "time", "timeset", "timeadd", "timespeed", "daylength", "hitbox", "heliphys", "procisland" };
+        static readonly string[] Verbs = { "give", "vehicle", "spawnMagnetableContainer", "spawnheli", "spawntrain", "spawncrane", "spawncraneontrack", "spawncontainerflatbed", "spawnelevator", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "save", "wipe", "hurttest", "sethp", "toggleGlobalPower", "toggleGlobalWater", "toggleBbat", "infFuel", "infAmmo", "wear", "unwear", "fluid", "date", "dateset", "whenBlackout", "triggerGlobalBrownout", "hurtmain", "killmain", "hurttail", "killtail", "kill", "profiler", "renderscale", "vertexlight", "weather", "credits", "fridge", "fill", "empty", "units", "simspeed", "time", "timeset", "timeadd", "timespeed", "daylength", "hitbox", "heliphys", "procisland" };
         static readonly EItemType[] ClothingTypes = { EItemType.SHIRT, EItemType.PANTS, EItemType.HAT, EItemType.VEST, EItemType.MASK, EItemType.GLASSES, EItemType.BACKPACK };
         readonly System.Collections.Generic.List<string> _history = new();
         int _histIdx;
@@ -221,6 +221,26 @@ namespace UnturnedGodot
                 if (Player.IsDead) { Log("kill: you're already dead"); return; }
                 Player.TakeDamage(9999f);   // 9999 = the game's standard instant-kill (OOB fall PlayerController:7314, --pdie, riding-explosion all use it) -> Health <= 0 -> Die()
                 Log("kill: you died");
+                return;
+            }
+
+            // sethp <n> -- debug: bring health DOWN to n via a real TakeDamage call. NOT a direct Health write --
+            // that looked like it worked (Player.Health read back correctly the instant after) and then
+            // silently reverted one tick later, because under the loopback (every mode reaches this by default
+            // via AttachMpLoopback) Health is SERVER-owned: AdoptReplicatedVitals re-pins it from the server's
+            // own combat-block echo every tick, and a client-side write that never told the server anything is
+            // exactly what that echo overwrites. Routing a real hit through TakeDamage -> NetDamageSink damages
+            // the actual authority, so the next echo reflects reality instead of fighting a local write it
+            // knows nothing about. Caught by comparing a render against the console's OWN reported value, which
+            // was correct on read and had already been quietly overwritten by the time the shot was taken.
+            if (verb == "sethp" && arg.Length > 0)
+            {
+                if (Player == null) { Log("sethp: no player"); return; }
+                if (!float.TryParse(arg, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float hp))
+                { Log("sethp: not a number"); return; }
+                float dmg = Mathf.Max(0f, Player.Health - Mathf.Clamp(hp, 0f, Player.MaxHealth));
+                if (dmg > 0f) Player.TakeDamage(dmg);
+                Log($"sethp: took {dmg:0} damage -> {Player.Health:0}/{Player.MaxHealth:0}");
                 return;
             }
 

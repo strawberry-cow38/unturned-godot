@@ -97,6 +97,12 @@ SCENES = {
     "hurt":      (["--peiplay", "--shot={OUT}"],
                   {"UG_BOOTCMD": "hurttest e", "UG_BOOTCMD_AT": "1.4", "UG_SHOTTIME": "1.7"}, True, 700,
                   "the directional hurt indicator, hit fired from the east"),
+    # Low-HP vignette + desaturation. `sethp 5` sets health directly (bypassing TakeDamage's server-sink
+    # routing entirely) -- see DevConsole. The overlay's strength is SMOOTHED (~0.17s time constant), so the
+    # shot fires a full second after sethp rather than right after it, to catch it settled rather than mid-ramp.
+    "lowhp":     (["--peiplay", "--shot={OUT}"],
+                  {"UG_BOOTCMD": "sethp 5", "UG_BOOTCMD_AT": "1.4", "UG_SHOTTIME": "2.4"}, True, 700,
+                  "the low-HP vignette + desaturation at 5/100 health"),
     "walls":     (["--walls", "--shot={OUT}"], {}, False, 200, "building tool: a drawn room with openings"),
     "wallclose": (["--walls", "--shot={OUT}"], {"UG_WALLCLOSE": "1"}, False, 200, "close on one opening: reveal + frame"),
     "wallswatch":(["--walls", "--shot={OUT}"], {"UG_WALLSWATCH": "1"}, False, 200, "all 52 retail palettes, one panel each"),

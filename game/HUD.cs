@@ -55,6 +55,7 @@ namespace UnturnedGodot
         ColorRect _pain;   // PlayerUI colorOverlayImage: full-screen COLOR_R tint, alpha = the player's painAlpha
         HurtDirectionIndicator _hurtIndicator;
         public HurtDirectionIndicator HurtIndicator => _hurtIndicator;
+        LowHealthOverlay _lowHp;
         Control _crosshair3p;   // centre-screen crosshair, shown only in third person (master) -- the 1P has the viewmodel reticle, the 3P had nothing marking the aim
 
         // PlayerUI messageBox (VEHICLE_ENTER): bottom-centre dark box with the vehicle's fuel/health/battery bars, shown while driving
@@ -82,6 +83,21 @@ namespace UnturnedGodot
             _pain.MouseFilter = Control.MouseFilterEnum.Ignore;
             root.AddChild(_pain);
             _playerOnly.Add(_pain);
+
+            // Low-HP vignette + desaturation (master 2026-09-03: "add a red vignette and lose color saturation
+            // when low hp"). No retail source for this -- it isn't a port, it's a game-feel addition -- so it is
+            // driven straight off the health FRACTION with no other opinion attached. Its own screen-space
+            // shader (RainOverlay's exact shape: CanvasLayer + ColorRect + ShaderMaterial) rather than writing
+            // Godot.Environment.AdjustmentSaturation: that Environment is ONE shared world resource
+            // (DayNightCycle already animates it for time-of-day), so a second writer fighting it every frame
+            // would make lighting flicker for every player sharing the world, not just the hurt one -- and in MP
+            // it is shared, so it would desaturate everyone's screen for ONE player's low HP. A screen-space
+            // overlay is the only thing that is naturally per-viewer.
+            _lowHp = new LowHealthOverlay();
+            _lowHp.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+            _lowHp.MouseFilter = Control.MouseFilterEnum.Ignore;
+            root.AddChild(_lowHp);
+            _playerOnly.Add(_lowHp);
 
             // Directional hurt indicator (master 2026-09-03: "add directional visual hit feedback when you get
             // hurt by something"). A ring of wedges around the screen centre, one per recent hit, drawn toward
@@ -450,6 +466,7 @@ namespace UnturnedGodot
                 }
                 _pain.Color = new Color(CR.R, CR.G, CR.B, Player.PainAlpha);   // colorOverlayImage.TintColor.a = painAlpha
                 _hurtIndicator.Cam = Player.Camera;   // kept in sync every frame -- the same camera that drives the flinch, so the two never disagree about which way "forward" means
+                _lowHp.SetFraction(Player.MaxHealth > 0f ? Player.Health / Player.MaxHealth : 1f);
             }
 
             bool inVeh = Vehicle != null;
