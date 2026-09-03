@@ -599,7 +599,7 @@ namespace UnturnedGodot
                         float d = wi.GlobalPosition.DistanceSquaredTo(_lookEnd);
                         if (d < bestI) { bestI = d; hitItem = wi; }
                     }
-                    else if (c is Vehicle v && IsInstanceValid(v))   // alive car (F to enter) OR a wreck (blowtorch salvage) -- both focusable (master)
+                    else if (Vehicle.Owning(c) is Vehicle v)   // alive car (F to enter) OR a wreck (blowtorch salvage) -- both focusable (master). Owning, not a cast: the mesh hitbox puts a child body between the ray and the Vehicle
                     {
                         float d = v.GlobalPosition.DistanceSquaredTo(_lookEnd);
                         if (d < bestV) { bestV = d; hitVeh = v; }
@@ -5137,7 +5137,7 @@ namespace UnturnedGodot
                 NpcTurretFx(origin, dir, gunId);
             };
             CollisionLayer = 1 << 3;   // player bit
-            CollisionMask = (1 << 0) | (1 << 6) | (int)RemotePlayers.RemotePlayerLayer;    // walk on ground (bit 0) + collide with transparent props on bit 6 (see-through to the item LOS raycast but still solid for the player -- master) + OTHER PLAYERS on bit 14 (strawberry 2026-09-03 "player vs player collision"; RemotePlayers.RemotePlayerLayer explains why they are not simply on bit 0). The wall/floor queries below reuse this mask, so they pick it up for free.
+            CollisionMask = (1 << 0) | (1 << 6) | (int)RemotePlayers.RemotePlayerLayer | (int)Vehicle.HitMeshBit;    // walk on ground (bit 0) + collide with transparent props on bit 6 (see-through to the item LOS raycast but still solid for the player -- master) + OTHER PLAYERS on bit 14 (strawberry 2026-09-03 "player vs player collision"; RemotePlayers.RemotePlayerLayer explains why they are not simply on bit 0) + VEHICLE HITBOXES on bit 15 (Vehicle.HitMeshBit -- the model-as-hitbox needs a layer no vehicle masks, or every car collides with its own; saying "the player collides with vehicles" here is clearer than the hitbox borrowing bit 0 to get the same effect). The wall/floor queries below reuse this mask, so they pick it up for free.
 
             _capsule = new CapsuleShape3D { Height = PlayerMovementDef.HEIGHT_STAND, Radius = 0.35f };
             _hitbox = new CollisionShape3D { Shape = _capsule, Position = new Vector3(0, PlayerMovementDef.HEIGHT_STAND / 2f, 0) };
@@ -6278,7 +6278,12 @@ namespace UnturnedGodot
                         Hitmark(b, dummy.LastZone == TargetDummy.HitZone.Head);
                     }
                     else if (collider is PhysicalBone3D pb) { SpawnFleshImpact(point, hdir); pb.ApplyImpulse(hdir * 7f, point - pb.GlobalPosition); }
-                    else if (collider is Vehicle veh)
+                    // RESOLVED, not cast. With the mesh hitbox on, the collider a bullet ray returns is the
+                    // vehicle's HitMesh CHILD body, and a plain `collider is Vehicle` stops matching -- measured,
+                    // a sedan went 6000 -> 6000 hp on a round straight through the door, with no glass broken, no
+                    // lamp shot out and nothing logged anywhere. Silent, total, and invisible to any test that
+                    // only asked whether the ray hit something.
+                    else if (Vehicle.Owning(collider) is Vehicle veh)
                     {
                         // A helicopter routes the hit by WHERE it landed: the hub boxes at each mast are the
                         // rotors' bullet colliders, everything else is airframe. Rotor damage does NOT also
@@ -8386,7 +8391,7 @@ namespace UnturnedGodot
                 // from under them, and the probe would miss within a tick or two and drop them in the sea.
                 var climbCarry = Vector3.Zero;
                 if (DeckCarryEnabled && _ladderBody != null && IsInstanceValid(_ladderBody)
-                    && _ladderBody.GetParent() is Vehicle lv && lv.CarriesRiders)
+                    && Vehicle.Owning(_ladderBody) is Vehicle lv && lv.CarriesRiders)
                 {
                     climbCarry = lv.DeckPointVelocity(GlobalPosition);
                     if (Mathf.Abs(lv.DeckYawRate) > 1e-5f) RotateY(lv.DeckYawRate * delta);
@@ -8443,7 +8448,9 @@ namespace UnturnedGodot
             _deckRayQ.Exclude = _deckRayExclude ??= new Godot.Collections.Array<Rid> { GetRid() };
             var hit = space.IntersectRay(_deckRayQ);
             if (hit.Count == 0) return;
-            if (hit["collider"].As<GodotObject>() is not Vehicle deck || !deck.CarriesRiders) return;
+            // Owning, not a cast: with the mesh hitbox on, the bit-5 body under the player's feet is the
+            // vehicle's HitMesh CHILD, so a direct cast finds nothing and a rider silently stops being carried.
+            if (Vehicle.Owning(hit["collider"].As<GodotObject>()) is not Vehicle deck || !deck.CarriesRiders) return;
             float yawRate = deck.DeckYawRate;
             if (Mathf.Abs(yawRate) > 1e-5f) RotateY(yawRate * delta);
             DebugOnDeck = deck;

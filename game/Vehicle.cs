@@ -3749,6 +3749,7 @@ namespace UnturnedGodot
         };
 
         readonly System.Collections.Generic.List<MeshInstance3D> _glassNodes = new();
+        readonly System.Collections.Generic.List<StaticBody3D> _glassBodies = new();   // parallel to _glassNodes when MeshHitbox is on, empty otherwise
         readonly System.Collections.Generic.List<string> _glassLabels = new();
         bool[] _glassBroken = System.Array.Empty<bool>();
 
@@ -3759,11 +3760,23 @@ namespace UnturnedGodot
 
         /// <summary>Break a pane. Deliberately does NOT self-heal: the pane stays gone until RepairGlass, which
         /// is what strawberry asked for ("doesnt respawn unless 'fixed' in the vehicle mechanics ui").</summary>
+        /// <summary>Put pane `i`'s collider in or out of the player/bullet layers. The LAYER, not the shape's
+        /// Disabled flag, because this is called from inside a physics callback (a bullet resolving its own hit)
+        /// where toggling a shape has to be deferred; writing a layer does not. A no-op when the panes have no
+        /// colliders at all, which is every vehicle with the mesh hitbox off.</summary>
+        void SetPaneSolid(int i, bool solid)
+        {
+            if ((uint)i >= (uint)_glassBodies.Count) return;
+            var b = _glassBodies[i];
+            if (GodotObject.IsInstanceValid(b)) b.CollisionLayer = solid ? HitMeshBit | (1u << 5) : 0u;
+        }
+
         public bool BreakGlass(int i)
         {
             if ((uint)i >= (uint)_glassNodes.Count || _glassBroken[i]) return false;
             _glassBroken[i] = true;
             if (GodotObject.IsInstanceValid(_glassNodes[i])) _glassNodes[i].Visible = false;
+            SetPaneSolid(i, false);   // a broken window is a hole you can shoot and climb through, not an invisible pane
             return true;
         }
 
@@ -3772,6 +3785,7 @@ namespace UnturnedGodot
             if ((uint)i >= (uint)_glassNodes.Count || !_glassBroken[i]) return false;
             _glassBroken[i] = false;
             if (GodotObject.IsInstanceValid(_glassNodes[i])) _glassNodes[i].Visible = true;
+            SetPaneSolid(i, true);
             return true;
         }
 
@@ -4075,6 +4089,52 @@ namespace UnturnedGodot
         static (ArrayMesh, ArrayMesh) SplitMeshByX(Mesh src)
             => SplitMeshBy(src, (p0, p1, p2) => (p0.X + p1.X + p2.X) / 3f < 0f);
 
+        /// <summary>The world-space centre of pane `i`, or Vector3.Zero if there is no such pane. Exposed so a
+        /// test can aim AT a window without hard-coding a number that every vehicle would need its own copy of.</summary>
+        public Vector3 GlassPaneCenter(int i)
+            => (uint)i < (uint)_glassNodes.Count && GodotObject.IsInstanceValid(_glassNodes[i])
+               ? _glassNodes[i].GlobalTransform * _glassNodes[i].GetAabb().GetCenter()
+               : Vector3.Zero;
+
+        /// <summary>Outward world-space normal of pane `i` -- its THINNEST local axis, flipped to point away
+        /// from the vehicle's own origin. A pane is a flat slab, so its thin axis is its face direction; taking
+        /// it off the mesh rather than assuming local Z is what makes it right for a RAKED windscreen and for
+        /// the roof panes, whose thin axis is Y.</summary>
+        public Vector3 GlassPaneNormal(int i)
+        {
+            if ((uint)i >= (uint)_glassNodes.Count || !GodotObject.IsInstanceValid(_glassNodes[i])) return Vector3.Zero;
+            var mi = _glassNodes[i];
+            var sz = mi.GetAabb().Size;
+            var axis = sz.X <= sz.Y && sz.X <= sz.Z ? Vector3.Right
+                     : sz.Y <= sz.Z ? Vector3.Up : Vector3.Back;
+            var n = (mi.GlobalTransform.Basis * axis).Normalized();
+            var outward = GlassPaneCenter(i) - GlobalPosition;
+            return n.Dot(outward) < 0f ? -n : n;
+        }
+
+        /// <summary>The Vehicle a physics collider belongs to, or null. THE reason this exists: once the mesh
+        /// hitbox is on, what a bullet ray or a look ray actually hits is the HitMesh StaticBody3D CHILD, and
+        /// every `collider is Vehicle` test in the game silently stops matching -- shooting a car would do
+        /// nothing at all, quietly, with no error anywhere. Walking up from the collider is the resolution that
+        /// holds in both modes, and it also covers the child bodies that already existed (the ship's ladder, the
+        /// helicopter's rotor hub boxes), which previously each needed their own GetParent() dance.
+        ///
+        /// Bounded to a few levels rather than walking to the scene root: an unbounded walk would report the
+        /// world's terrain as belonging to whatever vehicle happened to be an ancestor of it in some future
+        /// re-parenting, and a wrong Vehicle is worse than no Vehicle.</summary>
+        static readonly System.Collections.Generic.Dictionary<string, ConcavePolygonShape3D> _triCache = new();
+        StaticBody3D _hitMesh;   // the model-as-hitbox child, when UG_MESHHITBOX is on; null otherwise
+
+        const int OwningMaxDepth = 4;   // collider -> body -> vehicle, with headroom; see the note above
+        public static Vehicle Owning(GodotObject o)
+        {
+            if (o is Vehicle direct) return IsInstanceValid(direct) ? direct : null;
+            var n = o as Node;
+            for (int depth = 0; n != null && depth < OwningMaxDepth; depth++, n = n.GetParent())
+                if (n is Vehicle v) return IsInstanceValid(v) ? v : null;
+            return null;
+        }
+
         public int ResolveHitGlass(Vector3 world, float tol = 0.28f)
         {
             int best = -1; float bestD = tol;
@@ -4109,6 +4169,36 @@ namespace UnturnedGodot
             new Color(0.0f, 0.8f, 0.6f), new Color(0.85f, 0.3f, 0.0f), new Color(0.45f, 0.65f, 1f),
         };
 
+        /// <summary>Settle which body carries the player/bullet layers, once it is known whether this vehicle
+        /// got a HitMesh at all, and record the result as the un-ghosted base.
+        ///
+        /// WHY IT IS CONDITIONAL, and it is the bug this method exists for. The strip used to run early and
+        /// UNCONDITIONALLY, on every vehicle. But the HitMesh is only built on the car-body branch: a ship goes
+        /// down the HullBands/HullDecompose path and an aircraft may take the plain box, and neither gets one.
+        /// So those vehicles handed bit0|bit5 away and received nothing back -- no collider on any layer a
+        /// player, a bullet, a look ray or the crane scans. The container ship measured 792 probe points with
+        /// model but NO collider (against the old box hull's 972) and a player could not stand on her deck.
+        /// A vehicle with no hit mesh keeps the layers it always had.</summary>
+        static void FinaliseHitboxLayers(Vehicle v)
+        {
+            if (MeshHitbox && v._hitMesh != null)
+            {
+                // The convex hulls stop being what the player walks into and what bullets stop on; they keep
+                // driving the car and colliding with terrain, props and each other.
+                // The chassis gives up BOTH bit 0 and bit 5 -- those are the layers the player, bullets and
+                // every vehicle-scanner look at, and the mesh takes that job. Note bit 0 here is the layer the
+                // chassis SITS ON, which is a different thing from the bit 0 in its MASK: the car still masks
+                // bit 0 and so still collides with the terrain exactly as before. Conflating the two is what
+                // made the first attempt at fixing the self-collision put bit 0 back on the layer, which
+                // quietly returned the hulls to the bullet and walk masks and undid the entire change (the
+                // roof went back to stopping a footstep 7 cm proud of the model).
+                v.CollisionLayer = (v.CollisionLayer & ~((1u << 0) | (1u << 5))) | ChassisBit;
+                v.CollisionMask |= ChassisBit;   // ...so car-on-car still resolves, with real impulses
+            }
+            v._baseCollisionLayer = v.CollisionLayer;   // the un-ghosted layer, so a towed trailer can swap the solid bit for bit6 and restore it
+            v._baseCollisionMask = v.CollisionMask;      // and the un-ghosted mask (incl. bit8), so a ghosted trailer can add bit6 (to hit the cab's sleeper hull) and restore it
+        }
+
         static void AddGlassOverlay(Vehicle v, Spec s)
         {
             if (s.GlassMesh == null) return;
@@ -4133,6 +4223,7 @@ namespace UnturnedGodot
                                               CastShadow = GeometryInstance3D.ShadowCastingSetting.Off };
                 v.AddChild(mi);
                 v._glassNodes.Add(mi); v._glassLabels.Add(label);
+                AddPaneCollider(v, mi, $"{base_}_{label}.txt", m);
             }
             if (v._glassNodes.Count == 0)   // no per-pane files -- fall back to a single mesh (the jet's canopy)
             {
@@ -4144,6 +4235,39 @@ namespace UnturnedGodot
                 v._glassNodes.Add(mi); v._glassLabels.Add("canopy");
             }
             v._glassBroken = new bool[v._glassNodes.Count];
+        }
+
+        static readonly System.Collections.Generic.Dictionary<string, ConcavePolygonShape3D> _paneTriCache = new();
+
+        /// <summary>Give one glass pane a collider of its own, but ONLY with the mesh hitbox on.
+        ///
+        /// WHY IT EXISTS. With the hulls out of the player and bullet layers, the windscreen APERTURE is a hole:
+        /// the hull used to be what stopped a round at the glass, and the panes have never carried a collider.
+        /// Measured on a sedan, a ray fired along the windscreen's own normal stopped 0.26 m short of the pane
+        /// on the hull -- and passed clean through the car, hitting NOTHING AT ALL, with the mesh hitbox on.
+        ///
+        /// WHY NOT ALWAYS. With the hulls still on those layers the pane sits INSIDE a collider that already
+        /// stops everything, so these bodies would add six more shapes to every physics query the car takes
+        /// part in and change nothing observable. That was the stated reason the panes had no collider, and it
+        /// is still the right call in that mode.
+        ///
+        /// The body hangs off the PANE, so it inherits the pane's transform and Vehicle.Owning resolves a hit
+        /// through it (body -> pane -> vehicle, inside OwningMaxDepth). Excepted from the car for the same
+        /// reason HitMesh is: bit 0 is a layer the chassis masks, and a car must not collide with its own glass.</summary>
+        static void AddPaneCollider(Vehicle v, MeshInstance3D pane, string key, Mesh m)
+        {
+            if (!MeshHitbox) return;
+            if (!_paneTriCache.TryGetValue(key, out var tri))
+            {
+                tri = m.CreateTrimeshShape();
+                tri.BackfaceCollision = true;   // a pane is a single-sided quad; a round from outside must stop on it
+                _paneTriCache[key] = tri;
+            }
+            var body = new StaticBody3D { Name = "GlassHit", CollisionLayer = HitMeshBit | (1u << 5), CollisionMask = 0 };
+            body.AddChild(new CollisionShape3D { Shape = tri });
+            pane.AddChild(body);
+            v.AddCollisionExceptionWith(body);
+            v._glassBodies.Add(body);
         }
 
         /// <summary>LoadOptionalObj without the "missing" print -- probing per-pane files, absence is normal.</summary>
@@ -4618,15 +4742,9 @@ namespace UnturnedGodot
             v.SpecKey = specKey; v.SpawnVariant = variant;   // MP §3.6: replicated so puppets rebuild the same spec + paint
             v.CollisionLayer |= 1u << 5;   // bit 5 = "vehicle" so player bullets can raycast-hit it (see PlayerController.StepBullets)
             v.CollisionMask |= 1u << 8;    // bit 8 = "solid small prop" -> a car collides with fences/hydrants/barrels instead of phasing through (NOT bit6, so trailer ghosting is unaffected) (strawberry)
-            if (MeshHitbox)
-            {
-                // The convex hulls stop being what the player walks into and what bullets stop on; they keep
-                // driving the car and colliding with terrain, props and each other.
-                v.CollisionLayer = (v.CollisionLayer & ~((1u << 0) | (1u << 5))) | ChassisBit;
-                v.CollisionMask |= ChassisBit;   // ...so car-on-car still resolves, with real impulses
-            }
-            v._baseCollisionLayer = v.CollisionLayer;   // remember the un-ghosted layer (bit0|bit5) so a towed trailer can swap bit0->bit6 and restore it
-            v._baseCollisionMask = v.CollisionMask;      // and the un-ghosted mask (now incl. bit8), so a ghosted trailer can add bit6 (to hit the cab's sleeper hull) and restore it
+            // The chassis layers are finalised at the END of Build (FinaliseHitboxLayers), because whether this
+            // vehicle gives bit0|bit5 up depends on whether it actually GETS a HitMesh, and that is not known
+            // until the body has been built.
             v.AddToGroup("vehicles");      // so NearestVehicle + explosion damage (grenades) find every vehicle, not just harness-grouped ones
             v.ContactMonitor = true; v.MaxContactsReported = 6; v.BodyEntered += v.OnVehicleContact;   // wake a frozen parked car when another vehicle rams it (master)
             // ENGINE AND BRAKE SCALE WITH MASS, for now. Both are FORCES applied through the wheels, and both
@@ -5162,14 +5280,23 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                     // The model itself, on its own static body so Jolt will accept a mesh shape at all, and
                     // exempted from the car so the car is not permanently inside its own hitbox. It carries
                     // the layers the player and bullets scan; the chassis has just given them up.
-                    var hit = new StaticBody3D { Name = "HitMesh", CollisionLayer = (1u << 0) | (1u << 5), CollisionMask = 0 };
-                    // BackfaceCollision, because these bodies are NOT watertight and their winding is not
-                    // consistent: 492 of the sedan's 795 edges are not shared by exactly two faces. Measured
-                    // without it, a ray straight down on the player's own layers passed THROUGH the bonnet
-                    // and stopped on the floorpan at y -0.11 -- a hole you could shoot and walk through, over
-                    // the whole front of the car. With it the same ray stops on the bonnet.
-                    var tri = bodyMesh.CreateTrimeshShape();
-                    tri.BackfaceCollision = true;
+                    var hit = new StaticBody3D { Name = "HitMesh", CollisionLayer = HitMeshBit | (1u << 5), CollisionMask = 0 };
+                    v._hitMesh = hit;
+                    // Measured without BackfaceCollision, a ray straight down on the player's own layers passed
+                    // THROUGH the bonnet and stopped on the floorpan at y -0.11 -- a hole you could shoot and
+                    // walk through, over the whole front of the car. With it the same ray stops on the bonnet.
+                    // CACHED PER BODY MESH, like the hulls above and for the same reason. Build() runs once per
+                    // vehicle INSTANCE, not once per spec: a real PEI load spawns 88 vehicles from ~15 specs, so
+                    // an uncached CreateTrimeshShape is 88 trimesh builds to describe 15 distinct shapes. The
+                    // shape is immutable and refcounted, so every car of a spec can share one.
+                    if (!_triCache.TryGetValue(s.Body, out var tri))
+                    {
+                        tri = bodyMesh.CreateTrimeshShape();
+                        // BackfaceCollision, because these bodies are NOT watertight and their winding is not
+                        // consistent: 492 of the sedan's 795 edges are not shared by exactly two faces.
+                        tri.BackfaceCollision = true;
+                        _triCache[s.Body] = tri;
+                    }
                     hit.AddChild(new CollisionShape3D { Shape = tri });
                     v.AddChild(hit);
                     v.AddCollisionExceptionWith(hit);
@@ -5621,6 +5748,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             v.Brake = s.Brake * HandbrakeScale; v._parked = true;   // spawns parked: brake on + freezes once settled so it holds ride height without jitter (released once driven)
             v._alarmed = GD.Randf() < 0.05f;   // 5% of spawned cars are "alarmed" -- proximity/damage sets off the alarm loop (master). Only real Vehicles roll; a client's PUPPET is told via FlagAlarmed, so the two sides cannot disagree about which cars have alarms.
             ApplyVehicleCull(v);   // driveable vehicles had NO distance cull -> rendered full-detail at every range (master); cap them like props
+            FinaliseHitboxLayers(v);
             return v;
         }
 
@@ -7009,7 +7137,10 @@ if (s.Wheels != null && s.Wheels.Length > 1)
         // player (mask bit6) still collides, so no hole. Idempotent. (strawberry 2026-07-15)
         public void SetTowGhost(bool ghost)
         {
-            uint wantLayer = ghost ? (_baseCollisionLayer & ~(1u << 0)) | (1u << 6) : _baseCollisionLayer;
+            // SolidBit, not a literal bit 0. The sibling ghost path at SetGhosted was updated for the mesh
+            // hitbox and this one was not, so with the hitbox on `& ~(1u << 0)` cleared a bit the base layer no
+            // longer has: the trailer stayed solid and was never actually ghosted.
+            uint wantLayer = ghost ? (_baseCollisionLayer & ~SolidBit) | (1u << 6) : _baseCollisionLayer;
             if (CollisionLayer != wantLayer) CollisionLayer = wantLayer;
             // Also SCAN bit6 while ghosted so the towing cab's separate sleeper hull (layer bit6) still blocks this
             // trailer -> the deck/headboard can't phase through the sleeper (anti-clip). The cab body never scans bit6,
@@ -7917,6 +8048,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             _steerAngle = Mathf.MoveToward(_steerAngle, _steerTarget, steerRate * (float)delta);
             Steering = Mathf.DegToRad(_steerAngle);
             if (_steerPivot != null) _steerPivot.Basis = new Basis(_steerAxis, Mathf.DegToRad(_steerAngle));   // steering wheel model turns 1:1 with the steer angle (source line 4020, AnimatedSteeringAngle)
+            SyncHitMeshVelocity();           // MESH HITBOX: hand the static child our motion so a rider is carried
             CarryDeckRiders((float)delta);   // MOVING DECK: carry anything standing on us. Outside ApplyWaterPhysics
                                              // deliberately -- that returns early when the hull is not afloat, and a
                                              // grounded or beached vessel still has a deck.
@@ -7996,15 +8128,56 @@ if (s.Wheels != null && s.Wheels.Length > 1)
         // to leave the layers those scan: the chassis moves to a private bit that only other vehicles mask,
         // and bit0|bit5 go to the mesh.
         //
-        // OFF BY DEFAULT. It changes which layer every car sits on, and about fifteen call sites outside this
-        // file scan bit 5 (harbour crane, sling magnet, deck rays, bullet rays, look focus). That is not a
-        // change to flip on unattended and unmeasured, so it ships behind a switch and stays dark until it
-        // has been driven.
-        public static bool MeshHitbox => System.Environment.GetEnvironmentVariable("UG_MESHHITBOX") == "1";
+        // ON BY DEFAULT since 2026-09-03 (strawberry: "do it on real collision. we will fix as we go").
+        // UG_MESHHITBOX=0 puts every car back on its convex hulls, so the A/B is one flag on one binary.
+        //
+        // What it cost to turn on, all of it measured on a sedan in vehicle.mesh_hitbox rather than reasoned
+        // about, and none of it visible to a test that only asked whether a ray hit something:
+        //   * SHOOTING A CAR DID NOTHING AT ALL. 6000 -> 6000 hp on a round through the door, no glass, no
+        //     lamp, nothing logged. A ray now returns the HitMesh CHILD, so every `collider is Vehicle` in the
+        //     game stopped matching. Fixed by resolving through Vehicle.Owning at the four sites that took a
+        //     collider and cast it -- bullets, look focus, the deck ray, the ladder carry.
+        //   * THE WINDSCREEN WAS A HOLE. The hull was what stopped a round at the glass; a ray along the
+        //     windscreen's own normal passed clean through the car and hit NOTHING. The panes now carry their
+        //     own colliders (mesh-hitbox mode only), and a pane that BREAKS gives its collider up.
+        //   * A RIDER WAS LEFT BEHIND. A player on the roof tracked the car 1.00 for 1.00 on the hulls and
+        //     0.21 with the hitbox on -- a StaticBody3D reports no velocity to stand on. SyncHitMeshVelocity
+        //     publishes it; back to 0.97.
+        // The gain it was turned on for: a down-ray over the cabin stops at the model's real roof, 2.160,
+        // instead of 7 cm proud of it at 2.237.
+        public static bool MeshHitbox => System.Environment.GetEnvironmentVariable("UG_MESHHITBOX") != "0";
         const uint ChassisBit = 1u << 13;   // free; bits 0-12 are all spoken for
-        /// <summary>The layer bit that means "this vehicle's solid body" for ghosting purposes -- bit 0
-        /// normally, the private chassis bit once the mesh hitbox has taken bit 0 for itself.</summary>
-        static uint SolidBit => MeshHitbox ? ChassisBit : 1u << 0;
+
+        /// <summary>The layer the model-as-hitbox sits on, alongside bit 5.
+        ///
+        /// NOT BIT 0, and this is the whole point of having a bit of its own. The hitbox first borrowed bit 0
+        /// because that is the layer the player's capsule walks on -- but EVERY VEHICLE MASKS BIT 0 too (it is
+        /// how a car finds the terrain), so each vehicle's own wheels, tracks and hulls collided with its own
+        /// hitbox. The vehicle then sat permanently inside a collider it could not resolve, exactly the failure
+        /// the ship's own deckhouse exception was written for. Measured, with the hitbox on bit 0:
+        ///   tank    flipped upside down (up.y -1.00) and slid 20 m instead of pivoting on the spot
+        ///   sedan   top speed 8.42 m/s against a 14.7 floor, and no coast-down at all off the throttle
+        ///   jeep    a released hold skidded to rest in 0.39 m instead of the verified 0.74 m
+        /// All three passed with the flag off, on the same binary, in the same isolation.
+        ///
+        /// Bit 15 is otherwise unused, so nothing else in the game masks it: a hitbox can never again be
+        /// something its own vehicle -- or any other vehicle -- runs into. The player's capsule masks it
+        /// explicitly (PlayerController), which is a more honest statement of "the player collides with
+        /// vehicles" than borrowing the world layer was. Bit 5 stays for the things that SCAN for vehicles --
+        /// bullets, look focus, the deck ray, the crane and the sling.</summary>
+        public const uint HitMeshBit = 1u << 15;
+        /// <summary>The layer bits that make THIS vehicle solid to other vehicles -- what ghosting has to
+        /// clear so a towing cab can phase through the trailer it is backing under.
+        ///
+        /// The private chassis bit for a vehicle with a mesh hitbox, bit 0 for one without.
+        ///
+        /// PER INSTANCE, not per build. Keyed on the global flag it would claim a ship -- which never gets a
+        /// hitbox, so never gives bit 0 up -- sits on a layer it does not have.</summary>
+        uint SolidBit => _hitMesh != null ? ChassisBit : 1u << 0;
+
+        /// <summary>Test seam: the bit that means "solid" for THIS vehicle. Exposed so a test can assert the
+        /// un-ghosted layer was restored without hard-coding a layer scheme that has now changed twice.</summary>
+        public uint DebugSolidBit => SolidBit;
 
         public int DebugBoxHullsDisabled;   // fitted boxes taken out of physics once the hulls landed
         public int DebugHitMeshTris;        // triangles in the mesh hitbox, 0 when it is off
@@ -8246,6 +8419,27 @@ if (s.Wheels != null && s.Wheels.Length > 1)
         /// velocity added once, because that is what it was actually doing -- stepping off a moving deck, not
         /// coming to a dead stop in mid-air. That is also what makes taking off from a moving ship work: the
         /// aircraft is already doing 12 m/s when it breaks contact, exactly like a real deck launch.</summary>
+        /// <summary>Publish this vehicle's motion on the HitMesh child, so a player standing on the roof is
+        /// carried along.
+        ///
+        /// THE PROBLEM. CharacterBody3D reads a moving floor's velocity off the body it is standing on. A
+        /// RigidBody3D reports its own, which is why a rider on the hulls was carried perfectly -- measured, the
+        /// rider tracked the car 1.00 for 1.00 over 12 m. A StaticBody3D reports ConstantLinearVelocity, which
+        /// is zero unless something sets it, and with the hitbox on the body under the rider's feet IS a
+        /// StaticBody3D: the same 12 m drive carried the rider 2.7 m, a ratio of 0.21. The car drove out from
+        /// under them.
+        ///
+        /// ConstantLinearVelocity is exactly the knob for this -- it means "I am static, but treat me as moving
+        /// at this rate for the purposes of things resting on me", and it costs one vector write per tick. The
+        /// ANGULAR half matters as much for a car as the linear: a rider on the roof of a car going round a
+        /// corner should turn with it rather than slide off the outside.</summary>
+        void SyncHitMeshVelocity()
+        {
+            if (_hitMesh == null || !IsInstanceValid(_hitMesh)) return;
+            _hitMesh.ConstantLinearVelocity = LinearVelocity;
+            _hitMesh.ConstantAngularVelocity = AngularVelocity;
+        }
+
         void CarryDeckRiders(float delta)
         {
             DebugDeckRiders = 0;

@@ -97,7 +97,11 @@ namespace UnturnedGodot.Testing
             jeep.NetGhost(false);
             jeep.Brake = 0f;   // isolate "physics integrates from the seeded state" from brake tuning: the spawn-parked handbrake was still applied (no Drive ever ran here), which braked the first spike run to 0.74 m -- physics WAS live, just stopping. The real release path parks via the SP exit effects anyway.
             T.Check("release: Freeze off, hold flag cleared, base layer restored",
-                    !jeep.Freeze && !jeep.NetHeld && (jeep.CollisionLayer & (1u << 0)) != 0);
+                    // DebugSolidBit, not a literal bit 0. Which bit means "solid" is now a property of the
+                    // vehicle: with the mesh hitbox on, a car's chassis hands bit 0 to its HitMesh and sits on
+                    // a private bit instead. The thing this line is actually checking is that the GHOST swap
+                    // was undone, and that survives the layer scheme changing under it.
+                    !jeep.Freeze && !jeep.NetHeld && (jeep.CollisionLayer & jeep.DebugSolidBit) != 0);
             var relPos = jeep.GlobalPosition;
             yield return Ticks(1);
             float firstTick = jeep.GlobalPosition.X - relPos.X;
