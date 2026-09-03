@@ -16,6 +16,7 @@ namespace UnturnedGodot
 
         const float GlideRate = 14f;      // 1/s exponential approach to the replicated target
         const float SnapDistance = 5f;    // beyond this the glide would look like skating -> snap
+        readonly RandomNumberGenerator _rng = new RandomNumberGenerator();   // footstep pitch jitter, same +/-6% the shell uses
 
         sealed class Av
         {
@@ -29,6 +30,8 @@ namespace UnturnedGodot
             public CapsuleShape3D HullCapsule;
             public float HullHeight = -1f;               // last height the capsule was built at
             public bool HullSeated;                      // last seated state pushed to Disabled
+            public float StrideAcc;                      // metres of ground covered since this puppet's last footstep
+            public bool Grounded = true;                 // last probe result -- the false->true edge is a landing
         }
         readonly Dictionary<ushort, Av> _avatars = new();
         static readonly Color Skin = new Color(0.82f, 0.66f, 0.52f);   // the 3P body skin (matches PlayerController._body)
@@ -118,6 +121,7 @@ namespace UnturnedGodot
                     float inst = new Vector2(d.X, d.Z).Length() / (float)delta;
                     av.Speed = Mathf.Lerp(av.Speed, inst, 1f - Mathf.Exp(-8f * (float)delta));
                 }
+                bool aliveNow = !Client.CombatState.TryGet(e.OwnerPlayerId, out var ceAlive) || ceAlive.Alive;   // a corpse does not walk, and must not step
                 // v18: the replicated stance code (0 STAND / 1 SPRINT / 2 CROUCH / 3 PRONE) -> crouch/prone poses, not just standing.
                 var stance = e.Stance switch
                 {
@@ -128,6 +132,7 @@ namespace UnturnedGodot
                 };
                 // Match the local shell's capsule for this stance, so crawling under something you could crawl
                 // under alone still works when someone is standing there.
+                bool seated = _seated.Contains(e.OwnerPlayerId);
                 if (IsInstanceValid(av.HullShape))
                 {
                     float hh = SDG.Unturned.PlayerMovementDef.HeightForStance(stance);
@@ -141,8 +146,42 @@ namespace UnturnedGodot
                     // exactly the "getting into a vehicle on the server makes the physics freak out because
                     // player hit box overlaps" report. The local shell already disables its own shapes on
                     // seat confirm (PlayerController); this is the same move for everyone else.
-                    bool seated = _seated.Contains(e.OwnerPlayerId);
                     if (seated != av.HullSeated) { av.HullShape.Disabled = seated; av.HullSeated = seated; }
+                }
+                // FOOTSTEPS + LANDINGS FOR EVERYONE ELSE. PlayerController runs this for the local shell only
+                // ("Local player only here; puppets step in RemotePlayers"). A puppet has no IsOnFloor, no Velocity
+                // and no grounded bit on the wire, so the SAME downward probe that names the surface also answers
+                // whether there is any ground under it -- a miss is airborne, and an airborne puppet must not step
+                // on nothing. Deliberately NOT a new snapshot field: this is cosmetic, and a wire bit would cost a
+                // version bump and a re-golden to tell every client something it can already see for itself.
+                float vy = delta > 0.0 ? (av.Body.Position.Y - prev.Y) / (float)delta : 0f;
+                bool stepping = !seated && aliveNow && !snap && delta > 0.0;
+                if (!stepping) { av.StrideAcc = 0f; av.Grounded = true; }   // seated/dead/teleported: reset, so rejoining the world can't fire a phantom landing
+                else if (av.Speed > 0.3f || Mathf.Abs(vy) > 0.5f || !av.Grounded)   // a puppet standing still needs no ray at all
+                {
+                    var exclude = IsInstanceValid(av.Hull) ? av.Hull.GetRid() : default;
+                    bool grounded = PlayerController.TryFootSurfaceAt(this, av.Body.GlobalPosition, exclude, out var psurf);
+                    if (grounded && av.Speed > 0.3f)
+                    {
+                        float stride = stance switch { SDG.Unturned.EPlayerStance.SPRINT => 2.0f, SDG.Unturned.EPlayerStance.CROUCH => 1.0f, SDG.Unturned.EPlayerStance.PRONE => 0.9f, _ => 1.5f };
+                        av.StrideAcc += av.Speed * (float)delta;
+                        if (av.StrideAcc >= stride)
+                        {
+                            av.StrideAcc = 0f;
+                            bool run = stance == SDG.Unturned.EPlayerStance.SPRINT || av.Speed > 4.5f;
+                            var clip = GameAudio.PickFootstep(psurf, run);
+                            float vol = stance switch { SDG.Unturned.EPlayerStance.PRONE => -14f, SDG.Unturned.EPlayerStance.CROUCH => -8f, SDG.Unturned.EPlayerStance.SPRINT => 0f, _ => -3f };
+                            GameAudio.PlayAt(this, clip, av.Body.GlobalPosition, vol, 4f, 30f, _rng.RandfRange(0.94f, 1.06f));
+                        }
+                    }
+                    else if (!grounded) av.StrideAcc = 0f;                              // airborne: land on a fresh stride, not half of one
+                    else av.StrideAcc = Mathf.Min(av.StrideAcc, 0.9f);                  // stopped: keep most of it so the next step isn't instant (matches the shell)
+                    // The frame the probe first finds ground again. The glide DAMPS the fall, so a puppet's landing
+                    // reads softer than the shell's for the same drop -- right way round for a noise happening
+                    // somewhere other than under your own feet.
+                    if (grounded && !av.Grounded && vy < -2.5f)
+                        GameAudio.PlayAt(this, GameAudio.Pick("landing", GameAudio.LandSurface(psurf)), av.Body.GlobalPosition, Mathf.Clamp(-9f + (-vy - 2.5f) * 1.2f, -9f, 2f), 5f, 40f);
+                    av.Grounded = grounded;
                 }
                 av.Body.SetLocomotion(av.Speed, stance);
                 av.Body.Tick(delta);   // advance the rig, exactly like the local 3p body (PlayerController) -- required once the gun layer puts _ap in Manual; harmless no-op while gun-less

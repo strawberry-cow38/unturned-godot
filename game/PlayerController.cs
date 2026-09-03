@@ -3429,17 +3429,31 @@ namespace UnturnedGodot
         /// prop's SurfMeta via a short downward ray. Concrete when nothing says otherwise.</summary>
         Surf FootSurfaceUnderFeet()
         {
-            if (Terrain.HasWater && GlobalPosition.Y < Terrain.SeaLevelY + 0.1f) return Surf.Water;
-            var space = GetWorld3D()?.DirectSpaceState; if (space == null) return Surf.Concrete;
-            var q = PhysicsRayQueryParameters3D.Create(GlobalPosition + Vector3.Up * 0.3f, GlobalPosition + Vector3.Down * 0.6f, 1u << 0, new Godot.Collections.Array<Rid> { GetRid() });
+            // A miss means the short ray found no floor. The local shell only asks while IsOnFloor(), so that is
+            // a floor the ray failed to catch rather than thin air -- Concrete, as it always was. A PUPPET has no
+            // IsOnFloor to lean on and reads the same miss as airborne, which is the whole reason the probe below
+            // reports "nothing underfoot" separately instead of flattening it into a default surface.
+            return TryFootSurfaceAt(this, GlobalPosition, GetRid(), out var s) ? s : Surf.Concrete;
+        }
+
+        /// <summary>The shared footstep/landing surface probe: water when wading, else the terrain splatmap or a
+        /// prop's SurfMeta under <paramref name="pos"/>. Returns FALSE when nothing is underfoot at all. Static and
+        /// position-taking so the remote puppets in RemotePlayers resolve ground the SAME way the local shell does
+        /// -- one rule, so a floor that sounds like metal underfoot cannot sound like concrete to everyone else.</summary>
+        public static bool TryFootSurfaceAt(Node3D ctx, Vector3 pos, Rid exclude, out Surf surf)
+        {
+            surf = Surf.Concrete;
+            if (Terrain.HasWater && pos.Y < Terrain.SeaLevelY + 0.1f) { surf = Surf.Water; return true; }   // wading IS ground: you make noise on it
+            var space = ctx?.GetWorld3D()?.DirectSpaceState; if (space == null) return false;
+            var q = PhysicsRayQueryParameters3D.Create(pos + Vector3.Up * 0.3f, pos + Vector3.Down * 0.6f, 1u << 0, new Godot.Collections.Array<Rid> { exclude });
             var hit = space.IntersectRay(q);
-            if (hit.Count == 0) return Surf.Concrete;
+            if (hit.Count == 0) return false;
             if (hit["collider"].As<GodotObject>() is Node n)
             {
-                if (Terrain.Active != null && n.IsInGroup("terrain")) return Terrain.Active.SurfAt(GlobalPosition.X, GlobalPosition.Z);
-                if (n.HasMeta(SurfMeta)) return (Surf)(int)n.GetMeta(SurfMeta);
+                if (Terrain.Active != null && n.IsInGroup("terrain")) { surf = Terrain.Active.SurfAt(pos.X, pos.Z); return true; }
+                if (n.HasMeta(SurfMeta)) { surf = (Surf)(int)n.GetMeta(SurfMeta); return true; }
             }
-            return Surf.Concrete;
+            return true;   // something solid, just unlabelled -- concrete
         }
 
         // Port of PlayerStance.GetStealthDetectionRadius: the radius (m) within which a zombie can sense this
@@ -7583,8 +7597,7 @@ namespace UnturnedGodot
                         var sf = FootSurfaceUnderFeet();
                         bool run = _move.Stance == EPlayerStance.SPRINT || hsp > 4.5f;
                         if (_viewmodel != null) _viewmodel.CasingSurface = sf switch { Surf.Metal => "metal", Surf.Wood => "wood", Surf.Sand => "sand", Surf.Water => "water", _ => "general" };
-                        string bank = GameAudio.FootSurface(sf) + (run ? "_run" : "_walk");
-                        var clip = GameAudio.Pick("footsteps", bank) ?? GameAudio.Pick("footsteps", "concrete" + (run ? "_run" : "_walk"));
+                        var clip = GameAudio.PickFootstep(sf, run);   // surface_gait -> surface_walk -> concrete: a missing gait must not change the MATERIAL
                         float vol = _move.Stance switch { EPlayerStance.PRONE => -14f, EPlayerStance.CROUCH => -8f, EPlayerStance.SPRINT => 0f, _ => -3f };
                         GameAudio.PlayAt(this, clip, GlobalPosition, vol, 4f, 30f, _rng.RandfRange(0.94f, 1.06f));
                     }

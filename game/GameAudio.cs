@@ -102,6 +102,19 @@ namespace UnturnedGodot
             PlayerController.Surf.Water => "water", _ => "concrete",
         };
         public static string LandSurface(PlayerController.Surf s) => s == PlayerController.Surf.Metal ? "metal" : FootSurface(s);
+
+        /// <summary>A footstep clip for this surface and gait, with the fallback that matters: retail ships NO
+        /// dirt_run bank (12 walk clips, 0 run), so asking for one used to miss and drop straight to CONCRETE --
+        /// sprinting across a field sounded like sprinting down a pavement. Degrade to the SAME material's walk
+        /// bank first and only then to concrete, so a missing gait costs you the gait, never the ground you are
+        /// standing on. Shared by the local shell and the remote puppets so both hear the same thing.</summary>
+        public static AudioStream PickFootstep(PlayerController.Surf surf, bool run)
+        {
+            string mat = FootSurface(surf);
+            return (run ? Pick("footsteps", mat + "_run") : null)
+                ?? Pick("footsteps", mat + "_walk")
+                ?? Pick("footsteps", "concrete" + (run ? "_run" : "_walk"));
+        }
         public static string BulletSurface(PlayerController.Surf s) => s switch
         {
             PlayerController.Surf.Metal => "metallight", PlayerController.Surf.Wood => "woodlight", _ => FootSurface(s),
