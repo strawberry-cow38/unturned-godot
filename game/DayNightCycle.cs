@@ -203,7 +203,9 @@ void sky() {
                     _brownouts.Add((d, 0.77f + GD.Randf() * 0.20f));       // a random EVENING-night time (streetlights lit)
         }
 
-        public override void _Process(double delta)
+        public override void _EnterTree() { TickHub.Add(this, HubTick, 60f); }
+        public override void _ExitTree() { TickHub.Remove(this); }
+        public void HubTick(double delta)   // PERF: hub-ticked at 60 Hz (was a per-frame engine callback; see TickHub)
         {
             if (!ExternalTime) Advance((float)delta * Speed / DayLength);   // Speed = the console timeSpeed multiplier
             if (VisualsEnabled) { Apply(); DriveStreetlights((float)delta); DriveMoteFade(); }

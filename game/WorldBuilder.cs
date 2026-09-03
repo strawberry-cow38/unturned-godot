@@ -68,6 +68,10 @@ namespace UnturnedGodot
     // the capture/demo scripting; this owns the nodes.
     public static class WorldBuilder
     {
+        // ABLATION knob for profiling (2026-09-02): UG_SKIP="Vehicles,Foliage,Shadows" skips a subsystem at build so its
+        // frame cost can be measured as a delta on the same pinned scene. Off by default; never set by the game itself.
+        public static bool SkipPhase(string name) { var v = System.Environment.GetEnvironmentVariable("UG_SKIP"); return v != null && v.Contains(name); }
+
         /// <summary>Prop-local height that separates a Street_Light_0's surviving plinth from the pole that falls.
         /// The model is Z-up here (raw Unity coords, ObjMesh CONV=1): the plinth is a closed box spanning Z -1.0
         /// to +1.0 with roughly half of it buried, so this cut leaves a ~1m square stump standing.</summary>
@@ -300,7 +304,7 @@ namespace UnturnedGodot
             if (mode != WorldMode.Dedicated) root.AddChild(new ColliderBudget { Name = "ColliderBudget" });
             // dedicated fx hygiene (§2.1/§5): the headless server keeps the CLOCK (day-night time is
             // authoritative state now, §3.7) but skips shadow maps + the per-frame sky/fog/glow work
-            var sun = new DirectionalLight3D { LightEnergy = 1.2f, ShadowEnabled = mode != WorldMode.Dedicated, DirectionalShadowMaxDistance = 40f };   // cap shadow cascade reach (was Godot-default 100m): the high, pulled-back 3p vehicle cam stretched the 100m cascades to blanket a whole POI -> every zombie/building re-rendered into the shadow map every frame (strawberry: 3p-car-in-POI gpu tank). Demos cap at 14m; 40m keeps gameplay shadows.
+            var sun = new DirectionalLight3D { LightEnergy = 1.2f, ShadowEnabled = mode != WorldMode.Dedicated && !SkipPhase("Shadows"), DirectionalShadowMaxDistance = 40f };   // cap shadow cascade reach (was Godot-default 100m): the high, pulled-back 3p vehicle cam stretched the 100m cascades to blanket a whole POI -> every zombie/building re-rendered into the shadow map every frame (strawberry: 3p-car-in-POI gpu tank). Demos cap at 14m; 40m keeps gameplay shadows.
             root.AddChild(sun);
             var dayNight = new DayNightCycle { Sun = sun, Env = env, DayLength = DayNightCycle.DefaultDayLength, VisualsEnabled = mode != WorldMode.Dedicated };
             { var _tod = System.Environment.GetEnvironmentVariable("UG_TIME"); if (_tod != null && float.TryParse(_tod, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var _todv)) { dayNight.Time = _todv; dayNight.Speed = 0f; } }   // UG_TIME=0..1 freezes time-of-day for a render (0 midnight / 0.75 dusk) -- streetlight night demo
@@ -1355,10 +1359,14 @@ namespace UnturnedGodot
                 // FOLIAGE: PEI's baked Foliage.blob grass (asset 1, 612K instances) as one MultiMesh
                 {
                     await Phase("Foliage");
-                    var ff = new FoliageField();
-                    root.AddChild(ff);
-                    ff.LoadGrass();
-                    result.Foliage = ff;   // the editor's foliage brush paints into this instance
+                    if (!SkipPhase("Foliage"))
+                    {
+                        var ff = new FoliageField();
+                        root.AddChild(ff);
+                        ff.LoadGrass();
+                        result.Foliage = ff;   // the editor's foliage brush paints into this instance
+                    }
+                    else GD.Print("[world] foliage SKIPPED (UG_SKIP)");
                 }
                 // RESOURCES: Terrain/Trees.dat -> trees/bushes/ore-rocks/mushrooms (1694 spawns, 26 types) as MultiMeshes
                 {
@@ -1392,6 +1400,7 @@ namespace UnturnedGodot
             async System.Threading.Tasks.Task SpawnPeiVehicles()
             {
                 await Phase("Vehicles");
+                if (SkipPhase("Vehicles")) { GD.Print("[world] vehicles SKIPPED (UG_SKIP)"); return; }
                 string vpath = mapRoot + "/Spawns/Vehicles.dat";
                 int nv = 0;
                 if (System.IO.File.Exists(vpath))
@@ -1860,7 +1869,7 @@ namespace UnturnedGodot
             env.BackgroundMode = Godot.Environment.BGMode.Sky;
             env.Sky = new Sky { SkyMaterial = new ProceduralSkyMaterial() };
             root.AddChild(new WorldEnvironment { Environment = env });
-            var sun = new DirectionalLight3D { LightEnergy = 1.15f, ShadowEnabled = true, DirectionalShadowMaxDistance = 120f };
+            var sun = new DirectionalLight3D { LightEnergy = 1.15f, ShadowEnabled = !SkipPhase("Shadows"), DirectionalShadowMaxDistance = 120f };
             sun.RotationDegrees = new Vector3(-52f, 38f, 0f);
             root.AddChild(sun);
 
@@ -1921,7 +1930,7 @@ namespace UnturnedGodot
             // this camera. No dedicated-server guard here -- this path only ever builds a rendering client.
             root.AddChild(new LightShadowBudget { Name = "LightShadowBudget" });
             root.AddChild(new ColliderBudget { Name = "ColliderBudget" });   // stream prop collision in around the view; see the other call site
-            var sun = new DirectionalLight3D { LightEnergy = 1.2f, ShadowEnabled = true, DirectionalShadowMaxDistance = 40f };   // cap shadow cascade reach (was default 100m) -- see the 3p-vehicle-POI shadow-tank note on the other sun (strawberry)
+            var sun = new DirectionalLight3D { LightEnergy = 1.2f, ShadowEnabled = !SkipPhase("Shadows"), DirectionalShadowMaxDistance = 40f };   // cap shadow cascade reach (was default 100m) -- see the 3p-vehicle-POI shadow-tank note on the other sun (strawberry)
             root.AddChild(sun);
             var dayNight = new DayNightCycle { Sun = sun, Env = env, DayLength = DayNightCycle.DefaultDayLength };
             root.AddChild(dayNight);

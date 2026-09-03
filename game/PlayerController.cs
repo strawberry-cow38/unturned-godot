@@ -6479,16 +6479,19 @@ namespace UnturnedGodot
             _dispScratch.Clear();
             const float range = 5f * 32f;                 // = FoliageField CullRange (retail's ULTRA foliage draw distance)
             float range2 = range * range;
-            foreach (var node in GetTree().GetNodesInGroup(GrassDisplacers.Group))
+            var live = GrassDisplacers.Live;   // PERF: C#-side registry (see GrassDisplacers) -- one GlobalPosition read per displacer, no group marshalling
+            for (int li = live.Count - 1; li >= 0; li--)
             {
-                if (node is not Node3D n3 || !n3.IsInsideTree()) continue;
-                var gp = n3.GlobalPosition;
+                var e = live[li];
+                if (!GodotObject.IsInstanceValid(e.Node)) { live.RemoveAt(li); continue; }   // freed (picked-up item, despawned car, left player)
+                if (!e.Node.IsInsideTree()) continue;
+                var gp = e.Node.GlobalPosition;
                 float dx = gp.X - p.X, dz = gp.Z - p.Z;
                 float d2 = dx * dx + dz * dz;
                 if (d2 > range2) continue;                // out of grass render range -> displaces nothing visible
-                float r = GrassDisplacers.RadiusOf(n3);
+                float r = e.Radius;
                 _dispScratch.Add((d2, gp, r));
-                if (r > 1.0f) GrassDisplacers.DropWake(n3.GetInstanceId(), gp, r, nowMs);   // vehicles (big r) leave a wake; items + remote players (small r) don't
+                if (r > 1.0f) GrassDisplacers.DropWake(e.Id, gp, r, nowMs);   // vehicles (big r) leave a wake; items + remote players (small r) don't
             }
             GrassDisplacers.GatherWake(_dispScratch, p, range2, nowMs);   // add the fading wake breadcrumbs as extra (weaker, shrinking) texels behind the movers
             _dispScratch.Sort(static (a, b) => a.d2.CompareTo(b.d2));   // nearest first -> the Max that survive are the ones the player can actually see

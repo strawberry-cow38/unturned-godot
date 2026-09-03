@@ -228,7 +228,9 @@ namespace UnturnedGodot
 
         bool _feedWas;
 
-        public override void _Process(double delta)
+        public override void _EnterTree() { TickHub.Add(this, HubTick, 30f); }
+        public override void _ExitTree() { TickHub.Remove(this); }
+        public void HubTick(double delta)   // PERF: hub-ticked at 30 Hz (was a per-frame engine callback; see TickHub)
         {
             // Poll the WHOLE feed, mains and wire together -- the same lesson TVDevice learned today: relying on a
             // push means the one caller that pushes works and every other route leaves the unit lit through a

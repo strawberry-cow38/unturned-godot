@@ -65,7 +65,24 @@ namespace UnturnedGodot
             if (node == null) return;
             node.SetMeta(RadiusMeta, radius);
             if (!node.IsInGroup(Group)) node.AddToGroup(Group);
+            if (node is Node3D n3)
+            {
+                for (int i = 0; i < Live.Count; i++) if (Live[i].Node == n3) { Live[i].Radius = radius; return; }
+                Live.Add(new Entry { Node = n3, Radius = radius, Id = n3.GetInstanceId() });
+            }
         }
+        public static void Unregister(Node node)
+        {
+            for (int i = Live.Count - 1; i >= 0; i--) if (Live[i].Node == node) Live.RemoveAt(i);
+        }
+
+        // PERF (ETW + ablation, 2026-09-02): the per-frame consumer used to GetNodesInGroup (a fresh marshalled Godot
+        // array of every car + dropped item, each converted back to a C# object) and then make ~5 engine calls per
+        // displacer (IsInsideTree / GlobalPosition / HasMeta / GetMeta / GetInstanceId). With 88 parked cars that was
+        // most of the "vehicles cost 16% of the frame" ablation delta. The C#-side list carries radius + instance id,
+        // so the hot loop is ONE GlobalPosition read per displacer; freed nodes are pruned as they are met.
+        public sealed class Entry { public Node3D Node; public float Radius; public ulong Id; }
+        public static readonly System.Collections.Generic.List<Entry> Live = new();
 
         public static float RadiusOf(Node node) => node != null && node.HasMeta(RadiusMeta) ? (float)node.GetMeta(RadiusMeta) : PlayerRadius;
 

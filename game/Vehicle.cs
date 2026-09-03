@@ -6873,6 +6873,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
         public override void _ExitTree()   // a despawned/unloaded car drops its rope (either end) so no dangling TowedBy/Towing ref survives
         {
             _live.Remove(this);
+            GrassDisplacers.Unregister(this);
             if (Towing != null || TowedBy != null) DetachTow();
             if (_magnet != null) StowSling();   // a despawned/wrecked crane must not leave an orphan magnet hanging in the sky
         }
