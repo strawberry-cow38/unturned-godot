@@ -112,9 +112,21 @@ print(f"  derived: belt {belt:.2f}  roof {roof:.2f}  cabin band {band_lo:.2f}..{
 # greenhouse to 0.8 m and dropped four of its six panes.
 zres = 0.10
 need = belt + 0.55 * (roof - belt)
-zq = [z0 for z0 in np.arange(V[:, 2].min(), V[:, 2].max(), zres)
-      if ((V[:, 2] >= z0) & (V[:, 2] < z0 + zres)).sum() >= 1
-      and V[(V[:, 2] >= z0) & (V[:, 2] < z0 + zres), 1].max() >= need]
+# A slice qualifies on the WIDTH it reaches greenhouse height over, not on reaching it at all.
+# Testing the slice's max Y lets one narrow tall thing speak for the whole slice: a tractor's
+# exhaust stack stands to 2.3 m at z -0.9, well clear of a cab that really runs z 0.25..2.25, and
+# it dragged the cab front 1.6 m forward onto the bonnet. The windscreen plane was then fitted out
+# in open air, where a scan along its own normal sees the sky either side of the stack and finds
+# nothing framed -- so the tractor came out with no windscreen at all. A cab is a WIDE structure
+# and a stack, aerial or light bar is not; the threshold is a fraction of the cabin's own width
+# rather than a length, so it means the same thing on a bus as on a hatchback.
+CABMINW = 0.30 * 2 * XS
+def _qualifies(z0):
+    m = (V[:, 2] >= z0) & (V[:, 2] < z0 + zres)
+    if m.sum() < 1: return False
+    tall = V[m & (V[:, 1] >= need)]
+    return len(tall) > 0 and tall[:, 0].max() - tall[:, 0].min() >= CABMINW
+zq = [z0 for z0 in np.arange(V[:, 2].min(), V[:, 2].max(), zres) if _qualifies(z0)]
 if not zq: sys.exit("no cab: no z-slice reaches greenhouse height")
 cab_z0, cab_z1 = min(zq) - 0.20, max(zq) + zres + 0.20
 print(f"  cab z-span {cab_z0:.2f}..{cab_z1:.2f}  (body z {V[:,2].min():.2f}..{V[:,2].max():.2f})")
@@ -238,7 +250,19 @@ for take_max, label in ((True, 'rear'), (False, 'windshield')):
         runs = np.split(js, np.where(np.diff(js) != 1)[0] + 1)
         runs = [r for r in runs if r[0] > 0 and r[-1] < len(us) - 1]   # must be FRAMED both sides
         if not runs: continue
-        r = max(runs, key=len)
+        # JOIN ACROSS WHAT STANDS BEHIND THE GLASS. The ray asks "can I see through here", so a seat
+        # back or a steering column splits one aperture into several framed runs, and taking the widest
+        # keeps whichever side of the interior happens to be roomier: the tractor's screen came out
+        # 1.28 m wide and sitting at x -0.23..1.05, off-centre on a symmetric cab. Glass spans behind
+        # interior furniture, so join runs separated by less than a pillar's width. Anything wider is a
+        # real gap in the bodywork -- a different aperture the ray threaded into -- and must not be
+        # swallowed. Every existing pane on all 12 other vehicles is byte-identical with this in.
+        MULLION = 0.35
+        merged = [runs[0]]
+        for rr in runs[1:]:
+            if us[rr[0]] - us[merged[-1][-1]] <= MULLION: merged[-1] = np.arange(merged[-1][0], rr[-1] + 1)
+            else: merged.append(rr)
+        r = max(merged, key=len)
         if us[r[-1]] - us[r[0]] < 0.25: continue
         rows.append((vs[iv], us[r[0]] - GROW, us[r[-1]] + GROW))
     if len(rows) < 2: print(f"  !! {label}: aperture too small"); continue

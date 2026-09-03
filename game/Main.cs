@@ -40,6 +40,17 @@ namespace UnturnedGodot
         }
         int _frame;
         MainMenu _menuShotMenu; string _menuShotDir; int _menuShotIdx;   // --menushot=DIR: render the 3D barn menu + capture each camera anchor
+        string _glassShotDir;                        // --glassshot=DIR : eyeline orbit of ONE parked vehicle, per-pane glass colours
+        Camera3D _glassCam; float _glassRadius = 6.5f; float _glassEye = 1.70f;
+        System.Collections.Generic.List<MeshInstance3D> _glassPanes;
+        static readonly Color[] PaneColors = {   // deliberately NO magenta: that is the body colour
+            new Color(0.1f, 1f, 1f),     new Color(1f, 0.15f, 0.15f), new Color(1f, 0.95f, 0.1f),
+            new Color(0.15f, 1f, 0.25f), new Color(1f, 0.55f, 0f),    new Color(0.25f, 0.45f, 1f),
+            new Color(1f, 1f, 1f),       new Color(0.6f, 0.2f, 1f),   new Color(0.1f, 0.35f, 0.2f),
+            new Color(0.5f, 0.9f, 0.1f), new Color(0.2f, 0.2f, 0.6f), new Color(0.7f, 0.7f, 0.2f),
+            new Color(0f, 0.5f, 0.5f),   new Color(0.55f, 0.3f, 0.1f),
+        };
+        static readonly float[] GlassShotYaws = { 0f, 45f, 90f, 135f, 180f, 225f, 270f, 315f };
         string _rigDir;                              // --rig=DIR : capture a frame strip here
         int[] _rigCaptureFrames = { 4, 12, 20, 28, 36, 44 };
         int _rigShot;
@@ -103,7 +114,7 @@ namespace UnturnedGodot
                 DisplayServer.WindowSetVsyncMode(DisplayServer.VSyncMode.Disabled);
                 GD.Print($"[display] vsync -> {DisplayServer.WindowGetVsyncMode()}");
             }
-            string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null, drivetest = null, proptest = null, magnettest = null, animrig = null, rottest = null, itemtest = null, navShot = null, croptest = null, menuShot = null, clothtest = null, boattest = null, slingtest = null, trainshow = null, traintrack = null, ammoRadial = null, animaltest = null, treetest = null, profileShot = null;
+            string glassShot = null, catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null, drivetest = null, proptest = null, magnettest = null, animrig = null, rottest = null, itemtest = null, navShot = null, croptest = null, menuShot = null, clothtest = null, boattest = null, slingtest = null, trainshow = null, traintrack = null, ammoRadial = null, animaltest = null, treetest = null, profileShot = null;
             bool zperf = false;
             bool zbody = false;
             bool deployTest = false, barricadeTest = false, barricadePlay = false;
@@ -170,6 +181,7 @@ namespace UnturnedGodot
                 else if (arg.StartsWith("--vm=")) vm = arg["--vm=".Length..];
                 else if (arg == "--attach") _vmAttach = true;
                 else if (arg.StartsWith("--vehicle=")) { veh = arg["--vehicle=".Length..]; _shotRequested = veh; }
+                else if (arg.StartsWith("--glassshot=")) { glassShot = arg["--glassshot=".Length..]; _shotRequested = glassShot; }   // parked vehicle, PLAYER-EYE orbit, one frame per yaw
                 else if (arg.StartsWith("--boattest=")) boattest = arg["--boattest=".Length..];   // spawn a BOAT on a flat test sea + auto-drive (verify buoyancy + water propulsion)
                 else if (arg.StartsWith("--drivetest=")) drivetest = arg["--drivetest=".Length..];
                 else if (arg.StartsWith("--variant=")) _vehVariant = int.Parse(arg["--variant=".Length..]);
@@ -768,6 +780,18 @@ namespace UnturnedGodot
                 GetWindow().Size = System.Environment.GetEnvironmentVariable("UG_VMSMALL") == "1" ? new Vector2I(1280, 720) : new Vector2I(2560, 1440);
                 BuildViewmodelTest(gun ?? "eaglefire");   // --gun=<name> picks the gun (eaglefire | maplestrike)
                 if (_vmAttach) _rigCaptureFrames = new[] { 40, 50, 60, 70, 80, 90 };   // menu open (post-equip) for each frame
+                return;
+            }
+
+            if (glassShot != null)
+            {
+                _glassShotDir = glassShot;
+                System.IO.Directory.CreateDirectory(glassShot);
+                _rigDir = glassShot;
+                _rigCaptureFrames = new int[GlassShotYaws.Length];
+                for (int i = 0; i < GlassShotYaws.Length; i++) _rigCaptureFrames[i] = 24 + i * 8;   // settle, then one frame per yaw
+                GetWindow().Size = new Vector2I(1280, 720);
+                BuildGlassShot(gun ?? "van");
                 return;
             }
 
@@ -1671,6 +1695,107 @@ namespace UnturnedGodot
                     _vehCam.LookAtFromPosition(new Vector3(0f, 12f, 40f), new Vector3(0f, -1f, 6f), Vector3.Up);
                 else
                     _vehCam.LookAtFromPosition(new Vector3(0f, 3.2f, 34f) + farOff, new Vector3(0f, 0.6f, -50f) + farOff, Vector3.Up);
+            }
+        }
+
+        // --glassshot=DIR [--gun=<vehicle>]: ONE parked vehicle, shot from PLAYER EYE HEIGHT (1.70 m) at eight
+        // yaws around it -- master 2026-09-02: "take ur multi-angle photos from a player height view instead of
+        // looking down on the car". The existing --vehicle harness is a chase cam on a car mid-course, which is
+        // the wrong instrument twice over: it looks DOWN, and the thing being inspected is moving.
+        // The body is forced to a flat bright magenta so glass reads against it instead of against dark paint;
+        // set UG_GLASSDEBUG=1 to give every pane its own flat unshaded colour (the palette-as-classifier method).
+        // UG_GLASSRADIUS / UG_GLASSEYE override the orbit distance and eye height.
+        void BuildGlassShot(string type)
+        {
+            var env = new Godot.Environment
+            {
+                BackgroundMode = Godot.Environment.BGMode.Color, BackgroundColor = new Color(0.18f, 0.20f, 0.24f),
+                AmbientLightSource = Godot.Environment.AmbientSource.Color,
+                AmbientLightColor = new Color(0.85f, 0.85f, 0.85f), AmbientLightEnergy = 1.0f,
+            };
+            AddChild(new WorldEnvironment { Environment = env });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-48f, -38f, 0f), LightEnergy = 1.25f });
+            AddChild(new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(60f, 60f) },
+                MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.26f, 0.28f, 0.31f) } });
+            var floor = new StaticBody3D();   // the PlaneMesh is only paint; without this the car falls forever
+            floor.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
+            AddChild(floor);
+
+            { var r = System.Environment.GetEnvironmentVariable("UG_GLASSRADIUS"); if (r != null && float.TryParse(r, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var rr)) _glassRadius = rr; }
+            { var e = System.Environment.GetEnvironmentVariable("UG_GLASSEYE");    if (e != null && float.TryParse(e, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var ee)) _glassEye = ee; }
+
+            _veh = Vehicle.BuildByName(type, 0);
+            if (_veh == null) { GD.PrintErr($"[glassshot] no vehicle '{type}'"); GetTree().Quit(1); return; }
+            AddChild(_veh);
+            _veh.Position = new Vector3(0f, 1.2f, 0f);   // drop onto the floor so the suspension settles, as --vehicle does
+
+            // Bright flat body so the glass is the only thing that isn't magenta (master: "color the body a
+            // bright color too to help you diff"). Applied to every mesh EXCEPT the glass panes, which the
+            // glass builder already named Glass_<label>.
+            var bodyMat = new StandardMaterial3D { AlbedoColor = new Color(1f, 0.10f, 0.85f),
+                ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+            int painted = 0, panes = 0;
+            _glassPanes = new System.Collections.Generic.List<MeshInstance3D>();
+            void Paint(Node n)
+            {
+                if (n is MeshInstance3D mi)
+                {
+                    if (mi.Name.ToString().StartsWith("Glass_") || mi.Name.ToString() == "Glass") { panes++; _glassPanes.Add(mi); }
+                    else { mi.MaterialOverride = bodyMat; painted++; }
+                }
+                foreach (var c in n.GetChildren()) Paint(c);
+            }
+            Paint(_veh);
+            // Colour the panes MYSELF rather than leaning on UG_GLASSDEBUG: its palette starts at
+            // (1,0.2,1), the same magenta as the body above, so every vehicle's windscreen was
+            // invisible against the bodywork and I read a van's REAR window (seen through the empty
+            // cabin) as its windscreen. A pane palette that cannot contain the body colour is the fix.
+            for (int i = 0; i < _glassPanes.Count; i++)
+                _glassPanes[i].MaterialOverride = new StandardMaterial3D {
+                    AlbedoColor = PaneColors[i % PaneColors.Length],
+                    ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
+                    CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+            GD.Print($"[glassshot] '{type}': {painted} body meshes painted, {panes} glass panes left alone, {GlassShotYaws.Length} yaws at eye {_glassEye:0.00} m, radius {_glassRadius:0.0} m");
+            // Per-pane numbers next to the pictures: a pane that is the wrong SIZE or in the wrong PLACE is
+            // easier to see in metres than in pixels, and the debug colour tells me which pane I am looking at.
+            foreach (var mi in _glassPanes)
+            {
+                var a = mi.GetAabb(); var c = a.GetCenter(); var sz = a.Size;
+                string col = mi.MaterialOverride is StandardMaterial3D sm
+                    ? $"#{(int)(sm.AlbedoColor.R * 255):X2}{(int)(sm.AlbedoColor.G * 255):X2}{(int)(sm.AlbedoColor.B * 255):X2}" : "?";
+                // thinnest axis = the pane's normal; its extent is the pane's thickness
+                float t = Mathf.Min(sz.X, Mathf.Min(sz.Y, sz.Z));
+                string axis = t == sz.X ? "X" : (t == sz.Y ? "Y" : "Z");
+                GD.Print($"[pane] {type,-10} {mi.Name,-18} {col}  c=({c.X,6:0.00},{c.Y,6:0.00},{c.Z,7:0.00})  size=({sz.X,5:0.00},{sz.Y,5:0.00},{sz.Z,5:0.00})  thin={axis} {t:0.0000}m");
+            }
+
+            _glassCam = new Camera3D { Current = true, Fov = 55f, Far = 400f };
+            AddChild(_glassCam);
+            PlaceGlassCam(0);
+        }
+
+        // Aim at the centre of the panes themselves: the frame is only useful if the glass is IN it.
+        Vector3 GlassAim()
+        {
+            if (_glassPanes == null || _glassPanes.Count == 0) return new Vector3(0f, 1.05f, 0f);
+            var sum = Vector3.Zero; int n = 0;
+            foreach (var mi in _glassPanes) { if (!GodotObject.IsInstanceValid(mi)) continue; sum += mi.GlobalTransform * mi.GetAabb().GetCenter(); n++; }
+            return n == 0 ? new Vector3(0f, 1.05f, 0f) : sum / n;
+        }
+
+        // Eye-height orbit: stand a player's-eye camera on the ring and look at the car's mid-height, NOT down at it.
+        void PlaceGlassCam(int i)
+        {
+            if (_glassCam == null) return;
+            float yaw = GlassShotYaws[Mathf.Clamp(i, 0, GlassShotYaws.Length - 1)] * Mathf.Pi / 180f;
+            _glassCam.Position = new Vector3(Mathf.Sin(yaw) * _glassRadius, _glassEye, Mathf.Cos(yaw) * _glassRadius);
+            _glassCam.LookAt(GlassAim(), Vector3.Up);
+            if (System.Environment.GetEnvironmentVariable("UG_GLASSDIAG") == "1")
+            {
+                var aabb = new Aabb(); bool first = true;
+                void Grow(Node n) { if (n is MeshInstance3D mi && mi.Mesh != null) { var a = mi.GlobalTransform * mi.GetAabb(); if (first) { aabb = a; first = false; } else aabb = aabb.Merge(a); } foreach (var c in n.GetChildren()) Grow(c); }
+                if (_veh != null) Grow(_veh);
+                GD.Print($"[glassdiag] yaw {i}: cam {_glassCam.GlobalPosition} fwd {-_glassCam.GlobalTransform.Basis.Z} | veh {(_veh == null ? "NULL" : _veh.GlobalPosition.ToString())} visible {(_veh?.Visible)} meshAabb {(first ? "NONE" : aabb.ToString())}");
             }
         }
 
@@ -8091,10 +8216,12 @@ namespace UnturnedGodot
                             im.BlendRect(g, new Rect2I(Vector2I.Zero, g.GetSize()), Vector2I.Zero);
                         }
                     }
+                    if (_glassShotDir != null) { /* captured at yaw _rigShot */ }
                     string p = $"{_rigDir}/rig_{_rigShot:D2}.png";
                     im.SavePng(p);
                     GD.Print($"[RIG] saved {p} (frame {_frame})");
                     _rigShot++;
+                    if (_glassShotDir != null) PlaceGlassCam(_rigShot);   // move to the NEXT yaw for the next capture
                     if (_rigShot >= _rigCaptureFrames.Length) GetTree().Quit();
                 }
                 return;
