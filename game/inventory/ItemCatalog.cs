@@ -94,6 +94,7 @@ namespace SDG.Unturned
             WireExtractedGuns();
             WireExtractedMelee();
             WireClothingArmor();
+            WireClothingDims();
             WireConsumableStats();
             WireShotgunShells();
             WireMagazines();
@@ -351,6 +352,30 @@ namespace SDG.Unturned
         // onto the already-registered ItemAssets. Kept separate from items_catalog.tsv so it never risks the main 1937-item catalog.
         // The port applies the two WHOLE-BODY ones (explosionArmor -> Explode, fallingDamageMultiplier -> CheckFallDamage);
         // `armor` (general per-limb) is stored for when the port models limb damage.
+        /// <summary>content/clothing_dims.tsv (id  type  folder  width  height  size_x  size_y), extracted 2026-09-03 from every
+        /// retail clothing .dat (714 garments). Width/Height = the garment's STORAGE grid (195 have one: 72 shirts, 53 pants,
+        /// 41 vests, 29 backpacks); items_catalog.tsv only ever carried the item's own footprint, so every garment except the
+        /// two hardcoded ones wore with a 0x0 page (master: "extract all clothing slots from the source, each item's grid size").</summary>
+        static void WireClothingDims()
+        {
+            const string path = "res://content/clothing_dims.tsv";
+            if (!Godot.FileAccess.FileExists(path)) return;
+            using var f = Godot.FileAccess.Open(path, Godot.FileAccess.ModeFlags.Read);
+            int n = 0, storage = 0;
+            while (f != null && !f.EofReached())
+            {
+                string line = f.GetLine();
+                if (string.IsNullOrEmpty(line)) continue;
+                var c = line.Split('\t');
+                if (c.Length < 5 || !ushort.TryParse(c[0], out var id)) continue;
+                var a = Assets.find(id);
+                if (a == null) continue;
+                if (byte.TryParse(c[3], out var w) && byte.TryParse(c[4], out var h)) { a.width = w; a.height = h; if (w > 0 && h > 0) storage++; }
+                n++;
+            }
+            GD.Print($"[items] wired clothing dims for {n} garments ({storage} with a storage grid)");
+        }
+
         static void WireClothingArmor()
         {
             const string path = "res://content/clothing_armor.tsv";

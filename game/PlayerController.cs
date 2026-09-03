@@ -5566,7 +5566,7 @@ namespace UnturnedGodot
         void ApplyDefaultOutfit()
         {
             if (_clothing == null) return;
-            _clothing.Wear(new Item(3));    // Orange Hoodie -> shirt texture on torso/arms
+            // BARE SPAWN (master 2026-09-03: "spawn with no clothing at all") -- the Orange Hoodie default is gone; clothing comes from loot.
             // NOTE: gear (hat/vest) attach works structurally but its per-slot placement/scale is not yet
             // tuned (renders oversized/offset -- see docs/CLOTHING_PLAN.md P3b-tune), so the default outfit
             // ships shirt+pants only. Re-add gear here once AttachGear offsets are hand-tuned per slot.
@@ -5586,8 +5586,7 @@ namespace UnturnedGodot
         /// deliberately small rather than accidentally zero.</summary>
         public static void PopulateSpawnKit(PlayerInventory inv)
         {
-            inv.wearShirt(new Item(3));     // Orange Hoodie -> shirt slot + its grid
-            inv.wearPants(new Item(209));   // Cargo Pants   -> pants slot + 6x3 grid
+            // Bare spawn (master 2026-09-03): no Orange Hoodie / Cargo Pants starter outfit. Clothing is loot.
         }
 
         /// <summary>The FULL demo loadout. No longer what anyone spawns with -- it is now a FIXTURE: the MP join
