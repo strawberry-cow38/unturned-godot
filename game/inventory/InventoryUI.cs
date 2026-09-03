@@ -108,7 +108,7 @@ void fragment() {
         readonly List<(Control slot, Label label, System.Func<Item> worn, EItemType type)> _clothing = new();
         bool _open;
         float _storageW, _storageH;
-        readonly HashSet<byte> _collapsed = new();                           // clothing pages whose grid is folded away (items stay, header stays)
+        static readonly HashSet<byte> _collapsed = new();                    // clothing pages whose grid is folded away (items stay, header stays); STATIC so it survives inventory open/close and a rebuilt dashboard (master)
         readonly List<(Control icon, EItemType type)> _headerIcons = new();  // the small worn-item icon on each page header: draggable = take it off
         VScrollBar _vscroll; float _scrollY; bool _scrollTestApplied, _foldTestApplied;                                 // clothing column scroll (master 2026-09-03: "scrollbar to the right of the main inventory grid")
 
@@ -1824,7 +1824,7 @@ void fragment() {
             yA = BuildQuickCraftSection(aCol, yA, colW);   // Quick Craft as a section under Nearby (master), not a floating panel
             _storageW = boxW;
             // SCROLL (master 2026-09-03): the clothing column can outgrow the screen; clip the box and hang a scrollbar on its right.
-            float visibleH = vpsz.Y - NAVH - 2 * MARGIN;
+            float visibleH = vpsz.Y - NAVH - MARGIN;   // to the bottom of the screen (master 2026-09-03: "the scrollable region should go all the way to the bottom")
             if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_INVSCROLLTEST"), out var _vh) && _vh > 100f) visibleH = _vh;   // render harness: cap the box height so the scrollbar shows on a short column
             if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_INVSCROLLY"), out var _sy) && !_scrollTestApplied) { _scrollY = _sy; _scrollTestApplied = true; }   // render harness: pre-scrolled
             _storageCol.ClipContents = true; _storageCol.Size = new Vector2(boxW, visibleH);
@@ -2122,12 +2122,6 @@ void fragment() {
                 var fold = new Button { Flat = true, Position = new Vector2(HDRH, 0), Size = new Vector2(Mathf.Max(0f, width - HDRH), HDRH), MouseFilter = Control.MouseFilterEnum.Stop };
                 fold.Pressed += () => { if (!_collapsed.Remove(page)) _collapsed.Add(page); Refresh(); };
                 bar.AddChild(fold);
-                if (_collapsed.Contains(page))
-                {
-                    var chev = new Label { Text = "+", Position = new Vector2(HDRH + 4, 0), Size = new Vector2(30, HDRH), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, MouseFilter = Control.MouseFilterEnum.Ignore };   // "+" = folded, click to unfold (sits after the icon; the right end belongs to the %)
-                    chev.AddThemeColorOverride("font_color", UITheme.Accent); chev.AddThemeFontSizeOverride("font_size", 30);
-                    bar.AddChild(chev);
-                }
             }
 
             if (worn != null)
