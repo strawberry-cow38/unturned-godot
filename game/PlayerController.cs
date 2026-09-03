@@ -5906,6 +5906,24 @@ namespace UnturnedGodot
             return g;
         }
 
+        /// <summary>Somebody else's trigger pull, arriving over the wire (EventPlayerFired). Draws the streak
+        /// and plays the report exactly the way an NPC turret's shot already does -- that path was built for
+        /// "a gun that is not the local viewmodel" and is the same problem.
+        ///
+        /// ZERO DAMAGE, deliberately. The server has already resolved this shot analytically against its own
+        /// positions and unicast the hit confirm; a client re-simulating it would be a second, disagreeing
+        /// opinion about who got hit. This is a picture and a noise, nothing more.</summary>
+        public void RemoteShotFx(Vector3 origin, Vector3 dir, string gunId)
+        {
+            if (dir.LengthSquared() < 1e-6f) return;
+            dir = dir.Normalized();
+            var g = TurretGunDef(gunId);
+            float vel = g?.MuzzleVelocity ?? 500f;
+            int steps = g != null ? Mathf.Max(1, (int)(g.Range / 2f)) : 125;
+            SpawnBullet(origin, dir * vel, steps, 0f, 0f, 0f, 0f, 0f, srcGun: g, npc: true);
+            NpcTurretFx(origin, dir, gunId);
+        }
+
         /// <summary>`srcGun` is the gun that actually FIRED this round. It defaults to the player's held weapon,
         /// which is right for every player shot and wrong for every other kind: an NPC turret's rounds were taking
         /// their falloff, blast and tracer width from whatever the player happened to be carrying. `npc` marks the

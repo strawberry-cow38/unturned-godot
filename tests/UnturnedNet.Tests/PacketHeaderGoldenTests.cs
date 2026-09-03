@@ -71,6 +71,9 @@ namespace UnturnedNet.Tests
             session.SendControl(NetControlType.KeepAlive);
             Assert.That(captured, Is.Not.Null);
             Assert.That(capturedLen, Is.EqualTo(12));
+            // v19: mp-gunfire-fx (EventPlayerFired(37)) -- only the version byte (12->13) moves, which is the
+            // whole point of this golden: a new EVENT id is invisible in a keepalive, and the version byte is
+            // the only thing here that proves the bump happened at all.
             // v17: player-profiles (CommandSetProfile(42) + SystemProfiles(18) + EventAvatarData(36)) -- only
             // the version byte (10->11) moves. Before that v16: gun-state-authority -- only the version byte
             // (0F->10) moves, per the re-golden-with-bump discipline. Before that v15: wire-catchup (0E->0F).
@@ -81,7 +84,7 @@ namespace UnturnedNet.Tests
             // nothing in these twelve bytes moves when the command table grows. So this golden guards the
             // FRAMING, and the command table has no equivalent guard; the four unbumped ids were found by
             // reading git dates, not by a test. See CommandTableGoldenTests for the one that would have.
-            Assert.That(ToHex(captured, capturedLen), Is.EqualTo("751208000000000000002800"));   // byte[1]=0x12 = Version 18 (v18 mp-puppet-pose stance byte)
+            Assert.That(ToHex(captured, capturedLen), Is.EqualTo("751308000000000000002800"));   // byte[1]=0x13 = Version 19 (v19 mp-gunfire-fx: EventPlayerFired(37))
         }
 
         [Test]
