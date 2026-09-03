@@ -370,8 +370,22 @@ namespace UnturnedGodot.Testing
             // The battery is finite (strawberry: "a couple in game days"), then the junction goes properly dark.
             T.Check("the battery is not dead yet", !tl.BatteryDeadForTest);
             cycle.Day += Mathf.CeilToInt(TrafficLight.BatteryDays) + 1;
-            yield return Ticks(3);
-            T.Check("after the battery drains the signal is DARK", tl.CurrentPhase == TrafficLight.Phase.Off && tl.DarkForTest);
+            // WAIT ON THE STATE, NOT A FRAME COUNT. A clock jump has no event to hook -- unlike SetPowered, which
+            // re-evaluates the aspect itself -- so the drain is only noticed on the signal's next HUB tick. The old
+            // `Ticks(3)` spanned one of those only while a frame took longer than a hub period, i.e. it passed
+            // because this box is slow, and would start flaking the moment one got faster or the cadence changed
+            // again (it has, twice: per-frame -> 10 Hz -> 30 Hz). Every real bug this suite's history records was a
+            // fixed-time constant in a TEST, so wait for the condition and assert the consequences separately --
+            // the checks below still have teeth, because "battery dead" is not "phase Off and dark".
+            // Wait on the LAMPS, not on a frame count and not on the battery flag. BatteryDeadForTest is a pure
+            // clock comparison (ClockSeconds() >= _batteryDeadAt), so it is already true the instant the day is
+            // jumped -- waiting on it proves nothing and races the hub. DarkForTest is LitIndex < 0, which only
+            // changes when the signal next TICKS, and that is the thing with the latency. Until fails the test
+            // itself if the lamps never go out, so darkness and the phase machine stay two separate assertions:
+            // a junction that is dark while its phase still says Green is exactly the bug worth catching.
+            yield return Until(() => tl.DarkForTest);
+            T.Check("...and the phase machine agrees it is Off, not just the lamps",
+                tl.CurrentPhase == TrafficLight.Phase.Off);
             T.Check("...and the lenses are still present, not deleted", red.Visible && amber.Visible && green.Visible);
 
             // Power back = recharged, and straight back into the cycle rather than staying dark.
