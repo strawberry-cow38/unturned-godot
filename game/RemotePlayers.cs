@@ -32,6 +32,9 @@ namespace UnturnedGodot
             public bool HullSeated;                      // last seated state pushed to Disabled
             public float StrideAcc;                      // metres of ground covered since this puppet's last footstep
             public bool Grounded = true;                 // last probe result -- the false->true edge is a landing
+            public string MeleeName;                     // melee model in the hand (null = none/fists) -- the hold pose + swing clips key off it
+            public bool HeldGun;                         // a gun is in the hand (the overlay layer belongs to it, not to a melee swing)
+            public float SwingLeft;                      // seconds of a remote melee swing still playing; back to the hold when it hits 0
         }
         readonly Dictionary<ushort, Av> _avatars = new();
         static readonly Color Skin = new Color(0.82f, 0.66f, 0.52f);   // the 3P body skin (matches PlayerController._body)
@@ -184,7 +187,12 @@ namespace UnturnedGodot
                     av.Grounded = grounded;
                 }
                 av.Body.SetLocomotion(av.Speed, stance);
-                av.Body.Tick(delta);   // advance the rig, exactly like the local 3p body (PlayerController) -- required once the gun layer puts _ap in Manual; harmless no-op while gun-less
+                av.Body.Tick(delta);
+                if (av.SwingLeft > 0f)   // a remote melee swing is playing -> park back on the hold when it ends
+                {
+                    av.SwingLeft -= (float)delta;
+                    if (av.SwingLeft <= 0f) { av.SwingLeft = 0f; if (av.MeleeName != null) av.Body.ShowMeleeHold(av.MeleeName); else if (!av.HeldGun) av.Body.DisableGunLayer(); }
+                }   // advance the rig, exactly like the local 3p body (PlayerController) -- required once the gun layer puts _ap in Manual; harmless no-op while gun-less
 
                 // dress from the replicated appearance (cross-keyed by OwnerPlayerId); re-dress only on a change
                 if (Client.CombatState.TryGet(e.OwnerPlayerId, out var ce))
@@ -243,12 +251,21 @@ namespace UnturnedGodot
         /// <summary>The held weapon on a puppet (master 2026-09-03: "your melee weapons/guns shown to other players"): the same
         /// Right_Hook attach + gun overlay layer the local 3P body uses (PlayerController.UpdateBodyGun). Asset gunName -> gun,
         /// meleeName -> melee, anything else / 0 -> empty hands.</summary>
+        /// <summary>EventPlayerMelee (v25): play that player's weak/strong swing on their puppet's upper body.</summary>
+        public void OnRemoteMelee(ushort playerId, bool strong)
+        {
+            if (!_avatars.TryGetValue(playerId, out var av) || av.Body == null) return;
+            float len = av.Body.PlayMeleeSwing(av.MeleeName ?? "fists", strong);
+            if (len > 0f) av.SwingLeft = len;
+        }
         static void ApplyHeld(Av av, ushort heldId)
         {
             var a = heldId != 0 ? SDG.Unturned.Assets.find(heldId) : null;
             string gun = a?.gunName, melee = a?.meleeName;
+            av.MeleeName = null; av.HeldGun = false;
             if (!string.IsNullOrEmpty(gun))
             {
+                av.HeldGun = true;
                 av.Body.DetachMelee();
                 av.Body.AttachGun(gun);
                 string cap = char.ToUpper(gun[0]) + gun.Substring(1);
@@ -260,7 +277,8 @@ namespace UnturnedGodot
             else
             {
                 av.Body.DetachGun(); av.Body.DisableGunLayer();
-                if (!string.IsNullOrEmpty(melee)) av.Body.AttachMelee(melee); else av.Body.DetachMelee();
+                if (!string.IsNullOrEmpty(melee)) { av.Body.AttachMelee(melee); av.Body.ShowMeleeHold(melee); av.MeleeName = melee; }   // ready-to-swing, like the local 3P body
+                else av.Body.DetachMelee();
             }
         }
 

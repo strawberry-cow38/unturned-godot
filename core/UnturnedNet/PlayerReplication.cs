@@ -172,6 +172,7 @@ namespace UnturnedGodot.Net
         public const byte EventPlayerFired = 37;       // a gun WENT OFF: shooter, muzzle origin, direction, gun asset name. Nothing was broadcast on a shot at all before this, which is why another player's gunfire had no sound and drew no tracer on your screen (strawberry 2026-09-03 "network gun sounds, gun tracers"; the in-game report "I hear no gunshot sounds even when someone's shooting across the street from me"). Damage is NOT on this event -- the server already resolves that analytically and unicasts a hit confirm; this is purely what the shot LOOKS and SOUNDS like to everyone else.
         public const byte EventAvatarData = 36;        // the bytes behind an avatar hash, sent once per (peer, hash) on the reliable channel -- the snapshot carries only the hash, because a PNG per player per tick is not a snapshot
         public const byte EventPlayerHurt = 38;        // to the VICTIM only: damage taken + an optional source position, for the directional hurt indicator (master 2026-09-03). id 37 is EventPlayerFired.
+        public const byte EventPlayerMelee = 39;       // v25: a melee swing was accepted -- attacker + weak/strong, broadcast so puppets animate it (strawberry 2026-09-03)
     }
 
     /// <summary>

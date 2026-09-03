@@ -2957,6 +2957,7 @@ namespace UnturnedGodot
             _meleeCd = _viewmodel?.MeleeSwingLength(strong) ?? 0f;
             if (_meleeCd <= 0.05f) _meleeCd = strong ? 0.75f : 0.45f;
             _viewmodel?.SwingMelee(strong);   // source Weak / Strong swing anim
+            if (_body != null && !_fpOnlyBody3pSkip) { float sl = _body.PlayMeleeSwing(_heldMeleeName ?? "fists", strong); if (sl > 0f) _bodySwinging3p = true; }   // the SAME swing on the 3P body (strawberry 2026-09-03)
             float alert = _melee?.Alert ?? 0f;
             if (alert > 0f) SoundBus.Emit(GetTree(), GlobalPosition, alert);   // swing NOISE fires with the swing (source AlertTool.alert); 0 = stealthy
             // DAMAGE lands at the END of the swing (source: isDamageable is only true once the swing anim has played),
@@ -6998,6 +6999,8 @@ namespace UnturnedGodot
         string _bodyAimClip, _bodyReloadClip, _bodyEquipClip, _bodyHammerClip;  // resolved per-gun clip names for the overlay
         bool _bodyReloading3p, _bodyHammer3p;                  // edge-detect the reload + the rack so each plays once
         string _bodyMeleeName;   // melee model currently in the 3P body's hand (null = none)
+        bool _bodySwinging3p;    // a melee swing is playing on the 3P upper body; cleared when _meleeCd runs out
+        const bool _fpOnlyBody3pSkip = false;   // seam: never skip -- the 3P body must swing even while you watch it in 1P (puppets of you are driven by the wire, not this)
         void UpdateBodyGun()
         {
             // A PASSENGER keeps their gun on the 3rd-person body (strawberry: "passengers can hold weapons").
@@ -7008,8 +7011,15 @@ namespace UnturnedGodot
             string wantMelee = (!wantGun && _melee != null && !string.IsNullOrEmpty(_heldMeleeName) && _heldMeleeName != "fists" && !IsDriver && _riding == null && !_dead) ? _heldMeleeName : null;
             if (wantMelee != _bodyMeleeName)
             {
-                if (wantMelee == null) _body.DetachMelee(); else _body.AttachMelee(wantMelee);
+                if (wantMelee == null) { _body.DetachMelee(); if (!wantGun && !_bodySwinging3p) _body.DisableGunLayer(); }
+                else { _body.AttachMelee(wantMelee); _body.ShowMeleeHold(wantMelee); }   // ready-to-swing pose, not a weapon glued to a hanging arm
                 _bodyMeleeName = wantMelee;
+            }
+            if (_bodySwinging3p && _meleeCd <= 0f)   // the swing clip ran out -> back to the hold (or drop the layer for fists / empty hands)
+            {
+                _bodySwinging3p = false;
+                if (_bodyMeleeName != null) _body.ShowMeleeHold(_bodyMeleeName);
+                else if (!wantGun) _body.DisableGunLayer();
             }
             if (!wantGun)
             {

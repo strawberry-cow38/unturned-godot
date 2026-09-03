@@ -4525,7 +4525,7 @@ namespace UnturnedGodot
                 _paGun = true;   // -> the hold -> ADS -> lean-right -> lean-left sequence in _Process
             }
             string paMelee = System.Environment.GetEnvironmentVariable("UG_PAMELEE");   // UG_PAMELEE=katana -> the melee model in the 3P hand (RiggedCharacter.AttachMelee, what puppets/own body call)
-            if (!string.IsNullOrEmpty(paMelee)) _paRig.AttachMelee(paMelee);
+            if (!string.IsNullOrEmpty(paMelee)) { _paRig.AttachMelee(paMelee); _paRig.ShowMeleeHold(paMelee); }   // + the ready hold; UG_PASWING=1 fires a strong swing at 0.8s
             if (System.Environment.GetEnvironmentVariable("UG_PAHITBOX") == "1")
             {
                 _paHit = true;   // hold the chosen stance under the zone overlay

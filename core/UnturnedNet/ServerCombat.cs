@@ -304,6 +304,7 @@ namespace UnturnedGodot.Net
             if (tick < cs.MeleeReadyTick) { Diag.MeleeRejected++; return; }
             cs.MeleeReadyTick = tick + DefaultMelee.CooldownTicks;
             _pendingMelee.Add(new PendingMelee { Attacker = sender, Seq = cmd.Seq, LandTick = tick + DefaultMelee.HitDelayTicks, YawDegrees = cmd.YawDegrees, Strong = cmd.Strong });
+            _broadcast(NetMessagePak.Pack(ReplicationIds.EventPlayerMelee, new PlayerMeleeEvent { PlayerId = sender, Strong = cmd.Strong }.Write));   // v25: puppets swing
             Diag.MeleeAccepted++;
         }
 

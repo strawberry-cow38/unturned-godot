@@ -201,6 +201,11 @@ namespace UnturnedGodot
                     Shell.RemoteShotFx(new Vector3(e.Origin.x, e.Origin.y, e.Origin.z),
                                        new Vector3(e.Dir.x, e.Dir.y, e.Dir.z), e.Gun);
             };
+            Client.PlayerMeleed += e =>
+            {
+                if (e.PlayerId == Client.PlayerId) return;   // our own swing already played on our body
+                Remotes?.OnRemoteMelee(e.PlayerId, e.Strong);
+            };
             Client.ImpactFx += e =>
             {
                 if (Shell != null && IsInstanceValid(Shell))

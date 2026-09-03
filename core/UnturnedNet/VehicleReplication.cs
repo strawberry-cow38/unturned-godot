@@ -787,6 +787,23 @@ namespace UnturnedGodot.Net
     /// Every player currently fires the server's DefaultGun (per-gun profiles are the deferred equip seam,
     /// ServerCombat.SetGunProfile has no callers), so today this always says "eaglefire". When that seam
     /// lands the name starts being right on its own, with no second wire change.</summary>
+    /// <summary>v25: somebody SWUNG a melee weapon (or their fists) -- broadcast once per accepted MeleeCommand so every other
+    /// client can play the swing on that player's puppet. No damage rides this; the server's deferred hit is separate.</summary>
+    public struct PlayerMeleeEvent
+    {
+        public ushort PlayerId;
+        public bool Strong;
+        public void Write(NetPakWriter w) { w.WriteUInt16(PlayerId); w.WriteUInt8(Strong ? (byte)1 : (byte)0); }
+        public static bool TryRead(NetPakReader r, out PlayerMeleeEvent evt)
+        {
+            evt = default;
+            if (!r.ReadUInt16(out ushort pid)) return false;
+            if (!r.ReadUInt8(out byte st)) return false;
+            evt = new PlayerMeleeEvent { PlayerId = pid, Strong = st != 0 };
+            return true;
+        }
+    }
+
     public struct PlayerFiredEvent
     {
         public const int MaxGunNameLength = 32;

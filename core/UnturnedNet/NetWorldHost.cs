@@ -573,7 +573,8 @@ namespace UnturnedGodot.Net
         public event System.Action<StorageClosedEvent> StorageClosed;
 
         // Phase 7 vehicle facts (occupancy also rides the snapshot; the event gives the requester immediacy)
-        public event System.Action<PlayerFiredEvent> PlayerFired;   // somebody pulled a trigger: report + tracer
+        public event System.Action<PlayerFiredEvent> PlayerFired;
+        public event System.Action<PlayerMeleeEvent> PlayerMeleed;   // somebody swung: the puppet plays the weak/strong clip   // somebody pulled a trigger: report + tracer
         public event System.Action<VehicleEnteredEvent> VehicleEntered;
         public event System.Action<VehicleExitedEvent> VehicleExited;
         // Part A: the server rolled this driver's vehicle back (out-of-envelope state) -- teleport the
@@ -665,6 +666,7 @@ namespace UnturnedGodot.Net
             Events.Register<StorageClosedEvent>(ReplicationIds.EventStorageClosed, StorageClosedEvent.TryRead, e => StorageClosed?.Invoke(e));
             Events.Register<PlayerFiredEvent>(ReplicationIds.EventPlayerFired, PlayerFiredEvent.TryRead,
                 e => PlayerFired?.Invoke(e));
+            Events.Register<PlayerMeleeEvent>(ReplicationIds.EventPlayerMelee, PlayerMeleeEvent.TryRead, e => PlayerMeleed?.Invoke(e));
             Events.Register<VehicleEnteredEvent>(ReplicationIds.EventVehicleEntered, VehicleEnteredEvent.TryRead,
                 e => { Vehicles.ApplyEntered(e, Applier.LastAppliedServerTick); VehicleEntered?.Invoke(e); });
             Events.Register<VehicleExitedEvent>(ReplicationIds.EventVehicleExited, VehicleExitedEvent.TryRead,

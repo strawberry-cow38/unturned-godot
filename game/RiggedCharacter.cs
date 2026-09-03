@@ -694,6 +694,36 @@ namespace UnturnedGodot
             _gunAp.Play(clip); _gunAp.Seek(_gunAp.GetAnimation(clip).Length, true);
         }
 
+        // ---- MELEE on the same upper-body overlay the gun uses (strawberry 2026-09-03: "third person cam doesnt show melee
+        // animation? and they dont hold the weapon in the 'ready to swing' sorta state. just glued to their hand") ----
+        // The rig ships per-weapon {Cap}_Equip/_Weak/_Strong clips (Katana_*, Axe_fire_*, Knife_butcher_* ...) plus generic
+        // Melee_* fallbacks and Punch_Left/Right for fists. The END of _Equip is the ready hold, exactly as Gun_Equip is for guns.
+        public (string equip, string weak, string strong) MeleeClipsFor(string meleeName)
+        {
+            if (string.IsNullOrEmpty(meleeName) || meleeName == "fists") return ("", "Punch_Left", "Punch_Right");
+            string cap = char.ToUpper(meleeName[0]) + meleeName.Substring(1);
+            string Pick(string a, string b) => ClipLength(a) > 0f ? a : (ClipLength(b) > 0f ? b : "");
+            return (Pick(cap + "_Equip", "Melee_Equip"), Pick(cap + "_Weak", "Melee_Weak"), Pick(cap + "_Strong", "Melee_Strong"));
+        }
+        /// <summary>Ready-to-swing hold for a drawn melee weapon: the upper-body layer parked on the end of its Equip clip.</summary>
+        public void ShowMeleeHold(string meleeName)
+        {
+            var (equip, _, _) = MeleeClipsFor(meleeName);
+            if (equip == "") { if (_gunLayer && BaseClip(_gunAp?.CurrentAnimation ?? "").StartsWith("Punch")) DisableGunLayer(); return; }   // fists: no hold pose
+            if (!_gunLayer) EnableGunLayer("Gun_Aim");   // the additive aim bake is inert at AimBlend 0; the layer is what we want
+            SnapGunOverlay(equip);
+        }
+        /// <summary>Play a weak/strong swing on the upper body. Returns the clip length so the caller can return to the hold.</summary>
+        public float PlayMeleeSwing(string meleeName, bool strong)
+        {
+            var (_, weak, strongClip) = MeleeClipsFor(meleeName);
+            string clip = strong ? strongClip : weak;
+            if (clip == "" || ClipLength(clip) <= 0f) return 0f;
+            if (!_gunLayer) EnableGunLayer("Gun_Aim");
+            if (_gunAp != null && _gunAp.CurrentAnimation == clip) _gunAp.Stop();   // a second swing of the same clip must restart, not be ignored
+            SetGunOverlay(clip, 1f, loop: false);
+            return ClipLength(clip);
+        }
         public string GunOverlayClip => BaseClip(_gunAp?.CurrentAnimation ?? "");
         /// <summary>The looping locomotion/seated clip currently held (test seam).</summary>
         public string CurrentLoopClip => _loco ?? "";
