@@ -3732,7 +3732,11 @@ namespace UnturnedGodot
         // generator's l_mid1/r_mid1/l_mid2/r_mid2 files were written to disk and then never loaded.
         public static readonly string[] GlassPaneLabels = { "windshield", "rear", "l_front", "r_front", "l_rear", "r_rear",
                                                             "l_mid1", "r_mid1", "l_mid2", "r_mid2",
-                                                            "l_mid3", "r_mid3", "l_mid4", "r_mid4" };
+                                                            "l_mid3", "r_mid3", "l_mid4", "r_mid4",
+                                                            // ROOF GLASS (strawberry 2026-09-03, offroader: a skylight over the front
+                                                            // seats and a glazed rear ceiling meeting the trunk glass). `roof` is the
+                                                            // single-aperture case; front/rear when a cross-member splits it in two.
+                                                            "roof", "roof_front", "roof_rear" };
         public static string GlassPaneDisplay(string label) => label switch
         {
             "windshield" => "windscreen", "rear" => "rear window",
@@ -3741,7 +3745,8 @@ namespace UnturnedGodot
             "l_mid1" => "left mid 1", "r_mid1" => "right mid 1",
             "l_mid2" => "left mid 2", "r_mid2" => "right mid 2",
             "l_mid3" => "left mid 3", "r_mid3" => "right mid 3",
-            "l_mid4" => "left mid 4", "r_mid4" => "right mid 4", _ => label,
+            "l_mid4" => "left mid 4", "r_mid4" => "right mid 4",
+            "roof" => "roof glass", "roof_front" => "skylight", "roof_rear" => "rear ceiling", _ => label,
         };
 
         readonly System.Collections.Generic.List<MeshInstance3D> _glassNodes = new();
@@ -4100,6 +4105,9 @@ namespace UnturnedGodot
             new Color(1f, 0.55f, 0f),   new Color(0.6f, 0.2f, 1f), new Color(1f, 1f, 1f),
             new Color(0.1f, 0.35f, 0.2f), new Color(0.5f, 0.9f, 0.1f), new Color(0.9f, 0.4f, 0.6f),
             new Color(0.2f, 0.2f, 0.6f), new Color(0.7f, 0.7f, 0.2f),
+            // three more for the roof labels -- this array must never be SHORTER than GlassPaneLabels or the
+            // index wraps and two panes share a colour, which is the one thing the debug view exists to rule out
+            new Color(0.0f, 0.8f, 0.6f), new Color(0.85f, 0.3f, 0.0f), new Color(0.45f, 0.65f, 1f),
         };
 
         static void AddGlassOverlay(Vehicle v, Spec s)
