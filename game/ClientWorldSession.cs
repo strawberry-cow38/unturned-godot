@@ -185,6 +185,13 @@ namespace UnturnedGodot
                 HitmarkerHUD.Instance?.Show(e.Headshot);   // the hitmarker now only ever tells the server's truth
                 GD.Print($"[combat] hit {(HitTargetKind)e.TargetKind} {e.TargetId} for {e.Damage:0}{(e.Headshot ? " HEADSHOT" : "")}{(e.Killed ? " -- KILLED" : "")}");
             };
+            // WE got hit. Only sent to the victim, so no PlayerId filter needed -- unlike PlayerFired above,
+            // there is no "was this my own action" case to skip.
+            Client.PlayerHurt += e =>
+            {
+                if (Shell != null && IsInstanceValid(Shell))
+                    Shell.NetHurt(e.Damage, e.HasSource ? new Vector3(e.SourcePos.x, e.SourcePos.y, e.SourcePos.z) : (Vector3?)null);
+            };
             // SOMEBODY ELSE FIRED. Skip our own shots: the local trigger pull already drew its own tracer and
             // played its own report the instant it happened, and drawing the echo would double every shot.
             Client.PlayerFired += e =>

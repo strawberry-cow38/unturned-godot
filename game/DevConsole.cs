@@ -66,12 +66,12 @@ namespace UnturnedGodot
         // save/wipe take no argument. Missing from here they are swallowed by the arg guard and read as "the
         // console does not know that command" -- which is exactly what `wipe` did from the day it shipped, and
         // the note above this list warns about. Found by running the verb rather than by reading it.
-        static readonly string[] NoArgVerbs = { "unarmed", "fridge", "fluid", "survival", "spawnmagnetablecontainer", "magcontainer", "spawnelevator", "heliphys", "procisland", "credits", "save", "wipe" };
+        static readonly string[] NoArgVerbs = { "unarmed", "fridge", "fluid", "survival", "spawnmagnetablecontainer", "magcontainer", "spawnelevator", "heliphys", "procisland", "credits", "save", "wipe", "hurttest" };
         bool _resultHooked;
 
         LineEdit _input;
         Label _log;
-        static readonly string[] Verbs = { "give", "vehicle", "spawnMagnetableContainer", "spawnheli", "spawntrain", "spawncrane", "spawncraneontrack", "spawncontainerflatbed", "spawnelevator", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "save", "wipe", "toggleGlobalPower", "toggleGlobalWater", "toggleBbat", "infFuel", "infAmmo", "wear", "unwear", "fluid", "date", "dateset", "whenBlackout", "triggerGlobalBrownout", "hurtmain", "killmain", "hurttail", "killtail", "kill", "profiler", "renderscale", "vertexlight", "weather", "credits", "fridge", "fill", "empty", "units", "simspeed", "time", "timeset", "timeadd", "timespeed", "daylength", "hitbox", "heliphys", "procisland" };
+        static readonly string[] Verbs = { "give", "vehicle", "spawnMagnetableContainer", "spawnheli", "spawntrain", "spawncrane", "spawncraneontrack", "spawncontainerflatbed", "spawnelevator", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "save", "wipe", "hurttest", "toggleGlobalPower", "toggleGlobalWater", "toggleBbat", "infFuel", "infAmmo", "wear", "unwear", "fluid", "date", "dateset", "whenBlackout", "triggerGlobalBrownout", "hurtmain", "killmain", "hurttail", "killtail", "kill", "profiler", "renderscale", "vertexlight", "weather", "credits", "fridge", "fill", "empty", "units", "simspeed", "time", "timeset", "timeadd", "timespeed", "daylength", "hitbox", "heliphys", "procisland" };
         static readonly EItemType[] ClothingTypes = { EItemType.SHIRT, EItemType.PANTS, EItemType.HAT, EItemType.VEST, EItemType.MASK, EItemType.GLASSES, EItemType.BACKPACK };
         readonly System.Collections.Generic.List<string> _history = new();
         int _histIdx;
@@ -221,6 +221,35 @@ namespace UnturnedGodot
                 if (Player.IsDead) { Log("kill: you're already dead"); return; }
                 Player.TakeDamage(9999f);   // 9999 = the game's standard instant-kill (OOB fall PlayerController:7314, --pdie, riding-explosion all use it) -> Health <= 0 -> Die()
                 Log("kill: you died");
+                return;
+            }
+
+            // hurttest [n|s|e|w] -- debug: fire PlayerHurtEvent's client-side cosmetics (flash/flinch/directional
+            // indicator) as if a real MP hit landed from that compass direction, WITHOUT touching HP. Non-lethal
+            // damage on a real MP client's own NetAvatar is otherwise invisible to a headless run -- the only
+            // code path that renders it is the wire event this drives -- so this is what tools/shot.py's `hurt`
+            // scene fires through UG_BOOTCMD to make the indicator renderable at all.
+            if (verb.StartsWith("hurttest"))
+            {
+                if (Player == null) { Log("hurttest: no player"); return; }
+                Vector3 off = arg.ToLowerInvariant() switch
+                {
+                    "n" => new Vector3(0f, 0f, -10f), "s" => new Vector3(0f, 0f, 10f),
+                    "e" => new Vector3(10f, 0f, 0f), "w" => new Vector3(-10f, 0f, 0f),
+                    _ => new Vector3(10f, 0f, 0f),
+                };
+                Player.NetHurt(20f, Player.GlobalPosition + off);
+                // Log the bearing the indicator SHOULD be showing, so a render can be checked against a number
+                // instead of eyeballed -- the camera's facing at the moment this fires is not otherwise knowable
+                // from outside a scripted demo sequence.
+                if (Player.Camera != null)
+                {
+                    Vector3 camFwd = -Player.Camera.GlobalTransform.Basis.Z; camFwd.Y = 0f;
+                    Vector3 camRight = Player.Camera.GlobalTransform.Basis.X; camRight.Y = 0f;
+                    float bearing = Mathf.RadToDeg(Mathf.Atan2(camRight.Normalized().Dot(off.Normalized()), camFwd.Normalized().Dot(off.Normalized())));
+                    Log($"hurttest: hit from {arg.ToLowerInvariant()}, bearing {bearing:0}deg (0=ahead/top, +90=right, 180=behind/bottom, -90=left)");
+                }
+                else Log($"hurttest: hit from {arg.ToLowerInvariant()}");
                 return;
             }
 

@@ -53,6 +53,8 @@ namespace UnturnedGodot
             Current._alertLeft = seconds;
         }
         ColorRect _pain;   // PlayerUI colorOverlayImage: full-screen COLOR_R tint, alpha = the player's painAlpha
+        HurtDirectionIndicator _hurtIndicator;
+        public HurtDirectionIndicator HurtIndicator => _hurtIndicator;
         Control _crosshair3p;   // centre-screen crosshair, shown only in third person (master) -- the 1P has the viewmodel reticle, the 3P had nothing marking the aim
 
         // PlayerUI messageBox (VEHICLE_ENTER): bottom-centre dark box with the vehicle's fuel/health/battery bars, shown while driving
@@ -80,6 +82,17 @@ namespace UnturnedGodot
             _pain.MouseFilter = Control.MouseFilterEnum.Ignore;
             root.AddChild(_pain);
             _playerOnly.Add(_pain);
+
+            // Directional hurt indicator (master 2026-09-03: "add directional visual hit feedback when you get
+            // hurt by something"). A ring of wedges around the screen centre, one per recent hit, drawn toward
+            // where the hit came from and faded out over HurtDirectionIndicator.MarkTime -- the flash says "you
+            // got hit", this says "from over there". Its own Control.Draw rather than a texture: retail's is a
+            // shader-drawn arc too (PlayerDamageArrowUI), and there is no arrow asset in the ripped content.
+            _hurtIndicator = new HurtDirectionIndicator();
+            _hurtIndicator.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+            _hurtIndicator.MouseFilter = Control.MouseFilterEnum.Ignore;
+            root.AddChild(_hurtIndicator);
+            _playerOnly.Add(_hurtIndicator);
 
             // vitals draw on their OWN CanvasLayer ABOVE the inventory (layer 11) so the health/food/water/stamina/
             // infection bars stay visible with the bag open (master 2026-08-26). The rest of the HUD stays on layer 10.
@@ -436,6 +449,7 @@ namespace UnturnedGodot
                     _weaponName.Modulate = asset != null ? SDG.Unturned.ItemTool.RarityColorUI(asset.rarity) : Colors.White;
                 }
                 _pain.Color = new Color(CR.R, CR.G, CR.B, Player.PainAlpha);   // colorOverlayImage.TintColor.a = painAlpha
+                _hurtIndicator.Cam = Player.Camera;   // kept in sync every frame -- the same camera that drives the flinch, so the two never disagree about which way "forward" means
             }
 
             bool inVeh = Vehicle != null;

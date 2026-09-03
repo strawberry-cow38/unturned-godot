@@ -547,6 +547,7 @@ namespace UnturnedGodot.Net
         // Phase 5 combat facts (server -> this client). The shell subscribes to drive local fx/HUD:
         // damage numbers wait for HitConfirmed (§3.4); ImpactFx spawns decals/blood for OTHER players' shots.
         public event System.Action<HitConfirmEvent> HitConfirmed;
+        public event System.Action<PlayerHurtEvent> PlayerHurt;   // to THIS client, when it was the one hit -- drives the directional hurt indicator
         public event System.Action<ImpactFxEvent> ImpactFx;
         public event System.Action<PlayerDiedEvent> PlayerDied;
         public event System.Action<PlayerRespawnedEvent> PlayerRespawned;
@@ -631,6 +632,7 @@ namespace UnturnedGodot.Net
                 if (ApplySnapshot(snapshot, len)) JoinSnapshotsApplied++;
             });
             Events.Register<HitConfirmEvent>(ReplicationIds.EventHitConfirm, HitConfirmEvent.TryRead, e => HitConfirmed?.Invoke(e));
+            Events.Register<PlayerHurtEvent>(ReplicationIds.EventPlayerHurt, PlayerHurtEvent.TryRead, e => PlayerHurt?.Invoke(e));
             Events.Register<ImpactFxEvent>(ReplicationIds.EventImpactFx, ImpactFxEvent.TryRead, e => ImpactFx?.Invoke(e));
             Events.Register<PlayerDiedEvent>(ReplicationIds.EventPlayerDied, PlayerDiedEvent.TryRead, e => PlayerDied?.Invoke(e));
             Events.Register<PlayerRespawnedEvent>(ReplicationIds.EventPlayerRespawned, PlayerRespawnedEvent.TryRead, e => PlayerRespawned?.Invoke(e));
