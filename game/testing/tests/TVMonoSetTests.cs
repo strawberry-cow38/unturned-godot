@@ -64,7 +64,13 @@ namespace UnturnedGodot.Testing
             {
                 var mesh = ObjMesh.Load(ProjectSettings.GlobalizePath("res://content/objects/") + "Television_1.obj");
                 if (mesh == null) { T.Fail("Television_1.obj loads"); break; }
-                var mi = new MeshInstance3D { Mesh = mesh, Transform = StandUp };
+                // EACH SET AT ITS OWN SPOT. Which tube a TV is used to be a per-device coin flip, so spawning
+                // 40 in the same place eventually turned up one of each. It is now derived deterministically
+                // from the prop name and POSITION (TVDevice.StableSeed) -- so that every client agrees which
+                // set is the mono one, the same fix the car alarms needed. Forty TVs sharing one name and one
+                // position therefore all roll IDENTICALLY and the loop can never find both. Spreading them out
+                // restores the variety the check is actually after, and matches how they exist in a world.
+                var mi = new MeshInstance3D { Mesh = mesh, Transform = StandUp.Translated(new Vector3(i * 2.5f, 0f, 0f)) };
                 World.AddChild(mi);
                 var dev = TVDevice.Make(mi, "Television_1");
                 World.AddChild(dev);
