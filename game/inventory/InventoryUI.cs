@@ -38,7 +38,7 @@ namespace UnturnedGodot
         // blur of what's behind." Replaces the flat 72% black scrim. 5x5 weighted taps + a mip-LOD bias so the blur is
         // robust even if the screen copy's mipmaps are shallow. The panels are translucent, so this shows through the
         // entire dashboard (paperdoll included).
-        const string BACKDROP_BLUR = @"
+        internal const string BACKDROP_BLUR = @"
 shader_type canvas_item;
 uniform sampler2D screen_tex : hint_screen_texture, filter_linear_mipmap;
 uniform float lod = 1.5;
@@ -253,10 +253,7 @@ void fragment() {
 
         /// <summary>A navbar tab was clicked. Only Craft is wired so far -- Skills/Information have no page yet,
         /// and silently doing nothing is better than pretending. Inventory is the page you are already on.</summary>
-        void OnTab(string label)
-        {
-            if (label == "Craft") { Close(); Player?.OpenCrafting(); }
-        }
+        void OnTab(string label) { }   // tabs route through PlayerController.ShowMenu now (MenuNavbar)
 
         public void Toggle() { if (_open) Close(); else Open(); }
         // The Nearby/AREA refresh lives HERE, not at the call sites, because there are four ways to open the bag
@@ -1490,54 +1487,12 @@ void fragment() {
         // left column: the equip slots (hat/glasses/mask/shirt/vest/backpack/pants), each showing the worn item
         // Top navbar: a full-width 60px strip with the dashboard tab labels (source PlayerDashboardUI nav, above the
         // inventory content). The Inventory tab reads active; the rest are placeholders for the sibling dashboards.
-        void BuildNavbar()
+        MenuNavbar _navbar;
+        void BuildNavbar()   // the SHARED strip (MenuNavbar): identical geometry on every menu, live key labels
         {
-            var nav = new Panel();
-            nav.SetAnchorsPreset(Control.LayoutPreset.TopWide);
-            nav.OffsetBottom = NAVH;
-            StyleBox(nav, UI_NAV);
-            _dash.AddChild(nav);
-            // Retail's navbar is four WIDE TAB BUTTONS spanning the bar with their keybind in the label
-            // ("Inventory [G]"), evenly filling the nav bar -- not left-aligned plain text.
-            (string label, string key)[] tabs =
-            {
-                ("Inventory", "G"), ("Craft", "Y"), ("Skills", "U"), ("Information", "M"),
-            };
-            float vpw = GetViewport().GetVisibleRect().Size.X;
-            const float TABGAP = 8f;                                  // slim gap between tabs (square icon buttons removed)
-            float tabW = (vpw - MARGIN * 2 - TABGAP * (tabs.Length - 1)) / tabs.Length;
-            float tx2 = MARGIN;
-            for (int i = 0; i < tabs.Length; i++)
-            {
-                var btn = new Panel { Position = new Vector2(tx2, 8), Size = new Vector2(tabW, NAVH - 16) };
-                StyleBox(btn, i == 0 ? UI_TAB_ON : UI_TAB_OFF);        // the open page reads as the lit tab
-                _dash.AddChild(btn);
-
-                var t = new Label { Text = $"{tabs[i].label} [{tabs[i].key}]", Position = new Vector2(tx2, 8),
-                                    Size = new Vector2(tabW, NAVH - 16),
-                                    HorizontalAlignment = HorizontalAlignment.Center,
-                                    VerticalAlignment = VerticalAlignment.Center };
-                t.AddThemeColorOverride("font_color", i == 0 ? new Color(1f, 1f, 1f) : UITheme.TextBody);   // neutral, was blue-leaning
-                t.AddThemeFontSizeOverride("font_size", 32);
-                _dash.AddChild(t);
-
-                // THESE TABS WERE DECORATION. A Panel and a Label with no click handling anywhere, and the "[Y]"
-                // in the Craft label promised a keybind whose only handler in the codebase fires in BUILD mode --
-                // so the crafting menu was reachable on K and nothing else, and "the inventory crafting button"
-                // did not exist. A transparent Button over each tab makes them real without disturbing the
-                // existing styling (the Panel underneath still draws the lit/unlit state).
-                var hit = new Button { Flat = true, Position = new Vector2(tx2, 8), Size = new Vector2(tabW, NAVH - 16) };
-                hit.MouseFilter = Control.MouseFilterEnum.Stop;
-                string tabLabel = tabs[i].label;
-                hit.Pressed += () => OnTab(tabLabel);
-                _dash.AddChild(hit);
-
-                tx2 += tabW + TABGAP;
-            }
+            _navbar = MenuNavbar.Build(_dash, MenuNavbar.Tab.Inventory, t => Player?.ShowMenu(t), () => { Close(); Input.MouseMode = Input.MouseModeEnum.Captured; });
         }
 
-        // Name + faction badge at the character panel's top (source characterPlayer / SleekPlayer @ (10,10), 410x50):
-        // an avatar chip, username (yellow), faction "Neutral [0]" under it, and a yellow + on the right. Themed to match.
         void BuildNameBadge(Panel box)
         {
             var badge = new Panel { Position = new Vector2(8, 6), Size = new Vector2(CHARW - 16, 76) };
@@ -1650,15 +1605,15 @@ void fragment() {
             // clears _pdFramed on a resize so FramePaperdoll recomputes the distance for the real aspect.
             _pdVp.AddChild(_pdCam);
 
-            _pdVp.AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-25f, 155f, 0f), LightEnergy = 1.2f });                                          // key
-            _pdVp.AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-8f, -35f, 0f), LightEnergy = 0.55f, LightColor = UITheme.Text }); // NEUTRAL fill (master: no blue tint). The world env does not reach an isolated SubViewport, so this is the ONLY light on the paperdoll -- a cool one tinted the character too, not just the panels.
+            _pdVp.AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-30f, 150f, 0f), LightEnergy = 0.75f });   // key: 1.2 + ACES blew the head out to near-white (master 2026-09-03 "fix the lighting")                                          // key
+            _pdVp.AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-8f, -35f, 0f), LightEnergy = 0.35f, LightColor = UITheme.Text }); // NEUTRAL fill (master: no blue tint). The world env does not reach an isolated SubViewport, so this is the ONLY light on the paperdoll -- a cool one tinted the character too, not just the panels.
             _pdVp.AddChild(new WorldEnvironment
             {
                 Environment = new Godot.Environment
                 {
                     BackgroundMode = Godot.Environment.BGMode.Color, BackgroundColor = new Color(0f, 0f, 0f, 0f),
-                    AmbientLightSource = Godot.Environment.AmbientSource.Color, AmbientLightColor = new Color(0.53f, 0.53f, 0.53f), AmbientLightEnergy = 1.0f,   // neutral grey, was faintly blue
-                    TonemapMode = Godot.Environment.ToneMapper.Aces,
+                    AmbientLightSource = Godot.Environment.AmbientSource.Color, AmbientLightColor = new Color(0.42f, 0.42f, 0.44f), AmbientLightEnergy = 1.0f,   // neutral grey, was faintly blue
+                    TonemapMode = Godot.Environment.ToneMapper.Filmic,   // ACES crushed the lit side to white; filmic keeps the shirt/skin colour
                 },
             });
 

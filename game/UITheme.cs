@@ -36,7 +36,7 @@ namespace UnturnedGodot
         //
         //   UiLighten     0 = original brightness, 1 = pure white.
         //   UiAlphaScale  multiplies every alpha; below 1 is more see-through.
-        public const float UiLighten = 0.45f, UiAlphaScale = 0.72f;
+        public const float UiLighten = 0.12f, UiAlphaScale = 0.80f;   // 0.45 read as bright white over the blur (master 2026-09-03: "less bright white, more dark dark gray")
 
         /// <summary>Desaturate to luminance, then lift toward white.
         ///
@@ -80,10 +80,10 @@ namespace UnturnedGodot
         /// <summary>An occupied cell.</summary>
         public static Color Slot => Neutral(0.22f, 0.29f, 0.37f, 0.62f);
         /// <summary>An empty cell: LIGHT and see-through, so a grid reads as holes rather than tiles.</summary>
-        public static Color SlotEmpty => Neutral(0.62f, 0.72f, 0.84f, 0.30f);
+        public static Color SlotEmpty => Neutral(0.30f, 0.34f, 0.40f, 0.34f);   // was 0.62/0.72/0.84: the empty cells were the last pale block on the dark dashboard (master 2026-09-03)
         /// <summary>The lit RIM on an empty cell -- retail's empty cells have a bright border so the grid reads as
         /// holes with edges, not a flat slab. The partner to SlotEmpty; every grid (GridPanel, quick-craft) uses both.</summary>
-        public static Color SlotEmptyEdge => Neutral(0.86f, 0.92f, 1f, 0.55f);
+        public static Color SlotEmptyEdge => Neutral(0.55f, 0.60f, 0.68f, 0.45f);
         /// <summary>The lit/open tab, and the selected row in a list.</summary>
         public static Color Selected => Neutral(0.55f, 0.62f, 0.70f, 0.72f);
         /// <summary>Unlit tabs and icon buttons.</summary>

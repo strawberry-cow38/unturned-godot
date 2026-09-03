@@ -39,9 +39,11 @@ namespace UnturnedGodot
             _root.SetAnchorsPreset(Control.LayoutPreset.FullRect);
             AddChild(_root);
 
-            var dim = new ColorRect { Color = UITheme.Scrim, MouseFilter = Control.MouseFilterEnum.Stop };
+            var dim = new ColorRect { MouseFilter = Control.MouseFilterEnum.Stop };   // frosted-glass backdrop, same as the other menu screens
+            dim.Material = new ShaderMaterial { Shader = new Shader { Code = InventoryUI.BACKDROP_BLUR } };
             dim.SetAnchorsPreset(Control.LayoutPreset.FullRect);
             _root.AddChild(dim);
+            Current = this;
 
             _map = new TextureRect { ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize, StretchMode = TextureRect.StretchModeEnum.Scale, MouseFilter = Control.MouseFilterEnum.Ignore };
             var tex = LoadMap();
@@ -65,6 +67,7 @@ namespace UnturnedGodot
             _arrow.Polygon = new Vector2[] { new(0, -11), new(7, 8), new(0, 3), new(-7, 8) };   // points up (north) at rotation 0
             _map.AddChild(_arrow);
 
+            _navbar = MenuNavbar.Build(_root, MenuNavbar.Tab.Information, t => Player?.ShowMenu(t), () => Close());   // the Information tab of the unified menu hosts the map
             _coord = new Label();
             _coord.AddThemeFontSizeOverride("font_size", UITheme.FontBody);
             _coord.AddThemeColorOverride("font_color", new Color(0.82f, 1f, 0.82f));
@@ -90,8 +93,9 @@ namespace UnturnedGodot
         void Layout()
         {
             var vp = GetViewport().GetVisibleRect().Size;
-            float s = Mathf.Min(vp.X, vp.Y) * 0.9f;
-            _map.Position = new Vector2((vp.X - s) * 0.5f, (vp.Y - s) * 0.5f);
+            float top = MenuNavbar.Height + 36f;   // under the shared navbar + the coord line
+            float s = Mathf.Min(vp.X * 0.9f, vp.Y - top - 24f);
+            _map.Position = new Vector2((vp.X - s) * 0.5f, top);
             _map.Size = new Vector2(s, s);
             foreach (var (norm, dot, lbl) in _towns)
             {
@@ -112,18 +116,17 @@ namespace UnturnedGodot
 
         public override void _Input(InputEvent e)
         {
-            if (Keybinds.JustPressed(GameAction.Map, e))
-            {
-                if (GetViewport().GuiGetFocusOwner() is LineEdit) return;   // don't hijack typing in the console
-                Toggle();
-                GetViewport().SetInputAsHandled();
-            }
-            else if (e is InputEventKey { Pressed: true, Keycode: Key.Escape } && _root.Visible) { Close(); GetViewport().SetInputAsHandled(); }
+            // The M key is routed by PlayerController.ShowMenu (unified menu) so opening the map closes the other tabs; Esc closes here.
+            if (e is InputEventKey { Pressed: true, Keycode: Key.Escape } && _root.Visible) { Close(); GetViewport().SetInputAsHandled(); }
         }
 
-        void Toggle() { if (_root.Visible) Close(); else Open(); }
-        void Open() { _root.Visible = true; Layout(); Input.MouseMode = Input.MouseModeEnum.Visible; }
-        void Close() { _root.Visible = false; Input.MouseMode = Input.MouseModeEnum.Captured; }
+        public static MapUI Current;   // the live map screen (one per world); PlayerController routes the Information tab here
+        MenuNavbar _navbar;
+        public bool IsOpen => _root != null && _root.Visible;
+        public void Toggle() { if (_root.Visible) Close(); else Open(); }
+        public void Open() { _root.Visible = true; Layout(); _navbar?.SetActive(MenuNavbar.Tab.Information); Input.MouseMode = Input.MouseModeEnum.Visible; }
+        public void Close(bool captureMouse = true) { if (_root == null) return; _root.Visible = false; if (captureMouse) Input.MouseMode = Input.MouseModeEnum.Captured; }
+        public override void _ExitTree() { if (Current == this) Current = null; }
 
         static Vector2 WorldToNorm(Vector3 p) { float ls = Info().size; return new Vector2(p.X / ls + 0.5f, 0.5f + p.Z / ls); }
 

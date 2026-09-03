@@ -5473,25 +5473,29 @@ namespace UnturnedGodot
                     }
                 }
             }
-            else if (Keybinds.JustPressed(GameAction.Inventory, @event))
+            // UNIFIED MENU (master 2026-09-03): G (bind) or Tab (fixed alternate) = Inventory, Y = Craft, J = Skills, M = Information
+            // (the map). Every key routes through ShowMenu so exactly one screen is open; the same key closes its own screen.
+            else if (Keybinds.JustPressed(GameAction.Inventory, @event) || (@event is InputEventKey { Pressed: true, Echo: false, PhysicalKeycode: Key.Tab } && !(_build?.Active ?? false)))
             {
                 if (_viewmodel != null && _viewmodel.InAttachView) return;   // no inventory while the attachment menu is up
                 SaveGunState();   // capture the held gun's live state (ammo/mag/firemode/attachments) so dropping/moving it in the inventory keeps it (master)
-                if (_invUI != null && _invUI.IsOpen) CloseCrate();   // closing the dashboard saves an open crate
-                _invUI?.Toggle();   // open/close the inventory dashboard, freeing the mouse while it's open
-                Input.MouseMode = (_invUI != null && _invUI.IsOpen) ? Input.MouseModeEnum.Visible : Input.MouseModeEnum.Captured;
+                if (_invUI != null && _invUI.IsOpen) { CloseCrate(); _invUI.Close(); Input.MouseMode = Input.MouseModeEnum.Captured; }   // closing the dashboard saves an open crate
+                else ShowMenu(MenuNavbar.Tab.Inventory);
             }
-            // Y opens the crafting index -- the inventory navbar has advertised "Craft [Y]" all along while
-            // nothing listened for it outside build mode. The build-mode Y handler above still wins when active.
-            else if (Keybinds.JustPressed(GameAction.Craft, @event) && !(_build?.Active ?? false))
+            else if (Keybinds.JustPressed(GameAction.Craft, @event) && !(_build?.Active ?? false))   // the build-mode Y handler above still wins when active
             {
-                _craftMenu?.Toggle();
-                Input.MouseMode = (_craftMenu != null && _craftMenu.IsOpen) ? Input.MouseModeEnum.Visible : Input.MouseModeEnum.Captured;
+                if (_craftMenu != null && _craftMenu.IsOpen) { _craftMenu.Close(); Input.MouseMode = Input.MouseModeEnum.Captured; }
+                else ShowMenu(MenuNavbar.Tab.Craft);
             }
             else if (Keybinds.JustPressed(GameAction.Skills, @event))
             {
-                _skillsUI?.Toggle();   // Skills (default J): open/close the skills menu (spend XP to level skills)
-                Input.MouseMode = (_skillsUI != null && _skillsUI.IsOpen) ? Input.MouseModeEnum.Visible : Input.MouseModeEnum.Captured;
+                if (_skillsUI != null && _skillsUI.IsOpen) { _skillsUI.Close(); Input.MouseMode = Input.MouseModeEnum.Captured; }
+                else ShowMenu(MenuNavbar.Tab.Skills);
+            }
+            else if (Keybinds.JustPressed(GameAction.Map, @event) && GetViewport().GuiGetFocusOwner() is not LineEdit)
+            {
+                if (MapUI.Current != null && MapUI.Current.IsOpen) MapUI.Current.Close();
+                else ShowMenu(MenuNavbar.Tab.Information);   // the map is the Information tab
             }
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.Escape })
             {
@@ -5520,7 +5524,26 @@ namespace UnturnedGodot
             }
         }
 
-        public void OpenInventory() { _invUI?.Open(); Input.MouseMode = Input.MouseModeEnum.Visible; }   // Open() scans Nearby itself now
+        public void OpenInventory() { _invUI?.Open(); Input.MouseMode = Input.MouseModeEnum.Visible; }
+        public void OpenSkills() { _skillsUI?.Open(); Input.MouseMode = Input.MouseModeEnum.Visible; }
+        public void OpenMap() { MapUI.Current?.Open(); Input.MouseMode = Input.MouseModeEnum.Visible; }
+        /// <summary>The unified menu: exactly one of Inventory / Craft / Skills / Information(map) is open at a time, and
+        /// every screen's shared MenuNavbar routes here so a tab click is one call (master 2026-09-03: "unify the whole ui").</summary>
+        public void ShowMenu(MenuNavbar.Tab tab)
+        {
+            if (_invUI != null && _invUI.IsOpen) { CloseCrate(); _invUI.Close(); }
+            if (_craftMenu != null && _craftMenu.IsOpen) _craftMenu.Close();
+            if (_skillsUI != null && _skillsUI.IsOpen) _skillsUI.Close();
+            MapUI.Current?.Close(false);
+            switch (tab)
+            {
+                case MenuNavbar.Tab.Inventory: OpenInventory(); break;
+                case MenuNavbar.Tab.Craft: OpenCrafting(); break;
+                case MenuNavbar.Tab.Skills: OpenSkills(); break;
+                case MenuNavbar.Tab.Information: OpenMap(); break;
+            }
+        }
+        public bool AnyMenuOpen => (_invUI?.IsOpen ?? false) || (_craftMenu?.IsOpen ?? false) || (_skillsUI?.IsOpen ?? false) || (MapUI.Current?.IsOpen ?? false);   // Open() scans Nearby itself now
         /// <summary>L1 seam: the G-keybind path exactly as _Input runs it (`_invUI?.Toggle()`), so a test can
         /// exercise the entry point players actually use rather than the convenient OpenInventory one.</summary>
         public void DebugToggleInventory() => _invUI?.Toggle();
