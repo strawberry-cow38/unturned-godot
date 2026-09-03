@@ -3418,6 +3418,23 @@ namespace UnturnedGodot
         public bool Moving { get; private set; }
         public EPlayerStance Stance => _move.Stance;
         float _footNoiseT;   // Phase 3 hearing: throttle the continuous footstep-noise emit (~2.5x/s while moving)
+        float _strideAcc;    // metres of ground covered since the last footstep sound
+        /// <summary>Material under the feet for footstep/landing audio: water when wading, else the terrain splatmap or a
+        /// prop's SurfMeta via a short downward ray. Concrete when nothing says otherwise.</summary>
+        Surf FootSurfaceUnderFeet()
+        {
+            if (Terrain.HasWater && GlobalPosition.Y < Terrain.SeaLevelY + 0.1f) return Surf.Water;
+            var space = GetWorld3D()?.DirectSpaceState; if (space == null) return Surf.Concrete;
+            var q = PhysicsRayQueryParameters3D.Create(GlobalPosition + Vector3.Up * 0.3f, GlobalPosition + Vector3.Down * 0.6f, 1u << 0, new Godot.Collections.Array<Rid> { GetRid() });
+            var hit = space.IntersectRay(q);
+            if (hit.Count == 0) return Surf.Concrete;
+            if (hit["collider"].As<GodotObject>() is Node n)
+            {
+                if (Terrain.Active != null && n.IsInGroup("terrain")) return Terrain.Active.SurfAt(GlobalPosition.X, GlobalPosition.Z);
+                if (n.HasMeta(SurfMeta)) return (Surf)(int)n.GetMeta(SurfMeta);
+            }
+            return Surf.Concrete;
+        }
 
         // Port of PlayerStance.GetStealthDetectionRadius: the radius (m) within which a zombie can sense this
         // player, by stance -- standing 12, crouched 6, sprinting 20, prone 3, x1.1 while moving. AlertTool
@@ -4608,6 +4625,7 @@ namespace UnturnedGodot
         {
             _dead = true;
             _deathTimer = 3.5;
+            if (!NetAvatar) MusicPlayer.Get(this)?.Sting(GameAudio.Clip("music", Terrain.MapDir?.ToLowerInvariant() + "_outro") != null ? Terrain.MapDir.ToLowerInvariant() + "_outro" : "death");   // retail: the map's outro on death, death.ogg where a map has none
             _burstLeft = 0;   // death cancels any in-progress burst (no resume after respawn)
             if (_wiring) CancelWire();   // death drops any in-progress wire (no stale preview / death-cam nodes)
             ClearFisher();               // death reels in any deployed line (no stale bobber/line surviving into respawn)
@@ -7539,6 +7557,30 @@ namespace UnturnedGodot
             // detection radius by stance/speed (sprint 20 loud .. prone 3 near-silent). Throttled; a motionless player
             // makes no sound (must be SEEN instead). Zombies within earshot path to it via SoundBus.Hear.
             _footNoiseT -= (float)delta;
+            // FOOTSTEP AUDIO (retail effects/physics/footstep/<surface>_<walk|run>): a step every stride-length of ground
+            // covered, surface from the splatmap / prop SurfMeta under the feet, run bank above walking pace, water bank
+            // when wading. Local player only here; puppets step in RemotePlayers. Crouch/prone are quieter and slower.
+            if (!NetAvatar && !_dead && _driving == null && _riding == null && _ridingTrain == null && _ridingCrane == null && IsOnFloor() && !IsSwimming)
+            {
+                float hsp = new Vector2(Velocity.X, Velocity.Z).Length();
+                if (moving && hsp > 0.3f)
+                {
+                    float stride = _move.Stance switch { EPlayerStance.SPRINT => 2.0f, EPlayerStance.CROUCH => 1.0f, EPlayerStance.PRONE => 0.9f, _ => 1.5f };
+                    _strideAcc += hsp * (float)delta;
+                    if (_strideAcc >= stride)
+                    {
+                        _strideAcc = 0f;
+                        var sf = FootSurfaceUnderFeet();
+                        bool run = _move.Stance == EPlayerStance.SPRINT || hsp > 4.5f;
+                        if (_viewmodel != null) _viewmodel.CasingSurface = sf switch { Surf.Metal => "metal", Surf.Wood => "wood", Surf.Sand => "sand", Surf.Water => "water", _ => "general" };
+                        string bank = GameAudio.FootSurface(sf) + (run ? "_run" : "_walk");
+                        var clip = GameAudio.Pick("footsteps", bank) ?? GameAudio.Pick("footsteps", "concrete" + (run ? "_run" : "_walk"));
+                        float vol = _move.Stance switch { EPlayerStance.PRONE => -14f, EPlayerStance.CROUCH => -8f, EPlayerStance.SPRINT => 0f, _ => -3f };
+                        GameAudio.PlayAt(this, clip, GlobalPosition, vol, 4f, 30f, _rng.RandfRange(0.94f, 1.06f));
+                    }
+                }
+                else _strideAcc = Mathf.Min(_strideAcc, 0.6f * 1.5f);   // a stop mid-stride keeps most of the stride so the next step isn't instant
+            }
             if (moving && _footNoiseT <= 0f)
             {
                 _footNoiseT = 0.4f;
@@ -7549,7 +7591,12 @@ namespace UnturnedGodot
             StepMoveOnce(strafe, forward, jump, (float)delta, out bool wasAirborne, out float vy, out bool groundedEntering);
             LastGroundedInput = groundedEntering;   // the grounded the sim consumed -- state-stream dressing
             _interpPrev = _interpReady ? _interpCurr : GlobalPosition; _interpCurr = GlobalPosition; _interpReady = true;   // snapshot this tick's start/end for render interpolation (master)
-            if (wasAirborne && IsOnFloor()) CheckFallDamage(vy);   // just touched down -> fall damage on a hard landing
+            if (wasAirborne && IsOnFloor())
+            {
+                CheckFallDamage(vy);   // just touched down -> fall damage on a hard landing
+                if (!NetAvatar && vy < -2.5f)   // retail bipedland/<surface>: a real drop, not a curb -- louder the harder
+                    GameAudio.PlayAt(this, GameAudio.Pick("landing", GameAudio.LandSurface(FootSurfaceUnderFeet())), GlobalPosition, Mathf.Clamp(-9f + (-vy - 2.5f) * 1.2f, -9f, 2f), 5f, 40f);
+            }
         }
 
         // ---- the movement kernel: the ONE deterministic movement step, split in two halves because

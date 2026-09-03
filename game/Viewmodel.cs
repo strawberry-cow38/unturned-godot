@@ -96,7 +96,7 @@ namespace UnturnedGodot
         Vector3 _defaultAimHook = new(0f, -0.4688f, -0.2098f);   // the gun's ADS aim (gv.AimHook) -- the eye point iron/scope/red-dot all aim down
         readonly System.Collections.Generic.List<Casing> _casings = new();
         readonly RandomNumberGenerator _rng = new();
-        sealed class Casing { public MeshInstance3D Node; public Vector3 Vel; public Vector3 Spin; public float Life; }
+        sealed class Casing { public MeshInstance3D Node; public Vector3 Vel; public Vector3 Spin; public float Life; public bool Bounced; }
 
         // ADS (aim down sights) — source: hold RMB to aim; blend over Aim_In_Duration with a
         // smootherstep-squared ease (UseableGun.GetInterpolatedAimAlpha). Eaglefire Aim_In_Duration = 0.25s.
@@ -1190,6 +1190,7 @@ namespace UnturnedGodot
         // retail's rate -- DON'T re-lerp/re-snap, that double-lerps and feels mushy, tinyclaw); we roll the arms root
         // by it. Source: PlayerAnimator.cs:1537 rolls player.first by lean*HumanAnimator.LEAN (=20deg). Stylistic tilt.
         public float LeanRoll;   // degrees of Z-roll to apply to the viewmodel this frame (0 upright)
+        public string CasingSurface = "general";   // PlayerController feeds the surface under the feet (metal/wood/sand/water/general) for the casing bounce bank
         public float ScopeZoom => _isScope && _scopeCam != null && Godot.GodotObject.IsInstanceValid(_scopeCam) ? 90f / _scopeCam.Fov : 0f;   // mounted scope's zoom (90/fov): aug=4, 8x=8, 16x=16... -> drives ADS-sens reduction
 
         public void SetShown(bool shown) { if (_layer != null) _layer.Visible = shown; }
@@ -1495,6 +1496,11 @@ namespace UnturnedGodot
                 c.Life += (float)delta;
                 c.Vel += Vector3.Down * 9.8f * (float)delta;
                 c.Node.GlobalPosition += c.Vel * (float)delta;
+                if (!c.Bounced && c.Life > 0.35f)   // the brass lands about a third of a second after ejection: retail bulletcasingbounce/<surface> (2D -- the local player's own casing)
+                {
+                    c.Bounced = true;
+                    GameAudio.Play2D(this, GameAudio.Pick("casings", CasingSurface), -12f, _rng.RandfRange(0.92f, 1.08f));
+                }
                 c.Node.RotateX(c.Spin.X * (float)delta);
                 c.Node.RotateY(c.Spin.Y * (float)delta);
                 c.Node.RotateZ(c.Spin.Z * (float)delta);

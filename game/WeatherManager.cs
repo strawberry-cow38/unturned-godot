@@ -118,6 +118,13 @@ namespace UnturnedGodot
                 var tp = ProjectSettings.GlobalizePath("res://content/" + tf[i]);
                 if (System.IO.File.Exists(tp)) { _thunderStreams[i] = AudioStreamWav.LoadFromFile(tp); anyThunder |= _thunderStreams[i] != null; }
             }
+            // + retail's own three lightning rumbles (effects/weather/lightning), ripped 2026-09-03 -- they join the pick pool
+            var rumbles = GameAudio.Bank("ambience", "thunder_lightning_strike_rumble");
+            if (rumbles.Length > 0)
+            {
+                var merged = new System.Collections.Generic.List<AudioStream>(); foreach (var t in _thunderStreams) if (t != null) merged.Add(t); merged.AddRange(rumbles);
+                _thunderStreams = merged.ToArray(); anyThunder = true;
+            }
             if (anyThunder)
             {
                 _thunderPool = new AudioStreamPlayer[4];
