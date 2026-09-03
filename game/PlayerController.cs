@@ -5107,8 +5107,12 @@ namespace UnturnedGodot
         public override void _EnterTree() => PlayerRegistry.Register(this);
         public override void _ExitTree() => PlayerRegistry.Unregister(this);
 
+        // UG_PERF=1: where the Player load phase goes ([playerprof]) -- strawberry 2026-09-03 loading optimizations
+        static readonly bool _loadProf = System.Environment.GetEnvironmentVariable("UG_PERF") == "1";
+        static double PpMs(long a, long b) => (b - a) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
         public override void _Ready()
         {
+            long _pp0 = System.Diagnostics.Stopwatch.GetTimestamp(), _ppA = 0, _ppB = 0, _ppC = 0, _ppD = 0, _ppE = 0, _ppF = 0;
             TickProxy.Attach(this, ProcessTick, PhysicsTick);   // PERF: see TickProxy -- the engine dispatches to a 2-method node instead of walking this class's ~360-method table 4x per frame
             SetProcess(false); SetPhysicsProcess(false);         // the proxy child owns the engine callbacks; the overrides below stay for DIRECT callers (tests drive the controller with p._Process(dt))
             AddToGroup("players");     // so vehicle explosions (+ future area effects) can find nearby players
@@ -5178,6 +5182,7 @@ namespace UnturnedGodot
             };
             AddChild(_lookHullViz);
 
+            _ppA = System.Diagnostics.Stopwatch.GetTimestamp();
             _body = RiggedCharacter.Build("res://content/rig.json", new Color(0.82f, 0.66f, 0.52f));   // live 3rd-person body
             if (_body != null)
             {
@@ -5196,6 +5201,7 @@ namespace UnturnedGodot
                 if (!NetAvatar) _body.PhysicsInterpolationMode = Node.PhysicsInterpolationModeEnum.Off;
                 CallDeferred(Node.MethodName.AddSibling, _body);
             }
+            _ppB = System.Diagnostics.Stopwatch.GetTimestamp();
             _viewmodel = new Viewmodel { GunName = _gunName };   // per-gun visuals
             AddChild(_viewmodel);
             ApplyGunToViewmodel();
@@ -5216,17 +5222,22 @@ namespace UnturnedGodot
             PopulateDemoInventory();
             // P4: dress the 3P body off the worn slots. The demo kit already wears Cargo Pants (209) + Alicepack (253);
             // add a starter shirt + hat, then Refresh() paints/attaches every worn slot so the player isn't bare skin.
+            _ppC = System.Diagnostics.Stopwatch.GetTimestamp();
             _clothing = new PlayerClothingController(_body, Inventory);
             ApplyDefaultOutfit();
+            _ppD = System.Diagnostics.Stopwatch.GetTimestamp();
             _invUI = new InventoryUI { Inv = Inventory, Player = this, Clothing = _clothing };   // P5: drop-to-slot equip drives the on-body visual through the same controller
             AddChild(_invUI);
             _noteReader = new NoteReader();   // F reads a looked-at lore note into this panel
             AddChild(_noteReader);
+            _ppE = System.Diagnostics.Stopwatch.GetTimestamp();
             _craftMenu = new CraftingMenu { Inv = Inventory, Player = this };
             AddChild(_craftMenu);
+            _ppF = System.Diagnostics.Stopwatch.GetTimestamp();
             _skillsUI = new SkillsUI { Player = this };
             AddChild(_skillsUI);
             _build = new BuildTool { Cam = _cam };
+            if (_loadProf) { long _ppZ = System.Diagnostics.Stopwatch.GetTimestamp(); GD.Print($"[playerprof] pre={PpMs(_pp0, _ppA):0} body(rig)={PpMs(_ppA, _ppB):0} viewmodel..clothing={PpMs(_ppB, _ppC):0} clothing={PpMs(_ppC, _ppD):0} invUI+notes={PpMs(_ppD, _ppE):0} craft={PpMs(_ppE, _ppF):0} skills+build={PpMs(_ppF, _ppZ):0}  total={PpMs(_pp0, _ppZ):0} ms"); }
             GetParent().AddChild(_build);   // structures live in the scene, not under the player
 
             if (CaptureMouse) Input.MouseMode = Input.MouseModeEnum.Captured;

@@ -22,6 +22,12 @@ namespace UnturnedGodot
         // Load cache: the launch WARMUP preloads every core (vanilla) mesh into here, so the world build reuses
         // them instead of re-parsing the .obj on first use (kills the first-use hitch). Keyed by absolute path.
         static readonly Dictionary<string, ArrayMesh> _cache = new();
+        static readonly Dictionary<ArrayMesh, Vector3[]> _faces = new();   // the loader's own triangle list (3 verts/tri) -> collision shapes without a GetFaces() readback
+        /// <summary>ConcavePolygonShape3D for a mesh this loader built, from the triangle list it already has in hand.
+        /// mesh.CreateTrimeshShape() re-derives the same array through GetFaces() (a surface read-back): 295 unique
+        /// props cost 658 ms of a PEI load that way. Falls back to the engine path for meshes it did not load.</summary>
+        public static Shape3D TrimeshShape(ArrayMesh m)
+            => m != null && _faces.TryGetValue(m, out var f) && f.Length >= 3 ? new ConcavePolygonShape3D { Data = f } : m?.CreateTrimeshShape();
 
         /// <summary>Forget a cached mesh so the next Load re-reads it from disk.
         ///
@@ -107,13 +113,15 @@ namespace UnturnedGodot
             if (outV.Count == 0) return null;
             var arr = new Godot.Collections.Array();
             arr.Resize((int)Mesh.ArrayType.Max);
-            arr[(int)Mesh.ArrayType.Vertex] = outV.ToArray();
+            var vArr = outV.ToArray();
+            arr[(int)Mesh.ArrayType.Vertex] = vArr;
             arr[(int)Mesh.ArrayType.Normal] = outN.ToArray();
             arr[(int)Mesh.ArrayType.TexUV] = outU.ToArray();
             arr[(int)Mesh.ArrayType.Color] = outC.ToArray();   // white unless the obj carried baked vertex colours
             var m = new ArrayMesh();
             m.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, arr);
             _cache[globalPath] = m;
+            _faces[m] = vArr;   // non-indexed triangles: exactly what GetFaces() would hand back
             return m;
         }
 

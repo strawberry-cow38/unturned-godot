@@ -642,9 +642,16 @@ namespace UnturnedGodot
                 ragdollCache[n] = rm;
                 return rm;
             }
+            long _objT = 0, _objMeshT = 0, _objShapeT = 0; int _objN = 0, _objMeshMiss = 0, _objShapeMiss = 0;   // UG_PERF buckets ([objprof])
             void PlaceObject(string[] p, string name, int destIndex)
             {
-                if (!cache.TryGetValue(name, out var mesh)) { mesh = ObjMesh.Load(dir + name + ".obj"); cache[name] = mesh; }
+                long _o0 = System.Diagnostics.Stopwatch.GetTimestamp();
+                PlaceObjectInner(p, name, destIndex);
+                _objT += System.Diagnostics.Stopwatch.GetTimestamp() - _o0; _objN++;
+            }
+            void PlaceObjectInner(string[] p, string name, int destIndex)
+            {
+                if (!cache.TryGetValue(name, out var mesh)) { long _m0 = System.Diagnostics.Stopwatch.GetTimestamp(); mesh = ObjMesh.Load(dir + name + ".obj"); cache[name] = mesh; _objMeshT += System.Diagnostics.Stopwatch.GetTimestamp() - _m0; _objMeshMiss++; }
                 if (mesh == null) return;
                 float px = F(p[1]), py = F(p[2]), pz = F(p[3]), ex = F(p[4]), ey = F(p[5]), ez = F(p[6]), sx = F(p[7]), sy = F(p[8]), sz = F(p[9]);
                 // MATERIAL-PALETTE variant: gen_placements rolls the per-instance material (LevelObject.GetMaterialOverride:
@@ -1163,8 +1170,10 @@ namespace UnturnedGodot
                         // Fix: a solid box matching the mesh's own AABB (1.15 x 0.15 x 6.75, both catalogue
                         // ladders share it) instead of the open-rung trimesh -- climbable end to end, not rung
                         // to rung.
-                        shp = Ladder.IsLadderProp(name) ? new BoxShape3D { Size = mesh.GetAabb().Size } : mesh.CreateTrimeshShape();
+                        long _s0 = System.Diagnostics.Stopwatch.GetTimestamp();
+                        shp = Ladder.IsLadderProp(name) ? new BoxShape3D { Size = mesh.GetAabb().Size } : ObjMesh.TrimeshShape(mesh);   // from the loader's triangle list, no GetFaces() read-back
                         shapeCache[name] = shp;
+                        _objShapeT += System.Diagnostics.Stopwatch.GetTimestamp() - _s0; _objShapeMiss++;
                     }
                     if (shp != null)
                     {
@@ -1370,6 +1379,7 @@ namespace UnturnedGodot
             {
                 // ROAD SPLINES: Environment/Paths.dat bezier road network (separate from the road props) -> extruded strips.
                 {
+                    if (_vehProf) { double _f = 1000.0 / System.Diagnostics.Stopwatch.Frequency; GD.Print($"[objprof] objects={_objN} total={_objT * _f:0} ms | mesh loads={_objMeshMiss} {_objMeshT * _f:0} ms | trimesh shapes={_objShapeMiss} {_objShapeT * _f:0} ms | rest(nodes+AddChild+specials)={(_objT - _objMeshT - _objShapeT) * _f:0} ms"); }
                     await Phase("Roads");
                     var rf = new RoadField { Terr = terr };
                     rf.LoadFromEnvironment(mapRoot + "/Environment");
@@ -1576,9 +1586,13 @@ namespace UnturnedGodot
                 { var _ox = System.Environment.GetEnvironmentVariable("UG_SPAWNX"); var _oz = System.Environment.GetEnvironmentVariable("UG_SPAWNZ");   // spawn at arbitrary godot XZ (e.g. a named location node) for town orbits
                   if (_ox != null && float.TryParse(_ox, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var _px)) sx = _px;
                   if (_oz != null && float.TryParse(_oz, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var _pz)) sz = _pz; }
+                long _pl0 = System.Diagnostics.Stopwatch.GetTimestamp();
                 CharacterModel.LoadBundled();
+                long _pl1 = System.Diagnostics.Stopwatch.GetTimestamp();
                 var player = new PlayerController { CaptureMouse = true };
+                long _pl2 = System.Diagnostics.Stopwatch.GetTimestamp();
                 root.AddChild(player);
+                if (_vehProf) { double _f = 1000.0 / System.Diagnostics.Stopwatch.Frequency; GD.Print($"[playerphase] LoadBundled={(_pl1 - _pl0) * _f:0} ctor={(_pl2 - _pl1) * _f:0} AddChild(_Ready)={(System.Diagnostics.Stopwatch.GetTimestamp() - _pl2) * _f:0} ms"); }
                 player.EquipUnarmed();   // spawn UNARMED (bare fists) -- pick items up to equip them (strawberry)
                 result.Player = player;   // UG_AUTOFIRE terrain-impact verification
                 player.LinkWorldLighting(sun, env);   // FP gun takes the world day/night sun + ambient -- was NEVER called in Drive PEI, so the gun ignored time-of-day (master saw "not applying at all")
