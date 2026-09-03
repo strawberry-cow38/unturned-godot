@@ -1865,6 +1865,22 @@ namespace UnturnedGodot
             _veh.Position = new Vector3(0f, 1.2f, 0f);   // drop onto the plane so the suspension settles
             AddChild(_veh);
 
+            // UG_VEHOCCUPANT=1 (+ UG_SEATIDX=N, default 0): drop a rigged body into a seat so a --vehicle= showcase
+            // actually shows where a body sits, not just the empty shell -- SeatBodyLocal is the exact placement
+            // PlayerController uses to seat a real driver/passenger (strawberry 2026-09-03: "theres still a lot of
+            // vehicle seating positions that arent accurate. fix them all").
+            if (System.Environment.GetEnvironmentVariable("UG_VEHOCCUPANT") == "1")
+            {
+                int seatIdx = int.TryParse(System.Environment.GetEnvironmentVariable("UG_SEATIDX"), out var si) ? si : 0;
+                var occ = RiggedCharacter.Build("res://content/rig.json", new Color(0.82f, 0.66f, 0.52f));
+                if (occ != null)
+                {
+                    AddChild(occ);
+                    occ.GlobalTransform = _veh.GlobalTransform * new Transform3D(Basis.Identity, _veh.SeatBodyLocal(seatIdx));
+                    occ.PlayLoop(occ.ClipLength("Idle_Sit") > 0f ? "Idle_Sit" : "Idle_Stand");
+                }
+            }
+
             if (_hitch && _veh.CanTow)   // --hitch: place a trailer with its kingpin under the cab's fifth-wheel, then couple (test the rig)
             {
                 var trailer = Vehicle.BuildByName("trailer");

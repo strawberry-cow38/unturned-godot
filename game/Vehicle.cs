@@ -2273,6 +2273,10 @@ namespace UnturnedGodot
 
             ["scoutcopter"] = new[] { new Vector3(-0.34f, 0.32f, 0.10f), new Vector3(0.34f, 0.32f, 0.10f) },
             ["tank"] = new[] { new Vector3(0.000f, 0.192f, -2.711f), new Vector3(0.000f, 0.000f, -0.000f) },   // tank: 2 seats, verbatim from the prefab
+            // OTTER was never actually in this table (the comment above describing its Z-negation fix documented a
+            // finding that never got wired in) -- it fell through to SeatOf's jeep-shaped default, a car seat height
+            // inside a floatplane cockpit. Verbatim retail Seat_0/Seat_1 (tools/vehicle_seats.json): tandem, both X=0.
+            ["otter"] = new[] { new Vector3(0.000f, 0.666f, -1.318f), new Vector3(0.000f, 0.666f, -0.504f) },
         };
         static Vector3 SeatOf(string name) => name switch
         {
@@ -2289,6 +2293,20 @@ namespace UnturnedGodot
             "Police" => new Vector3(-0.50f, 0.02f, -0.63f),
             _ => new Vector3(-0.50f, 0.10f, -0.024f),   // Jeep + fallback
         };
+        /// <summary>The 11 classes above (+ Jeep, which legitimately IS the fallback) that ever got an eyeballed
+        /// per-vehicle rise off their own extracted Seat_0. Everything else used to fall through to the SAME
+        /// switch -> the Jeep's absolute spot, not "a small rise on THIS vehicle's own seat": a Huey/APC/Tank/
+        /// boat/Otter/Semi driver sat at a car's seat coordinate regardless of that vehicle's own size or shape
+        /// (strawberry 2026-09-03: "theres still a lot of vehicle seating positions that arent accurate. fix them
+        /// all"). Mirrors the identical BuildByName/SpecFor gap fixed 2026-08-16 one level up (whole SPEC, not
+        /// just the seat) -- same shape of bug, in the sibling table nobody re-checked when that one was found.</summary>
+        static bool HandTunedSeatOf(string name) => name is "Sedan" or "Hatchback" or "Humvee" or "Roadster"
+            or "Bus" or "Quad" or "Ambulance" or "Firetruck" or "Tractor" or "Ural" or "Police" or "Jeep";
+        /// <summary>Average of the 11 hand-tuned deltas above against their own real Seat_0 (Y +0.04 to +0.10,
+        /// Z from -0.005 to +0.09 with no consistent sign -- not touching Z avoids guessing the wrong direction).
+        /// Applied to a vehicle's OWN real seat instead of borrowing Jeep's, this is a small forgiving nudge off
+        /// a correct base rather than a substitute for one.</summary>
+        static readonly Vector3 GenericSeatRise = new Vector3(0f, 0.08f, 0f);
 
         // Jeep.dat: Speed 12.5, steer 28, front-steered, torque 2.8. Godot space (front = -Z): X +-1.30, front Z -1.40.
         static readonly Spec _jeep = new()
@@ -2348,6 +2366,13 @@ namespace UnturnedGodot
                 (-1.28f, 0.55f,  3.70f, false), (1.28f, 0.55f,  3.70f, false),   // rear axle 2 (tandem, drive) -- moved back 3.5->3.7 (strawberry)
             },
             Parts = new (string, Color)[] { },   // Model_0 is the whole cab; no separate seat/steer/light parts
+            // No vehicle prefab to extract a Seats node from (Semi_0 is a repurposed static PROP, not one of the
+            // Bundles/Vehicles/* entries tools/dump_vehicle_seats.py scans) -- it fell through to SeatOf's jeep
+            // spot, seating the driver at a car's Y=0.10 inside a cab whose own floor sits at Y~1.5. Triangulated
+            // instead from geometry this Spec ALREADY authors for the same driver: X=-0.5 matches SteerPivot.X and
+            // DriverEye.X on every other vehicle's convention; Y/Z = SeatModel, the real ripped seat mesh's own
+            // placement, so the body sits ON the visible seat rather than at an unrelated vehicle's coordinate.
+            Seats = new[] { new Vector3(-0.5f, 2.2f, 0.3f) },
             FifthWheel = new Vector3(0f, 0.62f, 3.0f),   // over the rear tandem (moved back from 2.6 -> pivot sits further back on the cab, more trailer clearance). Y matched to the trailer kingpin's Y (0.62) so the coupled trailer rides LEVEL. (strawberry 2026-07-15)
         };
 
@@ -3492,7 +3517,7 @@ namespace UnturnedGodot
             Sound = "fighterjet_engine.ogg", IgnitionSound = "fighterjet_ignition.ogg", IdlePitch = 0.9f, MaxPitch = 1.7f, IdleVolume = 0.85f, MaxVolume = 1.0f,   // the REAL dedicated jet engine + ignition (from the prefab)
             Palette = "fighter_jet_body_tex.png", DefaultPaints = new[] { "#bcbcbc" },   // real .dat DefaultPaintColors = military grey; paintable panels + fixed tan/grey details
             Fuel = 1000f, Health = 800f, Name = "Fighter Jet",
-            Seats = new[] { new Vector3(0f, 0.55f, -4.30f) },   // driver seat IN the cockpit tub (master 2026-08-18)
+            Seats = new[] { new Vector3(0f, 0.05f, -4.053f) },   // verbatim retail Seat_0 (fighter_jet, tools/vehicle_seats.json) -- the hand-placed guess (master 2026-08-18) sat the pilot 0.5m too high
             DriverEye = new Vector3(0f, 1.58f, -4.50f),   // FP eye in the cockpit, under the canopy, looking out the windscreen (master 2026-08-18)
         };
         public static Vehicle BuildFighterJet(int variant = 0) => Build(_fighterjet, variant, "fighterjet");
@@ -3541,7 +3566,8 @@ namespace UnturnedGodot
         public static VehiclePuppet BuildPuppetByName(string name, int variant)
         {
             var s = SpecFor(name);
-            var p = new VehiclePuppet { SpecKey = name, SeatOffset = SeatOf(s.Name) };
+            var pSeatLocals = s.Seats ?? (SeatTable.TryGetValue(name, out var pst) ? pst : new[] { SeatOf(s.Name) });
+            var p = new VehiclePuppet { SpecKey = name, SeatOffset = HandTunedSeatOf(s.Name) ? SeatOf(s.Name) : pSeatLocals[0] + GenericSeatRise };
             // Opt the puppet OUT of Godot's global physics interpolation (project.godot physics_interpolation=true), like
             // the PlayerController shell does (PlayerController.cs:1674). VehicleReplicaView repositions the puppet every
             // _Process frame with its OWN manual glide/dead-reckoning; leaving Godot interp ON renders the puppet at its
@@ -4885,11 +4911,15 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             SetupDrivetrain(v, s);   // MUST run after the line above: it REPLACES _gears/_speedMax/_speedMin for a driven hull, and a trailer keeps the spec's
             v._idlePitch = s.IdlePitch; v._maxPitch = s.MaxPitch; v._idleVol = s.IdleVolume; v._maxVol = s.MaxVolume;
             v.FuelMax = v.Fuel = s.Fuel; v.FuelBurn = FuelBurnClassOf(s.Name);   // TANK = per-vehicle metric Spec.Fuel (1u=1mL) so cans<->vehicles share units; burn = per-class (PZ-scale, infFuel-masked)
-            v.HealthMax = v.Health = s.Health; v.Battery = BatteryMax; v.DisplayName = s.Name; v.SeatOffset = SeatOf(s.Name);
+            v.HealthMax = v.Health = s.Health; v.Battery = BatteryMax; v.DisplayName = s.Name;
             // Seats: the spec's own array if it has one, else the extracted table by spec key, else the single
-            // hand-tuned driver spot. The fallback matters -- semi and trailer have no bundle prefab to extract
-            // from, and a null here would crash every seat lookup rather than degrading to one seat.
-            v.SeatLocals = s.Seats ?? (SeatTable.TryGetValue(specKey, out var st) ? st : new[] { v.SeatOffset });
+            // hand-tuned driver spot. The fallback matters -- trailer has no bundle prefab to extract from, and a
+            // null here would crash every seat lookup rather than degrading to one seat.
+            v.SeatLocals = s.Seats ?? (SeatTable.TryGetValue(specKey, out var st) ? st : new[] { SeatOf(s.Name) });
+            // SeatOffset (the visible 3rd-person BODY spot -- SeatBodyLocal, PlayerController.cs) uses the eyeballed
+            // rise ONLY for the 11 classes it was actually tuned against; anyone else gets THEIR OWN real seat
+            // plus a small generic rise, not the Jeep's absolute coordinate wearing this vehicle's name.
+            v.SeatOffset = HandTunedSeatOf(s.Name) ? SeatOf(s.Name) : v.SeatLocals[0] + GenericSeatRise;
             v.AccessZones = BuildAccessZones(s, v.SeatLocals, s.BoxCenter, s.BoxSize);
             v.AccessBoxCenter = s.BoxCenter;   // the frame the zones were laid out in; a test needs it to know which way is 'outboard' of a given zone
 
