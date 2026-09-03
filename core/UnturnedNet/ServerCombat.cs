@@ -46,6 +46,10 @@ namespace UnturnedGodot.Net
         public int MagCapacity = 30;
         public int ReloadTicks = 82;            // 1.633 s Gun_Reload
         public float MaxAimOriginOffset = 3f;   // Fire.Origin must sit within this of the avatar (eye 1.75 + muzzle 0.4 + grain)
+        /// <summary>The asset this profile IS, e.g. "eaglefire" -- rides PlayerFiredEvent so other clients can
+        /// pick the right report and tracer. Lowercase [a-z0-9_] only; the receiving client refuses anything
+        /// else rather than opening it, because it lands in a res:// path.</summary>
+        public string AssetName = "eaglefire";
     }
 
     public sealed class ServerMeleeProfile
@@ -278,6 +282,11 @@ namespace UnturnedGodot.Net
                     Seq = cmd.Seq,
                     Gun = gun,
                 });
+            // EVERY OTHER CLIENT HEARS AND SEES THIS. Broadcast after the shot is ACCEPTED, so a rejected
+            // trigger pull (reloading, dry, rate-limited, out of range) cannot make a phantom crack across the
+            // map. Once per trigger pull, not once per pellet -- a shotgun is one report and one muzzle flash.
+            _broadcast(NetMessagePak.Pack(ReplicationIds.EventPlayerFired,
+                new PlayerFiredEvent { PlayerId = sender, Origin = cmd.Origin, Dir = dir, Gun = gun.AssetName }.Write));
             Diag.ShotsAccepted++;
         }
 

@@ -185,6 +185,15 @@ namespace UnturnedGodot
                 HitmarkerHUD.Instance?.Show(e.Headshot);   // the hitmarker now only ever tells the server's truth
                 GD.Print($"[combat] hit {(HitTargetKind)e.TargetKind} {e.TargetId} for {e.Damage:0}{(e.Headshot ? " HEADSHOT" : "")}{(e.Killed ? " -- KILLED" : "")}");
             };
+            // SOMEBODY ELSE FIRED. Skip our own shots: the local trigger pull already drew its own tracer and
+            // played its own report the instant it happened, and drawing the echo would double every shot.
+            Client.PlayerFired += e =>
+            {
+                if (e.PlayerId == Client.PlayerId) return;
+                if (Shell != null && IsInstanceValid(Shell))
+                    Shell.RemoteShotFx(new Vector3(e.Origin.x, e.Origin.y, e.Origin.z),
+                                       new Vector3(e.Dir.x, e.Dir.y, e.Dir.z), e.Gun);
+            };
             Client.ImpactFx += e =>
             {
                 if (Shell != null && IsInstanceValid(Shell))

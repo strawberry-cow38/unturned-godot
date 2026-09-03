@@ -169,6 +169,7 @@ namespace UnturnedGodot.Net
         public const byte EventObjectRestored = 33;    // destructible props: the Rubble_Reset respawn -- alive-bit back on by index
         public const byte EventDoorState = 34;         // SP/MP unify: a door's authoritative open+locked state (both bits, so a lock is visible to everyone rather than only to the server)
         public const byte EventBedClaimed = 35;        // SP/MP unify: a bed's owner changed (0 = released); the loser of a re-claim gets its own event
+        public const byte EventPlayerFired = 37;       // a gun WENT OFF: shooter, muzzle origin, direction, gun asset name. Nothing was broadcast on a shot at all before this, which is why another player's gunfire had no sound and drew no tracer on your screen (strawberry 2026-09-03 "network gun sounds, gun tracers"; the in-game report "I hear no gunshot sounds even when someone's shooting across the street from me"). Damage is NOT on this event -- the server already resolves that analytically and unicasts a hit confirm; this is purely what the shot LOOKS and SOUNDS like to everyone else.
         public const byte EventAvatarData = 36;        // the bytes behind an avatar hash, sent once per (peer, hash) on the reliable channel -- the snapshot carries only the hash, because a PNG per player per tick is not a snapshot
     }
 

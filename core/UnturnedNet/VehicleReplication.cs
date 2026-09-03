@@ -686,6 +686,57 @@ namespace UnturnedGodot.Net
         }
     }
 
+    /// <summary>One trigger pull, broadcast to everybody. Origin and direction are raw float32 because the
+    /// tracer is drawn from them and a quantised muzzle reads as a shot leaving the wrong part of the gun.
+    ///
+    /// GUN is an ASSET NAME rather than an id because the client resolves it exactly the way the NPC-turret
+    /// path already does -- res://content/{name}_shoot.ogg for the report, {name}.dat for the tracer width.
+    /// It is bounded and CHARACTER-VALIDATED on read: it is a string that arrives over the network and is
+    /// then interpolated into a file path, so anything but [a-z0-9_] is refused rather than opened.
+    ///
+    /// Every player currently fires the server's DefaultGun (per-gun profiles are the deferred equip seam,
+    /// ServerCombat.SetGunProfile has no callers), so today this always says "eaglefire". When that seam
+    /// lands the name starts being right on its own, with no second wire change.</summary>
+    public struct PlayerFiredEvent
+    {
+        public const int MaxGunNameLength = 32;
+        public ushort PlayerId;
+        public Vector3 Origin, Dir;
+        public string Gun;
+
+        public void Write(NetPakWriter w)
+        {
+            w.WriteUInt16(PlayerId);
+            w.WriteFloat(Origin.x); w.WriteFloat(Origin.y); w.WriteFloat(Origin.z);
+            w.WriteFloat(Dir.x); w.WriteFloat(Dir.y); w.WriteFloat(Dir.z);
+            string g = Gun ?? "";
+            if (g.Length > MaxGunNameLength) g = g.Substring(0, MaxGunNameLength);
+            w.WriteUInt8((byte)g.Length);
+            for (int i = 0; i < g.Length; i++) w.WriteUInt8((byte)g[i]);
+        }
+
+        public static bool TryRead(NetPakReader r, out PlayerFiredEvent evt)
+        {
+            evt = default;
+            if (!r.ReadUInt16(out ushort pid)) return false;
+            if (!r.ReadFloat(out float ox) || !r.ReadFloat(out float oy) || !r.ReadFloat(out float oz)) return false;
+            if (!r.ReadFloat(out float dx) || !r.ReadFloat(out float dy) || !r.ReadFloat(out float dz)) return false;
+            if (!r.ReadUInt8(out byte len)) return false;
+            if (len > MaxGunNameLength) return false;   // bounds BEFORE the allocation, as the avatar PNG does
+            var sb = new System.Text.StringBuilder(len);
+            for (int i = 0; i < len; i++)
+            {
+                if (!r.ReadUInt8(out byte c)) return false;
+                // The validated set, not a sanitise-after-match: this string becomes a res:// path.
+                bool ok = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_';
+                if (!ok) return false;
+                sb.Append((char)c);
+            }
+            evt = new PlayerFiredEvent { PlayerId = pid, Origin = new Vector3(ox, oy, oz), Dir = new Vector3(dx, dy, dz), Gun = sb.ToString() };
+            return true;
+        }
+    }
+
     public struct VehicleExitedEvent
     {
         public uint NetId;
