@@ -642,7 +642,7 @@ namespace UnturnedGodot
                 ragdollCache[n] = rm;
                 return rm;
             }
-            long _objT = 0, _objMeshT = 0, _objShapeT = 0; int _objN = 0, _objMeshMiss = 0, _objShapeMiss = 0;   // UG_PERF buckets ([objprof])
+            long _objT = 0, _objMeshT = 0, _objShapeT = 0, _objMiT = 0, _objBodyT = 0; int _objN = 0, _objMeshMiss = 0, _objShapeMiss = 0, _objBodies = 0;   // UG_PERF buckets ([objprof])
             void PlaceObject(string[] p, string name, int destIndex)
             {
                 long _o0 = System.Diagnostics.Stopwatch.GetTimestamp();
@@ -826,7 +826,7 @@ namespace UnturnedGodot
                 var mainMi = batched ? null : new MeshInstance3D { Mesh = visMesh, MaterialOverride = MatFor(matName), Transform = new Transform3D(basis, gpos),
                     CastShadow = isDecal ? GeometryInstance3D.ShadowCastingSetting.Off : GeometryInstance3D.ShadowCastingSetting.On,
                     VisibilityRangeEnd = cull, VisibilityRangeFadeMode = GeometryInstance3D.VisibilityRangeFadeModeEnum.Disabled };   // individual props already frustum-cull behind the player; add a distance cutoff (master)
-                if (mainMi != null) root.AddChild(mainMi);
+                if (mainMi != null) { long _mi0 = System.Diagnostics.Stopwatch.GetTimestamp(); root.AddChild(mainMi); _objMiT += System.Diagnostics.Stopwatch.GetTimestamp() - _mi0; }
                 // MESH LOD: retail ships lower-detail meshes (mean 55% fewer triangles, some 98%) that the port
                 // never extracted. Each level draws in its own distance band, LOD0 nearest, so a prop gets CHEAPER
                 // with distance instead of only vanishing at the end of one.
@@ -1185,6 +1185,7 @@ namespace UnturnedGodot
                         // Small props go on the see-through layer 6 (bullets/LOS pass through) PLUS bit8 = "solid to vehicles"
                         // so a car can't phase through a fence/hydrant/barrel (bit8 is NOT the trailer-ghost bit6, so towing
                         // still works). Large structures on layer 0 already stop vehicles via the base bit0 mask. (strawberry)
+                        long _b0 = System.Diagnostics.Stopwatch.GetTimestamp();
                         var body = new StaticBody3D { Transform = new Transform3D(basis, gpos), CollisionLayer = losBlocker ? 1u << 0 : (1u << 6) | (1u << 8) };
                         body.SetMeta(PlayerController.SurfMeta, (int)(fmesh != null ? PlayerController.Surf.Wood : PlayerController.Surf.Concrete));   // trees (have foliage) = wood impacts; buildings/props = concrete
                         // Climbable: the player's forward probe resolves a hit collider back to the prop through
@@ -1195,6 +1196,7 @@ namespace UnturnedGodot
                         // (GasPump.AddInteractionCollider), not this world-mesh collider -- so no tag here.
                         body.AddChild(new CollisionShape3D { Shape = shp });
                         root.AddChild(body);
+                        _objBodyT += System.Diagnostics.Stopwatch.GetTimestamp() - _b0; _objBodies++;
                         body.AddToGroup(ColliderBudget.Group);   // distance-streamed: 13.9k collision nodes is a third of the scene tree
                         body.SetMeta(ColliderBudget.RadiusMeta, cull);   // collision outlives the MESH, never less: a prop you can still see must still be shootable
                         destBody = body;   // the collider a server bullet/melee ray tags for destructible damage
@@ -1379,7 +1381,7 @@ namespace UnturnedGodot
             {
                 // ROAD SPLINES: Environment/Paths.dat bezier road network (separate from the road props) -> extruded strips.
                 {
-                    if (_vehProf) { double _f = 1000.0 / System.Diagnostics.Stopwatch.Frequency; GD.Print($"[objprof] objects={_objN} total={_objT * _f:0} ms | mesh loads={_objMeshMiss} {_objMeshT * _f:0} ms | trimesh shapes={_objShapeMiss} {_objShapeT * _f:0} ms | rest(nodes+AddChild+specials)={(_objT - _objMeshT - _objShapeT) * _f:0} ms"); }
+                    if (_vehProf) { double _f = 1000.0 / System.Diagnostics.Stopwatch.Frequency; GD.Print($"[objprof] objects={_objN} total={_objT * _f:0} ms | mesh loads={_objMeshMiss} {_objMeshT * _f:0} ms | trimesh shapes={_objShapeMiss} {_objShapeT * _f:0} ms | mesh AddChild={_objMiT * _f:0} ms | bodies={_objBodies} create+AddChild={_objBodyT * _f:0} ms | other={(_objT - _objMeshT - _objShapeT - _objMiT - _objBodyT) * _f:0} ms"); }
                     await Phase("Roads");
                     var rf = new RoadField { Terr = terr };
                     rf.LoadFromEnvironment(mapRoot + "/Environment");

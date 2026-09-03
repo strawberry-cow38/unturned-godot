@@ -46,9 +46,66 @@ namespace UnturnedGodot
         public static int CachedCount => _cache.Count;
         public static bool IsCached(string globalPath) => _cache.ContainsKey(globalPath);
 
+        // BINARY MESH CACHE (strawberry 2026-09-03 loading optimizations; disk over compute): 302 prop OBJs are text-parsed on
+        // every PEI load (~255 ms). The parsed arrays are written once to user://mesh_cache/<name>_<size>_<conv>.omb and read
+        // back as raw floats after that. Keyed by the OBJ's size + CONV so an edited/re-ripped file re-parses. Versioned.
+        const int BinVersion = 1;
+        static string BinPath(string globalPath)
+        {
+            long len = 0; try { len = new System.IO.FileInfo(globalPath).Length; } catch { }
+            return ProjectSettings.GlobalizePath($"user://mesh_cache/{System.IO.Path.GetFileNameWithoutExtension(globalPath)}_{len}_{CONV}.omb");
+        }
+        static ArrayMesh TryLoadBin(string globalPath, out Vector3[] faces)
+        {
+            faces = null;
+            string bp = BinPath(globalPath);
+            if (!System.IO.File.Exists(bp)) return null;
+            try
+            {
+                using var br = new System.IO.BinaryReader(new System.IO.BufferedStream(System.IO.File.OpenRead(bp), 1 << 16));
+                if (br.ReadInt32() != 0x424D4F31 || br.ReadInt32() != BinVersion) return null;   // "OMB1"
+                int n = br.ReadInt32(); if (n <= 0 || n % 3 != 0 || n > 4_000_000) return null;
+                var v = new Vector3[n]; var nr = new Vector3[n]; var uv = new Vector2[n]; var col = new Color[n];
+                for (int i = 0; i < n; i++) v[i] = new Vector3(br.ReadSingle(), br.ReadSingle(), br.ReadSingle());
+                for (int i = 0; i < n; i++) nr[i] = new Vector3(br.ReadSingle(), br.ReadSingle(), br.ReadSingle());
+                for (int i = 0; i < n; i++) uv[i] = new Vector2(br.ReadSingle(), br.ReadSingle());
+                bool hasCol = br.ReadBoolean();
+                if (hasCol) for (int i = 0; i < n; i++) col[i] = new Color(br.ReadSingle(), br.ReadSingle(), br.ReadSingle(), 1f);
+                else for (int i = 0; i < n; i++) col[i] = Colors.White;
+                if (br.ReadInt32() != 0x444E4521) return null;
+                var arr = new Godot.Collections.Array(); arr.Resize((int)Mesh.ArrayType.Max);
+                arr[(int)Mesh.ArrayType.Vertex] = v; arr[(int)Mesh.ArrayType.Normal] = nr; arr[(int)Mesh.ArrayType.TexUV] = uv; arr[(int)Mesh.ArrayType.Color] = col;
+                var m = new ArrayMesh(); m.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, arr);
+                faces = v; return m;
+            }
+            catch (System.Exception e) { GD.PushWarning($"[objmesh] bad mesh cache {bp}: {e.Message}"); return null; }
+        }
+        static void TrySaveBin(string globalPath, Vector3[] v, Vector3[] nr, Vector2[] uv, Color[] col)
+        {
+            try
+            {
+                string bp = BinPath(globalPath);
+                System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(bp));
+                bool hasCol = false; foreach (var c in col) if (c != Colors.White) { hasCol = true; break; }
+                using var bw = new System.IO.BinaryWriter(new System.IO.BufferedStream(System.IO.File.Create(bp), 1 << 16));
+                bw.Write(0x424D4F31); bw.Write(BinVersion); bw.Write(v.Length);
+                foreach (var p in v) { bw.Write(p.X); bw.Write(p.Y); bw.Write(p.Z); }
+                foreach (var p in nr) { bw.Write(p.X); bw.Write(p.Y); bw.Write(p.Z); }
+                foreach (var p in uv) { bw.Write(p.X); bw.Write(p.Y); }
+                bw.Write(hasCol); if (hasCol) foreach (var c in col) { bw.Write(c.R); bw.Write(c.G); bw.Write(c.B); }
+                bw.Write(0x444E4521);
+            }
+            catch (System.Exception e) { GD.PushWarning($"[objmesh] could not write mesh cache: {e.Message}"); }
+        }
+
         public static ArrayMesh Load(string globalPath)
         {
             if (_cache.TryGetValue(globalPath, out var hit)) return hit;
+            if (System.IO.File.Exists(globalPath))
+            {
+                var bin = TryLoadBin(globalPath, out var bfaces);
+                if (bin != null) { _cache[globalPath] = bin; _faces[bin] = bfaces; return bin; }
+            }
             var pos = new List<Vector3>();
             var col = new List<Color>();   // optional per-vertex colour: "v x y z r g b" (billboard ad geometry baked from its palette)
             var nrm = new List<Vector3>();
@@ -113,11 +170,12 @@ namespace UnturnedGodot
             if (outV.Count == 0) return null;
             var arr = new Godot.Collections.Array();
             arr.Resize((int)Mesh.ArrayType.Max);
-            var vArr = outV.ToArray();
+            var vArr = outV.ToArray(); var nArr = outN.ToArray(); var uArr = outU.ToArray(); var cArr = outC.ToArray();
             arr[(int)Mesh.ArrayType.Vertex] = vArr;
-            arr[(int)Mesh.ArrayType.Normal] = outN.ToArray();
-            arr[(int)Mesh.ArrayType.TexUV] = outU.ToArray();
-            arr[(int)Mesh.ArrayType.Color] = outC.ToArray();   // white unless the obj carried baked vertex colours
+            arr[(int)Mesh.ArrayType.Normal] = nArr;
+            arr[(int)Mesh.ArrayType.TexUV] = uArr;
+            arr[(int)Mesh.ArrayType.Color] = cArr;   // white unless the obj carried baked vertex colours
+            TrySaveBin(globalPath, vArr, nArr, uArr, cArr);   // next load reads the arrays instead of re-parsing the text
             var m = new ArrayMesh();
             m.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, arr);
             _cache[globalPath] = m;
