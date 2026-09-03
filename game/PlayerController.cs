@@ -4606,6 +4606,26 @@ namespace UnturnedGodot
             Health -= amount;
             if (amount > 1f) { Bleeding = true; _bleedTimer = 5.0; }   // show the bleeding status icon after a real hit
 
+            ShowHurtCosmetics(amount, fromPos);
+            if (Health <= 0f) { Deaths++; Die(); }
+        }
+
+        /// <summary>The PlayerHurt wire handler for a REAL MP client (ClientWorldSession) -- this player's own
+        /// Health is server-owned there, so the only local work on a hit is the cosmetics: TakeDamage's HP path
+        /// is deliberately unreachable on a NetAvatar, but ShowHurtCosmetics never was HP work in the first
+        /// place. `sourcePos` is null when the server had no source to give (fall damage, starvation, an
+        /// unattributed blast) -- ShowHurtCosmetics already treats a null fromPos as "flash and flinch, no
+        /// direction shown", the same graceful degradation TakeDamage's local callers get.</summary>
+        public void NetHurt(float damage, Vector3? sourcePos) => ShowHurtCosmetics(damage, sourcePos);
+
+        /// <summary>Flash + flinch + the directional hurt indicator, split out of TakeDamage so a REAL MP client
+        /// can play them without going through TakeDamage's HP path -- that path is deliberately gated
+        /// invulnerable on a server-owned NetAvatar (C2: an unreplicated local death would desync everyone
+        /// else), so before this a hurt MP player got no feedback at all, only their Health ticking down on the
+        /// next snapshot. See PlayerHurtEvent for the wire side. Called from TakeDamage for SP/loopback and
+        /// from the PlayerHurt wire handler for a joined client -- one method, so the two paths cannot drift.</summary>
+        void ShowHurtCosmetics(float amount, Vector3? fromPos)
+        {
             // Hurt flash — PlayerLifeUI.onDamaged -> PlayerUI.pain: a red full-screen overlay whose alpha is
             // Clamp(damage/40, 0, 1) * 0.75, but only for a real hit (source gates it on damage > 5).
             if (amount > 5f) PainAlpha = Mathf.Clamp(amount / 40f, 0f, 1f) * 0.75f;
@@ -4623,10 +4643,17 @@ namespace UnturnedGodot
                     float deg = Mathf.Min(amount, 25f) * 0.5f;
                     if (localAxis.IsFinite())   // a degenerate cam basis could NaN the axis -> skip rather than poison _flinch
                         _flinch = (_flinch * new Quaternion(localAxis, Mathf.DegToRad(deg))).Normalized();
+
+                    // strawberry 2026-09-03: "add directional visual hit feedback when you get hurt by something".
+                    // Inside the SAME length check the flinch used, so both effects are gated identically and
+                    // directly overhead/underfoot shows neither rather than pointing at an arbitrary direction.
+                    // -dir, NOT dir: `dir` is attacker->me (what the flinch kicks AWAY from), but a "which way
+                    // do I turn to face the threat" indicator wants the opposite vector, me->attacker. Caught by
+                    // comparing a render against a logged bearing (DevConsole's hurttest) rather than by eye --
+                    // passing `dir` unmodified put every mark 180 degrees from where it belonged.
+                    _hurtHud?.Show(-dir.Normalized(), amount);
                 }
             }
-
-            if (Health <= 0f) { Deaths++; Die(); }
         }
 
         // (a door has no ToggleFocusedDoor helper any more: F on a door starts a hold, so the TAP fires from
@@ -7063,6 +7090,7 @@ namespace UnturnedGodot
         }
 
         public HUD Hud;   // set by the scene builder; the vehicle status box binds to the driven vehicle on enter/exit
+        HurtDirectionIndicator _hurtHud => Hud?.HurtIndicator;   // resolved through Hud rather than cached: Hud can be assigned after Die()/ShowHurtCosmetics have already run once in some construction orders
         public SDG.Unturned.PlayerSkills Skills { get; } = new();   // the player's skills/XP (source PlayerSkills); gates crafting, boosts farming, etc.
 
         // MP Part A: driving a client-local predicted vehicle (ClientWorldSession built it) -- gates the

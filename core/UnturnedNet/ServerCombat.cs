@@ -430,7 +430,9 @@ namespace UnturnedGodot.Net
                         {
                             float mult = hitRelY >= hitHeadMin ? b.Gun.HeadMult : (hitRelY >= hitTorsoMin ? b.Gun.TorsoMult : b.Gun.LegMult);
                             float dmg = b.Gun.PlayerDamage * mult;
-                            ApplyPlayerDamage(hitPlayer, dmg, b.Shooter, tick, out bool killed);
+                            // b.Pos, not the impact point: the indicator has to say which way to turn and face
+                            // the shooter, not mark where the bullet happened to end its flight.
+                            ApplyPlayerDamage(hitPlayer, dmg, b.Shooter, tick, out bool killed, sourcePos: b.Pos);
                             SendHitConfirm(b.Shooter, b.Seq, HitTargetKind.Player, hitPlayer, dmg, killed, hitRelY >= hitHeadMin);
                             BroadcastImpact(point, ImpactSurface.Flesh);
                             Diag.BulletHitsPlayer++;
@@ -537,7 +539,7 @@ namespace UnturnedGodot.Net
                 else if (bestPlayer != 0)
                 {
                     float dmg = DefaultMelee.PlayerDamage * mult;
-                    ApplyPlayerDamage(bestPlayer, dmg, pm.Attacker, tick, out bool killed);
+                    ApplyPlayerDamage(bestPlayer, dmg, pm.Attacker, tick, out bool killed, sourcePos: ape.Pos);
                     SendHitConfirm(pm.Attacker, pm.Seq, HitTargetKind.Player, bestPlayer, dmg, killed, false);
                 }
                 else if (WorldRay != null)
@@ -606,7 +608,7 @@ namespace UnturnedGodot.Net
                     float pr = (pe.Pos - g.Pos).magnitude;
                     if (pr > prof.Radius || Blocked(g.Pos, pe.Pos)) continue;
                     float dmg = ExplosionMath.Squared(prof.PlayerDamage, pr, prof.Radius);   // players: SQUARED falloff (Player.cs:1975); thrower included
-                    if (dmg > 0f) ApplyPlayerDamage(pe.OwnerPlayerId, dmg, g.Owner, tick, out _);
+                    if (dmg > 0f) ApplyPlayerDamage(pe.OwnerPlayerId, dmg, g.Owner, tick, out _, sourcePos: g.Pos);   // the BLAST is the source, not the thrower -- right even after they have moved away or the frag was theirs
                 }
             var evt = new GrenadeExplodedEvent { Pos = g.Pos, Radius = prof.Radius };
             _broadcast(NetMessagePak.Pack(ReplicationIds.EventGrenadeExploded, evt.Write));
@@ -620,12 +622,23 @@ namespace UnturnedGodot.Net
         }
 
         void ApplyPlayerDamage(ushort victim, float damage, ushort attacker, long tick, out bool killed)
+            => ApplyPlayerDamage(victim, damage, attacker, tick, out killed, sourcePos: null);
+
+        /// <summary>The single player-damage path (bullets, melee, grenades, and everything queued through
+        /// DamagePlayerExternal). <paramref name="sourcePos"/> is optional and purely cosmetic -- it feeds only
+        /// the victim's directional hurt indicator (PlayerHurtEvent) and touches no HP math, so a caller with
+        /// nothing to point at (fall, OOB, starvation, a deadzone) can safely omit it rather than guess one.</summary>
+        void ApplyPlayerDamage(ushort victim, float damage, ushort attacker, long tick, out bool killed, Vector3? sourcePos)
         {
             killed = false;
             if (!_state.TryGet(victim, out var cs) || !cs.Alive) return;
             cs.HealthExact -= damage;
             cs.Health = (byte)Math.Clamp((int)Math.Ceiling(cs.HealthExact), 0, 100);
             _state.MarkDirty(cs, tick);
+            // Sent even on a killing blow (the death screen still shows where the last hit came from), so this
+            // runs BEFORE the early-return below rather than being folded into the survive-only path.
+            var hurt = new PlayerHurtEvent { Damage = damage, HasSource = sourcePos.HasValue, SourcePos = sourcePos ?? Vector3.zero };
+            _sendTo(victim, NetMessagePak.Pack(ReplicationIds.EventPlayerHurt, hurt.Write));
             if (cs.HealthExact > 0f) return;
 
             killed = true;

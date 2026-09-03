@@ -207,6 +207,46 @@ namespace UnturnedGodot.Net
         }
     }
 
+    /// <summary>To the VICTIM only, on any real hit (unlike HitConfirm, which goes to the shooter): says how much
+    /// damage landed and, when a source position exists, WHERE it came from -- for the directional hurt
+    /// indicator (master 2026-09-03: "add directional visual hit feedback when you get hurt by something").
+    ///
+    /// Before this there was NOTHING here at all. TakeDamage's flinch/PainAlpha already existed and are
+    /// source-exact, but a real MP client's own body is a server-owned NetAvatar -- TakeDamage is gated
+    /// invulnerable on it by design (C2: an unreplicated local death would desync every other client) -- so a
+    /// hurt player learned they were hit only by watching their replicated Health tick down on the next
+    /// snapshot. No flash, no flinch, no direction, nothing. This event is what TakeDamage's fromPos parameter
+    /// always wanted to be fed over the wire; every player-damaging call in-process (fall, explosion, OOB) has
+    /// always been able to pass it and never has, because there was nowhere for a NETWORKED hit to arrive from.
+    ///
+    /// HasSource is its own bit rather than a magic zero vector: fall damage, OOB and starvation have no
+    /// attacker to point at, and a directional indicator that quietly pointed at (0,0,0) would read as "the
+    /// floor did this to you" -- worse than showing nothing.</summary>
+    public struct PlayerHurtEvent
+    {
+        public float Damage;
+        public bool HasSource;
+        public Vector3 SourcePos;   // meaningful only when HasSource
+
+        public void Write(NetPakWriter w)
+        {
+            NetWire.WriteDamage(w, Damage);
+            w.WriteBit(HasSource);
+            if (HasSource) NetWire.WritePos(w, SourcePos);
+        }
+
+        public static bool TryRead(NetPakReader r, out PlayerHurtEvent evt)
+        {
+            evt = default;
+            if (!NetWire.ReadDamage(r, out float dmg)) return false;
+            if (!r.ReadBit(out bool hasSource)) return false;
+            Vector3 pos = Vector3.zero;
+            if (hasSource && !NetWire.ReadPos(r, out pos)) return false;
+            evt = new PlayerHurtEvent { Damage = dmg, HasSource = hasSource, SourcePos = pos };
+            return true;
+        }
+    }
+
     public enum ImpactSurface : byte { Flesh = 0, World = 1 }
 
     /// <summary>Broadcast: a bullet ended somewhere -- clients spawn the impact fx (decal/dust/blood) locally.</summary>
