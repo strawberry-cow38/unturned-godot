@@ -61,16 +61,27 @@ namespace UnturnedGodot
             // alarm's own check falls back to GetViewport().GetCamera3D(), which is null on a dedicated
             // server -- so the machine that owns every car could never set one off, and a listen-server host
             // only ever triggered on HIS own proximity. This is the whole population, on both.
-            Vehicle.AlarmProximityTest = pos =>
+            //
+            // AND IT IS CLEARED WHEN THIS HOST GOES AWAY. It is a static holding a lambda that captures
+            // _server, so leaving it set outlives the server it belongs to: the next world in the same
+            // process -- which is every L1 run after the first -- would answer proximity out of a dead
+            // session's player list. That is the leaked-global shape, and it is silent, because a stale
+            // answer is still an answer.
+            var owner = host;
+            Vehicle.AlarmProximityTest = Proximity;
+            if (owner != null)
+                owner.TreeExiting += () => { if (Vehicle.AlarmProximityTest == Proximity) Vehicle.AlarmProximityTest = null; };
+        }
+
+        bool Proximity(Vector3 pos)
+        {
+            var u = ToU(pos);
+            foreach (var pe in _server.Players.All)
             {
-                var u = ToU(pos);
-                foreach (var pe in _server.Players.All)
-                {
-                    float dx = pe.Pos.x - u.x, dy = pe.Pos.y - u.y, dz = pe.Pos.z - u.z;
-                    if (dx * dx + dy * dy + dz * dz < Vehicle.AlarmRadiusSq) return true;
-                }
-                return false;
-            };
+                float dx = pe.Pos.x - u.x, dy = pe.Pos.y - u.y, dz = pe.Pos.z - u.z;
+                if (dx * dx + dy * dy + dz * dz < Vehicle.AlarmRadiusSq) return true;
+            }
+            return false;
         }
 
         /// <summary>B11 server-side reach: the requester must be near BOTH vehicles being roped. The client aims

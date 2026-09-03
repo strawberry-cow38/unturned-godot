@@ -430,6 +430,10 @@ namespace UnturnedGodot.Net
         void SpillStorage(uint netId, DeployableNetDef def, Vector3 at)
         {
             if (def == null || def.StorageWidth == 0) return;
+            // CLOSE FIRST. A player with this container open holds the live grid in his own STORAGE page;
+            // crate.Storage is only brought up to date when he is closed out of it. Reading before closing
+            // spills a stale snapshot and drops whatever he had just moved in.
+            _inventories.ServerCloseCrateViewers(netId, _tick());
             if (_inventories.TryGetCrate(netId, out var crate))
             {
                 int n = 0;

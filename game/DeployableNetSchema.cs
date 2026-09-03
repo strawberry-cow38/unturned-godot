@@ -42,10 +42,12 @@ namespace UnturnedGodot
                     // Deployable.Salvage yields 2x Metal Scrap (67); a ShatterOnDeath def leaves no wreck to salvage
                     SalvageItemId = def.ShatterOnDeath ? (ushort)0 : (ushort)67,
                     SalvageCount = def.ShatterOnDeath ? (byte)0 : (byte)2,
-                    // The fridge's own grid, matching Refrigerator.Spawn's defaults -- the client materializes
-                    // the crate at these dimensions and the server registers the authoritative one at them.
-                    StorageWidth = def.IsStorage ? (byte)5 : (byte)0,
-                    StorageHeight = def.IsStorage ? (byte)4 : (byte)0,
+                    // The fridge's own grid, from Refrigerator's constants rather than repeated here: the
+                    // server registers the authoritative crate at these dimensions and the client
+                    // materializes the visible one at the same, so a literal in two places is a silent
+                    // desync waiting for someone to change one of them.
+                    StorageWidth = def.IsStorage ? Refrigerator.GridW : (byte)0,
+                    StorageHeight = def.IsStorage ? Refrigerator.GridH : (byte)0,
                 });
             }
         }

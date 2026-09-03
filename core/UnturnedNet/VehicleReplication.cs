@@ -772,6 +772,10 @@ namespace UnturnedGodot.Net
         }
     }
 
+    // NOTE ON ITS HOME: this is a PLAYER event living in the vehicle file, next to the other event structs
+    // rather than beside its id in PlayerReplication. Left where it is on purpose -- every event struct in
+    // the project is in this file, and one of them being somewhere else is worse than all of them being in
+    // a file whose name no longer describes it.
     /// <summary>One trigger pull, broadcast to everybody. Origin and direction are raw float32 because the
     /// tracer is drawn from them and a quantised muzzle reads as a shot leaving the wrong part of the gun.
     ///
@@ -903,6 +907,10 @@ namespace UnturnedGodot.Net
         readonly Action<ushort, byte[]> _sendTo;   // Part A: recov is a driver-unicast reliable event
 
         readonly Dictionary<ushort, uint> _drivenByPlayer = new Dictionary<ushort, uint>();
+        /// <summary>Which seat each player is in. Kept SEPARATE from _drivenByPlayer, which stays driver-only
+        /// because it is what gates the vehicle's client-authority window -- a passenger must never appear in
+        /// it, or he would be allowed to report the car's transform.</summary>
+        readonly Dictionary<ushort, (uint NetId, int Seat)> _seatByPlayer = new Dictionary<ushort, (uint, int)>();
 
         /// <summary>The raw (unquantized) driver-reported state the server last ADOPTED -- what
         /// VehicleNetSync teleports the held node to each tick (game-side), engine-free here.</summary>
@@ -1128,9 +1136,6 @@ namespace UnturnedGodot.Net
             _broadcast(NetMessagePak.Pack(ReplicationIds.EventVehicleEntered, evt.Write));
         }
 
-        // Which seat each player is in. Separate from _drivenByPlayer, which stays DRIVER-only because it
-        // gates the client-authority window.
-        readonly Dictionary<ushort, (uint NetId, int Seat)> _seatByPlayer = new();
 
         /// <summary>Free the seat: clears occupancy + input, teleports the (remote) player's entity beside
         /// the driver door (the SP exit spot: vehicle pos + right * 2.4 + up), broadcasts the fact.
