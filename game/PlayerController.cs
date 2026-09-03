@@ -4934,6 +4934,7 @@ namespace UnturnedGodot
         public override void _Ready()
         {
             TickProxy.Attach(this, ProcessTick, PhysicsTick);   // PERF: see TickProxy -- the engine dispatches to a 2-method node instead of walking this class's ~360-method table 4x per frame
+            SetProcess(false); SetPhysicsProcess(false);         // the proxy child owns the engine callbacks; the overrides below stay for DIRECT callers (tests drive the controller with p._Process(dt))
             AddToGroup("players");     // so vehicle explosions (+ future area effects) can find nearby players
             // AN NPC HIND'S ROUNDS GO THROUGH THE REAL BULLET SYSTEM. NpcHeli raises a delegate rather than
             // calling in directly, so the AI does not have to know how a shot is drawn or resolved -- it gets
@@ -6518,6 +6519,11 @@ namespace UnturnedGodot
             RenderingServer.GlobalShaderParameterSet(GrassDisplacers.CountParam, cnt);
         }
 
+        // Kept as real overrides so direct calls keep working (NetTests: `p._Process(0.016)` steps the ride cam synchronously);
+        // the engine never invokes them because _Ready turns processing off on this node (the TickProxy child ticks it).
+        // Dropping the overrides silently turned those calls into Node's empty base method -> net.ride_freelook regressed.
+        public override void _Process(double delta) => ProcessTick(delta);
+        public override void _PhysicsProcess(double delta) => PhysicsTick(delta);
         public void ProcessTick(double delta)   // PERF: engine callback taken by a TickProxy child (see TickProxy); body unchanged
         {
             if (NetAvatar) return;   // per-frame work is all client-side (render interp, look focus, recoil drain, cam) -- none of it on a server avatar

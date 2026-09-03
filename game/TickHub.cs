@@ -19,7 +19,12 @@ namespace UnturnedGodot
             if (_inst != null && GodotObject.IsInstanceValid(_inst)) return;
             var tree = any.GetTree();
             if (tree == null) return;
-            _inst = new TickHub { Name = "TickHub" };
+            // ORDER: the swarms used to take their own callbacks in tree order, which put every vehicle (spawned by the
+            // world build) BEFORE the player. Ticked from a hub that sits after Main's subtree they ran after the player's
+            // step, so anything reading a vehicle transform in the player's tick (the ride cam, seated puppets) saw last
+            // step's value for a frame -- net.ride_freelook caught it (tinyclaw, 2026-09-03). A negative priority runs the
+            // hub ahead of every default-priority node, restoring "vehicles first".
+            _inst = new TickHub { Name = "TickHub", ProcessPhysicsPriority = -10, ProcessPriority = -10 };
             tree.Root.CallDeferred(Node.MethodName.AddChild, _inst);
         }
         // Generic registrations: any node hands the hub a tick delegate + a rate. Ticked from _Process at most `hz`
