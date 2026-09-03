@@ -59,6 +59,7 @@ namespace UnturnedGodot
 
         public override void _Ready()
         {
+            TickHub.AddProcess(this, HubProcess); SetProcess(false);   // PERF: hub-ticked (see TickHub.AddProcess)
             _vp = new SubViewport
             {
                 World3D = GetViewport().World3D,           // share the main scene so the mask cam sees the real items
@@ -82,7 +83,8 @@ namespace UnturnedGodot
             canvas.AddChild(_tr);
         }
 
-        public override void _Process(double delta)
+        public override void _Process(double delta) => HubProcess(delta);   // forwarder for direct callers; the engine's callback is off (SetProcess(false) in _Ready) -- TickHub ticks HubProcess
+        public void HubProcess(double delta)
         {
             var cam = GetViewport().GetCamera3D();
             if (cam == null) return;

@@ -28,6 +28,7 @@ namespace UnturnedGodot
 
         public override void _Ready()
         {
+            TickHub.AddProcess(this, HubProcess); SetProcess(false);   // PERF: hub-ticked (see TickHub.AddProcess)
             Layer = 58;
             Visible = false;
 
@@ -470,7 +471,8 @@ namespace UnturnedGodot
             RebuildRings();   // the bag changed under the rings whenever anything is attached or detached
         }
 
-        public override void _Process(double delta)
+        public override void _Process(double delta) => HubProcess(delta);   // forwarder for direct callers; the engine's callback is off (SetProcess(false) in _Ready) -- TickHub ticks HubProcess
+        public void HubProcess(double delta)
         {
             if (!Visible || VM == null) return;
             foreach (var slot in Slots)   // follow the gun: reposition each icon on its projected hook every frame

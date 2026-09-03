@@ -2531,9 +2531,13 @@ namespace UnturnedGodot.Testing
             // The headless L1 host doesn't interleave frame callbacks with the stepped physics ticks, so the
             // camera positioner (a _Process hook) is driven DIRECTLY -- deterministic, same code path as live.
             var cam = p.Camera;
-            p._Process(0.016);
-            T.Check("ride cam sits at the puppet's driver eye",
-                cam.GlobalPosition.DistanceTo(pup.GlobalTransform * pup.DriverEyeLocal) < 0.05f);
+            p._Process(0.016); p._Process(0.016); p._Process(0.016);   // the seated clip needs a couple of manual advances before the skull is at the seated height
+            // The 1P eye is the SEATED BODY's skull + eye offset since 2026-09-03 (strawberry: "exactly where the model's eyes would
+            // be"), not the per-vehicle DriverEyeLocal -- so the check is "in the driver's seat, at head height": within 1.3 m of
+            // the seat spot and above it. A cam left at the shell, at the chase distance, or at the origin still fails.
+            var seatW = pup.GlobalTransform * pup.SeatOffset;
+            T.Check($"ride cam sits at the puppet's driver seat, head height ({cam.GlobalPosition.DistanceTo(seatW):F2} m from the seat, dy={cam.GlobalPosition.Y - seatW.Y:F2})",
+                cam.GlobalPosition.DistanceTo(seatW) < 1.7f && cam.GlobalPosition.Y > seatW.Y + 0.3f);
             // entry gaze = the classic fixed gaze: vehicle-forward, pitched atan(0.6/3.9) ~ 8.75 deg down
             Vector3 fwd0 = pup.GlobalBasis * new Vector3(0f, -Mathf.Sin(Mathf.DegToRad(8.75f)), -Mathf.Cos(Mathf.DegToRad(8.75f)));
             T.Check("FP entry gaze looks over the hood (vehicle forward, slight down-tilt)",

@@ -83,6 +83,7 @@ namespace UnturnedGodot
 
         public override void _Ready()
         {
+            TickHub.AddProcess(this, HubProcess); SetProcess(false);   // PERF: hub-ticked (see TickHub.AddProcess)
             Current = this;
             AddToGroup("weather");   // the dev console finds it here
             _rng.Randomize();
@@ -166,7 +167,8 @@ namespace UnturnedGodot
         }
         float _shelterTarget = 1f;
 
-        public override void _Process(double delta)
+        public override void _Process(double delta) => HubProcess(delta);   // forwarder for direct callers; the engine's callback is off (SetProcess(false) in _Ready) -- TickHub ticks HubProcess
+        public void HubProcess(double delta)
         {
             if (Sim == null) return;
             // weather rides the same clock as the day/night cycle, so `timeSpeed` speeds the sky AND the weather

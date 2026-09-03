@@ -25,6 +25,7 @@ namespace UnturnedGodot
     // player is a handful per second and zero when standing still.
     public partial class ColliderBudget : Node
     {
+        public override void _Ready() { TickHub.AddProcess(this, HubProcess); SetProcess(false); }   // PERF: hub-ticked (see TickHub.AddProcess)
         public const string Group = "collbudget";
 
         /// <summary>Per-body collision radius, written by whoever builds the collider: the prop's own RENDER
@@ -109,7 +110,8 @@ namespace UnturnedGodot
 
         float _settle;
 
-        public override void _Process(double delta)
+        public override void _Process(double delta) => HubProcess(delta);   // forwarder for direct callers; the engine's callback is off (SetProcess(false) in _Ready) -- TickHub ticks HubProcess
+        public void HubProcess(double delta)
         {
             if (Disabled) return;
             // Build LAZILY. Both world-build paths are async, so a Build() call placed after them in source

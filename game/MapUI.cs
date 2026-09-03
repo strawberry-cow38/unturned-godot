@@ -34,6 +34,7 @@ namespace UnturnedGodot
 
         public override void _Ready()
         {
+            TickHub.AddProcess(this, HubProcess); SetProcess(false);   // PERF: hub-ticked (see TickHub.AddProcess)
             Layer = 90;   // under the F1 console (100)
             _root = new Control { Visible = false, MouseFilter = Control.MouseFilterEnum.Stop };   // eat clicks so the map doesn't shoot the gun underneath
             _root.SetAnchorsPreset(Control.LayoutPreset.FullRect);
@@ -105,7 +106,8 @@ namespace UnturnedGodot
             _coord.Position = new Vector2(_map.Position.X, _map.Position.Y - 24f);
         }
 
-        public override void _Process(double delta)
+        public override void _Process(double delta) => HubProcess(delta);   // forwarder for direct callers; the engine's callback is off (SetProcess(false) in _Ready) -- TickHub ticks HubProcess
+        public void HubProcess(double delta)
         {
             if (!_root.Visible || Player == null) return;
             var pos = Player.GlobalPosition;

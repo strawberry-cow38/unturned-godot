@@ -24,6 +24,7 @@ namespace UnturnedGodot
 
         public override void _Ready()
         {
+            TickHub.AddProcess(this, HubProcess); SetProcess(false);   // PERF: hub-ticked (see TickHub.AddProcess)
             int idx = AudioServer.BusCount;
             AudioServer.AddBus(idx);
             AudioServer.SetBusName(idx, "Rain");
@@ -53,7 +54,8 @@ namespace UnturnedGodot
             return new AudioStreamPlayer { Stream = w, Bus = _busName, VolumeDb = -80f };   // silent until _Process slews it up
         }
 
-        public override void _Process(double delta)
+        public override void _Process(double delta) => HubProcess(delta);   // forwarder for direct callers; the engine's callback is off (SetProcess(false) in _Ready) -- TickHub ticks HubProcess
+        public void HubProcess(double delta)
         {
             float rint = Mathf.Clamp(Intensity, 0f, 1f);
             float shelter = Mathf.Clamp(Shelter, 0f, 1f);

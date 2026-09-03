@@ -16,6 +16,7 @@ namespace UnturnedGodot
     // SpawnMapContainers is gated OFF, so a container never doubles (SP node + puppet).
     public partial class StorageReplicaView : Node
     {
+        public override void _Ready() { TickHub.AddPhysics(this, HubPhysics); SetPhysicsProcess(false); }   // PERF: hub-ticked (see TickHub.AddProcess)
         public NetWorldClient Client;
 
         struct Entry { public StoreShelf Node; public ulong DisplaySig; }
@@ -29,7 +30,8 @@ namespace UnturnedGodot
         }
 
         readonly HashSet<uint> _seen = new();
-        public override void _PhysicsProcess(double delta)
+        public override void _PhysicsProcess(double delta) => HubPhysics(delta);   // forwarder for direct callers; the engine's callback is off (SetProcess(false) in _Ready) -- TickHub ticks HubPhysics
+        public void HubPhysics(double delta)
         {
             if (Client == null) return;
             var parent = GetParent();

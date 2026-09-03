@@ -12,6 +12,7 @@ namespace UnturnedGodot
     // LOCAL player never gets a puppet -- that's the PlayerController shell (loopback) or the prediction path.
     public partial class RemotePlayers : Node3D
     {
+        public override void _Ready() { TickHub.AddProcess(this, HubProcess); SetProcess(false); }   // PERF: hub-ticked (see TickHub.AddProcess)
         public NetWorldClient Client;
 
         const float GlideRate = 14f;      // 1/s exponential approach to the replicated target
@@ -85,7 +86,8 @@ namespace UnturnedGodot
             }
         }
 
-        public override void _Process(double delta)
+        public override void _Process(double delta) => HubProcess(delta);   // forwarder for direct callers; the engine's callback is off (SetProcess(false) in _Ready) -- TickHub ticks HubProcess
+        public void HubProcess(double delta)
         {
             if (Client == null) return;
             float a = 1f - Mathf.Exp(-GlideRate * (float)delta);

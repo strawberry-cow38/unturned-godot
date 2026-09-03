@@ -49,6 +49,7 @@ void fragment() {
 
         public override void _Ready()
         {
+            TickHub.AddProcess(this, HubProcess); SetProcess(false);   // PERF: hub-ticked (see TickHub.AddProcess)
             var shader = new Shader { Code = LowHpShader };
             _mat = new ShaderMaterial { Shader = shader };
             _rect = new ColorRect { Material = _mat, Color = Colors.White };
@@ -69,7 +70,8 @@ void fragment() {
                 : Mathf.Clamp((StartFraction - fraction) / (StartFraction - CriticalFraction), 0f, 1f);
         }
 
-        public override void _Process(double delta)
+        public override void _Process(double delta) => HubProcess(delta);   // forwarder for direct callers; the engine's callback is off (SetProcess(false) in _Ready) -- TickHub ticks HubProcess
+        public void HubProcess(double delta)
         {
             // Smoothed rather than snapped straight to the target: healing 1 HP at a time (regen) would
             // otherwise flicker the vignette in and out around the threshold every tick.

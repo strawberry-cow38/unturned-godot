@@ -17,6 +17,7 @@ namespace UnturnedGodot
 
         public override void _Ready()
         {
+            TickHub.AddProcess(this, HubProcess); SetProcess(false);   // PERF: hub-ticked (see TickHub.AddProcess)
             Instance = this;
             var s = AudioStreamOggVorbis.LoadFromFile(ProjectSettings.GlobalizePath("res://content/hit.ogg"));
             if (s != null) { _critSound = new AudioStreamPlayer { Stream = s, VolumeDb = -6f }; AddChild(_critSound); }   // -6 dB ~ the source's 0.5 volume
@@ -36,7 +37,8 @@ namespace UnturnedGodot
             _marks.Add(new Mark { Age = 0f, Circle = true });
         }
 
-        public override void _Process(double delta)
+        public override void _Process(double delta) => HubProcess(delta);   // forwarder for direct callers; the engine's callback is off (SetProcess(false) in _Ready) -- TickHub ticks HubProcess
+        public void HubProcess(double delta)
         {
             if (_marks.Count == 0) return;
             for (int i = _marks.Count - 1; i >= 0; i--)

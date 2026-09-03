@@ -17,6 +17,7 @@ namespace UnturnedGodot
     // never runs here -- a client must not apply area damage locally. Removal comes as the entity vanishing.
     public partial class DeployableReplicaView : Node
     {
+        public override void _Ready() { TickHub.AddPhysics(this, HubPhysics); SetPhysicsProcess(false); }   // PERF: hub-ticked (see TickHub.AddProcess)
         public NetWorldClient Client;
 
         readonly Dictionary<uint, Deployable> _nodes = new();
@@ -32,7 +33,8 @@ namespace UnturnedGodot
         public int GasPumpCount => _gaspumps.Count;   // A2: how many gas-pump fixtures have materialized
         public bool TryGetGasPump(uint netId, out GasPump pump) => _gaspumps.TryGetValue(netId, out pump) && IsInstanceValid(pump);
 
-        public override void _PhysicsProcess(double delta)
+        public override void _PhysicsProcess(double delta) => HubPhysics(delta);   // forwarder for direct callers; the engine's callback is off (SetProcess(false) in _Ready) -- TickHub ticks HubPhysics
+        public void HubPhysics(double delta)
         {
             if (Client == null) return;
             var parent = GetParent();

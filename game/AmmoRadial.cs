@@ -19,7 +19,7 @@ namespace UnturnedGodot
         int _highlight = -1;
         const float Deadzone = 34f;
 
-        public override void _Ready() { Layer = 60; Visible = false; }
+        public override void _Ready() { TickHub.AddProcess(this, HubProcess); SetProcess(false); Layer = 60; Visible = false; }   // PERF: hub-ticked (see TickHub.AddProcess)
 
         // Build + show the pie for the player's current gun. No-op if there's nothing to pick.
         public void Open(PlayerController p)
@@ -87,7 +87,8 @@ namespace UnturnedGodot
             _pie.QueueRedraw();
         }
 
-        public override void _Process(double delta)
+        public override void _Process(double delta) => HubProcess(delta);   // forwarder for direct callers; the engine's callback is off (SetProcess(false) in _Ready) -- TickHub ticks HubProcess
+        public void HubProcess(double delta)
         {
             if (!IsOpen || Player == null || _pie == null) return;   // PlayerController owns closing + mouse recapture
             Vector2 v = GetViewport().GetMousePosition() - GetViewport().GetVisibleRect().Size * 0.5f;

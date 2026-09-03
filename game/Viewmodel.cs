@@ -303,6 +303,7 @@ namespace UnturnedGodot
 
         public override void _Ready()
         {
+            TickHub.AddProcess(this, HubProcess); SetProcess(false);   // PERF: hub-ticked (see TickHub.AddProcess)
             _vp = new SubViewport
             {
                 OwnWorld3D = true,
@@ -1228,7 +1229,8 @@ namespace UnturnedGodot
 
         public void SetShown(bool shown) { if (_layer != null) _layer.Visible = shown; }
 
-        public override void _Process(double delta)
+        public override void _Process(double delta) => HubProcess(delta);   // forwarder for direct callers; the engine's callback is off (SetProcess(false) in _Ready) -- TickHub ticks HubProcess
+        public void HubProcess(double delta)
         {
             if (_arms == null || _cam == null) return;
             // take in the world's lighting: sync the FP viewport's sun + ambient to the day/night cycle each frame

@@ -7415,9 +7415,16 @@ if (s.Wheels != null && s.Wheels.Length > 1)
         public static System.Collections.Generic.IReadOnlyList<Vehicle> Live => _live;   // every vehicle in the tree (PlayerController look scan reads it instead of GetNodesInGroup)
         public override void _EnterTree() { _live.Add(this); TickHub.Ensure(this); }
         public static long PhysicsTickAllCalls;   // wiring probe for tests: proves the hub reaches this every physics tick
+        static double _awakeLogT;
         public static void PhysicsTickAll(double delta)
         {
             PhysicsTickAllCalls++;
+            if (System.Environment.GetEnvironmentVariable("UG_PERF") == "1" && (_awakeLogT += delta) >= 3.0)   // [vehawake]: how many bodies the physics + the C# bridge still see every step
+            {
+                _awakeLogT = 0; int asleep = 0, frozen = 0, awake = 0, proc = 0;
+                foreach (var v in _live) { if (!GodotObject.IsInstanceValid(v)) continue; if (v.Freeze) frozen++; else if (v.Sleeping) asleep++; else awake++; if (v.IsProcessing()) proc++; }
+                GD.Print($"[vehawake] live={_live.Count} awake={awake} asleep={asleep} frozen={frozen} processing={proc}");
+            }
             for (int i = _live.Count - 1; i >= 0; i--)
             {
                 var v = _live[i];
@@ -7953,7 +7960,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
         /// repeat for every ship that spawns.</summary>
         public override void _Ready()
         {
-            SetProcess(_water != WaterMode.Car);   // PERF: _Process is boat-only (wake); a car paid the dispatch to early-return
+            SetProcess(false); if (_water != WaterMode.Car) TickHub.AddProcess(this, HubProcess);   // PERF: boat-only wake tick, through the hub (3 boats x 500 fps of chain-walk was 15% of the bridge)
             base._Ready();
             GrassDisplacers.Register(this, GrassDisplacers.VehicleRadius);   // master: a driven vehicle flattens grass in a wide swath under + around it
             if (_decomposeMesh == null || ForceBoxHull) return;
@@ -8426,7 +8433,8 @@ if (s.Wheels != null && s.Wheels.Length > 1)
         // foam wake on the RENDER frame: drive it from the INTERPOLATED hull pose so the leading
         // foam stays glued to the visually-rendered ship. Building it off the raw 50Hz physics pose
         // lags/jitters a step behind her -- the same interp trap as the flatbed container rider.
-        public override void _Process(double delta)
+        public override void _Process(double delta) => HubProcess(delta);   // forwarder; boats register HubProcess with TickHub (_Ready), the engine callback stays off
+        public void HubProcess(double delta)
         {
             if (_water == WaterMode.Car) return;
             bool active = _afloat && _buoys != null;

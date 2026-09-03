@@ -204,6 +204,7 @@ namespace UnturnedGodot
         }
         public override void _Ready()
         {
+            TickHub.AddProcess(this, HubProcess); SetProcess(false);   // PERF: hub-ticked (see TickHub.AddProcess)
             _a = new AudioStreamPlayer { Bus = "Master" }; _b = new AudioStreamPlayer { Bus = "Master" };
             AddChild(_a); AddChild(_b);
         }
@@ -228,7 +229,8 @@ namespace UnturnedGodot
             var p = new AudioStreamPlayer { Stream = s, VolumeDb = Mathf.LinearToDb(Mathf.Clamp(Volume, 0.0001f, 1f)) };
             AddChild(p); p.Play(); p.Finished += () => { if (GodotObject.IsInstanceValid(p)) p.QueueFree(); };
         }
-        public override void _Process(double delta)
+        public override void _Process(double delta) => HubProcess(delta);   // forwarder for direct callers; the engine's callback is off (SetProcess(false) in _Ready) -- TickHub ticks HubProcess
+        public void HubProcess(double delta)
         {
             if (_a == null || _b == null) return;
             float target = Mathf.LinearToDb(Mathf.Clamp(Volume, 0.0001f, 1f));

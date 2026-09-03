@@ -41,9 +41,33 @@ namespace UnturnedGodot
         {
             for (int i = _ticks.Count - 1; i >= 0; i--) if (_ticks[i].Node == node) _ticks.RemoveAt(i);
         }
+        // Per-FRAME registrations (strawberry 2026-09-03 "dig the next biggest frame swallower"): the ETW profile of the pinned
+        // PEI spot showed the C# bridge (CSharpInstanceBridge.Call) at ~16% of the main thread -- ~20 singleton nodes still took
+        // their own _Process/_PhysicsProcess at ~30 us of StringName chain-walk EACH, per frame. They register here instead:
+        // one engine callback, then plain delegate calls, in REGISTRATION order (player before its viewmodel/HUD, as the tree
+        // order used to give). Each class keeps its override as a forwarder for direct callers (tests drive p._Process(dt))
+        // and turns the engine's callback off with SetProcess(false) in _Ready -- the PlayerController/TickProxy pattern.
+        struct Frame { public Node Node; public System.Action<double> Tick; }
+        static readonly System.Collections.Generic.List<Frame> _procs = new(), _phys = new();
+        public static void AddProcess(Node node, System.Action<double> tick) { Ensure(node); _procs.Add(new Frame { Node = node, Tick = tick }); }
+        public static void AddPhysics(Node node, System.Action<double> tick) { Ensure(node); _phys.Add(new Frame { Node = node, Tick = tick }); }
+        public static void RemoveProcess(Node node) { for (int i = _procs.Count - 1; i >= 0; i--) if (_procs[i].Node == node) _procs.RemoveAt(i); }
+        public static void RemovePhysics(Node node) { for (int i = _phys.Count - 1; i >= 0; i--) if (_phys[i].Node == node) _phys.RemoveAt(i); }
+        public static int ProcessCount => _procs.Count; public static int PhysicsCount => _phys.Count;
+        static void RunFrames(System.Collections.Generic.List<Frame> list, double delta)
+        {
+            for (int i = 0; i < list.Count; i++)   // forward = registration order
+            {
+                var f = list[i];
+                if (!GodotObject.IsInstanceValid(f.Node)) { list.RemoveAt(i--); continue; }
+                if (!f.Node.IsInsideTree() || !f.Node.CanProcess()) continue;   // removed-but-alive (UI panels) / paused: skipped exactly like the engine would
+                f.Tick(delta);
+            }
+        }
         public override void _Process(double delta)
         {
             StorageCrate.TickAll(delta);
+            RunFrames(_procs, delta);
             for (int i = _ticks.Count - 1; i >= 0; i--)
             {
                 var e = _ticks[i];
@@ -55,6 +79,6 @@ namespace UnturnedGodot
                 e.Tick(dt);
             }
         }
-        public override void _PhysicsProcess(double delta) => Vehicle.PhysicsTickAll(delta);
+        public override void _PhysicsProcess(double delta) { Vehicle.PhysicsTickAll(delta); RunFrames(_phys, delta); }   // vehicles first (see ORDER above), then the registered physics ticks
     }
 }

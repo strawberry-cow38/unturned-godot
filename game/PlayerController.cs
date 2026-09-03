@@ -5114,7 +5114,7 @@ namespace UnturnedGodot
         public override void _Ready()
         {
             long _pp0 = System.Diagnostics.Stopwatch.GetTimestamp(), _ppA = 0, _ppB = 0, _ppC = 0, _ppD = 0, _ppE = 0, _ppF = 0;
-            TickProxy.Attach(this, ProcessTick, PhysicsTick);   // PERF: see TickProxy -- the engine dispatches to a 2-method node instead of walking this class's ~360-method table 4x per frame
+            TickHub.AddProcess(this, ProcessTick); TickHub.AddPhysics(this, PhysicsTick);   // PERF: hub-ticked (was a TickProxy child = still 2 engine callbacks/frame)
             SetProcess(false); SetPhysicsProcess(false);         // the proxy child owns the engine callbacks; the overrides below stay for DIRECT callers (tests drive the controller with p._Process(dt))
             AddToGroup("players");     // so vehicle explosions (+ future area effects) can find nearby players
             // AN NPC HIND'S ROUNDS GO THROUGH THE REAL BULLET SYSTEM. NpcHeli raises a delegate rather than

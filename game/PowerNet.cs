@@ -148,12 +148,14 @@ namespace UnturnedGodot
     // Ticks the power net once a frame. One instance is created lazily by the first placed deployable.
     public partial class PowerManager : Node
     {
+        public override void _Ready() { TickHub.AddProcess(this, HubProcess); SetProcess(false); }   // PERF: hub-ticked (see TickHub.AddProcess)
         // Pre-warm the wire-tool arrow SHADER over the first few frames (master): the port arrows are created hidden at
         // spawn, so their shared spatial-shader wouldn't compile until the tool first comes out -> all of them compile
         // at once = a hitch on the first wire interaction. Flash them visible for a couple frames so it compiles up
         // front (any in-view arrow warms the shared shader). Runs during/right-after load, then never again.
         int _prewarm = 3;
-        public override void _Process(double delta)
+        public override void _Process(double delta) => HubProcess(delta);   // forwarder for direct callers; the engine's callback is off (SetProcess(false) in _Ready) -- TickHub ticks HubProcess
+        public void HubProcess(double delta)
         {
             PowerNet.RecomputeIfDirty(GetTree());
             if (_prewarm > 0) { PowerNet.PrewarmWireArrows(GetTree(), _prewarm > 1); _prewarm--; }

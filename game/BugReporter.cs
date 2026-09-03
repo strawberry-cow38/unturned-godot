@@ -103,6 +103,7 @@ namespace UnturnedGodot
 
         public override void _Ready()
         {
+            TickHub.AddProcess(this, HubProcess); SetProcess(false); TickHub.AddPhysics(this, HubPhysics); SetPhysicsProcess(false);   // PERF: hub-ticked (see TickHub.AddProcess)
             // A pause menu stops _Process, and the capture ring holds only ~1.5 s -- without this the drain
             // stalls and audio is discarded silently.
             ProcessMode = ProcessModeEnum.Always;
@@ -239,7 +240,8 @@ namespace UnturnedGodot
             }
         }
 
-        public override void _Process(double delta)
+        public override void _Process(double delta) => HubProcess(delta);   // forwarder for direct callers; the engine's callback is off (SetProcess(false) in _Ready) -- TickHub ticks HubProcess
+        public void HubProcess(double delta)
         {
             double ms = delta * 1000.0;
             if (ms > _worstFrameMs) { _worstFrameMs = ms; _worstWindowLeft = 5.0; }
@@ -265,7 +267,8 @@ namespace UnturnedGodot
         /// unrelated and unrepeatable number of render frames per `Ticks(n)`. That mismatch is a race the
         /// repo has already been bitten by once (Deployable updating in _Process while the host stepped
         /// _PhysicsProcess made every Ticks(n) a coin flip).</summary>
-        public override void _PhysicsProcess(double delta)
+        public override void _PhysicsProcess(double delta) => HubPhysics(delta);   // forwarder for direct callers; the engine's callback is off (SetProcess(false) in _Ready) -- TickHub ticks HubPhysics
+        public void HubPhysics(double delta)
         {
             if (_session.State != ReportState.Recording) return;
             Drain();

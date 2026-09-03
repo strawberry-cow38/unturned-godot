@@ -17,6 +17,7 @@ namespace UnturnedGodot
     /// </summary>
     public partial class HurtDirectionIndicator : Control
     {
+        public override void _Ready() { TickHub.AddProcess(this, HubProcess); SetProcess(false); }   // PERF: hub-ticked (see TickHub.AddProcess)
         public const float MarkTime = 3.0f;   // how long a wedge stays visible before it's gone
         const float FadeStart = 1.5f;   // begins fading at half life, full opacity before that -- a fresh hit should read as sharp, not already dissolving
         const float Radius = 90f;       // px from screen centre
@@ -37,7 +38,8 @@ namespace UnturnedGodot
             QueueRedraw();
         }
 
-        public override void _Process(double delta)
+        public override void _Process(double delta) => HubProcess(delta);   // forwarder for direct callers; the engine's callback is off (SetProcess(false) in _Ready) -- TickHub ticks HubProcess
+        public void HubProcess(double delta)
         {
             if (_marks.Count == 0) return;
             bool anyAlive = false;

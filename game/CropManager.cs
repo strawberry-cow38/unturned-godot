@@ -17,12 +17,14 @@ namespace UnturnedGodot
 
         public override void _Ready()
         {
+            TickHub.AddProcess(this, HubProcess); SetProcess(false);   // PERF: hub-ticked (see TickHub.AddProcess)
             _inst = this;
             CropRegistry.Load();          // crops.tsv: seed id -> crop assets + dirt color
             FarmRegistry.Load();          // farms.tsv: seed id -> Growth secs + Grow yield (increment 1)
         }
 
-        public override void _Process(double delta)
+        public override void _Process(double delta) => HubProcess(delta);   // forwarder for direct callers; the engine's callback is off (SetProcess(false) in _Ready) -- TickHub ticks HubProcess
+        public void HubProcess(double delta)
         {
             _clock += delta * Speed;
             for (int i = _crops.Count - 1; i >= 0; i--)
