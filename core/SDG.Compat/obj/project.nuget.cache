@@ -1,8 +1,8 @@
 {
   "version": 2,
-  "dgSpecHash": "R5AubE8grVg=",
+  "dgSpecHash": "wd+sSd+dcmk=",
   "success": true,
-  "projectFilePath": "/home/ec2-user/ug-menu-wt/core/SDG.Compat/SDG.Compat.csproj",
+  "projectFilePath": "/home/ec2-user/ug-mp-wt/core/SDG.Compat/SDG.Compat.csproj",
   "expectedPackageFiles": [],
   "logs": []
 }

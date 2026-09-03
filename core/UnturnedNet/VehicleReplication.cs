@@ -39,13 +39,25 @@ namespace UnturnedGodot.Net
         // = 1/16 m. Both sides quantize through the SAME QuantizeClampedFloat, so the wire round-trips
         // bit-exact and StateHash stays byte-identical server<->client (a globally-mirrored system).
         public const int TowRestIntBits = 3, TowRestFracBits = 4;
+        /// <summary>Hard ceiling on seats per vehicle. The biggest thing in the spec table is nowhere near
+        /// this; it exists so a malformed count cannot make a client allocate on a hostile server's word.</summary>
+        public const int MaxSeats = 16;
 
         public sealed class VehicleEntity
         {
             public uint NetIdValue { get; internal set; }
             public byte TypeId { get; internal set; }        // index into the game's vehicle spec table (Vehicle.SpecNames order)
             public byte Variant { get; internal set; }       // spawn paint variant -- paint derives deterministically (Vehicle.SpawnPaint)
-            public ushort DriverPlayerId { get; internal set; }   // 0 = empty seat (single driver, §3.6 v1)
+            public ushort DriverPlayerId { get; internal set; }   // seat 0. 0 = empty.
+            /// <summary>Seats 1..N, index-aligned with the game layer's Vehicle.SeatLocals minus the driver.
+            /// Null or empty = a vehicle nobody is riding as a passenger. Seat 0 stays DriverPlayerId rather
+            /// than becoming Passengers[0], because the DRIVER is not just an occupant: he owns the vehicle's
+            /// client-authority window, and every existing reader of DriverPlayerId means that.</summary>
+            public ushort[] Passengers { get; internal set; }
+            /// <summary>How many seats this vehicle HAS -- from the game layer's spec, not the wire, because
+            /// both sides already resolve TypeId to the same spec table. Server-side only; it is what a seat
+            /// request is validated against. 0 = unset, treated as "driver only".</summary>
+            public byte SeatCount { get; internal set; }
             public Vector3 Pos { get; internal set; }
             public float YawDegrees { get; internal set; }
             public float PitchDegrees { get; internal set; }
@@ -235,6 +247,45 @@ namespace UnturnedGodot.Net
             e.LastChangedTick = tick;
         }
 
+        /// <summary>Put a player in a seat, or clear it with 0. Seat 0 is the driver and routes to
+        /// DriverPlayerId so every existing reader keeps working; 1..N grow the Passengers array on demand.</summary>
+        public void ServerSetSeat(NetId id, int seat, ushort playerId, long tick)
+        {
+            if (seat == 0) { ServerSetDriver(id, playerId, tick); return; }
+            if (!_vehicles.TryGet(id, out var e) || seat < 0 || seat >= MaxSeats) return;
+            var pax = e.Passengers;
+            if (pax == null || pax.Length < seat)
+            {
+                var grown = new ushort[seat];
+                if (pax != null) System.Array.Copy(pax, grown, pax.Length);
+                pax = grown; e.Passengers = pax;
+            }
+            if (pax[seat - 1] == playerId) return;
+            pax[seat - 1] = playerId;
+            e.LastChangedTick = tick;
+        }
+
+        /// <summary>Who is in this seat (0 = nobody). Seat 0 is the driver.</summary>
+        public ushort SeatOccupant(NetId id, int seat)
+        {
+            if (!_vehicles.TryGet(id, out var e)) return 0;
+            if (seat == 0) return e.DriverPlayerId;
+            var pax = e.Passengers;
+            return (pax != null && seat >= 1 && seat - 1 < pax.Length) ? pax[seat - 1] : (ushort)0;
+        }
+
+        /// <summary>Server-side seat count for this vehicle, from the game layer's spec. 0 means unset,
+        /// which is read as driver-only so a vehicle whose spec never registered cannot take passengers by
+        /// accident.</summary>
+        public int SeatsOn(NetId id) => _vehicles.TryGet(id, out var e) ? System.Math.Max(1, (int)e.SeatCount) : 1;
+
+        /// <summary>The game layer declares how many seats a spawned vehicle has. Server-side only -- never
+        /// written to the wire, because both ends already resolve TypeId through the same spec table.</summary>
+        public void ServerSetSeatCount(NetId id, int seats)
+        {
+            if (_vehicles.TryGet(id, out var e)) e.SeatCount = (byte)System.Math.Clamp(seats, 1, MaxSeats);
+        }
+
         /// <summary>Latest-wins input queue (DriveInput rides UnreliableSequenced -- a reordered stale
         /// command must never override a newer one).</summary>
         public void ServerQueueInput(uint vehicleNetId, in DriveInputCommand input)
@@ -360,6 +411,10 @@ namespace UnturnedGodot.Net
                 h = NetHash.MixByte(h, e.TypeId);
                 h = NetHash.MixByte(h, e.Variant);
                 h = NetHash.MixUInt32(h, e.DriverPlayerId);
+                // Passengers ride the hash too: occupancy that diverges silently is exactly what the sync
+                // check exists to catch, and seat 0 alone would not see it.
+                h = NetHash.MixByte(h, (byte)(e.Passengers?.Length ?? 0));
+                if (e.Passengers != null) foreach (ushort occ in e.Passengers) h = NetHash.MixUInt32(h, occ);
                 h = NetHash.MixFloat(h, e.Pos.x);
                 h = NetHash.MixFloat(h, e.Pos.y);
                 h = NetHash.MixFloat(h, e.Pos.z);
@@ -410,6 +465,12 @@ namespace UnturnedGodot.Net
             w.WriteUInt8(e.Flags);
             w.WriteUInt32(e.TowedNetId);                                        // A6: appended after Flags
             w.WriteClampedFloat(e.TowRestLen, TowRestIntBits, TowRestFracBits); // A6: cosmetic rope rest length
+            // v20 passengers, appended at the END like the tow fields rather than beside DriverPlayerId, so
+            // seat 0 keeps its place on the wire and every existing reader is untouched. Self-describing
+            // count: one byte is cheaper than a desync when a spec's seat count changes under a live client.
+            byte pc = (byte)(e.Passengers?.Length ?? 0);
+            w.WriteUInt8(pc);
+            for (int i = 0; i < pc; i++) w.WriteUInt16(e.Passengers[i]);
         }
 
         static bool ReadEntity(NetPakReader r, out VehicleEntity e)
@@ -432,13 +493,17 @@ namespace UnturnedGodot.Net
             if (!r.ReadUInt8(out byte flags)) return false;
             if (!r.ReadUInt32(out uint towedNetId)) return false;                                     // A6: appended after Flags
             if (!r.ReadClampedFloat(TowRestIntBits, TowRestFracBits, out float towRestLen)) return false; // A6
+            if (!r.ReadUInt8(out byte pc)) return false;                                               // v20 passengers
+            if (pc > MaxSeats) return false;                                                           // bounds BEFORE the allocation
+            ushort[] pax = pc == 0 ? System.Array.Empty<ushort>() : new ushort[pc];
+            for (int i = 0; i < pc; i++) { if (!r.ReadUInt16(out ushort occ)) return false; pax[i] = occ; }
             e = new VehicleEntity
             {
                 NetIdValue = id, TypeId = typeId, Variant = variant, DriverPlayerId = driver,
                 Pos = pos, YawDegrees = yaw, PitchDegrees = pitch, RollDegrees = roll,
                 LinVel = lin, AngVel = ang, SteerDegrees = steer,
                 Fuel = fuel, Health = health, Battery = battery, Flags = flags,
-                TowedNetId = towedNetId, TowRestLen = towRestLen,
+                TowedNetId = towedNetId, TowRestLen = towRestLen, Passengers = pax,
             };
             return true;
         }
@@ -618,12 +683,17 @@ namespace UnturnedGodot.Net
     public struct EnterVehicleCommand
     {
         public uint NetId;
-        public void Write(NetPakWriter w) => w.WriteUInt32(NetId);
+        /// <summary>Which seat the player is asking for. 255 = "any free one", which is what walking up to a
+        /// car with no door zone resolves to and what every pre-v20 caller meant.</summary>
+        public byte Seat;
+        public const byte AnySeat = 255;
+        public void Write(NetPakWriter w) { w.WriteUInt32(NetId); w.WriteUInt8(Seat); }
         public static bool TryRead(NetPakReader r, out EnterVehicleCommand cmd)
         {
             cmd = default;
             if (!r.ReadUInt32(out uint id)) return false;
-            cmd = new EnterVehicleCommand { NetId = id };
+            if (!r.ReadUInt8(out byte seat)) return false;
+            cmd = new EnterVehicleCommand { NetId = id, Seat = seat };
             return true;
         }
     }
@@ -673,15 +743,19 @@ namespace UnturnedGodot.Net
 
     public struct VehicleEnteredEvent
     {
+        /// <summary>Which seat was actually granted -- NOT the one that was asked for, which may have been
+        /// AnySeat or may have been taken between the ask and the answer.</summary>
+        public byte Seat;
         public uint NetId;
         public ushort PlayerId;
-        public void Write(NetPakWriter w) { w.WriteUInt32(NetId); w.WriteUInt16(PlayerId); }
+        public void Write(NetPakWriter w) { w.WriteUInt32(NetId); w.WriteUInt16(PlayerId); w.WriteUInt8(Seat); }
         public static bool TryRead(NetPakReader r, out VehicleEnteredEvent evt)
         {
             evt = default;
             if (!r.ReadUInt32(out uint id)) return false;
             if (!r.ReadUInt16(out ushort player)) return false;
-            evt = new VehicleEnteredEvent { NetId = id, PlayerId = player };
+            if (!r.ReadUInt8(out byte seat)) return false;
+            evt = new VehicleEnteredEvent { NetId = id, PlayerId = player, Seat = seat };
             return true;
         }
     }
@@ -855,7 +929,7 @@ namespace UnturnedGodot.Net
         public void Register(CommandRegistry commands)
         {
             commands.Register<EnterVehicleCommand>(ReplicationIds.CommandEnterVehicle, EnterVehicleCommand.TryRead,
-                (sender, cmd) => ServerEnter(sender, cmd.NetId),
+                (sender, cmd) => ServerEnter(sender, cmd.NetId, cmd.Seat),
                 validate: (sender, cmd) => CanEnter(sender, cmd.NetId));
 
             commands.Register<ExitVehicleCommand>(ReplicationIds.CommandExitVehicle, ExitVehicleCommand.TryRead,
@@ -984,7 +1058,7 @@ namespace UnturnedGodot.Net
             return (v.Pos - p.Pos).magnitude <= EnterReach;
         }
 
-        void ServerEnter(ushort sender, uint netId)
+        void ServerEnter(ushort sender, uint netId, byte wantSeat)
         {
             long tick = _tick();
             // THE SEAT IS TAKEN OR IT IS NOT. There was no occupancy check here at all: a second player
@@ -1001,35 +1075,71 @@ namespace UnturnedGodot.Net
             // is the precondition for the real multi-seat work rather than a detour from it: passengers need
             // a seat list on the entity, and every one of those seats needs this same "is it free" question
             // answered before it is assigned.
-            if (_vehicles.TryGet(new NetId(netId), out var occ) && occ.DriverPlayerId != 0 && occ.DriverPlayerId != sender)
+            var id = new NetId(netId);
+            if (!_vehicles.TryGet(id, out _)) return;
+            int seats = _vehicles.SeatsOn(id);
+
+            // Resolve the ask to an actual free seat. AnySeat (and any out-of-range index) walks the seats
+            // in order and takes the first free one -- driver first, which keeps "press F at a car with no
+            // door zone" meaning what it always meant.
+            int seat = -1;
+            if (wantSeat < seats && _vehicles.SeatOccupant(id, wantSeat) is ushort cur && (cur == 0 || cur == sender))
+                seat = wantSeat;
+            else if (wantSeat == EnterVehicleCommand.AnySeat || wantSeat >= seats)
+                for (int i = 0; i < seats; i++)
+                { ushort o = _vehicles.SeatOccupant(id, i); if (o == 0 || o == sender) { seat = i; break; } }
+
+            if (seat < 0)
             {
-                if (NetLog.Enabled) NetLog.Sink($"[NET] player {sender} asked for vehicle {netId}, already driven by {occ.DriverPlayerId} -- refused");
+                if (NetLog.Enabled) NetLog.Sink($"[NET] player {sender} asked for vehicle {netId} seat {wantSeat}: no free seat of {seats} -- refused");
                 return;
             }
-            _vehicles.ServerSetDriver(new NetId(netId), sender, tick);
-            _drivenByPlayer[sender] = netId;
+
+            // A player occupies ONE seat. Without this, asking for a second seat in the same car would
+            // leave him indexed in both and free only one of them on exit.
+            if (_seatByPlayer.TryGetValue(sender, out var held) && (held.NetId != netId || held.Seat != seat))
+                _vehicles.ServerSetSeat(new NetId(held.NetId), held.Seat, 0, tick);
+
+            _vehicles.ServerSetSeat(id, seat, sender, tick);
+            _seatByPlayer[sender] = (netId, seat);
             _players.ServerClearInput(sender);   // held walk input must not keep integrating under the seat
-            // Part A: a fresh driver gets a clean authority window -- counter 0, no seq, the envelope
-            // interval anchored at the enter tick (the first state's dt clamps to EnvelopeMaxTicks anyway)
-            _driven[netId] = new DrivenState { LastAcceptedTick = tick };
-            var evt = new VehicleEnteredEvent { NetId = netId, PlayerId = sender };
+            // ONLY THE DRIVER GETS THE AUTHORITY WINDOW. A passenger reporting vehicle state would be a
+            // second client steering the same car.
+            if (seat == 0)
+            {
+                _drivenByPlayer[sender] = netId;
+                // Part A: a fresh driver gets a clean authority window -- counter 0, no seq, the envelope
+                // interval anchored at the enter tick (the first state's dt clamps to EnvelopeMaxTicks anyway)
+                _driven[netId] = new DrivenState { LastAcceptedTick = tick };
+            }
+            var evt = new VehicleEnteredEvent { NetId = netId, PlayerId = sender, Seat = (byte)seat };
             _broadcast(NetMessagePak.Pack(ReplicationIds.EventVehicleEntered, evt.Write));
         }
+
+        // Which seat each player is in. Separate from _drivenByPlayer, which stays DRIVER-only because it
+        // gates the client-authority window.
+        readonly Dictionary<ushort, (uint NetId, int Seat)> _seatByPlayer = new();
 
         /// <summary>Free the seat: clears occupancy + input, teleports the (remote) player's entity beside
         /// the driver door (the SP exit spot: vehicle pos + right * 2.4 + up), broadcasts the fact.
         /// Idempotent -- false if the player wasn't driving.</summary>
         public bool ServerExit(ushort playerId)
         {
-            if (!_drivenByPlayer.TryGetValue(playerId, out uint netId)) return false;
-            _drivenByPlayer.Remove(playerId);
-            _driven.Remove(netId);   // Part A: authority returns to the server (VehicleNetSync releases the hold when Predicted drops)
+            // A PASSENGER LEAVES TOO. _drivenByPlayer is driver-only (it gates the authority window), so
+            // keying the exit off it would have left anyone in seat 1+ unable to get out -- their seat would
+            // stay occupied for the life of the vehicle and nobody else could take it.
+            if (!_seatByPlayer.TryGetValue(playerId, out var held)) return false;
+            uint netId = held.NetId;
+            int seat = held.Seat;
+            _seatByPlayer.Remove(playerId);
+            bool wasDriver = _drivenByPlayer.Remove(playerId);
+            if (wasDriver) _driven.Remove(netId);   // Part A: authority returns to the server (VehicleNetSync releases the hold when Predicted drops)
             long tick = _tick();
             var spot = Vector3.zero;   // zero = no spot (vehicle already despawned) -> clients fall back locally
             if (_vehicles.TryGet(new NetId(netId), out var v))
             {
-                _vehicles.ServerSetDriver(new NetId(netId), 0, tick);
-                _vehicles.ServerClearInput(new NetId(netId));
+                _vehicles.ServerSetSeat(new NetId(netId), seat, 0, tick);
+                if (wasDriver) _vehicles.ServerClearInput(new NetId(netId));   // a passenger leaving must not drop the driver's input
                 float yawRad = v.YawDegrees * (Mathf.PI / 180f);
                 // Godot yaw basis: right (basis.X) = (cos yaw, 0, -sin yaw)
                 var right = new Vector3(Mathf.Cos(yawRad), 0f, -Mathf.Sin(yawRad));
@@ -1047,10 +1157,12 @@ namespace UnturnedGodot.Net
         /// <summary>A vanished vehicle (despawned wreck node) drops its driver without an entity to exit beside.</summary>
         public void OnVehicleRemoved(uint netId)
         {
-            ushort driver = 0;
-            foreach (var kv in _drivenByPlayer)
-                if (kv.Value == netId) { driver = kv.Key; break; }
-            if (driver != 0) ServerExit(driver);
+            // EVERYONE aboard, not just the driver: a despawned wreck used to strand its passengers holding
+            // seats on a vehicle that no longer exists.
+            List<ushort> aboard = null;
+            foreach (var kv in _seatByPlayer)
+                if (kv.Value.NetId == netId) (aboard ??= new List<ushort>()).Add(kv.Key);
+            if (aboard != null) foreach (ushort p in aboard) ServerExit(p);
         }
 
         public void OnPeerDisconnected(ushort playerId) => ServerExit(playerId);

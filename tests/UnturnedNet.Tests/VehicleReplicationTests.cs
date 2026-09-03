@@ -416,7 +416,10 @@ namespace UnturnedNet.Tests
             // + A6: towedNetId (u32) + towRestLen (3int/4frac clamped) -- appended after flags. This golden
             // MOVED +5 bytes when A6 landed under v11 (byteLen 0x25->0x2A): not towing here, so the tail
             // gains towedNetId=0 (00000000) + restLen=0. Re-baselined to the actual (run 2026-07-20).
-            Assert.That(ToHex(bytes), Is.EqualTo("E803000000000000092A00010009000000050200000C040C08103E6000E1E0F8260002130802200402ECB9DBFFFFFF020000000002"));
+            // MOVED +1 byte again under v20 (byteLen 0x2A->0x2B): the passenger block's self-describing
+            // count, 0 here because nobody is riding. That single byte is the whole cost of multi-seat on
+            // an empty car, and it is what makes a client able to read a seat list it was not compiled for.
+            Assert.That(ToHex(bytes), Is.EqualTo("E803000000000000092B00010009000000050200000C040C08103E6000E1E0F8260002130802200402ECB9DBFFFFFF02000000000200"));
         }
 
         static ushort Driver(Harness h, uint veh)

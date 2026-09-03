@@ -497,7 +497,7 @@ namespace UnturnedGodot
             WorldBuilder.AttachPlayerShell(this, shell, withCropManager: false);   // the SP shell block verbatim; crops: the SERVER owns growth
             // C6: the shell's F-interact near a VehiclePuppet requests the seat over the wire (the MP
             // analogue of the SP direct EnterVehicle); F while riding requests the exit. Server validates.
-            shell.NetEnterVehicle = netId => Client.SendEnterVehicle(netId);
+            shell.NetEnterVehicle = (netId, seat) => Client.SendEnterVehicle(netId, seat);
             shell.NetExitVehicle = () => Client.SendExitVehicle();
             // D1: trigger pulls route over the wire (fx stay local + immediate, damage waits for the server;
             // the null default of each seam keeps SP/loopback byte-identical -- only THIS session wires them)

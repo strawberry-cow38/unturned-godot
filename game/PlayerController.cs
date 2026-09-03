@@ -3522,7 +3522,7 @@ namespace UnturnedGodot
         /// <summary>Test seam: the current virtual stick (pitch, roll) the pilot is holding.</summary>
         public UnityEngine.Vector2 DebugHeliStick => new UnityEngine.Vector2(_heliStickP, _heliStickR);
         public bool LastHandbrakeInput;
-        public System.Action<uint> NetEnterVehicle;  // wired by ClientWorldSession: F near a puppet asks the server for the seat
+        public System.Action<uint, byte> NetEnterVehicle;  // wired by ClientWorldSession: F near a puppet asks the server for a seat (255 = any free one)
         public System.Action NetExitVehicle;         // F while riding asks the server to free it (exit teleport follows)
 
         // D1 MP combat routing seams (PEI_COMBAT_PLAN §3 D1) -- the NetEnterVehicle pattern: wired ONLY by
@@ -3609,7 +3609,11 @@ namespace UnturnedGodot
         {
             var p = NearestPuppet();
             if (p == null) return false;
-            NetEnterVehicle(p.NetId);
+            // The door zone you are standing at names a seat, exactly as it does in singleplayer
+            // (EnterVehicle(_focusVehicle, _focusAccess.Seat)); no zone means any free one, driver first.
+            byte seat = (_focusAccessValid && _focusAccess.Seat >= 0 && _focusAccess.Seat < 255)
+                        ? (byte)_focusAccess.Seat : (byte)255;
+            NetEnterVehicle(p.NetId, seat);
             return true;
         }
 

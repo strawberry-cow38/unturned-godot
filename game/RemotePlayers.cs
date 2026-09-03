@@ -69,7 +69,11 @@ namespace UnturnedGodot
         {
             if (Client == null || playerId == 0) return false;
             foreach (var v in Client.Vehicles.All)
+            {
                 if (v.DriverPlayerId == playerId) return true;
+                var pax = v.Passengers;   // v20: a PASSENGER is seated too, and his hull must drop as well
+                if (pax != null) foreach (ushort occ in pax) if (occ == playerId) return true;
+            }
             return false;
         }
 

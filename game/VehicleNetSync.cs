@@ -164,6 +164,10 @@ namespace UnturnedGodot
                     // every existing vehicle is bit-identical to before.
                     _server.Vehicles.ServerSpawn(id, (byte)(typeIdx < 0 ? 0 : typeIdx), (byte)v.SpawnVariant,
                                                  ToU(v.GlobalPosition), tick, v.SpeedMaxMps, v.ClimbMaxMps, v.FallMaxMps);
+                    // How many people this thing seats, from the spec the game layer already has. The server
+                    // validates every seat request against it; core cannot see SeatLocals and must be told.
+                    // Never written to the wire -- both ends resolve TypeId through the same spec table.
+                    _server.Vehicles.ServerSetSeatCount(id, v.SeatCount);
                     t = new Tracked { NetId = id.Value, Node = v };
                     _tracked[v] = t;
                     _byId[t.NetId] = t;
