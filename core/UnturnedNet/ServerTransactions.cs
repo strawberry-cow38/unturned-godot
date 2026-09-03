@@ -119,6 +119,10 @@ namespace UnturnedGodot.Net
         /// <summary>The server's yield-roll RNG seam (Phase 8, §3.7: the AGRICULTURE second-yield roll moves
         /// server-side -- SP keeps GD.Randf on the direct path). Injectable so L0 tests are deterministic.</summary>
         public Func<float> Rand;
+        /// <summary>Installed by the game side (which owns the file path): deletes the save, clears the host's
+        /// PendingSave, and returns the line to show the admin. Null on a server with no persistence, and the
+        /// `wipe` verb says so rather than reporting a success it did not have.</summary>
+        public Func<string> WipeSaveHandler;
 
         readonly PlayerReplication _players;
         readonly PlayerCombatReplication _combat;
@@ -1118,6 +1122,21 @@ namespace UnturnedGodot.Net
             }
 
             if (!AllowCheats) { Diag.ConsoleRejected++; return "console commands are disabled on this server"; }
+
+            // WIPE (master 2026-09-03: "can be reset with a wipe command through the server control"). Deletes
+            // the save and forgets it, so the world comes back fresh on the next restart. It deliberately does
+            // NOT tear down the LIVE world out from under connected players: removing every deployable, wire,
+            // dropped item and crop at runtime means a removal event per object to every peer, and a half-sent
+            // teardown is a desync rather than a wipe. So the verb says exactly what it did and what is still
+            // standing -- a wipe that silently left the current world in place would be the worse failure.
+            // Sits BELOW the AllowCheats gate on purpose: it is the most destructive verb here.
+            if (verb == "wipe")
+            {
+                if (WipeSaveHandler == null) { Diag.ConsoleRejected++; return "no save is configured on this server"; }
+                string result = WipeSaveHandler();
+                Diag.ConsoleApplied++;
+                return result;
+            }
 
             if (verb == "give" && arg.Length > 0)
             {
