@@ -86,6 +86,7 @@ namespace UnturnedGodot
 
         public void Open()
         {
+            GameAudio.UiPopup(this);   // retail ui_menu_popup
             Visible = true;
             GetTree().Paused = true;                       // freeze the sim in the background (master)
             Input.MouseMode = Input.MouseModeEnum.Visible; // free the cursor for the menu

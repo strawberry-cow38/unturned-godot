@@ -3021,7 +3021,12 @@ namespace UnturnedGodot
         void MeleeImpactFx(Vector3 point, bool flesh, Surf surf = Surf.Concrete)
         {
             if (flesh) { SpawnFleshImpact(point, -(_cam?.GlobalTransform.Basis.Z ?? Vector3.Back)); HitmarkerHUD.Instance?.Show(false); }
-            else PlayImpactSound(ImpactSnd(surf), point);
+            else
+            {
+                string mb = GameAudio.MeleeSurface(surf);   // retail effects/physics/meleeimpact/<material> where the bank exists (metal, grass); the rest keep the material thunk
+                var retail = mb != null ? GameAudio.Pick("meleeimpacts", mb) : null;
+                PlayImpactSound(retail ?? ImpactSnd(surf), point);
+            }
         }
 
         // PlayerLife.onLanded: landing faster than the fall-damage threshold (map default 22 m/s, and the port has
@@ -3046,6 +3051,7 @@ namespace UnturnedGodot
         // (explosionArmor); vehicles take it too. Still no LIMB or buildable damage.
         public void Explode(Vector3 point, float radius, float zombieDamage, float playerDamage, float vehicleDamage)
         {
+            GameAudio.Explosion(this, point, radius);   // retail Bomb effect audio (effects/explosions/bomb_N/fire), ripped 2026-09-03
             foreach (var n in GetTree().GetNodesInGroup("zombies"))   // zombies caught in the blast: linear falloff + wall rule
                 if (n is ZombieBody z && !z.Dead)
                 {
@@ -8075,6 +8081,16 @@ namespace UnturnedGodot
             if (_move.Stance == EPlayerStance.SWIM)
             {
                 SwimStep(strafe, forward, jump);   // no gravity, buoyancy/free-swim; own velocity path
+                if (!NetAvatar)   // retail effects/physics/swim/<light|medium|heavy>wading: a stroke every ~1.4 m, heavier with speed
+                {
+                    float ssp = new Vector2(Velocity.X, Velocity.Z).Length();
+                    if (ssp > 0.4f && (_strideAcc += ssp * delta) >= 1.4f)
+                    {
+                        _strideAcc = 0f;
+                        string gait = ssp > 3.6f ? "heavywading" : ssp > 2.0f ? "mediumwading" : "lightwading";
+                        GameAudio.PlayAt(this, GameAudio.Pick("swim", gait), GlobalPosition, -4f, 5f, 40f, _rng.RandfRange(0.95f, 1.05f));
+                    }
+                }
                 wasAirborne = false;               // swimming is never airborne -> the caller skips fall damage (retail: SWIM branch never onLanded)
                 verticalVel = Velocity.Y;
                 groundedEntering = false;

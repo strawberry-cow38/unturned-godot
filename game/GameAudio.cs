@@ -15,6 +15,42 @@ namespace UnturnedGodot
         static readonly Dictionary<string, int> _last = new();
         static readonly RandomNumberGenerator _rng = new();
         static readonly bool _dbg = System.Environment.GetEnvironmentVariable("UG_AUDIODBG") == "1";   // print every bank pick / one-shot (verification)
+        /// <summary>UG_AUDIODBG=1: resolve every bank the code can emit and print the ones that are EMPTY. A missing
+        /// bank and a present one both hand the caller something playable, so a live run sounds fine and just wrong;
+        /// this is the check that catches it (tinyclaw, 2026-09-03: retail has no dirt_run, sprinting on dirt played pavement).</summary>
+        public static void AuditBanks()
+        {
+            if (!_dbg) return;
+            var want = new List<(string, string)>();
+            foreach (PlayerController.Surf sf in System.Enum.GetValues(typeof(PlayerController.Surf)))
+            {
+                want.Add(("footsteps", FootSurface(sf) + "_walk")); want.Add(("footsteps", FootSurface(sf) + "_run"));
+                want.Add(("landing", LandSurface(sf))); want.Add(("bulletimpacts", BulletSurface(sf)));
+                var ms = MeleeSurface(sf); if (ms != null) want.Add(("meleeimpacts", ms));
+            }
+            foreach (var c in new[] { "general", "metal", "wood", "sand", "water" }) want.Add(("casings", c));
+            foreach (var g in new[] { "lightwading", "mediumwading", "heavywading" }) want.Add(("swim", g));
+            want.Add(("explosions", "bomb_fire")); want.Add(("misc", "popup_ui_menu_popup")); want.Add(("animals", "cow_panic")); want.Add(("animals", "pig_panic")); want.Add(("ambience", "thunder_lightning_strike_rumble"));
+            int empty = 0;
+            foreach (var (f, pfx) in want) if (Bank(f, pfx).Length == 0) { empty++; GD.PrintErr($"[audio] EMPTY BANK {f}/{pfx}"); }
+            GD.Print($"[audio] bank audit: {want.Count - empty}/{want.Count} present");
+            // The other half (tinyclaw): banks ON DISK that no code path can ask for. Different query; a Surf value
+            // the enum lacks (gravel, ice, mud, snow, dirtloose, metalhigh...) shows up here, not above.
+            var asked = new HashSet<string>(); foreach (var (f, pfx) in want) asked.Add(f + "/" + pfx);
+            var orphan = new List<string>();
+            foreach (var folder in new[] { "footsteps", "landing", "bulletimpacts", "casings", "meleeimpacts", "swim" })
+            {
+                string dir = ProjectSettings.GlobalizePath($"res://content/audio/{folder}");
+                if (!System.IO.Directory.Exists(dir)) continue;
+                var seen = new HashSet<string>();
+                foreach (var file in System.IO.Directory.GetFiles(dir))
+                {
+                    var m = System.Text.RegularExpressions.Regex.Match(System.IO.Path.GetFileName(file), @"^(.+?)_\d+\.(wav|ogg)$");
+                    if (m.Success && seen.Add(m.Groups[1].Value) && !asked.Contains(folder + "/" + m.Groups[1].Value)) orphan.Add(folder + "/" + m.Groups[1].Value);
+                }
+            }
+            if (orphan.Count > 0) GD.Print($"[audio] {orphan.Count} banks on disk nothing asks for: {string.Join(", ", orphan)}");
+        }
 
         /// <summary>All clips named `<prefix>_NN.wav|ogg` under content/audio/<folder>, in order. Empty if none.</summary>
         public static AudioStream[] Bank(string folder, string prefix)
@@ -94,6 +130,33 @@ namespace UnturnedGodot
             return pl;
         }
 
+        /// <summary>Retail Bomb explosion (effects/explosions/bomb_N/fire) at a point, radius-scaled loudness. One-shot.</summary>
+        public static void Explosion(Node scene, Vector3 at, float radius)
+        {
+            var clip = Pick("explosions", "bomb_fire");   // bomb_fire_00..06.wav (retail effects/explosions/bomb_N/fire; renamed so the bank regex sees one prefix)
+            PlayAt(scene, clip, at, Mathf.Clamp(-2f + radius * 0.6f, -2f, 6f), 12f, 260f, _rng.RandfRange(0.95f, 1.05f));
+        }
+        /// <summary>UI click: retail sounds/popup/ui_menu_popup_N (2D).</summary>
+        public static void UiPopup(Node scene, float db = -6f) => Play2D(scene, Pick("misc", "popup_ui_menu_popup"), db);
+        /// <summary>Material under a node's feet: water when below sea level, else a short down-ray to the terrain splatmap
+        /// or a prop's SurfMeta. Shared by the local player and the remote puppets.</summary>
+        public static PlayerController.Surf SurfaceUnder(Node3D n, Rid exclude)
+        {
+            var gp = n.GlobalPosition;
+            if (Terrain.HasWater && gp.Y < Terrain.SeaLevelY + 0.1f) return PlayerController.Surf.Water;
+            var space = n.GetWorld3D()?.DirectSpaceState; if (space == null) return PlayerController.Surf.Concrete;
+            var q = PhysicsRayQueryParameters3D.Create(gp + Vector3.Up * 0.3f, gp + Vector3.Down * 0.6f, 1u << 0, exclude.IsValid ? new Godot.Collections.Array<Rid> { exclude } : null);
+            var hit = space.IntersectRay(q);
+            if (hit.Count == 0) return PlayerController.Surf.Concrete;
+            if (hit["collider"].As<GodotObject>() is Node c)
+            {
+                if (Terrain.Active != null && c.IsInGroup("terrain")) return Terrain.Active.SurfAt(gp.X, gp.Z);
+                if (c.HasMeta(PlayerController.SurfMeta)) return (PlayerController.Surf)(int)c.GetMeta(PlayerController.SurfMeta);
+            }
+            return PlayerController.Surf.Concrete;
+        }
+        public static string MeleeSurface(PlayerController.Surf s) => s switch { PlayerController.Surf.Metal => "metallight", PlayerController.Surf.Grass => "grass", _ => null };
+
         // ---- surface names shared by the footstep / landing / casing / bullet-impact banks ----
         public static string FootSurface(PlayerController.Surf s) => s switch
         {
@@ -117,7 +180,9 @@ namespace UnturnedGodot
         }
         public static string BulletSurface(PlayerController.Surf s) => s switch
         {
-            PlayerController.Surf.Metal => "metallight", PlayerController.Surf.Wood => "woodlight", _ => FootSurface(s),
+            PlayerController.Surf.Metal => "metallight", PlayerController.Surf.Wood => "woodlight",
+            PlayerController.Surf.Sand => "gravel",   // retail ships no sand bullet bank (audit 2026-09-03: a missing bank returns null and the old single wav takes over -- gravel is the retail choice)
+            _ => FootSurface(s),
         };
     }
 

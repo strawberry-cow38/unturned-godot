@@ -37,7 +37,12 @@ namespace UnturnedGodot
             Fuse -= dt;
             Vel.Y -= Gravity * dt;
             Vector3 next = GlobalPosition + Vel * dt;
-            if (next.Y < 0.11f) { next.Y = 0.11f; Vel = new Vector3(Vel.X * 0.4f, Mathf.Abs(Vel.Y) * 0.3f, Vel.Z * 0.4f); }   // bounce + damp
+            if (next.Y < 0.11f)
+            {
+                next.Y = 0.11f;
+                if (Vel.Y < -1.5f) GameAudio.PlayAt(this, GameAudio.Pick("casings", "general"), next, -6f, 4f, 30f, 0.7f);   // a grenade clunking on the ground (retail has no dedicated bounce clip: the brass bounce, pitched down)
+                Vel = new Vector3(Vel.X * 0.4f, Mathf.Abs(Vel.Y) * 0.3f, Vel.Z * 0.4f);   // bounce + damp
+            }
             GlobalPosition = next;
             if (Fuse <= 0f)
             {

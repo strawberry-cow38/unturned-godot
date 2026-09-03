@@ -203,9 +203,13 @@ namespace UnturnedGodot
             // rendered melee blood onto ZombiePuppets and logged zombie kills; both events still exist on
             // NetWorldClient, a core/ type that is NOT deleted, but nothing server-side fires them anymore.)
             Client.GrenadeExploded += e =>
+            {
                 // the SP blast "fx" is the camera flinch (PlayerController.Explode -> FlinchAllFromExplosion,
                 // same params) -- fx only, zero damage: the server already applied the authoritative damage
-                PlayerRegistry.FlinchAllFromExplosion(new Vector3(e.Pos.x, e.Pos.y, e.Pos.z), Mathf.Max(e.Radius * 2f, 12f), 30f);
+                var ep = new Vector3(e.Pos.x, e.Pos.y, e.Pos.z);
+                PlayerRegistry.FlinchAllFromExplosion(ep, Mathf.Max(e.Radius * 2f, 12f), 30f);
+                if (IsInsideTree()) GameAudio.Explosion(this, ep, e.Radius);   // a remote blast is heard too (retail Bomb effect audio)
+            };
             Client.ItemPickupDenied += e =>
             {
                 // a LEGAL pickup the server grid had no room for -- the item stays in the world; tell the

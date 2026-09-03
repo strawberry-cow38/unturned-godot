@@ -467,6 +467,7 @@ namespace UnturnedGodot
         {
             const float R = 5f;
             Vector3 p = GlobalPosition;
+            GameAudio.Explosion(this, p, R);   // retail Bomb explosion audio (ripped 2026-09-03)
             PlayerRegistry.FlinchAllFromExplosion(p, 18f, 28f);   // every player's camera; distance-gated per player
             // (enemy damage removed with the zombie system)
             foreach (var n in GetTree().GetNodesInGroup("players"))

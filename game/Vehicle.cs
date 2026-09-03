@@ -5474,8 +5474,10 @@ if (s.Wheels != null && s.Wheels.Length > 1)
 
             if (s.Sound != null)   // EngineRPMSimple: a looping engine clip (the prefab AudioSource) whose pitch + volume ride the RPM
             {
-                var ogg = AudioStreamOggVorbis.LoadFromFile(ProjectSettings.GlobalizePath($"res://content/{s.Sound}"));
-                ogg.Loop = true;
+                AudioStream ogg = s.Sound.EndsWith(".wav", System.StringComparison.OrdinalIgnoreCase)
+                    ? PlayerController.LoadWavOneShot($"res://content/{s.Sound}", loop: true)   // retail rips (content/audio/vehicles) are wav
+                    : AudioStreamOggVorbis.LoadFromFile(ProjectSettings.GlobalizePath($"res://content/{s.Sound}"));
+                if (ogg is AudioStreamOggVorbis _ov) _ov.Loop = true;
                 // HELICOPTERS CARRY. A car at 80 m is a car you have driven past; a helicopter is the thing you
                 // hear long before you see it, and that is most of what makes one feel big. UnitSize is the
                 // distance at which the attenuation curve starts, so raising BOTH is what actually extends the
@@ -5496,10 +5498,12 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             }
             if (s.IgnitionSound != null)   // one-shot spin-up; NOT autoplayed -- StepHeli fires it on a start
             {
-                var ig = AudioStreamOggVorbis.LoadFromFile(ProjectSettings.GlobalizePath($"res://content/{s.IgnitionSound}"));
+                AudioStream ig = s.IgnitionSound.EndsWith(".wav", System.StringComparison.OrdinalIgnoreCase)
+                    ? PlayerController.LoadWavOneShot($"res://content/{s.IgnitionSound}")
+                    : AudioStreamOggVorbis.LoadFromFile(ProjectSettings.GlobalizePath($"res://content/{s.IgnitionSound}"));
                 if (ig != null)
                 {
-                    ig.Loop = false;
+                    if (ig is AudioStreamOggVorbis _iv) _iv.Loop = false;
                     // The clip's own length becomes the spin-up gate, so "the rotor is ready" and "the start-up
                     // sound has finished" are the same instant by construction rather than two numbers someone
                     // has to keep in step.

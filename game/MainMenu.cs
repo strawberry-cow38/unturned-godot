@@ -621,7 +621,7 @@ namespace UnturnedGodot
                 if (img.Load(ip) == Error.Ok) b.Icon = ImageTexture.CreateFromImage(img);
             }
             b.AddThemeFontSizeOverride("font_size", 20);
-            b.Pressed += () => onClick();   // camera follows which submenu is OPEN (see _Process), NOT hover
+            b.Pressed += () => { GameAudio.UiPopup(this); onClick(); };   // retail ui_menu_popup click; camera follows which submenu is OPEN (see _Process), NOT hover
             layer.AddChild(b);
             _dashButtons.Add(b);            // tracked so SetDashboardVisible() can hide the whole dashboard when a submenu opens
         }
@@ -640,7 +640,7 @@ namespace UnturnedGodot
         {
             var b = new Button { Text = text, CustomMinimumSize = new Vector2(320f, 46f), Alignment = HorizontalAlignment.Left };
             b.AddThemeFontSizeOverride("font_size", 18);
-            b.Pressed += () => onClick();
+            b.Pressed += () => { GameAudio.UiPopup(this); onClick(); };
             return b;
         }
 
