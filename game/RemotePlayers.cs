@@ -24,9 +24,30 @@ namespace UnturnedGodot
             public Nameplate Plate;      // name + profile picture over the head
             public string PlateName;     // what the plate currently reads -- rebuild only on a change
             public ulong PlateAvatar = ulong.MaxValue;   // and which avatar hash it is showing (MaxValue = never set)
+            public AnimatableBody3D Hull;                // the thing you bump into (see RemotePlayerLayer)
+            public CollisionShape3D HullShape;
+            public CapsuleShape3D HullCapsule;
+            public float HullHeight = -1f;               // last height the capsule was built at
+            public bool HullSeated;                      // last seated state pushed to Disabled
         }
         readonly Dictionary<ushort, Av> _avatars = new();
         static readonly Color Skin = new Color(0.82f, 0.66f, 0.52f);   // the 3P body skin (matches PlayerController._body)
+
+        /// <summary>Remote players are SOLID (strawberry 2026-09-03: "player vs player collision", and the
+        /// in-game report "Yeah, no player collision." with the camera inside another player's torso).
+        ///
+        /// RiggedCharacter is a bare Node3D: until now a live puppet had no collider at all, and the only
+        /// CollisionShape3D in it belongs to the RAGDOLL, on the ragdoll bit, built when the player dies. So
+        /// you could walk through everybody.
+        ///
+        /// Its own bit rather than the world bit, because bit 0 is what a VEHICLE masks: put players there and
+        /// a car stops dead on a pedestrian instead of running them over, which is the opposite of what the
+        /// bumper Area3D is for ("the body's own mask ignores the enemy layer, so it plows through").
+        /// PlayerController adds this bit to its own mask; nothing else does.
+        ///
+        /// AnimatableBody3D, not StaticBody3D: the puppet is moved by script every frame, and an animatable
+        /// body carries that motion into the characters it touches instead of letting them sink in.</summary>
+        public const uint RemotePlayerLayer = 1u << 14;
 
         public int PuppetCount => _avatars.Count;
         public bool TryGetPuppet(ushort playerId, out Node3D avatar)
@@ -40,6 +61,16 @@ namespace UnturnedGodot
         {
             if (_avatars.TryGetValue(playerId, out var av)) { inv = av.Inv; return true; }
             inv = null; return false;
+        }
+
+        /// <summary>Is this player riding something? The client learns it from VehicleEntered/Exited, which
+        /// VehicleReplication folds into the vehicle's DriverPlayerId.</summary>
+        bool IsSeated(ushort playerId)
+        {
+            if (Client == null || playerId == 0) return false;
+            foreach (var v in Client.Vehicles.All)
+                if (v.DriverPlayerId == playerId) return true;
+            return false;
         }
 
         public override void _Process(double delta)
@@ -56,6 +87,11 @@ namespace UnturnedGodot
                     av = Build();
                     if (av == null) continue;
                     AddChild(av.Body);
+                    av.HullCapsule = new CapsuleShape3D { Height = SDG.Unturned.PlayerMovementDef.HEIGHT_STAND, Radius = 0.35f };
+                    av.HullShape = new CollisionShape3D { Shape = av.HullCapsule };
+                    av.Hull = new AnimatableBody3D { Name = "Hull", CollisionLayer = RemotePlayerLayer, CollisionMask = 0, SyncToPhysics = false };
+                    av.Hull.AddChild(av.HullShape);
+                    av.Body.AddChild(av.Hull);   // rides the puppet's transform
                     GrassDisplacers.Register(av.Body, GrassDisplacers.PlayerRadius);   // master: remote players flatten grass just like the local one (retail's point covers only self)
                     av.Body.Position = target;
                     _avatars[e.OwnerPlayerId] = av;
@@ -83,6 +119,24 @@ namespace UnturnedGodot
                     3 => SDG.Unturned.EPlayerStance.PRONE,
                     _ => SDG.Unturned.EPlayerStance.STAND,
                 };
+                // Match the local shell's capsule for this stance, so crawling under something you could crawl
+                // under alone still works when someone is standing there.
+                if (IsInstanceValid(av.HullShape))
+                {
+                    float hh = SDG.Unturned.PlayerMovementDef.HeightForStance(stance);
+                    if (Mathf.Abs(hh - av.HullHeight) > 0.001f)
+                    {
+                        av.HullCapsule.Height = hh;
+                        av.HullShape.Position = new Vector3(0f, hh * 0.5f, 0f);
+                        av.HullHeight = hh;
+                    }
+                    // A SEATED player's hull sits inside the car, and two solid bodies sharing a space is
+                    // exactly the "getting into a vehicle on the server makes the physics freak out because
+                    // player hit box overlaps" report. The local shell already disables its own shapes on
+                    // seat confirm (PlayerController); this is the same move for everyone else.
+                    bool seated = IsSeated(e.OwnerPlayerId);
+                    if (seated != av.HullSeated) { av.HullShape.Disabled = seated; av.HullSeated = seated; }
+                }
                 av.Body.SetLocomotion(av.Speed, stance);
                 av.Body.Tick(delta);   // advance the rig, exactly like the local 3p body (PlayerController) -- required once the gun layer puts _ap in Manual; harmless no-op while gun-less
 
