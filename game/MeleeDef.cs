@@ -18,7 +18,8 @@ namespace UnturnedGodot
         // behaviour -- ambiguous per the task's own "don't guess" rule. See the matching note in GunDef.cs.
         public float ZombieDamage = 45f, PlayerDamage = 45f, VehicleDamage = 10f, StructureDamage = 5f, ResourceDamage = 5f;
         public float Stamina;   // swing stamina cost (.dat Stamina, 0-100)
-        public float Strong = 0.5f;   // strong-swing timing fraction (.dat Strong)
+        public float Weak = 0.5f;     // weak-swing hit timing = this fraction of the swing clip (.dat Weak; ItemMeleeAsset.cs:91 default 0.5; 15/34 retail dats author it, 0.37-0.45)
+        public float Strong = 0.33f;  // strong-swing hit timing fraction (.dat Strong; ItemMeleeAsset.cs:92 default 0.33 -- was wrongly 0.5 here; 11 dats take the default)
         public float Strength = 1.5f; // STRONG swing damage multiplier (.dat Strength; source: dmg *= strength on a strong swing)
         public float Alert;           // .dat Alert_Radius: a swing's noise radius (source AlertTool.alert); 0 = silent/stealthy
         public bool Repeated;   // .dat "Repeated": a continuous HOLD-to-use tool (blowtorch, chainsaw). Source ItemMeleeAsset: "'Repeated' melee weapons don't have strong attacks" -> LMB = continuous use (no weak click / no punch), RMB = nothing.
@@ -38,7 +39,7 @@ namespace UnturnedGodot
         {
             Name = "fists", Range = 1.75f,
             ZombieDamage = 15f, PlayerDamage = 15f, VehicleDamage = 0f, StructureDamage = 2f, ResourceDamage = 20f,
-            Strong = 0.5f, Strength = 1f, Stamina = 0f,
+            Weak = 0.5f, Strong = 0.33f, Strength = 1f, Stamina = 0f,
         };
 
         public static MeleeDef FromDatText(string name, string datText)
@@ -54,7 +55,8 @@ namespace UnturnedGodot
                 StructureDamage = d.ParseFloat("Structure_Damage", 5f),
                 ResourceDamage = d.ParseFloat("Resource_Damage", 5f),
                 Stamina = d.ParseFloat("Stamina", 0f),
-                Strong = d.ParseFloat("Strong", 0.5f),
+                Weak = d.ParseFloat("Weak", 0.5f),
+                Strong = d.ParseFloat("Strong", 0.33f),
                 Strength = d.ParseFloat("Strength", 1.5f),
                 Alert = d.ParseFloat("Alert_Radius", 0f),
                 Repeated = d.ContainsKey("Repeated"),   // blowtorch/chainsaw: continuous hold, no weak/strong swings

@@ -2956,11 +2956,14 @@ namespace UnturnedGodot
             // DAMAGE lands at the END of the swing (source: isDamageable is only true once the swing anim has played),
             // NOT instantly on click -- scheduled here and applied by the tick, re-evaluating targets when it connects (master).
             if (NetMelee != null) { NetMelee(strong, RotationDegrees.Y); return; }   // D1: swing fx played above; the SERVER owns the deferred hit (ServerCombat re-evaluates at land time)
-            // Source UseableMelee.cs:818 fires the hit 0.1 s after the swing STARTS (weak); the strong swing waits its .dat
-            // `Strong` fraction of the clip (the wind-up). It used to fire at 70% of the whole clip -- for a 1.63 s axe strong
-            // swing that is 1.14 s, well after the visual contact (master 2026-09-03: "melee hit is applied way too late").
+            // Source: the hit gate (UseableMelee isDamageable) is the swing's frame count x the asset's Weak|Strong fraction --
+            // ItemMeleeAsset.cs:91-92 defaults Weak 0.5, Strong 0.33, and the .dats author 0.37-0.45 (tinyclaw's read of
+            // the source; my first fix used the repeated-tool 0.1 s throttle by mistake). It used to fire at 70% of the whole
+            // clip: 1.14 s on a 1.63 s axe strong swing, well after the visual contact (master: "applied way too late").
+            // Authored numbers, not feel: axe strong = 0.33 x 1.63 = 0.54 s.
             _pendingMeleeStrong = strong;
-            _pendingMeleeHit = strong ? Mathf.Max(0.1f, _meleeCd * Mathf.Clamp(_melee?.Strong ?? 0.5f, 0.05f, 0.9f)) : 0.1f;
+            float frac = strong ? (_melee?.Strong ?? 0.33f) : (_melee?.Weak ?? 0.5f);
+            _pendingMeleeHit = _meleeCd * Mathf.Clamp(frac, 0.05f, 0.95f);
         }
 
         float _pendingMeleeHit = -1f; bool _pendingMeleeStrong;   // deferred melee hit: >0 = a swing is mid-flight, damage lands when it reaches 0
