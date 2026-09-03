@@ -141,7 +141,11 @@ namespace UnturnedGodot
                 }
                 AttachmentFit.SetInstalledId(Player?.HeldItemForTest, slot, -1);
             }
-            VM.SetSlotAttached(slot, false);
+            // A scope/optic coming OFF puts the gun's own irons back (SetSlotMesh also deactivates the scope PiP + restores
+            // the iron aim hook); only a gun without irons hides the slot. Detaching used to just hide the node, so the scope
+            // picture stayed live and the next mount landed on a hidden node -> "the scope slot is never freed" (master).
+            if (installed >= 0 && slot == "Sight" && !string.IsNullOrEmpty(VM.DefaultSightTxt)) VM.SetSlotMesh("Sight", VM.DefaultSightTxt);
+            else VM.SetSlotAttached(slot, false);
             Player?.PlaySelectorSwitchSound();   // detach click (source: shared firemode/selector sound)
             Refresh();
             return true;

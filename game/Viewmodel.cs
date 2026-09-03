@@ -28,6 +28,18 @@ namespace UnturnedGodot
         Node3D _gun;
         CanvasLayer _layer;
         TextureRect _vpRect;   // the composited viewmodel image; rolled 2D about screen-centre for the 1P lean tilt
+        public const float VpOverX = 1.15f, VpOverY = 1.45f;   // render-target oversize factors (see _Ready) -- enough for the 20 deg lean roll on 16:9
+        Vector2 _scr, _vpMargin;   // screen size at build; (viewport - screen)/2
+        /// <summary>The camera fov that keeps the on-screen framing identical to a screen-sized viewport at vertical `vfov`:
+        /// convert to horizontal at the screen aspect, then widen by the horizontal oversize (width-locked camera; the
+        /// vertical follows the viewport's aspect, which lands on vfov * the vertical oversize exactly).</summary>
+        float OversizeFov(float vfov)
+        {
+            float aspect = _scr.Y > 0f ? _scr.X / _scr.Y : 16f / 9f;
+            float hHalf = Mathf.Atan(Mathf.Tan(Mathf.DegToRad(vfov) * 0.5f) * aspect);
+            return Mathf.RadToDeg(2f * Mathf.Atan(Mathf.Tan(hHalf) * VpOverX));
+        }
+        Vector2 VpToScreen(Vector2 px) => px - _vpMargin;   // UnprojectPosition gives viewport px; 2D overlays live in screen px
         // Source-accurate: horizontal offset is ZERO (PlayerAnimator.cs:1653 base = Vector3.zero,
         // PreferenceData Offset_Horizontal defaults 0). The gun reads right-handed because the RIG holds
         // it in the right hand (lefties get localScale.x=-1, PlayerAnimator:1613 — a mirror, not a shift).
@@ -267,10 +279,18 @@ namespace UnturnedGodot
                 RenderTargetUpdateMode = SubViewport.UpdateMode.Always,
                 HandleInputLocally = false,
             };
-            _vp.Size = (Vector2I)GetViewport().GetVisibleRect().Size;   // REVERTED (master): the oversize-and-crop read as a zoom-in. Back to screen-sized render at SourceFov; the lean-roll corner margin will be re-done as a wider vm-cam FOV ("render more") instead.
+            // OVERSIZED render target (master 2026-09-03: "render MORE longer vertically, when we lean we can see the bottom
+            // of the viewport"). The 1P lean is a 2D roll of the composited image about screen centre, so a screen-sized
+            // image shows its own edge in the corners at 20 deg. Render a taller+wider image and composite it CENTRED at
+            // 1:1 -- the framing is pixel-identical (the camera's FOV is widened by exactly the same factors, see
+            // OversizeFov), only the margin that used to be transparent is now painted. (The earlier attempt that read as
+            // a zoom-in oversized the image but still stretched it into the screen rect.)
+            _scr = GetViewport().GetVisibleRect().Size;
+            _vp.Size = new Vector2I(Mathf.RoundToInt(_scr.X * VpOverX), Mathf.RoundToInt(_scr.Y * VpOverY));
+            _vpMargin = ((Vector2)_vp.Size - _scr) * 0.5f;   // viewport px -> screen px = subtract this; the lean-roll corner margin will be re-done as a wider vm-cam FOV ("render more") instead.
             AddChild(_vp);
 
-            _cam = new Camera3D { Fov = SourceFov, Current = true };
+            _cam = new Camera3D { KeepAspect = Camera3D.KeepAspectEnum.Width, Fov = OversizeFov(SourceFov), Current = true };   // width-locked: the fov is horizontal, the extra height follows the taller viewport at the same px/deg
             _vp.AddChild(_cam);
             _vpLight = new DirectionalLight3D { RotationDegrees = new Vector3(-40f, -25f, 10f), LightEnergy = 1.2f };
             _vp.AddChild(_vpLight);
@@ -578,7 +598,9 @@ namespace UnturnedGodot
             // Composite the viewmodel viewport on top of the main view.
             _layer = new CanvasLayer { Layer = 5 };
             _vpRect = new TextureRect { Texture = _vp.GetTexture(), StretchMode = TextureRect.StretchModeEnum.Scale };
-            _vpRect.SetAnchorsPreset(Control.LayoutPreset.FullRect);   // REVERTED (master): screen-sized composite. The lean-roll self-sets its centre pivot at :1285, so the roll still turns about screen-centre.
+            _vpRect.SetAnchorsPreset(Control.LayoutPreset.TopLeft);
+            _vpRect.Position = -_vpMargin;              // the oversized image, centred on the screen at 1:1 (see _Ready)
+            _vpRect.Size = (Vector2)_vp.Size;   // REVERTED (master): screen-sized composite. The lean-roll self-sets its centre pivot at :1285, so the roll still turns about screen-centre.
             _layer.AddChild(_vpRect);
             AddChild(_layer);
         }
@@ -613,7 +635,7 @@ namespace UnturnedGodot
         {
             px = default;
             if (_cam == null || _muzzleFlash == null || _cam.IsPositionBehind(_muzzleFlash.GlobalPosition)) return false;
-            px = _cam.UnprojectPosition(_muzzleFlash.GlobalPosition);
+            px = VpToScreen(_cam.UnprojectPosition(_muzzleFlash.GlobalPosition));
             return true;
         }
 
@@ -912,8 +934,10 @@ namespace UnturnedGodot
         public bool IsSuppressed => SlotAttached("Barrel");   // the only Barrel attachment is the silenced suppressor, so attached = suppressed (source: silenced barrel fires no zombie alert)
         public void SetSlotAttached(string slot, bool on)
         {
+            if (slot == "Sight" && !on) HideScopePiP();   // a hidden Sight slot must not leave a live scope picture / scope aim hook behind
             if (_attachMesh.TryGetValue(slot, out var n)) { var m = _gun?.GetNodeOrNull<MeshInstance3D>(n); if (m != null) m.Visible = on; }
         }
+        public string DefaultSightTxt => _defaultSightTxt;   // the gun's own iron-sight mesh (null/empty = the gun has no irons of its own)
         // Attachment state as a bitmask over AttachSlots (bit set = that slot's model is attached) -- persisted on the gun's Item so
         // a detached suppressor/sight etc. survives hands<->inventory<->drop (master). Only slots the gun HAS a model for count.
         static readonly string[] AttachSlots = { "Sight", "Tactical", "Grip", "Barrel", "Magazine" };
@@ -939,6 +963,7 @@ namespace UnturnedGodot
             if (slot == "Sight") { HideScopePiP(); var _oldRet = m.GetNodeOrNull("Reticle"); if (_oldRet != null) { m.RemoveChild(_oldRet); _oldRet.QueueFree(); } }   // deactivate any prior scope's PiP + drop any prior red-dot reticle before the swap
             if (string.IsNullOrEmpty(txtName)) { m.Visible = false; return; }
             m.Mesh = ContentProvider.ParseObj($"res://content/{txtName}");
+            m.Visible = true;   // the node may have been hidden by a detach -- a freshly mounted mesh must show (was: new scope stayed invisible after detaching the old one)
             if (slot == "Sight")   // scopes/optics: each scope's REAL body colour from source (7x gray, most near-black); satin metal
             {
                 bool _isSc = ScopeCal.TryGetValue(txtName, out var _sc);
@@ -1150,7 +1175,7 @@ namespace UnturnedGodot
             if (_gun == null || _cam == null || !_hookLocal.TryGetValue(slot, out var local)) return false;
             Vector3 world = _gun.GlobalTransform * local;
             if (_cam.IsPositionBehind(world)) return false;
-            screen = _cam.UnprojectPosition(world);
+            screen = VpToScreen(_cam.UnprojectPosition(world));
             return true;
         }
 
@@ -1233,7 +1258,7 @@ namespace UnturnedGodot
                 {
                     _ladder.Active = false;   // range ladder REMOVED from all scopes (master). was: _scopeHasLadder && _aimAlpha > 0.6f
                     if (_ladder.Active && _cam != null && Godot.GodotObject.IsInstanceValid(_scopeLens))
-                        _ladder.Center = _cam.UnprojectPosition(_scopeLens.GlobalPosition);   // follow the lens's screen position so the ladder sways WITH the glass + crosshair
+                        _ladder.Center = VpToScreen(_cam.UnprojectPosition(_scopeLens.GlobalPosition));   // follow the lens's screen position so the ladder sways WITH the glass + crosshair
                         // ...and its ROLL, or the ladder slides with the glass while staying upright. Measured as
                         // the scope's up-vector projected into the view plane, against the camera's own up -- not
                         // the raw node rotation, which includes pitch/yaw the 2D overlay must ignore.
@@ -1348,8 +1373,11 @@ namespace UnturnedGodot
             // both POSITIVE, yaw HARD-ZEROED. So fwd/back PITCHES the gun and strafe ROLLS it (NOT yaws -- that was the
             // "inverted" feel master caught). The negative signs I nearly copied belong to rotationInputViewmodelRoll,
             // a SEPARATE +='d system -- don't inherit them.
-            armRot.X += _swayTilt.CurrentPosition.X;   // fwd/back sway -> PITCH
-            armRot.Z += _swayTilt.CurrentPosition.Y;   // strafe sway -> ROLL (source :1468, NOT yaw)
+            // SIGN: the source values are Unity Euler degrees (+X = nose DOWN, +Z = clockwise on screen); Godot's are the
+            // opposite on both axes (+X = nose UP, +Z = counter-clockwise). Applied raw they pitched the muzzle UP toward the
+            // face while walking forward and rolled the ADS picture against the strafe (master 2026-09-03).
+            armRot.X -= _swayTilt.CurrentPosition.X;   // fwd/back sway -> PITCH
+            armRot.Z -= _swayTilt.CurrentPosition.Y;   // strafe sway -> ROLL (source :1468, NOT yaw)
             _arms.RotationDegrees = armRot;
             // 1P lean tilt: a 2D roll of the composited viewmodel IMAGE about screen-centre -- NOT a 3D roll of the arms.
             // Stylistic only (the bullet origin already leans via the eye pivot, tinyclaw). Doing it in 2D keeps the ADS
@@ -1389,7 +1417,7 @@ namespace UnturnedGodot
                     else _arms.Play(_sprintStopClip);
                 }
             }
-            if (_cam != null) _cam.Fov = TuneFov;              // live-tunable viewmodel FOV (ESC sliders); ADS doesn't change VM FOV
+            if (_cam != null) _cam.Fov = OversizeFov(TuneFov);              // live-tunable viewmodel FOV (ESC sliders); ADS doesn't change VM FOV
 
             // reload plays the real Gun_Reload clip (see SetReloading) — the base pose IS the reload motion, no dip.
 

@@ -490,6 +490,7 @@ namespace UnturnedGodot
         }
 
         double _lookFocusT, _grassT;   // PERF: rate limiters (see ProcessTick)
+        System.Collections.Generic.List<(float d2, Vector3 pos, float r)> _dispPrev;   // last uploaded displacer texels (see UpdateGrassDisplacement)
         void UpdateLookFocus()
         {
             WorldItem hitItem = null; Vehicle hitVeh = null; Deployable hitDeploy = null; GasPump hitGasPump = null; GridPowerSource hitGrid = null; FluidContainer hitFluid = null;
@@ -6497,12 +6498,23 @@ namespace UnturnedGodot
             GrassDisplacers.GatherWake(_dispScratch, p, range2, nowMs);   // add the fading wake breadcrumbs as extra (weaker, shrinking) texels behind the movers
             _dispScratch.Sort(static (a, b) => a.d2.CompareTo(b.d2));   // nearest first -> the Max that survive are the ones the player can actually see
             int cnt = System.Math.Min(_dispScratch.Count, GrassDisplacers.Max);
-            for (int i = 0; i < cnt; i++)
+            // Upload ONLY when the packed texel set changed (idle = nothing moves = no upload). Uploading every frame was
+            // both a per-frame GPU update for nothing and, under the separate render thread, a texture update racing the
+            // renderer (4 "empty image" errors per load).
+            bool dispChanged = _dispPrev == null || _dispPrev.Count != cnt;
+            if (!dispChanged) for (int i = 0; i < cnt; i++) if (_dispPrev[i] != _dispScratch[i]) { dispChanged = true; break; }
+            if (dispChanged)
             {
-                var e = _dispScratch[i];
-                GrassDisplacers.DispImg.SetPixel(i, 0, new Color(e.pos.X, e.pos.Y, e.pos.Z, e.r));   // stale tail texels beyond cnt are never read (loop is count-bounded)
+                _dispPrev ??= new System.Collections.Generic.List<(float d2, Vector3 pos, float r)>();
+                _dispPrev.Clear();
+                for (int i = 0; i < cnt; i++)
+                {
+                    var e = _dispScratch[i];
+                    _dispPrev.Add(e);
+                    GrassDisplacers.DispImg.SetPixel(i, 0, new Color(e.pos.X, e.pos.Y, e.pos.Z, e.r));   // stale tail texels beyond cnt are never read (loop is count-bounded)
+                }
+                GrassDisplacers.DispTex.Update(GrassDisplacers.DispImg);   // re-upload the mutated texels; the global sampler still points at this same RID
             }
-            GrassDisplacers.DispTex.Update(GrassDisplacers.DispImg);   // re-upload the mutated texels; the global sampler still points at this same RID
             RenderingServer.GlobalShaderParameterSet(GrassDisplacers.CountParam, cnt);
         }
 
