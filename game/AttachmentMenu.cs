@@ -391,7 +391,7 @@ namespace UnturnedGodot
         static Texture2D LoadIcon(string file)
         {
             string p = ProjectSettings.GlobalizePath($"res://content/{file}");
-            if (System.IO.File.Exists(p)) { var img = Image.LoadFromFile(p); if (img != null) return ImageTexture.CreateFromImage(img); }
+            if (System.IO.File.Exists(p)) { var img = ContentProvider.LoadImage(p); if (img != null) return ImageTexture.CreateFromImage(img); }
             return null;
         }
 
@@ -404,7 +404,7 @@ namespace UnturnedGodot
             Texture2D tex = null;
             if (System.IO.File.Exists(p))
             {
-                var img = Image.LoadFromFile(p);
+                var img = ContentProvider.LoadImage(p);
                 if (img != null)
                 {
                     if (standUp && DrawnWiderThanTall(img)) { img.Rotate90(ClockDirection.Counterclockwise); img.FlipX(); }   // stand mags UP + un-mirror horizontally (master)

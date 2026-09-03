@@ -1088,7 +1088,7 @@ namespace UnturnedGodot
                 string p = ProjectSettings.GlobalizePath($"res://content/objects/{propName}_tex.png");
                 if (!System.IO.File.Exists(p)) return fallback;
                 var img = new Image();
-                if (img.Load(p) != Error.Ok) return fallback;
+                if (!ContentProvider.LoadOk(img, p)) return fallback;
                 int w = img.GetWidth(), h = img.GetHeight();
                 if (w <= 0 || h <= 0) return fallback;
                 int x = Mathf.Clamp(Mathf.FloorToInt(c.X * w), 0, w - 1);
@@ -1107,7 +1107,7 @@ namespace UnturnedGodot
             if (_pngCache.TryGetValue(resPath, out var hit)) return hit;
             var img = new Image();
             string p = ProjectSettings.GlobalizePath(resPath);
-            if (!System.IO.File.Exists(p) || img.Load(p) != Error.Ok) { GD.PrintErr($"[tv] {resPath} missing/failed"); _pngCache[resPath] = null; return null; }
+            if (!System.IO.File.Exists(p) || !ContentProvider.LoadOk(img, p)) { GD.PrintErr($"[tv] {resPath} missing/failed"); _pngCache[resPath] = null; return null; }
             var t = ImageTexture.CreateFromImage(img);
             _pngCache[resPath] = t;
             return t;
@@ -1149,7 +1149,7 @@ namespace UnturnedGodot
             if (_pattern != null) return _pattern;
             var img = new Image();   // raw png at runtime: Image.Load, not GD.Load (game feedback)
             string p = ProjectSettings.GlobalizePath("res://content/objects/smpte_pattern.png");
-            if (!System.IO.File.Exists(p) || img.Load(p) != Error.Ok) { GD.PrintErr("[tv] smpte_pattern.png missing/failed"); return null; }
+            if (!System.IO.File.Exists(p) || !ContentProvider.LoadOk(img, p)) { GD.PrintErr("[tv] smpte_pattern.png missing/failed"); return null; }
             _pattern = ImageTexture.CreateFromImage(img);
             return _pattern;
         }

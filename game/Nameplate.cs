@@ -96,7 +96,7 @@ namespace UnturnedGodot
         {
             if (_missing != null && GodotObject.IsInstanceValid(_missing)) return _missing;
             const int size = ProfileRules.AvatarPixels, cell = size / 8;
-            var img = Image.CreateEmpty(size, size, false, Image.Format.Rgb8);
+            var img = Image.CreateEmpty(size, size, false, Image.Format.Rgba8);
             var magenta = new Color(1f, 0f, 1f);
             var black = new Color(0.05f, 0.05f, 0.05f);
             for (int y = 0; y < size; y++)

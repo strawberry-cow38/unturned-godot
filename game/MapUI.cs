@@ -136,7 +136,7 @@ namespace UnturnedGodot
         {
             string p = ProjectSettings.GlobalizePath("res://content/" + Info().img);
             if (!System.IO.File.Exists(p)) { GD.Print($"[map] missing content/{Info().img}"); return null; }
-            var img = Image.LoadFromFile(p);
+            var img = ContentProvider.LoadImage(p);
             return img == null ? null : ImageTexture.CreateFromImage(img);
         }
     }

@@ -318,7 +318,7 @@ namespace UnturnedGodot
             if (info.Albedo != null)
             {
                 string ap = ProjectSettings.GlobalizePath($"res://content/{info.Albedo}");
-                if (System.IO.File.Exists(ap)) { var img = Image.LoadFromFile(ap); if (img != null) mat.AlbedoTexture = ImageTexture.CreateFromImage(img); }
+                if (System.IO.File.Exists(ap)) { var img = ContentProvider.LoadImage(ap); if (img != null) mat.AlbedoTexture = ImageTexture.CreateFromImage(img); }
             }
             var mi = new MeshInstance3D { Name = "GunMesh", Mesh = mesh, MaterialOverride = mat, RotationDegrees = new Vector3(0f, 0f, 90f) };   // barrel is gun-local +Y; roll about local +Z (world-vertical here) swings it to the char forward (-Z)
             att.AddChild(mi);
@@ -330,7 +330,7 @@ namespace UnturnedGodot
             // the REAL 1P muzzle flash: the Muzzle_0 star sprite on content/muzzleflash.gdshader (rolls per shot), same as the viewmodel (master)
             _flashMat = new ShaderMaterial { Shader = GD.Load<Shader>("res://content/muzzleflash.gdshader") };
             string ffp = ProjectSettings.GlobalizePath("res://content/muzzleflash.png");
-            if (System.IO.File.Exists(ffp)) { var fimg = Image.LoadFromFile(ffp); if (fimg != null) _flashMat.SetShaderParameter("tex", ImageTexture.CreateFromImage(fimg)); }
+            if (System.IO.File.Exists(ffp)) { var fimg = ContentProvider.LoadImage(ffp); if (fimg != null) _flashMat.SetShaderParameter("tex", ImageTexture.CreateFromImage(fimg)); }
             _flashMat.SetShaderParameter("roll", 0f);
             _flash.AddChild(new MeshInstance3D { Mesh = new QuadMesh { Size = new Vector2(0.55f, 0.55f) }, MaterialOverride = _flashMat });
             _muzzle.AddChild(_flash);
@@ -353,7 +353,7 @@ namespace UnturnedGodot
             att.BoneName = Skeleton.GetBoneName(hb);
             var mat = new StandardMaterial3D { CullMode = BaseMaterial3D.CullModeEnum.Disabled, TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest };
             string ap = ProjectSettings.GlobalizePath($"res://content/{meleeName}_albedo.png");
-            if (System.IO.File.Exists(ap)) { var img = Image.LoadFromFile(ap); if (img != null) mat.AlbedoTexture = ImageTexture.CreateFromImage(img); }
+            if (System.IO.File.Exists(ap)) { var img = ContentProvider.LoadImage(ap); if (img != null) mat.AlbedoTexture = ImageTexture.CreateFromImage(img); }
             att.AddChild(new MeshInstance3D { Name = "MeleeMesh", Mesh = mesh, MaterialOverride = mat, RotationDegrees = new Vector3(0f, 0f, 90f) });   // held-model localRotation = Euler(0,0,90), same as the viewmodel's melee
         }
         public void DetachMelee() => Skeleton?.GetNodeOrNull("MeleeAttach")?.QueueFree();
@@ -996,7 +996,7 @@ namespace UnturnedGodot
         {
             if (resPath == null) return null;
             if (_texCache.TryGetValue(resPath, out var cached) && cached != null) return cached;
-            var img = Image.LoadFromFile(ProjectSettings.GlobalizePath(resPath));
+            var img = ContentProvider.LoadImage(ProjectSettings.GlobalizePath(resPath));
             if (img == null) return null;
             var tex = ImageTexture.CreateFromImage(img);
             _texCache[resPath] = tex;

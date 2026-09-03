@@ -35,7 +35,7 @@ namespace UnturnedGodot
             };
             AddChild(_vp);
             // diagnostic "all" mask still drops the water plane (self-occlusion) AND the outline-silhouette layer (else focus glows reflect as solid tints).
-            _cam = new Camera3D { Current = true, CullMask = all ? (0xFFFFFu & ~WaterLayer & ~OutlineOverlay.OutlineLayer) : ReflLayer };
+            _cam = new Camera3D { PhysicsInterpolationMode = Node.PhysicsInterpolationModeEnum.Off, Current = true, CullMask = all ? (0xFFFFFu & ~WaterLayer & ~OutlineOverlay.OutlineLayer) : ReflLayer };
             _vp.AddChild(_cam);
             _mat.SetShaderParameter("reflection_tex", _vp.GetTexture());
             _mat.SetShaderParameter("reflection_on", true);

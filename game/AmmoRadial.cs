@@ -139,7 +139,7 @@ namespace UnturnedGodot
         static Texture2D LoadIcon(ushort id)
         {
             string p = ProjectSettings.GlobalizePath($"res://content/items/icons/{id}.png");
-            if (System.IO.File.Exists(p)) { var img = Image.LoadFromFile(p); if (img != null) return ImageTexture.CreateFromImage(img); }
+            if (System.IO.File.Exists(p)) { var img = ContentProvider.LoadImage(p); if (img != null) return ImageTexture.CreateFromImage(img); }
             return null;
         }
     }

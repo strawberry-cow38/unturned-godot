@@ -433,9 +433,9 @@ namespace UnturnedGodot
                     if (System.IO.File.Exists(itp))
                     {
                         var iimg = new Image();
-                        if (iimg.Load(itp) == Error.Ok)
+                        if (ContentProvider.LoadOk(iimg, itp))
                         {
-                            iimg.Convert(Image.Format.Rgb8);   // drop the near-zero src alpha; alpha now comes from AlbedoColor so the sheet actually renders
+                            iimg.Convert(Image.Format.Rgb8); iimg.Convert(Image.Format.Rgba8);   // Rgb8 drops the near-zero src alpha, the second convert makes it a warning-free RGBA8 with alpha 1   // drop the near-zero src alpha; alpha now comes from AlbedoColor so the sheet actually renders
                             iimg.GenerateMipmaps();
                             mm.AlbedoTexture = ImageTexture.CreateFromImage(iimg);
                             mm.TextureFilter = BaseMaterial3D.TextureFilterEnum.NearestWithMipmaps;
@@ -465,7 +465,7 @@ namespace UnturnedGodot
                 if (System.IO.File.Exists(tp))
                 {
                     var img = new Image();
-                    if (img.Load(tp) == Error.Ok)
+                    if (ContentProvider.LoadOk(img, tp))
                     {
                         // leaf/foliage cutout: if the albedo carries real transparency (>1% of texels), alpha-scissor it
                         if (img.GetFormat() == Image.Format.Rgba8)

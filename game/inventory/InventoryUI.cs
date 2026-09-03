@@ -1937,7 +1937,7 @@ void fragment() {
             if (_iconCache.TryGetValue(id, out var t)) return t;
             t = null;
             var p = ProjectSettings.GlobalizePath($"res://content/items/icons/{id}.png");
-            if (System.IO.File.Exists(p)) { var img = Image.LoadFromFile(p); if (img != null) t = ImageTexture.CreateFromImage(img); }
+            if (System.IO.File.Exists(p)) { var img = ContentProvider.LoadImage(p); if (img != null) t = ImageTexture.CreateFromImage(img); }
             _iconCache[id] = t;
             return t;
         }

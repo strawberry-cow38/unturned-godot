@@ -115,12 +115,29 @@ namespace UnturnedGodot
         }
         /// <summary>A decoded texture per absolute path (optionally mipmapped). Runtime Image.LoadFromFile has no mipmaps; callers that
         /// used to GenerateMipmaps per instance pass mipmaps:true and get the one shared texture.</summary>
+        /// <summary>Image.LoadFromFile + the RGB8 -> RGBA8 conversion the GPU upload would do anyway: Godot prints "Image format RGB8 not
+        /// supported by hardware, converting to RGBA8" for EVERY alpha-less PNG (83 per PEI load). Converting here is the same
+        /// work without the warning (strawberry 2026-09-03 "fix those errors + the engine warnings").</summary>
+        /// <summary>img.Load(path) == Error.Ok, plus the same RGB8 -> RGBA8 conversion as LoadImage (the `new Image(); if (img.Load(p) == Error.Ok)`
+        /// idiom is how the prop/menu/TV textures come in -- 81 of the 83 warnings per PEI load).</summary>
+        public static bool LoadOk(Image img, string path)
+        {
+            if (img == null || img.Load(path) != Error.Ok) return false;
+            if (!img.IsEmpty() && img.GetFormat() == Image.Format.Rgb8) img.Convert(Image.Format.Rgba8);
+            return true;
+        }
+        public static Image LoadImage(string absPath)
+        {
+            var img = Image.LoadFromFile(absPath);
+            if (img != null && !img.IsEmpty() && img.GetFormat() == Image.Format.Rgb8) img.Convert(Image.Format.Rgba8);
+            return img;
+        }
         public static ImageTexture TextureCached(string absPath, bool mipmaps = false)
         {
             string key = mipmaps ? absPath + "|mip" : absPath;
             if (_texCache.TryGetValue(key, out var t)) return t;
             if (!System.IO.File.Exists(absPath)) return null;
-            var img = Image.LoadFromFile(absPath);
+            var img = LoadImage(absPath);
             if (img == null) return null;
             if (mipmaps) img.GenerateMipmaps();
             t = ImageTexture.CreateFromImage(img);

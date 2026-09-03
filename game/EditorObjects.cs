@@ -223,7 +223,7 @@ namespace UnturnedGodot
             var mm = new StandardMaterial3D { Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled, VertexColorUseAsAlbedo = true };
             string tp = Dir + name + "_tex.png";
             var img = new Image();
-            if (System.IO.File.Exists(tp) && img.Load(tp) == Error.Ok)
+            if (System.IO.File.Exists(tp) && ContentProvider.LoadOk(img, tp))
             {
                 if (img.GetFormat() == Image.Format.Rgba8)   // leaf/foliage cutout: real transparency (>0.25% of texels) -> alpha-scissor (matches WorldBuilder)
                 {

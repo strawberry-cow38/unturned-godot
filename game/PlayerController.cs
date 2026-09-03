@@ -6097,7 +6097,7 @@ namespace UnturnedGodot
             {
                 _npcFlashTexTried = true;
                 string fp = ProjectSettings.GlobalizePath("res://content/muzzleflash.png");
-                if (System.IO.File.Exists(fp)) { var im = Image.LoadFromFile(fp); if (im != null) _npcFlashTex = ImageTexture.CreateFromImage(im); }
+                if (System.IO.File.Exists(fp)) { var im = ContentProvider.LoadImage(fp); if (im != null) _npcFlashTex = ImageTexture.CreateFromImage(im); }
             }
             if (host == null) return;
             var mat = new ShaderMaterial { Shader = GD.Load<Shader>("res://content/muzzleflash.gdshader") };
@@ -6567,7 +6567,7 @@ namespace UnturnedGodot
                 _tracerTexTried = true;
                 string p = ProjectSettings.GlobalizePath("res://content/tracer.png");
                 if (!System.IO.File.Exists(p)) p = ProjectSettings.GlobalizePath("res://content/bullet.png");
-                if (System.IO.File.Exists(p)) { var img = Image.LoadFromFile(p); if (img != null) _tracerTex = ImageTexture.CreateFromImage(img); }
+                if (System.IO.File.Exists(p)) { var img = ContentProvider.LoadImage(p); if (img != null) _tracerTex = ImageTexture.CreateFromImage(img); }
             }
             var mat = new StandardMaterial3D
             {
@@ -6757,7 +6757,7 @@ namespace UnturnedGodot
                     _dispPrev.Add(e);
                     GrassDisplacers.DispImg.SetPixel(i, 0, new Color(e.pos.X, e.pos.Y, e.pos.Z, e.r));   // stale tail texels beyond cnt are never read (loop is count-bounded)
                 }
-                GrassDisplacers.DispTex.Update(GrassDisplacers.DispImg);   // re-upload the mutated texels; the global sampler still points at this same RID
+                if (GrassDisplacers.DispImg != null && !GrassDisplacers.DispImg.IsEmpty()) GrassDisplacers.DispTex.Update(GrassDisplacers.DispImg);   // re-upload the mutated texels; the global sampler still points at this same RID
             }
             RenderingServer.GlobalShaderParameterSet(GrassDisplacers.CountParam, cnt);
         }

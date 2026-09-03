@@ -60,7 +60,7 @@ namespace UnturnedGodot
             if (System.IO.File.Exists(p))
             {
                 var img = new Image();
-                if (img.Load(p) == Error.Ok)
+                if (ContentProvider.LoadOk(img, p))
                     return new StandardMaterial3D { AlbedoTexture = ImageTexture.CreateFromImage(img), TextureFilter = BaseMaterial3D.TextureFilterEnum.NearestWithMipmaps, Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
             }
             return new StandardMaterial3D { AlbedoColor = concrete ? new Color(0.34f, 0.34f, 0.35f) : new Color(0.45f, 0.37f, 0.28f), Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };

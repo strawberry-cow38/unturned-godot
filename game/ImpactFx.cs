@@ -36,7 +36,7 @@ namespace UnturnedGodot
         {
             string p = ProjectSettings.GlobalizePath(rel);
             if (!System.IO.File.Exists(p)) return null;
-            var img = Image.LoadFromFile(p);
+            var img = ContentProvider.LoadImage(p);
             return img != null ? ImageTexture.CreateFromImage(img) : null;
         }
         static AudioStream LoadWav(string rel)

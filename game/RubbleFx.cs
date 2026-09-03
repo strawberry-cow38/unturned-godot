@@ -71,7 +71,7 @@ namespace UnturnedGodot
                     string tp = texDir + d["tex"].AsString();
                     if (File.Exists(tp))
                     {
-                        var img = Image.LoadFromFile(tp);
+                        var img = ContentProvider.LoadImage(tp);
                         if (img != null)
                         {
                             // The retail sprite is a horizontal N-frame flipbook; crop to a single clean frame here + render

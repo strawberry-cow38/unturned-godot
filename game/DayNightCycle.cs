@@ -490,7 +490,7 @@ void sky() {
         internal static ImageTexture LoadTex(string res)
         {
             string p = ProjectSettings.GlobalizePath(res);
-            if (System.IO.File.Exists(p)) { var img = Image.LoadFromFile(p); if (img != null) return ImageTexture.CreateFromImage(img); }
+            if (System.IO.File.Exists(p)) { var img = ContentProvider.LoadImage(p); if (img != null) return ImageTexture.CreateFromImage(img); }
             return null;
         }
 

@@ -106,7 +106,7 @@ namespace UnturnedGodot
         {
             var m = new StandardMaterial3D { TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest, Roughness = 0.75f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
             var img = new Image();
-            if (img.Load(ProjectSettings.GlobalizePath($"res://content/{tex}.png")) == Error.Ok)
+            if (ContentProvider.LoadOk(img, ProjectSettings.GlobalizePath($"res://content/{tex}.png")))
             {
                 if (liveryBody.HasValue) { img.Convert(Image.Format.Rgba8); img.SetPixel(0, 1, liveryBody.Value); }   // random livery -> body palette slot (0,1)
                 m.AlbedoTexture = ImageTexture.CreateFromImage(img);

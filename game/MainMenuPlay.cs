@@ -107,7 +107,7 @@ namespace UnturnedGodot
             string p = G($"res://content/menu/{file}");
             if (!System.IO.File.Exists(p)) return null;
             var img = new Image();
-            if (img.Load(p) != Error.Ok) return null;
+            if (!ContentProvider.LoadOk(img, p)) return null;
             if (maxSize > 0)
             {
                 int w = img.GetWidth(), h = img.GetHeight();

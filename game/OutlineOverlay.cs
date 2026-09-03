@@ -69,7 +69,7 @@ namespace UnturnedGodot
                 Size = (Vector2I)GetViewport().GetVisibleRect().Size,
             };
             AddChild(_vp);
-            _vpCam = new Camera3D { CullMask = OutlineLayer, Current = true };
+            _vpCam = new Camera3D { CullMask = OutlineLayer, Current = true, PhysicsInterpolationMode = Node.PhysicsInterpolationModeEnum.Off };   // mirrors the main camera every frame
             _vp.AddChild(_vpCam);
 
             _mat = new ShaderMaterial { Shader = GD.Load<Shader>("res://content/item_outline.gdshader") };

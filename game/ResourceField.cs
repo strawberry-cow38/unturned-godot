@@ -458,7 +458,7 @@ namespace UnturnedGodot
             if (File.Exists(texPath))
             {
                 var img = new Image();
-                if (img.Load(texPath) == Error.Ok)
+                if (ContentProvider.LoadOk(img, texPath))
                 {
                     img.GenerateMipmaps();
                     mat.AlbedoTexture = ImageTexture.CreateFromImage(img);
@@ -484,7 +484,7 @@ namespace UnturnedGodot
             if (File.Exists(texPath))
             {
                 var img = new Image();
-                if (img.Load(texPath) == Error.Ok) { img.GenerateMipmaps(); m.SetShaderParameter("albedo_tex", ImageTexture.CreateFromImage(img)); }
+                if (ContentProvider.LoadOk(img, texPath)) { img.GenerateMipmaps(); m.SetShaderParameter("albedo_tex", ImageTexture.CreateFromImage(img)); }
             }
             return m;
         }
@@ -601,7 +601,7 @@ namespace UnturnedGodot
                 if (m == null) break;
                 var mat = new StandardMaterial3D { CullMode = BaseMaterial3D.CullModeEnum.Disabled, Roughness = 0.9f };
                 var img = new Image();
-                if (img.Load(ResDir + $"{TreeName}_{suffix}_{i}_tex.png") == Error.Ok) { img.GenerateMipmaps(); mat.AlbedoTexture = ImageTexture.CreateFromImage(img); mat.TextureFilter = BaseMaterial3D.TextureFilterEnum.LinearWithMipmaps; }
+                if (ContentProvider.LoadOk(img, ResDir + $"{TreeName}_{suffix}_{i}_tex.png")) { img.GenerateMipmaps(); mat.AlbedoTexture = ImageTexture.CreateFromImage(img); mat.TextureFilter = BaseMaterial3D.TextureFilterEnum.LinearWithMipmaps; }
                 parent.AddChild(new MeshInstance3D { Mesh = m, MaterialOverride = mat });
             }
         }

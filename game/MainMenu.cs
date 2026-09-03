@@ -298,7 +298,7 @@ namespace UnturnedGodot
                 if (System.IO.File.Exists(tp))
                 {
                     var img = new Image();
-                    if (img.Load(tp) == Error.Ok)
+                    if (ContentProvider.LoadOk(img, tp))
                     {
                         mat.AlbedoTexture = ImageTexture.CreateFromImage(img);
                         mat.TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest;   // 4x2 palette: keep cells crisp
@@ -331,7 +331,7 @@ namespace UnturnedGodot
             // !Level.isLoaded. So the scene's 60 is an authored default retail overwrites, and it happens to
             // be the slider MINIMUM -- 60 vs 90 vertical is 3.0x the frame area.
             // near/far match the retail menu cameras (0.08 / 1024) rather than Godot's 0.05 / 4000.
-            _cam = new Camera3D { Current = true, Fov = 90f, Near = 0.08f, Far = 1024f };
+            _cam = new Camera3D { Current = true, Fov = 90f, Near = 0.08f, Far = 1024f, PhysicsInterpolationMode = Node.PhysicsInterpolationModeEnum.Off };   // driven per frame, not by physics
             AddChild(_cam);
         }
 
@@ -361,7 +361,7 @@ namespace UnturnedGodot
                 {
                     string tp = G($"res://content/menu/tex/{tex}");
                     var img = new Image();
-                    if (System.IO.File.Exists(tp) && img.Load(tp) == Error.Ok)
+                    if (System.IO.File.Exists(tp) && ContentProvider.LoadOk(img, tp))
                     {
                         if (leafy) img.GenerateMipmaps();
                         mat.AlbedoTexture = ImageTexture.CreateFromImage(img);
@@ -618,7 +618,7 @@ namespace UnturnedGodot
             if (System.IO.File.Exists(ip))
             {
                 var img = new Image();
-                if (img.Load(ip) == Error.Ok) b.Icon = ImageTexture.CreateFromImage(img);
+                if (ContentProvider.LoadOk(img, ip)) b.Icon = ImageTexture.CreateFromImage(img);
             }
             b.AddThemeFontSizeOverride("font_size", 20);
             b.Pressed += () => { GameAudio.UiPopup(this); onClick(); };   // retail ui_menu_popup click; camera follows which submenu is OPEN (see _Process), NOT hover
@@ -677,7 +677,7 @@ namespace UnturnedGodot
                                  Alignment = HorizontalAlignment.Left, ExpandIcon = false };
             b.AddThemeFontSizeOverride("font_size", 18);
             string ip = G($"res://content/menu/icon_{icon}.png");
-            if (System.IO.File.Exists(ip)) { var img = new Image(); if (img.Load(ip) == Error.Ok) { img.Resize(32, 32, Image.Interpolation.Lanczos); b.Icon = ImageTexture.CreateFromImage(img); } }
+            if (System.IO.File.Exists(ip)) { var img = new Image(); if (ContentProvider.LoadOk(img, ip)) { img.Resize(32, 32, Image.Interpolation.Lanczos); b.Icon = ImageTexture.CreateFromImage(img); } }
             b.Pressed += () => go();
             box.AddChild(b);
             return b;

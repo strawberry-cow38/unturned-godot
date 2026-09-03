@@ -304,6 +304,7 @@ namespace UnturnedGodot
         public override void _Ready()
         {
             TickHub.AddProcess(this, HubProcess); SetProcess(false);   // PERF: hub-ticked (see TickHub.AddProcess)
+            PhysicsInterpolationMode = Node.PhysicsInterpolationModeEnum.Off;   // the whole viewmodel subtree (SubViewport cam, arms, scope cams) is placed per FRAME from the main camera -- interpolating it again only earns the engine's "Interpolated Camera3D triggered from outside physics process" warning
             _vp = new SubViewport
             {
                 OwnWorld3D = true,
@@ -451,7 +452,7 @@ namespace UnturnedGodot
                     // albedoImg is loaded once here + reused for the body texture.
                     bool isGunBody = MeleeMesh == null && ConsumableMesh == null && DeployableMesh == null && ToolMesh == null;
                     Image albedoImg = null;
-                    if (gv.Albedo != null) { string _ap = ProjectSettings.GlobalizePath($"res://content/{gv.Albedo}"); if (System.IO.File.Exists(_ap)) albedoImg = Image.LoadFromFile(_ap); }
+                    if (gv.Albedo != null) { string _ap = ProjectSettings.GlobalizePath($"res://content/{gv.Albedo}"); if (System.IO.File.Exists(_ap)) albedoImg = ContentProvider.LoadImage(_ap); }
                     System.Collections.Generic.List<(Color color, ArrayMesh mesh)> sightDots = null;
                     ArrayMesh bodyMesh;
                     if (isGunBody) { var _sp = ContentProvider.ParseObjSplitByAlbedoMarker($"res://content/{gv.Gun}", albedoImg); bodyMesh = _sp.body; sightDots = _sp.markers; }
@@ -1018,7 +1019,7 @@ namespace UnturnedGodot
                     string _retName = txtName.Replace("_sight.txt", "_reticle.png");
                     Texture2D _retTex = null;
                     string _rp = ProjectSettings.GlobalizePath($"res://content/{_retName}");
-                    if (System.IO.File.Exists(_rp)) { var _ri = Image.LoadFromFile(_rp); if (_ri != null) _retTex = ImageTexture.CreateFromImage(_ri); }
+                    if (System.IO.File.Exists(_rp)) { var _ri = ContentProvider.LoadImage(_rp); if (_ri != null) _retTex = ImageTexture.CreateFromImage(_ri); }
                     bool _dot = txtName.Contains("cross") || txtName.Contains("chevron");
                     ConfigureScopePiP(_sc.Lens, _sc.Obj, _sc.Aim, _sc.Fov, _sc.Size, _sc.Sides, _retTex, _dot ? 0.056f : 1.0f, _dot ? new Color(1f, 0f, 0f) : new Color(1f, 1f, 1f));   // real PiP zoom + ADS aim + ripped reticle
                     _scopeHasLadder = txtName.StartsWith("scope_");   // the tube zoom scopes (8x/7x/16x) carry the numbered 100/200/300m range ladder
@@ -1046,7 +1047,7 @@ namespace UnturnedGodot
                         // eye and the reticle and occludes it (renders as a BLACK disc). red_dot/kobra are open rings (no-op there).
                     };
                     string _rp = ProjectSettings.GlobalizePath($"res://content/{_retName}");
-                    if (System.IO.File.Exists(_rp)) { var _ri = Image.LoadFromFile(_rp); if (_ri != null) { var _rt = ImageTexture.CreateFromImage(_ri); _retMat.AlbedoTexture = _rt; _retMat.EmissionTexture = _rt; } }
+                    if (System.IO.File.Exists(_rp)) { var _ri = ContentProvider.LoadImage(_rp); if (_ri != null) { var _rt = ImageTexture.CreateFromImage(_ri); _retMat.AlbedoTexture = _rt; _retMat.EmissionTexture = _rt; } }
                     m.AddChild(new MeshInstance3D { Name = "Reticle", Mesh = new QuadMesh { Size = new Vector2(_rd.Size, _rd.Size) }, MaterialOverride = _retMat, Position = _rd.Pos, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off });
                     // ADS through the optic's OWN aim (gun-local composed aim), so the eye tucks behind the sight instead of
                     // aligning to the gun's iron eye-point -- which parked the gun at the wrong height/angle in the sight
@@ -1555,7 +1556,7 @@ namespace UnturnedGodot
         static Texture2D LoadTex(string res)
         {
             string p = ProjectSettings.GlobalizePath(res);
-            if (System.IO.File.Exists(p)) { var img = Image.LoadFromFile(p); if (img != null) return ImageTexture.CreateFromImage(img); }
+            if (System.IO.File.Exists(p)) { var img = ContentProvider.LoadImage(p); if (img != null) return ImageTexture.CreateFromImage(img); }
             return null;
         }
 

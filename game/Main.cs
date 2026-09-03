@@ -1453,7 +1453,7 @@ namespace UnturnedGodot
                 if (m == null) continue;
                 var mat = new StandardMaterial3D { CullMode = BaseMaterial3D.CullModeEnum.Disabled, Roughness = 0.9f };
                 var img = new Image();
-                if (img.Load(dir + name + "_" + i + "_tex.png") == Error.Ok) { img.GenerateMipmaps(); mat.AlbedoTexture = ImageTexture.CreateFromImage(img); mat.TextureFilter = BaseMaterial3D.TextureFilterEnum.LinearWithMipmaps; }
+                if (ContentProvider.LoadOk(img, dir + name + "_" + i + "_tex.png")) { img.GenerateMipmaps(); mat.AlbedoTexture = ImageTexture.CreateFromImage(img); mat.TextureFilter = BaseMaterial3D.TextureFilterEnum.LinearWithMipmaps; }
                 root.AddChild(new MeshInstance3D { Mesh = m, MaterialOverride = mat });
             }
             return root;
@@ -1714,7 +1714,7 @@ namespace UnturnedGodot
                     var refMi = new MeshInstance3D { Mesh = ContentProvider.ParseObj("res://content/ship_body.txt"), Position = new Vector3(34f, Terrain.SeaLevelY - 4.8f, 0f) };
                     var refMat = new StandardMaterial3D { CullMode = BaseMaterial3D.CullModeEnum.Disabled, TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest };
                     var refImg = new Image();
-                    if (refImg.Load(ProjectSettings.GlobalizePath("res://content/ship_body_tex.png")) == Error.Ok) refMat.AlbedoTexture = ImageTexture.CreateFromImage(refImg);
+                    if (ContentProvider.LoadOk(refImg, ProjectSettings.GlobalizePath("res://content/ship_body_tex.png"))) refMat.AlbedoTexture = ImageTexture.CreateFromImage(refImg);
                     refMi.MaterialOverride = refMat; AddChild(refMi);
                     shipCam = new Vector3(17f, 22f, 62f); lookAt = new Vector3(17f, 4f, 0f);   // frame BOTH: floating @X0, static ref @X34
                 }
@@ -2011,7 +2011,7 @@ namespace UnturnedGodot
                     GrassDisplacers.EnsureGlobals();   // globals before the grass material (same rule as FoliageField -- else it links them invalid + no displacement)
                     var gsMat = new ShaderMaterial { Shader = GD.Load<Shader>("res://content/grass_displace.gdshader") };
                     var gimg = new Image();
-                    if (gimg.Load(fdir + "grass_00_tex.png") == Error.Ok) { gimg.GenerateMipmaps(); gsMat.SetShaderParameter("albedo_tex", ImageTexture.CreateFromImage(gimg)); }
+                    if (ContentProvider.LoadOk(gimg, fdir + "grass_00_tex.png")) { gimg.GenerateMipmaps(); gsMat.SetShaderParameter("albedo_tex", ImageTexture.CreateFromImage(gimg)); }
                     const int side = 110; const float spacing = 0.6f;   // 110x110 blades ~0.6m apart -> a dense ~66m lawn over the whole drive path
                     var gmm = new MultiMesh { Mesh = gblade, TransformFormat = MultiMesh.TransformFormatEnum.Transform3D, InstanceCount = side * side };
                     int gi = 0;
@@ -2113,7 +2113,7 @@ namespace UnturnedGodot
                     var texPath = cp.GetTexturePath(guid);
                     if (texPath != null)
                     {
-                        var img = Image.LoadFromFile(texPath);
+                        var img = ContentProvider.LoadImage(texPath);
                         if (img != null) { mat = new StandardMaterial3D { AlbedoTexture = ImageTexture.CreateFromImage(img) }; textured++; }
                     }
 
@@ -2736,7 +2736,7 @@ namespace UnturnedGodot
             var cmesh = ObjMesh.Load(dir + "Container_0.obj");
             var cmat = new StandardMaterial3D { Roughness = 0.85f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
             var cimg = new Image();
-            if (cimg.Load(dir + "Container_0_tex.png") == Error.Ok) { cimg.GenerateMipmaps(); cmat.AlbedoTexture = ImageTexture.CreateFromImage(cimg); }
+            if (ContentProvider.LoadOk(cimg, dir + "Container_0_tex.png")) { cimg.GenerateMipmaps(); cmat.AlbedoTexture = ImageTexture.CreateFromImage(cimg); }
             var cab = cmesh.GetAabb();
             float cW = cab.Size.X, cH = cab.Size.Z, cL = cab.Size.Y;   // Z-up prop: mesh Z is height, mesh Y is length
 
@@ -3314,7 +3314,7 @@ namespace UnturnedGodot
             if (mesh == null) { GD.Print($"[PROPTEST] no mesh {name}"); GetTree().Quit(); return; }
             var mat = new StandardMaterial3D { Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled, VertexColorUseAsAlbedo = true };
             string tp = dir + name + "_tex.png";
-            if (System.IO.File.Exists(tp)) { var img = new Image(); if (img.Load(tp) == Error.Ok) { img.GenerateMipmaps(); mat.AlbedoTexture = ImageTexture.CreateFromImage(img); } }
+            if (System.IO.File.Exists(tp)) { var img = new Image(); if (ContentProvider.LoadOk(img, tp)) { img.GenerateMipmaps(); mat.AlbedoTexture = ImageTexture.CreateFromImage(img); } }
             var propMi = new MeshInstance3D { Mesh = mesh, MaterialOverride = mat };
             { var _pr = System.Environment.GetEnvironmentVariable("UG_PROPROT"); if (!string.IsNullOrEmpty(_pr)) { var a = _pr.Split(','); propMi.RotationDegrees = new Vector3(float.Parse(a[0]), float.Parse(a[1]), float.Parse(a[2])); } }   // UG_PROPROT: reorient the prop (e.g. the elevator's stand-up) for the showcase
             AddChild(propMi);
@@ -3364,14 +3364,14 @@ namespace UnturnedGodot
             AddChild(new WorldEnvironment { Environment = env });
             AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-45f, -50f, 0f), LightEnergy = 1.2f, ShadowEnabled = true });
             Mesh Lm(string n) => ContentProvider.ParseObj($"res://content/{n}.txt");
-            Material Tex(string t) { var m = new StandardMaterial3D { TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest, Metallic = 0f, Roughness = 0.75f, CullMode = BaseMaterial3D.CullModeEnum.Disabled }; var img = new Image(); if (img.Load(ProjectSettings.GlobalizePath($"res://content/{t}.png")) == Error.Ok) m.AlbedoTexture = ImageTexture.CreateFromImage(img); return m; }
+            Material Tex(string t) { var m = new StandardMaterial3D { TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest, Metallic = 0f, Roughness = 0.75f, CullMode = BaseMaterial3D.CullModeEnum.Disabled }; var img = new Image(); if (ContentProvider.LoadOk(img, ProjectSettings.GlobalizePath($"res://content/{t}.png"))) m.AlbedoTexture = ImageTexture.CreateFromImage(img); return m; }
             Material carMat = Tex("train_car_tex"), bogieMat = Tex("train_bogie_tex");
             // PAINTABLE LIVERY: recolour the body palette slot (blue) to a random livery, and the stripe slot
             // (orange) STAYS fixed orange (master). Demo body colour here; per-spawn xorshift in the real vehicle.
             Color livery = new Color(0.16f, 0.42f, 0.22f);
             var bodyMat = new StandardMaterial3D { TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest, Metallic = 0f, Roughness = 0.75f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
             var _bimg = new Image();
-            if (_bimg.Load(ProjectSettings.GlobalizePath("res://content/train_body_tex.png")) == Error.Ok) { _bimg.Convert(Image.Format.Rgba8); _bimg.SetPixel(0, 1, livery); bodyMat.AlbedoTexture = ImageTexture.CreateFromImage(_bimg); }
+            if (ContentProvider.LoadOk(_bimg, ProjectSettings.GlobalizePath("res://content/train_body_tex.png"))) { _bimg.Convert(Image.Format.Rgba8); _bimg.SetPixel(0, 1, livery); bodyMat.AlbedoTexture = ImageTexture.CreateFromImage(_bimg); }
             void Am(Mesh m, Vector3 pp, Material mat) { if (m != null) AddChild(new MeshInstance3D { Mesh = m, Position = pp, MaterialOverride = mat }); }
             Mesh body = Lm("train_body"), bogie = Lm("train_bogie"), car = Lm("train_car"), head = Lm("train_headlights"), steer = Lm("train_steer"), seat = Lm("train_seat");
             Am(body, Vector3.Zero, bodyMat); Am(head, Vector3.Zero, bodyMat); Am(steer, Vector3.Zero, bodyMat); Am(seat, Vector3.Zero, bodyMat);
@@ -3399,10 +3399,10 @@ namespace UnturnedGodot
             for (int i = 0; i < P.Count - 1; i++) { Vector3 t = (P[i + 1] - P[i]).Normalized(); Vector3 side = new Vector3(t.Z, 0f, -t.X) * 1.7f; Vector3 a = P[i] - side, b = P[i] + side, c = P[i + 1] - side, e = P[i + 1] + side; foreach (var v in new[] { a, b, c, b, e, c }) im.SurfaceAddVertex(v + Vector3.Up * 0.02f); }
             im.SurfaceEnd(); AddChild(new MeshInstance3D { Mesh = im });
             Mesh Lm(string n) => ContentProvider.ParseObj($"res://content/{n}.txt");
-            Material Tex(string tn) { var m = new StandardMaterial3D { TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest, Roughness = 0.75f, CullMode = BaseMaterial3D.CullModeEnum.Disabled }; var img = new Image(); if (img.Load(ProjectSettings.GlobalizePath($"res://content/{tn}.png")) == Error.Ok) m.AlbedoTexture = ImageTexture.CreateFromImage(img); return m; }
+            Material Tex(string tn) { var m = new StandardMaterial3D { TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest, Roughness = 0.75f, CullMode = BaseMaterial3D.CullModeEnum.Disabled }; var img = new Image(); if (ContentProvider.LoadOk(img, ProjectSettings.GlobalizePath($"res://content/{tn}.png"))) m.AlbedoTexture = ImageTexture.CreateFromImage(img); return m; }
             var carMat = Tex("train_car_tex"); var bogieMat = Tex("train_bogie_tex");
             var bodyMat = new StandardMaterial3D { TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest, Roughness = 0.75f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
-            { var bimg = new Image(); if (bimg.Load(ProjectSettings.GlobalizePath("res://content/train_body_tex.png")) == Error.Ok) { bimg.Convert(Image.Format.Rgba8); bimg.SetPixel(0, 1, new Color(0.16f, 0.42f, 0.22f)); bodyMat.AlbedoTexture = ImageTexture.CreateFromImage(bimg); } }
+            { var bimg = new Image(); if (ContentProvider.LoadOk(bimg, ProjectSettings.GlobalizePath("res://content/train_body_tex.png"))) { bimg.Convert(Image.Format.Rgba8); bimg.SetPixel(0, 1, new Color(0.16f, 0.42f, 0.22f)); bodyMat.AlbedoTexture = ImageTexture.CreateFromImage(bimg); } }
             Mesh body = Lm("train_body"), bogie = Lm("train_bogie"), car = Lm("train_car");
             _trRailY = 0.9f;
             void MakeUnit(Mesh m, Material mat, float off) {
@@ -3485,7 +3485,7 @@ namespace UnturnedGodot
                 Basis su = form == "Gate" ? new Basis(new Vector3(0f, 0f, 1f), Mathf.DegToRad(180f)) * standUp : standUp;
                 var mat = new StandardMaterial3D { Roughness = 0.85f, CullMode = BaseMaterial3D.CullModeEnum.Disabled, TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest };
                 string tp = odir + nm + "_tex.png";
-                if (System.IO.File.Exists(tp)) { var img = new Image(); if (img.Load(tp) == Error.Ok) mat.AlbedoTexture = ImageTexture.CreateFromImage(img); else mat.AlbedoColor = new Color(0.5f, 0.36f, 0.22f); }
+                if (System.IO.File.Exists(tp)) { var img = new Image(); if (ContentProvider.LoadOk(img, tp)) mat.AlbedoTexture = ImageTexture.CreateFromImage(img); else mat.AlbedoColor = new Color(0.5f, 0.36f, 0.22f); }
                 else mat.AlbedoColor = new Color(0.5f, 0.36f, 0.22f);
                 // stood-up AABB: transform the 8 local corners by standUp -> sit the base on the ground, centre in X/Z.
                 Vector3 mn = new Vector3(1e9f, 1e9f, 1e9f), mx = new Vector3(-1e9f, -1e9f, -1e9f);
@@ -3598,7 +3598,7 @@ namespace UnturnedGodot
 
             var mat = new StandardMaterial3D { Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled, VertexColorUseAsAlbedo = true };
             string tp = dir + name + "_tex.png";
-            if (System.IO.File.Exists(tp)) { var img = new Image(); if (img.Load(tp) == Error.Ok) { img.GenerateMipmaps(); mat.AlbedoTexture = ImageTexture.CreateFromImage(img); } }
+            if (System.IO.File.Exists(tp)) { var img = new Image(); if (ContentProvider.LoadOk(img, tp)) { img.GenerateMipmaps(); mat.AlbedoTexture = ImageTexture.CreateFromImage(img); } }
 
             // Upright placement basis: ex=270/ez=0 is the map own convention for standing a flat-authored
             // interior prop up (see WorldBuilder.TryContainer -- Fridge_0/Wardrobe_0 are themselves
@@ -3741,7 +3741,7 @@ namespace UnturnedGodot
         void RenderWindMap()
         {
             string mp = ProjectSettings.GlobalizePath("res://content/pei_map.png");
-            var img = System.IO.File.Exists(mp) ? Image.LoadFromFile(mp) : null;
+            var img = System.IO.File.Exists(mp) ? ContentProvider.LoadImage(mp) : null;
             if (img == null) { GD.Print("[windmap] missing pei_map.png"); GetTree().Quit(1); return; }
             if (img.GetFormat() != Image.Format.Rgba8) img.Convert(Image.Format.Rgba8);
             int W = img.GetWidth(), H = img.GetHeight();
@@ -4084,7 +4084,7 @@ namespace UnturnedGodot
                     GD.Print($"[WATERTANK] {nm} AABB size={bb.Size} -> stood-up height ~{bb.Size.Z:0.0}m footprint ~{bb.Size.X:0.0}x{bb.Size.Y:0.0}m");
                     var mat = new StandardMaterial3D { Roughness = 0.85f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
                     string tp = odir + nm + "_tex.png";
-                    if (System.IO.File.Exists(tp)) { var img = new Image(); if (img.Load(tp) == Error.Ok) mat.AlbedoTexture = ImageTexture.CreateFromImage(img); else mat.AlbedoColor = new Color(0.62f, 0.66f, 0.70f); }
+                    if (System.IO.File.Exists(tp)) { var img = new Image(); if (ContentProvider.LoadOk(img, tp)) mat.AlbedoTexture = ImageTexture.CreateFromImage(img); else mat.AlbedoColor = new Color(0.62f, 0.66f, 0.70f); }
                     else mat.AlbedoColor = new Color(0.62f, 0.66f, 0.70f);
                     AddChild(new MeshInstance3D { Mesh = m, Basis = standUp, Position = pos, MaterialOverride = mat });
                 }
@@ -4618,7 +4618,7 @@ namespace UnturnedGodot
             if (mesh == null) { GD.PrintErr($"[ROTTEST] no mesh {name}"); GetTree().Quit(); return; }
             var mat = new StandardMaterial3D { Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled, VertexColorUseAsAlbedo = true };
             string tp = dir + name + "_tex.png";
-            if (System.IO.File.Exists(tp)) { var img = new Image(); if (img.Load(tp) == Error.Ok) { img.GenerateMipmaps(); mat.AlbedoTexture = ImageTexture.CreateFromImage(img); } }
+            if (System.IO.File.Exists(tp)) { var img = new Image(); if (ContentProvider.LoadOk(img, tp)) { img.GenerateMipmaps(); mat.AlbedoTexture = ImageTexture.CreateFromImage(img); } }
             var es = (System.Environment.GetEnvironmentVariable("UG_EULER") ?? "270,194,0").Split(',');
             float ex = F(es[0]), ey = F(es[1]), ez = F(es[2]);
             int conv = int.TryParse(System.Environment.GetEnvironmentVariable("UG_ROTCONV"), out var rc) ? rc : 0;
@@ -5997,7 +5997,7 @@ namespace UnturnedGodot
                 string p = ProjectSettings.GlobalizePath($"res://content/{albedo}");
                 if (System.IO.File.Exists(p))
                 {
-                    var img = Image.LoadFromFile(p);
+                    var img = ContentProvider.LoadImage(p);
                     if (img != null) { mat.AlbedoTexture = ImageTexture.CreateFromImage(img); GD.Print($"[BAKE] tex OK {img.GetWidth()}x{img.GetHeight()}"); }
                     else GD.Print("[BAKE] tex img NULL");
                 }
@@ -6318,7 +6318,7 @@ namespace UnturnedGodot
             string texPath = objDir + "Traffic_Light_0_tex.png";
             if (System.IO.File.Exists(texPath))
             {
-                var img = Image.LoadFromFile(texPath);
+                var img = ContentProvider.LoadImage(texPath);
                 if (img != null) bodyMat.AlbedoTexture = ImageTexture.CreateFromImage(img);
             }
 
@@ -6387,7 +6387,7 @@ namespace UnturnedGodot
             if (m == null) { GD.PrintErr("[beamtest] Lighthouse_0.obj missing"); return; }
             var mat = new StandardMaterial3D { Roughness = 0.9f, CullMode = BaseMaterial3D.CullModeEnum.Disabled, TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest };
             string tex = objDir + "Lighthouse_0_tex.png";
-            if (System.IO.File.Exists(tex)) { var img = Image.LoadFromFile(tex); if (img != null) mat.AlbedoTexture = ImageTexture.CreateFromImage(img); }
+            if (System.IO.File.Exists(tex)) { var img = ContentProvider.LoadImage(tex); if (img != null) mat.AlbedoTexture = ImageTexture.CreateFromImage(img); }
             var mi = new MeshInstance3D { Mesh = m, MaterialOverride = mat, RotationDegrees = new Vector3(270f, 194f, 0f) };   // the tower's real placement euler
             AddChild(mi);
 
@@ -6762,7 +6762,7 @@ namespace UnturnedGodot
             var mat = new StandardMaterial3D { Roughness = 0.85f, CullMode = BaseMaterial3D.CullModeEnum.Disabled,
                                                TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest };
             string tex = objDir + which + "_tex.png";
-            if (System.IO.File.Exists(tex)) { var img = Image.LoadFromFile(tex); if (img != null) mat.AlbedoTexture = ImageTexture.CreateFromImage(img); }
+            if (System.IO.File.Exists(tex)) { var img = ContentProvider.LoadImage(tex); if (img != null) mat.AlbedoTexture = ImageTexture.CreateFromImage(img); }
 
             bool ceiling = which == "Light_0" || which == "Light_1";
             float mountY = ceiling ? 3.0f : 0.0f;   // ceiling lights hang; floor/desk lamps stand on the ground
@@ -6855,7 +6855,7 @@ namespace UnturnedGodot
                 string texPath = ProjectSettings.GlobalizePath("res://content/objects/") + "Street_Light_0_tex.png";
                 if (System.IO.File.Exists(texPath))
                 {
-                    var img = Image.LoadFromFile(texPath);
+                    var img = ContentProvider.LoadImage(texPath);
                     if (img != null) bodyMat.AlbedoTexture = ImageTexture.CreateFromImage(img);
                 }
                 else bodyMat.AlbedoColor = new Color(0.17f, 0.17f, 0.18f);

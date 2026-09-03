@@ -73,7 +73,7 @@ namespace UnturnedGodot
             var body = ObjMesh.Load(dir + PropName + ".obj");
             var mat = new StandardMaterial3D { Roughness = 0.85f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
             var img = new Image();
-            if (img.Load(dir + PropName + "_tex.png") == Error.Ok) { img.GenerateMipmaps(); mat.AlbedoTexture = ImageTexture.CreateFromImage(img); }
+            if (ContentProvider.LoadOk(img, dir + PropName + "_tex.png")) { img.GenerateMipmaps(); mat.AlbedoTexture = ImageTexture.CreateFromImage(img); }
             _prop.AddChild(new MeshInstance3D { Mesh = body, MaterialOverride = mat });
 
             // Hull from the mesh's own bounds, transformed into node space. Deriving it rather than typing numbers

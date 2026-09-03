@@ -129,7 +129,7 @@ namespace UnturnedGodot
                         var tp = ProjectSettings.GlobalizePath($"{ItemsRoot}/{texv.AsString()}");
                         if (System.IO.File.Exists(tp))
                         {
-                            var img = Image.LoadFromFile(tp);
+                            var img = ContentProvider.LoadImage(tp);
                             if (img != null)
                             {
                                 img.GenerateMipmaps();

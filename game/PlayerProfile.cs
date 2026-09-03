@@ -84,6 +84,7 @@ namespace UnturnedGodot
             if (png == null || png.Length == 0) return null;
             var img = new Image();
             if (img.LoadPngFromBuffer(png) != Error.Ok) return null;
+            if (img.GetFormat() == Image.Format.Rgb8) img.Convert(Image.Format.Rgba8);   // alpha-less avatar PNG: convert here, not with a warning at upload
             if (img.GetWidth() != ProfileRules.AvatarPixels || img.GetHeight() != ProfileRules.AvatarPixels) return null;
             return ImageTexture.CreateFromImage(img);
         }

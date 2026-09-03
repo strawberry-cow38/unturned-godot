@@ -77,7 +77,7 @@ namespace UnturnedGodot
         {
             if (string.IsNullOrEmpty(rel)) return null;
             string p = ProjectSettings.GlobalizePath("res://content/" + rel);
-            if (System.IO.File.Exists(p)) { var img = Image.LoadFromFile(p); if (img != null) return ImageTexture.CreateFromImage(img); }
+            if (System.IO.File.Exists(p)) { var img = ContentProvider.LoadImage(p); if (img != null) return ImageTexture.CreateFromImage(img); }
             return null;
         }
 

@@ -52,7 +52,7 @@ namespace UnturnedGodot
         {
             var m = new StandardMaterial3D { TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest, Roughness = 0.85f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
             var img = new Image();
-            if (img.Load(ProjectSettings.GlobalizePath($"res://content/objects/{tex}_tex.png")) == Error.Ok) m.AlbedoTexture = ImageTexture.CreateFromImage(img);
+            if (ContentProvider.LoadOk(img, ProjectSettings.GlobalizePath($"res://content/objects/{tex}_tex.png"))) m.AlbedoTexture = ImageTexture.CreateFromImage(img);
             return m;
         }
 

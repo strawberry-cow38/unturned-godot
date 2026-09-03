@@ -114,7 +114,7 @@ void fragment() {
             for (int l = 0; l < SLAYERS; l++)
             {
                 var img = new Image();
-                if (img.Load(ProjectSettings.GlobalizePath($"res://content/{MapDir}/layer{l}.png")) != Error.Ok) { GD.Print($"[TERRAIN] texture load FAILED: {MapDir}/layer{l}"); return null; }
+                if (!ContentProvider.LoadOk(img, ProjectSettings.GlobalizePath($"res://content/{MapDir}/layer{l}.png"))) { GD.Print($"[TERRAIN] texture load FAILED: {MapDir}/layer{l}"); return null; }
                 img.Convert(Image.Format.Rgba8);
                 img.GenerateMipmaps();
                 imgs.Add(img);
@@ -211,7 +211,7 @@ void fragment() {
                     _dom[gx, gy] = (byte)layer;
                     _s0Img.SetPixel(gx, gy, c0); _s1Img.SetPixel(gx, gy, c1);
                 }
-            _s0Tex.Update(_s0Img); _s1Tex.Update(_s1Img);
+            UpdateSplat(_s0Tex, _s0Img); UpdateSplat(_s1Tex, _s1Img);   // guarded: an EMPTY splat image (a map with one splat) used to hit RenderingServer's "p_image is empty" error
         }
 
         // --- live heightmap sculpt (map editor Terrain tab) ---
@@ -1396,7 +1396,7 @@ void fragment() {
                         }
                 }
             }
-            _s0Tex.Update(_s0Img); _s1Tex.Update(_s1Img);
+            UpdateSplat(_s0Tex, _s0Img); UpdateSplat(_s1Tex, _s1Img);   // guarded: an EMPTY splat image (a map with one splat) used to hit RenderingServer's "p_image is empty" error
         }
 
         void PaintTexel(int gx, int gy, int layer)
@@ -1774,6 +1774,13 @@ void fragment() {
         // water-splash arrived carrying its own `WaterLevelY` with a -inf sentinel for "no water" -- the same
         // idea under a second name. Folded into this pair rather than kept alongside it: two notions of where
         // the water is will drift, and the one that drifts is whichever nobody happens to be looking at.
+        /// <summary>ImageTexture.Update with an empty/null image is a RenderingServer error (texture_storage.cpp _texture_2d_update
+        /// "p_image.is_null() || p_image->is_empty()") -- 4 of them on every PEI load (strawberry 2026-09-03 "fix those errors").</summary>
+        static void UpdateSplat(ImageTexture tex, Image img)
+        {
+            if (tex == null || img == null || img.IsEmpty() || img.GetWidth() == 0 || img.GetHeight() == 0) return;
+            tex.Update(img);
+        }
         public static float SeaLevelY = 25.6f;   // = 0.1(PEI seaLevel) * 256; overwritten per-build
         public static bool HasWater;
         /// <summary>Is this world point below the ocean surface? (the port's WaterUtility.isPointUnderwater).</summary>
