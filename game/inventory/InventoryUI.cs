@@ -110,7 +110,7 @@ void fragment() {
         float _storageW, _storageH;
         readonly HashSet<byte> _collapsed = new();                           // clothing pages whose grid is folded away (items stay, header stays)
         readonly List<(Control icon, EItemType type)> _headerIcons = new();  // the small worn-item icon on each page header: draggable = take it off
-        VScrollBar _vscroll; float _scrollY;                                 // clothing column scroll (master 2026-09-03: "scrollbar to the right of the main inventory grid")
+        VScrollBar _vscroll; float _scrollY; bool _scrollTestApplied, _foldTestApplied;                                 // clothing column scroll (master 2026-09-03: "scrollbar to the right of the main inventory grid")
 
         // quick-craft: a dashboard SECTION under the bags (icons of recipes you can afford); LMB queues 1, RMB queues 5.
         readonly List<(Control tile, BlueprintDef bp)> _quickTiles = new();
@@ -1764,6 +1764,7 @@ void fragment() {
             foreach (Node c in _clothingCol.GetChildren()) c.QueueFree();
             foreach (Node c in _areaCol.GetChildren()) c.QueueFree();
             _drop.Clear(); _headerIcons.Clear();
+            if (!_foldTestApplied && byte.TryParse(System.Environment.GetEnvironmentVariable("UG_INVFOLD"), out var _fp)) { _collapsed.Add(_fp); _foldTestApplied = true; }   // render harness: start with a page folded
 
             // weapon slots -> the character panel's bottom row (source: primary/secondary sit under the character). They
             // register as page-0/1 drop targets inside AddSlotAt, so they MUST be built AFTER _drop.Clear() -- previously
@@ -1824,6 +1825,8 @@ void fragment() {
             _storageW = boxW;
             // SCROLL (master 2026-09-03): the clothing column can outgrow the screen; clip the box and hang a scrollbar on its right.
             float visibleH = vpsz.Y - NAVH - 2 * MARGIN;
+            if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_INVSCROLLTEST"), out var _vh) && _vh > 100f) visibleH = _vh;   // render harness: cap the box height so the scrollbar shows on a short column
+            if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_INVSCROLLY"), out var _sy) && !_scrollTestApplied) { _scrollY = _sy; _scrollTestApplied = true; }   // render harness: pre-scrolled
             _storageCol.ClipContents = true; _storageCol.Size = new Vector2(boxW, visibleH);
             float maxScroll = Mathf.Max(0f, yC - visibleH);
             _scrollY = Mathf.Clamp(_scrollY, 0f, maxScroll);
@@ -1831,7 +1834,7 @@ void fragment() {
             if (_vscroll == null) { _vscroll = new VScrollBar { Step = 10 }; _vscroll.ValueChanged += v => { _scrollY = (float)v; _clothingCol.Position = new Vector2(0f, -_scrollY); }; _storageCol.AddChild(_vscroll); }
             _vscroll.Visible = maxScroll > 0f;
             _vscroll.MaxValue = yC; _vscroll.Page = visibleH; _vscroll.SetValueNoSignal(_scrollY);
-            _vscroll.Position = new Vector2(colW + 6f, 0f); _vscroll.Size = new Vector2(14f, visibleH);
+            _vscroll.Position = new Vector2(Mathf.Min(colW, 8 * CELL) + 8f, 0f); _vscroll.Size = new Vector2(14f, visibleH);   // hugs the widest grid (8 cells), not the split -- it was landing on the Nearby column
             _storageH = Mathf.Max(yC, split ? yA : yA) - 10f;   // source ContentSizeOffset = y - 10
 
             LayoutDash();
@@ -2121,8 +2124,8 @@ void fragment() {
                 bar.AddChild(fold);
                 if (_collapsed.Contains(page))
                 {
-                    var chev = new Label { Text = "▸", Position = new Vector2(width - 40, 0), Size = new Vector2(30, HDRH), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, MouseFilter = Control.MouseFilterEnum.Ignore };
-                    chev.AddThemeColorOverride("font_color", UITheme.TextDim); chev.AddThemeFontSizeOverride("font_size", 26);
+                    var chev = new Label { Text = "+", Position = new Vector2(HDRH + 4, 0), Size = new Vector2(30, HDRH), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, MouseFilter = Control.MouseFilterEnum.Ignore };   // "+" = folded, click to unfold (sits after the icon; the right end belongs to the %)
+                    chev.AddThemeColorOverride("font_color", UITheme.Accent); chev.AddThemeFontSizeOverride("font_size", 30);
                     bar.AddChild(chev);
                 }
             }
