@@ -56,6 +56,11 @@ namespace UnturnedGodot.Net
         // peer already has, and the only thing that crosses the wire is the damage/infection it causes,
         // which the existing vitals + combat paths already replicate.
         public readonly ServerDeadzones Deadzones = new ServerDeadzones();
+        /// <summary>The save this world was loaded from, or null for a fresh one. Held for the whole session
+        /// rather than consumed at load: a player's block is applied when THEY connect (PeerConnected below),
+        /// which for a dedicated server is minutes or days after the world came up. The game side sets this
+        /// before opening the socket, and clears it on a wipe.</summary>
+        public WorldSave PendingSave;
         // ...and the join answer for the above: the events carry changes, this block carries the state a
         // late joiner never saw change.
         public readonly InteractableStateReplication InteractableState = new InteractableStateReplication();
@@ -251,6 +256,15 @@ namespace UnturnedGodot.Net
                 // never make a later delta once this client acks it (found by the Part C desync detector:
                 // two simultaneous joiners each permanently missing the other's combat entity). §2.5's
                 // "replication send last" applies to the join snapshot too.
+                // PERSISTENCE (WorldSave): everything above just created this player at defaults. If the world
+                // was loaded from a save and it has a block for them, overwrite those defaults NOW -- before
+                // TickReplication composes the join snapshot below, so the client's very first picture of
+                // itself is its restored state rather than a spawn it sees corrected a tick later.
+                // The key is the name as PROFILES holds it, not peer.Name: ServerAdd sanitises on the way in and
+                // Capture reads it back out, so keying on the raw handshake string would miss every name the
+                // sanitiser touched.
+                if (PendingSave != null && Profiles.TryGet(peer.PlayerId, out var prof))
+                    PendingSave.TryApplyPlayer(this, peer.PlayerId, prof.Name, Session.CurrentTick);
                 _pendingJoinSnapshots.Add(peer);
             };
             Session.PeerDisconnected += (peer, reason) =>

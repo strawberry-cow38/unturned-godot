@@ -162,6 +162,7 @@ namespace UnturnedGodot
             lcol.AddChild(play);
             lcol.AddChild(OptionRow("Difficulty", Difficulties, _optDifficulty, i => { _optDifficulty = i; SaveMapSettings(); }));
             lcol.AddChild(OptionRow("Zombies", ZombieModes, _optZombies, i => { _optZombies = i; SaveMapSettings(); }));
+            lcol.AddChild(BuildResetDataButton());
             var cfgBox = new VBoxContainer { Visible = false };
             cfgBox.AddThemeConstantOverride("separation", 5);
             cfgBox.AddChild(OptionRow("Loot",       LootModes,   _optLoot,   i => { _optLoot = i; SaveMapSettings(); }));
@@ -295,6 +296,7 @@ namespace UnturnedGodot
             if (_descLabel != null) _descLabel.Text = GenerateMapDesc;
             if (_previewImage != null) _previewImage.Texture = null;
             if (_genRow != null) _genRow.Visible = true;
+            DisarmReset();
         }
 
         // Playground -- master moved it out of the Play submenu into its own map here (the gun range, not a survival map).
@@ -308,6 +310,7 @@ namespace UnturnedGodot
             if (_descLabel != null) _descLabel.Text = "The gun range -- an open sandbox to test weapons and mechanics. No survival, no map: just spawn in with everything.";
             if (_previewImage != null) _previewImage.Texture = LoadTex("mappreview_playground.png");   // null if not shipped
             if (_genRow != null) _genRow.Visible = false;
+            DisarmReset();
         }
 
         void SelectMap(string name, string key, bool playable, string desc)
@@ -322,6 +325,7 @@ namespace UnturnedGodot
             if (_previewName != null) _previewName.Text = name;
             if (_descLabel != null) _descLabel.Text = desc;
             if (_previewImage != null) _previewImage.Texture = key != "" ? LoadTex($"mappreview_{key}.png") : null;
+            DisarmReset();
         }
 
         // labeled left/right value cycler (retail SleekButtonState). onChange fires with the new index.
@@ -356,6 +360,62 @@ namespace UnturnedGodot
             row.AddChild(val);
             row.AddChild(next);
             return row;
+        }
+
+        // ---- Reset data (master 2026-09-03: "add a reset data button below the zombie on/off toggle, deletes
+        // the save file"). Sits directly under Zombies, outside the Config fold, because it is not a gameplay
+        // option -- it destroys a world.
+        //
+        // TWO CLICKS, deliberately. There is no confirm dialog in this menu and one misclick would delete
+        // somebody's base permanently, so the button ARMS first and says what it is about to delete. It
+        // disarms on any map change, so an armed click cannot land on a world you were not looking at.
+        Button _resetBtn;
+        bool _resetArmed;
+
+        Control BuildResetDataButton()
+        {
+            _resetBtn = new Button { CustomMinimumSize = new Vector2(340f, 34f), Alignment = HorizontalAlignment.Left };
+            _resetBtn.AddThemeFontSizeOverride("font_size", 15);
+            _resetBtn.Pressed += OnResetPressed;
+            RefreshResetButton();
+            return _resetBtn;
+        }
+
+        void OnResetPressed()
+        {
+            if (!SaveExistsForSelectedMap()) { RefreshResetButton(); return; }
+            if (!_resetArmed) { _resetArmed = true; RefreshResetButton(); return; }
+
+            string path = WorldSaveDriver.PathFor(SelectedMapFolder);
+            var dir = DirAccess.Open(path.GetBaseDir());
+            bool ok = dir != null && dir.Remove(path.GetFile()) == Error.Ok;
+            _resetArmed = false;
+            RefreshResetButton();
+            if (_descLabel != null)
+                _descLabel.Text = ok ? $"Deleted the saved world for {_selectedMap}."
+                                     : $"Could not delete the save at {path}.";
+        }
+
+        bool SaveExistsForSelectedMap()
+            => !string.IsNullOrEmpty(SelectedMapFolder)
+               && Godot.FileAccess.FileExists(WorldSaveDriver.PathFor(SelectedMapFolder));
+
+        void RefreshResetButton()
+        {
+            if (_resetBtn == null) return;
+            bool has = SaveExistsForSelectedMap();
+            _resetBtn.Disabled = !has;
+            _resetBtn.Text = !has ? "  Reset Data  (no save)"
+                           : _resetArmed ? $"  Delete {_selectedMap}'s world?  Click again"
+                           : "  Reset Data";
+        }
+
+        /// <summary>Called wherever the map selection changes: an armed delete must never survive the player
+        /// switching maps, or the second click lands on the wrong world.</summary>
+        void DisarmReset()
+        {
+            _resetArmed = false;
+            RefreshResetButton();
         }
 
         Control ToggleRow(string label, bool initial, System.Action<bool> onChange)

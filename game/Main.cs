@@ -5787,6 +5787,7 @@ namespace UnturnedGodot
             }
             _loopbackConsuming = consume;   // A1: under consume the StorageReplicaView materializes containers -> gate the SP-local SpawnMapContainers off (no double)
             AddChild(new MpLoopback { Player = res.Player, Driver = res.Sim,
+                                      MapId = System.IO.Path.GetFileName(_mapRoot?.TrimEnd('/')),   // save identity: the map folder name, so a PEI save never loads onto Washington
                                       DayNight = res.DayNight, Resources = res.Resources, Destructibles = res.Destructibles,   // Phase 8 world-state syncs (§3.7) + rubble
                                       Fixtures = res.Fixtures,                              // A3: grid-power fixtures -- ServerPlaced under consume, direct-Attached otherwise
                                       Containers = res.Containers,                          // A1: container manifest -> ContainerNetSync publishes server-owned fixtures

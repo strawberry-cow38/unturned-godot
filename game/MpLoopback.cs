@@ -48,6 +48,10 @@ namespace UnturnedGodot
 
         public MemNetwork Net { get; private set; }
         public NetWorldServer Server { get; private set; }
+        /// <summary>Which map this world is, for the save filename and the load-time map guard. Set by
+        /// Main.AttachMpLoopback from the map root; "world" when nothing says otherwise.</summary>
+        public string MapId;
+        public WorldSaveDriver Save { get; private set; }
         public NetWorldClient Client { get; private set; }
         public RemotePlayers Remotes { get; private set; }
         public DeployableReplicaView Deploys { get; private set; }   // P1 --spconsume: server deployable/wire entities -> local nodes (null unless ConsumeDeployables)
@@ -357,6 +361,17 @@ namespace UnturnedGodot
             // would have the loopback server and the local node both acting on the same press. Leaving them
             // at NetId 0 is what keeps singleplayer byte-identical -- see InteractableNetSync, which the
             // DEDICATED server does register (it has no PlayerControllers to run the direct paths).
+            // PERSISTENCE. Built HERE, at the end of _Ready, because the load has to sit in a narrow window: the
+            // syncs above have just registered the map's containers, resources and destructibles (all in their
+            // constructors), so the overlaid state finally has something to overlay -- and the local player has
+            // not joined yet, because that happens on the first Net.Tick inside TickLocal. Any earlier and the
+            // restore writes into fixtures that do not exist; any later and the player has already spawned at
+            // defaults. Doors are the known gap: a loopback deliberately leaves them unregistered (see the note
+            // above), so door state is dedicated-only and simply finds nothing to match in SP.
+            Save = new WorldSaveDriver(Server, MapId, DayNight);
+            GD.Print("[SAVE] " + Save.LoadIntoWorld());
+            Server.Transactions.WipeSaveHandler = () => Save.Wipe();
+            Driver.Sim.Add(new DelegateSimStep((t, dt) => Save.Tick(dt), "net.save.autosave"));
             Driver.Sim.Add(new DelegateSimStep((t, dt) => Server.TickReplication(), "net.server.replicate"));   // LAST (§2.5)
             GD.Print($"[MPLOOPBACK] listen-server up over MemTransport (content {NetContent.Hash:X16})");
         }

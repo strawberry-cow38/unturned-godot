@@ -157,6 +157,23 @@ namespace UnturnedGodot.Net
             Stamp();
         }
 
+        /// <summary>Put a door back to a saved open/locked state (WorldSave.ApplyWorld). Separate from
+        /// RegisterDoor because the world build registers every door at its default before a save is applied,
+        /// and separate from the Toggle/SetLocked command paths because those are a PLAYER acting -- they carry
+        /// reach checks and a toggle cooldown, neither of which means anything when the world is being rebuilt.
+        /// ServerDoor is a struct, so this writes the whole entry back rather than mutating a copy.</summary>
+        public bool ServerRestoreDoor(uint netId, bool open, bool locked)
+        {
+            if (!_doors.TryGetValue(netId, out var d)) return false;
+            var st = d.State;
+            st.IsOpen = open;
+            st.Locked = locked;
+            d.State = st;
+            _doors[netId] = d;
+            Stamp();
+            return true;
+        }
+
         public void RegisterBed(uint netId, Vector3 pos, float yaw = 0f)
         {
             if (_bedIdByNet.ContainsKey(netId)) return;
